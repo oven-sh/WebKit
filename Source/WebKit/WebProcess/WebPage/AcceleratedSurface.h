@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <WebCore/Damage.h>
 #include <WebCore/IntSize.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
@@ -41,14 +40,13 @@ class Region;
 
 namespace WebKit {
 
-class ThreadedCompositor;
 class WebPage;
 
 class AcceleratedSurface {
     WTF_MAKE_NONCOPYABLE(AcceleratedSurface);
     WTF_MAKE_TZONE_ALLOCATED(AcceleratedSurface);
 public:
-    static std::unique_ptr<AcceleratedSurface> create(ThreadedCompositor&, WebPage&, Function<void()>&& frameCompleteHandler);
+    static std::unique_ptr<AcceleratedSurface> create(WebPage&, Function<void()>&& frameCompleteHandler);
     virtual ~AcceleratedSurface() = default;
 
     virtual uint64_t window() const { ASSERT_NOT_REACHED(); return 0; }
@@ -61,11 +59,7 @@ public:
     virtual void willDestroyGLContext() { }
     virtual void finalize() { }
     virtual void willRenderFrame() { }
-    virtual void didRenderFrame() { }
-
-#if ENABLE(DAMAGE_TRACKING)
-    virtual const WebCore::Damage& addDamage(const WebCore::Damage&) { return WebCore::Damage::invalid(); };
-#endif
+    virtual void didRenderFrame(WebCore::Region&&) { }
 
     virtual void didCreateCompositingRunLoop(WTF::RunLoop&) { }
     virtual void willDestroyCompositingRunLoop() { }

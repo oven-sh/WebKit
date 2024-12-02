@@ -52,7 +52,7 @@ constexpr unsigned urlBytesBufferLength = 2048;
 constexpr auto scriptCodeLimit = static_cast<UScriptCode>(255);
 
 
-static std::array<uint32_t, (scriptCodeLimit + 31) / 32> allowedIDNScriptBits;
+static uint32_t allowedIDNScriptBits[(scriptCodeLimit + 31) / 32];
 
 #if !PLATFORM(COCOA)
 
@@ -452,8 +452,8 @@ static inline bool isSecondLevelDomainNameAllowedByTLDRules(std::span<const UCha
 
 #define CHECK_RULES_IF_SUFFIX_MATCHES(suffix, function) \
     { \
-        static constexpr size_t suffixLength = suffix.size(); \
-        if (buffer.size() > suffixLength && !memcmp(buffer.last(suffixLength).data(), suffix.data(), suffix.size())) \
+        static const int32_t suffixLength = sizeof(suffix) / sizeof(suffix[0]); \
+        if (buffer.size() > suffixLength && !memcmp(buffer.last(suffixLength).data(), suffix, sizeof(suffix))) \
             return isSecondLevelDomainNameAllowedByTLDRules(buffer.first(buffer.size() - suffixLength), function); \
     }
 
@@ -470,7 +470,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
         buffer = buffer.first(buffer.size() - 1);
 
     // http://cctld.ru/files/pdf/docs/rules_ru-rf.pdf
-    static constexpr std::array<UChar, 3> cyrillicRF {
+    static const UChar cyrillicRF[] = {
         '.',
         0x0440, // CYRILLIC SMALL LETTER ER
         0x0444, // CYRILLIC SMALL LETTER EF
@@ -478,7 +478,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     CHECK_RULES_IF_SUFFIX_MATCHES(cyrillicRF, isRussianDomainNameCharacter);
 
     // http://rusnames.ru/rules.pl
-    static constexpr std::array<UChar, 4> cyrillicRUS {
+    static const UChar cyrillicRUS[] = {
         '.',
         0x0440, // CYRILLIC SMALL LETTER ER
         0x0443, // CYRILLIC SMALL LETTER U
@@ -487,7 +487,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     CHECK_RULES_IF_SUFFIX_MATCHES(cyrillicRUS, isRussianDomainNameCharacter);
 
     // http://ru.faitid.org/projects/moscow/documents/moskva/idn
-    static constexpr std::array<UChar, 7> cyrillicMOSKVA {
+    static const UChar cyrillicMOSKVA[] = {
         '.',
         0x043C, // CYRILLIC SMALL LETTER EM
         0x043E, // CYRILLIC SMALL LETTER O
@@ -499,7 +499,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     CHECK_RULES_IF_SUFFIX_MATCHES(cyrillicMOSKVA, isRussianDomainNameCharacter);
 
     // http://www.dotdeti.ru/foruser/docs/regrules.php
-    static constexpr std::array<UChar, 5> cyrillicDETI {
+    static const UChar cyrillicDETI[] = {
         '.',
         0x0434, // CYRILLIC SMALL LETTER DE
         0x0435, // CYRILLIC SMALL LETTER IE
@@ -510,7 +510,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
 
     // http://corenic.org - rules not published. The word is Russian, so only allowing Russian at this time,
     // although we may need to revise the checks if this ends up being used with other languages spoken in Russia.
-    static constexpr std::array<UChar, 7> cyrillicONLAYN {
+    static const UChar cyrillicONLAYN[] = {
         '.',
         0x043E, // CYRILLIC SMALL LETTER O
         0x043D, // CYRILLIC SMALL LETTER EN
@@ -522,7 +522,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     CHECK_RULES_IF_SUFFIX_MATCHES(cyrillicONLAYN, isRussianDomainNameCharacter);
 
     // http://corenic.org - same as above.
-    static constexpr std::array<UChar, 5> cyrillicSAYT {
+    static const UChar cyrillicSAYT[] = {
         '.',
         0x0441, // CYRILLIC SMALL LETTER ES
         0x0430, // CYRILLIC SMALL LETTER A
@@ -534,7 +534,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     // http://pir.org/products/opr-domain/ - rules not published. According to the registry site,
     // the intended audience is "Russian and other Slavic-speaking markets".
     // Chrome appears to only allow Russian, so sticking with that for now.
-    static constexpr std::array<UChar, 4> cyrillicORG {
+    static const UChar cyrillicORG[] = {
         '.',
         0x043E, // CYRILLIC SMALL LETTER O
         0x0440, // CYRILLIC SMALL LETTER ER
@@ -543,7 +543,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     CHECK_RULES_IF_SUFFIX_MATCHES(cyrillicORG, isRussianDomainNameCharacter);
 
     // http://cctld.by/rules.html
-    static constexpr std::array<UChar, 4> cyrillicBEL {
+    static const UChar cyrillicBEL[] = {
         '.',
         0x0431, // CYRILLIC SMALL LETTER BE
         0x0435, // CYRILLIC SMALL LETTER IE
@@ -555,7 +555,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     });
 
     // http://www.nic.kz/docs/poryadok_vnedreniya_kaz_ru.pdf
-    static constexpr std::array<UChar, 4> cyrillicKAZ {
+    static const UChar cyrillicKAZ[] = {
         '.',
         0x049B, // CYRILLIC SMALL LETTER KA WITH DESCENDER
         0x0430, // CYRILLIC SMALL LETTER A
@@ -567,7 +567,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     });
 
     // http://uanic.net/docs/documents-ukr/Rules%20of%20UKR_v4.0.pdf
-    static constexpr std::array<UChar, 4> cyrillicUKR {
+    static const UChar cyrillicUKR[] = {
         '.',
         0x0443, // CYRILLIC SMALL LETTER U
         0x043A, // CYRILLIC SMALL LETTER KA
@@ -579,7 +579,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     });
 
     // http://www.rnids.rs/data/DOKUMENTI/idn-srb-policy-termsofuse-v1.4-eng.pdf
-    static constexpr std::array<UChar, 4> cyrillicSRB {
+    static const UChar cyrillicSRB[] = {
         '.',
         0x0441, // CYRILLIC SMALL LETTER ES
         0x0440, // CYRILLIC SMALL LETTER ER
@@ -591,7 +591,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     });
 
     // http://marnet.mk/doc/pravilnik-mk-mkd.pdf
-    static constexpr std::array<UChar, 4> cyrillicMKD {
+    static const UChar cyrillicMKD[] = {
         '.',
         0x043C, // CYRILLIC SMALL LETTER EM
         0x043A, // CYRILLIC SMALL LETTER KA
@@ -603,7 +603,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     });
 
     // https://www.mon.mn/cs/
-    static constexpr std::array<UChar, 4> cyrillicMON {
+    static const UChar cyrillicMON[] = {
         '.',
         0x043C, // CYRILLIC SMALL LETTER EM
         0x043E, // CYRILLIC SMALL LETTER O
@@ -615,7 +615,7 @@ static bool allCharactersAllowedByTLDRules(std::span<const UChar> buffer)
     });
 
     // https://www.icann.org/sites/default/files/packages/lgr/lgr-second-level-bulgarian-30aug16-en.html
-    static constexpr std::array<UChar, 3> cyrillicBG {
+    static const UChar cyrillicBG[] = {
         '.',
         0x0431, // CYRILLIC SMALL LETTER BE
         0x0433 // CYRILLIC SMALL LETTER GHE
@@ -798,9 +798,9 @@ static void applyHostNameFunctionToURLString(const String& string, URLDecodeFunc
     }, authorityStart);
     unsigned hostNameEnd = hostNameTerminator == notFound ? string.length() : hostNameTerminator;
 
-    // Find "@" for the start of the host name. There might be more than one and we try to find the last one.
-    auto lastUserInfoTerminator = StringView { string }.left(hostNameEnd).reverseFind('@');
-    unsigned hostNameStart = lastUserInfoTerminator == notFound ? authorityStart : lastUserInfoTerminator + 1;
+    // Find "@" for the start of the host name.
+    auto userInfoTerminator = StringView { string }.left(hostNameEnd).find('@', authorityStart);
+    unsigned hostNameStart = userInfoTerminator == notFound ? authorityStart : userInfoTerminator + 1;
 
     collectRangesThatNeedMapping(string, hostNameStart, hostNameEnd - hostNameStart, array, decodeFunction);
 }
@@ -860,7 +860,7 @@ static String escapeUnsafeCharacters(const String& sourceBuffer)
         char32_t c = sourceBuffer.characterStartingAt(i);
         unsigned characterLength = U16_LENGTH(c);
         if (isLookalikeCharacter(previousCodePoint, c)) {
-            std::array<uint8_t, 4> utf8Buffer;
+            uint8_t utf8Buffer[4];
             size_t offset = 0;
             UBool failure = false;
             U8_APPEND(utf8Buffer, offset, 4, c, failure);
@@ -898,7 +898,7 @@ String userVisibleURL(const CString& url)
         return { };
     Vector<char, urlBytesBufferLength> after(bufferLength);
 
-    size_t afterIndex = 0;
+    char* q = after.data();
     {
         auto p = before;
         for (int i = 0; i < length; i++) {
@@ -908,23 +908,23 @@ String userVisibleURL(const CString& url)
                 auto u = toASCIIHexValue(p[i + 1], p[i + 2]);
                 if (u > 0x7f) {
                     // unescape
-                    after[afterIndex++] = u;
+                    *q++ = u;
                 } else {
                     // do not unescape
-                    after[afterIndex++] = p[i];
-                    after[afterIndex++] = p[i + 1];
-                    after[afterIndex++] = p[i + 2];
+                    *q++ = p[i];
+                    *q++ = p[i + 1];
+                    *q++ = p[i + 2];
                 }
                 i += 2;
             } else {
-                after[afterIndex++] = c;
+                *q++ = c;
                 
                 // Check for "xn--" in an efficient, non-case-sensitive, way.
-                if (c == '-' && i >= 3 && !mayNeedHostNameDecoding && (after[afterIndex - 4] | 0x20) == 'x' && (after[afterIndex - 3] | 0x20) == 'n' && after[afterIndex - 2] == '-')
+                if (c == '-' && i >= 3 && !mayNeedHostNameDecoding && (q[-4] | 0x20) == 'x' && (q[-3] | 0x20) == 'n' && q[-2] == '-')
                     mayNeedHostNameDecoding = true;
             }
         }
-        after[afterIndex] = '\0';
+        *q = '\0';
     }
     
     // Check string to see if it can be converted to display using UTF-8  
@@ -935,21 +935,21 @@ String userVisibleURL(const CString& url)
         // Shift current string to the end of the buffer
         // then we will copy back bytes to the start of the buffer 
         // as we convert.
-        int afterlength = afterIndex;
-        auto p = after.mutableSpan().subspan(bufferLength.value() - afterlength - 1);
-        memmove(p.data(), after.data(), afterlength + 1); // copies trailing '\0'
-        afterIndex = 0;
-        while (p.front()) {
-            unsigned char c = p.front();
+        int afterlength = q - after.data();
+        char* p = after.data() + bufferLength.value() - afterlength - 1;
+        memmove(p, after.data(), afterlength + 1); // copies trailing '\0'
+        char* q = after.data();
+        while (*p) {
+            unsigned char c = *p;
             if (c > 0x7f) {
-                after[afterIndex++] = '%';
-                after[afterIndex++] = upperNibbleToASCIIHexDigit(c);
-                after[afterIndex++] = lowerNibbleToASCIIHexDigit(c);
+                *q++ = '%';
+                *q++ = upperNibbleToASCIIHexDigit(c);
+                *q++ = lowerNibbleToASCIIHexDigit(c);
             } else
-                after[afterIndex++] = p.front();
-            p = p.subspan(1);
+                *q++ = *p;
+            p++;
         }
-        after[afterIndex] = '\0';
+        *q = '\0';
         // Note: after.data() points to a null-terminated, pure ASCII string.
         result = String::fromUTF8(after.data());
         ASSERT(!!result);

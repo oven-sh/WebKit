@@ -38,8 +38,6 @@
 #include "FloatConversion.h"
 #include <wtf/MathExtras.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // Takes the input AudioChannel as an input impulse response and calculates the average group delay.
@@ -137,7 +135,5 @@ RefPtr<HRTFKernel> HRTFKernel::createInterpolatedKernel(HRTFKernel* kernel1, HRT
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUDIO)

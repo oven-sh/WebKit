@@ -54,8 +54,7 @@ ResourceProvider::~ResourceProvider() {
 sk_sp<GraphicsPipeline> ResourceProvider::findOrCreateGraphicsPipeline(
         const RuntimeEffectDictionary* runtimeDict,
         const GraphicsPipelineDesc& pipelineDesc,
-        const RenderPassDesc& renderPassDesc,
-        SkEnumBitMask<PipelineCreationFlags> pipelineCreationFlags) {
+        const RenderPassDesc& renderPassDesc) {
     auto globalCache = fSharedContext->globalCache();
     UniqueKey pipelineKey = fSharedContext->caps()->makeGraphicsPipelineKey(pipelineDesc,
                                                                             renderPassDesc);
@@ -71,8 +70,7 @@ sk_sp<GraphicsPipeline> ResourceProvider::findOrCreateGraphicsPipeline(
         TRACE_EVENT1_ALWAYS(
                 "skia.shaders", "createGraphicsPipeline", "desc",
                 TRACE_STR_COPY(to_str(fSharedContext, pipelineDesc, renderPassDesc).c_str()));
-        pipeline = this->createGraphicsPipeline(runtimeDict, pipelineDesc, renderPassDesc,
-                                                pipelineCreationFlags);
+        pipeline = this->createGraphicsPipeline(runtimeDict, pipelineDesc, renderPassDesc);
         if (pipeline) {
             // TODO: Should we store a null pipeline if we failed to create one so that subsequent
             // usage immediately sees that the pipeline cannot be created, vs. retrying every time?
@@ -308,8 +306,6 @@ void ResourceProvider::deleteBackendTexture(const BackendTexture& texture) {
 }
 
 void ResourceProvider::freeGpuResources() {
-    this->onFreeGpuResources();
-
     // TODO: Are there Resources that are ref'd by the ResourceProvider or its subclasses that need
     // be released? If we ever find that we're holding things directly on the ResourceProviders we
     // call down into the subclasses to allow them to release things.
@@ -318,7 +314,6 @@ void ResourceProvider::freeGpuResources() {
 }
 
 void ResourceProvider::purgeResourcesNotUsedSince(StdSteadyClock::time_point purgeTime) {
-    this->onPurgeResourcesNotUsedSince(purgeTime);
     fResourceCache->purgeResourcesNotUsedSince(purgeTime);
 }
 

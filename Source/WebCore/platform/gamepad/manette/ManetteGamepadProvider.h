@@ -44,10 +44,6 @@ class ManetteGamepadProvider final : public GamepadProvider {
 public:
     static ManetteGamepadProvider& singleton();
 
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
-
     virtual ~ManetteGamepadProvider();
 
     void startMonitoringGamepads(GamepadProviderClient&) final;
@@ -72,7 +68,7 @@ private:
     void inputNotificationTimerFired();
 
     Vector<WeakPtr<PlatformGamepad>> m_gamepadVector;
-    HashMap<ManetteDevice*, std::unique_ptr<ManetteGamepad>> m_gamepadMap;
+    UncheckedKeyHashMap<ManetteDevice*, std::unique_ptr<ManetteGamepad>> m_gamepadMap;
     bool m_initialGamepadsConnected { false };
 
     GRefPtr<ManetteMonitor> m_monitor;

@@ -32,10 +32,8 @@
 #include "GlyphPage.h"
 #include "OpenTypeTypes.h"
 #include "SharedBuffer.h"
-#include <wtf/Compiler.h>
 #include <wtf/RefPtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
 
 namespace WebCore {
 using namespace std;
@@ -569,7 +567,4 @@ void OpenTypeVerticalData::substituteWithVerticalGlyphs(const Font* font, GlyphP
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(OPENTYPE_VERTICAL)

@@ -77,10 +77,6 @@ public:
     void stop();
     bool isRunning() const;
     
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
-
 private:
     WebMemorySampler();
     ~WebMemorySampler();

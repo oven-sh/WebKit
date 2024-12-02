@@ -64,7 +64,7 @@ private:
     void didFinishLoading(const WebCore::FloatPoint3D&, const WebCore::FloatPoint3D&);
     void didUpdateEntityTransform(const WebCore::TransformationMatrix&);
     void didUpdateAnimationPlaybackState(bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp);
-    void didFinishEnvironmentMapLoading(bool succeeded);
+    void didFinishEnvironmentMapLoading();
 
     // WebCore::ModelPlayer overrides.
     WebCore::ModelPlayerIdentifier identifier() const final { return m_id; }

@@ -36,8 +36,6 @@
 #include <wtf/Int128.h>
 #include <wtf/dragonbox/ieee754_format.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 namespace dragonbox {
@@ -745,5 +743,3 @@ struct compressed_cache_detail {
 } // namespace dragonbox
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

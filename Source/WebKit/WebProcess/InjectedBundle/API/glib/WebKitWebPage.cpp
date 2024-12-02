@@ -98,7 +98,7 @@ enum {
     N_PROPERTIES,
 };
 
-static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
+static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
 
 struct _WebKitWebPagePrivate {
     WebPage* webPage;
@@ -109,7 +109,7 @@ struct _WebKitWebPagePrivate {
     HashMap<WebKitScriptWorld*, GRefPtr<WebKitWebFormManager>> formManagerMap;
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitWebPage, webkit_web_page, G_TYPE_OBJECT, GObject)
 
@@ -518,7 +518,7 @@ static void webkit_web_page_class_init(WebKitWebPageClass* klass)
             0,
             WEBKIT_PARAM_READABLE);
 
-    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties.data());
+    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties);
 
     /**
      * WebKitWebPage::document-loaded:

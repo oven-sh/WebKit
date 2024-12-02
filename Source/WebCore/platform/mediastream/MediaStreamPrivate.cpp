@@ -232,9 +232,9 @@ bool MediaStreamPrivate::muted() const
     return true;
 }
 
-IntSize MediaStreamPrivate::intrinsicSize() const
+FloatSize MediaStreamPrivate::intrinsicSize() const
 {
-    IntSize size;
+    FloatSize size;
     if (m_activeVideoTrack) {
         const RealtimeMediaSourceSettings& setting = m_activeVideoTrack->settings();
         size.setWidth(setting.width());

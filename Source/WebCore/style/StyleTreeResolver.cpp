@@ -26,9 +26,7 @@
 #include "config.h"
 #include "StyleTreeResolver.h"
 
-#include "AXObjectCache.h"
 #include "AnchorPositionEvaluator.h"
-#include "AnimationTimelinesController.h"
 #include "CSSFontSelector.h"
 #include "ComposedTreeAncestorIterator.h"
 #include "ComposedTreeIterator.h"
@@ -678,11 +676,6 @@ ElementUpdate TreeResolver::createAnimatedElementUpdate(ResolvedStyle&& resolved
             styleable.updateCSSViewTimelines(oldStyle, *resolvedStyle.style);
         }
 
-        if ((oldStyle && oldStyle->timelineScope().type != TimelineScope::Type::None) || resolvedStyle.style->timelineScope().type != TimelineScope::Type::None) {
-            CheckedRef timelinesController = element.protectedDocument()->ensureTimelinesController();
-            timelinesController->updateNamedTimelineMapForTimelineScope(resolvedStyle.style->timelineScope(), element);
-        }
-
         // The order in which CSS Transitions and CSS Animations are updated matters since CSS Transitions define the after-change style
         // to use CSS Animations as defined in the previous style change event. As such, we update CSS Animations after CSS Transitions
         // such that when CSS Transitions are updated the CSS Animations data is the same as during the previous style change event.
@@ -1117,8 +1110,6 @@ void TreeResolver::resolveComposedTree()
 
             if (element.hasCustomStyleResolveCallbacks())
                 element.didRecalcStyle(elementUpdate.change);
-            if (CheckedPtr cache = m_document->existingAXObjectCache())
-                cache->onStyleChange(element, elementUpdate.change, elementUpdate.style.get(), style);
 
             style = elementUpdate.style.get();
             change = elementUpdate.change;

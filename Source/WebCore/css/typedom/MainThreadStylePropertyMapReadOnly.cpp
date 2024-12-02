@@ -54,17 +54,17 @@ Document* MainThreadStylePropertyMapReadOnly::documentFromContext(ScriptExecutio
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-stylepropertymapreadonly-get
-ExceptionOr<MainThreadStylePropertyMapReadOnly::CSSStyleValueOrUndefined> MainThreadStylePropertyMapReadOnly::get(ScriptExecutionContext& context, const AtomString& property) const
+ExceptionOr<HashMapStylePropertyMapReadOnly::CSSStyleValueOrUndefined> MainThreadStylePropertyMapReadOnly::get(ScriptExecutionContext& context, const AtomString& property) const
 {
     auto* document = documentFromContext(context);
     if (!document)
-        return { std::monostate { } };
+        return nullptr;
 
     if (isCustomPropertyName(property)) {
         if (auto value = reifyValue(customPropertyValue(property), std::nullopt, *document))
-            return { WTFMove(value) };
+            return CSSStyleValueOrUndefined { WTFMove(value) };
 
-        return { std::monostate { } };
+        return nullptr;
     }
 
     auto propertyID = cssPropertyID(property);
@@ -73,15 +73,15 @@ ExceptionOr<MainThreadStylePropertyMapReadOnly::CSSStyleValueOrUndefined> MainTh
 
     if (isShorthand(propertyID)) {
         if (auto value = CSSStyleValueFactory::constructStyleValueForShorthandSerialization(shorthandPropertySerialization(propertyID), { *document }))
-            return { WTFMove(value) };
+            return CSSStyleValueOrUndefined { WTFMove(value) };
 
-        return { std::monostate { } };
+        return nullptr;
     }
 
     if (auto value = reifyValue(propertyValue(propertyID), propertyID, *document))
-        return { WTFMove(value) };
+        return CSSStyleValueOrUndefined { WTFMove(value) };
 
-    return { std::monostate { } };
+    return nullptr;
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-stylepropertymapreadonly-getall
@@ -114,15 +114,12 @@ ExceptionOr<bool> MainThreadStylePropertyMapReadOnly::has(ScriptExecutionContext
     if (result.hasException())
         return result.releaseException();
 
-    return WTF::switchOn(result.returnValue(),
-        [](const RefPtr<CSSStyleValue>& value) {
-            ASSERT(value);
-            return !!value;
-        },
-        [](std::monostate) {
-            return false;
-        }
-    );
+    return WTF::switchOn(result.returnValue(), [](const RefPtr<CSSStyleValue>& value) {
+        ASSERT(value);
+        return !!value;
+    }, [](const auto&) {
+        return false;
+    });
 }
 
 } // namespace WebCore

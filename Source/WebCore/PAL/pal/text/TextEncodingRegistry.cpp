@@ -50,67 +50,60 @@
 
 namespace PAL {
 
-constexpr size_t maxEncodingNameLength = 63;
+const size_t maxEncodingNameLength = 63;
 
 // Hash for all-ASCII strings that does case folding.
 struct TextEncodingNameHash {
-    static bool equal(std::span<const LChar> s1, std::span<const LChar> s2)
+    static bool equal(const char* s1, const char* s2)
     {
-        if (s1.size() != s2.size())
-            return false;
-
-        for (size_t i = 0; i < s1.size(); ++i) {
-            if (toASCIILower(s1[i]) != toASCIILower(s2[i]))
+        char c1;
+        char c2;
+        do {
+            c1 = *s1++;
+            c2 = *s2++;
+            if (toASCIILower(c1) != toASCIILower(c2))
                 return false;
-        }
-
-        return true;
-    }
-
-    static bool equal(ASCIILiteral s1, ASCIILiteral s2)
-    {
-        return equal(s1.span8(), s2.span8());
+        } while (c1 && c2);
+        return !c1 && !c2;
     }
 
     // This algorithm is the one-at-a-time hash from:
     // http://burtleburtle.net/bob/hash/hashfaq.html
     // http://burtleburtle.net/bob/hash/doobs.html
-    static unsigned hash(std::span<const LChar> s)
+    static unsigned hash(const char* s)
     {
         unsigned h = WTF::stringHashingStartValue;
-        for (char c : s) {
+        for (;;) {
+            char c = *s++;
+            if (!c) {
+                h += (h << 3);
+                h ^= (h >> 11);
+                h += (h << 15);
+                return h;
+            }
             h += toASCIILower(c);
             h += (h << 10);
             h ^= (h >> 6);
         }
-        h += (h << 3);
-        h ^= (h >> 11);
-        h += (h << 15);
-        return h;
-    }
-
-    static unsigned hash(ASCIILiteral s)
-    {
-        return hash(s.span8());
     }
 
     static const bool safeToCompareToEmptyOrDeleted = false;
 };
 
 struct HashTranslatorTextEncodingName {
-    static unsigned hash(std::span<const LChar> literal)
+    static unsigned hash(const char* literal)
     {
         return TextEncodingNameHash::hash(literal);
     }
 
-    static bool equal(const ASCIILiteral& a, std::span<const LChar> b)
+    static bool equal(const ASCIILiteral& a, const char* b)
     {
-        return TextEncodingNameHash::equal(a.span8(), b);
+        return TextEncodingNameHash::equal(a.characters(), b);
     }
 };
 
-using TextEncodingNameMap = HashMap<ASCIILiteral, ASCIILiteral, TextEncodingNameHash>;
-using TextCodecMap = HashMap<ASCIILiteral, NewTextCodecFunction>;
+using TextEncodingNameMap = UncheckedKeyHashMap<ASCIILiteral, ASCIILiteral, TextEncodingNameHash>;
+using TextCodecMap = UncheckedKeyHashMap<ASCIILiteral, NewTextCodecFunction>;
 
 static Lock encodingRegistryLock;
 
@@ -289,9 +282,9 @@ std::unique_ptr<TextCodec> newTextCodec(const TextEncoding& encoding)
     return result->value();
 }
 
-static ASCIILiteral atomCanonicalTextEncodingName(std::span<const LChar> name)
+ASCIILiteral atomCanonicalTextEncodingName(const char* name)
 {
-    if (name.empty())
+    if (!name || !name[0])
         return { };
 
     Locker locker { encodingRegistryLock };
@@ -309,21 +302,17 @@ static ASCIILiteral atomCanonicalTextEncodingName(std::span<const LChar> name)
     return textEncodingNameMap->get<HashTranslatorTextEncodingName>(name);
 }
 
-static ASCIILiteral atomCanonicalTextEncodingName(std::span<const UChar> characters)
+template<typename CharacterType> static ASCIILiteral atomCanonicalTextEncodingName(std::span<const CharacterType> characters)
 {
-    if (characters.size() > maxEncodingNameLength)
-        return { };
-
-    std::array<LChar, maxEncodingNameLength> buffer;
-    for (size_t i = 0; i < characters.size(); ++i)
-        buffer[i] = characters[i];
-
-    return atomCanonicalTextEncodingName(std::span { buffer }.first(characters.size()));
-}
-
-ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral name)
-{
-    return atomCanonicalTextEncodingName(name.span8());
+    char buffer[maxEncodingNameLength + 1];
+    size_t j = 0;
+    for (auto character : characters) {
+        if (j == maxEncodingNameLength)
+            return { };
+        buffer[j++] = character;
+    }
+    buffer[j] = 0;
+    return atomCanonicalTextEncodingName(buffer);
 }
 
 ASCIILiteral atomCanonicalTextEncodingName(StringView alias)

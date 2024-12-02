@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "IDBIndexIdentifier.h"
 #include "IDBKeyPath.h"
 #include "IDBObjectStoreIdentifier.h"
 #include <wtf/HashTraits.h>
@@ -35,12 +34,12 @@ namespace WebCore {
 
 class IDBIndexInfo {
 public:
-    WEBCORE_EXPORT IDBIndexInfo(IDBIndexIdentifier, IDBObjectStoreIdentifier, const String& name, IDBKeyPath&&, bool unique, bool multiEntry);
+    WEBCORE_EXPORT IDBIndexInfo(uint64_t identifier, IDBObjectStoreIdentifier, const String& name, IDBKeyPath&&, bool unique, bool multiEntry);
 
     WEBCORE_EXPORT IDBIndexInfo isolatedCopy() const &;
     WEBCORE_EXPORT IDBIndexInfo isolatedCopy() &&;
 
-    IDBIndexIdentifier identifier() const { return m_identifier; }
+    uint64_t identifier() const { return m_identifier; }
     IDBObjectStoreIdentifier objectStoreIdentifier() const { return m_objectStoreIdentifier; }
     const String& name() const { return m_name; }
     const IDBKeyPath& keyPath() const { return m_keyPath; }
@@ -54,9 +53,12 @@ public:
     String condensedLoggingString() const;
 #endif
 
-    void setIdentifier(IDBIndexIdentifier identifier) { m_identifier = identifier; }
+    // FIXME: Remove the need for this.
+    static const int64_t InvalidId = -1;
+
+    void setIdentifier(uint64_t identifier) { m_identifier = identifier; }
 private:
-    IDBIndexIdentifier m_identifier;
+    uint64_t m_identifier { 0 };
     IDBObjectStoreIdentifier m_objectStoreIdentifier;
     String m_name;
     IDBKeyPath m_keyPath;
@@ -72,7 +74,7 @@ template<> struct HashTraits<WebCore::IDBIndexInfo> : GenericHashTraits<WebCore:
     static constexpr bool emptyValueIsZero = false;
     static WebCore::IDBIndexInfo emptyValue()
     {
-        return WebCore::IDBIndexInfo { HashTraits<WebCore::IDBIndexIdentifier>::emptyValue(), HashTraits<WebCore::IDBObjectStoreIdentifier>::emptyValue(), { }, { }, false, false };
+        return WebCore::IDBIndexInfo { { }, HashTraits<WebCore::IDBObjectStoreIdentifier>::emptyValue(), { }, { }, false, false };
     }
     static bool isEmptyValue(const WebCore::IDBIndexInfo& value) { return value.objectStoreIdentifier().isHashTableEmptyValue(); }
 };

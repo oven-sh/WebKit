@@ -33,11 +33,6 @@ namespace WebKit {
 static const Seconds expireInterval = 60_s;
 static const unsigned maxCacheSize = 400;
 
-Ref<DNSCache> DNSCache::create()
-{
-    return adoptRef(*new DNSCache);
-}
-
 DNSCache::DNSCache()
     : m_expiredTimer(RunLoop::main(), this, &DNSCache::removeExpiredResponsesFired)
 {

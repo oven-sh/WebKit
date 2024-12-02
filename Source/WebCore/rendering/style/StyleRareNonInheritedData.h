@@ -60,10 +60,6 @@
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 
-namespace WTF {
-class TextStream;
-}
-
 namespace WebCore {
 
 class AnimationList;
@@ -105,10 +101,6 @@ public:
     ~StyleRareNonInheritedData();
     
     bool operator==(const StyleRareNonInheritedData&) const;
-
-#if !LOG_DISABLED
-    void dumpDifferences(TextStream&, const StyleRareNonInheritedData&) const;
-#endif
 
     LengthPoint perspectiveOrigin() const { return { perspectiveOriginX, perspectiveOriginY }; }
 
@@ -209,11 +201,11 @@ public:
     float zoom;
     AtomString pseudoElementNameArgument;
 
-    Vector<Style::ScopedName> anchorNames;
-    std::optional<Style::ScopedName> positionAnchor;
+    Vector<AtomString> anchorNames;
+    AtomString positionAnchor;
 
     std::optional<Length> blockStepSize;
-    unsigned blockStepInsert : 2; // BlockStepInsert
+    unsigned blockStepInsert : 1; // BlockStepInsert
 
     unsigned overscrollBehaviorX : 2; // OverscrollBehavior
     unsigned overscrollBehaviorY : 2; // OverscrollBehavior
@@ -231,16 +223,16 @@ public:
 
     unsigned contentVisibility : 2; // ContentVisibility
 
-    unsigned effectiveBlendMode: 5; // BlendMode
+    unsigned effectiveBlendMode: 5; // EBlendMode
     unsigned isolation : 1; // Isolation
 
 #if ENABLE(APPLE_PAY)
-    unsigned applePayButtonStyle : 2; // ApplePayButtonStyle
-    unsigned applePayButtonType : 4; // ApplePayButtonType
+    unsigned applePayButtonStyle : 2;
+    unsigned applePayButtonType : 4;
 #endif
 
     unsigned breakBefore : 4; // BreakBetween
-    unsigned breakAfter : 4; // BreakBetween
+    unsigned breakAfter : 4;
     unsigned breakInside : 3; // BreakInside
 
     unsigned inputSecurity : 1; // InputSecurity
@@ -255,8 +247,6 @@ public:
     unsigned overflowAnchor : 1; // Scroll Anchoring- OverflowAnchor
 
     bool hasClip : 1;
-
-    unsigned positionTryOrder : 3; // Style::PositionTryOrder; 5 values so 3 bits.
 
     FieldSizing fieldSizing { FieldSizing::Fixed };
 

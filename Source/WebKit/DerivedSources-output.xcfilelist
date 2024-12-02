@@ -100,7 +100,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPITabs.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPITabs.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPITest.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPITest.mm
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIUnified.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebNavigation.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebNavigation.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebNavigationEvent.h
@@ -315,6 +314,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaPlayerManagerProxyMessage
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaPlayerManagerProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaPlayerProxyMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaPlayerProxyMessages.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaRecorderManagerMessageReceiver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaRecorderManagerMessages.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaRecorderMessageReceiver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaRecorderMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaResourceManagerMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaResourceManagerMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/RemoteMediaSessionCoordinatorMessageReceiver.cpp

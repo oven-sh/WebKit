@@ -59,7 +59,7 @@ struct _JSCWeakValuePrivate {
     JSC::JSWeakValue weakValueRef;
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 WEBKIT_DEFINE_FINAL_TYPE(JSCWeakValue, jsc_weak_value, G_TYPE_OBJECT, GObject)
 
@@ -91,7 +91,6 @@ static void jscWeakValueInitialize(JSCWeakValue* weakValue, JSCValue* value)
     JSCWeakValuePrivate* priv = weakValue->priv;
     auto* jsContext = jscContextGetJSContext(jsc_value_get_context(value));
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
-    JSC::JSLockHolder locker(globalObject->vm());
     auto& owner = weakValueHandleOwner();
     JSC::Weak<JSC::JSGlobalObject> weak(globalObject, &owner, weakValue);
     priv->globalObject.swap(weak);

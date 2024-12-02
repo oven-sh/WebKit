@@ -34,9 +34,10 @@
 #include <wtf/HexNumber.h>
 #include <wtf/Int128.h>
 #include <wtf/SHA1.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/text/StringConcatenate.h>
 #include <wtf/text/WTFString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #ifdef __OBJC__
 @class NSUUID;
@@ -78,12 +79,6 @@ public:
         memcpy(&m_data, span.data(), 16);
     }
 
-    explicit UUID(std::span<const uint8_t> span)
-    {
-        RELEASE_ASSERT(span.size() == 16);
-        memcpy(&m_data, span.data(), 16);
-    }
-
     explicit constexpr UUID(UInt128 data)
         : m_data(data)
     {
@@ -97,7 +92,7 @@ public:
 
     std::span<const uint8_t, 16> span() const
     {
-        return asByteSpan<UInt128, 16>(m_data);
+        return std::span<const uint8_t, 16> { reinterpret_cast<const uint8_t*>(&m_data), 16 };
     }
 
     friend bool operator==(const UUID&, const UUID&) = default;
@@ -211,7 +206,7 @@ public:
     bool is8Bit() const { return true; }
 
     template<typename CharacterType>
-    void writeTo(std::span<CharacterType> destination) const
+    void writeTo(CharacterType* destination) const
     {
         handle([&](auto&&... adapters) {
             stringTypeAdapterAccumulator(destination, std::forward<decltype(adapters)>(adapters)...);
@@ -227,3 +222,5 @@ private:
 using WTF::createVersion4UUIDString;
 using WTF::createVersion4UUIDStringWeak;
 using WTF::bootSessionUUIDString;
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

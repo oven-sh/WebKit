@@ -126,7 +126,7 @@ public:
         ASSERT(box().isTextOrSoftLineBreak());
     }
 
-    void traverseNextLeafOnLine()
+    void traverseNextOnLine()
     {
         ASSERT(!atEnd());
 
@@ -138,7 +138,7 @@ public:
             setAtEnd();
     }
 
-    void traversePreviousLeafOnLine()
+    void traversePreviousOnLine()
     {
         ASSERT(!atEnd());
 
@@ -180,32 +180,6 @@ public:
         ASSERT(box().isInlineBox());
     }
 
-    void traverseNextBoxOnLine()
-    {
-        auto lineIndex = box().lineIndex();
-
-        traverseNextBox();
-
-        if (!atEnd() && lineIndex != box().lineIndex())
-            setAtEnd();
-    }
-
-    void traverseNextBoxOnLineSkippingChildren()
-    {
-        auto lineIndex = box().lineIndex();
-        auto& startBox = box().layoutBox();
-
-        traverseNextBox();
-
-        if (startBox.isInlineBox()) {
-            while (!atEnd() && isWithinInlineBox(startBox))
-                traverseNextBox();
-        }
-
-        if (!atEnd() && lineIndex != box().lineIndex())
-            setAtEnd();
-    }
-
     BoxModernPath firstLeafBoxForInlineBox() const
     {
         ASSERT(box().isInlineBox());
@@ -214,7 +188,7 @@ public:
 
         // The next box is the first descendant of this box;
         auto first = *this;
-        first.traverseNextLeafOnLine();
+        first.traverseNextOnLine();
 
         if (!first.atEnd() && !first.isWithinInlineBox(inlineBox))
             first.setAtEnd();
@@ -230,7 +204,7 @@ public:
 
         // FIXME: Get the last box index directly from the display box.
         auto last = firstLeafBoxForInlineBox();
-        for (auto box = last; !box.atEnd() && box.isWithinInlineBox(inlineBox); box.traverseNextLeafOnLine())
+        for (auto box = last; !box.atEnd() && box.isWithinInlineBox(inlineBox); box.traverseNextOnLine())
             last = box;
 
         return last;

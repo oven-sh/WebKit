@@ -30,8 +30,6 @@
 #include "PropertyNameArray.h"
 #include "Symbol.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorAssign);
@@ -1400,5 +1398,3 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorHasOwn, (JSGlobalObject* globalObject,
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

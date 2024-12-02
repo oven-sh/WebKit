@@ -30,8 +30,6 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 namespace ContentExtensions {
 
@@ -138,7 +136,5 @@ auto SerializedNFA::actions() const -> const Range<uint64_t>
 
 } // namespace ContentExtensions
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

@@ -29,12 +29,9 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/IterationStatus.h>
-#include <wtf/MallocPtr.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -216,12 +213,12 @@ private:
 
     Chapter* chapters() const
     {
-        return std::bit_cast<Chapter*>(this + 1);
+        return bitwise_cast<Chapter*>(this + 1);
     }
 
     EncodedInfo* encodedInfo() const
     {
-        return std::bit_cast<EncodedInfo*>(&chapters()[m_numberOfChapters]);
+        return bitwise_cast<EncodedInfo*>(&chapters()[m_numberOfChapters]);
     }
 
     EncodedInfo* endEncodedInfo() const
@@ -241,7 +238,7 @@ private:
 
     unsigned* payload() const
     {
-        return std::bit_cast<unsigned*>(this + 1);
+        return bitwise_cast<unsigned*>(this + 1);
     }
 
     static MallocPtr<ExpressionInfo> createUninitialized(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
@@ -335,5 +332,3 @@ private:
 static_assert(roundUpToMultipleOf<sizeof(unsigned)>(sizeof(ExpressionInfo)) == sizeof(ExpressionInfo), "CachedExpressionInfo relies on this invariant");
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

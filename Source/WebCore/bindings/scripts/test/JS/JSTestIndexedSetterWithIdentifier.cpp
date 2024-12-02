@@ -51,6 +51,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -115,9 +116,10 @@ template<> void JSTestIndexedSetterWithIdentifierDOMConstructor::initializePrope
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestIndexedSetterWithIdentifierPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestIndexedSetterWithIdentifierConstructor, 0 } },
-    HashTableValue { "indexedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestIndexedSetterWithIdentifierPrototypeFunction_indexedSetter, 2 } },
+static const HashTableValue JSTestIndexedSetterWithIdentifierPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestIndexedSetterWithIdentifierConstructor, 0 } },
+    { "indexedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestIndexedSetterWithIdentifierPrototypeFunction_indexedSetter, 2 } },
 };
 
 const ClassInfo JSTestIndexedSetterWithIdentifierPrototype::s_info = { "TestIndexedSetterWithIdentifier"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestIndexedSetterWithIdentifierPrototype) };
@@ -376,7 +378,6 @@ void JSTestIndexedSetterWithIdentifierOwner::finalize(JSC::Handle<JSC::Unknown> 
     uncacheWrapper(world, jsTestIndexedSetterWithIdentifier->protectedWrapped().ptr(), jsTestIndexedSetterWithIdentifier);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -401,8 +402,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestIndexedSe
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestIndexedSetterWithIdentifier>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

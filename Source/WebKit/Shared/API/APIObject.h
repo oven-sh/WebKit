@@ -170,7 +170,6 @@ public:
         RunJavaScriptPromptResultListener,
         SpeechRecognitionPermissionCallback,
         TextChecker,
-        TextRun,
         URLSchemeTask,
         UserContentController,
         UserInitiatedAction,

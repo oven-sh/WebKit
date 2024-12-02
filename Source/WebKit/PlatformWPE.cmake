@@ -533,12 +533,9 @@ if (ENABLE_BREAKPAD)
     )
 endif ()
 
-WEBKIT_BUILD_INSPECTOR_GRESOURCES(
-    "${WebInspectorUI_DERIVED_SOURCES_DIR}"
-    "${CMAKE_BINARY_DIR}/share/inspector.gresource"
-)
+WEBKIT_BUILD_INSPECTOR_GRESOURCES(${WebInspectorUI_DERIVED_SOURCES_DIR} "inspector.gresource")
 
-install(FILES "${CMAKE_BINARY_DIR}/share/inspector.gresource" DESTINATION "${CMAKE_INSTALL_FULL_DATADIR}/wpe-webkit-${WPE_API_VERSION}")
+install(FILES ${WebInspectorUI_DERIVED_SOURCES_DIR}/inspector.gresource DESTINATION "${CMAKE_INSTALL_FULL_DATADIR}/wpe-webkit-${WPE_API_VERSION}")
 
 add_library(WPEInjectedBundle MODULE "${WEBKIT_DIR}/WebProcess/InjectedBundle/API/glib/WebKitInjectedBundleMain.cpp")
 ADD_WEBKIT_PREFIX_HEADER(WPEInjectedBundle)
@@ -766,11 +763,7 @@ GI_INTROSPECT(WPEWebKit ${WPE_API_VERSION} wpe/webkit.h
         UIProcess/API/glib
     NO_IMPLICIT_SOURCES
 )
-GI_DOCGEN(WPEWebKit wpe/wpewebkit.toml.in
-    CONTENT_TEMPLATES
-        glib/environment-variables.md
-        glib/profiling.md
-)
+GI_DOCGEN(WPEWebKit wpe/wpewebkit.toml.in)
 
 if (ENABLE_2022_GLIB_API)
     set(WPE_WEB_PROCESS_EXTENSION_API_NAME "WPEWebProcessExtension")

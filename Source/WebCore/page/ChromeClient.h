@@ -23,21 +23,43 @@
 
 #include "AXObjectCache.h"
 #include "AutoplayEvent.h"
+#include "BarcodeDetectorInterface.h"
+#include "BarcodeDetectorOptionsInterface.h"
+#include "BarcodeFormatInterface.h"
 #include "ContactInfo.h"
+#include "Cursor.h"
 #include "DatabaseDetails.h"
 #include "DeviceOrientationOrMotionPermissionState.h"
 #include "DisabledAdaptations.h"
+#include "DisplayRefreshMonitor.h"
 #include "DocumentStorageAccess.h"
+#include "FaceDetectorInterface.h"
+#include "FaceDetectorOptionsInterface.h"
 #include "FocusDirection.h"
+#include "FrameLoader.h"
+#include "GraphicsContext.h"
 #include "HTMLMediaElementEnums.h"
 #include "HighlightVisibility.h"
+#include "HostWindow.h"
+#include "Icon.h"
 #include "ImageBuffer.h"
 #include "ImageBufferResourceLimits.h"
 #include "InputMode.h"
 #include "MediaControlsContextMenuItem.h"
+#include "MediaProducer.h"
 #include "PointerCharacteristics.h"
-#include "SyntheticClickResult.h"
+#include "PopupMenu.h"
+#include "PopupMenuClient.h"
+#include "RegistrableDomain.h"
+#include "RenderEmbeddedObject.h"
+#include "ScrollTypes.h"
+#include "ScrollingCoordinator.h"
+#include "SearchPopupMenu.h"
+#include "TextDetectorInterface.h"
 #include "WebCoreKeyboardUIMode.h"
+#include "WebGPU.h"
+#include "WorkerClient.h"
+#include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/Assertions.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
@@ -81,12 +103,10 @@ namespace WebCore {
 class AccessibilityObject;
 class ColorChooser;
 class ColorChooserClient;
-class Cursor;
 class DataListSuggestionPicker;
 class DataListSuggestionsClient;
 class DateTimeChooser;
 class DateTimeChooserClient;
-class DisplayRefreshMonitorFactory;
 class Element;
 class FileChooser;
 class FileIconLoader;
@@ -100,22 +120,16 @@ class HTMLMediaElement;
 class HTMLSelectElement;
 class HTMLVideoElement;
 class HitTestResult;
-class Icon;
 class IntRect;
 class LocalFrame;
 class NavigationAction;
 class Node;
 class Page;
-class PopupMenu;
 class PopupMenuClient;
-class RegistrableDomain;
-class SearchPopupMenu;
-class ScrollingCoordinator;
 class SecurityOrigin;
 class SecurityOriginData;
 class ViewportConstraints;
 class Widget;
-class WorkerClient;
 
 #if ENABLE(WEBGL)
 class GraphicsContextGL;
@@ -138,35 +152,17 @@ struct ViewportArguments;
 struct WindowFeatures;
 
 enum class CookieConsentDecisionResult : uint8_t;
-enum class DidFilterLinkDecoration : bool { No, Yes };
 enum class IsLoggedIn : uint8_t;
 enum class ModalContainerControlType : uint8_t;
 enum class ModalContainerDecision : uint8_t;
-enum class PluginUnavailabilityReason : uint8_t;
-enum class RouteSharingPolicy : uint8_t;
 enum class TextAnimationRunMode : uint8_t;
+enum class RouteSharingPolicy : uint8_t;
 
-enum class MediaProducerMediaState : uint32_t;
-using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
-
-namespace ShapeDetection {
-class BarcodeDetector;
-struct BarcodeDetectorOptions;
-enum class BarcodeFormat : uint8_t;
-class FaceDetector;
-struct FaceDetectorOptions;
-class TextDetector;
-}
+enum class DidFilterLinkDecoration : bool { No, Yes };
 
 namespace WritingTools {
 using SessionID = WTF::UUID;
 }
-
-#if HAVE(WEBGPU_IMPLEMENTATION)
-namespace WebGPU {
-class GPU;
-}
-#endif
 
 class ChromeClient {
 public:
@@ -269,8 +265,8 @@ public:
     virtual void scrollContainingScrollViewsToRevealRect(const IntRect&) const { }; // Currently only Mac has a non empty implementation.
     virtual void scrollMainFrameToRevealRect(const IntRect&) const { };
 
-    virtual bool shouldUnavailablePluginMessageBeButton(PluginUnavailabilityReason) const { return false; }
-    virtual void unavailablePluginButtonClicked(Element&, PluginUnavailabilityReason) const { }
+    virtual bool shouldUnavailablePluginMessageBeButton(RenderEmbeddedObject::PluginUnavailabilityReason) const { return false; }
+    virtual void unavailablePluginButtonClicked(Element&, RenderEmbeddedObject::PluginUnavailabilityReason) const { }
     virtual void mouseDidMoveOverElement(const HitTestResult&, OptionSet<PlatformEventModifier>, const String& toolTip, TextDirection) = 0;
 
     virtual void print(LocalFrame&, const StringWithDirection&) = 0;
@@ -304,7 +300,7 @@ public:
     // the new cache.
     virtual void reachedApplicationCacheOriginQuota(SecurityOrigin&, int64_t) { }
 
-    WEBCORE_EXPORT virtual std::unique_ptr<WorkerClient> createWorkerClient(SerialFunctionDispatcher&);
+    virtual std::unique_ptr<WorkerClient> createWorkerClient(SerialFunctionDispatcher&) { return nullptr; }
 
 #if ENABLE(IOS_TOUCH_EVENTS)
     virtual void didPreventDefaultForEvent() = 0;
@@ -394,10 +390,10 @@ public:
 #if HAVE(WEBGPU_IMPLEMENTATION)
     virtual RefPtr<WebGPU::GPU> createGPUForWebGPU() const { return nullptr; }
 #endif
-    virtual RefPtr<ShapeDetection::BarcodeDetector> createBarcodeDetector(const ShapeDetection::BarcodeDetectorOptions&) const;
-    virtual void getBarcodeDetectorSupportedFormats(CompletionHandler<void(Vector<ShapeDetection::BarcodeFormat>&&)>&&) const;
-    virtual RefPtr<ShapeDetection::FaceDetector> createFaceDetector(const ShapeDetection::FaceDetectorOptions&) const;
-    virtual RefPtr<ShapeDetection::TextDetector> createTextDetector() const;
+    virtual RefPtr<ShapeDetection::BarcodeDetector> createBarcodeDetector(const ShapeDetection::BarcodeDetectorOptions&) const { return nullptr; }
+    virtual void getBarcodeDetectorSupportedFormats(CompletionHandler<void(Vector<ShapeDetection::BarcodeFormat>&&)>&& completionHandler) const { completionHandler({ }); }
+    virtual RefPtr<ShapeDetection::FaceDetector> createFaceDetector(const ShapeDetection::FaceDetectorOptions&) const { return nullptr; }
+    virtual RefPtr<ShapeDetection::TextDetector> createTextDetector() const { return nullptr; }
 
     virtual void registerBlobPathForTesting(const String&, CompletionHandler<void()>&&) { }
 
@@ -440,7 +436,7 @@ public:
     // Returns true if layer tree updates are disabled.
     virtual bool layerTreeStateIsFrozen() const { return false; }
 
-    WEBCORE_EXPORT virtual RefPtr<ScrollingCoordinator> createScrollingCoordinator(Page&) const;
+    virtual RefPtr<ScrollingCoordinator> createScrollingCoordinator(Page&) const { return nullptr; }
     WEBCORE_EXPORT virtual void ensureScrollbarsController(Page&, ScrollableArea&, bool update = false) const;
 
     virtual bool canEnterVideoFullscreen(HTMLMediaElementEnums::VideoFullscreenMode) const { return false; }
@@ -512,9 +508,9 @@ public:
 #endif
 
 #if PLATFORM(PLAYSTATION)
-    virtual void postAccessibilityNotification(AccessibilityObject&, AXNotification) = 0;
+    virtual void postAccessibilityNotification(AccessibilityObject&, AXObjectCache::AXNotification) = 0;
     virtual void postAccessibilityNodeTextChangeNotification(AccessibilityObject*, AXTextChange, unsigned, const String&) = 0;
-    virtual void postAccessibilityFrameLoadingEventNotification(AccessibilityObject*, AXLoadingEvent) = 0;
+    virtual void postAccessibilityFrameLoadingEventNotification(AccessibilityObject*, AXObjectCache::AXLoadingEvent) = 0;
 #endif
 
     virtual bool selectItemWritingDirectionIsNatural() = 0;
@@ -706,10 +702,6 @@ public:
     virtual void hasActiveNowPlayingSessionChanged(bool) { }
 
     virtual void getImageBufferResourceLimitsForTesting(CompletionHandler<void(std::optional<ImageBufferResourceLimits>)>&& callback) const { callback(std::nullopt); }
-
-    virtual void callAfterPendingSyntheticClick(CompletionHandler<void(SyntheticClickResult)>&& completion) { completion(SyntheticClickResult::Failed); }
-
-    virtual void didSwallowClickEvent(const PlatformMouseEvent&, Node&) { }
 
     WEBCORE_EXPORT virtual ~ChromeClient();
 

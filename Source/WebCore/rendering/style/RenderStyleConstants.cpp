@@ -32,31 +32,6 @@
 
 namespace WebCore {
 
-
-bool alwaysPageBreak(BreakBetween between)
-{
-    return between >= BreakBetween::Page;
-}
-
-CSSBoxType transformBoxToCSSBoxType(TransformBox transformBox)
-{
-    switch (transformBox) {
-    case TransformBox::StrokeBox:
-        return CSSBoxType::StrokeBox;
-    case TransformBox::ContentBox:
-        return CSSBoxType::ContentBox;
-    case TransformBox::BorderBox:
-        return CSSBoxType::BorderBox;
-    case TransformBox::FillBox:
-        return CSSBoxType::FillBox;
-    case TransformBox::ViewBox:
-        return CSSBoxType::ViewBox;
-    default:
-        ASSERT_NOT_REACHED();
-        return CSSBoxType::BorderBox;
-    }
-}
-
 TextStream& operator<<(TextStream& ts, AnimationFillMode fillMode)
 {
     switch (fillMode) {
@@ -110,9 +85,8 @@ TextStream& operator<<(TextStream& ts, BackfaceVisibility visibility)
 TextStream& operator<<(TextStream& ts, BlockStepInsert blockStepInsert)
 {
     switch (blockStepInsert) {
-    case BlockStepInsert::MarginBox: ts << "margin-box"; break;
-    case BlockStepInsert::PaddingBox: ts << "padding-box"; break;
-    case BlockStepInsert::ContentBox: ts << "content-box"; break;
+    case BlockStepInsert::Margin: ts << "margin"; break;
+    case BlockStepInsert::Padding: ts << "padding"; break;
     }
     return ts;
 }
@@ -1432,10 +1406,18 @@ TextStream& operator<<(TextStream& ts, MathStyle mathStyle)
 TextStream& operator<<(TextStream& ts, ContainIntrinsicSizeType containIntrinsicSizeType)
 {
     switch (containIntrinsicSizeType) {
-    case ContainIntrinsicSizeType::None: ts << "none"; break;
-    case ContainIntrinsicSizeType::Length: ts << "length"; break;
-    case ContainIntrinsicSizeType::AutoAndLength: ts << "autoandlength"; break;
-    case ContainIntrinsicSizeType::AutoAndNone: ts << "autoandnone"; break;
+    case ContainIntrinsicSizeType::None:
+        ts << "none";
+        break;
+    case ContainIntrinsicSizeType::Length:
+        ts << "length";
+        break;
+    case ContainIntrinsicSizeType::AutoAndLength:
+        ts << "autoandlength";
+        break;
+    case ContainIntrinsicSizeType::AutoAndNone:
+        ts << "autoandnone";
+        break;
     }
     return ts;
 }
@@ -1453,17 +1435,28 @@ TextStream& operator<<(TextStream& ts, OverflowContinue overflowContinue)
     return ts;
 }
 
-TextStream& operator<<(TextStream& ts, StyleDifferenceContextSensitiveProperty property)
+bool alwaysPageBreak(BreakBetween between)
 {
-    switch (property) {
-    case StyleDifferenceContextSensitiveProperty::Transform: ts << "transform"; break;
-    case StyleDifferenceContextSensitiveProperty::Opacity: ts << "opacity"; break;
-    case StyleDifferenceContextSensitiveProperty::Filter: ts << "filter"; break;
-    case StyleDifferenceContextSensitiveProperty::ClipRect: ts << "clipRect"; break;
-    case StyleDifferenceContextSensitiveProperty::ClipPath: ts << "clipPath"; break;
-    case StyleDifferenceContextSensitiveProperty::WillChange: ts << "willChange"; break;
+    return between >= BreakBetween::Page;
+}
+
+CSSBoxType transformBoxToCSSBoxType(TransformBox transformBox)
+{
+    switch (transformBox) {
+    case TransformBox::StrokeBox:
+        return CSSBoxType::StrokeBox;
+    case TransformBox::ContentBox:
+        return CSSBoxType::ContentBox;
+    case TransformBox::BorderBox:
+        return CSSBoxType::BorderBox;
+    case TransformBox::FillBox:
+        return CSSBoxType::FillBox;
+    case TransformBox::ViewBox:
+        return CSSBoxType::ViewBox;
+    default:
+        ASSERT_NOT_REACHED();
+        return CSSBoxType::BorderBox;
     }
-    return ts;
 }
 
 } // namespace WebCore

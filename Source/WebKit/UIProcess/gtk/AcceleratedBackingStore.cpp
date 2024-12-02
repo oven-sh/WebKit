@@ -75,7 +75,7 @@ bool AcceleratedBackingStore::checkRequirements()
     return false;
 }
 
-RefPtr<AcceleratedBackingStore> AcceleratedBackingStore::create(WebPageProxy& webPage)
+std::unique_ptr<AcceleratedBackingStore> AcceleratedBackingStore::create(WebPageProxy& webPage)
 {
     if (!HardwareAccelerationManager::singleton().canUseHardwareAcceleration())
         return nullptr;

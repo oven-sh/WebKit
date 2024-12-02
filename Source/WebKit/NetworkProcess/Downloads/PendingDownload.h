@@ -30,7 +30,6 @@
 #include "NetworkLoadClient.h"
 #include "SandboxExtension.h"
 #include "UseDownloadPlaceholder.h"
-#include <WebCore/ProcessIdentifier.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -74,7 +73,7 @@ public:
 #else
     void publishProgress(const URL&, SandboxExtension::Handle&&);
 #endif
-    void didBecomeDownload(Download&);
+    void didBecomeDownload(const std::unique_ptr<Download>&);
 #endif
 
 private:    

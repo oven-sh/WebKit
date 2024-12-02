@@ -34,17 +34,17 @@ namespace WebCore {
     
 class AccessibilityARIAGridCell final : public AccessibilityTableCell {
 public:
-    static Ref<AccessibilityARIAGridCell> create(AXID, RenderObject&);
-    static Ref<AccessibilityARIAGridCell> create(AXID, Node&);
+    static Ref<AccessibilityARIAGridCell> create(RenderObject&);
+    static Ref<AccessibilityARIAGridCell> create(Node&);
     virtual ~AccessibilityARIAGridCell();
 
 private:
-    explicit AccessibilityARIAGridCell(AXID, RenderObject&);
-    explicit AccessibilityARIAGridCell(AXID, Node&);
-    bool isAccessibilityARIAGridCellInstance() const final { return true; }
+    explicit AccessibilityARIAGridCell(RenderObject&);
+    explicit AccessibilityARIAGridCell(Node&);
+    bool isAccessibilityARIAGridCellInstance() const override { return true; }
 
-    AccessibilityTable* parentTable() const final;
-    String readOnlyValue() const final;
+    AccessibilityTable* parentTable() const override;
+    String readOnlyValue() const override;
 }; 
 
 } // namespace WebCore 

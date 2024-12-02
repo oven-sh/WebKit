@@ -35,8 +35,6 @@
 #include <Accelerate/Accelerate.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FEColorMatrixSoftwareApplier);
@@ -285,5 +283,3 @@ bool FEColorMatrixSoftwareApplier::apply(const Filter&, const FilterImageVector&
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

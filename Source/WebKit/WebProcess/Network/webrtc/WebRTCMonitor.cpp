@@ -39,21 +39,6 @@ namespace WebKit {
 
 #define WEBRTC_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "%p - WebRTCMonitor::" fmt, this, ##__VA_ARGS__)
 
-WebRTCMonitor::WebRTCMonitor(LibWebRTCNetwork& libWebRTCNetwork)
-    : m_libWebRTCNetwork(libWebRTCNetwork)
-{
-}
-
-void WebRTCMonitor::ref() const
-{
-    m_libWebRTCNetwork->ref();
-}
-
-void WebRTCMonitor::deref() const
-{
-    m_libWebRTCNetwork->deref();
-}
-
 void WebRTCMonitor::startUpdating()
 {
     WEBRTC_RELEASE_LOG("StartUpdating - Asking network process to start updating");

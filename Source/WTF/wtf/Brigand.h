@@ -64,6 +64,8 @@
 #include <boost/variant.hpp>
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace brigand
 {
   template <class... T> struct list {};
@@ -452,14 +454,11 @@ namespace brigand
 {
 namespace detail
 {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     constexpr std::size_t count_bools(bool const * const begin, bool const * const end,
         std::size_t n)
     {
         return begin == end ? n : detail::count_bools(begin + 1, end, n + *begin);
     }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
     template <bool... Bs>
     struct template_count_bools
     {
@@ -2489,3 +2488,5 @@ namespace brigand
   template<std::uint64_t Value>
   struct double_ : real_<double, std::uint64_t,Value> {};
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

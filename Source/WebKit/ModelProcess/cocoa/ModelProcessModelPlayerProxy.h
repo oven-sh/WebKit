@@ -158,7 +158,7 @@ private:
     bool m_loop { false };
     double m_playbackRate { 1.0 };
 
-    RefPtr<WebCore::SharedBuffer> m_transientEnvironmentMapData;
+    RefPtr<WebCore::SharedBuffer> m_environmentMapData;
 };
 
 } // namespace WebKit

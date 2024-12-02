@@ -49,6 +49,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -242,8 +243,9 @@ template<> void JSTestOverloadedConstructorsDOMConstructor::initializeProperties
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 1> JSTestOverloadedConstructorsPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestOverloadedConstructorsConstructor, 0 } },
+static const HashTableValue JSTestOverloadedConstructorsPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestOverloadedConstructorsConstructor, 0 } },
 };
 
 const ClassInfo JSTestOverloadedConstructorsPrototype::s_info = { "TestOverloadedConstructors"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestOverloadedConstructorsPrototype) };
@@ -331,7 +333,6 @@ void JSTestOverloadedConstructorsOwner::finalize(JSC::Handle<JSC::Unknown> handl
     uncacheWrapper(world, jsTestOverloadedConstructors->protectedWrapped().ptr(), jsTestOverloadedConstructors);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -356,8 +357,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestOverloade
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestOverloadedConstructors>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

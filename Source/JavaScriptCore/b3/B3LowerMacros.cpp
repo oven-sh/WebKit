@@ -50,8 +50,6 @@
 #include <cmath>
 #include <wtf/BitVector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace B3 {
 
 namespace {
@@ -902,6 +900,5 @@ bool lowerMacros(Procedure& proc)
 
 } } // namespace JSC::B3
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(B3_JIT)
+

@@ -130,7 +130,7 @@ bool LoadTraceNamesFromJSON(const std::string jsonFilePath, std::vector<std::str
         return false;
     }
 
-    if (!doc.IsArray())
+    if (!doc.IsObject() || !doc.HasMember("traces") || !doc["traces"].IsArray())
     {
         return false;
     }
@@ -138,7 +138,7 @@ bool LoadTraceNamesFromJSON(const std::string jsonFilePath, std::vector<std::str
     // Read trace json into a list of trace names.
     std::vector<std::string> traces;
 
-    rapidjson::Document::Array traceArray = doc.GetArray();
+    rapidjson::Document::Array traceArray = doc["traces"].GetArray();
     for (rapidjson::SizeType arrayIndex = 0; arrayIndex < traceArray.Size(); ++arrayIndex)
     {
         const rapidjson::Document::ValueType &arrayElement = traceArray[arrayIndex];
@@ -148,7 +148,9 @@ bool LoadTraceNamesFromJSON(const std::string jsonFilePath, std::vector<std::str
             return false;
         }
 
-        traces.push_back(arrayElement.GetString());
+        std::vector<std::string> traceAndVersion;
+        angle::SplitStringAlongWhitespace(arrayElement.GetString(), &traceAndVersion);
+        traces.push_back(traceAndVersion[0]);
     }
 
     *namesOut = std::move(traces);

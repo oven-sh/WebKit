@@ -30,7 +30,8 @@
 #include <span>
 #include <wtf/Atomics.h>
 #include <wtf/Ref.h>
-#include <wtf/StdLibExtras.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace IPC {
 class Decoder;
@@ -137,7 +138,7 @@ protected:
 
 #undef HEADER_POINTER_ALIGNMENT
 
-    Header& header() const { return reinterpretCastSpanStartTo<Header>(m_sharedMemory->mutableSpan()); }
+    Header& header() const { return *reinterpret_cast<Header*>(m_sharedMemory->mutableSpan().data()); }
     static constexpr size_t headerSize() { return roundUpToMultipleOf<alignof(std::max_align_t)>(sizeof(Header)); }
 
     size_t m_dataSize { 0 };
@@ -145,3 +146,5 @@ protected:
 };
 
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -54,7 +54,7 @@ private:
     struct FinishCallback {
         GrGpuFinishedProc     fCallback;
         GrGpuFinishedContext  fContext;
-        GrGLsync              fSync;
+        GrGLsync              fFence;
     };
 
     GrGLGpu*                  fGpu;

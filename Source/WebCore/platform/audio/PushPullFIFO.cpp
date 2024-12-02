@@ -29,8 +29,6 @@
 
 #include "AudioBus.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 PushPullFIFO::PushPullFIFO(unsigned numberOfChannels, size_t fifoLength)
@@ -134,7 +132,5 @@ unsigned PushPullFIFO::numberOfChannels() const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUDIO)

@@ -1,3 +1,0 @@
-
-PASS @font-face from document applies to to :host::before/::after.
-

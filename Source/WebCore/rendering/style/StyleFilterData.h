@@ -29,10 +29,6 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
-namespace WTF {
-class TextStream;
-}
-
 namespace WebCore {
 
 class StyleFilterData : public RefCounted<StyleFilterData> {
@@ -41,10 +37,6 @@ public:
     Ref<StyleFilterData> copy() const;
 
     bool operator==(const StyleFilterData&) const;
-
-#if !LOG_DISABLED
-    void dumpDifferences(TextStream&, const StyleFilterData&) const;
-#endif
 
     FilterOperations operations;
 

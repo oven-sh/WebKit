@@ -29,8 +29,6 @@
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <wtf/text/TextStream.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 bool PixelBuffer::supportedPixelFormat(PixelFormat pixelFormat)
@@ -105,5 +103,3 @@ void PixelBuffer::set(size_t index, double value)
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

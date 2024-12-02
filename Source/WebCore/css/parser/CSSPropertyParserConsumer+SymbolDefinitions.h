@@ -25,9 +25,10 @@
 #pragma once
 
 #include "CSSParserToken.h"
+#include "CSSPrimitiveNumericTypes.h"
 #include "CSSPropertyParserConsumer+MetaConsumerDefinitions.h"
-#include "CSSSymbol.h"
 #include <optional>
+#include <wtf/Brigand.h>
 
 namespace WebCore {
 

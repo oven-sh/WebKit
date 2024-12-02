@@ -44,9 +44,7 @@
 #import "WebExtensionMenuItemParameters.h"
 #import "WebExtensionTabParameters.h"
 #import "WebExtensionUtilities.h"
-#import "WebFrame.h"
 #import "WebProcess.h"
-#import <WebCore/LocalFrame.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 static NSString * const checkedKey = @"checked";
@@ -318,7 +316,7 @@ id WebExtensionAPIMenus::createMenu(WebPage& page, WebFrame& frame, NSDictionary
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/menus/create
 
-    m_frameIdentifier = frame.frameID();
+    m_pageProxyIdentifier = page.webPageProxyIdentifier();
 
     std::optional<WebExtensionMenuItemParameters> parameters;
     RefPtr<WebExtensionCallbackHandler> clickCallback;
@@ -336,7 +334,7 @@ id WebExtensionAPIMenus::createMenu(WebPage& page, WebFrame& frame, NSDictionary
 
         if (clickCallback) {
             if (m_clickHandlerMap.isEmpty())
-                WebProcess::singleton().send(Messages::WebExtensionContext::AddListener(*m_frameIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType()), extensionContext().identifier());
+                WebProcess::singleton().send(Messages::WebExtensionContext::AddListener(*m_pageProxyIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType()), extensionContext().identifier());
 
             m_clickHandlerMap.set(identifier, clickCallback.releaseNonNull());
         }
@@ -351,7 +349,7 @@ void WebExtensionAPIMenus::update(WebPage& page, WebFrame& frame, id identifier,
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/menus/update
 
-    m_frameIdentifier = frame.frameID();
+    m_pageProxyIdentifier = page.webPageProxyIdentifier();
 
     if (!validateObject(identifier, @"identifier", [NSOrderedSet orderedSetWithObjects:NSString.class, NSNumber.class, nil], outExceptionString))
         return;
@@ -381,7 +379,7 @@ void WebExtensionAPIMenus::update(WebPage& page, WebFrame& frame, id identifier,
 
             if (clickCallback) {
                 if (m_clickHandlerMap.isEmpty())
-                    WebProcess::singleton().send(Messages::WebExtensionContext::AddListener(*m_frameIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType()), extensionContext().identifier());
+                    WebProcess::singleton().send(Messages::WebExtensionContext::AddListener(*m_pageProxyIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType()), extensionContext().identifier());
 
                 m_clickHandlerMap.set(newIdentifier, clickCallback.releaseNonNull());
             }
@@ -410,7 +408,7 @@ void WebExtensionAPIMenus::remove(id identifier, Ref<WebExtensionCallbackHandler
         m_clickHandlerMap.remove(identifier);
 
         if (m_clickHandlerMap.isEmpty())
-            WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_frameIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType(), 1), extensionContext().identifier());
+            WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_pageProxyIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType(), 1), extensionContext().identifier());
 
         callback->call();
     }, extensionContext().identifier());
@@ -429,7 +427,7 @@ void WebExtensionAPIMenus::removeAll(Ref<WebExtensionCallbackHandler>&& callback
         if (!m_clickHandlerMap.isEmpty()) {
             m_clickHandlerMap.clear();
 
-            WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_frameIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType(), 1), extensionContext().identifier());
+            WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_pageProxyIdentifier, WebExtensionEventListenerType::MenusOnClicked, contentWorldType(), 1), extensionContext().identifier());
         }
 
         callback->call();

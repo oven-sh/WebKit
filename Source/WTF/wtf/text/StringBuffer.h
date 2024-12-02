@@ -32,7 +32,7 @@
 #include <unicode/utypes.h>
 #include <wtf/Assertions.h>
 #include <wtf/DebugHeap.h>
-#include <wtf/MallocSpan.h>
+#include <wtf/MallocPtr.h>
 #include <wtf/Noncopyable.h>
 
 namespace WTF {
@@ -73,9 +73,11 @@ public:
 
     CharType& operator[](unsigned i) { RELEASE_ASSERT(i < m_length); return m_data[i]; }
 
-    MallocSpan<CharType, StringBufferMalloc> release()
+    MallocPtr<CharType, StringBufferMalloc> release()
     {
-        return adoptMallocSpan<CharType, StringBufferMalloc>(unsafeMakeSpan(std::exchange(m_data, nullptr), std::exchange(m_length, 0)));
+        CharType* data = m_data;
+        m_data = nullptr;
+        return adoptMallocPtr<CharType, StringBufferMalloc>(data);
     }
 
 private:

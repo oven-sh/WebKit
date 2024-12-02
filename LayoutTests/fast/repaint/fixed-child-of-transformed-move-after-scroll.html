@@ -2,15 +2,13 @@
 <head>
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
   <script type="text/javascript">
-      async function scrollAndRepaint()
+      function scrollAndRepaint()
       {
           scrollBy(0, 200);
           if (window.testRunner) {
               document.body.offsetTop;
-              testRunner.waitUntilDone();
-              await testRunner.displayAndTrackRepaints();
+              testRunner.displayAndTrackRepaints();
               repaintTest();
-              testRunner.notifyDone();
            } else {
               setTimeout(repaintTest, 15);
            }

@@ -68,7 +68,7 @@ enum {
     N_PROPERTIES,
 };
 
-static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
+static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
 
 struct _WebKitWebResourcePrivate {
     RefPtr<WebFrameProxy> frame;
@@ -79,7 +79,7 @@ struct _WebKitWebResourcePrivate {
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitWebResource, webkit_web_resource, G_TYPE_OBJECT, GObject)
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 static void webkitWebResourceGetProperty(GObject* object, guint propId, GValue* value, GParamSpec* paramSpec)
 {
@@ -127,7 +127,7 @@ static void webkit_web_resource_class_init(WebKitWebResourceClass* resourceClass
             WEBKIT_TYPE_URI_RESPONSE,
             WEBKIT_PARAM_READABLE);
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
 
     /**
      * WebKitWebResource::sent-request:

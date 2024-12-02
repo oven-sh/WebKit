@@ -52,9 +52,6 @@ public:
     explicit ServicesOverlayController(Page&);
     ~ServicesOverlayController();
 
-    void ref() const;
-    void deref() const;
-
     void selectedTelephoneNumberRangesChanged();
     void selectionRectsDidChange(const Vector<LayoutRect>&, const Vector<GapRects>&, bool isTextOnly);
 

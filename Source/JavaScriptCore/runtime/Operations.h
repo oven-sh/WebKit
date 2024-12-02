@@ -27,8 +27,6 @@
 #include "JSGlobalObject.h"
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 #define InvalidPrototypeChain (std::numeric_limits<size_t>::max())
@@ -915,5 +913,3 @@ ALWAYS_INLINE EncodedJSValue getByValWithIndex(JSGlobalObject* globalObject, JSC
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

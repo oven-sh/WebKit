@@ -54,11 +54,6 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MockPaymentCoordinator);
 
-Ref<MockPaymentCoordinator> MockPaymentCoordinator::create(Page& page)
-{
-    return adoptRef(*new MockPaymentCoordinator(page));
-}
-
 MockPaymentCoordinator::MockPaymentCoordinator(Page& page)
     : m_page { page }
 {
@@ -157,13 +152,9 @@ bool MockPaymentCoordinator::showPaymentUI(const URL&, const Vector<URL>&, const
     m_merchantCategoryCode = request.merchantCategoryCode();
 #endif
 
-    RefPtr page = m_page.get();
-    if (!page)
-        return false;
-
     ASSERT(m_showCount == m_hideCount);
     ++m_showCount;
-    dispatchIfShowing([page = WTFMove(page)]() {
+    dispatchIfShowing([page = Ref { m_page.get() }]() {
         page->paymentCoordinator().validateMerchant(URL { "https://webkit.org/"_str });
     });
     return true;
@@ -171,11 +162,7 @@ bool MockPaymentCoordinator::showPaymentUI(const URL&, const Vector<URL>&, const
 
 void MockPaymentCoordinator::completeMerchantValidation(const PaymentMerchantSession&)
 {
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    dispatchIfShowing([page = WTFMove(page), shippingAddress = m_shippingAddress]() mutable {
+    dispatchIfShowing([page = Ref { m_page.get() }, shippingAddress = m_shippingAddress]() mutable {
         page->paymentCoordinator().didSelectShippingContact(MockPaymentContact { WTFMove(shippingAddress) });
     });
 }
@@ -298,11 +285,7 @@ void MockPaymentCoordinator::completeCouponCodeChange(std::optional<ApplePayCoup
 
 void MockPaymentCoordinator::changeShippingOption(String&& shippingOption)
 {
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    dispatchIfShowing([page = WTFMove(page), shippingOption = WTFMove(shippingOption)]() mutable {
+    dispatchIfShowing([page = Ref { m_page.get() }, shippingOption = WTFMove(shippingOption)]() mutable {
         ApplePayShippingMethod shippingMethod;
         shippingMethod.identifier = WTFMove(shippingOption);
         page->paymentCoordinator().didSelectShippingMethod(shippingMethod);
@@ -311,11 +294,7 @@ void MockPaymentCoordinator::changeShippingOption(String&& shippingOption)
 
 void MockPaymentCoordinator::changePaymentMethod(ApplePayPaymentMethod&& paymentMethod)
 {
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    dispatchIfShowing([page = WTFMove(page), paymentMethod = WTFMove(paymentMethod)]() mutable {
+    dispatchIfShowing([page = Ref { m_page.get() }, paymentMethod = WTFMove(paymentMethod)]() mutable {
         page->paymentCoordinator().didSelectPaymentMethod(MockPaymentMethod { WTFMove(paymentMethod) });
     });
 }
@@ -324,11 +303,7 @@ void MockPaymentCoordinator::changePaymentMethod(ApplePayPaymentMethod&& payment
 
 void MockPaymentCoordinator::changeCouponCode(String&& couponCode)
 {
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    dispatchIfShowing([page = WTFMove(page), couponCode = WTFMove(couponCode)]() mutable {
+    dispatchIfShowing([page = Ref { m_page.get() }, couponCode = WTFMove(couponCode)]() mutable {
         page->paymentCoordinator().didChangeCouponCode(WTFMove(couponCode));
     });
 }
@@ -337,11 +312,7 @@ void MockPaymentCoordinator::changeCouponCode(String&& couponCode)
 
 void MockPaymentCoordinator::acceptPayment()
 {
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    dispatchIfShowing([page = WTFMove(page), shippingAddress = m_shippingAddress]() mutable {
+    dispatchIfShowing([page = Ref { m_page.get() }, shippingAddress = m_shippingAddress]() mutable {
         ApplePayPayment payment;
         payment.shippingContact = WTFMove(shippingAddress);
         page->paymentCoordinator().didAuthorizePayment(MockPayment { WTFMove(payment) });
@@ -350,11 +321,7 @@ void MockPaymentCoordinator::acceptPayment()
 
 void MockPaymentCoordinator::cancelPayment()
 {
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    dispatchIfShowing([protectedThis = Ref { *this }, page = WTFMove(page)] {
+    dispatchIfShowing([protectedThis = Ref { *this }, page = Ref { m_page.get() }] {
         page->paymentCoordinator().didCancelPaymentSession({ });
         ++protectedThis->m_hideCount;
         ASSERT(protectedThis->m_showCount == protectedThis->m_hideCount);
@@ -410,6 +377,21 @@ bool MockPaymentCoordinator::installmentConfigurationReturnsNil() const
 #else
     return true;
 #endif
+}
+
+void MockPaymentCoordinator::setPaymentCoordinator(PaymentCoordinator& paymentCoordinator)
+{
+    m_paymentCoordinator = paymentCoordinator;
+}
+
+void MockPaymentCoordinator::ref() const
+{
+    m_paymentCoordinator->ref();
+}
+
+void MockPaymentCoordinator::deref() const
+{
+    m_paymentCoordinator->deref();
 }
 
 } // namespace WebCore

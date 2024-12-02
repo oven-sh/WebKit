@@ -48,9 +48,9 @@ void CachedSVGDocument::setEncoding(const String& chs)
     protectedDecoder()->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
 }
 
-ASCIILiteral CachedSVGDocument::encoding() const
+String CachedSVGDocument::encoding() const
 {
-    return protectedDecoder()->encoding().name();
+    return String::fromLatin1(protectedDecoder()->encoding().name());
 }
 
 RefPtr<TextResourceDecoder> CachedSVGDocument::protectedDecoder() const

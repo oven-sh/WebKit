@@ -35,8 +35,6 @@
 #include "StylePropertiesInlines.h"
 #include "XMLNames.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ElementData);
@@ -193,5 +191,3 @@ Attribute* UniqueElementData::findAttributeByName(const QualifiedName& name)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

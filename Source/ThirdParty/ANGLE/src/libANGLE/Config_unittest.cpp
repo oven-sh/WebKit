@@ -112,11 +112,7 @@ TEST(ConfigSetTest, IDs)
     EXPECT_EQ(*std::max_element(ids.begin(), ids.end()), static_cast<EGLint>(set.size()));
 }
 
-// Test case to verify filtering of egl::ConfigSet based on bit size attributes
-// (e.g., EGL_RED_SIZE, EGL_GREEN_SIZE, etc.). The test generates configurations
-// with varying bit sizes for each attribute, filters by the attribute, and
-// checks that the number of filtered results matches the expected count.
-TEST(ConfigSetTest, FilteringBitSizes)
+TEST(ConfigSetTest, Filtering_BitSizes)
 {
     egl::ConfigSet set;
 
@@ -178,7 +174,7 @@ TEST(ConfigSetTest, FilteringBitSizes)
 // and EGL_ALPHA_SIZE).If the requested number of bits in attrib list for a
 // particular color component is 0 or EGL_DONT_CARE, then the number of bits
 // for that component is not considered.
-TEST(ConfigSetTest, SortingBitSizes)
+TEST(ConfigSetTest, Sorting_BitSizes)
 {
     egl::ConfigSet set;
     size_t testConfigCount = 64;

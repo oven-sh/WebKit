@@ -37,6 +37,7 @@
 #include "CachedScript.h"
 #include "CachedStyleSheetClient.h"
 #include "CachedTextTrack.h"
+
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -100,7 +101,7 @@ public:
     }
 
 private:
-    void setCSSStyleSheet(const String&, const URL&, ASCIILiteral, const CachedCSSStyleSheet* resource) final
+    void setCSSStyleSheet(const String&, const URL&, const String&, const CachedCSSStyleSheet* resource) final
     {
         ASSERT(resource);
         ASSERT(ownedResource() == resource);
@@ -113,7 +114,6 @@ private:
 
 class LinkPreloadImageResourceClient : public LinkPreloadResourceClient, public CachedImageClient {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LinkPreloadImageResourceClient);
 public:
     LinkPreloadImageResourceClient(LinkLoader& loader, CachedImage& resource)
         : LinkPreloadResourceClient(loader, resource)

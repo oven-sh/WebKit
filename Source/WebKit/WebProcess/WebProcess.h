@@ -103,7 +103,6 @@ namespace WebCore {
 class CPUMonitor;
 class PageGroup;
 class SecurityOriginData;
-class Site;
 class UserGestureToken;
 
 enum class EventMakesGamepadsVisible : bool;
@@ -147,7 +146,6 @@ class WebCookieJar;
 class WebFileSystemStorageConnection;
 class WebFrame;
 class WebLoaderStrategy;
-class WebNotificationManager;
 class WebPage;
 class WebPageGroupProxy;
 class WebProcessSupplement;
@@ -178,9 +176,9 @@ class LayerHostingContext;
 class SpeechRecognitionRealtimeMediaSourceManager;
 #endif
 
-class WebProcess final : public AuxiliaryProcess {
+class WebProcess final : public AuxiliaryProcess
+{
     WTF_MAKE_TZONE_ALLOCATED(WebProcess);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebProcess);
 public:
     using TopFrameDomain = WebCore::RegistrableDomain;
     using SubResourceDomain = WebCore::RegistrableDomain;
@@ -208,8 +206,8 @@ public:
 
     // ref() & deref() do nothing since WebProcess is a singleton object.
     // This is for objects owned by the WebProcess to forward their refcounting to their owner.
-    void ref() const final { }
-    void deref() const final { }
+    void ref() const { }
+    void deref() const { }
 
     WebPage* webPage(WebCore::PageIdentifier) const;
     void createWebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
@@ -372,8 +370,6 @@ public:
     WebCookieJar& cookieJar() { return m_cookieJar.get(); }
     Ref<WebCookieJar> protectedCookieJar();
     WebSocketChannelManager& webSocketChannelManager() { return m_webSocketChannelManager; }
-
-    Ref<WebNotificationManager> protectedNotificationManager();
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
     float backlightLevel() const { return m_backlightLevel; }
@@ -553,7 +549,7 @@ private:
     void gamepadDisconnected(unsigned index);
 #endif
 
-    void establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, WebCore::Site&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, RemoteWorkerInitializationData&&, CompletionHandler<void()>&&);
+    void establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, WebCore::RegistrableDomain&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, RemoteWorkerInitializationData&&, CompletionHandler<void()>&&);
 
     void fetchWebsiteData(OptionSet<WebsiteDataType>, CompletionHandler<void(WebsiteData&&)>&&);
     void deleteWebsiteData(OptionSet<WebsiteDataType>, WallTime modifiedSince, CompletionHandler<void()>&&);
@@ -698,7 +694,7 @@ private:
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
     void registerLogHook();
     void setupLogStream();
-    void sendLogOnStream(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, os_log_type_t);
+    void sendLogOnStream(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<uint8_t> logString, os_log_type_t);
 #endif
 
     HashMap<WebCore::PageIdentifier, RefPtr<WebPage>> m_pageMap;
@@ -775,7 +771,7 @@ private:
     HashSet<String> m_dnsPrefetchedHosts;
     PAL::HysteresisActivity m_dnsPrefetchHystereris;
 
-    RefPtr<WebAutomationSessionProxy> m_automationSessionProxy;
+    std::unique_ptr<WebAutomationSessionProxy> m_automationSessionProxy;
 
 #if ENABLE(SERVICE_CONTROLS)
     bool m_hasImageServices { false };

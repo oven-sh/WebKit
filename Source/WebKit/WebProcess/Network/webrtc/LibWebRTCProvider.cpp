@@ -43,12 +43,14 @@
 #include <WebCore/Settings.h>
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ALLOW_COMMA_BEGIN
+
 // See Bug 274508: Disable thread-safety-reference-return warnings in libwebrtc
 IGNORE_CLANG_WARNINGS_BEGIN("thread-safety-reference-return")
 #include <webrtc/pc/peer_connection_factory.h>
 IGNORE_CLANG_WARNINGS_END
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+
+ALLOW_COMMA_END
 
 namespace WebKit {
 using namespace WebCore;
@@ -189,7 +191,7 @@ std::unique_ptr<LibWebRTCProvider::SuspendableSocketFactory> LibWebRTCProvider::
 
 RefPtr<RTCDataChannelRemoteHandlerConnection> LibWebRTCProvider::createRTCDataChannelRemoteHandlerConnection()
 {
-    return &RTCDataChannelRemoteManager::singleton().remoteHandlerConnection();
+    return &RTCDataChannelRemoteManager::sharedManager().remoteHandlerConnection();
 }
 
 void LibWebRTCProvider::setLoggingLevel(WTFLogLevel level)

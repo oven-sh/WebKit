@@ -58,8 +58,6 @@
 #include <wtf/CommaPrinter.h>
 #include <wtf/ListDump.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 static constexpr bool dumpOSRAvailabilityData = false;
@@ -2073,7 +2071,5 @@ void Prefix::dump(PrintStream& out) const
 }
 
 } } // namespace JSC::DFG
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(DFG_JIT)

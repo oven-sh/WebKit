@@ -28,7 +28,7 @@
 
 #include "CAAudioStreamDescription.h"
 #include "MediaRecorderPrivate.h"
-#include "MediaRecorderPrivateEncoder.h"
+#include "MediaRecorderPrivateWriterCocoa.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -37,8 +37,6 @@ typedef const struct opaqueCMFormatDescription* CMFormatDescriptionRef;
 
 namespace WebCore {
 
-class ContentType;
-class Document;
 class MediaStreamPrivate;
 class WebAudioBufferList;
 
@@ -50,23 +48,21 @@ public:
     static std::unique_ptr<MediaRecorderPrivateAVFImpl> create(MediaStreamPrivate&, const MediaRecorderPrivateOptions&);
     ~MediaRecorderPrivateAVFImpl();
 
-    static bool isTypeSupported(Document&, ContentType&);
-
 private:
-    explicit MediaRecorderPrivateAVFImpl(Ref<MediaRecorderPrivateEncoder>&&);
+    explicit MediaRecorderPrivateAVFImpl(Ref<MediaRecorderPrivateWriter>&&);
 
     // MediaRecorderPrivate
     void videoFrameAvailable(VideoFrame&, VideoFrameTimeMetadata) final;
     void fetchData(FetchDataCallback&&) final;
     void audioSamplesAvailable(const WTF::MediaTime&, const PlatformAudioData&, const AudioStreamDescription&, size_t) final;
     void startRecording(StartRecordingCallback&&) final;
-    String mimeType() const final;
+    const String& mimeType() const final;
 
     void stopRecording(CompletionHandler<void()>&&) final;
     void pauseRecording(CompletionHandler<void()>&&) final;
     void resumeRecording(CompletionHandler<void()>&&) final;
 
-    const Ref<MediaRecorderPrivateEncoder> m_encoder;
+    Ref<MediaRecorderPrivateWriter> m_writer;
     RefPtr<VideoFrame> m_blackFrame;
     std::optional<CAAudioStreamDescription> m_description;
     std::unique_ptr<WebAudioBufferList> m_audioBuffer;

@@ -37,11 +37,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import <pal/spi/mac/NSScrollerImpSPI.h>
 #import <wtf/BlockObjCExceptions.h>
-#import <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
-
-WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollingTreeScrollingNodeDelegateMac);
 
 ScrollingTreeScrollingNodeDelegateMac::ScrollingTreeScrollingNodeDelegateMac(ScrollingTreeScrollingNode& scrollingNode)
     : ThreadedScrollingTreeScrollingNodeDelegate(scrollingNode)
@@ -73,15 +70,17 @@ void ScrollingTreeScrollingNodeDelegateMac::updateFromStateNode(const ScrollingS
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollbarHoverState))
         m_scrollerPair->mouseIsInScrollbar(scrollingStateNode.scrollbarHoverState());
     
-    if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::HorizontalScrollbarLayer))
+    if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::HorizontalScrollbarLayer) && scrollingNode().horizontalNativeScrollbarVisibility() == NativeScrollbarVisibility::Visible)
         m_scrollerPair->horizontalScroller().setHostLayer(static_cast<CALayer*>(scrollingStateNode.horizontalScrollbarLayer()));
     
-    if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::VerticalScrollbarLayer))
+    if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::VerticalScrollbarLayer) && scrollingNode().verticalNativeScrollbarVisibility() == NativeScrollbarVisibility::Visible)
         m_scrollerPair->verticalScroller().setHostLayer(static_cast<CALayer*>(scrollingStateNode.verticalScrollbarLayer()));
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollableAreaParams)) {
-        m_scrollerPair->horizontalScroller().setHiddenByStyle(scrollingStateNode.scrollableAreaParameters().horizontalNativeScrollbarVisibility);
-        m_scrollerPair->verticalScroller().setHiddenByStyle(scrollingStateNode.scrollableAreaParameters().verticalNativeScrollbarVisibility);
+        if (scrollingStateNode.scrollableAreaParameters().horizontalNativeScrollbarVisibility != NativeScrollbarVisibility::Visible)
+            m_scrollerPair->horizontalScroller().setHostLayer(nullptr);
+        if (scrollingStateNode.scrollableAreaParameters().verticalNativeScrollbarVisibility != NativeScrollbarVisibility::Visible)
+            m_scrollerPair->verticalScroller().setHostLayer(nullptr);
     }
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollbarEnabledState)) {
@@ -100,9 +99,6 @@ void ScrollingTreeScrollingNodeDelegateMac::updateFromStateNode(const ScrollingS
         auto scrollbarWidth = scrollingStateNode.scrollbarWidth();
         m_scrollerPair->setScrollbarWidth(scrollbarWidth);
     }
-
-    if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::UseDarkAppearanceForScrollbars))
-        m_scrollerPair->setUseDarkAppearance(scrollingStateNode.useDarkAppearanceForScrollbars());
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ContentAreaHoverState)) {
         if (scrollingStateNode.mouseIsOverContentArea())
@@ -131,7 +127,7 @@ bool ScrollingTreeScrollingNodeDelegateMac::handleWheelEvent(const PlatformWheel
     if (wasInMomentumPhase != m_inMomentumPhase)
         m_scrollerPair->setUsePresentationValues(m_inMomentumPhase);
 
-    auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { *scrollingTree(), scrollingNode().scrollingNodeID(), WheelEventTestMonitor::DeferReason::HandlingWheelEvent };
+    auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { scrollingTree(), scrollingNode().scrollingNodeID(), WheelEventTestMonitor::DeferReason::HandlingWheelEvent };
 
     updateUserScrollInProgressForEvent(wheelEvent);
 
@@ -292,7 +288,7 @@ RectEdges<bool> ScrollingTreeScrollingNodeDelegateMac::edgePinnedState() const
 bool ScrollingTreeScrollingNodeDelegateMac::shouldRubberBandOnSide(BoxSide side) const
 {
     if (scrollingNode().isRootNode())
-        return scrollingTree()->clientAllowsMainFrameRubberBandingOnSide(side);
+        return scrollingTree().clientAllowsMainFrameRubberBandingOnSide(side);
 
     switch (side) {
     case BoxSide::Top:
@@ -313,7 +309,7 @@ void ScrollingTreeScrollingNodeDelegateMac::didStopRubberBandAnimation()
 
 void ScrollingTreeScrollingNodeDelegateMac::rubberBandingStateChanged(bool inRubberBand)
 {
-    scrollingTree()->setRubberBandingInProgressForNode(scrollingNode().scrollingNodeID(), inRubberBand);
+    scrollingTree().setRubberBandingInProgressForNode(scrollingNode().scrollingNodeID(), inRubberBand);
 }
 
 void ScrollingTreeScrollingNodeDelegateMac::updateScrollbarPainters()

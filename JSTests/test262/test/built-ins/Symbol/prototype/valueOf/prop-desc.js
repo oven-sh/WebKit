@@ -13,8 +13,6 @@ features: [Symbol]
 
 assert.sameValue(typeof Symbol.prototype.valueOf, 'function');
 
-verifyProperty(Symbol.prototype, 'valueOf', {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(Symbol.prototype, 'valueOf');
+verifyWritable(Symbol.prototype, 'valueOf');
+verifyConfigurable(Symbol.prototype, 'valueOf');

@@ -61,8 +61,6 @@ public:
     {
     }
 
-    bool isEmpty() const { return m_text.isEmpty(); }
-
     WTF_EXPORT_PRIVATE TextStream& operator<<(bool);
     WTF_EXPORT_PRIVATE TextStream& operator<<(char);
     WTF_EXPORT_PRIVATE TextStream& operator<<(int);

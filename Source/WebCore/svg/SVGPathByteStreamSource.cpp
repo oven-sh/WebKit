@@ -23,13 +23,14 @@
 namespace WebCore {
 
 SVGPathByteStreamSource::SVGPathByteStreamSource(const SVGPathByteStream& stream)
-    : m_streamCurrent(stream.bytes().span())
+    : m_streamCurrent(stream.begin())
+    , m_streamEnd(stream.end())
 {
 }
 
 bool SVGPathByteStreamSource::hasMoreData() const
 {
-    return !m_streamCurrent.empty();
+    return m_streamCurrent < m_streamEnd;
 }
 
 SVGPathSegType SVGPathByteStreamSource::nextCommand(SVGPathSegType)

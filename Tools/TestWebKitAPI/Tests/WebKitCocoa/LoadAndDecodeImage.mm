@@ -28,8 +28,6 @@
 #import "CocoaImage.h"
 #import "HTTPServer.h"
 #import "PlatformUtilities.h"
-#import "Test.h"
-#import "TestNavigationDelegate.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <wtf/Expected.h>
@@ -38,8 +36,6 @@
 #import <wtf/text/Base64.h>
 
 namespace TestWebKitAPI {
-
-static bool done;
 
 TEST(WebKit, LoadAndDecodeImage)
 {

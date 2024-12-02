@@ -63,8 +63,8 @@ void WebSWOriginStore::clearStore()
 void WebSWOriginStore::importComplete()
 {
     m_isImported = true;
-    for (Ref connection : m_webSWServerConnections)
-        connection->send(Messages::WebSWClientConnection::SetSWOriginTableIsImported());
+    for (auto& connection : m_webSWServerConnections)
+        connection.send(Messages::WebSWClientConnection::SetSWOriginTableIsImported());
 }
 
 void WebSWOriginStore::registerSWServerConnection(WebSWServerConnection& connection)
@@ -93,8 +93,8 @@ void WebSWOriginStore::sendStoreHandle(WebSWServerConnection& connection)
 
 void WebSWOriginStore::didInvalidateSharedMemory()
 {
-    for (Ref connection : m_webSWServerConnections)
-        sendStoreHandle(connection.get());
+    for (auto& connection : m_webSWServerConnections)
+        sendStoreHandle(CheckedRef { connection }.get());
 }
 
 } // namespace WebKit

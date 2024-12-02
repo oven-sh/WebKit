@@ -51,12 +51,10 @@ struct PatchpointExceptionHandle : public PatchpointExceptionHandleBase {
         , m_callSiteIndex(callSiteIndex)
     { }
 
-    PatchpointExceptionHandle(std::optional<bool> hasExceptionHandlers, unsigned callSiteIndex, unsigned numLiveValues, unsigned firstStackmapParamOffset, unsigned firstStackmapChildOffset)
+    PatchpointExceptionHandle(std::optional<bool> hasExceptionHandlers, unsigned callSiteIndex, unsigned numLiveValues)
         : m_hasExceptionHandlers(hasExceptionHandlers)
         , m_callSiteIndex(callSiteIndex)
         , m_numLiveValues(numLiveValues)
-        , m_firstStackmapParamOffset(firstStackmapParamOffset)
-        , m_firstStackmapChildOffset(firstStackmapChildOffset)
     { }
 
     template <typename Generator>
@@ -71,8 +69,10 @@ struct PatchpointExceptionHandle : public PatchpointExceptionHandleBase {
             return;
 
         StackMap values(*m_numLiveValues);
+        unsigned paramsOffset = params.size() - *m_numLiveValues;
+        unsigned childrenOffset = params.value()->numChildren() - *m_numLiveValues;
         for (unsigned i = 0; i < *m_numLiveValues; ++i)
-            values[i] = OSREntryValue(params[i + m_firstStackmapParamOffset], params.value()->child(i + m_firstStackmapChildOffset)->type());
+            values[i] = OSREntryValue(params[i + paramsOffset], params.value()->child(i + childrenOffset)->type());
 
         generator->addStackMap(m_callSiteIndex, WTFMove(values));
     }
@@ -80,8 +80,6 @@ struct PatchpointExceptionHandle : public PatchpointExceptionHandleBase {
     std::optional<bool> m_hasExceptionHandlers;
     unsigned m_callSiteIndex { s_invalidCallSiteIndex };
     std::optional<unsigned> m_numLiveValues { };
-    unsigned m_firstStackmapParamOffset { };
-    unsigned m_firstStackmapChildOffset { };
 };
 
 #else
@@ -177,7 +175,7 @@ static ALWAYS_INLINE void buildEntryBufferForCatch(Probe::Context& context)
     unsigned valueSize = (savedFPWidth == SavedFPWidth::SaveVectors) ? 2 : 1;
     CallFrame* callFrame = context.fp<CallFrame*>();
     CallSiteIndex callSiteIndex = callFrame->callSiteIndex();
-    OptimizingJITCallee* callee = std::bit_cast<OptimizingJITCallee*>(callFrame->callee().asNativeCallee());
+    OptimizingJITCallee* callee = bitwise_cast<OptimizingJITCallee*>(callFrame->callee().asNativeCallee());
     const StackMap& stackmap = callee->stackmap(callSiteIndex);
     JSWebAssemblyInstance* instance = context.gpr<JSWebAssemblyInstance*>(GPRInfo::wasmContextInstancePointer);
     EncodedJSValue exception = context.gpr<EncodedJSValue>(GPRInfo::returnValueGPR);
@@ -187,11 +185,11 @@ static ALWAYS_INLINE void buildEntryBufferForCatch(Probe::Context& context)
     JSValue thrownValue = JSValue::decode(exception);
     void* payload = nullptr;
     if (JSWebAssemblyException* wasmException = jsDynamicCast<JSWebAssemblyException*>(thrownValue))
-        payload = std::bit_cast<void*>(wasmException->payload().span().data());
+        payload = bitwise_cast<void*>(wasmException->payload().span().data());
 
-    context.gpr(GPRInfo::argumentGPR0) = std::bit_cast<uintptr_t>(buffer);
+    context.gpr(GPRInfo::argumentGPR0) = bitwise_cast<uintptr_t>(buffer);
     context.gpr(GPRInfo::argumentGPR1) = exception;
-    context.gpr(GPRInfo::argumentGPR2) = std::bit_cast<uintptr_t>(payload);
+    context.gpr(GPRInfo::argumentGPR2) = bitwise_cast<uintptr_t>(payload);
 }
 
 static inline void SYSV_ABI buildEntryBufferForCatchSIMD(Probe::Context& context) { buildEntryBufferForCatch<SavedFPWidth::SaveVectors>(context); }

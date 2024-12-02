@@ -243,6 +243,9 @@ AVVideoCaptureSource::AVVideoCaptureSource(AVCaptureDevice* avDevice, const Capt
     , m_objcObserver(adoptNS([[WebCoreAVVideoCaptureSourceObserver alloc] initWithCaptureSource:this]))
     , m_device(avDevice)
     , m_zoomScaleFactor(cameraZoomScaleFactor([avDevice deviceType]))
+#if PLATFORM(IOS_FAMILY)
+    , m_startupTimer(*this, &AVVideoCaptureSource::startupTimerFired)
+#endif
     , m_verifyCapturingTimer(*this, &AVVideoCaptureSource::verifyIsCapturing)
     , m_defaultTorchMode((int64_t)[m_device torchMode])
 {
@@ -323,12 +326,8 @@ void AVVideoCaptureSource::startProducingData()
 
 #if PLATFORM(IOS_FAMILY)
     m_shouldCallNotifyMutedChange = false;
-
-    if (!m_startupTimer)
-        m_startupTimer = makeUnique<Timer>(*this, &AVVideoCaptureSource::startupTimerFired);
-
     static constexpr Seconds startupTimerInterval = 1_s;
-    m_startupTimer->startOneShot(startupTimerInterval);
+    m_startupTimer.startOneShot(startupTimerInterval);
 #endif
 }
 
@@ -1269,7 +1268,7 @@ void AVVideoCaptureSource::captureSessionIsRunningDidChange(bool state)
         updateVerifyCapturingTimer();
 
 #if PLATFORM(IOS_FAMILY)
-        if (m_startupTimer && m_startupTimer->isActive()) {
+        if (m_startupTimer.isActive()) {
             m_shouldCallNotifyMutedChange = true;
             return;
         }

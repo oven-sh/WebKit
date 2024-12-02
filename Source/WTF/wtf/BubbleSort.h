@@ -25,8 +25,6 @@
 
 #pragma once
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 // Why would you want to use bubble sort? When you know that your input is already mostly
@@ -98,5 +96,3 @@ void bubbleSort(IteratorType begin, IteratorType end)
 } // namespace WTF
 
 using WTF::bubbleSort;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

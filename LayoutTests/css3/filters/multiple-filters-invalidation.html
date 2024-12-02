@@ -19,16 +19,12 @@ function changeBackground() {
     document.getElementById("rect").style.background = "green";
 }
 
-onload = async () => {
-  if (window.testRunner) {
+if (window.testRunner) {
     testRunner.dumpAsText(true);
-    testRunner.waitUntilDone();
-    await testRunner.displayAndTrackRepaints();
+    testRunner.displayAndTrackRepaints();
     changeBackground();
-    testRunner.notifyDone();
-  } else 
-      window.setTimeout(changeBackground, 250);
-}
+} else 
+    window.setTimeout(changeBackground, 250);
 
 </script>
 </html>

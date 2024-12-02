@@ -65,7 +65,6 @@ public:
 
     using MatchElementRuleSets = UncheckedKeyHashMap<MatchElement, InvalidationRuleSetVector, IntHash<MatchElement>, WTF::StrongEnumHashTraits<MatchElement>>;
     static void addToMatchElementRuleSets(Invalidator::MatchElementRuleSets&, const InvalidationRuleSet&);
-    static void addToMatchElementRuleSetsRespectingNegation(Invalidator::MatchElementRuleSets&, const InvalidationRuleSet&);
     static void invalidateWithMatchElementRuleSets(Element&, const MatchElementRuleSets&);
     static void invalidateAllStyle(Scope&);
     static void invalidateHostAndSlottedStyleIfNeeded(ShadowRoot&);

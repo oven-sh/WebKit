@@ -52,6 +52,8 @@ public:
         DecorationStyleAndColor underline;
         DecorationStyleAndColor overline;
         DecorationStyleAndColor linethrough;
+
+        TextDecorationSkipInk skipInk { TextDecorationSkipInk::None };
     };
     struct BackgroundDecorationGeometry {
         FloatPoint textOrigin;

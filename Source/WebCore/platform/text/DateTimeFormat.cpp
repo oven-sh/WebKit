@@ -30,8 +30,6 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/text/StringBuilder.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 static const DateTimeFormat::FieldType lowerCaseToFieldTypeMap[26] = {
@@ -274,7 +272,5 @@ void DateTimeFormat::quoteAndAppendLiteral(const String& literal, StringBuilder&
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

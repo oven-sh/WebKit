@@ -42,7 +42,6 @@ namespace WebKit {
 
 void TestWithStream::didReceiveStreamMessage(IPC::StreamServerConnection& connection, IPC::Decoder& decoder)
 {
-    Ref protectedThis { *this };
     if (decoder.messageName() == Messages::TestWithStream::SendString::name())
         return IPC::handleMessage<Messages::TestWithStream::SendString>(connection, decoder, this, &TestWithStream::sendString);
     if (decoder.messageName() == Messages::TestWithStream::SendStringAsync::name())
@@ -61,8 +60,13 @@ void TestWithStream::didReceiveStreamMessage(IPC::StreamServerConnection& connec
     if (decoder.messageName() == Messages::TestWithStream::SendAndReceiveMachSendRight::name())
         return IPC::handleMessageSynchronous<Messages::TestWithStream::SendAndReceiveMachSendRight>(connection, decoder, this, &TestWithStream::sendAndReceiveMachSendRight);
 #endif
-    RELEASE_LOG_ERROR(IPC, "Unhandled stream message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
-    decoder.markInvalid();
+    UNUSED_PARAM(decoder);
+    UNUSED_PARAM(connection);
+#if ENABLE(IPC_TESTING_API)
+    if (connection.ignoreInvalidMessageForTesting())
+        return;
+#endif // ENABLE(IPC_TESTING_API)
+    ASSERT_NOT_REACHED_WITH_MESSAGE("Unhandled stream message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
 }
 
 } // namespace WebKit

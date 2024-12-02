@@ -12,8 +12,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Math, "max", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Math, "max");
+verifyWritable(Math, "max");
+verifyConfigurable(Math, "max");

@@ -77,7 +77,6 @@ class ValidateAST : public TIntermTraverser
     void expectNonNullChildren(Visit visit, TIntermNode *node, size_t least_count);
 
     bool validateInternal();
-    bool isInDeclaration() const;
 
     ValidateASTOptions mOptions;
     TDiagnostics *mDiagnostics;
@@ -134,8 +133,6 @@ class ValidateAST : public TIntermTraverser
     // For validateNoStatementsAfterBranch:
     bool mIsBranchVisitedInBlock        = false;
     bool mNoStatementsAfterBranchFailed = false;
-
-    bool mVariableNamingFailed = false;
 };
 
 bool IsSameType(const TType &a, const TType &b)
@@ -429,7 +426,12 @@ void ValidateAST::visitBuiltInFunction(TIntermOperator *node, const TFunction *f
         return;
     }
 
-    ImmutableString opValue = BuildConcatenatedImmutableString("op: ", op);
+    ImmutableStringBuilder opValueBuilder(16);
+    opValueBuilder << "op: ";
+    opValueBuilder.appendDecimal(op);
+
+    ImmutableString opValue = opValueBuilder;
+
     if (function == nullptr)
     {
         mDiagnostics->error(node->getLine(),
@@ -776,14 +778,7 @@ void ValidateAST::visitSymbol(TIntermSymbol *node)
             visitVariableNeedingDeclaration(node);
         }
     }
-    if (variable->symbolType() == SymbolType::Empty)
-    {
-        if (!isInDeclaration())
-        {
-            mDiagnostics->error(node->getLine(), "Found symbol with empty name", "");
-            mVariableNamingFailed = true;
-        }
-    }
+
     const bool isBuiltIn = gl::IsBuiltInName(variable->name().data());
     if (isBuiltIn)
     {
@@ -1313,14 +1308,7 @@ bool ValidateAST::validateInternal()
            !mBuiltInOpsFailed && !mFunctionCallFailed && !mNoRawFunctionCallsFailed &&
            !mNullNodesFailed && !mQualifiersFailed && !mPrecisionFailed && !mStructUsageFailed &&
            !mExpressionTypesFailed && !mMultiDeclarationsFailed && !mNoSwizzleOfSwizzleFailed &&
-           !mNoQualifiersOnConstructorsFailed && !mNoStatementsAfterBranchFailed &&
-           !mVariableNamingFailed;
-}
-
-bool ValidateAST::isInDeclaration() const
-{
-    auto *parent = getParentNode();
-    return parent != nullptr && parent->getAsDeclarationNode() != nullptr;
+           !mNoQualifiersOnConstructorsFailed && !mNoStatementsAfterBranchFailed;
 }
 
 }  // anonymous namespace

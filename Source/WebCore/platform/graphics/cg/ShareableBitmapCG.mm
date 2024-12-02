@@ -38,8 +38,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/spi/cocoa/IOSurfaceSPI.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 ShareableBitmapConfiguration::ShareableBitmapConfiguration(NativeImage& image)
@@ -66,9 +64,14 @@ std::optional<DestinationColorSpace> ShareableBitmapConfiguration::validateColor
 #endif
 }
 
+static bool wantsExtendedRange(const DestinationColorSpace& colorSpace)
+{
+    return CGColorSpaceUsesExtendedRange(colorSpace.platformColorSpace());
+}
+
 CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerPixel(const DestinationColorSpace& colorSpace)
 {
-    return colorSpace.usesExtendedRange() ? 8 : 4;
+    return wantsExtendedRange(colorSpace) ? 8 : 4;
 }
 
 CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerRow(const IntSize& size, const DestinationColorSpace& colorSpace)
@@ -87,7 +90,7 @@ CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerRow(const IntSize& 
 CGBitmapInfo ShareableBitmapConfiguration::calculateBitmapInfo(const DestinationColorSpace& colorSpace, bool isOpaque)
 {
     CGBitmapInfo info = 0;
-    if (colorSpace.usesExtendedRange()) {
+    if (wantsExtendedRange(colorSpace)) {
         info |= kCGBitmapFloatComponents | static_cast<CGBitmapInfo>(kCGBitmapByteOrder16Host);
 
         if (isOpaque)
@@ -274,5 +277,3 @@ void ShareableBitmap::setOwnershipOfMemory(const ProcessIdentity& identity)
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

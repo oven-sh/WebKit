@@ -30,17 +30,15 @@
 #include "AccessibilityObject.h"
 #include "TextIterator.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AXSearchManager);
 
 // This function determines if the given `axObject` is a radio button part of a different ad-hoc radio group
 // than `referenceObject`, where ad-hoc radio group membership is determined by comparing `name` attributes.
-static bool isRadioButtonInDifferentAdhocGroup(Ref<AXCoreObject> axObject, AXCoreObject* referenceObject)
+static bool isRadioButtonInDifferentAdhocGroup(RefPtr<AXCoreObject> axObject, AXCoreObject* referenceObject)
 {
-    if (!axObject->isRadioButton())
+    if (!axObject || !axObject->isRadioButton())
         return false;
 
     // If the `referenceObject` is not a radio button and this `axObject` is, their radio group membership is different because
@@ -51,7 +49,7 @@ static bool isRadioButtonInDifferentAdhocGroup(Ref<AXCoreObject> axObject, AXCor
     return axObject->nameAttribute() != referenceObject->nameAttribute();
 }
 
-bool AXSearchManager::matchForSearchKeyAtIndex(Ref<AXCoreObject> axObject, const AccessibilitySearchCriteria& criteria, size_t index)
+bool AXSearchManager::matchForSearchKeyAtIndex(RefPtr<AXCoreObject> axObject, const AccessibilitySearchCriteria& criteria, size_t index)
 {
     switch (criteria.searchKeys[index]) {
     case AccessibilitySearchKey::AnyType:
@@ -128,7 +126,7 @@ bool AXSearchManager::matchForSearchKeyAtIndex(Ref<AXCoreObject> axObject, const
         auto ranges = axObject->misspellingRanges();
         bool hasMisspelling = !ranges.isEmpty();
         if (hasMisspelling)
-            m_misspellingRanges.set(axObject->objectID(), WTFMove(ranges));
+            m_misspellingRanges.set(*axObject->objectID(), WTFMove(ranges));
         return hasMisspelling;
     }
     case AccessibilitySearchKey::Outline:
@@ -164,8 +162,11 @@ bool AXSearchManager::matchForSearchKeyAtIndex(Ref<AXCoreObject> axObject, const
     }
 }
 
-bool AXSearchManager::match(Ref<AXCoreObject> axObject, const AccessibilitySearchCriteria& criteria)
+bool AXSearchManager::match(RefPtr<AXCoreObject> axObject, const AccessibilitySearchCriteria& criteria)
 {
+    if (!axObject)
+        return false;
+
     for (size_t i = 0; i < criteria.searchKeys.size(); ++i) {
         if (matchForSearchKeyAtIndex(axObject, criteria, i))
             return criteria.visibleOnly ? axObject->isOnScreen() : true;
@@ -173,8 +174,11 @@ bool AXSearchManager::match(Ref<AXCoreObject> axObject, const AccessibilitySearc
     return false;
 }
 
-bool AXSearchManager::matchText(Ref<AXCoreObject> axObject, const String& searchText)
+bool AXSearchManager::matchText(RefPtr<AXCoreObject> axObject, const String& searchText)
 {
+    if (!axObject)
+        return false;
+
     // If text is empty we return true.
     if (searchText.isEmpty())
         return true;
@@ -184,7 +188,7 @@ bool AXSearchManager::matchText(Ref<AXCoreObject> axObject, const String& search
         || containsPlainText(axObject->stringValue(), searchText, FindOption::CaseInsensitive);
 }
 
-bool AXSearchManager::matchWithResultsLimit(Ref<AXCoreObject> object, const AccessibilitySearchCriteria& criteria, AXCoreObject::AccessibilityChildrenVector& results)
+bool AXSearchManager::matchWithResultsLimit(RefPtr<AXCoreObject> object, const AccessibilitySearchCriteria& criteria, AXCoreObject::AccessibilityChildrenVector& results)
 {
     if (match(object, criteria) && matchText(object, criteria.searchText)) {
         results.append(object);
@@ -197,12 +201,10 @@ bool AXSearchManager::matchWithResultsLimit(Ref<AXCoreObject> object, const Acce
     return false;
 }
 
-static void appendAccessibilityObject(Ref<AXCoreObject> object, AccessibilityObject::AccessibilityChildrenVector& results)
+static void appendAccessibilityObject(RefPtr<AXCoreObject> object, AccessibilityObject::AccessibilityChildrenVector& results)
 {
-    if (LIKELY(!object->isAttachment()))
-        results.append(object);
-    else {
-        // Find the next descendant of this attachment object so search can continue through frames.
+    // Find the next descendant of this attachment object so search can continue through frames.
+    if (object->isAttachment()) {
         Widget* widget = object->widgetForAttachmentView();
         auto* frameView = dynamicDowncast<LocalFrameView>(widget);
         if (!frameView)
@@ -211,13 +213,14 @@ static void appendAccessibilityObject(Ref<AXCoreObject> object, AccessibilityObj
         if (!document || !document->hasLivingRenderTree())
             return;
 
-        CheckedPtr cache = object->axObjectCache();
-        if (auto* axDocument = cache ? cache->getOrCreate(*document) : nullptr)
-            results.append(*axDocument);
+        object = object->axObjectCache()->getOrCreate(*document);
     }
+
+    if (object)
+        results.append(object);
 }
 
-static void appendChildrenToArray(Ref<AXCoreObject> object, bool isForward, RefPtr<AXCoreObject> startObject, AXCoreObject::AccessibilityChildrenVector& results)
+static void appendChildrenToArray(RefPtr<AXCoreObject> object, bool isForward, RefPtr<AXCoreObject> startObject, AXCoreObject::AccessibilityChildrenVector& results)
 {
     // A table's children includes elements whose own children are also the table's children (due to the way the Mac exposes tables).
     // The rows from the table should be queried, since those are direct descendants of the table, and they contain content.
@@ -235,7 +238,7 @@ static void appendChildrenToArray(Ref<AXCoreObject> object, bool isForward, RefP
         RefPtr<AXCoreObject> parentObject = startObject->parentObject();
         // Go up the parent chain to find the highest ancestor that's also being ignored.
         while (parentObject && parentObject->isIgnored()) {
-            if (parentObject == object.ptr())
+            if (parentObject == object)
                 break;
             startObject = parentObject;
             parentObject = parentObject->parentObject();
@@ -243,7 +246,6 @@ static void appendChildrenToArray(Ref<AXCoreObject> object, bool isForward, RefP
 
         // We should only ever hit this case with a live object (not an isolated object), as it would require startObject to be ignored,
         // and we should never have created an isolated object from an ignored live object.
-        // FIXME: This is not true for ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE), fix this before shipping it.
         ASSERT(is<AccessibilityObject>(startObject));
         auto* newStartObject = dynamicDowncast<AccessibilityObject>(startObject.get());
         // Get the un-ignored sibling based on the search direction, and update the searchPosition.
@@ -252,7 +254,7 @@ static void appendChildrenToArray(Ref<AXCoreObject> object, bool isForward, RefP
         startObject = newStartObject;
     }
 
-    size_t searchPosition = startObject ? searchChildren.find(Ref { *startObject }) : notFound;
+    size_t searchPosition = startObject ? searchChildren.find(startObject) : notFound;
 
     if (searchPosition != notFound) {
         if (isForward)
@@ -303,7 +305,7 @@ AXCoreObject::AccessibilityChildrenVector AXSearchManager::findMatchingObjectsIn
         // already behind/ahead of start element.
         AXCoreObject::AccessibilityChildrenVector searchStack;
         if (!criteria.immediateDescendantsOnly || startObject == criteria.anchorObject)
-            appendChildrenToArray(*startObject, isForward, previousObject, searchStack);
+            appendChildrenToArray(startObject, isForward, previousObject, searchStack);
 
         // This now does a DFS at the current level of the parent.
         while (!searchStack.isEmpty()) {
@@ -321,7 +323,7 @@ AXCoreObject::AccessibilityChildrenVector AXSearchManager::findMatchingObjectsIn
             break;
 
         // When moving backwards, the parent object needs to be checked, because technically it's "before" the starting element.
-        if (!isForward && startObject != criteria.anchorObject && matchWithResultsLimit(*startObject, criteria, results))
+        if (!isForward && startObject != criteria.anchorObject && matchWithResultsLimit(startObject, criteria, results))
             break;
 
         previousObject = startObject;
@@ -349,9 +351,9 @@ std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(Accessibilit
     AXLOG(startObject);
 
     bool forward = criteria.searchDirection == AccessibilitySearchDirection::Next;
-    if (match(*startObject, criteria)) {
-        ASSERT(m_misspellingRanges.contains(startObject->objectID()));
-        const auto& ranges = m_misspellingRanges.get(startObject->objectID());
+    if (match(startObject, criteria)) {
+        ASSERT(m_misspellingRanges.contains(*startObject->objectID()));
+        const auto& ranges = m_misspellingRanges.get(*startObject->objectID());
         ASSERT(!ranges.isEmpty());
 
         AXTextMarkerRange startRange { startObject->treeID(), startObject->objectID(), criteria.startRange };
@@ -370,10 +372,11 @@ std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(Accessibilit
 
     // Didn't find a matching range for startObject, thus move to the next/previous object.
     auto objects = findMatchingObjectsInternal(criteria);
-    if (!objects.isEmpty()) {
-        Ref object = objects[0];
-        ASSERT(m_misspellingRanges.contains(object->objectID()));
-        const auto& ranges = m_misspellingRanges.get(object->objectID());
+    if (!objects.isEmpty() && objects[0]) {
+        auto& object = *objects[0];
+        AXLOG(object);
+        ASSERT(m_misspellingRanges.contains(*object.objectID()));
+        const auto& ranges = m_misspellingRanges.get(*object.objectID());
         ASSERT(!ranges.isEmpty());
         return forward ? ranges[0] : ranges.last();
     }
@@ -381,5 +384,3 @@ std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(Accessibilit
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

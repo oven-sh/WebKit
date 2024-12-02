@@ -286,7 +286,7 @@ void Location::reload(LocalDOMWindow& activeWindow)
     if (targetDocument->url().protocolIsJavaScript())
         return;
 
-    localFrame->protectedNavigationScheduler()->scheduleRefresh(activeDocument);
+    localFrame->checkedNavigationScheduler()->scheduleRefresh(activeDocument);
 }
 
 ExceptionOr<void> Location::setLocation(LocalDOMWindow& incumbentWindow, LocalDOMWindow& firstWindow, const String& urlString)

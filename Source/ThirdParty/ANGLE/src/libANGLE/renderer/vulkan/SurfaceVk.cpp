@@ -159,16 +159,11 @@ bool Is90DegreeRotation(VkSurfaceTransformFlagsKHR transform)
     return ((transform & k90DegreeRotationVariants) != 0);
 }
 
-bool ColorNeedsInputAttachmentUsage(const angle::FeaturesVk &features)
+bool NeedsInputAttachmentUsage(const angle::FeaturesVk &features)
 {
     return features.supportsShaderFramebufferFetch.enabled ||
            features.supportsShaderFramebufferFetchNonCoherent.enabled ||
            features.emulateAdvancedBlendEquations.enabled;
-}
-
-bool DepthStencilNeedsInputAttachmentUsage(const angle::FeaturesVk &features)
-{
-    return features.supportsShaderFramebufferFetchDepthStencil.enabled;
 }
 
 angle::Result InitImageHelper(DisplayVk *displayVk,
@@ -187,11 +182,7 @@ angle::Result InitImageHelper(DisplayVk *displayVk,
 
     vk::Renderer *renderer = displayVk->getRenderer();
     // If shaders may be fetching from this, we need this image to be an input
-    const bool isColorAndNeedsInputUsage =
-        !isDepthOrStencilFormat && ColorNeedsInputAttachmentUsage(renderer->getFeatures());
-    const bool isDepthStencilAndNeedsInputUsage =
-        isDepthOrStencilFormat && DepthStencilNeedsInputAttachmentUsage(renderer->getFeatures());
-    if (isColorAndNeedsInputUsage || isDepthStencilAndNeedsInputUsage)
+    if (NeedsInputAttachmentUsage(renderer->getFeatures()))
     {
         usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
     }
@@ -1527,7 +1518,8 @@ angle::Result WindowSurfaceVk::recreateSwapchain(ContextVk *contextVk, const gl:
 
     // On Android, vkCreateSwapchainKHR destroys lastSwapchain, which is incorrect.  Wait idle in
     // that case as a workaround.
-    if (lastSwapchain && contextVk->getFeatures().waitIdleBeforeSwapchainRecreation.enabled)
+    if (lastSwapchain &&
+        contextVk->getRenderer()->getFeatures().waitIdleBeforeSwapchainRecreation.enabled)
     {
         mUse.merge(contextVk->getSubmittedResourceUse());
         ANGLE_TRY(finish(contextVk));
@@ -1602,7 +1594,7 @@ angle::Result WindowSurfaceVk::createSwapChain(vk::Context *context,
     VkImageUsageFlags imageUsageFlags = kSurfaceVkColorImageUsageFlags;
 
     // If shaders may be fetching from this, we need this image to be an input
-    if (ColorNeedsInputAttachmentUsage(renderer->getFeatures()))
+    if (NeedsInputAttachmentUsage(renderer->getFeatures()))
     {
         imageUsageFlags |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
     }
@@ -1778,7 +1770,7 @@ angle::Result WindowSurfaceVk::createSwapChain(vk::Context *context,
     if (samples > 1)
     {
         VkImageUsageFlags usage = kSurfaceVkColorImageUsageFlags;
-        if (ColorNeedsInputAttachmentUsage(renderer->getFeatures()))
+        if (NeedsInputAttachmentUsage(renderer->getFeatures()))
         {
             usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
         }
@@ -1827,11 +1819,7 @@ angle::Result WindowSurfaceVk::createSwapChain(vk::Context *context,
     {
         const vk::Format &dsFormat = renderer->getFormat(mState.config->depthStencilFormat);
 
-        VkImageUsageFlags dsUsage = kSurfaceVkDepthStencilImageUsageFlags;
-        if (DepthStencilNeedsInputAttachmentUsage(renderer->getFeatures()))
-        {
-            dsUsage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-        }
+        const VkImageUsageFlags dsUsage = kSurfaceVkDepthStencilImageUsageFlags;
 
         ANGLE_TRY(mDepthStencilImage.init(context, gl::TextureType::_2D, vkExtents, dsFormat,
                                           samples, dsUsage, gl::LevelIndex(0), 1, 1, robustInit,
@@ -1916,7 +1904,8 @@ angle::Result WindowSurfaceVk::checkForOutOfDateSwapchain(ContextVk *contextVk,
     presentOutOfDate = presentOutOfDate || swapIntervalChanged;
 
     // If there's no change, early out.
-    if (!contextVk->getFeatures().perFrameWindowSizeQuery.enabled && !presentOutOfDate)
+    if (!contextVk->getRenderer()->getFeatures().perFrameWindowSizeQuery.enabled &&
+        !presentOutOfDate)
     {
         return angle::Result::Continue;
     }
@@ -1924,7 +1913,7 @@ angle::Result WindowSurfaceVk::checkForOutOfDateSwapchain(ContextVk *contextVk,
     // Get the latest surface capabilities.
     ANGLE_TRY(queryAndAdjustSurfaceCaps(contextVk, &mSurfaceCaps));
 
-    if (contextVk->getFeatures().perFrameWindowSizeQuery.enabled)
+    if (contextVk->getRenderer()->getFeatures().perFrameWindowSizeQuery.enabled)
     {
         // On Android, rotation can cause the minImageCount to change
         uint32_t minImageCount =
@@ -2730,8 +2719,8 @@ bool WindowSurfaceVk::skipAcquireNextSwapchainImageForSharedPresentMode() const
     {
         ASSERT(mSwapchainImages.size());
         const SwapchainImage &image = mSwapchainImages[0];
-        ASSERT(image.image->valid());
-        if (image.image->getCurrentImageLayout() == vk::ImageLayout::SharedPresent)
+        if (image.image->valid() &&
+            image.image->getCurrentImageLayout() == vk::ImageLayout::SharedPresent)
         {
             return true;
         }
@@ -3306,6 +3295,15 @@ egl::Error WindowSurfaceVk::lockSurface(const egl::Display *display,
     ANGLE_TRACE_EVENT0("gpu.angle", "WindowSurfaceVk::lockSurface");
 
     vk::ImageHelper *image = mSwapchainImages[mCurrentSwapchainImageIndex].image.get();
+    if (!image->valid())
+    {
+        mAcquireOperation.needToAcquireNextSwapchainImage = true;
+        if (acquireNextSwapchainImage(vk::GetImpl(display)) != VK_SUCCESS)
+        {
+            return egl::EglBadAccess();
+        }
+    }
+    image = mSwapchainImages[mCurrentSwapchainImageIndex].image.get();
     ASSERT(image->valid());
 
     angle::Result result =

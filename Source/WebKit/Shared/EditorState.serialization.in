@@ -61,8 +61,6 @@ struct WebKit::EditorState {
     std::optional<WebKit::EditorState::VisualData> visualData;
 };
 
-using WebCore::ScrollPosition = WebCore::IntPoint;
-
 [Nested] struct WebKit::EditorState::PostLayoutData {
     OptionSet<WebKit::TypingAttribute> typingAttributes;
 #if PLATFORM(COCOA)
@@ -71,7 +69,7 @@ using WebCore::ScrollPosition = WebCore::IntPoint;
     WebCore::Color textColor;
     WebKit::ListType enclosingListType;
     WebCore::WritingDirection baseWritingDirection;
-    bool selectionIsTransparentOrFullyClipped;
+    bool editableRootIsTransparentOrFullyClipped;
     bool canEnableWritingSuggestions;
 #endif
 #if PLATFORM(IOS_FAMILY)
@@ -128,7 +126,5 @@ using WebCore::ScrollPosition = WebCore::IntPoint;
     WebCore::IntRect markedTextCaretRectAtStart;
     WebCore::IntRect markedTextCaretRectAtEnd;
     std::optional<WebCore::PlatformLayerIdentifier> enclosingLayerID;
-    std::optional<WebCore::ScrollingNodeID> enclosingScrollingNodeID;
-    WebCore::ScrollPosition enclosingScrollPosition;
 #endif
 };

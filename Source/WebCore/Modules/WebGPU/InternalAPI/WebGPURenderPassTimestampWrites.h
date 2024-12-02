@@ -26,7 +26,6 @@
 #pragma once
 
 #include "WebGPUIntegralTypes.h"
-#include "WebGPUQuerySet.h"
 #include <wtf/Ref.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
@@ -38,9 +37,7 @@ class QuerySet;
 struct RenderPassTimestampWrites {
     WeakPtr<QuerySet> querySet;
     Size32 beginningOfPassWriteIndex { 0 };
-    Size32 endOfPassWriteIndex { 1 };
-
-    RefPtr<QuerySet> protectedQuerySet() const { return querySet.get(); }
+    Size32 endOfPassWriteIndex { 0 };
 };
 
 } // namespace WebCore::WebGPU

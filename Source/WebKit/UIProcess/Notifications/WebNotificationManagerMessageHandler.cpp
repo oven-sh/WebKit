@@ -39,16 +39,6 @@ WebNotificationManagerMessageHandler::WebNotificationManagerMessageHandler(WebPa
 {
 }
 
-void WebNotificationManagerMessageHandler::ref() const
-{
-    m_webPageProxy->ref();
-}
-
-void WebNotificationManagerMessageHandler::deref() const
-{
-    m_webPageProxy->deref();
-}
-
 Ref<WebPageProxy> WebNotificationManagerMessageHandler::protectedPage() const
 {
     return m_webPageProxy.get();
@@ -68,9 +58,9 @@ void WebNotificationManagerMessageHandler::showNotification(IPC::Connection& con
 
 void WebNotificationManagerMessageHandler::cancelNotification(WebCore::SecurityOriginData&& origin, const WTF::UUID& notificationID)
 {
-    Ref serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
-    if (serviceWorkerNotificationHandler->handlesNotification(notificationID)) {
-        serviceWorkerNotificationHandler->cancelNotification(WTFMove(origin), notificationID);
+    auto& serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
+    if (serviceWorkerNotificationHandler.handlesNotification(notificationID)) {
+        serviceWorkerNotificationHandler.cancelNotification(WTFMove(origin), notificationID);
         return;
     }
     protectedPage()->cancelNotification(notificationID);
@@ -78,29 +68,29 @@ void WebNotificationManagerMessageHandler::cancelNotification(WebCore::SecurityO
 
 void WebNotificationManagerMessageHandler::clearNotifications(const Vector<WTF::UUID>& notificationIDs)
 {
-    Ref serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
+    auto& serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
 
     Vector<WTF::UUID> persistentNotifications;
     Vector<WTF::UUID> pageNotifications;
     persistentNotifications.reserveInitialCapacity(notificationIDs.size());
     pageNotifications.reserveInitialCapacity(notificationIDs.size());
     for (auto& notificationID : notificationIDs) {
-        if (serviceWorkerNotificationHandler->handlesNotification(notificationID))
+        if (serviceWorkerNotificationHandler.handlesNotification(notificationID))
             persistentNotifications.append(notificationID);
         else
             pageNotifications.append(notificationID);
     }
     if (!persistentNotifications.isEmpty())
-        serviceWorkerNotificationHandler->clearNotifications(persistentNotifications);
+        serviceWorkerNotificationHandler.clearNotifications(persistentNotifications);
     if (!pageNotifications.isEmpty())
         protectedPage()->clearNotifications(pageNotifications);
 }
 
 void WebNotificationManagerMessageHandler::didDestroyNotification(const WTF::UUID& notificationID)
 {
-    Ref serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
-    if (serviceWorkerNotificationHandler->handlesNotification(notificationID)) {
-        serviceWorkerNotificationHandler->didDestroyNotification(notificationID);
+    auto& serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
+    if (serviceWorkerNotificationHandler.handlesNotification(notificationID)) {
+        serviceWorkerNotificationHandler.didDestroyNotification(notificationID);
         return;
     }
     protectedPage()->didDestroyNotification(notificationID);

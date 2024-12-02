@@ -51,17 +51,15 @@ class IPCConnectionTester;
 class IPCStreamTester;
 
 // Main test interface for initiating various IPC test activities.
-class IPCTester final : public IPC::MessageReceiver, public RefCounted<IPCTester> {
+class IPCTester final : public IPC::MessageReceiver {
 public:
-    static Ref<IPCTester> create();
+    IPCTester();
     ~IPCTester();
 
     // IPC::MessageReceiver overrides.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
     bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
 private:
-    IPCTester();
-
     // Messages.
     void startMessageTesting(IPC::Connection&, String&& driverName);
     void stopMessageTesting(CompletionHandler<void()>&&);

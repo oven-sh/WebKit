@@ -35,52 +35,53 @@
 #import "WKWebExtensionControllerInternal.h"
 #import "WKWebViewInternal.h"
 #import "WebExtensionController.h"
+#import "WebPageProxy.h"
 #import "WebProcessProxy.h"
 #import <wtf/EnumTraits.h>
 
 namespace WebKit {
 
-void WebExtensionContext::addListener(WebCore::FrameIdentifier frameIdentifier, WebExtensionEventListenerType listenerType, WebExtensionContentWorldType contentWorldType)
+void WebExtensionContext::addListener(WebPageProxyIdentifier identifier, WebExtensionEventListenerType type, WebExtensionContentWorldType contentWorldType)
 {
-    RefPtr frame = WebFrameProxy::webFrame(frameIdentifier);
-    if (!frame)
+    RefPtr page = WebProcessProxy::webPage(identifier);
+    if (!page)
         return;
 
-    RELEASE_LOG_DEBUG(Extensions, "Registered event listener for type %{public}hhu in %{public}@ world", enumToUnderlyingType(listenerType), (NSString *)toDebugString(contentWorldType));
+    RELEASE_LOG_DEBUG(Extensions, "Registered event listener for type %{public}hhu in %{public}@ world", enumToUnderlyingType(type), (NSString *)toDebugString(contentWorldType));
 
-    if (!protectedExtension()->backgroundContentIsPersistent() && isBackgroundPage(frameIdentifier))
-        m_backgroundContentEventListeners.add(listenerType);
+    if (!protectedExtension()->backgroundContentIsPersistent() && isBackgroundPage(identifier))
+        m_backgroundContentEventListeners.add(type);
 
-    auto result = m_eventListenerFrames.add({ listenerType, contentWorldType }, WeakFrameCountedSet { });
-    result.iterator->value.add(*frame);
+    auto result = m_eventListenerPages.add({ type, contentWorldType }, WeakPageCountedSet { });
+    result.iterator->value.add(*page);
 }
 
-void WebExtensionContext::removeListener(WebCore::FrameIdentifier frameIdentifier, WebExtensionEventListenerType listenerType, WebExtensionContentWorldType contentWorldType, size_t removedCount)
+void WebExtensionContext::removeListener(WebPageProxyIdentifier identifier, WebExtensionEventListenerType type, WebExtensionContentWorldType contentWorldType, size_t removedCount)
 {
     ASSERT(removedCount);
 
-    RefPtr frame = WebFrameProxy::webFrame(frameIdentifier);
-    if (!frame)
+    RefPtr page = WebProcessProxy::webPage(identifier);
+    if (!page)
         return;
 
-    RELEASE_LOG_DEBUG(Extensions, "Unregistered %{public}zu event listener(s) for type %{public}hhu in %{public}@ world", removedCount, enumToUnderlyingType(listenerType), (NSString *)toDebugString(contentWorldType));
+    RELEASE_LOG_DEBUG(Extensions, "Unregistered %{public}zu event listener(s) for type %{public}hhu in %{public}@ world", removedCount, enumToUnderlyingType(type), (NSString *)toDebugString(contentWorldType));
 
-    if (!protectedExtension()->backgroundContentIsPersistent() && isBackgroundPage(frameIdentifier)) {
+    if (!protectedExtension()->backgroundContentIsPersistent() && isBackgroundPage(identifier)) {
         for (size_t i = 0; i < removedCount; ++i)
-            m_backgroundContentEventListeners.remove(listenerType);
+            m_backgroundContentEventListeners.remove(type);
     }
 
-    auto iterator = m_eventListenerFrames.find({ listenerType, contentWorldType });
-    if (iterator == m_eventListenerFrames.end())
+    auto iterator = m_eventListenerPages.find({ type, contentWorldType });
+    if (iterator == m_eventListenerPages.end())
         return;
 
     for (size_t i = 0; i < removedCount; ++i)
-        iterator->value.remove(*frame);
+        iterator->value.remove(*page);
 
     if (!iterator->value.isEmptyIgnoringNullReferences())
         return;
 
-    m_eventListenerFrames.remove(iterator);
+    m_eventListenerPages.remove(iterator);
 }
 
 } // namespace WebKit

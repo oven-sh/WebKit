@@ -164,7 +164,7 @@ void TextAnimationController::removeTransparentMarkersForTextAnimationID(const W
         return;
     }
 
-    document->markers().removeMarkers({ WebCore::DocumentMarkerType::TransparentContent }, [&](const WebCore::DocumentMarker& marker) {
+    document->markers().removeMarkers({ WebCore::DocumentMarker::Type::TransparentContent }, [&](const WebCore::DocumentMarker& marker) {
         return std::get<WebCore::DocumentMarker::TransparentContentData>(marker.data()).uuid == uuid ? WebCore::FilterMarkerResult::Remove : WebCore::FilterMarkerResult::Keep;
     });
 }
@@ -383,10 +383,7 @@ std::optional<WebCore::TextIndicatorData> TextAnimationController::createTextInd
         WebCore::TextIndicatorOption::IncludeSnapshotOfAllVisibleContentWithoutSelection,
         WebCore::TextIndicatorOption::ExpandClipBeyondVisibleRect,
         WebCore::TextIndicatorOption::SkipReplacedContent,
-        WebCore::TextIndicatorOption::RespectTextColor,
-#if PLATFORM(VISION)
-        WebCore::TextIndicatorOption::SnapshotContentAt3xBaseScale,
-#endif
+        WebCore::TextIndicatorOption::RespectTextColor
     };
 
     if (auto textIndicator = WebCore::TextIndicator::createWithRange(range, textIndicatorOptions, WebCore::TextIndicatorPresentationTransition::None, { }))

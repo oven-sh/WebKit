@@ -62,6 +62,11 @@ bool XRBinding::isValid() const
     return true;
 }
 
+Device& XRBinding::device()
+{
+    return m_device;
+}
+
 } // namespace WebGPU
 
 #pragma mark WGPU Stubs

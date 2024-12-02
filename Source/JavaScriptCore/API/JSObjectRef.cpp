@@ -55,8 +55,6 @@
 
 using namespace JSC;
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 JSClassRef JSClassCreate(const JSClassDefinition* definition)
 {
     JSC::initialize();
@@ -878,5 +876,3 @@ JSGlobalContextRef JSObjectGetGlobalContext(JSObjectRef objectRef)
         return nullptr;
     return reinterpret_cast<JSGlobalContextRef>(object->globalObject());
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -39,11 +39,11 @@ namespace WebKit {
 
 class WebPageProxy;
 
-class SmartMagnificationController : private IPC::MessageReceiver, public RefCounted<SmartMagnificationController> {
+class SmartMagnificationController : private IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(SmartMagnificationController);
     WTF_MAKE_NONCOPYABLE(SmartMagnificationController);
 public:
-    static Ref<SmartMagnificationController> create(WKContentView *);
+    SmartMagnificationController(WKContentView *);
     ~SmartMagnificationController();
 
     void handleSmartMagnificationGesture(WebCore::FloatPoint origin);
@@ -52,8 +52,6 @@ public:
     double zoomFactorForTargetRect(WebCore::FloatRect targetRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale);
 
 private:
-    explicit SmartMagnificationController(WKContentView *);
-
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
@@ -61,7 +59,7 @@ private:
     void scrollToRect(WebCore::FloatPoint origin, WebCore::FloatRect targetRect);
     std::tuple<WebCore::FloatRect, double, double> smartMagnificationTargetRectAndZoomScales(WebCore::FloatRect targetRect, double minimumScale, double maximumScale, bool addMagnificationPadding);
 
-    WeakPtr<WebPageProxy> m_webPageProxy;
+    WeakRef<WebPageProxy> m_webPageProxy;
     WKContentView *m_contentView;
 };
     

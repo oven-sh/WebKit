@@ -28,8 +28,6 @@
 
 #include <wtf/HexNumber.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 void printInternal(PrintStream& out, JSC::SIMDLane lane)
@@ -84,5 +82,3 @@ void printInternal(PrintStream& out, JSC::v128_t v)
 }
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

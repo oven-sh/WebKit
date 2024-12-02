@@ -646,19 +646,19 @@ void WebChromeClient::scrollContainingScrollViewsToRevealRect(const IntRect& r) 
 
 // End host window methods.
 
-bool WebChromeClient::shouldUnavailablePluginMessageBeButton(PluginUnavailabilityReason pluginUnavailabilityReason) const
+bool WebChromeClient::shouldUnavailablePluginMessageBeButton(RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason) const
 {
-    if (pluginUnavailabilityReason == PluginUnavailabilityReason::PluginMissing)
+    if (pluginUnavailabilityReason == RenderEmbeddedObject::PluginMissing)
         return [[m_webView UIDelegate] respondsToSelector:@selector(webView:didPressMissingPluginButton:)];
 
     return false;
 }
 
-void WebChromeClient::unavailablePluginButtonClicked(Element& element, PluginUnavailabilityReason pluginUnavailabilityReason) const
+void WebChromeClient::unavailablePluginButtonClicked(Element& element, RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason) const
 {
     ASSERT(element.hasTagName(objectTag) || element.hasTagName(embedTag) || element.hasTagName(appletTag));
 
-    ASSERT(pluginUnavailabilityReason == PluginUnavailabilityReason::PluginMissing);
+    ASSERT(pluginUnavailabilityReason == RenderEmbeddedObject::PluginMissing);
     CallUIDelegate(m_webView, @selector(webView:didPressMissingPluginButton:), kit(&element));
 }
 

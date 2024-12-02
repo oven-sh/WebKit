@@ -16,8 +16,6 @@ assert.sameValue(
   "`typeof Set.prototype.delete` is `'function'`"
 );
 
-verifyProperty(Set.prototype, "delete", {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(Set.prototype, "delete");
+verifyWritable(Set.prototype, "delete");
+verifyConfigurable(Set.prototype, "delete");

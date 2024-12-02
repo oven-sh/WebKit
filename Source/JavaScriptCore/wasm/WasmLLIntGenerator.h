@@ -27,7 +27,6 @@
 
 #if ENABLE(WEBASSEMBLY)
 
-#include "WasmFormat.h"
 #include <wtf/Expected.h>
 #include <wtf/text/WTFString.h>
 

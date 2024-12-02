@@ -107,10 +107,10 @@ public:
 
 private:
     // CheckedPtr interface
-    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
-    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
-    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
-    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    uint32_t ptrCount() const final { return CanMakeCheckedPtr::ptrCount(); }
+    uint32_t ptrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::ptrCountWithoutThreadCheck(); }
+    void incrementPtrCount() const final { CanMakeCheckedPtr::incrementPtrCount(); }
+    void decrementPtrCount() const final { CanMakeCheckedPtr::decrementPtrCount(); }
 
     WeakObjCPtr<WKFullScreenViewController> m_parent;
     RefPtr<WebCore::PlaybackSessionInterfaceIOS> m_interface;
@@ -458,10 +458,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     LMPlayableViewController *playableViewController = videoPresentationInterface ? videoPresentationInterface->playableViewController() : nil;
     UIViewController *environmentPickerButtonViewController = playableViewController.wks_environmentPickerButtonViewController;
 
-    if (environmentPickerButtonViewController) {
+    if (environmentPickerButtonViewController)
         playableViewController.wks_automaticallyDockOnFullScreenPresentation = YES;
-        playableViewController.wks_dismissFullScreenOnExitingDocking = YES;
-    }
 
     if (_environmentPickerButtonViewController == environmentPickerButtonViewController) {
         ASSERT(!environmentPickerButtonViewController || [[_stackView arrangedSubviews] containsObject:environmentPickerButtonViewController.view]);
@@ -471,6 +469,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self _removeEnvironmentPickerButtonView];
     if (!environmentPickerButtonViewController)
         return;
+
+    playableViewController.wks_dismissFullScreenOnExitingDocking = YES;
 
     [self addChildViewController:environmentPickerButtonViewController];
     [_stackView insertArrangedSubview:environmentPickerButtonViewController.view atIndex:1];
@@ -555,21 +555,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return [NSSet setWithObjects:@"prefersStatusBarHidden", @"view.window.windowScene.statusBarManager.statusBarHidden", @"view.window.safeAreaInsets", nil];
 }
 
-- (UIEdgeInsets)_additionalBottomInsets
-{
-    // If the window's safeAreaInsets.bottom is 0 then no additional bottom inset is necessary
-    // (e.g., because the device has a home button).
-    if (!self.view.window.safeAreaInsets.bottom)
-        return UIEdgeInsetsZero;
-
-    // This value was determined experimentally by finding the smallest value that
-    // allows for interacting with a slider aligned to the bottom of the web view without
-    // accidentally triggering system pan gestures.
-    static const UIEdgeInsets additionalBottomInsets = UIEdgeInsetsMake(0, 0, 8, 0);
-
-    return additionalBottomInsets;
-}
-
 - (UIEdgeInsets)additionalSafeAreaInsets
 {
     // When the status bar hides, the resulting changes to safeAreaInsets cause
@@ -577,22 +562,22 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     // Do not add additional insets if the status bar is not hidden.
     if (!self.view.window.windowScene.statusBarManager.statusBarHidden)
-        return [self _additionalBottomInsets];
+        return UIEdgeInsetsZero;
 
     // If the status bar is hidden while would would prefer it not be,
     // we should not reserve space as it likely won't re-appear.
     if (!self.prefersStatusBarHidden)
-        return [self _additionalBottomInsets];
+        return UIEdgeInsetsZero;
 
     // Additionally, hiding the status bar does not reduce safeAreaInsets when
     // the status bar resides within a larger safe area inset (e.g., due to the
     // camera area).
     if (self.view.window.safeAreaInsets.top > 0)
-        return [self _additionalBottomInsets];
+        return UIEdgeInsetsZero;
 
     // Otherwise, provide what is effectively a constant safeAreaInset.top by adding
     // an additional safeAreaInset at the top equal to the status bar height.
-    return UIEdgeInsetsAdd([self _additionalBottomInsets], UIEdgeInsetsMake(_nonZeroStatusBarHeight, 0, 0, 0), UIRectEdgeAll);
+    return UIEdgeInsetsMake(_nonZeroStatusBarHeight, 0, 0, 0);
 }
 
 - (void)setPrefersStatusBarHidden:(BOOL)value
@@ -746,10 +731,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         descriptor = [descriptor fontDescriptorByAddingAttributes:@{
             UIFontWeightTrait : [NSNumber numberWithDouble:UIFontWeightMedium]
         }];
-        RetainPtr buttonTitle = adoptNS([[NSMutableAttributedString alloc] initWithString:WebCore::fullscreenControllerViewSpatial() attributes:@{
+        fullscreenButtonConfiguration.attributedTitle = [[NSMutableAttributedString alloc] initWithString:WebCore::fullscreenControllerViewSpatial() attributes:@{
             NSFontAttributeName : [UIFont fontWithDescriptor:descriptor.get() size:0]
-        }]);
-        fullscreenButtonConfiguration.attributedTitle = buttonTitle.get();
+        }];
 
         [_enterVideoFullscreenButton setConfiguration:fullscreenButtonConfiguration];
         [_enterVideoFullscreenButton setContentHorizontalAlignment:UIControlContentHorizontalAlignmentLeft];
@@ -1018,7 +1002,13 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!page)
         return;
 
-    [self hideUI];
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    RefPtr videoPresentationManager = page->videoPresentationManager();
+    RefPtr videoPresentationInterface = videoPresentationManager ? videoPresentationManager->controlsManagerInterface() : nullptr;
+
+    LMPlayableViewController *playableViewController = videoPresentationInterface ? videoPresentationInterface->playableViewController() : nil;
+    playableViewController.wks_automaticallyDockOnFullScreenPresentation = NO;
+#endif
 
     page->enterFullscreen();
 }

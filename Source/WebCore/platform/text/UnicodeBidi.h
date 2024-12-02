@@ -23,11 +23,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
-namespace WTF {
-class TextStream;
-}
+#ifndef UnicodeBidi_h
+#define UnicodeBidi_h
 
 namespace WebCore {
 
@@ -50,6 +47,6 @@ inline bool isOverride(UnicodeBidi unicodeBidi)
     return unicodeBidi == UnicodeBidi::Override || unicodeBidi == UnicodeBidi::IsolateOverride;
 }
 
-WTF::TextStream& operator<<(WTF::TextStream&, UnicodeBidi);
-
 }
+
+#endif

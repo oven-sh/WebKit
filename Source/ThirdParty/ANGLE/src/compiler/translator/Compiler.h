@@ -189,11 +189,7 @@ class TCompiler : public TShHandleBase
 
     AdvancedBlendEquations getAdvancedBlendEquations() const { return mAdvancedBlendEquations; }
 
-    bool hasPixelLocalStorageUniforms() const { return !mPixelLocalStorageFormats.empty(); }
-    const std::vector<ShPixelLocalStorageFormat> &GetPixelLocalStorageFormats() const
-    {
-        return mPixelLocalStorageFormats;
-    }
+    bool hasPixelLocalStorageUniforms() const { return mHasPixelLocalStorageUniforms; }
 
     ShPixelLocalStorageType getPixelLocalStorageType() const { return mCompileOptions.pls.type; }
 
@@ -383,9 +379,8 @@ class TCompiler : public TShHandleBase
     // advanced blend equation parameters
     AdvancedBlendEquations mAdvancedBlendEquations;
 
-    // ANGLE_shader_pixel_local_storage: A mapping from binding index to the PLS uniform format at
-    // that index.
-    std::vector<ShPixelLocalStorageFormat> mPixelLocalStorageFormats;
+    // ANGLE_shader_pixel_local_storage.
+    bool mHasPixelLocalStorageUniforms;
 
     // Fragment shader uses screen-space derivatives
     bool mUsesDerivatives;

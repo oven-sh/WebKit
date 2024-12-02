@@ -37,11 +37,6 @@ namespace WebCore {
 class IntSize;
 class SharedBuffer;
 
-using TrackID = uint64_t;
-
-template<typename MappedArg>
-using TrackIDHashMap = HashMap<TrackID, MappedArg, WTF::IntHash<TrackID>, WTF::UnsignedWithZeroKeyHashTraits<TrackID>>;
-
 inline bool webkitGstCheckVersion(guint major, guint minor, guint micro)
 {
     guint currentMajor, currentMinor, currentMicro, currentNano;
@@ -74,9 +69,6 @@ std::optional<FloatSize> getVideoResolutionFromCaps(const GstCaps*);
 bool getSampleVideoInfo(GstSample*, GstVideoInfo&);
 #endif
 StringView capsMediaType(const GstCaps*);
-std::optional<TrackID> getStreamIdFromPad(const GRefPtr<GstPad>&);
-std::optional<TrackID> getStreamIdFromStream(const GRefPtr<GstStream>&);
-std::optional<TrackID> parseStreamId(StringView stringId);
 bool doCapsHaveType(const GstCaps*, const char*);
 bool areEncryptedCaps(const GstCaps*);
 Vector<String> extractGStreamerOptionsFromCommandLine();
@@ -347,10 +339,6 @@ void gstStructureIdSetValue(GstStructure*, GstId, const GValue*);
 bool gstStructureMapInPlace(GstStructure*, Function<bool(GstId, GValue*)>&&);
 StringView gstIdToString(GstId);
 void gstStructureFilterAndMapInPlace(GstStructure*, Function<bool(GstId, GValue*)>&&);
-
-#if USE(GBM)
-WARN_UNUSED_RETURN GRefPtr<GstCaps> buildDMABufCaps();
-#endif
 
 } // namespace WebCore
 

@@ -65,24 +65,6 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Navigation);
 
-class Navigation::NavigationHistoryEntryWrapper {
-public:
-    NavigationHistoryEntryWrapper() = default;
-
-    NavigationHistoryEntryWrapper(Ref<NavigationHistoryEntry>&& entry)
-        : m_entry(WTFMove(entry))
-        , m_pendingActivity(m_entry->makePendingActivity(*m_entry))
-    { }
-
-    NavigationHistoryEntry* operator->() const { return m_entry.get(); }
-    NavigationHistoryEntry* get() const { return m_entry.get(); }
-    NavigationHistoryEntry& operator*() const { ASSERT(m_entry); return *m_entry; }
-
-private:
-    RefPtr<NavigationHistoryEntry> m_entry;
-    RefPtr<ActiveDOMObject::PendingActivity<NavigationHistoryEntry>> m_pendingActivity;
-};
-
 Navigation::Navigation(LocalDOMWindow& window)
     : LocalDOMWindowProperty(&window)
 {
@@ -111,11 +93,11 @@ bool Navigation::canGoForward() const
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#getting-the-navigation-api-entry-index
-std::optional<size_t> Navigation::getEntryIndexOfHistoryItem(const Vector<NavigationHistoryEntryWrapper>& entries, const HistoryItem& item, size_t start)
+static std::optional<size_t> getEntryIndexOfHistoryItem(const Vector<Ref<NavigationHistoryEntry>>& entries, const HistoryItem& item, size_t start = 0)
 {
     // FIXME: We could have a more efficient solution than iterating through a list.
     for (size_t index = start; index < entries.size(); index++) {
-        if (entries[index]->associatedHistoryItem().itemSequenceNumber() == item.itemSequenceNumber())
+        if (entries[index]->associatedHistoryItem() == item)
             return index;
     }
 
@@ -144,41 +126,19 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
         bool shouldProcessPreviousNavigationEntries = [&]() {
             if (!previousNavigation->m_entries.size())
                 return false;
+            if (navigationType == NavigationNavigationType::Traverse)
+                return false;
             if (!frame()->document()->protectedSecurityOrigin()->isSameOriginAs(previousWindow->document()->protectedSecurityOrigin()))
                 return false;
             return true;
         }();
         if (shouldProcessPreviousNavigationEntries) {
             for (auto& entry : previousNavigation->m_entries)
-                m_entries.append(NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), *entry));
-
-            RELEASE_ASSERT(m_entries.size() > previousNavigation->m_currentEntryIndex);
-
-            // FIXME: This should handle Push, however somewhere before here the currentEntry of previousNavigation was updated
-            // to the new navigation so we get duplicate entries.
-            if (navigationType != NavigationNavigationType::Push) {
-                if (navigationType == NavigationNavigationType::Traverse) {
-                    m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, *currentItem);
-                    if (m_currentEntryIndex) {
-                        updateForActivation(frame()->history().previousItem(), navigationType);
-                        return;
-                    }
-                    // We are doing a cross document subframe traversal, we can't rely on previous window, so clear
-                    // m_entries and fall back to the normal algorithm for new windows.
-                    m_entries = { };
-                } else {
-                    auto previousEntry = m_entries[*previousNavigation->m_currentEntryIndex];
-
-                    if (navigationType == NavigationNavigationType::Replace)
-                        m_entries[*previousNavigation->m_currentEntryIndex] = NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), *currentItem);
-
-                    m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, *currentItem);
-
-                    if (navigationType) // Unset in the case of forms/POST requests.
-                        m_activation = NavigationActivation::create(*navigationType, *currentEntry(), previousEntry.get());
-
-                    return;
-                }
+                m_entries.append(NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), entry.get()));
+            m_currentEntryIndex = previousNavigation->m_currentEntryIndex;
+            if (navigationType == NavigationNavigationType::Reload) {
+                updateForActivation(currentItem.get(), navigationType);
+                return;
             }
         }
     }
@@ -236,9 +196,9 @@ void Navigation::updateForActivation(HistoryItem* previousItem, std::optional<Na
     bool isSameOrigin = frame()->document() && previousItem && SecurityOrigin::create(previousItem->url())->isSameOriginAs(frame()->document()->securityOrigin());
     auto previousEntryIndex = previousItem ? getEntryIndexOfHistoryItem(m_entries, *previousItem) : std::nullopt;
 
-    RefPtr<NavigationHistoryEntry> previousEntry;
+    RefPtr<NavigationHistoryEntry> previousEntry = nullptr;
     if (previousEntryIndex && isSameOrigin)
-        previousEntry = m_entries.at(previousEntryIndex.value()).get();
+        previousEntry = m_entries.at(previousEntryIndex.value()).ptr();
     if (type == NavigationNavigationType::Reload)
         previousEntry = currentEntry();
     else if (type == NavigationNavigationType::Replace && (isSameOrigin || wasAboutBlank))
@@ -285,19 +245,18 @@ RefPtr<NavigationActivation> Navigation::createForPageswapEvent(HistoryItem* new
     return nullptr;
 }
 
-Vector<Ref<NavigationHistoryEntry>> Navigation::entries() const
+const Vector<Ref<NavigationHistoryEntry>>& Navigation::entries() const
 {
+    static NeverDestroyed<Vector<Ref<NavigationHistoryEntry>>> emptyEntries;
     if (hasEntriesAndEventsDisabled())
-        return { };
-    return WTF::map(m_entries, [](auto& entryWrapper) {
-        return Ref { *entryWrapper };
-    });
+        return emptyEntries;
+    return m_entries;
 }
 
 NavigationHistoryEntry* Navigation::currentEntry() const
 {
     if (!hasEntriesAndEventsDisabled() && m_currentEntryIndex)
-        return m_entries.at(*m_currentEntryIndex).get();
+        return m_entries.at(*m_currentEntryIndex).ptr();
     return nullptr;
 }
 
@@ -321,8 +280,6 @@ enum EventTargetInterfaceType Navigation::eventTargetInterface() const
 
 static RefPtr<DOMPromise> createDOMPromise(const DeferredPromise& deferredPromise)
 {
-    Locker<JSC::JSLock> locker(commonVM().apiLock());
-
     auto promiseValue = deferredPromise.promise();
     auto& jsPromise = *JSC::jsCast<JSC::JSPromise*>(promiseValue);
     auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(jsPromise.globalObject());
@@ -456,7 +413,6 @@ Navigation::Result Navigation::navigate(const String& url, NavigateOptions&& opt
 
     auto request = FrameLoadRequest(*frame(), newURL);
     request.setNavigationHistoryBehavior(options.history);
-    request.setIsFromNavigationAPI(true);
     frame()->loader().loadFrameRequest(WTFMove(request), nullptr, { });
 
     // If the load() call never made it to the point that NavigateEvent was emitted, thus promoteUpcomingAPIMethodTracker() called, this will be true.
@@ -474,7 +430,8 @@ Navigation::Result Navigation::performTraversal(const String& key, Navigation::O
     if (!window()->protectedDocument()->isFullyActive() || window()->document()->unloadCounter())
         return createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::InvalidStateError, "Invalid state"_s);
 
-    if (!findEntryByKey(key))
+    auto entry = findEntryByKey(key);
+    if (!entry)
         createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::AbortError, "Navigation aborted"_s);
 
     if (!frame()->isMainFrame() && !window()->protectedDocument()->canNavigate(&frame()->page()->mainFrame()))
@@ -493,7 +450,7 @@ Navigation::Result Navigation::performTraversal(const String& key, Navigation::O
     RefPtr apiMethodTracker = addUpcomingTrarveseAPIMethodTracker(WTFMove(committed), WTFMove(finished), key, options.info);
 
     // FIXME: 11. Let sourceSnapshotParams be the result of snapshotting source snapshot params given document.
-    frame()->protectedNavigationScheduler()->scheduleHistoryNavigationByKey(key, [apiMethodTracker] (ScheduleHistoryNavigationResult result) {
+    frame()->checkedNavigationScheduler()->scheduleHistoryNavigationByKey(key, [apiMethodTracker] (ScheduleHistoryNavigationResult result) {
         if (result == ScheduleHistoryNavigationResult::Aborted)
             createErrorResult(WTFMove(apiMethodTracker->committedPromise), WTFMove(apiMethodTracker->finishedPromise), ExceptionCode::AbortError, "Navigation aborted"_s);
     });
@@ -501,22 +458,23 @@ Navigation::Result Navigation::performTraversal(const String& key, Navigation::O
     return apiMethodTrackerDerivedResult(*apiMethodTracker);
 }
 
-RefPtr<NavigationHistoryEntry> Navigation::findEntryByKey(const String& key)
+std::optional<Ref<NavigationHistoryEntry>> Navigation::findEntryByKey(const String& key)
 {
-    auto entryIndex = m_entries.findIf([&key](auto& entry) {
+    auto entryIndex = m_entries.findIf([&key](const Ref<NavigationHistoryEntry> entry) {
         return entry->key() == key;
     });
 
     if (entryIndex == notFound)
-        return nullptr;
+        return std::nullopt;
 
-    return m_entries[entryIndex].get();
+    return m_entries[entryIndex];
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigation-traverseto
 Navigation::Result Navigation::traverseTo(const String& key, Options&& options, Ref<DeferredPromise>&& committed, Ref<DeferredPromise>&& finished)
 {
-    if (!findEntryByKey(key))
+    auto entry = findEntryByKey(key);
+    if (!entry)
         return createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::InvalidStateError, "Invalid key"_s);
 
     return performTraversal(key, options, WTFMove(committed), WTFMove(finished));
@@ -528,7 +486,7 @@ Navigation::Result Navigation::back(Options&& options, Ref<DeferredPromise>&& co
     if (!canGoBack())
         return createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::InvalidStateError, "Cannot go back"_s);
 
-    auto previousEntry = m_entries[m_currentEntryIndex.value() - 1];
+    Ref previousEntry = m_entries[m_currentEntryIndex.value() - 1];
 
     return performTraversal(previousEntry->key(), options, WTFMove(committed), WTFMove(finished));
 }
@@ -539,7 +497,7 @@ Navigation::Result Navigation::forward(Options&& options, Ref<DeferredPromise>&&
     if (!canGoForward())
         return createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::InvalidStateError, "Cannot go forward"_s);
 
-    auto nextEntry = m_entries[m_currentEntryIndex.value() + 1];
+    Ref nextEntry = m_entries[m_currentEntryIndex.value() + 1];
 
     return performTraversal(nextEntry->key(), options, WTFMove(committed), WTFMove(finished));
 }
@@ -627,7 +585,7 @@ void Navigation::updateForNavigation(Ref<HistoryItem>&& item, NavigationNavigati
     if (!oldCurrentEntry)
         return;
 
-    Vector<NavigationHistoryEntryWrapper> disposedEntries;
+    Vector<Ref<NavigationHistoryEntry>> disposedEntries;
 
     if (navigationType == NavigationNavigationType::Traverse) {
         m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, item);
@@ -662,8 +620,8 @@ void Navigation::updateForReactivation(Vector<Ref<HistoryItem>>& newHistoryItems
     if (hasEntriesAndEventsDisabled())
         return;
 
-    Vector<NavigationHistoryEntryWrapper> newEntries;
-    Vector<NavigationHistoryEntryWrapper> oldEntries = std::exchange(m_entries, { });
+    Vector<Ref<NavigationHistoryEntry>> newEntries;
+    Vector<Ref<NavigationHistoryEntry>> oldEntries = std::exchange(m_entries, { });
 
     for (Ref item : newHistoryItems) {
         RefPtr<NavigationHistoryEntry> newEntry;
@@ -671,7 +629,7 @@ void Navigation::updateForReactivation(Vector<Ref<HistoryItem>>& newHistoryItems
         for (size_t entryIndex = 0; entryIndex < oldEntries.size(); entryIndex++) {
             auto& entry = oldEntries.at(entryIndex);
             if (entry->associatedHistoryItem() == item) {
-                newEntry = entry.get();
+                newEntry = entry.ptr();
                 oldEntries.remove(entryIndex);
                 break;
             }
@@ -680,7 +638,7 @@ void Navigation::updateForReactivation(Vector<Ref<HistoryItem>>& newHistoryItems
         if (!newEntry)
             newEntry = NavigationHistoryEntry::create(scriptExecutionContext(), WTFMove(item));
 
-        newEntries.append(*newEntry);
+        newEntries.append(newEntry.releaseNonNull());
     }
 
     m_entries = WTFMove(newEntries);
@@ -744,7 +702,7 @@ void Navigation::abortOngoingNavigation(NavigateEvent& event)
     if (!globalObject)
         return;
 
-    m_focusChangedDuringOngoingNavigation = FocusDidChange::No;
+    m_focusChangedDuringOnoingNavigation = false;
     m_suppressNormalScrollRestorationDuringOngoingNavigation = false;
 
     if (event.isBeingDispatched())
@@ -760,13 +718,10 @@ void Navigation::abortOngoingNavigation(NavigateEvent& event)
     if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(error)) {
         if (auto result = extractErrorInformationFromErrorInstance(globalObject, *errorInstance))
             errorInformation = WTFMove(*result);
-        // Default to document url if extractErrorInformationFromErrorInstance was not able to determine sourceURL.
-        if (errorInformation.sourceURL.isEmpty())
-            errorInformation.sourceURL = scriptExecutionContext()->url().string();
     }
 
-    if (RefPtr signal = event.signal())
-        signal->signalAbort(domException);
+    if (event.signal())
+        event.signal()->signalAbort(domException);
 
     m_ongoingNavigateEvent = nullptr;
 
@@ -833,13 +788,13 @@ static void waitForAllPromises(const Vector<RefPtr<DOMPromise>>& promises, Funct
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#inner-navigate-event-firing-algorithm
-Navigation::DispatchResult Navigation::innerDispatchNavigateEvent(NavigationNavigationType navigationType, Ref<NavigationDestination>&& destination, const String& downloadRequestFilename, FormState* formState, SerializedScriptValue* classicHistoryAPIState)
+bool Navigation::innerDispatchNavigateEvent(NavigationNavigationType navigationType, Ref<NavigationDestination>&& destination, const String& downloadRequestFilename, FormState* formState, SerializedScriptValue* classicHistoryAPIState)
 {
     if (hasEntriesAndEventsDisabled()) {
         ASSERT(!m_ongoingAPIMethodTracker);
         ASSERT(!m_upcomingNonTraverseMethodTracker);
         ASSERT(m_upcomingTraverseMethodTrackers.isEmpty());
-        return DispatchResult::Completed;
+        return true;
     }
 
     bool wasBeingDispatched = m_ongoingNavigateEvent ? m_ongoingNavigateEvent->isBeingDispatched() : false;
@@ -849,7 +804,7 @@ Navigation::DispatchResult Navigation::innerDispatchNavigateEvent(NavigationNavi
     // Prevent recursion on synchronous history navigation steps issued
     // from the navigate event handler.
     if (wasBeingDispatched && classicHistoryAPIState)
-        return DispatchResult::Completed;
+        return true;
 
     promoteUpcomingAPIMethodTracker(destination->key());
 
@@ -895,7 +850,7 @@ Navigation::DispatchResult Navigation::innerDispatchNavigateEvent(NavigationNavi
 
     Ref event = NavigateEvent::create(eventNames().navigateEvent, init, abortController.get());
     m_ongoingNavigateEvent = event.ptr();
-    m_focusChangedDuringOngoingNavigation = FocusDidChange::No;
+    m_focusChangedDuringOnoingNavigation = false;
     m_suppressNormalScrollRestorationDuringOngoingNavigation = false;
 
     dispatchEvent(event);
@@ -903,14 +858,14 @@ Navigation::DispatchResult Navigation::innerDispatchNavigateEvent(NavigationNavi
     // If the frame was detached in our event.
     if (!frame()) {
         abortOngoingNavigation(event);
-        return DispatchResult::Aborted;
+        return false;
     }
 
     if (event->defaultPrevented()) {
         // FIXME: If navigationType is "traverse", then consume history-action user activation.
         if (!event->signal()->aborted())
             abortOngoingNavigation(event);
-        return DispatchResult::Aborted;
+        return false;
     }
 
     bool endResultIsSameDocument = event->wasIntercepted() || destination->sameDocument();
@@ -965,63 +920,57 @@ Navigation::DispatchResult Navigation::innerDispatchNavigateEvent(NavigationNavi
             promiseList.append(WTFMove(promiseAndWrapper.first));
         }
 
-        // FIXME: this emulates the behavior of a Promise wrapped around waitForAll, but we may want the real
-        // thing if the ordering-and-transition tests show timing related issues related to this.
-        protectedScriptExecutionContext()->checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [this, promiseList, abortController, document, apiMethodTracker]() {
-            waitForAllPromises(promiseList, [abortController, document, apiMethodTracker, weakThis = WeakPtr { *this }]() mutable {
-                if (!weakThis || abortController->signal().aborted() || !document->isFullyActive() || !weakThis->m_ongoingNavigateEvent)
-                    return;
+        waitForAllPromises(promiseList, [this, abortController, document, apiMethodTracker, weakThis = WeakPtr { *this }]() mutable {
+            if (!weakThis || abortController->signal().aborted() || !document->isFullyActive() || !m_ongoingNavigateEvent)
+                return;
 
-                RefPtr strongThis = weakThis.get();
+            RefPtr strongThis = weakThis.get();
 
-                auto focusChanged = std::exchange(strongThis->m_focusChangedDuringOngoingNavigation, FocusDidChange::No);
-                strongThis->m_ongoingNavigateEvent->finish(*document, InterceptionHandlersDidFulfill::Yes, focusChanged);
-                strongThis->m_ongoingNavigateEvent = nullptr;
+            m_ongoingNavigateEvent->finish(*document, InterceptionHandlersDidFulfill::Yes);
+            m_ongoingNavigateEvent = nullptr;
 
-                strongThis->dispatchEvent(Event::create(eventNames().navigatesuccessEvent, { }));
+            dispatchEvent(Event::create(eventNames().navigatesuccessEvent, { }));
 
-                if (apiMethodTracker)
-                    strongThis->resolveFinishedPromise(apiMethodTracker.get());
+            if (apiMethodTracker)
+                resolveFinishedPromise(apiMethodTracker.get());
 
-                if (RefPtr transition = std::exchange(strongThis->m_transition, nullptr))
-                    transition->resolvePromise();
+            if (RefPtr transition = std::exchange(m_transition, nullptr))
+                transition->resolvePromise();
 
-                strongThis->m_ongoingNavigateEvent = nullptr;
+            m_ongoingNavigateEvent = nullptr;
 
-            }, [abortController, document, apiMethodTracker, weakThis = WeakPtr { *this }](JSC::JSValue result) mutable {
-                if (!weakThis || abortController->signal().aborted() || !document->isFullyActive() || !weakThis->m_ongoingNavigateEvent)
-                    return;
+        }, [this, abortController, document, apiMethodTracker, weakThis = WeakPtr { *this }](JSC::JSValue result) mutable {
+            if (!weakThis || abortController->signal().aborted() || !document->isFullyActive() || !m_ongoingNavigateEvent)
+                return;
 
-                RefPtr strongThis = weakThis.get();
+            RefPtr strongThis = weakThis.get();
 
-                auto focusChanged = std::exchange(strongThis->m_focusChangedDuringOngoingNavigation, FocusDidChange::No);
-                strongThis->m_ongoingNavigateEvent->finish(*document, InterceptionHandlersDidFulfill::No, focusChanged);
-                strongThis->m_ongoingNavigateEvent = nullptr;
+            m_ongoingNavigateEvent->finish(*document, InterceptionHandlersDidFulfill::No);
+            m_ongoingNavigateEvent = nullptr;
 
-                ErrorInformation errorInformation;
-                String errorMessage;
-                if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
-                    if (auto result = extractErrorInformationFromErrorInstance(strongThis->protectedScriptExecutionContext()->globalObject(), *errorInstance)) {
-                        errorInformation = WTFMove(*result);
-                        errorMessage = makeString("Uncaught "_s, errorInformation.errorTypeString, ": "_s, errorInformation.message);
-                    }
+            ErrorInformation errorInformation;
+            String errorMessage;
+            if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+                if (auto result = extractErrorInformationFromErrorInstance(protectedScriptExecutionContext()->globalObject(), *errorInstance)) {
+                    errorInformation = WTFMove(*result);
+                    errorMessage = makeString("Uncaught "_s, errorInformation.errorTypeString, ": "_s, errorInformation.message);
                 }
-                auto exception = Exception(ExceptionCode::UnknownError, errorMessage);
-                auto domException = createDOMException(*strongThis->protectedScriptExecutionContext()->globalObject(), exception.isolatedCopy());
+            }
+            auto exception = Exception(ExceptionCode::UnknownError, errorMessage);
+            auto domException = createDOMException(*protectedScriptExecutionContext()->globalObject(), exception.isolatedCopy());
 
-                strongThis->dispatchEvent(ErrorEvent::create(eventNames().navigateerrorEvent, errorMessage, errorInformation.sourceURL, errorInformation.line, errorInformation.column, { strongThis->protectedScriptExecutionContext()->globalObject()->vm(), result }));
+            dispatchEvent(ErrorEvent::create(eventNames().navigateerrorEvent, errorMessage, errorInformation.sourceURL, errorInformation.line, errorInformation.column, { protectedScriptExecutionContext()->globalObject()->vm(), result }));
 
-                if (apiMethodTracker)
-                    apiMethodTracker->finishedPromise->reject<IDLAny>(result, RejectAsHandled::Yes);
+            if (apiMethodTracker)
+                apiMethodTracker->finishedPromise->reject<IDLAny>(result, RejectAsHandled::Yes);
 
-                if (RefPtr transition = std::exchange(strongThis->m_transition, nullptr))
-                    transition->rejectPromise(exception, domException);
-            });
+            if (RefPtr transition = std::exchange(m_transition, nullptr))
+                transition->rejectPromise(exception, domException);
         });
 
         // If a new event has been dispatched in our event handler then we were aborted above.
         if (m_ongoingNavigateEvent != event.ptr())
-            return DispatchResult::Aborted;
+            return false;
     } else if (apiMethodTracker)
         cleanupAPIMethodTracker(apiMethodTracker.get());
     else {
@@ -1033,21 +982,21 @@ Navigation::DispatchResult Navigation::innerDispatchNavigateEvent(NavigationNavi
 
     // FIXME: Step 35 Clean up after running script
 
-    return event->wasIntercepted() ? DispatchResult::Intercepted : DispatchResult::Completed;
+    return !event->wasIntercepted();
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#fire-a-traverse-navigate-event
-Navigation::DispatchResult Navigation::dispatchTraversalNavigateEvent(HistoryItem& historyItem)
+bool Navigation::dispatchTraversalNavigateEvent(HistoryItem& historyItem)
 {
     auto* currentItem = frame() ? frame()->history().currentItem() : nullptr;
     bool isSameDocument = currentItem && currentItem->documentSequenceNumber() == historyItem.documentSequenceNumber();
 
     RefPtr<NavigationHistoryEntry> destinationEntry;
     auto index = m_entries.findIf([&historyItem](const auto& entry) {
-        return entry->associatedHistoryItem().itemSequenceNumber() == historyItem.itemSequenceNumber();
+        return entry->associatedHistoryItem() == historyItem;
     });
     if (index != notFound)
-        destinationEntry = m_entries[index].get();
+        destinationEntry = m_entries[index].ptr();
 
     // FIXME: Set destinations state
     Ref destination = NavigationDestination::create(historyItem.url(), WTFMove(destinationEntry), isSameDocument);
@@ -1061,14 +1010,14 @@ bool Navigation::dispatchPushReplaceReloadNavigateEvent(const URL& url, Navigati
     Ref destination = NavigationDestination::create(url, nullptr, isSameDocument);
     if (classicHistoryAPIState)
         destination->setStateObject(classicHistoryAPIState);
-    return innerDispatchNavigateEvent(navigationType, WTFMove(destination), { }, formState, classicHistoryAPIState) == DispatchResult::Completed;
+    return innerDispatchNavigateEvent(navigationType, WTFMove(destination), { }, formState, classicHistoryAPIState);
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#fire-a-download-request-navigate-event
 bool Navigation::dispatchDownloadNavigateEvent(const URL& url, const String& downloadFilename)
 {
     Ref destination = NavigationDestination::create(url, nullptr, false);
-    return innerDispatchNavigateEvent(NavigationNavigationType::Push, WTFMove(destination), downloadFilename) == DispatchResult::Completed;
+    return innerDispatchNavigateEvent(NavigationNavigationType::Push, WTFMove(destination), downloadFilename);
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#inform-the-navigation-api-about-aborting-navigation

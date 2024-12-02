@@ -79,9 +79,9 @@ std::optional<CString> Coder<CString>::decodeForPersistence(Decoder& decoder)
     if (!decoder.bufferIsLargeEnoughToContain<char>(*length))
         return std::nullopt;
 
-    std::span<char> buffer;
+    char* buffer;
     CString string = CString::newUninitialized(*length, buffer);
-    if (!decoder.decodeFixedLengthData(byteCast<uint8_t>(buffer)))
+    if (!decoder.decodeFixedLengthData({ byteCast<uint8_t>(buffer), *length }))
         return std::nullopt;
 
     return string;
@@ -112,9 +112,9 @@ static inline std::optional<String> decodeStringText(Decoder& decoder, uint32_t 
     if (!decoder.bufferIsLargeEnoughToContain<CharacterType>(length))
         return std::nullopt;
 
-    std::span<CharacterType> buffer;
+    CharacterType* buffer;
     String string = String::createUninitialized(length, buffer);
-    if (!decoder.decodeFixedLengthData(asMutableByteSpan(buffer)))
+    if (!decoder.decodeFixedLengthData({ reinterpret_cast<uint8_t*>(buffer), length * sizeof(CharacterType) }))
         return std::nullopt;
     
     return string;

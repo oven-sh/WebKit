@@ -115,10 +115,10 @@ WebExtensionMenuItem::WebExtensionMenuItem(WebExtensionContext& extensionContext
         m_contexts = WebExtensionMenuItemContextType::Page;
 
     if (!parameters.iconsJSON.isEmpty()) {
-        RefPtr parsedIcons = JSON::Value::parseJSON(parameters.iconsJSON);
-        m_icons = parsedIcons ? parsedIcons->asObject() : nullptr;
+        id parsedIcons = parseJSON(parameters.iconsJSON, JSONOptions::FragmentsAllowed);
+        m_icons = dynamic_objc_cast<NSDictionary>(parsedIcons);
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
-        m_iconVariants = parsedIcons ? parsedIcons->asArray() : nullptr;
+        m_iconVariants = dynamic_objc_cast<NSArray>(parsedIcons);
 #endif
         clearIconCache();
     }
@@ -189,10 +189,10 @@ void WebExtensionMenuItem::update(const WebExtensionMenuItemParameters& paramete
         m_command = extensionContext()->command(parameters.command);
 
     if (!parameters.iconsJSON.isNull()) {
-        RefPtr parsedIcons = JSON::Value::parseJSON(parameters.iconsJSON);
-        m_icons = parsedIcons ? parsedIcons->asObject() : nullptr;
+        id parsedIcons = parseJSON(parameters.iconsJSON, JSONOptions::FragmentsAllowed);
+        m_icons = dynamic_objc_cast<NSDictionary>(parsedIcons);
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
-        m_iconVariants = parsedIcons ? parsedIcons->asArray() : nullptr;
+        m_iconVariants = dynamic_objc_cast<NSArray>(parsedIcons);
 #endif
         clearIconCache();
     }
@@ -298,9 +298,8 @@ CocoaMenuItem *WebExtensionMenuItem::platformMenuItem(const WebExtensionMenuItem
         result.keyEquivalentModifierMask = command->modifierFlags().toRaw();
     }
 
-    auto idealSize = WebCore::FloatSize(16, 16);
-    auto *image = toCocoaImage(icon(idealSize));
-
+    auto idealSize = CGSizeMake(16, 16);
+    auto *image = icon(idealSize);
     image.size = idealSize;
 
     result.image = image;
@@ -326,7 +325,7 @@ CocoaMenuItem *WebExtensionMenuItem::platformMenuItem(const WebExtensionMenuItem
 
     // iOS does not support sub-menus that are disabled or hidden, so return a normal action in that case.
     if (submenuItems().isEmpty() || !isEnabled() || !isVisible()) {
-        auto *action = [UIAction actionWithTitle:processedTitle image:toCocoaImage(icon({ 20, 20 })) identifier:nil handler:makeBlockPtr([this, protectedThis = Ref { *this }, contextParameters](UIAction *) mutable {
+        auto *action = [UIAction actionWithTitle:processedTitle image:icon(CGSizeMake(20, 20)) identifier:nil handler:makeBlockPtr([this, protectedThis = Ref { *this }, contextParameters](UIAction *) mutable {
             if (RefPtr context = extensionContext())
                 context->performMenuItem(const_cast<WebExtensionMenuItem&>(*this), contextParameters, WebExtensionContext::UserTriggered::Yes);
         }).get()];
@@ -343,11 +342,11 @@ CocoaMenuItem *WebExtensionMenuItem::platformMenuItem(const WebExtensionMenuItem
         return action;
     }
 
-    return [UIMenu menuWithTitle:processedTitle image:toCocoaImage(icon({ 20, 20 })) identifier:nil options:0 children:submenuItemArray];
+    return [UIMenu menuWithTitle:processedTitle image:icon(CGSizeMake(20, 20)) identifier:nil options:0 children:submenuItemArray];
 #endif
 }
 
-RefPtr<WebCore::Icon> WebExtensionMenuItem::icon(WebCore::FloatSize idealSize) const
+CocoaImage *WebExtensionMenuItem::icon(CGSize idealSize) const
 {
     ASSERT(extensionContext());
 
@@ -356,27 +355,27 @@ RefPtr<WebCore::Icon> WebExtensionMenuItem::icon(WebCore::FloatSize idealSize) c
 #else
     if (!m_icons)
 #endif
-        return nullptr;
+        return nil;
 
     // Clear the cache if the display scales change (connecting display, etc.)
-    auto currentScales = availableScreenScales();
-    if (currentScales != m_cachedIconScales)
+    auto *currentScales = availableScreenScales();
+    if (![currentScales isEqualToSet:m_cachedIconScales.get()])
         clearIconCache();
 
     if (m_cachedIcon && CGSizeEqualToSize(idealSize, m_cachedIconIdealSize))
-        return m_cachedIcon;
+        return m_cachedIcon.get();
 
-    RefPtr<WebCore::Icon> result;
+    CocoaImage *result;
 
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
     if (m_iconVariants) {
-        result = extensionContext()->protectedExtension()->bestIconVariant(m_iconVariants, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
+        result = extensionContext()->protectedExtension()->bestImageForIconVariants(m_iconVariants.get(), idealSize, [&](Ref<API::Error> error) {
             extensionContext()->recordError(wrapper(error.get()));
         });
     } else
 #endif // ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
     if (m_icons) {
-        result = extensionContext()->protectedExtension()->bestIcon(m_icons, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
+        result = extensionContext()->protectedExtension()->bestImageInIconsDictionary(m_icons.get(), idealSize, [&](Ref<API::Error> error) {
             extensionContext()->recordError(wrapper(error.get()));
         });
     }
@@ -391,14 +390,14 @@ RefPtr<WebCore::Icon> WebExtensionMenuItem::icon(WebCore::FloatSize idealSize) c
 
     clearIconCache();
 
-    return nullptr;
+    return nil;
 }
 
 void WebExtensionMenuItem::clearIconCache() const
 {
     m_cachedIcon = nil;
-    m_cachedIconScales = { };
-    m_cachedIconIdealSize = { };
+    m_cachedIconScales = nil;
+    m_cachedIconIdealSize = CGSizeZero;
 }
 
 } // namespace WebKit

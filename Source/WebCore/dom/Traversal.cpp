@@ -50,7 +50,7 @@ ExceptionOr<unsigned short> NodeIteratorBase::acceptNodeSlowCase(Node& node)
         return NodeFilter::FILTER_SKIP;
 
     SetForScope isActive(m_isActive, true);
-    auto callbackResult = m_filter->acceptNodeRethrowingException(node);
+    auto callbackResult = m_filter->acceptNode(node);
     if (callbackResult.type() == CallbackResultType::ExceptionThrown)
         return Exception { ExceptionCode::ExistingExceptionError };
     return callbackResult.releaseReturnValue();

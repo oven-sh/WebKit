@@ -59,6 +59,7 @@ class GraphicsLayerFactory;
 class LocalFrame;
 class LocalFrameView;
 class TiledBacking;
+struct ViewportAttributes;
 enum class DelegatedScrollingMode : uint8_t;
 }
 
@@ -159,6 +160,7 @@ public:
 
 #if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
     virtual void updateGeometry(const WebCore::IntSize&, CompletionHandler<void()>&&) = 0;
+    virtual void didChangeViewportAttributes(WebCore::ViewportAttributes&&) = 0;
     virtual void deviceOrPageScaleFactorChanged() = 0;
     virtual bool enterAcceleratedCompositingModeIfNeeded() = 0;
     virtual void backgroundColorDidChange() { };

@@ -32,8 +32,6 @@
 #include <wtf/text/StringParsingBuffer.h>
 #include <wtf/text/StringView.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 enum class ApplicationCacheParserMode { Explicit, Fallback, OnlineAllowlist, Unknown };
@@ -80,7 +78,7 @@ std::optional<ApplicationCacheManifest> parseApplicationCacheManifest(const URL&
     bool allowFallbackNamespaceOutsideManifestPath = equalLettersIgnoringASCIICase(manifestMIMEType, cacheManifestMIMEType);
     auto manifestPath = WebCore::manifestPath(manifestURL);
 
-    auto manifestString = TextResourceDecoder::create(cacheManifestMIMEType, "UTF-8"_s)->decodeAndFlush(data);
+    auto manifestString = TextResourceDecoder::create(cacheManifestMIMEType, "UTF-8")->decodeAndFlush(data);
 
     return readCharactersForParsing(manifestString, [&]<typename CharacterType> (StringParsingBuffer<CharacterType> buffer) -> std::optional<ApplicationCacheManifest> {
         ApplicationCacheManifest manifest;
@@ -234,5 +232,3 @@ std::optional<ApplicationCacheManifest> parseApplicationCacheManifest(const URL&
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

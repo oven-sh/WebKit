@@ -57,17 +57,12 @@ function finishTest() {
     document.getElementById("both").classList.remove("wide"); // third div loses both
     document.getElementById("both").classList.remove("tall"); // vertical and horizontal scrollbars
     document.getElementById("corner").classList.remove("resizeWidget"); // bottom div loses a resize corner but no scrollbars
-    testRunner?.notifyDone();
 }
 
-onload = async () => {
-  if (window.testRunner) {
-      testRunner.dumpAsText(true);
-      testRunner.waitUntilDone();
-      await testRunner.displayAndTrackRepaints(); // Paint once with all overflow controls visible.
-      finishTest();
-  } else
-      window.setTimeout(finishTest, 0);
-}
-
+if (window.testRunner) {
+    testRunner.dumpAsText(true);
+    testRunner.displayAndTrackRepaints(); // Paint once with all overflow controls visible.
+    finishTest();
+} else
+    window.setTimeout(finishTest, 0);
 </script>

@@ -37,7 +37,6 @@
 #include <pal/crypto/CryptoDigest.h>
 #include <sqlite3.h>
 #include <wtf/FileSystem.h>
-#include <wtf/HexNumber.h>
 #include <wtf/text/MakeString.h>
 
 #if PLATFORM(COCOA)
@@ -52,7 +51,9 @@ namespace WebCore {
 
 static constexpr std::array<ASCIILiteral, 3> databaseFileSuffixes { ""_s, "-shm"_s, "-wal"_s };
 
-SQLiteFileSystem::SQLiteFileSystem() = default;
+SQLiteFileSystem::SQLiteFileSystem()
+{
+}
 
 String SQLiteFileSystem::appendDatabaseFileNameToPath(StringView path, StringView fileName)
 {
@@ -151,7 +152,18 @@ String SQLiteFileSystem::computeHashForFileName(StringView fileName)
     auto cryptoDigest = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_256);
     auto utf8FileName = fileName.utf8();
     cryptoDigest->addBytes(utf8FileName.span());
-    return cryptoDigest->toHexString();
+    auto digest = cryptoDigest->computeHash();
+    
+    // Convert digest to hex.
+    char* start = 0;
+    unsigned digestLength = digest.size();
+    CString result = CString::newUninitialized(digestLength * 2, start);
+    char* buffer = start;
+    for (size_t i = 0; i < digestLength; ++i) {
+        snprintf(buffer, 3, "%02X", digest.at(i));
+        buffer += 2;
+    }
+    return String::fromUTF8(result.span());
 }
 
 } // namespace WebCore

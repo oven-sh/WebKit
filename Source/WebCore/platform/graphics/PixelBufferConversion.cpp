@@ -34,12 +34,10 @@
 #if USE(ACCELERATE) && USE(CG)
 #include <Accelerate/Accelerate.h>
 #elif USE(SKIA)
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
 #include <skia/core/SkPixmap.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+IGNORE_CLANG_WARNINGS_END
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -367,5 +365,3 @@ void copyRows(unsigned sourceBytesPerRow, const uint8_t* source, unsigned destin
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -57,8 +57,6 @@
 #define RTT_ALIGNMENT
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 namespace Wasm {
@@ -558,7 +556,7 @@ public:
     const FieldType* storage(StructFieldCount i) const { return const_cast<StructType*>(this)->storage(i); }
 
     // Returns the offset relative to `m_payload` (the internal vector of fields)
-    const unsigned* offsetOfField(StructFieldCount i) const { ASSERT(i < fieldCount()); return std::bit_cast<const unsigned*>(m_payload + m_fieldCount) + i; }
+    const unsigned* offsetOfField(StructFieldCount i) const { ASSERT(i < fieldCount()); return bitwise_cast<const unsigned*>(m_payload + m_fieldCount) + i; }
     unsigned* offsetOfField(StructFieldCount i) { return const_cast<unsigned*>(const_cast<const StructType*>(this)->offsetOfField(i)); }
 
     // Returns the offset relative to `m_payload.storage` (the internal storage for the internal vector of fields)
@@ -605,7 +603,7 @@ public:
     {
     }
 
-    bool cleanup();
+    void cleanup();
 
     RecursionGroupCount typeCount() const { return m_typeCount; }
     TypeIndex type(RecursionGroupCount i) const { return const_cast<RecursionGroup*>(this)->getType(i); }
@@ -641,7 +639,7 @@ public:
     {
     }
 
-    bool cleanup();
+    void cleanup();
 
     TypeIndex recursionGroup() const { return const_cast<Projection*>(this)->getRecursionGroup(); }
     ProjectionIndex index() const { return const_cast<Projection*>(this)->getIndex(); }
@@ -677,7 +675,7 @@ public:
     {
     }
 
-    bool cleanup();
+    void cleanup();
 
     SupertypeCount supertypeCount() const { return m_supertypeCount; }
     bool isFinal() const { return m_final; }
@@ -815,14 +813,14 @@ public:
     template <typename T>
     const T* as() const { return const_cast<TypeDefinition*>(this)->as<T>(); }
 
-    TypeIndex index() const;
+    TypeIndex index() const { return bitwise_cast<TypeIndex>(this); }
 
     WTF::String toString() const;
     void dump(WTF::PrintStream& out) const;
     bool operator==(const TypeDefinition& rhs) const { return this == &rhs; }
     unsigned hash() const;
 
-    Ref<const TypeDefinition> replacePlaceholders(TypeIndex) const;
+    const TypeDefinition& replacePlaceholders(TypeIndex) const;
     const TypeDefinition& unroll() const;
     const TypeDefinition& expand() const;
     bool hasRecursiveReference() const;
@@ -831,17 +829,13 @@ public:
     // Type definitions that are compound and contain references to other definitions
     // via a type index should ref() the other definition when new unique instances are
     // constructed, and need to be cleaned up and have deref() called through this cleanup()
-    // method when the containing module is destroyed. Returns true if any ref counts may
-    // have changed.
-    bool cleanup();
+    // method when the containing module is destroyed.
+    void cleanup();
 
     // Type definitions are uniqued and, for call_indirect, validated at runtime. Tables can create invalid TypeIndex values which cause call_indirect to fail. We use 0 as the invalidIndex so that the codegen can easily test for it and trap, and we add a token invalid entry in TypeInformation.
     static const constexpr TypeIndex invalidIndex = 0;
 
 private:
-    // Returns the TypeIndex of a potentially unowned (other than TypeInformation::m_typeSet) TypeDefinition.
-    TypeIndex unownedIndex() const { return std::bit_cast<TypeIndex>(this); }
-
     friend class TypeInformation;
     friend struct FunctionParameterTypes;
     friend struct StructParameterTypes;
@@ -942,7 +936,7 @@ public:
     static RefPtr<TypeDefinition> getPlaceholderProjection(ProjectionIndex);
     ALWAYS_INLINE const FunctionSignature* thunkFor(Type type) const { return thunkTypes[linearizeType(type.kind)]; }
 
-    static void addCachedUnrolling(TypeIndex, const TypeDefinition&);
+    static void addCachedUnrolling(TypeIndex, const TypeDefinition*);
     static std::optional<TypeIndex> tryGetCachedUnrolling(TypeIndex);
 
     // Every type definition that is in a module's signature list should have a canonical RTT registered for subtyping checks.
@@ -958,7 +952,6 @@ public:
     static TypeIndex get(const TypeDefinition&);
 
     inline static const FunctionSignature& getFunctionSignature(TypeIndex);
-    inline static std::optional<const FunctionSignature*> tryGetFunctionSignature(TypeIndex);
 
     static void tryCleanup();
 private:
@@ -984,7 +977,5 @@ private:
 };
 
 } } // namespace JSC::Wasm
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

@@ -36,8 +36,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace B3 {
 
 namespace {
@@ -307,13 +305,13 @@ private:
             auto* pointer = dataSection + getOffset(entry.key.opcode(), entry.value);
             switch (entry.key.opcode()) {
             case Const128:
-                *std::bit_cast<v128_t*>(pointer) = entry.key.vectorValue();
+                *bitwise_cast<v128_t*>(pointer) = entry.key.vectorValue();
                 break;
             case ConstDouble:
-                *std::bit_cast<double*>(pointer) = entry.key.doubleValue();
+                *bitwise_cast<double*>(pointer) = entry.key.doubleValue();
                 break;
             case ConstFloat:
-                *std::bit_cast<float*>(pointer) = entry.key.floatValue();
+                *bitwise_cast<float*>(pointer) = entry.key.floatValue();
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -365,7 +363,7 @@ private:
 
                 Value* tableBase = m_insertionSet.insertIntConstant(
                     valueIndex, value->origin(), pointerType(),
-                    std::bit_cast<intptr_t>(dataSection));
+                    bitwise_cast<intptr_t>(dataSection));
                 Value* result = m_insertionSet.insert<MemoryValue>(
                     valueIndex, Load, value->type(), value->origin(), tableBase,
                     static_cast<Value::OffsetType>(offset));
@@ -380,10 +378,10 @@ private:
     {
         switch (value->opcode()) {
         case ConstDouble: {
-            return !Air::Arg::isValidFPImm64Form(std::bit_cast<uint64_t>(value->asDouble()));
+            return !Air::Arg::isValidFPImm64Form(bitwise_cast<uint64_t>(value->asDouble()));
         }
         case ConstFloat: {
-            return !Air::Arg::isValidFPImm32Form(std::bit_cast<uint32_t>(value->asFloat()));
+            return !Air::Arg::isValidFPImm32Form(bitwise_cast<uint32_t>(value->asFloat()));
         }
         case Const128: {
             return !bitEquals(value->asV128(), v128_t { });
@@ -409,6 +407,5 @@ void moveConstants(Procedure& proc)
 
 } } // namespace JSC::B3
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(B3_JIT)
+

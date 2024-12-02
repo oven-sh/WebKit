@@ -50,10 +50,6 @@
 #include "IOSurface.h"
 #endif
 
-#if USE(SKIA)
-class GrDirectContext;
-#endif
-
 namespace WTF {
 class TextStream;
 }
@@ -137,14 +133,6 @@ public:
     virtual RefPtr<cairo_surface_t> createCairoSurface() { return nullptr; }
 #endif
 
-#if USE(SKIA)
-    virtual void finishAcceleratedRenderingAndCreateFence() { }
-    virtual void waitForAcceleratedRenderingFenceCompletion() { }
-
-    virtual const GrDirectContext* skiaGrContext() const { return nullptr; }
-    WEBCORE_EXPORT virtual RefPtr<ImageBuffer> copyAcceleratedImageBufferBorrowingBackendRenderTarget(const ImageBuffer&) const;
-#endif
-
     virtual bool isInUse() const { return false; }
     virtual void releaseGraphicsContext() { ASSERT_NOT_REACHED(); }
 
@@ -167,7 +155,7 @@ public:
 
     virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() const { return nullptr; }
 
-    const Parameters& parameters() const { return m_parameters; }
+    const Parameters& parameters() { return m_parameters; }
 
     WEBCORE_EXPORT virtual String debugDescription() const = 0;
 

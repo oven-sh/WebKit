@@ -82,11 +82,11 @@ public:
     virtual void unlockFullscreenOrientation() { }
 };
 
-class WebFullScreenManagerProxy : public IPC::MessageReceiver, public CanMakeCheckedPtr<WebFullScreenManagerProxy>, public RefCounted<WebFullScreenManagerProxy> {
+class WebFullScreenManagerProxy : public IPC::MessageReceiver, public CanMakeCheckedPtr<WebFullScreenManagerProxy> {
     WTF_MAKE_TZONE_ALLOCATED(WebFullScreenManagerProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebFullScreenManagerProxy);
 public:
-    static Ref<WebFullScreenManagerProxy> create(WebPageProxy&, WebFullScreenManagerProxyClient&);
+    WebFullScreenManagerProxy(WebPageProxy&, WebFullScreenManagerProxyClient&);
     virtual ~WebFullScreenManagerProxy();
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
@@ -125,7 +125,7 @@ public:
     void unlockFullscreenOrientation();
 
 private:
-    WebFullScreenManagerProxy(WebPageProxy&, WebFullScreenManagerProxyClient&);
+    Ref<WebPageProxy> protectedPage() const;
 
     void supportsFullScreen(bool withKeyboard, CompletionHandler<void(bool)>&&);
     void enterFullScreen(bool blocksReturnToFullscreenFromPictureInPicture, FullScreenMediaDetails&&);
@@ -147,8 +147,8 @@ private:
     WTFLogChannel& logChannel() const;
 #endif
 
-    WeakPtr<WebPageProxy> m_page;
-    CheckedPtr<WebFullScreenManagerProxyClient> m_client;
+    WeakRef<WebPageProxy> m_page;
+    CheckedRef<WebFullScreenManagerProxyClient> m_client;
     FullscreenState m_fullscreenState { FullscreenState::NotInFullscreen };
     bool m_blocksReturnToFullscreenFromPictureInPicture { false };
 #if ENABLE(VIDEO_USES_ELEMENT_FULLSCREEN)

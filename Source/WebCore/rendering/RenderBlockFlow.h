@@ -22,10 +22,13 @@
 
 #pragma once
 
+#include "CaretRectComputation.h"
 #include "FloatingObjects.h"
 #include "LegacyLineLayout.h"
 #include "LineWidth.h"
 #include "RenderBlock.h"
+#include "RenderLineBoxList.h"
+#include "TrailingObjects.h"
 #include <memory>
 #include <wtf/TZoneMalloc.h>
 
@@ -40,7 +43,6 @@ template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::RenderBlockF
 
 namespace WebCore {
 
-class FloatingObjects;
 class LineBreaker;
 class RenderMultiColumnFlow;
 
@@ -236,7 +238,6 @@ public:
     };
 
     bool shouldTrimChildMargin(MarginTrimType, const RenderBox&) const;
-    void distributeExtraBlockStepSizingSpaceToChild(RenderBox& child, LayoutUnit extraSpace) const;
 
     void layoutBlockChild(RenderBox& child, MarginInfo&, LayoutUnit& previousFloatLogicalBottom, LayoutUnit& maxFloatLogicalBottom);
     void adjustPositionedBlock(RenderBox& child, const MarginInfo&);
@@ -250,7 +251,7 @@ public:
     LayoutUnit staticInlinePositionForOriginalDisplayInline(LayoutUnit logicalTop);
 
     LayoutUnit collapseMargins(RenderBox& child, MarginInfo&);
-    LayoutUnit collapseMarginsWithChildInfo(RenderBox* child, MarginInfo&);
+    LayoutUnit collapseMarginsWithChildInfo(RenderBox* child, RenderObject* prevSibling, MarginInfo&);
 
     LayoutUnit clearFloatsIfNeeded(RenderBox& child, MarginInfo&, LayoutUnit oldTopPosMargin, LayoutUnit oldTopNegMargin, LayoutUnit yPos);
     LayoutUnit estimateLogicalTopPosition(RenderBox& child, const MarginInfo&, LayoutUnit& estimateWithoutPagination);
@@ -533,14 +534,13 @@ private:
 
     void setTextBoxTrimForSubtree(const RenderBlockFlow* inlineFormattingContextRootForTextBoxTrimEnd = nullptr);
     void adjustTextBoxTrimAfterLayout();
-    std::pair<float, float> inlineContentTopAndBottomIncludingInkOverflow() const;
 
 #if ENABLE(TEXT_AUTOSIZING)
     int m_widthForTextAutosizing;
     unsigned m_lineCountForTextAutosizing : 2;
 #endif
     // FIXME: This is temporary until after we remove the forced "line layout codepath" invalidation.
-    std::optional<std::pair<LayoutUnit, LayoutUnit>> m_previousInlineLayoutContentTopAndBottomIncludingInkOverflow;
+    std::optional<LayoutUnit> m_previousInlineLayoutContentBoxLogicalHeight;
 
     std::optional<LayoutUnit> selfCollapsingMarginBeforeWithClear(RenderObject* candidate);
 

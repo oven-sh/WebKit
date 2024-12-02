@@ -31,8 +31,9 @@
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/OpaqueJSString.h>
 #include <WebCore/WebCoreJITOperations.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/unicode/UTF8Conversion.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 WKTypeID WKStringGetTypeID()
 {
@@ -46,7 +47,7 @@ WKStringRef WKStringCreateWithUTF8CString(const char* string)
 
 WKStringRef WKStringCreateWithUTF8CStringWithLength(const char* string, size_t stringLength)
 {
-    return WebKit::toAPI(&API::String::create(WTF::String::fromUTF8(unsafeMakeSpan(string, stringLength))).leakRef());
+    return WebKit::toAPI(&API::String::create(WTF::String::fromUTF8({ string, stringLength })).leakRef());
 }
 
 bool WKStringIsEmpty(WKStringRef stringRef)
@@ -66,7 +67,7 @@ size_t WKStringGetCharacters(WKStringRef stringRef, WKChar* buffer, size_t buffe
     unsigned unsignedBufferLength = std::min<size_t>(bufferLength, std::numeric_limits<unsigned>::max());
     auto substring = WebKit::toImpl(stringRef)->stringView().left(unsignedBufferLength);
 
-    substring.getCharacters(unsafeMakeSpan(reinterpret_cast<UChar*>(buffer), bufferLength));
+    substring.getCharacters(reinterpret_cast<UChar*>(buffer));
     return substring.length();
 }
 
@@ -85,21 +86,21 @@ size_t WKStringGetUTF8CStringImpl(WKStringRef stringRef, char* buffer, size_t bu
 
     auto string = WebKit::toImpl(stringRef)->stringView();
 
-    auto target = unsafeMakeSpan(byteCast<char8_t>(buffer), bufferSize);
+    std::span<char8_t> target { byteCast<char8_t>(buffer), bufferSize - 1 };
     WTF::Unicode::ConversionResult<char8_t> result;
     if (string.is8Bit())
-        result = WTF::Unicode::convert(string.span8(), target.first(bufferSize - 1));
+        result = WTF::Unicode::convert(string.span8(), target);
     else {
         if constexpr (strict == NonStrict)
-            result = WTF::Unicode::convertReplacingInvalidSequences(string.span16(), target.first(bufferSize - 1));
+            result = WTF::Unicode::convertReplacingInvalidSequences(string.span16(), target);
         else {
-            result = WTF::Unicode::convert(string.span16(), target.first(bufferSize - 1));
+            result = WTF::Unicode::convert(string.span16(), target);
             if (result.code == WTF::Unicode::ConversionResultCode::SourceInvalid)
                 return 0;
         }
     }
 
-    target[result.buffer.size()] = '\0';
+    buffer[result.buffer.size()] = '\0';
     return result.buffer.size() + 1;
 }
 
@@ -145,3 +146,5 @@ JSStringRef WKStringCopyJSString(WKStringRef stringRef)
     WebCore::populateJITOperations();
     return OpaqueJSString::tryCreate(WebKit::toImpl(stringRef)->string()).leakRef();
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

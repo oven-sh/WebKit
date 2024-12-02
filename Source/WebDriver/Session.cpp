@@ -66,7 +66,7 @@ const String& Session::shadowRootIdentifier()
     return shadowRootID;
 }
 
-Session::Session(Ref<SessionHost>&& host)
+Session::Session(std::unique_ptr<SessionHost>&& host)
     : m_host(WTFMove(host))
     , m_scriptTimeout(defaultScriptTimeout)
     , m_pageLoadTimeout(defaultPageLoadTimeout)
@@ -77,7 +77,7 @@ Session::Session(Ref<SessionHost>&& host)
 }
 
 #if ENABLE(WEBDRIVER_BIDI)
-Session::Session(Ref<SessionHost>&& host, WeakPtr<WebSocketServer>&& bidiServer)
+Session::Session(std::unique_ptr<SessionHost>&& host, WeakPtr<WebSocketServer>&& bidiServer)
     : Session(WTFMove(host))
 {
     m_bidiServer = WTFMove(bidiServer);

@@ -38,7 +38,6 @@ static auto copy(const Child&) -> Child;
 template<Leaf Op> Child copy(const Op&);
 template<typename Op> static auto copy(const IndirectNode<Op>&) -> Child;
 static auto copy(const IndirectNode<Anchor>&) -> Child;
-static auto copy(const IndirectNode<AnchorSize>&) -> Child;
 
 // MARK: Copying
 
@@ -79,7 +78,7 @@ template<typename Op> Child copy(const IndirectNode<Op>& root)
     return makeChild(WTF::apply([](const auto& ...x) { return Op { copy(x)... }; } , *root), root.type);
 }
 
-Anchor::Side copy(const Anchor::Side& side)
+static Anchor::Side copy(const Anchor::Side& side)
 {
     return WTF::switchOn(side,
         [](CSSValueID value) -> Anchor::Side {
@@ -93,17 +92,6 @@ Anchor::Side copy(const Anchor::Side& side)
 Child copy(const IndirectNode<Anchor>& anchor)
 {
     return makeChild(Anchor { .elementName = anchor->elementName, .side = copy(anchor->side), .fallback = copy(anchor->fallback) }, anchor.type);
-}
-
-Child copy(const IndirectNode<AnchorSize>& anchorSize)
-{
-    AnchorSize copyAnchorSize {
-        .elementName = anchorSize->elementName,
-        .dimension = anchorSize->dimension,
-        .fallback = copy(anchorSize->fallback)
-    };
-
-    return makeChild(WTFMove(copyAnchorSize), anchorSize.type);
 }
 
 // MARK: Exposed functions

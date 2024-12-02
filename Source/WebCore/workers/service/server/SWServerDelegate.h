@@ -50,7 +50,6 @@ class RegistrableDomain;
 class ResourceRequest;
 class SWRegistrationStore;
 class SWServer;
-class Site;
 
 struct BackgroundFetchRequest;
 struct ServiceWorkerJobData;
@@ -61,7 +60,7 @@ public:
     virtual ~SWServerDelegate() = default;
 
     virtual void softUpdate(ServiceWorkerJobData&&, bool shouldRefreshCache, ResourceRequest&&, CompletionHandler<void(WorkerFetchResult&&)>&&) = 0;
-    virtual void createContextConnection(const Site&, std::optional<ProcessIdentifier>, std::optional<ScriptExecutionContextIdentifier>, CompletionHandler<void()>&&) = 0;
+    virtual void createContextConnection(const RegistrableDomain&, std::optional<ProcessIdentifier>, std::optional<ScriptExecutionContextIdentifier>, CompletionHandler<void()>&&) = 0;
     virtual void appBoundDomains(CompletionHandler<void(HashSet<RegistrableDomain>&&)>&&) = 0;
     virtual void addAllowedFirstPartyForCookies(ProcessIdentifier, std::optional<ProcessIdentifier>, RegistrableDomain&&) = 0;
 

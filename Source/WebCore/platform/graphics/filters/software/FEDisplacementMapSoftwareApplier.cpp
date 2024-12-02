@@ -31,8 +31,6 @@
 #include "PixelBuffer.h"
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FEDisplacementMapSoftwareApplier);
@@ -112,5 +110,3 @@ bool FEDisplacementMapSoftwareApplier::apply(const Filter& filter, const FilterI
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

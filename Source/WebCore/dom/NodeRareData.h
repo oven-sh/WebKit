@@ -258,7 +258,6 @@ public:
         Popover = 1 << 25,
         DisplayContentsOrNoneStyle = 1 << 26,
         CustomStateSet = 1 << 27,
-        UserInfo = 1 << 28,
     };
 #endif
 

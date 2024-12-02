@@ -216,24 +216,24 @@ RenderTableCol* RenderTableCol::nextColumn() const
 
 const BorderValue& RenderTableCol::borderAdjoiningCellStartBorder() const
 {
-    return style().borderStart(table()->writingMode());
+    return style().borderStart(table()->style());
 }
 
 const BorderValue& RenderTableCol::borderAdjoiningCellEndBorder() const
 {
-    return style().borderEnd(table()->writingMode());
+    return style().borderEnd(table()->style());
 }
 
 const BorderValue& RenderTableCol::borderAdjoiningCellBefore(const RenderTableCell& cell) const
 {
     ASSERT_UNUSED(cell, table()->colElement(cell.col() + cell.colSpan()) == this);
-    return style().borderStart(table()->writingMode());
+    return style().borderStart(table()->style());
 }
 
 const BorderValue& RenderTableCol::borderAdjoiningCellAfter(const RenderTableCell& cell) const
 {
     ASSERT_UNUSED(cell, table()->colElement(cell.col() - 1) == this);
-    return style().borderEnd(table()->writingMode());
+    return style().borderEnd(table()->style());
 }
 
 LayoutUnit RenderTableCol::offsetLeft() const

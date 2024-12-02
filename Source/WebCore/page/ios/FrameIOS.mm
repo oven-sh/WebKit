@@ -79,8 +79,6 @@ using namespace WTF::Unicode;
 
 using JSC::JSLockHolder;
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // Create <html><body (style="...")></body></html> doing minimal amount of work.
@@ -728,7 +726,7 @@ NSArray *LocalFrame::interpretationsForCurrentRoot() const
     auto* root = selection().isNone() ? document()->bodyOrFrameset() : selection().selection().rootEditableElement();
     auto rangeOfRootContents = makeRangeSelectingNodeContents(*root);
 
-    auto markersInRoot = document()->markers().markersInRange(rangeOfRootContents, DocumentMarkerType::DictationPhraseWithAlternatives);
+    auto markersInRoot = document()->markers().markersInRange(rangeOfRootContents, DocumentMarker::Type::DictationPhraseWithAlternatives);
 
     // There are no phrases with alternatives, so there is just one interpretation.
     if (markersInRoot.isEmpty())
@@ -748,7 +746,7 @@ NSArray *LocalFrame::interpretationsForCurrentRoot() const
     unsigned combinationsSoFar = 1;
 
     for (auto& node : intersectingNodes(rangeOfRootContents)) {
-        for (auto& marker : document()->markers().markersFor(node, DocumentMarkerType::DictationPhraseWithAlternatives)) {
+        for (auto& marker : document()->markers().markersFor(node, DocumentMarker::Type::DictationPhraseWithAlternatives)) {
             auto& alternatives = std::get<Vector<String>>(marker->data());
 
             auto rangeForMarker = makeSimpleRange(node, *marker);
@@ -849,7 +847,5 @@ void LocalFrame::resetAllGeolocationPermission()
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(IOS_FAMILY)

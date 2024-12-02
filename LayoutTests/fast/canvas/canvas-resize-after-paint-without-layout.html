@@ -17,14 +17,12 @@
       if (window.testRunner)
         testRunner.dumpAsText(true);
 
-      async function runTest() {
-        testRunner?.waitUntilDone();
+      function runTest() {
         var canvas = document.getElementById('canvas');
         var ctx = canvas.getContext('2d');
         ctx.fillStyle = 'red';
         ctx.fillRect(0, 0, 300, 300);
-        await runRepaintTest();
-        testRunner?.notifyDone();
+        runRepaintTest();
       }
 
       function repaintTest() {

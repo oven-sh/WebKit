@@ -36,10 +36,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/SuperFastHash.h>
 
-#if USE(CF)
-typedef const struct __CFString * CFStringRef;
-#endif
-
 OBJC_CLASS NSString;
 
 namespace WTF {
@@ -53,7 +49,7 @@ public:
     static constexpr ASCIILiteral fromLiteralUnsafe(const char *string)
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(string);
-        return ASCIILiteral { unsafeMakeSpan(string, std::char_traits<char>::length(string) + 1) };
+        return ASCIILiteral { unsafeForgeSpan(string, std::char_traits<char>::length(string) + 1) };
     }
 
     WTF_EXPORT_PRIVATE void dump(PrintStream &out) const;
@@ -69,7 +65,6 @@ public:
 
     constexpr const char *characters() const { return m_charactersWithNullTerminator.data(); }
     constexpr size_t length() const { return !m_charactersWithNullTerminator.empty() ? m_charactersWithNullTerminator.size() - 1 : 0; }
-    constexpr std::span<const char> span() const { return m_charactersWithNullTerminator.first(length()); }
     std::span<const LChar> span8() const { return byteCast<LChar>(m_charactersWithNullTerminator.first(length())); }
     std::span<const char> spanIncludingNullTerminator() const { return m_charactersWithNullTerminator; }
     size_t isEmpty() const { return m_charactersWithNullTerminator.size() <= 1; }
@@ -84,10 +79,6 @@ public:
 
     static ASCIILiteral deletedValue();
     bool isDeletedValue() const { return characters() == reinterpret_cast<char *>(-1); }
-
-#if USE(CF)
-    WTF_EXPORT_PRIVATE RetainPtr<CFStringRef> createCFString() const;
-#endif
 
 private:
     constexpr explicit ASCIILiteral(std::span<const char> spanWithNullTerminator)
@@ -152,7 +143,7 @@ constexpr ASCIILiteral operator""_s(const char *characters, size_t)
 
 constexpr std::span<const LChar> operator""_span(const char *characters, size_t n)
 {
-    auto span = byteCast<LChar>(unsafeMakeSpan(characters, n));
+    auto span = byteCast<LChar>(unsafeForgeSpan(characters, n));
 #if ASSERT_ENABLED
     for (size_t i = 0, size = span.size(); i < size; ++i)
         ASSERT_UNDER_CONSTEXPR_CONTEXT(isASCII(span[i]));

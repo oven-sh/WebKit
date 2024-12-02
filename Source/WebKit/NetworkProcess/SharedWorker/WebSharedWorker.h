@@ -45,7 +45,6 @@ class WebSharedWorker;
 
 namespace WebCore {
 class RegistrableDomain;
-class Site;
 }
 
 namespace WebKit {
@@ -67,7 +66,6 @@ public:
     const WebCore::ClientOrigin& origin() const { return m_key.origin; }
     const URL& url() const { return m_key.url; }
     WebCore::RegistrableDomain topRegistrableDomain() const;
-    WebCore::Site topSite() const;
     WebSharedWorkerServerToContextConnection* contextConnection() const;
 
     void addSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier, const WebCore::TransferredMessagePort&);

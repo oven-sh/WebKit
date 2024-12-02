@@ -50,7 +50,6 @@
 #include "RenderListMarker.h"
 #include "RenderStyleInlines.h"
 #include "RenderView.h"
-#include "RenderViewTransitionRoot.h"
 #include "StyleCustomPropertyData.h"
 #include "StyleOriginatedAnimation.h"
 #include "StylePropertyShorthand.h"
@@ -148,13 +147,21 @@ RenderElement* Styleable::renderer() const
             return nullptr;
 
         // Find the right ::view-transition-group().
-        CheckedPtr correctGroup = viewTransitionRoot->childGroupForName(pseudoElementIdentifier->nameArgument);
+        RenderBlockFlow* correctGroup = nullptr;
+        for (auto& group : childrenOfType<RenderBlockFlow>(*viewTransitionRoot.get())) {
+            if (group.style().pseudoElementNameArgument() == pseudoElementIdentifier->nameArgument) {
+                correctGroup = &group;
+                break;
+            }
+        }
+
+        // If we can't find the correct group, return nullptr.
         if (!correctGroup)
             return nullptr;
 
         // Return early if we're looking for ::view-transition-group().
         if (pseudoElementIdentifier->pseudoId == PseudoId::ViewTransitionGroup)
-            return correctGroup.get();
+            return correctGroup;
 
         // Go through all descendants until we find the relevant pseudo element otherwise.
         for (auto& descendant : descendantsOfType<RenderBox>(*correctGroup)) {
@@ -302,8 +309,6 @@ void Styleable::willChangeRenderer() const
 void Styleable::cancelStyleOriginatedAnimations() const
 {
     cancelStyleOriginatedAnimations({ });
-    if (CheckedPtr timelinesController = element.protectedDocument()->timelinesController())
-        timelinesController->unregisterNamedTimelinesAssociatedWithElement(element);
 }
 
 void Styleable::cancelStyleOriginatedAnimations(const WeakStyleOriginatedAnimations& animationsToCancelSilently) const
@@ -963,18 +968,18 @@ void Styleable::queryContainerDidChange() const
 
 bool Styleable::capturedInViewTransition() const
 {
-    return !element.viewTransitionCapturedName(pseudoElementIdentifier).isNull();
-}
+    RefPtr activeViewTransition = element.document().activeViewTransition();
+    if (!activeViewTransition || activeViewTransition->phase() != ViewTransitionPhase::Animating)
+        return false;
 
-void Styleable::setCapturedInViewTransition(AtomString captureName)
-{
-    element.setViewTransitionCapturedName(pseudoElementIdentifier, captureName);
-    if (CheckedPtr renderer = this->renderer()) {
-        bool changed = renderer->setCapturedInViewTransition(!captureName.isNull());
-        if (changed)
-            element.invalidateStyleAndLayerComposition();
+    for (auto& [name, capturedElement] : activeViewTransition->namedElements().map()) {
+        if (auto newStyleable = capturedElement->newElement.styleable()) {
+            if (*newStyleable == *this)
+                return true;
+        }
     }
-}
 
+    return false;
+}
 
 } // namespace WebCore

@@ -96,7 +96,7 @@ private:
     String m_keySystem;
     String m_sessionId;
     RefPtr<WebKitMediaKeyError> m_error;
-    RefPtr<LegacyCDMSession> m_session;
+    std::unique_ptr<LegacyCDMSession> m_session;
 
     struct PendingKeyRequest {
         String mimeType;

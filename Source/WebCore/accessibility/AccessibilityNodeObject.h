@@ -39,48 +39,56 @@ class Element;
 class HTMLLabelElement;
 class Node;
 
+enum MouseButtonListenerResultFilter {
+    ExcludeBodyElement = 1,
+    IncludeBodyElement,
+};
+
 class AccessibilityNodeObject : public AccessibilityObject {
 public:
-    static Ref<AccessibilityNodeObject> create(AXID, Node&);
+    static Ref<AccessibilityNodeObject> create(Node&);
     virtual ~AccessibilityNodeObject();
 
     void init() override;
 
-    bool canvasHasFallbackContent() const final;
+    bool canvasHasFallbackContent() const override;
 
-    bool isBusy() const final;
-    bool isDetached() const override { return !m_node; }
-    bool isRadioInput() const final;
-    bool isFieldset() const final;
-    bool isInputImage() const final;
+    bool isBusy() const override;
+    bool isControl() const override;
+    bool isRadioInput() const override;
+    bool isFieldset() const override;
+    bool isHovered() const override;
+    bool isInputImage() const override;
+    bool isLink() const override;
     bool isMultiSelectable() const override;
     bool isNativeImage() const;
-    bool isNativeTextControl() const final;
-    bool isSecureField() const final;
-    bool isSearchField() const final;
+    bool isNativeTextControl() const override;
+    bool isSecureField() const override;
+    bool isSearchField() const override;
 
-    bool isChecked() const final;
+    bool isChecked() const override;
     bool isEnabled() const override;
     bool isIndeterminate() const override;
     bool isPressed() const final;
-    bool isRequired() const final;
+    bool isRequired() const override;
     bool supportsARIAOwns() const final;
+    bool supportsRequiredAttribute() const override;
 
-    bool supportsDropping() const final;
-    bool supportsDragging() const final;
-    bool isGrabbed() final;
-    Vector<String> determineDropEffects() const final;
+    bool supportsDropping() const override;
+    bool supportsDragging() const override;
+    bool isGrabbed() override;
+    Vector<String> determineDropEffects() const override;
 
     bool canSetSelectedAttribute() const override;
 
-    Node* node() const final { return m_node.get(); }
+    Node* node() const override { return m_node.get(); }
     Document* document() const override;
     LocalFrameView* documentFrameView() const override;
 
     void setFocused(bool) override;
-    bool isFocused() const final;
+    bool isFocused() const override;
     bool canSetFocusAttribute() const override;
-    unsigned headingLevel() const final;
+    unsigned headingLevel() const override;
 
     bool canSetValueAttribute() const override;
 
@@ -92,32 +100,33 @@ public:
 
     AccessibilityOrientation orientation() const override;
 
-    AccessibilityButtonState checkboxOrRadioValue() const final;
+    AccessibilityButtonState checkboxOrRadioValue() const override;
 
     URL url() const override;
-    unsigned hierarchicalLevel() const final;
+    unsigned hierarchicalLevel() const override;
     String textUnderElement(TextUnderElementMode = TextUnderElementMode()) const override;
     String accessibilityDescriptionForChildren() const;
     String description() const override;
     String helpText() const override;
     String title() const override;
-    String text() const final;
+    String text() const override;
     void alternativeText(Vector<AccessibilityText>&) const;
     void helpText(Vector<AccessibilityText>&) const;
     String stringValue() const override;
     WallTime dateTimeValue() const final;
-    SRGBA<uint8_t> colorValue() const final;
-    String ariaLabeledByAttribute() const final;
+    SRGBA<uint8_t> colorValue() const override;
+    String ariaLabeledByAttribute() const override;
     bool hasAccNameAttribute() const;
     bool hasAttributesRequiredForInclusion() const final;
-    bool hasClickHandler() const final;
-    void setIsExpanded(bool) final;
+    void setIsExpanded(bool) override;
 
     Element* actionElement() const override;
+    Element* mouseButtonListener(MouseButtonListenerResultFilter = ExcludeBodyElement) const;
     Element* anchorElement() const override;
     RefPtr<Element> popoverTargetElement() const final;
-    AccessibilityObject* internalLinkElement() const final;
+    AXCoreObject* internalLinkElement() const final;
     AccessibilityChildrenVector radioButtonGroup() const final;
+    AccessibilityObject* menuForMenuButton() const;
    
     virtual void changeValueByPercent(float percentChange);
  
@@ -126,6 +135,7 @@ public:
     AccessibilityObject* previousSibling() const override;
     AccessibilityObject* nextSibling() const override;
     AccessibilityObject* parentObject() const override;
+    AccessibilityObject* parentObjectIfExists() const override;
 
     bool matchesTextAreaRole() const;
 
@@ -140,7 +150,7 @@ public:
 #endif
 
 protected:
-    explicit AccessibilityNodeObject(AXID, Node*);
+    explicit AccessibilityNodeObject(Node*);
     void detachRemoteParts(AccessibilityDetachmentType) override;
 
     AccessibilityRole m_ariaRole { AccessibilityRole::Unknown };
@@ -148,11 +158,13 @@ protected:
     bool m_initialized { false };
 #endif
 
+    bool isDetached() const override { return !m_node; }
+
     AccessibilityRole determineAccessibilityRole() override;
     enum class TreatStyleFormatGroupAsInline : bool { No, Yes };
     AccessibilityRole determineAccessibilityRoleFromNode(TreatStyleFormatGroupAsInline = TreatStyleFormatGroupAsInline::No) const;
     AccessibilityRole roleFromInputElement(const HTMLInputElement&) const;
-    AccessibilityRole ariaRoleAttribute() const final { return m_ariaRole; }
+    AccessibilityRole ariaRoleAttribute() const override { return m_ariaRole; }
     virtual AccessibilityRole determineAriaRoleAttribute() const;
     AccessibilityRole remapAriaRoleDueToParent(AccessibilityRole) const;
 
@@ -162,7 +174,7 @@ protected:
     void updateChildrenIfNecessary() override;
     bool canHaveChildren() const override;
     AccessibilityChildrenVector visibleChildren() override;
-    bool isDescendantOfBarrenParent() const final;
+    bool isDescendantOfBarrenParent() const override;
     void updateOwnedChildren();
     AccessibilityObject* ownerParentObject() const;
     
@@ -180,9 +192,9 @@ protected:
 
     bool elementAttributeValue(const QualifiedName&) const;
 
-    const String liveRegionStatus() const final;
-    const String liveRegionRelevant() const final;
-    bool liveRegionAtomic() const final;
+    const String liveRegionStatus() const override;
+    const String liveRegionRelevant() const override;
+    bool liveRegionAtomic() const override;
 
     String accessKey() const final;
     bool isLabelable() const;
@@ -195,8 +207,11 @@ protected:
     Vector<Ref<Element>> ariaLabeledByElements() const;
     String descriptionForElements(const Vector<Ref<Element>>&) const;
     LayoutRect boundingBoxRect() const override;
-    String ariaDescribedByAttribute() const final;
-
+    String ariaDescribedByAttribute() const override;
+    
+    Element* menuElementForMenuButton() const;
+    Element* menuItemElementForMenu() const;
+    AccessibilityObject* menuButtonForMenu() const;
     AccessibilityObject* captionForFigure() const;
     virtual void labelText(Vector<AccessibilityText>&) const;
 private:
@@ -214,8 +229,8 @@ private:
     LayoutRect checkboxOrRadioRect() const;
 
     void setNeedsToUpdateChildren() override { m_childrenDirty = true; }
-    bool needsToUpdateChildren() const final { return m_childrenDirty; }
-    void setNeedsToUpdateSubtree() final { m_subtreeDirty = true; }
+    bool needsToUpdateChildren() const override { return m_childrenDirty; }
+    void setNeedsToUpdateSubtree() override { m_subtreeDirty = true; }
 
     bool isDescendantOfElementType(const HashSet<QualifiedName>&) const;
 protected:

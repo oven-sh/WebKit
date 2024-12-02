@@ -79,8 +79,6 @@ public:
 
     DrawingAreaProxy* drawingArea() { return page() ? page()->drawingArea() : nullptr; }
 
-    void close();
-
 private:
     WebView(RECT, const API::PageConfiguration&, HWND parentWindow);
 
@@ -117,7 +115,7 @@ private:
 
     bool shouldInitializeTrackPointHack();
 
-    void closeInternal();
+    void close();
 
     HCURSOR cursorToShow() const;
     void updateNativeCursor();

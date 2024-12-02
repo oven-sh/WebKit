@@ -58,8 +58,6 @@
 
 #if JSC_OBJC_API_ENABLED
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 using JSC::Integrity::audit;
 
 NSString * const JSPropertyDescriptorWritableKey = @"writable";
@@ -1368,7 +1366,5 @@ NSInvocation *valueToTypeInvocationFor(const char* encodedType)
 }
 
 @end
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

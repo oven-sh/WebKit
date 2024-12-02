@@ -38,8 +38,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PlatformMediaSession);
@@ -169,9 +167,9 @@ void PlatformMediaSession::setActive(bool active)
     m_active = active;
 
     if (m_active)
-        PlatformMediaSessionManager::singleton().addSession(*this);
+        PlatformMediaSessionManager::sharedManager().addSession(*this);
     else
-        PlatformMediaSessionManager::singleton().removeSession(*this);
+        PlatformMediaSessionManager::sharedManager().removeSession(*this);
 }
 
 void PlatformMediaSession::setState(State state)
@@ -183,7 +181,7 @@ void PlatformMediaSession::setState(State state)
     m_state = state;
     if (m_state == State::Playing && canProduceAudio())
         m_hasPlayedAudiblySinceLastInterruption = true;
-    PlatformMediaSessionManager::singleton().sessionStateChanged(*this);
+    PlatformMediaSessionManager::sharedManager().sessionStateChanged(*this);
 }
 
 size_t PlatformMediaSession::activeInterruptionCount() const
@@ -278,7 +276,7 @@ bool PlatformMediaSession::clientWillBeginPlayback()
 
     SetForScope preparingToPlay(m_preparingToPlay, true);
 
-    if (!PlatformMediaSessionManager::singleton().sessionWillBeginPlayback(*this)) {
+    if (!PlatformMediaSessionManager::sharedManager().sessionWillBeginPlayback(*this)) {
         if (state() == State::Interrupted)
             m_stateToRestore = State::Playing;
         return false;
@@ -302,7 +300,7 @@ bool PlatformMediaSession::processClientWillPausePlayback(DelayCallingUpdateNowP
     }
 
     setState(State::Paused);
-    PlatformMediaSessionManager::singleton().sessionWillEndPlayback(*this, shouldDelayCallingUpdateNowPlaying);
+    PlatformMediaSessionManager::sharedManager().sessionWillEndPlayback(*this, shouldDelayCallingUpdateNowPlaying);
     return true;
 }
 
@@ -332,7 +330,7 @@ void PlatformMediaSession::stopSession()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
     m_client.suspendPlayback();
-    PlatformMediaSessionManager::singleton().removeSession(*this);
+    PlatformMediaSessionManager::sharedManager().removeSession(*this);
 }
 
 PlatformMediaSession::MediaType PlatformMediaSession::mediaType() const
@@ -399,7 +397,7 @@ void PlatformMediaSession::isPlayingToWirelessPlaybackTargetChanged(bool isWirel
 
     m_isPlayingToWirelessPlaybackTarget = isWireless;
 
-    PlatformMediaSessionManager::singleton().sessionIsPlayingToWirelessPlaybackTargetChanged(*this);
+    PlatformMediaSessionManager::sharedManager().sessionIsPlayingToWirelessPlaybackTargetChanged(*this);
 }
 
 PlatformMediaSession::DisplayType PlatformMediaSession::displayType() const
@@ -433,12 +431,12 @@ bool PlatformMediaSession::hasMediaStreamSource() const
 
 void PlatformMediaSession::canProduceAudioChanged()
 {
-    PlatformMediaSessionManager::singleton().sessionCanProduceAudioChanged();
+    PlatformMediaSessionManager::sharedManager().sessionCanProduceAudioChanged();
 }
 
 void PlatformMediaSession::clientCharacteristicsChanged(bool positionChanged)
 {
-    PlatformMediaSessionManager::singleton().clientCharacteristicsChanged(*this, positionChanged);
+    PlatformMediaSessionManager::sharedManager().clientCharacteristicsChanged(*this, positionChanged);
 }
 
 static inline bool isPlayingAudio(PlatformMediaSession::MediaType mediaType)
@@ -528,7 +526,5 @@ std::optional<NowPlayingInfo> PlatformMediaSessionClient::nowPlayingInfo() const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(VIDEO) || ENABLE(WEB_AUDIO)

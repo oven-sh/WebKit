@@ -21,7 +21,6 @@ class SkColorFilter;
  *  ...
  *  5 (or larger) -> colors[5]
  *
- *  https://fiddle.skia.org/c/@overdrawcolorfilter_grid
  */
 class SK_API SkOverdrawColorFilter {
 public:

@@ -36,7 +36,7 @@
 #if USE(CAIRO)
 #include <WebCore/RefPtrCairo.h>
 #elif USE(SKIA)
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // Skia port
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkDocument.h>
 #include <skia/core/SkPicture.h>

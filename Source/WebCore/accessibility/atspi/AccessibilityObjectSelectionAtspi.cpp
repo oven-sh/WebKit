@@ -86,7 +86,7 @@ unsigned AccessibilityObjectAtspi::selectionCount() const
     return selectedChildren ? selectedChildren->size() : 0;
 }
 
-Vector<Ref<AccessibilityObjectAtspi>> AccessibilityObjectAtspi::selectedChildren() const
+Vector<RefPtr<AccessibilityObjectAtspi>> AccessibilityObjectAtspi::selectedChildren() const
 {
     if (!m_coreObject)
         return { };

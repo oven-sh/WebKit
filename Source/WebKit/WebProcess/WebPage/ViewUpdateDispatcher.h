@@ -30,7 +30,6 @@
 #include "MessageReceiver.h"
 #include "VisibleContentRectUpdateInfo.h"
 #include <WebCore/PageIdentifier.h>
-#include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Ref.h>
@@ -41,15 +40,10 @@ class WorkQueue;
 
 namespace WebKit {
 
-class WebProcess;
-
 class ViewUpdateDispatcher final: private IPC::MessageReceiver {
 public:
-    ViewUpdateDispatcher(WebProcess&);
+    ViewUpdateDispatcher();
     ~ViewUpdateDispatcher();
-
-    void ref() const;
-    void deref() const;
 
     void initializeConnection(IPC::Connection&);
 
@@ -71,7 +65,6 @@ private:
         MonotonicTime oldestTimestamp;
     };
 
-    CheckedRef<WebProcess> m_process;
     Ref<WTF::WorkQueue> m_queue;
     Lock m_latestUpdateLock;
     HashMap<WebCore::PageIdentifier, UniqueRef<UpdateData>> m_latestUpdate WTF_GUARDED_BY_LOCK(m_latestUpdateLock);

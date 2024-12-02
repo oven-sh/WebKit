@@ -20,13 +20,13 @@
         window.testRunner.notifyDone();
     }
 
-    async function doTest()
+    function doTest()
     {
       var textarea = document.getElementById('text');
       textarea.focus();
       textarea.selectionStart = textarea.selectionEnd = 0;
       if (window.testRunner)
-        await testRunner.displayAndTrackRepaints();
+        window.testRunner.displayAndTrackRepaints();
       window.setTimeout(endTest, 100);
     }
 

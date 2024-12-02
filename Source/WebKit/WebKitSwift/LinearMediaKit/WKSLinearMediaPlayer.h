@@ -159,7 +159,6 @@ API_AVAILABLE(visionos(1.0))
 @property (nonatomic, strong, nullable) NSDate *endDate;
 @property (nonatomic) BOOL spatialImmersive;
 @property (nonatomic, strong, nullable) WKSLinearMediaSpatialVideoMetadata *spatialVideoMetadata;
-@property (nonatomic, readonly) BOOL enteredFromInline;
 
 - (LMPlayableViewController *)makeViewController;
 - (void)enterFullscreenWithCompletionHandler:(void (^)(BOOL, NSError * _Nullable))completionHandler;

@@ -29,25 +29,23 @@
         if (window.testRunner)
             testRunner.dumpAsText();
         
-        async function testOnLoad()
+        function testOnLoad()
         {
-            testRunner?.waitUntilDone();
             // Small layer first
-            var result = await recordLayerTree("First (small layer):<br>");
+            var result = recordLayerTree("First (small layer):<br>");
 
             // Huge layer second
             document.getElementById('container').style.height = "5000px";
-            result += await recordLayerTree("<br><br>Second (huge layer):<br>");
+            result += recordLayerTree("<br><br>Second (huge layer):<br>");
 
             // Small layer third
             document.getElementById('container').style.height = "500px";
-            result += await recordLayerTree("<br><br>Third (small layer):<br>");
+            result += recordLayerTree("<br><br>Third (small layer):<br>");
 
             document.getElementById('layers').innerHTML = result;
-            testRunner?.notifyDone();
         }
 
-        async function recordLayerTree(messagePrefix)
+        function recordLayerTree(messagePrefix)
         {
             if (!window.testRunner)
                 return "";
@@ -55,7 +53,7 @@
             // Force a layout and a paint to make sure the compositing layers
             // have been updated.
             document.body.offsetLeft;
-            await testRunner.displayAndTrackRepaints();
+            testRunner.displayAndTrackRepaints();
 
             return messagePrefix + window.internals.layerTreeAsText(document);
         }

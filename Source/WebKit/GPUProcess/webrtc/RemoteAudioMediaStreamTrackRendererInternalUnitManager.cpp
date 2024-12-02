@@ -34,7 +34,6 @@
 #include "IPCSemaphore.h"
 #include "Logging.h"
 #include "SharedCARingBuffer.h"
-#include <WebCore/AudioMediaStreamTrackRenderer.h>
 #include <WebCore/AudioMediaStreamTrackRendererInternalUnit.h>
 #include <WebCore/AudioSampleBufferList.h>
 #include <WebCore/AudioSession.h>
@@ -50,27 +49,34 @@
 namespace WebKit {
 
 class RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit
-    : public WebCore::CoreAudioSpeakerSamplesProducer
+    : public RefCounted<RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit>
+    , public CanMakeWeakPtr<RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit>
+    , public WebCore::CoreAudioSpeakerSamplesProducer
     , public WebCore::AudioSessionInterruptionObserver
-    , public WebCore::AudioMediaStreamTrackRendererInternalUnit::Client {
+    , private WebCore::AudioMediaStreamTrackRendererInternalUnit::Client {
     WTF_MAKE_TZONE_ALLOCATED(RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit);
 public:
     static Ref<RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit> create(
-        AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, const String& deviceID, GPUConnectionToWebProcess& connection, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback) {
-        return adoptRef(*new RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit(identifier, deviceID, connection, WTFMove(callback)));
+        AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, Ref<IPC::Connection>&& connection, bool shouldRegisterAsSpeakerSamplesProducer,
+        CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback) {
+        return adoptRef(*new RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit(identifier, WTFMove(connection), shouldRegisterAsSpeakerSamplesProducer, WTFMove(callback)));
     }
 
     ~RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void start(ConsumerSharedCARingBuffer::Handle&&, IPC::Semaphore&&);
     void stop();
+    void setAudioOutputDevice(const String&);
 
-    void updateShouldRegisterAsSpeakerSamplesProducer();
+    void setShouldRegisterAsSpeakerSamplesProducer(bool);
 
     USING_CAN_MAKE_WEAKPTR(WebCore::AudioSessionInterruptionObserver);
 
 private:
-    RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier, const String&, GPUConnectionToWebProcess&, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&&);
+    RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier, Ref<IPC::Connection>&&, bool shouldRegisterAsSpeakerSamplesProducer, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&&);
 
     // CoreAudioSpeakerSamplesProducer
     const WebCore::CAAudioStreamDescription& format() final { return *m_description; }
@@ -89,10 +95,9 @@ private:
     void reset() final;
 
     Ref<WebCore::AudioMediaStreamTrackRendererInternalUnit> protectedLocalUnit() { return m_localUnit; }
-    void setShouldRegisterAsSpeakerSamplesProducer(bool);
 
     AudioMediaStreamTrackRendererInternalUnitIdentifier m_identifier;
-    ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_connection;
+    Ref<IPC::Connection> m_connection;
     Ref<WebCore::AudioMediaStreamTrackRendererInternalUnit> m_localUnit;
     uint64_t m_readOffset { 0 };
     uint64_t m_generateOffset { 0 };
@@ -101,7 +106,6 @@ private:
     std::unique_ptr<ConsumerSharedCARingBuffer> m_ringBuffer;
     bool m_isPlaying { false };
     std::optional<WebCore::CAAudioStreamDescription> m_description;
-    bool m_canUseCaptureUnit { false };
     bool m_shouldRegisterAsSpeakerSamplesProducer { false };
     bool m_canReset { true };
 };
@@ -113,23 +117,15 @@ RemoteAudioMediaStreamTrackRendererInternalUnitManager::RemoteAudioMediaStreamTr
 {
 }
 
-RemoteAudioMediaStreamTrackRendererInternalUnitManager::~RemoteAudioMediaStreamTrackRendererInternalUnitManager() = default;
-
-void RemoteAudioMediaStreamTrackRendererInternalUnitManager::ref() const
+RemoteAudioMediaStreamTrackRendererInternalUnitManager::~RemoteAudioMediaStreamTrackRendererInternalUnitManager()
 {
-    m_gpuConnectionToWebProcess.get()->ref();
 }
 
-void RemoteAudioMediaStreamTrackRendererInternalUnitManager::deref() const
-{
-    m_gpuConnectionToWebProcess.get()->deref();
-}
-
-void RemoteAudioMediaStreamTrackRendererInternalUnitManager::createUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, const String& deviceID,  CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback)
+void RemoteAudioMediaStreamTrackRendererInternalUnitManager::createUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback)
 {
     ASSERT(!m_units.contains(identifier));
     if (auto connection = m_gpuConnectionToWebProcess.get())
-        m_units.add(identifier, RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::create(identifier, deviceID, *connection, WTFMove(callback)));
+        m_units.add(identifier, RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::create(identifier, connection->connection(), connection->isLastToCaptureAudio(), WTFMove(callback)));
 }
 
 void RemoteAudioMediaStreamTrackRendererInternalUnitManager::deleteUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier)
@@ -139,7 +135,7 @@ void RemoteAudioMediaStreamTrackRendererInternalUnitManager::deleteUnit(AudioMed
 
     if (m_units.isEmpty()) {
         if (auto connection = m_gpuConnectionToWebProcess.get())
-            connection->protectedGPUProcess()->tryExitIfUnusedAndUnderMemoryPressure();
+            connection->gpuProcess().tryExitIfUnusedAndUnderMemoryPressure();
     }
 }
 
@@ -155,20 +151,29 @@ void RemoteAudioMediaStreamTrackRendererInternalUnitManager::stopUnit(AudioMedia
         unit->stop();
 }
 
+void RemoteAudioMediaStreamTrackRendererInternalUnitManager::setAudioOutputDevice(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, const String& deviceId)
+{
+    if (RefPtr unit = m_units.get(identifier))
+        unit->setAudioOutputDevice(deviceId);
+}
+
 void RemoteAudioMediaStreamTrackRendererInternalUnitManager::notifyLastToCaptureAudioChanged()
 {
-    for (Ref unit : m_units.values())
-        unit->updateShouldRegisterAsSpeakerSamplesProducer();
+    // FIXME: When supporting multiple units to different speakers, we should only select the unit matching the VPIO output device.
+    auto connection = m_gpuConnectionToWebProcess.get();
+    if (!connection)
+        return;
+    for (auto& unit : m_units.values())
+        unit->setShouldRegisterAsSpeakerSamplesProducer(connection->isLastToCaptureAudio());
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit);
 
-RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, const String& deviceID, GPUConnectionToWebProcess& connection, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback)
+RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, Ref<IPC::Connection>&& connection, bool shouldRegisterAsSpeakerSamplesProducer, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback)
     : m_identifier(identifier)
-    , m_connection(connection)
-    , m_localUnit(WebCore::AudioMediaStreamTrackRendererInternalUnit::create(deviceID, *this))
-    , m_canUseCaptureUnit(deviceID == AudioMediaStreamTrackRenderer::defaultDeviceID())
-    , m_shouldRegisterAsSpeakerSamplesProducer(m_canUseCaptureUnit && connection.isLastToCaptureAudio())
+    , m_connection(WTFMove(connection))
+    , m_localUnit(WebCore::AudioMediaStreamTrackRendererInternalUnit::create(*this))
+    , m_shouldRegisterAsSpeakerSamplesProducer(shouldRegisterAsSpeakerSamplesProducer)
 {
     WebCore::AudioSession::protectedSharedSession()->addInterruptionObserver(*this);
     protectedLocalUnit()->retrieveFormatDescription([weakThis = WeakPtr { *this }, this, callback = WTFMove(callback)](auto&& description) mutable {
@@ -196,15 +201,11 @@ void RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::reset()
         return;
 
     m_canReset = false;
-    if (RefPtr connection = m_connection.get())
-        connection->protectedConnection()->send(Messages::GPUProcessConnection::ResetAudioMediaStreamTrackRendererInternalUnit { m_identifier }, 0);
+    Ref { m_connection }->send(Messages::GPUProcessConnection::ResetAudioMediaStreamTrackRendererInternalUnit { m_identifier }, 0);
 }
 
 void RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::setShouldRegisterAsSpeakerSamplesProducer(bool value)
 {
-    if (!m_canUseCaptureUnit)
-        return;
-
     if (m_shouldRegisterAsSpeakerSamplesProducer == value)
         return;
 
@@ -212,13 +213,8 @@ void RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::setShouldRegist
     if (!m_isPlaying)
         return;
 
-    if (m_shouldRegisterAsSpeakerSamplesProducer) {
-        protectedLocalUnit()->stop();
+    if (m_shouldRegisterAsSpeakerSamplesProducer)
         WebCore::CoreAudioCaptureSourceFactory::singleton().registerSpeakerSamplesProducer(*this);
-    } else {
-        WebCore::CoreAudioCaptureSourceFactory::singleton().unregisterSpeakerSamplesProducer(*this);
-        protectedLocalUnit()->start();
-    }
 }
 
 void RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::start(ConsumerSharedCARingBuffer::Handle&& handle, IPC::Semaphore&& semaphore)
@@ -251,9 +247,9 @@ void RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::stop()
     protectedLocalUnit()->stop();
 }
 
-void RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::updateShouldRegisterAsSpeakerSamplesProducer()
+void RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::setAudioOutputDevice(const String& deviceId)
 {
-    setShouldRegisterAsSpeakerSamplesProducer(m_connection.get()->isLastToCaptureAudio());
+    protectedLocalUnit()->setAudioOutputDevice(deviceId);
 }
 
 OSStatus RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::render(size_t sampleCount, AudioBufferList& list, uint64_t, double, AudioUnitRenderActionFlags& flags)

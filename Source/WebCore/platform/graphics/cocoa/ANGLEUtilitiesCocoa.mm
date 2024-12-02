@@ -121,7 +121,7 @@ void destroyPbufferAndDetachIOSurface(EGLDisplay display, void* handle)
     EGL_DestroySurface(display, handle);
 }
 
-RetainPtr<id<MTLRasterizationRateMap>> newRasterizationRateMap(GCGLDisplay display, IntSize physicalSizeLeft, IntSize physicalSizeRight, IntSize screenSize, std::span<const float> horizontalSamplesLeft, std::span<const float> verticalSamples, std::span<const float> horizontalSamplesRight)
+RetainPtr<MTLRasterizationRateMap> newRasterizationRateMap(GCGLDisplay display, IntSize physicalSizeLeft, IntSize physicalSizeRight, IntSize screenSize, std::span<const float> horizontalSamplesLeft, std::span<const float> verticalSamples, std::span<const float> horizontalSamplesRight)
 {
     EGLDeviceEXT device = EGL_NO_DEVICE_EXT;
     if (!EGL_QueryDisplayAttribEXT(display, EGL_DEVICE_EXT, reinterpret_cast<EGLAttrib*>(&device)))
@@ -163,9 +163,9 @@ RetainPtr<id<MTLRasterizationRateMap>> newRasterizationRateMap(GCGLDisplay displ
     auto rateMap = cp_proxy_process_rasterization_rate_map_create(mtlDevice, cp_layer_renderer_layout_shared, 2);
     cp_rasterization_rate_map_update_shared_from_layered_descriptor(rateMap, descriptor.get());
 
-    RetainPtr<id<MTLRasterizationRateMap>> rasterizationRateMap = cp_proxy_process_rasterization_rate_map_get_metal_maps(rateMap).firstObject;
+    RetainPtr<MTLRasterizationRateMap> rasterizationRateMap = cp_proxy_process_rasterization_rate_map_get_metal_maps(rateMap).firstObject;
 #else
-    RetainPtr<id<MTLRasterizationRateMap>> rasterizationRateMap;
+    RetainPtr<MTLRasterizationRateMap> rasterizationRateMap;
     UNUSED_PARAM(display);
     UNUSED_PARAM(physicalSizeLeft);
     UNUSED_PARAM(physicalSizeRight);
@@ -177,7 +177,7 @@ RetainPtr<id<MTLRasterizationRateMap>> newRasterizationRateMap(GCGLDisplay displ
     return rasterizationRateMap;
 }
 
-RetainPtr<id<MTLSharedEvent>> newSharedEventWithMachPort(GCGLDisplay display, mach_port_t machPort)
+RetainPtr<MTLSharedEvent> newSharedEventWithMachPort(GCGLDisplay display, mach_port_t machPort)
 {
     // FIXME: Check for invalid mach_port_t
     EGLDeviceEXT device = EGL_NO_DEVICE_EXT;
@@ -191,7 +191,7 @@ RetainPtr<id<MTLSharedEvent>> newSharedEventWithMachPort(GCGLDisplay display, ma
     return adoptNS([(id<MTLDeviceSPI>)mtlDevice newSharedEventWithMachPort:machPort]);
 }
 
-RetainPtr<id<MTLSharedEvent>> newSharedEvent(GCGLDisplay display)
+RetainPtr<MTLSharedEvent> newSharedEvent(GCGLDisplay display)
 {
     EGLDeviceEXT device = EGL_NO_DEVICE_EXT;
     if (!EGL_QueryDisplayAttribEXT(display, EGL_DEVICE_EXT, reinterpret_cast<EGLAttrib*>(&device)))

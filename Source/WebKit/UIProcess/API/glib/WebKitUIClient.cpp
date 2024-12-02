@@ -53,13 +53,6 @@
 
 using namespace WebKit;
 
-class UIClient;
-
-namespace WTF {
-template<typename T> struct IsDeprecatedTimerSmartPointerException;
-template<> struct IsDeprecatedTimerSmartPointerException<UIClient> : std::true_type { };
-}
-
 class UIClient : public API::UIClient {
 public:
     explicit UIClient(WebKitWebView* webView)

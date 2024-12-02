@@ -11,11 +11,8 @@
     <option>aaaaaa</option>
     </select>
     <script>
-        onload = async () => {
-            testRunner?.waitUntilDone();
-            await testRunner?.displayAndTrackRepaints();
-            testRunner?.notifyDone();
-        }
+        if (window.testRunner)
+            testRunner.displayAndTrackRepaints();
     </script>
 </body>
 </html>

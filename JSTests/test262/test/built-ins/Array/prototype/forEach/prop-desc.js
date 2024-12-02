@@ -16,8 +16,6 @@ includes: [propertyHelper.js]
 
 assert.sameValue(typeof Array.prototype.forEach, 'function', 'typeof');
 
-verifyProperty(Array.prototype, "forEach", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Array.prototype, "forEach");
+verifyWritable(Array.prototype, "forEach");
+verifyConfigurable(Array.prototype, "forEach");

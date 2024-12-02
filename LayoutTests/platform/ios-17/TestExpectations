@@ -13,9 +13,6 @@ fast/forms/switch/pointer-tracking-there-and-back-again-rtl.html [ Timeout Image
 fast/forms/switch/pointer-tracking-there-and-back-again.html [ Timeout ImageOnlyFailure ]
 fast/forms/switch/pointer-tracking.html [ Pass Timeout ] # appears to be timing out only in stress mode
 
-# Week input control is only available starting in iOS 18
-fast/forms/ios/date-picker-value-crash.html [ Skip ]
-
 # -- The below regressed on iOS 18 but are passing on iOS 17 --
 
 # rdar://130594018 (REGRESSION (278344@main?): [ iOS 18 Release ] 2 http/tests/xmlhttprequest/* layout tests are constantly failing.)
@@ -97,6 +94,13 @@ imported/w3c/web-platform-tests/css/css-content/quotes-027.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-text/text-transform/text-transform-fullwidth-004.xht [ Pass ]
 imported/w3c/web-platform-tests/css/css-text/text-transform/text-transform-fullwidth-005.xht [ Pass ]
 fast/text/text-underline-position-under.html [ Pass ]
+
+# Fails when cookies are not SameSite=Lax by default
+http/tests/cookies/same-site/fetch-after-navigating-iframe-in-cross-origin-page.html [ Failure ]
+http/tests/cookies/same-site/fetch-in-cross-origin-service-worker.html [ Failure ]
+http/tests/cookies/same-site/popup-cross-site-post.html [ Failure ]
+imported/w3c/web-platform-tests/html/anonymous-iframe/cookie.tentative.https.window.html [ Failure ]
+imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/anonymous-iframe/cookie.tentative.https.window.html [ Failure ]
 
 # Fails with SameSite=None cookies by default
 http/tests/resourceLoadStatistics/set-all-cookies-to-same-site-strict.html [ Failure ]

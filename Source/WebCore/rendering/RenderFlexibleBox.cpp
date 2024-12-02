@@ -951,9 +951,7 @@ bool RenderFlexibleBox::shouldTrimCrossAxisMarginEnd() const
 void RenderFlexibleBox::trimMainAxisMarginStart(const FlexLayoutItem& flexLayoutItem)
 {
     auto horizontalFlow = isHorizontalFlow();
-    flexLayoutItem.mainAxisMargin -= horizontalFlow
-        ? flexLayoutItem.renderer->marginStart(writingMode())
-        : flexLayoutItem.renderer->marginBefore(writingMode());
+    flexLayoutItem.mainAxisMargin -= horizontalFlow ? flexLayoutItem.renderer->marginStart(&style()) : flexLayoutItem.renderer->marginBefore(&style());
     if (horizontalFlow)
         setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::InlineStart);
     else
@@ -964,9 +962,7 @@ void RenderFlexibleBox::trimMainAxisMarginStart(const FlexLayoutItem& flexLayout
 void RenderFlexibleBox::trimMainAxisMarginEnd(const FlexLayoutItem& flexLayoutItem)
 {
     auto horizontalFlow = isHorizontalFlow();
-    flexLayoutItem.mainAxisMargin -= horizontalFlow
-        ? flexLayoutItem.renderer->marginEnd(writingMode())
-        : flexLayoutItem.renderer->marginAfter(writingMode());
+    flexLayoutItem.mainAxisMargin -= horizontalFlow ? flexLayoutItem.renderer->marginEnd(&style()) : flexLayoutItem.renderer->marginAfter(&style());
     if (horizontalFlow)
         setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::InlineEnd);
     else
@@ -1515,7 +1511,7 @@ LayoutUnit RenderFlexibleBox::marginBoxAscentForFlexItem(const RenderBox& flexIt
     }
 
     if (isHorizontalFlow ? flexItem.isScrollContainerY() : flexItem.isScrollContainerX())
-        return std::max(0_lu, std::min(*ascent, crossAxisExtentForFlexItem(flexItem))) + flowAwareMarginBeforeForFlexItem(flexItem);
+        return std::clamp(*ascent, 0_lu, crossAxisExtentForFlexItem(flexItem)) + flowAwareMarginBeforeForFlexItem(flexItem);
     return *ascent + flowAwareMarginBeforeForFlexItem(flexItem);;
 }
 
@@ -1886,11 +1882,12 @@ static LayoutUnit alignmentOffset(LayoutUnit availableFreeSpace, ItemPosition po
     case ItemPosition::FlexEnd:
         return availableFreeSpace;
     case ItemPosition::Center:
-    case ItemPosition::AnchorCenter:
         return availableFreeSpace / 2;
     case ItemPosition::Baseline:
     case ItemPosition::LastBaseline: 
         return maxAscent.value_or(0_lu) - ascent.value_or(0_lu);
+    case ItemPosition::AnchorCenter:
+        return 0; // TODO: Implement - see https://bugs.webkit.org/show_bug.cgi?id=275451.
     }
     return 0;
 }

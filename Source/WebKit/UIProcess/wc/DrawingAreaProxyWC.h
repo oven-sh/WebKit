@@ -29,7 +29,6 @@
 
 #include "BackingStore.h"
 #include "DrawingAreaProxy.h"
-#include <wtf/RefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -38,21 +37,16 @@ class Region;
 
 namespace WebKit {
 
-class DrawingAreaProxyWC final : public DrawingAreaProxy, public RefCounted<DrawingAreaProxyWC> {
+class DrawingAreaProxyWC final : public DrawingAreaProxy {
     WTF_MAKE_TZONE_ALLOCATED(DrawingAreaProxyWC);
     WTF_MAKE_NONCOPYABLE(DrawingAreaProxyWC);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DrawingAreaProxyWC);
 public:
-    static Ref<DrawingAreaProxyWC> create(WebPageProxy&, WebProcessProxy&);
-
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
+    DrawingAreaProxyWC(WebPageProxy&, WebProcessProxy&);
 
     void paint(PlatformPaintContextPtr, const WebCore::IntRect&, WebCore::Region& unpaintedRegion);
 
 private:
-    DrawingAreaProxyWC(WebPageProxy&, WebProcessProxy&);
-
     // DrawingAreaProxy
     void deviceScaleFactorDidChange(CompletionHandler<void()>&&) override;
     void sizeDidChange() override;

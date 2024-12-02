@@ -28,8 +28,6 @@
 
 #include "JSObjectInlines.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 const ClassInfo JSPropertyNameEnumerator::s_info = { "JSPropertyNameEnumerator"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSPropertyNameEnumerator) };
@@ -218,5 +216,3 @@ JSString* JSPropertyNameEnumerator::computeNext(JSGlobalObject* globalObject, JS
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

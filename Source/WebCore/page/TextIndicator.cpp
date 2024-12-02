@@ -159,9 +159,6 @@ static SnapshotOptions snapshotOptionsForTextIndicatorOptions(OptionSet<TextIndi
     } else
         snapshotOptions.flags.add(SnapshotFlags::ExcludeSelectionHighlighting);
 
-    if (options.contains(TextIndicatorOption::SnapshotContentAt3xBaseScale))
-        snapshotOptions.flags.add(SnapshotFlags::PaintWith3xBaseScale);
-
     return snapshotOptions;
 }
 
@@ -181,23 +178,15 @@ static bool takeSnapshots(TextIndicatorData& data, LocalFrame& frame, IntRect sn
         return false;
 
     if (data.options.contains(TextIndicatorOption::IncludeSnapshotWithSelectionHighlight)) {
-        SnapshotOptions snapshotOptions { { }, ImageBufferPixelFormat::BGRA8, DestinationColorSpace::SRGB() };
-        if (data.options.contains(TextIndicatorOption::SnapshotContentAt3xBaseScale))
-            snapshotOptions.flags.add(SnapshotFlags::PaintWith3xBaseScale);
-
         float snapshotScaleFactor;
-        data.contentImageWithHighlight = takeSnapshot(frame, snapshotRect, WTFMove(snapshotOptions), snapshotScaleFactor, clipRectsInDocumentCoordinates);
+        data.contentImageWithHighlight = takeSnapshot(frame, snapshotRect, { { }, ImageBufferPixelFormat::BGRA8, DestinationColorSpace::SRGB() }, snapshotScaleFactor, clipRectsInDocumentCoordinates);
         ASSERT(!data.contentImageWithHighlight || data.contentImageScaleFactor >= snapshotScaleFactor);
     }
 
     if (data.options.contains(TextIndicatorOption::IncludeSnapshotOfAllVisibleContentWithoutSelection)) {
-        SnapshotOptions snapshotOptions { { SnapshotFlags::PaintEverythingExcludingSelection }, ImageBufferPixelFormat::BGRA8, DestinationColorSpace::SRGB() };
-        if (data.options.contains(TextIndicatorOption::SnapshotContentAt3xBaseScale))
-            snapshotOptions.flags.add(SnapshotFlags::PaintWith3xBaseScale);
-
         float snapshotScaleFactor;
         auto snapshotRect = frame.protectedView()->visibleContentRect();
-        data.contentImageWithoutSelection = takeSnapshot(frame, snapshotRect, WTFMove(snapshotOptions), snapshotScaleFactor, { });
+        data.contentImageWithoutSelection = takeSnapshot(frame, snapshotRect, { { SnapshotFlags::PaintEverythingExcludingSelection }, ImageBufferPixelFormat::BGRA8, DestinationColorSpace::SRGB() }, snapshotScaleFactor, { });
         data.contentImageWithoutSelectionRectInRootViewCoordinates = frame.protectedView()->contentsToRootView(snapshotRect);
     }
     

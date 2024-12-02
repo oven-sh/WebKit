@@ -163,7 +163,6 @@ set(WTF_PUBLIC_HEADERS
     MainThreadData.h
     MainThreadDispatcher.h
     MallocPtr.h
-    MallocSpan.h
     Markable.h
     MathExtras.h
     MediaTime.h
@@ -172,7 +171,6 @@ set(WTF_PUBLIC_HEADERS
     MessageQueue.h
     MetaAllocator.h
     MetaAllocatorHandle.h
-    Mmap.h
     MonotonicTime.h
     NakedPtr.h
     NakedRef.h
@@ -194,7 +192,6 @@ set(WTF_PUBLIC_HEADERS
     OptionSet.h
     OptionSetHash.h
     OrderMaker.h
-    OverflowPolicy.h
     Packed.h
     PackedRef.h
     PackedRefPtr.h
@@ -349,8 +346,6 @@ set(WTF_PUBLIC_HEADERS
     UniqueRefVector.h
     VMTags.h
     ValueCheck.h
-    VariantList.h
-    VariantListOperations.h
     Vector.h
     VectorHash.h
     VectorTraits.h
@@ -373,7 +368,6 @@ set(WTF_PUBLIC_HEADERS
     WordLock.h
     WorkQueue.h
     WorkerPool.h
-    ZippedRange.h
     dtoa.h
 
     dragonbox/dragonbox.h
@@ -471,7 +465,6 @@ set(WTF_PUBLIC_HEADERS
     text/WTFString.h
 
     text/icu/TextBreakIteratorICU.h
-    text/icu/UnicodeExtras.h
     text/icu/UTextProvider.h
     text/icu/UTextProviderLatin1.h
     text/icu/UTextProviderUTF16.h
@@ -636,7 +629,6 @@ set(WTF_SOURCES
     text/TextStream.cpp
     text/WTFString.cpp
 
-    text/icu/UnicodeExtras.cpp
     text/icu/UTextProvider.cpp
     text/icu/UTextProviderLatin1.cpp
     text/icu/UTextProviderUTF16.cpp
@@ -758,13 +750,6 @@ set(WTF_INTERFACE_DEPENDENCIES WTF_CopyHeaders)
 
 WEBKIT_FRAMEWORK_DECLARE(WTF)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
-
-if (PORT STREQUAL GTK OR PORT STREQUAL WPE)
-    WEBKIT_ADD_TARGET_CXX_FLAGS(WTF
-        -Wunsafe-buffer-usage
-        -fsafe-buffer-usage-suggestions
-    )
-endif ()
 
 WEBKIT_COPY_FILES(WTF_CopyHeaders
     DESTINATION ${WTF_FRAMEWORK_HEADERS_DIR}/wtf

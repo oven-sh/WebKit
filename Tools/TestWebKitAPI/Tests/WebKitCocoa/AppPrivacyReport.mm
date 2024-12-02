@@ -215,7 +215,8 @@ TEST(AppPrivacyReport, AppInitiatedRequestWithSubFrame)
 
     [webView loadRequest:appInitiatedRequest];
 
-    [webView waitForMessages:@[@"MainFrame: B", @"Subframe: B"]];
+    [webView waitForMessage:@"MainFrame: B"];
+    [webView waitForMessage:@"Subframe: B"];
 
     [webView _appPrivacyReportTestingData: ^(struct WKAppPrivacyReportTestingData data) {
         EXPECT_TRUE(data.hasLoadedAppInitiatedRequestTesting);
@@ -238,7 +239,8 @@ TEST(AppPrivacyReport, NonAppInitiatedRequestWithSubFrame)
 
     [webView loadRequest:nonAppInitiatedRequest];
 
-    [webView waitForMessages:@[@"MainFrame: B", @"Subframe: B"]];
+    [webView waitForMessage:@"MainFrame: B"];
+    [webView waitForMessage:@"Subframe: B"];
 
     [webView _appPrivacyReportTestingData: ^(struct WKAppPrivacyReportTestingData data) {
         EXPECT_FALSE(data.hasLoadedAppInitiatedRequestTesting);

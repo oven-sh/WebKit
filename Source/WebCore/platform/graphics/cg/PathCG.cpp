@@ -35,7 +35,6 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -569,7 +568,5 @@ void addToCGContextPath(CGContextRef context, const Path& path)
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(CG)

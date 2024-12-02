@@ -28,8 +28,6 @@
 
 #include <compression.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace PAL {
 
 Vector<LChar> gunzip(const unsigned char* data, size_t length)
@@ -90,5 +88,3 @@ Vector<LChar> gunzip(const unsigned char* data, size_t length)
 }
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

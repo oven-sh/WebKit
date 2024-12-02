@@ -1,5 +1,5 @@
 
 
-PASS Verify MP4 MediaRecorder doesn't drop first frame
+FAIL Verify MP4 MediaRecorder doesn't drop first frame assert_true: pixel is approximately red expected true got false
 PASS Verify WebM MediaRecorder doesn't drop first frame
 

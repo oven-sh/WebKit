@@ -42,6 +42,7 @@
 #include "InlineTextBoxStyle.h"
 #include "LocalFrame.h"
 #include "Page.h"
+#include "PaintInfo.h"
 #include "RenderBlock.h"
 #include "RenderCombineText.h"
 #include "RenderElementInlines.h"
@@ -56,6 +57,8 @@
 #include "Text.h"
 #include "TextBoxPainter.h"
 #include "TextBoxSelectableRange.h"
+#include "TextDecorationPainter.h"
+#include "TextPaintStyle.h"
 #include <stdio.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
@@ -225,6 +228,49 @@ void LegacyInlineTextBox::attachLine()
 bool LegacyInlineTextBox::isLineBreak() const
 {
     return renderer().style().preserveNewline() && len() == 1 && renderer().text()[start()] == '\n';
+}
+
+bool LegacyInlineTextBox::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, LayoutUnit /* lineTop */, LayoutUnit /*lineBottom*/,
+    HitTestAction /*hitTestAction*/)
+{
+    if (!renderer().parent()->visibleToHitTesting(request))
+        return false;
+
+    if (isLineBreak())
+        return false;
+
+    FloatRect rect(locationIncludingFlipping(), size());
+    rect.moveBy(accumulatedOffset);
+
+    if (locationInContainer.intersects(rect)) {
+        renderer().updateHitTestResult(result, flipForWritingMode(locationInContainer.point() - toLayoutSize(accumulatedOffset)));
+        if (result.addNodeToListBasedTestResult(renderer().protectedNodeForHitTest().get(), request, locationInContainer, rect) == HitTestProgress::Stop)
+            return true;
+    }
+    return false;
+}
+
+void LegacyInlineTextBox::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset, LayoutUnit /*lineTop*/, LayoutUnit /*lineBottom*/)
+{
+    if (isLineBreak() || !paintInfo.shouldPaintWithinRoot(renderer()) || renderer().style().usedVisibility() != Visibility::Visible
+        || paintInfo.phase == PaintPhase::Outline || !hasTextContent())
+        return;
+
+    ASSERT(paintInfo.phase != PaintPhase::SelfOutline && paintInfo.phase != PaintPhase::ChildOutlines);
+
+    LayoutUnit logicalLeftSide = logicalLeftVisualOverflow();
+    LayoutUnit logicalRightSide = logicalRightVisualOverflow();
+    LayoutUnit logicalStart = logicalLeftSide + (isHorizontal() ? paintOffset.x() : paintOffset.y());
+    LayoutUnit logicalExtent = logicalRightSide - logicalLeftSide;
+    
+    LayoutUnit paintEnd = isHorizontal() ? paintInfo.rect.maxX() : paintInfo.rect.maxY();
+    LayoutUnit paintStart = isHorizontal() ? paintInfo.rect.x() : paintInfo.rect.y();
+
+    if (logicalStart >= paintEnd || logicalStart + logicalExtent <= paintStart)
+        return;
+
+    LegacyTextBoxPainter textBoxPainter(*this, paintInfo, paintOffset);
+    textBoxPainter.paint();
 }
 
 TextBoxSelectableRange LegacyInlineTextBox::selectableRange() const

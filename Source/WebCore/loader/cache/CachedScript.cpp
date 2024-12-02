@@ -57,9 +57,9 @@ void CachedScript::setEncoding(const String& chs)
     protectedDecoder()->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
 }
 
-ASCIILiteral CachedScript::encoding() const
+String CachedScript::encoding() const
 {
-    return protectedDecoder()->encoding().name();
+    return String::fromLatin1(protectedDecoder()->encoding().name());
 }
 
 StringView CachedScript::script(ShouldDecodeAsUTF8Only shouldDecodeAsUTF8Only)

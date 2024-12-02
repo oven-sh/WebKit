@@ -1,5 +1,0 @@
-This is a sample text.
-
-
-PASS Test drag and drop selection over a text directive
-

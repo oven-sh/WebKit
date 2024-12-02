@@ -1819,10 +1819,9 @@ export interface Canvas extends EmbindObject<"Canvas"> {
      * @param bounds
      * @param backdrop
      * @param flags
-     * @param backdropFilterTileMode
      */
     saveLayer(paint?: Paint, bounds?: InputRect | null, backdrop?: ImageFilter | null,
-              flags?: SaveLayerFlag, backdropFilterTileMode?: TileMode): number;
+              flags?: SaveLayerFlag): number;
 
     /**
      * Scales the current matrix by sx on the x-axis and sy on the y-axis.

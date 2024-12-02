@@ -64,7 +64,7 @@ public:
     
     const T& at(Type type) const
     {
-        return std::bit_cast<TypeMap*>(this)->at(type);
+        return bitwise_cast<TypeMap*>(this)->at(type);
     }
     
     T& operator[](Type type)

@@ -284,7 +284,7 @@ static void openNewWindow(const URL& urlToLoad, LocalFrame& frame, Event* event,
 static void insertUnicodeCharacter(UChar character, LocalFrame& frame)
 {
     String text(span(character));
-    if (!frame.protectedEditor()->shouldInsertText(text, frame.selection().selection().toNormalizedRange(), EditorInsertAction::Typed))
+    if (!frame.checkedEditor()->shouldInsertText(text, frame.selection().selection().toNormalizedRange(), EditorInsertAction::Typed))
         return;
 
     ASSERT(frame.document());
@@ -324,7 +324,7 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         m_client->downloadURL(m_context.hitTestResult().absoluteLinkURL());
         break;
     case ContextMenuItemTagCopyLinkToClipboard:
-        frame->protectedEditor()->copyURL(m_context.hitTestResult().absoluteLinkURL(), m_context.hitTestResult().textContent());
+        frame->checkedEditor()->copyURL(m_context.hitTestResult().absoluteLinkURL(), m_context.hitTestResult().textContent());
         break;
     case ContextMenuItemTagOpenImageInNewWindow:
         openNewWindow(m_context.hitTestResult().absoluteImageURL(), *frame, nullptr, ShouldOpenExternalURLsPolicy::ShouldNotAllow);
@@ -336,11 +336,11 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
     case ContextMenuItemTagCopyImageToClipboard:
         // FIXME: The Pasteboard class is not written yet
         // For now, call into the client. This is temporary!
-        frame->protectedEditor()->copyImage(m_context.hitTestResult());
+        frame->checkedEditor()->copyImage(m_context.hitTestResult());
         break;
 #if PLATFORM(GTK)
     case ContextMenuItemTagCopyImageURLToClipboard:
-        frame->protectedEditor()->copyURL(m_context.hitTestResult().absoluteImageURL(), m_context.hitTestResult().textContent());
+        frame->checkedEditor()->copyURL(m_context.hitTestResult().absoluteImageURL(), m_context.hitTestResult().textContent());
         break;
 #endif
     case ContextMenuItemTagOpenMediaInNewWindow:
@@ -351,7 +351,7 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         m_client->downloadURL(m_context.hitTestResult().absoluteMediaURL());
         break;
     case ContextMenuItemTagCopyMediaLinkToClipboard:
-        frame->protectedEditor()->copyURL(m_context.hitTestResult().absoluteMediaURL(), m_context.hitTestResult().textContent());
+        frame->checkedEditor()->copyURL(m_context.hitTestResult().absoluteMediaURL(), m_context.hitTestResult().textContent());
         break;
     case ContextMenuItemTagToggleMediaControls:
         m_context.hitTestResult().toggleMediaControlsDisplay();
@@ -407,7 +407,7 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         break;
 #endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     case ContextMenuItemTagCopy:
-        frame->protectedEditor()->copy();
+        frame->checkedEditor()->copy();
         break;
     case ContextMenuItemTagCopyLinkWithHighlight:
         if (RefPtr page = frame->page()) {
@@ -441,7 +441,7 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         frame->editor().command("PasteAsPlainText"_s).execute();
         break;
     case ContextMenuItemTagDelete:
-        frame->protectedEditor()->performDelete();
+        frame->checkedEditor()->performDelete();
         break;
     case ContextMenuItemTagUnicodeInsertLRMMark:
         insertUnicodeCharacter(leftToRightMark, *frame);
@@ -482,7 +482,7 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
 #endif
     case ContextMenuItemTagSpellingGuess: {
         VisibleSelection selection = frame->selection().selection();
-        if (frame->protectedEditor()->shouldInsertText(title, selection.toNormalizedRange(), EditorInsertAction::Pasted)) {
+        if (frame->checkedEditor()->shouldInsertText(title, selection.toNormalizedRange(), EditorInsertAction::Pasted)) {
             OptionSet<ReplaceSelectionCommand::CommandOption> replaceOptions { ReplaceSelectionCommand::MatchStyle, ReplaceSelectionCommand::PreventNesting };
 
             if (frame->editor().behavior().shouldAllowSpellingSuggestionsWithoutSelection()) {
@@ -504,10 +504,10 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         break;
     }
     case ContextMenuItemTagIgnoreSpelling:
-        frame->protectedEditor()->ignoreSpelling();
+        frame->checkedEditor()->ignoreSpelling();
         break;
     case ContextMenuItemTagLearnSpelling:
-        frame->protectedEditor()->learnSpelling();
+        frame->checkedEditor()->learnSpelling();
         break;
     case ContextMenuItemTagSearchWeb:
         m_client->searchWithGoogle(frame.get());
@@ -534,7 +534,7 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         frame->editor().command("ToggleItalic"_s).execute();
         break;
     case ContextMenuItemTagUnderline:
-        frame->protectedEditor()->toggleUnderline();
+        frame->checkedEditor()->toggleUnderline();
         break;
     case ContextMenuItemTagOutline:
         // We actually never enable this because CSS does not have a way to specify an outline font,
@@ -551,13 +551,13 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         m_client->stopSpeaking();
         break;
     case ContextMenuItemTagDefaultDirection:
-        frame->protectedEditor()->setBaseWritingDirection(WritingDirection::Natural);
+        frame->checkedEditor()->setBaseWritingDirection(WritingDirection::Natural);
         break;
     case ContextMenuItemTagLeftToRight:
-        frame->protectedEditor()->setBaseWritingDirection(WritingDirection::LeftToRight);
+        frame->checkedEditor()->setBaseWritingDirection(WritingDirection::LeftToRight);
         break;
     case ContextMenuItemTagRightToLeft:
-        frame->protectedEditor()->setBaseWritingDirection(WritingDirection::RightToLeft);
+        frame->checkedEditor()->setBaseWritingDirection(WritingDirection::RightToLeft);
         break;
     case ContextMenuItemTagTextDirectionDefault:
         frame->editor().command("MakeTextWritingDirectionNatural"_s).execute();
@@ -569,54 +569,54 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         frame->editor().command("MakeTextWritingDirectionRightToLeft"_s).execute();
         break;
     case ContextMenuItemTagShowSpellingPanel:
-        frame->protectedEditor()->showSpellingGuessPanel();
+        frame->checkedEditor()->showSpellingGuessPanel();
         break;
     case ContextMenuItemTagCheckSpelling:
-        frame->protectedEditor()->advanceToNextMisspelling();
+        frame->checkedEditor()->advanceToNextMisspelling();
         break;
     case ContextMenuItemTagCheckSpellingWhileTyping:
-        frame->protectedEditor()->toggleContinuousSpellChecking();
+        frame->checkedEditor()->toggleContinuousSpellChecking();
         break;
     case ContextMenuItemTagCheckGrammarWithSpelling:
-        frame->protectedEditor()->toggleGrammarChecking();
+        frame->checkedEditor()->toggleGrammarChecking();
         break;
 #if USE(APPKIT)
     case ContextMenuItemTagMakeUpperCase:
-        frame->protectedEditor()->uppercaseWord();
+        frame->checkedEditor()->uppercaseWord();
         break;
     case ContextMenuItemTagMakeLowerCase:
-        frame->protectedEditor()->lowercaseWord();
+        frame->checkedEditor()->lowercaseWord();
         break;
     case ContextMenuItemTagCapitalize:
-        frame->protectedEditor()->capitalizeWord();
+        frame->checkedEditor()->capitalizeWord();
         break;
 #endif
 #if PLATFORM(COCOA)
     case ContextMenuItemTagChangeBack:
-        frame->protectedEditor()->changeBackToReplacedString(m_context.hitTestResult().replacedString());
+        frame->checkedEditor()->changeBackToReplacedString(m_context.hitTestResult().replacedString());
         break;
 #endif
 #if USE(AUTOMATIC_TEXT_REPLACEMENT)
     case ContextMenuItemTagShowSubstitutions:
-        frame->protectedEditor()->showSubstitutionsPanel();
+        frame->checkedEditor()->showSubstitutionsPanel();
         break;
     case ContextMenuItemTagSmartCopyPaste:
-        frame->protectedEditor()->toggleSmartInsertDelete();
+        frame->checkedEditor()->toggleSmartInsertDelete();
         break;
     case ContextMenuItemTagSmartQuotes:
-        frame->protectedEditor()->toggleAutomaticQuoteSubstitution();
+        frame->checkedEditor()->toggleAutomaticQuoteSubstitution();
         break;
     case ContextMenuItemTagSmartDashes:
-        frame->protectedEditor()->toggleAutomaticDashSubstitution();
+        frame->checkedEditor()->toggleAutomaticDashSubstitution();
         break;
     case ContextMenuItemTagSmartLinks:
-        frame->protectedEditor()->toggleAutomaticLinkDetection();
+        frame->checkedEditor()->toggleAutomaticLinkDetection();
         break;
     case ContextMenuItemTagTextReplacement:
-        frame->protectedEditor()->toggleAutomaticTextReplacement();
+        frame->checkedEditor()->toggleAutomaticTextReplacement();
         break;
     case ContextMenuItemTagCorrectSpellingAutomatically:
-        frame->protectedEditor()->toggleAutomaticSpellingCorrection();
+        frame->checkedEditor()->toggleAutomaticSpellingCorrection();
         break;
 #endif
     case ContextMenuItemTagInspectElement:
@@ -624,7 +624,7 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
             page->inspectorController().inspect(m_context.hitTestResult().innerNonSharedNode());
         break;
     case ContextMenuItemTagDictationAlternative:
-        frame->protectedEditor()->applyDictationAlternative(title);
+        frame->checkedEditor()->applyDictationAlternative(title);
         break;
 #if PLATFORM(MAC)
     case ContextMenuItemTagShowFonts:

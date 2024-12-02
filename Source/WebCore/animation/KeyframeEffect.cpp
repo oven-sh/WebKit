@@ -27,7 +27,6 @@
 #include "KeyframeEffect.h"
 
 #include "Animation.h"
-#include "AnimationTimelinesController.h"
 #include "CSSAnimation.h"
 #include "CSSKeyframeRule.h"
 #include "CSSPropertyAnimation.h"
@@ -78,7 +77,7 @@
 
 #if ENABLE(THREADED_ANIMATION_RESOLUTION)
 #include "AcceleratedEffect.h"
-#include "AcceleratedEffectStackUpdater.h"
+#include "AcceleratedTimeline.h"
 #endif
 
 namespace WebCore {
@@ -672,13 +671,14 @@ void KeyframeEffect::copyPropertiesFromSource(Ref<KeyframeEffect>&& source)
     m_parsedKeyframes = WTFMove(parsedKeyframes);
 
     setFill(source->fill());
-    setDelay(source->specifiedDelay());
-    setEndDelay(source->specifiedEndDelay());
+    setDelay(source->delay());
+    setEndDelay(source->endDelay());
     setDirection(source->direction());
     setIterations(source->iterations());
     setTimingFunction(source->timingFunction());
     setIterationStart(source->iterationStart());
-    setIterationDuration(source->specifiedIterationDuration());
+    setIterationDuration(source->iterationDuration());
+    updateStaticTimingProperties();
 
     BlendingKeyframes blendingKeyframes(m_keyframesName);
     blendingKeyframes.copyKeyframes(source->m_blendingKeyframes);
@@ -747,7 +747,7 @@ auto KeyframeEffect::getKeyframes() -> Vector<ComputedKeyframe>
     };
 
     auto styleProperties = MutableStyleProperties::create();
-    if (m_animationType == WebAnimationType::CSSAnimation && m_target->isConnected()) {
+    if (m_animationType == WebAnimationType::CSSAnimation) {
         auto matchingRules = m_target->styleResolver().pseudoStyleRulesForElement(target, m_pseudoElementIdentifier, Style::Resolver::AllCSSRules);
         for (auto& matchedRule : matchingRules)
             styleProperties->mergeAndOverrideOnConflict(matchedRule->properties());
@@ -2125,7 +2125,7 @@ void KeyframeEffect::applyPendingAcceleratedActions()
     }
 }
 
-Ref<const Animation> KeyframeEffect::backingAnimationForCompositedRenderer()
+Ref<const Animation> KeyframeEffect::backingAnimationForCompositedRenderer() const
 {
     auto effectAnimation = animation();
 
@@ -2133,7 +2133,7 @@ Ref<const Animation> KeyframeEffect::backingAnimationForCompositedRenderer()
     // corresponding Animation properties.
     auto animation = Animation::create();
     animation->setDuration(iterationDuration().time()->seconds());
-    animation->setDelay(delay().time()->seconds());
+    animation->setDelay(delay().seconds());
     animation->setIterationCount(iterations());
     animation->setTimingFunction(timingFunction()->clone());
     animation->setPlaybackRate(effectAnimation->playbackRate());
@@ -2399,7 +2399,7 @@ bool KeyframeEffect::ticksContinuouslyWhileActive() const
     return true;
 }
 
-Seconds KeyframeEffect::timeToNextTick(const BasicEffectTiming& timing)
+Seconds KeyframeEffect::timeToNextTick(const BasicEffectTiming& timing) const
 {
     // CSS Animations need to trigger "animationiteration" events even if there is no need to
     // update styles while animating, so if we're dealing with one we must wait until the next iteration.
@@ -2851,12 +2851,11 @@ void KeyframeEffect::updateAssociatedThreadedEffectStack(const std::optional<con
     if (!document()->page())
         return;
 
-    ASSERT(document()->timelinesController());
-    auto& acceleratedEffectStackUpdater = CheckedPtr { document()->timelinesController() }->acceleratedEffectStackUpdater();
+    auto& acceleratedTimeline = document()->acceleratedTimeline();
     if (previousTarget)
-        acceleratedEffectStackUpdater.updateEffectStackForTarget(*previousTarget);
+        acceleratedTimeline.updateEffectStackForTarget(*previousTarget);
     if (auto currentTarget = targetStyleable())
-        acceleratedEffectStackUpdater.updateEffectStackForTarget(*currentTarget);
+        acceleratedTimeline.updateEffectStackForTarget(*currentTarget);
 
     if (auto* animation = this->animation())
         animation->acceleratedStateDidChange();

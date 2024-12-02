@@ -63,6 +63,9 @@ static unsigned long getauxval(unsigned long type)
 
 namespace JSC {
 
+// non-unified build fixes 2024
+// WTF_MAKE_TZONE_ALLOCATED_IMPL(MacroAssemblerARM64);
+
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ctiMasmProbeTrampoline, void, ());
 JSC_ANNOTATE_JIT_OPERATION_PROBE(ctiMasmProbeTrampoline);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ctiMasmProbeTrampolineSIMD, void, ());

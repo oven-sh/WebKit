@@ -2,7 +2,7 @@
  * The default style sheet used to render HTML.
  *
  * Copyright (C) 2000 Lars Knoll (knoll@kde.org)
- * Copyright (C) 2003-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -1393,22 +1393,6 @@ ruby > :not(rb, rbc, ruby) {
     white-space: nowrap;
 }
 
-/* https://html.spec.whatwg.org/#the-details-and-summary-elements */
-
-details, summary {
-    display: block;
-}
-
-details > summary:first-of-type {
-    display: list-item;
-    counter-increment: list-item 0;
-    list-style: disclosure-closed inside;
-}
-
-details[open] > summary:first-of-type {
-    list-style-type: disclosure-open;
-}
-
 /* other elements */
 
 frameset, frame {
@@ -1423,14 +1407,29 @@ iframe {
     border: 2px inset;
 }
 
+details {
+    display: block;
+}
+
+summary {
+    display: block;
+}
+
+summary::-webkit-details-marker {
+    display: inline-block;
+    width: 0.66em;
+    height: 0.66em;
+    margin-inline-end: 0.4em;
+}
+
 bdi, output {
     unicode-bidi: isolate;
 }
 
 input[type=tel i]:dir(ltr) { direction: ltr; }
 
-bdo, bdo[dir] {
-    unicode-bidi: isolate-override;
+bdo {
+    unicode-bidi: bidi-override;
 }
 
 slot {

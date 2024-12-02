@@ -28,12 +28,10 @@
 #include "AudioDSPKernel.h"
 #include "IIRFilter.h"
 #include "IIRProcessor.h"
-#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class IIRDSPKernel final : public AudioDSPKernel {
-    WTF_MAKE_TZONE_ALLOCATED(IIRDSPKernel);
 public:
     explicit IIRDSPKernel(IIRProcessor&);
 

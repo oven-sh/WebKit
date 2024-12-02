@@ -30,7 +30,6 @@
 #endif
 
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -84,4 +83,3 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 }
 
 } // namespace WebCore
-

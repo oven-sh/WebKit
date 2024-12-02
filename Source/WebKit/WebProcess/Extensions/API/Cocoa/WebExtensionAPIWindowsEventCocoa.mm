@@ -35,7 +35,7 @@
 #import "WebExtensionAPIWindows.h"
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionUtilities.h"
-#import "WebFrame.h"
+#import "WebPageProxy.h"
 #import "WebProcess.h"
 
 #if ENABLE(WK_WEB_EXTENSIONS)
@@ -47,10 +47,7 @@ void WebExtensionAPIWindowsEvent::invokeListenersWithArgument(id argument, Optio
     if (m_listeners.isEmpty())
         return;
 
-    // Copy the listeners since call() can trigger a mutation of the listeners.
-    auto listenersCopy = m_listeners;
-
-    for (auto& listener : listenersCopy) {
+    for (auto& listener : m_listeners) {
         if (!listener.second.containsAny(windowTypeFilter))
             continue;
 
@@ -58,19 +55,19 @@ void WebExtensionAPIWindowsEvent::invokeListenersWithArgument(id argument, Optio
     }
 }
 
-void WebExtensionAPIWindowsEvent::addListener(WebCore::FrameIdentifier frameIdentifier, RefPtr<WebExtensionCallbackHandler> listener, NSDictionary *filter, NSString **outExceptionString)
+void WebExtensionAPIWindowsEvent::addListener(WebPage& page, RefPtr<WebExtensionCallbackHandler> listener, NSDictionary *filter, NSString **outExceptionString)
 {
     OptionSet<WindowTypeFilter> windowTypeFilter;
     if (!WebExtensionAPIWindows::parseWindowTypesFilter(filter, windowTypeFilter, @"filters", outExceptionString))
         return;
 
-    m_frameIdentifier = frameIdentifier;
+    m_pageProxyIdentifier = page.webPageProxyIdentifier();
     m_listeners.append({ listener, windowTypeFilter });
 
-    WebProcess::singleton().send(Messages::WebExtensionContext::AddListener(*m_frameIdentifier, m_type, contentWorldType()), extensionContext().identifier());
+    WebProcess::singleton().send(Messages::WebExtensionContext::AddListener(*m_pageProxyIdentifier, m_type, contentWorldType()), extensionContext().identifier());
 }
 
-void WebExtensionAPIWindowsEvent::removeListener(WebCore::FrameIdentifier frameIdentifier, RefPtr<WebExtensionCallbackHandler> listener)
+void WebExtensionAPIWindowsEvent::removeListener(WebPage& page, RefPtr<WebExtensionCallbackHandler> listener)
 {
     auto removedCount = m_listeners.removeAllMatching([&](auto& entry) {
         return entry.first->callbackFunction() == listener->callbackFunction();
@@ -79,9 +76,9 @@ void WebExtensionAPIWindowsEvent::removeListener(WebCore::FrameIdentifier frameI
     if (!removedCount)
         return;
 
-    ASSERT(frameIdentifier == m_frameIdentifier);
+    ASSERT(page.webPageProxyIdentifier() == m_pageProxyIdentifier);
 
-    WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_frameIdentifier, m_type, contentWorldType(), removedCount), extensionContext().identifier());
+    WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_pageProxyIdentifier, m_type, contentWorldType(), removedCount), extensionContext().identifier());
 }
 
 bool WebExtensionAPIWindowsEvent::hasListener(RefPtr<WebExtensionCallbackHandler> listener)
@@ -96,7 +93,7 @@ void WebExtensionAPIWindowsEvent::removeAllListeners()
     if (m_listeners.isEmpty())
         return;
 
-    WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_frameIdentifier, m_type, contentWorldType(), m_listeners.size()), extensionContext().identifier());
+    WebProcess::singleton().send(Messages::WebExtensionContext::RemoveListener(*m_pageProxyIdentifier, m_type, contentWorldType(), m_listeners.size()), extensionContext().identifier());
 
     m_listeners.clear();
 }

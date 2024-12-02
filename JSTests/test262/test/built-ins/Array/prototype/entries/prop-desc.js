@@ -17,8 +17,6 @@ assert.sameValue(
   '`typeof Array.prototype.entries` is `function`'
 );
 
-verifyProperty(Array.prototype, "entries", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Array.prototype, 'entries');
+verifyWritable(Array.prototype, 'entries');
+verifyConfigurable(Array.prototype, 'entries');

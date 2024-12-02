@@ -52,8 +52,6 @@
 
 // FIXME: There are repainting problems due to Aqua scroll bar buttons' visual overflow.
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 using ScrollbarSet = HashSet<SingleThreadWeakRef<Scrollbar>>;
@@ -600,7 +598,5 @@ void ScrollbarThemeMac::removeOverhangAreaShadow(CALayer *layer)
 #endif
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

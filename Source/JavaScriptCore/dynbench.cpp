@@ -36,8 +36,6 @@
 #include <wtf/MainThread.h>
 #include <wtf/text/StringCommon.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 using namespace JSC;
 
 namespace {
@@ -243,4 +241,3 @@ int main(int argc, char** argv) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     return 0;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -29,8 +29,6 @@
 #include <wtf/PageAllocation.h>
 #include <wtf/PageBlock.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 #define MINIMUM_BUMP_POOL_SIZE 0x1000
@@ -254,5 +252,3 @@ private:
 }
 
 using WTF::BumpPointerAllocator;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

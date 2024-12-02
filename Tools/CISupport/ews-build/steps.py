@@ -46,7 +46,7 @@ import socket
 import sys
 import time
 
-if sys.version_info < (3, 9):  # noqa: UP036
+if sys.version_info < (3, 9):
     print('ERROR: Minimum supported Python version for this code is Python 3.9')
     sys.exit(1)
 
@@ -78,6 +78,7 @@ MSG_FOR_EXCESSIVE_LOGS = f'Stopped due to excessive logging, limit: {THRESHOLD_F
 SCAN_BUILD_OUTPUT_DIR = 'scan-build-output'
 LLVM_DIR = 'llvm-project'
 STATIC_ANALYSIS_ARCHIVE_PATH = '/tmp/static-analysis.zip'
+LLVM_REVISION = '9a8740e11c82ab23b8cc8fcbee82856bf1d35852'
 
 if CURRENT_HOSTNAME in EWS_BUILD_HOSTNAMES:
     CURRENT_HOSTNAME = 'ews-build.webkit.org'
@@ -255,31 +256,19 @@ class GitHubMixin(object):
             defer.returnValue(data)
 
     @defer.inlineCallbacks
-    def get_number_of_prs_with_label(self, label, retry=0):
+    def get_number_of_prs_with_label(self, label):
         project = self.getProperty('project') or GITHUB_PROJECTS[0]
         owner, name = project.split('/', 1)
         query_body = '{repository(owner:"%s", name:"%s") { pullRequests(labels: "%s") { totalCount } } }' % (owner, name, label)
         query = {'query': query_body}
-
-        for attempt in range(retry + 1):
-            try:
-                response = yield self.query_graph_ql(query)
-                if 'errors' in response:
-                    yield self._addToLog('stdio', response['errors'][0]['message'])
-                else:
-                    num_prs = response['data']['repository']['pullRequests']['totalCount']
-                    break
-            except Exception as e:
-                yield self._addToLog('stdio', 'Failed to retrieve number of PRs.\n')
-
-            if attempt > retry:
-                return defer.returnValue(None)
-            wait_for = (attempt + 1) * 15
-            yield self._addToLog('stdio', 'Backing off for {} seconds before retrying.\n'.format(wait_for))
-            yield task.deferLater(reactor, wait_for, lambda: None)
-
-        yield self._addToLog('stdio', 'There are {} PR(s) in safe-merge-queue.\n'.format(num_prs))
-        defer.returnValue(num_prs)
+        response = yield self.query_graph_ql(query)
+        if response:
+            num_prs = response['data']['repository']['pullRequests']['totalCount']
+            yield self._addToLog('stdio', 'There are {} PR(s) in safe-merge-queue.\n'.format(num_prs))
+            defer.returnValue(num_prs)
+        else:
+            yield self._addToLog('stdio', 'Failed to retrieve number of PRs.\n')
+            defer.returnValue(None)
 
     @defer.inlineCallbacks
     def get_pr_json(self, pr_number, repository_url=None, retry=0):
@@ -2490,7 +2479,7 @@ class RetrievePRDataFromLabel(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
         project = self.getProperty('project')
         self.setProperty('repository', f'{GITHUB_URL}{project}')
 
-        num_prs = yield self.get_number_of_prs_with_label(self.label, retry=3)
+        num_prs = yield self.get_number_of_prs_with_label(self.label)
         if num_prs == 0:
             yield self._addToLog('stdio', f'Ending process as there are no PRs in {self.label}.\n')
             return defer.returnValue(SUCCESS)
@@ -3264,6 +3253,9 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
                 # this much faster than full debug info, and crash logs still have line numbers.
                 # Some projects (namely lldbWebKitTester) require full debug info, and may override this.
                 build_command += ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym', 'CLANG_DEBUG_INFORMATION_LEVEL=$(WK_OVERRIDE_DEBUG_INFORMATION_LEVEL:default=line-tables-only)']
+        if platform == 'gtk':
+            prefix = os.path.join("/app", "webkit", "WebKitBuild", self.getProperty("configuration"), "install")
+            build_command += [f'--prefix={prefix}']
 
         build_command += customBuildFlag(platform, self.getProperty('fullPlatform'))
 
@@ -3875,6 +3867,14 @@ class AnalyzeJSCTestsResults(buildstep.BuildStep, AddToLogMixin):
             send_email_to_bot_watchers(email_subject, email_text, builder_name, 'preexisting-{}'.format(test_name))
         except Exception as e:
             print('Error in sending email for pre-existing failure: {}'.format(e))
+
+
+class InstallBuiltProduct(shell.ShellCommandNewStyle):
+    name = 'install-built-product'
+    description = ['Installing Built Product']
+    descriptionDone = ['Installed Built Product']
+    command = ["python3", "Tools/Scripts/install-built-product",
+               WithProperties("--platform=%(fullPlatform)s"), WithProperties("--%(configuration)s")]
 
 
 class CleanBuild(shell.Compile):
@@ -5901,7 +5901,7 @@ class PrintConfiguration(steps.ShellSequence):
         return 'Unknown'
 
     def parseAndValidate(self, logText):
-        os_version, os_name, xcode_version = '', '', ''
+        os_version, xcode_version = '', ''
         match = re.search('ProductVersion:[ \t]*(.+?)\n', logText)
         if match:
             os_version = match.group(1).strip()
@@ -5912,13 +5912,7 @@ class PrintConfiguration(steps.ShellSequence):
         if match:
             xcode_version = match.group(1).strip()
 
-        match = re.search('BuildVersion:[ \t]*(.+?)\n', logText)
-        if match:
-            build_version = match.group(1).strip()
-            self.setProperty('build_version', build_version)
-
         self.setProperty('os_version', os_version)
-        self.setProperty('os_name', os_name)
         self.setProperty('xcode_version', xcode_version)
         os_version_builder = self.getProperty('os_version_builder', '')
         xcode_version_builder = self.getProperty('xcode_version_builder', '')
@@ -5946,6 +5940,147 @@ class PrintConfiguration(steps.ShellSequence):
         if xcode_version:
             configuration += ', Xcode: {}'.format(xcode_version)
         return {'step': configuration}
+
+
+class CheckOutLLVMProject(git.Git, AddToLogMixin):
+    name = 'checkout-llvm-project'
+    directory = 'llvm-project'
+    branch = 'webkit'
+    CHECKOUT_DELAY_AND_MAX_RETRIES_PAIR = (0, 2)
+    GIT_HASH_LENGTH = 40
+    haltOnFailure = False
+
+    def __init__(self, **kwargs):
+        repourl = f'{GITHUB_URL}rniwa/llvm-project.git'
+        super().__init__(
+            repourl=repourl,
+            workdir=self.directory,
+            retry=self.CHECKOUT_DELAY_AND_MAX_RETRIES_PAIR,
+            timeout=5 * 60,
+            branch=self.branch,
+            alwaysUseLatest=False,
+            logEnviron=False,
+            progress=True,
+            **kwargs
+        )
+
+    @defer.inlineCallbacks
+    def run_vc(self, branch, revision, patch):
+        rc = yield super().run_vc(self.branch, LLVM_REVISION, None)
+        return rc
+
+    @defer.inlineCallbacks
+    def parseGotRevision(self, _=None):
+        stdout = yield self._dovccmd(['rev-parse', 'HEAD'], collectStdout=True)
+        revision = stdout.strip()
+        if len(revision) != self.GIT_HASH_LENGTH:
+            raise buildstep.BuildStepFailed()
+        return SUCCESS
+
+    def doStepIf(self, step):
+        return self.build.getProperty('llvm_revision', '') != LLVM_REVISION
+
+    def getResultSummary(self):
+        if self.results == SKIPPED:
+            return {'step': 'llvm-project is already up to date'}
+        elif self.results != SUCCESS:
+            return {'step': 'Failed to update llvm-project directory'}
+        else:
+            return {'step': 'Cleaned and updated llvm-project directory'}
+
+
+class UpdateClang(steps.ShellSequence, ShellMixin):
+    name = 'update-clang'
+    description = 'updating clang'
+    descriptionDone = 'Successfully updated clang'
+    flunkOnFailure = False
+    warnOnFailure = False
+
+    def __init__(self, **kwargs):
+        super().__init__(logEnviron=True, workdir=LLVM_DIR, **kwargs)
+        self.commands = []
+        self.summary = ''
+
+    @defer.inlineCallbacks
+    def run(self):
+        self.env['PATH'] = f"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:{self.getProperty('builddir')}"
+        self.commands = [
+            util.ShellArg(command=self.shell_command('rm -r build-new; mkdir build-new'), logname='stdio', flunkOnFailure=False),
+            util.ShellArg(command=self.shell_command('cd build-new; xcrun cmake -DLLVM_ENABLE_PROJECTS=clang -DCMAKE_BUILD_TYPE=Release -G Ninja ../llvm -DCMAKE_MAKE_PROGRAM=$(xcrun --sdk macosx --find ninja)'), logname='stdio', haltOnFailure=True),
+            util.ShellArg(command=self.shell_command('cd build-new; ninja clang'), logname='stdio', haltOnFailure=True),
+            util.ShellArg(command=['rm', '-r', '../build/WebKitBuild'], logname='stdio', flunkOnFailure=False),  # Need a clean build after complier update
+        ]
+
+        rc = yield super().runShellSequence(self.commands)
+        if rc != SUCCESS:
+            if self.getProperty('llvm_revision', ''):
+                self.summary = 'Failed to update clang, using previous build'
+                return WARNINGS
+            self.summary = 'Failed to update clang'
+            self.build.buildFinished(['Failed to set up analyzer, retrying build'], RETRY)
+            return defer.returnValue(rc)
+
+        self.summary = 'Successfully updated clang'
+        self.build.addStepsAfterCurrentStep([PrintClangVersionAfterUpdate()])
+        defer.returnValue(rc)
+
+    def doStepIf(self, step):
+        return self.build.getProperty('llvm_revision', '') != LLVM_REVISION
+
+    def getResultSummary(self):
+        if self.results == SKIPPED:
+            return {'step': 'Clang is already up to date'}
+        return {'step': self.summary}
+
+
+class PrintClangVersion(shell.ShellCommandNewStyle):
+    name = 'print-clang-version'
+    haltOnFailure = False
+    flunkOnFailure = False
+    warnOnFailure = False
+    CLANG_VERSION_RE = '(.*clang version.+) \\((.+?)\\)'
+    summary = ''
+
+    def __init__(self, **kwargs):
+        super().__init__(logEnviron=False, workdir=LLVM_DIR, timeout=60, **kwargs)
+        self.command = ['./build/bin/clang', '--version']
+
+    @defer.inlineCallbacks
+    def run(self):
+        self.log_observer = logobserver.BufferLogObserver(wantStderr=True)
+        self.addLogObserver('stdio', self.log_observer)
+        rc = yield super().run()
+        log_text = self.log_observer.getStdout() + self.log_observer.getStderr()
+        match = re.search(self.CLANG_VERSION_RE, log_text)
+        if match:
+            self.build.setProperty('llvm_revision', match.group(2).split()[1])
+            self.summary = match.group(0)
+        elif 'No such file or directory' in log_text:
+            self.summary = 'Clang executable does not exist'
+            rc = SUCCESS
+        return defer.returnValue(rc)
+
+    def getResultSummary(self):
+        if self.results != SUCCESS:
+            return {'step': 'Failed to print clang version'}
+        return {'step': self.summary}
+
+
+class PrintClangVersionAfterUpdate(PrintClangVersion, ShellMixin):
+    name = 'print-clang-version-after-update'
+    haltOnFailure = True
+
+    @defer.inlineCallbacks
+    def run(self):
+        command = './build-new/bin/clang --version; rm -r build; mv build-new build'
+        self.command = self.shell_command(command)
+        rc = yield super().run()
+        return defer.returnValue(rc)
+
+    def getResultSummary(self):
+        if self.results != SUCCESS:
+            self.build.buildFinished(['Failed to set up analyzer, retrying build'], RETRY)
+        return super().getResultSummary()
 
 
 # FIXME: We should be able to remove this step once abandoning patch workflows
@@ -6901,6 +7036,82 @@ class UpdatePullRequest(shell.ShellCommandNewStyle, GitHubMixin, AddToLogMixin):
         return not self.doStepIf(step)
 
 
+class InstallCMake(shell.ShellCommandNewStyle):
+    name = 'install-cmake'
+    haltOnFailure = True
+    summary = 'Successfully installed CMake'
+
+    def __init__(self, **kwargs):
+        super().__init__(logEnviron=True, **kwargs)
+
+    @defer.inlineCallbacks
+    def run(self):
+        self.env['PATH'] = f'/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/'
+        self.command = ['python3', 'Tools/CISupport/Shared/download-and-install-build-tools', 'cmake']
+
+        self.log_observer = logobserver.BufferLogObserver()
+        self.addLogObserver('stdio', self.log_observer)
+
+        rc = yield super().run()
+        if rc != SUCCESS:
+            return defer.returnValue(rc)
+
+        log_text = self.log_observer.getStdout()
+        index_skipped = log_text.rfind('skipping download and installation')
+        if index_skipped != -1:
+            self.summary = 'CMake is already installed'
+        return defer.returnValue(rc)
+
+    def evaluateCommand(self, cmd):
+        if cmd.rc != 0:
+            self.commandFailed = True
+            return FAILURE
+        return SUCCESS
+
+    def getResultSummary(self):
+        if self.results != SUCCESS:
+            self.summary = f'Failed to install CMake'
+        return {u'step': self.summary}
+
+
+class InstallNinja(shell.ShellCommandNewStyle, ShellMixin):
+    name = 'install-ninja'
+    haltOnFailure = True
+    summary = 'Successfully installed Ninja'
+
+    def __init__(self, **kwargs):
+        super().__init__(logEnviron=True, **kwargs)
+
+    @defer.inlineCallbacks
+    def run(self):
+        self.env['PATH'] = f"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{self.getProperty('builddir')}"
+        self.command = self.shell_command('cd ../; python3 build/Tools/CISupport/Shared/download-and-install-build-tools ninja')
+
+        self.log_observer = logobserver.BufferLogObserver()
+        self.addLogObserver('stdio', self.log_observer)
+
+        rc = yield super().run()
+        if rc != SUCCESS:
+            return defer.returnValue(rc)
+
+        log_text = self.log_observer.getStdout()
+        index_skipped = log_text.rfind('skipping download and installation')
+        if index_skipped != -1:
+            self.summary = 'Ninja is already installed'
+        return defer.returnValue(rc)
+
+    def evaluateCommand(self, cmd):
+        if cmd.rc != 0:
+            self.commandFailed = True
+            return FAILURE
+        return SUCCESS
+
+    def getResultSummary(self):
+        if self.results != SUCCESS:
+            self.summary = f'Failed to install Ninja'
+        return {u'step': self.summary}
+
+
 # FIXME: Share static analyzer steps with build-webkit-org since they have a lot of similarities
 class ScanBuild(steps.ShellSequence, ShellMixin):
     name = "scan-build"
@@ -7052,32 +7263,12 @@ class FindUnexpectedStaticAnalyzerResults(shell.ShellCommandNewStyle):
 
     @defer.inlineCallbacks
     def run(self):
-        api_key = os.getenv(RESULTS_SERVER_API_KEY)
-        if api_key:
-            self.env[RESULTS_SERVER_API_KEY] = api_key
-        else:
-            self._addToLog('stdio', 'No API key for {} found'.format(RESULTS_DB_URL))
-
         self.command = ['python3', 'Tools/Scripts/compare-static-analysis-results', os.path.join(self.getProperty('builddir'), 'build/new')]
         self.command += ['--build-output', SCAN_BUILD_OUTPUT_DIR]
         if not self.expectations:
             self.command += ['--archived-dir', os.path.join(self.getProperty('builddir'), 'build/baseline')]
             self.command += ['--scan-build-path', '../llvm-project/clang/tools/scan-build/bin/scan-build']  # Only generate results page on the second comparison
             self.command += ['--delete-results']
-            if CURRENT_HOSTNAME in EWS_BUILD_HOSTNAMES and self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH:
-                self.command += [
-                    '--builder-name', self.getProperty('buildername', ''),
-                    '--build-number', self.getProperty('buildnumber', ''),
-                    '--buildbot-worker', self.getProperty('workername', ''),
-                    '--buildbot-master', CURRENT_HOSTNAME,
-                    '--report', RESULTS_DB_URL,
-                    '--architecture', self.getProperty('architecture', ''),
-                    '--platform', self.getProperty('platform', ''),
-                    '--version', self.getProperty('os_version', ''),
-                    '--version-name', self.getProperty('os_name', ''),
-                    '--style', self.getProperty('configuration', ''),
-                    '--sdk', self.getProperty('build_version', '')
-                ]
         else:
             self.command += ['--check-expectations']
 

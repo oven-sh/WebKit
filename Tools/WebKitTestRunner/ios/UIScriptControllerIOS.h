@@ -111,8 +111,7 @@ private:
     void keyboardAccessoryBarPrevious() override;
     bool isShowingKeyboard() const override;
     bool hasInputSession() const override;
-    void selectWordForReplacement() override;
-    void applyAutocorrection(JSStringRef newString, JSStringRef oldString, JSValueRef, bool) override;
+    void applyAutocorrection(JSStringRef newString, JSStringRef oldString, JSValueRef) override;
     double minimumZoomScale() const override;
     double maximumZoomScale() const override;
     std::optional<bool> stableStateOverride() const override;

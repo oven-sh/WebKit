@@ -8,8 +8,6 @@
 
 #include "float_common.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace fast_float {
 
 // the limb width: we want efficient multiplication of double the bits in
@@ -615,7 +613,5 @@ struct bigint : pow5_tables<> {
 };
 
 } // namespace fast_float
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

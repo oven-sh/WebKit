@@ -47,8 +47,6 @@
 #include <wtf/RefPtr.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class JSModuleNamespaceObject;
@@ -273,7 +271,7 @@ public:
     ImportFunctionInfo* importFunctionInfo(size_t importFunctionNum)
     {
         RELEASE_ASSERT(importFunctionNum < m_numImportFunctions);
-        return &std::bit_cast<ImportFunctionInfo*>(std::bit_cast<char*>(this) + offsetOfTail())[importFunctionNum];
+        return &bitwise_cast<ImportFunctionInfo*>(bitwise_cast<char*>(this) + offsetOfTail())[importFunctionNum];
     }
     static size_t offsetOfTargetInstance(size_t importFunctionNum) { return offsetOfTail() + importFunctionNum * sizeof(ImportFunctionInfo) + OBJECT_OFFSETOF(ImportFunctionInfo, targetInstance); }
     static size_t offsetOfWasmEntrypointLoadLocation(size_t importFunctionNum) { return offsetOfTail() + importFunctionNum * sizeof(ImportFunctionInfo) + OBJECT_OFFSETOF(ImportFunctionInfo, wasmEntrypointLoadLocation); }
@@ -335,7 +333,5 @@ private:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

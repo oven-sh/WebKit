@@ -27,7 +27,8 @@
 #import "NetworkTransportReceiveStream.h"
 
 #import "NetworkTransportSession.h"
-#include <wtf/cocoa/SpanCocoa.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -47,9 +48,9 @@ void NetworkTransportReceiveStream::receiveLoop()
         // FIXME: Not only is this an unnecessary string copy, but it's also something that should probably be in WTF or FragmentedSharedBuffer.
         auto vectorFromData = [](dispatch_data_t content) {
             ASSERT(content);
-            Vector<uint8_t> request;
-            dispatch_data_apply_span(content, [&](std::span<const uint8_t> buffer) {
-                request.append(buffer);
+            __block Vector<uint8_t> request;
+            dispatch_data_apply(content, ^bool(dispatch_data_t, size_t, const void* buffer, size_t size) {
+                request.append(std::span { static_cast<const uint8_t*>(buffer), size });
                 return true;
             });
             return request;
@@ -66,3 +67,5 @@ void NetworkTransportReceiveStream::receiveLoop()
     }).get());
 }
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

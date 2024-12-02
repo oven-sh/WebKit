@@ -638,7 +638,7 @@ void Scope::updateResolver(Vector<RefPtr<CSSStyleSheet>>& activeStyleSheets, Res
 
     unsigned firstNewIndex = m_activeStyleSheets.size();
     Vector<RefPtr<CSSStyleSheet>> newStyleSheets;
-    newStyleSheets.append(activeStyleSheets.subspan(firstNewIndex));
+    newStyleSheets.appendRange(activeStyleSheets.begin() + firstNewIndex, activeStyleSheets.end());
     m_resolver->appendAuthorStyleSheets(newStyleSheets);
 }
 

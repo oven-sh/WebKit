@@ -28,7 +28,7 @@
 #include "VM.h"
 #include <variant>
 #include <wtf/FileSystem.h>
-#include <wtf/MallocSpan.h>
+#include <wtf/MallocPtr.h>
 
 namespace JSC {
 
@@ -36,7 +36,7 @@ class CachePayload {
 public:
     using Destructor = WTF::Function<void(const void*)>;
     JS_EXPORT_PRIVATE static CachePayload makeMappedPayload(FileSystem::MappedFileData&&);
-    JS_EXPORT_PRIVATE static CachePayload makeMallocPayload(MallocSpan<uint8_t, VMMalloc>&&);
+    JS_EXPORT_PRIVATE static CachePayload makeMallocPayload(MallocPtr<uint8_t, VMMalloc>&&, size_t);
     JS_EXPORT_PRIVATE static CachePayload makePayloadWithDestructor(std::span<uint8_t>, Destructor&&);
     JS_EXPORT_PRIVATE static CachePayload makeEmptyPayload();
 
@@ -47,10 +47,9 @@ public:
     JS_EXPORT_PRIVATE std::span<const uint8_t> span() const;
 
 private:
-    using DataType = std::variant<MallocSpan<uint8_t, VMMalloc>, FileSystem::MappedFileData, std::span<uint8_t>>;
-    explicit CachePayload(DataType&&, Destructor&& = {nullptr});
+    CachePayload(std::variant<FileSystem::MappedFileData, std::pair<MallocPtr<uint8_t, VMMalloc>, size_t>, std::span<uint8_t>>&&, Destructor&& = {nullptr});
 
-    DataType m_data;
+    std::variant<FileSystem::MappedFileData, std::pair<MallocPtr<uint8_t, VMMalloc>, size_t>, std::span<uint8_t>> m_data;
     Destructor m_destructor { nullptr };
 };
 

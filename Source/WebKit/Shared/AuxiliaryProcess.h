@@ -31,7 +31,6 @@
 #include "SandboxExtension.h"
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/UserActivity.h>
-#include <wtf/AbstractRefCounted.h>
 #include <wtf/HashMap.h>
 #include <wtf/RunLoop.h>
 #include <wtf/RuntimeApplicationChecks.h>
@@ -55,7 +54,7 @@ class SandboxInitializationParameters;
 struct AuxiliaryProcessInitializationParameters;
 struct AuxiliaryProcessCreationParameters;
 
-class AuxiliaryProcess : public IPC::Connection::Client, public IPC::MessageSender, public AbstractRefCounted {
+class AuxiliaryProcess : public IPC::Connection::Client, public IPC::MessageSender {
     WTF_MAKE_NONCOPYABLE(AuxiliaryProcess);
     WTF_MAKE_FAST_ALLOCATED;
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(AuxiliaryProcess);
@@ -111,6 +110,7 @@ public:
 
 #if ENABLE(CFPREFS_DIRECT_MODE)
     virtual void preferenceDidUpdate(const String& domain, const String& key, const std::optional<String>& encodedValue);
+    void preferencesDidUpdate(HashMap<String, std::optional<String>> domainlessPreferences, HashMap<std::pair<String, String>, std::optional<String>> preferences);
 #endif
     static void setNotifyOptions();
 

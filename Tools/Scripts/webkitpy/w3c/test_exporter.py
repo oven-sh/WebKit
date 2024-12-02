@@ -345,13 +345,10 @@ class WebPlatformTestExporter(object):
             _log.info('Error creating a pull request on github. Please ensure that the provided github token has the "public_repo" scope.')
         return pr_number
 
-    def delete_local_branch(self, *, is_success=True):
-        if self._options.clean and (is_success or self._options.clean_on_failure):
-            _log.info('Removing local branch ' + self._branch_name)
-            self._git.checkout('master')
-            self._git.delete_branch(self._branch_name)
-        else:
-            _log.info('Keeping local branch ' + self._branch_name)
+    def delete_local_branch(self):
+        _log.info('Removing local branch ' + self._branch_name)
+        self._git.checkout('master')
+        self._git.delete_branch(self._branch_name)
 
     def create_upload_remote_if_needed(self):
         if not self._wpt_fork_remote in self._git.remote([]):
@@ -368,31 +365,29 @@ class WebPlatformTestExporter(object):
         self.clean()
 
         if not self.create_branch_with_patch(git_patch_file):
-            _log.error("Cannot create web-platform-tests local branch from the patch %r", git_patch_file)
-            self.delete_local_branch(is_success=False)
+            _log.error("Cannot create web-platform-tests local branch from the patch")
+            self.delete_local_branch()
             return
 
-        if git_patch_file and self.clean:
+        if git_patch_file:
             self._filesystem.remove(git_patch_file)
 
         if self._options.use_linter:
             lint_errors = self._linter.lint()
             if lint_errors:
                 _log.error("The wpt linter detected %s linting error(s). Please address the above errors before attempting to export changes to the web-platform-test repository." % (lint_errors,))
-                self.delete_local_branch(is_success=False)
+                self.delete_local_branch()
+                self.clean()
                 return
 
         try:
             if self.push_to_wpt_fork():
                 if self._options.create_pull_request:
                     self.make_pull_request()
-        except Exception:
-            self.delete_local_branch(is_success=False)
-            raise
-        else:
-            self.delete_local_branch(is_success=True)
         finally:
+            self.delete_local_branch()
             _log.info("Finished")
+            self.clean()
 
 
 def parse_args(args):
@@ -431,8 +426,6 @@ def parse_args(args):
     parser.add_argument('-c', '--create-pr', dest='create_pull_request', action='store_true', default=False, help='create pull request to w3c web-platform-tests')
     parser.add_argument('--non-interactive', action='store_true', dest='non_interactive', default=False, help='Never prompt the user, fail as fast as possible.')
     parser.add_argument('--no-linter', action='store_false', dest='use_linter', default=True, help='Disable linter.')
-    parser.add_argument('--no-clean', action='store_false', dest='clean', help='Do not clean up.')
-    parser.add_argument('--clean-on-failure', action='store_true', dest='clean_on_failure', help='Do not clean up on failure.')
 
     options, args = parser.parse_known_args(args)
 

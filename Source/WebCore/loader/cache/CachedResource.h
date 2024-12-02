@@ -46,7 +46,6 @@
 
 namespace WebCore {
 class CachedResource;
-class CachedResourceCallback;
 }
 
 namespace WTF {
@@ -129,7 +128,7 @@ public:
     virtual void load(CachedResourceLoader&);
 
     virtual void setEncoding(const String&) { }
-    virtual ASCIILiteral encoding() const { return ASCIILiteral(); }
+    virtual String encoding() const { return String(); }
     virtual const TextResourceDecoder* textResourceDecoder() const { return nullptr; }
     virtual void updateBuffer(const FragmentedSharedBuffer&);
     virtual void updateData(const SharedBuffer&);
@@ -337,7 +336,7 @@ protected:
     void clearCachedCryptographicDigests();
 
 private:
-    using Callback = CachedResourceCallback;
+    class Callback;
     template<typename T> friend class CachedResourceClientWalker;
 
     void deleteThis();
@@ -445,13 +444,18 @@ private:
     mutable std::array<std::optional<ResourceCryptographicDigest>, ResourceCryptographicDigest::algorithmCount> m_cryptographicDigests;
 };
 
-class CachedResourceCallback {
+class CachedResource::Callback {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
 public:
-    CachedResourceCallback(CachedResource&, CachedResourceClient&);
+    Callback(CachedResource&, CachedResourceClient&);
+
     void cancel();
 
 private:
+    void timerFired();
+
+    WeakRef<CachedResource> m_resource;
+    SingleThreadWeakRef<CachedResourceClient> m_client;
     Timer m_timer;
 };
 

@@ -80,7 +80,6 @@ workers [ Skip ]
 
 fast/events/pointer [ Pass ]
 interaction-region [ Pass ]
-media/media-css-volume-locked.html [ Pass ]
 overlay-region [ Pass ]
 platform/visionos/transforms [ Pass ]
 

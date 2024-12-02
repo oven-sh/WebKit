@@ -182,7 +182,7 @@ void ServiceWorkerSoftUpdateLoader::didReceiveBuffer(const WebCore::FragmentedSh
         if (!m_responseEncoding.isEmpty())
             m_decoder = TextResourceDecoder::create("text/javascript"_s, m_responseEncoding);
         else
-            m_decoder = TextResourceDecoder::create("text/javascript"_s, "UTF-8"_s);
+            m_decoder = TextResourceDecoder::create("text/javascript"_s, "UTF-8");
     }
 
     buffer.forEachSegment([&](auto segment) {

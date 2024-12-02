@@ -45,6 +45,7 @@ test(() => {
       complete: () => results.push("complete"),
     });
 
+  console.log(error, results);
   assert_array_equals(results, [error, error]);
 }, "filter(): Errors thrown in filter predicate are emitted to Observer error() handler");
 

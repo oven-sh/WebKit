@@ -48,8 +48,6 @@
 
 #include <mutex>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebConfig {
 
 alignas(WTF::ConfigAlignment) Slot g_config[WTF::ConfigSizeToProtect / sizeof(Slot)];
@@ -67,7 +65,7 @@ void setPermissionsOfConfigPage()
 #if PLATFORM(COCOA)
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        mach_vm_address_t addr = std::bit_cast<uintptr_t>(static_cast<void*>(WebConfig::g_config));
+        mach_vm_address_t addr = bitwise_cast<uintptr_t>(static_cast<void*>(WebConfig::g_config));
         auto flags = VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE | VM_FLAGS_PERMANENT;
 
         auto attemptVMMapping = [&] {
@@ -104,7 +102,7 @@ void Config::initialize()
             if (!data && size) {
                 // If __PAGEZERO starts with 0 address and it has size. [0, size] region cannot be
                 // mapped for accessible pages.
-                uintptr_t afterZeroPages = std::bit_cast<uintptr_t>(data) + size;
+                uintptr_t afterZeroPages = bitwise_cast<uintptr_t>(data) + size;
                 g_wtfConfig.lowestAccessibleAddress = roundDownToMultipleOf(onePage, std::max<uintptr_t>(onePage, afterZeroPages));
                 return;
             }
@@ -114,17 +112,6 @@ void Config::initialize()
     }();
     g_wtfConfig.highestAccessibleAddress = static_cast<uintptr_t>((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1);
     SignalHandlers::initialize();
-
-    uint8_t* reservedConfigBytes = reinterpret_cast_ptr<uint8_t*>(WebConfig::g_config + WebConfig::reservedSlotsForExecutableAllocator);
-    reservedConfigBytes[WebConfig::ReservedByteForAllocationProfiling] = 0;
-    const char* useAllocationProfilingRaw = getenv("JSC_useAllocationProfiling");
-    if (useAllocationProfilingRaw) {
-        auto useAllocationProfiling = span(useAllocationProfilingRaw);
-        if (equalLettersIgnoringASCIICase(useAllocationProfiling, "true"_s)
-            || equalLettersIgnoringASCIICase(useAllocationProfiling, "yes"_s)
-            || equal(useAllocationProfiling, "1"_s))
-            reservedConfigBytes[WebConfig::ReservedByteForAllocationProfiling] = 1;
-    }
 }
 
 void Config::finalize()
@@ -177,5 +164,3 @@ void Config::disableFreezingForTesting()
 }
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

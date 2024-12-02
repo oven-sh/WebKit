@@ -30,7 +30,6 @@
 #include <string.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/SuperFastHash.h>
 
@@ -43,10 +42,7 @@ Ref<CStringBuffer> CStringBuffer::createUninitialized(size_t length)
     // The +1 is for the terminating null character.
     size_t size = Checked<size_t>(sizeof(CStringBuffer)) + length + 1U;
     auto* stringBuffer = static_cast<CStringBuffer*>(CStringBufferMalloc::malloc(size));
-
-    Ref buffer = adoptRef(*new (NotNull, stringBuffer) CStringBuffer(length));
-    buffer->mutableSpanIncludingNullCharacter()[length] = '\0';
-    return buffer;
+    return adoptRef(*new (NotNull, stringBuffer) CStringBuffer(length));
 }
 
 CString::CString(const char* string)
@@ -72,7 +68,8 @@ void CString::init(std::span<const char> string)
     ASSERT(string.data());
 
     m_buffer = CStringBuffer::createUninitialized(string.size());
-    memcpySpan(m_buffer->mutableSpan(), string);
+    memcpy(m_buffer->mutableData(), string.data(), string.size());
+    m_buffer->mutableData()[string.size()] = '\0';
 }
 
 char* CString::mutableData()
@@ -83,11 +80,13 @@ char* CString::mutableData()
     return m_buffer->mutableData();
 }
 
-CString CString::newUninitialized(size_t length, std::span<char>& characterBuffer)
+CString CString::newUninitialized(size_t length, char*& characterBuffer)
 {
     CString result;
     result.m_buffer = CStringBuffer::createUninitialized(length);
-    characterBuffer = result.m_buffer->mutableSpan();
+    char* bytes = result.m_buffer->mutableData();
+    bytes[length] = '\0';
+    characterBuffer = bytes;
     return result;
 }
 
@@ -139,8 +138,8 @@ unsigned CString::hash() const
     if (isNull())
         return 0;
     SuperFastHash hasher;
-    for (auto character : span())
-        hasher.addCharacter(character);
+    for (const char* ptr = data(); *ptr; ++ptr)
+        hasher.addCharacter(*ptr);
     return hasher.hash();
 }
 

@@ -27,7 +27,6 @@
 
 #include "CDMSessionMediaSourceAVFObjC.h"
 #include "SourceBufferPrivateAVFObjC.h"
-#include <wtf/RefCounted.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WTFSemaphore.h>
@@ -43,30 +42,14 @@ class WorkQueue;
 }
 
 namespace WebCore {
-class CDMSessionAVContentKeySession;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::CDMSessionAVContentKeySession> : std::true_type { };
-}
-
-namespace WebCore {
 
 class CDMPrivateMediaSourceAVFObjC;
 
-class CDMSessionAVContentKeySession : public CDMSessionMediaSourceAVFObjC, public RefCounted<CDMSessionAVContentKeySession> {
+class CDMSessionAVContentKeySession : public CDMSessionMediaSourceAVFObjC {
     WTF_MAKE_TZONE_ALLOCATED(CDMSessionAVContentKeySession);
 public:
-    static Ref<CDMSessionAVContentKeySession> create(Vector<int>&& protocolVersions, int cdmVersion, CDMPrivateMediaSourceAVFObjC& parent, LegacyCDMSessionClient& client)
-    {
-        return adoptRef(*new CDMSessionAVContentKeySession(WTFMove(protocolVersions), cdmVersion, parent, client));
-    }
-
+    CDMSessionAVContentKeySession(Vector<int>&& protocolVersions, int cdmVersion, CDMPrivateMediaSourceAVFObjC&, LegacyCDMSessionClient&);
     virtual ~CDMSessionAVContentKeySession();
-
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
 
     static bool isAvailable();
 
@@ -85,16 +68,14 @@ public:
 
     void didProvideContentKeyRequest(AVContentKeyRequest *);
 
+protected:
+    RefPtr<Uint8Array> generateKeyReleaseMessage(unsigned short& errorCode, uint32_t& systemCode);
+
     bool hasContentKeySession() const { return m_contentKeySession; }
     AVContentKeySession* contentKeySession();
 
     bool hasContentKeyRequest() const;
     RetainPtr<AVContentKeyRequest> contentKeyRequest() const;
-
-protected:
-    CDMSessionAVContentKeySession(Vector<int>&& protocolVersions, int cdmVersion, CDMPrivateMediaSourceAVFObjC&, LegacyCDMSessionClient&);
-
-    RefPtr<Uint8Array> generateKeyReleaseMessage(unsigned short& errorCode, uint32_t& systemCode);
 
 #if !RELEASE_LOG_DISABLED
     ASCIILiteral logClassName() const { return "CDMSessionAVContentKeySession"_s; }

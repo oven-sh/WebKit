@@ -109,7 +109,7 @@ bool CredentialsContainer::performCommonChecks(const Options& options, Credentia
     }
 
     if (options.signal && options.signal->aborted()) {
-        promise.rejectType<IDLAny>(options.signal->reason().getValue());
+        promise.reject(Exception { ExceptionCode::AbortError, "Aborted by AbortSignal."_s });
         return false;
     }
 

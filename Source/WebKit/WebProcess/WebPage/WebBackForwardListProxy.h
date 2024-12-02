@@ -41,7 +41,7 @@ public:
 
     static void removeItem(const WebCore::BackForwardItemIdentifier&);
 
-    void clearCachedListCounts();
+    void clear();
 
 private:
     WebBackForwardListProxy(WebPage&);
@@ -58,6 +58,7 @@ private:
     unsigned forwardListCount() const override;
     bool containsItem(const WebCore::HistoryItem&) const final;
     const WebBackForwardListCounts& cacheListCountsIfNecessary() const;
+    void clearCachedListCounts();
 
     void close() override;
 

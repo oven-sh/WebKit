@@ -33,8 +33,6 @@
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace Yarr {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(YarrDisassembler);
@@ -62,7 +60,7 @@ YarrDisassembler::~YarrDisassembler() = default;
 void YarrDisassembler::dump(PrintStream& out, LinkBuffer& linkBuffer)
 {
     m_codeStart = linkBuffer.entrypoint<DisassemblyPtrTag>().untaggedPtr();
-    m_codeEnd = std::bit_cast<uint8_t*>(m_codeStart) + linkBuffer.size();
+    m_codeEnd = bitwise_cast<uint8_t*>(m_codeStart) + linkBuffer.size();
 
     dumpHeader(out, linkBuffer);
     dumpDisassembly(out, indentString(), linkBuffer, m_startOfCode, m_labelForGenerateYarrOp[0]);
@@ -154,6 +152,5 @@ void YarrDisassembler::dumpDisassembly(PrintStream& out, const char* prefix, Lin
 
 }} // namespace Yarr namespace JSC
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(JIT)
+

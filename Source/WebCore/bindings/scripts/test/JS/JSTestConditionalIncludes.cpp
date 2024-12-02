@@ -64,6 +64,7 @@
 #include <JavaScriptCore/JSArray.h>
 #endif
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -150,21 +151,22 @@ using JSTestConditionalIncludesDOMConstructor = JSDOMConstructorNotConstructable
 
 /* Hash table for constructor */
 
-static const std::array<HashTableValue, 3> JSTestConditionalIncludesConstructorTableValues {
+static const HashTableValue JSTestConditionalIncludesConstructorTableValues[] =
+{
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "MIXIN_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 1 } },
+    { "MIXIN_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 1 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "MIXIN_REFLECTED_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
+    { "MIXIN_REFLECTED_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "PARTIAL_MIXIN_CONSTANT_FROM_PARTIAL"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 5 } },
+    { "PARTIAL_MIXIN_CONSTANT_FROM_PARTIAL"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 5 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 };
 
@@ -222,83 +224,84 @@ template<> void JSTestConditionalIncludesDOMConstructor::initializeProperties(VM
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 17> JSTestConditionalIncludesPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludesConstructor, 0 } },
-    HashTableValue { "testAttr"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_testAttr, 0 } },
+static const HashTableValue JSTestConditionalIncludesPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludesConstructor, 0 } },
+    { "testAttr"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_testAttr, 0 } },
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "mixinReadOnlyAttribute"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinReadOnlyAttribute, 0 } },
+    { "mixinReadOnlyAttribute"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinReadOnlyAttribute, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "mixinAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinAttribute, setJSTestConditionalIncludes_mixinAttribute } },
+    { "mixinAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinAttribute, setJSTestConditionalIncludes_mixinAttribute } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "mixinCustomAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinCustomAttribute, setJSTestConditionalIncludes_mixinCustomAttribute } },
+    { "mixinCustomAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinCustomAttribute, setJSTestConditionalIncludes_mixinCustomAttribute } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "mixinNodeAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinNodeAttribute, setJSTestConditionalIncludes_mixinNodeAttribute } },
+    { "mixinNodeAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_mixinNodeAttribute, setJSTestConditionalIncludes_mixinNodeAttribute } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "partialMixinAttributeFromPartial"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_partialMixinAttributeFromPartial, 0 } },
+    { "partialMixinAttributeFromPartial"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionalIncludes_partialMixinAttributeFromPartial, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if (ENABLE(Condition12) && ENABLE(Condition22)) || ENABLE(Condition23)
-    HashTableValue { "mixinOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinOperation, 0 } },
+    { "mixinOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinOperation, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if (ENABLE(Condition12) && ENABLE(Condition22)) || ENABLE(Condition23)
-    HashTableValue { "mixinComplexOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinComplexOperation, 2 } },
+    { "mixinComplexOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinComplexOperation, 2 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if (ENABLE(Condition12) && ENABLE(Condition22)) || ENABLE(Condition23)
-    HashTableValue { "mixinCustomOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinCustomOperation, 0 } },
+    { "mixinCustomOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinCustomOperation, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if (ENABLE(Condition11) && ENABLE(Condition12) && ENABLE(Condition22)) || ENABLE(Condition23)
-    HashTableValue { "mixinConditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinConditionalOperation, 0 } },
+    { "mixinConditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinConditionalOperation, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if (ENABLE(Condition12) && ENABLE(Condition22)) || ENABLE(Condition23)
-    HashTableValue { "mixinSettingsConditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinSettingsConditionalOperation, 0 } },
+    { "mixinSettingsConditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinSettingsConditionalOperation, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if (ENABLE(Condition12) && ENABLE(Condition22)) || ENABLE(Condition23)
-    HashTableValue { "mixinResultFieldOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinResultFieldOperation, 0 } },
+    { "mixinResultFieldOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_mixinResultFieldOperation, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if (ENABLE(Condition12) && ENABLE(Condition22) && ENABLE(Condition33)) || ENABLE(Condition23)
-    HashTableValue { "partialMixinOperationFromPartial"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_partialMixinOperationFromPartial, 0 } },
+    { "partialMixinOperationFromPartial"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestConditionalIncludesPrototypeFunction_partialMixinOperationFromPartial, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "MIXIN_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 1 } },
+    { "MIXIN_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 1 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "MIXIN_REFLECTED_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
+    { "MIXIN_REFLECTED_CONSTANT"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(Condition22) || ENABLE(Condition23)
-    HashTableValue { "PARTIAL_MIXIN_CONSTANT_FROM_PARTIAL"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 5 } },
+    { "PARTIAL_MIXIN_CONSTANT_FROM_PARTIAL"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 5 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 };
 
@@ -817,7 +820,6 @@ void JSTestConditionalIncludesOwner::finalize(JSC::Handle<JSC::Unknown> handle, 
     uncacheWrapper(world, jsTestConditionalIncludes->protectedWrapped().ptr(), jsTestConditionalIncludes);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -842,8 +844,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestCondition
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestConditionalIncludes>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

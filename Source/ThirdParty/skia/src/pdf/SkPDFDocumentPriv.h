@@ -49,7 +49,7 @@ struct Key;
 struct KeyHash;
 }  // namespace SkPDFGradientShader
 
-const char* SkPDFGetElemIdKey();
+const char* SkPDFGetNodeIdKey();
 
 // Logically part of SkPDFDocument, but separate to keep similar functionality together.
 class SkPDFOffsetMap {
@@ -78,16 +78,16 @@ struct SkPDFLink {
         kNamedDestination,
     };
 
-    SkPDFLink(Type type, SkData* data, const SkRect& rect, int elemId)
+    SkPDFLink(Type type, SkData* data, const SkRect& rect, int nodeId)
         : fType(type)
         , fData(sk_ref_sp(data))
         , fRect(rect)
-        , fElemId(elemId) {}
+        , fNodeId(nodeId) {}
     const Type fType;
     // The url or named destination, depending on |fType|.
     const sk_sp<SkData> fData;
     const SkRect fRect;
-    const int fElemId;
+    const int fNodeId;
 };
 
 
@@ -133,18 +133,16 @@ public:
     SkPDFIndirectReference currentPage() const {
         return SkASSERT(this->hasCurrentPage() && !fPageRefs.empty()), fPageRefs.back();
     }
+    // Used to allow marked content to refer to its corresponding structure
+    // tree node, via a page entry in the parent tree. Returns -1 if no
+    // mark ID.
+    SkPDFTagTree::Mark createMarkIdForNodeId(int nodeId, SkPoint);
+    // Used to allow annotations to refer to their corresponding structure
+    // tree node, via the struct parent tree. Returns -1 if no struct parent
+    // key.
+    int createStructParentKeyForNodeId(int nodeId);
 
-    // Create a new marked-content identifier (MCID) to be used with a marked-content sequence
-    // parented by the structure element (StructElem) with the given element identifier (elemId).
-    // Returns a false Mark if if elemId does not refer to a StructElem.
-    SkPDFStructTree::Mark createMarkForElemId(int elemId);
-
-    // Create a key to use with /StructParent in a content item (usually an annotation) which refers
-    // to the structure element (StructElem) with the given element identifier (elemId).
-    // Returns -1 if elemId does not refer to a StructElem.
-    int createStructParentKeyForElemId(int elemId, SkPDFIndirectReference contentItemRef);
-
-    void addStructElemTitle(int elemId, SkSpan<const char>);
+    void addNodeTitle(int nodeId, SkSpan<const char>);
 
     std::unique_ptr<SkPDFArray> getAnnotations();
 
@@ -175,7 +173,6 @@ public:
     skia_private::THashMap<uint32_t, std::unique_ptr<SkAdvancedTypefaceMetrics>> fTypefaceMetrics;
     skia_private::THashMap<uint32_t, std::vector<SkString>> fType1GlyphNames;
     skia_private::THashMap<uint32_t, std::vector<SkUnichar>> fToUnicodeMap;
-    skia_private::THashMap<uint32_t, skia_private::THashMap<SkGlyphID, SkString>> fToUnicodeMapEx;
     skia_private::THashMap<uint32_t, SkPDFIndirectReference> fFontDescriptors;
     skia_private::THashMap<uint32_t, SkPDFIndirectReference> fType3FontDescriptors;
     skia_private::THashTable<sk_sp<SkPDFStrike>, const SkDescriptor&, SkPDFStrike::Traits> fStrikes;
@@ -209,7 +206,7 @@ private:
     SkExecutor *const fExecutor;
 
     // For tagged PDFs.
-    SkPDFStructTree fStructTree;
+    SkPDFTagTree fTagTree;
 
     SkMutex fMutex;
     SkSemaphore fSemaphore;

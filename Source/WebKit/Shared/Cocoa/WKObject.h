@@ -32,7 +32,6 @@
 #import <wtf/RefPtr.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/spi/cocoa/objcSPI.h>
 
 namespace API {
@@ -60,7 +59,8 @@ template<typename WrappedObjectClass> struct WrapperTraits;
 
 template<typename DestinationClass, typename SourceClass> inline DestinationClass *checkedObjCCast(SourceClass *source)
 {
-    return checked_objc_cast<DestinationClass>(source);
+    ASSERT([source isKindOfClass:[DestinationClass class]]);
+    return (DestinationClass *)source;
 }
 
 template<typename ObjectClass> inline typename WrapperTraits<ObjectClass>::WrapperClass *wrapper(ObjectClass& object)
@@ -168,6 +168,14 @@ using __thisIsHereToForceASemicolonAfterThisMacro UNUSED_TYPE_ALIAS = int
 #define WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS \
 + (BOOL)accessInstanceVariablesDirectly \
 { \
-    return !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ThrowOnKVCInstanceVariableAccess); \
+    if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ThrowOnKVCInstanceVariableAccess)) { \
+        static bool didLogFault; \
+        if (!didLogFault) { \
+            didLogFault = true; \
+            RELEASE_LOG_FAULT(API, "Do not access private instance variables of %{public}s via key-value coding. This will raise an exception when linking against newer SDKs.", class_getName(self)); \
+        } \
+        return YES; \
+    } \
+    return NO; \
 } \
 using __thisIsHereToForceASemicolonAfterThisMacro UNUSED_TYPE_ALIAS = int

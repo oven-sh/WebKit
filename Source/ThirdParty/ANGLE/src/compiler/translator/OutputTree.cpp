@@ -13,14 +13,12 @@ namespace sh
 namespace
 {
 
-void OutputFunction(TInfoSinkBase &out, const char *prefix, const TFunction *function)
+void OutputFunction(TInfoSinkBase &out, const char *str, const TFunction *func)
 {
-    out << prefix << ": " << static_cast<const TSymbol &>(*function);
-}
-
-void OutputVariable(TInfoSinkBase &out, const TVariable &variable)
-{
-    out << static_cast<const TSymbol &>(variable) << " (" << variable.getType() << ")";
+    const char *internal =
+        (func->symbolType() == SymbolType::AngleInternal) ? " (internal function)" : "";
+    out << str << internal << ": " << func->name() << " (symbol id " << func->uniqueId().get()
+        << ")";
 }
 
 // Two purposes:
@@ -88,7 +86,17 @@ void OutputTreeText(TInfoSinkBase &out, TIntermNode *node, const int depth)
 void TOutputTraverser::visitSymbol(TIntermSymbol *node)
 {
     OutputTreeText(mOut, node, getCurrentIndentDepth());
-    OutputVariable(mOut, node->variable());
+
+    if (node->variable().symbolType() == SymbolType::Empty)
+    {
+        mOut << "''";
+    }
+    else
+    {
+        mOut << "'" << node->getName() << "' ";
+    }
+    mOut << "(symbol id " << node->uniqueId().get() << ") ";
+    mOut << "(" << node->getType() << ")";
     mOut << "\n";
 }
 
@@ -386,9 +394,7 @@ void TOutputTraverser::visitFunctionPrototype(TIntermFunctionPrototype *node)
     {
         const TVariable *param = node->getFunction()->getParam(i);
         OutputTreeText(mOut, node, getCurrentIndentDepth() + 1);
-        mOut << "parameter: ";
-        OutputVariable(mOut, *param);
-        mOut << "\n";
+        mOut << "parameter: " << param->name() << " (" << param->getType() << ")\n";
     }
 }
 
@@ -410,7 +416,7 @@ bool TOutputTraverser::visitAggregate(Visit visit, TIntermAggregate *node)
     switch (op)
     {
         case EOpCallFunctionInAST:
-            OutputFunction(mOut, "Call a function", node->getFunction());
+            OutputFunction(mOut, "Call a user-defined function", node->getFunction());
             break;
         case EOpCallInternalRawFunction:
             OutputFunction(mOut, "Call an internal function with raw implementation",
@@ -579,9 +585,6 @@ bool TOutputTraverser::visitCase(Visit visit, TIntermCase *node)
 
 void TOutputTraverser::visitConstantUnion(TIntermConstantUnion *node)
 {
-    OutputTreeText(mOut, node, getCurrentIndentDepth());
-    mOut << "Constant union" << " (" << node->getType() << ")" << "\n";
-    ++mIndentDepth;
     size_t size = node->getType().getObjectSize();
 
     for (size_t i = 0; i < size; i++)
@@ -621,7 +624,6 @@ void TOutputTraverser::visitConstantUnion(TIntermConstantUnion *node)
                 break;
         }
     }
-    --mIndentDepth;
 }
 
 bool TOutputTraverser::visitLoop(Visit visit, TIntermLoop *node)

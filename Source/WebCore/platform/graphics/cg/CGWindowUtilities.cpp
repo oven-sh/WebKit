@@ -32,12 +32,12 @@
 
 namespace WebCore {
 
-RetainPtr<CGImageRef> cgWindowListCreateImage(CGRect screenBounds, CGWindowListOption listOption, CGWindowID windowID, CGWindowImageOption imageOption)
+CGImageRef cgWindowListCreateImage(CGRect screenBounds, CGWindowListOption listOption, CGWindowID windowID, CGWindowImageOption imageOption)
 {
     if (PAL::canLoad_CoreGraphics_CGWindowListCreateImage())
-        return adoptCF(PAL::softLink_CoreGraphics_CGWindowListCreateImage(screenBounds, listOption, windowID, imageOption));
+        return PAL::softLink_CoreGraphics_CGWindowListCreateImage(screenBounds, listOption, windowID, imageOption);
 
-    return { };
+    return nullptr;
 }
 
 }

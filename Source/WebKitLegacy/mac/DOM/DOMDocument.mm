@@ -114,7 +114,7 @@
 - (NSString *)inputEncoding
 {
     WebCore::JSMainThreadNullState state;
-    return IMPL->characterSetWithUTF8Fallback().createNSString().autorelease();
+    return IMPL->characterSetWithUTF8Fallback();
 }
 
 - (NSString *)xmlEncoding
@@ -288,7 +288,7 @@
 - (NSString *)charset
 {
     WebCore::JSMainThreadNullState state;
-    return IMPL->charset().createNSString().autorelease();
+    return IMPL->charset();
 }
 
 - (void)setCharset:(NSString *)newCharset
@@ -321,7 +321,7 @@
 - (NSString *)characterSet
 {
     WebCore::JSMainThreadNullState state;
-    return IMPL->characterSetWithUTF8Fallback().createNSString().autorelease();
+    return IMPL->characterSetWithUTF8Fallback();
 }
 
 - (NSString *)preferredStylesheetSet

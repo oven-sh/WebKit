@@ -303,24 +303,24 @@ void PlaybackSessionInterfaceMac::updatePlaybackControlsManagerTiming(double cur
     manager.timing = [getAVValueTimingClass() valueTimingWithAnchorValue:currentTime anchorTimeStamp:effectiveAnchorTime rate:effectivePlaybackRate];
 }
 
-uint32_t PlaybackSessionInterfaceMac::checkedPtrCount() const
+uint32_t PlaybackSessionInterfaceMac::ptrCount() const
 {
-    return CanMakeCheckedPtr::checkedPtrCount();
+    return CanMakeCheckedPtr::ptrCount();
 }
 
-uint32_t PlaybackSessionInterfaceMac::checkedPtrCountWithoutThreadCheck() const
+uint32_t PlaybackSessionInterfaceMac::ptrCountWithoutThreadCheck() const
 {
-    return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck();
+    return CanMakeCheckedPtr::ptrCountWithoutThreadCheck();
 }
 
-void PlaybackSessionInterfaceMac::incrementCheckedPtrCount() const
+void PlaybackSessionInterfaceMac::incrementPtrCount() const
 {
-    CanMakeCheckedPtr::incrementCheckedPtrCount();
+    CanMakeCheckedPtr::incrementPtrCount();
 }
 
-void PlaybackSessionInterfaceMac::decrementCheckedPtrCount() const
+void PlaybackSessionInterfaceMac::decrementPtrCount() const
 {
-    CanMakeCheckedPtr::decrementCheckedPtrCount();
+    CanMakeCheckedPtr::decrementPtrCount();
 }
 
 #endif // ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)

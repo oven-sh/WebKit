@@ -96,7 +96,7 @@ private:
     bool canBeProgramaticallyScrolled() const override
     {
         if (auto* shadowHost = dynamicDowncast<HTMLInputElement>(element()->shadowHost()))
-            return !shadowHost->hasAutofillStrongPasswordButton();
+            return !shadowHost->hasAutoFillStrongPasswordButton();
         return true;
     }
 };

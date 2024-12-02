@@ -39,6 +39,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -46,9 +47,10 @@ using JSTestNamespaceConstDOMConstructor = JSDOMConstructorNotCallable<JSTestNam
 
 /* Hash table for constructor */
 
-static const std::array<HashTableValue, 2> JSTestNamespaceConstConstructorTableValues {
-    HashTableValue { "TEST_FLAG"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, false } },
-    HashTableValue { "TEST_BIT_MASK"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0x0000fc00 } },
+static const HashTableValue JSTestNamespaceConstConstructorTableValues[] =
+{
+    { "TEST_FLAG"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, false } },
+    { "TEST_BIT_MASK"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0x0000fc00 } },
 };
 
 static_assert(TestNamespaceConst::TEST_FLAG == false, "TEST_FLAG in TestNamespaceConst does not match value from IDL");

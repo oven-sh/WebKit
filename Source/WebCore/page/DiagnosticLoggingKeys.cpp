@@ -796,20 +796,5 @@ String DiagnosticLoggingKeys::audioCodecKey()
     return "audioCodec"_s;
 }
 
-String DiagnosticLoggingKeys::textTrackTypeKey()
-{
-    return "textTrackType"_s;
-}
-
-String DiagnosticLoggingKeys::textTrackKindKey()
-{
-    return "textTrackKind"_s;
-}
-
-String DiagnosticLoggingKeys::textTrackModeKey()
-{
-    return "textTrackMode"_s;
-}
-
 } // namespace WebCore
 

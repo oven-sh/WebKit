@@ -41,8 +41,6 @@
 
 #import <pal/cf/CoreMediaSoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 CoreAudioCaptureDeviceManager& CoreAudioCaptureDeviceManager::singleton()
@@ -340,7 +338,5 @@ void CoreAudioCaptureDeviceManager::refreshAudioCaptureDevices(NotifyIfDevicesHa
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(MEDIA_STREAM) && PLATFORM(MAC)

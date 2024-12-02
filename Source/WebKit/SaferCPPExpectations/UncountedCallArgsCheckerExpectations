@@ -1,6 +1,7 @@
 AutomationBackendDispatchers.cpp
 AutomationFrontendDispatchers.cpp
 AutomationProtocolObjects.h
+GPUProcess/media/RemoteMediaPlayerManagerProxy.cpp
 JSWebExtensionAPIAction.mm
 JSWebExtensionAPIAlarms.mm
 JSWebExtensionAPICommands.mm
@@ -79,6 +80,7 @@ NetworkProcess/storage/SQLiteStorageArea.cpp
 NetworkProcess/webrtc/NetworkRTCUDPSocketCocoa.mm
 Platform/IPC/ArgumentCoders.h
 Platform/IPC/SharedBufferReference.cpp
+Platform/IPC/StreamServerConnection.h
 Platform/cocoa/WKPaymentAuthorizationDelegate.mm
 Platform/cocoa/WebPrivacyHelpers.mm
 Shared/API/APIArray.h
@@ -129,6 +131,20 @@ Shared/RemoteLayerTree/RemoteLayerWithInProcessRenderingBackingStore.mm
 Shared/RemoteLayerTree/RemoteLayerWithRemoteRenderingBackingStore.mm
 Shared/SharedStringHashStore.cpp
 Shared/WebCompiledContentRuleListData.cpp
+Shared/WebGPU/WebGPUBindGroupDescriptor.cpp
+Shared/WebGPU/WebGPUBindGroupEntry.cpp
+Shared/WebGPU/WebGPUBufferBinding.cpp
+Shared/WebGPU/WebGPUCanvasConfiguration.cpp
+Shared/WebGPU/WebGPUComputePassTimestampWrites.cpp
+Shared/WebGPU/WebGPUImageCopyBuffer.cpp
+Shared/WebGPU/WebGPUImageCopyTexture.cpp
+Shared/WebGPU/WebGPUPipelineDescriptorBase.cpp
+Shared/WebGPU/WebGPUPipelineLayoutDescriptor.cpp
+Shared/WebGPU/WebGPUProgrammableStage.cpp
+Shared/WebGPU/WebGPURenderPassColorAttachment.cpp
+Shared/WebGPU/WebGPURenderPassDepthStencilAttachment.cpp
+Shared/WebGPU/WebGPURenderPassDescriptor.cpp
+Shared/WebGPU/WebGPURenderPassTimestampWrites.cpp
 Shared/WebHitTestResultData.cpp
 Shared/WebImage.cpp
 Shared/WebMemorySampler.cpp
@@ -265,6 +281,7 @@ UIProcess/DeviceIdHashSaltStorage.cpp
 UIProcess/Extensions/Cocoa/WebExtensionActionCocoa.mm
 UIProcess/Extensions/Cocoa/WebExtensionCommandCocoa.mm
 UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+UIProcess/Extensions/Cocoa/WebExtensionTabCocoa.mm
 UIProcess/Extensions/Cocoa/WebExtensionURLSchemeHandlerCocoa.mm
 UIProcess/Extensions/WebExtensionAlarm.cpp
 UIProcess/Extensions/WebExtensionCommand.cpp
@@ -286,6 +303,7 @@ UIProcess/ProvisionalFrameProxy.cpp
 UIProcess/ProvisionalPageProxy.cpp
 UIProcess/RemoteLayerTree/RemoteLayerTreeHost.mm
 UIProcess/RemoteLayerTree/RemoteLayerTreeNode.mm
+UIProcess/RemoteLayerTree/RemoteLayerTreeScrollingPerformanceData.mm
 UIProcess/RemoteLayerTree/RemoteScrollingCoordinatorProxy.cpp
 UIProcess/RemoteLayerTree/mac/RemoteLayerTreeEventDispatcher.cpp
 UIProcess/RemoteLayerTree/mac/RemoteScrollingCoordinatorProxyMac.mm
@@ -369,6 +387,7 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestEventCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsEventCocoa.mm
 WebProcess/Extensions/Bindings/Cocoa/JSWebExtensionWrapperCocoa.mm
+WebProcess/Extensions/Bindings/JSWebExtensionWrapper.h
 WebProcess/FileAPI/BlobRegistryProxy.cpp
 WebProcess/FullScreen/WebFullScreenManager.cpp
 WebProcess/GPU/ShapeDetection/RemoteBarcodeDetectorProxy.cpp
@@ -402,6 +421,7 @@ WebProcess/GPU/media/RemoteMediaPlayerMIMETypeCache.cpp
 WebProcess/GPU/media/RemoteMediaPlayerManager.cpp
 WebProcess/GPU/media/RemoteRemoteCommandListener.cpp
 WebProcess/GPU/media/RemoteVideoCodecFactory.cpp
+WebProcess/GPU/media/RemoteVideoFrameProxy.cpp
 WebProcess/GPU/media/SourceBufferPrivateRemote.cpp
 WebProcess/GPU/media/SourceBufferPrivateRemote.h
 WebProcess/GPU/media/TextTrackPrivateRemote.cpp
@@ -410,6 +430,7 @@ WebProcess/GPU/media/WebMediaStrategy.cpp
 WebProcess/GPU/media/cocoa/MediaPlayerPrivateRemoteCocoa.mm
 WebProcess/GPU/webrtc/AudioMediaStreamTrackRendererInternalUnitManager.cpp
 WebProcess/GPU/webrtc/LibWebRTCCodecs.cpp
+WebProcess/GPU/webrtc/MediaRecorderPrivate.cpp
 WebProcess/GPU/webrtc/SampleBufferDisplayLayer.cpp
 WebProcess/GPU/webrtc/SharedVideoFrame.cpp
 WebProcess/Geolocation/WebGeolocationManager.cpp
@@ -447,8 +468,8 @@ WebProcess/InjectedBundle/InjectedBundleHitTestResult.cpp
 WebProcess/InjectedBundle/InjectedBundlePageUIClient.cpp
 WebProcess/InjectedBundle/InjectedBundleScriptWorld.cpp
 WebProcess/Inspector/RemoteWebInspectorUI.cpp
+WebProcess/Inspector/WebInspector.cpp
 WebProcess/Inspector/WebInspectorClient.cpp
-WebProcess/Inspector/WebInspectorInternal.cpp
 WebProcess/Inspector/WebInspectorUI.cpp
 WebProcess/Inspector/WebInspectorUIExtensionController.cpp
 WebProcess/Network/NetworkProcessConnection.cpp

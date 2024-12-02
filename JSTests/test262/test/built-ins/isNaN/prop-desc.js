@@ -8,8 +8,6 @@ description: >
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(this, "isNaN", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(this, "isNaN");
+verifyWritable(this, "isNaN");
+verifyConfigurable(this, "isNaN");

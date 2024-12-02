@@ -56,9 +56,7 @@ StackBounds StackBounds::newThreadStackBounds(PlatformThreadHandle thread)
 {
     void* origin = pthread_get_stackaddr_np(thread);
     rlim_t size = pthread_get_stacksize_np(thread);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     void* bound = static_cast<char*>(origin) - size;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return StackBounds { origin, bound };
 }
 
@@ -73,9 +71,7 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
         rlim_t size = limit.rlim_cur;
         if (size == RLIM_INFINITY)
             size = 8 * MB;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return StackBounds { origin, bound };
     }
     return newThreadStackBounds(pthread_self());
@@ -90,9 +86,7 @@ StackBounds StackBounds::newThreadStackBounds(PlatformThreadHandle thread)
     stack_t stack;
     pthread_stackseg_np(thread, &stack);
     void* origin = stack.ss_sp;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     void* bound = static_cast<char*>(origin) - stack.ss_size;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return StackBounds { origin, bound };
 }
 
@@ -102,9 +96,7 @@ StackBounds StackBounds::newThreadStackBounds(PlatformThreadHandle thread)
 {
     struct _thread_local_storage* tls = __tls();
     void* bound = tls->__stackaddr;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     void* origin = static_cast<char*>(bound) + tls->__stacksize;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return StackBounds { origin, bound };
 }
 
@@ -128,9 +120,7 @@ StackBounds StackBounds::newThreadStackBounds(PlatformThreadHandle thread)
     UNUSED_PARAM(rc);
     ASSERT(bound);
     pthread_attr_destroy(&sattr);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     void* origin = static_cast<char*>(bound) + stackSize;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // pthread_attr_getstack's bound is the lowest accessible pointer of the stack.
     return StackBounds { origin, bound };
 }
@@ -155,9 +145,7 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
             size = 8 * MB;
         // account for a guard page
         size -= static_cast<rlim_t>(sysconf(_SC_PAGESIZE));
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return StackBounds { origin, bound };
     }
 #endif

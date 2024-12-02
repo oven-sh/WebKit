@@ -20,7 +20,7 @@
 #include "config.h"
 #include "VideoDecoderGStreamer.h"
 
-#if ENABLE(VIDEO) && USE(GSTREAMER)
+#if USE(GSTREAMER)
 
 #include "GStreamerCommon.h"
 #include "GStreamerElementHarness.h"
@@ -88,14 +88,8 @@ void GStreamerVideoDecoder::create(const String& codecName, const Config& config
         GST_DEBUG_CATEGORY_INIT(webkit_video_decoder_debug, "webkitvideodecoder", 0, "WebKit WebCodecs Video Decoder");
     });
 
-    bool usingHardware = config.decoding == VideoDecoder::HardwareAcceleration::Yes;
     auto& scanner = GStreamerRegistryScanner::singleton();
-    auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName, usingHardware);
-    if (usingHardware && !lookupResult) {
-        GST_DEBUG("No hardware decoder found for codec %s, falling back to software", codecName.utf8().data());
-        lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName, false);
-    }
-
+    auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName);
     if (!lookupResult) {
         GST_WARNING("No decoder found for codec %s", codecName.utf8().data());
         callback(makeUnexpected(makeString("No decoder found for codec "_s, codecName)));
@@ -235,7 +229,7 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
             timestamp = m_timestamp;
 
         GST_TRACE_OBJECT(m_harness->element(), "Handling decoded frame with PTS: %" GST_TIME_FORMAT " and duration: %" GST_TIME_FORMAT, GST_TIME_ARGS(timestamp), GST_TIME_ARGS(duration));
-        auto videoFrame = VideoFrameGStreamer::create(WTFMove(outputSample), IntSize(m_presentationSize), fromGstClockTime(timestamp));
+        auto videoFrame = VideoFrameGStreamer::create(WTFMove(outputSample), m_presentationSize, fromGstClockTime(timestamp));
         m_outputCallback(VideoDecoder::DecodedFrame { WTFMove(videoFrame), timestamp, duration });
     });
 }
@@ -280,4 +274,4 @@ void GStreamerInternalVideoDecoder::flush()
 
 } // namespace WebCore
 
-#endif // ENABLE(VIDEO) && USE(GSTREAMER)
+#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)

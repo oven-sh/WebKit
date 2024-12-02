@@ -59,9 +59,9 @@ void CachedApplicationManifest::setEncoding(const String& chs)
     protectedDecoder()->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
 }
 
-ASCIILiteral CachedApplicationManifest::encoding() const
+String CachedApplicationManifest::encoding() const
 {
-    return protectedDecoder()->encoding().name();
+    return String::fromLatin1(protectedDecoder()->encoding().name());
 }
 
 std::optional<ApplicationManifest> CachedApplicationManifest::process(const URL& manifestURL, const URL& documentURL, Document* document)

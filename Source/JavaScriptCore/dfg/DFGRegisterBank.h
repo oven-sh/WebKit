@@ -31,8 +31,6 @@
 #include "FPRInfo.h"
 #include "GPRInfo.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 // === RegisterBank ===
@@ -381,7 +379,5 @@ typedef RegisterBank<GPRInfo>::iterator gpr_iterator;
 typedef RegisterBank<FPRInfo>::iterator fpr_iterator;
 
 } } // namespace JSC::DFG
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

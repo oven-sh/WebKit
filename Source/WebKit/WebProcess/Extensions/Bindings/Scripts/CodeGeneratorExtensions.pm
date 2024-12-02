@@ -313,12 +313,13 @@ EOF
 
     $contentsIncludes{"\"${className}.h\""} = 1;
     $contentsIncludes{"\"${implementationClassName}.h\""} = 1;
-    $contentsIncludes{"\"Logging.h\""} = 1;
-    $contentsIncludes{"\"WebExtensionUtilities.h\""} = 1;
-    $contentsIncludes{"\"WebPage.h\""} = 1;
-    $contentsIncludes{"<wtf/GetPtr.h>"} = 1;
 
     push(@contents, <<EOF);
+#include "Logging.h"
+#include "WebExtensionUtilities.h"
+#include <wtf/GetPtr.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -447,7 +448,7 @@ EOF
 
             push(@contents, "\n");
 
-            my $functionSignature = "JSValueRef ${className}::@{[$function->name]}(JSContextRef context, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef unsafeArguments[], JSValueRef* exception)";
+            my $functionSignature = "JSValueRef ${className}::@{[$function->name]}(JSContextRef context, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)";
             my $call = _callString($idlType, $function, 1);
 
             my $defaultEarlyReturnValue = "JSValueMakeUndefined(context)";
@@ -493,13 +494,11 @@ EOF
 
             my $lastParameter = $specifiedParameters[$#specifiedParameters];
 
-            push(@contents, "\n    auto arguments = unsafeMakeSpan(unsafeArguments, argumentCount);\n\n") if scalar @specifiedParameters;
+            push(@contents, "\n") if scalar @specifiedParameters;
             my $needsScriptContext = $function->extendedAttributes->{"NeedsScriptContext"};
 
             my $needsFrame = $function->extendedAttributes->{"NeedsFrame"};
-            my $needsFrameIdentifier = $function->extendedAttributes->{"NeedsFrameIdentifier"};
             my $needsPage = $function->extendedAttributes->{"NeedsPage"};
-            my $needsPageIdentifier = $function->extendedAttributes->{"NeedsPageIdentifier"};
             my $returnsPromiseIfNoCallback = $function->extendedAttributes->{"ReturnsPromiseWhenCallbackIsOmitted"} || $interface->extendedAttributes->{"ReturnsPromiseWhenCallbackIsOmitted"};
             my $callbackHandlerArgument;
 
@@ -512,9 +511,7 @@ EOF
                 $self->_includeHeaders(\%contentsIncludes, $parameter->type, $parameter);
                 $optionalArgumentCount++ if $parameter->extendedAttributes->{"Optional"};
                 $needsPage = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsPageWithCallbackHandler"};
-                $needsPageIdentifier = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsPageIdentifierWithCallbackHandler"};
                 $needsFrame = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsFrameWithCallbackHandler"};
-                $needsFrameIdentifier = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsFrameIdentifierWithCallbackHandler"};
                 $callbackHandlerArgument = $parameter->name if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
             }
 
@@ -686,14 +683,8 @@ EOF
             unshift(@methodSignatureNames, "frame") if $needsFrame;
             unshift(@parameters, "*frame") if $needsFrame;
 
-            unshift(@methodSignatureNames, "frameIdentifier") if $needsFrameIdentifier;
-            unshift(@parameters, "frame->frameID()") if $needsFrameIdentifier;
-
             unshift(@methodSignatureNames, "page") if $needsPage;
             unshift(@parameters, "*page") if $needsPage;
-
-            unshift(@methodSignatureNames, "webPageProxyIdentifier") if $needsPageIdentifier;
-            unshift(@parameters, "page->webPageProxyIdentifier()") if $needsPageIdentifier;
 
             push(@methodSignatureNames, "outExceptionString") if $needsExceptionString;
             push(@parameters, "&exceptionString") if $needsExceptionString;
@@ -729,7 +720,7 @@ EOF
 EOF
             }
 
-            if ($needsPage || $needsPageIdentifier) {
+            if ($needsPage) {
                 push(@contents, "    RefPtr page = toWebPage(context);\n");
                 push(@contents, "    if (UNLIKELY(!page)) {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Page could not be found for JSContextRef\");\n");
@@ -739,7 +730,7 @@ EOF
                 push(@contents, "    }\n\n");
             }
 
-            if ($needsFrame || $needsFrameIdentifier) {
+            if ($needsFrame) {
                 push(@contents, "    RefPtr frame = toWebFrame(context);\n");
                 push(@contents, "    if (UNLIKELY(!frame)) {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Frame could not be found for JSContextRef\");\n");
@@ -847,9 +838,7 @@ EOF
             my $call = _callString($idlType, $attribute, 0);
 
             my $needsFrame = $attribute->extendedAttributes->{"NeedsFrame"};
-            my $needsFrameIdentifier = $attribute->extendedAttributes->{"NeedsFrameIdentifier"};
             my $needsPage = $attribute->extendedAttributes->{"NeedsPage"};
-            my $needsPageIdentifier = $attribute->extendedAttributes->{"NeedsPageIdentifier"};
 
             my @methodSignatureNames = ();
             my @parameters = ();
@@ -860,14 +849,8 @@ EOF
             push(@methodSignatureNames, "page") if $needsPage;
             push(@parameters, "*page") if $needsPage;
 
-            push(@methodSignatureNames, "webPageProxyIdentifier") if $needsPageIdentifier;
-            push(@parameters, "page->webPageProxyIdentifier()") if $needsPageIdentifier;
-
             push(@methodSignatureNames, "frame") if $needsFrame;
             push(@parameters, "*frame") if $needsFrame;
-
-            push(@methodSignatureNames, "frameIdentifier") if $needsFrameIdentifier;
-            push(@parameters, "frame->frameID()") if $needsFrameIdentifier;
 
             my $getterExpression = $self->_functionCall($attribute, \@methodSignatureNames, \@parameters, $interface, $getterName);
 
@@ -897,7 +880,7 @@ EOF
     RELEASE_LOG_DEBUG(Extensions, "Called getter ${call} in %{public}s world", toDebugString(impl->contentWorldType()).utf8().data());
 EOF
 
-            if ($needsPage || $needsPageIdentifier) {
+            if ($needsPage) {
                 push(@contents, "\n");
                 push(@contents, "    RefPtr page = toWebPage(context);\n");
                 push(@contents, "    if (UNLIKELY(!page)) {\n");
@@ -906,7 +889,7 @@ EOF
                 push(@contents, "    }\n");
             }
 
-            if ($needsFrame || $needsFrameIdentifier) {
+            if ($needsFrame) {
                 push(@contents, "\n");
                 push(@contents, "    RefPtr frame = toWebFrame(context);\n");
                 push(@contents, "    if (UNLIKELY(!frame)) {\n");
@@ -949,7 +932,7 @@ EOF
                     $platformValue = $self->_platformTypeConstructor($attribute, "value");
                 }
 
-                if ($needsPage || $needsPageIdentifier) {
+                if ($needsPage) {
                     push(@contents, "\n");
                     push(@contents, "    RefPtr page = toWebPage(context);\n");
                     push(@contents, "    if (UNLIKELY(!page)) {\n");
@@ -958,7 +941,7 @@ EOF
                     push(@contents, "    }\n");
                 }
 
-                if ($needsFrame || $needsFrameIdentifier) {
+                if ($needsFrame) {
                     push(@contents, "\n");
                     push(@contents, "    RefPtr frame = toWebFrame(context);\n");
                     push(@contents, "    if (UNLIKELY(!frame)) {\n");
@@ -984,6 +967,9 @@ EOF
     push(@contents, <<EOF);
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 EOF
 
     push(@contents, <<EOF) if $conditionalString;
@@ -1026,8 +1012,6 @@ sub _hasAutomaticExceptions
 sub _includeHeaders
 {
     my ($self, $headers, $idlType, $signature) = @_;
-
-    $$headers{'"WebFrame.h"'} = 1 if $signature->extendedAttributes->{"NeedsFrame"} || $signature->extendedAttributes->{"NeedsFrameIdentifier"};
 
     return unless defined $idlType;
 

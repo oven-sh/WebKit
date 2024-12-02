@@ -828,7 +828,7 @@ Ref<Inspector::Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties() co
 
     auto propertiesObject = JSON::ArrayOf<Inspector::Protocol::CSS::CSSProperty>::create();
     auto shorthandEntries = ArrayOf<Inspector::Protocol::CSS::ShorthandEntry>::create();
-    HashMap<String, RefPtr<Inspector::Protocol::CSS::CSSProperty>> propertyNameToPreviousActiveProperty;
+    UncheckedKeyHashMap<String, RefPtr<Inspector::Protocol::CSS::CSSProperty>> propertyNameToPreviousActiveProperty;
     HashSet<String> foundShorthands;
     String previousPriority;
     String previousStatus;
@@ -836,11 +836,11 @@ Ref<Inspector::Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties() co
     auto sourceData = extractSourceData();
     unsigned ruleBodyRangeStart = sourceData ? sourceData->ruleBodyRange.start : 0;
 
-    for (auto& styleProperty : properties) {
-        const CSSPropertySourceData& propertyEntry = styleProperty.sourceData;
+    for (Vector<InspectorStyleProperty>::iterator it = properties.begin(), itEnd = properties.end(); it != itEnd; ++it) {
+        const CSSPropertySourceData& propertyEntry = it->sourceData;
         const String& name = propertyEntry.name;
 
-        auto status = styleProperty.disabled ? Inspector::Protocol::CSS::CSSPropertyStatus::Disabled : Inspector::Protocol::CSS::CSSPropertyStatus::Active;
+        auto status = it->disabled ? Inspector::Protocol::CSS::CSSPropertyStatus::Disabled : Inspector::Protocol::CSS::CSSPropertyStatus::Active;
 
         auto property = Inspector::Protocol::CSS::CSSProperty::create()
             .setName(lowercasePropertyName(name))
@@ -857,14 +857,14 @@ Ref<Inspector::Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties() co
         // Default "parsedOk" == true.
         if (!propertyEntry.parsedOk || !isExposed(propertyId, m_style->settings()))
             property->setParsedOk(false);
-        if (styleProperty.hasRawText())
-            property->setText(styleProperty.rawText);
+        if (it->hasRawText())
+            property->setText(it->rawText);
 
         // Default "priority" == "".
         if (propertyEntry.important)
             property->setPriority("important"_s);
 
-        if (styleProperty.hasSource) {
+        if (it->hasSource) {
             // The property range is relative to the style body start.
             // Should be converted into an absolute range (relative to the stylesheet start)
             // for the proper conversion into line:column.
@@ -875,8 +875,8 @@ Ref<Inspector::Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties() co
                 property->setRange(range.releaseNonNull());
         }
 
-        if (!styleProperty.disabled) {
-            if (styleProperty.hasSource) {
+        if (!it->disabled) {
+            if (it->hasSource) {
                 ASSERT(sourceData);
                 property->setImplicit(false);
 
@@ -886,7 +886,7 @@ Ref<Inspector::Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties() co
 
                 // Canonicalize property names to treat non-prefixed and vendor-prefixed property names the same (opacity vs. -webkit-opacity).
                 String canonicalPropertyName = propertyId != CSSPropertyID::CSSPropertyInvalid && propertyId != CSSPropertyID::CSSPropertyCustom ? nameString(propertyId) : name;
-                HashMap<String, RefPtr<Inspector::Protocol::CSS::CSSProperty>>::iterator activeIt = propertyNameToPreviousActiveProperty.find(canonicalPropertyName);
+                UncheckedKeyHashMap<String, RefPtr<Inspector::Protocol::CSS::CSSProperty>>::iterator activeIt = propertyNameToPreviousActiveProperty.find(canonicalPropertyName);
                 if (activeIt != propertyNameToPreviousActiveProperty.end()) {
                     if (propertyEntry.parsedOk) {
                         auto newPriority = activeIt->value->getString("priority"_s);

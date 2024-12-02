@@ -12,8 +12,6 @@ features: [Symbol.iterator]
 
 var ArrayIteratorProto = Object.getPrototypeOf([][Symbol.iterator]());
 
-verifyProperty(ArrayIteratorProto, "next", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(ArrayIteratorProto, 'next');
+verifyWritable(ArrayIteratorProto, 'next');
+verifyConfigurable(ArrayIteratorProto, 'next');

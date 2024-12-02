@@ -134,7 +134,6 @@
 #import "_WKTextManipulationItem.h"
 #import "_WKTextManipulationToken.h"
 #import "_WKTextPreview.h"
-#import "_WKTextRunInternal.h"
 #import "_WKVisitedLinkStoreInternal.h"
 #import "_WKWarningView.h"
 #import <WebCore/AppHighlight.h>
@@ -189,8 +188,9 @@
 #import "WKWebExtensionControllerInternal.h"
 #endif
 
+#import "WebKitSwiftSoftLink.h"
+
 #if PLATFORM(IOS_FAMILY)
-#import "PointerTouchCompatibilitySimulator.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "UIKitSPI.h"
@@ -215,8 +215,6 @@
 #import "WKViewInternal.h"
 #import <WebCore/ColorMac.h>
 #endif
-
-#import "WebKitSwiftSoftLink.h"
 
 #if PLATFORM(WATCHOS)
 static const BOOL defaultAllowsViewportShrinkToFit = YES;
@@ -266,6 +264,12 @@ RetainPtr<NSError> nsErrorFromExceptionDetails(const WebCore::ExceptionDetails& 
 
     return adoptNS([[NSError alloc] initWithDomain:WKErrorDomain code:errorCode userInfo:userInfo.get()]);
 }
+
+#if PLATFORM(IOS_FAMILY)
+typedef UIView PlatformView;
+#else
+typedef NSView PlatformView;
+#endif
 
 @implementation WKWebView
 
@@ -449,11 +453,6 @@ static uint32_t convertSystemLayoutDirection(NSUserInterfaceLayoutDirection dire
 #if PLATFORM(APPLETV)
     // FIXME: This is a workaround for <rdar://135515434> to prevent the tint color from being set to either solid black or white.
     self.tintColor = UIColor.systemBlueColor;
-#endif
-
-#if PLATFORM(IOS_FAMILY)
-    if (WebKit::PointerTouchCompatibilitySimulator::requiresPointerTouchCompatibility())
-        _pointerTouchCompatibilitySimulator = WTF::makeUnique<WebKit::PointerTouchCompatibilitySimulator>(self);
 #endif
 }
 
@@ -1380,7 +1379,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _allowsBackForwardNavigationGestures = allowsBackForwardNavigationGestures;
 
     if (allowsBackForwardNavigationGestures && !_gestureController) {
-        _gestureController = WebKit::ViewGestureController::create(*_page);
+        _gestureController = makeUnique<WebKit::ViewGestureController>(*_page);
         _gestureController->installSwipeHandler(self, [self scrollView]);
         if (WKWebView *alternateWebView = [_configuration _alternateWebViewForNavigationGestures])
             _gestureController->setAlternateBackForwardListSourcePage(alternateWebView->_page.get());
@@ -2158,11 +2157,6 @@ static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& edi
     }
 
     _page->didBeginWritingToolsSession(*webSession, contextData);
-
-    if (session.type == WTSessionTypeProofreading) {
-        _intelligenceTextEffectCoordinator = adoptNS([WebKit::allocWKIntelligenceTextEffectCoordinatorInstance() initWithDelegate:(id<WKIntelligenceTextEffectCoordinatorDelegate>)self]);
-        [_intelligenceTextEffectCoordinator startAnimationForRange:contexts.firstObject.range completion:^{ }];
-    }
 }
 
 - (void)proofreadingSession:(WTSession *)session didReceiveSuggestions:(NSArray<WTTextSuggestion *> *)suggestions processedRange:(NSRange)range inContext:(WTContext *)context finished:(BOOL)finished
@@ -2192,21 +2186,15 @@ static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& edi
         [_writingToolsTextSuggestions setObject:suggestion forKey:suggestion.uuid];
     }
 
-    NSInteger delta = [WebKit::getWKIntelligenceTextEffectCoordinatorClass() characterDeltaForReceivedSuggestions:suggestions];
-
-    auto operation = makeBlockPtr([webSession, replacementData, range, webContext, finished, weakSelf = WeakObjCPtr<WKWebView>(self)](void (^completion)(void)) {
-        auto strongSelf = weakSelf.get();
-        if (!strongSelf) {
-            completion();
+    _page->proofreadingSessionDidReceiveSuggestions(*webSession, replacementData, *webContext, finished, [webSession, replacementData, webContext, finished, page = WeakPtr { _page.get() }] {
+        if (!page)
             return;
-        }
 
-        strongSelf->_page->proofreadingSessionDidReceiveSuggestions(*webSession, replacementData, range, *webContext, finished, [completion = makeBlockPtr(completion)] {
-            completion();
+        // FIXME: Wait for the animation to finish before invoking this method.
+        page->proofreadingSessionDidCompletePartialReplacement(*webSession, replacementData, *webContext, finished, [] {
+            // FIXME: Once the animations are implemented, this completion handler will be used to inform the coordinator that this async operation is complete.
         });
     });
-
-    [_intelligenceTextEffectCoordinator requestReplacementWithProcessedRange:range finished:finished characterDelta:delta operation:operation.get() completion:^{ }];
 }
 
 - (void)proofreadingSession:(WTSession *)session didUpdateState:(WTTextSuggestionState)state forSuggestionWithUUID:(NSUUID *)suggestionUUID inContext:(WTContext *)context
@@ -2251,31 +2239,9 @@ static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& edi
     _activeWritingToolsSession = nil;
     [_writingToolsTextSuggestions removeAllObjects];
 
-    if (session.type != WTSessionTypeProofreading) {
-        _page->setWritingToolsActive(false);
-        _page->didEndWritingToolsSession(*webSession, accepted);
-        return;
-    }
+    _page->setWritingToolsActive(false);
 
-    // Flush and invoke all replacement operations, then dismiss the markers (and revert the text if not accepted),
-    // then set the selection to the updated context range, and finally clear the state in the web process.
-    //
-    // It's possible that the selection has already been restored by this point if the entire animation has already
-    // finished, but this is not guaranteed.
-
-    [_intelligenceTextEffectCoordinator flushReplacementsWithCompletion:makeBlockPtr([webSession, accepted, weakSelf = WeakObjCPtr<WKWebView>(self)] {
-        auto strongSelf = weakSelf.get();
-        if (!strongSelf)
-            return;
-
-        strongSelf->_page->setWritingToolsActive(false);
-
-        strongSelf->_page->willEndWritingToolsSession(*webSession, accepted, [webSession, accepted, weakSelf] {
-            [weakSelf.get()->_intelligenceTextEffectCoordinator restoreSelectionAcceptedReplacements:accepted completion:makeBlockPtr([webSession, accepted, weakSelf] {
-                weakSelf.get()->_page->didEndWritingToolsSession(*webSession, accepted);
-            }).get()];
-        });
-    }).get()];
+    _page->didEndWritingToolsSession(*webSession, accepted);
 }
 
 - (void)compositionSession:(WTSession *)session didReceiveText:(NSAttributedString *)attributedText replacementRange:(NSRange)range inContext:(WTContext *)context finished:(BOOL)finished
@@ -2320,17 +2286,10 @@ static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& edi
 
 #if !PLATFORM(APPLETV) && !PLATFORM(WATCHOS)
 
-#if PLATFORM(IOS_FAMILY)
-- (UIView *)viewForIntelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator
-{
-    return _contentView.get();
-}
-#else
-- (NSView *)viewForIntelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator
+- (PlatformView *)viewForIntelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator
 {
     return self;
 }
-#endif
 
 - (void)intelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator rectsForProofreadingSuggestionsInRange:(NSRange)range completion:(void (^)(NSArray<NSValue *> *))completion
 {
@@ -2343,24 +2302,10 @@ static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& edi
     });
 }
 
-- (void)intelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator updateTextVisibilityForRange:(NSRange)range visible:(BOOL)visible identifier:(NSUUID *)identifier completion:(void (^)(void))completion
+- (void)intelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator updateTextVisibilityForRange:(NSRange)range visible:(BOOL)visible completion:(void (^)(void))completion
 {
-    auto convertedIdentifier = WTF::UUID::fromNSUUID(identifier);
-    if (!convertedIdentifier) {
-        ASSERT_NOT_REACHED();
+    _page->updateTextVisibilityForActiveWritingToolsSession(range, visible, [completion = makeBlockPtr(completion)] {
         completion();
-        return;
-    }
-
-    _page->updateTextVisibilityForActiveWritingToolsSession(range, visible, *convertedIdentifier, [completion = makeBlockPtr(completion), weakSelf = WeakObjCPtr<WKWebView>(self)] {
-        auto strongSelf = weakSelf.get();
-        if (!strongSelf) {
-            completion();
-            return;
-        }
-
-        // Ensure the rendering of the visibility has actually taken effect.
-        [strongSelf _doAfterNextPresentationUpdate:completion.get()];
     });
 }
 
@@ -2430,20 +2375,6 @@ static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& edi
     });
 }
 #endif
-
-- (void)intelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator decorateReplacementsForRange:(NSRange)range completion:(void (^)(void))completion
-{
-    _page->decorateTextReplacementsForActiveWritingToolsSession(range, [completion = makeBlockPtr(completion)] {
-        completion();
-    });
-}
-
-- (void)intelligenceTextEffectCoordinator:(WKIntelligenceTextEffectCoordinator *)coordinator setSelectionForRange:(NSRange)range completion:(void (^)(void))completion
-{
-    _page->setSelectionForActiveWritingToolsSession(range, [completion = makeBlockPtr(completion)] {
-        completion();
-    });
-}
 
 #endif
 
@@ -3268,7 +3199,7 @@ static RetainPtr<NSArray> wkTextManipulationErrors(NSArray<_WKTextManipulationIt
 
 - (void)_setStatisticsCrossSiteLoadWithLinkDecorationForTesting:(NSString *)fromHost withToHost:(NSString *)toHost withWasFiltered:(BOOL)wasFiltered withCompletionHandler:(void(^)(void))completionHandler
 {
-    if (RefPtr pageForTesting = _page->pageForTesting())
+    if (auto* pageForTesting = _page->pageForTesting())
         pageForTesting->setCrossSiteLoadWithLinkDecorationForTesting(URL { fromHost }, URL { toHost }, wasFiltered, makeBlockPtr(completionHandler));
 }
 
@@ -3357,19 +3288,6 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
 #if ENABLE(APP_HIGHLIGHTS)
     _page->createAppHighlightInSelectedRange(newGroup ? WebCore::CreateNewGroupForHighlight::Yes : WebCore::CreateNewGroupForHighlight::No, originatedInApp ? WebCore::HighlightRequestOriginatedInApp::Yes : WebCore::HighlightRequestOriginatedInApp::No);
 #endif
-}
-
-- (void)_requestAllTextWithCompletionHandler:(void(^)(NSArray<_WKTextRun *> *))completionHandler
-{
-    _page->requestAllTextAndRects([weakSelf = WeakObjCPtr<WKWebView>(self), completion = makeBlockPtr(completionHandler)](auto&& textRuns) {
-        auto strongSelf = weakSelf.get();
-        if (!strongSelf)
-            return completion(@[ ]);
-
-        completion(createNSArray(WTFMove(textRuns), [](auto&& textRun) {
-            return wrapper(textRun);
-        }).get());
-    });
 }
 
 - (void)_requestTargetedElementInfo:(_WKTargetedElementRequest *)request completionHandler:(void(^)(NSArray<_WKTargetedElementInfo *> *))completion
@@ -4087,16 +4005,6 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
 {
     THROW_IF_SUSPENDED;
     _page->setAddsVisitedLinks(addsVisitedLinks);
-}
-
-- (NSArray<NSString *> *)_corsDisablingPatterns
-{
-    return createNSArray(_page->corsDisablingPatterns()).autorelease();
-}
-
-- (void)_setCORSDisablingPatterns:(NSArray<NSString *> *)patterns
-{
-    _page->setCORSDisablingPatterns(makeVector<String>(patterns));
 }
 
 - (BOOL)_networkRequestsInProgress
@@ -5104,7 +5012,7 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
             return;
         }
 
-        RetainPtr preview = [strongSelf->_contentView _createTargetedPreviewFromTextIndicator:*textIndicatorData previewContainer:[strongSelf scrollView]];
+        RetainPtr preview = [strongSelf->_contentView _createTargetedPreviewFromTextIndicator:*textIndicatorData previewContainer:strongSelf.get()];
         completionHandler(preview.get());
     });
 }

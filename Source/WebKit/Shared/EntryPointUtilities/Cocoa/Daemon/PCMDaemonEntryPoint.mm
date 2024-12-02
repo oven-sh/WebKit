@@ -39,9 +39,10 @@
 #import <wtf/HashSet.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/RunLoop.h>
-#import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/spi/darwin/XPCSPI.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // FIXME: Add daemon plist to repository.
 
@@ -124,14 +125,13 @@ static void connectionRemoved(xpc_connection_t connection)
 
 int PCMDaemonMain(int argc, const char** argv)
 {
-    auto arguments = unsafeMakeSpan(argv, argc);
-    if (arguments.size() < 5 || strcmp(arguments[1], "--machServiceName") || strcmp(arguments[3], "--storageLocation")) {
-        NSLog(@"Usage: %s --machServiceName <name> --storageLocation <location> [--startActivity]", arguments[0]);
+    if (argc < 5 || strcmp(argv[1], "--machServiceName") || strcmp(argv[3], "--storageLocation")) {
+        NSLog(@"Usage: %s --machServiceName <name> --storageLocation <location> [--startActivity]", argv[0]);
         return -1;
     }
-    const char* machServiceName = arguments[2];
-    const char* storageLocation = arguments[4];
-    bool startActivity = arguments.size() > 5 && !strcmp(arguments[5], "--startActivity");
+    const char* machServiceName = argv[2];
+    const char* storageLocation = argv[4];
+    bool startActivity = argc > 5 && !strcmp(argv[5], "--startActivity");
 
     @autoreleasepool {
 #if ENABLE(CFPREFS_DIRECT_MODE)
@@ -152,3 +152,5 @@ int PCMDaemonMain(int argc, const char** argv)
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -84,9 +84,7 @@ GstElement* GStreamerVideoCapturer::createSource()
 GstElement* GStreamerVideoCapturer::createConverter()
 {
     if (isCapturingDisplay()) {
-#if USE(GBM)
-        m_caps = buildDMABufCaps();
-#endif
+        gst_caps_set_features(m_caps.get(), 0, gst_caps_features_new("memory:DMABuf", nullptr));
         return makeGStreamerElement("identity", nullptr);
     }
 

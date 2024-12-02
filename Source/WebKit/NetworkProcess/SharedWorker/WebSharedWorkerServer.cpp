@@ -36,7 +36,6 @@
 #include "WebSharedWorkerServerConnection.h"
 #include "WebSharedWorkerServerToContextConnection.h"
 #include <WebCore/RegistrableDomain.h>
-#include <WebCore/Site.h>
 #include <WebCore/WorkerFetchResult.h>
 #include <WebCore/WorkerOptions.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -134,7 +133,7 @@ void WebSharedWorkerServer::didFinishFetchingSharedWorkerScript(WebSharedWorker&
     if (RefPtr connection = m_contextConnections.get(sharedWorker.topRegistrableDomain()))
         sharedWorker.launch(*connection);
     else
-        createContextConnection(sharedWorker.topSite(), sharedWorker.firstSharedWorkerObjectProcess());
+        createContextConnection(sharedWorker.topRegistrableDomain(), sharedWorker.firstSharedWorkerObjectProcess());
 }
 
 bool WebSharedWorkerServer::needsContextConnectionForRegistrableDomain(const WebCore::RegistrableDomain& registrableDomain) const
@@ -146,28 +145,28 @@ bool WebSharedWorkerServer::needsContextConnectionForRegistrableDomain(const Web
     return false;
 }
 
-void WebSharedWorkerServer::createContextConnection(const WebCore::Site& site, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier)
+void WebSharedWorkerServer::createContextConnection(const WebCore::RegistrableDomain& registrableDomain, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier)
 {
-    ASSERT(!m_contextConnections.contains(site.domain()));
-    if (m_pendingContextConnectionDomains.contains(site.domain()))
+    ASSERT(!m_contextConnections.contains(registrableDomain));
+    if (m_pendingContextConnectionDomains.contains(registrableDomain))
         return;
 
     RELEASE_LOG(SharedWorker, "WebSharedWorkerServer::createContextConnection will create a connection");
 
-    m_pendingContextConnectionDomains.add(site.domain());
-    m_session->networkProcess().parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::EstablishRemoteWorkerContextConnectionToNetworkProcess { RemoteWorkerType::SharedWorker, site, requestingProcessIdentifier, std::nullopt, m_session->sessionID() }, [this, weakThis = WeakPtr { *this }, site] (auto remoteProcessIdentifier) {
+    m_pendingContextConnectionDomains.add(registrableDomain);
+    m_session->networkProcess().parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::EstablishRemoteWorkerContextConnectionToNetworkProcess { RemoteWorkerType::SharedWorker, registrableDomain, requestingProcessIdentifier, std::nullopt, m_session->sessionID() }, [this, weakThis = WeakPtr { *this }, registrableDomain] (auto remoteProcessIdentifier) {
         if (!weakThis)
             return;
 
         RELEASE_LOG(SharedWorker, "WebSharedWorkerServer::createContextConnection should now have created a connection");
 
-        ASSERT(m_pendingContextConnectionDomains.contains(site.domain()));
-        m_pendingContextConnectionDomains.remove(site.domain());
-        if (m_contextConnections.contains(site.domain()))
+        ASSERT(m_pendingContextConnectionDomains.contains(registrableDomain));
+        m_pendingContextConnectionDomains.remove(registrableDomain);
+        if (m_contextConnections.contains(registrableDomain))
             return;
 
-        if (needsContextConnectionForRegistrableDomain(site.domain()))
-            createContextConnection(site, { });
+        if (needsContextConnectionForRegistrableDomain(registrableDomain))
+            createContextConnection(registrableDomain, { });
     }, 0);
 }
 
@@ -186,15 +185,15 @@ void WebSharedWorkerServer::removeContextConnection(WebSharedWorkerServerToConte
 {
     RELEASE_LOG(SharedWorker, "WebSharedWorkerServer::removeContextConnection(%p) webProcessIdentifier=%" PRIu64, &contextConnection, contextConnection.webProcessIdentifier() ? contextConnection.webProcessIdentifier()->toUInt64() : 0);
 
-    auto site = contextConnection.site();
+    auto registrableDomain = contextConnection.registrableDomain();
 
-    ASSERT(m_contextConnections.get(site.domain()) == &contextConnection);
+    ASSERT(m_contextConnections.get(registrableDomain) == &contextConnection);
 
-    m_contextConnections.remove(site.domain());
+    m_contextConnections.remove(registrableDomain);
 
     if (auto& sharedWorkerObjects = contextConnection.sharedWorkerObjects(); !sharedWorkerObjects.isEmpty()) {
         auto requestingProcessIdentifier = sharedWorkerObjects.begin()->key;
-        createContextConnection(site, requestingProcessIdentifier);
+        createContextConnection(registrableDomain, requestingProcessIdentifier);
     }
 }
 

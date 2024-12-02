@@ -34,24 +34,25 @@
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
 
-template<typename T> static RefPtr<CSSPrimitiveValue> consumeIntegerType(CSSParserTokenRange& range, const CSSParserContext& context)
+template<typename IntType, CSS::Range R>
+static RefPtr<CSSPrimitiveValue> consumeIntegerType(CSSParserTokenRange& range, const CSSParserContext& context)
 {
-    return CSSPrimitiveValueResolver<T>::consumeAndResolve(range, context, { }, { }, { });
+    return CSSPrimitiveValueResolver<CSS::Integer<IntType, R>>::consumeAndResolve(range, context, { }, { }, { });
 }
 
 RefPtr<CSSPrimitiveValue> consumeInteger(CSSParserTokenRange& range, const CSSParserContext& context)
 {
-    return consumeIntegerType<CSS::Integer<CSS::All, int>>(range, context);
+    return consumeIntegerType<int, CSS::All>(range, context);
 }
 
 RefPtr<CSSPrimitiveValue> consumeNonNegativeInteger(CSSParserTokenRange& range, const CSSParserContext& context)
 {
-    return consumeIntegerType<CSS::Integer<CSS::Range{0, CSS::Range::infinity}, int>>(range, context);
+    return consumeIntegerType<int, CSS::Range{0, CSS::Range::infinity}>(range, context);
 }
 
 RefPtr<CSSPrimitiveValue> consumePositiveInteger(CSSParserTokenRange& range, const CSSParserContext& context)
 {
-    return consumeIntegerType<CSS::Integer<CSS::Range{1, CSS::Range::infinity}, unsigned>>(range, context);
+    return consumeIntegerType<unsigned, CSS::Range{1, CSS::Range::infinity}>(range, context);
 }
 
 RefPtr<CSSPrimitiveValue> consumeInteger(CSSParserTokenRange& range, const CSSParserContext& context, const CSS::Range& valueRange)

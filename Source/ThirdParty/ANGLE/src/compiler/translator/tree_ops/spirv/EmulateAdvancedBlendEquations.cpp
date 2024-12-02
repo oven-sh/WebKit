@@ -93,7 +93,7 @@ class Builder
 bool Builder::build(TIntermBlock *root)
 {
     // Find the output variable for which advanced blend is specified.  Note that advanced blend can
-    // only be used when rendering is done to a single color attachment.
+    // only used when rendering is done to a single color attachment.
     findColorOutput(root);
     if (mSubpassInputVar == nullptr)
     {
@@ -164,9 +164,7 @@ void Builder::findColorOutput(TIntermBlock *root)
             }
         }
 
-        if (IsSubpassInputType(type.getBasicType()) &&
-            symbol->getName() != "ANGLEDepthInputAttachment" &&
-            symbol->getName() != "ANGLEStencilInputAttachment")
+        if (IsSubpassInputType(type.getBasicType()))
         {
             // There can only be one output with advanced blend, so there can only be a maximum of
             // one subpass input already defined (by framebuffer fetch emulation).

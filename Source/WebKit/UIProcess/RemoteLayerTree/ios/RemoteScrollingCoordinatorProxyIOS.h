@@ -81,6 +81,7 @@ public:
 
 private:
     RemoteLayerTreeDrawingAreaProxyIOS& drawingAreaIOS() const;
+    bool propagatesMainFrameScrolls() const override { return false; }
 
     void scrollingTreeNodeWillStartPanGesture(WebCore::ScrollingNodeID) override;
     void scrollingTreeNodeWillStartScroll(WebCore::ScrollingNodeID) override;

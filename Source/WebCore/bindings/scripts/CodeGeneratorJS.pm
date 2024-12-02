@@ -2503,15 +2503,11 @@ sub GenerateEnumerationImplementation
     # - Add default header template
     push(@implContentHeader, GenerateImplementationContentHeader($enumeration));
 
-    push(@implContent, "\n");
-
     push(@implContent, "\n\nnamespace WebCore {\n");
     push(@implContent, "using namespace JSC;\n\n");
     push(@implContent, GenerateEnumerationImplementationContent($enumeration, $className));
     push(@implContent, "} // namespace WebCore\n");
-
-    push(@implContent, "\n");
-
+     
     my $conditionalString = $codeGenerator->GenerateConditionalString($enumeration);
     push(@implContent, "\n#endif // ${conditionalString}\n") if $conditionalString;
 }
@@ -2532,7 +2528,7 @@ sub GenerateEnumerationImplementationContent
     $result .= "String convertEnumerationToString($className enumerationValue)\n";
     $result .= "{\n";
     AddToImplIncludes("<wtf/NeverDestroyed.h>");
-    $result .= "    static const std::array<NeverDestroyed<String>, " . scalar(@{$enumeration->values}) . "> values {\n";
+    $result .= "    static const NeverDestroyed<String> values[] = {\n";
     foreach my $value (@{$enumeration->values}) {
         if ($value eq "") {
             $result .= "        emptyString(),\n";
@@ -2567,10 +2563,10 @@ sub GenerateEnumerationImplementationContent
         my $enumerationValueName = GetEnumerationValueName(shift(@sortedEnumerationValues));
         $result .= "        return ${className}::$enumerationValueName;\n";
     }
-    $result .= "    static constexpr std::array<std::pair<ComparableASCIILiteral, $className>, " . scalar(@sortedEnumerationValues) . "> mappings {\n";
+    $result .= "    static constexpr std::pair<ComparableASCIILiteral, $className> mappings[] = {\n";
     for my $value (@sortedEnumerationValues) {
         my $enumerationValueName = GetEnumerationValueName($value);
-        $result .= "        std::pair<ComparableASCIILiteral, $className> { \"$value\"_s, ${className}::$enumerationValueName },\n";
+        $result .= "        { \"$value\", ${className}::$enumerationValueName },\n";
     }
     $result .= "    };\n";
     $result .= "    static constexpr SortedArrayMap enumerationMapping { mappings };\n";
@@ -4513,9 +4509,7 @@ sub GenerateImplementation
 
     @implContent = ();
 
-    push(@implContent, "\n");
-
-    push(@implContent, "namespace WebCore {\n");
+    push(@implContent, "\n\nnamespace WebCore {\n");
     push(@implContent, "using namespace JSC;\n\n");
 
     push(@implContent, GenerateEnumerationsImplementationContent($interface, $enumerations));
@@ -5309,7 +5303,7 @@ sub GenerateImplementation
         if ($codeGenerator->InheritsExtendedAttribute($interface, "ActiveDOMObject")) {
             push(@implContent, "    SUPPRESS_UNCOUNTED_LOCAL auto* js${interfaceName} = jsCast<JS${interfaceName}*>(handle.slot()->asCell());\n");
             $emittedJSCast = 1;
-            push(@implContent, "    SUPPRESS_UNCOUNTED_LOCAL auto& wrapped = js${interfaceName}->wrapped();\n");
+            push(@implContent, "    auto& wrapped = js${interfaceName}->wrapped();\n");
             push(@implContent, "    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {\n");
             push(@implContent, "        if (UNLIKELY(reason))\n");
             push(@implContent, "            *reason = \"ActiveDOMObject with pending activity\"_s;\n");
@@ -5424,7 +5418,6 @@ sub GenerateImplementation
         # being checked to be a dependent type so we can rely on `if constexpr`
         # not causing errors when evaluated.
         push(@implContent, <<END) if $vtableNameGnu;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -5449,8 +5442,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, ${implType}>,
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 END
 
         push(@implContent, "JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<$implType>&& impl)\n");
@@ -5514,12 +5505,12 @@ sub GenerateForEachEventHandlerContentAttribute
     AddToImplIncludes("HTMLNames.h");
     push(@$outputArray, "void ${className}::${functionName}(const Function<void(const AtomString& attributeName, const AtomString& eventName)>& function)\n");
     push(@$outputArray, "{\n");
-    push(@$outputArray, "    static constexpr std::array table {\n");
+    push(@$outputArray, "    static constexpr std::pair<decltype(HTMLNames::altAttr)&, const AtomString EventNames::*> table[] = {\n");
     foreach my $attribute (@{$interface->attributes}) {
         if ($codeGenerator->IsEventHandlerType($attribute->type) && (!defined $eventHandlerExtendedAttributeName || $attribute->extendedAttributes->{$eventHandlerExtendedAttributeName})) {
             my $attributeName = $attribute->name;
             my $eventName = EventHandlerAttributeShortEventName($attribute);
-            push(@$outputArray, "        std::pair<const decltype(HTMLNames::altAttr)&, const AtomString EventNames::*> { HTMLNames::${attributeName}Attr, &EventNames::${eventName} },\n");
+            push(@$outputArray, "        { HTMLNames::${attributeName}Attr, &EventNames::${eventName} },\n");
         }
     }
     push(@$outputArray, "    };\n");
@@ -6604,14 +6595,12 @@ sub GenerateDictionaryImplementation
     # - Add default header template
     push(@implContentHeader, GenerateImplementationContentHeader($dictionary));
 
-    push(@implContent, "\n");
     push(@implContent, "\n\nnamespace WebCore {\n");
     push(@implContent, "using namespace JSC;\n\n");
     push(@implContent, GenerateDictionaryImplementationContent($dictionary, $className));
     push(@implContent, GenerateEnumerationsImplementationContent($dictionary, $enumerations));
     push(@implContent, GenerateDictionariesImplementationContent($dictionary, $otherDictionaries)) if $otherDictionaries;
     push(@implContent, "} // namespace WebCore\n");
-    push(@implContent, "\n");
 
     my $conditionalString = $codeGenerator->GenerateConditionalString($dictionary);
     push(@implContent, "\n#endif // ${conditionalString}\n") if $conditionalString;
@@ -6771,7 +6760,6 @@ sub GenerateCallbackHeaderContent
             
             # FIXME: Change the default name (used for callback functions) to something other than handleEvent. It makes little sense.
             my $functionName = $operation->extendedAttributes->{ImplementedAs} || $operation->name || "handleEvent";
-            $functionName .= "RethrowingException" if $operation->extendedAttributes->{RethrowException};
 
             push(@$contentRef, "    ${nativeReturnType} ${functionName}(" . join(", ", @arguments) . ") override;\n");
         }
@@ -6827,10 +6815,9 @@ sub GenerateCallbackImplementationContent
     # Destructor
     push(@$contentRef, "${className}::~${className}()\n");
     push(@$contentRef, "{\n");
-    push(@$contentRef, "    SUPPRESS_UNCOUNTED_LOCAL ScriptExecutionContext* context = scriptExecutionContext();\n");
+    push(@$contentRef, "    ScriptExecutionContext* context = scriptExecutionContext();\n");
     push(@$contentRef, "    // When the context is destroyed, all tasks with a reference to a callback\n");
     push(@$contentRef, "    // should be deleted. So if the context is 0, we are on the context thread.\n");
-    push(@$contentRef, "    // We can't use RefPtr here since ScriptExecutionContext is not thread safe ref counted.\n");
     push(@$contentRef, "    if (!context || context->isContextThread())\n");
     push(@$contentRef, "        delete m_data;\n");
     push(@$contentRef, "    else\n");
@@ -6897,9 +6884,7 @@ sub GenerateCallbackImplementationContent
             
             # FIXME: Change the default name (used for callback functions) to something other than handleEvent. It makes little sense.
             my $functionName = $operation->name || "handleEvent";
-
             my $functionImplementationName = $operation->extendedAttributes->{ImplementedAs} || $functionName;
-            $functionImplementationName .= "RethrowingException" if $operation->extendedAttributes->{RethrowException};
 
             my @arguments = ();
 
@@ -7309,6 +7294,7 @@ sub GetNumberOfNullableMemberTypes
 
     foreach my $memberType (@{$idlUnionType->subtypes}) {
         $count++ if $memberType->isNullable;
+        $count++ if $memberType->name eq "undefined" && $undefinedAsNull;
         $count += GetNumberOfNullableMemberTypes($memberType) if $memberType->isUnion;
     }
 
@@ -7319,7 +7305,7 @@ sub GetIDLUnionMemberTypes
 {
     my ($interface, $idlUnionType) = @_;
 
-    my $numberOfNullableMembers = GetNumberOfNullableMemberTypes($idlUnionType);
+    my $numberOfNullableMembers = GetNumberOfNullableMemberTypes($idlUnionType, 1);
     assert("Union types must only have 0 or 1 nullable types.") if $numberOfNullableMembers > 1;
 
     my @idlUnionMemberTypes = ();
@@ -7327,7 +7313,8 @@ sub GetIDLUnionMemberTypes
     push(@idlUnionMemberTypes, "IDLNull") if $numberOfNullableMembers == 1;
 
     foreach my $memberType (GetFlattenedMemberTypes($idlUnionType)) {
-        push(@idlUnionMemberTypes, GetIDLTypeExcludingNullability($interface, $memberType));
+        my $nonnullType = GetIDLTypeExcludingNullability($interface, $memberType);
+        push(@idlUnionMemberTypes, $nonnullType) if $nonnullType ne "IDLUndefined";
     }
 
     return @idlUnionMemberTypes;
@@ -7717,8 +7704,7 @@ sub GenerateHashTableValueArray
     my $string = "";
 
     my $packedSize = scalar @{$keys};
-    my $arraySize = $packedSize || 1;
-    $string .= "\nstatic const std::array<HashTableValue, " . $arraySize . "> $nameEntries {\n";
+    $string .= "\nstatic const HashTableValue $nameEntries\[\] =\n\{\n";
 
     my $i = 0;
     foreach my $key (@{$keys}) {
@@ -7756,7 +7742,7 @@ sub GenerateHashTableValueArray
 
         my $hasSecondValue = $typeTag ne "Constant";
         my $secondValue = $hasSecondValue ? ", @$value2[$i]" : "";
-        $string .= "    HashTableValue { \"$key\"_s, ${jscAttributes}, NoIntrinsic, { HashTableValue::${typeTag}Type, @$value1[$i]$secondValue } },\n";
+        $string .= "    { \"$key\"_s, ${jscAttributes}, NoIntrinsic, { HashTableValue::${typeTag}Type, @$value1[$i]$secondValue } },\n";
 
         if ($readWriteConditional) {
             $string .= "#else\n";
@@ -7764,19 +7750,19 @@ sub GenerateHashTableValueArray
 
             push(@{@$specials[$i]}, "PropertyAttribute::ReadOnly");
 
-            $string .= "    HashTableValue { \"$key\"_s, " . StringifyJSCAttributes(@$specials[$i]) . ", NoIntrinsic, { HashTableValue::${typeTag}Type, @$value1[$i]$secondValue } },\n";
+            $string .= "    { \"$key\"_s, " . StringifyJSCAttributes(@$specials[$i]) . ", NoIntrinsic, { HashTableValue::${typeTag}Type, @$value1[$i]$secondValue } },\n";
             $string .= "#endif\n";
         }
 
         if ($conditional) {
             $string .= "#else\n";
-            $string .= "    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },\n";
+            $string .= "    { { }, 0, NoIntrinsic, { HashTableValue::End } },\n";
             $string .= "#endif\n";
         }
         ++$i;
     }
 
-    $string .= "    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } }\n" if (!$packedSize);
+    $string .= "    { { }, 0, NoIntrinsic, { HashTableValue::End } }\n" if (!$packedSize);
     $string .= "};\n\n";
     return $string;
 }
@@ -7883,7 +7869,7 @@ sub GenerateHashTable
         my @seenPropertyAttributesArray = sort keys %seenPropertyAttributesHash;
         my $seenPropertyAttributesString = "static_cast<uint8_t>(" . StringifyJSCAttributes(\@seenPropertyAttributesArray) . ")";
 
-        $hashTableString .= "static const HashTable $name = { $packedSize, $compactSizeMask, $seenPropertyAttributesString, ${className}::info(), $nameEntries.data(), $nameIndex };\n";
+        $hashTableString .= "static const HashTable $name = { $packedSize, $compactSizeMask, $seenPropertyAttributesString, ${className}::info(), $nameEntries, $nameIndex };\n";
         return $hashTableString
     };
 

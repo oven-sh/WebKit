@@ -21,7 +21,6 @@
 #include "RenderSVGResourcePattern.h"
 
 #include "ElementChildIteratorInlines.h"
-#include "ImageBuffer.h"
 #include "RenderLayer.h"
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGResourcePatternInlines.h"

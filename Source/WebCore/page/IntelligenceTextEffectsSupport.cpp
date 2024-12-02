@@ -27,14 +27,12 @@
 #include "IntelligenceTextEffectsSupport.h"
 
 #include "CharacterRange.h"
-#include "DocumentInlines.h"
+#include "Document.h"
 #include "DocumentMarkerController.h"
 #include "FloatRect.h"
 #include "RenderedDocumentMarker.h"
 #include "SimpleRange.h"
 #include "TextIndicator.h"
-#include "TextIterator.h"
-#include <wtf/UUID.h>
 
 namespace WebCore {
 namespace IntelligenceTextEffectsSupport {
@@ -47,7 +45,7 @@ Vector<FloatRect> writingToolsTextSuggestionRectsInRootViewCoordinates(Document&
     Vector<FloatRect> textRectsInRootViewCoordinates;
 
     auto& markers = document.markers();
-    markers.forEach(resolvedRange, { DocumentMarkerType::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
+    markers.forEach(resolvedRange, { DocumentMarker::Type::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
         auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
 
         auto markerRange = makeSimpleRange(node, marker);
@@ -62,67 +60,54 @@ Vector<FloatRect> writingToolsTextSuggestionRectsInRootViewCoordinates(Document&
 }
 #endif
 
-void updateTextVisibility(Document& document, const SimpleRange& scope, const CharacterRange& range, bool visible, const WTF::UUID& identifier)
+void updateTextVisibility(Document& document, const SimpleRange& scope, const CharacterRange& range, bool visible)
 {
-    if (visible) {
-        document.markers().removeMarkers({ WebCore::DocumentMarkerType::TransparentContent }, [identifier](auto& marker) {
-            auto& data = std::get<WebCore::DocumentMarker::TransparentContentData>(marker.data());
-            return data.uuid == identifier ? WebCore::FilterMarkerResult::Remove : WebCore::FilterMarkerResult::Keep;
-        });
-    } else {
-        auto resolvedRange = resolveCharacterRange(scope, range);
-        document.markers().addTransparentContentMarker(resolvedRange, identifier);
+    auto resolvedRange = resolveCharacterRange(scope, range);
+
+    if (visible)
+        document.markers().removeMarkers(resolvedRange, { WebCore::DocumentMarker::Type::TransparentContent });
+    else {
+        // FIXME: Remove the UUID parameter once the old animation system is removed and it's no longer needed.
+        document.markers().addTransparentContentMarker(resolvedRange, WTF::UUID { 0 });
     }
 }
 
-std::optional<TextIndicatorData> textPreviewDataForRange(Document&, const SimpleRange& scope, const CharacterRange& range)
+std::optional<TextIndicatorData> textPreviewDataForRange(Document& document, const SimpleRange& scope, const CharacterRange& range)
 {
     auto resolvedRange = resolveCharacterRange(scope, range);
+
+    // Temporarily remove any transparent content document markers so that when the snapshot is created, the text is visible.
+    // The markers are then re-added in the same run loop, so there will be no user-visible flickering of the text.
+
+    auto& markers = document.markers();
+
+    Vector<SimpleRange> transparentMarkerRangesToReinsert;
+
+    markers.forEach(resolvedRange, { WebCore::DocumentMarker::Type::TransparentContent }, [&](auto& node, auto& marker) {
+        auto markerRange = makeSimpleRange(node, marker);
+        transparentMarkerRangesToReinsert.append(markerRange);
+
+        return false;
+    });
 
     static constexpr OptionSet textIndicatorOptions {
         TextIndicatorOption::IncludeSnapshotOfAllVisibleContentWithoutSelection,
         TextIndicatorOption::ExpandClipBeyondVisibleRect,
         TextIndicatorOption::SkipReplacedContent,
         TextIndicatorOption::RespectTextColor,
-        TextIndicatorOption::DoNotClipToVisibleRect,
-#if PLATFORM(VISION)
-        TextIndicatorOption::SnapshotContentAt3xBaseScale,
-#endif
     };
 
     RefPtr textIndicator = WebCore::TextIndicator::createWithRange(resolvedRange, textIndicatorOptions, WebCore::TextIndicatorPresentationTransition::None, { });
     if (!textIndicator)
         return std::nullopt;
 
+    for (const auto& markerRange : transparentMarkerRangesToReinsert) {
+        // FIXME: Remove the UUID parameter once the old animation system is removed and it's no longer needed.
+        markers.addTransparentContentMarker(markerRange, WTF::UUID { 0 });
+    }
+
     return textIndicator->data();
 }
-
-#if ENABLE(WRITING_TOOLS)
-void decorateWritingToolsTextReplacements(Document& document, const SimpleRange& scope, const CharacterRange& range)
-{
-    auto resolvedRange = resolveCharacterRange(scope, range);
-
-    auto& markers = document.markers();
-
-    Vector<std::tuple<SimpleRange, DocumentMarker::WritingToolsTextSuggestionData>> markersToReinsert;
-
-    markers.forEach(resolvedRange, { DocumentMarkerType::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
-        auto range = makeSimpleRange(node, marker);
-        auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
-
-        markersToReinsert.append({ range, data });
-
-        return false;
-    });
-
-    markers.removeMarkers(resolvedRange, { DocumentMarkerType::WritingToolsTextSuggestion });
-
-    for (const auto& [range, oldData] : markersToReinsert) {
-        auto newData = DocumentMarker::WritingToolsTextSuggestionData { oldData.originalText, oldData.suggestionID, oldData.state, DocumentMarker::WritingToolsTextSuggestionData::Decoration::Underline };
-        markers.addMarker(range, DocumentMarkerType::WritingToolsTextSuggestion, newData);
-    }
-}
-#endif
 
 } // namespace IntelligenceTextEffectsSupport
 } // namespace WebCore

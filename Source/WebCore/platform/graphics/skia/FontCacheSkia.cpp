@@ -31,8 +31,6 @@
 #include "StyleFontSizeFunctions.h"
 #if defined(__ANDROID__) || defined(ANDROID)
 #include <skia/ports/SkFontMgr_android.h>
-#elif PLATFORM(WIN)
-#include <skia/ports/SkTypeface_win.h>
 #else
 #include <skia/ports/SkFontMgr_fontconfig.h>
 #endif
@@ -41,22 +39,14 @@
 #include <wtf/text/CharacterProperties.h>
 #include <wtf/unicode/CharacterNames.h>
 
-#if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
-#include "SystemSettings.h"
-#endif
-
-#if PLATFORM(WIN)
-#include <dwrite.h>
+#if PLATFORM(GTK)
+#include "GtkUtilities.h"
 #endif
 
 namespace WebCore {
 
 void FontCache::platformInit()
 {
-#if PLATFORM(WIN)
-    HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&m_DWFactory));
-    RELEASE_ASSERT(SUCCEEDED(hr));
-#endif
 }
 
 SkFontMgr& FontCache::fontManager() const
@@ -64,8 +54,6 @@ SkFontMgr& FontCache::fontManager() const
     if (!m_fontManager) {
 #if defined(__ANDROID__) || defined(ANDROID)
         m_fontManager = SkFontMgr_New_Android(nullptr);
-#elif OS(WINDOWS)
-        m_fontManager = SkFontMgr_New_DirectWrite(m_DWFactory.get(), nullptr);
 #else
         m_fontManager = SkFontMgr_New_FontConfig(FcConfigReference(nullptr));
 #endif
@@ -194,9 +182,9 @@ static String getFamilyNameStringFromFamily(const String& family)
     if (family == familyNamesData->at(FamilyNamesIndex::FantasyFamily))
         return "fantasy"_s;
 
-#if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
+#if PLATFORM(GTK)
     if (family == familyNamesData->at(FamilyNamesIndex::SystemUiFamily) || family == "-webkit-system-font"_s)
-        return SystemSettings::singleton().defaultSystemFont();
+        return defaultGtkSystemFont();
 #endif
 
     return emptyString();

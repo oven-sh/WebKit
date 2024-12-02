@@ -28,23 +28,23 @@
 
 #pragma once
 
-#include "AccessibilitySVGObject.h"
+#include "AccessibilitySVGElement.h"
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
-class AccessibilitySVGRoot final : public AccessibilitySVGObject {
+class AccessibilitySVGRoot final : public AccessibilitySVGElement {
 public:
-    static Ref<AccessibilitySVGRoot> create(AXID, RenderObject&, AXObjectCache*);
+    static Ref<AccessibilitySVGRoot> create(RenderObject&, AXObjectCache*);
     virtual ~AccessibilitySVGRoot();
 
     void setParent(AccessibilityRenderObject*);
     bool hasAccessibleContent() const;
 private:
-    explicit AccessibilitySVGRoot(AXID, RenderObject&, AXObjectCache*);
+    explicit AccessibilitySVGRoot(RenderObject&, AXObjectCache*);
 
-    AccessibilityObject* parentObject() const final;
-    bool isAccessibilitySVGRoot() const final { return true; }
+    AccessibilityObject* parentObject() const override;
+    bool isAccessibilitySVGRoot() const override { return true; }
 
     AccessibilityRole determineAccessibilityRole() final;
 

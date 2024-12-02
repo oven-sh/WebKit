@@ -123,7 +123,6 @@ struct ConsoleLogValue<Argument, false> {
 };
 
 WTF_EXPORT_PRIVATE extern Lock loggerObserverLock;
-WTF_EXPORT_PRIVATE extern Lock messageHandlerLoggerObserverLock;
 
 class Logger : public ThreadSafeRefCounted<Logger> {
     WTF_MAKE_NONCOPYABLE(Logger);
@@ -135,12 +134,6 @@ public:
         virtual ~Observer() = default;
         // Can be called on any thread.
         virtual void didLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) = 0;
-    };
-
-    class MessageHandlerObserver {
-    public:
-        virtual ~MessageHandlerObserver() = default;
-        virtual void handleLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) = 0;
     };
 
     static Ref<Logger> create(const void* owner)
@@ -156,7 +149,7 @@ public:
         //  on some systems, so don't allow it.
         UNUSED_PARAM(channel);
 #else
-        if (!willLog(channel, WTFLogLevel::Always, arguments...))
+        if (!willLog(channel, WTFLogLevel::Always))
             return;
 
         log(channel, WTFLogLevel::Always, arguments...);
@@ -166,7 +159,7 @@ public:
     template<typename... Arguments>
     inline void error(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Error, arguments...))
+        if (!willLog(channel, WTFLogLevel::Error))
             return;
 
         log(channel, WTFLogLevel::Error, arguments...);
@@ -175,7 +168,7 @@ public:
     template<typename... Arguments>
     inline void warning(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Warning, arguments...))
+        if (!willLog(channel, WTFLogLevel::Warning))
             return;
 
         log(channel, WTFLogLevel::Warning, arguments...);
@@ -184,7 +177,7 @@ public:
     template<typename... Arguments>
     inline void info(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Info, arguments...))
+        if (!willLog(channel, WTFLogLevel::Info))
             return;
 
         log(channel, WTFLogLevel::Info, arguments...);
@@ -193,7 +186,7 @@ public:
     template<typename... Arguments>
     inline void debug(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Debug, arguments...))
+        if (!willLog(channel, WTFLogLevel::Debug))
             return;
 
         log(channel, WTFLogLevel::Debug, arguments...);
@@ -210,7 +203,7 @@ public:
         UNUSED_PARAM(function);
         UNUSED_PARAM(line);
 #else
-        if (!willLog(channel, WTFLogLevel::Always, arguments...))
+        if (!willLog(channel, WTFLogLevel::Always))
             return;
 
         logVerbose(channel, WTFLogLevel::Always, file, function, line, arguments...);
@@ -220,7 +213,7 @@ public:
     template<typename... Arguments>
     inline void errorVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Error, arguments...))
+        if (!willLog(channel, WTFLogLevel::Error))
             return;
 
         logVerbose(channel, WTFLogLevel::Error, file, function, line, arguments...);
@@ -229,7 +222,7 @@ public:
     template<typename... Arguments>
     inline void warningVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Warning, arguments...))
+        if (!willLog(channel, WTFLogLevel::Warning))
             return;
 
         logVerbose(channel, WTFLogLevel::Warning, file, function, line, arguments...);
@@ -238,7 +231,7 @@ public:
     template<typename... Arguments>
     inline void infoVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Info, arguments...))
+        if (!willLog(channel, WTFLogLevel::Info))
             return;
 
         logVerbose(channel, WTFLogLevel::Info, file, function, line, arguments...);
@@ -247,24 +240,14 @@ public:
     template<typename... Arguments>
     inline void debugVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Debug, arguments...))
+        if (!willLog(channel, WTFLogLevel::Debug))
             return;
 
         logVerbose(channel, WTFLogLevel::Debug, file, function, line, arguments...);
     }
 
-    template<typename... Argument>
-    inline bool willLog(const WTFLogChannel& channel, WTFLogLevel level, const Argument&... arguments) const
+    inline bool willLog(const WTFLogChannel& channel, WTFLogLevel level) const
     {
-        {
-            if (!messageHandlerObserverLock().tryLock())
-                return false;
-
-            Locker locker { AdoptLock, messageHandlerObserverLock() };
-            for (MessageHandlerObserver& observer : messageHandlerObservers())
-                observer.handleLogMessage(channel, level, { ConsoleLogValue<Argument>::toValue(arguments)... });
-        }
-
         if (!m_enabled)
             return false;
 
@@ -320,19 +303,6 @@ public:
     {
         Locker locker { observerLock() };
         observers().removeFirstMatching([&observer](auto anObserver) {
-            return &anObserver.get() == &observer;
-        });
-    }
-
-    static inline void addMessageHandlerObserver(MessageHandlerObserver& observer)
-    {
-        Locker locker { messageHandlerObserverLock() };
-        messageHandlerObservers().append(observer);
-    }
-    static inline void removeMessageHandlerObserver(MessageHandlerObserver& observer)
-    {
-        Locker locker { messageHandlerObserverLock() };
-        messageHandlerObservers().removeFirstMatching([&observer](auto anObserver) {
             return &anObserver.get() == &observer;
         });
     }
@@ -410,12 +380,6 @@ private:
         return loggerObserverLock;
     }
 
-    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<MessageHandlerObserver>>& messageHandlerObservers() WTF_REQUIRES_LOCK(messageHandlerObserverLock());
-
-    static Lock& messageHandlerObserverLock() WTF_RETURNS_LOCK(messageHandlerLoggerObserverLock)
-    {
-        return messageHandlerLoggerObserverLock;
-    }
 
     bool m_enabled { true };
     const void* m_owner;

@@ -41,8 +41,6 @@
 #include "TransformOperations.h"
 #include "TranslateTransformOperation.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 BlendingKeyframes::~BlendingKeyframes() = default;
@@ -151,9 +149,6 @@ void BlendingKeyframes::fillImplicitKeyframes(const KeyframeEffect& effect, cons
 
     ASSERT(effect.target());
     auto& element = *effect.target();
-    if (!element.isConnected())
-        return;
-
     auto& styleResolver = element.styleResolver();
 
     // We need to establish which properties are implicit for 0% and 100%.
@@ -404,5 +399,3 @@ bool BlendingKeyframe::animatesProperty(KeyframeInterpolation::Property property
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

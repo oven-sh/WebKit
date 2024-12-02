@@ -80,7 +80,6 @@ void OMGPlan::dumpDisassembly(CompilationContext& context, LinkBuffer& linkBuffe
     dataLogLnIf(context.procedure->shouldDumpIR() || shouldDumpDisassemblyFor(CompilationMode::OMGMode), "Generated OMG code for WebAssembly OMG function[", functionIndex, "] ", signature.toString().ascii().data(), " name ", makeString(IndexOrName(functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace))).ascii().data());
     if (UNLIKELY(shouldDumpDisassemblyFor(CompilationMode::OMGMode))) {
         ScopedPrintStream out;
-        HashSet<B3::Value*> printedValues;
         auto* disassembler = context.procedure->code().disassembler();
 
         const char* b3Prefix = "b3    ";
@@ -91,26 +90,10 @@ void OMGPlan::dumpDisassembly(CompilationContext& context, LinkBuffer& linkBuffe
         auto forEachInst = scopedLambda<void(B3::Air::Inst&)>([&] (B3::Air::Inst& inst) {
             if (inst.origin && inst.origin != prevOrigin && context.procedure->code().shouldPreserveB3Origins()) {
                 if (String string = inst.origin->compilerConstructionSite(); !string.isNull())
-                    out.println(string);
-                Vector<B3::Value*> children;
-                Vector<B3::Value*> worklist;
-                children.append(inst.origin);
-                worklist.append(inst.origin);
-                while (!worklist.isEmpty()) {
-                    B3::Value* current = worklist.takeLast();
-                    for (B3::Value* child : current->children()) {
-                        if (printedValues.add(child).isNewEntry) {
-                            children.append(child);
-                            worklist.append(child);
-                        }
-                    }
-                }
-                for (size_t i = children.size(); i--;) {
-                    out.print(b3Prefix);
-                    children[i]->deepDump(context.procedure.get(), out);
-                    out.println();
-                }
-
+                    out.println("\033[1;37m", string, "\033[0m");
+                out.print(b3Prefix);
+                inst.origin->deepDump(context.procedure.get(), out);
+                out.println();
                 prevOrigin = inst.origin;
             }
         });
@@ -207,7 +190,7 @@ void OMGPlan::work(CompilationEffort)
         ASSERT(*m_calleeGroup->entrypointLoadLocationFromFunctionIndexSpace(functionIndexSpace) == entrypoint);
 
         {
-            WTF::storeStoreFence();
+            // These locks store barrier the set of OMG callee above.
             if (BBQCallee* bbqCallee = m_calleeGroup->bbqCallee(locker, m_functionIndex)) {
                 Locker locker { bbqCallee->tierUpCounter().getLock() };
                 bbqCallee->tierUpCounter().setCompilationStatusForOMG(mode(), TierUpCount::CompilationStatus::Compiled);
@@ -230,7 +213,7 @@ void OMGPlan::work(CompilationEffort)
         jsEntrypointCallee->setReplacementTarget(entrypoint);
 
     if (Options::freeRetiredWasmCode()) {
-        WTF::storeStoreFence();
+        // Taking the lock here fences all the stores above.
         Locker locker { m_calleeGroup->m_lock };
         m_calleeGroup->releaseBBQCallee(locker, m_functionIndex);
     }

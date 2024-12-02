@@ -34,25 +34,17 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/Uint8Array.h>
-#include <wtf/RefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyMockCDM);
 
-class MockCDMSession : public LegacyCDMSession, public RefCounted<MockCDMSession> {
+class MockCDMSession : public LegacyCDMSession {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(MockCDMSession);
 public:
-    static Ref<MockCDMSession> create(LegacyCDMSessionClient& client)
-    {
-        return adoptRef(*new MockCDMSession(client));
-    }
-
+    MockCDMSession(LegacyCDMSessionClient&);
     virtual ~MockCDMSession() = default;
-
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
 
     const String& sessionId() const override { return m_sessionId; }
     RefPtr<Uint8Array> generateKeyRequest(const String& mimeType, Uint8Array* initData, String& destinationURL, unsigned short& errorCode, uint32_t& systemCode) override;
@@ -61,8 +53,6 @@ public:
     RefPtr<ArrayBuffer> cachedKeyForKeyID(const String&) const override { return nullptr; }
 
 protected:
-    MockCDMSession(LegacyCDMSessionClient&);
-
     WeakPtr<LegacyCDMSessionClient> m_client;
     String m_sessionId;
 };
@@ -85,9 +75,9 @@ bool LegacyMockCDM::supportsMIMEType(const String& mimeType) const
     return equalLettersIgnoringASCIICase(mimeType, "video/mock"_s);
 }
 
-RefPtr<LegacyCDMSession> LegacyMockCDM::createSession(LegacyCDMSessionClient& client)
+std::unique_ptr<LegacyCDMSession> LegacyMockCDM::createSession(LegacyCDMSessionClient& client)
 {
-    return MockCDMSession::create(client);
+    return makeUnique<MockCDMSession>(client);
 }
 
 void LegacyMockCDM::ref() const

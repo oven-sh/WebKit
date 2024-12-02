@@ -70,6 +70,8 @@
 #import <WebKitAdditions/DyldCallbackAdditions.h>
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 SOFT_LINK_SYSTEM_LIBRARY(libsystem_info)
 SOFT_LINK_OPTIONAL(libsystem_info, mbr_close_connections, int, (), ());
 SOFT_LINK_OPTIONAL(libsystem_info, lookup_close_connections, int, (), ());
@@ -192,18 +194,19 @@ static OSStatus enableSandboxStyleFileQuarantine()
 }
 
 #if USE(CACHE_COMPILED_SANDBOX)
-static std::optional<Vector<uint8_t>> fileContents(const String& path, bool shouldLock = false, OptionSet<FileSystem::FileLockMode> lockMode = FileSystem::FileLockMode::Exclusive)
+static std::optional<Vector<char>> fileContents(const String& path, bool shouldLock = false, OptionSet<FileSystem::FileLockMode> lockMode = FileSystem::FileLockMode::Exclusive)
 {
     FileHandle file = shouldLock ? FileHandle(path, FileSystem::FileOpenMode::Read, lockMode) : FileHandle(path, FileSystem::FileOpenMode::Read);
     file.open();
     if (!file)
         return std::nullopt;
 
-    std::array<uint8_t, 4096> chunk;
-    Vector<uint8_t> contents;
-    contents.reserveInitialCapacity(chunk.size());
-    while (size_t bytesRead = file.read(chunk))
-        contents.append(std::span { chunk }.first(bytesRead));
+    char chunk[4096];
+    constexpr size_t chunkSize = std::size(chunk);
+    Vector<char> contents;
+    contents.reserveInitialCapacity(chunkSize);
+    while (size_t bytesRead = file.read(chunk, chunkSize))
+        contents.append(std::span { chunk, bytesRead });
     contents.shrinkToFit();
 
     return contents;
@@ -428,11 +431,11 @@ static SandboxProfilePtr compileAndCacheSandboxProfile(const SandboxInfo& info)
 
     Vector<uint8_t> cacheFile;
     cacheFile.reserveInitialCapacity(expectedFileSize);
-    cacheFile.append(asByteSpan(cachedHeader));
+    cacheFile.append(std::span { bitwise_cast<uint8_t*>(&cachedHeader), sizeof(CachedSandboxHeader) });
     cacheFile.append(info.header.span());
     if (haveBuiltin)
-        cacheFile.append(unsafeMakeSpan(sandboxProfile->builtin, cachedHeader.builtinSize));
-    cacheFile.append(unsafeMakeSpan(sandboxProfile->data, cachedHeader.dataSize));
+        cacheFile.append(std::span { sandboxProfile->builtin, cachedHeader.builtinSize });
+    cacheFile.append(std::span { sandboxProfile->data, cachedHeader.dataSize });
 
     if (!writeSandboxDataToCacheFile(info, cacheFile))
         WTFLogAlways("%s: Unable to cache compiled sandbox\n", getprogname());
@@ -453,13 +456,13 @@ static bool tryApplyCachedSandbox(const SandboxInfo& info)
     auto contents = fileContents(info.filePath);
     if (!contents || contents->isEmpty())
         return false;
-    Vector<uint8_t> cachedSandboxContents = WTFMove(*contents);
+    Vector<char> cachedSandboxContents = WTFMove(*contents);
     if (sizeof(CachedSandboxHeader) > cachedSandboxContents.size())
         return false;
 
     // This data may be corrupted if the sandbox file was cached on a different platform with different endianness
     CachedSandboxHeader cachedSandboxHeader;
-    memcpySpan(asMutableByteSpan(cachedSandboxHeader), cachedSandboxContents.span().first(sizeof(CachedSandboxHeader)));
+    memcpy(&cachedSandboxHeader, cachedSandboxContents.data(), sizeof(CachedSandboxHeader));
     int32_t libsandboxVersion = NSVersionOfRunTimeLibrary("sandbox");
     RELEASE_ASSERT(libsandboxVersion > 0);
     String osVersion = systemMarketingVersion();
@@ -477,9 +480,9 @@ static bool tryApplyCachedSandbox(const SandboxInfo& info)
 
     // These values are computed based on the disk layout specified below the definition of the CachedSandboxHeader struct
     // and must be changed if the layout changes.
-    auto sandboxHeader = cachedSandboxContents.mutableSpan().subspan(sizeof(CachedSandboxHeader));
-    auto sandboxBuiltin = sandboxHeader.subspan(cachedSandboxHeader.headerSize);
-    auto sandboxData = haveBuiltin ? sandboxBuiltin.subspan(cachedSandboxHeader.builtinSize) : sandboxBuiltin;
+    const char* sandboxHeaderPtr = bitwise_cast<char *>(cachedSandboxContents.data()) + sizeof(CachedSandboxHeader);
+    const char* sandboxBuiltinPtr = sandboxHeaderPtr + cachedSandboxHeader.headerSize;
+    unsigned char* sandboxDataPtr = bitwise_cast<unsigned char*>(haveBuiltin ? sandboxBuiltinPtr + cachedSandboxHeader.builtinSize : sandboxBuiltinPtr);
 
     size_t expectedFileSize = sizeof(CachedSandboxHeader) + cachedSandboxHeader.headerSize + cachedSandboxHeader.dataSize;
     if (haveBuiltin)
@@ -488,7 +491,7 @@ static bool tryApplyCachedSandbox(const SandboxInfo& info)
         return false;
     if (cachedSandboxHeader.headerSize != info.header.length())
         return false;
-    if (!equalSpans(sandboxHeader.first(info.header.length()), info.header.span()))
+    if (memcmp(sandboxHeaderPtr, info.header.data(), info.header.length()))
         return false;
 
     SandboxProfile profile { };
@@ -496,15 +499,13 @@ static bool tryApplyCachedSandbox(const SandboxInfo& info)
     profile.builtin = nullptr;
     profile.size = cachedSandboxHeader.dataSize;
     if (haveBuiltin) {
-        std::span<char> cstringBuffer;
-        builtin = CString::newUninitialized(cachedSandboxHeader.builtinSize, cstringBuffer);
-        profile.builtin = cstringBuffer.data();
+        builtin = CString::newUninitialized(cachedSandboxHeader.builtinSize, profile.builtin);
         if (builtin.isNull())
             return false;
-        memcpy(profile.builtin, sandboxBuiltin.data(), cachedSandboxHeader.builtinSize);
+        memcpy(profile.builtin, sandboxBuiltinPtr, cachedSandboxHeader.builtinSize);
     }
-    ASSERT(sandboxData.subspan(profile.size).data() <= std::to_address(cachedSandboxContents.end()));
-    profile.data = sandboxData.data();
+    ASSERT(static_cast<void *>(sandboxDataPtr + profile.size) <= static_cast<void *>(cachedSandboxContents.data() + cachedSandboxContents.size()));
+    profile.data = sandboxDataPtr;
 
     if (sandbox_apply(&profile)) {
         WTFLogAlways("%s: Could not apply cached sandbox: %s\n", getprogname(), safeStrerror(errno).data());
@@ -831,5 +832,7 @@ void AuxiliaryProcess::openDirectoryCacheInvalidated(SandboxExtension::Handle&& 
 #endif // PLATFORM(MAC)
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

@@ -103,7 +103,6 @@ private:
     void createRenderPipelineAsync(const WebCore::WebGPU::RenderPipelineDescriptor&, CompletionHandler<void(RefPtr<WebCore::WebGPU::RenderPipeline>&&, String&&)>&&) final;
 
     RefPtr<WebCore::WebGPU::CommandEncoder> createCommandEncoder(const std::optional<WebCore::WebGPU::CommandEncoderDescriptor>&) final;
-    Ref<WebCore::WebGPU::CommandEncoder> createInvalidCommandEncoder();
     RefPtr<WebCore::WebGPU::RenderBundleEncoder> createRenderBundleEncoder(const WebCore::WebGPU::RenderBundleEncoderDescriptor&) final;
 
     RefPtr<WebCore::WebGPU::QuerySet> createQuerySet(const WebCore::WebGPU::QuerySetDescriptor&) final;
@@ -117,12 +116,6 @@ private:
 
     Ref<ConvertToBackingContext> protectedConvertToBackingContext() const;
 
-    Ref<WebCore::WebGPU::CommandEncoder> invalidCommandEncoder() final;
-    Ref<WebCore::WebGPU::CommandBuffer> invalidCommandBuffer() final;
-    Ref<WebCore::WebGPU::RenderPassEncoder> invalidRenderPassEncoder() final;
-    Ref<WebCore::WebGPU::ComputePassEncoder> invalidComputePassEncoder() final;
-    void pauseAllErrorReporting(bool pause) final;
-
     WebGPUIdentifier m_backing;
     Ref<ConvertToBackingContext> m_convertToBackingContext;
     Ref<RemoteAdapterProxy> m_parent;
@@ -130,10 +123,6 @@ private:
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
     WebKit::SharedVideoFrameWriter m_sharedVideoFrameWriter;
 #endif
-    Ref<WebCore::WebGPU::CommandEncoder> m_invalidCommandEncoder;
-    Ref<WebCore::WebGPU::RenderPassEncoder> m_invalidRenderPassEncoder;
-    Ref<WebCore::WebGPU::ComputePassEncoder> m_invalidComputePassEncoder;
-    Ref<WebCore::WebGPU::CommandBuffer> m_invalidCommandBuffer;
 };
 
 } // namespace WebKit::WebGPU

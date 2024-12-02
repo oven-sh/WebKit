@@ -53,6 +53,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -130,16 +131,17 @@ template<> void JSTestCEReactionsDOMConstructor::initializeProperties(VM& vm, JS
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 9> JSTestCEReactionsPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactionsConstructor, 0 } },
-    HashTableValue { "attributeWithCEReactions"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_attributeWithCEReactions, setJSTestCEReactions_attributeWithCEReactions } },
-    HashTableValue { "reflectAttributeWithCEReactions"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_reflectAttributeWithCEReactions, setJSTestCEReactions_reflectAttributeWithCEReactions } },
-    HashTableValue { "stringifierAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_stringifierAttribute, setJSTestCEReactions_stringifierAttribute } },
-    HashTableValue { "attributeWithCEReactionsNotNeeded"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_attributeWithCEReactionsNotNeeded, setJSTestCEReactions_attributeWithCEReactionsNotNeeded } },
-    HashTableValue { "reflectAttributeWithCEReactionsNotNeeded"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_reflectAttributeWithCEReactionsNotNeeded, setJSTestCEReactions_reflectAttributeWithCEReactionsNotNeeded } },
-    HashTableValue { "stringifierAttributeNotNeeded"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_stringifierAttributeNotNeeded, setJSTestCEReactions_stringifierAttributeNotNeeded } },
-    HashTableValue { "methodWithCEReactions"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestCEReactionsPrototypeFunction_methodWithCEReactions, 0 } },
-    HashTableValue { "methodWithCEReactionsNotNeeded"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestCEReactionsPrototypeFunction_methodWithCEReactionsNotNeeded, 0 } },
+static const HashTableValue JSTestCEReactionsPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactionsConstructor, 0 } },
+    { "attributeWithCEReactions"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_attributeWithCEReactions, setJSTestCEReactions_attributeWithCEReactions } },
+    { "reflectAttributeWithCEReactions"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_reflectAttributeWithCEReactions, setJSTestCEReactions_reflectAttributeWithCEReactions } },
+    { "stringifierAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_stringifierAttribute, setJSTestCEReactions_stringifierAttribute } },
+    { "attributeWithCEReactionsNotNeeded"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_attributeWithCEReactionsNotNeeded, setJSTestCEReactions_attributeWithCEReactionsNotNeeded } },
+    { "reflectAttributeWithCEReactionsNotNeeded"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_reflectAttributeWithCEReactionsNotNeeded, setJSTestCEReactions_reflectAttributeWithCEReactionsNotNeeded } },
+    { "stringifierAttributeNotNeeded"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestCEReactions_stringifierAttributeNotNeeded, setJSTestCEReactions_stringifierAttributeNotNeeded } },
+    { "methodWithCEReactions"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestCEReactionsPrototypeFunction_methodWithCEReactions, 0 } },
+    { "methodWithCEReactionsNotNeeded"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestCEReactionsPrototypeFunction_methodWithCEReactionsNotNeeded, 0 } },
 };
 
 const ClassInfo JSTestCEReactionsPrototype::s_info = { "TestCEReactions"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestCEReactionsPrototype) };
@@ -469,7 +471,6 @@ void JSTestCEReactionsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* co
     uncacheWrapper(world, jsTestCEReactions->protectedWrapped().ptr(), jsTestCEReactions);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -494,8 +495,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestCEReactio
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestCEReactions>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

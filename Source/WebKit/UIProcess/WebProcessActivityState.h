@@ -75,7 +75,7 @@ private:
 
     RefPtr<ProcessThrottlerActivity> m_isVisibleActivity;
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
-    Ref<ProcessThrottlerTimedActivity> m_wasRecentlyVisibleActivity;
+    UniqueRef<ProcessThrottlerTimedActivity> m_wasRecentlyVisibleActivity;
 #endif
     RefPtr<ProcessThrottlerActivity> m_isAudibleActivity;
     RefPtr<ProcessThrottlerActivity> m_isCapturingActivity;

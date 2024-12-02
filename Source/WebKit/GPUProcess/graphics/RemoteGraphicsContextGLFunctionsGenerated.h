@@ -379,21 +379,21 @@
         assertIsCurrent(workQueue());
         Vector<GCGLfloat, 16> value(valueSize, 0);
         protectedContext()->getFloatv(pname, value);
-        completionHandler(spanReinterpretCast<const float>(value.span()));
+        completionHandler(std::span<const float>(reinterpret_cast<const float*>(value.data()), value.size()));
     }
     void getIntegerv(uint32_t pname, size_t valueSize, CompletionHandler<void(std::span<const int32_t>)>&& completionHandler)
     {
         assertIsCurrent(workQueue());
         Vector<GCGLint, 4> value(valueSize, 0);
         protectedContext()->getIntegerv(pname, value);
-        completionHandler(spanReinterpretCast<const int32_t>(value.span()));
+        completionHandler(std::span<const int32_t>(reinterpret_cast<const int32_t*>(value.data()), value.size()));
     }
     void getIntegeri_v(uint32_t pname, uint32_t index, CompletionHandler<void(std::span<const int32_t, 4>)>&& completionHandler) // NOLINT
     {
         assertIsCurrent(workQueue());
         std::array<GCGLint, 4> value { };
         protectedContext()->getIntegeri_v(pname, index, value);
-        completionHandler(spanReinterpretCast<const int32_t, 4>(std::span<const GCGLint, 4>(value)));
+        completionHandler(std::span<const int32_t, 4>(reinterpret_cast<const int32_t*>(value.data()), value.size()));
     }
     void getInteger64(uint32_t pname, CompletionHandler<void(int64_t)>&& completionHandler)
     {
@@ -423,7 +423,7 @@
         assertIsCurrent(workQueue());
         Vector<GCGLboolean, 4> value(valueSize, 0);
         protectedContext()->getBooleanv(pname, value);
-        completionHandler(spanReinterpretCast<const bool>(value.span()));
+        completionHandler(std::span<const bool>(reinterpret_cast<const bool*>(value.data()), value.size()));
     }
     void getFramebufferAttachmentParameteri(uint32_t target, uint32_t attachment, uint32_t pname, CompletionHandler<void(int32_t)>&& completionHandler)
     {
@@ -472,7 +472,7 @@
         std::array<GCGLint, 2> range { };
         GCGLint precision = { };
         protectedContext()->getShaderPrecisionFormat(shaderType, precisionType, range, &precision);
-        completionHandler(spanReinterpretCast<const int32_t, 2>(std::span<const GCGLint, 2>(range)), precision);
+        completionHandler(std::span<const int32_t, 2>(reinterpret_cast<const int32_t*>(range.data()), range.size()), precision);
     }
     void getShaderSource(uint32_t arg0, CompletionHandler<void(String&&)>&& completionHandler)
     {
@@ -504,7 +504,7 @@
             program = m_objectNames.get(program);
         Vector<GCGLfloat, 16> value(valueSize, 0);
         protectedContext()->getUniformfv(program, location, value);
-        completionHandler(spanReinterpretCast<const float>(value.span()));
+        completionHandler(std::span<const float>(reinterpret_cast<const float*>(value.data()), value.size()));
     }
     void getUniformiv(uint32_t program, int32_t location, size_t valueSize, CompletionHandler<void(std::span<const int32_t>)>&& completionHandler)
     {
@@ -513,7 +513,7 @@
             program = m_objectNames.get(program);
         Vector<GCGLint, 4> value(valueSize, 0);
         protectedContext()->getUniformiv(program, location, value);
-        completionHandler(spanReinterpretCast<const int32_t>(value.span()));
+        completionHandler(std::span<const int32_t>(reinterpret_cast<const int32_t*>(value.data()), value.size()));
     }
     void getUniformuiv(uint32_t program, int32_t location, size_t valueSize, CompletionHandler<void(std::span<const uint32_t>)>&& completionHandler)
     {
@@ -522,7 +522,7 @@
             program = m_objectNames.get(program);
         Vector<GCGLuint, 4> value(valueSize, 0);
         protectedContext()->getUniformuiv(program, location, value);
-        completionHandler(spanReinterpretCast<const uint32_t>(value.span()));
+        completionHandler(std::span<const uint32_t>(reinterpret_cast<const uint32_t*>(value.data()), value.size()));
     }
     void getUniformLocation(uint32_t arg0, String&& name, CompletionHandler<void(int32_t)>&& completionHandler)
     {
@@ -1465,7 +1465,7 @@
             program = m_objectNames.get(program);
         Vector<GCGLint, 4> params(paramsSize, 0);
         protectedContext()->getActiveUniformBlockiv(program, uniformBlockIndex, pname, params);
-        completionHandler(spanReinterpretCast<const int32_t>(params.span()));
+        completionHandler(std::span<const int32_t>(reinterpret_cast<const int32_t*>(params.data()), params.size()));
     }
     void getTranslatedShaderSourceANGLE(uint32_t arg0, CompletionHandler<void(String&&)>&& completionHandler)
     {
@@ -1631,7 +1631,7 @@
         assertIsCurrent(workQueue());
         Vector<GCGLint, 4> params(paramsSize, 0);
         protectedContext()->getInternalformativ(target, internalformat, pname, params);
-        completionHandler(spanReinterpretCast<const int32_t>(params.span()));
+        completionHandler(std::span<const int32_t>(reinterpret_cast<const int32_t*>(params.data()), params.size()));
     }
     void setDrawingBufferColorSpace(WebCore::DestinationColorSpace&& arg0)
     {
@@ -1642,7 +1642,6 @@
     void createExternalImage(uint32_t name, WebCore::GraphicsContextGL::ExternalImageSource&& arg0, uint32_t internalFormat, int32_t layer)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         auto result = protectedContext()->createExternalImage(WTFMove(arg0), internalFormat, layer);
         if (result)
             m_objectNames.add(name, result);
@@ -1650,7 +1649,6 @@
     void deleteExternalImage(uint32_t handle)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         if (UNLIKELY(!handle))
             return;
         handle = m_objectNames.take(handle);
@@ -1659,7 +1657,6 @@
     void bindExternalImage(uint32_t target, uint32_t arg1)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         if (arg1)
             arg1 = m_objectNames.get(arg1);
         protectedContext()->bindExternalImage(target, arg1);
@@ -1667,7 +1664,6 @@
     void createExternalSync(uint32_t name, WebCore::GraphicsContextGL::ExternalSyncSource&& arg0)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         auto result = protectedContext()->createExternalSync(WTFMove(arg0));
         if (result)
             m_objectNames.add(name, result);
@@ -1676,7 +1672,6 @@
     void deleteExternalSync(uint32_t arg0)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         if (UNLIKELY(!arg0))
             return;
         arg0 = m_objectNames.take(arg0);
@@ -1686,7 +1681,6 @@
     void enableRequiredWebXRExtensions(CompletionHandler<void(bool)>&& completionHandler)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXREnabled());
         bool returnValue = { };
         returnValue = protectedContext()->enableRequiredWebXRExtensions();
         completionHandler(returnValue);
@@ -1694,7 +1688,6 @@
     void addFoveation(WebCore::IntSize&& physicalSizeLeft, WebCore::IntSize&& physicalSizeRight, WebCore::IntSize&& screenSize, std::span<const float>&& horizontalSamplesLeft, std::span<const float>&& verticalSamples, std::span<const float>&& horizontalSamplesRight, CompletionHandler<void(bool)>&& completionHandler)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         bool returnValue = { };
         returnValue = protectedContext()->addFoveation(physicalSizeLeft, physicalSizeRight, screenSize, horizontalSamplesLeft, verticalSamples, horizontalSamplesRight);
         completionHandler(returnValue);
@@ -1702,7 +1695,6 @@
     void enableFoveation(uint32_t arg0)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         if (arg0)
             arg0 = m_objectNames.get(arg0);
         protectedContext()->enableFoveation(arg0);
@@ -1710,19 +1702,16 @@
     void disableFoveation()
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         protectedContext()->disableFoveation();
     }
     void framebufferDiscard(uint32_t target, std::span<const uint32_t>&& attachments)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         protectedContext()->framebufferDiscard(target, attachments);
     }
     void framebufferResolveRenderbuffer(uint32_t target, uint32_t attachment, uint32_t renderbuffertarget, uint32_t arg3)
     {
         assertIsCurrent(workQueue());
-        messageCheck(webXRPromptAccepted());
         if (arg3)
             arg3 = m_objectNames.get(arg3);
         protectedContext()->framebufferResolveRenderbuffer(target, attachment, renderbuffertarget, arg3);

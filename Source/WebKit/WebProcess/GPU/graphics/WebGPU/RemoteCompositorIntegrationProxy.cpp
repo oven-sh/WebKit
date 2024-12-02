@@ -65,11 +65,12 @@ Vector<MachSendRight> RemoteCompositorIntegrationProxy::recreateRenderBuffers(in
 }
 #endif
 
-void RemoteCompositorIntegrationProxy::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&& completionHandler)
+void RemoteCompositorIntegrationProxy::prepareForDisplay(CompletionHandler<void()>&& completionHandler)
 {
-    auto sendResult = sendSync(Messages::RemoteCompositorIntegration::PrepareForDisplay(frameIndex));
+    auto sendResult = sendSync(Messages::RemoteCompositorIntegration::PrepareForDisplay());
     UNUSED_VARIABLE(sendResult);
-    RefPtr { m_presentationContext }->present(frameIndex);
+
+    RefPtr { m_presentationContext }->present();
 
     completionHandler();
 }

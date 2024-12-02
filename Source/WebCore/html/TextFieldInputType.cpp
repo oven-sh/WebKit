@@ -785,7 +785,7 @@ bool TextFieldInputType::shouldDrawCapsLockIndicator() const
     if (!element()->isMutable())
         return false;
 
-    if (element()->hasAutofillStrongPasswordButton())
+    if (element()->hasAutoFillStrongPasswordButton())
         return false;
 
     RefPtr frame { element()->document().frame() };
@@ -810,22 +810,17 @@ void TextFieldInputType::capsLockStateMayHaveChanged()
 bool TextFieldInputType::shouldDrawAutoFillButton() const
 {
     ASSERT(element());
-    return element()->isMutable() && element()->autofillButtonType() != AutoFillButtonType::None;
+    return element()->isMutable() && element()->autoFillButtonType() != AutoFillButtonType::None;
 }
 
 void TextFieldInputType::autoFillButtonElementWasClicked()
 {
-    RefPtr element = this->element();
-    ASSERT(element);
-    Page* page = element->document().page();
+    ASSERT(element());
+    Page* page = element()->document().page();
     if (!page)
         return;
 
-    auto event = Event::create(eventNames().webkitautofillrequestEvent, Event::CanBubble::No, Event::IsCancelable::No);
-    event->setIsAutofillEvent();
-    element->dispatchEvent(WTFMove(event));
-
-    page->chrome().client().handleAutoFillButtonClick(*element);
+    page->chrome().client().handleAutoFillButtonClick(*element());
 }
 
 void TextFieldInputType::createContainer(PreserveSelectionRange preserveSelection)
@@ -899,7 +894,7 @@ void TextFieldInputType::updateAutoFillButton()
         if (!m_container)
             createContainer();
 
-        AutoFillButtonType autoFillButtonType = element()->autofillButtonType();
+        AutoFillButtonType autoFillButtonType = element()->autoFillButtonType();
         if (!m_autoFillButton)
             createAutoFillButton(autoFillButtonType);
 

@@ -47,10 +47,6 @@ class HIDGamepadProvider : public GamepadProvider {
 public:
     WEBCORE_EXPORT static HIDGamepadProvider& singleton();
 
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
-
     WEBCORE_EXPORT void startMonitoringGamepads(GamepadProviderClient&) final;
     WEBCORE_EXPORT void stopMonitoringGamepads(GamepadProviderClient&) final;
     const Vector<WeakPtr<PlatformGamepad>>& platformGamepads() final { return m_gamepadVector; }
@@ -82,7 +78,7 @@ private:
     unsigned indexForNewlyConnectedDevice();
 
     Vector<WeakPtr<PlatformGamepad>> m_gamepadVector;
-    HashMap<IOHIDDeviceRef, std::unique_ptr<HIDGamepad>> m_gamepadMap;
+    UncheckedKeyHashMap<IOHIDDeviceRef, std::unique_ptr<HIDGamepad>> m_gamepadMap;
 
     RetainPtr<IOHIDManagerRef> m_manager;
 

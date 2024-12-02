@@ -44,6 +44,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -109,10 +110,11 @@ template<> void JSTestStringifierNamedOperationDOMConstructor::initializePropert
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 3> JSTestStringifierNamedOperationPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierNamedOperationConstructor, 0 } },
-    HashTableValue { "identifier"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierNamedOperationPrototypeFunction_identifier, 0 } },
-    HashTableValue { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierNamedOperationPrototypeFunction_toString, 0 } },
+static const HashTableValue JSTestStringifierNamedOperationPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierNamedOperationConstructor, 0 } },
+    { "identifier"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierNamedOperationPrototypeFunction_identifier, 0 } },
+    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierNamedOperationPrototypeFunction_toString, 0 } },
 };
 
 const ClassInfo JSTestStringifierNamedOperationPrototype::s_info = { "TestStringifierNamedOperation"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestStringifierNamedOperationPrototype) };
@@ -230,7 +232,6 @@ void JSTestStringifierNamedOperationOwner::finalize(JSC::Handle<JSC::Unknown> ha
     uncacheWrapper(world, jsTestStringifierNamedOperation->protectedWrapped().ptr(), jsTestStringifierNamedOperation);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -255,8 +256,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestStringifi
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestStringifierNamedOperation>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

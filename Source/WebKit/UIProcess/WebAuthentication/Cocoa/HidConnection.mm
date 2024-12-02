@@ -33,6 +33,8 @@
 #import <wtf/RunLoop.h>
 #import <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 using namespace fido;
 
@@ -53,7 +55,7 @@ static void reportReceived(void* context, IOReturn status, void*, IOHIDReportTyp
     ASSERT(reportID == kHidReportId);
     ASSERT(reportLength == kHidMaxPacketSize);
 
-    connection->receiveReport(unsafeMakeSpan(report, reportLength));
+    connection->receiveReport(std::span { report, static_cast<size_t>(reportLength) });
 }
 #endif // HAVE(SECURITY_KEY_API)
 
@@ -162,5 +164,7 @@ void HidConnection::registerDataReceivedCallbackInternal()
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUTHN)

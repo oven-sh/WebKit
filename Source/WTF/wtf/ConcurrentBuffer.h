@@ -32,8 +32,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ConcurrentBuffer);
@@ -114,4 +112,3 @@ private:
 
 } // namespace WTF
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

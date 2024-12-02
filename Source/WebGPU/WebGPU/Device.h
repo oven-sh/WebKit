@@ -25,13 +25,12 @@
 
 #pragma once
 
-#import "API.h"
 #import "Adapter.h"
 #import "HardwareCapabilities.h"
+#import <IOSurface/IOSurfaceRef.h>
 #import "Queue.h"
 #import <CoreVideo/CVMetalTextureCache.h>
 #import <CoreVideo/CoreVideo.h>
-#import <IOSurface/IOSurfaceRef.h>
 #import <simd/matrix_types.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
@@ -71,12 +70,6 @@ class XRBinding;
 class XRSubImage;
 class XRProjectionLayer;
 class XRView;
-
-#if ENABLE(WEBGPU_BY_DEFAULT)
-using GPUShaderValidation = MTLShaderValidation;
-#else
-using GPUShaderValidation = uint32_t;
-#endif
 
 // https://gpuweb.github.io/gpuweb/#gpudevice
 class Device : public WGPUDeviceImpl, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<Device> {
@@ -136,32 +129,20 @@ public:
     void generateAnOutOfMemoryError(String&& message);
     void generateAnInternalError(String&& message);
 
-    RefPtr<Instance> instance() const { return m_instance.get(); }
+    RefPtr<Instance> instance() const { return m_adapter->instance(); }
     bool hasUnifiedMemory() const { return m_device.hasUnifiedMemory; }
 
-    uint32_t maxBuffersPlusVertexBuffersForVertexStage() const
-    {
-        ASSERT(m_capabilities.limits.maxBindGroupsPlusVertexBuffers > 0);
-        return m_capabilities.limits.maxBindGroupsPlusVertexBuffers;
-    }
-
-    uint32_t maxBuffersForFragmentStage() const { return m_capabilities.limits.maxBindGroups; }
-
+    uint32_t maxBuffersPlusVertexBuffersForVertexStage() const;
+    uint32_t maxBuffersForFragmentStage() const;
     uint32_t maxBuffersForComputeStage() const { return m_capabilities.limits.maxBindGroups; }
-    uint32_t vertexBufferIndexForBindGroup(uint32_t groupIndex) const
-    {
-        ASSERT(maxBuffersPlusVertexBuffersForVertexStage() > 0);
-        return WGSL::vertexBufferIndexForBindGroup(groupIndex, maxBuffersPlusVertexBuffersForVertexStage() - 1);
-    }
-
+    uint32_t vertexBufferIndexForBindGroup(uint32_t groupIndex) const;
     id<MTLBuffer> newBufferWithBytes(const void*, size_t, MTLResourceOptions) const;
     id<MTLBuffer> newBufferWithBytesNoCopy(void*, size_t, MTLResourceOptions) const;
     id<MTLTexture> newTextureWithDescriptor(MTLTextureDescriptor *, IOSurfaceRef = nullptr, NSUInteger plane = 0) const;
 
     static bool isStencilOnlyFormat(MTLPixelFormat);
     bool shouldStopCaptureAfterSubmit();
-    id<MTLBuffer> placeholderBuffer() const { return m_placeholderBuffer; }
-
+    id<MTLBuffer> placeholderBuffer() const;
     id<MTLTexture> placeholderTexture(WGPUTextureFormat) const;
     bool isDestroyed() const;
     NSString *errorValidatingTextureCreation(const WGPUTextureDescriptor&, const Vector<WGPUTextureFormat>& viewFormats);
@@ -192,11 +173,6 @@ public:
 #else
     constexpr bool isIntel() const { return false; }
 #endif
-    void pauseErrorReporting(bool pauseReporting);
-    bool enableEncoderTimestamps() const;
-    id<MTLCounterSampleBuffer> timestampsBuffer(id<MTLCommandBuffer>, size_t);
-    void resolveTimestampsForBuffer(id<MTLCommandBuffer>);
-    id<MTLSharedEvent> resolveTimestampsSharedEvent();
 
 private:
     Device(id<MTLDevice>, id<MTLCommandQueue> defaultQueue, HardwareCapabilities&&, Adapter&);
@@ -214,7 +190,6 @@ private:
     Ref<PipelineLayout> generatePipelineLayout(const Vector<Vector<WGPUBindGroupLayoutEntry>> &bindGroupEntries);
 
     void captureFrameIfNeeded() const;
-    GPUShaderValidation shaderValidationState() const;
 
     struct Error {
         WGPUErrorType type;
@@ -265,14 +240,9 @@ private:
     id<MTLRenderPipelineState> m_copyIndexedIndirectArgsPSOMS { nil };
 
     const Ref<Adapter> m_adapter;
-    const ThreadSafeWeakPtr<Instance> m_instance;
 #if HAVE(COREVIDEO_METAL_SUPPORT)
     RetainPtr<CVMetalTextureCacheRef> m_coreVideoTextureCache;
 #endif
-    NSMapTable<id<MTLCommandBuffer>, id<MTLCounterSampleBuffer>>* m_sampleCounterBuffers;
-    NSMapTable<id<MTLCommandBuffer>, NSMutableArray<id<MTLBuffer>>*>* m_resolvedSampleCounterBuffers;
-    id<MTLSharedEvent> m_resolveTimestampsSharedEvent { nil };
-    bool m_supressAllErrors { false };
 } SWIFT_SHARED_REFERENCE(retainDevice, releaseDevice);
 
 } // namespace WebGPU

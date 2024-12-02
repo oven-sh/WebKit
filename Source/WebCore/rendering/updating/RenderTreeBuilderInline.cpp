@@ -37,7 +37,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(RenderTreeBuilder, Inline);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(RenderTreeBuilderInline, RenderTreeBuilder::Inline);
 
 static bool canUseAsParentForContinuation(const RenderObject* renderer)
 {
@@ -57,7 +57,7 @@ static RenderBoxModelObject* nextContinuation(RenderObject* renderer)
     return downcast<RenderBlock>(*renderer).inlineContinuation();
 }
 
-RenderBoxModelObject* RenderTreeBuilder::Inline::continuationBefore(RenderInline& parent, RenderObject* beforeChild)
+static RenderBoxModelObject* continuationBefore(RenderInline& parent, RenderObject* beforeChild)
 {
     if (beforeChild && beforeChild->parent() == &parent)
         return &parent;
@@ -84,9 +84,9 @@ RenderBoxModelObject* RenderTreeBuilder::Inline::continuationBefore(RenderInline
 
 static RenderPtr<RenderInline> cloneAsContinuation(RenderInline& renderer)
 {
-    RenderPtr<RenderInline> cloneInline = renderer.isAnonymous() ?
-    createRenderer<RenderInline>(RenderObject::Type::Inline, renderer.document(), RenderStyle::clone(renderer.style()))
-    : createRenderer<RenderInline>(RenderObject::Type::Inline, *renderer.element(), RenderStyle::clone(renderer.style()));
+    auto continuationStyle = RenderStyle::clone(renderer.style());
+    continuationStyle.setDisplay(DisplayType::Inline);
+    RenderPtr<RenderInline> cloneInline = createRenderer<RenderInline>(RenderObject::Type::Inline, *renderer.element(), WTFMove(continuationStyle));
     cloneInline->initializeStyle();
     cloneInline->setFragmentedFlowState(renderer.fragmentedFlowState());
     cloneInline->setHasOutlineAutoAncestor(renderer.hasOutlineAutoAncestor());

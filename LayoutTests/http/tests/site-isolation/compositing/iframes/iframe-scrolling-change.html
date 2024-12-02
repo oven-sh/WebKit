@@ -12,13 +12,12 @@
     }
   </style>
   <script type="text/javascript" charset="utf-8">
-    async function doTest()
+    function doTest()
     {
-      testRunner?.waitUntilDone();
-      await testRunner.displayAndTrackRepaints();
+      if (window.testRunner)
+        testRunner.displayAndTrackRepaints();
 
-      document.getElementById('iframe').setAttribute('scrolling', 'yes');
-      testRunner?.notifyDone();
+      document.getElementById('iframe').setAttribute('scrolling', 'yes')
     }
 
     window.addEventListener('load', doTest, false);

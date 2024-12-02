@@ -37,26 +37,26 @@ namespace WebCore {
     
 using namespace HTMLNames;
 
-AccessibilityARIAGridCell::AccessibilityARIAGridCell(AXID axID, RenderObject& renderer)
-    : AccessibilityTableCell(axID, renderer)
+AccessibilityARIAGridCell::AccessibilityARIAGridCell(RenderObject& renderer)
+    : AccessibilityTableCell(renderer)
 {
 }
 
-AccessibilityARIAGridCell::AccessibilityARIAGridCell(AXID axID, Node& node)
-    : AccessibilityTableCell(axID, node)
+AccessibilityARIAGridCell::AccessibilityARIAGridCell(Node& node)
+    : AccessibilityTableCell(node)
 {
 }
 
 AccessibilityARIAGridCell::~AccessibilityARIAGridCell() = default;
 
-Ref<AccessibilityARIAGridCell> AccessibilityARIAGridCell::create(AXID axID, RenderObject& renderer)
+Ref<AccessibilityARIAGridCell> AccessibilityARIAGridCell::create(RenderObject& renderer)
 {
-    return adoptRef(*new AccessibilityARIAGridCell(axID, renderer));
+    return adoptRef(*new AccessibilityARIAGridCell(renderer));
 }
 
-Ref<AccessibilityARIAGridCell> AccessibilityARIAGridCell::create(AXID axID, Node& node)
+Ref<AccessibilityARIAGridCell> AccessibilityARIAGridCell::create(Node& node)
 {
-    return adoptRef(*new AccessibilityARIAGridCell(axID, node));
+    return adoptRef(*new AccessibilityARIAGridCell(node));
 }
 
 AccessibilityTable* AccessibilityARIAGridCell::parentTable() const

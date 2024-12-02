@@ -39,7 +39,6 @@
 #include "Timer.h"
 #include <array>
 #include <limits.h>
-#include <wtf/CheckedPtr.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/Forward.h>
 #include <wtf/HashFunctions.h>
@@ -71,7 +70,6 @@
 #include <windows.h>
 #include <objidl.h>
 #include <mlang.h>
-struct IDWriteFactory;
 #endif
 
 #if USE(FREETYPE)
@@ -114,10 +112,9 @@ enum class FontLookupOptions : uint8_t {
     DisallowObliqueSynthesis = 1 << 2,
 };
 
-class FontCache : public CanMakeCheckedPtr<FontCache> {
+class FontCache {
     WTF_MAKE_TZONE_ALLOCATED(FontCache);
     WTF_MAKE_NONCOPYABLE(FontCache);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FontCache);
 public:
     WEBCORE_EXPORT static FontCache& forCurrentThread();
     static FontCache* forCurrentThreadIfExists();
@@ -209,7 +206,7 @@ public:
 
 #if USE(SKIA)
     static Vector<hb_feature_t> computeFeatures(const FontDescription&, const FontCreationContext&);
-    WEBCORE_EXPORT SkFontMgr& fontManager() const;
+    SkFontMgr& fontManager() const;
     SkiaHarfBuzzFontCache& harfBuzzFontCache() { return m_harfBuzzFontCache; }
 #endif
 
@@ -280,10 +277,6 @@ private:
 #if USE(SKIA)
     mutable sk_sp<SkFontMgr> m_fontManager;
     SkiaHarfBuzzFontCache m_harfBuzzFontCache;
-#endif
-
-#if PLATFORM(WIN) && USE(SKIA)
-    COMPtr<IDWriteFactory> m_DWFactory;
 #endif
 
     friend class Font;

@@ -40,8 +40,6 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 const ClassInfo StructureRareData::s_info = { "StructureRareData"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(StructureRareData) };
@@ -288,5 +286,3 @@ void CachedSpecialPropertyAdaptiveInferredPropertyValueWatchpoint::handleFire(VM
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

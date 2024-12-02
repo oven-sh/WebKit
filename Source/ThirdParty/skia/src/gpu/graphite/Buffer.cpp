@@ -13,7 +13,6 @@ namespace skgpu::graphite {
 
 void* Buffer::map() {
     SkASSERT(this->isUnmappable() || !this->sharedContext()->caps()->bufferMapsAreAsync());
-    SkASSERT(this->isProtected() == Protected::kNo);
     if (!this->isMapped()) {
         this->onMap();
     }
@@ -22,7 +21,6 @@ void* Buffer::map() {
 
 void Buffer::asyncMap(GpuFinishedProc proc, GpuFinishedContext ctx) {
     SkASSERT(this->sharedContext()->caps()->bufferMapsAreAsync());
-    SkASSERT(this->isProtected() == Protected::kNo);
     this->onAsyncMap(proc, ctx);
 }
 

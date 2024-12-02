@@ -83,8 +83,8 @@ void RenderBundle::setLabel(String&& label)
 
 void RenderBundle::replayCommands(RenderPassEncoder& renderPassEncoder) const
 {
-    if (RefPtr renderBundleEncoder = m_renderBundleEncoder)
-        renderBundleEncoder->replayCommands(renderPassEncoder);
+    if (m_renderBundleEncoder)
+        m_renderBundleEncoder->replayCommands(renderPassEncoder);
 }
 
 bool RenderBundle::requiresCommandReplay() const
@@ -101,7 +101,7 @@ void RenderBundle::updateMinMaxDepths(float minDepth, float maxDepth)
     m_maxDepth = maxDepth;
     std::array<float, 2> twoFloats = { m_minDepth, m_maxDepth };
     for (RenderBundleICBWithResources* icb in m_renderBundlesResources)
-        m_device->protectedQueue()->writeBuffer(icb.fragmentDynamicOffsetsBuffer, 0, asWritableBytes(std::span(twoFloats)));
+        m_device->getQueue().writeBuffer(icb.fragmentDynamicOffsetsBuffer, 0, asWritableBytes(std::span(twoFloats)));
 }
 
 uint64_t RenderBundle::drawCount() const
@@ -130,15 +130,16 @@ bool RenderBundle::validateRenderPass(bool depthReadOnly, bool stencilReadOnly, 
                 continue;
             return false;
         }
-        auto attachmentView = colorAttachmentViews[i];
+        auto* attachmentView = colorAttachmentViews[i].get();
         if (!attachmentView) {
             if (descriptorColorFormat == WGPUTextureFormat_Undefined)
                 continue;
             return false;
         }
-        if (descriptorColorFormat != attachmentView->format())
+        auto& texture = *attachmentView;
+        if (descriptorColorFormat != texture.format())
             return false;
-        defaultRasterSampleCount = attachmentView->sampleCount();
+        defaultRasterSampleCount = texture.sampleCount();
     }
 
     if (auto* depthStencil = descriptor.depthStencilAttachment) {

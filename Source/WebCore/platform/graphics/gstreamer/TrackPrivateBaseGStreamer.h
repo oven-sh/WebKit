@@ -67,14 +67,13 @@ public:
     void setInitialCaps(GRefPtr<GstCaps>&& caps) { m_initialCaps = WTFMove(caps); }
     const GRefPtr<GstCaps>& initialCaps() { return m_initialCaps; }
 
-    TrackID streamId() const { return m_id; }
-    const AtomString& gstStreamId() const { return m_gstStreamId; }
+    static String trackIdFromPadStreamStartOrUniqueID(TrackType, unsigned index, const GRefPtr<GstPad>&);
+    const AtomString& stringId() const { return m_stringId; };
 
     virtual void updateConfigurationFromCaps(GRefPtr<GstCaps>&&) { }
 
 protected:
     TrackPrivateBaseGStreamer(TrackType, TrackPrivateBase*, unsigned index, GRefPtr<GstPad>&&, bool shouldHandleStreamStartEvent);
-    TrackPrivateBaseGStreamer(TrackType, TrackPrivateBase*, unsigned index, GRefPtr<GstPad>&&, TrackID);
     TrackPrivateBaseGStreamer(TrackType, TrackPrivateBase*, unsigned index, GstStream*);
 
     void notifyTrackOfTagsChanged();
@@ -83,7 +82,7 @@ protected:
     GstObject* objectForLogging() const;
 
     virtual void tagsChanged(GRefPtr<GstTagList>&&) { }
-    virtual void capsChanged(TrackID, GRefPtr<GstCaps>&&) { }
+    virtual void capsChanged(const String&, GRefPtr<GstCaps>&&) { }
     void installUpdateConfigurationHandlers();
     virtual void updateConfigurationFromTags(GRefPtr<GstTagList>&&) { }
 
@@ -99,8 +98,7 @@ protected:
     unsigned m_index;
     AtomString m_label;
     AtomString m_language;
-    AtomString m_gstStreamId;
-    // Track ID parsed from stream-id.
+    AtomString m_stringId;
     TrackID m_id;
     GRefPtr<GstPad> m_pad;
     GRefPtr<GstPad> m_bestUpstreamPad;
@@ -116,6 +114,7 @@ protected:
 private:
     bool getLanguageCode(GstTagList* tags, AtomString& value);
     static AtomString generateUniquePlaybin2StreamID(TrackType, unsigned index);
+    static TrackID trackIdFromStringIdOrIndex(TrackType, const AtomString&, unsigned);
     static char prefixForType(TrackType);
     template<class StringType>
     bool getTag(GstTagList* tags, const gchar* tagName, StringType& value);
@@ -127,7 +126,6 @@ private:
     TrackPrivateBase* m_owner;
     Lock m_tagMutex;
     GRefPtr<GstTagList> m_tags;
-    bool m_shouldUsePadStreamId { true };
     bool m_shouldHandleStreamStartEvent { true };
 };
 

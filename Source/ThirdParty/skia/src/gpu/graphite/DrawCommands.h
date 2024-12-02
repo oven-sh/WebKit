@@ -11,7 +11,6 @@
 #include "include/core/SkRect.h"
 #include "src/base/SkArenaAlloc.h"
 #include "src/base/SkTBlockList.h"
-#include "src/gpu/graphite/CommandTypes.h"
 #include "src/gpu/graphite/DrawTypes.h"
 
 namespace skgpu::graphite {
@@ -89,7 +88,7 @@ COMMAND(BindTexturesAndSamplers,
             PODArray<int> fTextureIndices;
             PODArray<int> fSamplerIndices);
 COMMAND(SetScissor,
-            Scissor fScissor);
+            SkIRect fScissor);
 COMMAND(Draw,
             PrimitiveType fType;
             uint32_t fBaseVertex;
@@ -155,7 +154,7 @@ public:
     }
 
     void setScissor(SkIRect scissor) {
-        this->add<SetScissor>(Scissor(scissor));
+        this->add<SetScissor>(scissor);
     }
 
     void bindDrawBuffers(BindBufferInfo vertexAttribs,

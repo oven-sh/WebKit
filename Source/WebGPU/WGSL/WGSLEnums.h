@@ -73,8 +73,6 @@ namespace WGSL {
 #define ENUM_InterpolationSampling(value) \
     value(Center, center) \
     value(Centroid, centroid) \
-    value(Either, either) \
-    value(First, first) \
     value(Sample, sample)
 
 #define ENUM_ShaderStage(value) \

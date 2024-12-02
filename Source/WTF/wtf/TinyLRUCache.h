@@ -30,8 +30,6 @@
 #include <span>
 #include <wtf/NeverDestroyed.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 template<typename KeyType, typename ValueType>
@@ -53,7 +51,7 @@ public:
             return valueForNull;
         }
 
-        auto cacheBuffer = this->cacheBuffer();
+        auto* cacheBuffer = this->cacheBuffer();
         for (size_t i = m_size; i-- > 0;) {
             if (cacheBuffer[i].first == key) {
                 if (i < m_size - 1) {
@@ -81,9 +79,9 @@ public:
 
 private:
     using Entry = std::pair<KeyType, ValueType>;
-    std::span<Entry, capacity> cacheBuffer() { return m_cacheBuffer; }
+    Entry* cacheBuffer() { return reinterpret_cast_ptr<Entry*>(m_cacheBuffer); }
 
-    alignas(Entry) std::array<Entry, capacity> m_cacheBuffer;
+    alignas(Entry) std::byte m_cacheBuffer[capacity * sizeof(Entry)];
     size_t m_size { 0 };
 };
 
@@ -91,5 +89,3 @@ private:
 
 using WTF::TinyLRUCache;
 using WTF::TinyLRUCachePolicy;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

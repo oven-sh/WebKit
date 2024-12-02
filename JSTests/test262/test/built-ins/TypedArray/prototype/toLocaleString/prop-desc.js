@@ -14,8 +14,6 @@ features: [TypedArray]
 
 var TypedArrayPrototype = TypedArray.prototype;
 
-verifyProperty(TypedArrayPrototype, 'toLocaleString', {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(TypedArrayPrototype, 'toLocaleString');
+verifyWritable(TypedArrayPrototype, 'toLocaleString');
+verifyConfigurable(TypedArrayPrototype, 'toLocaleString');

@@ -49,13 +49,10 @@ namespace WebPushD {
 enum class MessageType : uint8_t;
 }
 
-class NetworkNotificationManager : public NotificationManagerMessageHandler, public RefCounted<NetworkNotificationManager> {
+class NetworkNotificationManager : public NotificationManagerMessageHandler {
     WTF_MAKE_TZONE_ALLOCATED(NetworkNotificationManager);
 public:
-    static Ref<NetworkNotificationManager> create(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&);
-
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
+    NetworkNotificationManager(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&);
 
     void setPushAndNotificationsEnabledForOrigin(const WebCore::SecurityOriginData&, bool, CompletionHandler<void()>&&);
     void getPendingPushMessage(CompletionHandler<void(const std::optional<WebPushMessage>&)>&&);
@@ -80,8 +77,6 @@ public:
     void setAppBadge(const WebCore::SecurityOriginData&, std::optional<uint64_t> badge) final;
 
 private:
-    NetworkNotificationManager(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&);
-
     void showNotification(IPC::Connection&, const WebCore::NotificationData&, RefPtr<WebCore::NotificationResources>&&, CompletionHandler<void()>&&) final;
     void cancelNotification(WebCore::SecurityOriginData&&, const WTF::UUID& notificationID) final;
     void didDestroyNotification(const WTF::UUID& notificationID) final;

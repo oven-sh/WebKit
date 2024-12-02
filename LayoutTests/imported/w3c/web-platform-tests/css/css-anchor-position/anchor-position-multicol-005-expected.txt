@@ -1,3 +1,5 @@
 
-PASS .target 1
+FAIL .target 1 assert_equals:
+<div class="target target1" data-expected-width="40" data-expected-height="80"></div>
+width expected 40 but got 0
 

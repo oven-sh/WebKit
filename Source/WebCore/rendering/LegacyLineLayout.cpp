@@ -429,7 +429,22 @@ LegacyRootInlineBox* LegacyLineLayout::createLineBoxesFromBidiRuns(unsigned bidi
 
     lineBox->setBidiLevel(bidiLevel);
 
+    bool isSVGRootInlineBox = is<SVGRootInlineBox>(*lineBox);
+    ASSERT(isSVGRootInlineBox);
+
+    // Now we position all of our text runs horizontally.
+
     removeEmptyTextBoxesAndUpdateVisualReordering(lineBox, bidiRuns.firstRun());
+
+    // SVG text layout code computes vertical & horizontal positions on its own.
+    // Note that we still need to execute computeVerticalPositionsForLine() as
+    // it calls LegacyInlineTextBox::positionLineBox(), which tracks whether the box
+    // contains reversed text or not. If we wouldn't do that editing and thus
+    // text selection in RTL boxes would not work as expected.
+    if (isSVGRootInlineBox) {
+        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(m_flow.isRenderSVGText());
+        downcast<SVGRootInlineBox>(*lineBox).computePerCharacterLayoutInformation();
+    }
 
     GlyphOverflowAndFallbackFontsMap textBoxDataMap;
     lineBox->computeOverflow(lineBox->lineTop(), lineBox->lineBottom(), textBoxDataMap);

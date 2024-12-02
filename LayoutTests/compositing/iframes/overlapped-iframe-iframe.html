@@ -33,9 +33,9 @@
     {
         // For some reason this delay is required for AppKit to not short-circuit the display which is required
         // for overlap testing to kick in.
-        window.setTimeout(async function() {
+        window.setTimeout(function() {
             if (window.testRunner) {
-                await testRunner.displayAndTrackRepaints();
+                testRunner.displayAndTrackRepaints();
                 document.getElementById('layers').innerHTML = window.internals.layerTreeAsText(document);
                 testRunner.notifyDone();
             }

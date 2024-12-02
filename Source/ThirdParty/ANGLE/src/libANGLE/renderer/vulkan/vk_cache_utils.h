@@ -129,37 +129,8 @@ enum class FramebufferFetchMode
 {
     None,
     Color,
-    DepthStencil,
-    ColorAndDepthStencil,
 };
 FramebufferFetchMode GetProgramFramebufferFetchMode(const gl::ProgramExecutable *executable);
-ANGLE_INLINE bool FramebufferFetchModeHasColor(FramebufferFetchMode framebufferFetchMode)
-{
-    static_assert(ToUnderlying(FramebufferFetchMode::Color) == 0x1);
-    static_assert(ToUnderlying(FramebufferFetchMode::ColorAndDepthStencil) == 0x3);
-    return (ToUnderlying(framebufferFetchMode) & 0x1) != 0;
-}
-ANGLE_INLINE bool FramebufferFetchModeHasDepthStencil(FramebufferFetchMode framebufferFetchMode)
-{
-    static_assert(ToUnderlying(FramebufferFetchMode::DepthStencil) == 0x2);
-    static_assert(ToUnderlying(FramebufferFetchMode::ColorAndDepthStencil) == 0x3);
-    return (ToUnderlying(framebufferFetchMode) & 0x2) != 0;
-}
-ANGLE_INLINE FramebufferFetchMode FramebufferFetchModeMerge(FramebufferFetchMode mode1,
-                                                            FramebufferFetchMode mode2)
-{
-    constexpr uint32_t kNone         = ToUnderlying(FramebufferFetchMode::None);
-    constexpr uint32_t kColor        = ToUnderlying(FramebufferFetchMode::Color);
-    constexpr uint32_t kDepthStencil = ToUnderlying(FramebufferFetchMode::DepthStencil);
-    constexpr uint32_t kColorAndDepthStencil =
-        ToUnderlying(FramebufferFetchMode::ColorAndDepthStencil);
-    static_assert(kNone == 0);
-    static_assert((kColor & kColorAndDepthStencil) == kColor);
-    static_assert((kDepthStencil & kColorAndDepthStencil) == kDepthStencil);
-    static_assert((kColor | kDepthStencil) == kColorAndDepthStencil);
-
-    return static_cast<FramebufferFetchMode>(ToUnderlying(mode1) | ToUnderlying(mode2));
-}
 
 // There can be a maximum of IMPLEMENTATION_MAX_DRAW_BUFFERS color and resolve attachments, plus -
 // - one depth/stencil attachment
@@ -278,11 +249,7 @@ class alignas(4) RenderPassDesc final
     }
     bool hasColorFramebufferFetch() const
     {
-        return FramebufferFetchModeHasColor(framebufferFetchMode());
-    }
-    bool hasDepthStencilFramebufferFetch() const
-    {
-        return FramebufferFetchModeHasDepthStencil(framebufferFetchMode());
+        return framebufferFetchMode() == FramebufferFetchMode::Color;
     }
 
     void updateRenderToTexture(bool isRenderToTexture) { mIsRenderToTexture = isRenderToTexture; }
@@ -341,7 +308,7 @@ class alignas(4) RenderPassDesc final
     uint8_t mSrgbWriteControl : 1;
 
     // Framebuffer fetch, one of FramebufferFetchMode values
-    uint8_t mFramebufferFetchMode : 2;
+    uint8_t mFramebufferFetchMode : 1;
 
     // Depth/stencil resolve
     uint8_t mResolveDepth : 1;
@@ -362,7 +329,7 @@ class alignas(4) RenderPassDesc final
     uint8_t mHasFragmentShadingAttachment : 1;
 
     // Available space for expansion.
-    uint8_t mPadding2 : 5;
+    uint8_t mPadding2 : 6;
 
     // Whether each color attachment has a corresponding resolve attachment.  Color resolve
     // attachments can be used to optimize resolve through glBlitFramebuffer() as well as support
@@ -906,13 +873,9 @@ class GraphicsPipelineDesc final
                               FramebufferFetchMode framebufferFetchMode);
     void setRenderPassSampleCount(GLint samples);
     void setRenderPassFramebufferFetchMode(FramebufferFetchMode framebufferFetchMode);
-    bool getRenderPassColorFramebufferFetchMode() const
+    bool hasRenderPassColorFramebufferFetch() const
     {
         return mSharedNonVertexInput.renderPass.hasColorFramebufferFetch();
-    }
-    bool getRenderPassDepthStencilFramebufferFetchMode() const
-    {
-        return mSharedNonVertexInput.renderPass.hasDepthStencilFramebufferFetch();
     }
 
     void setRenderPassFoveation(bool isFoveated);
@@ -1798,10 +1761,6 @@ class WriteDescriptorDescs
                          VkDescriptorType descriptorType,
                          uint32_t descriptorCount);
 
-    void updateInputAttachment(uint32_t binding,
-                               ImageLayout layout,
-                               RenderTargetVk *renderTargetVk);
-
     // After a preliminary minimum size, use heap memory.
     angle::FastMap<WriteDescriptorDesc, kFastDescriptorSetDescLimit> mDescs;
     size_t mDynamicDescriptorSetCount = 0;
@@ -1972,6 +1931,24 @@ class DescriptorSetDescBuilder final
                                       const gl::ActiveTextureArray<TextureVk *> &textures,
                                       const gl::SamplerBindingVector &samplers);
 
+    angle::Result updateActiveTexturesForCacheMiss(
+        Context *context,
+        const ShaderInterfaceVariableInfoMap &variableInfoMap,
+        const WriteDescriptorDescs &writeDescriptorDescs,
+        const gl::ProgramExecutable &executable,
+        const gl::ActiveTextureArray<TextureVk *> &textures,
+        const gl::SamplerBindingVector &samplers,
+        PipelineType pipelineType,
+        const SharedDescriptorSetCacheKey &sharedCacheKey);
+
+    angle::Result updateFullActiveTextures(Context *context,
+                                           const ShaderInterfaceVariableInfoMap &variableInfoMap,
+                                           const WriteDescriptorDescs &writeDescriptorDescs,
+                                           const gl::ProgramExecutable &executable,
+                                           const gl::ActiveTextureArray<TextureVk *> &textures,
+                                           const gl::SamplerBindingVector &samplers,
+                                           PipelineType pipelineType);
+
     void updateDescriptorSet(Renderer *renderer,
                              const WriteDescriptorDescs &writeDescriptorDescs,
                              UpdateDescriptorSetsBuilder *updateBuilder,
@@ -1981,13 +1958,6 @@ class DescriptorSetDescBuilder final
     size_t getDynamicOffsetsSize() const { return mDynamicOffsets.size(); }
 
   private:
-    void updateInputAttachment(Context *context,
-                               uint32_t binding,
-                               ImageLayout layout,
-                               const vk::ImageView *imageView,
-                               ImageOrBufferViewSubresourceSerial serial,
-                               const WriteDescriptorDescs &writeDescriptorDescs);
-
     void setEmptyBuffer(uint32_t infoDescIndex,
                         VkDescriptorType descriptorType,
                         const BufferHelper &emptyBuffer);
@@ -2076,8 +2046,6 @@ class FramebufferDesc
     uint16_t mMaxIndex : 5;
 
     // Whether the render pass has input attachments or not.
-    // Note that depth/stencil framebuffer fetch is only implemented for dynamic rendering, and so
-    // does not interact with this class.
     uint16_t mHasColorFramebufferFetch : 1;
     static_assert(gl::IMPLEMENTATION_MAX_FRAMEBUFFER_LAYERS < (1 << 9) - 1,
                   "Not enough bits for mLayerCount");
@@ -2121,7 +2089,7 @@ CreateSharedFramebufferCacheKey(const FramebufferDesc &desc)
 class SamplerHelper final : angle::NonCopyable
 {
   public:
-    SamplerHelper(vk::Context *context);
+    SamplerHelper(ContextVk *contextVk);
     ~SamplerHelper();
 
     explicit SamplerHelper(SamplerHelper &&samplerHelper);

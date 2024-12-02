@@ -161,23 +161,6 @@ constexpr angle::PackedEnumMap<ImageLayout, ImageMemoryBarrierData> kImageMemory
         },
     },
     {
-        ImageLayout::DepthStencilWriteAndInput,
-        ImageMemoryBarrierData{
-            "DepthStencilWriteAndInput",
-            VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR,
-            kAllDepthStencilPipelineStageFlags,
-            kAllDepthStencilPipelineStageFlags,
-            // Transition to: all reads and writes must happen after barrier.
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            // Transition from: all writes must finish before barrier.
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            ResourceAccess::ReadWrite,
-            PipelineStage::EarlyFragmentTest,
-            EventStage::AllFragmentTest,
-            PipelineStageGroup::FragmentOnly,
-        },
-    },
-    {
         ImageLayout::DepthWriteStencilRead,
         ImageMemoryBarrierData{
             "DepthWriteStencilRead",
@@ -1565,9 +1548,10 @@ void RenderPassAttachment::finalizeLoadStore(Context *context,
     // For read only depth stencil, we can use StoreOpNone if available.  DontCare is still
     // preferred, so do this after handling DontCare.
     const bool supportsLoadStoreOpNone =
-        context->getFeatures().supportsRenderPassLoadStoreOpNone.enabled;
+        context->getRenderer()->getFeatures().supportsRenderPassLoadStoreOpNone.enabled;
     const bool supportsStoreOpNone =
-        supportsLoadStoreOpNone || context->getFeatures().supportsRenderPassStoreOpNone.enabled;
+        supportsLoadStoreOpNone ||
+        context->getRenderer()->getFeatures().supportsRenderPassStoreOpNone.enabled;
     if (mAccess == ResourceAccess::ReadOnly && supportsStoreOpNone)
     {
         if (*storeOp == RenderPassStoreOp::Store && *loadOp != RenderPassLoadOp::Clear)
@@ -1914,7 +1898,7 @@ void CommandBufferHelperCommon::retainImageWithEvent(Context *context, ImageHelp
     image->setQueueSerial(mQueueSerial);
     image->updatePipelineStageAccessHistory();
 
-    if (context->getFeatures().useVkEventForImageBarrier.enabled)
+    if (context->getRenderer()->getFeatures().useVkEventForImageBarrier.enabled)
     {
         image->setCurrentRefCountedEvent(context, mRefCountedEvents);
     }
@@ -2568,8 +2552,7 @@ void RenderPassCommandBufferHelper::finalizeColorImageLayout(
         // because this function is expected to finalize the image layout, we still have to pretend
         // the image is in the present layout already.
         mImageOptimizeForPresentOriginalLayout = mImageOptimizeForPresent->getCurrentImageLayout();
-        mImageOptimizeForPresent->setCurrentImageLayout(context->getRenderer(),
-                                                        ImageLayout::Present);
+        mImageOptimizeForPresent->setCurrentImageLayout(ImageLayout::Present);
 
         if (!context->getFeatures().preferDynamicRendering.enabled)
         {
@@ -2684,11 +2667,7 @@ void RenderPassCommandBufferHelper::finalizeDepthStencilImageLayout(Context *con
     }
     else
     {
-        if (mRenderPassDesc.hasDepthStencilFramebufferFetch())
-        {
-            imageLayout = ImageLayout::DepthStencilWriteAndInput;
-        }
-        else if (isReadOnlyDepth)
+        if (isReadOnlyDepth)
         {
             imageLayout = isReadOnlyStencil ? ImageLayout::DepthReadStencilRead
                                             : ImageLayout::DepthReadStencilWrite;
@@ -2839,7 +2818,7 @@ void RenderPassCommandBufferHelper::finalizeDepthStencilLoadStore(Context *conte
         hasStencilResolveAttachment, &stencilLoadOp, &stencilStoreOp, &isStencilInvalidated);
 
     const bool disableMixedDepthStencilLoadOpNoneAndLoad =
-        context->getFeatures().disallowMixedDepthStencilLoadOpNoneAndLoad.enabled;
+        context->getRenderer()->getFeatures().disallowMixedDepthStencilLoadOpNoneAndLoad.enabled;
 
     if (disableMixedDepthStencilLoadOpNoneAndLoad)
     {
@@ -3240,8 +3219,7 @@ angle::Result RenderPassCommandBufferHelper::flushToPrimary(Context *context,
 
             // Restore the original layout of the image and do the real transition after the render
             // pass ends.
-            mImageOptimizeForPresent->setCurrentImageLayout(context->getRenderer(),
-                                                            mImageOptimizeForPresentOriginalLayout);
+            mImageOptimizeForPresent->setCurrentImageLayout(mImageOptimizeForPresentOriginalLayout);
             mImageOptimizeForPresent->recordWriteBarrierOneOff(context, ImageLayout::Present,
                                                                &primary, nullptr);
             mImageOptimizeForPresent               = nullptr;
@@ -4229,7 +4207,7 @@ void DescriptorSetHelper::destroy()
         // Since the pool is created without VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, we
         // don't call vkFreeDescriptorSets. We always add to garbage list so that it can be
         // recycled.
-        mPool->addGarbage(std::move(*this));
+        mPool->get().addGarbage(std::move(*this));
         ASSERT(!valid());
     }
 }
@@ -4289,14 +4267,12 @@ void DescriptorPoolHelper::destroy(Renderer *renderer)
     mDescriptorSetCacheManager.destroyKeys(renderer);
     resetGarbage();
     ASSERT(renderer->hasResourceUseFinished(mUse));
-    ASSERT(mDescriptorSetGarbageList.empty());
     mDescriptorPool.destroy(renderer->getDevice());
 }
 
 void DescriptorPoolHelper::release(Renderer *renderer)
 {
     resetGarbage();
-    ASSERT(mDescriptorSetGarbageList.empty());
 
     GarbageObjects garbageObjects;
     garbageObjects.emplace_back(GetGarbage(&mDescriptorPool));
@@ -4349,10 +4325,10 @@ bool DescriptorPoolHelper::recycleGarbage(Renderer *renderer,
 
 bool DescriptorPoolHelper::allocateDescriptorSet(Context *context,
                                                  const DescriptorSetLayout &descriptorSetLayout,
-                                                 const DescriptorPoolPointer &pool,
+                                                 RefCountedDescriptorPool *refCountedPool,
                                                  DescriptorSetPointer *descriptorSetOut)
 {
-    ASSERT(pool.get() == this);
+    ASSERT(&(refCountedPool->get()) == this);
     if (recycleGarbage(context->getRenderer(), descriptorSetOut))
     {
         return true;
@@ -4361,7 +4337,7 @@ bool DescriptorPoolHelper::allocateDescriptorSet(Context *context,
     VkDescriptorSet descriptorSet;
     if (allocateVkDescriptorSet(context, descriptorSetLayout, &descriptorSet))
     {
-        DescriptorSetHelper helper = DescriptorSetHelper(descriptorSet, pool);
+        DescriptorSetHelper helper = DescriptorSetHelper(descriptorSet, refCountedPool);
         *descriptorSetOut          = std::move(helper);
         return true;
     }
@@ -4381,7 +4357,7 @@ void DescriptorPoolHelper::resetGarbage()
         // DescriptorSetHelper::destroy will not find it the garbage being valid  and try to add to
         // garbage list again.
         garbage->mDescriptorSet = VK_NULL_HANDLE;
-        garbage->mPool.reset();
+        garbage->mPool          = nullptr;
         ASSERT(!garbage->valid());
         mDescriptorSetGarbageList.pop_front();
     }
@@ -4428,7 +4404,7 @@ angle::Result DynamicDescriptorPool::init(Context *context,
     mPoolSizes.assign(setSizes, setSizes + setSizeCount);
     mCachedDescriptorSetLayout = descriptorSetLayout.getHandle();
 
-    DescriptorPoolPointer newPool = DescriptorPoolPointer::MakeShared();
+    DescriptorPoolPointer newPool = MakeShared<DescriptorPoolHelper>();
     ANGLE_TRY(newPool->init(context, mPoolSizes, mMaxSetsPerPool));
 
     mDescriptorPools.emplace_back(std::move(newPool));
@@ -4460,40 +4436,35 @@ angle::Result DynamicDescriptorPool::allocateDescriptorSet(
     ASSERT(descriptorSetLayout.getHandle() == mCachedDescriptorSetLayout);
 
     // First try to allocate from the same pool
-    DescriptorPoolPointer pool1;
     if (*descriptorSetOut)
     {
-        pool1 = (*descriptorSetOut)->getPool();
-        if (pool1->allocateDescriptorSet(context, descriptorSetLayout, pool1, descriptorSetOut))
+        RefCountedDescriptorPool *refCountedPool = (*descriptorSetOut)->getPool();
+        if (refCountedPool->get().allocateDescriptorSet(context, descriptorSetLayout,
+                                                        refCountedPool, descriptorSetOut))
         {
             return angle::Result::Continue;
         }
     }
 
     // Next try to allocate from mCurrentPoolIndex pool
-    DescriptorPoolPointer pool2;
-    if (mDescriptorPools[mCurrentPoolIndex] && mDescriptorPools[mCurrentPoolIndex]->valid() &&
-        !mDescriptorPools[mCurrentPoolIndex].owner_equal(pool1))
+    if (mDescriptorPools[mCurrentPoolIndex] &&
+        mDescriptorPools[mCurrentPoolIndex]->allocateDescriptorSet(
+            context, descriptorSetLayout,
+            mDescriptorPools[mCurrentPoolIndex].getRefCountedStorage(), descriptorSetOut))
     {
-        pool2 = mDescriptorPools[mCurrentPoolIndex];
-        if (pool2->allocateDescriptorSet(context, descriptorSetLayout, pool2, descriptorSetOut))
-        {
-            return angle::Result::Continue;
-        }
+        return angle::Result::Continue;
     }
 
-    // Next try all other existing pools
+    // Next try all existing pools
     for (DescriptorPoolPointer &pool : mDescriptorPools)
     {
-        if (!pool || !pool->valid())
+        if (!pool)
         {
             continue;
         }
-        if (pool.owner_equal(pool1) || pool.owner_equal(pool2))
-        {
-            continue;
-        }
-        if (pool->allocateDescriptorSet(context, descriptorSetLayout, pool, descriptorSetOut))
+
+        if (pool->allocateDescriptorSet(context, descriptorSetLayout, pool.getRefCountedStorage(),
+                                        descriptorSetOut))
         {
             return angle::Result::Continue;
         }
@@ -4502,7 +4473,8 @@ angle::Result DynamicDescriptorPool::allocateDescriptorSet(
     // Last, try to allocate a new pool (and/or evict an existing pool)
     ANGLE_TRY(allocateNewPool(context));
     bool success = mDescriptorPools[mCurrentPoolIndex]->allocateDescriptorSet(
-        context, descriptorSetLayout, mDescriptorPools[mCurrentPoolIndex], descriptorSetOut);
+        context, descriptorSetLayout, mDescriptorPools[mCurrentPoolIndex].getRefCountedStorage(),
+        descriptorSetOut);
     // Allocate from a new pool must succeed.
     ASSERT(success);
 
@@ -4533,7 +4505,7 @@ angle::Result DynamicDescriptorPool::getOrAllocateDescriptorSet(
     // Let pool know there is a shared cache key created and destroys the shared cache key
     // when it destroys the pool.
     *newSharedCacheKeyOut = CreateSharedDescriptorSetCacheKey(desc, this);
-    (*descriptorSetOut)->getPool()->onNewDescriptorSetAllocated(*newSharedCacheKeyOut);
+    (*descriptorSetOut)->getPool()->get().onNewDescriptorSetAllocated(*newSharedCacheKeyOut);
 
     return angle::Result::Continue;
 }
@@ -4541,32 +4513,24 @@ angle::Result DynamicDescriptorPool::getOrAllocateDescriptorSet(
 angle::Result DynamicDescriptorPool::allocateNewPool(Context *context)
 {
     Renderer *renderer = context->getRenderer();
-
-    // When cache is disabled, we are going to constantly release the current descriptorSet and put
-    // in garbage list and then recycle one from garbage list. The garbage list is essentially a
-    // ring buffer contains all pending/extra descriptorSets. For now we only do eviction if cache
-    // is enabled.
-    if (renderer->getFeatures().descriptorSetCache.enabled)
+    // Eviction logic: Before we allocate a new pool, check to see if there is any existing pool is
+    // not bound to program and is GPU compete. We destroy one pool in exchange for allocate a new
+    // pool to keep total descriptorPool count under control.
+    for (size_t poolIndex = 0; poolIndex < mDescriptorPools.size();)
     {
-        // Eviction logic: Before we allocate a new pool, check to see if there is any existing pool
-        // is not bound to program and is GPU compete. We destroy one pool in exchange for allocate
-        // a new pool to keep total descriptorPool count under control.
-        for (size_t poolIndex = 0; poolIndex < mDescriptorPools.size();)
+        if (!mDescriptorPools[poolIndex])
         {
-            if (!mDescriptorPools[poolIndex])
-            {
-                mDescriptorPools.erase(mDescriptorPools.begin() + poolIndex);
-                continue;
-            }
-            if (mDescriptorPools[poolIndex].unique() &&
-                renderer->hasResourceUseFinished(mDescriptorPools[poolIndex]->getResourceUse()))
-            {
-                mDescriptorPools[poolIndex]->destroy(renderer);
-                mDescriptorPools.erase(mDescriptorPools.begin() + poolIndex);
-                break;
-            }
-            ++poolIndex;
+            mDescriptorPools.erase(mDescriptorPools.begin() + poolIndex);
+            continue;
         }
+        if (mDescriptorPools[poolIndex].unique() &&
+            renderer->hasResourceUseFinished(mDescriptorPools[poolIndex]->getResourceUse()))
+        {
+            mDescriptorPools[poolIndex]->destroy(renderer);
+            mDescriptorPools.erase(mDescriptorPools.begin() + poolIndex);
+            break;
+        }
+        ++poolIndex;
     }
 
     static constexpr size_t kMaxPools = 99999;
@@ -4577,7 +4541,7 @@ angle::Result DynamicDescriptorPool::allocateNewPool(Context *context)
     {
         mMaxSetsPerPool *= mMaxSetsPerPoolMultiplier;
     }
-    DescriptorPoolPointer newPool = DescriptorPoolPointer::MakeShared();
+    DescriptorPoolPointer newPool = MakeShared<DescriptorPoolHelper>();
     ANGLE_TRY(newPool->init(context, mPoolSizes, mMaxSetsPerPool));
 
     mDescriptorPools.emplace_back(std::move(newPool));
@@ -4599,7 +4563,7 @@ void DynamicDescriptorPool::releaseCachedDescriptorSet(Renderer *renderer,
 
         if (descriptorSet.unique())
         {
-            DescriptorPoolWeakPointer pool = descriptorSet->getPool();
+            RefCountedDescriptorPool *pool = descriptorSet->getPool();
             descriptorSet.reset();
             checkAndReleaseUnusedPool(renderer, pool);
         }
@@ -4613,14 +4577,12 @@ void DynamicDescriptorPool::destroyCachedDescriptorSet(Renderer *renderer,
 }
 
 void DynamicDescriptorPool::checkAndReleaseUnusedPool(Renderer *renderer,
-                                                      const DescriptorPoolWeakPointer &pool)
+                                                      RefCountedDescriptorPool *pool)
 {
-    ASSERT(renderer->getFeatures().descriptorSetCache.enabled);
-
     // If pool still contains any valid descriptorSet cache, then don't destroy it. Note that even
     // if pool has no valid descriptorSet, pool itself may still be bound to a program until it gets
     // unbound when next descriptorSet gets allocated. We always keep at least one pool around.
-    if (mDescriptorPools.size() < 2 || pool->hasValidDescriptorSet() || pool.use_count() > 1)
+    if (mDescriptorPools.size() < 2 || pool->get().hasValidDescriptorSet() || pool->isReferenced())
     {
         return;
     }
@@ -4629,15 +4591,15 @@ void DynamicDescriptorPool::checkAndReleaseUnusedPool(Renderer *renderer,
     size_t poolIndex;
     for (poolIndex = 0; poolIndex < mDescriptorPools.size(); ++poolIndex)
     {
-        if (pool.owner_equal(mDescriptorPools[poolIndex]))
+        if (pool == mDescriptorPools[poolIndex].getRefCountedStorage())
         {
             break;
         }
     }
     // There must be a match
     ASSERT(poolIndex != mDescriptorPools.size());
-    ASSERT(pool->valid());
-    pool->release(renderer);
+    ASSERT(pool->get().valid());
+    pool->get().release(renderer);
 }
 
 // For testing only!
@@ -5755,28 +5717,6 @@ void BufferHelper::fillWithColor(const angle::Color<uint8_t> &color,
     }
 }
 
-void BufferHelper::fillWithPattern(const void *pattern,
-                                   size_t patternSize,
-                                   size_t offset,
-                                   size_t size)
-{
-    ASSERT(offset + size <= getSize());
-    ASSERT((size % patternSize) == 0);
-    ASSERT((offset % patternSize) == 0);
-
-    uint8_t *buffer = getMappedMemory() + offset;
-    std::memcpy(buffer, pattern, patternSize);
-    size_t remaining = size - patternSize;
-    while (remaining > patternSize)
-    {
-        std::memcpy(buffer + patternSize, buffer, patternSize);
-        remaining -= patternSize;
-        patternSize *= 2;
-    }
-    std::memcpy(buffer + patternSize, buffer, remaining);
-    return;
-}
-
 // Used for ImageHelper non-zero memory allocation when useVmaForImageSuballocation is disabled.
 angle::Result InitMappableDeviceMemory(Context *context,
                                        DeviceMemory *deviceMemory,
@@ -6800,7 +6740,7 @@ angle::Result ImageHelper::initLayerImageViewImpl(Context *context,
 
     if (conversionDesc.valid())
     {
-        ASSERT((context->getFeatures().supportsYUVSamplerConversion.enabled));
+        ASSERT((context->getRenderer()->getFeatures().supportsYUVSamplerConversion.enabled));
         yuvConversionInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
         yuvConversionInfo.pNext = nullptr;
         ANGLE_TRY(context->getRenderer()->getYuvConversionCache().getSamplerYcbcrConversion(
@@ -7024,8 +6964,7 @@ angle::Result ImageHelper::initImplicitMultisampledRenderToTexture(
         hasLazilyAllocatedMemory ? VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT : 0;
     constexpr VkImageUsageFlags kColorFlags =
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-    constexpr VkImageUsageFlags kDepthStencilFlags =
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+    constexpr VkImageUsageFlags kDepthStencilFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
     const VkImageUsageFlags kMultisampledUsageFlags =
         kLazyFlags |
@@ -7070,26 +7009,6 @@ VkImageAspectFlags ImageHelper::getAspectFlags() const
 bool ImageHelper::isCombinedDepthStencilFormat() const
 {
     return (getAspectFlags() & kDepthStencilAspects) == kDepthStencilAspects;
-}
-
-void ImageHelper::setCurrentImageLayout(Renderer *renderer, ImageLayout newLayout)
-{
-    // Once you transition to ImageLayout::SharedPresent, you never transition out of it.
-    if (mCurrentLayout == ImageLayout::SharedPresent)
-    {
-        return;
-    }
-
-    const ImageMemoryBarrierData &transitionFrom =
-        renderer->getImageMemoryBarrierData(mCurrentLayout);
-    const ImageMemoryBarrierData &transitionTo = renderer->getImageMemoryBarrierData(newLayout);
-    mLastNonShaderReadOnlyLayout =
-        !IsShaderReadOnlyLayout(transitionFrom) ? mCurrentLayout : mLastNonShaderReadOnlyLayout;
-    // Force the use of BarrierType::Pipeline in the next barrierImpl call
-    mLastNonShaderReadOnlyEvent.release(renderer);
-    mCurrentShaderReadStageMask =
-        IsShaderReadOnlyLayout(transitionTo) ? transitionTo.dstStageMask : 0;
-    mCurrentLayout = newLayout;
 }
 
 VkImageLayout ImageHelper::getCurrentLayout(Renderer *renderer) const
@@ -7371,7 +7290,8 @@ void ImageHelper::barrierImpl(Context *context,
 {
     Renderer *renderer = context->getRenderer();
     // mCurrentEvent must be invalid if useVkEventForImageBarrieris disabled.
-    ASSERT(context->getFeatures().useVkEventForImageBarrier.enabled || !mCurrentEvent.valid());
+    ASSERT(context->getRenderer()->getFeatures().useVkEventForImageBarrier.enabled ||
+           !mCurrentEvent.valid());
 
     // Release the ANI semaphore to caller to add to the command submission.
     ASSERT(acquireNextImageSemaphoreOut != nullptr || !mAcquireNextImageSemaphore.valid());
@@ -7803,7 +7723,7 @@ void ImageHelper::updateLayoutAndBarrier(Context *context,
 
 void ImageHelper::setCurrentRefCountedEvent(Context *context, EventMaps &eventMaps)
 {
-    ASSERT(context->getFeatures().useVkEventForImageBarrier.enabled);
+    ASSERT(context->getRenderer()->getFeatures().useVkEventForImageBarrier.enabled);
 
     // If there is already an event, release it first.
     mCurrentEvent.release(context);
@@ -8220,7 +8140,9 @@ angle::Result ImageHelper::generateMipmapsWithBlit(ContextVk *contextVk,
     // mLastNonShaderReadOnlyLayout is used to ensure previous write are made visible to reads,
     // since the only write here is transfer, hence mLastNonShaderReadOnlyLayout is set to
     // ImageLayout::TransferDst.
-    setCurrentImageLayout(renderer, ImageLayout::FragmentShaderReadOnly);
+    mLastNonShaderReadOnlyLayout = ImageLayout::TransferDst;
+    mCurrentShaderReadStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    mCurrentLayout               = ImageLayout::FragmentShaderReadOnly;
 
     contextVk->trackImageWithOutsideRenderPassEvent(this);
 
@@ -8384,7 +8306,7 @@ angle::Result ImageHelper::stageSubresourceUpdateImpl(ContextVk *contextVk,
         ANGLE_VK_CHECK_MATH(contextVk, storageFormatInfo.computeBufferImageHeight(
                                            glExtents.height, &bufferImageHeight));
 
-        if (contextVk->getFeatures().supportsComputeTranscodeEtcToBc.enabled &&
+        if (contextVk->getRenderer()->getFeatures().supportsComputeTranscodeEtcToBc.enabled &&
             IsETCFormat(vkFormat.getIntendedFormatID()) && IsBCFormat(storageFormat.id))
         {
             useComputeTransCoding =
@@ -9127,7 +9049,6 @@ void ImageHelper::restoreSubresourceContentImpl(gl::LevelIndex level,
 
 angle::Result ImageHelper::stagePartialClear(ContextVk *contextVk,
                                              const gl::Box &clearArea,
-                                             const ClearTextureMode clearMode,
                                              gl::TextureType textureType,
                                              uint32_t levelIndex,
                                              uint32_t layerIndex,
@@ -9191,24 +9112,9 @@ angle::Result ImageHelper::stagePartialClear(ContextVk *contextVk,
         aspectFlags |= formatInfo.stencilBits > 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0;
     }
 
-    if (clearMode == ClearTextureMode::FullClear)
-    {
-        bool useLayerAsDepth = textureType == gl::TextureType::CubeMap ||
-                               textureType == gl::TextureType::CubeMapArray ||
-                               textureType == gl::TextureType::_2DArray ||
-                               textureType == gl::TextureType::_2DMultisampleArray;
-        const gl::ImageIndex index = gl::ImageIndex::MakeFromType(
-            textureType, levelIndex, 0, useLayerAsDepth ? clearArea.depth : 1);
-
-        appendSubresourceUpdate(gl::LevelIndex(levelIndex),
-                                SubresourceUpdate(aspectFlags, clearValue, index));
-    }
-    else
-    {
-        appendSubresourceUpdate(gl::LevelIndex(levelIndex),
-                                SubresourceUpdate(aspectFlags, clearValue, textureType, levelIndex,
-                                                  layerIndex, layerCount, clearArea));
-    }
+    appendSubresourceUpdate(gl::LevelIndex(levelIndex),
+                            SubresourceUpdate(aspectFlags, clearValue, textureType, levelIndex,
+                                              layerIndex, layerCount, clearArea));
     return angle::Result::Continue;
 }
 
@@ -10030,7 +9936,6 @@ angle::Result ImageHelper::flushStagedUpdatesImpl(ContextVk *contextVk,
                     clear(renderer, update.data.clear.aspectFlags, update.data.clear.value,
                           updateMipLevelVk, updateBaseLayer, updateLayerCount,
                           &commandBuffer->getCommandBuffer());
-                    contextVk->getPerfCounters().fullImageClears++;
                     // Remember the latest operation is a clear call.
                     mCurrentSingleClearValue = update.data.clear;
 
@@ -11167,9 +11072,7 @@ angle::Result ImageHelper::readPixelsImpl(ContextVk *contextVk,
         ANGLE_TRY(resolvedImage.get().init2DStaging(
             contextVk, contextVk->getState().hasProtectedContent(), renderer->getMemoryProperties(),
             gl::Extents(area.width, area.height, 1), mIntendedFormatID, mActualFormatID,
-            VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                VK_IMAGE_USAGE_SAMPLED_BIT,
-            1));
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 1));
     }
     else if (isExternalFormat)
     {
@@ -11178,7 +11081,7 @@ angle::Result ImageHelper::readPixelsImpl(ContextVk *contextVk,
             gl::Extents(area.width, area.height, 1), angle::FormatID::R8G8B8A8_UNORM,
             angle::FormatID::R8G8B8A8_UNORM,
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
             1));
     }
 
@@ -12824,7 +12727,8 @@ angle::Result ShaderProgramHelper::getOrCreateComputePipeline(
     feedbackInfo.pipelineStageCreationFeedbackCount = 1;
     feedbackInfo.pPipelineStageCreationFeedbacks    = &perStageFeedback;
 
-    const bool supportsFeedback = context->getFeatures().supportsPipelineCreationFeedback.enabled;
+    const bool supportsFeedback =
+        context->getRenderer()->getFeatures().supportsPipelineCreationFeedback.enabled;
     if (supportsFeedback)
     {
         AddToPNextChain(&createInfo, &feedbackInfo);

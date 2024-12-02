@@ -25,8 +25,7 @@
 #pragma once
 
 #include "CSSCalcType.h"
-#include "CSSNone.h"
-#include "CSSPrimitiveNumericRange.h"
+#include "CSSPrimitiveNumericTypes.h"
 #include "CSSUnits.h"
 #include "CSSValueKeywords.h"
 #include "CalculationTree.h"
@@ -37,13 +36,6 @@
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
-
-namespace Style {
-
-// Forward declared from AnchorPositionEvaluator.h
-enum class AnchorSizeDimension : uint8_t;
-
-}
 
 enum class CSSUnitType : uint8_t;
 
@@ -751,8 +743,6 @@ public:
     // <anchor-side> = inside | outside | top | left | right | bottom | start | end | self-start | self-end | <percentage> | center
     using Side = std::variant<CSSValueID, Child>;
 
-    // Can't use Style::ScopedName here, since the scope ordinal is not available at
-    // parsing time.
     AtomString elementName;
     Side side;
     std::optional<Child> fallback;
@@ -769,10 +759,8 @@ public:
     // <anchor-element> = <dashed-ident>
     // <anchor-size> = width | height | block | inline | self-block | self-inline
 
-    // Can't use Style::ScopedName here, since the scope ordinal is not available at
-    // parsing time.
-    AtomString elementName; // <anchor-element>
-    std::optional<Style::AnchorSizeDimension> dimension; // <anchor-size>
+    AtomString elementName;
+    std::optional<CSSValueID> size;
     std::optional<Child> fallback;
 
     bool operator==(const AnchorSize&) const = default;
@@ -780,7 +768,7 @@ public:
 
 // MARK: Size assertions
 
-static_assert(sizeof(Child) <= 24, "Child should stay small");
+static_assert(sizeof(Child) == 24);
 
 // MARK: Reverse mappings
 

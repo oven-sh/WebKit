@@ -1,3 +1,0 @@
-
-FAIL Text directive blocked in application/json assert_equals: scrolled to fragment expected false but got true
-

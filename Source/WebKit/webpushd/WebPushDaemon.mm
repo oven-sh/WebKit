@@ -80,6 +80,8 @@
 #define GET_ALLOWED_BUNDLE_IDENTIFIER_ADDITIONS_1
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #if PLATFORM(IOS)
 
 // FIXME: This is only here temporarily for staging purposes.
@@ -1199,5 +1201,7 @@ void WebPushDaemon::setProtocolVersionForTesting(PushClientConnection& connectio
 }
 
 } // namespace WebPushD
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_PUSH_NOTIFICATIONS)

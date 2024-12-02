@@ -1,4 +1,0 @@
-1234567890
-
-FAIL @font-face should not leak out of shadow tree. assert_not_equals: got disallowed value 160
-

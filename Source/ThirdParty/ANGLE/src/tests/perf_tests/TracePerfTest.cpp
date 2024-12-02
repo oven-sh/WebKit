@@ -688,7 +688,8 @@ angle::GenericProc KHRONOS_APIENTRY TraceLoadProc(const char *procName)
     }
 
     // GLES
-    if (strcmp(procName, "glBindFramebuffer") == 0 || strcmp(procName, "glBindFramebufferOES") == 0)
+    // TODO(b/370508393): gles1 also requires glBindFramebufferOES, e.g. plague_inc
+    if (strcmp(procName, "glBindFramebuffer") == 0)
     {
         return reinterpret_cast<angle::GenericProc>(BindFramebufferProc);
     }
@@ -1318,7 +1319,7 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("mini_world"))
     {
-        if ((IsPixel4() || IsPixel4XL()) && mParams->isVulkan())
+        if (IsQualcomm() && mParams->isVulkan())
         {
             skipTest(
                 "TODO: http://anglebug.com/42264956 Vulkan Test failure on Pixel4XL due to vulkan "
@@ -1843,14 +1844,6 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         }
     }
 
-    if (traceNameIs("solar_smash"))
-    {
-        if (isIntelWinANGLE)
-        {
-            skipTest("https://issuetracker.google.com/378900717 Nondeterministic on Windows Intel");
-        }
-    }
-
     if (IsGalaxyS22())
     {
         if (traceNameIs("cod_mobile") || traceNameIs("dota_underlords") ||
@@ -2182,23 +2175,15 @@ void TracePerfTest::drawBenchmark()
         }
         else
         {
-            GLuint offscreenBuffer =
-                mOffscreenFramebuffers[mTotalFrameCount % mMaxOffscreenBufferCount];
+            // TODO(b/370508393): this is not valid for gles1, GL_READ_FRAMEBUFFER_BINDING
+            // isn't supported - only FRAMEBUFFER_BINDING_OES + bind FRAMEBUFFER_OES
             GLint currentDrawFBO, currentReadFBO;
-            if (gles1)
-            {
-                // OES_framebuffer_object doesn't define a separate "read" binding
-                glGetIntegerv(GL_FRAMEBUFFER_BINDING_OES, &currentDrawFBO);
-                bindFramebuffer(GL_FRAMEBUFFER, offscreenBuffer);
-            }
-            else
-            {
-                glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &currentDrawFBO);
-                glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &currentReadFBO);
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &currentDrawFBO);
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &currentReadFBO);
 
-                bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-                bindFramebuffer(GL_READ_FRAMEBUFFER, offscreenBuffer);
-            }
+            bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            bindFramebuffer(GL_READ_FRAMEBUFFER,
+                            mOffscreenFramebuffers[mTotalFrameCount % mMaxOffscreenBufferCount]);
 
             uint32_t frameX  = (mOffscreenFrameCount % kFramesPerSwap) % kFramesPerX;
             uint32_t frameY  = (mOffscreenFrameCount % kFramesPerSwap) / kFramesPerX;
@@ -2249,15 +2234,8 @@ void TracePerfTest::drawBenchmark()
                 glEnable(GL_SCISSOR_TEST);
             }
 
-            if (gles1)
-            {
-                bindFramebuffer(GL_FRAMEBUFFER, currentDrawFBO);
-            }
-            else
-            {
-                bindFramebuffer(GL_DRAW_FRAMEBUFFER, currentDrawFBO);
-                bindFramebuffer(GL_READ_FRAMEBUFFER, currentReadFBO);
-            }
+            bindFramebuffer(GL_DRAW_FRAMEBUFFER, currentDrawFBO);
+            bindFramebuffer(GL_READ_FRAMEBUFFER, currentReadFBO);
         }
 
         mTotalFrameCount++;
@@ -2464,17 +2442,14 @@ EGLDisplay TracePerfTest::onEglGetCurrentDisplay()
 // Triggered when the replay calls glBindFramebuffer.
 void TracePerfTest::onReplayFramebufferChange(GLenum target, GLuint framebuffer)
 {
-    bool gles1           = mParams->traceInfo.contextClientMajorVersion == 1;
-    auto bindFramebuffer = gles1 ? glBindFramebufferOES : glBindFramebuffer;
-
     if (framebuffer == 0 && mParams->surfaceType == SurfaceType::Offscreen)
     {
-        bindFramebuffer(target,
-                        mOffscreenFramebuffers[mTotalFrameCount % mMaxOffscreenBufferCount]);
+        glBindFramebuffer(target,
+                          mOffscreenFramebuffers[mTotalFrameCount % mMaxOffscreenBufferCount]);
     }
     else
     {
-        bindFramebuffer(target, framebuffer);
+        glBindFramebuffer(target, framebuffer);
     }
 
     switch (target)
@@ -2832,16 +2807,13 @@ void RegisterTraceTests()
     // Load JSON data.
     std::vector<std::string> traces;
     {
-        char traceListPath[kMaxPath] = {};
-        if (!angle::FindTestDataPath("gen/trace_list.json", traceListPath, kMaxPath))
-        {
-            ERR() << "Cannot find gen/trace_list.json";
-            return;
-        }
+        std::stringstream tracesJsonStream;
+        tracesJsonStream << rootTracePath << GetPathSeparator() << "restricted_traces.json";
+        std::string tracesJsonPath = tracesJsonStream.str();
 
-        if (!LoadTraceNamesFromJSON(traceListPath, &traces))
+        if (!LoadTraceNamesFromJSON(tracesJsonPath, &traces))
         {
-            ERR() << "Unable to load traces from JSON file: " << traceListPath;
+            ERR() << "Unable to load traces from JSON file: " << tracesJsonPath;
             return;
         }
     }

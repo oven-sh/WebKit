@@ -833,7 +833,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             type: cachedResourcePayload.type,
             loaderIdentifier,
             requestIdentifier,
-            requestMethod: WI.HTTPUtilities.RequestMethod.GET,
+            requestMethod: "GET",
             requestSentTimestamp: elapsedTime,
             initiatorStackTrace: this._initiatorStackTraceFromPayload(initiator),
             initiatorSourceCodeLocation: this._initiatorSourceCodeLocationFromPayload(initiator),
@@ -992,20 +992,19 @@ WI.NetworkManager = class NetworkManager extends WI.Object
                 return;
 
             case WI.LocalResourceOverride.InterceptType.Request: {
-                let method = localResource.requestMethod ?? (isPassthrough ? request.method : "");
                 target.NetworkAgent.interceptWithRequest.invoke({
                     requestId,
                     url: localResourceOverride.generateRequestRedirectURL(request.url) ?? undefined,
-                    method,
+                    method: localResource.requestMethod ?? (isPassthrough ? request.method : ""),
                     headers: {...originalHeaders, ...localResource.requestHeaders},
                     postData: (function() {
-                        if (method && WI.HTTPUtilities.RequestMethodsWithBody.has(method)) {
-                            if (localResource.requestData ?? false)
-                                return btoa(localResource.requestData);
-                            if (isPassthrough)
-                                return request.data;
-                        }
-                        return undefined;
+                        if (!WI.HTTPUtilities.RequestMethodsWithBody.has(localResource.requestMethod))
+                            return undefined;
+                        if (localResource.requestData ?? false)
+                            return btoa(localResource.requestData);
+                        if (isPassthrough)
+                            return request.data;
+                        return "";
                     })(),
                 });
                 return;

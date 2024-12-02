@@ -185,7 +185,6 @@ public:
     NetworkCache::Cache* cache() { return m_cache.get(); }
 
     PrefetchCache& prefetchCache() { return m_prefetchCache; }
-    CheckedRef<PrefetchCache> checkedPrefetchCache();
     void clearPrefetchCache() { m_prefetchCache.clear(); }
 
     virtual std::unique_ptr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::ShouldRelaxThirdPartyCookieBlocking, WebCore::StoredCredentialsPolicy);
@@ -260,8 +259,7 @@ public:
 #endif
 
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
-    NetworkNotificationManager& notificationManager() { return m_notificationManager.get(); }
-    Ref<NetworkNotificationManager> protectedNotificationManager();
+    NetworkNotificationManager& notificationManager() { return m_notificationManager; }
 #endif
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
@@ -287,7 +285,7 @@ protected:
 
     // SWServerDelegate
     void softUpdate(WebCore::ServiceWorkerJobData&&, bool shouldRefreshCache, WebCore::ResourceRequest&&, CompletionHandler<void(WebCore::WorkerFetchResult&&)>&&) final;
-    void createContextConnection(const WebCore::Site&, std::optional<WebCore::ProcessIdentifier>, std::optional<WebCore::ScriptExecutionContextIdentifier>, CompletionHandler<void()>&&) final;
+    void createContextConnection(const WebCore::RegistrableDomain&, std::optional<WebCore::ProcessIdentifier>, std::optional<WebCore::ScriptExecutionContextIdentifier>, CompletionHandler<void()>&&) final;
     void appBoundDomains(CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&&) final;
     void addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier, std::optional<WebCore::ProcessIdentifier>, WebCore::RegistrableDomain&&) final;
     RefPtr<WebCore::SWRegistrationStore> createRegistrationStore(WebCore::SWServer&) final;
@@ -323,20 +321,17 @@ protected:
 
     HashSet<Ref<NetworkResourceLoader>> m_keptAliveLoads;
 
-    class CachedNetworkResourceLoader : public RefCounted<CachedNetworkResourceLoader> {
+    class CachedNetworkResourceLoader {
         WTF_MAKE_TZONE_ALLOCATED(CachedNetworkResourceLoader);
     public:
-        static Ref<CachedNetworkResourceLoader> create(Ref<NetworkResourceLoader>&&);
-        RefPtr<NetworkResourceLoader> takeLoader();
-
-    private:
         explicit CachedNetworkResourceLoader(Ref<NetworkResourceLoader>&&);
+        RefPtr<NetworkResourceLoader> takeLoader();
+    private:
         void expirationTimerFired();
-
         WebCore::Timer m_expirationTimer;
         RefPtr<NetworkResourceLoader> m_loader;
     };
-    HashMap<NetworkResourceLoadIdentifier, Ref<CachedNetworkResourceLoader>> m_loadersAwaitingWebProcessTransfer;
+    HashMap<NetworkResourceLoadIdentifier, std::unique_ptr<CachedNetworkResourceLoader>> m_loadersAwaitingWebProcessTransfer;
 
     PrefetchCache m_prefetchCache;
 
@@ -346,7 +341,7 @@ protected:
     RefPtr<NetworkCache::Cache> m_cache;
     RefPtr<NetworkLoadScheduler> m_networkLoadScheduler;
     WebCore::BlobRegistryImpl m_blobRegistry;
-    Ref<NetworkBroadcastChannelRegistry> m_broadcastChannelRegistry;
+    UniqueRef<NetworkBroadcastChannelRegistry> m_broadcastChannelRegistry;
     unsigned m_testSpeedMultiplier { 1 };
     bool m_allowsServerPreconnect { true };
     bool m_shouldRunServiceWorkersOnMainThreadForTesting { false };
@@ -381,7 +376,7 @@ protected:
     HashMap<WebPageProxyIdentifier, String> m_attributedBundleIdentifierFromPageIdentifiers;
 
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
-    Ref<NetworkNotificationManager> m_notificationManager;
+    NetworkNotificationManager m_notificationManager;
 #endif
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
     std::optional<int64_t> m_bytesPerSecondLimit;

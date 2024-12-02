@@ -37,8 +37,6 @@
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 namespace ContentExtensions {
@@ -364,7 +362,5 @@ std::optional<DFA> NFAToDFA::convert(NFA&& nfa)
 } // namespace ContentExtensions
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

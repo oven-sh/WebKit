@@ -28,10 +28,8 @@
 #if USE(SKIA)
 
 #include "GraphicsContext.h"
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkCanvas.h>
 #include <skia/effects/SkDashPathEffect.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/CompletionHandler.h>
 
 namespace WebCore {
@@ -66,7 +64,6 @@ public:
 
     void drawNativeImageInternal(NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
     void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
-    void drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect& sourceImageRect, Filter&, FilterResults&) final;
 
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
@@ -119,8 +116,6 @@ private:
 
     void drawSkiaRect(const SkRect&, SkPaint&);
     void drawSkiaPath(const SkPath&, SkPaint&);
-    void drawSkiaImage(const sk_sp<SkImage>&, const IntSize&, const FloatRect&, const FloatRect&, ImagePaintingOptions);
-    void drawSkiaPattern(const sk_sp<SkImage>&, const IntSize&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, ImagePaintingOptions);
 
     class SkiaState {
     public:

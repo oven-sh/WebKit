@@ -46,8 +46,6 @@
 #endif
 #import <pal/cf/AudioToolboxSoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 #if ENABLE(VORBIS) || ENABLE(OPUS)
@@ -548,7 +546,5 @@ RefPtr<AudioInfo> createVorbisAudioInfo(std::span<const uint8_t> privateData)
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(COCOA)

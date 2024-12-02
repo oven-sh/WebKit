@@ -64,21 +64,26 @@ enum class AXPropertyFlag : uint32_t {
     HasBoldFont                                   = 1 << 3,
     HasItalicFont                                 = 1 << 4,
     HasPlainText                                  = 1 << 5,
-    IsEnabled                                     = 1 << 6,
-    IsExposedTableCell                            = 1 << 7,
-    IsGrabbed                                     = 1 << 8,
-    IsIgnored                                     = 1 << 9,
-    IsInlineText                                  = 1 << 10,
-    IsKeyboardFocusable                           = 1 << 11,
-    IsNonLayerSVGObject                           = 1 << 12,
-    IsTableColumn                                 = 1 << 13,
-    IsTableRow                                    = 1 << 14,
-    SupportsCheckedState                          = 1 << 15,
-    SupportsDragging                              = 1 << 16,
-    SupportsExpanded                              = 1 << 17,
-    SupportsPath                                  = 1 << 18,
-    SupportsPosInSet                              = 1 << 19,
-    SupportsSetSize                               = 1 << 20
+    IsControl                                     = 1 << 6,
+    IsEnabled                                     = 1 << 7,
+    IsExposedTableCell                            = 1 << 8,
+    IsGrabbed                                     = 1 << 9,
+    IsIgnored                                     = 1 << 10,
+    IsInlineText                                  = 1 << 11,
+    IsKeyboardFocusable                           = 1 << 12,
+    IsLink                                        = 1 << 13,
+    IsList                                        = 1 << 14,
+    IsNonLayerSVGObject                           = 1 << 15,
+    IsTableColumn                                 = 1 << 16,
+    IsTableRow                                    = 1 << 17,
+    SupportsCheckedState                          = 1 << 18,
+    SupportsDragging                              = 1 << 19,
+    SupportsExpanded                              = 1 << 20,
+    SupportsPath                                  = 1 << 21,
+    SupportsPosInSet                              = 1 << 22,
+    SupportsPressAction                           = 1 << 23,
+    SupportsRequiredAttribute                     = 1 << 24,
+    SupportsSetSize                               = 1 << 25
 };
 
 enum class AXPropertyName : uint16_t {
@@ -100,6 +105,7 @@ enum class AXPropertyName : uint16_t {
     CanBeMultilineTextField,
     CanSetFocusAttribute,
     CanSetSelectedAttribute,
+    CanSetSelectedChildren,
     CanSetValueAttribute,
 #if PLATFORM(MAC)
     CaretBrowsingEnabled,
@@ -110,6 +116,7 @@ enum class AXPropertyName : uint16_t {
     ColorValue,
     Columns,
     ColumnHeader,
+    ColumnHeaders,
     ColumnIndex,
     ColumnIndexRange,
     CurrentState,
@@ -128,8 +135,6 @@ enum class AXPropertyName : uint16_t {
     ExtendedDescription,
     HasApplePDFAnnotationAttribute,
     HasBoldFont,
-    HasBodyTag,
-    HasClickHandler,
     HasHighlighting,
     HasItalicFont,
     HasPlainText,
@@ -152,6 +157,7 @@ enum class AXPropertyName : uint16_t {
     IsBusy,
     IsChecked,
     IsColumnHeader,
+    IsControl,
     IsEnabled,
     IsExpanded,
     IsExposable,
@@ -164,6 +170,8 @@ enum class AXPropertyName : uint16_t {
     IsRadioInput,
     IsInputImage,
     IsKeyboardFocusable,
+    IsLink,
+    IsList,
     IsListBox,
     IsMathElement,
     IsMathFraction,
@@ -178,6 +186,7 @@ enum class AXPropertyName : uint16_t {
     IsMathTableCell,
     IsMathMultiscript,
     IsMathToken,
+    IsMeter,
     IsMultiSelectable,
     IsNonLayerSVGObject,
     IsPlugin,
@@ -258,7 +267,10 @@ enum class AXPropertyName : uint16_t {
     SupportsKeyShortcuts,
     SupportsPath,
     SupportsPosInSet,
+    SupportsPressAction,
     SupportsRangeValue,
+    SupportsRequiredAttribute,
+    SupportsSelectedRows,
     SupportsSetSize,
     TextContent,
     TextInputMarkedTextMarkerRange,
@@ -354,7 +366,7 @@ public:
     WEBCORE_EXPORT RefPtr<AXIsolatedObject> focusedNode();
 
     RefPtr<AXIsolatedObject> objectForID(std::optional<AXID>) const;
-    template<typename U> Vector<Ref<AXCoreObject>> objectsForIDs(const U&);
+    template<typename U> Vector<RefPtr<AXCoreObject>> objectsForIDs(const U&);
 
     void generateSubtree(AccessibilityObject&);
     bool shouldCreateNodeChange(AccessibilityObject&);
@@ -364,11 +376,6 @@ public:
     void updateChildrenForObjects(const ListHashSet<Ref<AccessibilityObject>>&);
     void updateNodeProperty(AXCoreObject& object, AXPropertyName property) { updateNodeProperties(object, { property }); }
     void updateNodeProperties(AXCoreObject&, const AXPropertyNameSet&);
-    void updateNodeProperties(AccessibilityObject* axObject, const AXPropertyNameSet& properties)
-    {
-        if (axObject)
-            updateNodeProperties(*axObject, properties);
-    }
     void updateDependentProperties(AccessibilityObject&);
     void updatePropertiesForSelfAndDescendants(AccessibilityObject&, const AXPropertyNameSet&);
     void updateFrame(AXID, IntRect&&);
@@ -379,15 +386,15 @@ public:
     void updateLoadingProgress(double);
 
     void addUnconnectedNode(Ref<AccessibilityObject>);
-    bool isUnconnectedNode(std::optional<AXID> axID) const { return axID && m_unconnectedNodes.contains(*axID); }
+    bool isUnconnectedNode(AXID axID) const { return m_unconnectedNodes.contains(axID); }
     // Removes the corresponding isolated object and all descendants from the m_nodeMap and queues their removal from the tree.
     void removeNode(const AccessibilityObject&);
     // Removes the given node and all its descendants from m_nodeMap.
     void removeSubtreeFromNodeMap(std::optional<AXID>, AccessibilityObject*);
 
-    void objectBecameIgnored(const AccessibilityObject& object)
-    {
 #if !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+    void objectBecameIgnored(AXID axID)
+    {
         // When an object becomes ignored, we should immediately remove it from the nodemap.
         // This is critical because objects can become ignored at any point, including in the
         // middle of AXObjectCache::handleChildrenChanged(). Consider this tree structure:
@@ -409,27 +416,12 @@ public:
         // just with a different parent (the next unignored ancestor). So we can safely only remove the given
         // object from the nodemap, and rely on the normal updateChildren flow to repair parent relationships
         // as needed.
-        m_nodeMap.remove(object.objectID());
+        m_nodeMap.remove(axID);
         // Any queued parent updates no longer need to happen (and if we do try to process them, we'll crash,
         // since this object is no longer in the node map).
-        m_needsParentUpdate.remove(object.objectID());
+        m_needsParentUpdate.remove(axID);
+    }
 #endif // !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-
-#if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-        objectChangedIgnoredState(object);
-        queueNodeUpdate(object.objectID(), { AXPropertyName::IsIgnored });
-#endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-    }
-    void objectBecameUnignored(const AccessibilityObject& object)
-    {
-#if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-        // We only cache minimal properties for ignored objects, so do a full node update to ensure all properties are cached.
-        queueNodeUpdate(object.objectID(), NodeUpdateOptions::nodeUpdate());
-        objectChangedIgnoredState(object);
-#else
-        UNUSED_PARAM(object);
-#endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-    }
 
     // Both setRootNodeID and setFocusedNodeID are called during the generation
     // of the IsolatedTree.
@@ -500,8 +492,6 @@ private:
     void queueRemovalsAndUnresolvedChanges();
     Vector<NodeChange> resolveAppends();
     void queueAppendsAndRemovals(Vector<NodeChange>&&, Vector<AXID>&&);
-
-    void objectChangedIgnoredState(const AccessibilityObject&);
 
     const ProcessID m_processID { presentingApplicationPID() };
     unsigned m_maxTreeDepth { 0 };
@@ -592,15 +582,16 @@ inline RefPtr<AXIsolatedTree> AXIsolatedTree::treeForPageID(std::optional<PageId
 }
 
 template<typename U>
-inline Vector<Ref<AXCoreObject>> AXIsolatedTree::objectsForIDs(const U& axIDs)
+inline Vector<RefPtr<AXCoreObject>> AXIsolatedTree::objectsForIDs(const U& axIDs)
 {
     ASSERT(!isMainThread());
 
-    Vector<Ref<AXCoreObject>> result;
+    Vector<RefPtr<AXCoreObject>> result;
     result.reserveInitialCapacity(axIDs.size());
     for (const auto& axID : axIDs) {
-        if (RefPtr object = objectForID(axID))
-            result.append(object.releaseNonNull());
+        RefPtr object = objectForID(axID);
+        if (object)
+            result.append(WTFMove(object));
     }
     result.shrinkToFit();
     return result;

@@ -30,8 +30,6 @@
 
 #include <wtf/Function.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 static inline bool isSliceNALU(uint8_t data)
@@ -205,7 +203,5 @@ SFrameCompatibilityPrefixBuffer computeVP8PrefixBuffer(std::span<const uint8_t> 
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_RTC)

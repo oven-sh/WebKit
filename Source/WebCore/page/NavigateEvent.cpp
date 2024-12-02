@@ -27,13 +27,9 @@
 #include "NavigateEvent.h"
 
 #include "AbortController.h"
-#include "CommonVM.h"
-#include "Element.h"
 #include "ExceptionCode.h"
-#include "HTMLBodyElement.h"
 #include "HistoryController.h"
 #include "LocalFrameView.h"
-#include "Navigation.h"
 #include "NavigationNavigationType.h"
 #include <wtf/IsoMallocInlines.h>
 
@@ -48,14 +44,13 @@ NavigateEvent::NavigateEvent(const AtomString& type, const NavigateEvent::Init& 
     , m_signal(init.signal)
     , m_formData(init.formData)
     , m_downloadRequest(init.downloadRequest)
+    , m_info(init.info)
     , m_canIntercept(init.canIntercept)
     , m_userInitiated(init.userInitiated)
     , m_hashChange(init.hashChange)
     , m_hasUAVisualTransition(init.hasUAVisualTransition)
     , m_abortController(abortController)
 {
-    Locker<JSC::JSLock> locker(commonVM().apiLock());
-    m_info.setWeakly(init.info);
 }
 
 Ref<NavigateEvent> NavigateEvent::create(const AtomString& type, const NavigateEvent::Init& init, AbortController* abortController)
@@ -156,26 +151,13 @@ void NavigateEvent::potentiallyProcessScrollBehavior(Document& document)
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#navigateevent-finish
-void NavigateEvent::finish(Document& document, InterceptionHandlersDidFulfill didFulfill, FocusDidChange focusChanged)
+void NavigateEvent::finish(Document& document, InterceptionHandlersDidFulfill didFulfill)
 {
     ASSERT(m_interceptionState != InterceptionState::Intercepted && m_interceptionState != InterceptionState::Finished);
     if (!m_interceptionState)
         return;
 
-    ASSERT(m_interceptionState == InterceptionState::Committed || m_interceptionState == InterceptionState::Scrolled);
-    if (focusChanged == FocusDidChange::No && m_focusReset != NavigationFocusReset::Manual) {
-        RefPtr documentElement = document.documentElement();
-        ASSERT(documentElement);
-
-        RefPtr<Element> focusTarget = documentElement->findAutofocusDelegate();
-        if (!focusTarget)
-            focusTarget = document.body();
-        if (!focusTarget)
-            focusTarget = documentElement;
-
-        document.setFocusedElement(focusTarget.get());
-    }
-
+    // FIXME: 3. Potentially reset the focus
     if (didFulfill == InterceptionHandlersDidFulfill::Yes)
         potentiallyProcessScrollBehavior(document);
 

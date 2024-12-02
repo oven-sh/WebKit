@@ -21,18 +21,6 @@
 namespace rx
 {
 
-union PixelColor
-{
-    uint8_t u8[4];
-    int8_t s8[4];
-    uint16_t u16[4];
-    int16_t s16[4];
-    uint32_t u32[4];
-    int32_t s32[4];
-    cl_half fp16[4];
-    cl_float fp32[4];
-};
-
 class CLMemoryVk : public CLMemoryImpl
 {
   public:
@@ -50,7 +38,6 @@ class CLMemoryVk : public CLMemoryImpl
     VkBufferUsageFlags getVkUsageFlags();
     VkMemoryPropertyFlags getVkMemPropertyFlags();
     virtual size_t getSize() const = 0;
-    size_t getOffset() const { return mMemory.getOffset(); }
 
     angle::Result copyTo(void *ptr, size_t offset, size_t size);
     angle::Result copyTo(CLMemoryVk *dst, size_t srcOffset, size_t dstOffset, size_t size);
@@ -87,20 +74,15 @@ class CLBufferVk : public CLMemoryVk
     CLBufferVk(const cl::Buffer &buffer);
     ~CLBufferVk() override;
 
-    vk::BufferHelper &getBuffer();
+    angle::Result createSubBuffer(const cl::Buffer &buffer,
+                                  cl::MemFlags flags,
+                                  size_t size,
+                                  CLMemoryImpl::Ptr *subBufferOut) override;
+
+    vk::BufferHelper &getBuffer() { return mBuffer; }
     CLBufferVk *getParent() { return static_cast<CLBufferVk *>(mParent); }
 
     angle::Result create(void *hostPtr);
-    angle::Result createStagingBuffer(size_t size);
-
-    angle::Result fillWithPattern(const void *pattern,
-                                  size_t patternSize,
-                                  size_t offset,
-                                  size_t size)
-    {
-        getBuffer().fillWithPattern(pattern, patternSize, offset, size);
-        return angle::Result::Continue;
-    }
 
     bool isSubBuffer() const { return mParent != nullptr; }
 
@@ -129,60 +111,28 @@ class CLImageVk : public CLMemoryVk
     angle::Result create(void *hostPtr);
 
     bool isCurrentlyInUse() const override;
+    bool isMapped() { return mMappedMemory != nullptr; }
     bool containsHostMemExtension();
 
     angle::Result createStagingBuffer(size_t size);
     angle::Result copyStagingFrom(void *ptr, size_t offset, size_t size);
-    angle::Result copyStagingTo(void *ptr, size_t offset, size_t size);
-    angle::Result copyStagingToFromWithPitch(void *ptr,
-                                             const cl::Coordinate &region,
-                                             const size_t rowPitch,
-                                             const size_t slicePitch,
-                                             StagingBufferCopyDirection copyStagingTo);
     VkImageUsageFlags getVkImageUsageFlags();
     VkImageType getVkImageType(const cl::ImageDescriptor &desc);
     size_t getSize() const override { return mImageSize; }
-    size_t getElementSize() { return mElementSize; }
-    size_t getArraySize() const { return mArrayLayers; }
-    bool isStagingBufferInitialized() { return mStagingBufferInitialized; }
-    VkExtent3D getImageExtent() { return mExtent; }
-    uint8_t *getMappedPtr() { return mMappedMemory; }
-    vk::ImageView &getImageView() { return mImageView; }
-    cl_image_format getImageFormat() { return mImageFormat; }
-    cl::ImageDescriptor getDesc() { return mDesc; }
-    void packPixels(const void *fillColor, PixelColor *packedColor);
-    void fillImageWithColor(const cl::MemOffsets &origin,
-                            const cl::Coordinate &region,
-                            uint8_t *imagePtr,
-                            PixelColor *packedColor);
-    VkExtent3D getExtentForCopy(const cl::Coordinate &region);
-    VkOffset3D getOffsetForCopy(const cl::MemOffsets &origin);
-    VkImageSubresourceLayers getSubresourceLayersForCopy(const cl::MemOffsets &origin,
-                                                         const cl::Coordinate &region,
-                                                         cl::MemObjectType copyToType,
-                                                         ImageCopyWith imageCopy);
-    size_t getRowPitch();
-    size_t getSlicePitch(size_t imageRowPitch);
 
   private:
     angle::Result mapImpl() override;
     void unmapImpl() override;
     angle::Result setDataImpl(const uint8_t *data, size_t size, size_t offset);
-    size_t calculateRowPitch();
-    size_t calculateSlicePitch(size_t imageRowPitch);
 
-    vk::ImageHelper mImage;
     vk::BufferHelper mStagingBuffer;
+    vk::ImageHelper mImage;
     VkExtent3D mExtent;
     angle::FormatID mFormat;
     uint32_t mArrayLayers;
     size_t mImageSize;
-    size_t mElementSize;
-    cl_image_format mImageFormat;
-    cl::ImageDescriptor mDesc;
-    bool mStagingBufferInitialized;
-    vk::ImageView mImageView;
-    VkImageViewType mImageViewType;
+    size_t mNumberChannels;
+    size_t mBytesPerChannel;
 };
 
 }  // namespace rx

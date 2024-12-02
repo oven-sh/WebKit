@@ -29,8 +29,6 @@
 
 #include "FELightingSoftwareApplier.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 inline IntSize FELightingSoftwareApplier::LightingData::topLeftNormal(int offset) const
@@ -178,5 +176,3 @@ inline IntSize FELightingSoftwareApplier::LightingData::bottomRightNormal(int of
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

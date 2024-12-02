@@ -22,7 +22,7 @@
 
 #if ENABLE(IPC_TESTING_API)
 
-messages -> IPCTester {
+messages -> IPCTester NotRefCounted {
     StartMessageTesting(String driverName)
     StopMessageTesting() -> () Synchronous
     CreateStreamTester(WebKit::IPCStreamTesterIdentifier identifier, IPC::StreamServerConnectionHandle serverConnection)

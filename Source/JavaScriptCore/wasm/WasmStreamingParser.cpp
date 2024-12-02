@@ -37,8 +37,6 @@
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace Wasm {
 
 namespace WasmStreamingParserInternal {
@@ -456,7 +454,5 @@ auto StreamingParser::finalize() -> State
 }
 
 } } // namespace JSC::Wasm
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

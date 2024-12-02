@@ -431,7 +431,7 @@ public:
     bool descendantDependentFlagsAreDirty() const
     {
         return m_visibleDescendantStatusDirty || m_visibleContentStatusDirty || m_hasSelfPaintingLayerDescendantDirty
-            || m_hasNotIsolatedBlendingDescendantsStatusDirty || m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty;
+            || m_hasNotIsolatedBlendingDescendantsStatusDirty || m_hasIntrinsicallyCompositedDescendantsStatusDirty;
     }
 
     bool isPaintingSVGResourceLayer() const { return m_isPaintingSVGResourceLayer; }
@@ -637,7 +637,7 @@ public:
         PaintingCompositingForegroundPhase    = 1 << 6,
         PaintingCompositingMaskPhase          = 1 << 7,
         PaintingCompositingClipPathPhase      = 1 << 8,
-        PaintingOverflowContainer             = 1 << 9,
+        PaintingCompositingScrollingPhase     = 1 << 9,
         PaintingOverflowContents              = 1 << 10,
         PaintingRootBackgroundOnly            = 1 << 11,
         PaintingSkipRootBackground            = 1 << 12,
@@ -681,7 +681,7 @@ public:
         OptionSet<ClipRectsOption> options;
 
         bool respectOverflowClip() const { return options.contains(ClipRectsOption::RespectOverflowClip); }
-        OverlayScrollbarSizeRelevancy overlayScrollbarSizeRelevancy() const { return options.contains(ClipRectsOption::IncludeOverlayScrollbarSize) ? OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize : OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize; }
+        OverlayScrollbarSizeRelevancy overlayScrollbarSizeRelevancy() const { return options.contains(ClipRectsOption::IncludeOverlayScrollbarSize) ? IncludeOverlayScrollbarSize : IgnoreOverlayScrollbarSize; }
     };
 
     // This method figures out our layerBounds in coordinates relative to
@@ -826,10 +826,6 @@ public:
     bool hasCompositingDescendant() const { return m_hasCompositingDescendant; }
     bool hasCompositedMask() const;
     bool hasCompositedNonContainedDescendants() const { return m_hasCompositedNonContainedDescendants; }
-
-    bool hasDescendantNeedingEventRegionUpdate() const { return m_hasDescendantNeedingEventRegionUpdate; }
-    void setAncestorsHaveDescendantNeedingEventRegionUpdate();
-    void clearHasDescendantNeedingEventRegionUpdate() { m_hasDescendantNeedingEventRegionUpdate = false; }
 
     // If non-null, a non-ancestor composited layer that this layer paints into (it is sharing its backing store with this layer).
     RenderLayer* backingProviderLayer() const { return m_backingProviderLayer.get(); }
@@ -1085,7 +1081,7 @@ private:
         return { };
     }
 
-    LayoutRect rendererBorderBoxRectInFragment(RenderFragmentContainer* fragment, RenderBox::RenderBoxFragmentInfoFlags flags = RenderBox::RenderBoxFragmentInfoFlags::CacheRenderBoxFragmentInfo) const
+    LayoutRect rendererBorderBoxRectInFragment(RenderFragmentContainer* fragment, RenderBox::RenderBoxFragmentInfoFlags flags = RenderBox::CacheRenderBoxFragmentInfo) const
     {
         if (auto* box = dynamicDowncast<RenderBox>(renderer()))
             return box->borderBoxRectInFragment(fragment, flags);
@@ -1228,13 +1224,12 @@ private:
     void updateAncestorChainHasBlendingDescendants();
     void dirtyAncestorChainHasBlendingDescendants();
 
-    void updateAncestorChainHasAlwaysIncludedInZOrderListsDescendants();
-    void dirtyAncestorChainHasAlwaysIncludedInZOrderListsDescendants();
+    void updateAncestorChainHasIntrinsicallyCompositedDescendants();
+    void dirtyAncestorChainHasIntrinsicallyCompositedDescendants();
 
-    bool alwaysIncludedInZOrderLists() const { return m_alwaysIncludedInZOrderLists; }
-    bool hasAlwaysIncludedInZOrderListsDescendants() const { return m_hasAlwaysIncludedInZOrderListsDescendants; }
+    bool isIntrinsicallyComposited() const { return m_intrinsicallyComposited; }
+    bool hasIntrinsicallyCompositedDescendants() const { return m_hasIntrinsicallyCompositedDescendants; }
     void setIntrinsicallyComposited(bool);
-    void updateAlwaysIncludedInZOrderLists();
 
     Ref<ClipRects> parentClipRects(const ClipRectsContext&) const;
     ClipRect backgroundClipRect(const ClipRectsContext&) const;
@@ -1330,8 +1325,6 @@ private:
     bool m_isHiddenByOverflowTruncation : 1 { false };
     bool m_isPaintingSVGResourceLayer : 1 { false };
 
-    bool m_hasDescendantNeedingEventRegionUpdate : 1 { false };
-
     unsigned m_indirectCompositingReason : 4; // IndirectCompositingReason
     unsigned m_viewportConstrainedNotCompositedReason : 2; // ViewportConstrainedNotCompositedReason
 
@@ -1346,9 +1339,8 @@ private:
     bool m_repaintRectsValid : 1;
 
     bool m_intrinsicallyComposited : 1 { false };
-    bool m_alwaysIncludedInZOrderLists : 1 { false };
-    bool m_hasAlwaysIncludedInZOrderListsDescendants : 1 { false };
-    bool m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty : 1 { true };
+    bool m_hasIntrinsicallyCompositedDescendants : 1 { false };
+    bool m_hasIntrinsicallyCompositedDescendantsStatusDirty : 1 { true };
 
     bool m_wasOmittedFromZOrderTree : 1 { false };
 
@@ -1484,7 +1476,6 @@ WTF::TextStream& operator<<(WTF::TextStream&, const RenderLayer&);
 WTF::TextStream& operator<<(WTF::TextStream&, const RenderLayer::ClipRectsContext&);
 WTF::TextStream& operator<<(WTF::TextStream&, IndirectCompositingReason);
 WTF::TextStream& operator<<(WTF::TextStream&, PaintBehavior);
-WTF::TextStream& operator<<(WTF::TextStream&, RenderLayer::PaintLayerFlag);
 
 } // namespace WebCore
 

@@ -29,8 +29,6 @@
 #include "ScopedArguments.h"
 #include "Structure.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 inline Structure* JSArray::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, IndexingType indexingType)
@@ -336,5 +334,3 @@ ALWAYS_INLINE JSValue getProperty(JSGlobalObject* globalObject, JSObject* object
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

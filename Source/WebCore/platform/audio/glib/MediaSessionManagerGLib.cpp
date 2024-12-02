@@ -123,7 +123,7 @@ std::unique_ptr<PlatformMediaSessionManager> PlatformMediaSessionManager::create
         g_warning("Failed at parsing XML Interface definition: %s", error->message);
         return nullptr;
     }
-    return makeUniqueWithoutRefCountedCheck<MediaSessionManagerGLib>(WTFMove(mprisInterface));
+    return makeUnique<MediaSessionManagerGLib>(WTFMove(mprisInterface));
 }
 
 MediaSessionManagerGLib::MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&& mprisInterface)

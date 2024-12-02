@@ -28,8 +28,6 @@
 
 #include <wtf/text/ASCIIFastPath.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace PAL {
 
 template<size_t size> struct UCharByteFiller;
@@ -77,5 +75,3 @@ inline void copyASCIIMachineWord(UChar* destination, const uint8_t* source)
 }
 
 } // namespace PAL
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

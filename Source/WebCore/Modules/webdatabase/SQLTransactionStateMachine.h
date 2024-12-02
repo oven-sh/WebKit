@@ -28,10 +28,6 @@
 #include "SQLTransactionState.h"
 #include <wtf/Forward.h>
 
-#ifndef NDEBUG
-#include <array>
-#endif
-
 namespace WebCore {
 
 template<typename T>
@@ -56,9 +52,9 @@ protected:
     // s_sizeOfStateAuditTrail states that the state machine enters. The audit
     // trail is updated before entering each state. This is for debugging use
     // only.
-    static constexpr size_t s_sizeOfStateAuditTrail = 20;
+    static const int s_sizeOfStateAuditTrail = 20;
     int m_nextStateAuditEntry;
-    std::array<SQLTransactionState, s_sizeOfStateAuditTrail> m_stateAuditTrail;
+    SQLTransactionState m_stateAuditTrail[s_sizeOfStateAuditTrail];
 #endif
 };
 
@@ -75,7 +71,7 @@ SQLTransactionStateMachine<T>::SQLTransactionStateMachine()
 #endif
 {
 #ifndef NDEBUG
-    for (size_t i = 0; i < s_sizeOfStateAuditTrail; ++i)
+    for (int i = 0; i < s_sizeOfStateAuditTrail; i++)
         m_stateAuditTrail[i] = SQLTransactionState::NumberOfStates;
 #endif
 }

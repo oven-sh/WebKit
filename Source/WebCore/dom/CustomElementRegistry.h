@@ -31,7 +31,6 @@
 #include <wtf/Lock.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/RobinHoodHashSet.h>
-#include <wtf/WeakListHashSet.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringHash.h>
@@ -57,13 +56,10 @@ class QualifiedName;
 
 class CustomElementRegistry : public RefCounted<CustomElementRegistry>, public ContextDestructionObserver {
 public:
-    static Ref<CustomElementRegistry> create(ScriptExecutionContext&, LocalDOMWindow&);
-    static Ref<CustomElementRegistry> create(ScriptExecutionContext&);
+    static Ref<CustomElementRegistry> create(LocalDOMWindow&, ScriptExecutionContext*);
     ~CustomElementRegistry();
 
     Document* document() const;
-
-    void didAssociateWithDocument(Document&);
 
     RefPtr<DeferredPromise> addElementDefinition(Ref<JSCustomElementInterface>&&);
 
@@ -83,17 +79,14 @@ public:
     bool isShadowDisabled(const AtomString& name) const { return m_disabledShadowSet.contains(name); }
 
     template<typename Visitor> void visitJSCustomElementInterfaces(Visitor&) const;
-
 private:
-    CustomElementRegistry(ScriptExecutionContext&, LocalDOMWindow&);
-    CustomElementRegistry(ScriptExecutionContext&);
+    CustomElementRegistry(LocalDOMWindow&, ScriptExecutionContext*);
 
     WeakPtr<LocalDOMWindow, WeakPtrImplWithEventTargetData> m_window;
     UncheckedKeyHashMap<AtomString, Ref<JSCustomElementInterface>> m_nameMap;
     UncheckedKeyHashMap<const JSC::JSObject*, JSCustomElementInterface*> m_constructorMap WTF_GUARDED_BY_LOCK(m_constructorMapLock);
     MemoryCompactRobinHoodHashMap<AtomString, Ref<DeferredPromise>> m_promiseMap;
     MemoryCompactRobinHoodHashSet<AtomString> m_disabledShadowSet;
-    WeakListHashSet<Document, WeakPtrImplWithEventTargetData> m_associatedDocuments;
 
     bool m_elementDefinitionIsRunning { false };
     mutable Lock m_constructorMapLock;

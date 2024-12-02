@@ -38,7 +38,6 @@
 #include "ContextMenuController.h"
 #include "ContextMenuItem.h"
 #include "ContextMenuProvider.h"
-#include "DocumentInlines.h"
 #include "Event.h"
 #include "EventListener.h"
 #include "EventNames.h"
@@ -58,7 +57,6 @@
 #include "Node.h"
 #include "Page.h"
 #include "PageGroup.h"
-#include "Quirks.h"
 #include "RenderTheme.h"
 #include "ShadowRoot.h"
 #include "TextTrack.h"
@@ -314,8 +312,9 @@ bool MediaControlsHost::inWindowFullscreen() const
     if (!m_mediaElement)
         return false;
 
-    if (RefPtr videoElement = dynamicDowncast<HTMLVideoElement>(*m_mediaElement))
-        return videoElement->webkitPresentationMode() == HTMLVideoElement::VideoPresentationMode::InWindow;
+    auto& mediaElement = *m_mediaElement;
+    if (is<HTMLVideoElement>(mediaElement))
+        return downcast<HTMLVideoElement>(mediaElement).webkitPresentationMode() == HTMLVideoElement::VideoPresentationMode::InWindow;
 #endif
     return false;
 }
@@ -326,13 +325,6 @@ bool MediaControlsHost::supportsRewind() const
     if (auto sourceType = this->sourceType())
         return *sourceType == SourceType::HLS || *sourceType == SourceType::File;
 #endif
-    return false;
-}
-
-bool MediaControlsHost::needsChromeMediaControlsPseudoElement() const
-{
-    if (m_mediaElement)
-        return m_mediaElement->document().quirks().needsChromeMediaControlsPseudoElement();
     return false;
 }
 
@@ -568,7 +560,7 @@ bool MediaControlsHost::showMediaControlsContextMenu(HTMLElement& target, String
         PlaybackSpeed,
         ShowMediaStatsTag
     >;
-    HashMap<MenuItemIdentifier, MenuData> idMap;
+    UncheckedKeyHashMap<MenuItemIdentifier, MenuData> idMap;
 
     auto createSubmenu = [] (const String& title, const String& icon, Vector<MenuItem>&& children) -> MenuItem {
 #if USE(UICONTEXTMENU)

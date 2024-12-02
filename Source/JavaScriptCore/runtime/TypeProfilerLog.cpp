@@ -34,8 +34,6 @@
 #include "TypeLocation.h"
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 namespace TypeProfilerLogInternal {
@@ -144,5 +142,3 @@ void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -8,7 +8,6 @@
 
 #include "angle_gl.h"
 #include "common/debug.h"
-#include "common/hash_containers.h"
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/StaticType.h"
 #include "compiler/translator/SymbolTable.h"
@@ -258,24 +257,7 @@ void InsertInitCode(TCompiler *compiler,
     }
 }
 
-TFunction *CloneFunctionHeader(TSymbolTable *symbolTable, const TFunction *function)
-{
-    TFunction *newFunction =
-        new TFunction(symbolTable, function->name(), function->symbolType(),
-                      &function->getReturnType(), function->isKnownToNotHaveSideEffects());
-
-    if (function->isDefined())
-    {
-        newFunction->setDefined();
-    }
-    if (function->hasPrototypeDeclaration())
-    {
-        newFunction->setHasPrototypeDeclaration();
-    }
-    return newFunction;
-}
-
-class InitializeLocalsTraverser final : public TIntermTraverser
+class InitializeLocalsTraverser : public TIntermTraverser
 {
   public:
     InitializeLocalsTraverser(int shaderVersion,
@@ -287,46 +269,6 @@ class InitializeLocalsTraverser final : public TIntermTraverser
           mCanUseLoopsToInitialize(canUseLoopsToInitialize),
           mHighPrecisionSupported(highPrecisionSupported)
     {}
-
-    void collectUnnamedOutFunctions(TIntermBlock &root)
-    {
-        TIntermSequence &sequence = *root.getSequence();
-        const size_t count        = sequence.size();
-        for (size_t i = 0; i < count; ++i)
-        {
-            const TIntermFunctionDefinition *functionDefinition =
-                sequence[i]->getAsFunctionDefinition();
-            if (!functionDefinition)
-            {
-                continue;
-            }
-            const TFunction *function = functionDefinition->getFunction();
-            TFunction *newFunction    = nullptr;
-            for (size_t p = 0; p < function->getParamCount(); ++p)
-            {
-                const TVariable *param = function->getParam(p);
-                const TType &type      = param->getType();
-                if (param->symbolType() == SymbolType::Empty)
-                {
-                    if (!newFunction)
-                    {
-                        newFunction                   = CloneFunctionHeader(mSymbolTable, function);
-                        mFunctionsToReplace[function] = newFunction;
-                        for (size_t z = 0; z < p; ++z)
-                        {
-                            newFunction->addParameter(function->getParam(z));
-                        }
-                    }
-                    param = new TVariable(mSymbolTable, kEmptyImmutableString, &type,
-                                          SymbolType::AngleInternal, param->extensions());
-                }
-                if (newFunction)
-                {
-                    newFunction->addParameter(param);
-                }
-            }
-        }
-    }
 
   protected:
     bool visitDeclaration(Visit visit, TIntermDeclaration *node) override
@@ -374,22 +316,7 @@ class InitializeLocalsTraverser final : public TIntermTraverser
                 }
             }
         }
-        // Must recurse in the cases which had initializers, because the initializiers might
-        // call the function that was rewritten.
-        return true;
-    }
-
-    void visitFunctionPrototype(TIntermFunctionPrototype *node) override
-    {
-        if (getParentNode()->getAsFunctionDefinition() != nullptr)
-        {
-            return;
-        }
-        auto it = mFunctionsToReplace.find(node->getFunction());
-        if (it != mFunctionsToReplace.end())
-        {
-            queueReplacement(new TIntermFunctionPrototype(it->second), OriginalNode::IS_DROPPED);
-        }
+        return false;
     }
 
     bool visitFunctionDefinition(Visit visit, TIntermFunctionDefinition *node) override
@@ -400,16 +327,6 @@ class InitializeLocalsTraverser final : public TIntermTraverser
         TIntermSequence initCode;
 
         const TFunction *function = node->getFunction();
-        auto it                   = mFunctionsToReplace.find(function);
-        if (it != mFunctionsToReplace.end())
-        {
-            function                                   = it->second;
-            TIntermFunctionPrototype *newPrototypeNode = new TIntermFunctionPrototype(function);
-            TIntermFunctionDefinition *newNode =
-                new TIntermFunctionDefinition(newPrototypeNode, node->getBody());
-            queueReplacement(newNode, OriginalNode::IS_DROPPED);
-        }
-
         for (size_t paramIndex = 0; paramIndex < function->getParamCount(); ++paramIndex)
         {
             const TVariable *paramVariable = function->getParam(paramIndex);
@@ -433,28 +350,10 @@ class InitializeLocalsTraverser final : public TIntermTraverser
         return true;
     }
 
-    bool visitAggregate(Visit visit, TIntermAggregate *node) override
-    {
-        const TFunction *function = node->getFunction();
-        if (function != nullptr)
-        {
-            auto it = mFunctionsToReplace.find(function);
-            if (it != mFunctionsToReplace.end())
-            {
-                const TFunction *target = it->second;
-                TIntermAggregate *newNode =
-                    TIntermAggregate::CreateFunctionCall(*target, node->getSequence());
-                queueReplacement(newNode, OriginalNode::IS_DROPPED);
-            }
-        }
-        return true;
-    }
-
   private:
     int mShaderVersion;
     bool mCanUseLoopsToInitialize;
     bool mHighPrecisionSupported;
-    angle::HashMap<const TFunction *, TFunction *> mFunctionsToReplace;
 };
 
 }  // namespace
@@ -478,7 +377,6 @@ bool InitializeUninitializedLocals(TCompiler *compiler,
 {
     InitializeLocalsTraverser traverser(shaderVersion, symbolTable, canUseLoopsToInitialize,
                                         highPrecisionSupported);
-    traverser.collectUnnamedOutFunctions(*root);
     root->traverse(&traverser);
     return traverser.updateTree(compiler, root);
 }

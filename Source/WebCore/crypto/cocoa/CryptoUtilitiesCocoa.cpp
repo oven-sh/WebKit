@@ -30,8 +30,6 @@
 #include <CommonCrypto/CommonCrypto.h>
 #include <pal/spi/cocoa/CommonCryptoSPI.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 ExceptionOr<Vector<uint8_t>> transformAESCTR(CCOperation operation, const Vector<uint8_t>& counter, size_t counterLength, const Vector<uint8_t>& key, std::span<const uint8_t> data)
@@ -176,5 +174,3 @@ Vector<uint8_t> calculateSHA256Signature(const Vector<uint8_t>& key, std::span<c
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -33,6 +33,8 @@
 
 #include <wtf/Compiler.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #if USE(LIBWEBRTC)
 
 #include <wtf/TZoneMalloc.h>
@@ -48,6 +50,8 @@
 #else // !USE(LIBWEBRTC) && !USE(GSTREAMER_WEBRTC)
 #include <WebCore/WebRTCProvider.h>
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace WebKit {
 

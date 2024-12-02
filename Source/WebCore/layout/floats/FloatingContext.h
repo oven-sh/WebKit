@@ -50,28 +50,35 @@ public:
     LayoutPoint positionForFloat(const Box&, const BoxGeometry&, const HorizontalConstraints&) const;
     LayoutPoint positionForNonFloatingFloatAvoider(const Box&, const BoxGeometry&) const;
 
-    struct BlockAxisPositionWithClearance {
+    struct PositionWithClearance {
         LayoutUnit position;
         std::optional<LayoutUnit> clearance;
     };
-    std::optional<BlockAxisPositionWithClearance> blockAxisPositionWithClearance(const Box&, const BoxGeometry&) const;
+    std::optional<PositionWithClearance> verticalPositionWithClearance(const Box&, const BoxGeometry&) const;
+
+    std::optional<LayoutUnit> top() const;
+    std::optional<LayoutUnit> leftBottom() const { return bottom(Clear::Left); }
+    std::optional<LayoutUnit> rightBottom() const { return bottom(Clear::Right); }
+    std::optional<LayoutUnit> bottom() const { return bottom(Clear::Both); }
 
     bool isEmpty() const { return m_placedFloats.list().isEmpty(); }
 
     struct Constraints {
-        std::optional<PointInContextRoot> start;
-        std::optional<PointInContextRoot> end;
+        std::optional<PointInContextRoot> left;
+        std::optional<PointInContextRoot> right;
     };
     enum class MayBeAboveLastFloat : bool { No, Yes };
     Constraints constraints(LayoutUnit candidateTop, LayoutUnit candidateBottom, MayBeAboveLastFloat) const;
 
     PlacedFloats::Item makeFloatItem(const Box& floatBox, const BoxGeometry&, std::optional<size_t> line = { }) const;
 
-    bool isStartPositioned(const Box& floatBox) const;
+    bool isLogicalLeftPositioned(const Box& floatBox) const;
 
 private:
-    bool isFloatingCandidateStartPositionedInBlockFormattingContext(const Box&) const;
-    Clear clearInBlockFormattingContext(const Box&) const;
+    std::optional<LayoutUnit> bottom(Clear) const;
+
+    bool isFloatingCandidateLeftPositionedInPlacedFloats(const Box&) const;
+    Clear clearInPlacedFloats(const Box&) const;
 
     const ElementBox& root() const { return m_formattingContextRoot; }
     // FIXME: Turn this into an actual geometry cache.
@@ -81,8 +88,8 @@ private:
 
     struct AbsoluteCoordinateValuesForFloatAvoider;
     AbsoluteCoordinateValuesForFloatAvoider absoluteCoordinates(const Box&, LayoutPoint borderBoxTopLeft) const;
-    LayoutPoint mapTopLeftToBlockFormattingContextRoot(const Box&, LayoutPoint borderBoxTopLeft) const;
-    Point mapPointFromFloatingContextRootToBlockFormattingContextRoot(Point) const;
+    LayoutPoint mapTopLeftToPlacedFloatsRoot(const Box&, LayoutPoint borderBoxTopLeft) const;
+    Point mapPointFromFormattingContextRootToPlacedFloatsRoot(Point) const;
 
     CheckedRef<const ElementBox> m_formattingContextRoot;
     const LayoutState& m_layoutState;

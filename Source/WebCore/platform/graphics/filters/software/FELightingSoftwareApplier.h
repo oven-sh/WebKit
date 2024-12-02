@@ -34,8 +34,6 @@
 #include "LightSource.h"
 #include <wtf/TZoneMalloc.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 class FELighting;
@@ -130,5 +128,3 @@ protected:
 };
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

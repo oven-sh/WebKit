@@ -60,7 +60,7 @@ std::optional<ClientOrigin> readOriginFromFile(const String& filePath)
     if (!originContent)
         return std::nullopt;
 
-    WTF::Persistence::Decoder decoder(originContent->span());
+    WTF::Persistence::Decoder decoder({ originContent->data(), originContent->size() });
     std::optional<ClientOrigin> origin;
     decoder >> origin;
     return origin;

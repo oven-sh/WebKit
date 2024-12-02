@@ -50,11 +50,7 @@ class RuleSet;
 
 using CascadeLayerPriority = uint16_t;
 
-struct RuleSetAndNegation {
-    RefPtr<const RuleSet> ruleSet;
-    IsNegation isNegation { IsNegation::No };
-};
-using InvalidationRuleSetVector = Vector<RuleSetAndNegation, 1>;
+using InvalidationRuleSetVector = Vector<RefPtr<const RuleSet>, 1>;
 
 struct DynamicMediaQueryEvaluationChanges {
     enum class Type { InvalidateStyle, ResetStyle };

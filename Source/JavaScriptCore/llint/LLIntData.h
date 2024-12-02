@@ -31,8 +31,6 @@
 #include "MacroAssemblerCodeRef.h"
 #include "Opcode.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class VM;
@@ -78,7 +76,7 @@ inline JSInstruction* exceptionInstructions()
 
 inline WasmInstruction* wasmExceptionInstructions()
 {
-    return reinterpret_cast<WasmInstruction*>(g_jscConfig.llint.wasmExceptionInstructions);
+    return bitwise_cast<WasmInstruction*>(g_jscConfig.llint.wasmExceptionInstructions);
 }
 
 inline JSC::Opcode* opcodeMap()
@@ -385,5 +383,3 @@ struct Registers {
 #endif
 
 } } // namespace JSC::LLInt
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

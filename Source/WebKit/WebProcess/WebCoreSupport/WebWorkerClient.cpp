@@ -64,7 +64,7 @@ public:
 private:
     RemoteRenderingBackendProxy& ensureRenderingBackend() const;
 
-    mutable RefPtr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
+    mutable std::unique_ptr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
 };
 
 

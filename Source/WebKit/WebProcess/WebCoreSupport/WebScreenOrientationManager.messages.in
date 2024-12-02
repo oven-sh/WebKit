@@ -23,6 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-messages -> WebScreenOrientationManager {
+messages -> WebScreenOrientationManager NotRefCounted {
     OrientationDidChange(enum:uint8_t WebCore::ScreenOrientationType orientation)
 }

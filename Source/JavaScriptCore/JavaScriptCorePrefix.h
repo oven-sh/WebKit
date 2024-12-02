@@ -54,10 +54,6 @@
 #include <sys/types.h>
 #endif
 
-#if OS(WINDOWS)
-#include <windows.h>
-#endif
-
 #ifdef __cplusplus
 #include <chrono>
 #include <functional>
@@ -66,7 +62,6 @@
 #include <mutex>
 #include <string>
 #include <typeinfo>
-#include <wtf/TZoneMalloc.h>
 #endif
 
 #ifdef __cplusplus

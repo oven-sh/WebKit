@@ -51,10 +51,10 @@ CompositorIntegrationImpl::CompositorIntegrationImpl(ConvertToBackingContext& co
 
 CompositorIntegrationImpl::~CompositorIntegrationImpl() = default;
 
-void CompositorIntegrationImpl::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&& completionHandler)
+void CompositorIntegrationImpl::prepareForDisplay(CompletionHandler<void()>&& completionHandler)
 {
     if (auto* presentationContext = m_presentationContext.get())
-        presentationContext->present(frameIndex);
+        presentationContext->present();
 
     m_onSubmittedWorkScheduledCallback(WTFMove(completionHandler));
 }

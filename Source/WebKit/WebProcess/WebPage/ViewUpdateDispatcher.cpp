@@ -38,25 +38,14 @@
 
 namespace WebKit {
 
-ViewUpdateDispatcher::ViewUpdateDispatcher(WebProcess& process)
-    : m_process(process)
-    , m_queue(WorkQueue::create("com.apple.WebKit.ViewUpdateDispatcher"_s))
+ViewUpdateDispatcher::ViewUpdateDispatcher()
+    : m_queue(WorkQueue::create("com.apple.WebKit.ViewUpdateDispatcher"_s))
 {
 }
 
 ViewUpdateDispatcher::~ViewUpdateDispatcher()
 {
     ASSERT_NOT_REACHED();
-}
-
-void ViewUpdateDispatcher::ref() const
-{
-    m_process->ref();
-}
-
-void ViewUpdateDispatcher::deref() const
-{
-    m_process->deref();
 }
 
 void ViewUpdateDispatcher::initializeConnection(IPC::Connection& connection)

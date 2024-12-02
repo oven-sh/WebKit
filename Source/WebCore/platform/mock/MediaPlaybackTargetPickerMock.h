@@ -47,7 +47,6 @@ namespace WebCore {
 class MediaPlaybackTargetPickerMock final : public MediaPlaybackTargetPicker, public CanMakeWeakPtr<MediaPlaybackTargetPickerMock> {
     WTF_MAKE_TZONE_ALLOCATED(MediaPlaybackTargetPickerMock);
     WTF_MAKE_NONCOPYABLE(MediaPlaybackTargetPickerMock);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MediaPlaybackTargetPickerMock);
 public:
     explicit MediaPlaybackTargetPickerMock(MediaPlaybackTargetPicker::Client&);
 

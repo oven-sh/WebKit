@@ -37,11 +37,15 @@
 #include <wtf/BlockPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakObjCPtr.h>
-#include <wtf/cocoa/VectorCocoa.h>
+#include <wtf/cocoa/SpanCocoa.h>
 
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ALLOW_COMMA_BEGIN
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+
 #include <webrtc/api/packet_socket_factory.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+
+ALLOW_DEPRECATED_DECLARATIONS_END
+ALLOW_COMMA_END
 
 namespace WebKit {
 
@@ -180,6 +184,15 @@ void NetworkRTCTCPSocketCocoa::setOption(int option, int value)
     nw_connection_reset_traffic_class(m_nwConnection.get(), *trafficClass);
 }
 
+static RetainPtr<dispatch_data_t> dataFromVector(Vector<uint8_t>&& v)
+{
+    auto bufferSize = v.size();
+    auto rawPointer = v.releaseBuffer().leakPtr();
+    return adoptNS(dispatch_data_create(rawPointer, bufferSize, dispatch_get_main_queue(), ^{
+        fastFree(rawPointer);
+    }));
+}
+
 Vector<uint8_t> NetworkRTCTCPSocketCocoa::createMessageBuffer(std::span<const uint8_t> data)
 {
     if (data.size() >= std::numeric_limits<uint16_t>::max())
@@ -217,7 +230,7 @@ void NetworkRTCTCPSocketCocoa::sendTo(std::span<const uint8_t> data, const rtc::
     if (buffer.isEmpty())
         return;
 
-    nw_connection_send(m_nwConnection.get(), makeDispatchData(WTFMove(buffer)).get(), NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, makeBlockPtr([identifier = m_identifier, connection = m_connection.copyRef(), options](_Nullable nw_error_t) {
+    nw_connection_send(m_nwConnection.get(), dataFromVector(WTFMove(buffer)).get(), NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, makeBlockPtr([identifier = m_identifier, connection = m_connection.copyRef(), options](_Nullable nw_error_t) {
         connection->send(Messages::LibWebRTCNetwork::SignalSentPacket { identifier, options.packet_id, rtc::TimeMillis() }, 0);
     }).get());
 }

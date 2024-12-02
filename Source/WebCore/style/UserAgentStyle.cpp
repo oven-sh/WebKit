@@ -295,6 +295,7 @@ void UserAgentStyle::ensureDefaultStyleSheetsForElement(const Element& element)
     }
 
     ASSERT(defaultStyle->features().idsInRules.isEmpty());
+    ASSERT(mathMLStyleSheet || defaultStyle->features().siblingRules.isEmpty());
 }
 
 } // namespace Style

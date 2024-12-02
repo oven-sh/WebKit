@@ -28,7 +28,7 @@
 #include "FormattingConstraints.h"
 #include "InlineFormattingConstraints.h"
 #include "LayoutBoxGeometry.h"
-#include "LayoutIntegrationBoxTreeUpdater.h"
+#include "LayoutIntegrationBoxTree.h"
 #include "LayoutState.h"
 
 namespace WebCore {
@@ -46,8 +46,6 @@ namespace LayoutIntegration {
 class BoxGeometryUpdater {
 public:
     BoxGeometryUpdater(Layout::LayoutState&, const Layout::ElementBox& rootLayoutBox);
-
-    void clear();
 
     void setFormattingContextRootGeometry(LayoutUnit availableLogicalWidth);
     void setFormattingContextContentGeometry(std::optional<LayoutUnit> availableLogicalWidth, std::optional<Layout::IntrinsicWidthMode>);

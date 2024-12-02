@@ -26,13 +26,13 @@
 #pragma once
 
 #include "APIObject.h"
-#include <wtf/Function.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
 #if PLATFORM(COCOA)
 #include <wtf/RetainPtr.h>
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 OBJC_CLASS NSData;
 
@@ -40,24 +40,26 @@ namespace API {
 
 class Data : public ObjectImpl<API::Object::Type::Data> {
 public:
-    using FreeDataFunction = WTF::Function<void()>;
+    using FreeDataFunction = void (*)(uint8_t*, const void* context);
 
-    static Ref<Data> createWithoutCopying(std::span<const uint8_t> bytes, FreeDataFunction&& freeDataFunction)
+    static Ref<Data> createWithoutCopying(std::span<const uint8_t> bytes, FreeDataFunction freeDataFunction, const void* context)
     {
-        return adoptRef(*new Data(bytes, WTFMove(freeDataFunction)));
+        return adoptRef(*new Data(bytes, freeDataFunction, context));
     }
 
     static Ref<Data> create(std::span<const uint8_t> bytes)
     {
-        MallocSpan<uint8_t> copiedBytes;
+        uint8_t* copiedBytes = nullptr;
 
-        if (!bytes.empty()) {
-            copiedBytes = MallocSpan<uint8_t>::malloc(bytes.size_bytes());
-            memcpySpan(copiedBytes.mutableSpan(), bytes);
+        if (bytes.size()) {
+            copiedBytes = static_cast<uint8_t*>(fastMalloc(bytes.size()));
+            memcpy(copiedBytes, bytes.data(), bytes.size());
         }
 
-        auto data = copiedBytes.span();
-        return createWithoutCopying(data, [copiedBytes = WTFMove(copiedBytes)] () { });
+        return createWithoutCopying({ copiedBytes, bytes.size() }, [] (uint8_t* bytes, const void*) {
+            if (bytes)
+                fastFree(static_cast<void*>(bytes));
+        }, nullptr);
     }
     
     static Ref<Data> create(const Vector<unsigned char>& buffer)
@@ -65,11 +67,14 @@ public:
         return create(buffer.span());
     }
 
-    static Ref<Data> create(Vector<unsigned char>&& vector)
+    static Ref<Data> create(Vector<unsigned char>&& buffer)
     {
-        auto buffer = vector.releaseBuffer();
-        auto span = buffer.span();
-        return createWithoutCopying(span, [buffer = WTFMove(buffer)] { });
+        auto bufferSize = buffer.size();
+        auto bufferPointer = buffer.releaseBuffer().leakPtr();
+        return createWithoutCopying({ bufferPointer, bufferSize }, [] (uint8_t* bytes, const void*) {
+            if (bytes)
+                WTF::VectorMalloc::free(bytes);
+        }, nullptr);
     }
 
 #if PLATFORM(COCOA)
@@ -78,23 +83,27 @@ public:
 
     ~Data()
     {
-        m_freeDataFunction();
+        m_freeDataFunction(const_cast<uint8_t*>(m_span.data()), m_context);
     }
 
     size_t size() const { return m_span.size(); }
     std::span<const uint8_t> span() const { return m_span; }
 
 private:
-    Data(std::span<const uint8_t> span, FreeDataFunction&& freeDataFunction)
+    Data(std::span<const uint8_t> span, FreeDataFunction freeDataFunction, const void* context)
         : m_span(span)
-        , m_freeDataFunction(WTFMove(freeDataFunction))
+        , m_freeDataFunction(freeDataFunction)
+        , m_context(context)
     {
     }
 
     std::span<const uint8_t> m_span;
-    FreeDataFunction m_freeDataFunction;
+    FreeDataFunction m_freeDataFunction { nullptr };
+    const void* m_context { nullptr };
 };
 
 } // namespace API
 
 SPECIALIZE_TYPE_TRAITS_API_OBJECT(Data);
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -41,8 +41,10 @@ class ElementAnimationRareData {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ElementAnimationRareData);
     WTF_MAKE_NONCOPYABLE(ElementAnimationRareData);
 public:
-    explicit ElementAnimationRareData();
+    explicit ElementAnimationRareData(const std::optional<Style::PseudoElementIdentifier>&);
     ~ElementAnimationRareData();
+
+    const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier() { return m_pseudoElementIdentifier; }
 
     KeyframeEffectStack* keyframeEffectStack() { return m_keyframeEffectStack.get(); }
     KeyframeEffectStack& ensureKeyframeEffectStack();
@@ -67,6 +69,7 @@ private:
     CSSAnimationCollection m_animationsCreatedByMarkup;
     AnimatableCSSPropertyToTransitionMap m_completedTransitionsByProperty;
     AnimatableCSSPropertyToTransitionMap m_runningTransitionsByProperty;
+    std::optional<Style::PseudoElementIdentifier> m_pseudoElementIdentifier { };
     bool m_hasPendingKeyframesUpdate { false };
     bool m_hasPropertiesOverridenAfterAnimation { false };
 };

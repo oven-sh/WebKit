@@ -177,7 +177,6 @@ WorkQueue& WorkQueue::main()
     static NeverDestroyed<RefPtr<WorkQueue>> mainWorkQueue;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
-        WTF::initialize();
         mainWorkQueue.get() = adoptRef(*new WorkQueue(CreateMain));
     });
     return *mainWorkQueue.get();

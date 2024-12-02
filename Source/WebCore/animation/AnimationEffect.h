@@ -56,9 +56,9 @@ public:
     virtual bool isKeyframeEffect() const { return false; }
 
     EffectTiming getBindingsTiming() const;
-    BasicEffectTiming getBasicTiming(std::optional<WebAnimationTime> = std::nullopt);
-    ComputedEffectTiming getBindingsComputedTiming();
-    ComputedEffectTiming getComputedTiming(std::optional<WebAnimationTime> = std::nullopt);
+    BasicEffectTiming getBasicTiming(std::optional<WebAnimationTime> = std::nullopt) const;
+    ComputedEffectTiming getBindingsComputedTiming() const;
+    ComputedEffectTiming getComputedTiming(std::optional<WebAnimationTime> = std::nullopt) const;
     ExceptionOr<void> bindingsUpdateTiming(Document&, std::optional<OptionalEffectTiming>);
     ExceptionOr<void> updateTiming(Document&, std::optional<OptionalEffectTiming>);
 
@@ -68,19 +68,16 @@ public:
     virtual void animationSuspensionStateDidChange(bool) { };
     virtual void animationTimelineDidChange(const AnimationTimeline*);
     virtual void animationDidFinish() { };
-    void animationPlaybackRateDidChange();
 
     AnimationEffectTiming timing() const { return m_timing; }
 
     WebAnimation* animation() const { return m_animation.get(); }
     virtual void setAnimation(WebAnimation*);
 
-    WebAnimationTime delay();
-    Seconds specifiedDelay() const { return m_timing.specifiedStartDelay; }
+    Seconds delay() const { return m_timing.delay; }
     void setDelay(const Seconds&);
 
-    WebAnimationTime endDelay();
-    Seconds specifiedEndDelay() const { return m_timing.specifiedEndDelay; }
+    Seconds endDelay() const { return m_timing.endDelay; }
     void setEndDelay(const Seconds&);
 
     FillMode fill() const { return m_timing.fill; }
@@ -92,9 +89,8 @@ public:
     double iterations() const { return m_timing.iterations; }
     ExceptionOr<void> setIterations(double);
 
-    WebAnimationTime iterationDuration();
-    std::optional<Seconds> specifiedIterationDuration() const { return m_timing.specifiedIterationDuration; }
-    void setIterationDuration(const std::optional<Seconds>&);
+    WebAnimationTime iterationDuration() const { return m_timing.iterationDuration; }
+    void setIterationDuration(const Seconds&);
 
     PlaybackDirection direction() const { return m_timing.direction; }
     void setDirection(PlaybackDirection);
@@ -102,10 +98,12 @@ public:
     TimingFunction* timingFunction() const { return m_timing.timingFunction.get(); }
     void setTimingFunction(const RefPtr<TimingFunction>&);
 
-    WebAnimationTime activeDuration();
-    WebAnimationTime endTime();
+    WebAnimationTime activeDuration() const { return m_timing.activeDuration; }
+    WebAnimationTime endTime() const { return m_timing.endTime; }
 
-    virtual Seconds timeToNextTick(const BasicEffectTiming&);
+    void updateStaticTimingProperties();
+
+    virtual Seconds timeToNextTick(const BasicEffectTiming&) const;
 
     virtual bool preventsAnimationReadiness() const { return false; }
 
@@ -117,11 +115,11 @@ protected:
 
 private:
     AnimationEffectTiming::ResolutionData resolutionData(std::optional<WebAnimationTime>) const;
-    void updateComputedTimingPropertiesIfNeeded();
+    void normalizeSpecifiedTiming(std::variant<double, String>);
 
     AnimationEffectTiming m_timing;
     WeakPtr<WebAnimation, WeakPtrImplWithEventTargetData> m_animation;
-    bool m_timingDidMutate { false };
+    bool m_hasAutoDuration { true };
 };
 
 } // namespace WebCore

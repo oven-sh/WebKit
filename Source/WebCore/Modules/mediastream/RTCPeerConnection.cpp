@@ -54,7 +54,6 @@
 #include "RTCConfiguration.h"
 #include "RTCController.h"
 #include "RTCDataChannel.h"
-#include "RTCDataChannelEvent.h"
 #include "RTCDtlsTransport.h"
 #include "RTCDtlsTransportBackend.h"
 #include "RTCIceCandidate.h"
@@ -76,8 +75,6 @@
 #if USE(LIBWEBRTC)
 #include "LibWebRTCProvider.h"
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -101,10 +98,10 @@ ExceptionOr<Ref<RTCPeerConnection>> RTCPeerConnection::create(Document& document
         return exception.releaseException();
 
     if (!peerConnection->isClosed()) {
-        if (RefPtr page = document.protectedPage()) {
+        if (auto* page = document.page()) {
             peerConnection->registerToController(page->rtcController());
 #if USE(LIBWEBRTC) && (!LOG_DISABLED || !RELEASE_LOG_DISABLED)
-            if (page->isAlwaysOnLoggingAllowed()) {
+            if (!page->sessionID().isEphemeral()) {
                 WTFLogLevel level = LogWebRTC.level;
                 if (level != WTFLogLevel::Debug && document.settings().webRTCMediaPipelineAdditionalLoggingEnabled())
                     level = WTFLogLevel::Info;
@@ -981,19 +978,6 @@ void RTCPeerConnection::dispatchEvent(Event& event)
     EventTarget::dispatchEvent(event);
 }
 
-void RTCPeerConnection::dispatchDataChannelEvent(UniqueRef<RTCDataChannelHandler>&& channelHandler, String&& label, RTCDataChannelInit&& channelInit)
-{
-    queueTaskKeepingObjectAlive(*this, TaskSource::Networking, [this, label = WTFMove(label), channelHandler = WTFMove(channelHandler), channelInit = WTFMove(channelInit)]() mutable {
-        if (isClosed())
-            return;
-
-        auto channel = RTCDataChannel::create(*document(), channelHandler.moveToUniquePtr(), WTFMove(label), WTFMove(channelInit), RTCDataChannelState::Open);
-        ALWAYS_LOG(LOGIDENTIFIER, makeString("Dispatching data-channel event for channel "_s, channel->label()));
-        dispatchEvent(RTCDataChannelEvent::create(eventNames().datachannelEvent, Event::CanBubble::No, Event::IsCancelable::No, Ref { channel }));
-        channel->fireOpenEventIfNeeded();
-    });
-}
-
 static inline ExceptionOr<PeerConnectionBackend::CertificateInformation> certificateTypeFromAlgorithmIdentifier(JSC::JSGlobalObject& lexicalGlobalObject, RTCPeerConnection::AlgorithmIdentifier&& algorithmIdentifier)
 {
     if (std::holds_alternative<String>(algorithmIdentifier))
@@ -1232,7 +1216,5 @@ void RTCPeerConnection::stopGatheringStatLogs()
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_RTC)

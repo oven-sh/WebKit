@@ -32,7 +32,6 @@
 #import "DragAndDropSimulator.h"
 #import "TestFilePromiseReceiver.h"
 #import <wtf/WeakObjCPtr.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 
 @implementation TestDraggingInfo {
     WeakObjCPtr<id> _source;

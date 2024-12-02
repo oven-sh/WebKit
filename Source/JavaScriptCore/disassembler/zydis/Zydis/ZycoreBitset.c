@@ -30,9 +30,6 @@
 
 #include "ZycoreBitset.h"
 #include "ZycoreLibC.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 /* ============================================================================================== */
 /* Internal constants                                                                             */
@@ -675,7 +672,5 @@ ZyanStatus ZyanBitsetNone(const ZyanBitset* bitset)
 /* ---------------------------------------------------------------------------------------------- */
 
 /* ============================================================================================== */
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

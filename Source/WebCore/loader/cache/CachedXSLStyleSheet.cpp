@@ -61,9 +61,9 @@ void CachedXSLStyleSheet::setEncoding(const String& chs)
     protectedDecoder()->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
 }
 
-ASCIILiteral CachedXSLStyleSheet::encoding() const
+String CachedXSLStyleSheet::encoding() const
 {
-    return protectedDecoder()->encoding().name();
+    return String::fromLatin1(protectedDecoder()->encoding().name());
 }
 
 void CachedXSLStyleSheet::finishLoading(const FragmentedSharedBuffer* data, const NetworkLoadMetrics& metrics)

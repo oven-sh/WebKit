@@ -31,8 +31,6 @@
 #include <wtf/Gigacage.h>
 #include <wtf/Noncopyable.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class VM;
@@ -243,5 +241,3 @@ public:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

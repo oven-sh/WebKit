@@ -63,9 +63,7 @@ LegacyTileGridTile::LegacyTileGridTile(LegacyTileGrid* tileGrid, const IntRect& 
         m_tileLayer = adoptNS([[LegacyTileLayer alloc] init]);
     }
     LegacyTileLayer* layer = m_tileLayer.get();
-
-    if (NSString *formatString = contentsFormatString(screenContentsFormat()))
-        layer.contentsFormat = formatString;
+    layer.contentsFormat = contentsFormatString(screenContentsFormat());
 
     [layer setTileGrid:tileGrid];
     [layer setOpaque:m_tileGrid->tileCache().tilesOpaque()];

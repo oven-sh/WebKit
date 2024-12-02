@@ -39,20 +39,20 @@ class RenderStyle;
 class ContentData {
     WTF_MAKE_TZONE_ALLOCATED(ContentData);
 public:
-    enum class Type : uint8_t {
-        Counter,
-        Image,
-        Quote,
-        Text,
+    enum Type {
+        CounterDataType,
+        ImageDataType,
+        QuoteDataType,
+        TextDataType
     };
     virtual ~ContentData() = default;
 
     Type type() const { return m_type; }
 
-    bool isCounter() const { return type() == Type::Counter; }
-    bool isImage() const { return type() == Type::Image; }
-    bool isQuote() const { return type() == Type::Quote; }
-    bool isText() const { return type() == Type::Text; }
+    bool isCounter() const { return type() == CounterDataType; }
+    bool isImage() const { return type() == ImageDataType; }
+    bool isQuote() const { return type() == QuoteDataType; }
+    bool isText() const { return type() == TextDataType; }
 
     virtual RenderPtr<RenderObject> createContentRenderer(Document&, const RenderStyle&) const = 0;
 
@@ -82,7 +82,7 @@ class ImageContentData final : public ContentData {
     WTF_MAKE_TZONE_ALLOCATED(ImageContentData);
 public:
     explicit ImageContentData(Ref<StyleImage>&& image)
-        : ContentData(Type::Image)
+        : ContentData(ImageDataType)
         , m_image(WTFMove(image))
     {
     }
@@ -114,7 +114,7 @@ class TextContentData final : public ContentData {
     WTF_MAKE_TZONE_ALLOCATED(TextContentData);
 public:
     explicit TextContentData(const String& text)
-        : ContentData(Type::Text)
+        : ContentData(TextDataType)
         , m_text(text)
     {
     }
@@ -138,7 +138,7 @@ class CounterContentData final : public ContentData {
     WTF_MAKE_TZONE_ALLOCATED(CounterContentData);
 public:
     explicit CounterContentData(std::unique_ptr<CounterContent> counter)
-        : ContentData(Type::Counter)
+        : ContentData(CounterDataType)
         , m_counter(WTFMove(counter))
     {
         ASSERT(m_counter);
@@ -170,7 +170,7 @@ class QuoteContentData final : public ContentData {
     WTF_MAKE_TZONE_ALLOCATED(QuoteContentData);
 public:
     explicit QuoteContentData(QuoteType quote)
-        : ContentData(Type::Quote)
+        : ContentData(QuoteDataType)
         , m_quote(quote)
     {
     }
@@ -196,13 +196,13 @@ inline bool operator==(const ContentData& a, const ContentData& b)
         return false;
 
     switch (a.type()) {
-    case ContentData::Type::Counter:
+    case ContentData::CounterDataType:
         return uncheckedDowncast<CounterContentData>(a) == uncheckedDowncast<CounterContentData>(b);
-    case ContentData::Type::Image:
+    case ContentData::ImageDataType:
         return uncheckedDowncast<ImageContentData>(a) == uncheckedDowncast<ImageContentData>(b);
-    case ContentData::Type::Quote:
+    case ContentData::QuoteDataType:
         return uncheckedDowncast<QuoteContentData>(a) == uncheckedDowncast<QuoteContentData>(b);
-    case ContentData::Type::Text:
+    case ContentData::TextDataType:
         return uncheckedDowncast<TextContentData>(a) == uncheckedDowncast<TextContentData>(b);
     }
 

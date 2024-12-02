@@ -32,9 +32,9 @@
 #include <graphics/cairo/RefPtrCairo.h>
 #endif
 
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
 #include <skia/core/SkPixmap.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+IGNORE_CLANG_WARNINGS_END
 
 namespace WebCore {
 

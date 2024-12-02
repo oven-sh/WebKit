@@ -31,7 +31,6 @@
 #include "JSWebExtensionAPIWebPageRuntime.h"
 #include "WebExtensionAPIEvent.h"
 #include "WebExtensionAPIObject.h"
-#include "WebPageProxyIdentifier.h"
 
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSString;
@@ -81,11 +80,11 @@ public:
 
     JSValue *lastError();
 
-    void sendMessage(WebPageProxyIdentifier, WebFrame&, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    RefPtr<WebExtensionAPIPort> connect(WebPageProxyIdentifier, WebFrame&, JSContextRef, NSString *extensionID, NSDictionary *options, NSString **outExceptionString);
+    void sendMessage(WebFrame&, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    RefPtr<WebExtensionAPIPort> connect(WebFrame&, JSContextRef, NSString *extensionID, NSDictionary *options, NSString **outExceptionString);
 
     void sendNativeMessage(WebFrame&, NSString *applicationID, NSString *messageJSON, Ref<WebExtensionCallbackHandler>&&);
-    RefPtr<WebExtensionAPIPort> connectNative(WebPageProxyIdentifier, JSContextRef, NSString *applicationID);
+    RefPtr<WebExtensionAPIPort> connectNative(WebFrame&, JSContextRef, NSString *applicationID);
 
     WebExtensionAPIEvent& onConnect();
     WebExtensionAPIEvent& onInstalled();
@@ -115,8 +114,8 @@ public:
     WebExtensionAPIWebPageRuntime& runtime() const final { return const_cast<WebExtensionAPIWebPageRuntime&>(*this); }
 
 #if PLATFORM(COCOA)
-    void sendMessage(WebPage&, WebFrame&, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    RefPtr<WebExtensionAPIPort> connect(WebPage&, WebFrame&, JSContextRef, NSString *extensionID, NSDictionary *options, NSString **outExceptionString);
+    void sendMessage(WebFrame&, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    RefPtr<WebExtensionAPIPort> connect(WebFrame&, JSContextRef, NSString *extensionID, NSDictionary *options, NSString **outExceptionString);
 #endif
 };
 

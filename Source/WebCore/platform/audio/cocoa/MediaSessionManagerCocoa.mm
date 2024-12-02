@@ -49,8 +49,6 @@
 #import "MediaRemoteSoftLink.h"
 #include <pal/cocoa/AVFoundationSoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 static const size_t kLowPowerVideoBufferSize = 4096;
 
 #if USE(NOW_PLAYING_ACTIVITY_SUPPRESSION)
@@ -68,7 +66,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaSessionManagerCocoa);
 #if PLATFORM(MAC)
 std::unique_ptr<PlatformMediaSessionManager> PlatformMediaSessionManager::create()
 {
-    return makeUniqueWithoutRefCountedCheck<MediaSessionManagerCocoa>();
+    return makeUnique<MediaSessionManagerCocoa>();
 }
 #endif // !PLATFORM(MAC)
 
@@ -87,9 +85,27 @@ void MediaSessionManagerCocoa::ensureCodecsRegistered()
     dispatch_once(&onceToken, ^{
         if (shouldEnableVP9Decoder())
             registerSupplementalVP9Decoder();
+        if (swVPDecodersAlwaysEnabled()) {
+            registerWebKitVP9Decoder();
+            registerWebKitVP8Decoder();
+        } else if (shouldEnableVP8Decoder())
+            registerWebKitVP8Decoder();
     });
 #endif
 }
+
+#if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
+static bool s_mediaSourceInlinePaintingEnabled = false;
+void MediaSessionManagerCocoa::setMediaSourceInlinePaintingEnabled(bool enabled)
+{
+    s_mediaSourceInlinePaintingEnabled = enabled;
+}
+
+bool MediaSessionManagerCocoa::mediaSourceInlinePaintingEnabled()
+{
+    return s_mediaSourceInlinePaintingEnabled;
+}
+#endif
 
 static bool s_shouldUseModernAVContentKeySession;
 void MediaSessionManagerCocoa::setShouldUseModernAVContentKeySession(bool enabled)
@@ -636,7 +652,5 @@ void MediaSessionManagerCocoa::updateNowPlayingSuppression(const NowPlayingInfo*
 #endif // USE(NOW_PLAYING_ACTIVITY_SUPPRESSION)
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(AUDIO_SESSION) && PLATFORM(COCOA)

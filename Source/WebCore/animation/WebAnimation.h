@@ -126,7 +126,7 @@ public:
     void setStartTime(std::optional<WebAnimationTime>);
     virtual std::optional<WebAnimationTime> bindingsCurrentTime() const { return currentTime(); };
     virtual ExceptionOr<void> setBindingsCurrentTime(const std::optional<WebAnimationTime>&);
-    std::optional<double> overallProgress() const;
+    std::optional<double> progress() const;
     virtual PlayState bindingsPlayState() const { return playState(); }
     virtual ReplaceState bindingsReplaceState() const { return replaceState(); }
     virtual bool bindingsPending() const { return pending(); }
@@ -140,11 +140,10 @@ public:
     virtual void setBindingsFrameRate(std::variant<FramesPerSecond, AnimationFrameRatePreset>&&);
     std::optional<FramesPerSecond> frameRate() const { return m_effectiveFrameRate; }
 
-    TimelineRangeValue bindingsRangeStart() const { return m_timelineRange.start.serialize(); }
-    TimelineRangeValue bindingsRangeEnd() const { return m_timelineRange.end.serialize(); }
-    virtual void setBindingsRangeStart(TimelineRangeValue&&);
-    virtual void setBindingsRangeEnd(TimelineRangeValue&&);
-    void setRange(TimelineRange range) { m_timelineRange = range; }
+    TimelineRangeValue rangeStart() const { return m_timelineRange.start.serialize(); }
+    TimelineRangeValue rangeEnd() const { return m_timelineRange.end.serialize();; }
+    void setRangeStart(TimelineRangeValue&&);
+    void setRangeEnd(TimelineRangeValue&&);
 
     bool needsTick() const;
     virtual void tick();

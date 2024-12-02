@@ -36,12 +36,12 @@ namespace WebCore {
 
 bool isCalc(const CSSUnresolvedColorMix::Component::Percentage& percentage)
 {
-    return percentage.isCalc();
+    return std::holds_alternative<CSSUnresolvedColorMix::Component::Percentage::Calc>(percentage.value);
 }
 
 bool is50Percent(const CSSUnresolvedColorMix::Component::Percentage& percentage)
 {
-    return WTF::switchOn(percentage,
+    return WTF::switchOn(percentage.value,
         [](const CSSUnresolvedColorMix::Component::Percentage::Raw& raw) { return raw.value == 50.0; },
         [](const CSSUnresolvedColorMix::Component::Percentage::Calc&) { return false; }
     );
@@ -54,10 +54,24 @@ bool is50Percent(const StyleColorMix::Component::Percentage& percentage)
 
 bool sumTo100Percent(const CSSUnresolvedColorMix::Component::Percentage& a, const CSSUnresolvedColorMix::Component::Percentage& b)
 {
-    if (a.isCalc() || b.isCalc())
-        return false;
+    using Percentage = CSSUnresolvedColorMix::Component::Percentage;
 
-    return a.raw()->value + b.raw()->value == 100.0;
+    auto visitor = WTF::makeVisitor(
+        [](const Percentage::Raw& a, const Percentage::Raw& b) {
+            return a.value + b.value == 100.0;
+        },
+        [](const Percentage::Raw&, const Percentage::Calc&) {
+            return false;
+        },
+        [](const Percentage::Calc&, const Percentage::Raw&) {
+            return false;
+        },
+        [](const Percentage::Calc&, const Percentage::Calc&) {
+            return false;
+        }
+    );
+
+    return std::visit(visitor, a.value, b.value);
 }
 
 bool sumTo100Percent(const StyleColorMix::Component::Percentage& a, const StyleColorMix::Component::Percentage& b)
@@ -69,7 +83,7 @@ std::optional<CSS::PercentageRaw<>> subtractFrom100Percent(const CSSUnresolvedCo
 {
     using Percentage = CSSUnresolvedColorMix::Component::Percentage;
 
-    return WTF::switchOn(percentage,
+    return WTF::switchOn(percentage.value,
         [&](const Percentage::Raw& raw) -> std::optional<CSS::PercentageRaw<>> {
             return CSS::PercentageRaw<> { 100.0 - raw.value };
         },

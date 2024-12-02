@@ -29,38 +29,34 @@
 #if USE(SKIA)
 #include "FontRenderOptions.h"
 #include "GLContext.h"
-#include "GLFence.h"
 #include "IntRect.h"
 #include "PixelBuffer.h"
 #include "PixelBufferConversion.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkBitmap.h>
 #include <skia/core/SkPixmap.h>
-#include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/TZoneMallocInlines.h>
 
 #if USE(COORDINATED_GRAPHICS)
 #include "BitmapTexture.h"
 #include "CoordinatedPlatformLayerBufferNativeImage.h"
 #include "CoordinatedPlatformLayerBufferRGB.h"
+#include "GLFence.h"
 #include "GraphicsLayerContentsDisplayDelegateTextureMapper.h"
 #include "TextureMapperFlags.h"
 #include "TextureMapperPlatformLayerProxy.h"
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ImageBufferSkiaAcceleratedBackend);
 
-std::unique_ptr<ImageBufferSkiaAcceleratedBackend> ImageBufferSkiaAcceleratedBackend::create(const Parameters& parameters, const ImageBufferCreationContext& creationContext)
+std::unique_ptr<ImageBufferSkiaAcceleratedBackend> ImageBufferSkiaAcceleratedBackend::create(const Parameters& parameters, const ImageBufferCreationContext&)
 {
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
@@ -76,29 +72,18 @@ std::unique_ptr<ImageBufferSkiaAcceleratedBackend> ImageBufferSkiaAcceleratedBac
 
     auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
     RELEASE_ASSERT(grContext);
-
     auto imageInfo = SkImageInfo::Make(backendSize.width(), backendSize.height(), kRGBA_8888_SkColorType, kPremul_SkAlphaType, parameters.colorSpace.platformColorSpace());
-    SkSurfaceProps properties { 0, FontRenderOptions::singleton().subpixelOrder() };
+    SkSurfaceProps properties = { 0, FontRenderOptions::singleton().subpixelOrder() };
     auto surface = SkSurfaces::RenderTarget(grContext, skgpu::Budgeted::kNo, imageInfo, PlatformDisplay::sharedDisplay().msaaSampleCount(), kTopLeft_GrSurfaceOrigin, &properties);
     if (!surface || !surface->getCanvas())
         return nullptr;
 
-    return create(parameters, creationContext, WTFMove(surface));
-}
-
-std::unique_ptr<ImageBufferSkiaAcceleratedBackend> ImageBufferSkiaAcceleratedBackend::create(const Parameters& parameters, const ImageBufferCreationContext&, sk_sp<SkSurface>&& surface)
-{
-    ASSERT(surface);
-    ASSERT(surface->getCanvas());
     return std::unique_ptr<ImageBufferSkiaAcceleratedBackend>(new ImageBufferSkiaAcceleratedBackend(parameters, WTFMove(surface)));
 }
 
 ImageBufferSkiaAcceleratedBackend::ImageBufferSkiaAcceleratedBackend(const Parameters& parameters, sk_sp<SkSurface>&& surface)
     : ImageBufferSkiaSurfaceBackend(parameters, WTFMove(surface), RenderingMode::Accelerated)
-    , m_skiaGrContext(PlatformDisplay::sharedDisplay().skiaGrContext())
 {
-    ASSERT(m_skiaGrContext);
-
 #if USE(COORDINATED_GRAPHICS)
     // Use a content layer for canvas.
     if (parameters.purpose == RenderingPurpose::Canvas) {
@@ -121,58 +106,6 @@ ImageBufferSkiaAcceleratedBackend::~ImageBufferSkiaAcceleratedBackend()
     if (m_layerContentsDisplayDelegate)
         static_cast<GraphicsLayerContentsDisplayDelegateTextureMapper*>(m_layerContentsDisplayDelegate.get())->proxy().setSwapBuffersFunction(nullptr);
 #endif
-}
-
-void ImageBufferSkiaAcceleratedBackend::finishAcceleratedRenderingAndCreateFence()
-{
-    Locker locker { m_fenceLock };
-    if (m_fence)
-        return;
-
-    auto* glContext = PlatformDisplay::sharedDisplay().skiaGLContext();
-    if (!glContext || !glContext->makeContextCurrent())
-        return;
-
-    auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
-    RELEASE_ASSERT(grContext);
-
-    if (GLFence::isSupported()) {
-        grContext->flushAndSubmit(m_surface.get(), GrSyncCpu::kNo);
-        m_fence = GLFence::create();
-        if (!m_fence)
-            grContext->submit(GrSyncCpu::kYes);
-    } else
-        grContext->flushAndSubmit(m_surface.get(), GrSyncCpu::kYes);
-}
-
-void ImageBufferSkiaAcceleratedBackend::waitForAcceleratedRenderingFenceCompletion()
-{
-    Locker locker { m_fenceLock };
-    if (!m_fence)
-        return;
-
-    m_fence->serverWait();
-    m_fence = nullptr;
-}
-
-RefPtr<ImageBuffer> ImageBufferSkiaAcceleratedBackend::copyAcceleratedImageBufferBorrowingBackendRenderTarget(const ImageBuffer& imageBuffer) const
-{
-    auto* glContext = PlatformDisplay::sharedDisplay().skiaGLContext();
-    if (!glContext || !glContext->makeContextCurrent())
-        return nullptr;
-
-    auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
-    RELEASE_ASSERT(grContext);
-
-    auto backendRenderTarget = SkSurfaces::GetBackendRenderTarget(m_surface.get(), SkSurfaces::BackendHandleAccess::kFlushRead);
-
-    const auto& imageInfo = m_surface->imageInfo();
-    auto surface = SkSurfaces::WrapBackendRenderTarget(grContext, backendRenderTarget, kTopLeft_GrSurfaceOrigin, imageInfo.colorType(), imageInfo.refColorSpace(), &m_surface->props());
-    if (!surface || !surface->getCanvas())
-        return nullptr;
-
-    auto backend = ImageBufferSkiaAcceleratedBackend::create(parameters(), { }, WTFMove(surface));
-    return ImageBuffer::create<ImageBuffer>(imageBuffer.parameters(), imageBuffer.backendInfo(), { }, WTFMove(backend));
 }
 
 RefPtr<NativeImage> ImageBufferSkiaAcceleratedBackend::copyNativeImage()
@@ -200,33 +133,15 @@ void ImageBufferSkiaAcceleratedBackend::getPixelBuffer(const IntRect& srcRect, P
     if (!PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent())
         return;
 
-    const IntRect backendRect { { }, size() };
-    const auto sourceRectClipped = intersection(backendRect, srcRect);
-    IntRect destinationRect { IntPoint::zero(), sourceRectClipped.size() };
+    auto info = m_surface->imageInfo();
+    auto data = SkData::MakeUninitialized(info.computeMinByteSize());
+    auto* pixels = static_cast<uint8_t*>(data->writable_data());
+    size_t rowBytes = static_cast<size_t>(info.minRowBytes64());
 
-    if (srcRect.x() < 0)
-        destinationRect.setX(destinationRect.x() - srcRect.x());
-    if (srcRect.y() < 0)
-        destinationRect.setY(destinationRect.y() - srcRect.y());
-
-    if (destination.size() != sourceRectClipped.size())
-        destination.zeroFill();
-
-    const auto destinationColorType = (destination.format().pixelFormat == PixelFormat::RGBA8)
-        ? SkColorType::kRGBA_8888_SkColorType : SkColorType::kBGRA_8888_SkColorType;
-
-    const auto destinationAlphaType = (destination.format().alphaFormat == AlphaPremultiplication::Premultiplied)
-        ? SkAlphaType::kPremul_SkAlphaType : SkAlphaType::kUnpremul_SkAlphaType;
-
-    auto destinationInfo = SkImageInfo::Make(destination.size().width(), destination.size().height(),
-        destinationColorType, destinationAlphaType, destination.format().colorSpace.platformColorSpace());
-    SkPixmap pixmap(destinationInfo, destination.bytes().data(), destination.size().width() * 4);
-
-    SkPixmap dstPixmap;
-    if (UNLIKELY(!pixmap.extractSubset(&dstPixmap, destinationRect)))
-        return;
-
-    m_surface->readPixels(dstPixmap, sourceRectClipped.x(), sourceRectClipped.y());
+    // Create a SkImageInfo so the readPixels call will convert the RGBA pixels from the surface into BGRA.
+    SkImageInfo imageInfo = SkImageInfo::Make(info.width(), info.height(), SkColorType::kBGRA_8888_SkColorType, SkAlphaType::kPremul_SkAlphaType, colorSpace().platformColorSpace());
+    if (m_surface->readPixels(imageInfo, pixels, rowBytes, 0, 0))
+        ImageBufferBackend::getPixelBuffer(srcRect, pixels, destination);
 }
 
 void ImageBufferSkiaAcceleratedBackend::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)

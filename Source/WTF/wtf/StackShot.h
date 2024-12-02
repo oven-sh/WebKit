@@ -73,8 +73,6 @@ public:
     
     void** array() const { return m_array.get(); }
     size_t size() const { return m_size; }
-
-    std::span<void*> span() const { return unsafeMakeSpan(m_array.get(), m_size); }
     
     explicit operator bool() const { return !!m_array; }
     
@@ -110,7 +108,7 @@ public:
     bool operator>(const StackShot&) const { return false; }
     
 private:
-    static void** deletedValueArray() { return std::bit_cast<void**>(static_cast<uintptr_t>(1)); }
+    static void** deletedValueArray() { return bitwise_cast<void**>(static_cast<uintptr_t>(1)); }
 
     UniqueArray<void*> m_array;
     size_t m_size { 0 };

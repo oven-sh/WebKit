@@ -36,8 +36,6 @@
 #include <wtf/WeakRandom.h>
 #include <wtf/WordLock.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 namespace {
@@ -82,7 +80,7 @@ struct Bucket {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     Bucket()
-        : random(static_cast<unsigned>(std::bit_cast<intptr_t>(this))) // Cannot use default seed since that recurses into Lock.
+        : random(static_cast<unsigned>(bitwise_cast<intptr_t>(this))) // Cannot use default seed since that recurses into Lock.
     {
     }
     
@@ -819,4 +817,3 @@ NEVER_INLINE void ParkingLot::forEachImpl(const ScopedLambda<void(Thread&, const
 
 } // namespace WTF
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

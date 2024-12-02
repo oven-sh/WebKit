@@ -391,7 +391,7 @@ test(() => {
 
   const controller = new AbortController();
 
-  self.when('error').take(1).subscribe(e =>
+  self.on('error').take(1).subscribe(e =>
       results.push(e.message + ', from report exception'));
 
   result.subscribe({

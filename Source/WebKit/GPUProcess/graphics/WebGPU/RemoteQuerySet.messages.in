@@ -24,7 +24,7 @@
 #if ENABLE(GPU_PROCESS)
 
 [EnabledBy=WebGPUEnabled]
-messages -> RemoteQuerySet Stream {
+messages -> RemoteQuerySet NotRefCounted Stream {
     void Destroy()
     void Destruct()
     void SetLabel(String label)

@@ -32,8 +32,6 @@
 #include "VM.h"
 #include <wtf/RefPtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 using namespace JSC;
 
 int testJSONParse()
@@ -69,5 +67,3 @@ int testJSONParse()
 
     return failed;
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

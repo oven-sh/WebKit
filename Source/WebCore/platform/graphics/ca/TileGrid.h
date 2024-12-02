@@ -30,7 +30,6 @@
 #include "PlatformCALayerClient.h"
 #include "TileGridIdentifier.h"
 #include "Timer.h"
-#include <wtf/CheckedPtr.h>
 #include <wtf/Deque.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashMap.h>
@@ -49,10 +48,9 @@ class TileController;
 
 using TileIndex = IntPoint;
 
-class TileGrid final : public PlatformCALayerClient, public CanMakeCheckedPtr<TileGrid> {
+class TileGrid : public PlatformCALayerClient {
     WTF_MAKE_TZONE_ALLOCATED(TileGrid);
     WTF_MAKE_NONCOPYABLE(TileGrid);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(TileGrid);
 public:
     explicit TileGrid(TileController&);
     ~TileGrid();
@@ -158,7 +156,7 @@ private:
     bool platformCALayerNeedsPlatformContext(const PlatformCALayer*) const override;
 
     TileGridIdentifier m_identifier;
-    CheckedRef<TileController> m_controller;
+    TileController& m_controller;
 #if USE(CA)
     Ref<PlatformCALayer> m_containerLayer;
 #endif

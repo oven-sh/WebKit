@@ -18,7 +18,6 @@ namespace
 class LinkTaskNULL : public LinkTask
 {
   public:
-    LinkTaskNULL(const gl::ProgramState *state) : mState(state) {}
     ~LinkTaskNULL() override = default;
     void link(const gl::ProgramLinkedResources &resources,
               const gl::ProgramMergedVaryings &mergedVaryings,
@@ -28,22 +27,12 @@ class LinkTaskNULL : public LinkTask
         ASSERT(linkSubTasksOut && linkSubTasksOut->empty());
         ASSERT(postLinkSubTasksOut && postLinkSubTasksOut->empty());
 
-        const gl::SharedCompiledShaderState &fragmentShader =
-            mState->getAttachedShader(gl::ShaderType::Fragment);
-        if (fragmentShader != nullptr)
-        {
-            resources.pixelLocalStorageLinker.link(fragmentShader->pixelLocalStorageFormats);
-        }
-
         return;
     }
     angle::Result getResult(const gl::Context *context, gl::InfoLog &infoLog) override
     {
         return angle::Result::Continue;
     }
-
-  private:
-    const gl::ProgramState *mState;
 };
 }  // anonymous namespace
 
@@ -70,7 +59,7 @@ void ProgramNULL::setSeparable(bool separable) {}
 angle::Result ProgramNULL::link(const gl::Context *contextImpl,
                                 std::shared_ptr<LinkTask> *linkTaskOut)
 {
-    *linkTaskOut = std::shared_ptr<LinkTask>(new LinkTaskNULL(&mState));
+    *linkTaskOut = std::shared_ptr<LinkTask>(new LinkTaskNULL);
     return angle::Result::Continue;
 }
 

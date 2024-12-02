@@ -44,13 +44,6 @@
 #include <wtf/text/CString.h>
 #endif
 
-#if USE(SKIA)
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib/Win port
-#include <skia/core/SkImage.h>
-#include <skia/core/SkPixmap.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-#endif
-
 #if OS(DARWIN)
 #define GL_UNSIGNED_INT_8_8_8_8_REV 0x8367
 static const GLenum s_pixelDataType = GL_UNSIGNED_INT_8_8_8_8_REV;
@@ -171,7 +164,6 @@ void BitmapTexture::updateContents(const void* srcData, const IntRect& targetRec
 
     // prepare temporaryData if necessary
     if (requireSubImageBuffer) {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib/Win port
         temporaryData.resize(targetRect.width() * targetRect.height() * bytesPerPixel);
         auto dst = temporaryData.data();
         data = dst;
@@ -183,7 +175,6 @@ void BitmapTexture::updateContents(const void* srcData, const IntRect& targetRec
             src += bytesPerLine;
             dst += targetBytesPerLine;
         }
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         bytesPerLine = targetBytesPerLine;
         adjustedSourceOffset = IntPoint(0, 0);
@@ -218,11 +209,6 @@ void BitmapTexture::updateContents(NativeImage* frameImage, const IntRect& targe
     int bytesPerLine = cairo_image_surface_get_stride(surface);
 
     updateContents(imageData, targetRect, offset, bytesPerLine, PixelFormat::BGRA8);
-#elif USE(SKIA)
-    sk_sp<SkImage> surface = frameImage->platformImage();
-    SkPixmap pixmap;
-    if (surface->peekPixels(&pixmap))
-        updateContents(pixmap.addr(), targetRect, offset, pixmap.rowBytes(), PixelFormat::BGRA8);
 #else
     UNUSED_PARAM(targetRect);
     UNUSED_PARAM(offset);

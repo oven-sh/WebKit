@@ -61,7 +61,7 @@ struct ExceptionDetails;
 class PaymentCoordinator final : public RefCountedAndCanMakeWeakPtr<PaymentCoordinator> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(PaymentCoordinator, WEBCORE_EXPORT);
 public:
-    WEBCORE_EXPORT static Ref<PaymentCoordinator> create(Ref<PaymentCoordinatorClient>&&);
+    WEBCORE_EXPORT static Ref<PaymentCoordinator> create(UniqueRef<PaymentCoordinatorClient>&&);
     WEBCORE_EXPORT ~PaymentCoordinator();
 
     PaymentCoordinatorClient& client() { return m_client.get(); }
@@ -102,10 +102,10 @@ public:
     void endApplePaySetup();
 
 protected:
-    WEBCORE_EXPORT explicit PaymentCoordinator(Ref<PaymentCoordinatorClient>&&);
+    WEBCORE_EXPORT explicit PaymentCoordinator(UniqueRef<PaymentCoordinatorClient>&&);
 
 private:
-    Ref<PaymentCoordinatorClient> m_client;
+    UniqueRef<PaymentCoordinatorClient> m_client;
     RefPtr<PaymentSession> m_activeSession;
 };
 

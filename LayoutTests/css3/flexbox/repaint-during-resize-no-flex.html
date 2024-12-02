@@ -34,10 +34,10 @@ function resizeFlexItem() {
     if (window.testRunner)
         testRunner.notifyDone();
 };
-window.onload = async function() {
+window.onload = function() {
     if (window.testRunner) {
         testRunner.waitUntilDone();
-        await testRunner.displayAndTrackRepaints();
+        testRunner.displayAndTrackRepaints();
     } else {
         document.body.appendChild(document.createTextNode(
             "Tests to make sure that when changing the size of one flex item changes the "

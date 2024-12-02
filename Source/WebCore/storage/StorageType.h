@@ -38,4 +38,9 @@ inline bool isLocalStorage(StorageType storageType)
     return storageType == StorageType::Local || storageType == StorageType::TransientLocal;
 }
 
+inline bool isPersistentLocalStorage(StorageType storageType)
+{
+    return storageType == StorageType::Local || storageType == StorageType::TransientLocal;
+}
+
 } // namespace WebCore

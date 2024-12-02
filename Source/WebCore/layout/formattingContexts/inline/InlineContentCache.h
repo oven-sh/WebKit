@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,13 +30,15 @@
 #include "InlineItem.h"
 #include "LineLayoutResult.h"
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 namespace Layout {
 
 // InlineContentCache is used to cache content for subsequent layouts.
 class InlineContentCache {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(InlineContentCache);
+    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_INLINE(InlineContentCache);
 public:
     struct InlineItems {
         InlineItemList& content() { return m_inlineItemList; }
@@ -46,7 +48,6 @@ public:
             bool requiresVisualReordering { false };
             // Note that <span>this is text</span> returns true as inline boxes are not considered 'content' here.
             bool hasTextAndLineBreakOnlyContent { false };
-            bool hasTextAutospace { false };
             size_t inlineBoxCount { 0 };
         };
         void set(InlineItemList&&, ContentAttributes);
@@ -58,7 +59,6 @@ public:
 
         bool requiresVisualReordering() const { return m_contentAttributes.requiresVisualReordering; }
         bool hasTextAndLineBreakOnlyContent() const { return m_contentAttributes.hasTextAndLineBreakOnlyContent; }
-        bool hasTextAutospace() const { return m_contentAttributes.hasTextAutospace; }
         bool hasInlineBoxes() const { return !!inlineBoxCount(); }
         size_t inlineBoxCount() const { return m_contentAttributes.inlineBoxCount; }
 
@@ -80,17 +80,12 @@ public:
     std::optional<InlineLayoutUnit> maximumContentSize() const { return m_maximumContentSize; }
     void resetMinimumMaximumContentSizes();
 
-    const InlineBoxBoundaryTextSpacings& inlineBoxBoundaryTextSpacings() const { return m_textSpacingContext.inlineBoxBoundaryTextSpacings; }
-    void setInlineBoxBoundaryTextSpacings(InlineBoxBoundaryTextSpacings&& spacings) { m_textSpacingContext.inlineBoxBoundaryTextSpacings = WTFMove(spacings); }
-    const TrimmableTextSpacings& trimmableTextSpacings() const { return m_textSpacingContext.trimmableTextSpacings; }
-    void setTrimmableTextSpacings(TrimmableTextSpacings&& spacings) { m_textSpacingContext.trimmableTextSpacings = WTFMove(spacings); }
-
-    const TextSpacingContext& textSpacingContext() const { return m_textSpacingContext; }
+    const InlineBoxBoundaryTextSpacings& inlineBoxBoundaryTextSpacings() const { return m_inlineBoxBoundaryTextSpacings; }
+    void setInlineBoxBoundaryTextSpacings(InlineBoxBoundaryTextSpacings&& spacings) { m_inlineBoxBoundaryTextSpacings = WTFMove(spacings); }
 
 private:
     InlineItems m_inlineItems;
-    TextSpacingContext m_textSpacingContext;
-
+    InlineBoxBoundaryTextSpacings m_inlineBoxBoundaryTextSpacings;
     std::optional<LineLayoutResult> m_maximumIntrinsicWidthLineContent { };
     std::optional<InlineLayoutUnit> m_minimumContentSize { };
     std::optional<InlineLayoutUnit> m_maximumContentSize { };

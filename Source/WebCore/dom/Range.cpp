@@ -1108,13 +1108,8 @@ Ref<DOMRectList> Range::getClientRects() const
 
 Ref<DOMRect> Range::getBoundingClientRect() const
 {
-    return boundingClientRect(makeSimpleRange(*this));
-}
-
-Ref<DOMRect> Range::boundingClientRect(const SimpleRange& simpleRange)
-{
-    simpleRange.startContainer().protectedDocument()->updateLayout();
-    return DOMRect::create(unionRectIgnoringZeroRects(RenderObject::clientBorderAndTextRects(simpleRange)));
+    startContainer().protectedDocument()->updateLayout();
+    return DOMRect::create(unionRectIgnoringZeroRects(RenderObject::clientBorderAndTextRects(makeSimpleRange(*this))));
 }
 
 static void setBothEndpoints(Range& range, const SimpleRange& value)

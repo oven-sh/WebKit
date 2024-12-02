@@ -37,8 +37,6 @@
 #include "FEColorMatrixSkiaApplier.h"
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 Ref<FEColorMatrix> FEColorMatrix::create(ColorMatrixType type, Vector<float>&& values, DestinationColorSpace colorSpace)
@@ -213,5 +211,3 @@ TextStream& FEColorMatrix::externalRepresentation(TextStream& ts, FilterRepresen
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -46,6 +46,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -111,11 +112,12 @@ template<> void JSExposedStarDOMConstructor::initializeProperties(VM& vm, JSDOMG
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 4> JSExposedStarPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsExposedStarConstructor, 0 } },
-    HashTableValue { "operationForAllContexts"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsExposedStarPrototypeFunction_operationForAllContexts, 0 } },
-    HashTableValue { "operationJustForWindowContexts"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsExposedStarPrototypeFunction_operationJustForWindowContexts, 0 } },
-    HashTableValue { "operationJustForWorkerContexts"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsExposedStarPrototypeFunction_operationJustForWorkerContexts, 0 } },
+static const HashTableValue JSExposedStarPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsExposedStarConstructor, 0 } },
+    { "operationForAllContexts"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsExposedStarPrototypeFunction_operationForAllContexts, 0 } },
+    { "operationJustForWindowContexts"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsExposedStarPrototypeFunction_operationJustForWindowContexts, 0 } },
+    { "operationJustForWorkerContexts"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsExposedStarPrototypeFunction_operationJustForWorkerContexts, 0 } },
 };
 
 const ClassInfo JSExposedStarPrototype::s_info = { "ExposedStar"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExposedStarPrototype) };
@@ -249,7 +251,6 @@ void JSExposedStar::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -274,8 +275,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, ExposedStar>,
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<ExposedStar>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

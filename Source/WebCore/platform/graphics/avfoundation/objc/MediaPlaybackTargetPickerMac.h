@@ -38,7 +38,6 @@ namespace WebCore {
 class MediaPlaybackTargetPickerMac final : public MediaPlaybackTargetPicker, public AVPlaybackTargetPickerClient {
     WTF_MAKE_TZONE_ALLOCATED(MediaPlaybackTargetPickerMac);
     WTF_MAKE_NONCOPYABLE(MediaPlaybackTargetPickerMac);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MediaPlaybackTargetPickerMac);
 public:
     explicit MediaPlaybackTargetPickerMac(MediaPlaybackTargetPicker::Client&);
     virtual ~MediaPlaybackTargetPickerMac();

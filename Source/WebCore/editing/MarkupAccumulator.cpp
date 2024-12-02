@@ -59,8 +59,6 @@
 #include <wtf/URL.h>
 #include <wtf/unicode/CharacterNames.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 using namespace HTMLNames;
@@ -884,5 +882,3 @@ bool MarkupAccumulator::shouldExcludeElement(const Element& element)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

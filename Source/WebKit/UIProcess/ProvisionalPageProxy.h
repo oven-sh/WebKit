@@ -111,7 +111,7 @@ public:
     bool isProcessSwappingOnNavigationResponse() const { return m_isProcessSwappingOnNavigationResponse; }
 
     DrawingAreaProxy* drawingArea() const { return m_drawingArea.get(); }
-    RefPtr<DrawingAreaProxy> takeDrawingArea();
+    std::unique_ptr<DrawingAreaProxy> takeDrawingArea();
 
     void setNavigation(API::Navigation&);
 
@@ -177,7 +177,7 @@ private:
     void logDiagnosticMessageWithEnhancedPrivacyFromWebProcess(const String& message, const String& description, WebCore::ShouldSample);
     void logDiagnosticMessageWithValueDictionaryFromWebProcess(const String& message, const String& description, const WebCore::DiagnosticLoggingClient::ValueDictionary&, WebCore::ShouldSample);
     void startURLSchemeTask(IPC::Connection&, URLSchemeTaskParameters&&);
-    void backForwardGoToItem(IPC::Connection&, const WebCore::BackForwardItemIdentifier&, CompletionHandler<void(const WebBackForwardListCounts&)>&&);
+    void backForwardGoToItem(const WebCore::BackForwardItemIdentifier&, CompletionHandler<void(const WebBackForwardListCounts&)>&&);
     void decidePolicyForNavigationActionSync(NavigationActionData&&, CompletionHandler<void(PolicyDecision&&)>&&);
     void backForwardAddItem(IPC::Connection&, WebCore::FrameIdentifier, Ref<FrameState>&&);
     void didDestroyNavigation(WebCore::NavigationIdentifier);
@@ -208,7 +208,7 @@ private:
     // Keep WebsiteDataStore alive for provisional page load.
     RefPtr<WebsiteDataStore> m_websiteDataStore;
 
-    RefPtr<DrawingAreaProxy> m_drawingArea;
+    std::unique_ptr<DrawingAreaProxy> m_drawingArea;
     RefPtr<WebFrameProxy> m_mainFrame;
     RefPtr<WebsiteDataStore> m_replacedDataStoreForWebArchiveLoad;
     WebCore::NavigationIdentifier m_navigationID;

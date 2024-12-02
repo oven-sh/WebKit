@@ -30,8 +30,6 @@
 #include "OpcodeInlines.h"
 #include "UnlinkedMetadataTableInlines.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 MetadataTable::MetadataTable(UnlinkedMetadataTable& unlinkedMetadata)
@@ -99,5 +97,3 @@ void MetadataTable::validate() const
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

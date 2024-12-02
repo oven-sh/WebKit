@@ -30,8 +30,6 @@
 #include "B3MemoryValue.h"
 #include "B3Width.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace B3 {
 
 class JS_EXPORT_PRIVATE AtomicValue final : public MemoryValue {
@@ -94,7 +92,5 @@ private:
 };
 
 } } // namespace JSC::B3
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)

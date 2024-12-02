@@ -33,9 +33,7 @@
 
 id WKObjCTypeWrapperGetObject(WKObjCTypeWrapperRef wrapperRef)
 {
-    if (wrapperRef && WKGetTypeID(wrapperRef) == WKDataGetTypeID()) {
-        RefPtr impl = WebKit::toImpl((WKDataRef)wrapperRef);
-        return WebKit::wrapper(impl.get());
-    }
+    if (wrapperRef && WKGetTypeID(wrapperRef) == WKDataGetTypeID())
+        return WebKit::wrapper(WebKit::toImpl((WKDataRef)wrapperRef));
     return nil;
 }

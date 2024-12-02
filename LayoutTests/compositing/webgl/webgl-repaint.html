@@ -27,29 +27,27 @@ function initWebGL()
 
 var gl = null;
 
-async function init()
+function init()
 {
   gl = initWebGL();
   gl.viewport(0, 0, 200, 200);
   gl.clearColor(1, 0, 0, 1); // red
   gl.clear(gl.COLOR_BUFFER_BIT);
   if (window.testRunner) {
-      testRunner.waitUntilDone();
-      await testRunner.displayAndTrackRepaints();
+      testRunner.displayAndTrackRepaints();
       testRunner.dumpAsText(true);
-      await drawGreen();
-      testRunner.notifyDone();
+      drawGreen();
   } else
       window.setTimeout(drawGreen, 50);
 }
 
-async function drawGreen()
+function drawGreen()
 {
   gl.clearColor(0, 1, 0, 1); // green
   gl.clear(gl.COLOR_BUFFER_BIT);
   if (window.testRunner) {
-      await testRunner.displayAndTrackRepaints();
-      await testRunner.displayAndTrackRepaints();
+      testRunner.displayAndTrackRepaints();
+      testRunner.displayAndTrackRepaints();
   } else
       window.setInterval(function() {
         document.getElementById('canvas').classList.toggle('border');

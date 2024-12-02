@@ -1,3 +1,0 @@
-
-PASS Navigating to a text fragment directive
-

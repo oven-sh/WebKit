@@ -124,8 +124,7 @@ endif ()
   .. code-block:: cmake
 
     GI_DOCGEN(<namespace> <toml-file>
-              [CONTENT_TEMPLATES <file...>]
-              [CONTENT_PATH <path...>])
+              [CONTENT_TEMPLATES <file...>])
 
    Configures generating documentation for a GObject-Introspection
    ``<namespace>``, which needs to have been previously configured using
@@ -143,10 +142,6 @@ endif ()
    command:`configure_file` in ``@ONLY`` mode. The ``.in`` sufix must
    not be present.
 
-   ``CONTENT_PATH`` may be used to specify additional directories where
-   to look for additional content files that may be then listed in the
-   TOML configuration in the ``extra.content_files`` array.
-
    Documentation is generated in the ``Documentation/<pkgname>-<nsversion>/``
    subdirectory by the ``doc-<namespace>`` target added by the command.
    Additionally, a ``doc-check-<namespace>`` target is created as well,
@@ -161,7 +156,7 @@ function(GI_DOCGEN namespace toml)
     cmake_parse_arguments(PARSE_ARGV 1 opt
         ""
         ""
-        "CONTENT_TEMPLATES;CONTENT_PATH"
+        "CONTENT_TEMPLATES"
     )
     if (NOT TARGET "gir-${namespace}")
         message(FATAL_ERROR
@@ -185,32 +180,10 @@ function(GI_DOCGEN namespace toml)
     endif ()
     set(outdir "${CMAKE_BINARY_DIR}/Documentation/${package}")
 
-    set(unifdef_defines)
-    if (PORT STREQUAL GTK)
-        list(APPEND unifdef_defines -DWPE=0 -DGTK=1)
-        if (USE_GTK4)
-            list(APPEND unifdef_defines -DGTK4=1 -DGTK3=0)
-        else ()
-            list(APPEND unifdef_defines -DGTK4=0 -DGTK3=1)
-        endif ()
-    else ()
-        list(APPEND unifdef_defines -DWPE=1 -DGTK=0)
-    endif ()
-
     set(docdeps "${toml_path};${gir_path}")
     foreach (item IN LISTS opt_CONTENT_TEMPLATES)
         get_filename_component(filename "${item}" NAME)
-        configure_file("${item}.in" "${contentdir}/${filename}.in" @ONLY)
-        add_custom_command(
-            OUTPUT "${contentdir}/${filename}"
-            DEPENDS "${contentdir}/${filename}.in"
-            COMMENT "Generating (unifdef): ${namespace}/${filename}"
-            VERBATIM
-            COMMAND "${UNIFDEF_EXECUTABLE}" -t -x 2
-                ${unifdef_defines}
-                -o "${contentdir}/${filename}"
-                "${contentdir}/${filename}.in"
-        )
+        configure_file("${item}.in" "${contentdir}/${filename}" @ONLY)
         list(APPEND docdeps "${contentdir}/${filename}")
     endforeach ()
 
@@ -220,18 +193,6 @@ function(GI_DOCGEN namespace toml)
         --config "${toml_path}"
         --add-include-path "${CMAKE_BINARY_DIR}"
     )
-
-    set(content_dir_flags
-        --content-dir "${contentdir}"
-        --content-dir "${toml_dir}"
-    )
-    foreach (item IN LISTS opt_CONTENT_PATH)
-        cmake_path(ABSOLUTE_PATH item OUTPUT_VARIABLE item_path)
-        if (NOT EXISTS "${item_path}")
-            message(FATAL_ERROR "Path does not exist: ${item_path}")
-        endif ()
-        list(APPEND content_dir_flags --content-dir "${item_path}")
-    endforeach ()
 
     # Documentation generation.
     add_custom_command(
@@ -243,8 +204,9 @@ function(GI_DOCGEN namespace toml)
         VERBATIM
         COMMAND "${GIDocgen_EXE}" gen-deps
             ${common_flags}
+            --content-dir "${contentdir}"
+            --content-dir "${toml_dir}"
             --config "${toml_path}"
-            ${content_dir_flags}
             "${gir_path}"
             "${contentdir}.depfiles"
         COMMAND "${Python_EXECUTABLE}" -c
@@ -253,7 +215,8 @@ function(GI_DOCGEN namespace toml)
         COMMAND "${GIDocgen_EXE}" generate
             ${common_flags}
             --no-namespace-dir
-            ${content_dir_flags}
+            --content-dir "${contentdir}"
+            --content-dir "${toml_dir}"
             --output-dir "${outdir}"
             --config "${toml_path}"
             "${gir_path}"

@@ -27,10 +27,7 @@
 
 #if HAVE(APP_SSO)
 
-#import <dispatch/dispatch.h>
 #import <wtf/SoftLinking.h>
-
-typedef NSString *NSErrorDomain;
 
 SOFT_LINK_PRIVATE_FRAMEWORK_FOR_SOURCE_WITH_EXPORT(PAL, AppSSO, PAL_EXPORT);
 

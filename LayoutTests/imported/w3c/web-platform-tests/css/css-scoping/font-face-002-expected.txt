@@ -1,4 +1,0 @@
-1234567890
-
-PASS @font-face from the document applies in the shadow tree
-

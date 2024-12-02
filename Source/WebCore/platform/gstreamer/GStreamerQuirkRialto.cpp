@@ -32,8 +32,6 @@
 #include "WebKitAudioSinkGStreamer.h"
 #include <wtf/OptionSet.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-
 namespace WebCore {
 
 GST_DEBUG_CATEGORY_STATIC(webkit_rialto_quirks_debug);
@@ -109,7 +107,5 @@ std::optional<bool> GStreamerQuirkRialto::isHardwareAccelerated(GstElementFactor
 #undef GST_CAT_DEFAULT
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(GSTREAMER)

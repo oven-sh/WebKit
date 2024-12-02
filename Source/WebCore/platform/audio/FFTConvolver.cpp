@@ -35,8 +35,6 @@
 #include "VectorMath.h"
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
     
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FFTConvolver);
@@ -118,7 +116,5 @@ void FFTConvolver::reset()
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUDIO)

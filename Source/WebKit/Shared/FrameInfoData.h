@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "WebFrameMetrics.h"
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOriginData.h>
@@ -46,7 +45,6 @@ struct FrameInfoData {
     ProcessID processID;
     bool isFocused { false };
     bool errorOccurred { false };
-    WebFrameMetrics frameMetrics { };
 };
 
 }

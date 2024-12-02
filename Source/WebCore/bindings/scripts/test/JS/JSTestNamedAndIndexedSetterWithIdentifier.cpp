@@ -52,6 +52,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -117,10 +118,11 @@ template<> void JSTestNamedAndIndexedSetterWithIdentifierDOMConstructor::initial
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 3> JSTestNamedAndIndexedSetterWithIdentifierPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedAndIndexedSetterWithIdentifierConstructor, 0 } },
-    HashTableValue { "namedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedAndIndexedSetterWithIdentifierPrototypeFunction_namedSetter, 2 } },
-    HashTableValue { "indexedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedAndIndexedSetterWithIdentifierPrototypeFunction_indexedSetter, 2 } },
+static const HashTableValue JSTestNamedAndIndexedSetterWithIdentifierPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedAndIndexedSetterWithIdentifierConstructor, 0 } },
+    { "namedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedAndIndexedSetterWithIdentifierPrototypeFunction_namedSetter, 2 } },
+    { "indexedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedAndIndexedSetterWithIdentifierPrototypeFunction_indexedSetter, 2 } },
 };
 
 const ClassInfo JSTestNamedAndIndexedSetterWithIdentifierPrototype::s_info = { "TestNamedAndIndexedSetterWithIdentifier"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestNamedAndIndexedSetterWithIdentifierPrototype) };
@@ -488,7 +490,6 @@ void JSTestNamedAndIndexedSetterWithIdentifierOwner::finalize(JSC::Handle<JSC::U
     uncacheWrapper(world, jsTestNamedAndIndexedSetterWithIdentifier->protectedWrapped().ptr(), jsTestNamedAndIndexedSetterWithIdentifier);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -513,8 +514,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestNamedAndI
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestNamedAndIndexedSetterWithIdentifier>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

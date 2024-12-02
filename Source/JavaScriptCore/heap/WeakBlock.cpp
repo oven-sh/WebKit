@@ -32,8 +32,6 @@
 #include "JSCInlines.h"
 #include "WeakHandleOwner.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(WeakBlock);
@@ -182,5 +180,3 @@ void WeakBlock::reap()
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

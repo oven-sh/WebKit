@@ -86,18 +86,15 @@ public:
     uint32_t sampleMask() const { return m_sampleMask; }
 
     Device& device() const { return m_device; }
-    PipelineLayout& pipelineLayout() const { return m_pipelineLayout; }
-    Ref<PipelineLayout> protectedPipelineLayout() const { return m_pipelineLayout; }
+    PipelineLayout& pipelineLayout() const;
     bool colorDepthStencilTargetsMatch(const WGPURenderPassDescriptor&, const Vector<RefPtr<TextureView>>&, const RefPtr<TextureView>&) const;
     bool validateRenderBundle(const WGPURenderBundleEncoderDescriptor&) const;
     bool writesDepth() const;
     bool writesStencil() const;
 
     const RequiredBufferIndicesContainer& requiredBufferIndices() const { return m_requiredBufferIndices; }
-    WGPUPrimitiveTopology primitiveTopology() const { return m_descriptor.primitive.topology; }
-
-    MTLIndexType stripIndexFormat() const { return m_descriptor.primitive.stripIndexFormat == WGPUIndexFormat_Uint16 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32; }
-
+    WGPUPrimitiveTopology primitiveTopology() const;
+    MTLIndexType stripIndexFormat() const;
     const BufferBindingSizesForBindGroup* minimumBufferSizes(uint32_t) const;
 
 private:

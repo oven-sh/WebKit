@@ -638,15 +638,10 @@ void SourceBufferPrivateAVFObjC::setCDMSession(LegacyCDMSession* session)
 
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    if (m_session) {
+    if (m_session)
         m_session->removeSourceBuffer(this);
 
-        auto parser = this->streamDataParser();
-        if (parser && shouldAddContentKeyRecipients())
-            [m_session->contentKeySession() removeContentKeyRecipient:parser];
-    }
-
-    m_session = toCDMSessionAVContentKeySession(session);
+    m_session = toCDMSessionMediaSourceAVFObjC(session);
 
     if (m_session) {
         m_session->addSourceBuffer(this);
@@ -654,10 +649,6 @@ void SourceBufferPrivateAVFObjC::setCDMSession(LegacyCDMSession* session)
             m_hasSessionSemaphore->signal();
             m_hasSessionSemaphore = nullptr;
         }
-
-        auto parser = this->streamDataParser();
-        if (parser && shouldAddContentKeyRecipients())
-            [m_session->contentKeySession() addContentKeyRecipient:parser];
 
         if (m_hdcpError) {
             callOnMainThread([weakThis = ThreadSafeWeakPtr { *this }] {
@@ -716,21 +707,17 @@ void SourceBufferPrivateAVFObjC::setCDMInstance(CDMInstance* instance)
 void SourceBufferPrivateAVFObjC::attemptToDecrypt()
 {
 #if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
-    if (m_keyIDs.isEmpty() || !m_waitingForKey)
+    if (!m_cdmInstance || m_keyIDs.isEmpty() || !m_waitingForKey)
         return;
 
-    if (m_cdmInstance) {
-        RefPtr instanceSession = m_cdmInstance->sessionForKeyIDs(m_keyIDs);
-        if (!instanceSession)
-            return;
-
-        if (!MediaSessionManagerCocoa::shouldUseModernAVContentKeySession()) {
-            if (auto parser = this->streamDataParser())
-                [instanceSession->contentKeySession() addContentKeyRecipient:parser];
-        }
-    } else if (!m_session)
+    auto instanceSession = m_cdmInstance->sessionForKeyIDs(m_keyIDs);
+    if (!instanceSession)
         return;
 
+    if (!MediaSessionManagerCocoa::shouldUseModernAVContentKeySession()) {
+        if (auto parser = this->streamDataParser())
+            [instanceSession->contentKeySession() addContentKeyRecipient:parser];
+    }
     if (m_hasSessionSemaphore) {
         m_hasSessionSemaphore->signal();
         m_hasSessionSemaphore = nullptr;
@@ -1112,7 +1099,7 @@ void SourceBufferPrivateAVFObjC::enqueueSampleBuffer(MediaSampleAVFObjC& sample)
     attachContentKeyToSampleIfNeeded(sample);
     WebSampleBufferVideoRendering *renderer = nil;
     if (m_videoRenderer) {
-        m_videoRenderer->enqueueSample(sample);
+        m_videoRenderer->enqueueSample(sample.platformSample().sample.cmSampleBuffer, !sample.isNonDisplaying());
 
         // Enqueuing a sample for display my synchronously fire an error, which can cause m_videoRenderer to become null.
         if (!m_videoRenderer)

@@ -39,18 +39,17 @@ namespace WebCore {
     
 using namespace HTMLNames;
 
-AccessibilityImageMapLink::AccessibilityImageMapLink(AXID axID)
-    : AccessibilityMockObject(axID)
-    , m_areaElement(nullptr)
+AccessibilityImageMapLink::AccessibilityImageMapLink()
+    : m_areaElement(nullptr)
     , m_mapElement(nullptr)
 {
 }
 
 AccessibilityImageMapLink::~AccessibilityImageMapLink() = default;
 
-Ref<AccessibilityImageMapLink> AccessibilityImageMapLink::create(AXID axID)
+Ref<AccessibilityImageMapLink> AccessibilityImageMapLink::create()
 {
-    return adoptRef(*new AccessibilityImageMapLink(axID));
+    return adoptRef(*new AccessibilityImageMapLink());
 }
 
 void AccessibilityImageMapLink::setHTMLAreaElement(HTMLAreaElement* element)

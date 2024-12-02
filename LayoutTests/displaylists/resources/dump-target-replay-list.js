@@ -2,7 +2,7 @@ if (window.testRunner)
     testRunner.dumpAsText();
 
 var targetDiv;
-async function doTest()
+function doTest()
 {
     document.body.offsetWidth;
     targetDiv = document.getElementById('target');
@@ -11,7 +11,8 @@ async function doTest()
         internals.setElementTracksDisplayListReplay(targetDiv, true);
     }
     
-    await testRunner?.displayAndTrackRepaints();
+    if (window.testRunner)
+        testRunner.displayAndTrackRepaints();
 
     if (window.internals) {
         var displayList = internals.displayListForElement(targetDiv);

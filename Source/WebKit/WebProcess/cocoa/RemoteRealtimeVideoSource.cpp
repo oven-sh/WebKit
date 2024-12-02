@@ -82,7 +82,6 @@ Ref<RealtimeMediaSource> RemoteRealtimeVideoSource::clone()
         clone->m_registerOwnerCallback = m_registerOwnerCallback;
         clone->setSettings(RealtimeMediaSourceSettings { settings() });
         clone->setCapabilities(RealtimeMediaSourceCapabilities { capabilities() });
-        clone->setMuted(muted());
 
         manager().addSource(*clone);
         manager().remoteCaptureSampleManager().addSource(*clone);

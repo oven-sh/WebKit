@@ -194,7 +194,7 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
             for (auto& floatItem : lineLayoutResult.floatContent.placedFloats) {
                 mayCacheLayoutResult = MayCacheLayoutResult::No;
                 auto marginBoxRect = BoxGeometry::marginBoxRect(floatItem.boxGeometry());
-                if (floatItem.isStartPositioned())
+                if (floatItem.isLeftPositioned())
                     leftWidth = std::max(leftWidth, marginBoxRect.right());
                 else
                     rightWidth = std::max(rightWidth, horizontalConstraints.logicalWidth - marginBoxRect.left());

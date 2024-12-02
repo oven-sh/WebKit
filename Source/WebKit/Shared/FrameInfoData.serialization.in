@@ -35,5 +35,4 @@ struct WebKit::FrameInfoData {
     WTF::ProcessID processID
     bool isFocused
     bool errorOccurred
-    WebKit::WebFrameMetrics frameMetrics
 }

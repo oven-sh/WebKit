@@ -33,8 +33,6 @@
 #include "WasmModuleInformation.h"
 #include "WasmWorklist.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace Wasm {
 
 Module::Module(LLIntPlan& plan)
@@ -160,7 +158,5 @@ void Module::copyInitialCalleeGroupToAllMemoryModes(MemoryMode initialMode)
 }
 
 } } // namespace JSC::Wasm
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

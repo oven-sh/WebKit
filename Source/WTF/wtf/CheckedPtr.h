@@ -176,13 +176,13 @@ private:
     ALWAYS_INLINE void refIfNotNull()
     {
         if (T* ptr = PtrTraits::unwrap(m_ptr); LIKELY(ptr))
-            ptr->incrementCheckedPtrCount();
+            ptr->incrementPtrCount();
     }
 
     ALWAYS_INLINE void derefIfNotNull()
     {
         if (T* ptr = PtrTraits::unwrap(m_ptr); LIKELY(ptr))
-            ptr->decrementCheckedPtrCount();
+            ptr->decrementPtrCount();
     }
 
     typename PtrTraits::StorageType m_ptr;

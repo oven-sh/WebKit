@@ -49,7 +49,7 @@ class CryptoKey;
 class DeferredPromise;
 
 enum class CryptoAlgorithmIdentifier : uint8_t;
-enum class CryptoKeyUsage : uint8_t;
+enum class CryptoKeyUsage;
 
 class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto>, public CanMakeWeakPtr<SubtleCrypto> {
 public:
@@ -81,7 +81,7 @@ private:
     inline friend RefPtr<DeferredPromise> getPromise(DeferredPromise*, WeakPtr<SubtleCrypto>);
 
     Ref<WorkQueue> m_workQueue;
-    HashMap<DeferredPromise*, Ref<DeferredPromise>> m_pendingPromises;
+    UncheckedKeyHashMap<DeferredPromise*, Ref<DeferredPromise>> m_pendingPromises;
 };
 
 } // namespace WebCore

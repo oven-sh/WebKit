@@ -158,7 +158,11 @@ protected:
     using GCGLContext = WebCore::GraphicsContextGLTextureMapperANGLE;
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #include "RemoteGraphicsContextGLFunctionsGenerated.h" // NOLINT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 private:
     void paintNativeImageToImageBuffer(WebCore::NativeImage&, WebCore::RenderingResourceIdentifier);
@@ -166,7 +170,6 @@ private:
     bool webXRPromptAccepted() const;
     Ref<IPC::StreamConnectionWorkQueue> protectedWorkQueue() const { return m_workQueue; }
     RefPtr<GCGLContext> protectedContext();
-    void messageCheck(bool);
 
 protected:
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;

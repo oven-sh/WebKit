@@ -15,7 +15,5 @@ PASS MediaRecorder.isTypeSupported - 'video/webm; codecs="vp8,opus"'
 PASS MediaRecorder.isTypeSupported - 'video/webm; codecs="vp8,vorbis"'
 PASS MediaRecorder.isTypeSupported - 'video/webm; codecs="vp09,opus"'
 PASS MediaRecorder.isTypeSupported - 'video/webm; codecs="vp09,vorbis"'
-PASS MediaRecorder mimeType MP4
-PASS MediaRecorder mimeType WebM
-PASS MediaRecorder mimeType with Opus in MP4
+PASS MediaRecorder mimeType
 

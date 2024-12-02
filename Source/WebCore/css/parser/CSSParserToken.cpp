@@ -35,8 +35,6 @@
 #include <wtf/HexNumber.h>
 #include <wtf/text/StringBuilder.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSParserToken);
 
@@ -405,11 +403,11 @@ static StringView mergeIfAdjacent(StringView a, StringView b)
 {
     if (a.is8Bit() && b.is8Bit()) {
         auto characters = a.span8();
-        if (std::to_address(characters.end()) == std::to_address(b.span8().begin()))
+        if (characters.end() == b.span8().begin())
             return std::span { characters.data(), a.length() + b.length() };
     } else if (!a.is8Bit() && !b.is8Bit()) {
         auto characters = a.span16();
-        if (std::to_address(characters.end()) == std::to_address(b.span16().begin()))
+        if (characters.end() == b.span16().begin())
             return std::span { characters.data(), a.length() + b.length() };
     }
     return { };
@@ -797,5 +795,3 @@ void CSSParserToken::serialize(StringBuilder& builder, const CSSParserToken* nex
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

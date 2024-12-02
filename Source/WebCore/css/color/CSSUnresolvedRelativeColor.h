@@ -26,7 +26,6 @@
 #pragma once
 
 #include "CSSColorDescriptors.h"
-#include "CSSPrimitiveNumericTypes+EvaluateCalc.h"
 #include "CSSRelativeColorResolver.h"
 #include "CSSRelativeColorSerialization.h"
 #include "CSSUnresolvedColorResolutionState.h"

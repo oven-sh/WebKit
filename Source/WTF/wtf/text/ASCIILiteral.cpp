@@ -37,11 +37,4 @@ void ASCIILiteral::dump(PrintStream& out) const
     out.print(StringView(span8()));
 }
 
-#if USE(CF)
-RetainPtr<CFStringRef> ASCIILiteral::createCFString() const
-{
-    return adoptCF(CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, characters(), kCFStringEncodingASCII, kCFAllocatorNull));
-}
-#endif
-
 } // namespace WTF

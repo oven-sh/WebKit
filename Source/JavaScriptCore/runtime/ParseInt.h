@@ -29,8 +29,6 @@
 #include "Lexer.h"
 #include <wtf/dtoa.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 static constexpr double mantissaOverflowLowerBound = 9007199254740992.0;
@@ -233,5 +231,3 @@ static ALWAYS_INLINE typename std::invoke_result<CallbackWhenNoException, String
 const char radixDigits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

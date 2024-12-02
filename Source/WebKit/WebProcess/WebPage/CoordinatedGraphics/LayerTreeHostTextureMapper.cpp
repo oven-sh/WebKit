@@ -253,6 +253,10 @@ void LayerTreeHost::contentsSizeChanged(const WebCore::IntSize&)
 {
 }
 
+void LayerTreeHost::didChangeViewportAttributes(WebCore::ViewportAttributes&&)
+{
+}
+
 void LayerTreeHost::setIsDiscardable(bool)
 {
 }

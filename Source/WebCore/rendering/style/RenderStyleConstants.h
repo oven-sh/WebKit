@@ -1197,11 +1197,9 @@ enum class ContentVisibility : uint8_t {
     Hidden,
 };
 
-// Stored as unsigned : 2 in StyleRareNonInheritedData
-enum class BlockStepInsert : uint8_t {
-    MarginBox,
-    PaddingBox,
-    ContentBox
+enum class BlockStepInsert : bool {
+    Margin,
+    Padding
 };
 
 enum class FieldSizing : bool {
@@ -1299,7 +1297,6 @@ WTF::TextStream& operator<<(WTF::TextStream&, ScrollSnapStop);
 WTF::TextStream& operator<<(WTF::TextStream&, ScrollSnapStrictness);
 WTF::TextStream& operator<<(WTF::TextStream&, SpeakAs);
 WTF::TextStream& operator<<(WTF::TextStream&, StyleDifference);
-WTF::TextStream& operator<<(WTF::TextStream&, StyleDifferenceContextSensitiveProperty);
 WTF::TextStream& operator<<(WTF::TextStream&, TableLayoutType);
 WTF::TextStream& operator<<(WTF::TextStream&, TextAlignMode);
 WTF::TextStream& operator<<(WTF::TextStream&, TextAlignLast);

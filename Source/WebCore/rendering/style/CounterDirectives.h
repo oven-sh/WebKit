@@ -35,8 +35,6 @@ struct CounterDirectives {
 
 struct CounterDirectiveMap {
     UncheckedKeyHashMap<AtomString, CounterDirectives> map;
-
-    friend bool operator==(const CounterDirectiveMap&, const CounterDirectiveMap&) = default;
 };
 
 } // namespace WebCore

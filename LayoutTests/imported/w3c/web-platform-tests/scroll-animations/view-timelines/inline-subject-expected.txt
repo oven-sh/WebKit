@@ -1,5 +1,5 @@
 Hello world
 
 
-PASS View timeline attached to SVG graphics element
+FAIL View timeline attached to SVG graphics element promise_test: Unhandled rejection with value: object "TypeError: undefined is not an object (evaluating 'anim.ready')"
 

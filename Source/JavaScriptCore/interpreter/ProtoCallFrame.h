@@ -34,8 +34,6 @@
 #include "JSWebAssemblyInstance.h"
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 struct JS_EXPORT_PRIVATE ProtoCallFrame {
@@ -94,5 +92,3 @@ public:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

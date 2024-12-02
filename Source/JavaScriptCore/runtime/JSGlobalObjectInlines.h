@@ -236,9 +236,9 @@ inline JSFunction* JSGlobalObject::performProxyObjectSetByValSloppyFunction() co
 inline JSFunction* JSGlobalObject::performProxyObjectSetByValSloppyFunctionConcurrently() const { return performProxyObjectSetByValSloppyFunction(); }
 inline JSFunction* JSGlobalObject::performProxyObjectSetByValStrictFunction() const { return m_performProxyObjectSetByValStrictFunction.get(); }
 inline JSFunction* JSGlobalObject::performProxyObjectSetByValStrictFunctionConcurrently() const { return performProxyObjectSetByValStrictFunction(); }
-inline GetterSetter* JSGlobalObject::regExpProtoGlobalGetter() const { return std::bit_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoGlobalGetter)); }
-inline GetterSetter* JSGlobalObject::regExpProtoUnicodeGetter() const { return std::bit_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoUnicodeGetter)); }
-inline GetterSetter* JSGlobalObject::regExpProtoUnicodeSetsGetter() const { return std::bit_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoUnicodeSetsGetter)); }
+inline GetterSetter* JSGlobalObject::regExpProtoGlobalGetter() const { return bitwise_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoGlobalGetter)); }
+inline GetterSetter* JSGlobalObject::regExpProtoUnicodeGetter() const { return bitwise_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoUnicodeGetter)); }
+inline GetterSetter* JSGlobalObject::regExpProtoUnicodeSetsGetter() const { return bitwise_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoUnicodeSetsGetter)); }
 
 ALWAYS_INLINE VM& getVM(JSGlobalObject* globalObject)
 {
@@ -343,13 +343,9 @@ ALWAYS_INLINE JSArray* tryCreateContiguousArrayWithPattern(JSGlobalObject* globa
 
 #if OS(DARWIN)
     memset_pattern8(static_cast<void*>(butterfly->contiguous().data()), &pattern, sizeof(EncodedJSValue) * initialLength);
-    if (vectorLength > initialLength)
-        memset(static_cast<void*>(butterfly->contiguous().data() + initialLength), 0, sizeof(EncodedJSValue) * (vectorLength - initialLength));
 #else
     for (unsigned i = 0; i < initialLength; ++i)
         butterfly->contiguous().atUnsafe(i).setWithoutWriteBarrier(pattern);
-    for (unsigned i = initialLength; i < vectorLength; ++i)
-        butterfly->contiguous().atUnsafe(i).clear();
 #endif
     return JSArray::createWithButterfly(vm, nullptr, structure, butterfly);
 }

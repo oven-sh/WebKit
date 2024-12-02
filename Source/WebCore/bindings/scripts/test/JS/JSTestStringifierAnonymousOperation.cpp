@@ -44,6 +44,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -108,9 +109,10 @@ template<> void JSTestStringifierAnonymousOperationDOMConstructor::initializePro
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestStringifierAnonymousOperationPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierAnonymousOperationConstructor, 0 } },
-    HashTableValue { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierAnonymousOperationPrototypeFunction_toString, 0 } },
+static const HashTableValue JSTestStringifierAnonymousOperationPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierAnonymousOperationConstructor, 0 } },
+    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierAnonymousOperationPrototypeFunction_toString, 0 } },
 };
 
 const ClassInfo JSTestStringifierAnonymousOperationPrototype::s_info = { "TestStringifierAnonymousOperation"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestStringifierAnonymousOperationPrototype) };
@@ -213,7 +215,6 @@ void JSTestStringifierAnonymousOperationOwner::finalize(JSC::Handle<JSC::Unknown
     uncacheWrapper(world, jsTestStringifierAnonymousOperation->protectedWrapped().ptr(), jsTestStringifierAnonymousOperation);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -238,8 +239,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestStringifi
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestStringifierAnonymousOperation>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

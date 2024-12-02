@@ -32,8 +32,6 @@
 
 #if ENABLE(WEB_AUTHN)
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace apdu {
 
 namespace {
@@ -147,7 +145,5 @@ Vector<uint8_t> ApduCommand::getEncodedCommand() const
 }
 
 } // namespace apdu
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUTHN)

@@ -103,8 +103,6 @@
 
 #import <pal/ios/UIKitSoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 using namespace HTMLNames;
@@ -1890,7 +1888,5 @@ bool RenderThemeIOS::paintSearchFieldResultsButton(const RenderBox& box, const P
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif //PLATFORM(IOS_FAMILY)

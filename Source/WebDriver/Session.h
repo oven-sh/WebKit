@@ -49,13 +49,13 @@ class SessionHost;
 
 class Session : public RefCounted<Session> {
 public:
-    static Ref<Session> create(Ref<SessionHost>&& host)
+    static Ref<Session> create(std::unique_ptr<SessionHost>&& host)
     {
         return adoptRef(*new Session(WTFMove(host)));
     }
     ~Session();
 #if ENABLE(WEBDRIVER_BIDI)
-    static Ref<Session> create(Ref<SessionHost>&& host, WeakPtr<WebSocketServer> bidiServer)
+    static Ref<Session> create(std::unique_ptr<SessionHost>&& host, WeakPtr<WebSocketServer> bidiServer)
     {
         return adoptRef(*new Session(WTFMove(host), WTFMove(bidiServer)));
     }
@@ -151,9 +151,9 @@ public:
     void takeScreenshot(std::optional<String> elementID, std::optional<bool> scrollIntoView, Function<void(CommandResult&&)>&&);
 
 private:
-    Session(Ref<SessionHost>&&);
+    Session(std::unique_ptr<SessionHost>&&);
 #if ENABLE(WEBDRIVER_BIDI)
-    Session(Ref<SessionHost>&&, WeakPtr<WebSocketServer>&&);
+    Session(std::unique_ptr<SessionHost>&&, WeakPtr<WebSocketServer>&&);
 #endif
 
     void switchToTopLevelBrowsingContext(const String&);
@@ -247,7 +247,7 @@ private:
     };
     InputSourceState& inputSourceState(const String& id);
 
-    RefPtr<SessionHost> m_host;
+    std::unique_ptr<SessionHost> m_host;
     double m_scriptTimeout;
     double m_pageLoadTimeout;
     double m_implicitWaitTimeout;

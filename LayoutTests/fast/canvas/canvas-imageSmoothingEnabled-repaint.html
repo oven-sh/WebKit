@@ -47,10 +47,10 @@
   var drawIterations = 2;
   
   // Unrolled repaint loop for running the test in DumpRenderTree
-  async function TestControllerPaint() {
+  function TestControllerPaint() {
       while (drawIterations > 0) {
           draw();
-          await testRunner.displayAndTrackRepaints();
+          testRunner.displayAndTrackRepaints();
           drawIterations = drawIterations - 1;
       }
       draw();
@@ -68,10 +68,10 @@
   	}
   }
   
-  async function onLoadHandler()
+  function onLoadHandler()
   {
       if (window.testRunner) {
-          await TestControllerPaint();
+          TestControllerPaint();
       } else {
           BrowserPaint();
       }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,6 @@
 #include "ServiceWorkerClientType.h"
 #include "ServiceWorkerContextData.h"
 #include "ServiceWorkerJobData.h"
-#include "Site.h"
 #include "WorkerFetchResult.h"
 #include <wtf/CallbackAggregator.h>
 #include <wtf/CompletionHandler.h>
@@ -59,7 +58,7 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SWServer);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(SWServer, Connection);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(SWServerConnection, SWServer::Connection);
 
 static const unsigned defaultMaxRegistrationCount = 3;
 
@@ -375,33 +374,27 @@ void SWServer::clearInternal(Function<bool(const ServiceWorkerRegistrationKey&)>
 
 void SWServer::Connection::finishFetchingScriptInServer(const ServiceWorkerJobDataIdentifier& jobDataIdentifier, const ServiceWorkerRegistrationKey& registrationKey, WorkerFetchResult&& result)
 {
-    if (RefPtr server = m_server.get())
-        server->scriptFetchFinished(jobDataIdentifier, registrationKey, m_identifier, WTFMove(result));
+    protectedServer()->scriptFetchFinished(jobDataIdentifier, registrationKey, m_identifier, WTFMove(result));
 }
 
 void SWServer::Connection::didResolveRegistrationPromise(const ServiceWorkerRegistrationKey& key)
 {
-    if (RefPtr server = m_server.get())
-        server->didResolveRegistrationPromise(this, key);
+    protectedServer()->didResolveRegistrationPromise(this, key);
 }
 
 RefPtr<SWServerRegistration> SWServer::Connection::doRegistrationMatching(const SecurityOriginData& topOrigin, const URL& clientURL)
 {
-    if (RefPtr server = m_server.get())
-        return server->doRegistrationMatching(topOrigin, clientURL);
-    return nullptr;
+    return m_server->doRegistrationMatching(topOrigin, clientURL);
 }
 
 void SWServer::Connection::addServiceWorkerRegistrationInServer(ServiceWorkerRegistrationIdentifier identifier)
 {
-    if (RefPtr server = m_server.get())
-        server->addClientServiceWorkerRegistration(*this, identifier);
+    protectedServer()->addClientServiceWorkerRegistration(*this, identifier);
 }
 
 void SWServer::Connection::removeServiceWorkerRegistrationInServer(ServiceWorkerRegistrationIdentifier identifier)
 {
-    if (RefPtr server = m_server.get())
-        server->removeClientServiceWorkerRegistration(*this, identifier);
+    protectedServer()->removeClientServiceWorkerRegistration(*this, identifier);
 }
 
 SWServer::SWServer(SWServerDelegate& delegate, UniqueRef<SWOriginStore>&& originStore, bool processTerminationDelayEnabled, String&& registrationDatabaseDirectory, PAL::SessionID sessionID, bool shouldRunServiceWorkersOnMainThreadForTesting, bool hasServiceWorkerEntitlement, std::optional<unsigned> overrideServiceWorkerRegistrationCountTestingValue, ServiceWorkerIsInspectable inspectable)
@@ -527,7 +520,7 @@ void SWServer::scheduleUnregisterJob(ServiceWorkerJobDataIdentifier jobDataIdent
 void SWServer::rejectJob(const ServiceWorkerJobData& jobData, const ExceptionData& exceptionData)
 {
     LOG(ServiceWorker, "Rejected ServiceWorker job %s in server", jobData.identifier().loggingString().utf8().data());
-    RefPtr connection = m_connections.get(jobData.connectionIdentifier());
+    CheckedPtr connection = m_connections.get(jobData.connectionIdentifier());
     if (!connection)
         return;
 
@@ -537,7 +530,7 @@ void SWServer::rejectJob(const ServiceWorkerJobData& jobData, const ExceptionDat
 void SWServer::resolveRegistrationJob(const ServiceWorkerJobData& jobData, const ServiceWorkerRegistrationData& registrationData, ShouldNotifyWhenResolved shouldNotifyWhenResolved)
 {
     LOG(ServiceWorker, "Resolved ServiceWorker job %s in server with registration %s", jobData.identifier().loggingString().utf8().data(), registrationData.identifier.loggingString().utf8().data());
-    RefPtr connection = m_connections.get(jobData.connectionIdentifier());
+    CheckedPtr connection = m_connections.get(jobData.connectionIdentifier());
     if (!connection) {
         if (shouldNotifyWhenResolved == ShouldNotifyWhenResolved::Yes && jobData.connectionIdentifier() == Process::identifier())
             didResolveRegistrationPromise(nullptr, registrationData.key);
@@ -549,7 +542,7 @@ void SWServer::resolveRegistrationJob(const ServiceWorkerJobData& jobData, const
 
 void SWServer::resolveUnregistrationJob(const ServiceWorkerJobData& jobData, const ServiceWorkerRegistrationKey& registrationKey, bool unregistrationResult)
 {
-    RefPtr connection = m_connections.get(jobData.connectionIdentifier());
+    CheckedPtr connection = m_connections.get(jobData.connectionIdentifier());
     if (!connection)
         return;
 
@@ -596,7 +589,7 @@ void SWServer::startScriptFetch(const ServiceWorkerJobData& jobData, SWServerReg
     //   current time minus registration's last update check time is greater than 86400.
     bool shouldRefreshCache = registration.updateViaCache() != ServiceWorkerUpdateViaCache::All || (registration.getNewestWorker() && registration.isStale());
 
-    RefPtr connection = m_connections.get(jobData.connectionIdentifier());
+    CheckedPtr connection = m_connections.get(jobData.connectionIdentifier());
     if (connection) {
         connection->startScriptFetchInClient(jobData.identifier().jobIdentifier, jobData.registrationKey(), shouldRefreshCache ? FetchOptions::Cache::NoCache : FetchOptions::Cache::Default);
         return;
@@ -747,10 +740,6 @@ void SWServer::matchAll(SWServerWorker& worker, const ServiceWorkerClientQueryOp
 
     Vector<ServiceWorkerClientData> matchingClients;
     forEachClientForOrigin(worker.origin(), [&](auto& clientData) {
-        // If client’s execution ready flag is unset, continue.
-        if (m_clientsToBeCreatedById.contains(clientData.identifier))
-            return;
-
         if (!options.includeUncontrolled) {
             auto registrationIdentifier = m_clientToControllingRegistration.get(clientData.identifier);
             if (worker.data().registrationIdentifier != registrationIdentifier)
@@ -869,15 +858,15 @@ LastNavigationWasAppInitiated SWServer::clientIsAppInitiatedForRegistrableDomain
 
 void SWServer::tryInstallContextData(const std::optional<ProcessIdentifier>& requestingProcessIdentifier, ServiceWorkerContextData&& data)
 {
-    Site site(data.registration.key.topOrigin());
-    RefPtr connection = contextConnectionForRegistrableDomain(site.domain());
+    RegistrableDomain registrableDomain(data.registration.key.topOrigin());
+    CheckedPtr connection = contextConnectionForRegistrableDomain(registrableDomain);
     if (!connection) {
         auto firstPartyForCookies = data.registration.key.firstPartyForCookies();
-        m_pendingContextDatas.ensure(site.domain(), [] {
+        m_pendingContextDatas.ensure(registrableDomain, [] {
             return Vector<ServiceWorkerContextData> { };
         }).iterator->value.append(WTFMove(data));
 
-        createContextConnection(site, data.serviceWorkerPageIdentifier);
+        createContextConnection(registrableDomain, data.serviceWorkerPageIdentifier);
         return;
     }
 
@@ -890,8 +879,8 @@ void SWServer::contextConnectionCreated(SWServerToContextConnection& contextConn
     auto requestingProcessIdentifier = contextConnection.webProcessIdentifier();
     m_delegate->addAllowedFirstPartyForCookies(contextConnection.webProcessIdentifier(), requestingProcessIdentifier, RegistrableDomain(contextConnection.registrableDomain()));
 
-    for (Ref connection : m_connections.values())
-        connection->contextConnectionCreated(contextConnection);
+    for (auto& connection : m_connections.values())
+        CheckedRef { *connection }->contextConnectionCreated(contextConnection);
 
     contextConnection.setInspectable(m_isInspectable);
 
@@ -919,15 +908,11 @@ void SWServer::forEachServiceWorker(const Function<bool(const SWServerWorker&)>&
 
 void SWServer::terminateContextConnectionWhenPossible(const RegistrableDomain& registrableDomain, ProcessIdentifier processIdentifier)
 {
-    RefPtr contextConnection = contextConnectionForRegistrableDomain(registrableDomain);
+    CheckedPtr contextConnection = contextConnectionForRegistrableDomain(registrableDomain);
     if (!contextConnection || contextConnection->webProcessIdentifier() != processIdentifier)
         return;
 
-    if (!contextConnection->terminateWhenPossible())
-        return;
-
-    removeContextConnection(*contextConnection);
-    contextConnection->connectionIsNoLongerNeeded();
+    contextConnection->terminateWhenPossible();
 }
 
 OptionSet<AdvancedPrivacyProtections> SWServer::advancedPrivacyProtectionsFromClient(const ClientOrigin& origin) const
@@ -953,7 +938,7 @@ void SWServer::installContextData(const ServiceWorkerContextData& data)
     RefPtr registration = m_scopeToRegistrationMap.get(data.registration.key);
     Ref worker = SWServerWorker::create(*this, *registration, data.scriptURL, data.script, data.certificateInfo, data.contentSecurityPolicy, data.crossOriginEmbedderPolicy, String { data.referrerPolicy }, data.workerType, data.serviceWorkerIdentifier, MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript> { data.scriptResourceMap });
 
-    RefPtr connection = worker->contextConnection();
+    CheckedPtr connection = worker->contextConnection();
     ASSERT(connection);
 
     registration->setPreInstallationWorker(worker.ptr());
@@ -977,11 +962,9 @@ void SWServer::runServiceWorkerIfNecessary(ServiceWorkerIdentifier identifier, R
 
 void SWServer::runServiceWorkerIfNecessary(SWServerWorker& worker, RunServiceWorkerCallback&& callback)
 {
-    RefPtr contextConnection = worker.contextConnection();
+    CheckedPtr contextConnection = worker.contextConnection();
     if (worker.isRunning()) {
         ASSERT(contextConnection);
-        worker.needsRunning();
-        contextConnection->serviceWorkerNeedsRunning();
         callback(contextConnection.get());
         return;
     }
@@ -1009,13 +992,11 @@ void SWServer::runServiceWorkerIfNecessary(SWServerWorker& worker, RunServiceWor
             return Vector<RunServiceWorkerCallback> { };
         }).iterator->value.append(WTFMove(callback));
 
-        createContextConnection(worker.topSite(), worker.serviceWorkerPageIdentifier());
+        createContextConnection(worker.topRegistrableDomain(), worker.serviceWorkerPageIdentifier());
         return;
     }
 
     bool success = runServiceWorker(worker.identifier());
-    if (success)
-        contextConnection->serviceWorkerNeedsRunning();
     callback(success ? contextConnection.get() : nullptr);
 }
 
@@ -1040,7 +1021,7 @@ bool SWServer::runServiceWorker(SWServerWorker& worker)
 
     worker.setState(SWServerWorker::State::Running);
 
-    RefPtr contextConnection = worker.contextConnection();
+    CheckedPtr contextConnection = worker.contextConnection();
     ASSERT(contextConnection);
 
     contextConnection->installServiceWorkerContext(worker.contextData(), worker.data(), worker.userAgent(), worker.workerThreadMode(), advancedPrivacyProtectionsFromClient(worker.registrationKey().clientOrigin()));
@@ -1079,7 +1060,7 @@ void SWServer::workerContextTerminated(SWServerWorker& worker)
 
 void SWServer::fireInstallEvent(SWServerWorker& worker)
 {
-    RefPtr contextConnection = worker.contextConnection();
+    CheckedPtr contextConnection = worker.contextConnection();
     if (!contextConnection) {
         RELEASE_LOG_ERROR(ServiceWorker, "Request to fire install event on a worker whose context connection does not exist");
         return;
@@ -1106,7 +1087,7 @@ void SWServer::runServiceWorkerAndFireActivateEvent(SWServerWorker& worker)
     });
 }
 
-void SWServer::addConnection(Ref<Connection>&& connection)
+void SWServer::addConnection(std::unique_ptr<Connection>&& connection)
 {
     auto identifier = connection->identifier();
     ASSERT(!m_connections.contains(identifier));
@@ -1178,9 +1159,9 @@ void SWServer::registerServiceWorkerClient(ClientOrigin&& clientOrigin, ServiceW
     ASSERT(!m_clientsById.contains(clientIdentifier));
     m_clientsById.add(clientIdentifier, makeUniqueRef<ServiceWorkerClientData>(WTFMove(data)));
 
-    ASSERT(!m_clientsToBeCreatedById.contains(clientIdentifier));
+    ASSERT(!m_clientPendingMessagesById.contains(clientIdentifier));
     if (isBeingCreatedClient == IsBeingCreatedClient::Yes)
-        m_clientsToBeCreatedById.add(clientIdentifier, Vector<ServiceWorkerClientPendingMessage> { });
+        m_clientPendingMessagesById.add(clientIdentifier, Vector<ServiceWorkerClientPendingMessage> { });
 
     auto& clientIdentifiersForOrigin = m_clientIdentifiersPerOrigin.ensure(clientOrigin, [] {
         return Clients { };
@@ -1239,7 +1220,7 @@ void SWServer::unregisterServiceWorkerClient(const ClientOrigin& clientOrigin, S
     auto appInitiatedValueBefore = clientIsAppInitiatedForRegistrableDomain(clientOrigin.clientRegistrableDomain());
 
     m_clientsById.remove(clientIdentifier);
-    m_clientsToBeCreatedById.remove(clientIdentifier);
+    m_clientPendingMessagesById.remove(clientIdentifier);
     m_visibleClientIdToInternalClientIdMap.remove(clientIdentifier.toString());
 
     auto clientsByRegistrableDomainIterator = m_clientsByRegistrableDomain.find(clientRegistrableDomain);
@@ -1290,7 +1271,7 @@ void SWServer::unregisterServiceWorkerClient(const ClientOrigin& clientOrigin, S
 
             m_clientIdentifiersPerOrigin.remove(clientOrigin);
         });
-        RefPtr contextConnection = contextConnectionForRegistrableDomain(clientRegistrableDomain);
+        CheckedPtr contextConnection = contextConnectionForRegistrableDomain(clientRegistrableDomain);
         bool shouldContextConnectionBeTerminatedWhenPossible = contextConnection && contextConnection->shouldTerminateWhenPossible();
         iterator->value.terminateServiceWorkersTimer->startOneShot(m_isProcessTerminationDelayEnabled && !MemoryPressureHandler::singleton().isUnderMemoryPressure() && !shouldContextConnectionBeTerminatedWhenPossible && !didUnregister ? defaultTerminationDelay : 0_s);
     }
@@ -1324,7 +1305,7 @@ SWServer::ShouldDelayRemoval SWServer::removeContextConnectionIfPossible(const R
     if (m_clientsByRegistrableDomain.contains(domain))
         return ShouldDelayRemoval::No;
 
-    RefPtr connection = contextConnectionForRegistrableDomain(domain);
+    WeakPtr connection = contextConnectionForRegistrableDomain(domain);
     if (!connection)
         return ShouldDelayRemoval::No;
 
@@ -1334,7 +1315,7 @@ SWServer::ShouldDelayRemoval SWServer::removeContextConnectionIfPossible(const R
     }
 
     removeContextConnection(*connection);
-    connection->connectionIsNoLongerNeeded();
+    connection->connectionIsNoLongerNeeded(); // May destroy the connection object.
     return ShouldDelayRemoval::No;
 }
 
@@ -1364,8 +1345,8 @@ bool SWServer::needsContextConnectionForRegistrableDomain(const RegistrableDomai
 
 void SWServer::resolveRegistrationReadyRequests(SWServerRegistration& registration)
 {
-    for (Ref connection : m_connections.values())
-        connection->resolveRegistrationReadyRequests(registration);
+    for (auto& connection : m_connections.values())
+        CheckedRef { *connection }->resolveRegistrationReadyRequests(registration);
 }
 
 void SWServer::Connection::whenRegistrationReady(const SecurityOriginData& topOrigin, const URL& clientURL, CompletionHandler<void(std::optional<ServiceWorkerRegistrationData>&&)>&& callback)
@@ -1381,10 +1362,7 @@ void SWServer::Connection::whenRegistrationReady(const SecurityOriginData& topOr
 
 void SWServer::Connection::storeRegistrationsOnDisk(CompletionHandler<void()>&& callback)
 {
-    if (RefPtr server = m_server.get())
-        server->storeRegistrationsOnDisk(WTFMove(callback));
-    else
-        callback();
+    protectedServer()->storeRegistrationsOnDisk(WTFMove(callback));
 }
 
 void SWServer::Connection::resolveRegistrationReadyRequests(SWServerRegistration& registration)
@@ -1455,42 +1433,15 @@ void SWServer::removeContextConnection(SWServerToContextConnection& connection)
 {
     RELEASE_LOG(ServiceWorker, "SWServer::removeContextConnection %" PRIu64, connection.identifier().toUInt64());
 
-    auto site = connection.site();
+    auto registrableDomain = connection.registrableDomain();
     auto serviceWorkerPageIdentifier = connection.serviceWorkerPageIdentifier();
 
-    ASSERT(m_contextConnections.get(site.domain()) == &connection);
+    ASSERT(m_contextConnections.get(registrableDomain) == &connection);
 
-    m_contextConnections.remove(site.domain());
-    markAllWorkersForRegistrableDomainAsTerminated(site.domain());
-    if (needsContextConnectionForRegistrableDomain(site.domain()))
-        createContextConnection(site, serviceWorkerPageIdentifier);
-}
-
-void SWServer::terminateIdleServiceWorkers(SWServerToContextConnection& connection)
-{
-    RELEASE_LOG(ServiceWorker, "SWServer::terminateIdleServiceWorkers %" PRIu64, connection.identifier().toUInt64());
-
-    auto domain = connection.site().domain();
-
-    Vector<Ref<SWServerWorker>> idleWorkers;
-    for (Ref worker : m_runningOrTerminatingWorkers.values()) {
-        if (worker->topRegistrableDomain() == domain && worker->isIdle(m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration))
-            idleWorkers.append(worker);
-    }
-    for (auto& worker : idleWorkers) {
-        RELEASE_LOG(ServiceWorker, "SWServer::terminateIdleServiceWorkers terminating worker %" PRIu64, worker->identifier().toUInt64());
-        worker->terminate();
-    }
-}
-
-bool SWServer::areServiceWorkersIdle(const SWServerToContextConnection& connection)
-{
-    auto domain = connection.site().domain();
-    for (Ref worker : m_runningOrTerminatingWorkers.values()) {
-        if (worker->topRegistrableDomain() == domain && !worker->isIdle(m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration))
-            return false;
-    }
-    return true;
+    m_contextConnections.remove(registrableDomain);
+    markAllWorkersForRegistrableDomainAsTerminated(registrableDomain);
+    if (needsContextConnectionForRegistrableDomain(registrableDomain))
+        createContextConnection(registrableDomain, serviceWorkerPageIdentifier);
 }
 
 SWServerToContextConnection* SWServer::contextConnectionForRegistrableDomain(const RegistrableDomain& domain)
@@ -1498,36 +1449,36 @@ SWServerToContextConnection* SWServer::contextConnectionForRegistrableDomain(con
     return m_contextConnections.get(domain);
 }
 
-void SWServer::createContextConnection(const Site& site, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier)
+void SWServer::createContextConnection(const RegistrableDomain& registrableDomain, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier)
 {
-    ASSERT(!m_contextConnections.contains(site.domain()));
-    if (m_pendingConnectionDomains.contains(site.domain()))
+    ASSERT(!m_contextConnections.contains(registrableDomain));
+    if (m_pendingConnectionDomains.contains(registrableDomain))
         return;
 
     RELEASE_LOG(ServiceWorker, "SWServer::createContextConnection will create a connection");
 
     std::optional<ProcessIdentifier> requestingProcessIdentifier;
-    if (auto it = m_clientsByRegistrableDomain.find(site.domain()); it != m_clientsByRegistrableDomain.end()) {
+    if (auto it = m_clientsByRegistrableDomain.find(registrableDomain); it != m_clientsByRegistrableDomain.end()) {
         if (!it->value.isEmpty())
             requestingProcessIdentifier = it->value.begin()->processIdentifier();
     }
 
-    m_pendingConnectionDomains.add(site.domain());
-    m_delegate->createContextConnection(site, requestingProcessIdentifier, serviceWorkerPageIdentifier, [weakThis = WeakPtr { *this }, site, serviceWorkerPageIdentifier] {
+    m_pendingConnectionDomains.add(registrableDomain);
+    m_delegate->createContextConnection(registrableDomain, requestingProcessIdentifier, serviceWorkerPageIdentifier, [weakThis = WeakPtr { *this }, registrableDomain, serviceWorkerPageIdentifier] {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
 
         RELEASE_LOG(ServiceWorker, "SWServer::createContextConnection should now have created a connection");
 
-        ASSERT(protectedThis->m_pendingConnectionDomains.contains(site.domain()));
-        protectedThis->m_pendingConnectionDomains.remove(site.domain());
+        ASSERT(protectedThis->m_pendingConnectionDomains.contains(registrableDomain));
+        protectedThis->m_pendingConnectionDomains.remove(registrableDomain);
 
-        if (protectedThis->m_contextConnections.contains(site.domain()))
+        if (protectedThis->m_contextConnections.contains(registrableDomain))
             return;
 
-        if (protectedThis->needsContextConnectionForRegistrableDomain(site.domain()))
-            protectedThis->createContextConnection(site, serviceWorkerPageIdentifier);
+        if (protectedThis->needsContextConnectionForRegistrableDomain(registrableDomain))
+            protectedThis->createContextConnection(registrableDomain, serviceWorkerPageIdentifier);
     });
 }
 
@@ -1767,7 +1718,7 @@ void SWServer::fireFunctionalEvent(SWServerRegistration& registration, Completio
         }
 
         if (!worker->contextConnection())
-            protectedThis->createContextConnection(worker->topSite(), worker->serviceWorkerPageIdentifier());
+            protectedThis->createContextConnection(worker->topRegistrableDomain(), worker->serviceWorkerPageIdentifier());
 
         protectedThis->runServiceWorkerIfNecessary(serviceWorkerIdentifier, [callback = WTFMove(callback)](auto* contextConnection) mutable {
             if (!contextConnection) {
@@ -1785,8 +1736,8 @@ void SWServer::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier
     if (!sourceServiceWorker)
         return;
 
-    auto iterator = m_clientsToBeCreatedById.find(destinationContextIdentifier);
-    if (iterator == m_clientsToBeCreatedById.end()) {
+    auto iterator = m_clientPendingMessagesById.find(destinationContextIdentifier);
+    if (iterator == m_clientPendingMessagesById.end()) {
         callbackIfClientIsReady(destinationContextIdentifier, message, sourceServiceWorker->data(), sourceOrigin);
         return;
     }
@@ -1795,7 +1746,7 @@ void SWServer::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier
 
 Vector<ServiceWorkerClientPendingMessage> SWServer::releaseServiceWorkerClientPendingMessage(ScriptExecutionContextIdentifier contextIdentifier)
 {
-    return m_clientsToBeCreatedById.take(contextIdentifier);
+    return m_clientPendingMessagesById.take(contextIdentifier);
 }
 
 void SWServer::setInspectable(ServiceWorkerIsInspectable inspectable)
@@ -1806,7 +1757,7 @@ void SWServer::setInspectable(ServiceWorkerIsInspectable inspectable)
     m_isInspectable = inspectable;
 
     for (auto& connection : m_contextConnections.values())
-        Ref { connection.get() }->setInspectable(inspectable);
+        CheckedRef { connection.get() }->setInspectable(inspectable);
 }
 
 SWServerRegistration* SWServer::getRegistration(ServiceWorkerRegistrationIdentifier identifier)
@@ -1816,19 +1767,13 @@ SWServerRegistration* SWServer::getRegistration(ServiceWorkerRegistrationIdentif
 
 void SWServer::Connection::startBackgroundFetch(ServiceWorkerRegistrationIdentifier registrationIdentifier, const String& backgroundFetchIdentifier, Vector<BackgroundFetchRequest>&& requests, BackgroundFetchOptions&& options, ExceptionOrBackgroundFetchInformationCallback&& callback)
 {
-    RefPtr server = m_server.get();
-    if (!server) {
-        callback(makeUnexpected(ExceptionData { ExceptionCode::InvalidStateError, "No server found"_s }));
-        return;
-    }
-
-    RefPtr registration = server->getRegistration(registrationIdentifier);
+    RefPtr registration = protectedServer()->getRegistration(registrationIdentifier);
     if (!registration) {
         callback(makeUnexpected(ExceptionData { ExceptionCode::InvalidStateError, "No registration found"_s }));
         return;
     }
 
-    server->requestBackgroundFetchPermission({ registration->key().topOrigin(), SecurityOriginData::fromURL(registration->key().scope()) }, [weakServer = WeakPtr { *server }, registrationIdentifier, backgroundFetchIdentifier, requests = WTFMove(requests), options = WTFMove(options), callback = WTFMove(callback)](bool result) mutable {
+    protectedServer()->requestBackgroundFetchPermission({ registration->key().topOrigin(), SecurityOriginData::fromURL(registration->key().scope()) }, [weakServer = WeakPtr { server() }, registrationIdentifier, backgroundFetchIdentifier, requests = WTFMove(requests), options = WTFMove(options), callback = WTFMove(callback)](bool result) mutable {
         RefPtr server = weakServer.get();
         if (!server || !result) {
             callback(makeUnexpected(ExceptionData { ExceptionCode::NotAllowedError, "Background fetch permission is denied"_s }));
@@ -1858,86 +1803,56 @@ BackgroundFetchEngine& SWServer::backgroundFetchEngine()
 
 void SWServer::Connection::backgroundFetchInformation(ServiceWorkerRegistrationIdentifier registrationIdentifier, const String& backgroundFetchIdentifier, BackgroundFetchEngine::ExceptionOrBackgroundFetchInformationCallback&& callback)
 {
-    RefPtr server = m_server.get();
-    if (!server) {
-        callback(makeUnexpected(ExceptionData { ExceptionCode::InvalidStateError, "No server found"_s }));
-        return;
-    }
-
-    RefPtr registration = server->getRegistration(registrationIdentifier);
+    RefPtr registration = server().getRegistration(registrationIdentifier);
     if (!registration) {
         callback(makeUnexpected(ExceptionData { ExceptionCode::InvalidStateError, "No registration found"_s }));
         return;
     }
 
-    server->backgroundFetchEngine().backgroundFetchInformation(*registration, backgroundFetchIdentifier, WTFMove(callback));
+    protectedServer()->backgroundFetchEngine().backgroundFetchInformation(*registration, backgroundFetchIdentifier, WTFMove(callback));
 }
 
 void SWServer::Connection::backgroundFetchIdentifiers(ServiceWorkerRegistrationIdentifier registrationIdentifier, BackgroundFetchEngine::BackgroundFetchIdentifiersCallback&& callback)
 {
-    RefPtr server = m_server.get();
-    if (!server) {
-        callback({ });
-        return;
-    }
-
-    RefPtr registration = server->getRegistration(registrationIdentifier);
+    RefPtr registration = server().getRegistration(registrationIdentifier);
     if (!registration) {
         callback({ });
         return;
     }
 
-    server->backgroundFetchEngine().backgroundFetchIdentifiers(*registration, WTFMove(callback));
+    protectedServer()->backgroundFetchEngine().backgroundFetchIdentifiers(*registration, WTFMove(callback));
 }
 
 void SWServer::Connection::abortBackgroundFetch(ServiceWorkerRegistrationIdentifier registrationIdentifier, const String& backgroundFetchIdentifier, BackgroundFetchEngine::AbortBackgroundFetchCallback&& callback)
 {
-    RefPtr server = m_server.get();
-    if (!server) {
-        callback(false);
-        return;
-    }
-
-    RefPtr registration = server->getRegistration(registrationIdentifier);
+    RefPtr registration = server().getRegistration(registrationIdentifier);
     if (!registration) {
         callback(false);
         return;
     }
 
-    server->backgroundFetchEngine().abortBackgroundFetch(*registration, backgroundFetchIdentifier, WTFMove(callback));
+    protectedServer()->backgroundFetchEngine().abortBackgroundFetch(*registration, backgroundFetchIdentifier, WTFMove(callback));
 }
 
 void SWServer::Connection::matchBackgroundFetch(ServiceWorkerRegistrationIdentifier registrationIdentifier, const String& backgroundFetchIdentifier, RetrieveRecordsOptions&& options, BackgroundFetchEngine::MatchBackgroundFetchCallback&& callback)
 {
-    RefPtr server = m_server.get();
-    if (!server) {
-        callback({ });
-        return;
-    }
-
-    RefPtr registration = server->getRegistration(registrationIdentifier);
+    RefPtr registration = server().getRegistration(registrationIdentifier);
     if (!registration) {
         callback({ });
         return;
     }
 
-    server->backgroundFetchEngine().matchBackgroundFetch(*registration, backgroundFetchIdentifier, WTFMove(options), WTFMove(callback));
+    protectedServer()->backgroundFetchEngine().matchBackgroundFetch(*registration, backgroundFetchIdentifier, WTFMove(options), WTFMove(callback));
 }
 
 void SWServer::Connection::retrieveRecordResponse(BackgroundFetchRecordIdentifier recordIdentifier, BackgroundFetchEngine::RetrieveRecordResponseCallback&& callback)
 {
-    if (RefPtr server = m_server.get())
-        server->backgroundFetchEngine().retrieveRecordResponse(recordIdentifier, WTFMove(callback));
-    else
-        callback(makeUnexpected(ExceptionData { ExceptionCode::InvalidStateError, "No server found"_s }));
+    protectedServer()->backgroundFetchEngine().retrieveRecordResponse(recordIdentifier, WTFMove(callback));
 }
 
 void SWServer::Connection::retrieveRecordResponseBody(BackgroundFetchRecordIdentifier recordIdentifier, BackgroundFetchEngine::RetrieveRecordResponseBodyCallback&& callback)
 {
-    if (RefPtr server = m_server.get())
-        server->backgroundFetchEngine().retrieveRecordResponseBody(recordIdentifier, WTFMove(callback));
-    else
-        callback(makeUnexpected(ResourceError { errorDomainWebKitInternal, 0, { }, "No server found"_s }));
+    protectedServer()->backgroundFetchEngine().retrieveRecordResponseBody(recordIdentifier, WTFMove(callback));
 }
 
 } // namespace WebCore

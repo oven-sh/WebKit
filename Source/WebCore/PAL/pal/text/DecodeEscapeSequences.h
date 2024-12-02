@@ -102,17 +102,18 @@ struct URLEscapeSequence {
         // a valid escape sequence, but there may be characters between the sequences.
         Vector<uint8_t, 512> buffer;
         buffer.grow(run.length()); // Unescaping hex sequences only makes the length smaller.
-        size_t bufferIndex = 0;
+        uint8_t* p = buffer.data();
         while (!run.isEmpty()) {
             if (run[0] == '%') {
-                buffer[bufferIndex++] = (toASCIIHexValue(run[1]) << 4) | toASCIIHexValue(run[2]);
+                *p++ = (toASCIIHexValue(run[1]) << 4) | toASCIIHexValue(run[2]);
                 run = run.substring(SequenceSize);
             } else {
-                buffer[bufferIndex++] = run[0];
+                *p++ = run[0];
                 run = run.substring(1);
             }
         }
-        buffer.shrink(bufferIndex);
+        ASSERT(buffer.size() >= static_cast<size_t>(p - buffer.data())); // Prove buffer not overrun.
+        buffer.shrink(p - buffer.data());
         return buffer;
     }
 
@@ -185,3 +186,4 @@ inline Vector<uint8_t> decodeURLEscapeSequencesAsData(StringView string)
 }
 
 } // namespace PAL
+

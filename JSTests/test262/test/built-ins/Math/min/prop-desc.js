@@ -12,8 +12,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Math, "min", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Math, "min");
+verifyWritable(Math, "min");
+verifyConfigurable(Math, "min");

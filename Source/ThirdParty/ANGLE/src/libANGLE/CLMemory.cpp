@@ -162,9 +162,7 @@ Memory::Memory(const Buffer &buffer,
                void *hostPtr)
     : mContext(&context),
       mProperties(std::move(properties)),
-      mFlags(flags.excludes(CL_MEM_READ_WRITE | CL_MEM_READ_ONLY | CL_MEM_WRITE_ONLY)
-                 ? cl::MemFlags{flags.get() | CL_MEM_READ_WRITE}
-                 : flags),
+      mFlags(flags),
       mHostPtr(flags.intersects(CL_MEM_USE_HOST_PTR) ? hostPtr : nullptr),
       mImpl(nullptr),
       mSize(size),

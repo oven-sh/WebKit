@@ -41,7 +41,6 @@
 #import <WebKit/_WKNotificationData.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
-#import <notify.h>
 #import <objc/runtime.h>
 
 static const NSString * const kURLArgumentString = @"--url";
@@ -117,19 +116,6 @@ static BOOL enabledForFeature(_WKFeature *feature)
 
         dataStore = [[WKWebsiteDataStore alloc] _initWithConfiguration:configuration];
         dataStore._delegate = self;
-
-        int token;
-        notify_register_dispatch("org.webkit.MiniBrowser.clearAllData", &token, dispatch_get_main_queue(), ^(int unusedToken) {
-            [dataStore removeDataOfTypes:WKWebsiteDataStore.allWebsiteDataTypes modifiedSince:[NSDate distantPast] completionHandler:^{
-                NSLog(@"Removed all website data from default persistent data store.");
-            }];
-        });
-
-        notify_register_dispatch("org.webkit.MiniBrowser.clearServiceWorkers", &token, dispatch_get_main_queue(), ^(int unusedToken) {
-            [dataStore removeDataOfTypes:[NSSet setWithObject:WKWebsiteDataTypeServiceWorkerRegistrations] modifiedSince:[NSDate distantPast] completionHandler:^{
-                NSLog(@"Removed all service workers from default persistent data store.");
-            }];
-        });
     }
     
     return dataStore;
@@ -374,11 +360,6 @@ static NSNumber *_currentBadge;
 
     [[controller window] makeKeyAndOrderFront:sender];
     [controller loadHTMLString:@"<html><body></body></html>"];
-}
-
-- (IBAction)newSwiftUIWindow:(id)sender
-{
-    [self createSwiftUIWindow:sender];
 }
 
 - (void)didCreateBrowserWindowController:(BrowserWindowController *)controller

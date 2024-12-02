@@ -25,6 +25,7 @@
 #include "CSSCustomPropertySyntax.h"
 #include "CSSParserContext.h"
 #include "CSSParserTokenRange.h"
+#include "CSSPropertyParserHelpers.h"
 #include "StyleRuleType.h"
 #include <wtf/text/StringView.h>
 
@@ -128,7 +129,6 @@ private:
 
     // CSS3 Parsing Routines (for properties specific to CSS3)
     bool consumeBorderImage(CSSPropertyID, bool important);
-    bool consumeBorderRadius(CSSPropertyID, bool important);
 
     bool consumeFlex(bool important);
 

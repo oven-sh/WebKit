@@ -63,7 +63,7 @@ GType webkit_media_src_get_type(void);
 
 void webKitMediaSrcEmitStreams(WebKitMediaSrc* source, const Vector<RefPtr<WebCore::MediaSourceTrackGStreamer>>& tracks);
 
-void webKitMediaSrcFlush(WebKitMediaSrc*, TrackID streamId);
+void webKitMediaSrcFlush(WebKitMediaSrc*, const AtomString& streamName);
 
 void webKitMediaSrcSetPlayer(WebKitMediaSrc*, ThreadSafeWeakPtr<WebCore::MediaPlayerPrivateGStreamerMSE>&&);
 

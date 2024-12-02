@@ -81,6 +81,8 @@ struct PseudoElementIdentifier;
 
 }
 
+WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE(WebCore::RenderObject);
+WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE(WebCore::Node);
 WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE(WebCore::NodeRareData);
 
 namespace WebCore {
@@ -95,7 +97,7 @@ const int initialNodeVectorSize = 11; // Covers 99.5%. See webkit.org/b/80706
 typedef Vector<Ref<Node>, initialNodeVectorSize> NodeVector;
 
 class Node : public EventTarget, public CanMakeCheckedPtr<Node> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(Node);
+    WTF_MAKE_COMPACT_TZONE_OR_ISO_ALLOCATED(Node);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Node);
 
     friend class Document;
@@ -150,9 +152,14 @@ public:
     static constexpr ptrdiff_t parentNodeMemoryOffset() { return OBJECT_OFFSETOF(Node, m_parentNode); }
     inline Element* parentElement() const; // Defined in ElementInlines.h.
     inline RefPtr<Element> protectedParentElement() const; // Defined in ElementInlines.h.
-    Node* previousSibling() const { return m_previousSibling; }
-    RefPtr<Node> protectedPreviousSibling() const { return m_previousSibling; }
-    static constexpr ptrdiff_t previousSiblingMemoryOffset() { return OBJECT_OFFSETOF(Node, m_previousSibling); }
+    Node* previousSibling() const { return m_previous.pointer(); }
+    RefPtr<Node> protectedPreviousSibling() const { return m_previous.pointer(); }
+    static constexpr ptrdiff_t previousSiblingMemoryOffset() { return OBJECT_OFFSETOF(Node, m_previous); }
+#if CPU(ADDRESS64)
+    static uintptr_t previousSiblingPointerMask() { return CompactPointerTuple<Node*, uint16_t>::pointerMask; }
+#else
+    static uintptr_t previousSiblingPointerMask() { return -1; }
+#endif
     Node* nextSibling() const { return m_next.get(); }
     RefPtr<Node> protectedNextSibling() const { return m_next.get(); }
     static constexpr ptrdiff_t nextSiblingMemoryOffset() { return OBJECT_OFFSETOF(Node, m_next); }
@@ -334,7 +341,7 @@ public:
     WEBCORE_EXPORT Element* enclosingLinkEventParentOrSelf();
 
     // These low-level calls give the caller responsibility for maintaining the integrity of the tree.
-    void setPreviousSibling(Node* previous) { m_previousSibling = previous; }
+    void setPreviousSibling(Node* previous) { m_previous.setPointer(previous); }
     void setNextSibling(Node* next) { m_next = next; }
 
     virtual bool canContainRangeEndPoint() const { return false; }
@@ -456,7 +463,7 @@ public:
     // Integration with rendering tree
 
     // As renderer() includes a branch you should avoid calling it repeatedly in hot code paths.
-    RenderObject* renderer() const { return m_renderer; }
+    RenderObject* renderer() const { return m_rendererWithStyleFlags.pointer(); }
     CheckedPtr<RenderObject> checkedRenderer() const;
     void setRenderer(RenderObject*); // Defined in RenderObject.h
 
@@ -672,12 +679,12 @@ protected:
     void setStateFlag(StateFlag flag, bool value = true) const { m_stateFlags.set(flag, value); }
     void clearStateFlag(StateFlag flag) const { setStateFlag(flag, false); }
 
-    bool hasElementStateFlag(ElementStateFlag flag) const { return m_elementStateFlags.contains(flag); }
+    bool hasElementStateFlag(ElementStateFlag flag) const { return OptionSet<ElementStateFlag>::fromRaw(m_previous.type()).contains(flag); }
     inline void setElementStateFlag(ElementStateFlag, bool value = true) const;
     void clearElementStateFlag(ElementStateFlag flag) const { setElementStateFlag(flag, false); }
 
-    RareDataBitFields rareDataBitfields() const { return std::bit_cast<RareDataBitFields>(m_rareDataWithBitfields.type()); }
-    void setRareDataBitfields(RareDataBitFields bitfields) { m_rareDataWithBitfields.setType(std::bit_cast<uint16_t>(bitfields)); }
+    RareDataBitFields rareDataBitfields() const { return bitwise_cast<RareDataBitFields>(m_rareDataWithBitfields.type()); }
+    void setRareDataBitfields(RareDataBitFields bitfields) { m_rareDataWithBitfields.setType(bitwise_cast<uint16_t>(bitfields)); }
 
     TabIndexState tabIndexState() const { return static_cast<TabIndexState>(rareDataBitfields().tabIndexState); }
     void setTabIndexState(TabIndexState);
@@ -715,8 +722,8 @@ protected:
 
     struct StyleBitfields {
     public:
-        static StyleBitfields fromRaw(uint16_t packed) { return std::bit_cast<StyleBitfields>(packed); }
-        uint16_t toRaw() const { return std::bit_cast<uint16_t>(*this); }
+        static StyleBitfields fromRaw(uint16_t packed) { return bitwise_cast<StyleBitfields>(packed); }
+        uint16_t toRaw() const { return bitwise_cast<uint16_t>(*this); }
 
         Style::Validity styleValidity() const { return static_cast<Style::Validity>(m_styleValidity); }
         void setStyleValidity(Style::Validity validity) { m_styleValidity = enumToUnderlyingType(validity); }
@@ -728,12 +735,12 @@ protected:
         void clearDescendantsNeedStyleResolution() { m_flags = (flags() - NodeStyleFlag::DescendantNeedsStyleResolution - NodeStyleFlag::DirectChildNeedsStyleResolution).toRaw(); }
 
     private:
-        uint16_t m_styleValidity : 3 { 0 };
-        uint16_t m_flags : 13 { 0 };
+        uint16_t m_styleValidity : 3;
+        uint16_t m_flags : 13;
     };
 
-    StyleBitfields styleBitfields() const { return m_styleBitfields; }
-    void setStyleBitfields(StyleBitfields bitfields) { m_styleBitfields = bitfields; }
+    StyleBitfields styleBitfields() const { return StyleBitfields::fromRaw(m_rendererWithStyleFlags.type()); }
+    void setStyleBitfields(StyleBitfields bitfields) { m_rendererWithStyleFlags.setType(bitfields.toRaw()); }
     ALWAYS_INLINE bool hasStyleFlag(NodeStyleFlag flag) const { return styleBitfields().flags().contains(flag); }
     ALWAYS_INLINE void setStyleFlag(NodeStyleFlag);
     ALWAYS_INLINE void clearStyleFlags(OptionSet<NodeStyleFlag>);
@@ -790,14 +797,12 @@ private:
     mutable uint32_t m_refCountAndParentBit { s_refCountIncrement };
     const uint16_t m_typeBitFields;
     mutable OptionSet<StateFlag> m_stateFlags;
-    mutable OptionSet<ElementStateFlag> m_elementStateFlags;
-    mutable StyleBitfields m_styleBitfields;
 
     CheckedPtr<ContainerNode> m_parentNode;
     TreeScope* m_treeScope { nullptr };
-    Node* m_previousSibling { nullptr };
+    CompactPointerTuple<Node*, uint16_t> m_previous;
     CheckedPtr<Node> m_next;
-    RenderObject* m_renderer { nullptr };
+    CompactPointerTuple<RenderObject*, uint16_t> m_rendererWithStyleFlags;
     CompactUniquePtrTuple<NodeRareData, uint16_t> m_rareDataWithBitfields;
 };
 
@@ -898,7 +903,9 @@ inline ContainerNode* Node::parentNodeGuaranteedHostFree() const
 
 inline void Node::setElementStateFlag(ElementStateFlag flag, bool value) const
 {
-    m_elementStateFlags.set(flag, value);
+    auto set = OptionSet<ElementStateFlag>::fromRaw(m_previous.type());
+    set.set(flag, value);
+    const_cast<Node&>(*this).m_previous.setType(set.toRaw());
 }
 
 ALWAYS_INLINE void Node::setStyleFlag(NodeStyleFlag flag)

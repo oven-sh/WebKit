@@ -29,8 +29,6 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "UIKitSPI.h"
-#import "WKContentViewInteraction.h"
-#import "WKWebViewIOS.h"
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <wtf/RetainPtr.h>
@@ -43,6 +41,10 @@ static char associatedTouchIdentifierKey;
 static unsigned incrementingTouchIdentifier = 1;
 
 @implementation WKTouchEventsGestureRecognizer {
+    __weak id _touchTarget;
+    SEL _touchAction;
+    __weak id<WKTouchEventsGestureRecognizerDelegate> _touchEventDelegate;
+
     BOOL _passedHitTest;
     BOOL _defaultPrevented;
     BOOL _dispatchingTouchEvents;
@@ -84,7 +86,7 @@ static double approximateWallTime(NSTimeInterval timestamp)
     }
 }
 
-- (instancetype)initWithContentView:(WKContentView *)view
+- (id)initWithTarget:(id)target action:(SEL)action touchDelegate:(id<WKTouchEventsGestureRecognizerDelegate>)delegate
 {
     self = [super initWithTarget:nil action:nil];
     if (!self)
@@ -93,8 +95,10 @@ static double approximateWallTime(NSTimeInterval timestamp)
     // Remove our target/action pair, and hold onto it.
     // This gesture recognizer calls its single target/action pair
     // itself, and is not called via the standard mechanism.
+    _touchTarget = target;
+    _touchAction = action;
+    _touchEventDelegate = delegate;
     _activeTouchesByIdentifier = NSMapTable.strongToWeakObjectsMapTable;
-    _contentView = view;
 
     [self reset];
 
@@ -128,7 +132,8 @@ static double approximateWallTime(NSTimeInterval timestamp)
 
     _lastTouchEvent.type = WebKit::WKTouchEventType::Begin;
     _lastTouchEvent.timestamp = 0;
-    _lastTouchEvent.locationInRootViewCoordinates = CGPointZero;
+    _lastTouchEvent.locationInScreenCoordinates = CGPointZero;
+    _lastTouchEvent.locationInDocumentCoordinates = CGPointZero;
     _lastTouchEvent.scale = NAN;
     _lastTouchEvent.rotation = NAN;
     _lastTouchEvent.inJavaScriptGesture = false;
@@ -224,27 +229,17 @@ static unsigned nextTouchIdentifier()
     }
 }
 
-static CGPoint mapRootViewToViewport(CGPoint pointInRootView, WKContentView *contentView)
-{
-    RetainPtr webView = [contentView webView];
-    CGPoint origin = [webView bounds].origin;
-    auto inset = [webView _computedObscuredInset];
-    auto offsetInRootView = [webView convertPoint:CGPointMake(origin.x + inset.left, origin.y + inset.top) toView:contentView];
-    return CGPointMake(pointInRootView.x - offsetInRootView.x, pointInRootView.y - offsetInRootView.y);
-}
-
 - (WebKit::WKTouchEvent)_touchEventForTouch:(UITouch *)touch
 {
     auto locationInWindow = [touch locationInView:nil];
-    auto locationInRootView = [[self view] convertPoint:locationInWindow fromView:nil];
-    RetainPtr contentView = [self contentView];
+    auto locationInViewport = [[self view] convertPoint:locationInWindow fromView:nil];
 
     WebKit::WKTouchPoint touchPoint;
-    touchPoint.locationInRootViewCoordinates = locationInRootView;
-    touchPoint.locationInViewport = mapRootViewToViewport(locationInRootView, contentView.get());
+    touchPoint.locationInDocumentCoordinates = locationInViewport;
+    touchPoint.locationInScreenCoordinates = locationInWindow;
     touchPoint.identifier = 0;
     touchPoint.phase = touch.phase;
-    touchPoint.majorRadiusInWindowCoordinates = touch.majorRadius;
+    touchPoint.majorRadiusInScreenCoordinates = touch.majorRadius;
     touchPoint.force = touch.maximumPossibleForce > 0 ? touch.force / touch.maximumPossibleForce : 0;
 
     if (touch.type == UITouchTypeStylus) {
@@ -260,7 +255,8 @@ static CGPoint mapRootViewToViewport(CGPoint pointInRootView, WKContentView *con
     WebKit::WKTouchEvent event;
     event.type = WebKit::WKTouchEventType::Change;
     event.timestamp = approximateWallTime(touch.timestamp);
-    event.locationInRootViewCoordinates = locationInRootView;
+    event.locationInDocumentCoordinates = locationInViewport;
+    event.locationInScreenCoordinates = locationInWindow;
     event.touchPoints = { touchPoint };
 
     return event;
@@ -274,10 +270,10 @@ static CGPoint mapRootViewToViewport(CGPoint pointInRootView, WKContentView *con
     auto firstTouch = CGPointZero;
     auto secondTouch = CGPointZero;
     unsigned touchesDownCount = 0;
-    auto centroidInWindowCoordinates = CGPointZero;
-    auto centroidInRootViewCoordinates = CGPointZero;
-    auto releasedTouchCentroidInWindowCoordinates = CGPointZero;
-    auto releasedTouchCentroidInRootViewCoordinates = CGPointZero;
+    auto centroidInScreenCoordinates = CGPointZero;
+    auto centroidInDocumentCoordinates = CGPointZero;
+    auto releasedTouchCentroidInScreenCoordinates = CGPointZero;
+    auto releasedTouchCentroidInDocumentCoordinates = CGPointZero;
 
     _dispatchingTouchEvents = YES;
 
@@ -299,7 +295,6 @@ static CGPoint mapRootViewToViewport(CGPoint pointInRootView, WKContentView *con
             _lastTouchEvent.predictedEvents.append([self _touchEventForTouch:predictedTouch]);
     }
 
-    RetainPtr contentView = [self contentView];
     NSUInteger touchIndex = 0;
 
     [_activeTouchesByIdentifier removeAllObjects];
@@ -326,12 +321,12 @@ static CGPoint mapRootViewToViewport(CGPoint pointInRootView, WKContentView *con
         // iPhone WebKit works as if it is full screen. Therefore Web coords are Global coords.
         auto& touchPoint = _lastTouchEvent.touchPoints[touchIndex];
         auto locationInWindow = [touch locationInView:nil];
-        auto locationInRootView = [[self view] convertPoint:locationInWindow fromView:nil];
-        touchPoint.locationInRootViewCoordinates = locationInRootView;
-        touchPoint.locationInViewport = mapRootViewToViewport(locationInRootView, contentView.get());
+        touchPoint.locationInScreenCoordinates = locationInWindow;
+        auto locationInViewport = [[self view] convertPoint:locationInWindow fromView:nil];
+        touchPoint.locationInDocumentCoordinates = locationInViewport;
         touchPoint.identifier = [associatedIdentifier unsignedIntValue];
         touchPoint.phase = touch.phase;
-        touchPoint.majorRadiusInWindowCoordinates = touch.majorRadius;
+        touchPoint.majorRadiusInScreenCoordinates = touch.majorRadius;
 
         if (touch.maximumPossibleForce > 0)
             touchPoint.force = touch.force / touch.maximumPossibleForce;
@@ -351,36 +346,37 @@ static CGPoint mapRootViewToViewport(CGPoint pointInRootView, WKContentView *con
         ++touchIndex;
 
         if ((touchPoint.phase == UITouchPhaseEnded) || (touchPoint.phase == UITouchPhaseCancelled)) {
-            releasedTouchCentroidInWindowCoordinates.x += locationInWindow.x;
-            releasedTouchCentroidInWindowCoordinates.y += locationInWindow.y;
-            releasedTouchCentroidInRootViewCoordinates.x += locationInRootView.x;
-            releasedTouchCentroidInRootViewCoordinates.y += locationInRootView.y;
+            releasedTouchCentroidInScreenCoordinates.x += locationInWindow.x;
+            releasedTouchCentroidInScreenCoordinates.y += locationInWindow.y;
+            releasedTouchCentroidInDocumentCoordinates.x += locationInViewport.x;
+            releasedTouchCentroidInDocumentCoordinates.y += locationInViewport.y;
             continue;
         }
 
         touchesDownCount++;
 
-        centroidInWindowCoordinates.x += locationInWindow.x;
-        centroidInWindowCoordinates.y += locationInWindow.y;
-        centroidInRootViewCoordinates.x += locationInRootView.x;
-        centroidInRootViewCoordinates.y += locationInRootView.y;
+        centroidInScreenCoordinates.x += locationInWindow.x;
+        centroidInScreenCoordinates.y += locationInWindow.y;
+        centroidInDocumentCoordinates.x += locationInViewport.x;
+        centroidInDocumentCoordinates.y += locationInViewport.y;
 
         if (touchesDownCount == 1)
-            firstTouch = locationInRootView;
+            firstTouch = locationInViewport;
         else if (touchesDownCount == 2)
-            secondTouch = locationInRootView;
+            secondTouch = locationInViewport;
     }
     ASSERT(touchIndex == _lastTouchEvent.touchPoints.size());
 
     if (touchesDownCount > 0) {
-        centroidInWindowCoordinates = CGPointMake(centroidInWindowCoordinates.x / touchesDownCount, centroidInWindowCoordinates.y / touchesDownCount);
-        centroidInRootViewCoordinates = CGPointMake(centroidInRootViewCoordinates.x / touchesDownCount, centroidInRootViewCoordinates.y / touchesDownCount);
+        centroidInScreenCoordinates = CGPointMake(centroidInScreenCoordinates.x / touchesDownCount, centroidInScreenCoordinates.y / touchesDownCount);
+        centroidInDocumentCoordinates = CGPointMake(centroidInDocumentCoordinates.x / touchesDownCount, centroidInDocumentCoordinates.y / touchesDownCount);
     } else {
-        centroidInWindowCoordinates = CGPointMake(releasedTouchCentroidInWindowCoordinates.x / touchCount, releasedTouchCentroidInWindowCoordinates.y / touchCount);
-        centroidInRootViewCoordinates = CGPointMake(releasedTouchCentroidInRootViewCoordinates.x / touchCount, releasedTouchCentroidInRootViewCoordinates.y / touchCount);
+        centroidInScreenCoordinates = CGPointMake(releasedTouchCentroidInScreenCoordinates.x / touchCount, releasedTouchCentroidInScreenCoordinates.y / touchCount);
+        centroidInDocumentCoordinates = CGPointMake(releasedTouchCentroidInDocumentCoordinates.x / touchCount, releasedTouchCentroidInDocumentCoordinates.y / touchCount);
     }
 
-    _lastTouchEvent.locationInRootViewCoordinates = centroidInRootViewCoordinates;
+    _lastTouchEvent.locationInScreenCoordinates = centroidInScreenCoordinates;
+    _lastTouchEvent.locationInDocumentCoordinates = centroidInDocumentCoordinates;
 
     _lastTouchEvent.scale = 0;
     _lastTouchEvent.rotation = 0;
@@ -444,7 +440,8 @@ static WebKit::WKTouchEventType lastExpectedWKEventTypeForTouches(NSSet *touches
 
 - (void)performAction
 {
-    [_contentView _touchEventsRecognized];
+    // Call our target ourselves to determine preventDefault state.
+    ((void(*)(id, SEL, id))objc_msgSend)(_touchTarget, _touchAction, self);
 }
 
 - (BOOL)_hasActiveTouchesForEvent:(UIEvent *)event
@@ -509,10 +506,15 @@ static WebKit::WKTouchEventType lastExpectedWKEventTypeForTouches(NSSet *touches
 {
     auto activeTouches = [event touchesForGestureRecognizer:self];
 
-    RetainPtr contentView = [self contentView];
+    auto delegate = _touchEventDelegate;
+    if ([delegate respondsToSelector:@selector(shouldIgnoreTouchEvent)] && [delegate shouldIgnoreTouchEvent]) {
+        self.state = UIGestureRecognizerStateFailed;
+        return;
+    }
+
     // Only hitTest when when we haven't already passed the hitTest.
     if (!_passedHitTest) {
-        if ([contentView _shouldIgnoreTouchEvent:event]) {
+        if (([delegate respondsToSelector:@selector(gestureRecognizer:shouldIgnoreTouchEvent:)] && [delegate gestureRecognizer:self shouldIgnoreTouchEvent:event]) || ![delegate isAnyTouchOverActiveArea:activeTouches]) {
             self.state = UIGestureRecognizerStateFailed;
             return;
         }

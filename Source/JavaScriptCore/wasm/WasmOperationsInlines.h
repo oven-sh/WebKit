@@ -40,8 +40,6 @@
 #include "WasmModuleInformation.h"
 #include "WasmTypeDefinition.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 namespace Wasm {
 
@@ -53,7 +51,7 @@ inline EncodedJSValue refFunc(JSWebAssemblyInstance* instance, uint32_t index)
 }
 
 template <typename T>
-JSWebAssemblyArray* fillArray(JSWebAssemblyInstance* instance, Wasm::FieldType fieldType, uint32_t size, T value, RefPtr<const Wasm::RTT> rtt)
+JSWebAssemblyArray* fillArray(JSWebAssemblyInstance* instance, Wasm::FieldType fieldType, uint32_t size, EncodedJSValue value, RefPtr<const Wasm::RTT> rtt)
 {
     JSGlobalObject* globalObject = instance->globalObject();
     VM& vm = instance->vm();
@@ -62,11 +60,11 @@ JSWebAssemblyArray* fillArray(JSWebAssemblyInstance* instance, Wasm::FieldType f
     if (!size)
         return JSWebAssemblyArray::tryCreate(vm, globalObject->webAssemblyArrayStructure(), fieldType, size, WTFMove(values), rtt);
 
-    values.fill(value);
+    values.fill(static_cast<T>(value));
     return JSWebAssemblyArray::tryCreate(vm, globalObject->webAssemblyArrayStructure(), fieldType, size, WTFMove(values), rtt);
 }
 
-inline JSValue arrayNew(JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, EncodedJSValue encValue)
+inline EncodedJSValue arrayNew(JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, EncodedJSValue encValue)
 {
     ASSERT(typeIndex < instance->module().moduleInformation().typeCount());
 
@@ -78,21 +76,25 @@ inline JSValue arrayNew(JSWebAssemblyInstance* instance, uint32_t typeIndex, uin
     size_t elementSize = fieldType.type.elementSize();
 
     if (UNLIKELY(productOverflows<uint32_t>(elementSize, size) || elementSize * size > maxArraySizeInBytes))
-        return jsNull();
+        return JSValue::encode(jsNull());
 
     JSWebAssemblyArray* array = nullptr;
 
     switch (elementSize) {
     case sizeof(uint8_t): {
-        array = fillArray<uint8_t>(instance, fieldType, size, static_cast<uint8_t>(encValue), arrayRTT);
+        // `encValue` must be an unboxed int32 (since the typechecker guarantees that its type is i32); so it's safe to truncate it in the cases below.
+        ASSERT(encValue <= UINT32_MAX);
+        array = fillArray<uint8_t>(instance, fieldType, size, encValue, arrayRTT);
         break;
     }
     case sizeof(uint16_t): {
-        array = fillArray<uint16_t>(instance, fieldType, size, static_cast<uint16_t>(encValue), arrayRTT);
+        ASSERT(encValue <= UINT32_MAX);
+        array = fillArray<uint16_t>(instance, fieldType, size, encValue, arrayRTT);
         break;
     }
     case sizeof(uint32_t): {
-        array = fillArray<uint32_t>(instance, fieldType, size, static_cast<uint32_t>(encValue), arrayRTT);
+        ASSERT(encValue <= UINT32_MAX);
+        array = fillArray<uint32_t>(instance, fieldType, size, encValue, arrayRTT);
         break;
     }
     case sizeof(uint64_t): {
@@ -103,12 +105,10 @@ inline JSValue arrayNew(JSWebAssemblyInstance* instance, uint32_t typeIndex, uin
         RELEASE_ASSERT_NOT_REACHED();
     }
     ASSERT(array);
-    if (array)
-        return array;
-    return jsNull();
+    return JSValue::encode(array ? JSValue(array) : jsNull());
 }
 
-inline JSValue arrayNew(JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, v128_t value)
+inline EncodedJSValue arrayNew(JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, v128_t value)
 {
     JSGlobalObject* globalObject = instance->globalObject();
     VM& vm = instance->vm();
@@ -123,14 +123,12 @@ inline JSValue arrayNew(JSWebAssemblyInstance* instance, uint32_t typeIndex, uin
     size_t elementSize = fieldType.type.elementSize();
 
     if (UNLIKELY(productOverflows<uint32_t>(elementSize, size) || elementSize * size > maxArraySizeInBytes))
-        return jsNull();
+        return JSValue::encode(jsNull());
 
     FixedVector<v128_t> values(size);
     values.fill(value);
-    auto* array = JSWebAssemblyArray::tryCreate(vm, globalObject->webAssemblyArrayStructure(), fieldType, size, WTFMove(values), rtt);
-    if (array)
-        return array;
-    return jsNull();
+    JSObject* array = JSWebAssemblyArray::tryCreate(vm, globalObject->webAssemblyArrayStructure(), fieldType, size, WTFMove(values), rtt);
+    return JSValue::encode(array ? JSValue(array) : jsNull());
 }
 
 template <typename T>
@@ -152,7 +150,7 @@ JSWebAssemblyArray* copyElementsInReverse(JSWebAssemblyInstance* instance, Wasm:
 }
 
 // Expects arguments in reverse order
-inline JSValue arrayNewFixed(JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, uint64_t* arguments)
+inline EncodedJSValue arrayNewFixed(JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, uint64_t* arguments)
 {
     // Get the array element type and determine the element size
     const Wasm::TypeDefinition& arraySignature = instance->module().moduleInformation().typeSignatures[typeIndex]->expand();
@@ -183,9 +181,7 @@ inline JSValue arrayNewFixed(JSWebAssemblyInstance* instance, uint32_t typeIndex
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
-    if (array)
-        return array;
-    return jsNull();
+    return JSValue::encode(array ? JSValue(array) : jsNull());
 }
 
 template<typename T>
@@ -721,18 +717,7 @@ static inline int32_t waitImpl(VM& vm, ValueType* pointer, ValueType expectedVal
     Seconds timeout = Seconds::infinity();
     if (timeoutInNanoseconds >= 0)
         timeout = Seconds::fromNanoseconds(timeoutInNanoseconds);
-    auto result = WaiterListManager::singleton().waitSync(vm, pointer, expectedValue, timeout);
-    switch (result) {
-    case WaiterListManager::WaitSyncResult::OK:
-    case WaiterListManager::WaitSyncResult::NotEqual:
-    case WaiterListManager::WaitSyncResult::TimedOut:
-        return static_cast<int32_t>(result);
-    case WaiterListManager::WaitSyncResult::Terminated:
-        vm.throwTerminationException();
-        return -1;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-    return -1;
+    return static_cast<int32_t>(WaiterListManager::singleton().waitSync(vm, pointer, expectedValue, timeout));
 }
 
 inline int32_t memoryAtomicWait32(JSWebAssemblyInstance* instance, uint64_t offsetInMemory, int32_t value, int64_t timeoutInNanoseconds)
@@ -748,7 +733,7 @@ inline int32_t memoryAtomicWait32(JSWebAssemblyInstance* instance, uint64_t offs
         return -1;
     if (!vm.m_typedArrayController->isAtomicsWaitAllowedOnCurrentThread())
         return -1;
-    int32_t* pointer = std::bit_cast<int32_t*>(std::bit_cast<uint8_t*>(instance->memory()->basePointer()) + offsetInMemory);
+    int32_t* pointer = bitwise_cast<int32_t*>(bitwise_cast<uint8_t*>(instance->memory()->basePointer()) + offsetInMemory);
     return waitImpl<int32_t>(vm, pointer, value, timeoutInNanoseconds);
 }
 
@@ -770,7 +755,7 @@ inline int32_t memoryAtomicWait64(JSWebAssemblyInstance* instance, uint64_t offs
         return -1;
     if (!vm.m_typedArrayController->isAtomicsWaitAllowedOnCurrentThread())
         return -1;
-    int64_t* pointer = std::bit_cast<int64_t*>(std::bit_cast<uint8_t*>(instance->memory()->basePointer()) + offsetInMemory);
+    int64_t* pointer = bitwise_cast<int64_t*>(bitwise_cast<uint8_t*>(instance->memory()->basePointer()) + offsetInMemory);
     return waitImpl<int64_t>(vm, pointer, value, timeoutInNanoseconds);
 }
 
@@ -790,7 +775,7 @@ inline int32_t memoryAtomicNotify(JSWebAssemblyInstance* instance, unsigned base
         return -1;
     if (instance->memory()->sharingMode() != MemorySharingMode::Shared)
         return 0;
-    uint8_t* pointer = std::bit_cast<uint8_t*>(instance->memory()->basePointer()) + offsetInMemory;
+    uint8_t* pointer = bitwise_cast<uint8_t*>(instance->memory()->basePointer()) + offsetInMemory;
     unsigned count = UINT_MAX;
     if (countValue >= 0)
         count = static_cast<unsigned>(countValue);
@@ -825,7 +810,5 @@ inline void* throwWasmToJSException(CallFrame* callFrame, Wasm::ExceptionType ty
 }
 
 } } // namespace JSC::Wasm
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

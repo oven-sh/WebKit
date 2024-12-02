@@ -29,7 +29,6 @@ struct WebKit::XRDeviceInfo {
     PlatformXR::Device::FeatureList vrFeatures;
     PlatformXR::Device::FeatureList arFeatures;
     WebCore::IntSize recommendedResolution;
-    double minimumNearClipPlane;
 };
 
 #endif

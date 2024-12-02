@@ -183,7 +183,6 @@ private:
 
     // Rendering overrides.
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle&) const final { return true; }
     void didAttachRenderers() final;
 
     // CachedRawResourceClient overrides.
@@ -197,7 +196,7 @@ private:
 #if ENABLE(MODEL_PROCESS)
     void didUpdateEntityTransform(ModelPlayer&, const TransformationMatrix&) final;
     void didUpdateBoundingBox(ModelPlayer&, const FloatPoint3D&, const FloatPoint3D&) final;
-    void didFinishEnvironmentMapLoading(bool succeeded) final;
+    void didFinishEnvironmentMapLoading() final;
 #endif
     std::optional<PlatformLayerIdentifier> platformLayerID() final;
 
@@ -219,8 +218,6 @@ private:
     void updateLoop();
     void updateEnvironmentMap();
     URL selectEnvironmentMapURL() const;
-    void environmentMapRequestResource();
-    void environmentMapResetAndReject(Exception&&);
     void environmentMapResourceFinished();
 #endif
     void modelResourceFinished();
@@ -241,7 +238,7 @@ private:
     Ref<DOMPointReadOnly> m_boundingBoxExtents;
     double m_playbackRate { 1.0 };
     URL m_environmentMapURL;
-    SharedBufferBuilder m_environmentMapData;
+    SharedBufferBuilder m_pendingEnvironmentMapData;
     CachedResourceHandle<CachedRawResource> m_environmentMapResource;
     UniqueRef<EnvironmentMapPromise> m_environmentMapReadyPromise;
 #endif

@@ -17,76 +17,74 @@
 #include "src/pdf/SkPDFTypes.h"
 
 #include <cstddef>
+#include <vector>
 
 class SkPDFDocument;
-struct SkPDFStructElem;
+struct SkPDFTagNode;
 struct SkPoint;
 
-class SkPDFStructTree {
+class SkPDFTagTree {
 public:
-    SkPDFStructTree(SkPDF::StructureElementNode*, SkPDF::Metadata::Outline);
-    SkPDFStructTree(const SkPDFStructTree&) = delete;
-    SkPDFStructTree& operator=(const SkPDFStructTree&) = delete;
-    SkPDFStructTree(SkPDFStructTree&&) = delete;
-    SkPDFStructTree& operator=(SkPDFStructTree&&) = delete;
-    ~SkPDFStructTree();
+    SkPDFTagTree(SkPDF::StructureElementNode*, SkPDF::Metadata::Outline);
+    ~SkPDFTagTree();
 
     class Mark {
-        SkPDFStructElem* fStructElem;
-        size_t fMarkIndex;
+        SkPDFTagNode *const fNode;
+        size_t const fMarkIndex;
     public:
-        Mark(SkPDFStructElem* structElem, size_t markIndex)
-            : fStructElem(structElem), fMarkIndex(markIndex) {}
+        Mark(SkPDFTagNode* node, size_t index) : fNode(node), fMarkIndex(index) {}
         Mark() : Mark(nullptr, 0) {}
-        Mark(const Mark&) = default;
-        Mark& operator=(const Mark&) = default;
+        Mark(const Mark&) = delete;
+        Mark& operator=(const Mark&) = delete;
         Mark(Mark&&) = default;
-        Mark& operator=(Mark&&) = default;
+        Mark& operator=(Mark&&) = delete;
 
-        explicit operator bool() const { return fStructElem; }
-        int mcid() const; // mcid < 0 means no active mark, if bool(this) always >= 0
-        int elemId() const; // 0 elemId means no active structure element
-        SkString structType() const; // only call when bool(this)
-        void accumulate(SkPoint); // only call when bool(this)
+        explicit operator bool() const { return fNode; }
+        int id();
+        SkPoint& point();
     };
+    // Used to allow marked content to refer to its corresponding structure
+    // tree node, via a page entry in the parent tree. Returns a false mark if
+    // nodeId is 0.
+    Mark createMarkIdForNodeId(int nodeId, unsigned pageIndex, SkPoint);
+    // Used to allow annotations to refer to their corresponding structure
+    // tree node, via the struct parent tree. Returns -1 if no struct parent
+    // key.
+    int createStructParentKeyForNodeId(int nodeId, unsigned pageIndex);
 
-    // Create a new marked-content identifier (MCID) to be used with a marked-content sequence
-    // parented by the structure element (StructElem) with the given element identifier (elemId).
-    // The StructTreeRoot::ParentTree[Page::StructParent][mcid] will refer to the structure element.
-    // The structure element will add this MCID as its next child (in StructElem::K).
-    // Returns a false Mark if if elemId does not refer to a StructElem.
-    SkPDFStructTree::Mark createMarkForElemId(int elemId, unsigned pageIndex);
-
-    // Create a key to use with /StructParent in a content item (usually an annotation) which refers
-    // to the structure element (StructElem) with the given element identifier (elemId).
-    // The StructTreeRoot ParentTree will map from this key to the structure element.
-    // The structure element will add the content item as its next child (as StructElem::K::OBJR).
-    // Returns -1 if elemId does not refer to a StructElem.
-    int createStructParentKeyForElemId(int elemId, SkPDFIndirectReference contentItemRef,
-                                       unsigned pageIndex);
-
-    void addStructElemTitle(int elemId, SkSpan<const char>);
-    SkPDFIndirectReference emitStructTreeRoot(SkPDFDocument* doc) const;
-    SkPDFIndirectReference makeOutline(SkPDFDocument* doc) const;
+    void addNodeAnnotation(int nodeId, SkPDFIndirectReference annotationRef, unsigned pageIndex);
+    void addNodeTitle(int nodeId, SkSpan<const char>);
+    SkPDFIndirectReference makeStructTreeRoot(SkPDFDocument* doc);
+    SkPDFIndirectReference makeOutline(SkPDFDocument* doc);
     SkString getRootLanguage();
 
-    // An entry in an ordered map from an element identifier to an indirect reference to its
-    // corresponding structure element.
-    struct IDTreeEntry {
-        int elemId;
-        SkPDFIndirectReference structElemRef;
-    };
 private:
-    void move(SkPDF::StructureElementNode& node, SkPDFStructElem* structElem, bool wantTitle);
+    // An entry in a map from a node ID to an indirect reference to its
+    // corresponding structure element node.
+    struct IDTreeEntry {
+        int nodeId;
+        SkPDFIndirectReference ref;
+    };
+
+    void Move(SkPDF::StructureElementNode& node,
+              SkPDFTagNode* dst,
+              SkArenaAlloc* arena,
+              skia_private::THashMap<int, SkPDFTagNode*>* nodeMap,
+              bool wantTitle);
+    SkPDFIndirectReference PrepareTagTreeToEmit(SkPDFIndirectReference parent,
+                                                SkPDFTagNode* node,
+                                                SkPDFDocument* doc);
 
     SkArenaAlloc fArena;
-    skia_private::THashMap<int, SkPDFStructElem*> fStructElemForElemId;
-    SkPDFStructElem* fRoot = nullptr;
+    skia_private::THashMap<int, SkPDFTagNode*> fNodeMap;
+    SkPDFTagNode* fRoot = nullptr;
     SkPDF::Metadata::Outline fOutline = SkPDF::Metadata::Outline::None;
-    // fStructElemForMcidForPage[Page::StructParents][mcid] -> parent StructElem of mcid
-    skia_private::TArray<skia_private::TArray<SkPDFStructElem*>> fStructElemForMcidForPage;
-    // fStructElemForContentItem[?::StructParent] -> parent StructElem of content-item
-    skia_private::TArray<SkPDFStructElem*> fStructElemForContentItem;
+    skia_private::TArray<skia_private::TArray<SkPDFTagNode*>> fMarksPerPage;
+    std::vector<IDTreeEntry> fIdTreeEntries;
+    std::vector<int> fParentTreeAnnotationNodeIds;
+
+    SkPDFTagTree(const SkPDFTagTree&) = delete;
+    SkPDFTagTree& operator=(const SkPDFTagTree&) = delete;
 };
 
 #endif

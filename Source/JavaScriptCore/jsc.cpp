@@ -1204,8 +1204,6 @@ static RefPtr<Uint8Array> fillBufferWithContentsOfFile(const String& fileName)
     return result;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 template<typename Vector>
 static bool fillBufferWithContentsOfFile(FILE* file, Vector& buffer)
 {
@@ -1223,28 +1221,21 @@ static bool fillBufferWithContentsOfFile(FILE* file, Vector& buffer)
     return readSize == buffer.size() - initialSize;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 static bool fillBufferWithContentsOfFile(const String& fileName, Vector<char>& buffer)
 {
     struct stat statBuf;
-    auto fileNameUTF = fileName.tryGetUTF8();
-    if (!fileNameUTF.has_value()) {
-        fprintf(stderr, "Error when parsing file name: %s\n", fileName.ascii().data());
-        return false;
-    }
-    if (stat(fileNameUTF->data(), &statBuf) == -1) {
-        fprintf(stderr, "Could not open file: %s\n", fileNameUTF->data());
+    if (stat(fileName.utf8().data(), &statBuf) == -1) {
+        fprintf(stderr, "Could not open file: %s\n", fileName.utf8().data());
         return false;
     }
 
     if ((statBuf.st_mode & S_IFMT) != S_IFREG) {
-        fprintf(stderr, "Trying to open a non-file: %s\n", fileNameUTF->data());
+        fprintf(stderr, "Trying to open a non-file: %s\n", fileName.utf8().data());
         return false;
     }
-    auto* f = fopen(fileNameUTF->data(), "rb");
+    FILE* f = fopen(fileName.utf8().data(), "rb");
     if (!f) {
-        fprintf(stderr, "Could not open file: %s\n", fileNameUTF->data());
+        fprintf(stderr, "Could not open file: %s\n", fileName.utf8().data());
         return false;
     }
 
@@ -1864,9 +1855,9 @@ JSC_DEFINE_HOST_FUNCTION(functionAddressOf, (JSGlobalObject*, CallFrame* callFra
     JSValue value = callFrame->argument(0);
     if (!value.isCell())
         return JSValue::encode(jsUndefined());
-    // Need to cast to uint64_t so std::bit_cast will play along.
-    uint64_t asNumber = std::bit_cast<uintptr_t>(value.asCell());
-    EncodedJSValue returnValue = JSValue::encode(jsNumber(std::bit_cast<double>(asNumber)));
+    // Need to cast to uint64_t so bitwise_cast will play along.
+    uint64_t asNumber = bitwise_cast<uintptr_t>(value.asCell());
+    EncodedJSValue returnValue = JSValue::encode(jsNumber(bitwise_cast<double>(asNumber)));
     return returnValue;
 }
 
@@ -2042,8 +2033,6 @@ JSC_DEFINE_HOST_FUNCTION(functionReadFile, (JSGlobalObject* globalObject, CallFr
     return JSValue::encode(result);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 JSC_DEFINE_HOST_FUNCTION(functionWriteFile, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -2090,8 +2079,6 @@ JSC_DEFINE_HOST_FUNCTION(functionWriteFile, (JSGlobalObject* globalObject, CallF
 
     return JSValue::encode(jsNumber(size));
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 JSC_DEFINE_HOST_FUNCTION(functionCheckSyntax, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -3155,15 +3142,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSGlobalObject* globalOb
     DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler(), HeapSnapshotBuilder::SnapshotType::InspectorSnapshot, OverflowPolicy::RecordOverflow);
+    HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
     snapshotBuilder.buildSnapshot();
 
     String jsonString = snapshotBuilder.json();
-    if (snapshotBuilder.hasOverflowed()) {
-        throwOutOfMemoryError(globalObject, scope);
-        return encodedJSUndefined();
-    }
-
     EncodedJSValue result = JSValue::encode(JSONParse(globalObject, jsonString));
     scope.releaseAssertNoException();
     return result;
@@ -3179,14 +3161,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForGCDebugging, (JSGlobalOb
     {
         DeferGCForAWhile deferGC(vm); // Prevent concurrent GC from interfering with the full GC that the snapshot does.
 
-        HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler(), HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot, OverflowPolicy::RecordOverflow);
+        HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler(), HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot);
         snapshotBuilder.buildSnapshot();
 
         jsonString = snapshotBuilder.json();
-        if (snapshotBuilder.hasOverflowed()) {
-            throwOutOfMemoryError(globalObject, scope);
-            return encodedJSUndefined();
-        }
     }
     scope.releaseAssertNoException();
     return JSValue::encode(jsString(vm, WTFMove(jsonString)));
@@ -3501,8 +3479,6 @@ static void startTimeoutThreadIfNeeded(VM& vm)
     startTimeoutTimer(timeoutDuration);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 int main(int argc, char** argv)
 {
 #if OS(DARWIN)
@@ -3597,8 +3573,6 @@ int main(int argc, char** argv)
 
     jscExit(res);
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static void dumpException(GlobalObject* globalObject, JSValue exception)
 {
@@ -3969,8 +3943,6 @@ static bool isMJSFile(char *filename)
 }
 
 #if PLATFORM(COCOA)
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 static NEVER_INLINE void crashPGMUAF()
 {
     WTF::forceEnablePGM();
@@ -3997,11 +3969,7 @@ static NEVER_INLINE void crashPGMLowerGuardPage()
     result = result - 1;
     *result = 'a';
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void CommandLine::parseArguments(int argc, char** argv)
 {
@@ -4254,8 +4222,6 @@ void CommandLine::parseArguments(int argc, char** argv)
         jscExit(EXIT_SUCCESS);
     }
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 CommandLine::CommandLine(CommandLineForWorkersTag)
     : m_treatWatchdogExceptionAsSuccess(mainCommandLine->m_treatWatchdogExceptionAsSuccess)

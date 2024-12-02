@@ -102,28 +102,10 @@ Task::Status RenderPassTask::addCommands(Context* context,
     SkASSERT(fTarget && fTarget->isInstantiated());
     SkASSERT(!fDstCopy || fDstCopy->isInstantiated());
 
-    // Set any replay translation and clip, as needed.
-    // The clip set here will intersect with any scissor set during this render pass.
-    const SkIRect renderTargetBounds = SkIRect::MakeSize(fTarget->dimensions());
     if (fTarget->texture() == replayData.fTarget) {
-        // We're drawing to the final replay target, so apply replay translation and clip.
-        if (replayData.fClip.isEmpty()) {
-            // If no replay clip is defined, default to the render target bounds.
-            commandBuffer->setReplayTranslationAndClip(replayData.fTranslation,
-                                                       renderTargetBounds);
-        } else {
-            // If a replay clip is defined, intersect it with the render target bounds.
-            // If the intersection is empty, we can skip this entire render pass.
-            SkIRect replayClip = replayData.fClip;
-            if (!replayClip.intersect(renderTargetBounds)) {
-                return Status::kSuccess;
-            }
-            commandBuffer->setReplayTranslationAndClip(replayData.fTranslation, replayClip);
-        }
+        commandBuffer->setReplayTranslation(replayData.fTranslation);
     } else {
-        // We're not drawing to the final replay target, so don't apply replay translation or clip.
-        // In this case as well, the clip we set defaults to the render target bounds.
-        commandBuffer->setReplayTranslationAndClip({0, 0}, renderTargetBounds);
+        commandBuffer->clearReplayTranslation();
     }
 
     // We don't instantiate the MSAA or DS attachments in prepareResources because we want to use

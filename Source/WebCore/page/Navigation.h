@@ -25,11 +25,9 @@
 
 #pragma once
 
-#include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalDOMWindowProperty.h"
-#include "NavigateEvent.h"
 #include "NavigationHistoryEntry.h"
 #include "NavigationNavigationType.h"
 #include "NavigationTransition.h"
@@ -120,7 +118,7 @@ public:
         RefPtr<DOMPromise> finished;
     };
 
-    Vector<Ref<NavigationHistoryEntry>> entries() const;
+    const Vector<Ref<NavigationHistoryEntry>>& entries() const;
     NavigationHistoryEntry* currentEntry() const;
     NavigationTransition* transition() { return m_transition.get(); };
     NavigationActivation* activation() { return m_activation.get(); };
@@ -140,8 +138,7 @@ public:
 
     ExceptionOr<void> updateCurrentEntry(UpdateCurrentEntryOptions&&);
 
-    enum class DispatchResult : uint8_t { Completed, Aborted, Intercepted };
-    DispatchResult dispatchTraversalNavigateEvent(HistoryItem&);
+    bool dispatchTraversalNavigateEvent(HistoryItem&);
     bool dispatchPushReplaceReloadNavigateEvent(const URL&, NavigationNavigationType, bool isSameDocument, FormState*, SerializedScriptValue* classicHistoryAPIState = nullptr);
     bool dispatchDownloadNavigateEvent(const URL&, const String& downloadFilename);
 
@@ -153,10 +150,8 @@ public:
 
     void abortOngoingNavigationIfNeeded();
 
-    RefPtr<NavigationHistoryEntry> findEntryByKey(const String& key);
+    std::optional<Ref<NavigationHistoryEntry>> findEntryByKey(const String& key);
     bool suppressNormalScrollRestoration() const { return m_suppressNormalScrollRestorationDuringOngoingNavigation; }
-
-    void setFocusChanged(FocusDidChange changed) { m_focusChangedDuringOngoingNavigation = changed; }
 
 private:
     explicit Navigation(LocalDOMWindow&);
@@ -170,7 +165,7 @@ private:
     bool hasEntriesAndEventsDisabled() const;
     Result performTraversal(const String& key, Navigation::Options, Ref<DeferredPromise>&& committed, Ref<DeferredPromise>&& finished);
     ExceptionOr<RefPtr<SerializedScriptValue>> serializeState(JSC::JSValue state);
-    DispatchResult innerDispatchNavigateEvent(NavigationNavigationType, Ref<NavigationDestination>&&, const String& downloadRequestFilename, FormState* = nullptr, SerializedScriptValue* classicHistoryAPIState = nullptr);
+    bool innerDispatchNavigateEvent(NavigationNavigationType, Ref<NavigationDestination>&&, const String& downloadRequestFilename, FormState* = nullptr, SerializedScriptValue* classicHistoryAPIState = nullptr);
 
     RefPtr<NavigationAPIMethodTracker> maybeSetUpcomingNonTraversalTracker(Ref<DeferredPromise>&& committed, Ref<DeferredPromise>&& finished, JSC::JSValue info, RefPtr<SerializedScriptValue>&&);
     RefPtr<NavigationAPIMethodTracker> addUpcomingTrarveseAPIMethodTracker(Ref<DeferredPromise>&& committed, Ref<DeferredPromise>&& finished, const String& key, JSC::JSValue info);
@@ -182,20 +177,17 @@ private:
     void notifyCommittedToEntry(NavigationAPIMethodTracker*, NavigationHistoryEntry*, NavigationNavigationType);
     Result apiMethodTrackerDerivedResult(const NavigationAPIMethodTracker&);
 
-    class NavigationHistoryEntryWrapper;
-    static std::optional<size_t> getEntryIndexOfHistoryItem(const Vector<NavigationHistoryEntryWrapper>& entries, const HistoryItem&, size_t start = 0);
-
     std::optional<size_t> m_currentEntryIndex;
     RefPtr<NavigationTransition> m_transition;
     RefPtr<NavigationActivation> m_activation;
-    Vector<NavigationHistoryEntryWrapper> m_entries;
+    Vector<Ref<NavigationHistoryEntry>> m_entries;
 
     RefPtr<NavigateEvent> m_ongoingNavigateEvent;
-    FocusDidChange m_focusChangedDuringOngoingNavigation { FocusDidChange::No };
+    bool m_focusChangedDuringOnoingNavigation { false };
     bool m_suppressNormalScrollRestorationDuringOngoingNavigation { false };
     RefPtr<NavigationAPIMethodTracker> m_ongoingAPIMethodTracker;
     RefPtr<NavigationAPIMethodTracker> m_upcomingNonTraverseMethodTracker;
-    HashMap<String, Ref<NavigationAPIMethodTracker>> m_upcomingTraverseMethodTrackers;
+    UncheckedKeyHashMap<String, Ref<NavigationAPIMethodTracker>> m_upcomingTraverseMethodTrackers;
 };
 
 } // namespace WebCore

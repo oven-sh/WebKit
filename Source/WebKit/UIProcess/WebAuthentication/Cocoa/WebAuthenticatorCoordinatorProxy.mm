@@ -956,27 +956,14 @@ static RetainPtr<ASCCredentialRequestContext> configurationAssertionRequestConte
     return requestContext;
 }
 
-static Vector<WebCore::AuthenticatorTransport> toAuthenticatorTransports(NSArray<NSString *> *ascTransports)
+static Vector<WebCore::AuthenticatorTransport> toAuthenticatorTransports(NSArray<NSNumber *> *ascTransports)
 {
     Vector<WebCore::AuthenticatorTransport> transports;
     transports.reserveInitialCapacity(ascTransports.count);
-    for (NSString *ascTransport : ascTransports) {
-        if ([ascTransport isEqualToString:@"usb"])
-            transports.append(WebCore::AuthenticatorTransport::Usb);
-        else if ([ascTransport isEqualToString:@"nfc"])
-            transports.append(WebCore::AuthenticatorTransport::Nfc);
-        else if ([ascTransport isEqualToString:@"ble"])
-            transports.append(WebCore::AuthenticatorTransport::Ble);
-        else if ([ascTransport isEqualToString:@"internal"])
-            transports.append(WebCore::AuthenticatorTransport::Internal);
-        else if ([ascTransport isEqualToString:@"cable"])
-            transports.append(WebCore::AuthenticatorTransport::Cable);
-        else if ([ascTransport isEqualToString:@"hybrid"])
-            transports.append(WebCore::AuthenticatorTransport::Hybrid);
-        else if ([ascTransport isEqualToString:@"smartCard"])
-            transports.append(WebCore::AuthenticatorTransport::SmartCard);
+    for (NSNumber *ascTransport : ascTransports) {
+        if (WTF::isValidEnum<WebCore::AuthenticatorTransport>(ascTransport.intValue))
+            transports.append(static_cast<WebCore::AuthenticatorTransport>(ascTransport.intValue));
     }
-
     return transports;
 }
 

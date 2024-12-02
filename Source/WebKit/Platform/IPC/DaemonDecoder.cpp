@@ -26,7 +26,7 @@
 #include "config.h"
 #include "DaemonDecoder.h"
 
-#include <wtf/StdLibExtras.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -42,12 +42,12 @@ bool Decoder::bufferIsLargeEnoughToContainBytes(size_t bytes) const
     return bytes <= m_buffer.size() - m_bufferPosition;
 }
 
-bool Decoder::decodeFixedLengthData(std::span<uint8_t> data)
+bool Decoder::decodeFixedLengthData(uint8_t* data, size_t size)
 {
-    if (!bufferIsLargeEnoughToContainBytes(data.size()))
+    if (!bufferIsLargeEnoughToContainBytes(size))
         return false;
-    memcpySpan(data, m_buffer.subspan(m_bufferPosition, data.size()));
-    m_bufferPosition += data.size();
+    memcpy(data, m_buffer.data() + m_bufferPosition, size);
+    m_bufferPosition += size;
     return true;
 }
 
@@ -55,11 +55,13 @@ std::span<const uint8_t> Decoder::decodeFixedLengthReference(size_t size)
 {
     if (!bufferIsLargeEnoughToContainBytes(size))
         return { };
-    auto data = m_buffer.subspan(m_bufferPosition, size);
+    const uint8_t* data = m_buffer.data() + m_bufferPosition;
     m_bufferPosition += size;
-    return data;
+    return { data, size };
 }
 
 } // namespace Daemon
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -86,10 +86,10 @@ public:
     typedef std::array<uint8_t, hashSize> Digest;
 
     WTF_EXPORT_PRIVATE void computeHash(Digest&);
-
+    
     // Get a hex hash from the digest.
     WTF_EXPORT_PRIVATE static CString hexDigest(const Digest&);
-
+    
     // Compute the hex digest directly.
     WTF_EXPORT_PRIVATE CString computeHexDigest();
 
@@ -101,10 +101,10 @@ private:
     void processBlock();
     void reset();
 
-    std::array<uint8_t, 64> m_buffer;
+    uint8_t m_buffer[64];
     size_t m_cursor; // Number of bytes filled in m_buffer (0-64).
     uint64_t m_totalBytes; // Number of bytes added so far.
-    std::array<uint32_t, 5> m_hash;
+    uint32_t m_hash[5];
 #endif
 };
 

@@ -29,8 +29,6 @@
 #include "CodeBlock.h"
 #include "GenericArgumentsInlines.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(DirectArguments);
@@ -221,4 +219,3 @@ JSArray* DirectArguments::fastSlice(JSGlobalObject* globalObject, DirectArgument
 
 } // namespace JSC
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

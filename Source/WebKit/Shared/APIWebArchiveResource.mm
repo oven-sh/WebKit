@@ -57,13 +57,24 @@ WebArchiveResource::WebArchiveResource(RefPtr<ArchiveResource>&& archiveResource
 {
 }
 
-WebArchiveResource::~WebArchiveResource() = default;
+WebArchiveResource::~WebArchiveResource()
+{
+}
+
+static void releaseWebArchiveResourceData(uint8_t*, const void* data)
+{
+    // Balanced by CFRetain in WebArchiveResource::data().
+    CFRelease(data);
+}
 
 Ref<API::Data> WebArchiveResource::data()
 {
-    RetainPtr cfData = m_archiveResource->data().makeContiguous()->createCFData();
-    auto cfDataSpan = span(cfData.get());
-    return API::Data::createWithoutCopying(cfDataSpan, [cfData = WTFMove(cfData)] { });
+    RetainPtr<CFDataRef> cfData = m_archiveResource->data().makeContiguous()->createCFData();
+
+    // Balanced by CFRelease in releaseWebArchiveResourceData.
+    CFRetain(cfData.get());
+
+    return API::Data::createWithoutCopying(span(cfData.get()), releaseWebArchiveResourceData, cfData.get());
 }
 
 String WebArchiveResource::URL()

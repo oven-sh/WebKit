@@ -102,9 +102,8 @@ public:
         GRefPtr<GstElementFactory> factory;
     };
 
-    enum class CaseSensitiveCodecName : bool { No, Yes };
-    CodecLookupResult isCodecSupported(Configuration, const String& codec, bool usingHardware = false, CaseSensitiveCodecName = CaseSensitiveCodecName::Yes) const;
-    MediaPlayerEnums::SupportsType isContentTypeSupported(Configuration, const ContentType&, const Vector<ContentType>& contentTypesRequiringHardwareSupport, CaseSensitiveCodecName = CaseSensitiveCodecName::Yes) const;
+    CodecLookupResult isCodecSupported(Configuration, const String& codec, bool usingHardware = false) const;
+    MediaPlayerEnums::SupportsType isContentTypeSupported(Configuration, const ContentType&, const Vector<ContentType>& contentTypesRequiringHardwareSupport) const;
     bool areAllCodecsSupported(Configuration, const Vector<String>& codecs, bool shouldCheckForHardwareUse = false) const;
 
     CodecLookupResult areCapsSupported(Configuration, const GRefPtr<GstCaps>&, bool shouldCheckForHardwareUse) const;

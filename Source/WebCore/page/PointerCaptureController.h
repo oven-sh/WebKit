@@ -24,7 +24,6 @@
 
 #pragma once
 
-#include "EventTarget.h"
 #include "ExceptionOr.h"
 #include "PlatformMouseEvent.h"
 #include "PointerID.h"
@@ -78,7 +77,6 @@ private:
             return adoptRef(*new CapturingData(pointerType));
         }
 
-        WeakPtr<Document, WeakPtrImplWithEventTargetData> activeDocument;
         RefPtr<Element> pendingTargetOverride;
         RefPtr<Element> targetOverride;
 #if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE))
@@ -116,10 +114,7 @@ private:
     void updateHaveAnyCapturingElement();
     void elementWasRemovedSlow(Element&);
 
-    void dispatchOverOrOutEvent(const AtomString&, EventTarget*, const PlatformTouchEvent&, unsigned index, bool isPrimary, WindowProxy&, IntPoint);
-    void dispatchEnterOrLeaveEvent(const AtomString&, Element&, const PlatformTouchEvent&, unsigned index, bool isPrimary, WindowProxy&, IntPoint);
-
-    WeakPtr<Page> m_page;
+    Page& m_page;
     // While PointerID is defined as int32_t, we use int64_t here so that we may use a value outside of the int32_t range to have safe
     // empty and removed values, allowing any int32_t to be provided through the API for lookup in this hashmap.
     using PointerIdToCapturingDataMap = UncheckedKeyHashMap<int64_t, Ref<CapturingData>, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>>;

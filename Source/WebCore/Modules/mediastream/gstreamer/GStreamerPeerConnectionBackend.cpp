@@ -30,7 +30,6 @@
 #include "GStreamerRtpTransceiverBackend.h"
 #include "IceCandidate.h"
 #include "JSRTCStatsReport.h"
-#include "Logging.h"
 #include "MediaEndpointConfiguration.h"
 #include "NotImplemented.h"
 #include "RTCIceCandidate.h"
@@ -61,7 +60,7 @@ public:
     }
     bool shouldEmitLogMessage(const WTFLogChannel& channel) const final
     {
-        return StringView::fromLatin1(channel.name).startsWith("WebRTC"_s);
+        return g_str_has_prefix(channel.name, "WebRTC");
     }
 };
 
@@ -242,11 +241,9 @@ RefPtr<RTCRtpSender> GStreamerPeerConnectionBackend::findExistingSender(const Ve
 ExceptionOr<Ref<RTCRtpSender>> GStreamerPeerConnectionBackend::addTrack(MediaStreamTrack& track, FixedVector<String>&& mediaStreamIds)
 {
     GST_DEBUG_OBJECT(m_endpoint->pipeline(), "Adding new track.");
-    auto addTrackResult = m_endpoint->addTrack(track, mediaStreamIds);
-    if (addTrackResult.hasException())
-        return addTrackResult.releaseException();
-
-    auto senderBackend = addTrackResult.releaseReturnValue();
+    auto senderBackend = WTF::makeUnique<GStreamerRtpSenderBackend>(*this, nullptr);
+    if (!m_endpoint->addTrack(*senderBackend, track, mediaStreamIds))
+        return Exception { ExceptionCode::TypeError, "Unable to add track"_s };
 
     Ref peerConnection = m_peerConnection.get();
     if (auto sender = findExistingSender(peerConnection->currentTransceivers(), *senderBackend)) {
@@ -296,9 +293,9 @@ ExceptionOr<Ref<RTCRtpTransceiver>> GStreamerPeerConnectionBackend::addTransceiv
     return addTransceiverFromTrackOrKind(WTFMove(track), init, IgnoreNegotiationNeededFlag::No);
 }
 
-GStreamerRtpSenderBackend::Source GStreamerPeerConnectionBackend::createSourceForTrack(MediaStreamTrack& track)
+GStreamerRtpSenderBackend::Source GStreamerPeerConnectionBackend::createLinkedSourceForTrack(MediaStreamTrack& track)
 {
-    return m_endpoint->createSourceForTrack(track);
+    return m_endpoint->createLinkedSourceForTrack(track);
 }
 
 static inline GStreamerRtpTransceiverBackend& backendFromRTPTransceiver(RTCRtpTransceiver& transceiver)
@@ -387,27 +384,6 @@ void GStreamerPeerConnectionBackend::tearDown()
         auto& backend = backendFromRTPTransceiver(*transceiver);
         backend.tearDown();
     }
-}
-
-void GStreamerPeerConnectionBackend::startGatheringStatLogs(Function<void(String&&)>&& callback)
-{
-    if (!m_rtcStatsLogCallback)
-        m_endpoint->startRTCLogs();
-    m_rtcStatsLogCallback = WTFMove(callback);
-}
-
-void GStreamerPeerConnectionBackend::stopGatheringStatLogs()
-{
-    if (m_rtcStatsLogCallback) {
-        m_endpoint->stopRTCLogs();
-        m_rtcStatsLogCallback = { };
-    }
-}
-
-void GStreamerPeerConnectionBackend::provideStatLogs(String&& stats)
-{
-    if (m_rtcStatsLogCallback)
-        m_rtcStatsLogCallback(WTFMove(stats));
 }
 
 #undef GST_CAT_DEFAULT

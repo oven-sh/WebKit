@@ -145,7 +145,7 @@ private:
     void cacheGradient(Ref<WebCore::Gradient>&&);
     void cacheFilter(Ref<WebCore::Filter>&&);
     void cacheFont(const WebCore::Font::Attributes&, WebCore::FontPlatformDataAttributes, std::optional<WebCore::RenderingResourceIdentifier>);
-#if PLATFORM(COCOA) || USE(SKIA)
+#if PLATFORM(COCOA)
     void cacheFontCustomPlatformData(WebCore::FontCustomPlatformSerializedData&&);
 #else
     void cacheFontCustomPlatformData(Ref<WebCore::FontCustomPlatformData>&&);
@@ -184,7 +184,7 @@ private:
 
     Ref<ShapeDetection::ObjectHeap> protectedShapeDetectionObjectHeap() const;
 
-#if PLATFORM(COCOA) || USE(SKIA)
+#if PLATFORM(COCOA)
     bool shouldUseLockdownFontParser() const;
 #endif
 

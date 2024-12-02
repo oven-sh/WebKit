@@ -77,6 +77,7 @@ id<MTLBlitCommandEncoder> Queue::ensureBlitCommandEncoder()
         return m_blitCommandEncoder;
 
     auto *commandBufferDescriptor = [MTLCommandBufferDescriptor new];
+    commandBufferDescriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
     auto blitCommandBuffer = commandBufferWithDescriptor(commandBufferDescriptor);
     m_commandBuffer = blitCommandBuffer;
     m_blitCommandEncoder = [m_commandBuffer blitCommandEncoder];
@@ -97,12 +98,10 @@ void Queue::finalizeBlitCommandEncoder()
 void Queue::endEncoding(id<MTLCommandEncoder> commandEncoder, id<MTLCommandBuffer> commandBuffer) const
 {
     id<MTLCommandEncoder> currentEncoder = encoderForBuffer(commandBuffer);
-    if (!currentEncoder || currentEncoder != commandEncoder)
+    if (currentEncoder != commandEncoder)
         return;
 
     [currentEncoder endEncoding];
-    if (RefPtr device = m_device.get())
-        device->resolveTimestampsForBuffer(commandBuffer);
     [m_openCommandEncoders removeObjectForKey:commandBuffer];
 }
 
@@ -214,11 +213,12 @@ void Queue::onSubmittedWorkScheduled(Function<void()>&& completionHandler)
     callbacks.append(WTFMove(completionHandler));
 }
 
-NSString* Queue::errorValidatingSubmit(const Vector<Ref<WebGPU::CommandBuffer>>& commands) const
+NSString* Queue::errorValidatingSubmit(const Vector<std::reference_wrapper<CommandBuffer>>& commands) const
 {
-    for (Ref command : commands) {
-        if (!isValidToUseWith(command.get(), *this) || command->bufferMapCount() || command->commandBuffer().status >= MTLCommandBufferStatusCommitted)
-            return command->lastError() ?: @"Validation failure.";
+    for (auto command : commands) {
+        auto& commandBuffer = command.get();
+        if (!isValidToUseWith(commandBuffer, *this) || commandBuffer.bufferMapCount() || commandBuffer.commandBuffer().status >= MTLCommandBufferStatusCommitted)
+            return commandBuffer.lastError() ?: @"Validation failure.";
     }
 
     // FIXME: "Every GPUQuerySet referenced in a command in any element of commandBuffers is in the available state."
@@ -269,16 +269,8 @@ void Queue::commitMTLCommandBuffer(id<MTLCommandBuffer> commandBuffer)
             return;
         MTLCommandBufferStatus status = mtlCommandBuffer.status;
         bool loseTheDevice = false;
-        if (NSError *error = mtlCommandBuffer.error; status != MTLCommandBufferStatusCompleted) {
+        if (NSError *error = mtlCommandBuffer.error; status != MTLCommandBufferStatusCompleted)
             loseTheDevice = !error || error.code != MTLCommandBufferErrorNotPermitted;
-            if (loseTheDevice) {
-                NSError* underlyingError = error.userInfo[NSUnderlyingErrorKey];
-                if (underlyingError.code == 0x10a)
-                    loseTheDevice = false;
-                else
-                    WTFLogAlways("Encountered fatal command buffer error %@, underlying error %@", error, underlyingError);
-            }
-        }
 
         protectedThis->scheduleWork([loseTheDevice, protectedThis = protectedThis.copyRef()]() {
             ++(protectedThis->m_completedCommandBufferCount);
@@ -297,13 +289,13 @@ void Queue::commitMTLCommandBuffer(id<MTLCommandBuffer> commandBuffer)
     ++m_submittedCommandBufferCount;
 }
 
-static void invalidateCommandBuffers(Vector<Ref<WebGPU::CommandBuffer>>&& commands, auto&& makeInvalidFunc)
+static void invalidateCommandBuffers(Vector<std::reference_wrapper<CommandBuffer>>&& commands, auto&& makeInvalidFunc)
 {
     for (auto commandBuffer : commands)
         makeInvalidFunc(commandBuffer.get());
 }
 
-void Queue::submit(Vector<Ref<WebGPU::CommandBuffer>>&& commands)
+void Queue::submit(Vector<std::reference_wrapper<CommandBuffer>>&& commands)
 {
     auto device = m_device.get();
     if (!device)
@@ -321,11 +313,12 @@ void Queue::submit(Vector<Ref<WebGPU::CommandBuffer>>&& commands)
 
     NSMutableOrderedSet<id<MTLCommandBuffer>> *commandBuffersToSubmit = [NSMutableOrderedSet orderedSetWithCapacity:commands.size()];
     NSString* validationError = nil;
-    for (Ref command : commands) {
-        if (id<MTLCommandBuffer> mtlBuffer = command->commandBuffer(); mtlBuffer && ![commandBuffersToSubmit containsObject:mtlBuffer])
+    for (auto commandBuffer : commands) {
+        auto& command = commandBuffer.get();
+        if (id<MTLCommandBuffer> mtlBuffer = command.commandBuffer(); mtlBuffer && ![commandBuffersToSubmit containsObject:mtlBuffer])
             [commandBuffersToSubmit addObject:mtlBuffer];
         else {
-            validationError = command->lastError() ?: @"Command buffer appears twice.";
+            validationError = command.lastError() ?: @"Command buffer appears twice.";
             break;
         }
     }
@@ -965,7 +958,7 @@ void Queue::writeTexture(const WGPUImageCopyTexture& destination, std::span<uint
         // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400771-copyfrombuffer?language=objc
         // "When you copy to a 2D texture, depth must be 1."
         auto sourceSize = MTLSizeMake(widthForMetal, heightForMetal, 1);
-        if (!widthForMetal || !heightForMetal || (bytesPerRow && bytesPerRow < Texture::bytesPerRow(textureFormat, widthForMetal, texture->sampleCount())))
+        if (!widthForMetal || !heightForMetal || bytesPerRow < Texture::bytesPerRow(textureFormat, widthForMetal, texture->sampleCount()))
             return;
 
         auto destinationOrigin = MTLOriginMake(destination.origin.x, destination.origin.y, 0);
@@ -997,7 +990,7 @@ void Queue::writeTexture(const WGPUImageCopyTexture& destination, std::span<uint
     case WGPUTextureDimension_3D: {
         auto sourceSize = MTLSizeMake(widthForMetal, heightForMetal, depthForMetal);
         auto destinationOrigin = MTLOriginMake(destination.origin.x, destination.origin.y, destination.origin.z);
-        if (!widthForMetal || !heightForMetal || !depthForMetal || (bytesPerRow && bytesPerRow < Texture::bytesPerRow(textureFormat, widthForMetal, texture->sampleCount())))
+        if (!widthForMetal || !heightForMetal || !depthForMetal || bytesPerRow < Texture::bytesPerRow(textureFormat, widthForMetal, texture->sampleCount()))
             return;
 
         [m_blitCommandEncoder
@@ -1043,7 +1036,7 @@ void Queue::clearTextureViewIfNeeded(TextureView& textureView)
     if (!devicePtr)
         return;
 
-    Ref parentTexture = textureView.apiParentTexture();
+    auto& parentTexture = textureView.apiParentTexture();
     for (uint32_t slice = 0; slice < textureView.arrayLayerCount(); ++slice) {
         for (uint32_t mipLevel = 0; mipLevel < textureView.mipLevelCount(); ++mipLevel) {
             auto checkedParentMipLevel = checkedSum<uint32_t>(textureView.baseMipLevel(), mipLevel);
@@ -1052,10 +1045,10 @@ void Queue::clearTextureViewIfNeeded(TextureView& textureView)
                 return;
             auto parentMipLevel = checkedParentMipLevel.value();
             auto parentSlice = checkedParentSlice.value();
-            if (parentTexture->previouslyCleared(parentMipLevel, parentSlice))
+            if (parentTexture.previouslyCleared(parentMipLevel, parentSlice))
                 continue;
 
-            CommandEncoder::clearTextureIfNeeded(parentTexture.get(), parentMipLevel, parentSlice, *devicePtr, ensureBlitCommandEncoder());
+            CommandEncoder::clearTextureIfNeeded(parentTexture, parentMipLevel, parentSlice, *devicePtr, ensureBlitCommandEncoder());
         }
     }
     finalizeBlitCommandEncoder();
@@ -1091,8 +1084,8 @@ void wgpuQueueOnSubmittedWorkDoneWithBlock(WGPUQueue queue, WGPUQueueWorkDoneBlo
 
 void wgpuQueueSubmit(WGPUQueue queue, size_t commandCount, const WGPUCommandBuffer* commands)
 {
-    Vector<Ref<WebGPU::CommandBuffer>> commandsToForward;
-    for (auto& command : unsafeMakeSpan(commands, commandCount))
+    Vector<std::reference_wrapper<WebGPU::CommandBuffer>> commandsToForward;
+    for (auto& command : unsafeForgeSpan(commands, commandCount))
         commandsToForward.append(WebGPU::protectedFromAPI(command));
     WebGPU::protectedFromAPI(queue)->submit(WTFMove(commandsToForward));
 }

@@ -54,7 +54,6 @@ static bool webClipExists(const String& webClipIdentifier)
         NSString *path = [UIWebClip pathForWebClipWithIdentifier:(NSString *)webClipIdentifier];
         if (!path)
             return false;
-        path = [path stringByAppendingPathComponent:@"Info.plist"];
         return [[NSFileManager defaultManager] fileExistsAtPath:path];
     }
 }

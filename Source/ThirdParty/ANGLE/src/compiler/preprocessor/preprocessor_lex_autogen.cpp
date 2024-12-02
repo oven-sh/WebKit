@@ -902,8 +902,7 @@ static int input(yyscan_t yyscanner);
         do                                                \
         {                                                 \
             if (fwrite(yytext, (size_t)yyleng, 1, yyout)) \
-            {                                             \
-            }                                             \
+            {}                                            \
         } while (0)
 #endif
 

@@ -38,8 +38,6 @@
 #include <dlfcn.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 #if ENABLE(JIT_OPERATION_VALIDATION) || ENABLE(JIT_OPERATION_DISASSEMBLY)
@@ -129,24 +127,24 @@ LLINT_DECLARE_ROUTINE_VALIDATE(ipint_trampoline);
 LLINT_DECLARE_ROUTINE_VALIDATE(ipint_entry);
 
 #if ENABLE(JIT_OPERATION_VALIDATION)
-#define LLINT_OP_EXTRAS(validateLabel) reinterpret_cast<void*>(validateLabel)
+#define LLINT_OP_EXTRAS(validateLabel) bitwise_cast<void*>(validateLabel)
 #else // ENABLE(JIT_OPERATION_DISASSEMBLY)
 #define LLINT_OP_EXTRAS(validateLabel)
 #endif
 
 #define LLINT_ROUTINE(functionName) { \
-        std::bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(functionName)), \
+        bitwise_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(functionName)), \
         LLINT_OP_EXTRAS(LLINT_ROUTINE_VALIDATE(functionName)) \
     },
 
 #define LLINT_OP(name) { \
-        std::bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(name)), \
+        bitwise_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_VALIDATE(name)) \
     }, { \
-        std::bit_cast<void*>(LLInt::getWide16CodeFunctionPtr<CFunctionPtrTag>(name)), \
+        bitwise_cast<void*>(LLInt::getWide16CodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_WIDE16_VALIDATE(name)) \
     }, { \
-        std::bit_cast<void*>(LLInt::getWide32CodeFunctionPtr<CFunctionPtrTag>(name)), \
+        bitwise_cast<void*>(LLInt::getWide32CodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_WIDE32_VALIDATE(name)) \
     },
 
@@ -288,7 +286,5 @@ void JITOperationList::populateDisassemblyLabelsInEmbedder(const JITOperationAnn
 #endif // ENABLE(JIT_OPERATION_DISASSEMBLY)
 
 #endif // ENABLE(JIT_OPERATION_VALIDATION) || ENABLE(JIT_OPERATION_DISASSEMBLY)
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace JSC

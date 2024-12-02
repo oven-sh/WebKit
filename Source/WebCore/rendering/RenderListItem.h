@@ -41,8 +41,11 @@ public:
     int value() const;
     void updateValue();
 
-    WEBCORE_EXPORT String markerTextWithoutSuffix() const;
-    String markerTextWithSuffix() const;
+    void setNotInList(bool notInList) { m_notInList = notInList; }
+    bool notInList() const { return m_notInList; }
+
+    WEBCORE_EXPORT StringView markerTextWithoutSuffix() const;
+    StringView markerTextWithSuffix() const;
 
     void updateListMarkerNumbers();
 
@@ -71,6 +74,7 @@ private:
 
     SingleThreadWeakPtr<RenderListMarker> m_marker;
     mutable std::optional<int> m_value;
+    bool m_notInList { false };
 };
 
 bool isHTMLListElement(const Node&);

@@ -146,7 +146,7 @@ public:
     void setCustomUserAgent(JSStringRef);
 
     // Special DOM functions.
-    void clearBackForwardList(JSContextRef, JSValueRef callback);
+    void clearBackForwardList();
     void execCommand(JSStringRef name, JSStringRef showUI, JSStringRef value);
     bool isCommandEnabled(JSStringRef name);
     unsigned windowCount();
@@ -155,7 +155,7 @@ public:
     void testRepaint() { m_testRepaint = true; }
     void repaintSweepHorizontally() { m_testRepaintSweepHorizontally = true; }
     void display();
-    void displayAndTrackRepaints(JSContextRef, JSValueRef callback);
+    void displayAndTrackRepaints();
     void displayOnLoadFinish() { m_displayOnLoadFinish = true; }
     bool shouldDisplayOnLoadFinish() { return m_displayOnLoadFinish; }
     void dontForceRepaint() { m_forceRepaint = false; }

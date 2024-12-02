@@ -72,8 +72,6 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StringPrintStream.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace LLInt {
 
 #define LLINT_BEGIN_NO_SET_PC() \
@@ -337,7 +335,7 @@ LLINT_SLOW_PATH_DECL(trace)
             pc);
     if (opcodeID == op_enter) {
         dataLogF("Frame will eventually return to %p\n", callFrame->returnPCForInspection());
-        *std::bit_cast<volatile char*>(callFrame->returnPCForInspection());
+        *bitwise_cast<volatile char*>(callFrame->returnPCForInspection());
     }
     if (opcodeID == op_ret) {
         dataLogF("Will be returning to %p\n", callFrame->returnPCForInspection());
@@ -592,7 +590,7 @@ extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame* calleeFrame, CallLink
     void* callTarget = linkFor(vm, owner, calleeFrame, callLinkInfo);
     ensureStillAliveHere(owner);
     if (UNLIKELY(scope.exception()))
-        return encodeResult(callTarget, std::bit_cast<void*>(&vm));
+        return encodeResult(callTarget, bitwise_cast<void*>(&vm));
     return encodeResult(callTarget, nullptr);
 }
 
@@ -608,7 +606,7 @@ extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame* calleeFrame, CallLink
     void* callTarget = virtualForWithFunction(vm, owner, calleeFrame, callLinkInfo, calleeAsFunctionCellIgnored);
     ensureStillAliveHere(owner);
     if (UNLIKELY(scope.exception()))
-        return encodeResult(callTarget, std::bit_cast<void*>(&vm));
+        return encodeResult(callTarget, bitwise_cast<void*>(&vm));
     return encodeResult(callTarget, nullptr);
 }
 
@@ -623,11 +621,11 @@ extern "C" UGPRPair SYSV_ABI llint_polymorphic_call(CallFrame* calleeFrame, Call
     calleeFrame->setCodeBlock(nullptr);
     void* callTarget = virtualForWithFunction(vm, owner, calleeFrame, callLinkInfo, calleeAsFunctionCell);
     if (UNLIKELY(scope.exception()))
-        return encodeResult(callTarget, std::bit_cast<void*>(&vm));
+        return encodeResult(callTarget, bitwise_cast<void*>(&vm));
     linkPolymorphicCall(vm, owner, calleeFrame, *callLinkInfo, CallVariant(calleeAsFunctionCell));
     ensureStillAliveHere(owner);
     if (UNLIKELY(scope.exception()))
-        return encodeResult(callTarget, std::bit_cast<void*>(&vm));
+        return encodeResult(callTarget, bitwise_cast<void*>(&vm));
     return encodeResult(callTarget, nullptr);
 }
 
@@ -644,7 +642,7 @@ LLINT_SLOW_PATH_DECL(slow_path_new_array)
     LLINT_BEGIN();
     auto bytecode = pc->as<OpNewArray>();
     auto& metadata = bytecode.metadata(codeBlock);
-    LLINT_RETURN(constructArrayNegativeIndexed(globalObject, &metadata.m_arrayAllocationProfile, std::bit_cast<JSValue*>(&callFrame->uncheckedR(bytecode.m_argv)), bytecode.m_argc));
+    LLINT_RETURN(constructArrayNegativeIndexed(globalObject, &metadata.m_arrayAllocationProfile, bitwise_cast<JSValue*>(&callFrame->uncheckedR(bytecode.m_argv)), bytecode.m_argc));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_new_array_with_size)
@@ -1135,22 +1133,25 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
                 GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
-                if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && newStructure->previousID() == oldStructure) {
-                    ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
+                if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity()) {
+                    ASSERT(oldStructure == newStructure->previousID());
+                    if (oldStructure == newStructure->previousID()) {
+                        ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
-                    bool sawPolyProto = false;
-                    auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
-                    if (result != InvalidPrototypeChain && !sawPolyProto) {
-                        ASSERT(oldStructure->isObject());
-                        metadata.m_oldStructureID = oldStructure->id();
-                        metadata.m_offset = slot.cachedOffset();
-                        metadata.m_newStructureID = newStructure->id();
-                        if (!(bytecode.m_flags.isDirect())) {
-                            StructureChain* chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
-                            ASSERT(chain);
-                            metadata.m_structureChain.set(vm, codeBlock, chain);
+                        bool sawPolyProto = false;
+                        auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
+                        if (result != InvalidPrototypeChain && !sawPolyProto) {
+                            ASSERT(oldStructure->isObject());
+                            metadata.m_oldStructureID = oldStructure->id();
+                            metadata.m_offset = slot.cachedOffset();
+                            metadata.m_newStructureID = newStructure->id();
+                            if (!(bytecode.m_flags.isDirect())) {
+                                StructureChain* chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
+                                ASSERT(chain);
+                                metadata.m_structureChain.set(vm, codeBlock, chain);
+                            }
+                            vm.writeBarrier(codeBlock);
                         }
-                        vm.writeBarrier(codeBlock);
                     }
                 }
             } else {
@@ -1462,18 +1463,21 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
                 GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
-                if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && oldStructure == newStructure->previousID()) {
-                    ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
+                if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity()) {
+                    ASSERT(oldStructure == newStructure->previousID());
+                    if (oldStructure == newStructure->previousID()) {
+                        ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
-                    bool sawPolyProto = false;
-                    auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
-                    if (result != InvalidPrototypeChain && !sawPolyProto) {
-                        ASSERT(oldStructure->isObject());
-                        metadata.m_oldStructureID = oldStructure->id();
-                        metadata.m_offset = slot.cachedOffset();
-                        metadata.m_newStructureID = newStructure->id();
-                        metadata.m_property.set(vm, codeBlock, subscript.asCell());
-                        vm.writeBarrier(codeBlock);
+                        bool sawPolyProto = false;
+                        auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
+                        if (result != InvalidPrototypeChain && !sawPolyProto) {
+                            ASSERT(oldStructure->isObject());
+                            metadata.m_oldStructureID = oldStructure->id();
+                            metadata.m_offset = slot.cachedOffset();
+                            metadata.m_newStructureID = newStructure->id();
+                            metadata.m_property.set(vm, codeBlock, subscript.asCell());
+                            vm.writeBarrier(codeBlock);
+                        }
                     }
                 }
             } else {
@@ -2543,9 +2547,9 @@ LLINT_SLOW_PATH_DECL(slow_path_arityCheck)
         ErrorHandlingScope errorScope(vm);
         throwScope.release();
         throwArityCheckStackOverflowError(globalObject, throwScope);
-        LLINT_RETURN_TWO(std::bit_cast<void*>(static_cast<uintptr_t>(1)), callFrame);
+        LLINT_RETURN_TWO(bitwise_cast<void*>(static_cast<uintptr_t>(1)), callFrame);
     }
-    LLINT_RETURN_TWO(nullptr, std::bit_cast<void*>(static_cast<uintptr_t>(slotsToAdd)));
+    LLINT_RETURN_TWO(nullptr, bitwise_cast<void*>(static_cast<uintptr_t>(slotsToAdd)));
 }
 
 template<typename Opcode>
@@ -2666,7 +2670,7 @@ static inline UGPRPair dispatchToNextInstructionDuringExit(ThrowScope& scope, Co
     ASSERT(codeBlock->jitType() == JITType::BaselineJIT);
     BytecodeIndex nextBytecodeIndex = pc.next().index();
     auto nextBytecode = codeBlock->jitCodeMap().find(nextBytecodeIndex);
-    return encodeResult(std::bit_cast<void*>(static_cast<uintptr_t>(1)), nextBytecode.taggedPtr());
+    return encodeResult(bitwise_cast<void*>(static_cast<uintptr_t>(1)), nextBytecode.taggedPtr());
 #endif
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -2862,5 +2866,3 @@ extern "C" NO_RETURN_DUE_TO_CRASH void SYSV_ABI llint_crash()
 }
 
 } } // namespace JSC::LLInt
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

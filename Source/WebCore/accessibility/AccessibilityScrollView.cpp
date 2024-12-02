@@ -38,9 +38,8 @@
 
 namespace WebCore {
     
-AccessibilityScrollView::AccessibilityScrollView(AXID axID, ScrollView& view)
-    : AccessibilityObject(axID)
-    , m_scrollView(view)
+AccessibilityScrollView::AccessibilityScrollView(ScrollView* view)
+    : m_scrollView(view)
     , m_childrenDirty(false)
 {
     if (auto* localFrameView = dynamicDowncast<LocalFrameView>(view))
@@ -69,9 +68,9 @@ void AccessibilityScrollView::detachRemoteParts(AccessibilityDetachmentType deta
     m_frameOwnerElement = nullptr;
 }
 
-Ref<AccessibilityScrollView> AccessibilityScrollView::create(AXID axID, ScrollView& view)
+Ref<AccessibilityScrollView> AccessibilityScrollView::create(ScrollView* view)
 {
-    return adoptRef(*new AccessibilityScrollView(axID, view));
+    return adoptRef(*new AccessibilityScrollView(view));
 }
 
 ScrollView* AccessibilityScrollView::currentScrollView() const
@@ -174,13 +173,10 @@ void AccessibilityScrollView::updateScrollbars()
     
 void AccessibilityScrollView::removeChildScrollbar(AccessibilityObject* scrollbar)
 {
-    if (!scrollbar)
-        return;
-
-    size_t position = m_children.find(Ref { *scrollbar });
-    if (position != notFound) {
-        m_children[position]->detachFromParent();
-        m_children.remove(position);
+    size_t pos = m_children.find(scrollbar);
+    if (pos != notFound) {
+        m_children[pos]->detachFromParent();
+        m_children.remove(pos);
 
         if (CheckedPtr cache = axObjectCache())
             cache->remove(scrollbar->objectID());
@@ -198,7 +194,7 @@ AccessibilityScrollbar* AccessibilityScrollView::addChildScrollbar(Scrollbar* sc
 
     auto& scrollBarObject = uncheckedDowncast<AccessibilityScrollbar>(*cache->getOrCreate(*scrollbar));
     scrollBarObject.setParent(this);
-    addChild(scrollBarObject);
+    addChild(&scrollBarObject);
     return &scrollBarObject;
 }
         
@@ -250,7 +246,7 @@ void AccessibilityScrollView::addRemoteFrameChild()
     } else
         m_remoteFrame->setParent(this);
 
-    addChild(*m_remoteFrame);
+    addChild(m_remoteFrame.get());
 }
 
 void AccessibilityScrollView::addChildren()

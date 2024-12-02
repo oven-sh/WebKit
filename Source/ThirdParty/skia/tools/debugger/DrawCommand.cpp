@@ -35,13 +35,13 @@
 #include "include/private/base/SkDebug.h"
 #include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkTo.h"
+#include "include/private/gpu/ganesh/GrImageContext.h"
 #include "include/utils/SkShadowUtils.h"
 #include "src/base/SkAutoMalloc.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkFontPriv.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkPaintDefaults.h"
-#include "src/core/SkPathEffectBase.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkTextBlobPriv.h"
 #include "src/core/SkWriteBuffer.h"
@@ -59,7 +59,6 @@ class GrDirectContext;
 
 #if defined(SK_GANESH)
 #include "include/gpu/ganesh/GrRecordingContext.h"
-#include "include/private/gpu/ganesh/GrImageContext.h"
 #endif
 
 #define DEBUGCANVAS_ATTRIBUTE_DUMP "dump"
@@ -875,11 +874,11 @@ static void apply_paint_patheffect(const SkPaint&  paint,
                                    UrlDataManager& urlDataManager) {
     SkPathEffect* pathEffect = paint.getPathEffect();
     if (pathEffect != nullptr) {
-        SkPathEffectBase::DashInfo dashInfo;
-        SkPathEffectBase::DashType dashType = as_PEB(pathEffect)->asADash(&dashInfo);
-        if (dashType == SkPathEffectBase::DashType::kDash) {
+        SkPathEffect::DashInfo dashInfo;
+        SkPathEffect::DashType dashType = pathEffect->asADash(&dashInfo);
+        if (dashType == SkPathEffect::kDash_DashType) {
             dashInfo.fIntervals = (SkScalar*)sk_malloc_throw(dashInfo.fCount * sizeof(SkScalar));
-            as_PEB(pathEffect)->asADash(&dashInfo);
+            pathEffect->asADash(&dashInfo);
             writer.beginObject(DEBUGCANVAS_ATTRIBUTE_DASHING);
             writer.beginArray(DEBUGCANVAS_ATTRIBUTE_INTERVALS, false);
             for (int32_t i = 0; i < dashInfo.fCount; i++) {

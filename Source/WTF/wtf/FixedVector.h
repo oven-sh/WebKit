@@ -27,6 +27,8 @@
 
 #include <wtf/EmbeddedFixedVector.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WTF {
 
 template<typename T>
@@ -128,7 +130,7 @@ public:
     }
 
     template<std::invocable<size_t> Generator>
-    static FixedVector createWithSizeFromGenerator(size_t size, NOESCAPE Generator&& generator)
+    static FixedVector createWithSizeFromGenerator(size_t size, Generator&& generator)
     {
         return FixedVector<T> { Storage::createWithSizeFromGenerator(size, std::forward<Generator>(generator)) };
     }
@@ -194,8 +196,8 @@ public:
 
     Storage* storage() { return m_storage.get(); }
 
-    std::span<const T> span() const { return m_storage ? m_storage->span() : std::span<const T> { }; }
-    std::span<T> mutableSpan() { return m_storage ? m_storage->span() : std::span<T> { }; }
+    std::span<const T> span() const { return { m_storage ? m_storage->data() : nullptr, size() }; }
+    std::span<T> mutableSpan() { return { m_storage ? m_storage->data() : nullptr, size() }; }
 
     Vector<T> subvector(size_t offset, size_t length = std::dynamic_extent) const
     {
@@ -268,3 +270,5 @@ FixedVector<ReturnType> map(const FixedVector<T>& source, MapFunction&& mapFunct
 } // namespace WTF
 
 using WTF::FixedVector;
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -1,3 +1,3 @@
 
-PASS Create non-global CustomElementRegistry and add definitions
+FAIL Create non-global CustomElementRegistry and add definitions Illegal constructor
 

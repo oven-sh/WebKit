@@ -44,7 +44,7 @@
 #import "WKFullKeyboardAccessWatcher.h"
 #import "WKWebProcessPlugInBrowserContextControllerInternal.h"
 #import "WebFrame.h"
-#import "WebInspectorInternal.h"
+#import "WebInspector.h"
 #import "WebPage.h"
 #import "WebPageGroupProxy.h"
 #import "WebProcessCreationParameters.h"
@@ -190,6 +190,8 @@
 #import <pal/cocoa/AVFoundationSoftLink.h>
 #import <pal/cocoa/DataDetectorsCoreSoftLink.h>
 #import <pal/cocoa/MediaToolboxSoftLink.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #define RELEASE_LOG_SESSION_ID (m_sessionID ? m_sessionID->toUInt64() : 0)
 #define WEBPROCESS_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [sessionID=%" PRIu64 "] WebProcess::" fmt, this, RELEASE_LOG_SESSION_ID, ##__VA_ARGS__)
@@ -836,14 +838,14 @@ void WebProcess::registerLogHook()
             return;
 #endif
 
-        auto logChannel = span8IncludingNullTerminator(msg->subsystem);
-        auto logCategory = span8IncludingNullTerminator(msg->category);
+        std::span logChannel(byteCast<uint8_t>(msg->subsystem), msg->subsystem ? strlen(msg->subsystem) + 1 : 0);
+        std::span logCategory(byteCast<uint8_t>(msg->category), msg->category ? strlen(msg->category) + 1 : 0);
 
         if (type == OS_LOG_TYPE_FAULT)
             type = OS_LOG_TYPE_ERROR;
 
         if (char* messageString = os_log_copy_message_string(msg)) {
-            auto logString = span8IncludingNullTerminator(messageString);
+            std::span logString(byteCast<uint8_t>(messageString), strlen(messageString) + 1);
             WebProcess::singleton().sendLogOnStream(logChannel, logCategory, logString, type);
             free(messageString);
         }
@@ -876,7 +878,7 @@ void WebProcess::setupLogStream()
     });
 }
 
-void WebProcess::sendLogOnStream(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, os_log_type_t type)
+void WebProcess::sendLogOnStream(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<uint8_t> logString, os_log_type_t type)
 {
     if (RefPtr logStreamConnection = m_logStreamConnection)
         logStreamConnection->send(Messages::LogStream::LogOnBehalfOfWebContent(logChannel, logCategory, logString, type), m_logStreamIdentifier);
@@ -1467,14 +1469,14 @@ void WebProcess::systemWillPowerOn()
 
 void WebProcess::systemWillSleep()
 {
-    if (PlatformMediaSessionManager::singletonIfExists())
-        PlatformMediaSessionManager::singleton().processSystemWillSleep();
+    if (PlatformMediaSessionManager::sharedManagerIfExists())
+        PlatformMediaSessionManager::sharedManager().processSystemWillSleep();
 }
 
 void WebProcess::systemDidWake()
 {
-    if (PlatformMediaSessionManager::singletonIfExists())
-        PlatformMediaSessionManager::singleton().processSystemDidWake();
+    if (PlatformMediaSessionManager::sharedManagerIfExists())
+        PlatformMediaSessionManager::sharedManager().processSystemDidWake();
 }
 #endif
 
@@ -1532,3 +1534,5 @@ void WebProcess::postObserverNotification(const String& message)
 #undef RELEASE_LOG_SESSION_ID
 #undef WEBPROCESS_RELEASE_LOG
 #undef WEBPROCESS_RELEASE_LOG_ERROR
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

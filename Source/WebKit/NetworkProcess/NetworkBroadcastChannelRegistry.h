@@ -29,7 +29,6 @@
 #include <WebCore/BroadcastChannelIdentifier.h>
 #include <WebCore/ClientOrigin.h>
 #include <wtf/HashMap.h>
-#include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -40,11 +39,10 @@ namespace WebKit {
 
 class NetworkProcess;
 
-class NetworkBroadcastChannelRegistry : public RefCounted<NetworkBroadcastChannelRegistry> {
+class NetworkBroadcastChannelRegistry {
     WTF_MAKE_TZONE_ALLOCATED(NetworkBroadcastChannelRegistry);
 public:
-    static Ref<NetworkBroadcastChannelRegistry> create(NetworkProcess&);
-    ~NetworkBroadcastChannelRegistry();
+    explicit NetworkBroadcastChannelRegistry(NetworkProcess&);
 
     void removeConnection(IPC::Connection&);
 
@@ -55,8 +53,6 @@ public:
     void postMessage(IPC::Connection&, const WebCore::ClientOrigin&, const String& name, WebCore::MessageWithMessagePorts&&, CompletionHandler<void()>&&);
 
 private:
-    explicit NetworkBroadcastChannelRegistry(NetworkProcess&);
-
     Ref<NetworkProcess> m_networkProcess;
     using NameToConnectionIdentifiersMap = HashMap<String, Vector<IPC::Connection::UniqueID>>;
     HashMap<WebCore::ClientOrigin, NameToConnectionIdentifiersMap> m_broadcastChannels;

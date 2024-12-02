@@ -38,8 +38,6 @@ class Sampler final : public _cl_sampler, public Object
     template <typename T = rx::CLSamplerImpl>
     T &getImpl() const;
 
-    static Sampler *Cast(cl_sampler sampler);
-
   private:
     Sampler(Context &context,
             PropArray &&properties,
@@ -86,11 +84,6 @@ template <typename T>
 inline T &Sampler::getImpl() const
 {
     return static_cast<T &>(*mImpl);
-}
-
-inline Sampler *Sampler::Cast(cl_sampler sampler)
-{
-    return static_cast<Sampler *>(sampler);
 }
 
 }  // namespace cl

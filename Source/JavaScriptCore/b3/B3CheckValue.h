@@ -29,8 +29,6 @@
 
 #include "B3StackmapValue.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace B3 {
 
 class CheckValue final : public StackmapValue {
@@ -66,7 +64,5 @@ private:
 };
 
 } } // namespace JSC::B3
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)

@@ -72,7 +72,7 @@ struct _WebKitPrintCustomWidgetPrivate {
     GRefPtr<GtkWidget> widget;
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 WEBKIT_DEFINE_TYPE(WebKitPrintCustomWidget, webkit_print_custom_widget, G_TYPE_OBJECT)
 

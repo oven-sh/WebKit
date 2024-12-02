@@ -40,12 +40,12 @@ public:
     
     EvalCodeBlock* codeBlock() const
     {
-        return std::bit_cast<EvalCodeBlock*>(Base::codeBlock());
+        return bitwise_cast<EvalCodeBlock*>(Base::codeBlock());
     }
 
     UnlinkedEvalCodeBlock* unlinkedCodeBlock() const
     {
-        return std::bit_cast<UnlinkedEvalCodeBlock*>(Base::unlinkedCodeBlock());
+        return bitwise_cast<UnlinkedEvalCodeBlock*>(Base::unlinkedCodeBlock());
     }
 
     Ref<JSC::JITCode> generatedJITCode()

@@ -32,7 +32,6 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
-#import "CocoaHelpers.h"
 #import "WebExtension.h"
 #import "WebExtensionContext.h"
 #import "WebExtensionMenuItem.h"
@@ -283,7 +282,7 @@ CocoaMenuItem *WebExtensionCommand::platformMenuItem() const
     result.keyEquivalent = activationKey();
     result.keyEquivalentModifierMask = modifierFlags().toRaw();
     if (RefPtr context = extensionContext())
-        result.image = toCocoaImage(context->extension().icon(WebCore::FloatSize(16, 16)));
+        result.image = context->extension().icon(NSMakeSize(16, 16));
 
     return result;
 #else

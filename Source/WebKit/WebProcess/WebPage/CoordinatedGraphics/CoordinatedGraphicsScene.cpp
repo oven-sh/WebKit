@@ -23,21 +23,21 @@
 #include "CoordinatedGraphicsScene.h"
 
 #if USE(COORDINATED_GRAPHICS)
+
 #include <WebCore/CoordinatedBackingStore.h>
 #include <WebCore/CoordinatedPlatformLayerBuffer.h>
-#include <WebCore/CoordinatedTileBuffer.h>
-#include <WebCore/Damage.h>
+#include <WebCore/NicosiaBackingStore.h>
 #include <WebCore/NicosiaCompositionLayer.h>
 #include <WebCore/NicosiaScene.h>
 #include <WebCore/TextureMapperLayer.h>
 #include <wtf/Atomics.h>
-#include <wtf/SystemTracing.h>
 
 namespace WebKit {
 using namespace WebCore;
 
-CoordinatedGraphicsScene::CoordinatedGraphicsScene(CoordinatedGraphicsSceneClient* client)
+CoordinatedGraphicsScene::CoordinatedGraphicsScene(CoordinatedGraphicsSceneClient* client, Damage::ShouldPropagate propagateDamage)
     : m_client(client)
+    , m_propagateDamage(propagateDamage)
 {
 }
 
@@ -58,6 +58,8 @@ void CoordinatedGraphicsScene::paintToCurrentGLContext(const TransformationMatri
 {
     updateSceneState();
 
+    m_damage = WebCore::Damage();
+
     TextureMapperLayer* currentRootLayer = rootLayer();
     if (!currentRootLayer)
         return;
@@ -66,53 +68,13 @@ void CoordinatedGraphicsScene::paintToCurrentGLContext(const TransformationMatri
         currentRootLayer->setTransform(matrix);
 
     bool sceneHasRunningAnimations = currentRootLayer->applyAnimationsRecursively(MonotonicTime::now());
-
-    bool didChangeClipRect = false;
-    FloatRoundedRect actualClipRect(clipRect);
-#if ENABLE(DAMAGE_TRACKING)
-    if (m_client && m_damagePropagation != Damage::Propagation::None) {
-        Damage frameDamage;
-        if (sceneHasRunningAnimations) {
-            // When running animations for now we need to damage the whole frame.
-            frameDamage.add(clipRect);
-        } else {
-            WTFBeginSignpost(this, CollectDamage);
-            currentRootLayer->collectDamage(*m_textureMapper, frameDamage);
-            WTFEndSignpost(this, CollectDamage);
-
-            ASSERT(!frameDamage.isInvalid());
-            if (m_damagePropagation == Damage::Propagation::Unified) {
-                Damage boundsDamage;
-                boundsDamage.add(frameDamage.bounds());
-                frameDamage = WTFMove(boundsDamage);
-            }
-        }
-
-        const auto& damageSinceLastSurfaceUse = m_client->addSurfaceDamage(frameDamage);
-        if (!damageSinceLastSurfaceUse.isInvalid()) {
-            actualClipRect = static_cast<FloatRoundedRect>(damageSinceLastSurfaceUse.bounds());
-            didChangeClipRect = true;
-        }
-    }
-#endif
-
-    WTFBeginSignpost(this, PaintTextureMapperLayerTree);
     m_textureMapper->beginPainting(flipY ? TextureMapper::FlipY::Yes : TextureMapper::FlipY::No);
-    m_textureMapper->beginClip(TransformationMatrix(), actualClipRect);
+    m_textureMapper->beginClip(TransformationMatrix(), FloatRoundedRect(clipRect));
+
     currentRootLayer->paint(*m_textureMapper);
-    if (!didChangeClipRect)
-        m_fpsCounter.updateFPSAndDisplay(*m_textureMapper, clipRect.location(), matrix);
+    m_fpsCounter.updateFPSAndDisplay(*m_textureMapper, clipRect.location(), matrix);
     m_textureMapper->endClip();
     m_textureMapper->endPainting();
-    WTFEndSignpost(this, PaintTextureMapperLayerTree);
-
-    if (didChangeClipRect && m_fpsCounter.isActive()) {
-        m_textureMapper->beginPainting(flipY ? TextureMapper::FlipY::Yes : TextureMapper::FlipY::No);
-        m_textureMapper->beginClip(TransformationMatrix(), FloatRoundedRect(clipRect));
-        m_fpsCounter.updateFPSAndDisplay(*m_textureMapper, clipRect.location(), matrix);
-        m_textureMapper->endClip();
-        m_textureMapper->endPainting();
-    }
 
     if (sceneHasRunningAnimations)
         updateViewport();
@@ -129,38 +91,50 @@ void CoordinatedGraphicsScene::onNewBufferAvailable()
     updateViewport();
 }
 
-static TextureMapperLayer& texmapLayer(Nicosia::CompositionLayer& compositionLayer)
+static TextureMapperLayer& texmapLayer(Nicosia::CompositionLayer& compositionLayer, Damage::ShouldPropagate propagateDamage)
 {
     auto& compositionState = compositionLayer.compositionState();
     if (!compositionState.layer) {
-        compositionState.layer = makeUnique<TextureMapperLayer>();
+        compositionState.layer = makeUnique<TextureMapperLayer>(propagateDamage);
         compositionState.layer->setID(compositionLayer.id());
     }
     return *compositionState.layer;
 }
 
-static void updateBackingStore(TextureMapperLayer& layer, CoordinatedBackingStore& backingStore, const CoordinatedBackingStoreProxy::Update& update)
+void updateBackingStore(TextureMapperLayer& layer,
+    Nicosia::BackingStore::CompositionState& compositionState,
+    const Nicosia::BackingStore::TileUpdate& update)
 {
-    layer.setBackingStore(&backingStore);
-    backingStore.resize(layer.size(), update.scale());
+    if (!compositionState.backingStore)
+        compositionState.backingStore = CoordinatedBackingStore::create();
+    auto& backingStore = *compositionState.backingStore;
 
-    for (auto tileID : update.tilesToCreate())
-        backingStore.createTile(tileID);
-    for (auto tileID : update.tilesToRemove())
-        backingStore.removeTile(tileID);
-    for (const auto& tileUpdate : update.tilesToUpdate())
-        backingStore.updateTile(tileUpdate.tileID, tileUpdate.dirtyRect, tileUpdate.tileRect, tileUpdate.buffer.copyRef(), { });
+    layer.setBackingStore(&backingStore);
+    backingStore.resize(layer.size());
+
+    for (auto& tile : update.tilesToCreate)
+        backingStore.createTile(tile.tileID, tile.scale);
+    for (auto& tile : update.tilesToRemove)
+        backingStore.removeTile(tile.tileID);
+    for (auto& tile : update.tilesToUpdate)
+        backingStore.updateTile(tile.tileID, tile.updateRect, tile.tileRect, tile.buffer.copyRef(), { });
 }
 
-void CoordinatedGraphicsScene::removeLayer(Nicosia::CompositionLayer& layer)
+void removeLayer(Nicosia::CompositionLayer& layer)
 {
-    layer.accessCommitted([](const Nicosia::CompositionLayer::LayerState& committed) {
-        if (committed.contentLayer)
-            committed.contentLayer->invalidate();
-    });
+    layer.accessCommitted(
+        [](const Nicosia::CompositionLayer::LayerState& committed)
+        {
+            if (committed.backingStore) {
+                auto& compositionState = committed.backingStore->compositionState();
+                compositionState.backingStore = nullptr;
+            }
+
+            if (committed.contentLayer)
+                committed.contentLayer->invalidate();
+        });
 
     auto& compositionState = layer.compositionState();
-    m_backingStores.remove(compositionState.layer.get());
     compositionState.layer = nullptr;
 }
 
@@ -182,7 +156,8 @@ void CoordinatedGraphicsScene::updateSceneState()
     struct {
         struct BackingStore {
             std::reference_wrapper<TextureMapperLayer> layer;
-            CoordinatedBackingStoreProxy::Update update;
+            std::reference_wrapper<Nicosia::BackingStore> backingStore;
+            Nicosia::BackingStore::TileUpdate update;
         };
         Vector<BackingStore> backingStore;
 
@@ -213,7 +188,7 @@ void CoordinatedGraphicsScene::updateSceneState()
             // Handle the root layer, adding it to the TextureMapperLayer tree
             // on the first update. No such change is expected later.
             {
-                auto& rootLayer = texmapLayer(*state.rootLayer);
+                auto& rootLayer = texmapLayer(*state.rootLayer, m_propagateDamage);
                 if (rootLayer.id() != m_rootLayerID) {
                     m_rootLayerID = rootLayer.id();
                     RELEASE_ASSERT(m_rootLayer->children().isEmpty());
@@ -251,8 +226,7 @@ void CoordinatedGraphicsScene::updateSceneState()
             // the incoming state changes. Layer backings are stored so that the updates
             // (possibly time-consuming) can be done outside of this scene update.
             for (auto& compositionLayer : m_nicosia.state.layers) {
-                auto& layer = texmapLayer(*compositionLayer);
-
+                auto& layer = texmapLayer(*compositionLayer, m_propagateDamage);
                 compositionLayer->commitState(
                     [this, &layer, &layersByBacking, &replacedProxiesToInvalidate]
                     (const Nicosia::CompositionLayer::LayerState& layerState)
@@ -288,22 +262,23 @@ void CoordinatedGraphicsScene::updateSceneState()
                         if (layerState.delta.filtersChanged)
                             layer.setFilters(layerState.filters);
                         if (layerState.delta.backdropFiltersChanged)
-                            layer.setBackdropLayer(layerState.backdropLayer ? &texmapLayer(*layerState.backdropLayer) : nullptr);
+                            layer.setBackdropLayer(layerState.backdropLayer ? &texmapLayer(*layerState.backdropLayer, m_propagateDamage) : nullptr);
                         if (layerState.delta.backdropFiltersRectChanged)
                             layer.setBackdropFiltersRect(layerState.backdropFiltersRect);
                         if (layerState.delta.animationsChanged)
                             layer.setAnimations(layerState.animations);
 
                         if (layerState.delta.childrenChanged) {
-                            layer.setChildren(WTF::map(layerState.children, [](auto& child) {
-                                return &texmapLayer(*child);
-                            }));
+                            layer.setChildren(WTF::map(layerState.children,
+                                [this](auto& child) {
+                                    return &texmapLayer(*child, m_propagateDamage);
+                                }));
                         }
 
                         if (layerState.delta.maskChanged)
-                            layer.setMaskLayer(layerState.mask ? &texmapLayer(*layerState.mask) : nullptr);
+                            layer.setMaskLayer(layerState.mask ? &texmapLayer(*layerState.mask, m_propagateDamage) : nullptr);
                         if (layerState.delta.replicaChanged)
-                            layer.setReplicaLayer(layerState.replica ? &texmapLayer(*layerState.replica) : nullptr);
+                            layer.setReplicaLayer(layerState.replica ? &texmapLayer(*layerState.replica, m_propagateDamage) : nullptr);
 
                         if (layerState.delta.flagsChanged) {
                             layer.setContentsOpaque(layerState.flags.contentsOpaque);
@@ -326,12 +301,12 @@ void CoordinatedGraphicsScene::updateSceneState()
                             layer.setDebugBorderWidth(layerState.debugBorder.width);
                         }
 
-                        if (layerState.backingStore)
-                            layersByBacking.backingStore.append({ std::ref(layer), layerState.backingStore->takePendingUpdate() });
-                        else {
+                        if (layerState.backingStore) {
+                            layer.acceptDamageVisitor(*this);
+                            layersByBacking.backingStore.append(
+                                { std::ref(layer), std::ref(*layerState.backingStore), layerState.backingStore->takeUpdate() });
+                        } else
                             layer.setBackingStore(nullptr);
-                            m_backingStores.remove(&layer);
-                        }
 
                         if (layerState.contentLayer) {
                             layersByBacking.contentLayer.append(
@@ -348,10 +323,11 @@ void CoordinatedGraphicsScene::updateSceneState()
                         else
                             layer.setAnimatedBackingStoreClient(nullptr);
 
-#if ENABLE(DAMAGE_TRACKING)
-                        if (layerState.delta.damageChanged)
-                            layer.setDamage(layerState.damage);
-#endif
+                        if (layerState.delta.damageChanged) {
+                            layer.addDamage(layerState.damage);
+                            if (layerState.damage.isInvalid())
+                                layer.invalidateDamage();
+                        }
                     });
             }
         });
@@ -364,13 +340,11 @@ void CoordinatedGraphicsScene::updateSceneState()
 
     {
         for (auto& entry : layersByBacking.backingStore) {
-            auto addResult = m_backingStores.ensure(&entry.layer.get(), [] {
-                return CoordinatedBackingStore::create();
-            });
+            auto& compositionState = entry.backingStore.get().compositionState();
+            updateBackingStore(entry.layer.get(), compositionState, entry.update);
 
-            auto& backingStore = addResult.iterator->value.get();
-            updateBackingStore(entry.layer.get(), backingStore, entry.update);
-            backingStoresWithPendingBuffers.add(backingStore);
+            if (compositionState.backingStore)
+                backingStoresWithPendingBuffers.add(*compositionState.backingStore);
         }
 
         layersByBacking.backingStore = { };
@@ -419,7 +393,8 @@ void CoordinatedGraphicsScene::ensureRootLayer()
     if (m_rootLayer)
         return;
 
-    m_rootLayer = makeUnique<TextureMapperLayer>();
+    m_rootLayer = makeUnique<TextureMapperLayer>(m_propagateDamage);
+    m_rootLayer->acceptDamageVisitor(*this);
     m_rootLayer->setMasksToBounds(false);
     m_rootLayer->setDrawsContent(false);
     m_rootLayer->setAnchorPoint(FloatPoint3D(0, 0, 0));
@@ -433,15 +408,18 @@ void CoordinatedGraphicsScene::purgeGLResources()
     ASSERT(!m_client);
 
     if (m_nicosia.scene) {
-        m_nicosia.scene->accessState([this](Nicosia::Scene::State& state) {
-            for (auto& layer : state.layers)
-                removeLayer(*layer);
-            state.layers = { };
-            state.rootLayer = nullptr;
-        });
+        m_nicosia.scene->accessState(
+            [](Nicosia::Scene::State& state)
+            {
+                for (auto& layer : state.layers)
+                    removeLayer(*layer);
+                state.layers = { };
+                state.rootLayer = nullptr;
+            });
         m_nicosia.scene = nullptr;
     }
 
+    m_rootLayer->dismissDamageVisitor();
     m_rootLayer = nullptr;
     m_rootLayerID = 0;
     m_textureMapper = nullptr;
@@ -452,6 +430,11 @@ void CoordinatedGraphicsScene::detach()
     ASSERT(RunLoop::isMain());
     m_isActive = false;
     m_client = nullptr;
+}
+
+void CoordinatedGraphicsScene::recordDamage(const FloatRect& damagedRect)
+{
+    m_damage.add(damagedRect);
 }
 
 } // namespace WebKit

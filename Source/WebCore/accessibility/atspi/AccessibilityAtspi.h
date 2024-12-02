@@ -48,10 +48,6 @@ class AccessibilityAtspi {
 public:
     WEBCORE_EXPORT static AccessibilityAtspi& singleton();
 
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
-
     void connect(const String&, const String&);
 
     const char* uniqueName() const;

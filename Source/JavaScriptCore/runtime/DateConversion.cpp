@@ -31,8 +31,6 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 template<int width>
@@ -105,5 +103,3 @@ String formatDateTime(const GregorianDateTime& t, DateTimeFormat format, bool as
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

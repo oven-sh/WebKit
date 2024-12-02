@@ -27,8 +27,6 @@
 
 #include "JSObject.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 // This is used for sharing interface and implementation. It should not have its own classInfo.
@@ -79,5 +77,3 @@ protected:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

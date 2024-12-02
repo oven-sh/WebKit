@@ -26,8 +26,6 @@
 #include "config.h"
 #include "WasmBBQJIT64.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 #include "WasmBBQJIT.h"
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
@@ -1408,23 +1406,23 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::truncSaturated(Ext1OpType truncationOp,
     switch (kind) {
     case TruncationKind::I32TruncF32S:
     case TruncationKind::I32TruncF64S:
-        maxResult = std::bit_cast<uint32_t>(INT32_MAX);
-        minResult = std::bit_cast<uint32_t>(INT32_MIN);
+        maxResult = bitwise_cast<uint32_t>(INT32_MAX);
+        minResult = bitwise_cast<uint32_t>(INT32_MIN);
         break;
     case TruncationKind::I32TruncF32U:
     case TruncationKind::I32TruncF64U:
-        maxResult = std::bit_cast<uint32_t>(UINT32_MAX);
-        minResult = std::bit_cast<uint32_t>(0U);
+        maxResult = bitwise_cast<uint32_t>(UINT32_MAX);
+        minResult = bitwise_cast<uint32_t>(0U);
         break;
     case TruncationKind::I64TruncF32S:
     case TruncationKind::I64TruncF64S:
-        maxResult = std::bit_cast<uint64_t>(INT64_MAX);
-        minResult = std::bit_cast<uint64_t>(INT64_MIN);
+        maxResult = bitwise_cast<uint64_t>(INT64_MAX);
+        minResult = bitwise_cast<uint64_t>(INT64_MIN);
         break;
     case TruncationKind::I64TruncF32U:
     case TruncationKind::I64TruncF64U:
-        maxResult = std::bit_cast<uint64_t>(UINT64_MAX);
-        minResult = std::bit_cast<uint64_t>(0ULL);
+        maxResult = bitwise_cast<uint64_t>(UINT64_MAX);
+        minResult = bitwise_cast<uint64_t>(0ULL);
         break;
     }
 
@@ -1585,7 +1583,7 @@ Value BBQJIT::marshallToI64(Value value)
     ASSERT(!value.isLocal());
     if (value.type() == TypeKind::F32 || value.type() == TypeKind::F64) {
         if (value.isConst())
-            return Value::fromI64(value.type() == TypeKind::F32 ? std::bit_cast<uint32_t>(value.asI32()) : std::bit_cast<uint64_t>(value.asF64()));
+            return Value::fromI64(value.type() == TypeKind::F32 ? bitwise_cast<uint32_t>(value.asI32()) : bitwise_cast<uint64_t>(value.asF64()));
         // This is a bit silly. We could just move initValue to the right argument GPR if we know it's in an FPR already.
         flushValue(value);
         return Value::fromTemp(TypeKind::I64, value.asTemp());
@@ -1686,7 +1684,7 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addArrayGet(ExtGCOpType arrayGetKind, u
     if (arrayref.isConst()) {
         ASSERT(arrayref.asI64() == JSValue::encode(jsNull()));
         emitThrowException(ExceptionType::NullArrayGet);
-        result = Value::fromRef(resultType.kind, JSValue::encode(jsNull()));
+        result = Value::fromRef(resultType.kind, 0);
         return { };
     }
 
@@ -2198,7 +2196,7 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addStructGet(ExtGCOpType structGetKind,
         // This is the only constant struct currently possible.
         ASSERT(JSValue::decode(structValue.asRef()).isNull());
         emitThrowException(ExceptionType::NullStructGet);
-        result = Value::fromRef(resultKind, JSValue::encode(jsNull()));
+        result = Value::fromRef(resultKind, 0);
         LOG_INSTRUCTION("StructGet", structValue, fieldIndex, "Exception");
         return { };
     }
@@ -2652,7 +2650,7 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addI64ReinterpretF64(Value operand, Val
 {
     EMIT_UNARY(
         "I64ReinterpretF64", TypeKind::I64,
-        BLOCK(Value::fromI64(std::bit_cast<int64_t>(operand.asF64()))),
+        BLOCK(Value::fromI64(bitwise_cast<int64_t>(operand.asF64()))),
         BLOCK(
             m_jit.moveDoubleTo64(operandLocation.asFPR(), resultLocation.asGPR());
         )
@@ -2663,7 +2661,7 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addF64ReinterpretI64(Value operand, Val
 {
     EMIT_UNARY(
         "F64ReinterpretI64", TypeKind::F64,
-        BLOCK(Value::fromF64(std::bit_cast<double>(operand.asI64()))),
+        BLOCK(Value::fromF64(bitwise_cast<double>(operand.asI64()))),
         BLOCK(
             m_jit.move64ToDouble(operandLocation.asGPR(), resultLocation.asFPR());
         )
@@ -2803,7 +2801,7 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addF64Copysign(Value lhs, Value rhs, Va
                 emitMoveConst(Value::fromF64(std::abs(lhs.asF64())), resultLocation);
                 m_jit.orDouble(resultLocation.asFPR(), wasmScratchFPR, resultLocation.asFPR());
             } else {
-                bool signBit = std::bit_cast<uint64_t>(rhs.asF64()) & 0x8000000000000000ull;
+                bool signBit = bitwise_cast<uint64_t>(rhs.asF64()) & 0x8000000000000000ull;
 #if CPU(X86_64)
                 m_jit.moveDouble(lhsLocation.asFPR(), resultLocation.asFPR());
                 m_jit.move64ToDouble(TrustedImm64(0x7fffffffffffffffll), wasmScratchFPR);
@@ -3047,12 +3045,11 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
     m_exceptionHandlers.append({ handlerType, entryData.tryStart(), m_callSiteIndex, 0, m_tryCatchDepth, target.tag });
     emitCatchPrologue();
 
-    auto& targetControl = m_parser->resolveControlRef(target.target).controlData;
     if (target.type == CatchKind::CatchRef || target.type == CatchKind::CatchAllRef) {
-        if (targetControl.targetLocations().last().isGPR())
-            m_jit.move(GPRInfo::returnValueGPR, targetControl.targetLocations().last().asGPR());
+        if (target.target->targetLocations().last().isGPR())
+            m_jit.move(GPRInfo::returnValueGPR, target.target->targetLocations().last().asGPR());
         else
-            m_jit.storePtr(GPRInfo::returnValueGPR, targetControl.targetLocations().last().asAddress());
+            m_jit.storePtr(GPRInfo::returnValueGPR, target.target->targetLocations().last().asAddress());
     }
 
     if (target.type == CatchKind::Catch || target.type == CatchKind::CatchRef) {
@@ -3062,7 +3059,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
             unsigned offset = 0;
             for (unsigned i = 0; i < signature->argumentCount(); ++i) {
                 Type type = signature->argumentType(i);
-                Location slot = targetControl.targetLocations()[i];
+                Location slot = target.target->targetLocations()[i];
                 switch (type.kind) {
                 case TypeKind::I32:
                     if (slot.isGPR())
@@ -3123,7 +3120,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
     }
 
     // jump to target
-    targetControl.addBranch(m_jit.jump());
+    target.target->addBranch(m_jit.jump());
 }
 
 PartialResult WARN_UNUSED_RETURN BBQJIT::addThrowRef(Value exception, Stack&)
@@ -3257,12 +3254,12 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addFusedIfCompare(OpType op, Expression
 
     consume(operand);
 
-    result = ControlData(*this, BlockType::If, signature, currentControlData().enclosedHeight() + currentControlData().implicitSlots() + enclosingStack.size() - signature.m_signature->argumentCount(), liveScratchGPRs, liveScratchFPRs);
+    result = ControlData(*this, BlockType::If, signature, currentControlData().enclosedHeight() + currentControlData().implicitSlots() + enclosingStack.size() - signature->argumentCount(), liveScratchGPRs, liveScratchFPRs);
 
     // Despite being conditional, if doesn't need to worry about diverging expression stacks at block boundaries, so it doesn't need multiple exits.
     currentControlData().flushAndSingleExit(*this, result, enclosingStack, true, false);
 
-    LOG_INSTRUCTION("IfCompare", makeString(op).characters(), *signature.m_signature, operand, operandLocation);
+    LOG_INSTRUCTION("IfCompare", makeString(op).characters(), *signature, operand, operandLocation);
     LOG_INDENT();
     splitStack(signature, enclosingStack, newStack);
 
@@ -3523,12 +3520,12 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addFusedIfCompare(OpType op, Expression
     consume(right);
 
 
-    result = ControlData(*this, BlockType::If, signature, currentControlData().enclosedHeight() + currentControlData().implicitSlots() + enclosingStack.size() - signature.m_signature->argumentCount(), liveScratchGPRs, liveScratchFPRs);
+    result = ControlData(*this, BlockType::If, signature, currentControlData().enclosedHeight() + currentControlData().implicitSlots() + enclosingStack.size() - signature->argumentCount(), liveScratchGPRs, liveScratchFPRs);
 
     // Despite being conditional, if doesn't need to worry about diverging expression stacks at block boundaries, so it doesn't need multiple exits.
     currentControlData().flushAndSingleExit(*this, result, enclosingStack, true, false);
 
-    LOG_INSTRUCTION("IfCompare", makeString(op).characters(), *signature.m_signature, left, leftLocation, right, rightLocation);
+    LOG_INSTRUCTION("IfCompare", makeString(op).characters(), *signature, left, leftLocation, right, rightLocation);
     LOG_INDENT();
     splitStack(signature, enclosingStack, newStack);
 
@@ -5150,5 +5147,3 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addCallRef(const TypeDefinition& origin
 
 #endif // USE(JSVALUE64)
 #endif // ENABLE(WEBASSEMBLY_BBQJIT)
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

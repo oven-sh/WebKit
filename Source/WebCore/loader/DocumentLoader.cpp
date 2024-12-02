@@ -160,9 +160,9 @@ static void setAllDefersLoading(const ResourceLoaderMap& loaders, bool defers)
         loader->setDefersLoading(defers);
 }
 
-static HashMap<ScriptExecutionContextIdentifier, DocumentLoader*>& scriptExecutionContextIdentifierToLoaderMap()
+static UncheckedKeyHashMap<ScriptExecutionContextIdentifier, DocumentLoader*>& scriptExecutionContextIdentifierToLoaderMap()
 {
-    static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, DocumentLoader*>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<ScriptExecutionContextIdentifier, DocumentLoader*>> map;
     return map.get();
 }
 
@@ -934,7 +934,7 @@ void DocumentLoader::responseReceived(CachedResource& resource, const ResourceRe
             auto firstPartyDomain = RegistrableDomain(response.url());
             if (auto loginDomains = NetworkStorageSession::subResourceDomainsInNeedOfStorageAccessForFirstParty(firstPartyDomain)) {
                 if (!Quirks::hasStorageAccessForAllLoginDomains(*loginDomains, firstPartyDomain)) {
-                    m_frame->protectedNavigationScheduler()->scheduleRedirect(document, 0, microsoftTeamsRedirectURL(), IsMetaRefresh::No);
+                    m_frame->checkedNavigationScheduler()->scheduleRedirect(document, 0, microsoftTeamsRedirectURL(), IsMetaRefresh::No);
                     return;
                 }
             }
@@ -978,7 +978,7 @@ void DocumentLoader::responseReceived(const ResourceResponse& response, Completi
         return;
 
     ASSERT(m_identifierForLoadWithoutResourceLoader || m_mainResource);
-    ResourceLoaderIdentifier identifier = m_identifierForLoadWithoutResourceLoader ? *m_identifierForLoadWithoutResourceLoader : *m_mainResource->resourceLoaderIdentifier();
+    ResourceLoaderIdentifier identifier = m_identifierForLoadWithoutResourceLoader ? *m_identifierForLoadWithoutResourceLoader : *m_mainResource->identifier();
 
     if (m_substituteData.isValid() || !platformStrategies()->loaderStrategy()->havePerformedSecurityChecks(response)) {
         auto url = response.url();
@@ -1101,7 +1101,7 @@ bool DocumentLoader::disallowDataRequest() const
         return false;
 
     if (RefPtr currentDocument = frame()->document()) {
-        ResourceLoaderIdentifier identifier = m_identifierForLoadWithoutResourceLoader ? *m_identifierForLoadWithoutResourceLoader : *m_mainResource->resourceLoaderIdentifier();
+        ResourceLoaderIdentifier identifier = m_identifierForLoadWithoutResourceLoader ? *m_identifierForLoadWithoutResourceLoader : *m_mainResource->identifier();
         currentDocument->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Not allowed to navigate top frame to data URL '"_s, m_response.url().stringCenterEllipsizedToLength(), "'."_s), identifier.toUInt64());
     }
     DOCUMENTLOADER_RELEASE_LOG("continueAfterContentPolicy: cannot show URL");

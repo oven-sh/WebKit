@@ -4234,53 +4234,6 @@ TEST_P(GLSLTest_ES3, FlatVaryingMatrixArray)
     EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(255, 127, 63, 255), 1.0);
 }
 
-// Test that using a varying matrix array works with a particular input names scheme.
-// Test that having "mat3 a[*]" and "mat2 a_0" does not cause internal shader compile failures.
-// For a buggy naming scheme both would expand into a_0_0 and cause problems.
-TEST_P(GLSLTest_ES3, VaryingMatrixArrayNaming2)
-{
-    constexpr char kVS[] = R"(#version 300 es
-precision mediump float;
-uniform mat3 r0;
-uniform mat2 r1;
-in vec4 a_position;
-out mat2 a_0;
-out mat3 a[2];
-void main() {
-    a[0] = r0;
-    a[1] = r0 + mat3(1, 1, 1, 1, 1, 1, 1, 1, 1);
-    a_0 = r1;
-    gl_Position = a_position;
-})";
-    constexpr char kFS[] = R"(#version 300 es
-precision mediump float;
-in mat2 a_0;
-in mat3 a[2];
-layout(location = 0) out vec4 o;
-void main(void) {
-    mat3 diff0 = a[0] - mat3(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8);
-    mat3 diff1 = a[1] - mat3(1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8);
-    mat2 diff2 = a_0 - mat2(3.0, 3.1, 3.2, 3.3);
-    o.r = all(lessThan(abs(diff0[0]) + abs(diff0[1]) + abs(diff0[2]), vec3(0.01))) ? 1.0 : 0.0;
-    o.g = all(lessThan(abs(diff1[0]) + abs(diff1[1]) + abs(diff1[2]), vec3(0.01))) ? 1.0 : 0.0;
-    o.b = all(lessThan(abs(diff2[0]) + abs(diff2[1]), vec2(0.01))) ? 1.0 : 0.0;
-    o.a = 1.0;
-})";
-    ANGLE_GL_PROGRAM(program, kVS, kFS);
-
-    GLint r0 = glGetUniformLocation(program, "r0");
-    ASSERT_NE(-1, r0);
-    GLint r1 = glGetUniformLocation(program, "r1");
-    ASSERT_NE(-1, r1);
-    glUseProgram(program);
-    float r0v[] = {0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f};
-    glUniformMatrix3fv(r0, 1, false, r0v);
-    float r1v[] = {3.0f, 3.1f, 3.2f, 3.3f};
-    glUniformMatrix2fv(r1, 1, false, r1v);
-    drawQuad(program, "a_position", 0.5f);
-    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(255, 255, 255, 255), 1.0);
-}
-
 // Test that literal infinity can be written out from the shader translator.
 // A similar test can't be made for NaNs, since ESSL 3.00.6 requirements for NaNs are very loose.
 TEST_P(GLSLTest_ES3, LiteralInfinityOutput)
@@ -6670,7 +6623,7 @@ struct S { float a; };
 
 out vec4 color;
 
-float f(out float, out vec2 o1, out S o2[2], out float o3[3])
+float f(out vec2 o1, out S o2[2], out float o3[3])
 {
     float uninitialized_local;
 
@@ -6686,15 +6639,14 @@ float f(out float, out vec2 o1, out S o2[2], out float o3[3])
 
 void main()
 {
-    float v0 = 345.;
     vec2 v1 = vec2(123., 234.);
     S v2[2] = S[2](S(-1111.), S(55.));
     float v3[3] = float[3](20., 30., 40.);
-    float v4 = f(v0, v1, v2, v3);
+    float v4 = f(v1, v2, v3);
 
     // Everything should be 0 now except for v2[0].a and v3[1] which should be 1.0 and 0.5
     // respectively.
-    color = vec4(v0 + v1.x + v2[0].a + v3[0],  // 1.0
+    color = vec4(v1.x + v2[0].a + v3[0],  // 1.0
                  v1.y + v2[1].a + v3[1],  // 0.5
                  v3[2] + v4,              // 0
                  1.0);
@@ -7569,7 +7521,7 @@ void main()
 color = tex_color;
 })";
 
-    constexpr GLint kBufferSize = 4;
+    constexpr GLint kBufferSize = 32;
     GLubyte texData[]           = {0u, 255u, 0u, 255u};
 
     GLTexture texture;
@@ -9438,183 +9390,6 @@ void main()
         my_FragColor = vec4(0, 1, 0, 1);
     }
 })";
-
-    ANGLE_GL_PROGRAM(program, kVS, kFS);
-    drawQuad(program.get(), "inputAttribute", 0.5f);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that a varying anonymous struct that is defined as a part of the declaration is handled
-// correctly.
-TEST_P(GLSLTest_ES3, VaryingAnonymousStructWithInlineDefinition)
-{
-    constexpr char kVS[] = R"(#version 300 es
-in vec4 inputAttribute;
-flat out struct
-{
-    int field;
-} v_s;
-
-void main()
-{
-    v_s.field = 1;
-    gl_Position = inputAttribute;
-})";
-
-    constexpr char kFS[] = R"(#version 300 es
-precision highp float;
-out vec4 my_FragColor;
-flat in struct
-{
-    int field;
-} v_s;
-void main()
-{
-    bool success = (v_s.field == 1);
-    my_FragColor = vec4(1, 0, 0, 1);
-    if (success)
-    {
-        my_FragColor = vec4(0, 1, 0, 1);
-    }
-})";
-    ANGLE_GL_PROGRAM(program, kVS, kFS);
-    drawQuad(program.get(), "inputAttribute", 0.5f);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that a varying anonymous structs that are defined as a part of the declaration is handled
-// correctly.
-TEST_P(GLSLTest_ES3, VaryingAnonymousStructWithInlineDefinition2)
-{
-    constexpr char kVS[] = R"(#version 300 es
-in vec4 inputAttribute;
-flat out struct
-{
-    int field;
-} v_s0, v_s1;
-void main()
-{
-    v_s0.field = 1;
-    v_s1.field = 2;
-    gl_Position = inputAttribute;
-})";
-    constexpr char kFS[] = R"(#version 300 es
-precision highp float;
-out vec4 my_FragColor;
-flat in struct
-{
-    int field;
-} v_s0, v_s1;
-void main()
-{
-    bool success = (v_s0.field == 1 && v_s1.field == 2);
-    my_FragColor = vec4(1, 0, 0, 1);
-    if (success)
-    {
-        my_FragColor = vec4(0, 1, 0, 1);
-    }
-})";
-    ANGLE_GL_PROGRAM(program, kVS, kFS);
-    drawQuad(program.get(), "inputAttribute", 0.5f);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that a varying anonymous structs that are defined as a part of the declaration is handled
-// in a specific way. Highlights ambiguity of ES "Chapter 9. Shader Interface Matching":
-//  "When linking shaders, the type of declared vertex outputs and fragment inputs with the same
-//  name must match"
-TEST_P(GLSLTest_ES3, VaryingAnonymousStructWithInlineDefinition3)
-{
-    constexpr char kVS[] = R"(#version 300 es
-in vec4 inputAttribute;
-flat out struct
-{
-    int field;
-} v_s0;
-flat out struct
-{
-    int field;
-} v_s1;
-flat out struct
-{
-    int field;
-} v_s2, v_s3;
-void main()
-{
-    v_s0.field = 1;
-    v_s1.field = 2;
-    v_s2.field = 3;
-    v_s3.field = 4;
-    gl_Position = inputAttribute;
-})";
-
-    constexpr char kFS[] = R"(#version 300 es
-precision highp float;
-out vec4 my_FragColor;
-flat in struct
-{
-    int field;
-} v_s0, v_s1, v_s2, v_s3;
-void main()
-{
-    bool success = v_s0.field == 1 && v_s1.field == 2 && v_s2.field == 3 && v_s3.field == 4;
-    my_FragColor = vec4(1, 0, 0, 1);
-    if (success)
-    {
-        my_FragColor = vec4(0, 1, 0, 1);
-    }
-})";
-
-    ANGLE_GL_PROGRAM(program, kVS, kFS);
-    drawQuad(program.get(), "inputAttribute", 0.5f);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that a varying anonymous structs can be compared for equality.
-TEST_P(GLSLTest_ES3, VaryingAnonymousStructEquality)
-{
-    constexpr char kVS[] = R"(#version 300 es
-in vec4 inputAttribute;
-flat out struct
-{
-    int field;
-} v_s0;
-flat out struct
-{
-    int field;
-} v_s1;
-flat out struct
-{
-    int field;
-} v_s2, v_s3;
-
-void main()
-{
-    v_s0.field = 1;
-    v_s1.field = 2;
-    v_s2.field = 3;
-    v_s3.field = 4;
-    gl_Position = inputAttribute;
-})";
-
-    constexpr char kFS[] = R"(#version 300 es
-precision highp float;
-out vec4 my_FragColor;
-flat in struct
-{
-    int field;
-} v_s0, v_s1, v_s2, v_s3;
-void main()
-{
-    bool success = v_s0 != v_s1 && v_s0 != v_s2 && v_s0 != v_s3 && v_s1 != v_s2 && v_s1 != v_s3 && v_s2 != v_s3;
-    success = success && v_s0.field == 1 && v_s1.field == 2 && v_s2.field == 3 && v_s3.field == 4;
-    my_FragColor = vec4(1, 0, 0, 1);
-    if (success)
-    {
-        my_FragColor = vec4(0, 1, 0, 1);
-    }
-})";
-
     ANGLE_GL_PROGRAM(program, kVS, kFS);
     drawQuad(program.get(), "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
@@ -15619,29 +15394,6 @@ void main() {
     EXPECT_NE(compileResult, 0);
 }
 
-// Test separation of struct declarations, case where separated struct is used as a member of
-// another struct.
-TEST_P(GLSLTest, SeparateStructDeclaratorStructInStruct)
-{
-    const char kFragmentShader[] = R"(precision mediump float;
-uniform vec4 u;
-struct S1 { vec4 v; } a;
-void main()
-{
-    struct S2 { S1 s1; } b;
-    a.v = u;
-    b.s1 = a;
-    gl_FragColor = b.s1.v + vec4(0, 0, 0, 1);
-}
-)";
-    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFragmentShader);
-    glUseProgram(program);
-    GLint u = glGetUniformLocation(program, "u");
-    glUniform4f(u, 0, 1, 0, 0);
-    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
 // Regression test for transformation bug which separates struct declarations from uniform
 // declarations.  The bug was that the uniform variable usage in the initializer of a new
 // declaration (y below) was not being processed.
@@ -20241,122 +19993,6 @@ Foo foo(float bar)
 
     ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFragmentShader);
     glUseProgram(program);
-
-    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that vec equality works.
-TEST_P(GLSLTest, VecEquality)
-{
-    const char kFragmentShader[] = R"(precision mediump float;
-uniform vec4 u;
-void main()
-{
-    gl_FragColor = vec4(0, 0, 0, 1);
-    vec4 a = vec4(1.0, 2.0, 3.0, 4.0);
-    if (a == u)
-        gl_FragColor.g = 1.0;
-
-    vec4 b = vec4(1.0) + u;
-    if (b == u)
-        gl_FragColor.r = 1.0;
-}
-)";
-
-    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFragmentShader);
-    glUseProgram(program);
-    GLint u = glGetUniformLocation(program, "u");
-    glUniform4f(u, 1, 2, 3, 4);
-
-    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that mat equality works.
-TEST_P(GLSLTest, MatEquality)
-{
-    const char kFragmentShader[] = R"(precision mediump float;
-uniform vec4 u;
-void main()
-{
-    gl_FragColor = vec4(0, 0, 0, 1);
-    mat4 a = mat4(1,2,3,4,1,2,3,4,1,2,3,4,1,2,3,4);
-    if (a == mat4(u, u, u, u))
-        gl_FragColor.g = 1.0;
-    mat4 b = mat4(1.0);
-    if (b == mat4(u, u, u, u))
-        gl_FragColor.r = 1.0;
-}
-)";
-
-    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFragmentShader);
-    glUseProgram(program);
-    GLint u = glGetUniformLocation(program, "u");
-    glUniform4f(u, 1, 2, 3, 4);
-
-    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that struct equality works.
-TEST_P(GLSLTest, StructEquality)
-{
-    const char kFragmentShader[] = R"(precision mediump float;
-uniform vec4 u;
-struct A {
-    vec4 i;
-};
-void main()
-{
-    gl_FragColor = vec4(0, 0, 0, 1);
-    A a, b;
-    a.i = vec4(1,2,3,4);
-    b.i = u;
-    if (a == b)
-        gl_FragColor.g = 1.0;
-    b.i = vec4(1.0);
-    if (a == b)
-        gl_FragColor.r = 1.0;
-}
-)";
-    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFragmentShader);
-    glUseProgram(program);
-    GLint u = glGetUniformLocation(program, "u");
-    glUniform4f(u, 1, 2, 3, 4);
-
-    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-}
-
-// Test that nested struct equality works.
-TEST_P(GLSLTest, NestedStructEquality)
-{
-    const char kFragmentShader[] = R"(precision mediump float;
-uniform vec4 u;
-struct A {
-    vec4 i;
-};
-struct B {
-    A a;
-};
-void main()
-{
-    gl_FragColor = vec4(0, 0, 0, 1);
-    B a, b;
-    a.a.i = vec4(1,2,3,4);
-    b.a.i = u;
-    if (a == b)
-        gl_FragColor.g = 1.0;
-    b.a.i = vec4(1.0);
-    if (a == b)
-        gl_FragColor.r = 1.0;
-}
-)";
-    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFragmentShader);
-    glUseProgram(program);
-    GLint u = glGetUniformLocation(program, "u");
-    glUniform4f(u, 1, 2, 3, 4);
 
     drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);

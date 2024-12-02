@@ -42,8 +42,6 @@
 #import <objc/runtime.h>
 #import <wtf/RetainPtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 class CallbackArgument {
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -760,7 +758,5 @@ id tryUnwrapConstructor(JSObjectRef object)
         return nil;
     return impl->wrappedConstructor();
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

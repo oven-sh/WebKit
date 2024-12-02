@@ -108,6 +108,7 @@ public:
     inline bool shouldApplySizeOrInlineSizeContainment() const;
     inline bool shouldApplyStyleContainment() const;
     inline bool shouldApplyPaintContainment() const;
+    inline bool shouldApplyLayoutOrPaintContainment() const;
     inline bool shouldApplyAnyContainment() const;
 
     bool hasEligibleContainmentForSizeQuery() const;
@@ -291,6 +292,8 @@ public:
 
     static void markRendererDirtyAfterTopLayerChange(RenderElement* renderer, RenderBlock* containingBlockBeforeStyleResolution);
 
+    bool isSkippedContentRoot() const;
+
     void clearNeedsLayoutForSkippedContent();
 
     void setRenderBoxHasShapeOutsideInfo(bool b) { m_renderBoxHasShapeOutsideInfo = b; }
@@ -349,9 +352,6 @@ protected:
 
     bool shouldApplyLayoutOrPaintContainment(bool) const;
     inline bool shouldApplySizeOrStyleContainment(bool) const;
-
-    const Element* defaultAnchor() const;
-    const RenderElement* defaultAnchorRenderer() const;
 
 private:
     RenderElement(Type, ContainerNode&, RenderStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
@@ -428,7 +428,6 @@ private:
 inline int adjustForAbsoluteZoom(int, const RenderElement&);
 inline LayoutUnit adjustLayoutUnitForAbsoluteZoom(LayoutUnit, const RenderElement&);
 inline LayoutSize adjustLayoutSizeForAbsoluteZoom(LayoutSize, const RenderElement&);
-inline bool isSkippedContentRoot(const RenderElement&);
 
 inline void RenderElement::setChildNeedsLayout(MarkingBehavior markParents)
 {
@@ -492,6 +491,13 @@ inline RenderObject* RenderElement::lastInFlowChild() const
         return lastChild->previousInFlowSibling();
     }
     return nullptr;
+}
+
+inline bool RenderObject::isSkippedContentRoot() const
+{
+    if (isRenderText())
+        return false;
+    return downcast<RenderElement>(*this).isSkippedContentRoot();
 }
 
 inline RenderElement* RenderObject::parent() const

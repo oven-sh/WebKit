@@ -34,8 +34,6 @@
 #include <pal/system/ios/UserInterfaceIdiom.h>
 #include <wtf/cf/TypeCastsCF.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 SystemFontDatabaseCoreText& SystemFontDatabaseCoreText::forCurrentThread()
@@ -466,5 +464,3 @@ auto SystemFontDatabase::platformSystemFontShorthandInfo(FontShorthand fontShort
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

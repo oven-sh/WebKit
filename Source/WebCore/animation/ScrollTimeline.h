@@ -26,11 +26,9 @@
 #pragma once
 
 #include "AnimationTimeline.h"
-#include "Element.h"
 #include "ScrollAxis.h"
 #include "ScrollTimelineOptions.h"
 #include <wtf/Ref.h>
-#include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -49,7 +47,7 @@ public:
     static Ref<ScrollTimeline> create(const AtomString&, ScrollAxis);
     static Ref<ScrollTimeline> createFromCSSValue(const CSSScrollValue&);
 
-    virtual Element* source() const;
+    virtual Element* source() const { return m_source.get(); }
     void setSource(const Element*);
 
     ScrollAxis axis() const { return m_axis; }
@@ -64,12 +62,10 @@ public:
     AnimationTimeline::ShouldUpdateAnimationsAndSendEvents documentWillUpdateAnimationsAndSendEvents() override;
 
     AnimationTimelinesController* controller() const override;
+    static ScrollableArea* scrollableAreaForSourceRenderer(RenderElement*, Ref<Document>);
 
     std::optional<WebAnimationTime> currentTime(const TimelineRange&) override;
     TimelineRange defaultRange() const override;
-    WeakPtr<Element, WeakPtrImplWithEventTargetData> timelineScopeDeclaredElement() const { return m_timelineScopeElement; }
-    void setTimelineScopeElement(const Element&);
-    void clearTimelineScopeDeclaredElement() { m_timelineScopeElement = nullptr; }
 
 protected:
     explicit ScrollTimeline(const AtomString&, ScrollAxis);
@@ -82,8 +78,6 @@ protected:
     static float floatValueForOffset(const Length&, float);
     virtual Data computeTimelineData(const TimelineRange&) const;
 
-    static ScrollableArea* scrollableAreaForSourceRenderer(const RenderElement*, Document&);
-
 private:
     enum class Scroller : uint8_t { Nearest, Root, Self };
 
@@ -92,21 +86,10 @@ private:
 
     bool isScrollTimeline() const final { return true; }
 
-    void animationTimingDidChange(WebAnimation&) override;
-
-    struct CurrentTimeData {
-        float scrollOffset { 0 };
-        float maxScrollOffset { 0 };
-    };
-
-    void cacheCurrentTime();
-
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_source;
     ScrollAxis m_axis { ScrollAxis::Block };
     AtomString m_name;
-    Scroller m_scroller { Scroller::Self };
-    WeakPtr<Element, WeakPtrImplWithEventTargetData> m_timelineScopeElement;
-    CurrentTimeData m_cachedCurrentTimeData { };
+    Scroller m_scroller { Scroller::Nearest };
 };
 
 } // namespace WebCore

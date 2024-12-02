@@ -67,10 +67,10 @@ void runBasicGlobalMutexTest(bool expectToPass, Args &&...args)
     }
 }
 
-// Tests basic usage of ScopedGlobalEGLMutexLock.
-TEST(GlobalMutexTest, ScopedGlobalEGLMutexLock)
+// Tests basic usage of ScopedGlobalMutexLock.
+TEST(GlobalMutexTest, ScopedGlobalMutexLock)
 {
-    runBasicGlobalMutexTest<egl::ScopedGlobalEGLMutexLock>(true);
+    runBasicGlobalMutexTest<egl::ScopedGlobalMutexLock>(true);
 }
 
 // Tests basic usage of ScopedOptionalGlobalMutexLock (Enabled).
@@ -86,11 +86,11 @@ TEST(GlobalMutexTest, ScopedOptionalGlobalMutexLockDisabled)
 }
 
 #if defined(ANGLE_ENABLE_GLOBAL_MUTEX_RECURSION)
-// Tests that ScopedGlobalEGLMutexLock can be recursively locked.
-TEST(GlobalMutexTest, RecursiveScopedGlobalEGLMutexLock)
+// Tests that ScopedGlobalMutexLock can be recursively locked.
+TEST(GlobalMutexTest, RecursiveScopedGlobalMutexLock)
 {
-    egl::ScopedGlobalEGLMutexLock lock;
-    egl::ScopedGlobalEGLMutexLock lock2;
+    egl::ScopedGlobalMutexLock lock;
+    egl::ScopedGlobalMutexLock lock2;
 }
 
 // Tests that ScopedOptionalGlobalMutexLock can be recursively locked.

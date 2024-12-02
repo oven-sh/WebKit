@@ -28,10 +28,7 @@
 #import "config.h"
 #import "PlatformWritingToolsUtilities.h"
 
-#import <SoftLinking/WeakLinking.h>
 #import <WebCore/WritingToolsTypes.h>
-
-WEAK_IMPORT_OBJC_CLASS(WTContext);
 
 namespace WebKit {
 

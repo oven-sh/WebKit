@@ -179,6 +179,7 @@ function test()
         description: "Tests request headers passthrough with a new header",
         expression: "postData('resources/intercept-echo.py')",
         override: {
+            requestMethod: "POST",
             requestData: "value=overridden",
             requestHeaders: { "X-Expected": "PASS" },
             isPassthrough: true,
@@ -190,6 +191,7 @@ function test()
         description: "Tests request headers passthrough with an overridden header",
         expression: "postData('resources/intercept-echo.py', {'X-Expected': 'FAIL'})",
         override: {
+            requestMethod: "POST",
             requestData: "value=overridden",
             requestHeaders: { "X-Expected": "PASS" },
             isPassthrough: true,

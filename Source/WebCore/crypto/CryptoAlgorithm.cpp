@@ -85,7 +85,7 @@ void CryptoAlgorithm::unwrapKey(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallb
     exceptionCallback(ExceptionCode::NotSupportedError);
 }
 
-ExceptionOr<std::optional<size_t>> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameters&)
+ExceptionOr<size_t> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameters&)
 {
     return Exception { ExceptionCode::NotSupportedError };
 }

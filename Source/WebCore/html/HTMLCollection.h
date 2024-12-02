@@ -101,7 +101,7 @@ protected:
 
     void invalidateNamedElementCache(Document&) const;
 
-    enum class RootType : bool { AtNode, AtTreeScope };
+    enum RootType { IsRootedAtNode, IsRootedAtTreeScope };
     static RootType rootTypeFromCollectionType(CollectionType);
 
     mutable Lock m_namedElementCacheAssignmentLock;

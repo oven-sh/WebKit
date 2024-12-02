@@ -14,13 +14,10 @@
         foo
     </div>
     <script type="text/javascript">
-        onload = async () => {
-            testRunner?.waitUntilDone();
-            await testRunner?.displayAndTrackRepaints();
-            target = document.getElementById('target');
-            window.getSelection().setBaseAndExtent(target, 0, target, 1);
-            testRunner?.notifyDone();
-        }
+        if (window.testRunner)
+            testRunner.displayAndTrackRepaints();
+        target = document.getElementById('target');
+        window.getSelection().setBaseAndExtent(target, 0, target, 1);
     </script>
 </body>
 </html>

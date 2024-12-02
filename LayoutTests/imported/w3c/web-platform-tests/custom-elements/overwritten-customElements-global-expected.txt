@@ -1,6 +1,0 @@
-
-PASS Custom elements can still be created after `window.customElements` is overwritten.
-PASS Custom elements can still be constructed after `window.customElements` is overwritten.
-PASS Custom elements can still be created after `window.customElements` is deleted.
-PASS Custom elements can still be constructed after `window.customElements` is deleted.
-

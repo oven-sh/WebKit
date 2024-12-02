@@ -188,7 +188,7 @@ GameControllerHapticEngines& GameControllerGamepad::ensureHapticEngines()
 void GameControllerGamepad::playEffect(GamepadHapticEffectType type, const GamepadEffectParameters& parameters, CompletionHandler<void(bool)>&& completionHandler)
 {
 #if HAVE(WIDE_GAMECONTROLLER_SUPPORT)
-    ensureProtectedHapticEngines()->playEffect(type, parameters, WTFMove(completionHandler));
+    ensureHapticEngines().playEffect(type, parameters, WTFMove(completionHandler));
 #else
     UNUSED_PARAM(type);
     UNUSED_PARAM(parameters);
@@ -199,8 +199,8 @@ void GameControllerGamepad::playEffect(GamepadHapticEffectType type, const Gamep
 void GameControllerGamepad::stopEffects(CompletionHandler<void()>&& completionHandler)
 {
 #if HAVE(WIDE_GAMECONTROLLER_SUPPORT)
-    if (RefPtr hapticEngines = m_hapticEngines)
-        hapticEngines->stopEffects();
+    if (m_hapticEngines)
+        m_hapticEngines->stopEffects();
 #endif
     completionHandler();
 }
@@ -209,8 +209,8 @@ void GameControllerGamepad::noLongerHasAnyClient()
 {
 #if HAVE(WIDE_GAMECONTROLLER_SUPPORT)
     // Stop the haptics engine if it is running.
-    if (RefPtr hapticEngines = m_hapticEngines)
-        hapticEngines->stop([] { });
+    if (m_hapticEngines)
+        m_hapticEngines->stop([] { });
 #endif
 }
 

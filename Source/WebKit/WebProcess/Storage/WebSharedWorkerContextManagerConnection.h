@@ -31,10 +31,9 @@
 #include "WebPageProxyIdentifier.h"
 #include "WebPreferencesStore.h"
 #include <WebCore/PageIdentifier.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/SharedWorkerContextManager.h>
 #include <WebCore/SharedWorkerIdentifier.h>
-#include <WebCore/Site.h>
-#include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -49,14 +48,11 @@ namespace WebKit {
 class WebUserContentController;
 struct RemoteWorkerInitializationData;
 
-class WebSharedWorkerContextManagerConnection final : public WebCore::SharedWorkerContextManager::Connection, public IPC::MessageReceiver, public RefCounted<WebSharedWorkerContextManagerConnection> {
+class WebSharedWorkerContextManagerConnection final : public WebCore::SharedWorkerContextManager::Connection, public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(WebSharedWorkerContextManagerConnection);
 public:
-    static Ref<WebSharedWorkerContextManagerConnection> create(Ref<IPC::Connection>&&, WebCore::Site&&, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&);
+    WebSharedWorkerContextManagerConnection(Ref<IPC::Connection>&&, WebCore::RegistrableDomain&&, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&);
     ~WebSharedWorkerContextManagerConnection();
-
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
 
     void establishConnection(CompletionHandler<void()>&&) final;
     void postErrorToWorkerObject(WebCore::SharedWorkerIdentifier, const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, bool isErrorEvent) final;
@@ -65,8 +61,6 @@ public:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
 private:
-    WebSharedWorkerContextManagerConnection(Ref<IPC::Connection>&&, WebCore::Site&&, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&);
-
     // IPC Messages.
     void launchSharedWorker(WebCore::ClientOrigin&&, WebCore::SharedWorkerIdentifier, WebCore::WorkerOptions&&, WebCore::WorkerFetchResult&&, WebCore::WorkerInitializationData&&);
     void updatePreferencesStore(const WebPreferencesStore&);
@@ -74,7 +68,7 @@ private:
     void close();
 
     Ref<IPC::Connection> m_connectionToNetworkProcess;
-    const WebCore::Site m_site;
+    WebCore::RegistrableDomain m_registrableDomain;
     PageGroupIdentifier m_pageGroupID;
     WebPageProxyIdentifier m_webPageProxyID;
     WebCore::PageIdentifier m_pageID;

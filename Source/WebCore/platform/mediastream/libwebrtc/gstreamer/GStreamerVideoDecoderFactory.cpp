@@ -24,7 +24,6 @@
 #include "GStreamerVideoDecoderFactory.h"
 
 #include "GStreamerQuirks.h"
-#include "GStreamerRegistryScanner.h"
 #include "GStreamerVideoCommon.h"
 #include "GStreamerVideoFrameLibWebRTC.h"
 #include "webrtc/modules/video_coding/codecs/h264/include/h264.h"
@@ -278,7 +277,19 @@ public:
 
     static GRefPtr<GstElementFactory> GstDecoderFactory(const char* capsStr)
     {
-        return GStreamerRegistryScanner::singleton().isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, String::fromUTF8(capsStr), false).factory;
+        auto allDecoders = gst_element_factory_list_get_elements(GST_ELEMENT_FACTORY_TYPE_DECODER,
+            GST_RANK_MARGINAL);
+        auto caps = adoptGRef(gst_caps_from_string(capsStr));
+        auto decoders = gst_element_factory_list_filter(allDecoders,
+            caps.get(), GST_PAD_SINK, FALSE);
+
+        gst_plugin_feature_list_free(allDecoders);
+        GRefPtr<GstElementFactory> res;
+        if (decoders)
+            res = GST_ELEMENT_FACTORY(decoders->data);
+        gst_plugin_feature_list_free(decoders);
+
+        return res;
     }
 
     bool HasGstDecoder()

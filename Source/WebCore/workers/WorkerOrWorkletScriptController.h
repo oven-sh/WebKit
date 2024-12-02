@@ -28,6 +28,8 @@
 
 #include <wtf/Compiler.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #include "FetchOptions.h"
 #include "WorkerThreadType.h"
 #include <JavaScriptCore/Debugger.h>
@@ -38,6 +40,8 @@
 #include <wtf/MessageQueue.h>
 #include <wtf/NakedPtr.h>
 #include <wtf/TZoneMalloc.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace JSC {
 class AbstractModuleRecord;

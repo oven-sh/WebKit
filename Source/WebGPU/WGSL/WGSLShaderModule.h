@@ -169,7 +169,7 @@ public:
     std::enable_if_t<sizeof(CurrentType) < sizeof(ReplacementType) || std::is_same_v<ReplacementType, AST::Expression>, void> replace(CurrentType& current, ReplacementType& replacement)
     {
         m_replacements.append([&current, currentCopy = current]() mutable {
-            std::bit_cast<AST::IdentityExpression*>(&current)->~IdentityExpression();
+            bitwise_cast<AST::IdentityExpression*>(&current)->~IdentityExpression();
             new (&current) CurrentType(WTFMove(currentCopy));
         });
 
@@ -181,12 +181,12 @@ public:
     std::enable_if_t<sizeof(CurrentType) >= sizeof(ReplacementType) && !std::is_same_v<ReplacementType, AST::Expression>, void> replace(CurrentType& current, ReplacementType& replacement)
     {
         m_replacements.append([&current, currentCopy = current]() mutable {
-            std::bit_cast<ReplacementType*>(&current)->~ReplacementType();
-            new (std::bit_cast<void*>(&current)) CurrentType(WTFMove(currentCopy));
+            bitwise_cast<ReplacementType*>(&current)->~ReplacementType();
+            new (bitwise_cast<void*>(&current)) CurrentType(WTFMove(currentCopy));
         });
 
         current.~CurrentType();
-        new (std::bit_cast<void*>(&current)) ReplacementType(replacement);
+        new (bitwise_cast<void*>(&current)) ReplacementType(replacement);
     }
 
     template<typename T, size_t size>

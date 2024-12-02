@@ -31,7 +31,9 @@
 namespace WebKit {
 namespace NetworkCache {
 
-IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue::QOS>)
+IOChannel::IOChannel(String&& filePath, Type type, std::optional<WorkQueue::QOS>)
+    : m_path(WTFMove(filePath))
+    , m_type(type)
 {
     FileSystem::FileOpenMode mode { };
     switch (type) {
@@ -45,52 +47,40 @@ IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue:
         mode = FileSystem::FileOpenMode::ReadWrite;
         break;
     }
-
-    Locker locker { m_lock };
-    m_fileDescriptor = FileSystem::openFile(filePath, mode);
+    m_fileDescriptor = FileSystem::openFile(m_path, mode);
 }
 
 IOChannel::~IOChannel()
 {
-    Locker locker { m_lock };
     FileSystem::closeFile(m_fileDescriptor);
 }
 
-void IOChannel::read(size_t offset, size_t size, Ref<WTF::WorkQueueBase>&& queue, Function<void(Data&&, int error)>&& completionHandler)
+void IOChannel::read(size_t offset, size_t size, WTF::WorkQueueBase& queue, Function<void(Data&, int error)>&& completionHandler)
 {
-    queue->dispatch([this, protectedThis = Ref { *this }, offset, size, completionHandler = WTFMove(completionHandler)] {
-        m_lock.lock();
-
+    queue.dispatch([this, protectedThis = Ref { *this }, offset, size, completionHandler = WTFMove(completionHandler)] {
         auto fileSize = FileSystem::fileSize(m_fileDescriptor);
         if (!fileSize || *fileSize > std::numeric_limits<size_t>::max()) {
-            m_lock.unlock();
-            return completionHandler(Data { }, -1);
+            Data data;
+            completionHandler(data, -1);
+            return;
         }
-
         size_t readSize = *fileSize;
         readSize = std::min(size, readSize);
         Vector<uint8_t> buffer(readSize);
         FileSystem::seekFile(m_fileDescriptor, offset, FileSystem::FileSeekOrigin::Beginning);
         int err = FileSystem::readFromFile(m_fileDescriptor, buffer.mutableSpan());
-        m_lock.unlock();
-
         err = err < 0 ? err : 0;
         auto data = Data(WTFMove(buffer));
-        completionHandler(WTFMove(data), err);
+        completionHandler(data, err);
     });
 }
 
-void IOChannel::write(size_t offset, const Data& data, Ref<WTF::WorkQueueBase>&& queue, Function<void(int error)>&& completionHandler)
+void IOChannel::write(size_t offset, const Data& data, WTF::WorkQueueBase& queue, Function<void(int error)>&& completionHandler)
 {
-    queue->dispatch([this, protectedThis = Ref { *this }, offset, data, completionHandler = WTFMove(completionHandler)] {
-        int err = 0;
-        {
-            Locker locker { m_lock };
-            FileSystem::seekFile(m_fileDescriptor, offset, FileSystem::FileSeekOrigin::Beginning);
-            err = FileSystem::writeToFile(m_fileDescriptor, data.span());
-            err = err < 0 ? err : 0;
-        }
-
+    queue.dispatch([this, protectedThis = Ref { *this }, offset, data, completionHandler = WTFMove(completionHandler)] {
+        FileSystem::seekFile(m_fileDescriptor, offset, FileSystem::FileSeekOrigin::Beginning);
+        int err = FileSystem::writeToFile(m_fileDescriptor, data.span());
+        err = err < 0 ? err : 0;
         completionHandler(err);
     });
 }

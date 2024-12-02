@@ -28,8 +28,6 @@
 
 #if ENABLE(MATHML)
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 using namespace MathMLOperatorDictionary;
@@ -1159,7 +1157,5 @@ bool MathMLOperatorDictionary::isVertical(char32_t textContent)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(MATHML)

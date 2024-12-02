@@ -174,25 +174,19 @@ SelectorDataList::SelectorDataList(const CSSSelectorList& selectorList)
         m_matchType = CompilableMultipleSelectorMatch;
 }
 
-inline bool SelectorDataList::selectorMatches(const SelectorData& selectorData, Element& element, const ContainerNode& rootNode, Style::SelectorMatchingState* selectorMatchingState) const
+inline bool SelectorDataList::selectorMatches(const SelectorData& selectorData, Element& element, const ContainerNode& rootNode) const
 {
     SelectorChecker selectorChecker(element.document());
     SelectorChecker::CheckingContext selectorCheckingContext(SelectorChecker::Mode::QueryingRules);
     selectorCheckingContext.scope = rootNode.isDocumentNode() ? nullptr : &rootNode;
-    // Providing SelectorMatchingState allows cross-element optimizations like caching for :has() matches.
-    selectorCheckingContext.selectorMatchingState = selectorMatchingState;
-
     return selectorChecker.match(*selectorData.selector, element, selectorCheckingContext);
 }
 
-inline Element* SelectorDataList::selectorClosest(const SelectorData& selectorData, Element& element, const ContainerNode& rootNode, Style::SelectorMatchingState* selectorMatchingState) const
+inline Element* SelectorDataList::selectorClosest(const SelectorData& selectorData, Element& element, const ContainerNode& rootNode) const
 {
     SelectorChecker selectorChecker(element.document());
     SelectorChecker::CheckingContext selectorCheckingContext(SelectorChecker::Mode::QueryingRules);
     selectorCheckingContext.scope = rootNode.isDocumentNode() ? nullptr : &rootNode;
-    // Providing SelectorMatchingState allows cross-element optimizations like caching for :has() matches.
-    selectorCheckingContext.selectorMatchingState = selectorMatchingState;
-
     if (!selectorChecker.match(*selectorData.selector, element, selectorCheckingContext))
         return nullptr;
     return &element;
@@ -209,11 +203,9 @@ bool SelectorDataList::matches(Element& targetElement) const
 
 Element* SelectorDataList::closest(Element& targetElement) const
 {
-    Style::SelectorMatchingState selectorMatchingState;
-
     for (Ref currentElement : lineageOfType<Element>(targetElement)) {
         for (auto& selector : m_selectors) {
-            if (auto* candidateElement = selectorClosest(selector, currentElement, targetElement, &selectorMatchingState))
+            if (auto* candidateElement = selectorClosest(selector, currentElement, targetElement))
                 return candidateElement;
         }
     }
@@ -463,10 +455,8 @@ ALWAYS_INLINE void SelectorDataList::executeSingleSelectorData(const ContainerNo
 {
     ASSERT(m_selectors.size() == 1);
 
-    Style::SelectorMatchingState selectorMatchingState;
-
     for (Ref element : descendantsOfType<Element>(const_cast<ContainerNode&>(searchRootNode))) {
-        if (selectorMatches(selectorData, element, rootNode, &selectorMatchingState)) {
+        if (selectorMatches(selectorData, element, rootNode)) {
             appendOutputForElement(output, element);
             if constexpr (std::is_same_v<OutputType, Element*>)
                 return;
@@ -477,11 +467,9 @@ ALWAYS_INLINE void SelectorDataList::executeSingleSelectorData(const ContainerNo
 template<typename OutputType>
 ALWAYS_INLINE void SelectorDataList::executeSingleMultiSelectorData(const ContainerNode& rootNode, OutputType& output) const
 {
-    Style::SelectorMatchingState selectorMatchingState;
-
     for (Ref element : descendantsOfType<Element>(const_cast<ContainerNode&>(rootNode))) {
         for (auto& selector : m_selectors) {
-            if (selectorMatches(selector, element, rootNode, &selectorMatchingState)) {
+            if (selectorMatches(selector, element, rootNode)) {
                 appendOutputForElement(output, element);
                 if constexpr (std::is_same_v<OutputType, Element*>)
                     return;

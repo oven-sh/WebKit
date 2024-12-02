@@ -72,25 +72,25 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& coreObject, AX
         return;
 
     switch (notification) {
-    case AXNotification::CheckedStateChanged:
+    case AXCheckedStateChanged:
         if (coreObject.isCheckboxOrRadio() || coreObject.isSwitch())
             wrapper->stateChanged("checked", coreObject.isChecked());
         break;
-    case AXNotification::SelectedStateChanged:
+    case AXSelectedStateChanged:
         wrapper->stateChanged("selected", coreObject.isSelected());
         break;
-    case AXNotification::MenuListItemSelected: {
+    case AXMenuListItemSelected: {
         // Menu list popup items are handled by AXSelectedStateChanged.
         auto* parent = coreObject.parentObjectUnignored();
         if (parent && !parent->isMenuListPopup())
             wrapper->stateChanged("selected", coreObject.isSelected());
         break;
     }
-    case AXNotification::SelectedCellsChanged:
-    case AXNotification::SelectedChildrenChanged:
+    case AXSelectedCellsChanged:
+    case AXSelectedChildrenChanged:
         wrapper->selectionChanged();
         break;
-    case AXNotification::MenuListValueChanged: {
+    case AXMenuListValueChanged: {
         const auto& children = coreObject.children();
         if (children.size() == 1) {
             if (auto* childWrapper = children[0]->wrapper())
@@ -98,47 +98,47 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& coreObject, AX
         }
         break;
     }
-    case AXNotification::ValueChanged:
+    case AXValueChanged:
         if (wrapper->interfaces().contains(AccessibilityObjectAtspi::Interface::Value))
             wrapper->valueChanged(coreObject.valueForRange());
         break;
-    case AXNotification::InvalidStatusChanged:
+    case AXInvalidStatusChanged:
         wrapper->stateChanged("invalid-entry", coreObject.invalidStatus() != "false"_s);
         break;
-    case AXNotification::ElementBusyChanged:
+    case AXElementBusyChanged:
         wrapper->stateChanged("busy", coreObject.isBusy());
         break;
-    case AXNotification::CurrentStateChanged:
+    case AXCurrentStateChanged:
         wrapper->stateChanged("active", coreObject.currentState() != AccessibilityCurrentState::False);
         break;
-    case AXNotification::RowExpanded:
+    case AXRowExpanded:
         wrapper->stateChanged("expanded", true);
         break;
-    case AXNotification::RowCollapsed:
+    case AXRowCollapsed:
         wrapper->stateChanged("expanded", false);
         break;
-    case AXNotification::ExpandedChanged:
+    case AXExpandedChanged:
         wrapper->stateChanged("expanded", coreObject.isExpanded());
         break;
-    case AXNotification::DisabledStateChanged: {
+    case AXDisabledStateChanged: {
         bool enabledState = coreObject.isEnabled();
         wrapper->stateChanged("enabled", enabledState);
         wrapper->stateChanged("sensitive", enabledState);
         break;
     }
-    case AXNotification::PressedStateChanged:
+    case AXPressedStateChanged:
         wrapper->stateChanged("pressed", coreObject.isPressed());
         break;
-    case AXNotification::ReadOnlyStatusChanged:
+    case AXReadOnlyStatusChanged:
         wrapper->stateChanged("read-only", !coreObject.canSetValueAttribute());
         break;
-    case AXNotification::RequiredStatusChanged:
+    case AXRequiredStatusChanged:
         wrapper->stateChanged("required", coreObject.isRequired());
         break;
-    case AXNotification::ActiveDescendantChanged:
+    case AXActiveDescendantChanged:
         wrapper->activeDescendantChanged();
         break;
-    case AXNotification::ChildrenChanged:
+    case AXChildrenChanged:
         coreObject.updateChildrenIfNecessary();
         break;
     default:
@@ -244,31 +244,31 @@ void AXObjectCache::frameLoadingEventPlatformNotification(AccessibilityObject* c
         return;
 
     switch (loadingEvent) {
-    case AXLoadingEvent::Started:
+    case AXObjectCache::AXLoadingStarted:
         wrapper->stateChanged("busy", true);
         break;
-    case AXLoadingEvent::Reloaded:
+    case AXObjectCache::AXLoadingReloaded:
         wrapper->stateChanged("busy", true);
         wrapper->loadEvent("Reload");
         break;
-    case AXLoadingEvent::Failed:
+    case AXObjectCache::AXLoadingFailed:
         wrapper->stateChanged("busy", false);
         wrapper->loadEvent("LoadStopped");
         break;
-    case AXLoadingEvent::Finished:
+    case AXObjectCache::AXLoadingFinished:
         wrapper->stateChanged("busy", false);
         wrapper->loadEvent("LoadComplete");
         break;
     }
 }
 
-void AXObjectCache::platformHandleFocusedUIElementChanged(Element* oldFocus, Element* newFocus)
+void AXObjectCache::platformHandleFocusedUIElementChanged(Node* oldFocusedNode, Node* newFocusedNode)
 {
-    if (auto* axObject = get(oldFocus)) {
+    if (auto* axObject = get(oldFocusedNode)) {
         if (auto* wrapper = axObject->wrapper())
             wrapper->stateChanged("focused", false);
     }
-    if (auto* axObject = getOrCreate(newFocus)) {
+    if (auto* axObject = getOrCreate(newFocusedNode)) {
         if (auto* wrapper = axObject->wrapper())
             wrapper->stateChanged("focused", true);
     }

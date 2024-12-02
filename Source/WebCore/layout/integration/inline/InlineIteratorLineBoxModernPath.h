@@ -115,7 +115,7 @@ public:
             return { *m_inlineContent };
         auto runIterator = BoxModernPath { *m_inlineContent, line().firstBoxIndex() };
         if (runIterator.box().isInlineBox())
-            runIterator.traverseNextLeafOnLine();
+            runIterator.traverseNextOnLine();
         return runIterator;
     }
 
@@ -126,7 +126,7 @@ public:
             return { *m_inlineContent };
         auto runIterator = BoxModernPath { *m_inlineContent, line().firstBoxIndex() + boxCount - 1 };
         if (runIterator.box().isInlineBox())
-            runIterator.traversePreviousLeafOnLine();
+            runIterator.traversePreviousOnLine();
         return runIterator;
     }
 

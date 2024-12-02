@@ -36,26 +36,26 @@ namespace WebCore {
     
 using namespace HTMLNames;
     
-AccessibilityTreeItem::AccessibilityTreeItem(AXID axID, RenderObject& renderer)
-    : AccessibilityRenderObject(axID, renderer)
+AccessibilityTreeItem::AccessibilityTreeItem(RenderObject& renderer)
+    : AccessibilityRenderObject(renderer)
 {
 }
 
-AccessibilityTreeItem::AccessibilityTreeItem(AXID axID, Node& node)
-    : AccessibilityRenderObject(axID, node)
+AccessibilityTreeItem::AccessibilityTreeItem(Node& node)
+    : AccessibilityRenderObject(node)
 {
 }
 
 AccessibilityTreeItem::~AccessibilityTreeItem() = default;
     
-Ref<AccessibilityTreeItem> AccessibilityTreeItem::create(AXID axID, RenderObject& renderer)
+Ref<AccessibilityTreeItem> AccessibilityTreeItem::create(RenderObject& renderer)
 {
-    return adoptRef(*new AccessibilityTreeItem(axID, renderer));
+    return adoptRef(*new AccessibilityTreeItem(renderer));
 }
 
-Ref<AccessibilityTreeItem> AccessibilityTreeItem::create(AXID axID, Node& node)
+Ref<AccessibilityTreeItem> AccessibilityTreeItem::create(Node& node)
 {
-    return adoptRef(*new AccessibilityTreeItem(axID, node));
+    return adoptRef(*new AccessibilityTreeItem(node));
 }
 
 bool AccessibilityTreeItem::supportsCheckedState() const

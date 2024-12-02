@@ -29,7 +29,6 @@
 
 #include "PlatformWheelEvent.h"
 #include "ScrollExtents.h"
-#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
 /*
@@ -72,8 +71,6 @@ static constexpr double velocityAccumulationMax = 6.0;
 static constexpr Seconds scrollCaptureThreshold { 150_ms };
 
 namespace WebCore {
-
-WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollAnimationKinetic);
 
 ScrollAnimationKinetic::PerAxisData::PerAxisData(double lower, double upper, double initialOffset, double initialVelocity)
     : m_lower(lower)

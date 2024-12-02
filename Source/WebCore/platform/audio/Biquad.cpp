@@ -45,8 +45,6 @@
 #include <Accelerate/Accelerate.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Biquad);
@@ -896,7 +894,5 @@ double Biquad::tailFrame(size_t coefIndex, double maxFrame)
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUDIO)

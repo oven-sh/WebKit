@@ -50,6 +50,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -114,9 +115,10 @@ template<> void JSTestNamedSetterWithIdentifierDOMConstructor::initializePropert
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestNamedSetterWithIdentifierPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedSetterWithIdentifierConstructor, 0 } },
-    HashTableValue { "namedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedSetterWithIdentifierPrototypeFunction_namedSetter, 2 } },
+static const HashTableValue JSTestNamedSetterWithIdentifierPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedSetterWithIdentifierConstructor, 0 } },
+    { "namedSetter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedSetterWithIdentifierPrototypeFunction_namedSetter, 2 } },
 };
 
 const ClassInfo JSTestNamedSetterWithIdentifierPrototype::s_info = { "TestNamedSetterWithIdentifier"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestNamedSetterWithIdentifierPrototype) };
@@ -418,7 +420,6 @@ void JSTestNamedSetterWithIdentifierOwner::finalize(JSC::Handle<JSC::Unknown> ha
     uncacheWrapper(world, jsTestNamedSetterWithIdentifier->protectedWrapped().ptr(), jsTestNamedSetterWithIdentifier);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -443,8 +444,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestNamedSett
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestNamedSetterWithIdentifier>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

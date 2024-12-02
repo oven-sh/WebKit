@@ -23,7 +23,7 @@
 
 #if ENABLE(GPU_PROCESS)
 
-messages -> RemoteTextDetector Stream {
+messages -> RemoteTextDetector NotRefCounted Stream {
     [EnabledBy=ShapeDetection] void Detect(WebCore::RenderingResourceIdentifier renderingResourceIdentifier) -> (Vector<WebCore::ShapeDetection::DetectedText> detectedText)
 }
 

@@ -178,10 +178,11 @@ static Color parseOptionalConfigColor(const String& fieldName, JSON::Object& con
 
 static bool parseQuad(Ref<JSON::Array>&& quadArray, FloatQuad* quad)
 {
-    std::array<double, 8> coordinates;
-    if (quadArray->length() != coordinates.size())
+    const size_t coordinatesInQuad = 8;
+    double coordinates[coordinatesInQuad];
+    if (quadArray->length() != coordinatesInQuad)
         return false;
-    for (size_t i = 0; i < coordinates.size(); ++i) {
+    for (size_t i = 0; i < coordinatesInQuad; ++i) {
         auto coordinate = quadArray->get(i)->asDouble();
         if (!coordinate)
             return false;
@@ -195,9 +196,8 @@ static bool parseQuad(Ref<JSON::Array>&& quadArray, FloatQuad* quad)
     return true;
 }
 
-class RevalidateStyleAttributeTask final : public CanMakeCheckedPtr<RevalidateStyleAttributeTask> {
+class RevalidateStyleAttributeTask {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(RevalidateStyleAttributeTask);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RevalidateStyleAttributeTask);
 public:
     RevalidateStyleAttributeTask(InspectorDOMAgent*);
     void scheduleFor(Element*);
@@ -299,7 +299,7 @@ String InspectorDOMAgent::toErrorString(Exception&& exception)
     return DOMException::name(exception.code());
 }
 
-InspectorDOMAgent::InspectorDOMAgent(PageAgentContext& context, InspectorOverlay& overlay)
+InspectorDOMAgent::InspectorDOMAgent(PageAgentContext& context, InspectorOverlay* overlay)
     : InspectorAgentBase("DOM"_s, context)
     , m_injectedScriptManager(context.injectedScriptManager)
     , m_frontendDispatcher(makeUnique<Inspector::DOMFrontendDispatcher>(context.frontendRouter))
@@ -314,11 +314,6 @@ InspectorDOMAgent::InspectorDOMAgent(PageAgentContext& context, InspectorOverlay
 }
 
 InspectorDOMAgent::~InspectorDOMAgent() = default;
-
-Ref<InspectorOverlay> InspectorDOMAgent::protectedOverlay() const
-{
-    return m_overlay.get();
-}
 
 void InspectorDOMAgent::didCreateFrontendAndBackend(Inspector::FrontendRouter*, Inspector::BackendDispatcher*)
 {
@@ -355,9 +350,8 @@ void InspectorDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReaso
     setSearchingForNode(ignored, false, nullptr, nullptr, nullptr, false);
     hideHighlight();
 
-    Ref overlay = m_overlay.get();
-    overlay->clearAllGridOverlays();
-    overlay->clearAllFlexOverlays();
+    m_overlay->clearAllGridOverlays();
+    m_overlay->clearAllFlexOverlays();
 
     m_instrumentingAgents.setPersistentDOMAgent(nullptr);
     m_documentRequested = false;
@@ -1210,8 +1204,8 @@ bool InspectorDOMAgent::handleMousePress()
     if (!m_searchingForNode)
         return false;
 
-    if (RefPtr node = protectedOverlay()->highlightedNode()) {
-        inspect(node.get());
+    if (Node* node = m_overlay->highlightedNode()) {
+        inspect(node);
         return true;
     }
     return false;
@@ -1223,7 +1217,7 @@ bool InspectorDOMAgent::handleTouchEvent(Node& node)
         return false;
 
     if (m_inspectModeHighlightConfig) {
-        protectedOverlay()->highlightNode(&node, *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
+        m_overlay->highlightNode(&node, *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
         inspect(&node);
         return true;
     }
@@ -1286,7 +1280,7 @@ void InspectorDOMAgent::highlightMousedOverNode()
         return;
 
     if (m_inspectModeHighlightConfig)
-        protectedOverlay()->highlightNode(node, *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
+        m_overlay->highlightNode(node, *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
 }
 
 void InspectorDOMAgent::setSearchingForNode(Inspector::Protocol::ErrorString& errorString, bool enabled, RefPtr<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, bool showRulers)
@@ -1317,7 +1311,7 @@ void InspectorDOMAgent::setSearchingForNode(Inspector::Protocol::ErrorString& er
     } else
         hideHighlight();
 
-    protectedOverlay()->didSetSearchingForNode(m_searchingForNode);
+    m_overlay->didSetSearchingForNode(m_searchingForNode);
 
     if (InspectorClient* client = m_inspectedPage.inspectorController().inspectorClient())
         client->elementSelectionChanged(m_searchingForNode);
@@ -1428,7 +1422,7 @@ void InspectorDOMAgent::innerHighlightQuad(std::unique_ptr<FloatQuad> quad, RefP
     highlightConfig->content = parseColor(WTFMove(color)).value_or(Color::transparentBlack);
     highlightConfig->contentOutline = parseColor(WTFMove(outlineColor)).value_or(Color::transparentBlack);
     highlightConfig->usePageCoordinates = usePageCoordinates ? *usePageCoordinates : false;
-    protectedOverlay()->highlightQuad(WTFMove(quad), *highlightConfig);
+    m_overlay->highlightQuad(WTFMove(quad), *highlightConfig);
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -1533,7 +1527,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(co
         }
     }
 
-    protectedOverlay()->highlightNodeList(StaticNodeList::create(WTFMove(nodeList)), *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
+    m_overlay->highlightNodeList(StaticNodeList::create(WTFMove(nodeList)), *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
 
     return { };
 }
@@ -1577,7 +1571,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNode(std::o
     if (providedFlexOverlayConfig && !flexOverlayConfig)
         return makeUnexpected(errorString);
 
-    protectedOverlay()->highlightNode(node, *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
+    m_overlay->highlightNode(node, *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
 
     return { };
 }
@@ -1627,7 +1621,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNodeList(Re
     if (providedFlexOverlayConfig && !flexOverlayConfig)
         return makeUnexpected(errorString);
 
-    protectedOverlay()->highlightNodeList(StaticNodeList::create(WTFMove(nodes)), *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
+    m_overlay->highlightNodeList(StaticNodeList::create(WTFMove(nodes)), *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
 
     return { };
 }
@@ -1649,7 +1643,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightFrame(const
         highlightConfig->showInfo = true; // Always show tooltips for frames.
         highlightConfig->content = parseColor(WTFMove(color)).value_or(Color::transparentBlack);
         highlightConfig->contentOutline = parseColor(WTFMove(outlineColor)).value_or(Color::transparentBlack);
-        protectedOverlay()->highlightNode(frame->ownerElement(), *highlightConfig);
+        m_overlay->highlightNode(frame->ownerElement(), *highlightConfig);
     }
 
     return { };
@@ -1657,7 +1651,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightFrame(const
 
 Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::hideHighlight()
 {
-    protectedOverlay()->hideHighlight();
+    m_overlay->hideHighlight();
 
     return { };
 }
@@ -1673,7 +1667,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showGridOverlay(Insp
     if (!config)
         return makeUnexpected(errorString);
 
-    protectedOverlay()->setGridOverlayForNode(*node, *config);
+    m_overlay->setGridOverlayForNode(*node, *config);
 
     return { };
 }
@@ -1686,10 +1680,10 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::hideGridOverlay(std:
         if (!node)
             return makeUnexpected(errorString);
 
-        return protectedOverlay()->clearGridOverlayForNode(*node);
+        return m_overlay->clearGridOverlayForNode(*node);
 }
 
-    protectedOverlay()->clearAllGridOverlays();
+    m_overlay->clearAllGridOverlays();
 
     return { };
 }
@@ -1705,7 +1699,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showFlexOverlay(Insp
     if (!config)
         return makeUnexpected(errorString);
 
-    protectedOverlay()->setFlexOverlayForNode(*node, *config);
+    m_overlay->setFlexOverlayForNode(*node, *config);
 
     return { };
 }
@@ -1718,10 +1712,10 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::hideFlexOverlay(std:
         if (!node)
             return makeUnexpected(errorString);
 
-        return protectedOverlay()->clearFlexOverlayForNode(*node);
+        return m_overlay->clearFlexOverlayForNode(*node);
     }
 
-    protectedOverlay()->clearAllFlexOverlays();
+    m_overlay->clearAllFlexOverlays();
 
     return { };
 }
@@ -2176,7 +2170,7 @@ Ref<Inspector::Protocol::DOM::EventListener> InspectorDOMAgent::buildObjectForEv
 
 void InspectorDOMAgent::processAccessibilityChildren(AXCoreObject& axObject, JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>& childNodeIds)
 {
-    const auto& children = axObject.unignoredChildren();
+    const auto& children = axObject.children();
     if (!children.size())
         return;
 
@@ -2184,7 +2178,7 @@ void InspectorDOMAgent::processAccessibilityChildren(AXCoreObject& axObject, JSO
         if (Node* childNode = childObject->node())
             childNodeIds.addItem(pushNodePathToFrontend(childNode));
         else
-            processAccessibilityChildren(childObject.get(), childNodeIds);
+            processAccessibilityChildren(*childObject, childNodeIds);
     }
 }
     
@@ -2380,8 +2374,8 @@ Ref<Inspector::Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildO
                     liveRegionStatus = Inspector::Protocol::DOM::AccessibilityProperties::LiveRegionStatus::Polite;
             }
 
-            if (auto* clickableObject = axObject->clickableSelfOrAncestor(ClickHandlerFilter::IncludeBody))
-                mouseEventNode = clickableObject->node();
+            if (auto* accessibilityNodeObject = dynamicDowncast<AccessibilityNodeObject>(*axObject))
+                mouseEventNode = accessibilityNodeObject->mouseButtonListener(MouseButtonListenerResultFilter::IncludeBodyElement);
 
             if (axObject->supportsARIAOwns()) {
                 auto ownedElements = axObject->elementsFromAttribute(aria_ownsAttr);

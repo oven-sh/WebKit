@@ -53,19 +53,6 @@ RemoteScrollingTreeIOS::RemoteScrollingTreeIOS(RemoteScrollingCoordinatorProxy& 
 
 RemoteScrollingTreeIOS::~RemoteScrollingTreeIOS() = default;
 
-void RemoteScrollingTreeIOS::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNode& node, ScrollingLayerPositionAction scrollingLayerPositionAction)
-{
-    ASSERT(isMainRunLoop());
-
-    // Scroll updates for the main frame on iOS are sent via WebPageProxy::updateVisibleContentRects()
-    if (node.isRootNode()) {
-        ScrollingTree::scrollingTreeNodeDidScroll(node, scrollingLayerPositionAction);
-        return;
-    }
-
-    RemoteScrollingTree::scrollingTreeNodeDidScroll(node, scrollingLayerPositionAction);
-}
-
 void RemoteScrollingTreeIOS::scrollingTreeNodeWillStartPanGesture(ScrollingNodeID nodeID)
 {
     if (m_scrollingCoordinatorProxy)

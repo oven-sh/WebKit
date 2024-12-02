@@ -37,6 +37,7 @@ namespace WebCore {
 
 class Color;
 class Document;
+class LegacyInlineTextBox;
 class RenderCombineText;
 class RenderStyle;
 class RenderText;
@@ -46,9 +47,10 @@ struct MarkedText;
 struct PaintInfo;
 struct StyledMarkedText;
 
+template<typename TextBoxPath>
 class TextBoxPainter {
 public:
-    TextBoxPainter(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&, const RenderStyle&, PaintInfo&, const LayoutPoint& paintOffset);
+    TextBoxPainter(TextBoxPath&&, PaintInfo&, const LayoutPoint& paintOffset);
     ~TextBoxPainter();
 
     void paint();
@@ -92,8 +94,9 @@ protected:
     using DecoratingBoxList = Vector<DecoratingBox>;
     void collectDecoratingBoxesForTextBox(DecoratingBoxList&, const InlineIterator::TextBoxIterator&, FloatPoint textBoxLocation, const TextDecorationPainter::Styles&);
 
-    // FIXME: We could just talk to the display box directly.
-    const InlineIterator::BoxModernPath m_textBox;
+    const ShadowData* debugTextShadow() const;
+
+    const TextBoxPath m_textBox;
     const RenderText& m_renderer;
     const Document& m_document;
     const RenderStyle& m_style;
@@ -110,6 +113,18 @@ protected:
     const bool m_containsComposition;
     const bool m_useCustomUnderlines;
     std::optional<bool> m_emphasisMarkExistsAndIsAbove { };
+};
+
+class LegacyTextBoxPainter : public TextBoxPainter<InlineIterator::BoxLegacyPath> {
+public:
+    LegacyTextBoxPainter(const LegacyInlineTextBox&, PaintInfo&, const LayoutPoint& paintOffset);
+
+    static FloatRect calculateUnionOfAllDocumentMarkerBounds(const LegacyInlineTextBox&);
+};
+
+class ModernTextBoxPainter : public TextBoxPainter<InlineIterator::BoxModernPath> {
+public:
+    ModernTextBoxPainter(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&, PaintInfo&, const LayoutPoint& paintOffset);
 };
 
 }

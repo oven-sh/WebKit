@@ -36,24 +36,17 @@ const ClassInfo JSWrapForValidIterator::s_info = { "Iterator"_s, &Base::s_info, 
 
 JSWrapForValidIterator* JSWrapForValidIterator::createWithInitialValues(VM& vm, Structure* structure)
 {
-    auto values = initialValues();
     JSWrapForValidIterator* iterator = new (NotNull, allocateCell<JSWrapForValidIterator>(vm)) JSWrapForValidIterator(vm, structure);
-    iterator->finishCreation(vm, values[0], values[1]);
+    iterator->finishCreation(vm);
     return iterator;
 }
 
-JSWrapForValidIterator* JSWrapForValidIterator::create(VM& vm, Structure* structure, JSValue iterator, JSValue nextMethod)
-{
-    JSWrapForValidIterator* result = new (NotNull, allocateCell<JSWrapForValidIterator>(vm)) JSWrapForValidIterator(vm, structure);
-    result->finishCreation(vm, iterator, nextMethod);
-    return result;
-}
-
-void JSWrapForValidIterator::finishCreation(VM& vm, JSValue iterator, JSValue nextMethod)
+void JSWrapForValidIterator::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    this->setIteratedIterator(vm, iterator);
-    this->setIteratedNextMethod(vm, nextMethod);
+    auto values = initialValues();
+    for (unsigned index = 0; index < values.size(); ++index)
+        Base::internalField(index).set(vm, this, values[index]);
 }
 
 template<typename Visitor>
@@ -68,7 +61,15 @@ DEFINE_VISIT_CHILDREN(JSWrapForValidIterator);
 
 JSC_DEFINE_HOST_FUNCTION(wrapForValidIteratorPrivateFuncCreate, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(JSWrapForValidIterator::create(globalObject->vm(), globalObject->wrapForValidIteratorStructure(), callFrame->uncheckedArgument(0), callFrame->uncheckedArgument(1)));
+    VM& vm = globalObject->vm();
+
+    auto* wrapForValidIterator = JSWrapForValidIterator::createWithInitialValues(vm, globalObject->wrapForValidIteratorStructure());
+    if (callFrame->uncheckedArgument(0).isCell())
+        wrapForValidIterator->setIteratedIterator(vm, asObject(callFrame->uncheckedArgument(0)));
+    if (callFrame->uncheckedArgument(1).isCell())
+        wrapForValidIterator->setIteratedNextMethod(vm, asObject(callFrame->uncheckedArgument(1)));
+
+    return JSValue::encode(wrapForValidIterator);
 }
 
 } // namespace JSC

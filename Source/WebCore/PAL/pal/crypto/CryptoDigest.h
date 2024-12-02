@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <wtf/HexNumber.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
@@ -51,16 +50,11 @@ public:
 
     PAL_EXPORT void addBytes(std::span<const uint8_t>);
     PAL_EXPORT Vector<uint8_t> computeHash();
-    String toHexString();
+    PAL_EXPORT String toHexString();
     PAL_EXPORT CryptoDigest();
 
 private:
     std::unique_ptr<CryptoDigestContext> m_context;
 };
-
-inline String CryptoDigest::toHexString()
-{
-    return WTF::toHexString(computeHash());
-}
 
 } // namespace PAL

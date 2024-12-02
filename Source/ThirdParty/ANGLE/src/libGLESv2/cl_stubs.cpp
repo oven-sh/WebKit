@@ -563,7 +563,8 @@ cl_int CreateKernelsInProgram(cl_program program,
 
 cl_kernel CloneKernel(cl_kernel source_kernel)
 {
-    CL_RETURN_OBJ(source_kernel->cast<Kernel>().clone(););
+    WARN_NOT_SUPPORTED(CloneKernel);
+    return 0;
 }
 
 cl_int RetainKernel(cl_kernel kernel)

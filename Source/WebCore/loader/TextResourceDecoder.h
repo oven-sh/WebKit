@@ -86,7 +86,7 @@ private:
     std::unique_ptr<PAL::TextCodec> m_codec;
     std::unique_ptr<HTMLMetaCharsetParser> m_charsetParser;
     EncodingSource m_source { DefaultEncoding };
-    ASCIILiteral m_parentFrameAutoDetectedEncoding;
+    const char* m_parentFrameAutoDetectedEncoding { nullptr };
     Vector<uint8_t> m_buffer;
     bool m_checkedForBOM { false };
     bool m_checkedForCSSCharset { false };

@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2002 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2003-2024 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2023 Apple Inc. All rights reserved.
  *  Copyright (C) 2007 Cameron Zwarich (cwzwarich@uwaterloo.ca)
  *  Copyright (C) 2007 Maks Orlovich
  *
@@ -48,9 +48,6 @@
 #include <wtf/dtoa.h>
 #include <wtf/text/StringBuilder.h>
 #include "ObjectConstructorInlines.h"
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 const ASCIILiteral ObjectProtoCalledOnNullOrUndefinedError { "Object.prototype.__proto__ called on null or undefined"_s };
@@ -79,7 +76,7 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
         return JSC::throwException(globalObject, scope, createURIError(globalObject, "String contained an illegal UTF-16 sequence."_s));
     };
 
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    StringBuilder builder(StringBuilder::OverflowHandler::RecordOverflow);
     builder.reserveCapacity(characters.size());
 
     // 4. Repeat
@@ -164,7 +161,7 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    StringBuilder builder(StringBuilder::OverflowHandler::RecordOverflow);
     size_t k = 0;
     UChar u = 0;
     while (k < characters.size()) {
@@ -619,7 +616,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEscape, (JSGlobalObject* globalObject, CallFr
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        StringBuilder builder(OverflowPolicy::RecordOverflow);
+        StringBuilder builder(StringBuilder::OverflowHandler::RecordOverflow);
         if (view.is8Bit()) {
             for (auto character : view.span8()) {
                 if (doNotEscape.get(character))
@@ -657,7 +654,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        StringBuilder builder(OverflowPolicy::RecordOverflow);
+        StringBuilder builder(StringBuilder::OverflowHandler::RecordOverflow);
         builder.reserveCapacity(length);
 
         if (view.is8Bit()) {
@@ -1181,6 +1178,4 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncSpeciesGetter, (JSGlobalObject* globalObject,
     return JSValue::encode(callFrame->thisValue().toThis(globalObject, ECMAMode::strict()));
 }
 
-} // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+}

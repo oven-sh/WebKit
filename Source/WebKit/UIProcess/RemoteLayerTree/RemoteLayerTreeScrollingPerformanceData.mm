@@ -159,18 +159,15 @@ void RemoteLayerTreeScrollingPerformanceData::logData()
     for (auto event : m_events) {
         switch (event.eventType) {
         case ScrollingLogEvent::SwitchedScrollingMode: {
-            if (RefPtr page = m_drawingArea->page())
-                page->logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::SwitchedScrollingMode), event.startTime, event.value);
+            m_drawingArea->page().logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::SwitchedScrollingMode), event.startTime, event.value);
             break;
         }
         case ScrollingLogEvent::Exposed: {
-            if (RefPtr page = m_drawingArea->page())
-                page->logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::ExposedTilelessArea), event.startTime, event.value);
+            m_drawingArea->page().logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::ExposedTilelessArea), event.startTime, event.value);
             break;
         }
         case ScrollingLogEvent::Filled: {
-            if (RefPtr page = m_drawingArea->page())
-                page->logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::FilledTile), event.startTime, event.value);
+            m_drawingArea->page().logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::FilledTile), event.startTime, event.value);
             break;
         }
         default:

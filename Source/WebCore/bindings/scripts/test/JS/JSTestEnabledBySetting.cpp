@@ -53,6 +53,7 @@
 #include "JSDOMConvertBase.h"
 #endif
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -121,15 +122,17 @@ static const struct CompactHashIndex JSTestEnabledBySettingTableIndex[2] = {
 };
 
 
-static const std::array<HashTableValue, 1> JSTestEnabledBySettingTableValues {
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } }
+static const HashTableValue JSTestEnabledBySettingTableValues[] =
+{
+    { { }, 0, NoIntrinsic, { HashTableValue::End } }
 };
 
-static const HashTable JSTestEnabledBySettingTable = { 0, 1, static_cast<uint8_t>(0), JSTestEnabledBySetting::info(), JSTestEnabledBySettingTableValues.data(), JSTestEnabledBySettingTableIndex };
+static const HashTable JSTestEnabledBySettingTable = { 0, 1, static_cast<uint8_t>(0), JSTestEnabledBySetting::info(), JSTestEnabledBySettingTableValues, JSTestEnabledBySettingTableIndex };
 /* Hash table for constructor */
 
-static const std::array<HashTableValue, 1> JSTestEnabledBySettingConstructorTableValues {
-    HashTableValue { "enabledBySettingConstant"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0 } },
+static const HashTableValue JSTestEnabledBySettingConstructorTableValues[] =
+{
+    { "enabledBySettingConstant"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0 } },
 };
 
 static_assert(TestEnabledBySetting::enabledBySettingConstant == 0, "enabledBySettingConstant in TestEnabledBySetting does not match value from IDL");
@@ -160,25 +163,26 @@ template<> void JSTestEnabledBySettingDOMConstructor::initializeProperties(VM& v
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 6> JSTestEnabledBySettingPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySettingConstructor, 0 } },
+static const HashTableValue JSTestEnabledBySettingPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySettingConstructor, 0 } },
 #if ENABLE(TEST_FEATURE)
-    HashTableValue { "enabledBySettingAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySetting_enabledBySettingAttribute, setJSTestEnabledBySetting_enabledBySettingAttribute } },
+    { "enabledBySettingAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySetting_enabledBySettingAttribute, setJSTestEnabledBySetting_enabledBySettingAttribute } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(TEST_FEATURE)
-    HashTableValue { "enabledByTwoSettingsAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySetting_enabledByTwoSettingsAttribute, setJSTestEnabledBySetting_enabledByTwoSettingsAttribute } },
+    { "enabledByTwoSettingsAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySetting_enabledByTwoSettingsAttribute, setJSTestEnabledBySetting_enabledByTwoSettingsAttribute } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
-    HashTableValue { "supplementalAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySetting_supplementalAttribute, setJSTestEnabledBySetting_supplementalAttribute } },
+    { "supplementalAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEnabledBySetting_supplementalAttribute, setJSTestEnabledBySetting_supplementalAttribute } },
 #if ENABLE(TEST_FEATURE)
-    HashTableValue { "enabledBySettingOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestEnabledBySettingPrototypeFunction_enabledBySettingOperation, 1 } },
+    { "enabledBySettingOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestEnabledBySettingPrototypeFunction_enabledBySettingOperation, 1 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
-    HashTableValue { "enabledBySettingConstant"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0 } },
+    { "enabledBySettingConstant"_s, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0 } },
 };
 
 const ClassInfo JSTestEnabledBySettingPrototype::s_info = { "TestEnabledBySetting"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestEnabledBySettingPrototype) };
@@ -493,7 +497,6 @@ void JSTestEnabledBySettingOwner::finalize(JSC::Handle<JSC::Unknown> handle, voi
     uncacheWrapper(world, jsTestEnabledBySetting->protectedWrapped().ptr(), jsTestEnabledBySetting);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -518,8 +521,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestEnabledBy
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestEnabledBySetting>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

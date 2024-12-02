@@ -34,8 +34,6 @@
 #include "config.h"
 #include <wtf/dragonbox/dragonbox_to_chars.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 namespace dragonbox {
@@ -642,5 +640,3 @@ char* to_shortest(const uint64_t significand, int32_t exponent, char* buffer)
 } // namespace dragonbox
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

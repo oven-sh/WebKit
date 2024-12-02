@@ -33,7 +33,7 @@
 #include "InlineIteratorLineBox.h"
 #include "InlineIteratorTextBox.h"
 #include "LayoutIntegrationBoxGeometryUpdater.h"
-#include "LayoutIntegrationBoxTreeUpdater.h"
+#include "LayoutIntegrationBoxTree.h"
 #include "LayoutPoint.h"
 #include "LayoutState.h"
 #include "RenderObjectEnums.h"
@@ -101,11 +101,11 @@ public:
     LayoutRect visualOverflowBoundingBoxRectFor(const RenderInline&) const;
     Vector<FloatRect> collectInlineBoxRects(const RenderInline&) const;
 
-    LayoutUnit contentLogicalHeight() const;
     std::optional<LayoutUnit> clampedContentLogicalHeight() const;
     bool contains(const RenderElement& renderer) const;
 
     bool isPaginated() const;
+    LayoutUnit contentBoxLogicalHeight() const;
     size_t lineCount() const;
     bool hasVisualOverflow() const;
     LayoutUnit firstLinePhysicalBaseline() const;
@@ -121,8 +121,8 @@ public:
     InlineIterator::LineBoxIterator firstLineBox() const;
     InlineIterator::LineBoxIterator lastLineBox() const;
 
-    const RenderBlockFlow& flow() const { return downcast<RenderBlockFlow>(*m_rootLayoutBox->rendererForIntegration()); }
-    RenderBlockFlow& flow() { return downcast<RenderBlockFlow>(*m_rootLayoutBox->rendererForIntegration()); }
+    const RenderBlockFlow& flow() const { return downcast<RenderBlockFlow>(m_boxTree.rootRenderer()); }
+    RenderBlockFlow& flow() { return downcast<RenderBlockFlow>(m_boxTree.rootRenderer()); }
 
     static void releaseCaches(RenderView&);
 
@@ -151,14 +151,14 @@ private:
 
     Layout::InlineDamage& ensureLineDamage();
 
-    const Layout::ElementBox& rootLayoutBox() const { return *m_rootLayoutBox; }
-    Layout::ElementBox& rootLayoutBox() { return *m_rootLayoutBox; }
+    const Layout::ElementBox& rootLayoutBox() const;
+    Layout::ElementBox& rootLayoutBox();
     void clearInlineContent();
     void releaseCachesAndResetDamage();
 
     LayoutUnit physicalBaselineForLine(const InlineDisplay::Line&) const;
     
-    CheckedPtr<Layout::ElementBox> m_rootLayoutBox;
+    BoxTree m_boxTree;
     WeakPtr<Layout::LayoutState> m_layoutState;
     Layout::BlockFormattingState& m_blockFormattingState;
     Layout::InlineContentCache& m_inlineContentCache;

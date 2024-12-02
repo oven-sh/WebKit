@@ -48,7 +48,6 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
-    static constexpr bool deferSendingIfSuspended = false;
 
     explicit TestMessage(const String& url)
         : m_arguments(url)

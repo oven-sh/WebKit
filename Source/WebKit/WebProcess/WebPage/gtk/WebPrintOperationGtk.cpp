@@ -81,7 +81,7 @@ WebPrintOperationGtk::PrintPagesData::PrintPagesData(WebPrintOperationGtk* print
     }
 
     if (printOperation->m_pagesToPrint == GTK_PRINT_PAGES_RANGES) {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         Vector<GtkPageRange> pageRanges;
         GtkPageRange* ranges = printOperation->m_pageRanges;
         size_t rangesCount = printOperation->m_pageRangesCount;

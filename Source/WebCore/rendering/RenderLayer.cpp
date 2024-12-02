@@ -50,7 +50,7 @@
 #include "AccessibilityRegionContext.h"
 #include "BitmapImage.h"
 #include "BorderShape.h"
-#include "BoxLayoutShape.h"
+#include "BoxShape.h"
 #include "CSSFilter.h"
 #include "CSSPropertyNames.h"
 #include "Chrome.h"
@@ -262,7 +262,7 @@ public:
     }
 
 #if ASSERT_ENABLED
-    std::array<const RenderLayer*, NumCachedClipRectsTypes> m_clipRectsRoot;
+    const RenderLayer* m_clipRectsRoot[NumCachedClipRectsTypes];
 #endif
 private:
     unsigned getIndex(ClipRectsType clipRectsType, bool respectOverflowClip) const
@@ -274,7 +274,7 @@ private:
         return index;
     }
 
-    std::array<RefPtr<ClipRects>, NumCachedClipRectsTypes * 2> m_clipRects;
+    RefPtr<ClipRects> m_clipRects[NumCachedClipRectsTypes * 2];
 };
 
 void makeMatrixRenderable(TransformationMatrix& matrix, bool has3DRendering)
@@ -441,11 +441,6 @@ void RenderLayer::addChild(RenderLayer& child, RenderLayer* beforeChild)
 
     if (child.hasBlendMode() || (child.hasNotIsolatedBlendingDescendants() && !child.isolatesBlending()))
         updateAncestorChainHasBlendingDescendants(); // Why not just dirty?
-
-#if ENABLE(ASYNC_SCROLLING)
-    if (child.hasDescendantNeedingEventRegionUpdate() || (child.isComposited() && child.backing()->needsEventRegionUpdate()))
-        child.setAncestorsHaveDescendantNeedingEventRegionUpdate();
-#endif
 }
 
 void RenderLayer::removeChild(RenderLayer& oldChild)
@@ -589,7 +584,7 @@ bool RenderLayer::shouldBeNormalFlowOnly() const
 
 bool RenderLayer::shouldBeCSSStackingContext() const
 {
-    return !renderer().style().hasAutoUsedZIndex() || renderer().shouldApplyLayoutContainment() || renderer().shouldApplyPaintContainment() || renderer().requiresRenderingConsolidationForViewTransition() || renderer().isRenderViewTransitionCapture() || renderer().isViewTransitionRoot() || isRenderViewLayer();
+    return !renderer().style().hasAutoUsedZIndex() || renderer().shouldApplyLayoutOrPaintContainment() || renderer().requiresRenderingConsolidationForViewTransition() || renderer().isRenderViewTransitionCapture() || renderer().isViewTransitionRoot() || isRenderViewLayer();
 }
 
 bool RenderLayer::computeCanBeBackdropRoot() const
@@ -868,7 +863,7 @@ void RenderLayer::collectLayers(std::unique_ptr<Vector<RenderLayer*>>& positiveZ
 
     bool isStacking = isStackingContext();
     // Overflow layers are just painted by their enclosing layers, so they don't get put in zorder lists.
-    bool layerOrDescendantsAreVisible = (m_hasVisibleContent || m_alwaysIncludedInZOrderLists) || ((m_hasVisibleDescendant || m_hasAlwaysIncludedInZOrderListsDescendants) && isStacking);
+    bool layerOrDescendantsAreVisible = (m_hasVisibleContent || m_intrinsicallyComposited) || ((m_hasVisibleDescendant || m_hasIntrinsicallyCompositedDescendants) && isStacking);
     layerOrDescendantsAreVisible |= page().hasEverSetVisibilityAdjustment();
     if (!isNormalFlowOnly()) {
         if (layerOrDescendantsAreVisible) {
@@ -1549,41 +1544,34 @@ void RenderLayer::dirtyAncestorChainHasBlendingDescendants()
 
 void RenderLayer::setIntrinsicallyComposited(bool composited)
 {
-    m_intrinsicallyComposited = composited;
-    updateAlwaysIncludedInZOrderLists();
-}
-
-void RenderLayer::updateAlwaysIncludedInZOrderLists()
-{
-    bool alwaysIncludedInZOrderLists = m_intrinsicallyComposited  || renderer().hasViewTransitionName();
-    if (m_alwaysIncludedInZOrderLists != alwaysIncludedInZOrderLists) {
-        m_alwaysIncludedInZOrderLists = alwaysIncludedInZOrderLists;
-        if (alwaysIncludedInZOrderLists)
-            updateAncestorChainHasAlwaysIncludedInZOrderListsDescendants();
+    if (m_intrinsicallyComposited != composited) {
+        m_intrinsicallyComposited = composited;
+        if (composited)
+            updateAncestorChainHasIntrinsicallyCompositedDescendants();
         else
-            dirtyAncestorChainHasAlwaysIncludedInZOrderListsDescendants();
+            dirtyAncestorChainHasIntrinsicallyCompositedDescendants();
         if (!hasVisibleContent() && !isNormalFlowOnly())
             dirtyHiddenStackingContextAncestorZOrderLists();
     }
 }
 
-void RenderLayer::updateAncestorChainHasAlwaysIncludedInZOrderListsDescendants()
+void RenderLayer::updateAncestorChainHasIntrinsicallyCompositedDescendants()
 {
     for (auto* layer = this; layer; layer = layer->parent()) {
-        if (!layer->m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty && layer->m_hasAlwaysIncludedInZOrderListsDescendants)
+        if (!layer->m_hasIntrinsicallyCompositedDescendantsStatusDirty && layer->m_hasIntrinsicallyCompositedDescendants)
             break;
-        layer->m_hasAlwaysIncludedInZOrderListsDescendants = true;
-        layer->m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty = false;
+        layer->m_hasIntrinsicallyCompositedDescendants = true;
+        layer->m_hasIntrinsicallyCompositedDescendantsStatusDirty = false;
     }
 }
 
-void RenderLayer::dirtyAncestorChainHasAlwaysIncludedInZOrderListsDescendants()
+void RenderLayer::dirtyAncestorChainHasIntrinsicallyCompositedDescendants()
 {
     for (auto* layer = this; layer; layer = layer->parent()) {
-        if (layer->m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty)
+        if (layer->m_hasIntrinsicallyCompositedDescendantsStatusDirty)
             break;
 
-        layer->m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty = true;
+        layer->m_hasIntrinsicallyCompositedDescendantsStatusDirty = true;
     }
 }
 
@@ -1878,11 +1866,11 @@ void RenderLayer::updateAncestorDependentState()
 
 void RenderLayer::updateDescendantDependentFlags()
 {
-    if (m_visibleDescendantStatusDirty || m_hasSelfPaintingLayerDescendantDirty || hasNotIsolatedBlendingDescendantsStatusDirty() || m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty) {
+    if (m_visibleDescendantStatusDirty || m_hasSelfPaintingLayerDescendantDirty || hasNotIsolatedBlendingDescendantsStatusDirty() || m_hasIntrinsicallyCompositedDescendantsStatusDirty) {
         bool hasVisibleDescendant = false;
         bool hasSelfPaintingLayerDescendant = false;
         bool hasNotIsolatedBlendingDescendants = false;
-        bool hasAlwaysIncludedInZOrderListsDescendants = false;
+        bool hasIntrinsicallyCompositedDescendants = false;
 
         if (m_hasNotIsolatedBlendingDescendantsStatusDirty) {
             m_hasNotIsolatedBlendingDescendantsStatusDirty = false;
@@ -1895,15 +1883,15 @@ void RenderLayer::updateDescendantDependentFlags()
             hasVisibleDescendant |= child->m_hasVisibleContent || child->m_hasVisibleDescendant;
             hasSelfPaintingLayerDescendant |= child->isSelfPaintingLayer() || child->hasSelfPaintingLayerDescendant();
             hasNotIsolatedBlendingDescendants |= child->hasBlendMode() || (child->hasNotIsolatedBlendingDescendants() && !child->isolatesBlending());
-            hasAlwaysIncludedInZOrderListsDescendants |= child->alwaysIncludedInZOrderLists() || child->m_hasAlwaysIncludedInZOrderListsDescendants;
+            hasIntrinsicallyCompositedDescendants |= child->isIntrinsicallyComposited() || child->m_hasIntrinsicallyCompositedDescendants;
         }
 
         m_hasVisibleDescendant = hasVisibleDescendant;
         m_visibleDescendantStatusDirty = false;
         m_hasSelfPaintingLayerDescendant = hasSelfPaintingLayerDescendant;
         m_hasSelfPaintingLayerDescendantDirty = false;
-        m_hasAlwaysIncludedInZOrderListsDescendants = hasAlwaysIncludedInZOrderListsDescendants;
-        m_hasAlwaysIncludedInZOrderListsDescendantsStatusDirty = false;
+        m_hasIntrinsicallyCompositedDescendants = hasIntrinsicallyCompositedDescendants;
+        m_hasIntrinsicallyCompositedDescendantsStatusDirty = false;
 
         m_hasNotIsolatedBlendingDescendants = hasNotIsolatedBlendingDescendants;
     }
@@ -3538,6 +3526,7 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
 
     bool haveTransparency = localPaintFlags.contains(PaintLayerFlag::HaveTransparency);
     bool isPaintingOverlayScrollbars = localPaintFlags.contains(PaintLayerFlag::PaintingOverlayScrollbars);
+    bool isPaintingScrollingContent = localPaintFlags.contains(PaintLayerFlag::PaintingCompositingScrollingPhase);
     bool isPaintingCompositedForeground = localPaintFlags.contains(PaintLayerFlag::PaintingCompositingForegroundPhase);
     bool isPaintingCompositedBackground = localPaintFlags.contains(PaintLayerFlag::PaintingCompositingBackgroundPhase);
     bool isPaintingOverflowContents = localPaintFlags.contains(PaintLayerFlag::PaintingOverflowContents);
@@ -3545,6 +3534,17 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
     bool isCollectingAccessibilityRegion = is<AccessibilityRegionContext>(paintingInfo.regionContext);
 
     bool isSelfPaintingLayer = this->isSelfPaintingLayer();
+
+    // Outline always needs to be painted even if we have no visible content. Also,
+    // the outline is painted in the background phase during composited scrolling.
+    // If it were painted in the foreground phase, it would move with the scrolled
+    // content. When not composited scrolling, the outline is painted in the
+    // foreground phase. Since scrolled contents are moved by repainting in this
+    // case, the outline won't get 'dragged along'.
+    bool shouldPaintOutline = isSelfPaintingLayer && !isPaintingOverlayScrollbars && !isCollectingEventRegion && !isCollectingAccessibilityRegion
+        && (renderer().view().printing() || renderer().view().hasRenderersWithOutline())
+        && ((isPaintingScrollingContent && isPaintingCompositedBackground)
+        || (!isPaintingScrollingContent && isPaintingCompositedForeground));
 
     auto hasVisibleContent = [&]() -> bool {
         if (!m_hasVisibleContent)
@@ -3563,41 +3563,6 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
     };
 
     bool shouldPaintContent = hasVisibleContent() && isSelfPaintingLayer && !isPaintingOverlayScrollbars && !isCollectingEventRegion && !isCollectingAccessibilityRegion;
-
-    bool shouldPaintOutline = [&]() {
-        if (!isSelfPaintingLayer)
-            return false;
-
-        if (!shouldPaintContent)
-            return false;
-
-        if (isPaintingOverlayScrollbars || isCollectingEventRegion || isCollectingAccessibilityRegion)
-            return false;
-
-        // For the current layer, the outline has been painted by the primary GraphicsLayer.
-        if (localPaintFlags.contains(PaintLayerFlag::PaintingOverflowContents))
-            return false;
-
-        // Paint outlines in the background phase for a scroll container so that they don't scroll with the content.
-        // FIXME: inset outlines will have the wrong z-ordering with scrolled content. See also webkit.org/b/249457.
-        if (localPaintFlags.contains(PaintLayerFlag::PaintingOverflowContainer))
-            return isPaintingCompositedBackground;
-
-        return isPaintingCompositedForeground;
-    }();
-
-    bool shouldPaintNegativeZIndexChildren = [&]() {
-        if (localPaintFlags.contains(PaintLayerFlag::PaintingOverflowContainer))
-            return false;
-
-        if (localPaintFlags.contains(PaintLayerFlag::PaintingOverflowContents)) {
-            // Overflow contents has the "PaintingCompositingForegroundPhase" phase,
-            // but we need to paint negative z-index layers here so they scroll with the content.
-            return true;
-        }
-
-        return isPaintingCompositedBackground;
-    }();
 
     if (localPaintFlags.contains(PaintLayerFlag::PaintingRootBackgroundOnly) && !renderer().isRenderView() && !renderer().isDocumentElementRenderer()) {
         // If beginTransparencyLayers was called prior to this, ensure the transparency state is cleaned up before returning.
@@ -3738,7 +3703,7 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
         }
 
         // Now walk the sorted list of children with negative z-indices.
-        if (shouldPaintNegativeZIndexChildren)
+        if ((isPaintingScrollingContent && isPaintingOverflowContents) || (!isPaintingScrollingContent && isPaintingCompositedBackground))
             paintList(negativeZOrderLayers(), currentContext, paintingInfo, localPaintFlags);
         
         if (isPaintingCompositedForeground) {
@@ -4935,7 +4900,7 @@ Ref<ClipRects> RenderLayer::updateClipRects(const ClipRectsContext& clipRectsCon
 #if ASSERT_ENABLED
     m_clipRectsCache->m_clipRectsRoot[clipRectsType] = clipRectsContext.rootLayer;
 #endif
-    ASSERT(enumToUnderlyingType(clipRectsContext.overlayScrollbarSizeRelevancy()) == (clipRectsContext.clipRectsType == RootRelativeClipRects));
+    ASSERT(clipRectsContext.overlayScrollbarSizeRelevancy() == (clipRectsContext.clipRectsType == RootRelativeClipRects));
 
     RefPtr<ClipRects> parentClipRects;
     // For transformed layers, the root layer was shifted to be us, so there is no need to
@@ -5895,9 +5860,6 @@ void RenderLayer::styleChanged(StyleDifference diff, const RenderStyle* oldStyle
                 dirtyZOrderLists();
         }
 
-        if (!oldStyle->viewTransitionName().isNone() != renderer().hasViewTransitionName())
-            updateAlwaysIncludedInZOrderLists();
-
         // Visibility and scrollability are input to canUseCompositedScrolling().
         if (m_scrollableArea) {
             if (oldStyle->writingMode() != renderer().style().writingMode())
@@ -6223,16 +6185,6 @@ static TextStream& operator<<(TextStream& ts, RenderLayer::EventRegionInvalidati
 }
 #endif // !LOG_DISABLED
 
-void RenderLayer::setAncestorsHaveDescendantNeedingEventRegionUpdate()
-{
-    for (auto* layer = parent(); layer; layer = layer->parent()) {
-        if (layer->m_hasDescendantNeedingEventRegionUpdate)
-            break;
-
-        layer->m_hasDescendantNeedingEventRegionUpdate = true;
-    }
-}
-
 bool RenderLayer::invalidateEventRegion(EventRegionInvalidationReason reason)
 {
 #if ENABLE(ASYNC_SCROLLING)
@@ -6254,7 +6206,6 @@ bool RenderLayer::invalidateEventRegion(EventRegionInvalidationReason reason)
     LOG_WITH_STREAM(EventRegions, stream << this << " invalidateEventRegion for reason " << reason << " invalidating in compositing layer " << compositingLayer);
 
     compositingLayer->backing()->setNeedsEventRegionUpdate();
-    compositingLayer->setAncestorsHaveDescendantNeedingEventRegionUpdate();
 
     if (reason == EventRegionInvalidationReason::NonCompositedFrame) {
         auto& view = renderer().view();
@@ -6347,32 +6298,6 @@ TextStream& operator<<(TextStream& ts, PaintBehavior behavior)
 
     return ts;
 }
-
-TextStream& operator<<(TextStream& ts, RenderLayer::PaintLayerFlag flag)
-{
-    switch (flag) {
-    case RenderLayer::PaintLayerFlag::HaveTransparency: ts << "HaveTransparency"; break;
-    case RenderLayer::PaintLayerFlag::AppliedTransform: ts << "AppliedTransform"; break;
-    case RenderLayer::PaintLayerFlag::TemporaryClipRects: ts << "TemporaryClipRects"; break;
-    case RenderLayer::PaintLayerFlag::PaintingReflection: ts << "PaintingReflection"; break;
-    case RenderLayer::PaintLayerFlag::PaintingOverlayScrollbars: ts << "PaintingOverlayScrollbars"; break;
-    case RenderLayer::PaintLayerFlag::PaintingCompositingBackgroundPhase: ts << "PaintingCompositingBackgroundPhase"; break;
-    case RenderLayer::PaintLayerFlag::PaintingCompositingForegroundPhase: ts << "PaintingCompositingForegroundPhase"; break;
-    case RenderLayer::PaintLayerFlag::PaintingCompositingMaskPhase: ts << "PaintingCompositingMaskPhase"; break;
-    case RenderLayer::PaintLayerFlag::PaintingCompositingClipPathPhase: ts << "PaintingCompositingClipPathPhase"; break;
-    case RenderLayer::PaintLayerFlag::PaintingOverflowContainer: ts << "PaintingOverflowContainer"; break;
-    case RenderLayer::PaintLayerFlag::PaintingOverflowContents: ts << "PaintingOverflowContents"; break;
-    case RenderLayer::PaintLayerFlag::PaintingRootBackgroundOnly: ts << "PaintingRootBackgroundOnly"; break;
-    case RenderLayer::PaintLayerFlag::PaintingSkipRootBackground: ts << "PaintingSkipRootBackground"; break;
-    case RenderLayer::PaintLayerFlag::PaintingChildClippingMaskPhase: ts << "PaintingChildClippingMaskPhase"; break;
-    case RenderLayer::PaintLayerFlag::PaintingSVGClippingMask: ts << "PaintingSVGClippingMask"; break;
-    case RenderLayer::PaintLayerFlag::CollectingEventRegion: ts << "CollectingEventRegion"; break;
-    case RenderLayer::PaintLayerFlag::PaintingSkipDescendantViewTransition: ts << "PaintingSkipDescendantViewTransition"; break;
-    }
-
-    return ts;
-}
-
 
 #undef LAYER_POSITIONS_ASSERT_ENABLED
 #undef LAYER_POSITIONS_ASSERT

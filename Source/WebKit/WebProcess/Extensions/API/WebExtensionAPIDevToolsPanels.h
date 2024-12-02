@@ -31,7 +31,6 @@
 #include "WebExtensionAPIDevToolsExtensionPanel.h"
 #include "WebExtensionAPIEvent.h"
 #include "WebExtensionAPIObject.h"
-#include "WebPageProxyIdentifier.h"
 
 namespace WebKit {
 
@@ -44,7 +43,7 @@ public:
 #if PLATFORM(COCOA)
     RefPtr<WebExtensionAPIDevToolsExtensionPanel> extensionPanel(Inspector::ExtensionTabID) const;
 
-    void createPanel(WebPageProxyIdentifier, NSString *title, NSString *iconPath, NSString *pagePath, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void createPanel(WebPage&, NSString *title, NSString *iconPath, NSString *pagePath, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     NSString *themeName();
 

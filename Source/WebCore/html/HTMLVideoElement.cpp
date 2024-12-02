@@ -111,7 +111,7 @@ void HTMLVideoElement::didAttachRenderers()
 
     if (shouldDisplayPosterImage()) {
         if (!m_imageLoader)
-            m_imageLoader = makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this);
+            m_imageLoader = makeUnique<HTMLImageLoader>(*this);
         m_imageLoader->updateFromElement();
         if (CheckedPtr renderer = this->renderer())
             renderer->checkedImageResource()->setCachedImage(m_imageLoader->protectedImage());
@@ -191,7 +191,7 @@ void HTMLVideoElement::attributeChanged(const QualifiedName& name, const AtomStr
     if (name == posterAttr) {
         if (shouldDisplayPosterImage()) {
             if (!m_imageLoader)
-                m_imageLoader = makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this);
+                m_imageLoader = makeUnique<HTMLImageLoader>(*this);
             m_imageLoader->updateFromElementIgnoringPreviousError();
         } else {
             if (CheckedPtr renderer = this->renderer()) {
@@ -796,20 +796,6 @@ void HTMLVideoElement::setVideoFullscreenStandby(bool value)
         });
     }
 }
-
-ExceptionOr<void> HTMLVideoElement::enterFullscreenIgnoringPermissionsPolicy()
-{
-    ignoreFullscreenPermissionPolicyOnNextCallToEnterFullscreen();
-    return webkitEnterFullscreen();
-}
-
-#if ENABLE(VIDEO_PRESENTATION_MODE)
-void HTMLVideoElement::setPresentationModeIgnoringPermissionsPolicy(VideoPresentationMode mode)
-{
-    ignoreFullscreenPermissionPolicyOnNextCallToEnterFullscreen();
-    setPresentationMode(mode);
-}
-#endif
 
 } // namespace WebCore
 

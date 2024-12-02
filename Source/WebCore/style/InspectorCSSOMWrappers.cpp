@@ -39,7 +39,6 @@
 #include "CSSStyleRule.h"
 #include "CSSStyleSheet.h"
 #include "CSSSupportsRule.h"
-#include "Document.h"
 #include "ExtensionStyleSheets.h"
 #include "StyleScope.h"
 #include "StyleSheetContents.h"

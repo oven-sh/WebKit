@@ -101,8 +101,6 @@
 
 IGNORE_WARNINGS_BEGIN("frame-address")
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 template<bool strict, bool direct>
@@ -148,9 +146,9 @@ char* newTypedArrayWithSize(JSGlobalObject* globalObject, VM& vm, Structure* str
     size_t unsignedSize = static_cast<size_t>(size);
 
     if (vector)
-        return std::bit_cast<char*>(ViewClass::createWithFastVector(globalObject, structure, unsignedSize, vector));
+        return bitwise_cast<char*>(ViewClass::createWithFastVector(globalObject, structure, unsignedSize, vector));
 
-    RELEASE_AND_RETURN(scope, std::bit_cast<char*>(ViewClass::create(globalObject, structure, unsignedSize)));
+    RELEASE_AND_RETURN(scope, bitwise_cast<char*>(ViewClass::create(globalObject, structure, unsignedSize)));
 }
 
 template <bool strict>
@@ -2125,7 +2123,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewArray, char*, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), size);
 
-    OPERATION_RETURN(scope, std::bit_cast<char*>(constructArray(globalObject, arrayStructure, static_cast<JSValue*>(buffer), size)));
+    OPERATION_RETURN(scope, bitwise_cast<char*>(constructArray(globalObject, arrayStructure, static_cast<JSValue*>(buffer), size)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewEmptyArray, char*, (VM* vmPointer, Structure* arrayStructure))
@@ -2135,7 +2133,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewEmptyArray, char*, (VM* vmPointer, Structur
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     
-    OPERATION_RETURN(scope, std::bit_cast<char*>(JSArray::create(vm, arrayStructure)));
+    OPERATION_RETURN(scope, bitwise_cast<char*>(JSArray::create(vm, arrayStructure)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSize, char*, (JSGlobalObject* globalObject, Structure* arrayStructure, int32_t size, Butterfly* butterfly))
@@ -2160,7 +2158,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSize, char*, (JSGlobalObject* glob
             OPERATION_RETURN(scope, nullptr);
         }
     }
-    OPERATION_RETURN(scope, std::bit_cast<char*>(result));
+    OPERATION_RETURN(scope, bitwise_cast<char*>(result));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAndHint, char*, (JSGlobalObject* globalObject, Structure* arrayStructure, int32_t size, int32_t vectorLengthHint, Butterfly* butterfly))
@@ -2185,7 +2183,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAndHint, char*, (JSGlobalObjec
             OPERATION_RETURN(scope, nullptr);
         }
     }
-    OPERATION_RETURN(scope, std::bit_cast<char*>(result));
+    OPERATION_RETURN(scope, bitwise_cast<char*>(result));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrayBuffer, JSCell*, (VM* vmPointer, Structure* arrayStructure, JSCell* immutableButterflyCell))
@@ -2392,7 +2390,7 @@ JSC_DEFINE_JIT_OPERATION(operationCreateRest, JSCell*, (JSGlobalObject* globalOb
 
     Structure* structure = globalObject->restParameterStructure();
     static_assert(sizeof(Register) == sizeof(JSValue), "This is a strong assumption here.");
-    JSValue* argumentsToCopyRegion = std::bit_cast<JSValue*>(argumentStart) + numberOfParamsToSkip;
+    JSValue* argumentsToCopyRegion = bitwise_cast<JSValue*>(argumentStart) + numberOfParamsToSkip;
     OPERATION_RETURN(scope, constructArray(globalObject, structure, argumentsToCopyRegion, arraySize));
 }
 
@@ -3758,7 +3756,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfValueInt32OrContiguous, UCPUStrict
         OPERATION_RETURN(scope, toUCPUStrictInt32(-1));
 
     if (searchElement.isObject()) {
-        auto* result = std::bit_cast<const WriteBarrier<Unknown>*>(WTF::find64(std::bit_cast<const uint64_t*>(data + index), encodedValue, length - index));
+        auto* result = bitwise_cast<const WriteBarrier<Unknown>*>(WTF::find64(bitwise_cast<const uint64_t*>(data + index), encodedValue, length - index));
         if (result)
             OPERATION_RETURN(scope, toUCPUStrictInt32(result - data));
         OPERATION_RETURN(scope, toUCPUStrictInt32(-1));
@@ -3804,7 +3802,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIndexOfNonStringIdentityValueCon
     if (index >= length)
         return toUCPUStrictInt32(-1);
 
-    auto* result = std::bit_cast<const WriteBarrier<Unknown>*>(WTF::find64(std::bit_cast<const uint64_t*>(data + index), searchElement, length - index));
+    auto* result = bitwise_cast<const WriteBarrier<Unknown>*>(WTF::find64(bitwise_cast<const uint64_t*>(data + index), searchElement, length - index));
     if (result)
         return toUCPUStrictInt32(result - data);
     return toUCPUStrictInt32(-1);
@@ -3819,7 +3817,7 @@ JSC_DEFINE_JIT_OPERATION(operationLoadVarargs, void, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue arguments = JSValue::decode(encodedArguments);
     
-    loadVarargs(globalObject, std::bit_cast<JSValue*>(&callFrame->r(firstElement)), arguments, offset, lengthIncludingThis - 1);
+    loadVarargs(globalObject, bitwise_cast<JSValue*>(&callFrame->r(firstElement)), arguments, offset, lengthIncludingThis - 1);
     
     for (uint32_t i = lengthIncludingThis - 1; i < mandatoryMinimum; ++i)
         callFrame->r(firstElement + i) = jsUndefined();
@@ -3878,8 +3876,8 @@ JSC_DEFINE_JIT_OPERATION(operationNewRawObject, char*, (VM* vmPointer, Structure
     }
 
     if (structure->typeInfo().type() == JSType::ArrayType)
-        OPERATION_RETURN(scope, std::bit_cast<char*>(JSArray::createWithButterfly(vm, nullptr, structure, butterfly)));
-    OPERATION_RETURN(scope, std::bit_cast<char*>(JSFinalObject::createWithButterfly(vm, structure, butterfly)));
+        OPERATION_RETURN(scope, bitwise_cast<char*>(JSArray::createWithButterfly(vm, nullptr, structure, butterfly)));
+    OPERATION_RETURN(scope, bitwise_cast<char*>(JSFinalObject::createWithButterfly(vm, structure, butterfly)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewObjectWithButterfly, JSCell*, (VM* vmPointer, Structure* structure, Butterfly* butterfly))
@@ -5227,8 +5225,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerOSREntryNow, char*, (VM* vmPoi
 } } // namespace JSC::DFG
 
 IGNORE_WARNINGS_END
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(DFG_JIT)
 

@@ -31,7 +31,7 @@ WI.WebSocketResource = class WebSocketResource extends WI.Resource
             type: WI.Resource.Type.WebSocket,
             loaderIdentifier,
             requestIdentifier,
-            requestMethod: WI.HTTPUtilities.RequestMethod.GET,
+            requestMethod: "GET",
             requestHeaders,
             requestSentTimestamp,
         });

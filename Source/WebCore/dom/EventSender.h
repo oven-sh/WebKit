@@ -26,7 +26,6 @@
 #pragma once
 
 #include "Timer.h"
-#include <wtf/CheckedPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
@@ -36,9 +35,8 @@ namespace WebCore {
 class Page;
 class WeakPtrImplWithEventTargetData;
 
-template<typename T, typename WeakPtrImpl> class EventSender : public CanMakeCheckedPtr<EventSender<T, WeakPtrImpl>> {
+template<typename T, typename WeakPtrImpl> class EventSender {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(EventSender);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EventSender);
     WTF_MAKE_NONCOPYABLE(EventSender);
 public:
     EventSender();

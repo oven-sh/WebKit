@@ -31,7 +31,6 @@
 #include "config.h"
 #include "StyleGridItemData.h"
 
-#include "RenderStyleDifference.h"
 #include "RenderStyleInlines.h"
 
 namespace WebCore {
@@ -59,15 +58,5 @@ Ref<StyleGridItemData> StyleGridItemData::copy() const
 {
     return adoptRef(*new StyleGridItemData(*this));
 }
-
-#if !LOG_DISABLED
-void StyleGridItemData::dumpDifferences(TextStream& ts, const StyleGridItemData& other) const
-{
-    LOG_IF_DIFFERENT(gridColumnStart);
-    LOG_IF_DIFFERENT(gridColumnEnd);
-    LOG_IF_DIFFERENT(gridRowStart);
-    LOG_IF_DIFFERENT(gridRowEnd);
-}
-#endif
 
 } // namespace WebCore

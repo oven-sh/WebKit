@@ -45,8 +45,6 @@
 #include <sys/socket.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 void prefetchDNS(const String& hostname)
@@ -182,5 +180,3 @@ unsigned IPAddress::matchingNetMaskLength(const IPAddress& other) const
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

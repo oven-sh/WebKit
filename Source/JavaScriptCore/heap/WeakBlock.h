@@ -30,8 +30,6 @@
 #include <wtf/DoublyLinkedList.h>
 #include <wtf/StdLibExtras.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class AbstractSlotVisitor;
@@ -150,5 +148,3 @@ inline bool WeakBlock::isLogicallyEmptyButNotFree() const
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

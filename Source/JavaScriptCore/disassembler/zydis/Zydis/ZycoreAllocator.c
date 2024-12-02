@@ -30,9 +30,6 @@
 
 #include "ZycoreAllocator.h"
 #include "ZycoreLibC.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 /* ============================================================================================== */
 /* Internal functions                                                                             */
@@ -139,7 +136,5 @@ ZyanAllocator* ZyanAllocatorDefault(void)
 #endif
 
 /* ============================================================================================== */
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

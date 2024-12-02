@@ -38,7 +38,6 @@ class RenderLayerCompositor;
 class RenderLayoutState;
 class RenderCounter;
 class RenderQuote;
-class RenderViewTransitionRoot;
 
 namespace Layout {
 class InitialContainingBlock;
@@ -108,7 +107,7 @@ public:
 
     LayoutRect viewRect() const;
 
-    void updateHitTestResult(HitTestResult&, const LayoutPoint&) const override;
+    void updateHitTestResult(HitTestResult&, const LayoutPoint&) override;
 
     void setPageLogicalSize(LayoutSize);
     LayoutUnit pageOrViewLogicalHeight() const;
@@ -213,8 +212,8 @@ public:
     void unregisterAnchor(const RenderBoxModelObject&);
     const SingleThreadWeakHashSet<const RenderBoxModelObject>& anchors() const { return m_anchors; }
 
-    SingleThreadWeakPtr<RenderViewTransitionRoot> viewTransitionRoot() const;
-    void setViewTransitionRoot(RenderViewTransitionRoot& renderer);
+    SingleThreadWeakPtr<RenderElement> viewTransitionRoot() const;
+    void setViewTransitionRoot(RenderElement& renderer);
 
 private:
     void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
@@ -285,7 +284,7 @@ private:
     SingleThreadWeakHashSet<const RenderBox> m_containerQueryBoxes;
     SingleThreadWeakHashSet<const RenderBoxModelObject> m_anchors;
 
-    SingleThreadWeakPtr<RenderViewTransitionRoot> m_viewTransitionRoot;
+    SingleThreadWeakPtr<RenderElement> m_viewTransitionRoot;
 };
 
 } // namespace WebCore

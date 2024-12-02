@@ -107,16 +107,8 @@ static inline double toWebRTCBitRatePriority(RTCPriorityType priority)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ExceptionOr<GUniquePtr<GstStructure>> fromRTCEncodingParameters(const RTCRtpEncodingParameters& parameters, const String& kind)
+GUniquePtr<GstStructure> fromRTCEncodingParameters(const RTCRtpEncodingParameters& parameters)
 {
-    if (kind == "video"_s && parameters.scaleResolutionDownBy && *parameters.scaleResolutionDownBy < 1)
-        return Exception { ExceptionCode::RangeError, "scaleResolutionDownBy should be >= 1"_s };
-
-    if (parameters.rid.length() > 255)
-        return Exception { ExceptionCode::TypeError, "rid is too long"_s };
-    if (!parameters.rid.containsOnlyASCII() || !parameters.rid.containsOnly<isASCIIAlphanumeric>())
-        return Exception { ExceptionCode::TypeError, "rid contains invalid characters"_s };
-
     GUniquePtr<GstStructure> rtcParameters(gst_structure_new("encoding-parameters", "active", G_TYPE_BOOLEAN, parameters.active,
         "rid", G_TYPE_STRING, parameters.rid.utf8().data(), "bitrate-priority", G_TYPE_DOUBLE, toWebRTCBitRatePriority(parameters.priority), nullptr));
 
@@ -124,12 +116,12 @@ ExceptionOr<GUniquePtr<GstStructure>> fromRTCEncodingParameters(const RTCRtpEnco
         gst_structure_set(rtcParameters.get(), "ssrc", G_TYPE_UINT, parameters.ssrc, nullptr);
 
     if (parameters.maxBitrate)
-        gst_structure_set(rtcParameters.get(), "max-bitrate", G_TYPE_UINT, *parameters.maxBitrate, nullptr);
+        gst_structure_set(rtcParameters.get(), "max-bitrate", G_TYPE_ULONG, *parameters.maxBitrate, nullptr);
 
     if (parameters.maxFramerate)
-        gst_structure_set(rtcParameters.get(), "max-framerate", G_TYPE_UINT, *parameters.maxFramerate, nullptr);
+        gst_structure_set(rtcParameters.get(), "max-framerate", G_TYPE_ULONG, *parameters.maxFramerate, nullptr);
 
-    if (parameters.scaleResolutionDownBy && kind == "video"_s)
+    if (parameters.scaleResolutionDownBy)
         gst_structure_set(rtcParameters.get(), "scale-resolution-down-by", G_TYPE_DOUBLE, *parameters.scaleResolutionDownBy, nullptr);
 
     if (parameters.networkPriority)
@@ -158,10 +150,10 @@ static inline RTCRtpEncodingParameters toRTCEncodingParameters(const GstStructur
 
     gst_structure_get(rtcParameters, "active", G_TYPE_BOOLEAN, &(parameters.active), nullptr);
 
-    if (auto maxBitrate = gstStructureGet<unsigned>(rtcParameters, "max-bitrate"_s))
+    if (auto maxBitrate = gstStructureGet<uint64_t>(rtcParameters, "max-bitrate"_s))
         parameters.maxBitrate = *maxBitrate;
 
-    if (auto maxFramerate = gstStructureGet<unsigned>(rtcParameters, "max-framerate"_s))
+    if (auto maxFramerate = gstStructureGet<uint64_t>(rtcParameters, "max-framerate"_s))
         parameters.maxFramerate = *maxFramerate;
 
     if (auto rid = gstStructureGetString(rtcParameters, "rid"_s))
@@ -179,28 +171,6 @@ static inline RTCRtpEncodingParameters toRTCEncodingParameters(const GstStructur
     return parameters;
 }
 
-static inline RTCRtpCodecParameters toRTCCodecParameters(const GstStructure* rtcParameters)
-{
-    RTCRtpCodecParameters parameters;
-
-    if (auto pt = gstStructureGet<unsigned>(rtcParameters, "pt"_s))
-        parameters.payloadType = *pt;
-
-    if (auto mimeType = gstStructureGetString(rtcParameters, "mime-type"_s))
-        parameters.mimeType = mimeType.toString();
-
-    if (auto clockRate = gstStructureGet<unsigned>(rtcParameters, "clock-rate"_s))
-        parameters.clockRate = *clockRate;
-
-    if (auto channels = gstStructureGet<unsigned>(rtcParameters, "channels"_s))
-        parameters.channels = *channels;
-
-    if (auto fmtpLine = gstStructureGetString(rtcParameters, "fmtp-line"_s))
-        parameters.sdpFmtpLine = fmtpLine.toString();
-
-    return parameters;
-}
-
 RTCRtpSendParameters toRTCRtpSendParameters(const GstStructure* rtcParameters)
 {
     if (!rtcParameters)
@@ -210,73 +180,32 @@ RTCRtpSendParameters toRTCRtpSendParameters(const GstStructure* rtcParameters)
     if (auto transactionId = gstStructureGetString(rtcParameters, "transaction-id"_s))
         parameters.transactionId = makeString(transactionId);
 
-    if (auto encodings = gst_structure_get_value(rtcParameters, "encodings")) {
-        unsigned size = gst_value_list_get_size(encodings);
-        parameters.encodings.reserveInitialCapacity(size);
-        for (unsigned i = 0; i < size; i++) {
-            const auto value = gst_value_list_get_value(encodings, i);
-            RELEASE_ASSERT(GST_VALUE_HOLDS_STRUCTURE(value));
-            parameters.encodings.append(toRTCEncodingParameters(gst_value_get_structure(value)));
-        }
+    auto* encodings = gst_structure_get_value(rtcParameters, "encodings");
+    unsigned size = gst_value_list_get_size(encodings);
+    for (unsigned i = 0; i < size; i++) {
+        const auto* value = gst_value_list_get_value(encodings, i);
+        RELEASE_ASSERT(GST_VALUE_HOLDS_STRUCTURE(value));
+        parameters.encodings.append(toRTCEncodingParameters(gst_value_get_structure(value)));
     }
 
-    if (auto codecs = gst_structure_get_value(rtcParameters, "codecs")) {
-        unsigned size = gst_value_list_get_size(codecs);
-        parameters.codecs.reserveInitialCapacity(size);
-        for (unsigned i = 0; i < size; i++) {
-            const auto value = gst_value_list_get_value(codecs, i);
-            RELEASE_ASSERT(GST_VALUE_HOLDS_STRUCTURE(value));
-            parameters.codecs.append(toRTCCodecParameters(gst_value_get_structure(value)));
-        }
-    }
-
-    // FIXME: The rtcp parameters should not be hardcoded.
-    parameters.rtcp.cname = "unused"_s;
-    parameters.rtcp.reducedSize = false;
-
-    // FIXME: Handle rtcParameters.degradationPreference, headerExtensions.
+    // FIXME: Handle rtcParameters.degradation_preference.
     return parameters;
 }
 
-GUniquePtr<GstStructure> fromRTCCodecParameters(const RTCRtpCodecParameters& parameters)
-{
-    GUniquePtr<GstStructure> rtcParameters(gst_structure_new("codec-parameters", "pt", G_TYPE_UINT, parameters.payloadType,
-        "mime-type", G_TYPE_STRING, parameters.mimeType.utf8().data(), "clock-rate", G_TYPE_UINT, parameters.clockRate,
-        "channels", G_TYPE_UINT, parameters.channels, "fmtp-line", G_TYPE_STRING, parameters.sdpFmtpLine.utf8().data(), nullptr));
-    return rtcParameters;
-}
-
-ExceptionOr<GUniquePtr<GstStructure>> fromRTCSendParameters(const RTCRtpSendParameters& parameters, const String& kind)
+GUniquePtr<GstStructure> fromRTCSendParameters(const RTCRtpSendParameters& parameters)
 {
     GUniquePtr<GstStructure> gstParameters(gst_structure_new("send-parameters", "transaction-id", G_TYPE_STRING, parameters.transactionId.ascii().data(), nullptr));
     GValue encodingsValue = G_VALUE_INIT;
     g_value_init(&encodingsValue, GST_TYPE_LIST);
     for (auto& encoding : parameters.encodings) {
-        auto encodingData = fromRTCEncodingParameters(encoding, kind);
-        if (encodingData.hasException())
-            return encodingData.releaseException();
+        auto encodingData = fromRTCEncodingParameters(encoding);
         GValue value = G_VALUE_INIT;
         g_value_init(&value, GST_TYPE_STRUCTURE);
-        gst_value_set_structure(&value, encodingData.returnValue().get());
+        gst_value_set_structure(&value, encodingData.get());
         gst_value_list_append_value(&encodingsValue, &value);
         g_value_unset(&value);
     }
     gst_structure_take_value(gstParameters.get(), "encodings", &encodingsValue);
-
-    GValue codecsValue = G_VALUE_INIT;
-    g_value_init(&codecsValue, GST_TYPE_LIST);
-    for (auto& codec : parameters.codecs) {
-        auto codecData = fromRTCCodecParameters(codec);
-        GValue value = G_VALUE_INIT;
-        g_value_init(&value, GST_TYPE_STRUCTURE);
-        gst_value_set_structure(&value, codecData.get());
-        gst_value_list_append_value(&codecsValue, &value);
-        g_value_unset(&value);
-    }
-    gst_structure_take_value(gstParameters.get(), "codecs", &codecsValue);
-
-    // FIXME: Missing serialization for degradationPreference, headerExtensions, rtcp.
-
     return gstParameters;
 }
 
@@ -287,15 +216,6 @@ static void ensureDebugCategoryInitialized()
         GST_DEBUG_CATEGORY_INIT(webkit_webrtc_utils_debug, "webkitwebrtcutils", 0, "WebKit WebRTC utilities");
     });
 }
-
-enum class NextSDPField {
-    None,
-    Typ,
-    Raddr,
-    Rport,
-    TcpType,
-    Ufrag
-};
 
 std::optional<RTCIceCandidate::Fields> parseIceCandidateSDP(const String& sdp)
 {
@@ -317,82 +237,64 @@ std::optional<RTCIceCandidate::Fields> parseIceCandidateSDP(const String& sdp)
     String relatedAddress;
     guint16 relatedPort = 0;
     String usernameFragment;
-    String lowercasedSDP = sdp.convertToASCIILowercase();
-    StringView view = StringView(lowercasedSDP).substring(10);
-    unsigned i = 0;
-    NextSDPField nextSdpField { NextSDPField::None };
+    auto tokens = sdp.convertToASCIILowercase().substring(10).split(' ');
 
-    for (auto token : view.split(' ')) {
-        auto tokenString = token.toStringWithoutCopying();
+    for (auto it = tokens.begin(); it != tokens.end(); ++it) {
+        auto i = std::distance(tokens.begin(), it);
+        auto token = *it;
         switch (i) {
         case 0:
-            foundation = tokenString;
+            foundation = token;
             break;
         case 1:
             if (auto value = parseInteger<unsigned>(token))
                 componentId = *value;
             else {
-                GST_WARNING("Invalid SDP candidate component ID: %s", tokenString.utf8().data());
+                GST_WARNING("Invalid SDP candidate component ID: %s", token.ascii().data());
                 return { };
             }
             break;
         case 2:
-            transport = tokenString;
+            transport = token;
             break;
         case 3:
             if (auto value = parseInteger<unsigned>(token))
                 priority = *value;
             else {
-                GST_WARNING("Invalid SDP candidate priority: %s", tokenString.utf8().data());
+                GST_WARNING("Invalid SDP candidate priority: %s", token.ascii().data());
                 return { };
             }
             break;
         case 4:
-            address = tokenString;
+            address = token;
             break;
         case 5:
             if (auto value = parseInteger<unsigned>(token))
                 port = *value;
             else {
-                GST_WARNING("Invalid SDP candidate port: %s", tokenString.utf8().data());
+                GST_WARNING("Invalid SDP candidate port: %s", token.ascii().data());
                 return { };
             }
             break;
         default:
-            if (token == "typ"_s)
-                nextSdpField = NextSDPField::Typ;
-            else if (token == "raddr"_s)
-                nextSdpField = NextSDPField::Raddr;
-            else if (token == "rport"_s)
-                nextSdpField = NextSDPField::Rport;
-            else if (token == "tcptype"_s)
-                nextSdpField = NextSDPField::TcpType;
-            else if (token == "ufrag"_s)
-                nextSdpField = NextSDPField::Ufrag;
-            else {
-                switch (nextSdpField) {
-                case NextSDPField::None:
-                    break;
-                case NextSDPField::Typ:
-                    type = tokenString;
-                    break;
-                case NextSDPField::Raddr:
-                    relatedAddress = tokenString;
-                    break;
-                case NextSDPField::Rport:
-                    relatedPort = parseInteger<unsigned>(token).value_or(0);
-                    break;
-                case NextSDPField::TcpType:
-                    tcptype = tokenString;
-                    break;
-                case NextSDPField::Ufrag:
-                    usernameFragment = tokenString;
-                    break;
-                }
+            if (it + 1 == tokens.end()) {
+                GST_WARNING("Incomplete SDP candidate");
+                return { };
             }
+
+            it++;
+            if (token == "typ"_s)
+                type = *it;
+            else if (token == "raddr"_s)
+                relatedAddress = *it;
+            else if (token == "rport"_s)
+                relatedPort = parseInteger<unsigned>(*it).value_or(0);
+            else if (token == "tcptype"_s)
+                tcptype = *it;
+            else if (token == "ufrag"_s)
+                usernameFragment = *it;
             break;
         }
-        i++;
     }
 
     if (type.isEmpty()) {
@@ -589,7 +491,7 @@ uint32_t UniqueSSRCGenerator::generateSSRC()
 
 std::optional<int> payloadTypeForEncodingName(StringView encodingName)
 {
-    static HashMap<String, int> staticPayloadTypes = {
+    static UncheckedKeyHashMap<String, int> staticPayloadTypes = {
         { "PCMU"_s, 0 },
         { "PCMA"_s, 8 },
         { "G722"_s, 9 },
@@ -601,13 +503,17 @@ std::optional<int> payloadTypeForEncodingName(StringView encodingName)
     return { };
 }
 
-GRefPtr<GstCaps> capsFromRtpCapabilities(const RTCRtpCapabilities& capabilities, Function<void(GstStructure*)> supplementCapsCallback)
+GRefPtr<GstCaps> capsFromRtpCapabilities(RefPtr<UniqueSSRCGenerator> ssrcGenerator, const RTCRtpCapabilities& capabilities, Function<void(GstStructure*)> supplementCapsCallback)
 {
     auto caps = adoptGRef(gst_caps_new_empty());
     for (unsigned index = 0; auto& codec : capabilities.codecs) {
         auto components = codec.mimeType.split('/');
         auto* codecStructure = gst_structure_new("application/x-rtp", "media", G_TYPE_STRING, components[0].ascii().data(),
             "encoding-name", G_TYPE_STRING, components[1].convertToASCIIUppercase().ascii().data() , "clock-rate", G_TYPE_INT, codec.clockRate, nullptr);
+
+        auto ssrc = ssrcGenerator->generateSSRC();
+        if (ssrc != std::numeric_limits<uint32_t>::max())
+            gst_structure_set(codecStructure, "ssrc", G_TYPE_UINT, ssrc, nullptr);
 
         if (!codec.sdpFmtpLine.isEmpty()) {
             for (auto& fmtp : codec.sdpFmtpLine.split(';')) {

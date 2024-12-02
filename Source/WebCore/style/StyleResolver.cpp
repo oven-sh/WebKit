@@ -104,8 +104,6 @@ public:
         : m_element(&element)
         , m_parentStyle(parentStyle)
     {
-        ASSERT(element.isConnected());
-
         auto& document = element.document();
         auto* documentElement = document.documentElement();
         if (!documentElement || documentElement == &element)

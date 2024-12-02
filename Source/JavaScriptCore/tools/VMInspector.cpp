@@ -39,8 +39,6 @@
 #include <wtf/Expected.h>
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(VMInspector);
@@ -415,7 +413,7 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     // Check if frame is an entryFrame.
     entryFrame = vm.topEntryFrame;
     while (entryFrame) {
-        if (entryFrame == std::bit_cast<EntryFrame*>(callFrame)) {
+        if (entryFrame == bitwise_cast<EntryFrame*>(callFrame)) {
             dataLogLn("CallFrame ", RawPointer(callFrame), " is an EntryFrame.");
             auto* entryRecord = vmEntryRecord(entryFrame);
             dataLogLn("    previous entryFrame: ", RawPointer(entryRecord->prevTopEntryFrame()));
@@ -583,7 +581,7 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
     size_t cellSize = cell->cellSize();
     size_t slotCount = cellSize / sizeof(EncodedJSValue);
 
-    EncodedJSValue* slots = std::bit_cast<EncodedJSValue*>(cell);
+    EncodedJSValue* slots = bitwise_cast<EncodedJSValue*>(cell);
     unsigned indentation = 0;
 
     auto indent = [&] {
@@ -712,7 +710,5 @@ void VMInspector::dumpSubspaceHashes(VM* vm)
     });
     dataLogLn();
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace JSC

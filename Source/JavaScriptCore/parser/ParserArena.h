@@ -32,8 +32,6 @@
 #include <type_traits>
 #include <wtf/SegmentedVector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
     class ParserArenaDeletable;
@@ -217,5 +215,3 @@ namespace JSC {
     };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

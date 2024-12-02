@@ -44,23 +44,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollLatchingController);
 // See also ScrollTreeLatchingController.cpp
 static const Seconds resetLatchedStateTimeout { 100_ms };
 
-ScrollLatchingController::ScrollLatchingController(Page& page)
-    : m_page(page)
-    , m_clearLatchingStateTimer(*this, &ScrollLatchingController::clearTimerFired)
+ScrollLatchingController::ScrollLatchingController()
+    : m_clearLatchingStateTimer(*this, &ScrollLatchingController::clearTimerFired)
 {
 }
 
 ScrollLatchingController::~ScrollLatchingController() = default;
-
-void ScrollLatchingController::ref() const
-{
-    m_page->ref();
-}
-
-void ScrollLatchingController::deref() const
-{
-    m_page->deref();
-}
 
 void ScrollLatchingController::clear()
 {

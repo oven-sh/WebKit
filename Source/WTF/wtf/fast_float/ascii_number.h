@@ -17,8 +17,6 @@
 #include <arm_neon.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace fast_float {
 
 template <typename UC>
@@ -406,7 +404,5 @@ parsed_number_string_t<UC> parse_number_string(UC const *p, UC const * pend, par
 }
 
 } // namespace fast_float
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

@@ -43,7 +43,6 @@ static WeakHashSet<SessionHost::BrowserTerminatedObserver>& browserTerminatedObs
 
 void SessionHost::inspectorDisconnected()
 {
-    Ref<SessionHost> protectedThis(*this);
     // Browser closed or crashed, finish all pending commands with error.
     for (auto messageID : copyToVector(m_commandRequests.keys())) {
         auto responseHandler = m_commandRequests.take(messageID);
@@ -105,21 +104,18 @@ void SessionHost::dispatchMessage(const String& message)
     responseHandler(WTFMove(response));
 }
 
+#if !USE(GLIB)
 bool SessionHost::isRemoteBrowser() const
 {
-    return m_isRemoteBrowser;
+    return false;
 }
+#endif
 
 #if ENABLE(WEBDRIVER_BIDI)
 void SessionHost::addBrowserTerminatedObserver(const BrowserTerminatedObserver& observer)
 {
     ASSERT(!browserTerminatedObservers().contains(observer));
     browserTerminatedObservers().add(observer);
-}
-
-void SessionHost::removeBrowserTerminatedObserver(const BrowserTerminatedObserver& observer)
-{
-    browserTerminatedObservers().remove(observer);
 }
 #endif
 

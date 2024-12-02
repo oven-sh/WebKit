@@ -92,6 +92,12 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
     return digestParams.returnValue()->identifier;
 }
 
+static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
+{
+    auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
+    auto* context = globalObject.scriptExecutionContext();
+    return context && context->settingsValues().deprecateRSAESPKCSWebCryptoEnabled;
+}
 static bool isAESCFBWebCryptoDeprecated(JSGlobalObject& state)
 {
     auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&state);
@@ -130,8 +136,6 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     auto params = convertDictionary<CryptoAlgorithmParameters>(state, value.get());
     if (UNLIKELY(params.hasException(scope)))
         return Exception { ExceptionCode::ExistingExceptionError };
-    if (params.returnValue().name == "RSAES-PKCS1-v1_5"_s || params.returnValue().name == "rsaes-pkcs1-v1_5"_s)
-        return Exception { ExceptionCode::NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
 
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(params.returnValue().name);
     if (UNLIKELY(!identifier))
@@ -149,7 +153,10 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     case Operations::Decrypt:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-            return Exception { ExceptionCode::NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+            if (isRSAESPKCSWebCryptoDeprecated(state))
+                return Exception { ExceptionCode::NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+            result = makeUnique<CryptoAlgorithmParameters>(params.releaseReturnValue());
+            break;
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
             auto params = convertDictionary<CryptoAlgorithmRsaOaepParams>(state, value.get());
             if (UNLIKELY(params.hasException(scope)))
@@ -232,8 +239,15 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         break;
     case Operations::GenerateKey:
         switch (*identifier) {
-        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-            return Exception { ExceptionCode::NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5: {
+            if (isRSAESPKCSWebCryptoDeprecated(state))
+                return Exception { ExceptionCode::NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+            auto params = convertDictionary<CryptoAlgorithmRsaKeyGenParams>(state, value.get());
+            if (UNLIKELY(params.hasException(scope)))
+                return Exception { ExceptionCode::ExistingExceptionError };
+            result = makeUnique<CryptoAlgorithmRsaKeyGenParams>(params.releaseReturnValue());
+            break;
+        }
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
@@ -355,7 +369,10 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     case Operations::ImportKey:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-            return Exception { ExceptionCode::NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+            if (isRSAESPKCSWebCryptoDeprecated(state))
+                return Exception { ExceptionCode::NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+            result = makeUnique<CryptoAlgorithmParameters>(params.releaseReturnValue());
+            break;
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
@@ -585,7 +602,7 @@ static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifie
 {
     switch (identifier) {
     case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-        return false;
+        return !isRSAESPKCSWebCryptoDeprecated(state);
     case CryptoAlgorithmIdentifier::AES_CFB:
         return !isAESCFBWebCryptoDeprecated(state);
     case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:

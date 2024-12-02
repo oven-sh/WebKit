@@ -31,8 +31,6 @@
 #include "PreciseJumpTargetsInlines.h"
 #include <wtf/BubbleSort.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 void BytecodeRewriter::applyModification()
@@ -149,5 +147,3 @@ void BytecodeRewriter::adjustJumpTargets()
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

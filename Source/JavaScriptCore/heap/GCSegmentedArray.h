@@ -31,8 +31,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(GCSegmentedArray);
@@ -54,7 +52,7 @@ public:
 
     T* data()
     {
-        return std::bit_cast<T*>(this + 1);
+        return bitwise_cast<T*>(this + 1);
     }
 
     static constexpr size_t blockSize = 4 * KB;
@@ -167,4 +165,3 @@ private:
 
 } // namespace JSC
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

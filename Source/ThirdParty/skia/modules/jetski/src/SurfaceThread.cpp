@@ -81,7 +81,7 @@ void* SurfaceThread::pthread_main(void* arg) {
                surfaceThread->message_callback, surfaceThread);
 
     while (surfaceThread->fRunning) {
-        int ident = ALOOPER_POLL_CALLBACK;
+        int ident = 0;
         while (ident == ALOOPER_POLL_CALLBACK) {
             ident = ALooper_pollOnce(0, nullptr, nullptr, nullptr);
         }

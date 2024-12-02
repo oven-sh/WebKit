@@ -44,10 +44,6 @@ class UIGamepadProvider final : public WebCore::GamepadProviderClient {
 public:
     static UIGamepadProvider& singleton();
 
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
-
     void processPoolStartedUsingGamepads(WebProcessPool&);
     void processPoolStoppedUsingGamepads(WebProcessPool&);
 

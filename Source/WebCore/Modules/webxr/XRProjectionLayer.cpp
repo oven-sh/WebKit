@@ -26,10 +26,9 @@
 #include "config.h"
 #include "XRProjectionLayer.h"
 
-#if ENABLE(WEBXR_LAYERS)
-
 #include "PlatformXR.h"
-#include <wtf/TZoneMallocInlines.h>
+
+#if ENABLE(WEBXR_LAYERS)
 
 namespace WebCore {
 
@@ -122,4 +121,4 @@ WebCore::WebGPU::XRProjectionLayer& XRProjectionLayer::backing()
 
 } // namespace WebCore
 
-#endif // ENABLE(WEBXR_LAYERS)
+#endif

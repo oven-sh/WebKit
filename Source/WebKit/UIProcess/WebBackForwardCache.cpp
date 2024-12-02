@@ -41,24 +41,13 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebBackForwardCache);
 
-WebBackForwardCache::WebBackForwardCache(WebProcessPool& processPool)
-    : m_processPool(processPool)
+WebBackForwardCache::WebBackForwardCache()
 {
 }
 
 WebBackForwardCache::~WebBackForwardCache()
 {
     clear();
-}
-
-void WebBackForwardCache::ref() const
-{
-    m_processPool->ref();
-}
-
-void WebBackForwardCache::deref() const
-{
-    m_processPool->deref();
 }
 
 inline void WebBackForwardCache::removeOldestEntry()
@@ -80,9 +69,10 @@ void WebBackForwardCache::setCapacity(WebProcessPool& pool, unsigned capacity)
     pool.sendToAllProcesses(Messages::WebProcess::SetBackForwardCacheCapacity(m_capacity));
 }
 
-void WebBackForwardCache::addEntry(WebBackForwardListItem& item, Ref<WebBackForwardCacheEntry>&& backForwardCacheEntry)
+void WebBackForwardCache::addEntry(WebBackForwardListItem& item, std::unique_ptr<WebBackForwardCacheEntry>&& backForwardCacheEntry)
 {
     ASSERT(capacity());
+    ASSERT(backForwardCacheEntry);
 
     if (item.backForwardCacheEntry()) {
         ASSERT(m_itemsWithCachedPage.contains(item));
@@ -101,12 +91,12 @@ void WebBackForwardCache::addEntry(WebBackForwardListItem& item, Ref<WebBackForw
 
 void WebBackForwardCache::addEntry(WebBackForwardListItem& item, std::unique_ptr<SuspendedPageProxy>&& suspendedPage)
 {
-    addEntry(item, WebBackForwardCacheEntry::create(*this, item.itemID(), suspendedPage->process().coreProcessIdentifier(), WTFMove(suspendedPage)));
+    addEntry(item, makeUnique<WebBackForwardCacheEntry>(*this, item.itemID(), suspendedPage->process().coreProcessIdentifier(), WTFMove(suspendedPage)));
 }
 
 void WebBackForwardCache::addEntry(WebBackForwardListItem& item, WebCore::ProcessIdentifier processIdentifier)
 {
-    addEntry(item, WebBackForwardCacheEntry::create(*this, item.itemID(), WTFMove(processIdentifier), nullptr));
+    addEntry(item, makeUnique<WebBackForwardCacheEntry>(*this, item.itemID(), WTFMove(processIdentifier), nullptr));
 }
 
 void WebBackForwardCache::removeEntry(WebBackForwardListItem& item)
@@ -130,7 +120,7 @@ std::unique_ptr<SuspendedPageProxy> WebBackForwardCache::takeSuspendedPage(WebBa
 
     ASSERT(m_itemsWithCachedPage.contains(item));
     ASSERT(item.backForwardCacheEntry());
-    auto suspendedPage = item.protectedBackForwardCacheEntry()->takeSuspendedPage();
+    auto suspendedPage = item.backForwardCacheEntry()->takeSuspendedPage();
     ASSERT(suspendedPage);
     removeEntry(item);
     return suspendedPage;

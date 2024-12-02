@@ -31,7 +31,7 @@ class RenderReplaced : public RenderBox {
 public:
     virtual ~RenderReplaced();
 
-    LayoutUnit computeReplacedLogicalWidth(ShouldComputePreferred = ShouldComputePreferred::ComputeActual) const override;
+    LayoutUnit computeReplacedLogicalWidth(ShouldComputePreferred = ComputeActual) const override;
     LayoutUnit computeReplacedLogicalHeight(std::optional<LayoutUnit> estimatedUsedWidth = std::nullopt) const override;
 
     LayoutRect replacedContentRect(const LayoutSize& intrinsicSize) const;
@@ -40,7 +40,6 @@ public:
     bool setNeedsLayoutIfNeededAfterIntrinsicSizeChange();
 
     LayoutSize intrinsicSize() const final;
-    FloatSize intrinsicRatio() const;
     
     bool isContentLikelyVisibleInViewport();
     bool needsPreferredWidthsRecalculation() const override;
@@ -48,8 +47,6 @@ public:
     double computeIntrinsicAspectRatio() const;
 
     void computeIntrinsicRatioInformation(FloatSize& intrinsicSize, FloatSize& intrinsicRatio) const override;
-
-    virtual bool paintsContent() const { return true; }
 
 protected:
     RenderReplaced(Type, Element&, RenderStyle&&, OptionSet<ReplacedFlag> = { });
@@ -76,10 +73,8 @@ protected:
 
     void willBeDestroyed() override;
 
-    virtual void layoutShadowContent(const LayoutSize&);
-
 private:
-    LayoutUnit computeConstrainedLogicalWidth() const;
+    LayoutUnit computeConstrainedLogicalWidth(ShouldComputePreferred) const;
 
     virtual RenderBox* embeddedContentBox() const { return 0; }
     ASCIILiteral renderName() const override { return "RenderReplaced"_s; }

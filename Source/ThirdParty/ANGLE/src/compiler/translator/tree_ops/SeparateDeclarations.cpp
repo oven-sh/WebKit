@@ -5,9 +5,10 @@
 //
 #include "compiler/translator/tree_ops/SeparateDeclarations.h"
 
-#include "common/hash_containers.h"
-#include "compiler/translator/IntermRebuild.h"
+#include <unordered_map>
 #include "compiler/translator/SymbolTable.h"
+
+#include "compiler/translator/IntermRebuild.h"
 #include "compiler/translator/util.h"
 
 namespace sh
@@ -18,10 +19,7 @@ namespace
 class Separator final : private TIntermRebuild
 {
   public:
-    Separator(TCompiler &compiler, bool separateCompoundStructDeclarations)
-        : TIntermRebuild(compiler, true, true),
-          mSeparateCompoundStructDeclarations(separateCompoundStructDeclarations)
-    {}
+    Separator(TCompiler &compiler) : TIntermRebuild(compiler, true, true) {}
     using TIntermRebuild::rebuildRoot;
 
   private:
@@ -29,56 +27,40 @@ class Separator final : private TIntermRebuild
     {
         ASSERT(!mNewStructure);  // No nested struct declarations.
         TIntermSequence &sequence = *node.getSequence();
-        if (sequence.size() <= 1 && !mSeparateCompoundStructDeclarations)
+        if (sequence.size() <= 1)
         {
             return;
         }
         TIntermTyped *declarator    = sequence.at(0)->getAsTyped();
         const TType &declaratorType = declarator->getType();
         const TStructure *structure = declaratorType.getStruct();
-        // Rewrite variable declarations that specify structs AND variable(s) at the same
-        // time.
+        // Rewrite variable declarations that specify structs AND multiple variables at the same
+        // time. Only one variable can specify the struct and rest must be rewritten with new
+        // type.
         if (!structure || !declaratorType.isStructSpecifier())
         {
             return;
         }
-        if (mSeparateCompoundStructDeclarations && sequence.size() == 1)
-        {
-            if (TIntermSymbol *symbol = declarator->getAsSymbolNode(); symbol != nullptr)
-            {
-                if (symbol->variable().symbolType() == SymbolType::Empty)
-                {
-                    return;
-                }
-            }
-        }
-        // By default, struct specifier changes for all variables except the first one.
+        // Struct specifier changes for all variables except the first one.
         uint32_t index = 1;
         if (structure->symbolType() == SymbolType::Empty)
         {
+
             TStructure *newStructure =
                 new TStructure(&mSymbolTable, kEmptyImmutableString, &structure->fields(),
                                SymbolType::AngleInternal);
             newStructure->setAtGlobalScope(structure->atGlobalScope());
             structure     = newStructure;
-            // Adding name causes the struct type to change, so also the first variable variable
-            // needs rewriting.
+            mNewStructure = newStructure;
+            // Adding name causes the struct type to change, so all variables need rewriting.
             index = 0;
         }
-        if (mSeparateCompoundStructDeclarations)
-        {
-            mNewStructure = structure;
-            // Separating struct and variable declaration causes the variable type to change
-            // from specifying to not-specifying, so also the first variable needs rewriting.
-            index = 0;
-        }
-
         for (; index < sequence.size(); ++index)
         {
             Declaration decl              = ViewDeclaration(node, index);
             const TVariable &var          = decl.symbol.variable();
             const TType &varType          = var.getType();
-            const bool newTypeIsSpecifier = index == 0 && !mSeparateCompoundStructDeclarations;
+            const bool newTypeIsSpecifier = index == 0;
             TType *newType                = new TType(structure, newTypeIsSpecifier);
             newType->setQualifier(varType.getQualifier());
             newType->makeArrays(varType.getArraySizes());
@@ -96,29 +78,28 @@ class Separator final : private TIntermRebuild
     PostResult visitDeclarationPost(TIntermDeclaration &node) override
     {
         TIntermSequence &sequence = *node.getSequence();
-        if (sequence.size() <= 1 && !mNewStructure)
+        if (sequence.size() <= 1)
         {
             return node;
         }
         std::vector<TIntermNode *> replacements;
+        uint32_t index = 0;
         if (mNewStructure)
         {
-            TType *newType = new TType(mNewStructure, true);
-            if (mNewStructure->atGlobalScope())
-            {
-                newType->setQualifier(EvqGlobal);
-            }
-            TVariable *structVar =
-                new TVariable(&mSymbolTable, kEmptyImmutableString, newType, SymbolType::Empty);
-            TIntermDeclaration *replacement = new TIntermDeclaration({structVar});
+            TType *namedType = new TType(mNewStructure, true);
+            namedType->setQualifier(EvqGlobal);
+            TIntermDeclaration *replacement = new TIntermDeclaration;
+            replacement->appendDeclarator(sequence.at(0)->getAsTyped());
             replacement->setLine(node.getLine());
             replacements.push_back(replacement);
             mNewStructure = nullptr;
+            index         = 1;
         }
-        for (uint32_t index = 0; index < sequence.size(); ++index)
+        for (; index < sequence.size(); ++index)
         {
+            TIntermDeclaration *replacement = new TIntermDeclaration;
             TIntermTyped *declarator        = sequence.at(index)->getAsTyped();
-            TIntermDeclaration *replacement = new TIntermDeclaration({declarator});
+            replacement->appendDeclarator(declarator);
             replacement->setLine(declarator->getLine());
             replacements.push_back(replacement);
         }
@@ -135,132 +116,16 @@ class Separator final : private TIntermRebuild
         return *new TIntermSymbol(it->second);
     }
 
-    PreResult visitFunctionPrototypePre(TIntermFunctionPrototype &node) override
-    {
-        const TFunction *function = node.getFunction();
-        auto it                   = mFunctionsToReplace.find(function);
-        if (it != mFunctionsToReplace.end())
-        {
-            TIntermFunctionPrototype *newFuncProto = new TIntermFunctionPrototype(it->second);
-            return newFuncProto;
-        }
-        else if (node.getType().isStructSpecifier())
-        {
-            const TType &oldType        = node.getType();
-            const TStructure *structure = oldType.getStruct();
-            // Name unnamed inline structs
-            if (structure->symbolType() == SymbolType::Empty)
-            {
-                TStructure *newStructure =
-                    new TStructure(&mSymbolTable, kEmptyImmutableString, &structure->fields(),
-                                   SymbolType::AngleInternal);
-                newStructure->setAtGlobalScope(structure->atGlobalScope());
-                structure = newStructure;
-            }
-            TType *newType = new TType(structure, true);
-            if (structure->atGlobalScope())
-            {
-                newType->setQualifier(EvqGlobal);
-            }
-            TVariable *structVar =
-                new TVariable(&mSymbolTable, ImmutableString(""), newType, SymbolType::Empty);
-            TType *returnType = new TType(structure, false);
-            if (oldType.isArray())
-            {
-                returnType->makeArrays(oldType.getArraySizes());
-            }
-            returnType->setQualifier(oldType.getQualifier());
-
-            const TFunction *oldFunc = function;
-            ASSERT(oldFunc->symbolType() == SymbolType::UserDefined);
-
-            const TFunction *newFunc     = cloneFunctionAndChangeReturnType(oldFunc, returnType);
-            mFunctionsToReplace[oldFunc] = newFunc;
-            if (getParentNode()->getAsFunctionDefinition() != nullptr)
-            {
-                mNewFunctionReturnStructDeclaration = new TIntermDeclaration({structVar});
-                return new TIntermFunctionPrototype(newFunc);
-            }
-            return PreResult::Multi(
-                {new TIntermDeclaration({structVar}), new TIntermFunctionPrototype(newFunc)});
-        }
-
-        return node;
-    }
-
-    PostResult visitFunctionDefinitionPost(TIntermFunctionDefinition &node) override
-    {
-        if (mNewFunctionReturnStructDeclaration)
-        {
-            return PostResult::Multi(
-                {std::exchange(mNewFunctionReturnStructDeclaration, nullptr), &node});
-        }
-        return node;
-    }
-
-    PreResult visitAggregatePre(TIntermAggregate &node) override
-    {
-        const TFunction *function = node.getFunction();
-        auto it                   = mFunctionsToReplace.find(function);
-        if (it != mFunctionsToReplace.end())
-        {
-            TIntermAggregate *replacementNode =
-                TIntermAggregate::CreateFunctionCall(*it->second, node.getSequence());
-
-            return PreResult(replacementNode, VisitBits::Children);
-        }
-
-        return node;
-    }
-
-  private:
-    const TFunction *cloneFunctionAndChangeReturnType(const TFunction *oldFunc,
-                                                      const TType *newReturnType)
-
-    {
-        ASSERT(oldFunc->symbolType() == SymbolType::UserDefined);
-
-        TFunction *newFunc = new TFunction(&mSymbolTable, oldFunc->name(), oldFunc->symbolType(),
-                                           newReturnType, oldFunc->isKnownToNotHaveSideEffects());
-
-        if (oldFunc->isDefined())
-        {
-            newFunc->setDefined();
-        }
-
-        if (oldFunc->hasPrototypeDeclaration())
-        {
-            newFunc->setHasPrototypeDeclaration();
-        }
-
-        const size_t paramCount = oldFunc->getParamCount();
-        for (size_t i = 0; i < paramCount; ++i)
-        {
-            const TVariable *var = oldFunc->getParam(i);
-            newFunc->addParameter(var);
-        }
-
-        return newFunc;
-    }
-
-    angle::HashMap<const TFunction *, const TFunction *> mFunctionsToReplace;
-    // New structure separated from function declaration.
-    TIntermDeclaration *mNewFunctionReturnStructDeclaration = nullptr;
-
-    // New structure from compound declaration.
     const TStructure *mNewStructure = nullptr;
     // Old struct variable to new struct variable mapping.
-    angle::HashMap<const TVariable *, TVariable *> mStructVariables;
-    const bool mSeparateCompoundStructDeclarations;
+    std::unordered_map<const TVariable *, TVariable *> mStructVariables;
 };
 
 }  // namespace
 
-bool SeparateDeclarations(TCompiler &compiler,
-                          TIntermBlock &root,
-                          bool separateCompoundStructDeclarations)
+bool SeparateDeclarations(TCompiler &compiler, TIntermBlock &root)
 {
-    Separator separator(compiler, separateCompoundStructDeclarations);
+    Separator separator(compiler);
     return separator.rebuildRoot(root);
 }
 

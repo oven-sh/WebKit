@@ -55,9 +55,6 @@ public:
     explicit UserMediaCaptureManager(WebProcess&);
     ~UserMediaCaptureManager();
 
-    void ref() const;
-    void deref() const;
-
     static ASCIILiteral supplementName();
 
     void didReceiveMessageFromGPUProcess(IPC::Connection& connection, IPC::Decoder& decoder) { didReceiveMessage(connection, decoder); }
@@ -137,7 +134,6 @@ private:
     void applyConstraintsSucceeded(WebCore::RealtimeMediaSourceIdentifier, WebCore::RealtimeMediaSourceSettings&&);
     void applyConstraintsFailed(WebCore::RealtimeMediaSourceIdentifier, WebCore::MediaConstraintType, String&&);
 
-    CheckedRef<WebProcess> m_process;
     using Source = std::variant<std::nullptr_t, Ref<RemoteRealtimeAudioSource>, Ref<RemoteRealtimeVideoSource>>;
     HashMap<WebCore::RealtimeMediaSourceIdentifier, Source> m_sources;
     NoOpCaptureDeviceManager m_noOpCaptureDeviceManager;

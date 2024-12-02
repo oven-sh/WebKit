@@ -104,7 +104,7 @@ MediaStreamTrack::MediaStreamTrack(ScriptExecutionContext& context, Ref<MediaStr
     m_isInterrupted = m_private->interrupted();
 
     if (m_private->isAudio())
-        PlatformMediaSessionManager::singleton().addAudioCaptureSource(*this);
+        PlatformMediaSessionManager::sharedManager().addAudioCaptureSource(*this);
 }
 
 MediaStreamTrack::~MediaStreamTrack()
@@ -115,7 +115,7 @@ MediaStreamTrack::~MediaStreamTrack()
         return;
 
     if (m_private->isAudio())
-        PlatformMediaSessionManager::singleton().removeAudioCaptureSource(*this);
+        PlatformMediaSessionManager::sharedManager().removeAudioCaptureSource(*this);
 }
 
 const AtomString& MediaStreamTrack::kind() const
@@ -253,7 +253,7 @@ void MediaStreamTrack::stopTrack(StopMode mode)
     m_ended = true;
 
     if (isAudio() && isCaptureTrack())
-        PlatformMediaSessionManager::singleton().audioCaptureSourceStateChanged();
+        PlatformMediaSessionManager::sharedManager().audioCaptureSourceStateChanged();
 
     configureTrackRendering();
 }
@@ -483,7 +483,7 @@ void MediaStreamTrack::trackStarted(MediaStreamTrackPrivate&)
 void MediaStreamTrack::trackEnded(MediaStreamTrackPrivate&)
 {
     if (m_isCaptureTrack && m_private->isAudio())
-        PlatformMediaSessionManager::singleton().removeAudioCaptureSource(*this);
+        PlatformMediaSessionManager::sharedManager().removeAudioCaptureSource(*this);
 
     ALWAYS_LOG(LOGIDENTIFIER);
 
@@ -534,7 +534,7 @@ void MediaStreamTrack::trackMutedChanged(MediaStreamTrackPrivate&)
         m_muted = muted;
 
         if (isAudio() && isCaptureTrack())
-            PlatformMediaSessionManager::singleton().audioCaptureSourceStateChanged();
+            PlatformMediaSessionManager::sharedManager().audioCaptureSourceStateChanged();
 
         dispatchEvent(Event::create(muted ? eventNames().muteEvent : eventNames().unmuteEvent, Event::CanBubble::No, Event::IsCancelable::No));
     };
@@ -635,14 +635,7 @@ Ref<MediaStreamTrack> MediaStreamTrack::create(ScriptExecutionContext& context, 
         });
     });
 
-    bool isEnded = privateTrack->ended();
-    Ref track = MediaStreamTrack::create(context, WTFMove(privateTrack), RegisterCaptureTrackToOwner::No);
-    if (isEnded) {
-        track->m_ended = true;
-        track->m_readyState = State::Ended;
-    }
-
-    return track;
+    return MediaStreamTrack::create(context, WTFMove(privateTrack), RegisterCaptureTrackToOwner::No);
 }
 
 #if !RELEASE_LOG_DISABLED

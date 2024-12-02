@@ -36,8 +36,6 @@
 #import <wtf/NeverDestroyed.h>
 #import <wtf/StdLibExtras.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 // FIXME: Default buttons really should be more like push buttons and not like buttons.
 
 namespace WebCore {
@@ -450,7 +448,5 @@ bool ThemeMac::supportsLargeFormControls()
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

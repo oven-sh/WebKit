@@ -25,7 +25,6 @@
 
 #include "config.h"
 #include "PageRevealEvent.h"
-
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {

@@ -33,9 +33,6 @@
 #define ZYDIS_STATUS_H
 
 #include "ZycoreStatus.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #ifdef __cplusplus
 extern "C" {
@@ -158,7 +155,5 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ZYDIS_STATUS_H */

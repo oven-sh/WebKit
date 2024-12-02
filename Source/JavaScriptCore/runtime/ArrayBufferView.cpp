@@ -29,8 +29,6 @@
 #include "DataView.h"
 #include "TypedArrayInlines.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 ArrayBufferView::ArrayBufferView(TypedArrayType type, RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> byteLength)
@@ -109,5 +107,3 @@ void ArrayBufferView::setDetachable(bool flag)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

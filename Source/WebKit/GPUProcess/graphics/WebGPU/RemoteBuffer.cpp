@@ -114,7 +114,7 @@ void RemoteBuffer::copy(std::optional<WebCore::SharedMemoryHandle>&& dataHandle,
 
     memcpySpan(buffer.subspan(offset), data);
 #else
-    backing().copyFrom(data, offset);
+    backing().copy(data, offset);
 #endif
     completionHandler(true);
 

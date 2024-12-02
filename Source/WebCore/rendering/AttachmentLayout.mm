@@ -35,7 +35,6 @@
 #include "GeometryUtilities.h"
 #include "RenderTheme.h"
 #include <pal/spi/cf/CoreTextSPI.h>
-#include <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebCore {
 

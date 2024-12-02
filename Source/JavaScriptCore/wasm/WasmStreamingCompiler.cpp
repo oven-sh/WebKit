@@ -26,7 +26,6 @@
 #include "config.h"
 #include "WasmStreamingCompiler.h"
 
-#include "DeferredWorkTimerInlines.h"
 #include "JSBigInt.h"
 #include "JSWebAssembly.h"
 #include "JSWebAssemblyCompileError.h"
@@ -48,10 +47,10 @@ StreamingCompiler::StreamingCompiler(VM& vm, CompilerMode compilerMode, JSGlobal
     , m_info(Wasm::ModuleInformation::create())
     , m_parser(m_info.get(), *this)
 {
-    Vector<JSCell*> dependencies;
-    dependencies.append(globalObject);
+    Vector<Weak<JSCell>> dependencies;
+    dependencies.append(Weak<JSCell>(globalObject));
     if (importObject)
-        dependencies.append(importObject);
+        dependencies.append(Weak<JSCell>(importObject));
     m_ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::AtSomePoint, vm, promise, WTFMove(dependencies));
 #ifndef BUN_SKIP_FAILING_ASSERTIONS
     ASSERT(vm.deferredWorkTimer->hasPendingWork(m_ticket));
@@ -143,7 +142,7 @@ void StreamingCompiler::didComplete()
     case CompilerMode::Validation: {
         m_vm.deferredWorkTimer->scheduleWorkSoon(ticket, [result = WTFMove(result)](DeferredWorkTimer::Ticket ticket) mutable {
             JSPromise* promise = jsCast<JSPromise*>(ticket->target());
-            JSGlobalObject* globalObject = jsCast<JSGlobalObject*>(ticket->dependencies()[0]);
+            JSGlobalObject* globalObject = jsCast<JSGlobalObject*>(ticket->dependencies()[0].get());
             VM& vm = globalObject->vm();
             auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -164,8 +163,8 @@ void StreamingCompiler::didComplete()
     case CompilerMode::FullCompile: {
         m_vm.deferredWorkTimer->scheduleWorkSoon(ticket, [result = WTFMove(result)](DeferredWorkTimer::Ticket ticket) mutable {
             JSPromise* promise = jsCast<JSPromise*>(ticket->target());
-            JSGlobalObject* globalObject = jsCast<JSGlobalObject*>(ticket->dependencies()[0]);
-            JSObject* importObject = jsCast<JSObject*>(ticket->dependencies()[1]);
+            JSGlobalObject* globalObject = jsCast<JSGlobalObject*>(ticket->dependencies()[0].get());
+            JSObject* importObject = jsCast<JSObject*>(ticket->dependencies()[1].get());
             VM& vm = globalObject->vm();
             auto scope = DECLARE_THROW_SCOPE(vm);
 

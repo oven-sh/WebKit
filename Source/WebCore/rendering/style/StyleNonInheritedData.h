@@ -29,10 +29,6 @@
 #include <wtf/DataRef.h>
 #include <wtf/RefCounted.h>
 
-namespace WTF {
-class TextStream;
-}
-
 namespace WebCore {
 
 class StyleBoxData;
@@ -49,10 +45,6 @@ public:
     Ref<StyleNonInheritedData> copy() const;
 
     bool operator==(const StyleNonInheritedData&) const;
-
-#if !LOG_DISABLED
-    void dumpDifferences(TextStream&, const StyleNonInheritedData&) const;
-#endif
 
     DataRef<StyleBoxData> boxData;
     DataRef<StyleBackgroundData> backgroundData;

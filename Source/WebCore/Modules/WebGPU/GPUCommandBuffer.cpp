@@ -38,10 +38,4 @@ void GPUCommandBuffer::setLabel(String&& label)
     m_backing->setLabel(WTFMove(label));
 }
 
-void GPUCommandBuffer::setBacking(WebGPU::CommandEncoder& commandEncoder, WebGPU::CommandBuffer& commandBuffer)
-{
-    m_encoder->setBacking(commandEncoder);
-    m_backing = commandBuffer;
-}
-
 }

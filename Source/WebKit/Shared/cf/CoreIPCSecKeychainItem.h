@@ -30,7 +30,8 @@
 #import <Security/SecKeychainItem.h>
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/RetainPtr.h>
-#import <wtf/cf/VectorCF.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -78,7 +79,8 @@ public:
         if (!m_persistentRef)
             return { };
 
-        return span(m_persistentRef.get());
+        CFDataRef data = m_persistentRef.get();
+        return { CFDataGetBytePtr(data), static_cast<size_t>(CFDataGetLength(data)) };
     }
 
 private:
@@ -100,5 +102,7 @@ private:
 };
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // HAVE(SEC_KEYCHAIN)

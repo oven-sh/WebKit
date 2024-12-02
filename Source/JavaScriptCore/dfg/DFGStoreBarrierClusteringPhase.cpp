@@ -36,8 +36,6 @@
 #include "JSCJSValueInlines.h"
 #include <wtf/FastBitVector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 namespace {
@@ -178,6 +176,5 @@ bool performStoreBarrierClustering(Graph& graph)
 
 } } // namespace JSC::DFG
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(DFG_JIT)
+

@@ -14,8 +14,6 @@ features: [TypedArray]
 
 var TypedArrayPrototype = TypedArray.prototype;
 
-verifyProperty(TypedArrayPrototype, 'copyWithin', {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(TypedArrayPrototype, 'copyWithin');
+verifyWritable(TypedArrayPrototype, 'copyWithin');
+verifyConfigurable(TypedArrayPrototype, 'copyWithin');

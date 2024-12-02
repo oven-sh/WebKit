@@ -38,7 +38,6 @@ namespace JSC {
     v(entryOSREntry, NoPtrTag) \
     v(wasmOSREntry, NoPtrTag) \
     v(wasmTailCallWasmEntryPtrTag, NoPtrTag) \
-    v(wasmIPIntTailCallWasmEntryPtrTag, NoPtrTag) \
     v(exceptionHandler, NoPtrTag) \
     v(returnFromLLInt, NoPtrTag) \
     v(llint_function_for_call_arity_checkUntag, NoPtrTag) \

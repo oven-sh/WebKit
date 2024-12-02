@@ -68,7 +68,8 @@ private:
         std::optional<Vector<BufferDynamicOffset>>&&) final;
 
     void setBindGroup(Index32, const BindGroup&,
-        std::span<const uint32_t> dynamicOffsetsArrayBuffer,
+        const uint32_t* dynamicOffsetsArrayBuffer,
+        size_t dynamicOffsetsArrayBufferLength,
         Size64 dynamicOffsetsDataStart,
         Size32 dynamicOffsetsDataLength) final;
 
@@ -77,8 +78,6 @@ private:
     void insertDebugMarker(String&& markerLabel) final;
 
     void setLabelInternal(const String&) final;
-
-    Ref<ConvertToBackingContext> protectedConvertToBackingContext() const { return m_convertToBackingContext; }
 
     WebGPUPtr<WGPUComputePassEncoder> m_backing;
     Ref<ConvertToBackingContext> m_convertToBackingContext;

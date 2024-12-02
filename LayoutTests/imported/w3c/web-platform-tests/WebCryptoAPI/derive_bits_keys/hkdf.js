@@ -45,13 +45,13 @@ function define_tests() {
                             });
                         }, testName);
 
-                        // 0 length
+                        // 0 length (OperationError)
                         subsetTest(promise_test, function(test) {
                             return subtle.deriveBits(algorithm, baseKeys[derivedKeySize], 0)
                             .then(function(derivation) {
                                 assert_equals(derivation.byteLength, 0, "Derived correctly empty key");
                             }, function(err) {
-                                assert_unreached("deriveBits failed with error " + err.name + ": " + err.message);
+                                assert_equals(err.name, "OperationError", "deriveBits with 0 length correctly threw OperationError: " + err.message);
                             });
                         }, testName + " with 0 length");
 

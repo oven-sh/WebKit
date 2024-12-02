@@ -102,11 +102,9 @@
 #include "ContentChangeObserver.h"
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Node);
+WTF_MAKE_COMPACT_TZONE_OR_ISO_ALLOCATED_IMPL(Node);
 
 using namespace HTMLNames;
 
@@ -120,13 +118,11 @@ public:
 #endif
     uint32_t refCountAndParentBit;
     uint32_t nodeFlags;
-    uint16_t elementStateFlags;
-    uint16_t styleBitfields;
     void* parentNode;
     void* treeScope;
-    void* previous;
+    uint8_t previous[8];
     void* next;
-    void* renderer;
+    uint8_t rendererWithStyleFlags[8];
     uint8_t rareDataWithBitfields[8];
 };
 
@@ -196,8 +192,6 @@ static ASCIILiteral stringForRareDataUseType(NodeRareData::UseType useType)
         return "ExplicitlySetAttrElementsMap"_s;
     case NodeRareData::UseType::Popover:
         return "Popover"_s;
-    case NodeRareData::UseType::UserInfo:
-        return "UserInfo"_s;
     }
     return { };
 }
@@ -438,7 +432,7 @@ Node::~Node()
 
     ASSERT(!renderer());
     ASSERT(!parentNode());
-    ASSERT(!m_previousSibling);
+    ASSERT(!m_previous.pointer());
     ASSERT(!m_next);
 
     {
@@ -2462,16 +2456,6 @@ static inline bool tryAddEventListener(Node* targetNode, const AtomString& event
         document->addTouchEventHandler(*targetNode);
 #endif
 
-#if ENABLE(CONTENT_CHANGE_OBSERVER)
-    if (typeInfo.isInCategory(EventCategory::MouseMoveRelated)) {
-        if (WeakPtr observer = document->contentChangeObserverIfExists())
-            observer->didAddMouseMoveRelatedEventListener(eventType, *targetNode);
-    }
-#endif
-
-    if (CheckedPtr cache = document->existingAXObjectCache())
-        cache->onEventListenerAdded(*targetNode, eventType);
-
     return true;
 }
 
@@ -2513,9 +2497,6 @@ static inline bool didRemoveEventListenerOfType(Node& targetNode, const AtomStri
     if (typeInfo.isInCategory(EventCategory::Gesture))
         document->removeTouchEventHandler(targetNode);
 #endif
-
-    if (CheckedPtr cache = document->existingAXObjectCache())
-        cache->onEventListenerRemoved(targetNode, eventType);
 
     return true;
 }
@@ -3092,8 +3073,6 @@ TextStream& operator<<(TextStream& ts, const Node& node)
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if ENABLE(TREE_DEBUGGING)
 

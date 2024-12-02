@@ -41,6 +41,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -100,8 +101,9 @@ template<> void JSTestDefaultToJSONIndirectInheritanceDOMConstructor::initialize
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 1> JSTestDefaultToJSONIndirectInheritancePrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONIndirectInheritanceConstructor, 0 } },
+static const HashTableValue JSTestDefaultToJSONIndirectInheritancePrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONIndirectInheritanceConstructor, 0 } },
 };
 
 const ClassInfo JSTestDefaultToJSONIndirectInheritancePrototype::s_info = { "TestDefaultToJSONIndirectInheritance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestDefaultToJSONIndirectInheritancePrototype) };

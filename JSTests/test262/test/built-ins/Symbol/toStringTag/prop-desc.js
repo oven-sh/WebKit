@@ -12,8 +12,6 @@ features: [Symbol.toStringTag]
 ---*/
 
 assert.sameValue(typeof Symbol.toStringTag, 'symbol');
-verifyProperty(Symbol, 'toStringTag', {
-  writable: false,
-  enumerable: false,
-  configurable: false,
-});
+verifyNotEnumerable(Symbol, 'toStringTag');
+verifyNotWritable(Symbol, 'toStringTag');
+verifyNotConfigurable(Symbol, 'toStringTag');

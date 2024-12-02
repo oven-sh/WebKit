@@ -31,8 +31,6 @@
 #include <wtf/DataLog.h>
 #include <wtf/TZoneMalloc.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace ARM64Disassembler {
 
 class A64DOpcode {
@@ -1049,5 +1047,3 @@ public:
 } } // namespace JSC::ARM64Disassembler
 
 using JSC::ARM64Disassembler::A64DOpcode;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

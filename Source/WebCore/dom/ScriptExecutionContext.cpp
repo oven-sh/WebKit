@@ -953,15 +953,6 @@ bool ScriptExecutionContext::requiresScriptExecutionTelemetry(ScriptTelemetryCat
     return true;
 }
 
-bool ScriptExecutionContext::isAlwaysOnLoggingAllowed() const
-{
-    auto sessionID = this->sessionID();
-    if (!sessionID)
-        return false;
-
-    return sessionID->isAlwaysOnLoggingAllowed() || settingsValues().allowPrivacySensitiveOperationsInNonPersistentDataStores;
-}
-
 WebCoreOpaqueRoot root(ScriptExecutionContext* context)
 {
     return WebCoreOpaqueRoot { context };

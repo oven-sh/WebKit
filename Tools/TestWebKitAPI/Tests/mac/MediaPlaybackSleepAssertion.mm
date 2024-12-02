@@ -141,8 +141,7 @@ static bool hasAssertionType(CFStringRef type)
     return false;
 }
 
-// FIXME: https://webkit.org/b/282671
-TEST(WebKitLegacy, DISABLED_MediaPlaybackSleepAssertion)
+TEST(WebKitLegacy, MediaPlaybackSleepAssertion)
 {
     JSC::Config::configureForTesting();
 

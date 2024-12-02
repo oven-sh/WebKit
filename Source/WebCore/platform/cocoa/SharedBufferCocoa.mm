@@ -35,8 +35,6 @@
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 @interface WebCoreSharedBufferData : NSData
 - (instancetype)initWithDataSegment:(const WebCore::DataSegment&)dataSegment position:(NSUInteger)position size:(NSUInteger)size;
 @end
@@ -188,5 +186,3 @@ RetainPtr<NSData> SharedBufferDataView::createNSData() const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

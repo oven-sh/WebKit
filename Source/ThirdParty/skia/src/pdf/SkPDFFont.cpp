@@ -23,6 +23,7 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
+#include "include/core/SkPathEffect.h"
 #include "include/core/SkPathTypes.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
@@ -65,8 +66,6 @@
 #include <initializer_list>
 #include <memory>
 #include <utility>
-
-using namespace skia_private;
 
 void SkPDFFont::GetType1GlyphNames(const SkTypeface& face, SkString* dst) {
     face.getPostScriptGlyphNames(dst);
@@ -119,9 +118,9 @@ static bool scale_paint(SkPaint& paint, SkScalar fontToEMScale) {
         }
     }
     if (SkPathEffectBase* peb = as_PEB(paint.getPathEffect())) {
-        AutoSTMalloc<4, SkScalar> intervals;
+        skia_private::AutoSTMalloc<4, SkScalar> intervals;
         SkPathEffectBase::DashInfo dashInfo(intervals, 4, 0);
-        if (peb->asADash(&dashInfo) == SkPathEffectBase::DashType::kDash) {
+        if (peb->asADash(&dashInfo) == SkPathEffect::kDash_DashType) {
             if (dashInfo.fCount > 4) {
                 intervals.realloc(dashInfo.fCount);
                 peb->asADash(&dashInfo);
@@ -314,16 +313,6 @@ const std::vector<SkUnichar>& SkPDFFont::GetUnicodeMap(const SkTypeface& typefac
     std::vector<SkUnichar> buffer(typeface.countGlyphs());
     typeface.getGlyphToUnicodeMap(buffer.data());
     return *canon->fToUnicodeMap.set(id, std::move(buffer));
-}
-
-THashMap<SkGlyphID, SkString>& SkPDFFont::GetUnicodeMapEx(const SkTypeface& typeface,
-                                                          SkPDFDocument* canon) {
-    SkASSERT(canon);
-    SkTypefaceID id = typeface.uniqueID();
-    if (THashMap<SkGlyphID, SkString>* ptr = canon->fToUnicodeMapEx.find(id)) {
-        return *ptr;
-    }
-    return *canon->fToUnicodeMapEx.set(id, THashMap<SkGlyphID, SkString>());
 }
 
 SkAdvancedTypefaceMetrics::FontType SkPDFFont::FontType(const SkPDFStrike& pdfStrike,
@@ -539,7 +528,6 @@ static void emit_subset_type0(const SkPDFFont& font, SkPDFDocument* doc) {
     SkASSERT(SkToSizeT(typeface.countGlyphs()) == glyphToUnicode.size());
     std::unique_ptr<SkStreamAsset> toUnicode =
             SkPDFMakeToUnicodeCmap(glyphToUnicode.data(),
-                                   SkPDFFont::GetUnicodeMapEx(typeface, doc),
                                    &font.glyphUsage(),
                                    font.multiByteGlyphs(),
                                    font.firstGlyphID(),
@@ -902,7 +890,6 @@ static void emit_subset_type3(const SkPDFFont& pdfFont, SkPDFDocument* doc) {
     const std::vector<SkUnichar>& glyphToUnicode = SkPDFFont::GetUnicodeMap(pathTypeface, doc);
     SkASSERT(glyphToUnicode.size() == SkToSizeT(pathTypeface.countGlyphs()));
     auto toUnicodeCmap = SkPDFMakeToUnicodeCmap(glyphToUnicode.data(),
-                                                SkPDFFont::GetUnicodeMapEx(pathTypeface, doc),
                                                 &subset,
                                                 false,
                                                 firstGlyphID,

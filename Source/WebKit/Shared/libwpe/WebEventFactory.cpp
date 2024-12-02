@@ -30,6 +30,8 @@
 #include <WebCore/Scrollbar.h>
 #include <cmath>
 #include <wpe/wpe.h>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebKit {
 
@@ -306,27 +308,35 @@ static WebKit::WebPlatformTouchPoint::State stateForTouchPoint(int mainEventId, 
 
 WebTouchEvent WebEventFactory::createWebTouchEvent(struct wpe_input_touch_event* event, float deviceScaleFactor)
 {
-    WebEventType type;
+    auto type = WebEventType::TouchMove;
+    static NeverDestroyed<HashMap<int32_t, int32_t, DefaultHash<int32_t>, WTF::UnsignedWithZeroKeyHashTraits<int32_t>>> activeTrackingTouchPoints;
+    static int32_t uniqueTouchPointId = WebCore::mousePointerID + 1;
+    int32_t pointId;
+
     switch (event->type) {
     case wpe_input_touch_event_type_down:
         type = WebEventType::TouchStart;
+        activeTrackingTouchPoints.get().add(event->id, uniqueTouchPointId);
+        pointId = uniqueTouchPointId;
+        uniqueTouchPointId++;
         break;
     case wpe_input_touch_event_type_motion:
         type = WebEventType::TouchMove;
+        pointId = activeTrackingTouchPoints.get().get(event->id);
         break;
     case wpe_input_touch_event_type_up:
         type = WebEventType::TouchEnd;
+        pointId = activeTrackingTouchPoints.get().take(event->id);
         break;
-    default:
+    case wpe_input_touch_event_type_null:
         ASSERT_NOT_REACHED();
-        break;
     }
 
     Vector<WebKit::WebPlatformTouchPoint> touchPoints;
     touchPoints.reserveCapacity(event->touchpoints_length);
 
     for (unsigned i = 0; i < event->touchpoints_length; ++i) {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // WPE port
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         auto& point = event->touchpoints[i];
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         if (point.type == wpe_input_touch_event_type_null)
@@ -335,7 +345,7 @@ WebTouchEvent WebEventFactory::createWebTouchEvent(struct wpe_input_touch_event*
         WebCore::IntPoint pointCoordinates(point.x, point.y);
         pointCoordinates.scale(1 / deviceScaleFactor);
         touchPoints.append(
-            WebKit::WebPlatformTouchPoint(point.id, stateForTouchPoint(event->id, &point),
+            WebKit::WebPlatformTouchPoint(pointId, stateForTouchPoint(event->id, &point),
                 pointCoordinates, pointCoordinates));
     }
 

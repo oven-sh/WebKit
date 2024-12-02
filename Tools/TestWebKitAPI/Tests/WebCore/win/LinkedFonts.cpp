@@ -35,7 +35,6 @@ void appendLinkedFonts(WCHAR* linkedFonts, unsigned length, Vector<String>* resu
 
 namespace TestWebKitAPI {
 
-#if USE(CAIRO)
 // Test the appendLinkedFonts function with normal input data (string with pairs of font filenames and font names separated with \0).
 TEST(WebCore, appendLinkedFontsTest)
 {
@@ -60,6 +59,5 @@ TEST(WebCore, appendLinkedFontsWithMissingCommaTest)
     appendLinkedFonts(linkedFonts, sizeof(linkedFonts) / sizeof(WCHAR), &result);
     ASSERT(!result.size());
 }
-#endif
 
 } // namespace TestWebKitAPI

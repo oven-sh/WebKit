@@ -25,10 +25,6 @@
 
 #pragma once
 
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 WTF_EXTERN_C_BEGIN
 
 #if USE(APPLE_INTERNAL_SDK)
@@ -119,5 +115,3 @@ int cced25519_verify(const struct ccdigest_info *, size_t len, const void *cc_si
 #endif // USE(APPLE_INTERNAL_SDK)
 
 WTF_EXTERN_C_END
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

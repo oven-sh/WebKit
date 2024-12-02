@@ -23,7 +23,7 @@
 
 #if PLATFORM(COCOA) && ENABLE(GPU_PROCESS) && ENABLE(MEDIA_STREAM)
 
-messages -> RemoteSampleBufferDisplayLayer {
+messages -> RemoteSampleBufferDisplayLayer NotRefCounted {
 #if !RELEASE_LOG_DISABLED
     SetLogIdentifier(String logIdentifier)
 #endif

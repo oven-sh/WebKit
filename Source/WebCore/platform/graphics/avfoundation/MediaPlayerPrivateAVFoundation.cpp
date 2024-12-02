@@ -53,8 +53,6 @@
 #include <wtf/URL.h>
 #include <wtf/text/CString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 MediaPlayerPrivateAVFoundation::MediaPlayerPrivateAVFoundation(MediaPlayer* player)
@@ -923,7 +921,5 @@ String convertEnumerationToString(MediaPlayerPrivateAVFoundation::MediaRendering
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

@@ -79,7 +79,6 @@
 #include "NodeList.h"
 #include "NodeTraversal.h"
 #include "Page.h"
-#include "ProcessSyncClient.h"
 #include "ProcessWarming.h"
 #include "RemoteFrame.h"
 #include "RenderLayerCompositor.h"
@@ -279,12 +278,12 @@ void LocalFrame::setView(RefPtr<LocalFrameView>&& view)
     protectedLoader()->resetMultipleFormSubmissionProtection();
 }
 
-Ref<Editor> LocalFrame::protectedEditor()
+CheckedRef<Editor> LocalFrame::checkedEditor()
 {
     return editor();
 }
 
-Ref<const Editor> LocalFrame::protectedEditor() const
+CheckedRef<const Editor> LocalFrame::checkedEditor() const
 {
     return editor();
 }
@@ -307,7 +306,7 @@ void LocalFrame::setDocument(RefPtr<Document>&& newDocument)
     if (RefPtr previousDocument = m_doc) {
 #if ENABLE(ATTACHMENT_ELEMENT)
         for (Ref attachment : previousDocument->attachmentElementsByIdentifier().values())
-            protectedEditor()->didRemoveAttachmentElement(attachment);
+            checkedEditor()->didRemoveAttachmentElement(attachment);
 #endif
 
         if (previousDocument->backForwardCacheState() != Document::InBackForwardCache)
@@ -325,7 +324,7 @@ void LocalFrame::setDocument(RefPtr<Document>&& newDocument)
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     if (RefPtr document = m_doc) {
-        Ref editor = this->editor();
+        CheckedRef editor = this->editor();
         for (Ref attachment : document->attachmentElementsByIdentifier().values())
             editor->didInsertAttachmentElement(attachment);
     }
@@ -893,19 +892,22 @@ std::optional<SimpleRange> LocalFrame::rangeForPoint(const IntPoint& framePoint)
         return std::nullopt;
 
     if (auto previousCharacterRange = makeSimpleRange(position.previous(), position)) {
-        if (protectedEditor()->firstRectForRange(*previousCharacterRange).contains(framePoint))
+        if (checkedEditor()->firstRectForRange(*previousCharacterRange).contains(framePoint))
             return *previousCharacterRange;
     }
 
     if (auto nextCharacterRange = makeSimpleRange(position, position.next())) {
-        if (protectedEditor()->firstRectForRange(*nextCharacterRange).contains(framePoint))
+        if (checkedEditor()->firstRectForRange(*nextCharacterRange).contains(framePoint))
             return *nextCharacterRange;
     }
 
     return std::nullopt;
 }
 
-void LocalFrame::createView(const IntSize& viewportSize, const std::optional<Color>& backgroundColor, const IntSize& fixedLayoutSize, bool useFixedLayout, ScrollbarMode horizontalScrollbarMode, bool horizontalLock, ScrollbarMode verticalScrollbarMode, bool verticalLock)
+void LocalFrame::createView(const IntSize& viewportSize, const std::optional<Color>& backgroundColor,
+    const IntSize& fixedLayoutSize, const IntRect& fixedVisibleContentRect,
+    bool useFixedLayout, ScrollbarMode horizontalScrollbarMode, bool horizontalLock,
+    ScrollbarMode verticalScrollbarMode, bool verticalLock)
 {
     ASSERT(page());
 
@@ -920,6 +922,11 @@ void LocalFrame::createView(const IntSize& viewportSize, const std::optional<Col
     if (isRootFrame) {
         frameView = LocalFrameView::create(*this, viewportSize);
         frameView->setFixedLayoutSize(fixedLayoutSize);
+#if USE(COORDINATED_GRAPHICS)
+        frameView->setFixedVisibleContentRect(fixedVisibleContentRect);
+#else
+        UNUSED_PARAM(fixedVisibleContentRect);
+#endif
         frameView->setUseFixedLayout(useFixedLayout);
     } else
         frameView = LocalFrameView::create(*this);
@@ -1013,7 +1020,7 @@ void LocalFrame::setPageAndTextZoomFactors(float pageZoomFactor, float textZoomF
     if (!document)
         return;
 
-    protectedEditor()->dismissCorrectionPanelAsIgnored();
+    checkedEditor()->dismissCorrectionPanelAsIgnored();
 
     // Respect SVGs zoomAndPan="disabled" property in standalone SVG documents.
     // FIXME: How to handle compound documents + zoomAndPan="disabled"? Needs SVG WG clarification.
@@ -1243,7 +1250,7 @@ void LocalFrame::documentURLDidChange(const URL& url)
 {
     if (RefPtr page = this->page(); page && isMainFrame()) {
         page->setMainFrameURL(url);
-        page->processSyncClient().broadcastMainFrameURLChangeToOtherProcesses(url);
+        protectedLoader()->client().broadcastMainFrameURLChangeToOtherProcesses(url);
     }
 }
 

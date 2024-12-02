@@ -13,7 +13,6 @@ defines:
   - verifyNotEnumerable # deprecated
   - verifyConfigurable # deprecated
   - verifyNotConfigurable # deprecated
-  - verifyPrimordialProperty
 ---*/
 
 // @ts-check
@@ -281,10 +280,3 @@ function verifyNotConfigurable(obj, name) {
     throw new Test262Error("Expected obj[" + String(name) + "] NOT to be configurable, but was.");
   }
 }
-
-/**
- * Use this function to verify the properties of a primordial object.
- * For non-primordial objects, use verifyProperty.
- * See: https://github.com/tc39/how-we-work/blob/main/terminology.md#primordial
- */
-var verifyPrimordialProperty = verifyProperty;

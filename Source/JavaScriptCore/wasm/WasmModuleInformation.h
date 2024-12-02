@@ -35,7 +35,7 @@
 
 namespace JSC { namespace Wasm {
 
-struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> {
+struct ModuleInformation : public ThreadSafeRefCounted<ModuleInformation> {
 
     using BranchHints = UncheckedKeyHashMap<uint32_t, BranchHintMap, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
@@ -172,7 +172,6 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     Vector<TypeIndex> importExceptionTypeIndices;
     Vector<TypeIndex> internalExceptionTypeIndices;
     Vector<Ref<TypeDefinition>> typeSignatures;
-    Vector<Ref<TypeDefinition>> recursionGroups;
 
     MemoryInformation memory;
 

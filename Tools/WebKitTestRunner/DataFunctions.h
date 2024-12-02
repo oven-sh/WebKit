@@ -42,7 +42,8 @@ inline WKDataRef dataValue(WKTypeRef value)
 
 inline WTF::UUID dataToUUID(WKDataRef data)
 {
-    return WTF::UUID { WKDataGetSpan(data) };
+    RELEASE_ASSERT(WKDataGetSize(data) == 16);
+    return WTF::UUID { std::span<const uint8_t, 16> { WKDataGetBytes(data), 16 } };
 }
 
 inline WKRetainPtr<WKDataRef> uuidToData(const WTF::UUID& uuid)

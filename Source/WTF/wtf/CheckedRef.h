@@ -49,13 +49,13 @@ public:
     {
         unpoison(*this);
         if (auto* ptr = PtrTraits::exchange(m_ptr, nullptr))
-            PtrTraits::unwrap(ptr)->decrementCheckedPtrCount();
+            PtrTraits::unwrap(ptr)->decrementPtrCount();
     }
 
     CheckedRef(T& object)
         : m_ptr(&object)
     {
-        PtrTraits::unwrap(m_ptr)->incrementCheckedPtrCount();
+        PtrTraits::unwrap(m_ptr)->incrementPtrCount();
     }
 
     enum AdoptTag { Adopt };
@@ -68,7 +68,7 @@ public:
         : m_ptr { PtrTraits::unwrap(other.m_ptr) }
     {
         auto* ptr = PtrTraits::unwrap(m_ptr);
-        ptr->incrementCheckedPtrCount();
+        ptr->incrementPtrCount();
     }
 
     template<typename OtherType, typename OtherPtrTraits>
@@ -76,7 +76,7 @@ public:
         : m_ptr { PtrTraits::unwrap(other.m_ptr) }
     {
         auto* ptr = PtrTraits::unwrap(m_ptr);
-        ptr->incrementCheckedPtrCount();
+        ptr->incrementPtrCount();
     }
 
     ALWAYS_INLINE CheckedRef(CheckedRef&& other)
@@ -104,10 +104,10 @@ public:
 
     ALWAYS_INLINE T* ptr() const
     {
-        // In normal execution, a CheckedPtr always points to an object with a non-zero checkedPtrCount().
+        // In normal execution, a CheckedPtr always points to an object with a non-zero ptrCount().
         // When it detects a dangling pointer, WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR scribbles an object with zeroes and then leaks it.
-        // When we check checkedPtrCountWithoutThreadCheck() here, we're checking for a scribbled object.
-        ASSERT(PtrTraits::unwrap(m_ptr)->checkedPtrCountWithoutThreadCheck());
+        // When we check ptrCountWithoutThreadCheck() here, we're checking for a scribbled object.
+        ASSERT(PtrTraits::unwrap(m_ptr)->ptrCountWithoutThreadCheck());
         return PtrTraits::unwrap(m_ptr);
     }
 
@@ -278,23 +278,23 @@ public:
 
     ~CanMakeCheckedPtrBase() = default;
 
-    PtrCounterType checkedPtrCount() const { return m_checkedPtrCount; }
-    void incrementCheckedPtrCount() const { ++m_checkedPtrCount; }
-    ALWAYS_INLINE void decrementCheckedPtrCount() const
+    PtrCounterType ptrCount() const { return m_count; }
+    void incrementPtrCount() const { ++m_count; }
+    ALWAYS_INLINE void decrementPtrCount() const
     {
-        // In normal execution, a CheckedPtr always points to an object with a non-zero checkedPtrCount().
+        // In normal execution, a CheckedPtr always points to an object with a non-zero ptrCount().
         // When it detects a dangling pointer, WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR scribbles an object with zeroes and then leaks it.
-        // When we check checkedPtrCountWithoutThreadCheck() here, we're checking for a scribbled object.
-        RELEASE_ASSERT(checkedPtrCountWithoutThreadCheck());
-        --m_checkedPtrCount;
+        // When we check ptrCountWithoutThreadCheck() here, we're checking for a scribbled object.
+        RELEASE_ASSERT(ptrCountWithoutThreadCheck());
+        --m_count;
     }
 
-    ALWAYS_INLINE PtrCounterType checkedPtrCountWithoutThreadCheck() const
+    ALWAYS_INLINE PtrCounterType ptrCountWithoutThreadCheck() const
     {
         if constexpr (std::is_same_v<StorageType, std::atomic<uint32_t>>)
-            return m_checkedPtrCount;
+            return m_count;
         else
-            return m_checkedPtrCount.valueWithoutThreadCheck();
+            return m_count.valueWithoutThreadCheck();
     }
 
     friend bool operator==(const CanMakeCheckedPtrBase&, const CanMakeCheckedPtrBase&)
@@ -304,7 +304,7 @@ public:
     }
 
 private:
-    mutable StorageType m_checkedPtrCount { 0 };
+    mutable StorageType m_count { 0 };
 };
 
 template<typename T, DefaultedOperatorEqual defaultedOperatorEqual = DefaultedOperatorEqual::No>

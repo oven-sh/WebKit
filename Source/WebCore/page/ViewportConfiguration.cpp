@@ -548,12 +548,8 @@ void ViewportConfiguration::updateConfiguration()
     else if (booleanViewportArgumentIsSet(m_viewportArguments.shrinkToFit))
         m_configuration.allowsShrinkToFit = m_viewportArguments.shrinkToFit != 0.;
 
-    if (canOverrideConfigurationParameters()) {
-        if (!viewportArgumentsOverridesWidth)
-            m_configuration.width = m_minimumLayoutSize.width();
-        else if (layoutSizeIsExplicitlyScaled())
-            m_configuration.width /= effectiveLayoutScale;
-    }
+    if (canOverrideConfigurationParameters() && !viewportArgumentsOverridesWidth)
+        m_configuration.width = m_minimumLayoutSize.width();
 
     m_configuration.avoidsUnsafeArea = m_viewportArguments.viewportFit != ViewportFit::Cover;
     m_configuration.initialScaleIgnoringLayoutScaleFactor = m_configuration.initialScale;

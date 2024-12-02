@@ -8,22 +8,20 @@
 description("Tests basic use of requestAnimationFrame");
 jsTestIsAsync = true;
 
-onload = async () => {
-    await testRunner?.displayAndTrackRepaints();
-    
-    let callbackCount = 0;
-    let rAFCallback = () => {
-        testPassed("requestAnimationFrame callback was called");
-        callbackCount++;
-        if (callbackCount < 5)
-            requestAnimationFrame(rAFCallback);
-        else
-           finishJSTest();
-    }
-    
-    requestAnimationFrame(rAFCallback);
+if (window.testRunner)
+    testRunner.displayAndTrackRepaints();
+
+let callbackCount = 0;
+let rAFCallback = () => {
+    testPassed("requestAnimationFrame callback was called");
+    callbackCount++;
+    if (callbackCount < 5)
+        requestAnimationFrame(rAFCallback);
+    else
+       finishJSTest();
 }
 
+requestAnimationFrame(rAFCallback);
 
 </script>
 </body>

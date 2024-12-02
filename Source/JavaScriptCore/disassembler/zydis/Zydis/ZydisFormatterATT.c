@@ -29,9 +29,6 @@
 #if ENABLE(ZYDIS)
 
 #include "ZydisInternalFormatterATT.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 /* ============================================================================================== */
 /* Constants                                                                                      */
@@ -429,7 +426,5 @@ ZyanStatus ZydisFormatterATTPrintIMM(const ZydisFormatter* formatter,
 /* ---------------------------------------------------------------------------------------------- */
 
 /* ============================================================================================== */
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

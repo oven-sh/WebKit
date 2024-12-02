@@ -415,6 +415,15 @@ bool InternalSettings::vp9DecoderEnabled() const
 #endif
 }
 
+bool InternalSettings::mediaSourceInlinePaintingEnabled() const
+{
+#if ENABLE(MEDIA_SOURCE) && (HAVE(AVSAMPLEBUFFERVIDEOOUTPUT) || USE(GSTREAMER))
+    return DeprecatedGlobalSettings::mediaSourceInlinePaintingEnabled();
+#else
+    return false;
+#endif
+}
+
 ExceptionOr<void> InternalSettings::setCustomPasteboardDataEnabled(bool enabled)
 {
     if (!m_page)

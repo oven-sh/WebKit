@@ -31,11 +31,11 @@
     function doTest()
     {
         // For some reason this delay is required for AppKit to not short-circuit the display.
-        window.setTimeout(async function() {
+        window.setTimeout(function() {
             var hadLayersBefore = false;
             var hadLayersAfter = false;
             if (window.testRunner) {
-                await testRunner.displayAndTrackRepaints(); // Need to paint for overlap testing.
+                testRunner.displayAndTrackRepaints(); // Need to paint for overlap testing.
                 hadLayersBefore = window.internals.layerTreeAsText(document) != "";
             }
 

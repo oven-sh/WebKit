@@ -9,16 +9,15 @@ Here we:
         <title></title>
         <link rel="stylesheet" href="resources/cached.css">
         <script type="text/javascript">
-            async function test() {
+            function test() {
                 document.body.offsetTop;
-                testRunner?.waitUntilDone();
-                await testRunner?.displayAndTrackRepaints();
+                if (window.testRunner)
+                    testRunner.displayAndTrackRepaints();
                 // remove text, this requests layout for DIV,
                 // but only simplified layout for TABLE
                 document.getElementById("blockDiv").innerText = "";
                 // change color, no layout for TABLE, only repaint
                 document.getElementById("foo").style.borderColor = "lime";
-                testRunner?.notifyDone();
             }
         </script>
     </head>

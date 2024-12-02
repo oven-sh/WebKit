@@ -30,8 +30,6 @@
 #include <wtf/StackPointer.h>
 #include <wtf/ThreadingPrimitives.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 class StackBounds {
@@ -160,5 +158,3 @@ private:
 } // namespace WTF
 
 using WTF::StackBounds;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -24,7 +24,6 @@
 
 #pragma once
 
-#include "CSSPrimitiveNumericTypes+Canonicalization.h"
 #include "CSSPropertyParserConsumer+MetaConsumerDefinitions.h"
 
 namespace WebCore {
@@ -46,7 +45,7 @@ struct TimeValidator {
     template<auto R> static bool isValid(CSS::TimeRaw<R> raw, CSSPropertyParserOptions)
     {
         return isValidDimensionValue(raw, [&] {
-            auto canonicalValue = CSS::canonicalize(raw);
+            auto canonicalValue = CSS::canonicalizeTime(raw.value, raw.type);
             return canonicalValue >= raw.range.min && canonicalValue <= raw.range.max;
         });
     }

@@ -46,8 +46,6 @@
 
 #include <wtf/Scope.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculationFailureDebugInfo);
@@ -511,7 +509,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         case UnboxedBooleanInGPR:
             jit.store32(
                 recovery.gpr(),
-                &std::bit_cast<EncodedValueDescriptor*>(scratch + index)->asBits.payload);
+                &bitwise_cast<EncodedValueDescriptor*>(scratch + index)->asBits.payload);
             break;
             
         case InPair:
@@ -594,7 +592,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
 #else
             jit.store32(
                 AssemblyHelpers::TrustedImm32(JSValue::Int32Tag),
-                &std::bit_cast<EncodedValueDescriptor*>(scratch + index)->asBits.tag);
+                &bitwise_cast<EncodedValueDescriptor*>(scratch + index)->asBits.tag);
 #endif
             break;
 
@@ -617,7 +615,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         case UnboxedBooleanInGPR:
             jit.store32(
                 AssemblyHelpers::TrustedImm32(JSValue::BooleanTag),
-                &std::bit_cast<EncodedValueDescriptor*>(scratch + index)->asBits.tag);
+                &bitwise_cast<EncodedValueDescriptor*>(scratch + index)->asBits.tag);
             break;
 
         case BooleanDisplacedInJSStack:
@@ -630,7 +628,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
 
         case UnboxedCellInGPR:
             jit.storeCell(
-                &std::bit_cast<EncodedValueDescriptor*>(scratch + index)->asBits.tag);
+                &bitwise_cast<EncodedValueDescriptor*>(scratch + index)->asBits.tag);
             break;
 
         case CellDisplacedInJSStack:
@@ -880,7 +878,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDebugPrintSpeculationFailure, void, (
     auto* debugInfo = context.arg<SpeculationFailureDebugInfo*>();
     CodeBlock* codeBlock = debugInfo->codeBlock;
     CodeBlock* alternative = codeBlock->alternative();
-    CallFrame* callFrame = std::bit_cast<CallFrame*>(context.fp());
+    CallFrame* callFrame = bitwise_cast<CallFrame*>(context.fp());
 
     VM& vm = codeBlock->vm();
     NativeCallFrameTracer tracer(vm, callFrame);
@@ -906,14 +904,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDebugPrintSpeculationFailure, void, (
         FPRReg fpr = FPRInfo::toRegister(i);
         dataLog(" ", FPRInfo::debugName(fpr), ":");
         uint64_t bits = context.fpr<uint64_t>(fpr);
-        double value = std::bit_cast<double>(bits);
+        double value = bitwise_cast<double>(bits);
         dataLogF("%llx:%lf", static_cast<long long>(bits), value);
     }
     dataLog("\n");
 }
 
 } } // namespace JSC::DFG
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(DFG_JIT)

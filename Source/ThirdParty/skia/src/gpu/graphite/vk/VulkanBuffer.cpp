@@ -24,16 +24,8 @@ sk_sp<Buffer> VulkanBuffer::Make(const VulkanSharedContext* sharedContext,
     VkBuffer buffer;
     skgpu::VulkanAlloc alloc;
 
-    // TODO (b/374749633): We can't use protected buffers in the vertex shader. The checks below
-    // make sure we don't use it for vertex or index buffers. But we currently don't have a way to
-    // check here if it is a uniform or storage buffer that is used in the vertex shader. If we hit
-    // that issue and need those GpuOnly buffers, we'll need to pass in some information to the
-    // factory to say what stage the buffer is for. Maybe expand AccessPattern to be
-    // GpuOnly_NotVertex or some better name like that.
     bool isProtected = sharedContext->isProtected() == Protected::kYes &&
-                       accessPattern == AccessPattern::kGpuOnly &&
-                       type != BufferType::kVertex &&
-                       type != BufferType::kIndex;
+                       accessPattern == AccessPattern::kGpuOnly;
 
     // Protected memory _never_ uses mappable buffers.
     // Otherwise, the only time we don't require mappable buffers is when we're on a device
@@ -154,8 +146,7 @@ sk_sp<Buffer> VulkanBuffer::Make(const VulkanSharedContext* sharedContext,
     }
 
     return sk_sp<Buffer>(new VulkanBuffer(
-            sharedContext, size, type, accessPattern, std::move(buffer), alloc, bufInfo.usage,
-            Protected(isProtected)));
+            sharedContext, size, type, accessPattern, std::move(buffer), alloc, bufInfo.usage));
 }
 
 VulkanBuffer::VulkanBuffer(const VulkanSharedContext* sharedContext,
@@ -164,9 +155,8 @@ VulkanBuffer::VulkanBuffer(const VulkanSharedContext* sharedContext,
                            AccessPattern accessPattern,
                            VkBuffer buffer,
                            const skgpu::VulkanAlloc& alloc,
-                           const VkBufferUsageFlags usageFlags,
-                           Protected isProtected)
-        : Buffer(sharedContext, size, isProtected)
+                           const VkBufferUsageFlags usageFlags)
+        : Buffer(sharedContext, size)
         , fBuffer(std::move(buffer))
         , fAlloc(alloc)
         , fBufferUsageFlags(usageFlags)

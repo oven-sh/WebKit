@@ -56,7 +56,7 @@ DrawingAreaProxy::DrawingAreaProxy(DrawingAreaType type, WebPageProxy& webPagePr
 
 DrawingAreaProxy::~DrawingAreaProxy() = default;
 
-RefPtr<WebPageProxy> DrawingAreaProxy::protectedWebPageProxy() const
+Ref<WebPageProxy> DrawingAreaProxy::protectedWebPageProxy() const
 {
     return m_webPageProxy.get();
 }
@@ -120,9 +120,9 @@ bool DrawingAreaProxy::setSize(const IntSize& size, const IntSize& scrollDelta)
     return true;
 }
 
-WebPageProxy* DrawingAreaProxy::page() const
+WebPageProxy& DrawingAreaProxy::page() const
 {
-    return m_webPageProxy.get();
+    return m_webPageProxy;
 }
 
 #if PLATFORM(COCOA)
@@ -144,8 +144,8 @@ void DrawingAreaProxy::didChangeViewExposedRect()
 
 void DrawingAreaProxy::viewExposedRectChangedTimerFired()
 {
-    RefPtr webPageProxy = m_webPageProxy.get();
-    if (!webPageProxy || !webPageProxy->hasRunningProcess())
+    Ref webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy->hasRunningProcess())
         return;
 
     auto viewExposedRect = webPageProxy->viewExposedRect();

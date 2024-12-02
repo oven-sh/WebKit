@@ -14,8 +14,6 @@ features: [TypedArray]
 
 var TypedArrayPrototype = TypedArray.prototype;
 
-verifyProperty(TypedArrayPrototype, 'fill', {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(TypedArrayPrototype, 'fill');
+verifyWritable(TypedArrayPrototype, 'fill');
+verifyConfigurable(TypedArrayPrototype, 'fill');

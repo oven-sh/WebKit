@@ -28,13 +28,9 @@
 #include "WebChromeClient.h"
 
 #include "APIArray.h"
-#include "APIDictionary.h"
 #include "APIInjectedBundleFormClient.h"
 #include "APIInjectedBundlePageUIClient.h"
-#include "APINumber.h"
-#include "APIObject.h"
 #include "APISecurityOrigin.h"
-#include "APIString.h"
 #include "DrawingArea.h"
 #include "FindController.h"
 #include "FrameInfoData.h"
@@ -107,7 +103,6 @@
 #include <WebCore/TextRecognitionOptions.h>
 #include <WebCore/ViewportConfiguration.h>
 #include <WebCore/WindowFeatures.h>
-#include <wtf/JSONValues.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
@@ -692,6 +687,13 @@ void WebChromeClient::invalidateContentsForSlowScroll(const IntRect& rect)
     }
 
     page->pageDidScroll();
+#if USE(COORDINATED_GRAPHICS)
+    RefPtr frameView = page->localMainFrameView();
+    if (frameView && frameView->delegatesScrolling()) {
+        page->drawingArea()->scroll(rect, IntSize());
+        return;
+    }
+#endif
     page->drawingArea()->setNeedsDisplayInRect(rect);
 }
 
@@ -773,20 +775,20 @@ void WebChromeClient::scrollContainingScrollViewsToRevealRect(const IntRect&) co
     notImplemented();
 }
 
-bool WebChromeClient::shouldUnavailablePluginMessageBeButton(PluginUnavailabilityReason pluginUnavailabilityReason) const
+bool WebChromeClient::shouldUnavailablePluginMessageBeButton(RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason) const
 {
     switch (pluginUnavailabilityReason) {
-    case PluginUnavailabilityReason::PluginMissing:
+    case RenderEmbeddedObject::PluginMissing:
         // FIXME: <rdar://problem/8794397> We should only return true when there is a
         // missingPluginButtonClicked callback defined on the Page UI client.
-    case PluginUnavailabilityReason::InsecurePluginVersion:
+    case RenderEmbeddedObject::InsecurePluginVersion:
         return true;
 
 
-    case PluginUnavailabilityReason::PluginCrashed:
-    case PluginUnavailabilityReason::PluginBlockedByContentSecurityPolicy:
-    case PluginUnavailabilityReason::UnsupportedPlugin:
-    case PluginUnavailabilityReason::PluginTooSmall:
+    case RenderEmbeddedObject::PluginCrashed:
+    case RenderEmbeddedObject::PluginBlockedByContentSecurityPolicy:
+    case RenderEmbeddedObject::UnsupportedPlugin:
+    case RenderEmbeddedObject::PluginTooSmall:
         return false;
     }
 
@@ -794,7 +796,7 @@ bool WebChromeClient::shouldUnavailablePluginMessageBeButton(PluginUnavailabilit
     return false;
 }
     
-void WebChromeClient::unavailablePluginButtonClicked(Element& element, PluginUnavailabilityReason pluginUnavailabilityReason) const
+void WebChromeClient::unavailablePluginButtonClicked(Element& element, RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason) const
 {
     UNUSED_PARAM(element);
     UNUSED_PARAM(pluginUnavailabilityReason);
@@ -815,10 +817,10 @@ void WebChromeClient::mouseDidMoveOverElement(const HitTestResult& hitTestResult
     page->send(Messages::WebPageProxy::MouseDidMoveOverElement(webHitTestResultData, wkModifiers, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
 }
 
+static constexpr unsigned maxTitleLength = 1000; // Closest power of 10 above the W3C recommendation for Title length.
+
 void WebChromeClient::print(LocalFrame& frame, const StringWithDirection& title)
 {
-    static constexpr unsigned maxTitleLength = 1000; // Closest power of 10 above the W3C recommendation for Title length.
-
     auto webFrame = WebFrame::fromCoreFrame(frame);
     ASSERT(webFrame);
 
@@ -1569,37 +1571,6 @@ bool WebChromeClient::shouldDispatchFakeMouseMoveEvents() const
     return protectedPage()->shouldDispatchFakeMouseMoveEvents();
 }
 
-static RefPtr<API::Object> userDataFromJSONData(JSON::Value& value)
-{
-    switch (value.type()) {
-    case JSON::Value::Type::Null:
-        return API::String::createNull(); // FIXME: Encode nil properly.
-    case JSON::Value::Type::Boolean:
-        return API::Boolean::create(*value.asBoolean());
-    case JSON::Value::Type::Double:
-        return API::Double::create(*value.asDouble());
-    case JSON::Value::Type::Integer:
-        return API::Int64::create(*value.asInteger());
-    case JSON::Value::Type::String:
-        return API::String::create(value.asString());
-    case JSON::Value::Type::Object: {
-        auto result = API::Dictionary::create();
-        for (auto [key, value] : *value.asObject())
-            result->add(key, userDataFromJSONData(value));
-        return result;
-    }
-    case JSON::Value::Type::Array: {
-        auto array = value.asArray();
-        Vector<RefPtr<API::Object>> result;
-        for (auto& item : *value.asArray())
-            result.append(userDataFromJSONData(item));
-        return API::Array::create(WTFMove(result));
-    }
-    }
-    ASSERT_NOT_REACHED();
-    return nullptr;
-}
-
 void WebChromeClient::handleAutoFillButtonClick(HTMLInputElement& inputElement)
 {
     RefPtr<API::Object> userData;
@@ -1608,14 +1579,6 @@ void WebChromeClient::handleAutoFillButtonClick(HTMLInputElement& inputElement)
     auto nodeHandle = InjectedBundleNodeHandle::getOrCreate(inputElement);
     auto page = protectedPage();
     page->injectedBundleUIClient().didClickAutoFillButton(page, nodeHandle.get(), userData);
-
-    if (!userData) {
-        auto userInfo = inputElement.userInfo();
-        if (!userInfo.isNull()) {
-            if (auto data = JSON::Value::parseJSON(inputElement.userInfo()))
-                userData = userDataFromJSONData(*data);
-        }
-    }
 
     // Notify the UIProcess.
     page->send(Messages::WebPageProxy::HandleAutoFillButtonClick(UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
@@ -1762,7 +1725,7 @@ void WebChromeClient::setMockWebAuthenticationConfiguration(const MockWebAuthent
 #endif
 
 #if PLATFORM(PLAYSTATION)
-void WebChromeClient::postAccessibilityNotification(WebCore::AccessibilityObject&, WebCore::AXNotification)
+void WebChromeClient::postAccessibilityNotification(WebCore::AccessibilityObject&, WebCore::AXObjectCache::AXNotification)
 {
     notImplemented();
 }
@@ -1772,7 +1735,7 @@ void WebChromeClient::postAccessibilityNodeTextChangeNotification(WebCore::Acces
     notImplemented();
 }
 
-void WebChromeClient::postAccessibilityFrameLoadingEventNotification(WebCore::AccessibilityObject*, WebCore::AXLoadingEvent)
+void WebChromeClient::postAccessibilityFrameLoadingEventNotification(WebCore::AccessibilityObject*, WebCore::AXObjectCache::AXLoadingEvent)
 {
     notImplemented();
 }
@@ -1979,16 +1942,6 @@ void WebChromeClient::getImageBufferResourceLimitsForTesting(CompletionHandler<v
 bool WebChromeClient::requiresScriptTelemetryForURL(const URL& url, const SecurityOrigin& topOrigin) const
 {
     return WebProcess::singleton().requiresScriptTelemetryForURL(url, topOrigin);
-}
-
-void WebChromeClient::callAfterPendingSyntheticClick(CompletionHandler<void(SyntheticClickResult)>&& completion)
-{
-    protectedPage()->callAfterPendingSyntheticClick(WTFMove(completion));
-}
-
-void WebChromeClient::didSwallowClickEvent(const PlatformMouseEvent& event, Node& node)
-{
-    protectedPage()->didSwallowClickEvent(event, node);
 }
 
 } // namespace WebKit

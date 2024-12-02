@@ -212,6 +212,7 @@ const char* Thread::normalizeThreadName(const char* threadName)
         result = result.right(kLinuxThreadNameLimit);
 #endif
     auto characters = result.span8();
+    ASSERT(characters.data()[characters.size()] == '\0');
     return byteCast<char>(characters.data());
 #endif
 }
@@ -506,7 +507,7 @@ void initialize()
 #endif
         setPermissionsOfConfigPage();
         Config::initialize();
-#if USE(TZONE_MALLOC) && !USE(SYSTEM_MALLOC)
+#if USE(TZONE_MALLOC)
         bmalloc::api::TZoneHeapManager::singleton(); // Force initialization.
 #endif
         Gigacage::ensureGigacage();

@@ -187,16 +187,14 @@ public final class WKSRKEntity: NSObject {
         }
     }
 
-    @objc(applyIBLData:withCompletion:) public func applyIBL(data: Data, completion: @escaping (Bool) -> Void) {
+    @objc(applyIBLData:) public func applyIBL(data: Data) {
 #if canImport(RealityKit, _version: 366)
         guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
             Logger.realityKitEntity.error("Cannot get CGImageSource from IBL image data")
-            completion(false)
             return
         }
         guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
             Logger.realityKitEntity.error("Cannot get CGImage from CGImageSource")
-            completion(false)
             return
         }
 
@@ -209,17 +207,15 @@ public final class WKSRKEntity: NSObject {
                     entity.components[ImageBasedLightComponent.self] = .init(source: .single(environment))
                     entity.components[ImageBasedLightReceiverComponent.self] = .init(imageBasedLight: entity)
                 }
-                completion(true)
             } catch {
                 Logger.realityKitEntity.error("Cannot load environment resource from CGImage")
-                completion(false)
             }
         }
 #endif
     }
 
     @objc(removeIBL) public func removeIBL() {
-        entity.components[ImageBasedLightComponent.self] = .init(source: .none)
+        entity.components[ImageBasedLightComponent.self] = nil
         entity.components[ImageBasedLightReceiverComponent.self] = nil
     }
 

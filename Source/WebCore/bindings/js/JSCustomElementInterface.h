@@ -45,7 +45,6 @@ class PrivateName;
 
 namespace WebCore {
 
-class CustomElementRegistry;
 class DOMWrapperWorld;
 class Document;
 class Element;
@@ -61,8 +60,8 @@ public:
         return adoptRef(*new JSCustomElementInterface(name, callback, globalObject));
     }
 
-    Ref<Element> constructElementWithFallback(Document&, CustomElementRegistry&, const AtomString&, ParserConstructElementWithEmptyStack = ParserConstructElementWithEmptyStack::No);
-    Ref<Element> constructElementWithFallback(Document&, CustomElementRegistry&, const QualifiedName&);
+    Ref<Element> constructElementWithFallback(Document&, const AtomString&, ParserConstructElementWithEmptyStack = ParserConstructElementWithEmptyStack::No);
+    Ref<Element> constructElementWithFallback(Document&, const QualifiedName&);
     Ref<HTMLElement> createElement(Document&);
 
     void upgradeElement(Element&);
@@ -123,7 +122,7 @@ public:
 private:
     JSCustomElementInterface(const QualifiedName&, JSC::JSObject* callback, JSDOMGlobalObject*);
 
-    RefPtr<Element> tryToConstructCustomElement(Document&, CustomElementRegistry&, const AtomString&, ParserConstructElementWithEmptyStack);
+    RefPtr<Element> tryToConstructCustomElement(Document&, const AtomString&, ParserConstructElementWithEmptyStack);
 
     template<typename Function>
     void invokeCallback(Element&, JSC::JSObject* callback, const Function& addArguments);

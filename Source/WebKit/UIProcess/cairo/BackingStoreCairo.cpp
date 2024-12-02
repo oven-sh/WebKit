@@ -42,10 +42,11 @@
 
 #if USE(SKIA)
 #include <WebCore/GraphicsContextSkia.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkCanvas.h>
+
+IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
 #include <skia/core/SkSurface.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+IGNORE_CLANG_WARNINGS_END
 #endif
 
 namespace WebKit {

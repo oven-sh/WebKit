@@ -349,10 +349,11 @@ class DoubleToStringConverter {
   static void DoubleToAscii(double v,
                             DtoaMode mode,
                             int requested_digits,
-                            std::span<char> buffer,
-                            bool& sign,
-                            int& length,
-                            int& point);
+                            char* buffer,
+                            int buffer_length,
+                            bool* sign,
+                            int* length,
+                            int* point);
 
  private:
   // Implementation for ToShortest and ToShortestSingle.
@@ -367,17 +368,20 @@ class DoubleToStringConverter {
   bool HandleSpecialValues(double value, StringBuilder* result_builder) const;
   // Constructs an exponential representation (i.e. 1.234e56).
   // The given exponent assumes a decimal point after the first decimal digit.
-  void CreateExponentialRepresentation(std::span<const char> decimal_digits,
+  void CreateExponentialRepresentation(const char* decimal_digits,
+                                       int length,
                                        int exponent,
                                        StringBuilder* result_builder) const;
   // Creates a decimal representation (i.e 1234.5678).
-  void CreateDecimalRepresentation(std::span<const char> decimal_digits,
+  void CreateDecimalRepresentation(const char* decimal_digits,
+                                   int length,
                                    int decimal_point,
                                    int digits_after_point,
                                    StringBuilder* result_builder) const;
   bool ToFixedInternal(double value,
                        int requested_digits,
-                       std::span<char> buffer,
+                       char* buffer,
+                       int buffer_length, 
                        StringBuilder* result_builder) const;
 
   const int flags_;

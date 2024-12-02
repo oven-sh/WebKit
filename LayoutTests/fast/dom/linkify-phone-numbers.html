@@ -3,7 +3,8 @@
 <head>
 <title>This tests the most common cases of linkifying/not linkifying phone numbers on iOS</title>
 <script>
-window.internals?.settings.setTelephoneNumberParsingEnabled(true);
+if (window.internals)
+    internals.settings.setTelephoneNumberParsingEnabled(true);
 </script>
 </head>
 <body>
@@ -14,6 +15,5 @@ window.internals?.settings.setTelephoneNumberParsingEnabled(true);
 <a href="#">408 111 222</a>
 <pre>408 111 222</pre>
 <code>408 111 222</code>
-<div data-mime-type="text/latex">$\displaystyle \left(x + 1234567)\right$</div>
 </body>
 </html>

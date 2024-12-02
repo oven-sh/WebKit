@@ -110,11 +110,6 @@ static void runMessageTesting(IPC::Connection& connection, std::atomic<bool>& sh
     driver(sendTestMessage, &context);
 }
 
-Ref<IPCTester> IPCTester::create()
-{
-    return adoptRef(*new IPCTester);
-}
-
 IPCTester::IPCTester() = default;
 
 IPCTester::~IPCTester()

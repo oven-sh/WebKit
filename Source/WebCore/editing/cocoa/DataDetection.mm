@@ -68,8 +68,6 @@
 #import <pal/mac/DataDetectorsSoftLink.h>
 #import <pal/spi/ios/DataDetectorsUISoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 #if PLATFORM(MAC)
 template<> struct WTF::CFTypeTrait<DDResultRef> {
     static inline CFTypeID typeID(void) { return DDResultGetCFTypeID(); }
@@ -600,9 +598,7 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
     RefPtr<Text> lastTextNodeToUpdate;
     String lastNodeContent;
     unsigned contentOffset = 0;
-    DDQueryOffset lastModifiedQueryOffset = { };
-    lastModifiedQueryOffset.queryIndex = -1;
-    lastModifiedQueryOffset.offset = 0;
+    DDQueryOffset lastModifiedQueryOffset = { .queryIndex = -1, .offset = 0 };
 
     // For each result add the link.
     // Since there could be multiple results in the same text node, the node is only modified when
@@ -861,7 +857,5 @@ Ref<HTMLDivElement> DataDetection::createElementForImageOverlay(Document& docume
 #endif // ENABLE(IMAGE_ANALYSIS)
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

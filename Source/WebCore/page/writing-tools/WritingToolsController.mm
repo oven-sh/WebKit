@@ -38,7 +38,6 @@
 #import "FrameSelection.h"
 #import "GeometryUtilities.h"
 #import "HTMLConverter.h"
-#import "IntelligenceTextEffectsSupport.h"
 #import "Logging.h"
 #import "NodeRenderStyle.h"
 #import "RenderedDocumentMarker.h"
@@ -53,7 +52,7 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WritingToolsController);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(WritingToolsController, EditingScope);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(WritingToolsControllerEditingScope, WritingToolsController::EditingScope);
 
 #pragma mark - EditingScope
 
@@ -257,25 +256,12 @@ void WritingToolsController::willBeginWritingToolsSession(const std::optional<Wr
     completionHandler({ { WTF::UUID { 0 }, attributedStringFromRange, selectedTextCharacterRange } });
 }
 
-void WritingToolsController::didBeginWritingToolsSession(const WritingTools::Session& session, const Vector<WritingTools::Context>& contexts)
+void WritingToolsController::didBeginWritingToolsSession(const WritingTools::Session&, const Vector<WritingTools::Context>& contexts)
 {
     RELEASE_LOG(WritingTools, "WritingToolsController::didBeginWritingToolsSession [received contexts: %zu]", contexts.size());
-
-    if (session.type != WritingTools::Session::Type::Proofreading) {
-        // FIXME: Refactor this function into specialized functions per session type.
-        return;
-    }
-
-    RefPtr document = this->document();
-    if (!document) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    document->selection().clear();
 }
 
-void WritingToolsController::proofreadingSessionDidReceiveSuggestions(const WritingTools::Session&, const Vector<WritingTools::TextSuggestion>& suggestions, const CharacterRange& processedRange, const WritingTools::Context& context, bool finished)
+void WritingToolsController::proofreadingSessionDidReceiveSuggestions(const WritingTools::Session&, const Vector<WritingTools::TextSuggestion>& suggestions, const WritingTools::Context& context, bool finished)
 {
     RELEASE_LOG(WritingTools, "WritingToolsController::proofreadingSessionDidReceiveSuggestion [received suggestions: %zu, finished: %d]", suggestions.size(), finished);
 
@@ -291,35 +277,11 @@ void WritingToolsController::proofreadingSessionDidReceiveSuggestions(const Writ
         return;
     }
 
-    RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
-    IgnoreSelectionChangeForScope ignoreSelectionChanges { *frame };
+    m_page->chrome().client().removeInitialTextAnimationForActiveWritingToolsSession();
+
+    document->selection().clear();
 
     auto sessionRange = makeSimpleRange(state->contextRange);
-
-    // Determine if the range for this batch of suggestions, relative to the current text, is covered by transparent content markers or not.
-    // If so, the markers should be removed, and then re-added to the range after the replacement, accounting for any offset that the
-    // replacement operation results in.
-    //
-    // Because this happens in the same run-loop cycle, this change will not be seen by the user.
-
-    auto replacementLocationOffsetBeforeBatch = state->replacementLocationOffset;
-    auto adjustedProcessedRangeLocation = processedRange.location + replacementLocationOffsetBeforeBatch;
-
-    auto adjustedProcessedRangeBeforeReplacement = resolveCharacterRange(sessionRange, { adjustedProcessedRangeLocation, processedRange.length });
-
-    HashSet<WTF::UUID> transparentContentMarkerIdentifiers;
-
-    document->markers().forEach(adjustedProcessedRangeBeforeReplacement, { DocumentMarkerType::TransparentContent }, [&](auto&, auto marker) {
-        auto& data = std::get<DocumentMarker::TransparentContentData>(marker.data());
-        transparentContentMarkerIdentifiers.add(data.uuid);
-
-        return false;
-    });
-
-    for (auto& transparentContentMarkerIdentifier : transparentContentMarkerIdentifiers)
-        IntelligenceTextEffectsSupport::updateTextVisibility(*document, sessionRange, { adjustedProcessedRangeLocation, processedRange.length }, true, transparentContentMarkerIdentifier);
-
-    auto attributedTextString = context.attributedText.string;
 
     // The tracking of the additional replacement location offset needs to be scoped to a particular instance
     // of this class, instead of just this function, because the function may need to be called multiple times.
@@ -344,29 +306,68 @@ void WritingToolsController::proofreadingSessionDidReceiveSuggestions(const Writ
         auto newRangeWithOffset = CharacterRange { locationWithOffset, suggestion.replacement.length() };
         auto newResolvedRange = resolveCharacterRange(sessionRange, newRangeWithOffset);
 
-        auto originalString = attributedTextString.substring(suggestion.originalRange.location, suggestion.originalRange.length);
+        auto originalString = [context.attributedText.nsAttributedString() attributedSubstringFromRange:suggestion.originalRange];
 
-        auto markerData = DocumentMarker::WritingToolsTextSuggestionData { originalString, suggestion.identifier, DocumentMarker::WritingToolsTextSuggestionData::State::Accepted, DocumentMarker::WritingToolsTextSuggestionData::Decoration::None };
-        addMarker(newResolvedRange, DocumentMarkerType::WritingToolsTextSuggestion, markerData);
+        auto markerData = DocumentMarker::WritingToolsTextSuggestionData { originalString.string, suggestion.identifier, DocumentMarker::WritingToolsTextSuggestionData::State::Accepted, DocumentMarker::WritingToolsTextSuggestionData::Decoration::None };
+        addMarker(newResolvedRange, DocumentMarker::Type::WritingToolsTextSuggestion, markerData);
 
         state->replacementLocationOffset += static_cast<int>(suggestion.replacement.length()) - static_cast<int>(suggestion.originalRange.length);
     }
 
-    for (auto& transparentContentMarkerIdentifier : transparentContentMarkerIdentifiers) {
-        // Re-add the transparent content document markers if applicable, adjusted for the character difference after replacement,
-        // and still relative to the current text.
+    if (finished) {
+        document->editor().setSuppressEditingForWritingTools(false);
+        document->selection().setSelection({ sessionRange });
+    }
+}
 
-        auto replacementLocationOffsetAfterBatch = state->replacementLocationOffset;
-        auto characterDelta = replacementLocationOffsetAfterBatch - replacementLocationOffsetBeforeBatch;
-        auto adjustedProcessedRangeAfterReplacement = CharacterRange { adjustedProcessedRangeLocation, processedRange.length + characterDelta };
-
-        IntelligenceTextEffectsSupport::updateTextVisibility(*document, sessionRange, adjustedProcessedRangeAfterReplacement, false, transparentContentMarkerIdentifier);
+void WritingToolsController::proofreadingSessionDidCompletePartialReplacement(const WritingTools::Session&, const Vector<WritingTools::TextSuggestion>& suggestions, const WritingTools::Context&, bool)
+{
+    CheckedPtr state = currentState<WritingTools::Session::Type::Proofreading>();
+    if (!state) {
+        ASSERT_NOT_REACHED();
+        return;
     }
 
-    document->selection().clear();
+    RefPtr document = this->document();
+    if (!document) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
 
-    if (finished)
-        document->editor().setSuppressEditingForWritingTools(false);
+    auto sessionRange = makeSimpleRange(state->contextRange);
+
+    auto& markers = document->markers();
+
+    markers.forEach(sessionRange, { DocumentMarker::Type::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
+        auto oldData = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
+        if (oldData.decoration != DocumentMarker::WritingToolsTextSuggestionData::Decoration::None)
+            return false;
+
+#if ASSERT_ENABLED
+        // All previously received suggestions in the session range should already have been decorated,
+        // so this condition should never be `false` given the above check.
+
+        auto isInMostRecentSuggestionBatch = std::ranges::any_of(suggestions, [oldData](auto& suggestion) {
+            return suggestion.identifier == oldData.suggestionID;
+        });
+
+        ASSERT(isInMostRecentSuggestionBatch);
+
+        // An early return is intentionally omitted here because if there are suggestions in prior batches
+        // that were never made visible for some reason by this point, they certainly should be.
+#else
+        UNUSED_PARAM(suggestions);
+#endif
+
+        auto offsetRange = OffsetRange { marker.startOffset(), marker.endOffset() };
+
+        markers.removeMarkers(node, offsetRange, { DocumentMarker::Type::WritingToolsTextSuggestion });
+
+        auto newData = DocumentMarker::WritingToolsTextSuggestionData { oldData.originalText, oldData.suggestionID, oldData.state, DocumentMarker::WritingToolsTextSuggestionData::Decoration::Underline };
+        markers.addMarker(node, DocumentMarker { DocumentMarker::Type::WritingToolsTextSuggestion, offsetRange, WTFMove(newData) });
+
+        return false;
+    });
 }
 
 void WritingToolsController::proofreadingSessionDidUpdateStateForSuggestion(const WritingTools::Session&, WritingTools::TextSuggestion::State newTextSuggestionState, const WritingTools::TextSuggestion& textSuggestion, const WritingTools::Context&)
@@ -426,7 +427,7 @@ void WritingToolsController::proofreadingSessionDidUpdateStateForSuggestion(cons
         auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
 
         auto offsetRange = OffsetRange { marker.startOffset(), marker.endOffset() };
-        document->markers().removeMarkers(node, offsetRange, { DocumentMarkerType::WritingToolsTextSuggestion });
+        document->markers().removeMarkers(node, offsetRange, { DocumentMarker::Type::WritingToolsTextSuggestion });
 
         replaceContentsOfRangeInSession(*state, rangeToReplace, data.originalText);
 
@@ -702,13 +703,13 @@ void WritingToolsController::writingToolsSessionDidReceiveAction<WritingTools::S
 
     Vector<std::tuple<Ref<Node>, DocumentMarker::WritingToolsTextSuggestionData, unsigned, unsigned>> markerData;
 
-    markers.forEach(sessionRange, { DocumentMarkerType::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
+    markers.forEach(sessionRange, { DocumentMarker::Type::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
         auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
         markerData.append({ node, data, marker.startOffset(), marker.endOffset() });
         return false;
     });
 
-    markers.removeMarkers(sessionRange, { DocumentMarkerType::WritingToolsTextSuggestion });
+    markers.removeMarkers(sessionRange, { DocumentMarker::Type::WritingToolsTextSuggestion });
 
     for (auto& [node, oldData, startOffset, endOffset] : markerData | std::views::reverse) {
         auto rangeToReplace = SimpleRange { { node.get(), startOffset }, { node.get(), endOffset } };
@@ -721,7 +722,7 @@ void WritingToolsController::writingToolsSessionDidReceiveAction<WritingTools::S
         auto newData = DocumentMarker::WritingToolsTextSuggestionData { currentText, oldData.suggestionID, newState, oldData.decoration };
         auto newOffsetRange = OffsetRange { startOffset, endOffset + previousText.length() - currentText.length() };
 
-        markers.addMarker(node, DocumentMarker { DocumentMarkerType::WritingToolsTextSuggestion, newOffsetRange, WTFMove(newData) });
+        markers.addMarker(node, DocumentMarker { DocumentMarker::Type::WritingToolsTextSuggestion, newOffsetRange, WTFMove(newData) });
     }
 }
 
@@ -772,7 +773,7 @@ void WritingToolsController::writingToolsSessionDidReceiveAction(const WritingTo
 }
 
 template<>
-void WritingToolsController::willEndWritingToolsSession<WritingTools::Session::Type::Proofreading>(bool accepted)
+void WritingToolsController::didEndWritingToolsSession<WritingTools::Session::Type::Proofreading>(bool accepted)
 {
     RefPtr document = this->document();
 
@@ -788,42 +789,22 @@ void WritingToolsController::willEndWritingToolsSession<WritingTools::Session::T
 
     // If the session as a whole is not accepted, revert all the suggestions to their original text.
 
-    markers.forEach<DocumentMarkerController::IterationDirection::Backwards>(sessionRange, { DocumentMarkerType::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
+    markers.forEach<DocumentMarkerController::IterationDirection::Backwards>(sessionRange, { DocumentMarker::Type::WritingToolsTextSuggestion }, [&](auto& node, auto& marker) {
         auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
 
         auto offsetRange = OffsetRange { marker.startOffset(), marker.endOffset() };
 
         auto rangeToReplace = makeSimpleRange(node, marker);
 
-        markers.removeMarkers(node, offsetRange, { DocumentMarkerType::WritingToolsTextSuggestion });
+        markers.removeMarkers(node, offsetRange, { DocumentMarker::Type::WritingToolsTextSuggestion });
 
         if (!accepted && data.state != DocumentMarker::WritingToolsTextSuggestionData::State::Rejected)
             replaceContentsOfRangeInSession(*state, rangeToReplace, data.originalText);
 
         return false;
     });
-}
 
-template<>
-void WritingToolsController::willEndWritingToolsSession<WritingTools::Session::Type::Composition>(bool)
-{
-}
-
-void WritingToolsController::willEndWritingToolsSession(const WritingTools::Session& session, bool accepted)
-{
-    switch (session.type) {
-    case WritingTools::Session::Type::Proofreading:
-        willEndWritingToolsSession<WritingTools::Session::Type::Proofreading>(accepted);
-        break;
-    case WritingTools::Session::Type::Composition:
-        willEndWritingToolsSession<WritingTools::Session::Type::Composition>(accepted);
-        break;
-    }
-}
-
-template<>
-void WritingToolsController::didEndWritingToolsSession<WritingTools::Session::Type::Proofreading>(bool)
-{
+    state = nullptr;
     m_state = { };
 }
 
@@ -1084,7 +1065,7 @@ std::optional<std::tuple<Node&, DocumentMarker&>> WritingToolsController::findTe
     RefPtr<Node> targetNode;
     WeakPtr<DocumentMarker> targetMarker;
 
-    document->markers().forEach(outerRange, { DocumentMarkerType::WritingToolsTextSuggestion }, [&textSuggestionID, &targetNode, &targetMarker](auto& node, auto& marker) mutable {
+    document->markers().forEach(outerRange, { DocumentMarker::Type::WritingToolsTextSuggestion }, [&textSuggestionID, &targetNode, &targetMarker](auto& node, auto& marker) mutable {
         auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
         if (data.suggestionID != textSuggestionID)
             return false;
@@ -1112,7 +1093,7 @@ std::optional<std::tuple<Node&, DocumentMarker&>> WritingToolsController::findTe
     RefPtr<Node> targetNode;
     WeakPtr<DocumentMarker> targetMarker;
 
-    document->markers().forEach(range, { DocumentMarkerType::WritingToolsTextSuggestion }, [&range, &targetNode, &targetMarker](auto& node, auto& marker) mutable {
+    document->markers().forEach(range, { DocumentMarker::Type::WritingToolsTextSuggestion }, [&range, &targetNode, &targetMarker](auto& node, auto& marker) mutable {
         auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data());
 
         auto markerRange = makeSimpleRange(node, marker);

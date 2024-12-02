@@ -50,7 +50,7 @@ ComputePassEncoderImpl::~ComputePassEncoderImpl() = default;
 
 void ComputePassEncoderImpl::setPipeline(const ComputePipeline& computePipeline)
 {
-    wgpuComputePassEncoderSetPipeline(m_backing.get(), protectedConvertToBackingContext()->convertToBacking(computePipeline));
+    wgpuComputePassEncoderSetPipeline(m_backing.get(), m_convertToBackingContext->convertToBacking(computePipeline));
 }
 
 void ComputePassEncoderImpl::dispatch(Size32 workgroupCountX, Size32 workgroupCountY, Size32 workgroupCountZ)
@@ -60,7 +60,7 @@ void ComputePassEncoderImpl::dispatch(Size32 workgroupCountX, Size32 workgroupCo
 
 void ComputePassEncoderImpl::dispatchIndirect(const Buffer& indirectBuffer, Size64 indirectOffset)
 {
-    wgpuComputePassEncoderDispatchWorkgroupsIndirect(m_backing.get(), protectedConvertToBackingContext()->convertToBacking(indirectBuffer), indirectOffset);
+    wgpuComputePassEncoderDispatchWorkgroupsIndirect(m_backing.get(), m_convertToBackingContext->convertToBacking(indirectBuffer), indirectOffset);
 }
 
 void ComputePassEncoderImpl::end()
@@ -72,15 +72,18 @@ void ComputePassEncoderImpl::setBindGroup(Index32 index, const BindGroup& bindGr
     std::optional<Vector<BufferDynamicOffset>>&& offsets)
 {
     auto backingOffsets = valueOrDefault(offsets);
-    wgpuComputePassEncoderSetBindGroup(m_backing.get(), index, protectedConvertToBackingContext()->convertToBacking(bindGroup), static_cast<uint32_t>(backingOffsets.size()), backingOffsets.data());
+    wgpuComputePassEncoderSetBindGroup(m_backing.get(), index, m_convertToBackingContext->convertToBacking(bindGroup), static_cast<uint32_t>(backingOffsets.size()), backingOffsets.data());
 }
 
 void ComputePassEncoderImpl::setBindGroup(Index32 index, const BindGroup& bindGroup,
-    std::span<const uint32_t> dynamicOffsetsArrayBuffer,
+    const uint32_t* dynamicOffsetsArrayBuffer,
+    size_t dynamicOffsetsArrayBufferLength,
     Size64 dynamicOffsetsDataStart,
     Size32 dynamicOffsetsDataLength)
 {
-    wgpuComputePassEncoderSetBindGroup(m_backing.get(), index, protectedConvertToBackingContext()->convertToBacking(bindGroup), dynamicOffsetsDataLength, dynamicOffsetsArrayBuffer.subspan(dynamicOffsetsDataStart).data());
+    UNUSED_PARAM(dynamicOffsetsArrayBufferLength);
+    // FIXME: Use checked algebra.
+    wgpuComputePassEncoderSetBindGroup(m_backing.get(), index, m_convertToBackingContext->convertToBacking(bindGroup), dynamicOffsetsDataLength, dynamicOffsetsArrayBuffer + dynamicOffsetsDataStart);
 }
 
 void ComputePassEncoderImpl::pushDebugGroup(String&& groupLabel)

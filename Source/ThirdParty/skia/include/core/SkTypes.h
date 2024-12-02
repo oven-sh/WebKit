@@ -96,8 +96,7 @@
 #if defined(SK_HISTOGRAM_ENUMERATION)  || \
     defined(SK_HISTOGRAM_BOOLEAN)      || \
     defined(SK_HISTOGRAM_EXACT_LINEAR) || \
-    defined(SK_HISTOGRAM_MEMORY_KB)    || \
-    defined(SK_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES)
+    defined(SK_HISTOGRAM_MEMORY_KB)
 #  define SK_HISTOGRAMS_ENABLED 1
 #else
 #  define SK_HISTOGRAMS_ENABLED 0
@@ -108,19 +107,15 @@
 #endif
 
 #ifndef SK_HISTOGRAM_ENUMERATION
-#  define SK_HISTOGRAM_ENUMERATION(name, sampleEnum, enumSize)
+#  define SK_HISTOGRAM_ENUMERATION(name, sample, enum_size)
 #endif
 
 #ifndef SK_HISTOGRAM_EXACT_LINEAR
-#  define SK_HISTOGRAM_EXACT_LINEAR(name, sample, valueMax)
+#  define SK_HISTOGRAM_EXACT_LINEAR(name, sample, value_max)
 #endif
 
 #ifndef SK_HISTOGRAM_MEMORY_KB
 #  define SK_HISTOGRAM_MEMORY_KB(name, sample)
-#endif
-
-#ifndef SK_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES
-#  define SK_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(name, sampleUSec, minUSec, maxUSec, bucketCount)
 #endif
 
 #define SK_HISTOGRAM_PERCENTAGE(name, percent_as_int) \

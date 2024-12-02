@@ -373,13 +373,12 @@ public:
     iterator begin() const { return iterator(*this, findBit(0, true)); }
     iterator end() const { return iterator(*this, size()); }
 
-    static unsigned outOfLineMemoryUse(size_t bitCount)
+    unsigned outOfLineMemoryUse() const
     {
-        if (bitCount <= maxInlineBits())
+        if (isInline())
             return 0;
-        return byteCount(bitCount);
+        return byteCount(size());
     }
-    unsigned outOfLineMemoryUse() const { return outOfLineMemoryUse(size()); }
         
     WTF_EXPORT_PRIVATE void shiftRightByMultipleOf64(size_t);
 
@@ -467,8 +466,8 @@ private:
     public:
         size_t numBits() const { return m_numBits; }
         size_t numWords() const { return (m_numBits + bitsInPointer() - 1) / bitsInPointer(); }
-        uintptr_t* bits() { return std::bit_cast<uintptr_t*>(this + 1); }
-        const uintptr_t* bits() const { return std::bit_cast<const uintptr_t*>(this + 1); }
+        uintptr_t* bits() { return bitwise_cast<uintptr_t*>(this + 1); }
+        const uintptr_t* bits() const { return bitwise_cast<const uintptr_t*>(this + 1); }
         
         static WTF_EXPORT_PRIVATE OutOfLineBits* create(size_t numBits);
         
@@ -485,8 +484,8 @@ private:
     
     bool isInline() const { return m_bitsOrPointer >> maxInlineBits(); }
     
-    const OutOfLineBits* outOfLineBits() const { return std::bit_cast<const OutOfLineBits*>(m_bitsOrPointer << 1); }
-    OutOfLineBits* outOfLineBits() { return std::bit_cast<OutOfLineBits*>(m_bitsOrPointer << 1); }
+    const OutOfLineBits* outOfLineBits() const { return bitwise_cast<const OutOfLineBits*>(m_bitsOrPointer << 1); }
+    OutOfLineBits* outOfLineBits() { return bitwise_cast<OutOfLineBits*>(m_bitsOrPointer << 1); }
     
     WTF_EXPORT_PRIVATE void resizeOutOfLine(size_t numBits, size_t shiftInWords = 0);
     WTF_EXPORT_PRIVATE void setSlow(const BitVector& other);

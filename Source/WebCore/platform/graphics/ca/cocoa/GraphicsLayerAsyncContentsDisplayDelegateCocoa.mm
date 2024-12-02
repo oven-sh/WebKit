@@ -27,7 +27,6 @@
 #import "GraphicsLayerAsyncContentsDisplayDelegateCocoa.h"
 
 #import "GraphicsLayerCA.h"
-#import "ImageBuffer.h"
 #import "NativeImage.h"
 #import "WebCoreCALayerExtras.h"
 

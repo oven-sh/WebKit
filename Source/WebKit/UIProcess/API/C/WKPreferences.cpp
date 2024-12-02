@@ -758,16 +758,6 @@ bool WKPreferencesGetWebAuthenticationEnabled(WKPreferencesRef preferencesRef)
     return toImpl(preferencesRef)->webAuthenticationEnabled();
 }
 
-void WKPreferencesSetDigitalCredentialsEnabled(WKPreferencesRef preferencesRef, bool flag)
-{
-    toImpl(preferencesRef)->setDigitalCredentialsEnabled(flag);
-}
-
-bool WKPreferencesGetDigitalCredentialsEnabled(WKPreferencesRef preferencesRef)
-{
-    return toImpl(preferencesRef)->digitalCredentialsEnabled();
-}
-
 void WKPreferencesSetInvisibleMediaAutoplayPermitted(WKPreferencesRef preferencesRef, bool flag)
 {
     toImpl(preferencesRef)->setInvisibleAutoplayNotPermitted(!flag);

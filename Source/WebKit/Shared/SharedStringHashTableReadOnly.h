@@ -48,8 +48,9 @@ protected:
     WebCore::SharedStringHash* findSlot(WebCore::SharedStringHash) const;
 
     RefPtr<WebCore::SharedMemory> m_sharedMemory;
+    unsigned m_tableSize { 0 };
     unsigned m_tableSizeMask { 0 };
-    std::span<WebCore::SharedStringHash> m_table;
+    WebCore::SharedStringHash* m_table { nullptr };
 };
 
 } // namespace WebKit

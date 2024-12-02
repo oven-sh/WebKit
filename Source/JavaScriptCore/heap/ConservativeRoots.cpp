@@ -37,8 +37,6 @@
 #include "WasmCallee.h"
 #include <wtf/OSAllocator.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 static constexpr bool verboseWasmCalleeScan = false;
@@ -57,7 +55,7 @@ ConservativeRoots::ConservativeRoots(JSC::Heap& heap)
         dataLogLnIf(verboseWasmCalleeScan, "Looking for ", RawPointer(iter.ptr()), " boxed: ", RawPointer(boxedWasmCallee));
         // FIXME: This seems like it could have some kind of bulk add.
         m_wasmCalleesPendingDestructionCopy.add(iter.ptr());
-        m_boxedWasmCalleeFilter.add(std::bit_cast<uintptr_t>(CalleeBits::boxNativeCallee(iter.ptr())));
+        m_boxedWasmCalleeFilter.add(bitwise_cast<uintptr_t>(CalleeBits::boxNativeCallee(iter.ptr())));
     }
 #endif
 }
@@ -110,7 +108,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         if (m_size == m_capacity)
             grow();
 
-        m_roots[m_size++] = std::bit_cast<HeapCell*>(p);
+        m_roots[m_size++] = bitwise_cast<HeapCell*>(p);
     };
 
     const HashSet<MarkedBlock*>& set = m_heap.objectSpace().blocks().set();
@@ -120,10 +118,10 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
 #if ENABLE(WEBASSEMBLY) && USE(JSVALUE64)
     if constexpr (lookForWasmCallees) {
-        CalleeBits calleeBits = std::bit_cast<CalleeBits>(pointer);
+        CalleeBits calleeBits = bitwise_cast<CalleeBits>(pointer);
         // No point in even checking the hash set if the pointer doesn't even look like a native callee.
         if (calleeBits.isNativeCallee()) {
-            if (!boxedWasmCalleeFilter.ruleOut(std::bit_cast<uintptr_t>(pointer))) {
+            if (!boxedWasmCalleeFilter.ruleOut(bitwise_cast<uintptr_t>(pointer))) {
                 Wasm::Callee* wasmCallee = static_cast<Wasm::Callee*>(calleeBits.asNativeCallee());
                 if (m_wasmCalleesPendingDestructionCopy.contains(wasmCallee)) {
                     m_wasmCalleesDiscovered.add(wasmCallee);
@@ -163,11 +161,11 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
     MarkedBlock* candidate = MarkedBlock::blockFor(pointer);
     // It's possible for a butterfly pointer to point past the end of a butterfly. Check this now.
-    if (pointer <= std::bit_cast<char*>(candidate) + sizeof(IndexingHeader)) {
+    if (pointer <= bitwise_cast<char*>(candidate) + sizeof(IndexingHeader)) {
         // We may be interested in the last cell of the previous MarkedBlock.
-        char* previousPointer = std::bit_cast<char*>(std::bit_cast<uintptr_t>(pointer) - sizeof(IndexingHeader) - 1);
+        char* previousPointer = bitwise_cast<char*>(bitwise_cast<uintptr_t>(pointer) - sizeof(IndexingHeader) - 1);
         MarkedBlock* previousCandidate = MarkedBlock::blockFor(previousPointer);
-        if (!jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(previousCandidate))
+        if (!jsGCFilter.ruleOut(bitwise_cast<uintptr_t>(previousCandidate))
             && set.contains(previousCandidate)
             && mayHaveIndexingHeader(previousCandidate->handle().cellKind())) {
             previousPointer = static_cast<char*>(previousCandidate->handle().cellAlign(previousPointer));
@@ -176,7 +174,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         }
     }
 
-    if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(candidate))) {
+    if (jsGCFilter.ruleOut(bitwise_cast<uintptr_t>(candidate))) {
         ASSERT(!candidate || !set.contains(candidate));
         return;
     }
@@ -291,5 +289,3 @@ void ConservativeRoots::add(
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

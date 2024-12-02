@@ -29,7 +29,6 @@
 
 #include "MessageReceiver.h"
 #include "WebProcessSupplement.h"
-#include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -53,9 +52,6 @@ public:
     explicit UserMediaCaptureManager(WebProcess&);
     ~UserMediaCaptureManager();
 
-    void ref() const;
-    void deref() const;
-
     static ASCIILiteral supplementName() { return "UserMediaCaptureManager"_s; }
 
 private:
@@ -69,8 +65,6 @@ private:
 
     using GetMediaStreamDevicesCallback = CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>;
     void getMediaStreamDevices(bool revealIdsAndLabels, GetMediaStreamDevicesCallback&&);
-
-    CheckedRef<WebProcess> m_process;
 };
 
 } // namespace WebKit

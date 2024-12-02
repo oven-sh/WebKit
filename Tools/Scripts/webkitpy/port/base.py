@@ -725,11 +725,6 @@ class Port(object):
         if name in os.environ:
             clean_env[name] = os.environ[name]
 
-    def _copy_values_from_environ_with_prefix(self, clean_env, prefix):
-        for name in os.environ:
-            if name.startswith(prefix):
-                clean_env[name] = os.environ[name]
-
     def port_adjust_environment_for_test_driver(self, env):
         return env
 
@@ -743,7 +738,6 @@ class Port(object):
             # For Linux:
             'ALSA_CARD',
             'DBUS_SESSION_BUS_ADDRESS',
-            'GI_TYPELIB_PATH',
             'LANG',
             'LD_LIBRARY_PATH',
             'TERM',
@@ -761,12 +755,13 @@ class Port(object):
 
             # Most ports (?):
             'HOME',
-            'PATH'
-        ]
+            'PATH',
+            'WEBKIT_TESTFONTS',
+            'WEBKIT_OUTPUTDIR',
 
+        ]
         for variable in variables_to_copy:
             self._copy_value_from_environ_if_set(clean_env, variable)
-        self._copy_values_from_environ_with_prefix(clean_env, 'WEBKIT')
 
         for string_variable in self.get_option('additional_env_var', []):
             [name, value] = string_variable.split('=', 1)

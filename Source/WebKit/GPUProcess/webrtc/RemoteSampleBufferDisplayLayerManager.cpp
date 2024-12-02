@@ -44,7 +44,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteSampleBufferDisplayLayerManager);
 RemoteSampleBufferDisplayLayerManager::RemoteSampleBufferDisplayLayerManager(GPUConnectionToWebProcess& gpuConnectionToWebProcess)
     : m_connectionToWebProcess(gpuConnectionToWebProcess)
     , m_connection(gpuConnectionToWebProcess.connection())
-    , m_queue(gpuConnectionToWebProcess.protectedGPUProcess()->videoMediaStreamTrackRendererQueue())
+    , m_queue(gpuConnectionToWebProcess.gpuProcess().videoMediaStreamTrackRendererQueue())
 {
 }
 

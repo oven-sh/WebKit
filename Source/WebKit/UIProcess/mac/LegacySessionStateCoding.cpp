@@ -30,11 +30,13 @@
 #include "SessionState.h"
 #include <mutex>
 #include <wtf/CheckedArithmetic.h>
-#include <wtf/MallocSpan.h>
+#include <wtf/MallocPtr.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/cf/TypeCastsCF.h>
 #include <wtf/cf/VectorCF.h>
 #include <wtf/text/StringView.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -81,8 +83,10 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HistoryEntryDataEncoder);
 class HistoryEntryDataEncoder {
 public:
     HistoryEntryDataEncoder()
-        : m_buffer(MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc>::malloc(512))
-        , m_bufferPointer(m_buffer.mutableSpan().data())
+        : m_bufferSize(0)
+        , m_bufferCapacity(512)
+        , m_buffer(MallocPtr<uint8_t, HistoryEntryDataEncoderMalloc>::malloc(m_bufferCapacity))
+        , m_bufferPointer(m_buffer.get())
     {
         // Keep format compatibility by encoding an unused uint64_t here.
         *this << static_cast<uint64_t>(0);
@@ -198,7 +202,7 @@ public:
         return *this << static_cast<uint32_t>(value);
     }
 
-    MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> finishEncoding(size_t& size)
+    MallocPtr<uint8_t, HistoryEntryDataEncoderMalloc> finishEncoding(size_t& size)
     {
         size = m_bufferSize;
         return WTFMove(m_buffer);
@@ -210,7 +214,7 @@ private:
     {
         static_assert(std::is_arithmetic<Type>::value);
 
-        encodeFixedLengthData(asByteSpan(value), sizeof(value));
+        encodeFixedLengthData({ reinterpret_cast<uint8_t*>(&value), sizeof(value) }, sizeof(value));
         return *this;
     }
 
@@ -219,11 +223,11 @@ private:
         RELEASE_ASSERT(data.data() || data.empty());
         ASSERT(!(reinterpret_cast<uintptr_t>(data.data()) % alignment));
 
-        auto buffer = grow(alignment, data.size());
-        memcpySpan(buffer, data);
+        uint8_t* buffer = grow(alignment, data.size());
+        memcpy(buffer, data.data(), data.size());
     }
 
-    std::span<uint8_t> grow(unsigned alignment, size_t size)
+    uint8_t* grow(unsigned alignment, size_t size)
     {
         size_t alignedSize = ((m_bufferSize + alignment - 1) / alignment) * alignment;
 
@@ -232,35 +236,31 @@ private:
 
         growCapacity(bufferSize.value());
 
-        memsetSpan(mutableBuffer().subspan(m_bufferSize, alignedSize - m_bufferSize), 0);
+        std::memset(m_buffer.get() + m_bufferSize, 0, alignedSize - m_bufferSize);
 
         m_bufferSize = bufferSize.value();
-        m_bufferPointer = mutableBuffer().subspan(m_bufferSize).data();
+        m_bufferPointer = m_buffer.get() + m_bufferSize;
 
-        return mutableBuffer().subspan(alignedSize);
+        return m_buffer.get() + alignedSize;
     }
 
     void growCapacity(size_t newSize)
     {
-        auto currentCapacity = capacity();
-        if (newSize <= currentCapacity)
+        if (newSize <= m_bufferCapacity)
             return;
 
-        Checked<size_t> newCapacity = currentCapacity;
+        Checked<size_t> newCapacity = m_bufferCapacity;
         while (newCapacity < newSize)
             newCapacity *= 2U;
 
         m_buffer.realloc(newCapacity.value());
+        m_bufferCapacity = newCapacity.value();
     }
 
-    size_t capacity() const { return m_buffer.span().size(); }
-
-    std::span<uint8_t> mutableBuffer() { return m_buffer.mutableSpan(); }
-    std::span<const uint8_t> buffer() const { return m_buffer.span(); }
-
-    size_t m_bufferSize { 0 };
-    MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> m_buffer;
-    uint8_t* m_bufferPointer { nullptr };
+    size_t m_bufferSize;
+    size_t m_bufferCapacity;
+    MallocPtr<uint8_t, HistoryEntryDataEncoderMalloc> m_buffer;
+    uint8_t* m_bufferPointer;
 };
 
 enum class FormDataElementType {
@@ -367,7 +367,7 @@ static void encodeFrameStateNode(HistoryEntryDataEncoder& encoder, const FrameSt
 #endif
 }
 
-static MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> encodeSessionHistoryEntryData(const FrameState& frameState, size_t& bufferSize)
+static MallocPtr<uint8_t, HistoryEntryDataEncoderMalloc> encodeSessionHistoryEntryData(const FrameState& frameState, size_t& bufferSize)
 {
     HistoryEntryDataEncoder encoder;
 
@@ -402,7 +402,7 @@ static RetainPtr<CFDataRef> encodeSessionHistoryEntryData(const FrameState& fram
     size_t bufferSize;
     auto buffer = encodeSessionHistoryEntryData(frameState, bufferSize);
 
-    return adoptCF(CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, buffer.leakSpan().data(), bufferSize, fastMallocDeallocator.get().get()));
+    return adoptCF(CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, buffer.leakPtr(), bufferSize, fastMallocDeallocator.get().get()));
 }
 
 static RetainPtr<CFDictionaryRef> createDictionary(std::initializer_list<std::pair<CFStringRef, CFTypeRef>> keyValuePairs)
@@ -515,21 +515,22 @@ RefPtr<API::Data> encodeLegacySessionState(const SessionState& sessionState)
     CFIndex length = CFDataGetLength(data.get());
 
     size_t bufferSize = length + sizeof(uint32_t);
-    auto mallocBuffer = MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc>::tryMalloc(bufferSize);
-    if (!mallocBuffer)
+    auto buffer = MallocPtr<uint8_t, HistoryEntryDataEncoderMalloc>::tryMalloc(bufferSize);
+    if (!buffer)
         return nullptr;
-    auto buffer = mallocBuffer.mutableSpan();
 
     // Put the session state version number at the start of the buffer
-    buffer[0] = (sessionStateDataVersion & 0xff000000) >> 24;
-    buffer[1] = (sessionStateDataVersion & 0x00ff0000) >> 16;
-    buffer[2] = (sessionStateDataVersion & 0x0000ff00) >> 8;
-    buffer[3] = (sessionStateDataVersion & 0x000000ff);
+    buffer.get()[0] = (sessionStateDataVersion & 0xff000000) >> 24;
+    buffer.get()[1] = (sessionStateDataVersion & 0x00ff0000) >> 16;
+    buffer.get()[2] = (sessionStateDataVersion & 0x0000ff00) >> 8;
+    buffer.get()[3] = (sessionStateDataVersion & 0x000000ff);
 
     // Copy in the actual session state data
-    CFDataGetBytes(data.get(), CFRangeMake(0, length), buffer.subspan(sizeof(uint32_t)).data());
+    CFDataGetBytes(data.get(), CFRangeMake(0, length), buffer.get() + sizeof(uint32_t));
 
-    return API::Data::createWithoutCopying(buffer, [mallocBuffer = WTFMove(mallocBuffer)] { });
+    return API::Data::createWithoutCopying({ buffer.leakPtr(), bufferSize }, [] (uint8_t* buffer, const void* context) {
+        HistoryEntryDataEncoderMalloc::free(buffer);
+    }, nullptr);
 }
 
 class HistoryEntryDataDecoder {
@@ -603,9 +604,9 @@ public:
             return *this;
         }
 
-        std::span<UChar> buffer;
+        UChar* buffer;
         auto string = String::createUninitialized(length, buffer);
-        decodeFixedLengthData(asMutableByteSpan(buffer), alignof(UChar));
+        decodeFixedLengthData({ reinterpret_cast<uint8_t*>(buffer), length * sizeof(UChar) }, alignof(UChar));
 
         value = string;
         return *this;
@@ -751,7 +752,7 @@ private:
         static_assert(std::is_arithmetic<Type>::value);
         value = Type();
 
-        decodeFixedLengthData(asMutableByteSpan(value), sizeof(value));
+        decodeFixedLengthData({ reinterpret_cast<uint8_t*>(&value), sizeof(value) }, sizeof(value));
         return *this;
     }
 
@@ -803,7 +804,7 @@ private:
 
     inline bool alignedBufferIsLargeEnoughToContain(const uint8_t* alignedPosition, size_t size) const
     {
-        auto* bufferEnd = std::to_address(m_buffer.end());
+        auto* bufferEnd = m_buffer.data() + m_buffer.size();
         return bufferEnd >= alignedPosition && static_cast<size_t>(bufferEnd - alignedPosition) >= size;
     }
 
@@ -1146,12 +1147,13 @@ bool decodeLegacySessionState(std::span<const uint8_t> data, SessionState& sessi
     if (size < sizeof(uint32_t))
         return false;
 
-    uint32_t versionNumber = (data[0] << 24) + (data[1] << 16) + (data[2] << 8) + data[3];
+    auto* bytes = data.data();
+    uint32_t versionNumber = (bytes[0] << 24) + (bytes[1] << 16) + (bytes[2] << 8) + bytes[3];
 
     if (versionNumber != sessionStateDataVersion)
         return false;
 
-    auto cfPropertyList = adoptCF(CFPropertyListCreateWithData(kCFAllocatorDefault, adoptCF(CFDataCreate(kCFAllocatorDefault, data.subspan(sizeof(uint32_t)).data(), size - sizeof(uint32_t))).get(), kCFPropertyListImmutable, nullptr, nullptr));
+    auto cfPropertyList = adoptCF(CFPropertyListCreateWithData(kCFAllocatorDefault, adoptCF(CFDataCreate(kCFAllocatorDefault, bytes + sizeof(uint32_t), size - sizeof(uint32_t))).get(), kCFPropertyListImmutable, nullptr, nullptr));
     auto sessionStateDictionary = dynamic_cf_cast<CFDictionaryRef>(cfPropertyList.get());
     if (!sessionStateDictionary)
         return false;
@@ -1181,3 +1183,5 @@ bool decodeLegacySessionState(std::span<const uint8_t> data, SessionState& sessi
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

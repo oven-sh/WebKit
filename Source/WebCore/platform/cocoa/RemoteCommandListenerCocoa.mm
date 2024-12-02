@@ -139,7 +139,7 @@ RemoteCommandListenerCocoa::RemoteCommandListenerCocoa(RemoteCommandListenerClie
 
     scheduleSupportedCommandsUpdate();
 
-    ThreadSafeWeakPtr weakThis { *this };
+    WeakPtr weakThis { *this };
     m_commandHandler = MRMediaRemoteAddAsyncCommandHandlerBlock(^(MRMediaRemoteCommand command, CFDictionaryRef options, void(^completion)(CFArrayRef)) {
 
         LOG(Media, "RemoteCommandListenerCocoa::RemoteCommandListenerCocoa - received command %u", command);
@@ -217,10 +217,8 @@ RemoteCommandListenerCocoa::RemoteCommandListenerCocoa(RemoteCommandListenerClie
             status = MRMediaRemoteCommandHandlerStatusCommandFailed;
         };
 
-        ensureOnMainThread([weakThis = WTFMove(weakThis), platformCommand, argument] {
-            if (RefPtr protectedThis = weakThis.get())
-                protectedThis->client().didReceiveRemoteControlCommand(platformCommand, argument);
-        });
+        if (weakThis && status != MRMediaRemoteCommandHandlerStatusCommandFailed)
+            weakThis->client().didReceiveRemoteControlCommand(platformCommand, argument);
 
         completion((__bridge CFArrayRef)@[@(status)]);
     });

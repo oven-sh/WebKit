@@ -85,25 +85,6 @@ PAS_NEVER_INLINE size_t pas_page_malloc_alignment_shift_slow(void)
     return result;
 }
 
-static void*
-pas_page_malloc_try_map_pages(size_t size)
-{
-    void* mmap_result = NULL;
-
-    PAS_PROFILE(PAGE_ALLOCATION, size, PAS_VM_TAG);
-
-    mmap_result = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | PAS_NORESERVE, PAS_VM_TAG, 0);
-    if (mmap_result == MAP_FAILED) {
-        errno = 0; /* Clear the error so that we don't leak errno in those
-                      cases where we handle the allocation failure
-                      internally. If we want to set errno for clients then we
-                      do that explicitly. */
-        return NULL;
-    }
-
-    return mmap_result;
-}
-
 pas_aligned_allocation_result
 pas_page_malloc_try_allocate_without_deallocating_padding(
     size_t size, pas_alignment alignment)
@@ -140,12 +121,19 @@ pas_page_malloc_try_allocate_without_deallocating_padding(
         if (__builtin_add_overflow(page_allocation_alignment, aligned_size, &mapped_size))
             return result;
     }
-
-    mmap_result = pas_page_malloc_try_map_pages(mapped_size);
-    if (!mmap_result)
+    
+    mmap_result = mmap(NULL, mapped_size, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANON | PAS_NORESERVE, PAS_VM_TAG, 0);
+    if (mmap_result == MAP_FAILED) {
+        errno = 0; /* Clear the error so that we don't leak errno in those
+                      cases where we handle the allocation failure
+                      internally. If we want to set errno for clients then we
+                      do that explicitly. */
         return result;
+    }
 
     uintptr_t pages_begin = (uintptr_t)mmap_result;
+    PAS_PROFILE(PAGE_ALLOCATION, pages_begin);
     mmap_result = (void*)pages_begin;
     
     mapped = (char*)mmap_result;
@@ -197,10 +185,12 @@ void pas_page_malloc_zero_fill(void* base, size_t size)
     PAS_ASSERT(pas_is_aligned((uintptr_t)base, page_size));
     PAS_ASSERT(pas_is_aligned(size, page_size));
 
-    int flags = MAP_PRIVATE | MAP_ANON | MAP_FIXED | PAS_NORESERVE;
-    int tag = PAS_VM_TAG;
-    PAS_PROFILE(ZERO_FILL_PAGE, base, size, flags, tag);
-    result_ptr = mmap(base, size, PROT_READ | PROT_WRITE, flags, tag, 0);
+    result_ptr = mmap(base,
+                      size,
+                      PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANON | MAP_FIXED | PAS_NORESERVE,
+                      PAS_VM_TAG,
+                      0);
     PAS_ASSERT(result_ptr == base);
 }
 

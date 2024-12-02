@@ -39,8 +39,6 @@
 
 #define DUMP_STRUCTURE_ID_STATISTICS 0
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 #if DUMP_STRUCTURE_ID_STATISTICS
@@ -50,7 +48,7 @@ static HashSet<Structure*>& liveStructureSet = *(new HashSet<Structure*>);
 inline void StructureTransitionTable::setSingleTransition(VM& vm, JSCell* owner, Structure* structure)
 {
     ASSERT(isUsingSingleSlot());
-    m_data = std::bit_cast<intptr_t>(structure) | UsingSingleSlotFlag;
+    m_data = bitwise_cast<intptr_t>(structure) | UsingSingleSlotFlag;
     vm.writeBarrier(owner, structure);
 }
 
@@ -630,7 +628,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     ASSERT(!Structure::removePropertyTransitionFromExistingStructure(structure, propertyName, offset));
     ASSERT(structure->getConcurrently(propertyName.uid()) != invalidOffset);
 
-    if (structure->shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()) {
+    if (structure->transitionCountHasOverflowed()) {
         ASSERT(!isCopyOnWrite(structure->indexingMode()));
         Structure* transition = toUncacheableDictionaryTransition(vm, structure, deferred);
         ASSERT(structure != transition);
@@ -770,7 +768,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
         return existingTransition;
     }
 
-    if (structure->shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()) {
+    if (structure->transitionCountHasOverflowed()) {
         ASSERT(!isCopyOnWrite(structure->indexingMode()));
         Structure* transition = toUncacheableDictionaryTransition(vm, structure, deferred);
         ASSERT(structure != transition);
@@ -1730,5 +1728,3 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

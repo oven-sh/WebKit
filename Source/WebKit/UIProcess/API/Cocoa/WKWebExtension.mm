@@ -213,7 +213,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
 
 - (NSString *)displayActionLabel
 {
-    return nsStringNilIfEmpty(self._protectedWebExtension->displayActionLabel());
+    return self._protectedWebExtension->displayActionLabel();
 }
 
 - (NSString *)version
@@ -223,12 +223,12 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
 
 - (CocoaImage *)iconForSize:(CGSize)size
 {
-    return WebKit::toCocoaImage(self._protectedWebExtension->icon(WebCore::FloatSize(size)));
+    return self._protectedWebExtension->icon(size);
 }
 
 - (CocoaImage *)actionIconForSize:(CGSize)size
 {
-    return WebKit::toCocoaImage(self._protectedWebExtension->actionIcon(WebCore::FloatSize(size)));
+    return self._protectedWebExtension->actionIcon(size);
 }
 
 - (NSSet<WKWebExtensionPermission> *)requestedPermissions

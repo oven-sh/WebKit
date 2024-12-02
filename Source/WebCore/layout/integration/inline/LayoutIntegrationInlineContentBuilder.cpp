@@ -29,6 +29,7 @@
 #include "InlineDamage.h"
 #include "InlineDisplayBox.h"
 #include "LayoutBoxGeometry.h"
+#include "LayoutIntegrationBoxTree.h"
 #include "LayoutIntegrationInlineContent.h"
 #include "LayoutState.h"
 #include "RenderBlockFlowInlines.h"
@@ -92,8 +93,9 @@ static std::tuple<float, float> glyphOverflowInInlineDirection(size_t firstTextB
     return { leadingOverflow(), trailingOverflow() };
 }
 
-InlineContentBuilder::InlineContentBuilder(const RenderBlockFlow& blockFlow)
+InlineContentBuilder::InlineContentBuilder(const RenderBlockFlow& blockFlow, BoxTree& boxTree)
     : m_blockFlow(blockFlow)
+    , m_boxTree(boxTree)
 {
 }
 

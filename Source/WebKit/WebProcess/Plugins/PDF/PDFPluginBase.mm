@@ -53,7 +53,6 @@
 #import <WebCore/EventNames.h>
 #import <WebCore/FocusController.h>
 #import <WebCore/Frame.h>
-#import <WebCore/FrameLoader.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/HTMLPlugInElement.h>
 #import <WebCore/LegacyNSPasteboardTypes.h>
@@ -76,6 +75,8 @@
 #import <wtf/text/TextStream.h>
 
 #import "PDFKitSoftLink.h"
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 using namespace WebCore;
@@ -126,8 +127,6 @@ PDFPluginBase::~PDFPluginBase()
     if (auto* page = m_frame ? m_frame->page() : nullptr)
         page->removePDFHUD(*this);
 #endif
-
-    ASSERT(!m_pdfTestCallback);
 }
 
 void PDFPluginBase::teardown()
@@ -162,9 +161,6 @@ void PDFPluginBase::teardown()
 
     if (isLocked())
         teardownPasswordEntryForm();
-
-    if (m_pdfTestCallback && m_element)
-        m_element->pluginDestroyedWithPendingPDFTestCallback(WTFMove(m_pdfTestCallback));
 }
 
 Page* PDFPluginBase::page() const
@@ -307,10 +303,10 @@ std::span<const uint8_t> PDFPluginBase::dataSpanForRange(uint64_t sourcePosition
     if (!haveValidData(checkValidRanges))
         return { };
 
-    return span(m_data.get()).subspan(sourcePosition, count);
+    return { CFDataGetBytePtr(m_data.get()) + sourcePosition, count };
 }
 
-bool PDFPluginBase::getByteRanges(CFMutableArrayRef dataBuffersArray, std::span<const CFRange> ranges) const
+bool PDFPluginBase::getByteRanges(CFMutableArrayRef dataBuffersArray, const CFRange* ranges, size_t count) const
 {
     Locker locker { m_streamedDataLock };
 
@@ -334,13 +330,15 @@ bool PDFPluginBase::getByteRanges(CFMutableArrayRef dataBuffersArray, std::span<
         return m_validRanges.contains({ rangeLocation, rangeLocation + rangeLength - 1 });
     };
 
-    for (auto& range : ranges) {
-        if (!haveDataForRange(range))
+    for (size_t i = 0; i < count; ++i) {
+        if (!haveDataForRange(ranges[i]))
             return false;
     }
 
-    for (auto& range : ranges) {
-        RetainPtr cfData = toCFData(span(m_data.get()).subspan(range.location, range.length));
+    for (size_t i = 0; i < count; ++i) {
+        auto range = ranges[i];
+        const uint8_t* dataPtr = CFDataGetBytePtr(m_data.get()) + range.location;
+        RetainPtr cfData = adoptCF(CFDataCreate(kCFAllocatorDefault, dataPtr, range.length));
         CFArrayAppendValue(dataBuffersArray, cfData.get());
     }
 
@@ -357,7 +355,7 @@ void PDFPluginBase::insertRangeRequestData(uint64_t offset, const Vector<uint8_t
     auto requiredLength = offset + requestData.size();
     ensureDataBufferLength(requiredLength);
 
-    memcpySpan(mutableSpan(m_data.get()).subspan(offset), requestData.span());
+    memcpy(CFDataGetMutableBytePtr(m_data.get()) + offset, requestData.data(), requestData.size());
 
     m_validRanges.add({ offset, offset + requestData.size() - 1 });
 }
@@ -384,7 +382,7 @@ void PDFPluginBase::streamDidReceiveData(const SharedBuffer& buffer)
 
         ensureDataBufferLength(m_streamedBytes + buffer.size());
         auto bufferSpan = buffer.span();
-        memcpySpan(mutableSpan(m_data.get()).subspan(m_streamedBytes), bufferSpan);
+        memcpy(CFDataGetMutableBytePtr(m_data.get()) + m_streamedBytes, bufferSpan.data(), bufferSpan.size());
         m_streamedBytes += buffer.size();
 
         // Keep our ranges-lookup-table compact by continuously updating its first range
@@ -1014,30 +1012,32 @@ void PDFPluginBase::print()
 
 #if PLATFORM(MAC)
 
-void PDFPluginBase::writeItemsToPasteboard(NSString *pasteboardName, Vector<PasteboardItem>&& pasteboardItems) const
+void PDFPluginBase::writeItemsToPasteboard(NSString *pasteboardName, NSArray *items, NSArray *types) const
 {
     // FIXME: <https://webkit.org/b/269174> PDFPluginBase::writeItemsToPasteboard should be platform-agnostic.
-    auto pasteboardTypes = pasteboardItems.map([](const auto& item) -> String {
-        return item.type.get();
-    });
+    auto pasteboardTypes = makeVector<String>(types);
     auto pageIdentifier = m_frame && m_frame->coreLocalFrame() ? m_frame->coreLocalFrame()->pageID() : std::nullopt;
 
     auto& webProcess = WebProcess::singleton();
     webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardTypes(pasteboardName, pasteboardTypes, pageIdentifier), 0);
 
-    for (auto&& [data, type] : WTFMove(pasteboardItems)) {
+    ASSERT(items.count >= types.count);
+    for (NSUInteger i = 0, count = items.count; i < count; ++i) {
+        NSString *type = [types objectAtIndex:i];
+        NSData *data = [items objectAtIndex:i];
+
         // We don't expect the data for any items to be empty, but aren't completely sure.
         // Avoid crashing in the SharedMemory constructor in release builds if we're wrong.
-        ASSERT([data length]);
-        if (![data length])
+        ASSERT(data.length);
+        if (!data.length)
             continue;
 
         if ([type isEqualToString:legacyStringPasteboardType()] || [type isEqualToString:NSPasteboardTypeString]) {
-            auto plainTextString = adoptNS([[NSString alloc] initWithData:data.get() encoding:NSUTF8StringEncoding]);
-            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardStringForType(pasteboardName, type.get(), plainTextString.get(), pageIdentifier), 0);
+            auto plainTextString = adoptNS([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
+            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardStringForType(pasteboardName, type, plainTextString.get(), pageIdentifier), 0);
         } else {
-            auto buffer = SharedBuffer::create(data.get());
-            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardBufferForType(pasteboardName, type.get(), WTFMove(buffer), pageIdentifier), 0);
+            auto buffer = SharedBuffer::create(data);
+            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardBufferForType(pasteboardName, type, WTFMove(buffer), pageIdentifier), 0);
         }
     }
 }
@@ -1108,7 +1108,7 @@ void PDFPluginBase::notifyCursorChanged(WebCore::PlatformCursorType cursorType)
     m_frame->protectedPage()->send(Messages::WebPageProxy::SetCursor(WebCore::Cursor::fromType(cursorType)));
 }
 
-bool PDFPluginBase::supportsForms() const
+bool PDFPluginBase::supportsForms()
 {
     // FIXME: We support forms for full-main-frame and <iframe> PDFs, but not <embed> or <object>, because those cases do not have their own Document into which to inject form elements.
     return isFullFramePlugin();
@@ -1238,8 +1238,6 @@ void PDFPluginBase::incrementalLoaderLog(const String& message)
 
 void PDFPluginBase::registerPDFTest(RefPtr<WebCore::VoidCallback>&& callback)
 {
-    ASSERT(!m_pdfTestCallback);
-
     if (m_pdfDocument && callback)
         callback->handleEvent();
     else
@@ -1251,106 +1249,8 @@ std::optional<FrameIdentifier> PDFPluginBase::rootFrameID() const
     return m_view->frame()->rootFrame().frameID();
 }
 
-// FIXME: Share more of the style sheet between the embed/non-embed case.
-String PDFPluginBase::annotationStyle() const
-{
-    if (!supportsForms()) {
-        return
-        "#annotationContainer {"
-        "    overflow: hidden;"
-        "    position: relative;"
-        "    pointer-events: none;"
-        "    display: flex;"
-        "    place-content: center;"
-        "    place-items: center;"
-        "}"
-        ""
-        ".annotation {"
-        "    position: absolute;"
-        "    pointer-events: auto;"
-        "}"
-        ""
-        ".lock-icon {"
-        "    width: 64px;"
-        "    height: 64px;"
-        "    margin-bottom: 12px;"
-        "}"
-        ""
-        ".password-form {"
-        "    position: static;"
-        "    display: block;"
-        "    text-align: center;"
-        "    font-family: system-ui;"
-        "    font-size: 15px;"
-        "}"
-        ""
-        ".password-form p {"
-        "    margin: 4pt;"
-        "}"
-        ""
-        ".password-form .subtitle {"
-        "    font-size: 12px;"
-        "}"_s;
-    }
-
-    return
-    "#annotationContainer {"
-    "    overflow: hidden;"
-    "    position: absolute;"
-    "    pointer-events: none;"
-    "    top: 0;"
-    "    left: 0;"
-    "    right: 0;"
-    "    bottom: 0;"
-    "    display: flex;"
-    "    flex-direction: column;"
-    "    justify-content: center;"
-    "    align-items: center;"
-    "}"
-    ""
-    ".annotation {"
-    "    position: absolute;"
-    "    pointer-events: auto;"
-    "}"
-    ""
-    "textarea.annotation { "
-    "    resize: none;"
-    "}"
-    ""
-    "input.annotation[type='password'] {"
-    "    position: static;"
-    "    width: 238px;"
-    "    margin-top: 110px;"
-    "    font-size: 15px;"
-    "}"
-    ""
-    ".lock-icon {"
-    "    width: 64px;"
-    "    height: 64px;"
-    "    margin-bottom: 12px;"
-    "}"
-    ""
-    ".password-form {"
-    "    position: static;"
-    "    display: block;"
-    "    text-align: center;"
-    "    font-family: system-ui;"
-    "    font-size: 15px;"
-    "}"
-    ""
-    ".password-form p {"
-    "    margin: 4pt;"
-    "}"
-    ""
-    ".password-form .subtitle {"
-    "    font-size: 12px;"
-    "}"
-    ""
-    ".password-form + input.annotation[type='password'] {"
-    "    margin-top: 16px;"
-    "}"_s;
-}
-
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(PDF_PLUGIN)

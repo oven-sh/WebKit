@@ -64,7 +64,7 @@ HTMLDocumentParser::HTMLDocumentParser(HTMLDocument& document, OptionSet<ParserC
     , m_tokenizer(m_options)
     , m_scriptRunner(makeUnique<HTMLScriptRunner>(document, static_cast<HTMLScriptRunnerHost&>(*this)))
     , m_treeBuilder(makeUnique<HTMLTreeBuilder>(*this, document, parserContentPolicy(), m_options))
-    , m_parserScheduler(HTMLParserScheduler::create(*this))
+    , m_parserScheduler(makeUnique<HTMLParserScheduler>(*this))
     , m_preloader(makeUnique<HTMLResourcePreloader>(document))
     , m_shouldEmitTracePoints(isMainDocumentLoadingFromHTTP(document))
 {
@@ -110,15 +110,13 @@ void HTMLDocumentParser::detach()
     // Yet during fast/dom/HTMLScriptElement/script-load-events.html we do.
     m_preloadScanner = nullptr;
     m_insertionPreloadScanner = nullptr;
-    if (RefPtr parserScheduler = std::exchange(m_parserScheduler, nullptr))
-        parserScheduler->detach(); // Will clear any timers.
+    m_parserScheduler = nullptr; // Deleting the scheduler will clear any timers.
 }
 
 void HTMLDocumentParser::stopParsing()
 {
     DocumentParser::stopParsing();
-    if (RefPtr parserScheduler = std::exchange(m_parserScheduler, nullptr))
-        parserScheduler->detach(); // Will clear any timers.
+    m_parserScheduler = nullptr; // Deleting the scheduler will clear any timers.
 }
 
 // This kicks off "Once the user agent stops parsing" as described by:
@@ -170,14 +168,14 @@ inline bool HTMLDocumentParser::shouldDelayEnd() const
 
 void HTMLDocumentParser::didBeginYieldingParser()
 {
-    if (RefPtr parserScheduler = m_parserScheduler)
-        parserScheduler->didBeginYieldingParser();
+    if (m_parserScheduler)
+        m_parserScheduler->didBeginYieldingParser();
 }
 
 void HTMLDocumentParser::didEndYieldingParser()
 {
-    if (RefPtr parserScheduler = m_parserScheduler)
-        parserScheduler->didEndYieldingParser();
+    if (m_parserScheduler)
+        m_parserScheduler->didEndYieldingParser();
 }
 
 bool HTMLDocumentParser::isParsingFragment() const
@@ -238,7 +236,7 @@ void HTMLDocumentParser::runScriptsForPausedTreeBuilder()
 
             CustomElementReactionStack reactionStack(document()->globalObject());
             auto& elementInterface = constructionData->elementInterface.get();
-            auto newElement = elementInterface.constructElementWithFallback(*document(), constructionData->registry, constructionData->name,
+            auto newElement = elementInterface.constructElementWithFallback(*document(), constructionData->name,
                 m_scriptRunner && !m_scriptRunner->isExecutingScript() ? ParserConstructElementWithEmptyStack::Yes : ParserConstructElementWithEmptyStack::No);
             m_treeBuilder->didCreateCustomOrFallbackElement(WTFMove(newElement), *constructionData);
         }
@@ -265,10 +263,9 @@ Document* HTMLDocumentParser::contextForParsingSession()
 
 bool HTMLDocumentParser::pumpTokenizerLoop(SynchronousMode mode, bool parsingFragment, PumpSession& session)
 {
-    RefPtr parserScheduler = m_parserScheduler;
     do {
         if (UNLIKELY(isWaitingForScripts())) {
-            if (mode == SynchronousMode::AllowYield && parserScheduler->shouldYieldBeforeExecutingScript(m_treeBuilder->scriptToProcess(), session))
+            if (mode == SynchronousMode::AllowYield && m_parserScheduler->shouldYieldBeforeExecutingScript(m_treeBuilder->scriptToProcess(), session))
                 return true;
             
             runScriptsForPausedTreeBuilder();
@@ -281,10 +278,10 @@ bool HTMLDocumentParser::pumpTokenizerLoop(SynchronousMode mode, bool parsingFra
         // how the parser has always handled stopping when the page assigns window.location. What should
         // happen instead is that assigning window.location causes the parser to stop parsing cleanly.
         // The problem is we're not prepared to do that at every point where we run JavaScript.
-        if (UNLIKELY(!parsingFragment && document()->frame() && document()->frame()->protectedNavigationScheduler()->locationChangePending()))
+        if (UNLIKELY(!parsingFragment && document()->frame() && document()->frame()->checkedNavigationScheduler()->locationChangePending()))
             return false;
 
-        if (UNLIKELY(mode == SynchronousMode::AllowYield && parserScheduler->shouldYieldBeforeToken(session)))
+        if (UNLIKELY(mode == SynchronousMode::AllowYield && m_parserScheduler->shouldYieldBeforeToken(session)))
             return true;
 
         auto token = m_tokenizer.nextToken(m_input.current());
@@ -327,7 +324,7 @@ void HTMLDocumentParser::pumpTokenizer(SynchronousMode mode)
         return;
 
     if (shouldResume)
-        Ref { *m_parserScheduler }->scheduleForResume();
+        m_parserScheduler->scheduleForResume();
 
     if (isWaitingForScripts() && !isDetached()) {
         ASSERT(m_tokenizer.isInDataState());
@@ -633,14 +630,14 @@ void HTMLDocumentParser::parseDocumentFragment(const String& source, DocumentFra
     
 void HTMLDocumentParser::suspendScheduledTasks()
 {
-    if (RefPtr parserScheduler = m_parserScheduler)
-        parserScheduler->suspend();
+    if (m_parserScheduler)
+        m_parserScheduler->suspend();
 }
 
 void HTMLDocumentParser::resumeScheduledTasks()
 {
-    if (RefPtr parserScheduler = m_parserScheduler)
-        parserScheduler->resume();
+    if (m_parserScheduler)
+        m_parserScheduler->resume();
 }
 
 }

@@ -39,9 +39,6 @@ class PerformanceMonitor {
 public:
     explicit PerformanceMonitor(Page&);
 
-    void ref() const;
-    void deref() const;
-
     void didStartProvisionalLoad();
     void didFinishLoad();
     void activityStateChanged(OptionSet<ActivityState> oldState, OptionSet<ActivityState> newState);

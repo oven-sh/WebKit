@@ -166,7 +166,7 @@ public:
 
 #if USE(SKIA)
     Color(const SkColor&);
-    WEBCORE_EXPORT operator SkColor() const;
+    operator SkColor() const;
 
     Color(const SkColor4f&);
     operator SkColor4f() const;
@@ -216,7 +216,6 @@ private:
     friend void add(Hasher&, const Color&);
 
     class OutOfLineComponents : public ThreadSafeRefCounted<OutOfLineComponents> {
-        WTF_MAKE_FAST_COMPACT_ALLOCATED;
     public:
         static Ref<OutOfLineComponents> create(ColorComponents<float, 4>&& components)
         {
@@ -545,9 +544,9 @@ inline uint64_t Color::encodedPackedInlineColor(PackedColor::RGBA color)
 inline uint64_t Color::encodedOutOfLineComponents(Ref<OutOfLineComponents>&& outOfLineComponents)
 {
 #if CPU(ADDRESS64)
-    return std::bit_cast<uint64_t>(&outOfLineComponents.leakRef());
+    return bitwise_cast<uint64_t>(&outOfLineComponents.leakRef());
 #else
-    return std::bit_cast<uint32_t>(&outOfLineComponents.leakRef());
+    return bitwise_cast<uint32_t>(&outOfLineComponents.leakRef());
 #endif
 }
 
@@ -574,9 +573,9 @@ inline PackedColor::RGBA Color::decodedPackedInlineColor(uint64_t value)
 inline Color::OutOfLineComponents& Color::decodedOutOfLineComponents(uint64_t value)
 {
 #if CPU(ADDRESS64)
-    return *std::bit_cast<OutOfLineComponents*>(value & colorValueMask);
+    return *bitwise_cast<OutOfLineComponents*>(value & colorValueMask);
 #else
-    return *std::bit_cast<OutOfLineComponents*>(static_cast<uint32_t>(value & colorValueMask));
+    return *bitwise_cast<OutOfLineComponents*>(static_cast<uint32_t>(value & colorValueMask));
 #endif
 }
 

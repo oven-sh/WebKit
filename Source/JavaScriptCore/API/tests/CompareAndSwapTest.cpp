@@ -31,8 +31,6 @@
 #include <wtf/Atomics.h>
 #include <wtf/Threading.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 class Bitmap {
 public:
     Bitmap() { clearAll(); }
@@ -118,5 +116,3 @@ void testCompareAndSwap()
 
     printf("PASS: CompareAndSwap test completed without a hang\n");
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -16,8 +16,6 @@ includes: [propertyHelper.js]
 features: [SharedArrayBuffer]
 ---*/
 
-verifyProperty(SharedArrayBuffer.prototype, "slice", {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(SharedArrayBuffer.prototype, "slice");
+verifyWritable(SharedArrayBuffer.prototype, "slice");
+verifyConfigurable(SharedArrayBuffer.prototype, "slice");

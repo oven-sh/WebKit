@@ -82,9 +82,6 @@ public:
     // Non-AA bounds filling (can handle inverse "fills" but will touch every pixel within the clip)
     const Renderer* nonAABounds() const { return &fNonAABoundsFill; }
 
-    // Circular arcs
-    const Renderer* circularArc() const { return &fCircularArc; }
-
     const Renderer* analyticBlur() const { return &fAnalyticBlur; }
 
     // TODO: May need to add support for inverse filled strokes (need to check SVG spec if this is a
@@ -134,7 +131,6 @@ private:
     Renderer fAnalyticRRect;
     Renderer fPerEdgeAAQuad;
     Renderer fNonAABoundsFill;
-    Renderer fCircularArc;
 
     Renderer fAnalyticBlur;
 

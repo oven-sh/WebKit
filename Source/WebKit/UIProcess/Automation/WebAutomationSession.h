@@ -29,6 +29,7 @@
 #include "AutomationBackendDispatchers.h"
 #include "AutomationFrontendDispatchers.h"
 #include "Connection.h"
+#include "MessageReceiver.h"
 #include "MessageSender.h"
 #include "SimulatedInputDispatcher.h"
 #include "WebEvent.h"
@@ -39,7 +40,6 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/RunLoop.h>
-#include <wtf/WeakPtr.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteAutomationTarget.h>
@@ -102,7 +102,8 @@ public:
 
 using AutomationCompletionHandler = WTF::CompletionHandler<void(std::optional<AutomationCommandError>)>;
 
-class WebAutomationSession final : public API::ObjectImpl<API::Object::Type::AutomationSession>, public Inspector::AutomationBackendDispatcherHandler, public CanMakeWeakPtr<WebAutomationSession>
+class WebAutomationSession final : public API::ObjectImpl<API::Object::Type::AutomationSession>, public IPC::MessageReceiver
+    , public Inspector::AutomationBackendDispatcherHandler
 #if ENABLE(WEBDRIVER_ACTIONS_API)
     , public SimulatedInputDispatcher::Client
 #endif
@@ -277,6 +278,13 @@ private:
     void maximizeWindowForPage(WebPageProxy&, WTF::CompletionHandler<void()>&&);
     void hideWindowForPage(WebPageProxy&, WTF::CompletionHandler<void()>&&);
 
+    // IPC::MessageReceiver (Implemented by generated code in WebAutomationSessionMessageReceiver.cpp).
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
+
+    // Called by WebAutomationSession messages.
+    void didEvaluateJavaScriptFunction(uint64_t callbackID, const String& result, const String& errorType);
+    void didTakeScreenshot(uint64_t callbackID, std::optional<WebCore::ShareableBitmap::Handle>&&, const String& errorType);
+
     // Platform-dependent implementations.
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
     void updateClickCount(MouseButton, const WebCore::IntPoint&, Seconds maxTime = 1_s, int maxDistance = 0);
@@ -350,6 +358,9 @@ private:
 
     uint64_t m_nextEvaluateJavaScriptCallbackID { 1 };
     HashMap<uint64_t, RefPtr<Inspector::AutomationBackendDispatcherHandler::EvaluateJavaScriptFunctionCallback>> m_evaluateJavaScriptFunctionCallbacks;
+
+    uint64_t m_nextScreenshotCallbackID { 1 };
+    HashMap<uint64_t, RefPtr<Inspector::AutomationBackendDispatcherHandler::TakeScreenshotCallback>> m_screenshotCallbacks;
 
     enum class WindowTransitionedToState {
         Fullscreen,

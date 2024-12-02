@@ -48,10 +48,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollingTreeStickyNode);
 ScrollingTreeStickyNode::ScrollingTreeStickyNode(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
     : ScrollingTreeNode(scrollingTree, ScrollingNodeType::Sticky, nodeID)
 {
-    scrollingTree.fixedOrStickyNodeAdded(*this);
+    scrollingTree.fixedOrStickyNodeAdded();
 }
 
-ScrollingTreeStickyNode::~ScrollingTreeStickyNode() = default;
+ScrollingTreeStickyNode::~ScrollingTreeStickyNode()
+{
+    scrollingTree().fixedOrStickyNodeRemoved();
+}
 
 bool ScrollingTreeStickyNode::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
@@ -91,7 +94,7 @@ FloatPoint ScrollingTreeStickyNode::computeLayerPosition() const
 
     for (RefPtr ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
         if (auto* overflowProxyNode = dynamicDowncast<ScrollingTreeOverflowScrollProxyNode>(*ancestor)) {
-            auto overflowNode = scrollingTree()->nodeForID(overflowProxyNode->overflowScrollingNodeID());
+            auto overflowNode = scrollingTree().nodeForID(overflowProxyNode->overflowScrollingNodeID());
             if (!overflowNode)
                 break;
 

@@ -46,10 +46,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollingTreeFixedNode);
 ScrollingTreeFixedNode::ScrollingTreeFixedNode(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
     : ScrollingTreeNode(scrollingTree, ScrollingNodeType::Fixed, nodeID)
 {
-    scrollingTree.fixedOrStickyNodeAdded(*this);
+    scrollingTree.fixedOrStickyNodeAdded();
 }
 
-ScrollingTreeFixedNode::~ScrollingTreeFixedNode() = default;
+ScrollingTreeFixedNode::~ScrollingTreeFixedNode()
+{
+    scrollingTree().fixedOrStickyNodeRemoved();
+}
 
 bool ScrollingTreeFixedNode::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {

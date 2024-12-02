@@ -30,7 +30,6 @@
 
 #include "GeometryUtilities.h"
 #include "GraphicsContext.h"
-#include "ImageBuffer.h"
 #include "ImageObserver.h"
 #include <CoreGraphics/CGContext.h>
 #include <CoreGraphics/CGPDFDocument.h>

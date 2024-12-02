@@ -90,7 +90,6 @@ public:
 
     Ref<DOMRectList> getClientRects() const;
     Ref<DOMRect> getBoundingClientRect() const;
-    static Ref<DOMRect> boundingClientRect(const SimpleRange&);
 
     WEBCORE_EXPORT ExceptionOr<Ref<DocumentFragment>> createContextualFragment(std::variant<RefPtr<TrustedHTML>, String>&& fragment);
 

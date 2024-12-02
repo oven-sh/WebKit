@@ -33,8 +33,6 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class BytecodeGraph {
@@ -123,5 +121,3 @@ BytecodeGraph::BytecodeGraph(CodeBlockType* codeBlock, const InstructionStreamTy
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

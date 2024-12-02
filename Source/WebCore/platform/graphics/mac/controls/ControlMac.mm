@@ -32,7 +32,6 @@
 #import "ControlFactoryMac.h"
 #import "FloatRoundedRect.h"
 #import "GraphicsContextCG.h"
-#import "ImageBuffer.h"
 #import "LocalCurrentGraphicsContext.h"
 #import "LocalDefaultSystemAppearance.h"
 #import "WebControlView.h"

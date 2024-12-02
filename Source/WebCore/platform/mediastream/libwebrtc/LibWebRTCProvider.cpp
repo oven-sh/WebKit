@@ -41,7 +41,6 @@
 #include <dlfcn.h>
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 ALLOW_UNUSED_PARAMETERS_BEGIN
 ALLOW_COMMA_BEGIN
 
@@ -61,7 +60,6 @@ IGNORE_CLANG_WARNINGS_END
 
 ALLOW_COMMA_END
 ALLOW_UNUSED_PARAMETERS_END
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #include <wtf/Function.h>
 #include <wtf/NeverDestroyed.h>
@@ -83,6 +81,14 @@ LibWebRTCProvider::~LibWebRTCProvider()
 }
 
 #if !PLATFORM(COCOA)
+void LibWebRTCProvider::registerWebKitVP9Decoder()
+{
+}
+
+void LibWebRTCProvider::registerWebKitVP8Decoder()
+{
+}
+
 void WebRTCProvider::setH264HardwareEncoderAllowed(bool)
 {
 }
@@ -314,9 +320,10 @@ rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> LibWebRTCProvider::cr
     willCreatePeerConnectionFactory();
 
     ASSERT(!m_audioModule);
-    m_audioModule = LibWebRTCAudioModule::create();
+    auto audioModule = rtc::make_ref_counted<LibWebRTCAudioModule>();
+    m_audioModule = audioModule.get();
 
-    return webrtc::CreatePeerConnectionFactory(networkThread, signalingThread, signalingThread, rtc::scoped_refptr<webrtc::AudioDeviceModule>(m_audioModule.get()), webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(), createEncoderFactory(), createDecoderFactory(), nullptr, nullptr, nullptr, nullptr
+    return webrtc::CreatePeerConnectionFactory(networkThread, signalingThread, signalingThread, WTFMove(audioModule), webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(), createEncoderFactory(), createDecoderFactory(), nullptr, nullptr, nullptr, nullptr
 #if PLATFORM(COCOA)
         , webrtc::CreateTaskQueueGcdFactory()
 #endif

@@ -57,8 +57,6 @@
 #define JMPBUF(png_ptr) png_ptr->jmpbuf
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // Gamma constants.
@@ -915,5 +913,3 @@ void PNGImageDecoder::fallbackNotAnimated()
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -29,33 +29,26 @@
 
 namespace WebCore {
 
-class AccessibilityMenuListPopup;
 class RenderMenuList;
 
 class AccessibilityMenuList final : public AccessibilityRenderObject {
 public:
-    static Ref<AccessibilityMenuList> create(AXID, RenderMenuList&, AXObjectCache&);
+    static Ref<AccessibilityMenuList> create(RenderMenuList&);
 
-    bool isCollapsed() const final;
-    bool press() final;
+    bool isCollapsed() const override;
+    bool press() override;
 
     void didUpdateActiveOption(int optionIndex);
 
 private:
-    explicit AccessibilityMenuList(AXID, RenderMenuList&, AXObjectCache&);
+    explicit AccessibilityMenuList(RenderMenuList&);
 
     bool isMenuList() const final { return true; }
     AccessibilityRole determineAccessibilityRole() final { return AccessibilityRole::PopUpButton; }
 
-    bool canSetFocusAttribute() const final;
-    void addChildren() final;
-    void updateChildrenIfNecessary() final;
-    // This class' children are initialized once in the constructor with m_popup.
-    void clearChildren() final { };
-    void setNeedsToUpdateChildren() final { };
+    bool canSetFocusAttribute() const override;
 
-    // FIXME: Nothing calls AXObjectCache::remove for m_popup.
-    Ref<AccessibilityMenuListPopup> m_popup;
+    void addChildren() override;
 };
 
 } // namespace WebCore

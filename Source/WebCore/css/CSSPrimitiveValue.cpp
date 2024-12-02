@@ -351,13 +351,6 @@ CSSPrimitiveValue::CSSPrimitiveValue(CSSUnresolvedColor unresolvedColor)
     m_value.unresolvedColor = new CSSUnresolvedColor(WTFMove(unresolvedColor));
 }
 
-CSSPrimitiveValue::CSSPrimitiveValue(Ref<CSSAttrValue> value)
-    : CSSValue(ClassType::Primitive)
-{
-    setPrimitiveUnitType(CSSUnitType::CSS_ATTR);
-    m_value.attr = &value.leakRef();
-}
-
 CSSPrimitiveValue::~CSSPrimitiveValue()
 {
     auto type = primitiveUnitType();
@@ -365,12 +358,10 @@ CSSPrimitiveValue::~CSSPrimitiveValue()
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CustomIdent:
     case CSSUnitType::CSS_URI:
+    case CSSUnitType::CSS_ATTR:
     case CSSUnitType::CSS_FONT_FAMILY:
         if (m_value.string)
             m_value.string->deref();
-        break;
-    case CSSUnitType::CSS_ATTR:
-        m_value.attr->deref();
         break;
     case CSSUnitType::CSS_CALC:
         m_value.calc->deref();
@@ -583,9 +574,9 @@ Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(CSSUnresolvedColor value)
     return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<CSSAttrValue> value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::createAttr(String value)
 {
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
+    return adoptRef(*new CSSPrimitiveValue(WTFMove(value), CSSUnitType::CSS_ATTR));
 }
 
 Ref<CSSPrimitiveValue> CSSPrimitiveValue::createCustomIdent(String value)
@@ -1287,6 +1278,7 @@ String CSSPrimitiveValue::stringValue() const
     switch (primitiveUnitType()) {
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CustomIdent:
+    case CSSUnitType::CSS_ATTR:
     case CSSUnitType::CSS_FONT_FAMILY:
     case CSSUnitType::CSS_URI:
         return m_value.string;
@@ -1294,8 +1286,6 @@ String CSSPrimitiveValue::stringValue() const
         return nameString(m_value.valueID);
     case CSSUnitType::CSS_PROPERTY_ID:
         return nameString(m_value.propertyID);
-    case CSSUnitType::CSS_ATTR:
-        return m_value.attr->cssText();
     default:
         return String();
     }
@@ -1507,8 +1497,9 @@ ALWAYS_INLINE String CSSPrimitiveValue::serializeInternal() const
     case CSSUnitType::CSS_VW:
     case CSSUnitType::CSS_X:
         return formatNumberValue(unitTypeString(type));
+
     case CSSUnitType::CSS_ATTR:
-        return m_value.attr->cssText();
+        return makeString("attr("_s, m_value.string, ')');
     case CSSUnitType::CSS_CALC:
         return m_value.calc->cssText();
     case CSSUnitType::CSS_DIMENSION:
@@ -1650,10 +1641,9 @@ bool CSSPrimitiveValue::equals(const CSSPrimitiveValue& other) const
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CustomIdent:
     case CSSUnitType::CSS_URI:
+    case CSSUnitType::CSS_ATTR:
     case CSSUnitType::CSS_FONT_FAMILY:
         return equal(m_value.string, other.m_value.string);
-    case CSSUnitType::CSS_ATTR:
-        return m_value.attr->equals(*other.m_value.attr);
     case CSSUnitType::CSS_RGBCOLOR:
         return color() == other.color();
     case CSSUnitType::CSS_CALC:
@@ -1755,11 +1745,9 @@ bool CSSPrimitiveValue::addDerivedHash(Hasher& hasher) const
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CustomIdent:
     case CSSUnitType::CSS_URI:
+    case CSSUnitType::CSS_ATTR:
     case CSSUnitType::CSS_FONT_FAMILY:
         add(hasher, String { m_value.string });
-        break;
-    case CSSUnitType::CSS_ATTR:
-        add(hasher, m_value.attr);
         break;
     case CSSUnitType::CSS_RGBCOLOR:
         add(hasher, color());

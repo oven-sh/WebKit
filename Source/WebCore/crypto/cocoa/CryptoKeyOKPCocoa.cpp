@@ -36,18 +36,16 @@
 #endif
 #include <pal/spi/cocoa/CoreCryptoSPI.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
-bool CryptoKeyOKP::supportsNamedCurve()
+bool CryptoKeyOKP::isPlatformSupportedCurve(NamedCurve namedCurve)
 {
-    return true;
+    return namedCurve == NamedCurve::Ed25519 || namedCurve == NamedCurve::X25519;
 }
 
 std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (!supportsNamedCurve())
+    if (!isPlatformSupportedCurve(namedCurve))
         return { };
 #if !HAVE(SWIFT_CPP_INTEROP)
     ccec25519pubkey ccPublicKey;
@@ -129,9 +127,9 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
 #endif
 }
 
-bool CryptoKeyOKP::platformCheckPairedKeys(CryptoAlgorithmIdentifier identifier, NamedCurve, const Vector<uint8_t>& privateKey, const Vector<uint8_t>& publicKey)
+bool CryptoKeyOKP::platformCheckPairedKeys(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, const Vector<uint8_t>& privateKey, const Vector<uint8_t>& publicKey)
 {
-    if (!supportsNamedCurve())
+    if (!isPlatformSupportedCurve(namedCurve))
         return false;
 
     if (privateKey.size() != 32 || publicKey.size() != 32)
@@ -185,7 +183,7 @@ bool CryptoKeyOKP::platformCheckPairedKeys(CryptoAlgorithmIdentifier identifier,
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (!supportsNamedCurve())
+    if (!isPlatformSupportedCurve(namedCurve))
         return nullptr;
 
     // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
@@ -244,7 +242,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
         return nullptr;
     ++index;
 
-    return create(identifier, namedCurve, CryptoKeyType::Public, keyData.subspan(index, keyData.size() - index), extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Public, std::span { keyData.data() + index, keyData.size() - index }, extractable, usages);
 }
 
 constexpr uint8_t OKPOIDFirstByte = 6;
@@ -313,7 +311,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (!supportsNamedCurve())
+    if (!isPlatformSupportedCurve(namedCurve))
         return nullptr;
 
     // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
@@ -380,7 +378,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
     if (keyData.size() < index + 1)
         return nullptr;
 
-    return create(identifier, namedCurve, CryptoKeyType::Private, keyData.subspan(index, keyData.size() - index), extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Private, std::span { keyData.data() + index, keyData.size() - index }, extractable, usages);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
@@ -449,7 +447,7 @@ String CryptoKeyOKP::generateJwkX() const
         RELEASE_ASSERT_NOT_REACHED();
         return String(""_s);
     }
-    return base64URLEncodeToString(std::span { publicKey });
+    return base64URLEncodeToString(std::span { publicKey, sizeof(publicKey) });
 #else
     switch (namedCurve()) {
     case NamedCurve::Ed25519: {
@@ -475,5 +473,3 @@ Vector<uint8_t> CryptoKeyOKP::platformExportRaw() const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

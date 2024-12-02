@@ -203,24 +203,24 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
 
     auto markers = markerController->markersFor(*renderer.textNode());
 
-    auto markedTextTypeForMarkerType = [] (DocumentMarkerType type) {
+    auto markedTextTypeForMarkerType = [] (DocumentMarker::Type type) {
         switch (type) {
-        case DocumentMarkerType::Spelling:
+        case DocumentMarker::Type::Spelling:
             return MarkedText::Type::SpellingError;
-        case DocumentMarkerType::Grammar:
+        case DocumentMarker::Type::Grammar:
             return MarkedText::Type::GrammarError;
-        case DocumentMarkerType::CorrectionIndicator:
+        case DocumentMarker::Type::CorrectionIndicator:
             return MarkedText::Type::Correction;
 #if ENABLE(WRITING_TOOLS)
-        case DocumentMarkerType::WritingToolsTextSuggestion:
+        case DocumentMarker::Type::WritingToolsTextSuggestion:
             return MarkedText::Type::WritingToolsTextSuggestion;
 #endif
-        case DocumentMarkerType::TextMatch:
+        case DocumentMarker::Type::TextMatch:
             return MarkedText::Type::TextMatch;
-        case DocumentMarkerType::DictationAlternatives:
+        case DocumentMarker::Type::DictationAlternatives:
             return MarkedText::Type::DictationAlternatives;
 #if PLATFORM(IOS_FAMILY)
-        case DocumentMarkerType::DictationPhraseWithAlternatives:
+        case DocumentMarker::Type::DictationPhraseWithAlternatives:
             return MarkedText::Type::DictationPhraseWithAlternatives;
 #endif
         default:
@@ -236,30 +236,30 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
     for (auto& marker : markers) {
         // Collect either the background markers or the foreground markers, but not both
         switch (marker->type()) {
-        case DocumentMarkerType::Grammar:
-        case DocumentMarkerType::Spelling:
+        case DocumentMarker::Type::Grammar:
+        case DocumentMarker::Type::Spelling:
             break;
-        case DocumentMarkerType::CorrectionIndicator:
+        case DocumentMarker::Type::CorrectionIndicator:
 #if ENABLE(WRITING_TOOLS)
-        case DocumentMarkerType::WritingToolsTextSuggestion:
+        case DocumentMarker::Type::WritingToolsTextSuggestion:
 #endif
-        case DocumentMarkerType::Replacement:
-        case DocumentMarkerType::DictationAlternatives:
+        case DocumentMarker::Type::Replacement:
+        case DocumentMarker::Type::DictationAlternatives:
 #if PLATFORM(IOS_FAMILY)
         // FIXME: Remove the PLATFORM(IOS_FAMILY)-guard.
-        case DocumentMarkerType::DictationPhraseWithAlternatives:
+        case DocumentMarker::Type::DictationPhraseWithAlternatives:
 #endif
             if (phase != MarkedText::PaintPhase::Decoration)
                 continue;
             break;
-        case DocumentMarkerType::TextMatch:
+        case DocumentMarker::Type::TextMatch:
             if (!renderer.frame().editor().markedTextMatchesAreHighlighted())
                 continue;
             if (phase == MarkedText::PaintPhase::Decoration)
                 continue;
             break;
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
-        case DocumentMarkerType::TelephoneNumber:
+        case DocumentMarker::Type::TelephoneNumber:
             if (!renderer.frame().editor().markedTextMatchesAreHighlighted())
                 continue;
             if (phase != MarkedText::PaintPhase::Background)
@@ -283,12 +283,12 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
 
         // Marker intersects this run. Collect it.
         switch (marker->type()) {
-        case DocumentMarkerType::Spelling:
-        case DocumentMarkerType::CorrectionIndicator:
+        case DocumentMarker::Type::Spelling:
+        case DocumentMarker::Type::CorrectionIndicator:
 #if ENABLE(WRITING_TOOLS)
-        case DocumentMarkerType::WritingToolsTextSuggestion: {
+        case DocumentMarker::Type::WritingToolsTextSuggestion: {
             auto shouldPaintMarker = [&] {
-                if (marker->type() != DocumentMarkerType::WritingToolsTextSuggestion)
+                if (marker->type() != DocumentMarker::Type::WritingToolsTextSuggestion)
                     return true;
 
                 auto data = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker->data());
@@ -308,23 +308,23 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
             BFALLTHROUGH;
         }
 #endif
-        case DocumentMarkerType::DictationAlternatives:
-        case DocumentMarkerType::Grammar:
+        case DocumentMarker::Type::DictationAlternatives:
+        case DocumentMarker::Type::Grammar:
 #if PLATFORM(IOS_FAMILY)
         // FIXME: See <rdar://problem/8933352>. Also, remove the PLATFORM(IOS_FAMILY)-guard.
-        case DocumentMarkerType::DictationPhraseWithAlternatives:
+        case DocumentMarker::Type::DictationPhraseWithAlternatives:
 #endif
-        case DocumentMarkerType::TextMatch: {
+        case DocumentMarker::Type::TextMatch: {
             auto [clampedStart, clampedEnd] = selectableRange.clamp(marker->startOffset(), marker->endOffset());
 
             auto markedTextType = markedTextTypeForMarkerType(marker->type());
             markedTexts.append({ clampedStart, clampedEnd, markedTextType, marker.get() });
             break;
         }
-        case DocumentMarkerType::Replacement:
+        case DocumentMarker::Type::Replacement:
             break;
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
-        case DocumentMarkerType::TelephoneNumber:
+        case DocumentMarker::Type::TelephoneNumber:
             break;
 #endif
         default:
@@ -334,13 +334,13 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
     return markedTexts;
 }
 
-Vector<MarkedText> MarkedText::collectForDraggedAndTransparentContent(const DocumentMarkerType type, const RenderText& renderer, const TextBoxSelectableRange& selectableRange)
+Vector<MarkedText> MarkedText::collectForDraggedAndTransparentContent(const DocumentMarker::Type type, const RenderText& renderer, const TextBoxSelectableRange& selectableRange)
 {
-    auto markerTypeForDocumentMarker = [] (DocumentMarkerType type) {
+    auto markerTypeForDocumentMarker = [] (DocumentMarker::Type type) {
         switch (type) {
-        case DocumentMarkerType::DraggedContent:
+        case DocumentMarker::Type::DraggedContent:
             return MarkedText::Type::DraggedContent;
-        case DocumentMarkerType::TransparentContent:
+        case DocumentMarker::Type::TransparentContent:
             return MarkedText::Type::TransparentContent;
         default:
             return MarkedText::Type::Unmarked;

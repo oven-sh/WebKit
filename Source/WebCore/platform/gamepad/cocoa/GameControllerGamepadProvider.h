@@ -46,10 +46,6 @@ class GameControllerGamepadProvider : public GamepadProvider {
 public:
     WEBCORE_EXPORT static GameControllerGamepadProvider& singleton();
 
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
-
     WEBCORE_EXPORT void startMonitoringGamepads(GamepadProviderClient&) final;
     WEBCORE_EXPORT void stopMonitoringGamepads(GamepadProviderClient&) final;
     const Vector<WeakPtr<PlatformGamepad>>& platformGamepads() final { return m_gamepadVector; }
@@ -86,7 +82,7 @@ private:
 
     void inputNotificationTimerFired();
 
-    HashMap<CFTypeRef, std::unique_ptr<GameControllerGamepad>> m_gamepadMap;
+    UncheckedKeyHashMap<CFTypeRef, std::unique_ptr<GameControllerGamepad>> m_gamepadMap;
     Vector<WeakPtr<PlatformGamepad>> m_gamepadVector;
     WeakHashSet<PlatformGamepad> m_invisibleGamepads;
 

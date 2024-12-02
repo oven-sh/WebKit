@@ -31,8 +31,6 @@
 #include <wtf/ByteOrder.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore::PushCrypto {
 
 // Arbitrary limit that's larger than the largest payload APNS should ever give us.
@@ -302,5 +300,3 @@ std::optional<Vector<uint8_t>> decryptAESGCMPayload(const ClientKeys& clientKeys
 }
 
 } // namespace WebCore::PushCrypto
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

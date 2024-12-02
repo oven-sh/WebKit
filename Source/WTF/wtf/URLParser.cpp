@@ -61,7 +61,7 @@ enum URLCharacterClass {
     ValidScheme = 0x40,
 };
 
-static constexpr std::array<uint8_t, 256> characterClassTable {
+static const uint8_t characterClassTable[256] = {
     UserInfo | Default | QueryPercent | ForbiddenHost | ForbiddenDomain, // 0x0
     UserInfo | Default | QueryPercent | ForbiddenDomain, // 0x1
     UserInfo | Default | QueryPercent | ForbiddenDomain, // 0x2
@@ -508,7 +508,7 @@ ALWAYS_INLINE void URLParser::utf8PercentEncode(const CodePointIterator<Characte
     ASSERT_WITH_MESSAGE(isInCodeSet(codePoint), "isInCodeSet should always return true for non-ASCII characters");
     syntaxViolation(iterator);
 
-    std::array<uint8_t, U8_MAX_LENGTH> buffer;
+    uint8_t buffer[U8_MAX_LENGTH];
     int32_t offset = 0;
     UBool isError = false;
     U8_APPEND(buffer, offset, U8_MAX_LENGTH, codePoint, isError);
@@ -536,7 +536,7 @@ ALWAYS_INLINE void URLParser::utf8QueryEncode(const CodePointIterator<CharacterT
 
     syntaxViolation(iterator);
 
-    std::array<uint8_t, U8_MAX_LENGTH> buffer;
+    uint8_t buffer[U8_MAX_LENGTH];
     int32_t offset = 0;
     UBool isError = false;
     U8_APPEND(buffer, offset, U8_MAX_LENGTH, codePoint, isError);
@@ -557,6 +557,7 @@ template<typename CharacterType>
 void URLParser::encodeNonUTF8Query(const Vector<UChar>& source, const URLTextEncoding& encoding, CodePointIterator<CharacterType> iterator)
 {
     auto encoded = encoding.encodeForURLParsing(source.span());
+    auto* data = encoded.data();
     size_t length = encoded.size();
     
     if (!length == !iterator.atEnd()) {
@@ -567,7 +568,7 @@ void URLParser::encodeNonUTF8Query(const Vector<UChar>& source, const URLTextEnc
     size_t i = 0;
     for (; i < length; ++i) {
         ASSERT(!iterator.atEnd());
-        uint8_t byte = encoded[i];
+        uint8_t byte = data[i];
         if (UNLIKELY(byte != *iterator)) {
             syntaxViolation(iterator);
             break;
@@ -584,7 +585,7 @@ void URLParser::encodeNonUTF8Query(const Vector<UChar>& source, const URLTextEnc
     ASSERT((i == length) == iterator.atEnd());
     for (; i < length; ++i) {
         ASSERT(m_didSeeSyntaxViolation);
-        uint8_t byte = encoded[i];
+        uint8_t byte = data[i];
         if (shouldPercentEncodeQueryByte(byte, m_urlIsSpecial))
             percentEncodeByte(byte);
         else
@@ -868,7 +869,7 @@ void URLParser::copyURLPartsUntil(const URL& base, URLPart part, const CodePoint
     ASSERT_NOT_REACHED();
 }
 
-constexpr std::array<uint8_t, 2> dotASCIICode { '2', 'e' };
+constexpr uint8_t dotASCIICode[2] = { '2', 'e' };
 
 template<typename CharacterType>
 ALWAYS_INLINE bool URLParser::isSingleDotPathSegment(CodePointIterator<CharacterType> c)
@@ -970,7 +971,7 @@ bool URLParser::shouldPopPath(unsigned newPathAfterLastSlash)
         return true;
 
     ASSERT(m_url.m_pathAfterLastSlash <= m_asciiBuffer.size());
-    CodePointIterator<LChar> componentToPop(m_asciiBuffer.subspan(newPathAfterLastSlash, m_url.m_pathAfterLastSlash - newPathAfterLastSlash));
+    CodePointIterator<LChar> componentToPop({ &m_asciiBuffer[newPathAfterLastSlash], &m_asciiBuffer[0] + m_url.m_pathAfterLastSlash });
     if (newPathAfterLastSlash == m_url.m_hostEnd + m_url.m_portLength + 1 && isWindowsDriveLetter(componentToPop))
         return false;
     return true;
@@ -2077,15 +2078,14 @@ void URLParser::parseAuthority(CodePointIterator<CharacterType> iterator)
 template<typename UnsignedIntegerType>
 void URLParser::appendNumberToASCIIBuffer(UnsignedIntegerType number)
 {
-    constexpr size_t bufferSize = sizeof(UnsignedIntegerType) * 3 + 1;
-    std::array<LChar, bufferSize> buffer;
-    size_t index = bufferSize;
+    LChar buf[sizeof(UnsignedIntegerType) * 3 + 1];
+    LChar* end = std::end(buf);
+    LChar* p = end;
     do {
-        buffer[--index] = (number % 10) + '0';
+        *--p = (number % 10) + '0';
         number /= 10;
     } while (number);
-
-    appendToASCIIBuffer(std::span { buffer }.subspan(index));
+    appendToASCIIBuffer(std::span { p, static_cast<size_t>(end - p) });
 }
 
 void URLParser::serializeIPv4(IPv4Address address)
@@ -2252,7 +2252,7 @@ Expected<uint32_t, URLParser::IPv4PieceParsingError> URLParser::parseIPv4Piece(C
 ALWAYS_INLINE static uint64_t pow256(size_t exponent)
 {
     RELEASE_ASSERT(exponent <= 4);
-    static constexpr std::array<uint64_t, 5> values { 1, 256, 256 * 256, 256 * 256 * 256, 256ull * 256 * 256 * 256 };
+    static constexpr uint64_t values[5] = { 1, 256, 256 * 256, 256 * 256 * 256, 256ull * 256 * 256 * 256 };
     return values[exponent];
 }
 
@@ -2562,10 +2562,10 @@ template<typename CharacterType> std::optional<URLParser::LCharBuffer> URLParser
         return ascii;
     }
 
-    std::array<UChar, hostnameBufferLength> hostnameBuffer;
+    UChar hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    size_t numCharactersConverted = uidna_nameToASCII(&internationalDomainNameTranscoder(), StringView(domain).upconvertedCharacters(), domain.length(), hostnameBuffer.data(), hostnameBufferLength, &processingDetails, &error);
+    size_t numCharactersConverted = uidna_nameToASCII(&internationalDomainNameTranscoder(), StringView(domain).upconvertedCharacters(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
 #if ASSERT_ENABLED
@@ -2576,7 +2576,7 @@ template<typename CharacterType> std::optional<URLParser::LCharBuffer> URLParser
 #else
         UNUSED_PARAM(numCharactersConverted);
 #endif // ASSERT_ENABLED
-        ascii.append(std::span { hostnameBuffer }.first(numCharactersConverted));
+        ascii.append(std::span { hostnameBuffer, numCharactersConverted });
         if (domain != StringView(ascii.span()))
             syntaxViolation(iteratorForSyntaxViolationPosition);
         return ascii;
@@ -2586,8 +2586,8 @@ template<typename CharacterType> std::optional<URLParser::LCharBuffer> URLParser
 
 bool URLParser::hasForbiddenHostCodePoint(const URLParser::LCharBuffer& asciiDomain)
 {
-    for (auto character : asciiDomain) {
-        if (isForbiddenDomainCodePoint(character))
+    for (size_t i = 0; i < asciiDomain.size(); ++i) {
+        if (isForbiddenDomainCodePoint(asciiDomain[i]))
             return true;
     }
     return false;
@@ -2842,13 +2842,13 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         if (UNLIKELY(!isASCII(*iterator)))
             syntaxViolation(hostBegin);
 
-        std::array<uint8_t, U8_MAX_LENGTH> buffer;
+        uint8_t buffer[U8_MAX_LENGTH];
         size_t offset = 0;
         UBool isError = false;
         U8_APPEND(buffer, offset, U8_MAX_LENGTH, *iterator, isError);
         if (isError)
             return HostParsingResult::InvalidHost;
-        utf8Encoded.append(std::span { buffer }.first(offset));
+        utf8Encoded.append(std::span { buffer, offset });
     }
     LCharBuffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
     String domain = String::fromUTF8(percentDecoded.span());
@@ -2860,6 +2860,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     if (!asciiDomain || hasForbiddenHostCodePoint(asciiDomain.value()))
         return HostParsingResult::InvalidHost;
     LCharBuffer& asciiDomainValue = asciiDomain.value();
+    const LChar* asciiDomainCharacters = asciiDomainValue.data();
 
     auto address = parseIPv4Host<CharacterType, LChar>(hostBegin, asciiDomainValue.span());
     if (address) {
@@ -2874,7 +2875,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     if (address.error() == IPv4ParsingError::Failure)
         return HostParsingResult::InvalidHost;
 
-    appendToASCIIBuffer(asciiDomainValue.span());
+    appendToASCIIBuffer(std::span { asciiDomainCharacters, asciiDomainValue.size() });
     m_url.m_hostEnd = currentPosition(iterator);
     auto hostStart = m_url.hostStart();
     if (UNLIKELY(dnsNameEndsInNumber(parsedDataView(hostStart, m_url.m_hostEnd - hostStart))))

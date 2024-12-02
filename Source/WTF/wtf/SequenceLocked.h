@@ -20,8 +20,6 @@
 #include <type_traits>
 #include <wtf/Compiler.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 // A SequenceLock implements lock-free reads. A sequence counter is incremented
@@ -141,5 +139,3 @@ private:
 }
 
 using WTF::SequenceLocked;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

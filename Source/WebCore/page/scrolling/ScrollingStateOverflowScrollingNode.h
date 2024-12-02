@@ -71,7 +71,6 @@ private:
         ScrollbarEnabledState&&,
         UserInterfaceLayoutDirection,
         ScrollbarWidth,
-        bool useDarkAppearanceForScrollbars,
         RequestedKeyboardScrollData&&
     );
     ScrollingStateOverflowScrollingNode(ScrollingStateTree&, ScrollingNodeID);

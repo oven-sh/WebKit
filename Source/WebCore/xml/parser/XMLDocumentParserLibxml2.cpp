@@ -79,8 +79,6 @@
 #include <libxslt/xslt.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 #if ENABLE(XSLT)
@@ -820,7 +818,7 @@ void XMLDocumentParser::startElementNs(const xmlChar* xmlLocalName, const xmlCha
         customElementReactionStack.emplace(m_currentNode->document().globalObject());
     }
 
-    auto newElement = m_currentNode->treeScope().createElement(qName, true);
+    auto newElement = m_currentNode->document().createElement(qName, true);
 
     Vector<Attribute> prefixedAttributes;
     if (!handleNamespaceAttributes(prefixedAttributes, libxmlNamespaces, numNamespaces)) {
@@ -1515,5 +1513,3 @@ std::optional<HashMap<String, String>> parseAttributes(CachedResourceLoader& cac
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

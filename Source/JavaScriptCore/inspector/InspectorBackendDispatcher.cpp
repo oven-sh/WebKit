@@ -33,8 +33,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace Inspector {
 
 SupplementalBackendDispatcher::SupplementalBackendDispatcher(BackendDispatcher& backendDispatcher)
@@ -358,5 +356,3 @@ RefPtr<JSON::Array> BackendDispatcher::getArray(JSON::Object* params, const Stri
 }
 
 } // namespace Inspector
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

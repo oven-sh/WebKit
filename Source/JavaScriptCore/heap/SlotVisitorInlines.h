@@ -30,8 +30,6 @@
 #include "PreciseAllocation.h"
 #include "SlotVisitor.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 ALWAYS_INLINE void SlotVisitor::appendUnbarriered(JSValue* slot, size_t count)
@@ -197,5 +195,3 @@ IterationStatus SlotVisitor::forEachMarkStack(const Func& func)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

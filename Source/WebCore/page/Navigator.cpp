@@ -398,15 +398,9 @@ RefPtr<Page> Navigator::protectedPage()
     return page();
 }
 
-const Document* Navigator::document() const
-{
-    RefPtr frame = this->frame();
-    return frame ? frame->document() : nullptr;
-}
-
 Document* Navigator::document()
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     return frame ? frame->document() : nullptr;
 }
 
@@ -540,16 +534,5 @@ void Navigator::getPushPermissionState(DOMPromiseDeferred<IDLEnumeration<PushPer
 }
 
 #endif // #if ENABLE(DECLARATIVE_WEB_PUSH)
-
-int Navigator::maxTouchPoints() const
-{
-#if ENABLE(IOS_TOUCH_EVENTS) && !PLATFORM(MACCATALYST)
-    RefPtr document = this->document();
-    if (!document || !document->quirks().needsZeroMaxTouchPointsQuirk())
-        return 5;
-#endif
-
-    return 0;
-}
 
 } // namespace WebCore

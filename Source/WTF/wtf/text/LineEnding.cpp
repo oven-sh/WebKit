@@ -38,34 +38,32 @@ namespace WTF {
 
 Vector<uint8_t> normalizeLineEndingsToLF(Vector<uint8_t>&& vector)
 {
-    size_t inputIndex = 0;
-    size_t outputIndex = 0;
-    while (inputIndex < vector.size()) {
-        auto character = vector[inputIndex++];
+    auto q = vector.data();
+    for (auto p = vector.data(), end = p + vector.size(); p != end; ) {
+        auto character = *p++;
         if (character == '\r') {
             // Turn CRLF and CR into LF.
-            if (inputIndex < vector.size() && vector[inputIndex] == '\n')
-                ++inputIndex;
-            vector[outputIndex++] = '\n';
+            if (p != end && *p == '\n')
+                ++p;
+            *q++ = '\n';
         } else {
             // Leave other characters alone.
-            vector[outputIndex++] = character;
+            *q++ = character;
         }
     }
-    vector.shrink(outputIndex);
-    return vector;
+    vector.shrink(q - vector.data());
+    return WTFMove(vector);
 }
 
 Vector<uint8_t> normalizeLineEndingsToCRLF(Vector<uint8_t>&& source)
 {
-    size_t sourceIndex = 0;
     size_t resultLength = 0;
-    while (sourceIndex < source.size()) {
-        auto character = source[sourceIndex++];
+    for (auto p = source.data(), end = p + source.size(); p != end; ) {
+        auto character = *p++;
         if (character == '\r') {
             // Turn CR or CRLF into CRLF;
-            if (sourceIndex < source.size() && source[sourceIndex] == '\n')
-                ++sourceIndex;
+            if (p != end && *p == '\n')
+                ++p;
             resultLength += 2;
         } else if (character == '\n') {
             // Turn LF into CRLF.
@@ -77,29 +75,28 @@ Vector<uint8_t> normalizeLineEndingsToCRLF(Vector<uint8_t>&& source)
     }
 
     if (resultLength == source.size())
-        return source;
+        return WTFMove(source);
 
     Vector<uint8_t> result(resultLength);
-    sourceIndex = 0;
-    size_t resultIndex = 0;
-    while (sourceIndex < source.size()) {
-        auto character = source[sourceIndex++];
+    auto q = result.data();
+    for (auto p = source.data(), end = p + source.size(); p != end; ) {
+        auto character = *p++;
         if (character == '\r') {
             // Turn CR or CRLF into CRLF;
-            if (sourceIndex < source.size() && source[sourceIndex] == '\n')
-                ++sourceIndex;
-            result[resultIndex++] = '\r';
-            result[resultIndex++] = '\n';
+            if (p != end && *p == '\n')
+                ++p;
+            *q++ = '\r';
+            *q++ = '\n';
         } else if (character == '\n') {
             // Turn LF into CRLF.
-            result[resultIndex++] = '\r';
-            result[resultIndex++] = '\n';
+            *q++ = '\r';
+            *q++ = '\n';
         } else {
             // Leave other characters alone.
-            result[resultIndex++] = character;
+            *q++ = character;
         }
     }
-    ASSERT(resultIndex == resultLength);
+    ASSERT(q == result.data() + resultLength);
     return result;
 }
 

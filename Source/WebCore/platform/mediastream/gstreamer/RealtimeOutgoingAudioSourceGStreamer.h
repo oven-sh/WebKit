@@ -27,27 +27,22 @@ namespace WebCore {
 
 class RealtimeOutgoingAudioSourceGStreamer final : public RealtimeOutgoingMediaSourceGStreamer {
 public:
-    static Ref<RealtimeOutgoingAudioSourceGStreamer> create(const RefPtr<UniqueSSRCGenerator>& ssrcGenerator, const String& mediaStreamId, MediaStreamTrack& track)
-    {
-        return adoptRef(*new RealtimeOutgoingAudioSourceGStreamer(ssrcGenerator, mediaStreamId, track));
-    }
-    static Ref<RealtimeOutgoingAudioSourceGStreamer> createMuted(const RefPtr<UniqueSSRCGenerator>& ssrcGenerator)
-    {
-        return adoptRef(*new RealtimeOutgoingAudioSourceGStreamer(ssrcGenerator));
-    }
-    ~RealtimeOutgoingAudioSourceGStreamer();
+    static Ref<RealtimeOutgoingAudioSourceGStreamer> create(const RefPtr<UniqueSSRCGenerator>& ssrcGenerator, const String& mediaStreamId, MediaStreamTrack& track) { return adoptRef(*new RealtimeOutgoingAudioSourceGStreamer(ssrcGenerator, mediaStreamId, track)); }
 
-    WARN_UNUSED_RETURN GRefPtr<GstPad> outgoingSourcePad() const final;
-    RefPtr<GStreamerRTPPacketizer> createPacketizer(RefPtr<UniqueSSRCGenerator>, const GstStructure*, GUniquePtr<GstStructure>&&) final;
+    bool setPayloadType(const GRefPtr<GstCaps>&) final;
+    void setParameters(GUniquePtr<GstStructure>&&) final;
+    void teardown() final;
 
 protected:
     explicit RealtimeOutgoingAudioSourceGStreamer(const RefPtr<UniqueSSRCGenerator>&, const String& mediaStreamId, MediaStreamTrack&);
-    explicit RealtimeOutgoingAudioSourceGStreamer(const RefPtr<UniqueSSRCGenerator>&);
 
 private:
-    void initialize();
-
     RTCRtpCapabilities rtpCapabilities() const final;
+
+    GRefPtr<GstElement> m_audioconvert;
+    GRefPtr<GstElement> m_audioresample;
+    GRefPtr<GstElement> m_inputCapsFilter;
+    GRefPtr<GstCaps> m_inputCaps;
 };
 
 } // namespace WebCore

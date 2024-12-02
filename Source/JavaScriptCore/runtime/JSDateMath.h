@@ -49,8 +49,6 @@
 #include <wtf/SaturatedArithmetic.h>
 #include <wtf/TZoneMalloc.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class JSGlobalObject;
@@ -210,5 +208,3 @@ ALWAYS_INLINE bool isUTCEquivalent(StringView timeZone)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

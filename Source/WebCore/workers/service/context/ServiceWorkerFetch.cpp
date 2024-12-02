@@ -104,10 +104,6 @@ static void processResponse(Ref<Client>&& client, Expected<Ref<FetchResponse>, s
         return;
     }
 
-    // As per https://fetch.spec.whatwg.org/#main-fetch step 9, copy request's url list in response's url list if empty.
-    if (resourceResponse.url().isNull())
-        resourceResponse.setURL(requestURL);
-
     if (resourceResponse.isRedirection() && resourceResponse.httpHeaderFields().contains(HTTPHeaderName::Location)) {
         client->didReceiveRedirection(resourceResponse);
         return;
@@ -124,6 +120,10 @@ static void processResponse(Ref<Client>&& client, Expected<Ref<FetchResponse>, s
         if (!resourceResponse.certificateInfo())
             resourceResponse.setCertificateInfo(WTFMove(certificateInfo));
     }
+
+    // As per https://fetch.spec.whatwg.org/#main-fetch step 9, copy request's url list in response's url list if empty.
+    if (resourceResponse.url().isNull())
+        resourceResponse.setURL(requestURL);
 
     client->didReceiveResponse(resourceResponse);
 

@@ -83,11 +83,7 @@ bool RenderVTTCue::initializeLayoutParameters(LayoutUnit& step, LayoutUnit& posi
     if (!firstChild())
         return false;
 
-    auto* box = cueBox();
-    if (!box)
-        return false;
-
-    auto firstInlineBox = InlineIterator::firstInlineBoxFor(*box) ? InlineIterator::firstInlineBoxFor(*box) : InlineIterator::firstRootInlineBoxFor(*this);
+    auto firstInlineBox = InlineIterator::firstInlineBoxFor(cueBox()) ? InlineIterator::firstInlineBoxFor(cueBox()) : InlineIterator::firstRootInlineBoxFor(*this);
     if (!firstInlineBox)
         return false;
 
@@ -360,11 +356,7 @@ void RenderVTTCue::repositionCueSnapToLinesSet()
     bool switched;
     placeBoxInDefaultPosition(position, switched);
 
-    auto* box = cueBox();
-    if (!box)
-        return;
-
-    auto firstInlineBox = InlineIterator::firstInlineBoxFor(*box) ? InlineIterator::firstInlineBoxFor(*box) : InlineIterator::firstRootInlineBoxFor(*this);
+    auto firstInlineBox = InlineIterator::firstInlineBoxFor(cueBox()) ? InlineIterator::firstInlineBoxFor(cueBox()) : InlineIterator::firstRootInlineBoxFor(*this);
     ASSERT(firstInlineBox);
     // 11. Step loop: If none of the boxes in boxes would overlap any of the boxes
     // in output and all the boxes in output are within the video's rendering area
@@ -391,11 +383,7 @@ void RenderVTTCue::repositionGenericCue()
     if (!firstChild())
         return;
 
-    auto* box = cueBox();
-    if (!box)
-        return;
-
-    auto firstInlineBox = InlineIterator::firstInlineBoxFor(*box);
+    auto firstInlineBox = InlineIterator::firstInlineBoxFor(cueBox());
     if (downcast<TextTrackCueGeneric>(*m_cue).useDefaultPosition() && firstInlineBox) {
         LayoutUnit parentWidth = containingBlock()->logicalWidth();
         LayoutUnit width { firstInlineBox->visualRectIgnoringBlockDirection().width() };
@@ -483,12 +471,10 @@ RenderBlockFlow& RenderVTTCue::backdropBox() const
     return downcast<RenderBlockFlow>(firstChild);
 }
 
-RenderInline* RenderVTTCue::cueBox() const
+RenderInline& RenderVTTCue::cueBox() const
 {
-    auto* firstChild = backdropBox().firstChild();
-    ASSERT(firstChild);
-    ASSERT(is<RenderInline>(firstChild));
-    return dynamicDowncast<RenderInline>(firstChild);
+    ASSERT(firstChild());
+    return downcast<RenderInline>(*backdropBox().firstChild());
 }
 
 } // namespace WebCore

@@ -49,7 +49,7 @@ inline auto HTMLCollection::rootTypeFromCollectionType(CollectionType type) -> R
     case CollectionType::DocumentNamedItems:
     case CollectionType::DocumentAllNamedItems:
     case CollectionType::FormControls:
-        return HTMLCollection::RootType::AtTreeScope;
+        return HTMLCollection::IsRootedAtTreeScope;
     case CollectionType::AllDescendants:
     case CollectionType::ByClass:
     case CollectionType::ByTag:
@@ -64,10 +64,10 @@ inline auto HTMLCollection::rootTypeFromCollectionType(CollectionType type) -> R
     case CollectionType::SelectedOptions:
     case CollectionType::DataListOptions:
     case CollectionType::MapAreas:
-        return HTMLCollection::RootType::AtNode;
+        return HTMLCollection::IsRootedAtNode;
     }
     ASSERT_NOT_REACHED();
-    return HTMLCollection::RootType::AtNode;
+    return HTMLCollection::IsRootedAtNode;
 }
 
 static NodeListInvalidationType invalidationTypeExcludingIdAndNameAttributes(CollectionType type)
@@ -115,7 +115,7 @@ static NodeListInvalidationType invalidationTypeExcludingIdAndNameAttributes(Col
 HTMLCollection::HTMLCollection(ContainerNode& ownerNode, CollectionType type)
     : m_collectionType(static_cast<unsigned>(type))
     , m_invalidationType(static_cast<unsigned>(invalidationTypeExcludingIdAndNameAttributes(type)))
-    , m_rootType(static_cast<unsigned>(rootTypeFromCollectionType(type)))
+    , m_rootType(rootTypeFromCollectionType(type))
     , m_ownerNode(ownerNode)
 {
     ASSERT(m_rootType == static_cast<unsigned>(rootTypeFromCollectionType(type)));

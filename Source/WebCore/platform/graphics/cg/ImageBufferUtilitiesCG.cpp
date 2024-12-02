@@ -38,8 +38,6 @@
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 using PutBytesCallback = size_t(std::span<const uint8_t>);
@@ -274,7 +272,5 @@ String dataURL(const PixelBuffer& pixelBuffer, const String& mimeType, std::opti
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(CG)

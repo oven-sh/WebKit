@@ -43,6 +43,8 @@ public:
 
     OffscreenCanvas& canvas() const { return downcast<OffscreenCanvas>(canvasBase()); }
 
+    void commit();
+
     void setFont(const String&);
     CanvasDirection direction() const;
     void fillText(const String& text, double x, double y, std::optional<double> maxWidth = std::nullopt);

@@ -32,6 +32,9 @@
 
 #include <type_traits>
 #include <wtf/Forward.h>
+#include <wtf/FunctionDispatcher.h>
+#include <wtf/Ref.h>
+#include <wtf/RefPtr.h>
 
 // SFINAE depends on overload resolution. We indicate the overload we'd prefer
 // (if it can compile) using a higher priorty type (int), and the overload
@@ -97,34 +100,34 @@ struct RemoveSmartPointerHelper<T, Ref<Pointee>> {
 template<typename T>
 struct RemoveSmartPointer : detail::RemoveSmartPointerHelper<T, std::remove_cv_t<T>> { };
 
-// HasRefPtrMemberFunctions implementation
+// HasRefPtrMethods implementation
 namespace detail {
 
 template<typename>
 struct SFINAE1True : std::true_type { };
 
 template<class T>
-static auto HasRefPtrMemberFunctionsTest(SFINAE_OVERLOAD_PREFERRED) -> SFINAE1True<decltype(static_cast<std::remove_cv_t<T>*>(nullptr)->ref(), static_cast<std::remove_cv_t<T>*>(nullptr)->deref())>;
+static auto HasRefPtrMethodsTest(SFINAE_OVERLOAD_PREFERRED) -> SFINAE1True<decltype(static_cast<std::remove_cv_t<T>*>(nullptr)->ref(), static_cast<std::remove_cv_t<T>*>(nullptr)->deref())>;
 template<class>
-static auto HasRefPtrMemberFunctionsTest(SFINAE_OVERLOAD_DEFAULT) -> std::false_type;
+static auto HasRefPtrMethodsTest(SFINAE_OVERLOAD_DEFAULT) -> std::false_type;
 
 } // namespace detail
 
 template<class T>
-struct HasRefPtrMemberFunctions : decltype(detail::HasRefPtrMemberFunctionsTest<T>(SFINAE_OVERLOAD)) { };
+struct HasRefPtrMethods : decltype(detail::HasRefPtrMethodsTest<T>(SFINAE_OVERLOAD)) { };
 
-// HasCheckedPtrMemberFunctions implementation
+// HasCheckedPtrMethods implementation
 namespace detail {
 
 template<class T>
-static auto HasCheckedPtrMemberFunctionsTest(SFINAE_OVERLOAD_PREFERRED) -> SFINAE1True<decltype(static_cast<std::remove_cv_t<T>*>(nullptr)->incrementCheckedPtrCount(), static_cast<std::remove_cv_t<T>*>(nullptr)->decrementCheckedPtrCount())>;
+static auto HasCheckedPtrMethodsTest(SFINAE_OVERLOAD_PREFERRED) -> SFINAE1True<decltype(static_cast<std::remove_cv_t<T>*>(nullptr)->incrementPtrCount(), static_cast<std::remove_cv_t<T>*>(nullptr)->decrementPtrCount())>;
 template<class>
-static auto HasCheckedPtrMemberFunctionsTest(SFINAE_OVERLOAD_DEFAULT) -> std::false_type;
+static auto HasCheckedPtrMethodsTest(SFINAE_OVERLOAD_DEFAULT) -> std::false_type;
 
 } // namespace detail
 
 template<class T>
-struct HasCheckedPtrMemberFunctions : decltype(detail::HasCheckedPtrMemberFunctionsTest<T>(SFINAE_OVERLOAD)) { };
+struct HasCheckedPtrMethods : decltype(detail::HasCheckedPtrMethodsTest<T>(SFINAE_OVERLOAD)) { };
 
 // HasIsolatedCopy()
 namespace detail {
@@ -181,16 +184,5 @@ struct IsExpected : std::false_type { };
 
 template <typename T, typename E>
 struct IsExpected<Expected<T, E>> : std::true_type { };
-
-template <typename... Args>
-struct ParameterCountImpl {
-    static constexpr std::size_t value = sizeof...(Args);
-};
-
-template <typename ReturnType, typename... Args>
-constexpr std::size_t parameterCount(ReturnType(*)(Args...))
-{
-    return ParameterCountImpl<Args...>::value;
-}
 
 } // namespace NTF

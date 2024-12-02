@@ -441,10 +441,7 @@ add_custom_command(
     VERBATIM
 )
 
-WEBKIT_BUILD_INSPECTOR_GRESOURCES(
-    "${WebKitGTK_DERIVED_SOURCES_DIR}"
-    "${WebKitGTK_DERIVED_SOURCES_DIR}/InspectorGResourceBundle.c"
-)
+WEBKIT_BUILD_INSPECTOR_GRESOURCES(${WebKitGTK_DERIVED_SOURCES_DIR} "InspectorGResourceBundle.c")
 
 set(WebKitResources "")
 list(APPEND WebKitResources "<file alias=\"css/gtk-theme.css\">gtk-theme.css</file>\n")
@@ -594,10 +591,7 @@ GI_INTROSPECT(WebKit${WEBKITGTK_API_INFIX} ${WEBKITGTK_API_VERSION} webkit${WEBK
 )
 
 GI_DOCGEN(WebKit${WEBKITGTK_API_INFIX} gtk/gtk${GTK_API_VERSION}-webkitgtk.toml.in
-    CONTENT_TEMPLATES
-        gtk/gtk${GTK_API_VERSION}-urlmap.js
-        glib/environment-variables.md
-        glib/profiling.md
+    CONTENT_TEMPLATES gtk/gtk${GTK_API_VERSION}-urlmap.js
 )
 
 if (ENABLE_2022_GLIB_API)

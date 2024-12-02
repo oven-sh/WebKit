@@ -86,8 +86,6 @@ private:
     void didReceiveData(WebCore::CurlStreamID, const WebCore::SharedBuffer&) final;
     void didFail(WebCore::CurlStreamID, CURLcode, WebCore::CertificateInfo&&) final;
 
-    Ref<NetworkSocketChannel> protectedChannel() const;
-
     void tryServerTrustEvaluation(WebCore::AuthenticationChallenge&&, String&&);
 
     bool appendReceivedBuffer(const WebCore::SharedBuffer&);
@@ -106,7 +104,7 @@ private:
     bool isStreamInvalidated() { return m_streamID == WebCore::invalidCurlStreamID; }
     void destructStream();
 
-    WeakRef<NetworkSocketChannel> m_channel;
+    CheckedRef<NetworkSocketChannel> m_channel;
     WebPageProxyIdentifier m_webProxyPageID;
     WebCore::ResourceRequest m_request;
     String m_protocol;

@@ -196,11 +196,6 @@ void RemoteDevice::setSharedVideoFrameMemory(WebCore::SharedMemory::Handle&& han
 }
 #endif
 
-void RemoteDevice::pauseAllErrorReporting(bool pauseErrorReporting)
-{
-    protectedBacking()->pauseAllErrorReporting(pauseErrorReporting);
-}
-
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
 void RemoteDevice::importExternalTextureFromVideoFrame(const WebGPU::ExternalTextureDescriptor& descriptor, WebGPUIdentifier identifier)
 {

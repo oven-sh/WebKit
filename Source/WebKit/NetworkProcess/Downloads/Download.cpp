@@ -53,11 +53,6 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Download);
 
-Ref<Download> Download::create(DownloadManager& downloadManager, DownloadID downloadID, NetworkDataTask& download, NetworkSession& session, const String& suggestedName)
-{
-    return adoptRef(*new Download(downloadManager, downloadID, download, session, suggestedName));
-}
-
 Download::Download(DownloadManager& downloadManager, DownloadID downloadID, NetworkDataTask& download, NetworkSession& session, const String& suggestedName)
     : m_downloadManager(downloadManager)
     , m_downloadID(downloadID)
@@ -66,15 +61,10 @@ Download::Download(DownloadManager& downloadManager, DownloadID downloadID, Netw
     , m_sessionID(session.sessionID())
     , m_testSpeedMultiplier(session.testSpeedMultiplier())
 {
-    downloadManager.didCreateDownload();
+    m_downloadManager->didCreateDownload();
 }
 
 #if PLATFORM(COCOA)
-Ref<Download> Download::create(DownloadManager& downloadManager, DownloadID downloadID, NSURLSessionDownloadTask* download, NetworkSession& session, const String& suggestedName)
-{
-    return adoptRef(*new Download(downloadManager, downloadID, download, session, suggestedName));
-}
-
 Download::Download(DownloadManager& downloadManager, DownloadID downloadID, NSURLSessionDownloadTask* download, NetworkSession& session, const String& suggestedName)
     : m_downloadManager(downloadManager)
     , m_downloadID(downloadID)
@@ -83,15 +73,14 @@ Download::Download(DownloadManager& downloadManager, DownloadID downloadID, NSUR
     , m_sessionID(session.sessionID())
     , m_testSpeedMultiplier(session.testSpeedMultiplier())
 {
-    downloadManager.didCreateDownload();
+    m_downloadManager->didCreateDownload();
 }
 #endif
 
 Download::~Download()
 {
     platformDestroyDownload();
-    if (CheckedPtr downloadManager = m_downloadManager)
-        downloadManager->didDestroyDownload();
+    m_downloadManager->didDestroyDownload();
 }
 
 void Download::cancel(CompletionHandler<void(std::span<const uint8_t>)>&& completionHandler, IgnoreDidFailCallback ignoreDidFailCallback)
@@ -110,8 +99,7 @@ void Download::cancel(CompletionHandler<void(std::span<const uint8_t>)>&& comple
         DOWNLOAD_RELEASE_LOG("didCancel: (id = %" PRIu64 ")", downloadID().toUInt64());
         if (auto extension = std::exchange(m_sandboxExtension, nullptr))
             extension->revoke();
-        if (CheckedPtr downloadManager = m_downloadManager)
-            downloadManager->downloadFinished(*this);
+        m_downloadManager->downloadFinished(*this);
     };
 
     if (m_download) {
@@ -146,10 +134,6 @@ void Download::didReceiveData(uint64_t bytesWritten, uint64_t totalBytesWritten,
     
     m_monitor.downloadReceivedBytes(bytesWritten);
 
-#if HAVE(MODERN_DOWNLOADPROGRESS)
-    updateProgress(totalBytesWritten, totalBytesExpectedToWrite);
-#endif
-
     send(Messages::DownloadProxy::DidReceiveData(bytesWritten, totalBytesWritten, totalBytesExpectedToWrite));
 }
 
@@ -168,8 +152,7 @@ void Download::didFinish()
             m_sandboxExtension = nullptr;
         }
 
-        if (CheckedPtr downloadManager = m_downloadManager)
-            downloadManager->downloadFinished(*this);
+        m_downloadManager->downloadFinished(*this);
     });
 }
 
@@ -192,15 +175,12 @@ void Download::didFail(const ResourceError& error, std::span<const uint8_t> resu
         m_sandboxExtension->revoke();
         m_sandboxExtension = nullptr;
     }
-    if (CheckedPtr downloadManager = m_downloadManager)
-        downloadManager->downloadFinished(*this);
+    m_downloadManager->downloadFinished(*this);
 }
 
 IPC::Connection* Download::messageSenderConnection() const
 {
-    if (CheckedPtr downloadManager = m_downloadManager)
-        return downloadManager->downloadProxyConnection();
-    return nullptr;
+    return m_downloadManager->downloadProxyConnection();
 }
 
 uint64_t Download::messageSenderDestinationID() const

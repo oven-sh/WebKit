@@ -45,8 +45,6 @@
 #include <wtf/Assertions.h>
 #include <wtf/StdMap.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToLocaleString);
@@ -1409,7 +1407,7 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
 
         if (direction == IndexOfDirection::Forward) {
             if (searchElement.isObject()) {
-                auto* result = std::bit_cast<const WriteBarrier<Unknown>*>(WTF::find64(std::bit_cast<const uint64_t*>(data + index), JSValue::encode(searchElement), length - index));
+                auto* result = bitwise_cast<const WriteBarrier<Unknown>*>(WTF::find64(bitwise_cast<const uint64_t*>(data + index), JSValue::encode(searchElement), length - index));
                 if (result)
                     return jsNumber(result - data);
                 return jsNumber(-1);
@@ -1901,5 +1899,3 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncConcat, (JSGlobalObject* globalObject, Ca
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

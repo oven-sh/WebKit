@@ -15,7 +15,6 @@
 #include "src/gpu/graphite/render/AnalyticBlurRenderStep.h"
 #include "src/gpu/graphite/render/AnalyticRRectRenderStep.h"
 #include "src/gpu/graphite/render/BitmapTextRenderStep.h"
-#include "src/gpu/graphite/render/CircularArcRenderStep.h"
 #include "src/gpu/graphite/render/CommonDepthStencilSettings.h"
 #include "src/gpu/graphite/render/CoverBoundsRenderStep.h"
 #include "src/gpu/graphite/render/CoverageMaskRenderStep.h"
@@ -110,8 +109,6 @@ RendererProvider::RendererProvider(const Caps* caps, StaticBufferManager* buffer
     fNonAABoundsFill = makeFromStep(std::make_unique<CoverBoundsRenderStep>(
                                             "non-aa-fill", kDirectDepthGreaterPass),
                                     DrawTypeFlags::kSimpleShape);
-    fCircularArc = makeFromStep(std::make_unique<CircularArcRenderStep>(bufferManager),
-                                DrawTypeFlags::kSimpleShape);
     fAnalyticBlur = makeFromStep(std::make_unique<AnalyticBlurRenderStep>(),
                                  DrawTypeFlags::kSimpleShape);
 

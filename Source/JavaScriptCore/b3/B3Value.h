@@ -42,8 +42,6 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TriState.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace B3 {
 
 class BasicBlock;
@@ -369,27 +367,27 @@ protected:
     // The specific value of VarArgs does not matter, but the value of the others is assumed to match their meaning.
     enum NumChildren : uint8_t { Zero = 0, One = 1, Two = 2, Three = 3, VarArgs = 4};
 
-    char* childrenAlloc() { return std::bit_cast<char*>(this) + m_adjacencyListOffset; }
-    const char* childrenAlloc() const { return std::bit_cast<const char*>(this) + m_adjacencyListOffset; }
+    char* childrenAlloc() { return bitwise_cast<char*>(this) + m_adjacencyListOffset; }
+    const char* childrenAlloc() const { return bitwise_cast<const char*>(this) + m_adjacencyListOffset; }
     Vector<Value*, 3>& childrenVector()
     {
         ASSERT(m_numChildren == VarArgs);
-        return *std::bit_cast<Vector<Value*, 3>*>(childrenAlloc());
+        return *bitwise_cast<Vector<Value*, 3>*>(childrenAlloc());
     }
     const Vector<Value*, 3>& childrenVector() const
     {
         ASSERT(m_numChildren == VarArgs);
-        return *std::bit_cast<Vector<Value*, 3> const*>(childrenAlloc());
+        return *bitwise_cast<Vector<Value*, 3> const*>(childrenAlloc());
     }
     Value** childrenArray()
     {
         ASSERT(m_numChildren != VarArgs);
-        return std::bit_cast<Value**>(childrenAlloc());
+        return bitwise_cast<Value**>(childrenAlloc());
     }
     Value* const* childrenArray() const
     {
         ASSERT(m_numChildren != VarArgs);
-        return std::bit_cast<Value* const*>(childrenAlloc());
+        return bitwise_cast<Value* const*>(childrenAlloc());
     }
 
     template<typename... Arguments>
@@ -553,7 +551,6 @@ protected:
         case VectorBitwiseSelect:
         case VectorRelaxedMAdd:
         case VectorRelaxedNMAdd:
-        case VectorRelaxedLaneSelect:
             return 3 * sizeof(Value*);
         case CCall:
         case Check:
@@ -632,16 +629,16 @@ private:
 
         switch (valueToClone.m_numChildren) {
         case VarArgs:
-            new (std::bit_cast<char*>(this) + offset) Vector<Value*, 3> (valueToClone.childrenVector());
+            new (bitwise_cast<char*>(this) + offset) Vector<Value*, 3> (valueToClone.childrenVector());
             break;
         case Three:
-            std::bit_cast<Value**>(std::bit_cast<char*>(this) + offset)[2] = valueToClone.childrenArray()[2];
+            bitwise_cast<Value**>(bitwise_cast<char*>(this) + offset)[2] = valueToClone.childrenArray()[2];
             FALLTHROUGH;
         case Two:
-            std::bit_cast<Value**>(std::bit_cast<char*>(this) + offset)[1] = valueToClone.childrenArray()[1];
+            bitwise_cast<Value**>(bitwise_cast<char*>(this) + offset)[1] = valueToClone.childrenArray()[1];
             FALLTHROUGH;
         case One:
-            std::bit_cast<Value**>(std::bit_cast<char*>(this) + offset)[0] = valueToClone.childrenArray()[0];
+            bitwise_cast<Value**>(bitwise_cast<char*>(this) + offset)[0] = valueToClone.childrenArray()[0];
             break;
         case Zero:
             break;
@@ -785,7 +782,6 @@ private:
         case VectorBitwiseSelect:
         case VectorRelaxedMAdd:
         case VectorRelaxedNMAdd:
-        case VectorRelaxedLaneSelect:
             if (UNLIKELY(numArgs != 3))
                 badKind(kind, numArgs);
             return Three;
@@ -1021,11 +1017,11 @@ public: \
 private: \
     Value** childrenArray() \
     { \
-        return std::bit_cast<Value**>(std::bit_cast<char*>(this) + sizeof(*this)); \
+        return bitwise_cast<Value**>(bitwise_cast<char*>(this) + sizeof(*this)); \
     } \
     Value* const* childrenArray() const \
     { \
-        return std::bit_cast<Value* const*>(std::bit_cast<char const*>(this) + sizeof(*this)); \
+        return bitwise_cast<Value* const*>(bitwise_cast<char const*>(this) + sizeof(*this)); \
     }
 
 // Only use this for classes with no subclass that add new fields (as it uses sizeof(*this))
@@ -1033,15 +1029,13 @@ private: \
 private: \
     Vector<Value*, 3>& childrenVector() \
     { \
-        return *std::bit_cast<Vector<Value*, 3>*>(std::bit_cast<char*>(this) + sizeof(*this)); \
+        return *bitwise_cast<Vector<Value*, 3>*>(bitwise_cast<char*>(this) + sizeof(*this)); \
     } \
     const Vector<Value*, 3>& childrenVector() const \
     { \
-        return *std::bit_cast<Vector<Value*, 3> const*>(std::bit_cast<char const*>(this) + sizeof(*this)); \
+        return *bitwise_cast<Vector<Value*, 3> const*>(bitwise_cast<char const*>(this) + sizeof(*this)); \
     } \
 
 } } // namespace JSC::B3
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)

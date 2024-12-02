@@ -28,7 +28,6 @@
 #ifndef DOUBLE_CONVERSION_BIGNUM_H_
 #define DOUBLE_CONVERSION_BIGNUM_H_
 
-#include <array>
 #include <wtf/dtoa/utils.h>
 
 namespace WTF {
@@ -68,7 +67,7 @@ class Bignum {
   // In the worst case this function is in O(this/other).
   uint16_t DivideModuloIntBignum(const Bignum& other);
 
-  bool ToHexString(std::span<char> buffer) const;
+  bool ToHexString(char* buffer, int buffer_size) const;
 
   // Returns
   //  -1 if a < b,
@@ -130,7 +129,7 @@ class Bignum {
   Chunk BigitAt(int index) const;
   void SubtractTimes(const Bignum& other, int factor);
 
-  std::array<Chunk, kBigitCapacity> bigits_buffer_;
+  Chunk bigits_buffer_[kBigitCapacity];
   // A BufferReference backed by bigits_buffer_. This way accesses to the array are
   // checked for out-of-bounds errors.
   BufferReference<Chunk> bigits_;

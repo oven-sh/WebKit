@@ -26,7 +26,6 @@
 #include "config.h"
 #include <wtf/persistence/PersistentDecoder.h>
 
-#include <wtf/StdLibExtras.h>
 #include <wtf/persistence/PersistentEncoder.h>
 
 namespace WTF::Persistence {
@@ -44,24 +43,24 @@ bool Decoder::bufferIsLargeEnoughToContain(size_t size) const
     return size <= static_cast<size_t>(std::distance(m_bufferPosition, m_buffer.end()));
 }
 
-std::span<const uint8_t> Decoder::bufferPointerForDirectRead(size_t size)
+const uint8_t* Decoder::bufferPointerForDirectRead(size_t size)
 {
     if (!bufferIsLargeEnoughToContain(size))
-        return { };
+        return nullptr;
 
-    auto data = m_buffer.subspan(currentOffset(), size);
+    auto data = m_buffer.data() + currentOffset();
     m_bufferPosition += size;
 
-    Encoder::updateChecksumForData(m_sha1, data);
+    Encoder::updateChecksumForData(m_sha1, { data, size });
     return data;
 }
 
 bool Decoder::decodeFixedLengthData(std::span<uint8_t> span)
 {
     auto buffer = bufferPointerForDirectRead(span.size());
-    if (!buffer.data())
+    if (!buffer)
         return false;
-    memcpySpan(span, buffer);
+    memcpy(span.data(), buffer, span.size());
     return true;
 }
 
@@ -81,7 +80,7 @@ Decoder& Decoder::decodeNumber(std::optional<T>& optional)
         return *this;
 
     T value;
-    memcpySpan(asMutableByteSpan(value), m_buffer.subspan(currentOffset(), sizeof(T)));
+    memcpy(&value, m_buffer.data() + currentOffset(), sizeof(T));
     m_bufferPosition += sizeof(T);
 
     Encoder::updateChecksumForNumber(m_sha1, value);

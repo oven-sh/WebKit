@@ -41,26 +41,26 @@ namespace WebCore {
     
 using namespace HTMLNames;
 
-AccessibilityList::AccessibilityList(AXID axID, RenderObject& renderer)
-    : AccessibilityRenderObject(axID, renderer)
+AccessibilityList::AccessibilityList(RenderObject& renderer)
+    : AccessibilityRenderObject(renderer)
 {
 }
 
-AccessibilityList::AccessibilityList(AXID axID, Node& node)
-    : AccessibilityRenderObject(axID, node)
+AccessibilityList::AccessibilityList(Node& node)
+    : AccessibilityRenderObject(node)
 {
 }
 
 AccessibilityList::~AccessibilityList() = default;
 
-Ref<AccessibilityList> AccessibilityList::create(AXID axID, RenderObject& renderer)
+Ref<AccessibilityList> AccessibilityList::create(RenderObject& renderer)
 {
-    return adoptRef(*new AccessibilityList(axID, renderer));
+    return adoptRef(*new AccessibilityList(renderer));
 }
 
-Ref<AccessibilityList> AccessibilityList::create(AXID axID, Node& node)
+Ref<AccessibilityList> AccessibilityList::create(Node& node)
 {
-    return adoptRef(*new AccessibilityList(axID, node));
+    return adoptRef(*new AccessibilityList(node));
 }
 
 bool AccessibilityList::computeIsIgnored() const
@@ -128,16 +128,6 @@ bool AccessibilityList::childHasPseudoVisibleListItemMarkers(Node* node)
 
 AccessibilityRole AccessibilityList::determineAccessibilityRole()
 {
-    if (!m_childrenDirty && childrenInitialized())
-        return determineAccessibilityRoleWithCleanChildren();
-
-    m_ariaRole = determineAriaRoleAttribute();
-    return isDescriptionList() ? AccessibilityRole::DescriptionList : AccessibilityRole::List;
-}
-
-AccessibilityRole AccessibilityList::determineAccessibilityRoleWithCleanChildren()
-{
-    ASSERT(!m_childrenDirty && childrenInitialized());
     m_ariaRole = determineAriaRoleAttribute();
 
     // Directory is mapped to list for now, but does not adhere to the same heuristics.
@@ -161,7 +151,7 @@ AccessibilityRole AccessibilityList::determineAccessibilityRoleWithCleanChildren
     unsigned listItemCount = 0;
     bool hasVisibleMarkers = false;
 
-    const auto& children = unignoredChildren();
+    const auto& children = this->unignoredChildren();
     // DescriptionLists are always semantically a description list, so do not apply heuristics.
     if (isDescriptionList() && children.size())
         return AccessibilityRole::DescriptionList;

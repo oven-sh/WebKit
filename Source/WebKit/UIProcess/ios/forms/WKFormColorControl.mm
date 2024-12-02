@@ -174,8 +174,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)selectColor:(UIColor *)color
 {
-    if (auto *picker = dynamic_objc_cast<WKColorPicker>(self.control))
-        [picker selectColor:color];
+    if ([self.control isKindOfClass:WKColorPicker.class])
+        [(WKColorPicker *)self.control selectColor:color];
 }
 
 @end

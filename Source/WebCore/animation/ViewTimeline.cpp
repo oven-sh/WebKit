@@ -39,10 +39,7 @@
 #include "CSSViewValue.h"
 #include "Document.h"
 #include "Element.h"
-#include "LegacyRenderSVGModelObject.h"
 #include "RenderBox.h"
-#include "RenderInline.h"
-#include "RenderSVGModelObject.h"
 #include "ScrollAnchoringController.h"
 #include "StyleBuilderConverter.h"
 
@@ -131,7 +128,6 @@ ViewTimeline::ViewTimeline(ViewTimelineOptions&& options)
         auto document = m_subject->protectedDocument();
         document->ensureTimelinesController().addTimeline(*this);
         m_insets = insetsFromOptions(options.inset, RefPtr { m_subject.get() });
-        cacheCurrentTime();
     }
 }
 
@@ -204,63 +200,8 @@ AnimationTimelinesController* ViewTimeline::controller() const
     return nullptr;
 }
 
-void ViewTimeline::cacheCurrentTime()
-{
-    m_cachedCurrentTimeData = [&] -> CurrentTimeData {
-        if (!m_subject)
-            return { };
-        CheckedPtr subjectRenderer = m_subject->renderer();
-        if (!subjectRenderer)
-            return { };
-        auto* sourceScrollableArea = scrollableAreaForSourceRenderer(sourceScrollerRenderer(), m_subject->document());
-        if (!sourceScrollableArea)
-            return { };
-
-        // https://drafts.csswg.org/scroll-animations-1/#view-timeline-progress
-        //
-        // Progress (the current time) in a view progress timeline is calculated as: distance ÷ range where:
-        //
-        // - distance is the current scroll offset minus the scroll offset corresponding to the start of the
-        //   cover range
-        // - range is the scroll offset corresponding to the end of the cover range minus the scroll offset
-        //   corresponding to the start of the cover range
-        float scrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->scrollPosition().y() : sourceScrollableArea->scrollPosition().x();
-        float scrollContainerSize = axis() == ScrollAxis::Block ? sourceScrollableArea->visibleHeight() : sourceScrollableArea->visibleWidth();
-
-        auto subjectOffsetFromSource = subjectRenderer->localToContainerPoint(FloatPoint(), sourceScrollerRenderer());
-        float subjectOffset = axis() == ScrollAxis::Block ? subjectOffsetFromSource.y() : subjectOffsetFromSource.x();
-
-        auto subjectBounds = [&] -> FloatSize {
-            if (CheckedPtr subjectRenderBox = dynamicDowncast<RenderBox>(subjectRenderer.get()))
-                return subjectRenderBox->borderBoxRect().size();
-            if (CheckedPtr subjectRenderInline = dynamicDowncast<RenderInline>(subjectRenderer.get()))
-                return subjectRenderInline->borderBoundingBox().size();
-            if (CheckedPtr subjectRenderSVGModelObject = dynamicDowncast<RenderSVGModelObject>(subjectRenderer.get()))
-                return subjectRenderSVGModelObject->borderBoxRectEquivalent().size();
-            if (is<LegacyRenderSVGModelObject>(subjectRenderer.get()))
-                return subjectRenderer->objectBoundingBox().size();
-            return { };
-        }();
-
-        auto subjectSize = axis() == ScrollAxis::Block ? subjectBounds.height() : subjectBounds.width();
-
-        auto insetStart = m_insets.start.value_or(Length());
-        auto insetEnd = m_insets.end.value_or(insetStart);
-
-        return {
-            scrollOffset,
-            scrollContainerSize,
-            subjectOffset,
-            subjectSize,
-            insetStart,
-            insetEnd
-        };
-    }();
-}
-
 AnimationTimeline::ShouldUpdateAnimationsAndSendEvents ViewTimeline::documentWillUpdateAnimationsAndSendEvents()
 {
-    cacheCurrentTime();
     if (m_subject && m_subject->isConnected())
         return AnimationTimeline::ShouldUpdateAnimationsAndSendEvents::Yes;
     return AnimationTimeline::ShouldUpdateAnimationsAndSendEvents::No;
@@ -294,8 +235,38 @@ RenderBox* ViewTimeline::sourceScrollerRenderer() const
 
 ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& range) const
 {
-    if (!m_cachedCurrentTimeData.scrollOffset && !m_cachedCurrentTimeData.scrollContainerSize)
+    if (!m_subject)
         return { };
+
+    Ref document = m_subject->document();
+
+    CheckedPtr subjectRenderBox = dynamicDowncast<RenderBox>(m_subject->renderer());
+    if (!subjectRenderBox)
+        return { };
+
+    auto* sourceScrollableArea = scrollableAreaForSourceRenderer(sourceScrollerRenderer(), document);
+    if (!sourceScrollableArea)
+        return { };
+
+    // https://drafts.csswg.org/scroll-animations-1/#view-timeline-progress
+    //
+    // Progress (the current time) in a view progress timeline is calculated as: distance ÷ range where:
+    //
+    // - distance is the current scroll offset minus the scroll offset corresponding to the start of the
+    //   cover range
+    // - range is the scroll offset corresponding to the end of the cover range minus the scroll offset
+    //   corresponding to the start of the cover range
+
+    float currentScrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->scrollPosition().y() : sourceScrollableArea->scrollPosition().x();
+    float scrollContainerSize = axis() == ScrollAxis::Block ? sourceScrollableArea->visibleHeight() : sourceScrollableArea->visibleWidth();
+
+    auto subjectOffsetFromSource = subjectRenderBox->localToContainerPoint(FloatPoint(), sourceScrollerRenderer());
+    float subjectOffset = axis() == ScrollAxis::Block ? subjectOffsetFromSource.y() : subjectOffsetFromSource.x();
+
+    float subjectSize = axis() == ScrollAxis::Block ? subjectRenderBox->borderBoxRect().height() : subjectRenderBox->borderBoxRect().width();
+
+    auto insetStart = m_insets.start.value_or(Length());
+    auto insetEnd = m_insets.end.value_or(insetStart);
 
     auto computeRangeStart = [&]() {
         switch (range.start.name) {
@@ -303,12 +274,12 @@ ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& rang
         case SingleTimelineRange::Name::EntryCrossing:
         case SingleTimelineRange::Name::Entry:
         case SingleTimelineRange::Name::Cover:
-            return m_cachedCurrentTimeData.subjectOffset - m_cachedCurrentTimeData.scrollContainerSize;
+            return subjectOffset - scrollContainerSize;
         case SingleTimelineRange::Name::Contain:
-            return m_cachedCurrentTimeData.subjectOffset - m_cachedCurrentTimeData.scrollContainerSize - m_cachedCurrentTimeData.subjectSize;
+            return subjectOffset - scrollContainerSize - subjectSize;
         case SingleTimelineRange::Name::ExitCrossing:
         case SingleTimelineRange::Name::Exit:
-            return m_cachedCurrentTimeData.subjectOffset;
+            return subjectOffset;
         case SingleTimelineRange::Name::Omitted:
             return 0.f;
         }
@@ -321,12 +292,12 @@ ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& rang
         case SingleTimelineRange::Name::ExitCrossing:
         case SingleTimelineRange::Name::Exit:
         case SingleTimelineRange::Name::Cover:
-            return m_cachedCurrentTimeData.subjectOffset + m_cachedCurrentTimeData.subjectSize;
+            return subjectOffset + subjectSize;
         case SingleTimelineRange::Name::Contain:
-            return m_cachedCurrentTimeData.subjectOffset;
+            return subjectOffset;
         case SingleTimelineRange::Name::Entry:
         case SingleTimelineRange::Name::EntryCrossing:
-            return m_cachedCurrentTimeData.subjectOffset - m_cachedCurrentTimeData.scrollContainerSize - m_cachedCurrentTimeData.subjectSize;
+            return subjectOffset - scrollContainerSize - subjectSize;
         case SingleTimelineRange::Name::Omitted:
             return 0.f;
         }
@@ -334,11 +305,11 @@ ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& rang
         return 0.f;
     };
 
-    auto rangeStart = computeRangeStart() + m_cachedCurrentTimeData.insetEnd.value();
-    auto rangeEnd = computeRangeEnd() - m_cachedCurrentTimeData.insetStart.value();
+    auto rangeStart = computeRangeStart() + insetEnd.value();
+    auto rangeEnd = computeRangeEnd() - insetStart.value();
 
     return {
-        m_cachedCurrentTimeData.scrollOffset,
+        currentScrollOffset,
         rangeStart + ScrollTimeline::floatValueForOffset(range.start.offset, rangeEnd - rangeStart),
         rangeStart + ScrollTimeline::floatValueForOffset(range.end.offset, rangeEnd - rangeStart)
     };

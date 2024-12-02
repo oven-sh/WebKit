@@ -18,7 +18,7 @@ namespace
 {
 
 // Basic SplitString tests
-TEST(StringUtilsTest, SplitStringBasics)
+TEST(StringUtilsTest, SplitString_Basics)
 {
     std::vector<std::string> r;
 
@@ -58,7 +58,7 @@ TEST(StringUtilsTest, SplitStringBasics)
 }
 
 // Check different whitespace and result types for SplitString
-TEST(StringUtilsTest, SplitStringWhitespaceAndResultType)
+TEST(StringUtilsTest, SplitString_WhitespaceAndResultType)
 {
     std::vector<std::string> r;
 

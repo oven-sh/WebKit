@@ -39,8 +39,6 @@
 #include <Accelerate/Accelerate.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 namespace {
@@ -1811,7 +1809,5 @@ ALWAYS_INLINE void FormatConverter::convert()
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBGL)

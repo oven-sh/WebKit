@@ -113,9 +113,6 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     return [[NSWorkspace sharedWorkspace] iconForFileType:[@"." stringByAppendingString:file.pathExtension]];
 ALLOW_DEPRECATED_DECLARATIONS_END
 #else
-    NSError *error = nil;
-    if (![file checkResourceIsReachableAndReturnError:&error])
-        return nil;
     UIDocumentInteractionController *interactionController = [UIDocumentInteractionController interactionControllerWithURL:file];
     if (![interactionController.icons count])
         return nil;

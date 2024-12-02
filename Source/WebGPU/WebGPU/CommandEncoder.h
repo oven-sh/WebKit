@@ -25,7 +25,6 @@
 
 #pragma once
 
-#import "CommandBuffer.h"
 #import "CommandsMixin.h"
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
@@ -116,7 +115,6 @@ public:
     void setExistingEncoder(id<MTLCommandEncoder>);
     void generateInvalidEncoderStateError();
     bool validateClearBuffer(const Buffer&, uint64_t offset, uint64_t size);
-    static void trackEncoder(CommandEncoder&, WeakHashSet<CommandEncoder>&);
 
 private:
     CommandEncoder(id<MTLCommandBuffer>, Device&);
@@ -140,7 +138,10 @@ private:
     id<MTLSharedEvent> m_abortCommandBuffer { nil };
     id<MTLBlitCommandEncoder> m_blitCommandEncoder { nil };
     id<MTLCommandEncoder> m_existingCommandEncoder { nil };
-
+    struct PendingTimestampWrites {
+        Ref<QuerySet> querySet;
+        uint32_t queryIndex;
+    };
     uint64_t m_debugGroupStackSize { 0 };
     WeakPtr<CommandBuffer> m_cachedCommandBuffer;
     NSString* m_lastErrorString { nil };

@@ -846,7 +846,7 @@ void WebsiteDataStore::removeData(OptionSet<WebsiteDataType> dataTypes, WallTime
         for (RefPtr processPool : processPools()) {
             // Clear back/forward cache first as processes removed from the back/forward cache will likely
             // be added to the WebProcess cache.
-            processPool->protectedBackForwardCache()->removeEntriesForSession(sessionID());
+            processPool->checkedBackForwardCache()->removeEntriesForSession(sessionID());
             processPool->checkedWebProcessCache()->clearAllProcessesForSession(sessionID());
         }
 
@@ -992,11 +992,6 @@ void WebsiteDataStore::resetServiceWorkerTimeoutForTesting()
 bool WebsiteDataStore::hasServiceWorkerBackgroundActivityForTesting() const
 {
     return WTF::anyOf(WebProcessPool::allProcessPools(), [](auto& pool) { return pool->hasServiceWorkerBackgroundActivityForTesting(); });
-}
-
-void WebsiteDataStore::runningOrTerminatingServiceWorkerCountForTesting(CompletionHandler<void(unsigned)>&& completionHandler)
-{
-    protectedNetworkProcess()->sendWithAsyncReply(Messages::NetworkProcess::RunningOrTerminatingServiceWorkerCountForTesting(sessionID()), WTFMove(completionHandler));
 }
 
 void WebsiteDataStore::setMaxStatisticsEntries(size_t maximumEntryCount, CompletionHandler<void()>&& completionHandler)

@@ -24,9 +24,9 @@
 
 namespace WebCore {
 
-inline LayoutUnit RenderBox::availableHeight() const { return writingMode().isHorizontal() ? availableLogicalHeight(AvailableLogicalHeightType::IncludeMarginBorderPadding) : availableLogicalWidth(); }
+inline LayoutUnit RenderBox::availableHeight() const { return writingMode().isHorizontal() ? availableLogicalHeight(IncludeMarginBorderPadding) : availableLogicalWidth(); }
 inline LayoutUnit RenderBox::availableLogicalWidth() const { return contentLogicalWidth(); }
-inline LayoutUnit RenderBox::availableWidth() const { return writingMode().isHorizontal() ? availableLogicalWidth() : availableLogicalHeight(AvailableLogicalHeightType::IncludeMarginBorderPadding); }
+inline LayoutUnit RenderBox::availableWidth() const { return writingMode().isHorizontal() ? availableLogicalWidth() : availableLogicalHeight(IncludeMarginBorderPadding); }
 inline LayoutSize RenderBox::borderBoxLogicalSize() const { return logicalSize(); }
 inline LayoutRect RenderBox::clientBoxRect() const { return LayoutRect(clientLeft(), clientTop(), clientWidth(), clientHeight()); }
 inline LayoutUnit RenderBox::clientLeft() const { return borderLeft(); }
@@ -150,13 +150,6 @@ inline void RenderBox::setLogicalWidth(LayoutUnit size)
         setWidth(size);
     else
         setHeight(size);
-}
-
-inline LayoutUnit resolveHeightForRatio(LayoutUnit borderAndPaddingLogicalWidth, LayoutUnit borderAndPaddingLogicalHeight, LayoutUnit logicalWidth, double aspectRatio, BoxSizing boxSizing)
-{
-    if (boxSizing == BoxSizing::BorderBox)
-        return LayoutUnit((logicalWidth + borderAndPaddingLogicalWidth) * aspectRatio) - borderAndPaddingLogicalHeight;
-    return LayoutUnit(logicalWidth * aspectRatio);
 }
 
 } // namespace WebCore

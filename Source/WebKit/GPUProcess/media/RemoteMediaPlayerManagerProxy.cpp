@@ -101,7 +101,7 @@ void RemoteMediaPlayerManagerProxy::deleteMediaPlayer(MediaPlayerIdentifier iden
         return;
 
     if (!hasOutstandingRenderingResourceUsage())
-        connection->protectedGPUProcess()->tryExitIfUnusedAndUnderMemoryPressure();
+        connection->gpuProcess().tryExitIfUnusedAndUnderMemoryPressure();
 }
 
 void RemoteMediaPlayerManagerProxy::getSupportedTypes(MediaPlayerEnums::MediaEngineIdentifier engineIdentifier, CompletionHandler<void(Vector<String>&&)>&& completionHandler)
@@ -183,8 +183,8 @@ Logger& RemoteMediaPlayerManagerProxy::logger()
 {
     if (!m_logger) {
         m_logger = Logger::create(this);
-        RefPtr connection { m_gpuConnectionToWebProcess.get() };
-        m_logger->setEnabled(this, connection && connection->isAlwaysOnLoggingAllowed());
+        auto connection = m_gpuConnectionToWebProcess.get();
+        m_logger->setEnabled(this, connection ? connection->sessionID().isAlwaysOnLoggingAllowed() : false);
     }
 
     return *m_logger;

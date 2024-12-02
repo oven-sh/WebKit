@@ -29,6 +29,8 @@
 #include "MessageNames.h"
 #include <wtf/StdLibExtras.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace IPC {
 
 template<typename, typename> struct ArgumentCoder;
@@ -45,8 +47,9 @@ public:
     static constexpr size_t messageAlignment = alignof(MessageName);
     static constexpr bool isIPCEncoder = true;
 
-    StreamConnectionEncoder(MessageName messageName, std::span<uint8_t> stream)
+    StreamConnectionEncoder(MessageName messageName, uint8_t* stream, size_t streamCapacity)
         : m_buffer(stream)
+        , m_bufferCapacity(streamCapacity)
     {
         *this << messageName;
     }
@@ -57,14 +60,15 @@ public:
     bool encodeSpan(std::span<T, Extent> span)
     {
         auto bytes = asBytes(span);
-        auto bufferPointer = reinterpret_cast<uintptr_t>(m_buffer.data()) + m_encodedSize;
-        auto newBufferPointer = roundUpToMultipleOf<alignof(T)>(bufferPointer);
+        size_t bufferPointer = static_cast<size_t>(reinterpret_cast<intptr_t>(m_buffer + m_encodedSize));
+        size_t newBufferPointer = roundUpToMultipleOf<alignof(T)>(bufferPointer);
         if (newBufferPointer < bufferPointer)
             return false;
-        auto alignedSize = m_encodedSize + (newBufferPointer - bufferPointer);
+        intptr_t alignedSize = m_encodedSize + (newBufferPointer - bufferPointer);
         if (!reserve(alignedSize, bytes.size()))
             return false;
-        memcpySpan(m_buffer.subspan(alignedSize), bytes);
+        uint8_t* buffer = m_buffer + alignedSize;
+        memcpy(buffer, bytes.data(), bytes.size());
         m_encodedSize = alignedSize + bytes.size();
         return true;
     }
@@ -73,7 +77,7 @@ public:
     bool encodeObject(const T& object)
     {
         static_assert(std::is_trivially_copyable_v<T>);
-        return encodeSpan(singleElementSpan(object));
+        return encodeSpan(std::span(std::addressof(object), 1));
     }
 
     template<typename T>
@@ -84,20 +88,23 @@ public:
     }
 
     size_t size() const { ASSERT(isValid()); return m_encodedSize; }
-    bool isValid() const { return !!m_buffer.data(); }
+    bool isValid() const { return m_bufferCapacity; }
     operator bool() const { return isValid(); }
 private:
     bool reserve(size_t alignedSize, size_t additionalSize)
     {
         size_t size = alignedSize + additionalSize;
-        if (size < alignedSize || size > m_buffer.size()) {
-            m_buffer = { };
+        if (size < alignedSize || size > m_bufferCapacity) {
+            m_bufferCapacity = 0;
             return false;
         }
         return true;
     }
-    std::span<uint8_t> m_buffer;
+    uint8_t* m_buffer;
+    size_t m_bufferCapacity;
     size_t m_encodedSize { 0 };
 };
 
 } // namespace IPC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

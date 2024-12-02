@@ -30,11 +30,10 @@
 #include "CSSPrimitiveValueMappings.h"
 #include "CSSScrollValue.h"
 #include "CSSValuePool.h"
-#include "DocumentInlines.h"
+#include "Document.h"
 #include "Element.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderView.h"
-#include "WebAnimation.h"
 
 namespace WebCore {
 
@@ -84,10 +83,8 @@ ScrollTimeline::ScrollTimeline(ScrollTimelineOptions&& options)
     , m_source(WTFMove(options.source))
     , m_axis(options.axis)
 {
-    if (m_source) {
+    if (m_source)
         m_source->protectedDocument()->ensureTimelinesController().addTimeline(*this);
-        cacheCurrentTime();
-    }
 }
 
 ScrollTimeline::ScrollTimeline(const AtomString& name, ScrollAxis axis)
@@ -102,40 +99,6 @@ ScrollTimeline::ScrollTimeline(Scroller scroller, ScrollAxis axis)
 {
     m_axis = axis;
     m_scroller = scroller;
-}
-
-Element* ScrollTimeline::source() const
-{
-    if (!m_source)
-        return nullptr;
-
-    switch (m_scroller) {
-    case Scroller::Nearest: {
-        if (CheckedPtr subjectRenderer = m_source->renderer()) {
-            if (CheckedPtr nearestScrollableContainer = subjectRenderer->enclosingScrollableContainer()) {
-                if (RefPtr nearestSource = nearestScrollableContainer->element()) {
-                    auto document = nearestSource->protectedDocument();
-                    RefPtr documentElement = document->documentElement();
-                    if (nearestSource != documentElement)
-                        return nearestSource.get();
-                    // RenderObject::enclosingScrollableContainer() will return the document element even in
-                    // quirks mode, but the scrolling element in that case is the <body> element, so we must
-                    // make sure to return Document::scrollingElement() in case the document element is
-                    // returned by enclosingScrollableContainer() but it was not explicitly set as the source.
-                    return m_source.get() == documentElement ? nearestSource.get() : document->scrollingElement();
-                }
-            }
-        }
-        return nullptr;
-    }
-    case Scroller::Root:
-        return m_source->protectedDocument()->scrollingElement();
-    case Scroller::Self:
-        return m_source.get();
-    }
-
-    ASSERT_NOT_REACHED();
-    return nullptr;
 }
 
 void ScrollTimeline::setSource(const Element* source)
@@ -200,45 +163,20 @@ AnimationTimelinesController* ScrollTimeline::controller() const
     return nullptr;
 }
 
-void ScrollTimeline::cacheCurrentTime()
-{
-    m_cachedCurrentTimeData = [&] -> CurrentTimeData {
-        RefPtr source = this->source();
-        if (!source)
-            return { };
-        auto* sourceScrollableArea = scrollableAreaForSourceRenderer(source->renderer(), source->document());
-        if (!sourceScrollableArea)
-            return { };
-        float scrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->scrollOffset().y() : sourceScrollableArea->scrollOffset().x();
-        float maxScrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->maximumScrollOffset().y() : sourceScrollableArea->maximumScrollOffset().x();
-        // Chrome appears to clip the current time of a scroll timeline in the [0-100] range.
-        // We match this behavior for compatibility reasons, see https://github.com/w3c/csswg-drafts/issues/11033.
-        if (maxScrollOffset > 0)
-            scrollOffset = std::clamp(scrollOffset, 0.f, maxScrollOffset);
-        return { scrollOffset, maxScrollOffset };
-    }();
-}
-
 AnimationTimeline::ShouldUpdateAnimationsAndSendEvents ScrollTimeline::documentWillUpdateAnimationsAndSendEvents()
 {
-    cacheCurrentTime();
     if (m_source && m_source->isConnected())
         return AnimationTimeline::ShouldUpdateAnimationsAndSendEvents::Yes;
     return AnimationTimeline::ShouldUpdateAnimationsAndSendEvents::No;
 }
 
-void ScrollTimeline::setTimelineScopeElement(const Element& element)
-{
-    m_timelineScopeElement = WeakPtr { &element };
-}
-
-ScrollableArea* ScrollTimeline::scrollableAreaForSourceRenderer(const RenderElement* renderer, Document& document)
+ScrollableArea* ScrollTimeline::scrollableAreaForSourceRenderer(RenderElement* renderer, Ref<Document> document)
 {
     CheckedPtr renderBox = dynamicDowncast<RenderBox>(renderer);
     if (!renderBox)
         return nullptr;
 
-    if (renderer->element() == Ref { document }->scrollingElement())
+    if (renderer->element() == document->documentElement())
         return &renderer->view().frameView();
 
     return renderBox->hasLayer() ? renderBox->layer()->scrollableArea() : nullptr;
@@ -258,11 +196,25 @@ TimelineRange ScrollTimeline::defaultRange() const
 
 ScrollTimeline::Data ScrollTimeline::computeTimelineData(const TimelineRange& range) const
 {
-    if (!m_cachedCurrentTimeData.scrollOffset && !m_cachedCurrentTimeData.maxScrollOffset)
-        return { };
     if ((range.start.name != SingleTimelineRange::Name::Normal && range.start.name != SingleTimelineRange::Name::Omitted) || (range.end.name != SingleTimelineRange::Name::Normal && range.end.name != SingleTimelineRange::Name::Omitted))
         return { };
-    return { m_cachedCurrentTimeData.scrollOffset, floatValueForOffset(range.start.offset, m_cachedCurrentTimeData.maxScrollOffset), floatValueForOffset(range.end.offset, m_cachedCurrentTimeData.maxScrollOffset) };
+
+    if (!m_source)
+        return { };
+
+    auto* sourceScrollableArea = scrollableAreaForSourceRenderer(m_source->renderer(), m_source->document());
+    if (!sourceScrollableArea)
+        return { };
+
+    float maxScrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->maximumScrollOffset().y() : sourceScrollableArea->maximumScrollOffset().x();
+    float scrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->scrollOffset().y() : sourceScrollableArea->scrollOffset().x();
+
+    // Chrome appears to clip the current time of a scroll timeline in the [0-100] range.
+    // We match this behavior for compatibility reasons, see https://github.com/w3c/csswg-drafts/issues/11033.
+    if (maxScrollOffset > 0)
+        scrollOffset = std::clamp(scrollOffset, 0.f, maxScrollOffset);
+
+    return { scrollOffset, floatValueForOffset(range.start.offset, maxScrollOffset), floatValueForOffset(range.end.offset, maxScrollOffset) };
 }
 
 std::optional<WebAnimationTime> ScrollTimeline::currentTime(const TimelineRange& timelineRange)
@@ -278,17 +230,6 @@ std::optional<WebAnimationTime> ScrollTimeline::currentTime(const TimelineRange&
     auto distance = data.scrollOffset - data.rangeStart;
     auto progress = distance / range;
     return WebAnimationTime::fromPercentage(progress * 100);
-}
-
-void ScrollTimeline::animationTimingDidChange(WebAnimation& animation)
-{
-    AnimationTimeline::animationTimingDidChange(animation);
-
-    if (!m_source || !animation.pending() || animation.isEffectInvalidationSuspended())
-        return;
-
-    if (RefPtr page = m_source->protectedDocument()->page())
-        page->scheduleRenderingUpdate(RenderingUpdateStep::Animations);
 }
 
 } // namespace WebCore

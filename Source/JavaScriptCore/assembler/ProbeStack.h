@@ -33,8 +33,6 @@
 
 #if ENABLE(ASSEMBLER)
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 namespace Probe {
@@ -223,7 +221,5 @@ private:
 
 } // namespace Probe
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(ASSEMBLER)

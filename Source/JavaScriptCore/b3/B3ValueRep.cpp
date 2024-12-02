@@ -57,10 +57,6 @@ void ValueRep::addUsedRegistersTo(bool isSIMDContext, RegisterSetBuilder& set) c
         set.add(MacroAssembler::stackPointerRegister, IgnoreVectors);
         set.add(GPRInfo::callFrameRegister, IgnoreVectors);
         return;
-#if USE(JSVALUE32_64)
-    case RegisterPair:
-        break;
-#endif
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -88,11 +84,6 @@ void ValueRep::dump(PrintStream& out) const
     case Register:
         out.print("(", reg(), ")");
         return;
-#if USE(JSVALUE32_64)
-    case RegisterPair:
-        out.print("(", u.regPair.regLo, ", ", u.regPair.regHi, ")");
-        return;
-#endif
     case Stack:
         out.print("(", offsetFromFP(), ")");
         return;
@@ -200,11 +191,6 @@ void printInternal(PrintStream& out, ValueRep::Kind kind)
     case ValueRep::SomeRegister:
         out.print("SomeRegister");
         return;
-#if USE(JSVALUE32_64)
-    case ValueRep::RegisterPair:
-        out.print("SomeRegisterPair");
-        return;
-#endif
     case ValueRep::SomeRegisterWithClobber:
         out.print("SomeRegisterWithClobber");
         return;

@@ -89,8 +89,8 @@ protected:
 
 private:
     const CompilationMode m_compilationMode;
-    const FunctionSpaceIndex m_index;
     const IndexOrName m_indexOrName;
+    const FunctionSpaceIndex m_index;
 
 protected:
     FixedVector<HandlerInfo> m_exceptionHandlers;

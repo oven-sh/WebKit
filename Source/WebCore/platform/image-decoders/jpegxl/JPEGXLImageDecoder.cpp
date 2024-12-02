@@ -27,8 +27,6 @@
 #include "config.h"
 #include "JPEGXLImageDecoder.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 #if USE(JPEGXL)
 
 #include "PixelBufferConversion.h"
@@ -526,5 +524,3 @@ void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void*, void*, unsigned
 
 }
 #endif // USE(JPEGXL)
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

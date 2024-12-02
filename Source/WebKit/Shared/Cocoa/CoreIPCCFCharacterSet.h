@@ -29,7 +29,8 @@
 
 #include "ArgumentCodersCocoa.h"
 #include <wtf/RetainPtr.h>
-#include <wtf/cf/VectorCF.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -60,7 +61,9 @@ public:
     std::span<const uint8_t> dataReference() const
     {
         ASSERT(m_cfCharacterSetData);
-        return span(m_cfCharacterSetData.get());
+        CFDataRef data = m_cfCharacterSetData.get();
+        ASSERT(data);
+        return { CFDataGetBytePtr(data), static_cast<size_t>(CFDataGetLength(data)) };
     }
 
 private:
@@ -76,5 +79,7 @@ private:
 };
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(COCOA)

@@ -39,8 +39,6 @@
 #include "WasmContext.h"
 #include <wtf/StringPrintStream.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 bool CallFrame::callSiteBitsAreBytecodeOffset() const
@@ -417,7 +415,7 @@ JSWebAssemblyInstance* CallFrame::wasmInstance() const
 {
     ASSERT(callee().isNativeCallee());
 #if USE(JSVALUE32_64)
-    return std::bit_cast<JSWebAssemblyInstance*>(this[static_cast<int>(CallFrameSlot::codeBlock)].asanUnsafePointer());
+    return bitwise_cast<JSWebAssemblyInstance*>(this[static_cast<int>(CallFrameSlot::codeBlock)].asanUnsafePointer());
 #else
     return jsCast<JSWebAssemblyInstance*>(this[static_cast<int>(CallFrameSlot::codeBlock)].jsValue());
 #endif
@@ -426,5 +424,3 @@ JSWebAssemblyInstance* CallFrame::wasmInstance() const
 
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

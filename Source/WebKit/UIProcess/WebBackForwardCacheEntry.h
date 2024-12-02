@@ -29,7 +29,6 @@
 #include <WebCore/ProcessIdentifier.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
-#include <wtf/RefCounted.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -39,13 +38,13 @@ class SuspendedPageProxy;
 class WebBackForwardCache;
 class WebProcessProxy;
 
-class WebBackForwardCacheEntry : public RefCounted<WebBackForwardCacheEntry> {
+class WebBackForwardCacheEntry {
     WTF_MAKE_TZONE_ALLOCATED(WebBackForwardCacheEntry);
 public:
-    static Ref<WebBackForwardCacheEntry> create(WebBackForwardCache&, WebCore::BackForwardItemIdentifier, WebCore::ProcessIdentifier, std::unique_ptr<SuspendedPageProxy>&&);
+    WebBackForwardCacheEntry(WebBackForwardCache&, WebCore::BackForwardItemIdentifier, WebCore::ProcessIdentifier, std::unique_ptr<SuspendedPageProxy>&&);
     ~WebBackForwardCacheEntry();
 
-    WebBackForwardCache* backForwardCache() const;
+    WebBackForwardCache& backForwardCache() const;
 
     SuspendedPageProxy* suspendedPage() const { return m_suspendedPage.get(); }
     std::unique_ptr<SuspendedPageProxy> takeSuspendedPage();
@@ -53,11 +52,9 @@ public:
     RefPtr<WebProcessProxy> process() const;
 
 private:
-    WebBackForwardCacheEntry(WebBackForwardCache&, WebCore::BackForwardItemIdentifier, WebCore::ProcessIdentifier, std::unique_ptr<SuspendedPageProxy>&&);
-
     void expirationTimerFired();
 
-    WeakPtr<WebBackForwardCache> m_backForwardCache;
+    CheckedRef<WebBackForwardCache> m_backForwardCache;
     WebCore::ProcessIdentifier m_processIdentifier;
     Markable<WebCore::BackForwardItemIdentifier> m_backForwardItemID;
     std::unique_ptr<SuspendedPageProxy> m_suspendedPage;

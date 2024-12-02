@@ -100,7 +100,8 @@ private:
 
         struct {
             struct wl_touch* object { nullptr };
-            struct wpe_input_touch_event_raw points[10] { };
+            struct wpe_input_touch_event_raw points[10];
+            bool tracking { false };
         } touch;
 
         struct {

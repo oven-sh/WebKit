@@ -49,7 +49,6 @@
 #import <pal/spi/mac/NSSpellCheckerSPI.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/WorkQueue.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WTR {
 

@@ -92,7 +92,7 @@ enum {
     N_PROPERTIES
 };
 
-static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
+static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
 
 enum {
     CLOSED,
@@ -106,7 +106,7 @@ enum {
     LAST_SIGNAL
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 static void wpeViewSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
@@ -322,7 +322,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
             FALSE,
             WEBKIT_PARAM_READABLE);
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
 
     /**
      * WPEView::closed:

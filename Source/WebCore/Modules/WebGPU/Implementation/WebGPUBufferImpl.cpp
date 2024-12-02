@@ -81,9 +81,7 @@ void BufferImpl::getMappedRange(Size64 offset, std::optional<Size64> size, Funct
     auto bufferSize = wgpuBufferGetInitialSize(m_backing.get());
     size_t actualSize = pointer ? static_cast<size_t>(bufferSize) : 0;
     size_t actualOffset = pointer ? static_cast<size_t>(offset) : 0;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    callback(unsafeMakeSpan(static_cast<uint8_t*>(pointer) - actualOffset, actualSize));
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    callback({ static_cast<uint8_t*>(pointer) - actualOffset, actualSize });
 }
 
 std::span<uint8_t> BufferImpl::getBufferContents()
@@ -95,13 +93,13 @@ std::span<uint8_t> BufferImpl::getBufferContents()
 }
 
 #if ENABLE(WEBGPU_SWIFT)
-void BufferImpl::copyFrom(std::span<const uint8_t> data, size_t offset)
+void BufferImpl::copy(std::span<const uint8_t> data, size_t offset)
 {
     RELEASE_ASSERT(backing());
     return wgpuBufferCopy(backing(), data, offset);
 }
 #else
-void BufferImpl::copyFrom(std::span<const uint8_t>, size_t)
+void BufferImpl::copy(std::span<const uint8_t>, size_t)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }

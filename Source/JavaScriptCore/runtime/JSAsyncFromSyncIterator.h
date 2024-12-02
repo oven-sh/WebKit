@@ -63,10 +63,9 @@ public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     static JSAsyncFromSyncIterator* createWithInitialValues(VM&, Structure*);
-    static JSAsyncFromSyncIterator* create(VM&, Structure*, JSValue syncIterator, JSValue nextMethod);
 
-    void setSyncIterator(VM& vm, JSValue syncIterator) { internalField(Field::SyncIterator).set(vm, this, syncIterator); }
-    void setNextMethod(VM& vm, JSValue nextMethod) { internalField(Field::NextMethod).set(vm, this, nextMethod); }
+    void setSyncIterator(VM& vm, JSObject* syncIterator) { internalField(Field::SyncIterator).set(vm, this, syncIterator); }
+    void setNextMethod(VM& vm, JSObject* nextMethod) { internalField(Field::NextMethod).set(vm, this, nextMethod); }
 
 private:
     JSAsyncFromSyncIterator(VM& vm, Structure* structure)
@@ -74,7 +73,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, JSValue syncIterator, JSValue nextMethod);
+    void finishCreation(VM&);
     DECLARE_VISIT_CHILDREN;
 
 };

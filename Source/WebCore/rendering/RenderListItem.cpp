@@ -280,9 +280,9 @@ void RenderListItem::layout()
 
 void RenderListItem::computePreferredLogicalWidths()
 {
-    // FIXME: RenderListMarker::updateInlineMargins() mutates margin style which affects preferred widths.
+    // FIXME: RenderListMarker::updateMargins() mutates margin style which affects preferred widths.
     if (m_marker && m_marker->preferredLogicalWidthsDirty())
-        m_marker->updateInlineMarginsAndContent();
+        m_marker->updateMarginsAndContent();
 
     RenderBlockFlow::computePreferredLogicalWidths();
 }
@@ -295,14 +295,14 @@ void RenderListItem::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     RenderBlockFlow::paint(paintInfo, paintOffset);
 }
 
-String RenderListItem::markerTextWithoutSuffix() const
+StringView RenderListItem::markerTextWithoutSuffix() const
 {
     if (!m_marker)
         return { };
     return m_marker->textWithoutSuffix();
 }
 
-String RenderListItem::markerTextWithSuffix() const
+StringView RenderListItem::markerTextWithSuffix() const
 {
     if (!m_marker)
         return { };

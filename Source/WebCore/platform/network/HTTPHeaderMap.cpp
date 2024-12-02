@@ -37,8 +37,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 HTTPHeaderMap::HTTPHeaderMap()
@@ -245,5 +243,3 @@ void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

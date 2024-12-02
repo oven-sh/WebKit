@@ -37,15 +37,15 @@ class AccessibilityTableRow;
 
 class AccessibilityTableCell : public AccessibilityRenderObject {
 public:
-    static Ref<AccessibilityTableCell> create(AXID, RenderObject&);
-    static Ref<AccessibilityTableCell> create(AXID, Node&);
+    static Ref<AccessibilityTableCell> create(RenderObject&);
+    static Ref<AccessibilityTableCell> create(Node&);
     virtual ~AccessibilityTableCell();
     bool isTableCell() const final { return true; }
 
     bool isExposedTableCell() const final;
     bool isTableHeaderCell() const;
-    bool isColumnHeader() const final;
-    bool isRowHeader() const final;
+    bool isColumnHeader() const override;
+    bool isRowHeader() const override;
 
     std::optional<AXID> rowGroupAncestorID() const final;
 
@@ -56,10 +56,11 @@ public:
     // Returns the start location and column span of the cell.
     std::pair<unsigned, unsigned> columnIndexRange() const final;
 
-    AccessibilityChildrenVector rowHeaders() final;
+    AccessibilityChildrenVector columnHeaders() override;
+    AccessibilityChildrenVector rowHeaders() override;
 
-    int axColumnIndex() const final;
-    int axRowIndex() const final;
+    int axColumnIndex() const override;
+    int axRowIndex() const override;
     unsigned colSpan() const;
     unsigned rowSpan() const;
     void incrementEffectiveRowSpan() { ++m_effectiveRowSpan; }
@@ -75,11 +76,12 @@ public:
 #endif
 
 protected:
-    explicit AccessibilityTableCell(AXID, RenderObject&);
-    explicit AccessibilityTableCell(AXID, Node&);
+    explicit AccessibilityTableCell(RenderObject&);
+    explicit AccessibilityTableCell(Node&);
 
     AccessibilityTableRow* parentRow() const;
     AccessibilityRole determineAccessibilityRole() final;
+    AccessibilityObject* parentObjectUnignored() const override;
 
 private:
     // If a table cell is not exposed as a table cell, a TH element can serve as its title UI element.
@@ -87,6 +89,7 @@ private:
     bool computeIsIgnored() const final;
     String expandedTextValue() const final;
     bool supportsExpandedTextValue() const final;
+    AccessibilityTableRow* ariaOwnedByParent() const;
     void ensureIndexesUpToDate() const;
 
     unsigned m_rowIndex { 0 };

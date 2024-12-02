@@ -1,4 +1,4 @@
 
 
-PASS navigation.activation - traverse, then push same-document
+FAIL navigation.activation - traverse, then push same-document assert_equals: expected 2 but got 1
 

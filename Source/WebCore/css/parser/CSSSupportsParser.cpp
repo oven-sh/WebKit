@@ -32,6 +32,7 @@
 
 #include "CSSParserImpl.h"
 #include "CSSPropertyParserConsumer+Font.h"
+#include "CSSPropertyParserHelpers.h"
 #include "CSSSelectorParser.h"
 #include "CSSTokenizer.h"
 #include "FontCustomPlatformData.h"

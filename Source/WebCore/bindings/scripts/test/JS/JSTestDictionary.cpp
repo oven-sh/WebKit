@@ -25,7 +25,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -57,4 +56,3 @@ template<> ConversionResult<IDLDictionary<TestDictionary>> convertDictionary<Tes
 }
 
 } // namespace WebCore
-

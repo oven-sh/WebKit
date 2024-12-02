@@ -56,8 +56,6 @@
 #include <wtf/ParallelHelperPool.h>
 #include <wtf/Threading.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class CodeBlock;
@@ -583,9 +581,6 @@ public:
 
     bool isMarkingForGCVerifier() const { return m_isMarkingForGCVerifier; }
 
-    void setKeepVerifierSlotVisitor();
-    void clearVerifierSlotVisitor();
-
     void appendPossiblyAccessedStringFromConcurrentThreads(String&& string)
     {
         m_possiblyAccessedStringsFromConcurrentThreads.append(WTFMove(string));
@@ -598,9 +593,6 @@ public:
     void reportWasmCalleePendingDestruction(Ref<Wasm::Callee>&&);
     bool isWasmCalleePendingDestruction(Wasm::Callee&);
 #endif
-
-    // This is a debug function for checking who marked the target cell.
-    void dumpVerifierMarkerData(HeapCell*);
 
 private:
     friend class AllocatingScope;
@@ -725,7 +717,6 @@ private:
     void updateObjectCounts();
     void endMarking();
 
-    void cancelDeferredWorkIfNeeded();
     void reapWeakHandles();
     void pruneStaleEntriesFromWeakGCHashTables();
     void sweepArrayBuffers();
@@ -790,9 +781,8 @@ private:
 
     static bool useGenerationalGC();
     static bool shouldSweepSynchronously();
-
+    
     void verifyGC();
-    void verifierMark();
 
     Lock m_lock;
     const HeapType m_heapType;
@@ -862,7 +852,6 @@ private:
     bool m_isShuttingDown { false };
     bool m_mutatorShouldBeFenced { Options::forceFencedBarrier() };
     bool m_isMarkingForGCVerifier { false };
-    bool m_keepVerifierSlotVisitor { false };
     Lock m_wasmCalleesPendingDestructionLock;
 
     unsigned m_barrierThreshold { Options::forceFencedBarrier() ? tautologicalThreshold : blackThreshold };
@@ -1119,8 +1108,8 @@ public:
         
         static IsoCellSet& setFor(Subspace& space)
         {
-            return *std::bit_cast<IsoCellSet*>(
-                std::bit_cast<char*>(&space) -
+            return *bitwise_cast<IsoCellSet*>(
+                bitwise_cast<char*>(&space) -
                 OBJECT_OFFSETOF(SpaceAndSet, space) +
                 OBJECT_OFFSETOF(SpaceAndSet, set));
         }
@@ -1154,8 +1143,8 @@ public:
 
         static ScriptExecutableSpaceAndSets& setAndSpaceFor(Subspace& space)
         {
-            return *std::bit_cast<ScriptExecutableSpaceAndSets*>(
-                std::bit_cast<char*>(&space) -
+            return *bitwise_cast<ScriptExecutableSpaceAndSets*>(
+                bitwise_cast<char*>(&space) -
                 OBJECT_OFFSETOF(ScriptExecutableSpaceAndSets, space));
         }
 
@@ -1247,5 +1236,3 @@ private:
 } // namespace GCClient
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -37,7 +37,6 @@
 #import "WebExtensionAPITest.h"
 #import "WebExtensionContextProxy.h"
 #import "WebExtensionControllerProxy.h"
-#import "WebPage.h"
 
 namespace WebKit {
 

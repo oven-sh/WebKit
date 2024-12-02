@@ -23,7 +23,6 @@
 #include "StyleInheritedData.h"
 
 #include "RenderStyleInlines.h"
-#include "RenderStyleDifference.h"
 
 namespace WebCore {
 
@@ -90,22 +89,5 @@ void StyleInheritedData::fastPathInheritFrom(const StyleInheritedData& inheritPa
     color = inheritParent.color;
     visitedLinkColor = inheritParent.visitedLinkColor;
 }
-
-#if !LOG_DISABLED
-void StyleInheritedData::dumpDifferences(TextStream& ts, const StyleInheritedData& other) const
-{
-    LOG_IF_DIFFERENT(horizontalBorderSpacing);
-    LOG_IF_DIFFERENT(verticalBorderSpacing);
-    LOG_IF_DIFFERENT(lineHeight);
-
-#if ENABLE(TEXT_AUTOSIZING)
-    LOG_IF_DIFFERENT(specifiedLineHeight);
-#endif
-
-    LOG_IF_DIFFERENT(fontCascade);
-    LOG_IF_DIFFERENT(color);
-    LOG_IF_DIFFERENT(visitedLinkColor);
-}
-#endif
 
 } // namespace WebCore

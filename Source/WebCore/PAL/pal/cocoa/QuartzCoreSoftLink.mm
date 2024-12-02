@@ -25,7 +25,6 @@
 
 #include "config.h"
 
-#include <dispatch/dispatch.h>
 #include <pal/spi/cocoa/QuartzCoreSPI.h>
 #include <wtf/SoftLinking.h>
 

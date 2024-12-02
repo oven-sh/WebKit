@@ -77,17 +77,14 @@ class RemoteImageBufferProxyFlushState;
 class RemoteImageBufferSetProxy;
 
 class RemoteRenderingBackendProxy
-    : public IPC::Connection::Client, public RefCounted<RemoteRenderingBackendProxy>, SerialFunctionDispatcher {
+    : public IPC::Connection::Client, SerialFunctionDispatcher {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteRenderingBackendProxy);
 public:
-    static Ref<RemoteRenderingBackendProxy> create(WebPage&);
-    static Ref<RemoteRenderingBackendProxy> create(SerialFunctionDispatcher&);
+    static std::unique_ptr<RemoteRenderingBackendProxy> create(WebPage&);
+    static std::unique_ptr<RemoteRenderingBackendProxy> create(SerialFunctionDispatcher&);
 
     ~RemoteRenderingBackendProxy();
-
-    using RefCounted::ref;
-    using RefCounted::deref;
 
     static bool canMapRemoteImageBufferBackendBackingStore();
 

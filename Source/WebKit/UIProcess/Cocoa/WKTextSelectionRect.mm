@@ -123,7 +123,7 @@
 
 - (NSWritingDirection)writingDirection
 {
-    if (_selectionGeometry.direction() == WebCore::TextDirection::LTR)
+    if (_selectionGeometry.direction() == WebCore::TextDirection::LTR || _selectionGeometry.mayAppearLogicallyDiscontiguous())
         return NSWritingDirectionLeftToRight;
 
     return NSWritingDirectionRightToLeft;

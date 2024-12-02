@@ -130,7 +130,7 @@ ServiceWorkerFetchTask::ServiceWorkerFetchTask(WebSWServerConnection& swServerCo
 ServiceWorkerFetchTask::~ServiceWorkerFetchTask()
 {
     SWFETCH_RELEASE_LOG("~ServiceWorkerFetchTask:");
-    if (RefPtr serviceWorkerConnection = m_serviceWorkerConnection.get())
+    if (CheckedPtr serviceWorkerConnection = m_serviceWorkerConnection.get())
         serviceWorkerConnection->unregisterFetch(*this);
 
     cancelPreloadIfNecessary();
@@ -161,7 +161,7 @@ void ServiceWorkerFetchTask::start(WebSWServerToContextConnection& serviceWorker
 
 void ServiceWorkerFetchTask::workerClosed()
 {
-    if (RefPtr serviceWorkerConnection = m_serviceWorkerConnection.get())
+    if (CheckedPtr serviceWorkerConnection = m_serviceWorkerConnection.get())
         serviceWorkerConnection->unregisterFetch(*this);
     contextClosed();
 }
@@ -452,7 +452,7 @@ void ServiceWorkerFetchTask::timeoutTimerFired()
 
     cannotHandle();
 
-    if (RefPtr swServerConnection = m_swServerConnection.get())
+    if (CheckedPtr swServerConnection = m_swServerConnection.get())
         swServerConnection->fetchTaskTimedOut(*serviceWorkerIdentifier());
 }
 
@@ -462,13 +462,10 @@ void ServiceWorkerFetchTask::softUpdateIfNeeded()
     if (!m_shouldSoftUpdate)
         return;
     Ref loader = *m_loader;
-    RefPtr swConnection = loader->connectionToWebProcess().swConnection();
+    CheckedPtr swConnection = loader->connectionToWebProcess().swConnection();
     if (!swConnection)
         return;
-    RefPtr server = swConnection->server();
-    if (!server)
-        return;
-    if (RefPtr registration = server->getRegistration(*m_serviceWorkerRegistrationIdentifier))
+    if (RefPtr registration = swConnection->protectedServer()->getRegistration(*m_serviceWorkerRegistrationIdentifier))
         registration->scheduleSoftUpdate(loader->isAppInitiated() ? WebCore::IsAppInitiated::Yes : WebCore::IsAppInitiated::No);
 }
 
@@ -562,8 +559,7 @@ void ServiceWorkerFetchTask::cancelPreloadIfNecessary()
 
 NetworkSession* ServiceWorkerFetchTask::session()
 {
-    RefPtr swServerConnection = m_swServerConnection.get();
-    return swServerConnection ? swServerConnection->session() : nullptr;
+    return m_swServerConnection ? m_swServerConnection->session() : nullptr;
 }
 
 bool ServiceWorkerFetchTask::convertToDownload(DownloadManager& manager, DownloadID downloadID, const ResourceRequest& request, const ResourceResponse& response)

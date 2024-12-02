@@ -87,6 +87,12 @@ inline WeakSet& CellContainer::weakSet() const
     return markedBlock().weakSet();
 }
 
+inline void CellContainer::aboutToMark(HeapVersion markingVersion)
+{
+    if (!isPreciseAllocation())
+        markedBlock().aboutToMark(markingVersion, nullptr);
+}
+
 inline bool CellContainer::areMarksStale() const
 {
     if (isPreciseAllocation())

@@ -21,7 +21,7 @@ struct SkStageRec;
 
 class SkColorFilterShader : public SkShaderBase {
 public:
-    static sk_sp<SkShader> Make(sk_sp<SkShader> shader, float alpha, sk_sp<SkColorFilter> filter);
+    SkColorFilterShader(sk_sp<SkShader> shader, float alpha, sk_sp<SkColorFilter> filter);
 
     ShaderType type() const override { return ShaderType::kColorFilter; }
 
@@ -30,8 +30,6 @@ public:
     float alpha() const { return fAlpha; }
 
 private:
-    SkColorFilterShader(sk_sp<SkShader> shader, float alpha, sk_sp<SkColorFilter> filter);
-
     bool isOpaque() const override;
     void flatten(SkWriteBuffer&) const override;
     bool appendStages(const SkStageRec&, const SkShaders::MatrixRec&) const override;

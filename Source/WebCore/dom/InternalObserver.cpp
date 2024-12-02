@@ -28,9 +28,8 @@
 
 #include "ContextDestructionObserverInlines.h"
 #include "JSDOMExceptionHandling.h"
-#include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCJSValue.h>
-#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 
 namespace WebCore {
 

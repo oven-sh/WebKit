@@ -32,8 +32,6 @@
 #include <wtf/Nonmovable.h>
 #include <wtf/UniqueArray.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class MarkedJSValueRefArray final : public BasicRawSentinelNode<MarkedJSValueRefArray> {
@@ -72,5 +70,3 @@ private:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

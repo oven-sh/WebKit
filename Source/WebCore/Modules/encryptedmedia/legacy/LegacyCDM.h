@@ -68,7 +68,7 @@ public:
     static void clearFactories();
 
     bool supportsMIMEType(const String&) const;
-    RefPtr<LegacyCDMSession> createSession(LegacyCDMSessionClient&);
+    std::unique_ptr<LegacyCDMSession> createSession(LegacyCDMSessionClient&);
 
     const String& keySystem() const { return m_keySystem; }
 

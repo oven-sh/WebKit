@@ -334,26 +334,19 @@ void RenderBlock::styleWillChange(StyleDifference diff, const RenderStyle& newSt
     RenderBox::styleWillChange(diff, newStyle);
 }
 
-bool RenderBlock::scrollbarWidthDidChange(const RenderStyle& oldStyle, const RenderStyle& newStyle, ScrollbarOrientation orientation)
-{
-    return (orientation == ScrollbarOrientation::Vertical ? includeVerticalScrollbarSize() : includeHorizontalScrollbarSize()) && oldStyle.scrollbarWidth() != newStyle.scrollbarWidth();
-}
-
-bool RenderBlock::contentBoxLogicalWidthChanged(const RenderStyle& oldStyle, const RenderStyle& newStyle)
+static bool borderOrPaddingLogicalWidthChanged(const RenderStyle& oldStyle, const RenderStyle& newStyle)
 {
     if (newStyle.writingMode().isHorizontal()) {
         return oldStyle.borderLeftWidth() != newStyle.borderLeftWidth()
             || oldStyle.borderRightWidth() != newStyle.borderRightWidth()
             || oldStyle.paddingLeft() != newStyle.paddingLeft()
-            || oldStyle.paddingRight() != newStyle.paddingRight()
-            || scrollbarWidthDidChange(oldStyle, newStyle, ScrollbarOrientation::Vertical);
+            || oldStyle.paddingRight() != newStyle.paddingRight();
     }
 
     return oldStyle.borderTopWidth() != newStyle.borderTopWidth()
         || oldStyle.borderBottomWidth() != newStyle.borderBottomWidth()
         || oldStyle.paddingTop() != newStyle.paddingTop()
-        || oldStyle.paddingBottom() != newStyle.paddingBottom()
-        || scrollbarWidthDidChange(oldStyle, newStyle, ScrollbarOrientation::Horizontal);
+        || oldStyle.paddingBottom() != newStyle.paddingBottom();
 }
 
 void RenderBlock::styleDidChange(StyleDifference diff, const RenderStyle* oldStyle)
@@ -367,7 +360,7 @@ void RenderBlock::styleDidChange(StyleDifference diff, const RenderStyle* oldSty
 
     // It's possible for our border/padding to change, but for the overall logical width of the block to
     // end up being the same. We keep track of this change so in layoutBlock, we can know to set relayoutChildren=true.
-    setShouldForceRelayoutChildren(oldStyle && diff == StyleDifference::Layout && needsLayout() && contentBoxLogicalWidthChanged(*oldStyle, style()));
+    setShouldForceRelayoutChildren(oldStyle && diff == StyleDifference::Layout && needsLayout() && borderOrPaddingLogicalWidthChanged(*oldStyle, style()));
 }
 
 RenderPtr<RenderBlock> RenderBlock::clone() const
@@ -791,7 +784,7 @@ bool RenderBlock::simplifiedLayout()
         return false;
 
     bool canContainFixedPosObjects = canContainFixedPositionObjects();
-    if (layoutContext().isSkippedContentRootForLayout(*this) && (posChildNeedsLayout() || canContainFixedPosObjects))
+    if (isSkippedContentRoot() && (posChildNeedsLayout() || canContainFixedPosObjects))
         return false;
 
     // Lay out positioned descendants or objects that just need to recompute overflow.
@@ -864,8 +857,8 @@ LayoutUnit RenderBlock::marginIntrinsicLogicalWidthForChild(RenderBox& child) co
     // A margin has three types: fixed, percentage, and auto (variable).
     // Auto and percentage margins become 0 when computing min/max width.
     // Fixed margins can be added in as is.
-    Length marginLeft = child.style().marginStart(writingMode());
-    Length marginRight = child.style().marginEnd(writingMode());
+    Length marginLeft = child.style().marginStartUsing(&style());
+    Length marginRight = child.style().marginEndUsing(&style());
     LayoutUnit margin;
     if (marginLeft.isFixed() && !shouldTrimChildMargin(MarginTrimType::InlineStart, child))
         margin += marginLeft.value();
@@ -876,7 +869,7 @@ LayoutUnit RenderBlock::marginIntrinsicLogicalWidthForChild(RenderBox& child) co
 
 void RenderBlock::layoutPositionedObject(RenderBox& r, bool relayoutChildren, bool fixedPositionObjectsOnly)
 {
-    if (layoutContext().isSkippedContentRootForLayout(*this)) {
+    if (isSkippedContentRoot()) {
         r.clearNeedsLayoutForSkippedContent();
         return;
     }
@@ -1029,7 +1022,7 @@ void RenderBlock::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 
 void RenderBlock::paintContents(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (isSkippedContentRoot(*this))
+    if (isSkippedContentRoot())
         return;
 
     if (childrenInline())
@@ -1552,9 +1545,7 @@ GapRects RenderBlock::blockSelectionGaps(RenderBlock& rootBlock, const LayoutPoi
                 continue;
         }
 
-        // FIXME: Eventually we won't special-case table and other layout roots like this.
-        auto propagatesSelectionToChildren = is<RenderTable>(*curr) || is<RenderFlexibleBox>(*curr) || is<RenderDeprecatedFlexibleBox>(*curr) || is<RenderGrid>(*curr);
-        auto paintsOwnSelection = curr->shouldPaintSelectionGaps() || propagatesSelectionToChildren;
+        bool paintsOwnSelection = curr->shouldPaintSelectionGaps() || curr->isRenderTable(); // FIXME: Eventually we won't special-case table like this.
         bool fillBlockGaps = paintsOwnSelection || (curr->canBeSelectionLeaf() && childState != HighlightState::None);
         if (fillBlockGaps) {
             // We need to fill the vertical gap above this object.
@@ -2020,7 +2011,7 @@ bool RenderBlock::nodeAtPoint(const HitTestRequest& request, HitTestResult& resu
 
     // If we have clipping, then we can't have any spillout.
     bool useClip = (hasControlClip() || hasNonVisibleOverflow());
-    bool checkChildren = !useClip || (hasControlClip() ? locationInContainer.intersects(controlClipRect(adjustedLocation)) : locationInContainer.intersects(overflowClipRect(adjustedLocation, nullptr, OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize)));
+    bool checkChildren = !useClip || (hasControlClip() ? locationInContainer.intersects(controlClipRect(adjustedLocation)) : locationInContainer.intersects(overflowClipRect(adjustedLocation, nullptr, IncludeOverlayScrollbarSize)));
     if (checkChildren && hitTestChildren(request, result, locationInContainer, adjustedLocation, hitTestAction))
         return true;
 
@@ -2289,8 +2280,8 @@ void RenderBlock::computeBlockPreferredLogicalWidths(LayoutUnit& minLogicalWidth
         // A margin basically has three types: fixed, percentage, and auto (variable).
         // Auto and percentage margins simply become 0 when computing min/max width.
         // Fixed margins can be added in as is.
-        Length startMarginLength = childStyle.marginStart(writingMode());
-        Length endMarginLength = childStyle.marginEnd(writingMode());
+        Length startMarginLength = childStyle.marginStartUsing(&styleToUse);
+        Length endMarginLength = childStyle.marginEndUsing(&styleToUse);
         LayoutUnit margin;
         LayoutUnit marginStart;
         LayoutUnit marginEnd;
@@ -2317,9 +2308,7 @@ void RenderBlock::computeBlockPreferredLogicalWidths(LayoutUnit& minLogicalWidth
                 // Determine a left and right max value based off whether or not the floats can fit in the
                 // margins of the object.  For negative margins, we will attempt to overlap the float if the negative margin
                 // is smaller than the float width.
-                bool ltr = containingBlock
-                    ? containingBlock->writingMode().isLogicalLeftInlineStart()
-                    : writingMode().isLogicalLeftInlineStart();
+                bool ltr = containingBlock ? containingBlock->writingMode().isLogicalLeftInlineStart() : styleToUse.writingMode().isLogicalLeftInlineStart();
                 LayoutUnit marginLogicalLeft = ltr ? marginStart : marginEnd;
                 LayoutUnit marginLogicalRight = ltr ? marginEnd : marginStart;
                 LayoutUnit maxLeft = marginLogicalLeft > 0 ? std::max(floatLeftWidth, marginLogicalLeft) : floatLeftWidth + marginLogicalLeft;
@@ -2767,7 +2756,7 @@ const RenderStyle& RenderBlock::outlineStyleForRepaint() const
     return RenderElement::outlineStyleForRepaint();
 }
 
-void RenderBlock::updateHitTestResult(HitTestResult& result, const LayoutPoint& point) const
+void RenderBlock::updateHitTestResult(HitTestResult& result, const LayoutPoint& point)
 {
     if (result.innerNode())
         return;
@@ -2810,7 +2799,7 @@ void RenderBlock::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint
             addFocusRingRectsForInlineChildren(rects, additionalOffset, paintContainer);
     
         for (auto& box : childrenOfType<RenderBox>(*this)) {
-            if (is<RenderListMarker>(box) || box.isOutOfFlowPositioned())
+            if (is<RenderListMarker>(box))
                 continue;
 
             FloatPoint pos;
@@ -3317,7 +3306,7 @@ RenderBox* RenderBlock::findFieldsetLegend(FieldsetFindLegendOption option) cons
 
 void RenderBlock::adjustBorderBoxRectForPainting(LayoutRect& paintRect)
 {
-    if (!isFieldset() || isSkippedContentRoot(*this) || !intrinsicBorderForFieldset())
+    if (!isFieldset() || isSkippedContentRoot() || !intrinsicBorderForFieldset())
         return;
     
     auto* legend = findFieldsetLegend();
@@ -3340,7 +3329,7 @@ void RenderBlock::adjustBorderBoxRectForPainting(LayoutRect& paintRect)
 LayoutRect RenderBlock::paintRectToClipOutFromBorder(const LayoutRect& paintRect)
 {
     LayoutRect clipRect;
-    if (!isFieldset() || isSkippedContentRoot(*this))
+    if (!isFieldset() || isSkippedContentRoot())
         return clipRect;
     auto* legend = findFieldsetLegend();
     if (!legend)
@@ -3444,8 +3433,8 @@ bool RenderBlock::computePreferredWidthsForExcludedChildren(LayoutUnit& minWidth
     maxWidth -= scrollbarWidth;
     
     const auto& childStyle = legend->style();
-    auto startMarginLength = childStyle.marginStart(writingMode());
-    auto endMarginLength = childStyle.marginEnd(writingMode());
+    auto startMarginLength = childStyle.marginStartUsing(&style());
+    auto endMarginLength = childStyle.marginEndUsing(&style());
     LayoutUnit margin;
     LayoutUnit marginStart;
     LayoutUnit marginEnd;
@@ -3496,7 +3485,7 @@ LayoutUnit RenderBlock::adjustIntrinsicLogicalHeightForBoxSizing(LayoutUnit heig
 
 void RenderBlock::paintExcludedChildrenInBorder(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (!isFieldset() || isSkippedContentRoot(*this))
+    if (!isFieldset() || isSkippedContentRoot())
         return;
     
     RenderBox* box = findFieldsetLegend();

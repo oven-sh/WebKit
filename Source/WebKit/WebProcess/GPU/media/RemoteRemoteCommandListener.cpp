@@ -33,10 +33,13 @@
 #include "RemoteRemoteCommandListenerMessages.h"
 #include "RemoteRemoteCommandListenerProxyMessages.h"
 #include "WebProcess.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 
 using namespace WebCore;
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteRemoteCommandListener);
 
 Ref<RemoteRemoteCommandListener> RemoteRemoteCommandListener::create(RemoteCommandListenerClient& client)
 {
@@ -51,15 +54,15 @@ RemoteRemoteCommandListener::RemoteRemoteCommandListener(RemoteCommandListenerCl
 
 RemoteRemoteCommandListener::~RemoteRemoteCommandListener()
 {
-    if (RefPtr gpuProcessConnection = m_gpuProcessConnection.get()) {
-        gpuProcessConnection->messageReceiverMap().removeMessageReceiver(Messages::RemoteRemoteCommandListener::messageReceiverName(), identifier().toUInt64());
+    if (auto gpuProcessConnection = m_gpuProcessConnection.get()) {
+        gpuProcessConnection->messageReceiverMap().removeMessageReceiver(*this);
         gpuProcessConnection->connection().send(Messages::GPUConnectionToWebProcess::ReleaseRemoteCommandListener(identifier()), 0);
     }
 }
 
 GPUProcessConnection& RemoteRemoteCommandListener::ensureGPUProcessConnection()
 {
-    RefPtr gpuProcessConnection = m_gpuProcessConnection.get();
+    auto gpuProcessConnection = m_gpuProcessConnection.get();
     if (!gpuProcessConnection) {
         gpuProcessConnection = &WebProcess::singleton().ensureGPUProcessConnection();
         m_gpuProcessConnection = gpuProcessConnection;
@@ -72,9 +75,7 @@ GPUProcessConnection& RemoteRemoteCommandListener::ensureGPUProcessConnection()
 
 void RemoteRemoteCommandListener::gpuProcessConnectionDidClose(GPUProcessConnection& gpuProcessConnection)
 {
-    ASSERT(m_gpuProcessConnection.get() == &gpuProcessConnection);
-
-    gpuProcessConnection.messageReceiverMap().removeMessageReceiver(Messages::RemoteRemoteCommandListener::messageReceiverName(), identifier().toUInt64());
+    gpuProcessConnection.messageReceiverMap().removeMessageReceiver(*this);
     m_gpuProcessConnection = nullptr;
 
     // FIXME: GPUProcess will be relaunched/RemoteCommandListener re-created when calling updateSupportedCommands().

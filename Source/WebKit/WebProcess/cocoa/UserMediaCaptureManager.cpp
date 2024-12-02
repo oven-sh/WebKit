@@ -50,11 +50,9 @@ using namespace WebCore;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(UserMediaCaptureManager);
 
 UserMediaCaptureManager::UserMediaCaptureManager(WebProcess& process)
-    : m_process(process)
-    , m_audioFactory(*this)
+    : m_audioFactory(*this)
     , m_videoFactory(*this)
     , m_displayFactory(*this)
-    , m_remoteCaptureSampleManager(*this)
 {
     process.addMessageReceiver(Messages::UserMediaCaptureManager::messageReceiverName(), *this);
 }
@@ -64,18 +62,8 @@ UserMediaCaptureManager::~UserMediaCaptureManager()
     RealtimeMediaSourceCenter::singleton().unsetAudioCaptureFactory(m_audioFactory);
     RealtimeMediaSourceCenter::singleton().unsetDisplayCaptureFactory(m_displayFactory);
     RealtimeMediaSourceCenter::singleton().unsetVideoCaptureFactory(m_videoFactory);
-    m_process->removeMessageReceiver(Messages::UserMediaCaptureManager::messageReceiverName());
+    WebProcess::singleton().removeMessageReceiver(Messages::UserMediaCaptureManager::messageReceiverName());
     m_remoteCaptureSampleManager.stopListeningForIPC();
-}
-
-void UserMediaCaptureManager::ref() const
-{
-    m_process->ref();
-}
-
-void UserMediaCaptureManager::deref() const
-{
-    m_process->deref();
 }
 
 ASCIILiteral UserMediaCaptureManager::supplementName()

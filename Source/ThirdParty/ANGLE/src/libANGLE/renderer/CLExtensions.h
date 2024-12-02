@@ -25,7 +25,6 @@ struct CLExtensions
     CLExtensions &operator=(CLExtensions &&);
 
     void initializeExtensions(std::string &&extensionStr);
-    void initializeVersionedExtensions(const NameVersionVector &versionedExtList);
 
     std::string versionStr;
     cl_version version = 0u;

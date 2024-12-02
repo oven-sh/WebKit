@@ -77,7 +77,7 @@ public:
 
 private:
     // PageClient
-    Ref<DrawingAreaProxy> createDrawingAreaProxy(WebProcessProxy&) override;
+    std::unique_ptr<DrawingAreaProxy> createDrawingAreaProxy(WebProcessProxy&) override;
     void setViewNeedsDisplay(const WebCore::Region&) override;
     void requestScroll(const WebCore::FloatPoint&, const WebCore::IntPoint&, WebCore::ScrollIsAnimated) override;
     WebCore::FloatPoint viewScrollPosition() override;
@@ -99,6 +99,7 @@ private:
 
     void setCursor(const WebCore::Cursor&) override;
     void setCursorHiddenUntilMouseMoves(bool) override;
+    void didChangeViewportProperties(const WebCore::ViewportAttributes&) override;
 
     void registerEditCommand(Ref<WebEditCommandProxy>&&, UndoOrRedo) override;
     void clearAllEditCommands() override;

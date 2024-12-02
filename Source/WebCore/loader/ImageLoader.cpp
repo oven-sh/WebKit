@@ -158,16 +158,6 @@ ImageLoader::~ImageLoader()
         loadEventSender().cancelEvent(*this);
 }
 
-void ImageLoader::ref() const
-{
-    m_element->ref();
-}
-
-void ImageLoader::deref() const
-{
-    m_element->deref();
-}
-
 void ImageLoader::clearImage()
 {
     clearImageWithoutConsideringPendingLoadEvent();

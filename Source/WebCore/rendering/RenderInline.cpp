@@ -226,8 +226,11 @@ bool RenderInline::mayAffectLayout() const
 
 void RenderInline::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*this))
+    if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*this)) {
         lineLayout->paint(paintInfo, paintOffset, this);
+        return;
+    }
+    m_legacyLineBoxes.paint(this, paintInfo, paintOffset);
 }
 
 template<typename GeneratorContext>
@@ -373,24 +376,24 @@ LayoutUnit RenderInline::marginBottom() const
     return computeMargin(this, style().marginBottom());
 }
 
-LayoutUnit RenderInline::marginStart(const WritingMode writingMode) const
+LayoutUnit RenderInline::marginStart(const RenderStyle* otherStyle) const
 {
-    return computeMargin(this, style().marginStart(writingMode));
+    return computeMargin(this, style().marginStartUsing(otherStyle ? otherStyle : &style()));
 }
 
-LayoutUnit RenderInline::marginEnd(const WritingMode writingMode) const
+LayoutUnit RenderInline::marginEnd(const RenderStyle* otherStyle) const
 {
-    return computeMargin(this, style().marginEnd(writingMode));
+    return computeMargin(this, style().marginEndUsing(otherStyle ? otherStyle : &style()));
 }
 
-LayoutUnit RenderInline::marginBefore(const WritingMode writingMode) const
+LayoutUnit RenderInline::marginBefore(const RenderStyle* otherStyle) const
 {
-    return computeMargin(this, style().marginBefore(writingMode));
+    return computeMargin(this, style().marginBeforeUsing(otherStyle ? otherStyle : &style()));
 }
 
-LayoutUnit RenderInline::marginAfter(const WritingMode writingMode) const
+LayoutUnit RenderInline::marginAfter(const RenderStyle* otherStyle) const
 {
-    return computeMargin(this, style().marginAfter(writingMode));
+    return computeMargin(this, style().marginAfterUsing(otherStyle ? otherStyle : &style()));
 }
 
 ASCIILiteral RenderInline::renderName() const
@@ -413,7 +416,7 @@ bool RenderInline::nodeAtPoint(const HitTestRequest& request, HitTestResult& res
     ASSERT(layer());
     if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*this))
         return lineLayout->hitTest(request, result, locationInContainer, accumulatedOffset, hitTestAction, this);
-    return false;
+    return m_legacyLineBoxes.hitTest(this, request, result, locationInContainer, accumulatedOffset, hitTestAction);
 }
 
 VisiblePosition RenderInline::positionForPoint(const LayoutPoint& point, HitTestSource source, const RenderFragmentContainer* fragment)
@@ -782,7 +785,7 @@ const RenderObject* RenderInline::pushMappingToContainer(const RenderLayerModelO
     return ancestorSkipped ? ancestorToStopAt : container;
 }
 
-void RenderInline::updateHitTestResult(HitTestResult& result, const LayoutPoint& point) const
+void RenderInline::updateHitTestResult(HitTestResult& result, const LayoutPoint& point)
 {
     if (result.innerNode())
         return;

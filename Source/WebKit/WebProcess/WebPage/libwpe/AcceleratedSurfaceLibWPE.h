@@ -49,7 +49,7 @@ public:
     void clientResize(const WebCore::IntSize&) override;
     void finalize() override;
     void willRenderFrame() override;
-    void didRenderFrame() override;
+    void didRenderFrame(WebCore::Region&&) override;
 
 private:
     AcceleratedSurfaceLibWPE(WebPage&, Function<void()>&& frameCompleteHandler);

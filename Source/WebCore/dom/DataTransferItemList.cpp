@@ -147,16 +147,16 @@ Vector<Ref<DataTransferItem>>& DataTransferItemList::ensureItems() const
     if (m_items)
         return *m_items;
 
-    Ref document = *this->document();
     Ref dataTransfer = m_dataTransfer.get();
     Vector<Ref<DataTransferItem>> items;
-    for (auto& type : dataTransfer->typesForItemList(document)) {
+    for (auto& type : dataTransfer->typesForItemList()) {
         auto lowercasedType = type.convertToASCIILowercase();
         if (shouldExposeTypeInItemList(lowercasedType))
             items.append(DataTransferItem::create(*this, lowercasedType));
     }
 
-    for (auto& file : dataTransfer->files(document).files())
+    RefPtr document { this->document() };
+    for (auto& file : dataTransfer->files(*document).files())
         items.append(DataTransferItem::create(*this, file->type(), file.copyRef()));
 
     m_items = WTFMove(items);

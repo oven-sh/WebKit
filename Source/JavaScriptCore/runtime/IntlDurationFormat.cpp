@@ -45,8 +45,6 @@
 #define U_HIDE_DRAFT_API 1
 #include <unicode/uformattedvalue.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 namespace IntlDurationFormatInternal {
 static constexpr bool verbose = false;
@@ -304,9 +302,9 @@ enum class ElementType : uint8_t {
 
 struct Element {
     ElementType m_type;
-    bool m_valueSignBit;
     TemporalUnit m_unit;
     String m_string;
+    double m_value;
     std::unique_ptr<UFormattedNumber, ICUDeleter<unumf_closeResult>> m_formattedNumber;
 };
 
@@ -388,8 +386,6 @@ static String buildDecimalFormat(TemporalUnit unit, Int128 ns)
 static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlDurationFormat* durationFormat, ISO8601::Duration duration)
 {
     // https://tc39.es/proposal-intl-duration-format/#sec-partitiondurationformatpattern
-
-    ASSERT(isValidDuration(duration));
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -580,13 +576,13 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
                     auto formatted = formatToString(formattedNumber.get());
                     RETURN_IF_EXCEPTION(scope, { });
 
-                    elements.append({ ElementType::Element, std::signbit(value), unit, WTFMove(formatted), WTFMove(formattedNumber) });
+                    elements.append({ ElementType::Element, unit, WTFMove(formatted), value, WTFMove(formattedNumber) });
                 }
 
                 if (needsSeparator) {
                     if (separator.isNull())
                         separator = retrieveSeparator(durationFormat->dataLocaleWithExtensions(), durationFormat->numberingSystem());
-                    elements.append({ ElementType::Literal, std::signbit(value), unit, separator, nullptr });
+                    elements.append({ ElementType::Literal, unit, separator, value, nullptr });
                 }
 
                 break;
@@ -612,7 +608,7 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
                 auto formatted = formatToString(formattedNumber.get());
                 RETURN_IF_EXCEPTION(scope, { });
 
-                elements.append({ ElementType::Element, std::signbit(value), unit, WTFMove(formatted), WTFMove(formattedNumber) });
+                elements.append({ ElementType::Element, unit, WTFMove(formatted), value, WTFMove(formattedNumber) });
                 break;
             }
             }
@@ -774,7 +770,7 @@ JSValue IntlDurationFormat::formatToParts(JSGlobalObject* globalObject, ISO8601:
                     }
                     IntlFieldIterator iterator(*fieldItr.get());
                     JSString* type = jsString(vm, String(temporalUnitSingularPropertyName(vm, element.m_unit).uid()));
-                    IntlNumberFormat::formatToPartsInternal(globalObject, IntlNumberFormat::Style::Unit, element.m_valueSignBit, IntlMathematicalValue::NumberType::Integer, element.m_string, iterator, parts, nullptr, type);
+                    IntlNumberFormat::formatToPartsInternal(globalObject, IntlNumberFormat::Style::Unit, std::signbit(element.m_value), IntlMathematicalValue::numberTypeFromDouble(element.m_value), element.m_string, iterator, parts, nullptr, type);
                     RETURN_IF_EXCEPTION(scope, void());
                     break;
                 }
@@ -895,5 +891,3 @@ ASCIILiteral IntlDurationFormat::displayString(Display display)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

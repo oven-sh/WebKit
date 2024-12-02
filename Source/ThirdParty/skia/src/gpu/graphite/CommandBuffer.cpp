@@ -22,7 +22,7 @@
 
 namespace skgpu::graphite {
 
-CommandBuffer::CommandBuffer(Protected isProtected) : fIsProtected(isProtected) {}
+CommandBuffer::CommandBuffer() {}
 
 CommandBuffer::~CommandBuffer() {
     this->releaseResources();

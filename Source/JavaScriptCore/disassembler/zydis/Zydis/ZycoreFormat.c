@@ -30,9 +30,6 @@
 
 #include "ZycoreFormat.h"
 #include "ZycoreLibC.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if defined(ZYAN_CLANG)
 #pragma clang diagnostic push
@@ -528,7 +525,5 @@ ZyanStatus ZyanStringAppendHexS(ZyanString* string, ZyanI64 value, ZyanU8 paddin
 #elif defined(ZYAN_GCC)
 #pragma GCC diagnostic pop
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

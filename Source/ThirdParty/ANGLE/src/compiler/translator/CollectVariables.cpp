@@ -746,9 +746,7 @@ void CollectVariablesTraverser::setFieldOrVariableProperties(const TType &type,
     {
         // Structures use a NONE type that isn't exposed outside ANGLE.
         variableOut->type = GL_NONE;
-        // Anonymous structs are given name from AngleInternal namespace.
-        if (structure->symbolType() != SymbolType::Empty &&
-            structure->symbolType() != SymbolType::AngleInternal)
+        if (structure->symbolType() != SymbolType::Empty)
         {
             variableOut->structOrBlockName = structure->name().data();
         }

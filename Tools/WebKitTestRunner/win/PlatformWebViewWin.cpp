@@ -39,14 +39,6 @@
 #include <cairo.h>
 #endif
 
-#if USE(SKIA)
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
-#include <skia/core/SkColorSpace.h>
-#include <skia/core/SkImage.h>
-#include <skia/core/SkPixmap.h>
-IGNORE_CLANG_WARNINGS_END
-#endif
-
 namespace WTR {
 
 static LPCWSTR hostWindowClassName = L"WTRWebViewHostWindow";
@@ -225,16 +217,8 @@ static cairo_surface_t* generateCairoSurfaceFromBitmap(BITMAP bitmapTag)
 
     return image;
 }
-#elif USE(SKIA)
-static SkImage* generateCairoSurfaceFromBitmap(BITMAP bitmapTag)
-{
-    auto imageInfo = SkImageInfo::MakeN32Premul(bitmapTag.bmWidth, bitmapTag.bmHeight, SkColorSpace::MakeSRGB());
-    SkPixmap pixmap(imageInfo, bitmapTag.bmBits, bitmapTag.bmWidthBytes);
-    return SkImages::RasterFromPixmapCopy(pixmap).release();
-}
-#endif
 
-PlatformImage PlatformWebView::windowSnapshotImage()
+cairo_surface_t* PlatformWebView::windowSnapshotImage()
 {
     RECT windowRect;
     ::GetClientRect(m_window, &windowRect);
@@ -267,6 +251,7 @@ PlatformImage PlatformWebView::windowSnapshotImage()
 
     return generateCairoSurfaceFromBitmap(bitmapTag);
 }
+#endif
 
 void PlatformWebView::changeWindowScaleIfNeeded(float)
 {

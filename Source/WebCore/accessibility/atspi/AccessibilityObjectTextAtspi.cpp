@@ -839,8 +839,11 @@ AccessibilityObjectAtspi::TextAttributes AccessibilityObjectAtspi::textAttribute
         return { WTFMove(defaultAttributes), -1, -1 };
 
     if (!*utf16Offset && m_hasListMarkerAtStart) {
+        auto* axObject = m_coreObject->children()[0].get();
+        RELEASE_ASSERT(axObject);
+
         // Always consider list marker an independent run.
-        auto attributes = accessibilityTextAttributes(m_coreObject->children()[0].get(), defaultAttributes);
+        auto attributes = accessibilityTextAttributes(*axObject, defaultAttributes);
         if (!includeDefault)
             return { WTFMove(attributes), 0, 1 };
 

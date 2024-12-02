@@ -270,7 +270,7 @@ EventName GetTraceEventName(const char *title, uint64_t counter)
 vk::ResourceAccess GetColorAccess(const gl::State &state,
                                   const gl::FramebufferState &framebufferState,
                                   const gl::DrawBufferMask &emulatedAlphaMask,
-                                  const gl::ProgramExecutable *executable,
+                                  bool hasFramebufferFetch,
                                   size_t colorIndexGL)
 {
     // No access if draw buffer is disabled altogether
@@ -295,8 +295,6 @@ vk::ResourceAccess GetColorAccess(const gl::State &state,
 
     if (isOutputMasked)
     {
-        const bool hasFramebufferFetch =
-            executable ? executable->usesColorFramebufferFetch() : false;
         return hasFramebufferFetch ? vk::ResourceAccess::ReadOnly : vk::ResourceAccess::Unused;
     }
 
@@ -304,7 +302,6 @@ vk::ResourceAccess GetColorAccess(const gl::State &state,
 }
 
 vk::ResourceAccess GetDepthAccess(const gl::DepthStencilState &dsState,
-                                  const gl::ProgramExecutable *executable,
                                   UpdateDepthFeedbackLoopReason reason)
 {
     // Skip if depth/stencil not actually accessed.
@@ -322,12 +319,8 @@ vk::ResourceAccess GetDepthAccess(const gl::DepthStencilState &dsState,
 
     if (dsState.isDepthMaskedOut())
     {
-        const bool hasFramebufferFetch =
-            executable ? executable->usesDepthFramebufferFetch() : false;
-
         // If depthFunc is GL_ALWAYS or GL_NEVER, we do not need to load depth value.
-        return (dsState.depthFunc == GL_ALWAYS || dsState.depthFunc == GL_NEVER) &&
-                       !hasFramebufferFetch
+        return (dsState.depthFunc == GL_ALWAYS || dsState.depthFunc == GL_NEVER)
                    ? vk::ResourceAccess::Unused
                    : vk::ResourceAccess::ReadOnly;
     }
@@ -337,7 +330,6 @@ vk::ResourceAccess GetDepthAccess(const gl::DepthStencilState &dsState,
 
 vk::ResourceAccess GetStencilAccess(const gl::DepthStencilState &dsState,
                                     GLuint framebufferStencilSize,
-                                    const gl::ProgramExecutable *executable,
                                     UpdateDepthFeedbackLoopReason reason)
 {
     // Skip if depth/stencil not actually accessed.
@@ -353,10 +345,8 @@ vk::ResourceAccess GetStencilAccess(const gl::DepthStencilState &dsState,
         return vk::ResourceAccess::Unused;
     }
 
-    const bool hasFramebufferFetch = executable ? executable->usesStencilFramebufferFetch() : false;
-
     return dsState.isStencilNoOp(framebufferStencilSize) &&
-                   dsState.isStencilBackNoOp(framebufferStencilSize) && !hasFramebufferFetch
+                   dsState.isStencilBackNoOp(framebufferStencilSize)
                ? vk::ResourceAccess::ReadOnly
                : vk::ResourceAccess::ReadWrite;
 }
@@ -962,52 +952,52 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, vk::Rendere
         DIRTY_BIT_DYNAMIC_BLEND_CONSTANTS,    DIRTY_BIT_DYNAMIC_STENCIL_COMPARE_MASK,
         DIRTY_BIT_DYNAMIC_STENCIL_WRITE_MASK, DIRTY_BIT_DYNAMIC_STENCIL_REFERENCE,
     };
-    if (mRenderer->getFeatures().useVertexInputBindingStrideDynamicState.enabled ||
+    if (mRenderer->useVertexInputBindingStrideDynamicState() ||
         getFeatures().supportsVertexInputDynamicState.enabled)
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_VERTEX_BUFFERS);
     }
-    if (mRenderer->getFeatures().useCullModeDynamicState.enabled)
+    if (mRenderer->useCullModeDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_CULL_MODE);
     }
-    if (mRenderer->getFeatures().useFrontFaceDynamicState.enabled)
+    if (mRenderer->useFrontFaceDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_FRONT_FACE);
     }
-    if (mRenderer->getFeatures().useDepthTestEnableDynamicState.enabled)
+    if (mRenderer->useDepthTestEnableDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_TEST_ENABLE);
     }
-    if (mRenderer->getFeatures().useDepthWriteEnableDynamicState.enabled)
+    if (mRenderer->useDepthWriteEnableDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_WRITE_ENABLE);
     }
-    if (mRenderer->getFeatures().useDepthCompareOpDynamicState.enabled)
+    if (mRenderer->useDepthCompareOpDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_COMPARE_OP);
     }
-    if (mRenderer->getFeatures().useStencilTestEnableDynamicState.enabled)
+    if (mRenderer->useStencilTestEnableDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_STENCIL_TEST_ENABLE);
     }
-    if (mRenderer->getFeatures().useStencilOpDynamicState.enabled)
+    if (mRenderer->useStencilOpDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_STENCIL_OP);
     }
-    if (mRenderer->getFeatures().usePrimitiveRestartEnableDynamicState.enabled)
+    if (mRenderer->usePrimitiveRestartEnableDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_PRIMITIVE_RESTART_ENABLE);
     }
-    if (mRenderer->getFeatures().useRasterizerDiscardEnableDynamicState.enabled)
+    if (mRenderer->useRasterizerDiscardEnableDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_RASTERIZER_DISCARD_ENABLE);
     }
-    if (mRenderer->getFeatures().useDepthBiasEnableDynamicState.enabled)
+    if (mRenderer->useDepthBiasEnableDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_BIAS_ENABLE);
     }
-    if (mRenderer->getFeatures().supportsLogicOpDynamicState.enabled)
+    if (mRenderer->useLogicOpDynamicState())
     {
         mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_LOGIC_OP);
     }
@@ -1172,37 +1162,37 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, vk::Rendere
     }
 
     // Dynamic state in VK_EXT_extended_dynamic_state:
-    if (mRenderer->getFeatures().useCullModeDynamicState.enabled)
+    if (mRenderer->useCullModeDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_CULL_FACE_ENABLED);
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_CULL_FACE);
     }
-    if (mRenderer->getFeatures().useFrontFaceDynamicState.enabled)
+    if (mRenderer->useFrontFaceDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_FRONT_FACE);
     }
-    if (mRenderer->getFeatures().useDepthTestEnableDynamicState.enabled)
+    if (mRenderer->useDepthTestEnableDynamicState())
     {
         // Depth test affects depth write state too in GraphicsPipelineDesc, so the pipeline needs
         // to stay dirty if depth test changes while depth write state is static.
-        if (mRenderer->getFeatures().useDepthWriteEnableDynamicState.enabled)
+        if (mRenderer->useDepthWriteEnableDynamicState())
         {
             mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_DEPTH_TEST_ENABLED);
         }
     }
-    if (mRenderer->getFeatures().useDepthWriteEnableDynamicState.enabled)
+    if (mRenderer->useDepthWriteEnableDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_DEPTH_MASK);
     }
-    if (mRenderer->getFeatures().useDepthCompareOpDynamicState.enabled)
+    if (mRenderer->useDepthCompareOpDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_DEPTH_FUNC);
     }
-    if (mRenderer->getFeatures().useStencilTestEnableDynamicState.enabled)
+    if (mRenderer->useStencilTestEnableDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_STENCIL_TEST_ENABLED);
     }
-    if (mRenderer->getFeatures().useStencilOpDynamicState.enabled)
+    if (mRenderer->useStencilOpDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_STENCIL_FUNCS_FRONT);
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_STENCIL_FUNCS_BACK);
@@ -1210,15 +1200,15 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, vk::Rendere
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_STENCIL_OPS_BACK);
     }
     // Dynamic state in VK_EXT_extended_dynamic_state2:
-    if (mRenderer->getFeatures().usePrimitiveRestartEnableDynamicState.enabled)
+    if (mRenderer->usePrimitiveRestartEnableDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_PRIMITIVE_RESTART_ENABLED);
     }
-    if (mRenderer->getFeatures().useRasterizerDiscardEnableDynamicState.enabled)
+    if (mRenderer->useRasterizerDiscardEnableDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_RASTERIZER_DISCARD_ENABLED);
     }
-    if (mRenderer->getFeatures().useDepthBiasEnableDynamicState.enabled)
+    if (mRenderer->useDepthBiasEnableDynamicState())
     {
         mPipelineDirtyBitsMask.reset(gl::state::DIRTY_BIT_POLYGON_OFFSET_FILL_ENABLED);
     }
@@ -1494,26 +1484,19 @@ angle::Result ContextVk::initialize(const angle::ImageLoadContext &imageLoadCont
     return angle::Result::Continue;
 }
 
-bool ContextVk::isSingleBufferedWindowCurrent() const
-{
-    return (mCurrentWindowSurface != nullptr && mCurrentWindowSurface->isSharedPresentMode());
-}
-
-bool ContextVk::hasSomethingToFlush() const
-{
-    // Don't skip flushes for single-buffered windows with staged updates. It is expected that a
-    // flush call on a single-buffered window ensures any pending updates reach the screen.
-    const bool isSingleBufferedWindowWithStagedUpdates =
-        isSingleBufferedWindowCurrent() && mCurrentWindowSurface->hasStagedUpdates();
-
-    return (mHasAnyCommandsPendingSubmission || hasActiveRenderPass() ||
-            !mOutsideRenderPassCommands->empty() || isSingleBufferedWindowWithStagedUpdates);
-}
-
 angle::Result ContextVk::flush(const gl::Context *context)
 {
-    // Skip if there's nothing to flush.
-    if (!hasSomethingToFlush())
+    // Skip the flush if there's nothing recorded.
+    //
+    // Don't skip flushes for single-buffered windows with staged updates. It is expected that a
+    // flush call on a single-buffered window ensures any pending updates reach the screen.
+    const bool isSingleBufferedWindow =
+        mCurrentWindowSurface != nullptr && mCurrentWindowSurface->isSharedPresentMode();
+    const bool isSingleBufferedWindowWithStagedUpdates =
+        isSingleBufferedWindow && mCurrentWindowSurface->hasStagedUpdates();
+
+    if (!mHasAnyCommandsPendingSubmission && !hasActiveRenderPass() &&
+        mOutsideRenderPassCommands->empty() && !isSingleBufferedWindowWithStagedUpdates)
     {
         return angle::Result::Continue;
     }
@@ -1525,7 +1508,6 @@ angle::Result ContextVk::flush(const gl::Context *context)
     //    usage flags are expected to behave similar to a single-buffered window
     FramebufferVk *drawFramebufferVk = getDrawFramebuffer();
     ASSERT(drawFramebufferVk == vk::GetImpl(mState.getDrawFramebuffer()));
-    const bool isSingleBufferedWindow = isSingleBufferedWindowCurrent();
     const bool frontBufferRenderingEnabled =
         isSingleBufferedWindow || drawFramebufferVk->hasFrontBufferUsage();
 
@@ -1547,14 +1529,14 @@ angle::Result ContextVk::flush(const gl::Context *context)
 angle::Result ContextVk::finish(const gl::Context *context)
 {
     if (mRenderer->getFeatures().swapbuffersOnFlushOrFinishWithSingleBuffer.enabled &&
-        isSingleBufferedWindowCurrent() && hasSomethingToFlush())
+        (mCurrentWindowSurface != nullptr) && mCurrentWindowSurface->isSharedPresentMode())
     {
         ANGLE_TRY(mCurrentWindowSurface->onSharedPresentContextFlush(context));
-        // While call above performs implicit flush, don't skip |finishImpl| below, since we still
-        // need to wait for submitted commands.
     }
-
-    ANGLE_TRY(finishImpl(RenderPassClosureReason::GLFinish));
+    else
+    {
+        ANGLE_TRY(finishImpl(RenderPassClosureReason::GLFinish));
+    }
 
     syncObjectPerfCounters(mRenderer->getCommandQueuePerfCounters());
     return angle::Result::Continue;
@@ -2339,11 +2321,10 @@ angle::Result ContextVk::switchOutReadOnlyDepthStencilMode(
         return angle::Result::Continue;
     }
 
-    const gl::ProgramExecutable *executable = mState.getProgramExecutable();
     const gl::DepthStencilState &dsState = mState.getDepthStencilState();
-    vk::ResourceAccess depthAccess          = GetDepthAccess(dsState, executable, depthReason);
-    vk::ResourceAccess stencilAccess        = GetStencilAccess(
-        dsState, mState.getDrawFramebuffer()->getStencilBitCount(), executable, stencilReason);
+    vk::ResourceAccess depthAccess       = GetDepthAccess(dsState, depthReason);
+    vk::ResourceAccess stencilAccess =
+        GetStencilAccess(dsState, mState.getDrawFramebuffer()->getStencilBitCount(), stencilReason);
 
     if ((HasResourceWriteAccess(depthAccess) &&
          mDepthStencilAttachmentFlags[vk::RenderPassUsage::DepthReadOnlyAttachment]) ||
@@ -2464,20 +2445,12 @@ angle::Result ContextVk::handleDirtyGraphicsRenderPass(DirtyBits::Iterator *dirt
     // - When the program binding changes (see |invalidateProgramExecutableHelper|)
     if (getFeatures().preferDynamicRendering.enabled)
     {
-        vk::FramebufferFetchMode framebufferFetchMode =
-            vk::GetProgramFramebufferFetchMode(mState.getProgramExecutable());
-        if (framebufferFetchMode != vk::FramebufferFetchMode::None)
+        if (mState.getProgramExecutable()->usesColorFramebufferFetch())
         {
             // Note: this function sets a dirty bit through onColorAccessChange() not through
             // |dirtyBitsIterator|, but that dirty bit is always set on new render passes, so it
             // won't be missed.
-            onFramebufferFetchUse(framebufferFetchMode);
-        }
-        else
-        {
-            // Reset framebuffer fetch mode.  Note that |onFramebufferFetchUse| _accumulates_
-            // framebuffer fetch mode.
-            mRenderPassCommands->setFramebufferFetchMode(vk::FramebufferFetchMode::None);
+            onFramebufferFetchUse();
         }
     }
 
@@ -2501,7 +2474,7 @@ angle::Result ContextVk::handleDirtyGraphicsColorAccess(DirtyBits::Iterator *dir
         {
             vk::ResourceAccess colorAccess = GetColorAccess(
                 mState, framebufferState, drawFramebufferVk->getEmulatedAlphaAttachmentMask(),
-                executable, colorIndexGL);
+                executable->usesColorFramebufferFetch(), colorIndexGL);
             mRenderPassCommands->onColorAccess(colorIndexVk, colorAccess);
         }
         ++colorIndexVk;
@@ -2521,12 +2494,10 @@ angle::Result ContextVk::handleDirtyGraphicsDepthStencilAccess(
     }
 
     // Update depth/stencil attachment accesses
-    const gl::ProgramExecutable *executable = mState.getProgramExecutable();
     const gl::DepthStencilState &dsState = mState.getDepthStencilState();
-    vk::ResourceAccess depthAccess =
-        GetDepthAccess(dsState, executable, UpdateDepthFeedbackLoopReason::Draw);
+    vk::ResourceAccess depthAccess = GetDepthAccess(dsState, UpdateDepthFeedbackLoopReason::Draw);
     vk::ResourceAccess stencilAccess =
-        GetStencilAccess(dsState, mState.getDrawFramebuffer()->getStencilBitCount(), executable,
+        GetStencilAccess(dsState, mState.getDrawFramebuffer()->getStencilBitCount(),
                          UpdateDepthFeedbackLoopReason::Draw);
     mRenderPassCommands->onDepthAccess(depthAccess);
     mRenderPassCommands->onStencilAccess(stencilAccess);
@@ -2625,7 +2596,7 @@ ANGLE_INLINE angle::Result ContextVk::handleDirtyTexturesImpl(
         ProgramExecutableVk *executableVk = vk::GetImpl(executable);
         ANGLE_TRY(executableVk->updateTexturesDescriptorSet(
             this, mActiveTextures, mState.getSamplers(), pipelineType,
-            mShareGroupVk->getUpdateDescriptorSetsBuilder()));
+            mShareGroupVk->getUpdateDescriptorSetsBuilder(), commandBufferHelper));
     }
 
     return angle::Result::Continue;
@@ -2652,7 +2623,7 @@ angle::Result ContextVk::handleDirtyGraphicsVertexBuffers(DirtyBits::Iterator *d
     const gl::AttribArray<VkDeviceSize> &bufferOffsets =
         vertexArrayVk->getCurrentArrayBufferOffsets();
 
-    if (mRenderer->getFeatures().useVertexInputBindingStrideDynamicState.enabled ||
+    if (mRenderer->useVertexInputBindingStrideDynamicState() ||
         getFeatures().supportsVertexInputDynamicState.enabled)
     {
         const gl::AttribArray<GLuint> &bufferStrides =
@@ -2852,9 +2823,7 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
     const bool hasStorageBuffers       = executable->hasStorageBuffers();
     const bool hasAtomicCounterBuffers = executable->hasAtomicCounterBuffers();
     const bool hasUniformBuffers       = executable->hasUniformBuffers();
-    const bool hasFramebufferFetch     = executable->usesColorFramebufferFetch() ||
-                                     executable->usesDepthFramebufferFetch() ||
-                                     executable->usesStencilFramebufferFetch();
+    const bool hasFramebufferFetch     = executable->usesColorFramebufferFetch();
 
     if (!hasUniformBuffers && !hasStorageBuffers && !hasAtomicCounterBuffers && !hasImages &&
         !hasFramebufferFetch)
@@ -2917,7 +2886,7 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
     vk::SharedDescriptorSetCacheKey newSharedCacheKey;
     ANGLE_TRY(executableVk->updateShaderResourcesDescriptorSet(
         this, mShareGroupVk->getUpdateDescriptorSetsBuilder(), mShaderBufferWriteDescriptorDescs,
-        mShaderBuffersDescriptorDesc, &newSharedCacheKey));
+        commandBufferHelper, mShaderBuffersDescriptorDesc, &newSharedCacheKey));
 
     if (newSharedCacheKey)
     {
@@ -2974,7 +2943,7 @@ angle::Result ContextVk::handleDirtyUniformBuffersImpl(CommandBufferT *commandBu
     vk::SharedDescriptorSetCacheKey newSharedCacheKey;
     ANGLE_TRY(executableVk->updateShaderResourcesDescriptorSet(
         this, mShareGroupVk->getUpdateDescriptorSetsBuilder(), mShaderBufferWriteDescriptorDescs,
-        mShaderBuffersDescriptorDesc, &newSharedCacheKey));
+        commandBufferHelper, mShaderBuffersDescriptorDesc, &newSharedCacheKey));
 
     if (newSharedCacheKey)
     {
@@ -3043,7 +3012,7 @@ angle::Result ContextVk::handleDirtyGraphicsTransformFeedbackBuffersEmulation(
     vk::SharedDescriptorSetCacheKey newSharedCacheKey;
     ANGLE_TRY(executableVk->updateUniformsAndXfbDescriptorSet(
         this, mShareGroupVk->getUpdateDescriptorSetsBuilder(), writeDescriptorDescs,
-        currentUniformBuffer, &uniformsAndXfbDesc, &newSharedCacheKey));
+        mRenderPassCommands, currentUniformBuffer, &uniformsAndXfbDesc, &newSharedCacheKey));
 
     if (newSharedCacheKey)
     {
@@ -3154,15 +3123,16 @@ angle::Result ContextVk::handleDirtyGraphicsDescriptorSets(DirtyBits::Iterator *
 angle::Result ContextVk::handleDirtyGraphicsUniforms(DirtyBits::Iterator *dirtyBitsIterator,
                                                      DirtyBits dirtyBitMask)
 {
-    return handleDirtyUniformsImpl(dirtyBitsIterator);
+    return handleDirtyUniformsImpl(dirtyBitsIterator, mRenderPassCommands);
 }
 
 angle::Result ContextVk::handleDirtyComputeUniforms(DirtyBits::Iterator *dirtyBitsIterator)
 {
-    return handleDirtyUniformsImpl(dirtyBitsIterator);
+    return handleDirtyUniformsImpl(dirtyBitsIterator, mOutsideRenderPassCommands);
 }
 
-angle::Result ContextVk::handleDirtyUniformsImpl(DirtyBits::Iterator *dirtyBitsIterator)
+angle::Result ContextVk::handleDirtyUniformsImpl(DirtyBits::Iterator *dirtyBitsIterator,
+                                                 vk::CommandBufferHelperCommon *commandBufferHelper)
 {
     dirtyBitsIterator->setLaterBit(DIRTY_BIT_DESCRIPTOR_SETS);
 
@@ -3170,7 +3140,7 @@ angle::Result ContextVk::handleDirtyUniformsImpl(DirtyBits::Iterator *dirtyBitsI
     TransformFeedbackVk *transformFeedbackVk =
         vk::SafeGetImpl(mState.getCurrentTransformFeedback());
     ANGLE_TRY(executableVk->updateUniforms(
-        this, mShareGroupVk->getUpdateDescriptorSetsBuilder(), &mEmptyBuffer,
+        this, mShareGroupVk->getUpdateDescriptorSetsBuilder(), commandBufferHelper, &mEmptyBuffer,
         &mDefaultUniformStorage, mState.isTransformFeedbackActiveUnpaused(), transformFeedbackVk));
 
     return angle::Result::Continue;
@@ -3532,45 +3502,41 @@ void ContextVk::syncObjectPerfCounters(const angle::VulkanPerfCounters &commandQ
 
     // Share group descriptor set allocations and caching stats.
     memset(mVulkanCacheStats.data(), 0, sizeof(CacheStats) * mVulkanCacheStats.size());
-    if (getFeatures().descriptorSetCache.enabled)
+
+    mShareGroupVk->getMetaDescriptorPools()[DescriptorSetIndex::UniformsAndXfb]
+        .accumulateDescriptorCacheStats(VulkanCacheType::UniformsAndXfbDescriptors, this);
+    mShareGroupVk->getMetaDescriptorPools()[DescriptorSetIndex::Texture]
+        .accumulateDescriptorCacheStats(VulkanCacheType::TextureDescriptors, this);
+    mShareGroupVk->getMetaDescriptorPools()[DescriptorSetIndex::ShaderResource]
+        .accumulateDescriptorCacheStats(VulkanCacheType::ShaderResourcesDescriptors, this);
+
+    const CacheStats &uniCacheStats = mVulkanCacheStats[VulkanCacheType::UniformsAndXfbDescriptors];
+    mPerfCounters.uniformsAndXfbDescriptorSetCacheHits      = uniCacheStats.getHitCount();
+    mPerfCounters.uniformsAndXfbDescriptorSetCacheMisses    = uniCacheStats.getMissCount();
+    mPerfCounters.uniformsAndXfbDescriptorSetCacheTotalSize = uniCacheStats.getSize();
+
+    const CacheStats &texCacheStats = mVulkanCacheStats[VulkanCacheType::TextureDescriptors];
+    mPerfCounters.textureDescriptorSetCacheHits      = texCacheStats.getHitCount();
+    mPerfCounters.textureDescriptorSetCacheMisses    = texCacheStats.getMissCount();
+    mPerfCounters.textureDescriptorSetCacheTotalSize = texCacheStats.getSize();
+
+    const CacheStats &resCacheStats =
+        mVulkanCacheStats[VulkanCacheType::ShaderResourcesDescriptors];
+    mPerfCounters.shaderResourcesDescriptorSetCacheHits      = resCacheStats.getHitCount();
+    mPerfCounters.shaderResourcesDescriptorSetCacheMisses    = resCacheStats.getMissCount();
+    mPerfCounters.shaderResourcesDescriptorSetCacheTotalSize = resCacheStats.getSize();
+
+    mPerfCounters.descriptorSetCacheTotalSize =
+        uniCacheStats.getSize() + texCacheStats.getSize() + resCacheStats.getSize() +
+        mVulkanCacheStats[VulkanCacheType::DriverUniformsDescriptors].getSize();
+
+    mPerfCounters.descriptorSetCacheKeySizeBytes = 0;
+
+    for (DescriptorSetIndex descriptorSetIndex : angle::AllEnums<DescriptorSetIndex>())
     {
-        mShareGroupVk->getMetaDescriptorPools()[DescriptorSetIndex::UniformsAndXfb]
-            .accumulateDescriptorCacheStats(VulkanCacheType::UniformsAndXfbDescriptors, this);
-        mShareGroupVk->getMetaDescriptorPools()[DescriptorSetIndex::Texture]
-            .accumulateDescriptorCacheStats(VulkanCacheType::TextureDescriptors, this);
-        mShareGroupVk->getMetaDescriptorPools()[DescriptorSetIndex::ShaderResource]
-            .accumulateDescriptorCacheStats(VulkanCacheType::ShaderResourcesDescriptors, this);
-
-        const CacheStats &uniCacheStats =
-            mVulkanCacheStats[VulkanCacheType::UniformsAndXfbDescriptors];
-        mPerfCounters.uniformsAndXfbDescriptorSetCacheHits      = uniCacheStats.getHitCount();
-        mPerfCounters.uniformsAndXfbDescriptorSetCacheMisses    = uniCacheStats.getMissCount();
-        mPerfCounters.uniformsAndXfbDescriptorSetCacheTotalSize = uniCacheStats.getSize();
-
-        const CacheStats &texCacheStats = mVulkanCacheStats[VulkanCacheType::TextureDescriptors];
-        mPerfCounters.textureDescriptorSetCacheHits      = texCacheStats.getHitCount();
-        mPerfCounters.textureDescriptorSetCacheMisses    = texCacheStats.getMissCount();
-        mPerfCounters.textureDescriptorSetCacheTotalSize = texCacheStats.getSize();
-
-        const CacheStats &resCacheStats =
-            mVulkanCacheStats[VulkanCacheType::ShaderResourcesDescriptors];
-        mPerfCounters.shaderResourcesDescriptorSetCacheHits      = resCacheStats.getHitCount();
-        mPerfCounters.shaderResourcesDescriptorSetCacheMisses    = resCacheStats.getMissCount();
-        mPerfCounters.shaderResourcesDescriptorSetCacheTotalSize = resCacheStats.getSize();
-
-        mPerfCounters.descriptorSetCacheTotalSize =
-            uniCacheStats.getSize() + texCacheStats.getSize() + resCacheStats.getSize() +
-            mVulkanCacheStats[VulkanCacheType::DriverUniformsDescriptors].getSize();
-
-        mPerfCounters.descriptorSetCacheKeySizeBytes = 0;
-
-        for (DescriptorSetIndex descriptorSetIndex : angle::AllEnums<DescriptorSetIndex>())
-        {
-            vk::MetaDescriptorPool &descriptorPool =
-                mShareGroupVk->getMetaDescriptorPools()[descriptorSetIndex];
-            mPerfCounters.descriptorSetCacheKeySizeBytes +=
-                descriptorPool.getTotalCacheKeySizeBytes();
-        }
+        vk::MetaDescriptorPool &descriptorPool =
+            mShareGroupVk->getMetaDescriptorPools()[descriptorSetIndex];
+        mPerfCounters.descriptorSetCacheKeySizeBytes += descriptorPool.getTotalCacheKeySizeBytes();
     }
 
     // Update perf counters from the renderer as well
@@ -5091,7 +5057,7 @@ void ContextVk::updateViewport(FramebufferVk *framebufferVk,
 
 void ContextVk::updateFrontFace()
 {
-    if (mRenderer->getFeatures().useFrontFaceDynamicState.enabled)
+    if (mRenderer->useFrontFaceDynamicState())
     {
         mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_FRONT_FACE);
     }
@@ -5159,7 +5125,7 @@ void ContextVk::updateDepthTestEnabled(const gl::State &glState)
     const gl::DepthStencilState depthStencilState = glState.getDepthStencilState();
     gl::Framebuffer *drawFramebuffer              = glState.getDrawFramebuffer();
 
-    if (mRenderer->getFeatures().useDepthTestEnableDynamicState.enabled)
+    if (mRenderer->useDepthTestEnableDynamicState())
     {
         mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_TEST_ENABLE);
     }
@@ -5175,7 +5141,7 @@ void ContextVk::updateDepthWriteEnabled(const gl::State &glState)
     const gl::DepthStencilState depthStencilState = glState.getDepthStencilState();
     gl::Framebuffer *drawFramebuffer              = glState.getDrawFramebuffer();
 
-    if (mRenderer->getFeatures().useDepthWriteEnableDynamicState.enabled)
+    if (mRenderer->useDepthWriteEnableDynamicState())
     {
         mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_WRITE_ENABLE);
     }
@@ -5188,7 +5154,7 @@ void ContextVk::updateDepthWriteEnabled(const gl::State &glState)
 
 void ContextVk::updateDepthFunc(const gl::State &glState)
 {
-    if (mRenderer->getFeatures().useDepthCompareOpDynamicState.enabled)
+    if (mRenderer->useDepthCompareOpDynamicState())
     {
         mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_COMPARE_OP);
     }
@@ -5204,7 +5170,7 @@ void ContextVk::updateStencilTestEnabled(const gl::State &glState)
     const gl::DepthStencilState depthStencilState = glState.getDepthStencilState();
     gl::Framebuffer *drawFramebuffer              = glState.getDrawFramebuffer();
 
-    if (mRenderer->getFeatures().useStencilTestEnableDynamicState.enabled)
+    if (mRenderer->useStencilTestEnableDynamicState())
     {
         mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_STENCIL_TEST_ENABLE);
     }
@@ -5268,7 +5234,7 @@ void ContextVk::updateRasterizerDiscardEnabled(bool isPrimitivesGeneratedQueryAc
         isEmulatingRasterizerDiscardDuringPrimitivesGeneratedQuery(
             isPrimitivesGeneratedQueryActive);
 
-    if (mRenderer->getFeatures().useRasterizerDiscardEnableDynamicState.enabled)
+    if (mRenderer->useRasterizerDiscardEnableDynamicState())
     {
         mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_RASTERIZER_DISCARD_ENABLE);
     }
@@ -5462,12 +5428,11 @@ angle::Result ContextVk::invalidateProgramExecutableHelper(const gl::Context *co
 
             if (framebufferFetchMode != vk::FramebufferFetchMode::None)
             {
-                onFramebufferFetchUse(framebufferFetchMode);
+                onFramebufferFetchUse();
             }
         }
         else
         {
-            ASSERT(!FramebufferFetchModeHasDepthStencil(framebufferFetchMode));
             const bool hasColorFramebufferFetch =
                 framebufferFetchMode != vk::FramebufferFetchMode::None;
             if (mIsInColorFramebufferFetchMode != hasColorFramebufferFetch)
@@ -5492,7 +5457,7 @@ angle::Result ContextVk::invalidateProgramExecutableHelper(const gl::Context *co
             // DIRTY_BIT_COLOR_ACCESS. This means we will not call
             // handleDirtyGraphicsColorAccess that updates the access value of
             // framebuffer color attachment from unused to readonly. This makes the
-            // color attachment to continue using LoadOpNone, and the second program
+            // color attachment continue using LoadOpNone, and the second program
             // will not be able to read the value in the color attachment.
             if (getFeatures().permanentlySwitchToFramebufferFetchMode.enabled &&
                 hasColorFramebufferFetch)
@@ -5614,7 +5579,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 onDepthStencilAccessChange();
                 break;
             case gl::state::DIRTY_BIT_STENCIL_FUNCS_FRONT:
-                if (mRenderer->getFeatures().useStencilOpDynamicState.enabled)
+                if (mRenderer->useStencilOpDynamicState())
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_STENCIL_OP);
                 }
@@ -5628,7 +5593,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 onDepthStencilAccessChange();
                 break;
             case gl::state::DIRTY_BIT_STENCIL_FUNCS_BACK:
-                if (mRenderer->getFeatures().useStencilOpDynamicState.enabled)
+                if (mRenderer->useStencilOpDynamicState())
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_STENCIL_OP);
                 }
@@ -5642,7 +5607,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 onDepthStencilAccessChange();
                 break;
             case gl::state::DIRTY_BIT_STENCIL_OPS_FRONT:
-                if (mRenderer->getFeatures().useStencilOpDynamicState.enabled)
+                if (mRenderer->useStencilOpDynamicState())
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_STENCIL_OP);
                 }
@@ -5654,7 +5619,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 onDepthStencilAccessChange();
                 break;
             case gl::state::DIRTY_BIT_STENCIL_OPS_BACK:
-                if (mRenderer->getFeatures().useStencilOpDynamicState.enabled)
+                if (mRenderer->useStencilOpDynamicState())
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_STENCIL_OP);
                 }
@@ -5672,7 +5637,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 break;
             case gl::state::DIRTY_BIT_CULL_FACE_ENABLED:
             case gl::state::DIRTY_BIT_CULL_FACE:
-                if (mRenderer->getFeatures().useCullModeDynamicState.enabled)
+                if (mRenderer->useCullModeDynamicState())
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_CULL_MODE);
                 }
@@ -5686,7 +5651,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 updateFrontFace();
                 break;
             case gl::state::DIRTY_BIT_POLYGON_OFFSET_FILL_ENABLED:
-                if (mRenderer->getFeatures().useDepthBiasEnableDynamicState.enabled)
+                if (mRenderer->useDepthBiasEnableDynamicState())
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_BIAS_ENABLE);
                 }
@@ -5708,7 +5673,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_LINE_WIDTH);
                 break;
             case gl::state::DIRTY_BIT_PRIMITIVE_RESTART_ENABLED:
-                if (mRenderer->getFeatures().usePrimitiveRestartEnableDynamicState.enabled)
+                if (mRenderer->usePrimitiveRestartEnableDynamicState())
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_PRIMITIVE_RESTART_ENABLE);
                 }
@@ -5992,7 +5957,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                             break;
                         case gl::state::EXTENDED_DIRTY_BIT_POLYGON_OFFSET_POINT_ENABLED:
                         case gl::state::EXTENDED_DIRTY_BIT_POLYGON_OFFSET_LINE_ENABLED:
-                            if (mRenderer->getFeatures().useDepthBiasEnableDynamicState.enabled)
+                            if (mRenderer->useDepthBiasEnableDynamicState())
                             {
                                 mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_BIAS_ENABLE);
                             }
@@ -6009,7 +5974,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                                 &mGraphicsPipelineTransition, glState.isLogicOpEnabled());
                             break;
                         case gl::state::EXTENDED_DIRTY_BIT_LOGIC_OP:
-                            if (mRenderer->getFeatures().supportsLogicOpDynamicState.enabled)
+                            if (mRenderer->useLogicOpDynamicState())
                             {
                                 mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_LOGIC_OP);
                             }
@@ -6399,8 +6364,7 @@ angle::Result ContextVk::invalidateCurrentShaderResources(gl::Command command)
     const bool hasUniformBuffers = executable->hasUniformBuffers();
 
     if (hasUniformBuffers || hasStorageBuffers || hasImages ||
-        executable->usesColorFramebufferFetch() || executable->usesDepthFramebufferFetch() ||
-        executable->usesStencilFramebufferFetch())
+        executable->usesColorFramebufferFetch())
     {
         mGraphicsDirtyBits |= kResourcesAndDescSetDirtyBits;
         mComputeDirtyBits |= kResourcesAndDescSetDirtyBits;
@@ -6919,7 +6883,7 @@ angle::Result ContextVk::acquireTextures(const gl::Context *context,
         // Image should not be accessed while unowned. Emulated formats may have staged updates
         // to clear the image after initialization.
         ASSERT(!image.hasStagedUpdatesInAllocatedLevels() || image.hasEmulatedImageChannels());
-        image.setCurrentImageLayout(getRenderer(), layout);
+        image.setCurrentImageLayout(layout);
     }
     return angle::Result::Continue;
 }
@@ -8412,7 +8376,6 @@ angle::Result ContextVk::flushOutsideRenderPassCommands()
     {
         return angle::Result::Continue;
     }
-    ASSERT(mOutsideRenderPassCommands->getQueueSerial().valid());
 
     addOverlayUsedBuffersCount(mOutsideRenderPassCommands);
 
@@ -8449,12 +8412,9 @@ angle::Result ContextVk::flushOutsideRenderPassCommands()
 
     if (mRenderPassCommands->started() && mOutsideRenderPassSerialFactory.empty())
     {
-        ANGLE_PERF_WARNING(
-            getDebug(), GL_DEBUG_SEVERITY_HIGH,
+        ANGLE_VK_PERF_WARNING(
+            this, GL_DEBUG_SEVERITY_HIGH,
             "Running out of reserved outsideRenderPass queueSerial. ending renderPass now.");
-        // flushCommandsAndEndRenderPass will end up call back into this function again. We must
-        // ensure mOutsideRenderPassCommands is empty so that it can early out.
-        ASSERT(mOutsideRenderPassCommands->empty());
         // We used up all reserved serials. In order to maintain serial order (outsideRenderPass
         // must be smaller than render pass), we also endRenderPass here as well. This is not
         // expected to happen often in real world usage.
@@ -9071,35 +9031,20 @@ angle::Result ContextVk::switchToColorFramebufferFetchMode(bool hasColorFramebuf
     return angle::Result::Continue;
 }
 
-void ContextVk::onFramebufferFetchUse(vk::FramebufferFetchMode framebufferFetchMode)
+void ContextVk::onFramebufferFetchUse()
 {
     ASSERT(getFeatures().preferDynamicRendering.enabled);
 
     if (mRenderPassCommands->started())
     {
-        // Accumulate framebuffer fetch mode to allow multiple draw calls in the same render pass
-        // where some use color framebuffer fetch and some depth/stencil
-        const vk::FramebufferFetchMode mergedMode = vk::FramebufferFetchModeMerge(
-            mRenderPassCommands->getRenderPassDesc().framebufferFetchMode(), framebufferFetchMode);
-
-        mRenderPassCommands->setFramebufferFetchMode(mergedMode);
+        mRenderPassCommands->setFramebufferFetchMode();
 
         // When framebuffer fetch is enabled, attachments can be read from even if output is
         // masked, so update their access.
-        if (FramebufferFetchModeHasColor(framebufferFetchMode))
-        {
-            onColorAccessChange();
-        }
-        if (FramebufferFetchModeHasDepthStencil(framebufferFetchMode))
-        {
-            onDepthStencilAccessChange();
-        }
+        onColorAccessChange();
     }
 
-    if (FramebufferFetchModeHasColor(framebufferFetchMode))
-    {
-        mRenderer->onColorFramebufferFetchUse();
-    }
+    mRenderer->onColorFramebufferFetchUse();
 }
 
 ANGLE_INLINE angle::Result ContextVk::allocateQueueSerialIndex()

@@ -94,10 +94,40 @@ const WebExtensionContext::UserContentControllerProxySet& WebExtensionContext::u
     return extensionController()->allNonPrivateUserContentControllers();
 }
 
-WebExtensionContext::WebProcessProxySet WebExtensionContext::processes(EventListenerTypeSet&& typeSet, ContentWorldTypeSet&& contentWorldTypeSet, Function<bool(WebPageProxy&, WebFrameProxy&)>&& predicate) const
+bool WebExtensionContext::pageListensForEvent(const WebPageProxy& page, WebExtensionEventListenerType type, WebExtensionContentWorldType contentWorldType) const
 {
     if (!isLoaded())
-        return { };
+        return false;
+
+    if (!hasAccessToPrivateData() && page.sessionID().isEphemeral())
+        return false;
+
+    auto findAndCheckPage = [&](WebExtensionContentWorldType worldType) {
+        auto entry = m_eventListenerPages.find({ type, worldType });
+        return entry != m_eventListenerPages.end() && entry->value.contains(page);
+    };
+
+    bool found = findAndCheckPage(contentWorldType);
+
+#if ENABLE(INSPECTOR_EXTENSIONS)
+    if (!found) {
+        // Inspector content world is a special alias of Main. Check it when Main is requested (and vice versa).
+        found = findAndCheckPage(contentWorldType == WebExtensionContentWorldType::Main ? WebExtensionContentWorldType::Inspector : WebExtensionContentWorldType::Main);
+    }
+#endif
+
+    if (!found)
+        return false;
+
+    return page.legacyMainFrameProcess().canSendMessage();
+}
+
+WebExtensionContext::WebProcessProxySet WebExtensionContext::processes(EventListenerTypeSet&& typeSet, ContentWorldTypeSet&& contentWorldTypeSet) const
+{
+    WebProcessProxySet result;
+
+    if (!isLoaded())
+        return result;
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
     // Inspector content world is a special alias of Main. Include it when Main is requested (and vice versa).
@@ -107,34 +137,30 @@ WebExtensionContext::WebProcessProxySet WebExtensionContext::processes(EventList
         contentWorldTypeSet.add(WebExtensionContentWorldType::Main);
 #endif
 
-    WebProcessProxySet result;
-
     for (auto type : typeSet) {
         for (auto contentWorldType : contentWorldTypeSet) {
-            auto pagesEntry = m_eventListenerFrames.find({ type, contentWorldType });
-            if (pagesEntry == m_eventListenerFrames.end())
+            auto pagesEntry = m_eventListenerPages.find({ type, contentWorldType });
+            if (pagesEntry == m_eventListenerPages.end())
                 continue;
 
             for (auto entry : pagesEntry->value) {
-                Ref frame = entry.key;
-                RefPtr page = frame->page();
-                if (!page)
-                    continue;
-
+                Ref page = entry.key;
                 if (!hasAccessToPrivateData() && page->sessionID().isEphemeral())
                     continue;
 
-                if (predicate && !predicate(*page, frame))
-                    continue;
-
-                Ref webProcess = frame->process();
-                if (webProcess->canSendMessage())
-                    result.add(webProcess);
+                Ref process = page->legacyMainFrameProcess();
+                if (process->canSendMessage())
+                    result.add(WTFMove(process));
             }
         }
     }
 
     return result;
+}
+
+WebExtensionMessagePort::~WebExtensionMessagePort()
+{
+    remove();
 }
 
 } // namespace WebKit

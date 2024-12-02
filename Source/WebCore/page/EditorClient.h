@@ -206,10 +206,6 @@ public:
 
     virtual void willChangeSelectionForAccessibility() { }
     virtual void didChangeSelectionForAccessibility() { }
-
-#if PLATFORM(IOS_FAMILY)
-    virtual bool shouldDrawVisuallyContiguousBidiSelection() const { return false; }
-#endif
 };
 
 }

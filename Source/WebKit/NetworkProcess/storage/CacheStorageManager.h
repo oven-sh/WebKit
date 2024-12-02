@@ -27,7 +27,6 @@
 
 #include "Connection.h"
 #include <WebCore/DOMCacheEngine.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
@@ -41,10 +40,10 @@ struct ClientOrigin;
 
 namespace WebKit {
 class CacheStorageCache;
-class CacheStorageRecordInformation;
 class CacheStorageRegistry;
 class CacheStorageStore;
 struct CacheStorageRecord;
+struct CacheStorageRecordInformation;
 
 
 class CacheStorageManager : public RefCountedAndCanMakeWeakPtr<CacheStorageManager> {

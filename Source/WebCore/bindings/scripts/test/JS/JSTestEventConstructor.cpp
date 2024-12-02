@@ -46,6 +46,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -210,14 +211,15 @@ template<> void JSTestEventConstructorDOMConstructor::initializeProperties(VM& v
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 4> JSTestEventConstructorPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructorConstructor, 0 } },
-    HashTableValue { "attr1"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructor_attr1, 0 } },
-    HashTableValue { "attr2"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructor_attr2, 0 } },
+static const HashTableValue JSTestEventConstructorPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructorConstructor, 0 } },
+    { "attr1"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructor_attr1, 0 } },
+    { "attr2"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructor_attr2, 0 } },
 #if ENABLE(SPECIAL_EVENT)
-    HashTableValue { "attr3"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructor_attr3, 0 } },
+    { "attr3"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventConstructor_attr3, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 };
 
@@ -332,7 +334,6 @@ void JSTestEventConstructor::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -357,8 +358,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestEventCons
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestEventConstructor>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

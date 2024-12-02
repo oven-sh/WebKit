@@ -45,7 +45,7 @@ namespace WebCore {
 
 class WebCoreOpaqueRoot;
 
-enum class CryptoKeyClass : uint8_t {
+enum class CryptoKeyClass {
     AES,
     EC,
     HMAC,

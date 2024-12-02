@@ -178,9 +178,6 @@ public:
     static String sourceTypeKey();
     static String videoCodecKey();
     static String audioCodecKey();
-    static String textTrackTypeKey();
-    static String textTrackKindKey();
-    static String textTrackModeKey();
 
     WEBCORE_EXPORT static String memoryUsageToDiagnosticLoggingKey(uint64_t memoryUsage);
     WEBCORE_EXPORT static String foregroundCPUUsageToDiagnosticLoggingKey(double cpuUsage);

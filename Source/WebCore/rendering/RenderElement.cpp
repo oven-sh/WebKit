@@ -95,14 +95,12 @@
 #include "ShadowRoot.h"
 #include "StylePendingResources.h"
 #include "StyleResolver.h"
-#include "StyleScope.h"
 #include "Styleable.h"
 #include "TextAutoSizing.h"
 #include "ViewTransition.h"
 #include <wtf/MathExtras.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/TextStream.h>
 
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
 #include "ContentChangeObserver.h"
@@ -180,6 +178,7 @@ bool RenderElement::isContentDataSupported(const ContentData& contentData)
 
 RenderPtr<RenderElement> RenderElement::createFor(Element& element, RenderStyle&& style, OptionSet<ConstructBlockLevelRendererFor> rendererTypeOverride)
 {
+
     const ContentData* contentData = style.contentData();
     if (!rendererTypeOverride && contentData && isContentDataSupported(*contentData) && !element.isPseudoElement()) {
         Style::loadPendingResources(style, element.document(), &element);
@@ -529,19 +528,8 @@ void RenderElement::setStyle(RenderStyle&& style, StyleDifference minimalStyleDi
 
     StyleDifference diff = StyleDifference::Equal;
     OptionSet<StyleDifferenceContextSensitiveProperty> contextSensitiveProperties;
-    if (m_hasInitializedStyle) {
+    if (m_hasInitializedStyle)
         diff = m_style.diff(style, contextSensitiveProperties);
-
-#if !LOG_DISABLED
-        if (LogStyle.state == WTFLogChannelState::On) {
-            TextStream diffStream(TextStream::LineMode::MultipleLine, TextStream::Formatting::NumberRespectingIntegers);
-            diffStream.increaseIndent(2);
-            m_style.dumpDifferences(diffStream, style);
-            if (!diffStream.isEmpty())
-                LOG_WITH_STREAM(Style, stream << *this << " style diff " << diff << " (context sensitive changes " << contextSensitiveProperties << "):\n" << diffStream.release());
-        }
-#endif
-    }
 
     diff = std::max(diff, minimalStyleDifference);
 
@@ -892,7 +880,7 @@ void RenderElement::styleWillChange(StyleDifference diff, const RenderStyle& new
         if (visibilityChanged || inertChanged) {
             Ref document = this->document();
             if (CheckedPtr cache = document->existingAXObjectCache())
-                cache->onInertOrVisibilityChange(*this);
+                cache->childrenChanged(checkedParent().get(), this);
         }
 
         // Keep layer hierarchy visibility bits up to date if visibility or skipped content state changes.
@@ -901,7 +889,7 @@ void RenderElement::styleWillChange(StyleDifference diff, const RenderStyle& new
         if (wasVisible != willBeVisible) {
             if (CheckedPtr layer = enclosingLayer()) {
                 if (willBeVisible) {
-                    if (m_style.hasSkippedContent() && isSkippedContentRoot(*this))
+                    if (m_style.hasSkippedContent() && isSkippedContentRoot())
                         layer->dirtyVisibleContentStatus();
                     else
                         layer->setHasVisibleContent();
@@ -1617,31 +1605,6 @@ bool RenderElement::isVisibleInViewport() const
     Ref frameView = view().frameView();
     auto visibleRect = frameView->windowToContents(frameView->windowClipRect());
     return isVisibleInDocumentRect(visibleRect);
-}
-
-const Element* RenderElement::defaultAnchor() const
-{
-    if (!element())
-        return nullptr;
-    auto& anchorPositionedStates = document().styleScope().anchorPositionedStates();
-    auto anchoringStateLookupResult = anchorPositionedStates.find(*element());
-    if (anchoringStateLookupResult == anchorPositionedStates.end() || !anchoringStateLookupResult->value)
-        return nullptr;
-    const auto& anchoringState = *anchoringStateLookupResult->value;
-    const auto& anchorName = style().positionAnchor();
-    if (!anchorName)
-        return nullptr;
-    auto defaultAnchorLookupResult = anchoringState.anchorElements.find(anchorName->name);
-    if (defaultAnchorLookupResult == anchoringState.anchorElements.end())
-        return nullptr;
-    return &defaultAnchorLookupResult->value.get();
-}
-
-const RenderElement* RenderElement::defaultAnchorRenderer() const
-{
-    if (auto* defaultAnchor = this->defaultAnchor())
-        return defaultAnchor->renderer();
-    return nullptr;
 }
 
 VisibleInViewportState RenderElement::imageFrameAvailable(CachedImage& image, ImageAnimatingState animatingState, const IntRect* changeRect)
@@ -2564,6 +2527,11 @@ void RenderElement::markRendererDirtyAfterTopLayerChange(RenderElement* renderer
     renderBox->setNeedsLayout();
 }
 
+bool RenderElement::isSkippedContentRoot() const
+{
+    return WebCore::isSkippedContentRoot(style(), element()) && !view().frameView().layoutContext().needsSkippedContentLayout();
+}
+
 bool RenderElement::hasEligibleContainmentForSizeQuery() const
 {
     switch (style().containerType()) {
@@ -2589,7 +2557,7 @@ void RenderElement::layoutIfNeeded()
 {
     if (!needsLayout())
         return;
-    if (layoutContext().isSkippedContentForLayout(*this)) {
+    if (isSkippedContentForLayout()) {
         clearNeedsLayoutForSkippedContent();
         return;
     }

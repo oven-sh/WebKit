@@ -31,8 +31,6 @@
 #include "JSObject.h"
 #include <wtf/MallocPtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 enum class HashTableType {
@@ -127,7 +125,7 @@ public:
 
     static JSCell* deletedKey()
     {
-        return std::bit_cast<JSCell*>(static_cast<uintptr_t>(-3));
+        return bitwise_cast<JSCell*>(static_cast<uintptr_t>(-3));
     }
 
     bool isDeleted()
@@ -171,7 +169,7 @@ public:
 
     ALWAYS_INLINE BucketType* buffer() const
     {
-        return std::bit_cast<BucketType*>(this);
+        return bitwise_cast<BucketType*>(this);
     }
 
     static MallocPtr<WeakMapBuffer> create(uint32_t capacity)
@@ -224,30 +222,9 @@ public:
         return jsUndefined();
     }
 
-    template <typename T = WeakMapBucketType>
-    ALWAYS_INLINE typename std::enable_if<std::is_same<T, WeakMapBucket<WeakMapBucketDataKeyValue>>::value, JSValue>::type getBucket(JSCell* key, uint32_t hash, size_t index)
-    {
-        UNUSED_PARAM(key);
-        UNUSED_PARAM(hash);
-        ASSERT(jsWeakMapHash(key) == hash);
-
-        WeakMapBucketType* bucket = buffer() + index;
-        ASSERT(bucket);
-        ASSERT(findBucket(key, hash) == bucket);
-
-        return bucket->value();
-    }
-
-    ALWAYS_INLINE std::pair<size_t, bool> findBucketIndex(JSCell* key, uint32_t hash)
-    {
-        return findBucketIndexAlreadyHashed(key, hash);
-    }
-
     ALWAYS_INLINE WeakMapBucketType* findBucket(JSCell* key, uint32_t hash)
     {
-        if (auto [index, exists] = findBucketIndexAlreadyHashed(key, hash); exists)
-            return buffer() + index;
-        return nullptr;
+        return findBucketAlreadyHashed(key, hash);
     }
 
     ALWAYS_INLINE bool has(JSCell* key)
@@ -258,7 +235,6 @@ public:
 
     ALWAYS_INLINE void add(VM&, JSCell* key, JSValue = JSValue());
     ALWAYS_INLINE void add(VM&, JSCell* key, JSValue, uint32_t hash);
-    ALWAYS_INLINE void addBucket(VM&, JSCell* key, JSValue, uint32_t hash, size_t index);
 
     ALWAYS_INLINE bool remove(JSCell* key)
     {
@@ -379,7 +355,7 @@ private:
         ++m_keyCount;
     }
 
-    ALWAYS_INLINE std::pair<size_t, bool> findBucketIndexAlreadyHashed(JSCell* key, uint32_t hash)
+    ALWAYS_INLINE WeakMapBucketType* findBucketAlreadyHashed(JSCell* key, uint32_t hash)
     {
         const uint32_t mask = m_capacity - 1;
         uint32_t index = hash & mask;
@@ -389,12 +365,12 @@ private:
         while (!bucket->isEmpty()) {
             if (canUseBucket(bucket, key)) {
                 ASSERT(!bucket->isDeleted());
-                return { index, true };
+                return buffer + index;
             }
             index = (index + 1) & mask;
             bucket = buffer + index;
         }
-        return { index, false };
+        return nullptr;
     }
 
     enum class RehashMode { Normal, RemoveBatching };
@@ -443,5 +419,3 @@ private:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

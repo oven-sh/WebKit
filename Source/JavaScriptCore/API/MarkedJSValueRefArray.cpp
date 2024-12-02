@@ -28,8 +28,6 @@
 
 #include "JSCJSValue.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 MarkedJSValueRefArray::MarkedJSValueRefArray(JSGlobalContextRef context, unsigned size)
@@ -60,7 +58,7 @@ void MarkedJSValueRefArray::visitAggregate(Visitor& visitor)
             continue;
         visitor.appendUnbarriered(jsCell); // We should mark the wrapper itself to keep JSValueRef live.
 #else
-        visitor.appendUnbarriered(std::bit_cast<JSValue>(value));
+        visitor.appendUnbarriered(bitwise_cast<JSValue>(value));
 #endif
     }
 }
@@ -69,5 +67,3 @@ template void MarkedJSValueRefArray::visitAggregate(AbstractSlotVisitor&);
 template void MarkedJSValueRefArray::visitAggregate(SlotVisitor&);
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

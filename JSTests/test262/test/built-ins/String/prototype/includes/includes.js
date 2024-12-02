@@ -18,8 +18,6 @@ assert.sameValue(
   '`typeof String.prototype.includes` is `function`'
 );
 
-verifyProperty(String.prototype, 'includes', {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(String.prototype, 'includes');
+verifyWritable(String.prototype, 'includes');
+verifyConfigurable(String.prototype, 'includes');

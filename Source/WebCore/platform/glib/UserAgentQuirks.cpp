@@ -123,7 +123,6 @@ static bool urlRequiresMacintoshPlatform(const String& domain, const String& bas
     // agent to use the light version. Earlier versions even block users from
     // accessing the calendar.
     if (domain == "outlook.office.com"_s
-        || domain == "outlook.office365.com"_s
         || domain == "mail.ntu.edu.tw"_s
         || domain == "exchange.tu-berlin.de"_s)
         return true;
@@ -134,7 +133,7 @@ static bool urlRequiresMacintoshPlatform(const String& domain, const String& bas
     if (domain == "www.sspa.juntadeandalucia.es"_s)
         return true;
 
-    // Atlassian Confluence discriminates against WebKitGTK's standard user agent
+    // Atlassian Confluence discrimates against WebKitGTK's standard user agent
     // by completely blocking access to the application. It runs on different
     // subdomains for each Atlassian customer so the quirk must apply broadly.
     if (baseDomain == "atlassian.net"_s)
@@ -143,11 +142,6 @@ static bool urlRequiresMacintoshPlatform(const String& domain, const String& bas
     // Rosetta Stone discriminates against WebKitGTK's standard mobile user agent
     // by redirecting to an intent:// URL, which will of course fail to load.
     if (domain == "totale.rosettastone.com"_s)
-        return true;
-
-    // DuckDuckGo discriminates against WebKitGTK's standard user agent by
-    // returning an HTTP 400 Bad Request error when loading every search result.
-    if (domain == "duckduckgo.com"_s)
         return true;
 
     return false;

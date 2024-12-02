@@ -36,26 +36,28 @@ class Scrollbar;
 
 class AccessibilityScrollbar final : public AccessibilityMockObject {
 public:
-    static Ref<AccessibilityScrollbar> create(AXID, Scrollbar&);
+    static Ref<AccessibilityScrollbar> create(Scrollbar*);
 
+    Scrollbar* scrollbar() const { return m_scrollbar.get(); }
+    
 private:
-    explicit AccessibilityScrollbar(AXID, Scrollbar&);
+    explicit AccessibilityScrollbar(Scrollbar*);
 
-    bool canSetValueAttribute() const final { return true; }
+    bool canSetValueAttribute() const override { return true; }
 
-    bool isAccessibilityScrollbar() const final { return true; }
-    LayoutRect elementRect() const final;
-
+    bool isAccessibilityScrollbar() const override { return true; }
+    LayoutRect elementRect() const override;
+    
     AccessibilityRole determineAccessibilityRole() final { return AccessibilityRole::ScrollBar; }
-    AccessibilityOrientation orientation() const final;
-    Document* document() const final;
-    bool isEnabled() const final;
-
+    AccessibilityOrientation orientation() const override;
+    Document* document() const override;
+    bool isEnabled() const override;
+    
     // Assumes float [0..1]
-    bool setValue(float) final;
-    float valueForRange() const final;
+    bool setValue(float) override;
+    float valueForRange() const override;
 
-    Ref<Scrollbar> m_scrollbar;
+    RefPtr<Scrollbar> m_scrollbar;
 };
 
 } // namespace WebCore

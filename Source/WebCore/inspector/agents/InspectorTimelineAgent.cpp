@@ -35,7 +35,6 @@
 
 #include "Event.h"
 #include "FrameSnapshotting.h"
-#include "ImageBuffer.h"
 #include "InspectorAnimationAgent.h"
 #include "InspectorCPUProfilerAgent.h"
 #include "InspectorClient.h"

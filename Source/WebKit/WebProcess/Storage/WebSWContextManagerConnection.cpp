@@ -81,9 +81,9 @@ namespace WebKit {
 using namespace PAL;
 using namespace WebCore;
 
-WebSWContextManagerConnection::WebSWContextManagerConnection(Ref<IPC::Connection>&& connection, Site&& site, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, PageIdentifier pageID, const WebPreferencesStore& store, RemoteWorkerInitializationData&& initializationData)
+WebSWContextManagerConnection::WebSWContextManagerConnection(Ref<IPC::Connection>&& connection, RegistrableDomain&& registrableDomain, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, PageIdentifier pageID, const WebPreferencesStore& store, RemoteWorkerInitializationData&& initializationData)
     : m_connectionToNetworkProcess(WTFMove(connection))
-    , m_site(WTFMove(site))
+    , m_registrableDomain(WTFMove(registrableDomain))
     , m_serviceWorkerPageIdentifier(serviceWorkerPageIdentifier)
     , m_pageGroupID(pageGroupID)
     , m_webPageProxyID(webPageProxyID)
@@ -106,12 +106,17 @@ WebSWContextManagerConnection::WebSWContextManagerConnection(Ref<IPC::Connection
     WebProcess::singleton().disableTermination();
 }
 
-WebSWContextManagerConnection::~WebSWContextManagerConnection() = default;
+WebSWContextManagerConnection::~WebSWContextManagerConnection()
+{
+    auto callbacks = WTFMove(m_skipWaitingCallbacks);
+    for (auto& callback : callbacks.values())
+        callback();
+}
 
 void WebSWContextManagerConnection::establishConnection(CompletionHandler<void()>&& completionHandler)
 {
     m_connectionToNetworkProcess->addWorkQueueMessageReceiver(Messages::WebSWContextManagerConnection::messageReceiverName(), m_queue.get(), *this);
-    m_connectionToNetworkProcess->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::EstablishSWContextConnection { m_webPageProxyID, m_site, m_serviceWorkerPageIdentifier }, WTFMove(completionHandler), 0);
+    m_connectionToNetworkProcess->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::EstablishSWContextConnection { m_webPageProxyID, m_registrableDomain, m_serviceWorkerPageIdentifier }, WTFMove(completionHandler), 0);
 }
 
 void WebSWContextManagerConnection::stop()
@@ -467,7 +472,19 @@ void WebSWContextManagerConnection::setServiceWorkerHasPendingEvents(ServiceWork
 
 void WebSWContextManagerConnection::skipWaiting(ServiceWorkerIdentifier serviceWorkerIdentifier, CompletionHandler<void()>&& callback)
 {
-    m_connectionToNetworkProcess->sendWithAsyncReply(Messages::WebSWServerToContextConnection::SkipWaiting(serviceWorkerIdentifier), WTFMove(callback), 0);
+    auto requestIdentifier = ++m_previousRequestIdentifier;
+    m_skipWaitingCallbacks.add(requestIdentifier, WTFMove(callback));
+    m_connectionToNetworkProcess->send(Messages::WebSWServerToContextConnection::SkipWaiting(requestIdentifier, serviceWorkerIdentifier), 0);
+}
+
+void WebSWContextManagerConnection::skipWaitingCompleted(uint64_t requestIdentifier)
+{
+    assertIsCurrent(m_queue.get());
+
+    callOnMainRunLoop([protectedThis = Ref { *this }, requestIdentifier]() mutable {
+        if (auto callback = protectedThis->m_skipWaitingCallbacks.take(requestIdentifier))
+            callback();
+    });
 }
 
 void WebSWContextManagerConnection::setScriptResource(ServiceWorkerIdentifier serviceWorkerIdentifier, const URL& url, const ServiceWorkerContextData::ImportedScript& script)
@@ -477,7 +494,6 @@ void WebSWContextManagerConnection::setScriptResource(ServiceWorkerIdentifier se
 
 void WebSWContextManagerConnection::workerTerminated(ServiceWorkerIdentifier serviceWorkerIdentifier)
 {
-    RELEASE_LOG(ServiceWorker, "WebSWContextManagerConnection::workerTerminated %llu", serviceWorkerIdentifier.toUInt64());
     m_connectionToNetworkProcess->send(Messages::WebSWServerToContextConnection::WorkerTerminated(serviceWorkerIdentifier), 0);
 }
 
@@ -488,7 +504,19 @@ void WebSWContextManagerConnection::findClientByVisibleIdentifier(WebCore::Servi
 
 void WebSWContextManagerConnection::matchAll(WebCore::ServiceWorkerIdentifier serviceWorkerIdentifier, const ServiceWorkerClientQueryOptions& options, ServiceWorkerClientsMatchAllCallback&& callback)
 {
-    m_connectionToNetworkProcess->sendWithAsyncReply(Messages::WebSWServerToContextConnection::MatchAll { serviceWorkerIdentifier, options }, WTFMove(callback), 0);
+    auto requestIdentifier = ++m_previousRequestIdentifier;
+    m_matchAllRequests.add(requestIdentifier, WTFMove(callback));
+    m_connectionToNetworkProcess->send(Messages::WebSWServerToContextConnection::MatchAll { requestIdentifier, serviceWorkerIdentifier, options }, 0);
+}
+
+void WebSWContextManagerConnection::matchAllCompleted(uint64_t requestIdentifier, Vector<ServiceWorkerClientData>&& clientsData)
+{
+    assertIsCurrent(m_queue.get());
+
+    callOnMainRunLoop([protectedThis = Ref { *this }, requestIdentifier, clientsData = crossThreadCopy(WTFMove(clientsData))]() mutable {
+        if (auto callback = protectedThis->m_matchAllRequests.take(requestIdentifier))
+            callback(WTFMove(clientsData));
+    });
 }
 
 void WebSWContextManagerConnection::openWindow(WebCore::ServiceWorkerIdentifier serviceWorkerIdentifier, const URL& url, OpenWindowCallback&& callback)

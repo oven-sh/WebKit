@@ -11,7 +11,6 @@
 
 #include <vector>
 
-#include "common/PackedCLEnums_autogen.h"
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
 #include "libANGLE/renderer/vulkan/CLEventVk.h"
 #include "libANGLE/renderer/vulkan/CLKernelVk.h"
@@ -248,8 +247,7 @@ class CLCommandQueueVk : public CLCommandQueueImpl
     angle::Result syncHostBuffers();
     angle::Result flushComputePassCommands();
     angle::Result processWaitlist(const cl::EventPtrs &waitEvents);
-    angle::Result createEvent(CLEventImpl::CreateFunc *createFunc,
-                              cl::ExecutionStatus initialStatus);
+    angle::Result createEvent(CLEventImpl::CreateFunc *createFunc);
 
     angle::Result onResourceAccess(const vk::CommandBufferAccess &access);
     angle::Result getCommandBuffer(const vk::CommandBufferAccess &access,
@@ -261,12 +259,6 @@ class CLCommandQueueVk : public CLCommandQueueImpl
     }
 
     angle::Result processPrintfBuffer();
-    angle::Result copyImageToFromBuffer(CLImageVk &imageVk,
-                                        vk::BufferHelper &buffer,
-                                        const cl::MemOffsets &origin,
-                                        const cl::Coordinate &region,
-                                        size_t bufferOffset,
-                                        ImageBufferCopyDirection writeToBuffer);
 
     CLContextVk *mContext;
     const CLDeviceVk *mDevice;
@@ -300,26 +292,8 @@ class CLCommandQueueVk : public CLCommandQueueImpl
     bool mNeedPrintfHandling;
     const angle::HashMap<uint32_t, ClspvPrintfInfo> *mPrintfInfos;
 
-    // Host buffer transferring utility
-    struct HostTransferConfig
-    {
-        cl_command_type type{0};
-        size_t size            = 0;
-        size_t offset          = 0;
-        void *dstHostPtr       = nullptr;
-        const void *srcHostPtr = nullptr;
-        cl::MemOffsets origin;
-        cl::Coordinate region;
-    };
-    struct HostTransferEntry
-    {
-        HostTransferConfig transferConfig;
-        cl::MemoryPtr transferBufferHandle;
-    };
-    using HostTransferEntries = std::vector<HostTransferEntry>;
-    HostTransferEntries mHostTransferList;
-    angle::Result addToHostTransferList(CLBufferVk *srcBuffer, HostTransferConfig transferEntry);
-    angle::Result addToHostTransferList(CLImageVk *srcImage, HostTransferConfig transferEntry);
+    // List of buffer refs that need host syncing
+    cl::MemoryPtrs mHostBufferUpdateList;
 };
 
 }  // namespace rx

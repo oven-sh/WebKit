@@ -26,8 +26,6 @@
 #include "config.h"
 #include "FontSelectionAlgorithm.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 FontSelectionAlgorithm::FontSelectionAlgorithm(FontSelectionRequest request, const Vector<Capabilities>& capabilities, std::optional<Capabilities> bounds)
@@ -171,5 +169,3 @@ size_t FontSelectionAlgorithm::indexOfBestCapabilities()
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

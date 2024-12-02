@@ -115,7 +115,7 @@ GStreamerVideoCaptureSource::GStreamerVideoCaptureSource(String&& deviceID, Atom
     m_capturer->addObserver(*this);
 
     auto& singleton = GStreamerVideoCaptureDeviceManager::singleton();
-    singleton.registerCapturer(m_capturer.copyRef());
+    singleton.registerCapturer(m_capturer);
 }
 
 GStreamerVideoCaptureSource::GStreamerVideoCaptureSource(GStreamerCaptureDevice&& device, MediaDeviceHashSalts&& hashSalts)
@@ -127,7 +127,7 @@ GStreamerVideoCaptureSource::GStreamerVideoCaptureSource(GStreamerCaptureDevice&
     m_capturer->addObserver(*this);
 
     auto& singleton = GStreamerVideoCaptureDeviceManager::singleton();
-    singleton.registerCapturer(m_capturer.copyRef());
+    singleton.registerCapturer(m_capturer);
 }
 
 GStreamerVideoCaptureSource::~GStreamerVideoCaptureSource()
@@ -179,14 +179,6 @@ void GStreamerVideoCaptureSource::sourceCapsChanged(const GstCaps* caps)
 void GStreamerVideoCaptureSource::captureEnded()
 {
     m_capturer->stop();
-}
-
-std::pair<GstClockTime, GstClockTime> GStreamerVideoCaptureSource::queryCaptureLatency() const
-{
-    if (!m_capturer)
-        return { GST_CLOCK_TIME_NONE, GST_CLOCK_TIME_NONE };
-
-    return m_capturer->queryLatency();
 }
 
 void GStreamerVideoCaptureSource::startProducingData()

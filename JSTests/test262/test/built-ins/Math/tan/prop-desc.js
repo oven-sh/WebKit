@@ -12,8 +12,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Math, "tan", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Math, "tan");
+verifyWritable(Math, "tan");
+verifyConfigurable(Math, "tan");

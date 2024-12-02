@@ -62,8 +62,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeGenerator);
@@ -5675,4 +5673,3 @@ void printInternal(PrintStream& out, JSC::Variable::VariableKind kind)
 
 } // namespace WTF
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

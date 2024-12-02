@@ -33,8 +33,6 @@
 #import <pal/spi/mac/CoreUISPI.h>
 #import <pal/spi/mac/NSAppearanceSPI.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore::SwitchMacUtilities {
 
 IntSize cellSize(NSControlSize controlSize)
@@ -144,7 +142,5 @@ RefPtr<ImageBuffer> trackMaskImage(GraphicsContext& context, FloatSize trackRect
 }
 
 } // namespace WebCore::SwitchMacUtilities
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

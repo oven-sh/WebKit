@@ -36,23 +36,23 @@ namespace WTF {
 CString safeStrerror(int errnum)
 {
     constexpr size_t bufferLength = 1024;
-    std::span<char> cstringBuffer;
+    char* cstringBuffer = nullptr;
     auto result = CString::newUninitialized(bufferLength, cstringBuffer);
 #if OS(WINDOWS)
-    strerror_s(cstringBuffer.data(), cstringBuffer.size(), errnum);
+    strerror_s(cstringBuffer, bufferLength, errnum);
 #else
-    auto ret = strerror_r(errnum, cstringBuffer.data(), cstringBuffer.size());
+    auto ret = strerror_r(errnum, cstringBuffer, bufferLength);
     if constexpr (std::is_same<decltype(ret), char*>::value) {
         // We have GNU strerror_r(), which returns char*. This may or may not be a pointer into
         // cstringBuffer. We also have to be careful because this has to compile even if ret is
         // an int, hence the reinterpret_casts.
         char* message = reinterpret_cast<char*>(ret);
-        if (message != cstringBuffer.data())
-            strncpy(cstringBuffer.data(), message, cstringBuffer.size());
+        if (message != cstringBuffer)
+            strncpy(cstringBuffer, message, bufferLength);
     } else {
         // We have POSIX strerror_r, which returns int and may fail.
         if (ret)
-            snprintf(cstringBuffer.data(), cstringBuffer.size(), "%s %d", "Unknown error", errnum);
+            snprintf(cstringBuffer, bufferLength, "%s %d", "Unknown error", errnum);
     }
 #endif // OS(WINDOWS)
     return result;

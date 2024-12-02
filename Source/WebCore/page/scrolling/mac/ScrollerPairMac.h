@@ -113,8 +113,6 @@ public:
 
     bool mouseInContentArea() const { return m_mouseInContentArea; }
 
-    void setUseDarkAppearance(bool);
-
     void setScrollbarWidth(ScrollbarWidth);
 
 private:
@@ -138,7 +136,6 @@ private:
     ScrollbarWidth m_scrollbarWidth { ScrollbarWidth::Auto };
     std::atomic<bool> m_usingPresentationValues { false };
     std::atomic<ScrollbarStyle> m_scrollbarStyle { ScrollbarStyle::AlwaysVisible };
-    bool m_useDarkAppearance { false };
     bool m_inLiveResize { false };
     bool m_mouseInContentArea { false };
 };

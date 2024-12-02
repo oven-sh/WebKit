@@ -41,16 +41,16 @@ namespace WebCore {
     
 using namespace HTMLNames;
 
-AccessibilityMediaObject::AccessibilityMediaObject(AXID axID, RenderObject& renderer)
-    : AccessibilityRenderObject(axID, renderer)
+AccessibilityMediaObject::AccessibilityMediaObject(RenderObject& renderer)
+    : AccessibilityRenderObject(renderer)
 {
 }
 
 AccessibilityMediaObject::~AccessibilityMediaObject() = default;
 
-Ref<AccessibilityMediaObject> AccessibilityMediaObject::create(AXID axID, RenderObject& renderer)
+Ref<AccessibilityMediaObject> AccessibilityMediaObject::create(RenderObject& renderer)
 {
-    return adoptRef(*new AccessibilityMediaObject(axID, renderer));
+    return adoptRef(*new AccessibilityMediaObject(renderer));
 }
 
 bool AccessibilityMediaObject::computeIsIgnored() const

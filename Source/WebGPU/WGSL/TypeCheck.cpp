@@ -1676,10 +1676,7 @@ void TypeChecker::visit(AST::UnaryExpression& unary)
         auto* type = infer(unary.expression(), Evaluation::Runtime);
         auto* pointer = std::get_if<Types::Pointer>(type);
         if (!pointer) {
-            if (isBottom(type))
-                inferred(type);
-            else
-                typeError(unary.span(), "cannot dereference expression of type '"_s, *type, '\'');
+            typeError(unary.span(), "cannot dereference expression of type '"_s, *type, '\'');
             return;
         }
 
@@ -2036,11 +2033,6 @@ const Type* TypeChecker::chooseOverload(ASCIILiteral kind, const SourceSpan& spa
 
 const Type* TypeChecker::infer(AST::Expression& expression, Evaluation evaluation, DiscardResult discardResult)
 {
-    if (evaluation > m_evaluation) {
-        typeError(InferBottom::No, expression.span(), "cannot use "_s, evaluationToString(evaluation), " value in "_s, evaluationToString(m_evaluation), " expression"_s);
-        return m_types.bottomType();
-    }
-
     auto discardResultScope = SetForScope(m_discardResult, discardResult);
     auto evaluationScope = SetForScope(m_evaluation, evaluation);
 
@@ -2245,8 +2237,6 @@ Behaviors TypeChecker::analyzeStatements(AST::Statement::List& statements)
 const Type* TypeChecker::check(AST::Expression& expression, Constraint constraint, Evaluation evaluation)
 {
     auto* type = infer(expression, evaluation);
-    if (isBottom(type))
-        return type;
     type = satisfyOrPromote(type, constraint, m_types);
     if (!type)
         return nullptr;

@@ -95,10 +95,8 @@ public:
     bool isInRenderTreeLayout() const { return layoutPhase() == LayoutPhase::InRenderTreeLayout; }
     bool inPaintableState() const { return layoutPhase() != LayoutPhase::InRenderTreeLayout && layoutPhase() != LayoutPhase::InViewSizeAdjust && (layoutPhase() != LayoutPhase::InPostLayout || inAsynchronousTasks()); }
 
+    bool needsSkippedContentLayout() const { return m_needsSkippedContentLayout; }
     void setNeedsSkippedContentLayout(bool needsSkippedContentLayout) { m_needsSkippedContentLayout = needsSkippedContentLayout; }
-
-    bool isSkippedContentForLayout(const RenderElement&) const;
-    bool isSkippedContentRootForLayout(const RenderElement&) const;
 
     RenderElement* subtreeLayoutRoot() const;
     void clearSubtreeLayoutRoot() { m_subtreeLayoutRoot.clear(); }
@@ -175,8 +173,6 @@ private:
     // These functions may only be accessed by LayoutStateMaintainer or LayoutStateDisabler.
     void disablePaintOffsetCache() { m_paintOffsetCacheDisableCount++; }
     void enablePaintOffsetCache() { ASSERT(m_paintOffsetCacheDisableCount > 0); m_paintOffsetCacheDisableCount--; }
-
-    bool needsSkippedContentLayout() const { return m_needsSkippedContentLayout; }
 
     LocalFrame& frame() const;
     Ref<LocalFrame> protectedFrame();

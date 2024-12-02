@@ -31,8 +31,6 @@
 #include "SFrameUtils.h"
 #include <wtf/Algorithms.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 #if ASSERT_ENABLED
@@ -382,7 +380,5 @@ void RTCRtpSFrameTransformer::updateAuthenticationSize()
 #endif // !PLATFORM(COCOA) && !USE(GSTREAMER_WEBRTC)
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_RTC)

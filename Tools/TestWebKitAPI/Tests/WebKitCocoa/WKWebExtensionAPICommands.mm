@@ -29,7 +29,6 @@
 
 #import "WebExtensionUtilities.h"
 #import <WebKit/WKWebExtensionCommandPrivate.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if USE(APPKIT)
 #import <Carbon/Carbon.h>

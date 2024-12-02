@@ -162,7 +162,6 @@ enum class Feature
     ExplicitFragmentLocations,
     ExplicitlyCastMediumpFloatTo16Bit,
     ExplicitlyEnablePerSampleShading,
-    ExposeES32ForTesting,
     ExposeNonConformantExtensionsAndVersions,
     FinishDoesNotCauseQueriesToBeAvailable,
     FlushAfterEndingTransformFeedback,

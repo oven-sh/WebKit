@@ -54,9 +54,9 @@ String bytesAsString(CFURLRef url)
     auto bytesLength = CFURLGetBytes(url, nullptr, 0);
     RELEASE_ASSERT(bytesLength != -1);
     RELEASE_ASSERT(bytesLength <= static_cast<CFIndex>(String::MaxLength));
-    std::span<LChar> buffer;
+    LChar* buffer;
     auto result = String::createUninitialized(bytesLength, buffer);
-    CFURLGetBytes(url, buffer.data(), buffer.size());
+    CFURLGetBytes(url, buffer, bytesLength);
     return result;
 }
 

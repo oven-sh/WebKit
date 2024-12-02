@@ -40,6 +40,8 @@
 
 #import "LocalAuthenticationSoftLink.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -147,18 +149,17 @@ void MockLocalConnection::filterResponses(Vector<Ref<AuthenticatorAssertionRespo
     if (preferredCredentialIdBase64.isEmpty())
         return;
 
-    RefPtr<AuthenticatorAssertionResponse> matchingResponse;
-    for (auto& response : responses) {
-        auto* rawId = response->rawId();
+    auto itr = responses.begin();
+    for (; itr != responses.end(); ++itr) {
+        auto* rawId = itr->get().rawId();
         ASSERT(rawId);
         auto rawIdBase64 = base64EncodeToString(rawId->span());
-        if (rawIdBase64 == preferredCredentialIdBase64) {
-            matchingResponse = response.copyRef();
+        if (rawIdBase64 == preferredCredentialIdBase64)
             break;
-        }
     }
+    auto response = itr->copyRef();
     responses.clear();
-    responses.append(matchingResponse.releaseNonNull());
+    responses.append(WTFMove(response));
 }
 
 RetainPtr<NSArray> MockLocalConnection::getExistingCredentials(const String& rpId)
@@ -186,5 +187,7 @@ RetainPtr<NSArray> MockLocalConnection::getExistingCredentials(const String& rpI
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUTHN)

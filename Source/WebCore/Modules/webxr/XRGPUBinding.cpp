@@ -26,8 +26,6 @@
 #include "config.h"
 #include "XRGPUBinding.h"
 
-#if ENABLE(WEBXR_LAYERS)
-
 #include "GPUDevice.h"
 #include "WebGPUXRBinding.h"
 #include "WebGPUXREye.h"
@@ -38,7 +36,8 @@
 #include "XRGPUProjectionLayerInit.h"
 #include "XRGPUSubImage.h"
 #include "XRProjectionLayer.h"
-#include <wtf/TZoneMallocInlines.h>
+
+#if ENABLE(WEBXR_LAYERS)
 
 namespace WebCore {
 

@@ -27,7 +27,8 @@
 #include "SharedStringHashTableReadOnly.h"
 
 #include <WebCore/SharedMemory.h>
-#include <wtf/StdLibExtras.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -52,9 +53,13 @@ static inline unsigned doubleHash(unsigned key)
     return key;
 }
 
-SharedStringHashTableReadOnly::SharedStringHashTableReadOnly() = default;
+SharedStringHashTableReadOnly::SharedStringHashTableReadOnly()
+{
+}
 
-SharedStringHashTableReadOnly::~SharedStringHashTableReadOnly() = default;
+SharedStringHashTableReadOnly::~SharedStringHashTableReadOnly()
+{
+}
 
 void SharedStringHashTableReadOnly::setSharedMemory(RefPtr<SharedMemory>&& sharedMemory)
 {
@@ -62,11 +67,13 @@ void SharedStringHashTableReadOnly::setSharedMemory(RefPtr<SharedMemory>&& share
 
     if (m_sharedMemory) {
         ASSERT(!(m_sharedMemory->size() % sizeof(SharedStringHash)));
-        m_table = spanReinterpretCast<SharedStringHash>(m_sharedMemory->mutableSpan());
-        ASSERT(isPowerOf2(m_table.size()));
-        m_tableSizeMask = m_table.size() - 1;
+        m_table = reinterpret_cast<SharedStringHash*>(m_sharedMemory->mutableSpan().data());
+        m_tableSize = m_sharedMemory->size() / sizeof(SharedStringHash);
+        ASSERT(isPowerOf2(m_tableSize));
+        m_tableSizeMask = m_tableSize - 1;
     } else {
-        m_table = { };
+        m_table = nullptr;
+        m_tableSize = 0;
         m_tableSizeMask = 0;
     }
 }
@@ -83,20 +90,21 @@ SharedStringHash* SharedStringHashTableReadOnly::findSlot(SharedStringHash share
         return nullptr;
 
     int k = 0;
-    auto table = m_table;
+    SharedStringHash* table = m_table;
     int sizeMask = m_tableSizeMask;
     unsigned h = static_cast<unsigned>(sharedStringHash);
     int i = h & sizeMask;
 
+    SharedStringHash* entry;
     while (1) {
-        auto& entry = table[i];
+        entry = table + i;
 
         // Check if we've reached the end of the table.
-        if (!entry)
-            return &entry;
+        if (!*entry)
+            return entry;
 
-        if (entry == sharedStringHash)
-            return &entry;
+        if (*entry == sharedStringHash)
+            return entry;
 
         if (!k)
             k = 1 | doubleHash(h);
@@ -105,3 +113,5 @@ SharedStringHash* SharedStringHashTableReadOnly::findSlot(SharedStringHash share
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -29,10 +29,10 @@
         testRunner.waitUntilDone();
     }
 
-    async function doTest()
+    function doTest()
     {
         if (window.testRunner)
-            await testRunner.displayAndTrackRepaints();
+            testRunner.displayAndTrackRepaints();
 
         document.getElementById('box').className = 'composited';
         if (window.testRunner) {

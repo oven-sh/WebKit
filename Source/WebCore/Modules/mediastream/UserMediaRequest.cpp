@@ -136,7 +136,7 @@ void UserMediaRequest::start()
         break;
     }
 
-    PlatformMediaSessionManager::singleton().prepareToSendUserMediaPermissionRequest();
+    PlatformMediaSessionManager::sharedManager().prepareToSendUserMediaPermissionRequest();
     controller->requestUserMediaAccess(*this);
 }
 

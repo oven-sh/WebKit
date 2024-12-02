@@ -125,7 +125,7 @@ bool CDMPrivateMediaSourceAVFObjC::supportsMIMEType(const String& mimeType) cons
     return MediaPlayerPrivateMediaSourceAVFObjC::supportsTypeAndCodecs(parameters) != MediaPlayer::SupportsType::IsNotSupported;
 }
 
-RefPtr<LegacyCDMSession> CDMPrivateMediaSourceAVFObjC::createSession(LegacyCDMSessionClient& client)
+std::unique_ptr<LegacyCDMSession> CDMPrivateMediaSourceAVFObjC::createSession(LegacyCDMSessionClient& client)
 {
     String keySystem = m_cdm->keySystem(); // Local copy for StringView usage
     auto parameters = parseKeySystem(m_cdm->keySystem());
@@ -133,7 +133,7 @@ RefPtr<LegacyCDMSession> CDMPrivateMediaSourceAVFObjC::createSession(LegacyCDMSe
     if (!parameters)
         return nullptr;
 
-    RefPtr session = CDMSessionAVContentKeySession::create(WTFMove(parameters.value().protocols), parameters.value().version, *this, client);
+    auto session = makeUnique<CDMSessionAVContentKeySession>(WTFMove(parameters.value().protocols), parameters.value().version, *this, client);
 
     m_sessions.append(session.get());
     return WTFMove(session);

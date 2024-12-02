@@ -7,12 +7,11 @@ Here we change cell border color, expect that cache is invalidated and paint pro
         <title></title>
         <link rel="stylesheet" href="resources/cached.css">
         <script type="text/javascript">
-            async function test() {
+            function test() {
                 document.body.offsetTop;
-                testRunner?.waitUntilDone();
-                await testRunner?.displayAndTrackRepaints();
+                if (window.testRunner)
+                    testRunner.displayAndTrackRepaints();
                 document.getElementById("foo").style.borderColor = "lime";
-                testRunner?.notifyDone();
             }
         </script>
     </head>

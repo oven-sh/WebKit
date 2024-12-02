@@ -4,10 +4,11 @@
 <script src="../../resources/js-test-pre.js"></script>
 <script>
     description("Test that animated gif outside viewport does not trigger repaint.");
-    async function startTrackingRepaints()
+    function startTrackingRepaints()
     {
         document.body.offsetTop;
-        await testRunner.displayAndTrackRepaints();
+        window.internals.startTrackingRepaints();
+        testRunner.displayAndTrackRepaints();
         setTimeout(logRepaints, 200);
     }
 

@@ -38,8 +38,6 @@
 #include "JSCInlines.h"
 #include "TypeLocation.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 class FixupPhase : public Phase {
@@ -4705,64 +4703,59 @@ private:
                 } else {
                     switch (signature->arguments[index - 2]) {
                     case SpecString:
-                        if (edge->shouldSpeculateNotString())
+                        if (!edge->shouldSpeculateNotString())
                             shouldConvertToCallDOM = false;
                         break;
                     case SpecInt32Only:
-                        if (edge->shouldSpeculateNotInt32())
+                        if (!edge->shouldSpeculateNotInt32())
                             shouldConvertToCallDOM = false;
                         break;
                     case SpecBoolean:
-                        if (edge->shouldSpeculateNotBoolean())
+                        if (!edge->shouldSpeculateNotBoolean())
                             shouldConvertToCallDOM = false;
                         break;
                     case SpecInt8Array: {
-                        if (edge->shouldSpeculateNotInt8Array())
+                        if (edge->shouldSpeculateInt8Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecInt16Array: {
-                        if (edge->shouldSpeculateNotInt16Array())
+                        if (edge->shouldSpeculateInt16Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecInt32Array: {
-                        if (edge->shouldSpeculateNotInt32Array())
+                        if (edge->shouldSpeculateInt32Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecUint8Array: {
-                        if (edge->shouldSpeculateNotUint8Array())
+                        if (edge->shouldSpeculateUint8Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecUint8ClampedArray: {
-                        if (edge->shouldSpeculateNotUint8ClampedArray())
+                        if (edge->shouldSpeculateUint8ClampedArray())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecUint16Array: {
-                        if (edge->shouldSpeculateNotUint16Array())
+                        if (edge->shouldSpeculateUint16Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecUint32Array: {
-                        if (edge->shouldSpeculateNotUint32Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecFloat16Array: {
-                        if (edge->shouldSpeculateNotFloat16Array())
+                        if (edge->shouldSpeculateUint32Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecFloat32Array: {
-                        if (edge->shouldSpeculateNotFloat32Array())
+                        if (edge->shouldSpeculateFloat32Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
                     case SpecFloat64Array: {
-                        if (edge->shouldSpeculateNotFloat64Array())
+                        if (edge->shouldSpeculateFloat64Array())
                             shouldConvertToCallDOM = false;
                         break;
                     }
@@ -4770,7 +4763,7 @@ private:
                     case SpecInt32AsInt52:
                     case SpecNonInt32AsInt52:
                     case SpecAnyIntAsDouble: {
-                        if (edge->shouldSpeculateNotInt52())
+                        if (edge->shouldSpeculateInt52())
                             shouldConvertToCallDOM = false;
                         break;
                     }
@@ -5373,6 +5366,5 @@ bool performFixup(Graph& graph)
 
 } } // namespace JSC::DFG
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(DFG_JIT)
+

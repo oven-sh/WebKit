@@ -51,6 +51,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -114,9 +115,10 @@ template<> void JSTestEventTargetDOMConstructor::initializeProperties(VM& vm, JS
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestEventTargetPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventTargetConstructor, 0 } },
-    HashTableValue { "item"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestEventTargetPrototypeFunction_item, 1 } },
+static const HashTableValue JSTestEventTargetPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestEventTargetConstructor, 0 } },
+    { "item"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestEventTargetPrototypeFunction_item, 1 } },
 };
 
 const ClassInfo JSTestEventTargetPrototype::s_info = { "TestEventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestEventTargetPrototype) };
@@ -397,7 +399,6 @@ void JSTestEventTarget::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -422,8 +423,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestEventTarg
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestEventTarget>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

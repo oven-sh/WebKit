@@ -15,8 +15,6 @@ features: [TypedArray]
 
 assert.sameValue(Int8Array.prototype, Object.getPrototypeOf(new Int8Array(0)));
 
-verifyProperty(Int8Array, "prototype", {
-  writable: false,
-  enumerable: false,
-  configurable: false,
-});
+verifyNotEnumerable(Int8Array, "prototype");
+verifyNotWritable(Int8Array, "prototype");
+verifyNotConfigurable(Int8Array, "prototype");

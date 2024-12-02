@@ -28,15 +28,14 @@
 
 #if ENABLE(WEB_AUTHN)
 
-#include "Logging.h"
 #include <WebCore/FidoConstants.h>
-#include <wtf/Assertions.h>
 #include <wtf/RunLoop.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRandomNumber.h>
 #include <wtf/text/Base64.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 using namespace fido;
@@ -178,8 +177,6 @@ CtapHidDriver::CtapHidDriver(Ref<HidConnection>&& connection)
 
 void CtapHidDriver::transact(Vector<uint8_t>&& data, ResponseCallback&& callback)
 {
-    if (!isValidSize(data.size()))
-        RELEASE_LOG(WebAuthn, "CtapHidDriver::transact Sending data larger than maxSize. msgSize=%ld", data.size());
     ASSERT(m_state == State::Idle);
     m_state = State::AllocateChannel;
     m_channelId = kHidBroadcastChannel;
@@ -193,7 +190,7 @@ void CtapHidDriver::transact(Vector<uint8_t>&& data, ResponseCallback&& callback
     ASSERT(!(kHidInitNonceLength % sizeof(uint32_t)) && steps >= 1);
     for (size_t i = 0; i < steps; ++i) {
         uint32_t weakRandom = weakRandomNumber<uint32_t>();
-        memcpySpan(m_nonce.mutableSpan().subspan(i * sizeof(uint32_t)), asByteSpan(weakRandom));
+        memcpy(m_nonce.data() + i * sizeof(uint32_t), &weakRandom, sizeof(uint32_t));
     }
 
     auto initCommand = FidoHidMessage::create(m_channelId, FidoHidDeviceCommand::kInit, m_nonce);
@@ -282,5 +279,7 @@ void CtapHidDriver::cancel()
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUTHN)

@@ -25,7 +25,6 @@
 #include "SVGPathTraversalStateBuilder.h"
 
 #include "PathTraversalState.h"
-#include <wtf/StdLibExtras.h>
 
 namespace WebCore {
 
@@ -37,24 +36,24 @@ SVGPathTraversalStateBuilder::SVGPathTraversalStateBuilder(PathTraversalState& s
 
 void SVGPathTraversalStateBuilder::moveTo(const FloatPoint& targetPoint, bool, PathCoordinateMode)
 {
-    m_traversalState.processPathElement(PathElement::Type::MoveToPoint, singleElementSpan(targetPoint));
+    m_traversalState.processPathElement(PathElement::Type::MoveToPoint, &targetPoint);
 }
 
 void SVGPathTraversalStateBuilder::lineTo(const FloatPoint& targetPoint, PathCoordinateMode)
 {
-    m_traversalState.processPathElement(PathElement::Type::AddLineToPoint, singleElementSpan(targetPoint));
+    m_traversalState.processPathElement(PathElement::Type::AddLineToPoint, &targetPoint);
 }
 
 void SVGPathTraversalStateBuilder::curveToCubic(const FloatPoint& point1, const FloatPoint& point2, const FloatPoint& targetPoint, PathCoordinateMode)
 {
-    std::array points { point1, point2, targetPoint };
+    FloatPoint points[] = { point1, point2, targetPoint };
 
-    m_traversalState.processPathElement(PathElement::Type::AddCurveToPoint, std::span<FloatPoint> { points });
+    m_traversalState.processPathElement(PathElement::Type::AddCurveToPoint, points);
 }
 
 void SVGPathTraversalStateBuilder::closePath()
 {
-    m_traversalState.processPathElement(PathElement::Type::CloseSubpath, { });
+    m_traversalState.processPathElement(PathElement::Type::CloseSubpath, nullptr);
 }
 
 bool SVGPathTraversalStateBuilder::continueConsuming()

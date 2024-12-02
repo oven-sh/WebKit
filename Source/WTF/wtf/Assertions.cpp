@@ -65,8 +65,6 @@
 #import <wtf/spi/cocoa/OSLogSPI.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 WTF_ATTRIBUTE_PRINTF(1, 0)
@@ -308,49 +306,49 @@ void WTFReportBacktraceWithPrefixAndStackDepth(const char* prefix, int framesToS
 {
     int frames = framesToShow + kDefaultFramesToSkip;
     Vector<void*> samples;
-    samples.resize(frames);
+    samples.reserveInitialCapacity(frames);
 
     WTFGetBacktrace(samples.data(), &frames);
     CrashLogPrintStream out;
     if (frames > kDefaultFramesToSkip)
-        WTFPrintBacktraceWithPrefixAndPrintStream(out, samples.subspan(kDefaultFramesToSkip, framesToShow), prefix);
+        WTFPrintBacktraceWithPrefixAndPrintStream(out, samples.data() + kDefaultFramesToSkip, framesToShow, prefix);
     else
         out.print("%sno stacktrace available", prefix);
 }
 
 void WTFReportBacktraceWithPrefixAndPrintStream(PrintStream& out, const char* prefix)
 {
-    std::array<void*, kDefaultFramesToShow + kDefaultFramesToSkip> samples;
-    int frames = samples.size();
+    void* samples[kDefaultFramesToShow + kDefaultFramesToSkip];
+    int frames = kDefaultFramesToShow + kDefaultFramesToSkip;
 
-    WTFGetBacktrace(samples.data(), &frames);
+    WTFGetBacktrace(samples, &frames);
     if (frames > kDefaultFramesToSkip)
-        WTFPrintBacktraceWithPrefixAndPrintStream(out, std::span { samples }.subspan(kDefaultFramesToSkip, frames - kDefaultFramesToSkip), prefix);
+        WTFPrintBacktraceWithPrefixAndPrintStream(out, samples + kDefaultFramesToSkip, frames - kDefaultFramesToSkip, prefix);
     else
         out.print("%sno stacktrace available", prefix);
 }
 
 void WTFReportBacktrace()
 {
-    std::array<void*, kDefaultFramesToShow + kDefaultFramesToSkip> samples;
+    void* samples[kDefaultFramesToShow + kDefaultFramesToSkip];
     int frames = kDefaultFramesToShow + kDefaultFramesToSkip;
 
-    WTFGetBacktrace(samples.data(), &frames);
+    WTFGetBacktrace(samples, &frames);
     if (frames > kDefaultFramesToSkip)
-        WTFPrintBacktrace(std::span { samples }.subspan(kDefaultFramesToSkip, frames - kDefaultFramesToSkip));
+        WTFPrintBacktrace(samples + kDefaultFramesToSkip, frames - kDefaultFramesToSkip);
     else
         CrashLogPrintStream { }.print("no stacktrace available");
 }
 
-void WTFPrintBacktraceWithPrefixAndPrintStream(PrintStream& out, std::span<void* const> stack, const char* prefix)
+void WTFPrintBacktraceWithPrefixAndPrintStream(PrintStream& out, void** stack, int size, const char* prefix)
 {
-    out.print(StackTracePrinter { stack, prefix });
+    out.print(StackTracePrinter { { stack, static_cast<size_t>(std::max(0, size)) }, prefix });
 }
 
-void WTFPrintBacktrace(std::span<void* const> stack)
+void WTFPrintBacktrace(void** stack, int size)
 {
     CrashLogPrintStream out;
-    WTFPrintBacktraceWithPrefixAndPrintStream(out, stack, "");
+    WTFPrintBacktraceWithPrefixAndPrintStream(out, stack, size, "");
 }
 
 #if !defined(NDEBUG) || !(OS(DARWIN) || PLATFORM(PLAYSTATION))
@@ -740,5 +738,3 @@ String getAndResetAccumulatedLogs()
 }
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

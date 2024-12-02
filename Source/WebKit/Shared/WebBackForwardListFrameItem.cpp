@@ -27,7 +27,6 @@
 #include "WebBackForwardListFrameItem.h"
 
 #include "SessionState.h"
-#include "WebBackForwardListItem.h"
 
 namespace WebKit {
 using namespace WebCore;

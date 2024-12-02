@@ -75,9 +75,9 @@ void CryptoAlgorithmHKDF::importKey(CryptoKeyFormat format, KeyData&& data, cons
     callback(CryptoKeyRaw::create(parameters.identifier, WTFMove(std::get<Vector<uint8_t>>(data)), usages));
 }
 
-ExceptionOr<std::optional<size_t>> CryptoAlgorithmHKDF::getKeyLength(const CryptoAlgorithmParameters&)
+ExceptionOr<size_t> CryptoAlgorithmHKDF::getKeyLength(const CryptoAlgorithmParameters&)
 {
-    return std::optional<size_t>();
+    return 0;
 }
     
 } // namespace WebCore

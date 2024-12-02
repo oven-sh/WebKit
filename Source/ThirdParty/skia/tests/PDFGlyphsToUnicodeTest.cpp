@@ -25,24 +25,25 @@ using namespace skia_private;
 
 static constexpr SkGlyphID kMaximumGlyphIndex = UINT16_MAX;
 
-static bool stream_equals(const SkDynamicMemoryWStream& stream, const char* buffer) {
-    const size_t streamSize = stream.bytesWritten();
-    AutoTMalloc<char> data(streamSize);
-    stream.copyTo(data.get());
-
-    if ((false)) {
-        SkDebugf("Output\n%.*s\n", SkToInt(streamSize), data.data());
-    }
-
-    if (streamSize != strlen(buffer)) {
+static bool stream_equals(const SkDynamicMemoryWStream& stream, size_t offset,
+                          const char* buffer, size_t len) {
+    if (len != strlen(buffer)) {
         return false;
     }
-    return memcmp(data.get(), buffer, streamSize) == 0;
+
+    const size_t streamSize = stream.bytesWritten();
+
+    if (offset + len > streamSize) {
+        return false;
+    }
+
+    AutoTMalloc<char> data(streamSize);
+    stream.copyTo(data.get());
+    return memcmp(data.get() + offset, buffer, len) == 0;
 }
 
 DEF_TEST(SkPDF_ToUnicode, reporter) {
     SkTDArray<SkUnichar> glyphToUnicode;
-    THashMap<SkGlyphID, SkString> glyphToUnicodeEx;
     SkTDArray<uint16_t> glyphsInSubset;
     SkPDFGlyphUse subset(1, kMaximumGlyphIndex);
 
@@ -82,16 +83,13 @@ DEF_TEST(SkPDF_ToUnicode, reporter) {
     glyphsInSubset.push_back(0x101);
     glyphToUnicode.push_back(0x1013);
 
-    glyphToUnicodeEx.set(0x9, SkString("ffi"));
-    glyphToUnicodeEx.set(0xFC, SkString("st"));
-
     SkGlyphID lastGlyphID = SkToU16(glyphToUnicode.size() - 1);
 
     SkDynamicMemoryWStream buffer;
     for (uint16_t v : glyphsInSubset) {
         subset.set(v);
     }
-    SkPDFAppendCmapSections(glyphToUnicode.data(), glyphToUnicodeEx, &subset, &buffer, true, 0,
+    SkPDFAppendCmapSections(&glyphToUnicode[0], &subset, &buffer, true, 0,
                             std::min<SkGlyphID>(0xFFFF,  lastGlyphID));
 
     char expectedResult[] =
@@ -101,10 +99,6 @@ DEF_TEST(SkPDF_ToUnicode, reporter) {
 <0008> <002F>\n\
 <0009> <0033>\n\
 endbfchar\n\
-2 beginbfchar\n\
-<0009> <006600660069>\n\
-<00FC> <00730074>\n\
-endbfchar\n\
 4 beginbfrange\n\
 <0005> <0007> <0027>\n\
 <000B> <000D> <0035>\n\
@@ -112,12 +106,13 @@ endbfchar\n\
 <0100> <0101> <1012>\n\
 endbfrange\n";
 
-    REPORTER_ASSERT(reporter, stream_equals(buffer, expectedResult));
+    REPORTER_ASSERT(reporter, stream_equals(buffer, 0, expectedResult,
+                                            buffer.bytesWritten()));
 
     // Remove characters and ranges.
     buffer.reset();
 
-    SkPDFAppendCmapSections(glyphToUnicode.data(), glyphToUnicodeEx, &subset, &buffer, true, 8,
+    SkPDFAppendCmapSections(&glyphToUnicode[0], &subset, &buffer, true, 8,
                             std::min<SkGlyphID>(0x00FF, lastGlyphID));
 
     char expectedResultChop1[] =
@@ -125,51 +120,48 @@ endbfrange\n";
 <0008> <002F>\n\
 <0009> <0033>\n\
 endbfchar\n\
-2 beginbfchar\n\
-<0009> <006600660069>\n\
-<00FC> <00730074>\n\
-endbfchar\n\
 2 beginbfrange\n\
 <000B> <000D> <0035>\n\
 <00FE> <00FF> <1010>\n\
 endbfrange\n";
 
-    REPORTER_ASSERT(reporter, stream_equals(buffer, expectedResultChop1));
+    REPORTER_ASSERT(reporter, stream_equals(buffer, 0, expectedResultChop1,
+                                            buffer.bytesWritten()));
 
     // Remove characters from range to downdrade it to one char.
     buffer.reset();
 
-    SkPDFAppendCmapSections(glyphToUnicode.data(), glyphToUnicodeEx, &subset, &buffer, true, 0x00D,
+    SkPDFAppendCmapSections(&glyphToUnicode[0], &subset, &buffer, true, 0x00D,
                             std::min<SkGlyphID>(0x00FE, lastGlyphID));
 
     char expectedResultChop2[] =
 "2 beginbfchar\n\
 <000D> <0037>\n\
 <00FE> <1010>\n\
-endbfchar\n\
-1 beginbfchar\n\
-<00FC> <00730074>\n\
 endbfchar\n";
 
-    REPORTER_ASSERT(reporter, stream_equals(buffer, expectedResultChop2));
+    REPORTER_ASSERT(reporter, stream_equals(buffer, 0, expectedResultChop2,
+                                            buffer.bytesWritten()));
 
     buffer.reset();
 
-    SkPDFAppendCmapSections(glyphToUnicode.data(), glyphToUnicodeEx, &subset, &buffer, false, 0xFC,
+    SkPDFAppendCmapSections(&glyphToUnicode[0], nullptr, &buffer, false, 0xFC,
                             std::min<SkGlyphID>(0x110, lastGlyphID));
 
     char expectedResultSingleBytes[] =
-"1 beginbfchar\n\
-<01> <00730074>\n\
+"2 beginbfchar\n\
+<01> <0000>\n\
+<02> <0000>\n\
 endbfchar\n\
 1 beginbfrange\n\
 <03> <06> <1010>\n\
 endbfrange\n";
 
-    REPORTER_ASSERT(reporter, stream_equals(buffer, expectedResultSingleBytes));
+    REPORTER_ASSERT(reporter, stream_equals(buffer, 0,
+                                            expectedResultSingleBytes,
+                                            buffer.bytesWritten()));
 
     glyphToUnicode.reset();
-    glyphToUnicodeEx.reset();
     glyphsInSubset.reset();
     SkPDFGlyphUse subset2(1, kMaximumGlyphIndex);
 
@@ -193,7 +185,7 @@ endbfrange\n";
     for (uint16_t v : glyphsInSubset) {
         subset2.set(v);
     }
-    SkPDFAppendCmapSections(glyphToUnicode.data(), glyphToUnicodeEx, &subset2, &buffer2, true, 0,
+    SkPDFAppendCmapSections(&glyphToUnicode[0], &subset2, &buffer2, true, 0,
                             std::min<SkGlyphID>(0xFFFF, lastGlyphID));
 
     char expectedResult2[] =
@@ -207,7 +199,8 @@ endbfchar\n\
 <0056> <0057> <0073>\n\
 endbfrange\n";
 
-    REPORTER_ASSERT(reporter, stream_equals(buffer2, expectedResult2));
+    REPORTER_ASSERT(reporter, stream_equals(buffer2, 0, expectedResult2,
+                                            buffer2.bytesWritten()));
 }
 
 #endif

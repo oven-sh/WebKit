@@ -577,10 +577,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCanvasTransform.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCanvasTransform.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCanvasUserInterface.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCanvasUserInterface.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCaretPosition.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCaretPosition.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCaretPositionFromPointOptions.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCaretPositionFromPointOptions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSChannelCountMode.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSChannelCountMode.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSChannelInterpretation.cpp
@@ -873,8 +869,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDistanceModelType.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDistanceModelType.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDocument+CSSOMView.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDocument+CSSOMView.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDocument+CaretPositionFromPoint.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDocument+CaretPositionFromPoint.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDocument+Fullscreen.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDocument+Fullscreen.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDocument+HTML.cpp
@@ -1167,12 +1161,12 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasAlphaMode.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasAlphaMode.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasConfiguration.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasConfiguration.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasContext.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasContext.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasToneMapping.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasToneMapping.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasToneMappingMode.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasToneMappingMode.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasContext.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUCanvasContext.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUColorDict.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUColorDict.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUColorTargetState.cpp
@@ -1709,8 +1703,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageData.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageData.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageDataSettings.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageDataSettings.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageDataStorageFormat.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageDataStorageFormat.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageResource.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageResource.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSImageSmoothingQuality.cpp
@@ -3119,8 +3111,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSViewTransitionUpdateCallback.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSViewTransitionUpdateCallback.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSVisibilityState.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSVisibilityState.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSVisitorCallback.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSVisitorCallback.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSVisualViewport.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSVisualViewport.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSVoidCallback.cpp
@@ -3578,10 +3568,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/NodeName.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/PaintWorkletGlobalScopeConstructors.idl
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/PlugInsResources.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/PlugInsResourcesData.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ProcessSyncClient.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ProcessSyncClient.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ProcessSyncData.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ProcessSyncData.serialization.in
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableByteStreamControllerBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableByteStreamControllerBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableByteStreamInternalsBuiltins.cpp

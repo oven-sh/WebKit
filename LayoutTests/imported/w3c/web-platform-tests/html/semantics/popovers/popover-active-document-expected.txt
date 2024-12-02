@@ -1,3 +1,0 @@
-
-PASS showPopover should throw when the document isn't active
-

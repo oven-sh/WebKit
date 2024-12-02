@@ -379,8 +379,6 @@ public:
         enqueueTaskWhenSettled(WTFMove(promise), taskSource, CompletionHandlerWithFinalizer<void(typename Promise::Result&&)>(WTFMove(task), WTFMove(finalizer)));
     }
 
-    bool isAlwaysOnLoggingAllowed() const;
-
 protected:
     class AddConsoleMessageTask : public Task {
     public:

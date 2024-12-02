@@ -60,44 +60,6 @@ Vector<String> makeStringVector(const JSON::Array& array)
     return vector;
 }
 
-double largestDisplayScale()
-{
-    auto largestDisplayScale = 1.0;
-
-    for (double scale : availableScreenScales()) {
-        if (scale > largestDisplayScale)
-            largestDisplayScale = scale;
-    }
-
-    return largestDisplayScale;
-}
-
-RefPtr<JSON::Object> jsonWithLowercaseKeys(RefPtr<JSON::Object> json)
-{
-    if (!json)
-        return json;
-
-    Ref newObject = JSON::Object::create();
-    for (auto& key : json->keys())
-        newObject->setValue(key.convertToASCIILowercase(), *json->getValue(key));
-
-    return newObject;
-}
-
-RefPtr<JSON::Object> mergeJSON(RefPtr<JSON::Object> jsonA, RefPtr<JSON::Object> jsonB)
-{
-    if (!jsonA || !jsonB)
-        return jsonA ?: jsonB;
-
-    RefPtr mergedObject = jsonA.copyRef();
-    for (auto& key : jsonB->keys()) {
-        if (!mergedObject->getValue(key))
-            mergedObject->setValue(key, *jsonB->getValue(key));
-    }
-
-    return mergedObject;
-}
-
 } // namespace WebKit
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

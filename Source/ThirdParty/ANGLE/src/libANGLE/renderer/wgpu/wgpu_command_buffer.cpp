@@ -66,13 +66,6 @@ void CommandBuffer::drawIndexed(uint32_t indexCount,
     drawIndexedCommand->firstInstance      = firstInstance;
 }
 
-void CommandBuffer::setBindGroup(uint32_t groupIndex, wgpu::BindGroup bindGroup)
-{
-    SetBindGroupCommand *setBindGroupCommand = initCommand<CommandID::SetBindGroup>();
-    setBindGroupCommand->groupIndex          = groupIndex;
-    setBindGroupCommand->bindGroup = GetReferencedObject(mReferencedBindGroups, bindGroup);
-}
-
 void CommandBuffer::setPipeline(wgpu::RenderPipeline pipeline)
 {
     SetPipelineCommand *setPiplelineCommand = initCommand<CommandID::SetPipeline>();
@@ -186,15 +179,6 @@ void CommandBuffer::recordCommands(wgpu::RenderPassEncoder encoder)
                         drawIndexedCommand.indexCount, drawIndexedCommand.instanceCount,
                         drawIndexedCommand.firstIndex, drawIndexedCommand.baseVertex,
                         drawIndexedCommand.firstInstance);
-                    break;
-                }
-
-                case CommandID::SetBindGroup:
-                {
-                    const SetBindGroupCommand &setBindGroupCommand =
-                        GetCommandAndIterate<CommandID::SetBindGroup>(&currentCommand);
-                    encoder.SetBindGroup(setBindGroupCommand.groupIndex,
-                                         *setBindGroupCommand.bindGroup);
                     break;
                 }
 

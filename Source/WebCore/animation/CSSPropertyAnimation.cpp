@@ -76,8 +76,6 @@
 #include <wtf/PointerComparison.h>
 #include <wtf/text/TextStream.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 #if !LOG_DISABLED
@@ -684,13 +682,15 @@ static inline GridTrackList blendFunc(const GridTrackList& from, const GridTrack
     return result;
 }
 
-static inline RefPtr<StylePathData> blendFunc(StylePathData* from, StylePathData* to, const CSSPropertyBlendingContext& context)
+static inline RefPtr<BasicShapePath> blendFunc(BasicShapePath* from, BasicShapePath* to, const CSSPropertyBlendingContext& context)
 {
     if (context.isDiscrete)
         return context.progress < 0.5 ? from : to;
     ASSERT(from && to);
-    return from->blend(*to, context);
+    auto blendedValue = to->blend(*from, context);
+    return &downcast<BasicShapePath>(blendedValue.leakRef());
 }
+
 
 class AnimationPropertyWrapperBase {
     WTF_MAKE_NONCOPYABLE(AnimationPropertyWrapperBase);
@@ -3663,7 +3663,7 @@ private:
 };
 
 
-class DWrapper final : public RefCountedPropertyWrapper<StylePathData> {
+class DWrapper final : public RefCountedPropertyWrapper<BasicShapePath> {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Animation);
 public:
     DWrapper()
@@ -4040,7 +4040,7 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
         new DiscretePropertyWrapper<BlendMode>(CSSPropertyBackgroundBlendMode, &RenderStyle::backgroundBlendMode, &RenderStyle::setBackgroundBlendMode),
         new DiscretePropertyWrapper<StyleAppearance>(CSSPropertyAppearance, &RenderStyle::appearance, &RenderStyle::setAppearance),
 #if ENABLE(DARK_MODE_CSS)
-        new DiscretePropertyWrapper<Style::ColorScheme>(CSSPropertyColorScheme, &RenderStyle::colorScheme, &RenderStyle::setColorScheme),
+        new DiscretePropertyWrapper<StyleColorScheme>(CSSPropertyColorScheme, &RenderStyle::colorScheme, &RenderStyle::setColorScheme),
 #endif
         new PropertyWrapperAspectRatio,
         new DiscretePropertyWrapper<const FontPalette&>(CSSPropertyFontPalette, &RenderStyle::fontPalette, &RenderStyle::setFontPalette),
@@ -4097,9 +4097,8 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
         new DiscretePropertyWrapper<const Vector<Style::ScopedName>&>(CSSPropertyViewTransitionClass, &RenderStyle::viewTransitionClasses, &RenderStyle::setViewTransitionClasses),
         new DiscretePropertyWrapper<Style::ViewTransitionName>(CSSPropertyViewTransitionName, &RenderStyle::viewTransitionName, &RenderStyle::setViewTransitionName),
         new DiscretePropertyWrapper<FieldSizing>(CSSPropertyFieldSizing, &RenderStyle::fieldSizing, &RenderStyle::setFieldSizing),
-        new DiscretePropertyWrapper<const Vector<Style::ScopedName>&>(CSSPropertyAnchorName, &RenderStyle::anchorNames, &RenderStyle::setAnchorNames),
-        new DiscretePropertyWrapper<const std::optional<Style::ScopedName>&>(CSSPropertyPositionAnchor, &RenderStyle::positionAnchor, &RenderStyle::setPositionAnchor),
-        new DiscretePropertyWrapper<Style::PositionTryOrder>(CSSPropertyPositionTryOrder, &RenderStyle::positionTryOrder, &RenderStyle::setPositionTryOrder),
+        new DiscretePropertyWrapper<const Vector<AtomString>&>(CSSPropertyAnchorName, &RenderStyle::anchorNames, &RenderStyle::setAnchorNames),
+        new DiscretePropertyWrapper<const AtomString&>(CSSPropertyPositionAnchor, &RenderStyle::positionAnchor, &RenderStyle::setPositionAnchor),
         new DiscretePropertyWrapper<const BlockEllipsis&>(CSSPropertyBlockEllipsis, &RenderStyle::blockEllipsis, &RenderStyle::setBlockEllipsis),
         new DiscretePropertyWrapper<size_t>(CSSPropertyMaxLines, &RenderStyle::maxLines, &RenderStyle::setMaxLines),
         new DiscretePropertyWrapper<OverflowContinue>(CSSPropertyContinue, &RenderStyle::overflowContinue, &RenderStyle::setOverflowContinue)
@@ -4754,5 +4753,3 @@ int CSSPropertyAnimation::getNumProperties()
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

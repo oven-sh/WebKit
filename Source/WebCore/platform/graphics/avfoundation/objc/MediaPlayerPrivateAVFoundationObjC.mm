@@ -135,8 +135,6 @@
 
 #import <pal/cocoa/MediaToolboxSoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace std {
 template <> struct iterator_traits<HashSet<RefPtr<WebCore::MediaSelectionOptionAVFObjC>>::iterator> {
     typedef RefPtr<WebCore::MediaSelectionOptionAVFObjC> value_type;
@@ -2932,11 +2930,11 @@ void MediaPlayerPrivateAVFoundationObjC::keyAdded()
         m_keyURIToRequestMap.remove(keyId);
 }
 
-RefPtr<LegacyCDMSession> MediaPlayerPrivateAVFoundationObjC::createSession(const String& keySystem, LegacyCDMSessionClient& client)
+std::unique_ptr<LegacyCDMSession> MediaPlayerPrivateAVFoundationObjC::createSession(const String& keySystem, LegacyCDMSessionClient& client)
 {
     if (!keySystemIsSupported(keySystem))
         return nullptr;
-    RefPtr session = CDMSessionAVFoundationObjC::create(this, client);
+    auto session = makeUnique<CDMSessionAVFoundationObjC>(this, client);
     m_session = *session;
     return WTFMove(session);
 }
@@ -4461,7 +4459,5 @@ NSArray* playerKVOProperties()
 }
 
 @end
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

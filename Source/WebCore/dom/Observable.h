@@ -33,15 +33,13 @@
 
 namespace WebCore {
 
-class DeferredPromise;
 class InternalObserver;
-class JSSubscriptionObserverCallback;
-class MapperCallback;
-class PredicateCallback;
 class ScriptExecutionContext;
-class VisitorCallback;
-struct SubscribeOptions;
+class JSSubscriptionObserverCallback;
+class PredicateCallback;
+class MapperCallback;
 struct SubscriptionObserver;
+struct SubscribeOptions;
 
 class Observable final : public ScriptWrappable, public RefCounted<Observable> {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(Observable);
@@ -67,11 +65,7 @@ public:
     // Promise-returning operators.
 
     void first(ScriptExecutionContext&, const SubscribeOptions&, Ref<DeferredPromise>&&);
-    void forEach(ScriptExecutionContext&, Ref<VisitorCallback>&&, const SubscribeOptions&, Ref<DeferredPromise>&&);
     void last(ScriptExecutionContext&, const SubscribeOptions&, Ref<DeferredPromise>&&);
-    void find(ScriptExecutionContext&, Ref<PredicateCallback>&&, const SubscribeOptions&, Ref<DeferredPromise>&&);
-    void every(ScriptExecutionContext&, Ref<PredicateCallback>&&, const SubscribeOptions&, Ref<DeferredPromise>&&);
-    void some(ScriptExecutionContext&, Ref<PredicateCallback>&&, const SubscribeOptions&, Ref<DeferredPromise>&&);
 
 private:
     Ref<SubscriberCallback> m_subscriberCallback;

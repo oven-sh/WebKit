@@ -38,14 +38,8 @@ async function test() {
     const instance = await instantiate(wat, { m: { x: globalX } }, { exceptions: true });
     const { outer } = instance.exports;
     for (let i = 0; i < 10; i++) {
-        try {
-            let result = outer(null, {}, {});
-            throw "FAILED";
-        } catch (e) {
-            let exception = e;
-            if (exception != "RangeError: Maximum call stack size exceeded.")
-                throw "FAILED";
-        }
+        let result = outer(null, {}, {});
+        assert.eq(result, undefined);
     }
 }
 

@@ -86,9 +86,6 @@ public:
     bool enhancedWindowingEnabled() const { return boolTestRunnerFeatureValue("enhancedWindowingEnabled"); }
     bool textExtractionEnabled() const { return boolTestRunnerFeatureValue("textExtractionEnabled"); }
     bool useHardwareKeyboardMode() const { return boolTestRunnerFeatureValue("useHardwareKeyboardMode"); }
-    bool shouldIgnoreWebProcessTermination() const { return boolTestRunnerFeatureValue("ignoreWebProcessTermination"); }
-    bool enableMetalDebugDevice() const { return boolTestRunnerFeatureValue("enableMetalDebugDevice"); }
-    bool enableMetalShaderValidation() const { return boolTestRunnerFeatureValue("enableMetalShaderValidation"); }
     double contentInsetTop() const { return doubleTestRunnerFeatureValue("contentInset.top"); }
     double obscuredInsetTop() const { return doubleTestRunnerFeatureValue("obscuredInset.top"); }
     double horizontalSystemMinimumLayoutMargin() const { return doubleTestRunnerFeatureValue("horizontalSystemMinimumLayoutMargin"); }

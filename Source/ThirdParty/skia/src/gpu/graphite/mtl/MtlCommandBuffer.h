@@ -107,7 +107,8 @@ private:
 
     void bindTextureAndSampler(const Texture*, const Sampler*, unsigned int bindIndex);
 
-    void setScissor(const Scissor&);
+    void setScissor(unsigned int left, unsigned int top,
+                    unsigned int width, unsigned int height);
     void setViewport(float x, float y, float width, float height,
                      float minDepth, float maxDepth);
 

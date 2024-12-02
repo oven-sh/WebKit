@@ -39,8 +39,6 @@
 #include <assert.h>
 #include <math.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 constexpr unsigned MaxBusChannels = 32;
@@ -609,7 +607,5 @@ void AudioBus::clearSilentFlag()
 }
 
 } // WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUDIO)

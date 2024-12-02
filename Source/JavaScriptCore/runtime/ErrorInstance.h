@@ -82,21 +82,9 @@ public:
     void clearRuntimeTypeForCause() { m_runtimeTypeForCause = TypeNothing; }
 
     ErrorType errorType() const { return m_errorType; }
-    void setStackOverflowError()
-    {
-#if ENABLE(WEBASSEMBLY)
-        m_catchableFromWasm = false;
-#endif
-        m_stackOverflowError = true;
-    }
+    void setStackOverflowError() { m_stackOverflowError = true; }
     bool isStackOverflowError() const { return m_stackOverflowError; }
-    void setOutOfMemoryError()
-    {
-#if ENABLE(WEBASSEMBLY)
-        m_catchableFromWasm = false;
-#endif
-        m_outOfMemoryError = true;
-    }
+    void setOutOfMemoryError() { m_outOfMemoryError = true; }
     bool isOutOfMemoryError() const { return m_outOfMemoryError; }
 
     void setNativeGetterTypeError() { m_nativeGetterTypeError = true; }

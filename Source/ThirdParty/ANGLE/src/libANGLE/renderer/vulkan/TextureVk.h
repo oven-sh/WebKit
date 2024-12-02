@@ -228,15 +228,16 @@ class TextureVk : public TextureImpl, public angle::ObserverInterface
 
     void releaseOwnershipOfImage(const gl::Context *context);
 
-    const vk::ImageView &getReadImageView(GLenum srgbDecode,
+    const vk::ImageView &getReadImageView(vk::Context *context,
+                                          GLenum srgbDecode,
                                           bool texelFetchStaticUse,
                                           bool samplerExternal2DY2YEXT) const;
 
-    angle::Result getBufferView(vk::Context *context,
-                                const vk::Format *imageUniformFormat,
-                                const gl::SamplerBinding *samplerBinding,
-                                bool isImage,
-                                const vk::BufferView **viewOut);
+    angle::Result getBufferViewAndRecordUse(vk::Context *context,
+                                            const vk::Format *imageUniformFormat,
+                                            const gl::SamplerBinding *samplerBinding,
+                                            bool isImage,
+                                            const vk::BufferView **viewOut);
 
     // A special view used for texture copies that shouldn't perform swizzle.
     const vk::ImageView &getCopyImageView() const;
@@ -431,7 +432,6 @@ class TextureVk : public TextureImpl, public angle::ObserverInterface
     angle::Result clearSubImageImpl(const gl::Context *context,
                                     GLint level,
                                     const gl::Box &clearArea,
-                                    vk::ClearTextureMode clearMode,
                                     GLenum format,
                                     GLenum type,
                                     const uint8_t *data);

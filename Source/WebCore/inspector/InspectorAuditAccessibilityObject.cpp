@@ -93,11 +93,11 @@ ExceptionOr<RefPtr<Node>> InspectorAuditAccessibilityObject::getActiveDescendant
 
 static void addChildren(AXCoreObject& parentObject, Vector<Ref<Node>>& childNodes)
 {
-    for (const auto& childObject : parentObject.unignoredChildren()) {
+    for (const auto& childObject : parentObject.children()) {
         if (RefPtr childNode = childObject->node())
             childNodes.append(childNode.releaseNonNull());
         else
-            addChildren(childObject.get(), childNodes);
+            addChildren(*childObject, childNodes);
     }
 }
 
@@ -276,10 +276,8 @@ ExceptionOr<RefPtr<Node>> InspectorAuditAccessibilityObject::getMouseEventNode(N
 {
     ERROR_IF_NO_ACTIVE_AUDIT();
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
-        if (auto* clickableObject = axObject->clickableSelfOrAncestor(ClickHandlerFilter::IncludeBody))
-            return clickableObject->node();
-    }
+    if (auto* accessibilityNodeObject = dynamicDowncast<AccessibilityNodeObject>(accessibilityObjectForNode(node)))
+        return accessibilityNodeObject->mouseButtonListener(MouseButtonListenerResultFilter::IncludeBodyElement);
 
     return nullptr;
 }

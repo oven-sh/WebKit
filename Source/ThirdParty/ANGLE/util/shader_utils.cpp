@@ -430,16 +430,14 @@ std::vector<angle::PerfMonitorTriplet> GetPerfMonitorTriplets()
 
     std::vector<angle::PerfMonitorTriplet> perfResults(resultSize /
                                                        sizeof(angle::PerfMonitorTriplet));
-    GLint bytesWritten = 0;
     glGetPerfMonitorCounterDataAMD(
         0, GL_PERFMON_RESULT_AMD, static_cast<GLsizei>(perfResults.size() * sizeof(perfResults[0])),
-        &perfResults.data()->group, &bytesWritten);
+        &perfResults.data()->group, nullptr);
 
     if (glGetError() != GL_NO_ERROR)
     {
         return {};
     }
-    ASSERT(static_cast<GLuint>(bytesWritten) == resultSize);
 
     return perfResults;
 }

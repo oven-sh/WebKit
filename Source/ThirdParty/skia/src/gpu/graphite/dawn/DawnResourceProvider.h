@@ -11,7 +11,6 @@
 #include "include/gpu/graphite/dawn/DawnTypes.h"
 #include "src/core/SkLRUCache.h"
 #include "src/core/SkTHash.h"
-#include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/ResourceProvider.h"
 
 namespace skgpu::graphite {
@@ -21,7 +20,6 @@ class DawnSampler;
 class DawnSharedContext;
 class DawnTexture;
 class DawnBuffer;
-class DawnCommandBuffer;
 
 class DawnResourceProvider final : public ResourceProvider {
 public:
@@ -62,15 +60,10 @@ public:
     const wgpu::BindGroup& findOrCreateSingleTextureSamplerBindGroup(const DawnSampler* sampler,
                                                                      const DawnTexture* texture);
 
-    // Find the cached bind buffer info, or create a new one for the given intrinsic values.
-    BindBufferInfo findOrCreateIntrinsicBindBufferInfo(DawnCommandBuffer* cb,
-                                                       UniformDataBlock intrinsicValues);
-
 private:
     sk_sp<GraphicsPipeline> createGraphicsPipeline(const RuntimeEffectDictionary*,
                                                    const GraphicsPipelineDesc&,
-                                                   const RenderPassDesc&,
-                                                   SkEnumBitMask<PipelineCreationFlags>) override;
+                                                   const RenderPassDesc&) override;
     sk_sp<ComputePipeline> createComputePipeline(const ComputePipelineDesc&) override;
 
     sk_sp<Texture> createTexture(SkISize, const TextureInfo&, skgpu::Budgeted) override;
@@ -87,9 +80,6 @@ private:
 
     DawnSharedContext* dawnSharedContext() const;
 
-    void onFreeGpuResources() override;
-    void onPurgeResourcesNotUsedSince(StdSteadyClock::time_point purgeTime) override;
-
     skia_private::THashMap<uint32_t, wgpu::RenderPipeline> fBlitWithDrawPipelines;
 
     wgpu::BindGroupLayout fUniformBuffersBindGroupLayout;
@@ -104,10 +94,6 @@ private:
 
     BindGroupCache<kNumUniformEntries> fUniformBufferBindGroupCache;
     BindGroupCache<1> fSingleTextureSamplerBindGroups;
-
-    class IntrinsicBuffer;
-    class IntrinsicConstantsManager;
-    std::unique_ptr<IntrinsicConstantsManager> fIntrinsicConstantsManager;
 };
 
 }  // namespace skgpu::graphite

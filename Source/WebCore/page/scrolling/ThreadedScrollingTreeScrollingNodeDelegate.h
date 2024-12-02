@@ -30,7 +30,6 @@
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
 
 #include "ScrollingEffectsController.h"
-#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -42,7 +41,6 @@ class ScrollingTreeScrollingNode;
 class ScrollingTree;
 
 class ThreadedScrollingTreeScrollingNodeDelegate : public ScrollingTreeScrollingNodeDelegate, private ScrollingEffectsControllerClient {
-    WTF_MAKE_TZONE_ALLOCATED(ThreadedScrollingTreeScrollingNodeDelegate);
 public:
     void updateSnapScrollState();
 

@@ -12,8 +12,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Math, "cos", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Math, "cos");
+verifyWritable(Math, "cos");
+verifyConfigurable(Math, "cos");

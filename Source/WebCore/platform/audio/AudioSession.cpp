@@ -42,24 +42,12 @@
 #include "AudioSessionIOS.h"
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioSession);
 
-std::atomic<bool> s_shouldManageAudioSessionCategory { false };
+bool AudioSession::s_shouldManageAudioSessionCategory { false };
 static bool s_mediaPlaybackEnabled { false };
-
-bool AudioSession::shouldManageAudioSessionCategory()
-{
-    return s_shouldManageAudioSessionCategory.load();
-}
-
-void AudioSession::setShouldManageAudioSessionCategory(bool flag)
-{
-    s_shouldManageAudioSessionCategory.store(flag);
-}
 
 static RefPtr<AudioSession>& sharedAudioSession()
 {
@@ -409,7 +397,5 @@ String convertEnumerationToString(AudioSession::SoundStageSize size)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(AUDIO_SESSION)

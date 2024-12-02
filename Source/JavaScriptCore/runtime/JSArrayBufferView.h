@@ -29,8 +29,6 @@
 #include "JSObject.h"
 #include <wtf/TaggedArrayStoragePtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class JSArrayBufferView;
@@ -391,5 +389,3 @@ namespace WTF {
 JS_EXPORT_PRIVATE void printInternal(PrintStream&, JSC::TypedArrayMode);
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

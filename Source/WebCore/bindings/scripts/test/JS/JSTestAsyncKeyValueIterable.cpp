@@ -48,6 +48,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -114,11 +115,12 @@ template<> void JSTestAsyncKeyValueIterableDOMConstructor::initializeProperties(
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 4> JSTestAsyncKeyValueIterablePrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestAsyncKeyValueIterableConstructor, 0 } },
-    HashTableValue { "entries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestAsyncKeyValueIterablePrototypeFunction_entries, 0 } },
-    HashTableValue { "keys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestAsyncKeyValueIterablePrototypeFunction_keys, 0 } },
-    HashTableValue { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestAsyncKeyValueIterablePrototypeFunction_values, 0 } },
+static const HashTableValue JSTestAsyncKeyValueIterablePrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestAsyncKeyValueIterableConstructor, 0 } },
+    { "entries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestAsyncKeyValueIterablePrototypeFunction_entries, 0 } },
+    { "keys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestAsyncKeyValueIterablePrototypeFunction_keys, 0 } },
+    { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestAsyncKeyValueIterablePrototypeFunction_values, 0 } },
 };
 
 const ClassInfo JSTestAsyncKeyValueIterablePrototype::s_info = { "TestAsyncKeyValueIterable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestAsyncKeyValueIterablePrototype) };
@@ -296,7 +298,6 @@ void JSTestAsyncKeyValueIterableOwner::finalize(JSC::Handle<JSC::Unknown> handle
     uncacheWrapper(world, jsTestAsyncKeyValueIterable->protectedWrapped().ptr(), jsTestAsyncKeyValueIterable);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -321,8 +322,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestAsyncKeyV
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestAsyncKeyValueIterable>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

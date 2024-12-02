@@ -184,7 +184,7 @@ inline const PropertyCascade::Property& PropertyCascade::logicalGroupProperty(CS
 
 inline std::span<const CSSPropertyID> PropertyCascade::logicalGroupPropertyIDs() const
 {
-    return std::span { m_logicalGroupPropertyIDs }.first(m_seenLogicalGroupPropertyCount);
+    return { m_logicalGroupPropertyIDs.data(), m_seenLogicalGroupPropertyCount };
 }
 
 inline bool PropertyCascade::hasCustomProperty(const AtomString& name) const
@@ -198,5 +198,5 @@ inline const PropertyCascade::Property& PropertyCascade::customProperty(const At
     return m_customProperties.find(name)->value;
 }
 
-} // namespace Style
-} // namespace WebCore
+}
+}

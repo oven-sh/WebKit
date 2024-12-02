@@ -58,7 +58,8 @@ ExceptionOr<Ref<VideoTrackGenerator>> VideoTrackGenerator::create(ScriptExecutio
     });
 
     auto logger = Logger::create(&context);
-    logger->setEnabled(&context, context.isAlwaysOnLoggingAllowed());
+    if (auto sessionID = context.sessionID())
+        logger->setEnabled(&context, sessionID->isAlwaysOnLoggingAllowed());
 
     auto privateTrack = MediaStreamTrackPrivate::create(WTFMove(logger), WTFMove(source), [identifier = context.identifier()](Function<void()>&& task) {
         ScriptExecutionContext::postTaskTo(identifier, [task = WTFMove(task)] (auto&) mutable {

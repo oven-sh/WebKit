@@ -7,14 +7,15 @@
         if (window.testRunner)
           testRunner.notifyDone();
       }
-      async function doTest()
+      function doTest()
       {
           var bg = document.querySelector(".test");
           if (window.testRunner)
               testRunner.dumpAsText(true);
 
           // Change the layer to become background only.
-          await testRunner.displayAndTrackRepaints();
+          if (window.testRunner)
+              window.testRunner.displayAndTrackRepaints();
 
           var img = new Image;
           img.onload = onBackgroundImageLoad;

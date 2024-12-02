@@ -34,18 +34,11 @@
 #include "EventNames.h"
 #include "MediaRecorderErrorEvent.h"
 #include "MediaRecorderPrivate.h"
+#include "MediaRecorderProvider.h"
 #include "Page.h"
 #include "SharedBuffer.h"
 #include "WindowEventLoop.h"
 #include <wtf/TZoneMallocInlines.h>
-
-#if PLATFORM(COCOA) && USE(AVFOUNDATION)
-#include "MediaRecorderPrivateAVFImpl.h"
-#endif
-
-#if USE(GSTREAMER_TRANSCODER)
-#include "MediaRecorderPrivateGStreamer.h"
-#endif
 
 namespace WebCore {
 
@@ -56,21 +49,19 @@ MediaRecorder::CreatorFunction MediaRecorder::m_customCreator = nullptr;
 bool MediaRecorder::isTypeSupported(Document& document, const String& value)
 {
 #if PLATFORM(COCOA) || USE(GSTREAMER_TRANSCODER)
-    if (value.isEmpty())
-        return true;
+    auto* page = document.page();
 
-    ContentType mimeType(value);
-#if PLATFORM(COCOA)
-    return MediaRecorderPrivateAVFImpl::isTypeSupported(document, mimeType);
-#elif USE(GSTREAMER_TRANSCODER)
-    UNUSED_PARAM(document);
-    return MediaRecorderPrivateGStreamer::isTypeSupported(mimeType);
+#if ENABLE(MEDIA_RECORDER_WEBM)
+    if (!document.settings().mediaRecorderEnabledWebM() && page && page->mediaRecorderProvider().isWebMAndSupported(value))
+        return false;
 #endif
+    return page && page->mediaRecorderProvider().isSupported(value);
 #else
     UNUSED_PARAM(document);
     UNUSED_PARAM(value);
     return false;
 #endif
+
 }
 
 ExceptionOr<Ref<MediaRecorder>> MediaRecorder::create(Document& document, Ref<MediaStream>&& stream, Options&& options)
@@ -92,15 +83,17 @@ void MediaRecorder::setCustomPrivateRecorderCreator(CreatorFunction creator)
     m_customCreator = creator;
 }
 
-ExceptionOr<std::unique_ptr<MediaRecorderPrivate>> MediaRecorder::createMediaRecorderPrivate(MediaStreamPrivate& stream, const Options& options)
+ExceptionOr<std::unique_ptr<MediaRecorderPrivate>> MediaRecorder::createMediaRecorderPrivate(Document& document, MediaStreamPrivate& stream, const Options& options)
 {
+    auto* page = document.page();
+    if (!page)
+        return Exception { ExceptionCode::InvalidStateError };
+
     if (m_customCreator)
         return m_customCreator(stream, options);
 
-#if PLATFORM(COCOA) && USE(AVFOUNDATION)
-    std::unique_ptr<MediaRecorderPrivate> result = MediaRecorderPrivateAVFImpl::create(stream, options);
-#elif USE(GSTREAMER_TRANSCODER)
-    std::unique_ptr<MediaRecorderPrivate> result = MediaRecorderPrivateGStreamer::create(stream, options);
+#if PLATFORM(COCOA) || USE(GSTREAMER_TRANSCODER)
+    auto result = page->mediaRecorderProvider().createMediaRecorderPrivate(stream, options);
 #else
     std::unique_ptr<MediaRecorderPrivate> result;
 #endif
@@ -113,7 +106,7 @@ MediaRecorder::MediaRecorder(Document& document, Ref<MediaStream>&& stream, Opti
     : ActiveDOMObject(document)
     , m_options(WTFMove(options))
     , m_stream(WTFMove(stream))
-    , m_timeSliceTimer([this] { Ref { *this }->requestDataInternal(ReturnDataIfEmpty::No); })
+    , m_timeSliceTimer([this] { requestData(); })
 {
     computeInitialBitRates();
 
@@ -166,7 +159,7 @@ ExceptionOr<void> MediaRecorder::startRecording(std::optional<unsigned> timeSlic
     options.videoBitsPerSecond = m_videoBitsPerSecond;
 
     ASSERT(!m_private);
-    auto result = createMediaRecorderPrivate(m_stream->privateStream(), options);
+    auto result = createMediaRecorderPrivate(*document(), m_stream->privateStream(), options);
 
     if (result.hasException())
         return result.releaseException();
@@ -205,7 +198,7 @@ ExceptionOr<void> MediaRecorder::startRecording(std::optional<unsigned> timeSlic
         track->addObserver(*this);
 
     m_state = RecordingState::Recording;
-    m_timeSlice = timeSlice ? std::make_optional(std::max(m_mimimumTimeSlice, *timeSlice)) : std::nullopt;
+    m_timeSlice = timeSlice;
     if (m_timeSlice)
         m_timeSliceTimer.startOneShot(Seconds::fromMilliseconds(*m_timeSlice));
     return { };
@@ -240,23 +233,17 @@ void MediaRecorder::stopRecording()
 
 ExceptionOr<void> MediaRecorder::requestData()
 {
-    return requestDataInternal(ReturnDataIfEmpty::Yes);
-}
-
-ExceptionOr<void> MediaRecorder::requestDataInternal(ReturnDataIfEmpty returnDataIfEmpty)
-{
     if (state() == RecordingState::Inactive)
         return Exception { ExceptionCode::InvalidStateError, "The MediaRecorder's state cannot be inactive"_s };
 
     if (m_timeSliceTimer.isActive())
         m_timeSliceTimer.stop();
 
-    fetchData([this, returnDataIfEmpty](auto&& buffer, auto& mimeType, auto timeCode) {
+    fetchData([this](auto&& buffer, auto& mimeType, auto timeCode) {
         if (!m_isActive)
             return;
 
-        if (returnDataIfEmpty == ReturnDataIfEmpty::Yes || !buffer->isEmpty())
-            dispatchEvent(createDataAvailableEvent(scriptExecutionContext(), WTFMove(buffer), mimeType, timeCode));
+        dispatchEvent(createDataAvailableEvent(scriptExecutionContext(), WTFMove(buffer), mimeType, timeCode));
 
         switch (state()) {
         case RecordingState::Inactive:

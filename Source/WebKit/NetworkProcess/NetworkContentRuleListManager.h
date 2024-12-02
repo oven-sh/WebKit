@@ -51,9 +51,6 @@ public:
     using BackendCallback = CompletionHandler<void(WebCore::ContentExtensions::ContentExtensionsBackend&)>;
     void contentExtensionsBackend(UserContentControllerIdentifier, BackendCallback&&);
 
-    void ref() const;
-    void deref() const;
-
 private:
     void addContentRuleLists(UserContentControllerIdentifier, Vector<std::pair<WebCompiledContentRuleListData, URL>>&&);
     void removeContentRuleList(UserContentControllerIdentifier, const String& name);

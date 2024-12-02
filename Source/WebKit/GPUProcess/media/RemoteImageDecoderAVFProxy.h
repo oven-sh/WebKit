@@ -58,9 +58,6 @@ public:
 
     bool allowsExitUnderMemoryPressure() const;
 
-    void ref() const;
-    void deref() const;
-
 private:
     void createDecoder(const IPC::SharedBufferReference&, const String& mimeType, CompletionHandler<void(std::optional<WebCore::ImageDecoderIdentifier>&&)>&&);
     void deleteDecoder(WebCore::ImageDecoderIdentifier);

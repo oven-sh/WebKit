@@ -248,11 +248,14 @@ void SoupNetworkSession::clearHSTSCache(WallTime modifiedSince)
 #endif
 }
 
-static inline bool stringIsNumeric(const std::string_view& str)
+static inline bool stringIsNumeric(const char* str)
 {
-    return std::all_of(str.cbegin(), str.cend(), [](const auto c) {
-        return WTF::isASCIIDigit(c);
-    });
+    while (*str) {
+        if (!g_ascii_isdigit(*str))
+            return false;
+        str++;
+    }
+    return true;
 }
 
 // Old versions of WebKit created this cache.
@@ -268,8 +271,7 @@ void SoupNetworkSession::clearOldSoupCache(const String& cacheDirectory)
         return;
 
     while (const char* name = g_dir_read_name(dir.get())) {
-        const auto nameView = std::string_view(name);
-        if (!nameView.starts_with("soup.cache") && !stringIsNumeric(nameView))
+        if (!g_str_has_prefix(name, "soup.cache") && !stringIsNumeric(name))
             continue;
 
         GUniquePtr<gchar> filename(g_build_filename(cachePath.data(), name, nullptr));

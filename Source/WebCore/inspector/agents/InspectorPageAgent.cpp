@@ -115,12 +115,6 @@ bool InspectorPageAgent::mainResourceContent(LocalFrame* frame, bool withBase64E
     return InspectorPageAgent::dataContent(buffer->makeContiguous()->span(), frame->document()->encoding(), withBase64Encode, result);
 }
 
-
-Ref<InspectorOverlay> InspectorPageAgent::protectedOverlay() const
-{
-    return m_overlay.get();
-}
-
 bool InspectorPageAgent::sharedBufferContent(RefPtr<FragmentedSharedBuffer>&& buffer, const String& textEncodingName, bool withBase64Encode, String* result)
 {
     return dataContent(buffer ? buffer->makeContiguous()->span() : std::span<const uint8_t> { }, textEncodingName, withBase64Encode, result);
@@ -342,7 +336,7 @@ DocumentLoader* InspectorPageAgent::assertDocumentLoader(Inspector::Protocol::Er
     return documentLoader;
 }
 
-InspectorPageAgent::InspectorPageAgent(PageAgentContext& context, InspectorClient* client, InspectorOverlay& overlay)
+InspectorPageAgent::InspectorPageAgent(PageAgentContext& context, InspectorClient* client, InspectorOverlay* overlay)
     : InspectorAgentBase("Page"_s, context)
     , m_frontendDispatcher(makeUnique<Inspector::PageFrontendDispatcher>(context.frontendRouter))
     , m_backendDispatcher(Inspector::PageBackendDispatcher::create(context.backendDispatcher, this))
@@ -889,7 +883,7 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Page::
 #if !PLATFORM(IOS_FAMILY)
 Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::setShowRulers(bool showRulers)
 {
-    protectedOverlay()->setShowRulers(showRulers);
+    m_overlay->setShowRulers(showRulers);
 
     return { };
 }
@@ -903,7 +897,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::setShowPaintRects(b
     if (m_client->overridesShowPaintRects())
         return { };
 
-    protectedOverlay()->setShowPaintRects(show);
+    m_overlay->setShowPaintRects(show);
 
     return { };
 }
@@ -1068,7 +1062,7 @@ void InspectorPageAgent::didPaint(RenderObject& renderer, const LayoutRect& rect
         return;
     }
 
-    protectedOverlay()->showPaintRect(rootRect);
+    m_overlay->showPaintRect(rootRect);
 }
 
 void InspectorPageAgent::didLayout()
@@ -1077,7 +1071,7 @@ void InspectorPageAgent::didLayout()
     if (isFirstLayout)
         m_isFirstLayoutAfterOnLoad = false;
 
-    protectedOverlay()->update();
+    m_overlay->update();
 }
 
 void InspectorPageAgent::didScroll()
@@ -1087,7 +1081,7 @@ void InspectorPageAgent::didScroll()
 
 void InspectorPageAgent::didRecalculateStyle()
 {
-    protectedOverlay()->update();
+    m_overlay->update();
 }
 
 Ref<Inspector::Protocol::Page::Frame> InspectorPageAgent::buildObjectForFrame(LocalFrame* frame)

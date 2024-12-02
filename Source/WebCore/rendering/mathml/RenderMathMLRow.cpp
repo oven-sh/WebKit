@@ -134,9 +134,6 @@ void RenderMathMLRow::computePreferredLogicalWidths()
 
     m_minPreferredLogicalWidth = m_maxPreferredLogicalWidth = preferredLogicalWidthOfRowItems();
 
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
-    applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
-
     adjustPreferredLogicalWidthsForBorderAndPadding();
 
     setPreferredLogicalWidthsDirty(false);
@@ -174,6 +171,8 @@ void RenderMathMLRow::layoutBlock(bool relayoutChildren, LayoutUnit)
     recomputeLogicalWidth();
     computeAndSetBlockDirectionMarginsOfChildren();
 
+    setLogicalHeight(borderAndPaddingLogicalHeight() + scrollbarLogicalHeight());
+
     LayoutUnit width, ascent, descent;
     stretchVerticalOperatorsAndLayoutChildren();
     getContentBoundingBox(width, ascent, descent);
@@ -181,11 +180,9 @@ void RenderMathMLRow::layoutBlock(bool relayoutChildren, LayoutUnit)
     setLogicalWidth(width);
     setLogicalHeight(ascent + descent);
 
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::Layout);
-    auto shift = applySizeToMathContent(LayoutPhase::Layout, sizes);
-    shiftInFlowChildren(shift, 0);
-
     adjustLayoutForBorderAndPadding();
+
+    updateLogicalHeight();
 
     layoutPositionedObjects(relayoutChildren);
 

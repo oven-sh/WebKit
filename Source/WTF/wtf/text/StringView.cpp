@@ -32,8 +32,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <wtf/ASCIICType.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
-#include <wtf/StdLibExtras.h>
-#include <wtf/ZippedRange.h>
 #include <wtf/text/AdaptiveStringSearcher.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -275,11 +273,10 @@ String convertASCIICase(std::span<const CharacterType> input)
     if (!input)
         return { };
 
-    std::span<CharacterType> characters;
+    CharacterType* characters;
     auto result = String::createUninitialized(input.size(), characters);
-    size_t i = 0;
     for (auto character : input)
-        characters[i++] = type == ASCIICase::Lower ? toASCIILower(character) : toASCIIUpper(character);
+        *characters++ = type == ASCIICase::Lower ? toASCIILower(character) : toASCIIUpper(character);
     return result;
 }
 
@@ -315,25 +312,24 @@ AtomString StringView::convertToASCIILowercaseAtom() const
     return convertASCIILowercaseAtom(span16());
 }
 
-
 template<typename DestinationCharacterType, typename SourceCharacterType>
-void getCharactersWithASCIICaseInternal(StringView::CaseConvertType type, std::span<DestinationCharacterType> destination, std::span<const SourceCharacterType> source)
+void getCharactersWithASCIICaseInternal(StringView::CaseConvertType type, DestinationCharacterType* destination, std::span<const SourceCharacterType> source)
 {
     static_assert(std::is_same<SourceCharacterType, LChar>::value || std::is_same<SourceCharacterType, UChar>::value);
     static_assert(std::is_same<DestinationCharacterType, LChar>::value || std::is_same<DestinationCharacterType, UChar>::value);
     static_assert(sizeof(DestinationCharacterType) >= sizeof(SourceCharacterType));
     auto caseConvert = (type == StringView::CaseConvertType::Lower) ? toASCIILower<SourceCharacterType> : toASCIIUpper<SourceCharacterType>;
-    for (auto [destinationCharacter, character] : zippedRange(destination, source))
-        destinationCharacter = caseConvert(character);
+    for (auto character : source)
+        *destination++ = caseConvert(character);
 }
 
-void StringView::getCharactersWithASCIICase(CaseConvertType type, std::span<LChar> destination) const
+void StringView::getCharactersWithASCIICase(CaseConvertType type, LChar* destination) const
 {
     ASSERT(is8Bit());
     getCharactersWithASCIICaseInternal(type, destination, span8());
 }
 
-void StringView::getCharactersWithASCIICase(CaseConvertType type, std::span<UChar> destination) const
+void StringView::getCharactersWithASCIICase(CaseConvertType type, UChar* destination) const
 {
     if (is8Bit()) {
         getCharactersWithASCIICaseInternal(type, destination, span8());
@@ -361,11 +357,11 @@ StringViewWithUnderlyingString normalizedNFC(StringView string)
     unsigned normalizedLength = unorm2_normalize(normalizer, span.data(), span.size(), nullptr, 0, &status);
     ASSERT(needsToGrowToProduceBuffer(status));
 
-    std::span<UChar> characters;
+    UChar* characters;
     String result = String::createUninitialized(normalizedLength, characters);
 
     status = U_ZERO_ERROR;
-    unorm2_normalize(normalizer, span.data(), span.size(), characters.data(), characters.size(), &status);
+    unorm2_normalize(normalizer, span.data(), span.size(), characters, normalizedLength, &status);
     ASSERT(U_SUCCESS(status));
 
     StringView view { result };
@@ -467,9 +463,9 @@ template<typename CharacterType> static String makeStringBySimplifyingNewLinesSl
     unsigned length = string.length();
     unsigned resultLength = firstCarriageReturn;
     auto characters = string.span<CharacterType>();
-    std::span<CharacterType> resultCharacters;
+    CharacterType* resultCharacters;
     auto result = String::createUninitialized(length, resultCharacters);
-    memcpySpan(resultCharacters, characters.first(firstCarriageReturn));
+    memcpy(resultCharacters, characters.data(), firstCarriageReturn * sizeof(CharacterType));
     for (unsigned i = firstCarriageReturn; i < length; ++i) {
         if (characters[i] != '\r')
             resultCharacters[resultLength++] = characters[i];

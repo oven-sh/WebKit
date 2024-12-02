@@ -48,8 +48,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace B3 {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Value);
@@ -123,7 +121,7 @@ void DeepValueDump::dump(PrintStream& out) const
 Value::~Value()
 {
     if (m_numChildren == VarArgs)
-        std::bit_cast<Vector<Value*, 3> *>(childrenAlloc())->Vector<Value*, 3>::~Vector();
+        bitwise_cast<Vector<Value*, 3> *>(childrenAlloc())->Vector<Value*, 3>::~Vector();
 }
 
 void Value::replaceWithIdentity(Value* value)
@@ -751,7 +749,6 @@ Effects Value::effects() const
     case VectorRelaxedSwizzle:
     case VectorRelaxedMAdd:
     case VectorRelaxedNMAdd:
-    case VectorRelaxedLaneSelect:
         break;
     case Div:
     case UDiv:
@@ -1013,7 +1010,6 @@ ValueKey Value::key() const
     case VectorRelaxedMAdd:
     case VectorRelaxedNMAdd:
     case VectorBitwiseSelect:
-    case VectorRelaxedLaneSelect:
         numChildrenForKind(kind(), 3);
         return ValueKey(kind(), type(), as<SIMDValue>()->simdInfo(), child(0), child(1), child(2));
     case VectorSwizzle:
@@ -1168,7 +1164,5 @@ void Value::badKind(Kind kind, unsigned numArgs)
 }
 
 } } // namespace JSC::B3
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)

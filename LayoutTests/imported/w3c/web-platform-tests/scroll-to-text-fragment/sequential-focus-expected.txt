@@ -1,4 +1,0 @@
-foo  Next Focusable Element
-
-PASS Text Fragment focus behavior
-

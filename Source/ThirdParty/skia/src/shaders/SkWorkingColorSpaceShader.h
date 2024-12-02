@@ -22,14 +22,9 @@ struct SkStageRec;
 
 class SkWorkingColorSpaceShader final : public SkShaderBase {
 public:
-    static sk_sp<SkShader> Make(sk_sp<SkShader> shader, sk_sp<SkColorSpace> workingSpace) {
-        if (!shader) {
-            return nullptr;
-        } else if (!workingSpace) {
-            return shader;
-        } else {
-            return sk_sp(new SkWorkingColorSpaceShader(std::move(shader), std::move(workingSpace)));
-        }
+    SkWorkingColorSpaceShader(sk_sp<SkShader> shader, sk_sp<SkColorSpace> workingSpace)
+            : fShader(std::move(shader)), fWorkingSpace(std::move(workingSpace)) {
+        SkASSERT(fWorkingSpace);
     }
 
     ShaderType type() const override { return ShaderType::kWorkingColorSpace; }
@@ -38,12 +33,6 @@ public:
     sk_sp<SkColorSpace> workingSpace() const { return fWorkingSpace; }
 
 private:
-    SkWorkingColorSpaceShader(sk_sp<SkShader> shader, sk_sp<SkColorSpace> workingSpace)
-            : fShader(std::move(shader)), fWorkingSpace(std::move(workingSpace)) {
-        SkASSERT(fShader);
-        SkASSERT(fWorkingSpace);
-    }
-
     bool appendStages(const SkStageRec& rec, const SkShaders::MatrixRec&) const override;
 
     friend void ::SkRegisterWorkingColorSpaceShaderFlattenable();

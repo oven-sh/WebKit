@@ -53,8 +53,6 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore::ContentExtensions {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ContentExtensionsBackend);
@@ -127,8 +125,6 @@ auto ContentExtensionsBackend::actionsFromContentRuleList(const ContentExtension
             return topURLActions.contains(actionAndFlags);
         case ActionCondition::IfFrameURL:
             return !frameURLActions.contains(actionAndFlags);
-        case ActionCondition::UnlessFrameURL:
-            return frameURLActions.contains(actionAndFlags);
         }
         ASSERT_NOT_REACHED();
         return false;
@@ -409,7 +405,5 @@ void applyResultsToRequest(ContentRuleListResults&& results, Page* page, Resourc
 }
     
 } // namespace WebCore::ContentExtensions
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

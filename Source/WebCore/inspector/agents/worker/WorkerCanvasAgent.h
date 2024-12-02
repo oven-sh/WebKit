@@ -35,7 +35,6 @@ class WorkerOrWorkletGlobalScope;
 class WorkerCanvasAgent final : public InspectorCanvasAgent {
     WTF_MAKE_NONCOPYABLE(WorkerCanvasAgent);
     WTF_MAKE_TZONE_ALLOCATED(WorkerCanvasAgent);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WorkerCanvasAgent);
 public:
     WorkerCanvasAgent(WorkerAgentContext&);
     ~WorkerCanvasAgent();

@@ -63,10 +63,9 @@ static WebKit::ContentWorldIdentifier generateIdentifier()
     return WebKit::ContentWorldIdentifier::generate();
 }
 
-ContentWorld::ContentWorld(const WTF::String& name, OptionSet<WebKit::ContentWorldOption> options)
+ContentWorld::ContentWorld(const WTF::String& name)
     : m_identifier(generateIdentifier())
     , m_name(name)
-    , m_options(options)
 {
     auto addResult = sharedWorldIdentifierMap().add(m_identifier, *this);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
@@ -78,11 +77,11 @@ ContentWorld::ContentWorld(WebKit::ContentWorldIdentifier identifier)
     ASSERT(m_identifier == WebKit::pageContentWorldIdentifier());
 }
 
-Ref<ContentWorld> ContentWorld::sharedWorldWithName(const WTF::String& name, OptionSet<WebKit::ContentWorldOption> options)
+Ref<ContentWorld> ContentWorld::sharedWorldWithName(const WTF::String& name)
 {
     RefPtr<ContentWorld> newContentWorld;
     auto result = sharedWorldNameMap().ensure(name, [&] {
-        newContentWorld = adoptRef(*new ContentWorld(name, options));
+        newContentWorld = adoptRef(*new ContentWorld(name));
         return WeakRef { *newContentWorld };
     });
     return newContentWorld ? newContentWorld.releaseNonNull() : Ref { result.iterator->value.get() };
@@ -96,7 +95,7 @@ ContentWorld& ContentWorld::pageContentWorld()
 
 ContentWorld& ContentWorld::defaultClientWorld()
 {
-    static NeverDestroyed<RefPtr<ContentWorld>> world(adoptRef(new ContentWorld(WTF::String { }, { })));
+    static NeverDestroyed<RefPtr<ContentWorld>> world(adoptRef(new ContentWorld(WTF::String { })));
     return *world.get();
 }
 

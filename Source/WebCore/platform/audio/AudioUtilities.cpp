@@ -32,8 +32,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/WeakRandomNumber.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 namespace AudioUtilities {
@@ -107,7 +105,5 @@ void applyNoise(float* values, size_t numberOfElementsToProcess, float standardD
 } // AudioUtilites
 
 } // WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUDIO)

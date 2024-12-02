@@ -17,13 +17,12 @@
 
   </style>
   <script type="text/javascript" charset="utf-8">
-    async function doTest()
+    function doTest()
     {
-      testRunner?.waitUntilDone();
-      await testRunner?.displayAndTrackRepaints();
+      if (window.testRunner)
+        testRunner.displayAndTrackRepaints();
 
       document.getElementById('iframe').className = 'composited';
-      testRunner?.notifyDone();
     }
 
     window.addEventListener('load', doTest, false);

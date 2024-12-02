@@ -201,14 +201,14 @@ TEST_F(UnrollFlattenTest, GradientInDiscont)
     expect(expectations, ArraySize(expectations));
 }
 
-class UnrollFlattenTestES3 : public UnrollFlattenTest
+class UnrollFlattenTest_ES3 : public UnrollFlattenTest
 {
   public:
-    UnrollFlattenTestES3() : UnrollFlattenTest(SH_GLES3_SPEC) {}
+    UnrollFlattenTest_ES3() : UnrollFlattenTest(SH_GLES3_SPEC) {}
 };
 
 // Check that we correctly detect the ES3 builtin "texture" function as a gradient operation.
-TEST_F(UnrollFlattenTestES3, TextureBuiltin)
+TEST_F(UnrollFlattenTest_ES3, TextureBuiltin)
 {
     const std::string &shaderString =
         "#version 300 es\n"

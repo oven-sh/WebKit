@@ -190,9 +190,6 @@ void RenderMathMLFraction::computePreferredLogicalWidths()
     LayoutUnit denominatorWidth = denominator().maxPreferredLogicalWidth() + marginIntrinsicLogicalWidthForChild(denominator());
     m_minPreferredLogicalWidth = m_maxPreferredLogicalWidth = std::max(numeratorWidth, denominatorWidth);
 
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
-    applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
-
     adjustPreferredLogicalWidthsForBorderAndPadding();
 
     setPreferredLogicalWidthsDirty(false);
@@ -270,10 +267,6 @@ void RenderMathMLFraction::layoutBlock(bool relayoutChildren, LayoutUnit)
 
     setLogicalHeight(verticalOffset);
 
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::Layout);
-    auto shift = applySizeToMathContent(LayoutPhase::Layout, sizes);
-    shiftInFlowChildren(shift, 0);
-
     adjustLayoutForBorderAndPadding();
 
     layoutPositionedObjects(relayoutChildren);
@@ -298,7 +291,6 @@ void RenderMathMLFraction::paint(PaintInfo& info, const LayoutPoint& paintOffset
     info.context().setStrokeThickness(thickness);
     info.context().setStrokeStyle(StrokeStyle::SolidStroke);
     info.context().setStrokeColor(style().visitedDependentColorWithColorFilter(CSSPropertyColor));
-    // MathML Core says the fraction bar takes the full width of the content box.
     info.context().drawLine(adjustedPaintOffset, roundedIntPoint(LayoutPoint(adjustedPaintOffset.x() + logicalWidth() - borderAndPaddingLogicalWidth(), LayoutUnit(adjustedPaintOffset.y()))));
 }
 

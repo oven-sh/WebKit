@@ -43,7 +43,6 @@
 #include "CSSMediaRule.h"
 #include "CSSParser.h"
 #include "CSSPropertyParser.h"
-#include "CSSPropertyParserConsumer+Color.h"
 #include "CSSStyleRule.h"
 #include "CSSSupportsRule.h"
 #include "CacheStorageConnection.h"
@@ -148,6 +147,7 @@
 #include "MediaMetadata.h"
 #include "MediaPlayer.h"
 #include "MediaProducer.h"
+#include "MediaRecorderProvider.h"
 #include "MediaResourceLoader.h"
 #include "MediaSession.h"
 #include "MediaSessionActionDetails.h"
@@ -179,7 +179,6 @@
 #include "PseudoElement.h"
 #include "PushSubscription.h"
 #include "PushSubscriptionData.h"
-#include "Quirks.h"
 #include "RTCNetworkManager.h"
 #include "RTCRtpSFrameTransform.h"
 #include "Range.h"
@@ -486,47 +485,47 @@ void InspectorStubFrontend::sendMessageToFrontend(const String& message)
     frontendAPIDispatcher().dispatchMessageAsync(message);
 }
 
-static bool markerTypeFrom(const String& markerType, DocumentMarkerType& result)
+static bool markerTypeFrom(const String& markerType, DocumentMarker::Type& result)
 {
     if (equalLettersIgnoringASCIICase(markerType, "spelling"_s))
-        result = DocumentMarkerType::Spelling;
+        result = DocumentMarker::Type::Spelling;
     else if (equalLettersIgnoringASCIICase(markerType, "grammar"_s))
-        result = DocumentMarkerType::Grammar;
+        result = DocumentMarker::Type::Grammar;
     else if (equalLettersIgnoringASCIICase(markerType, "textmatch"_s))
-        result = DocumentMarkerType::TextMatch;
+        result = DocumentMarker::Type::TextMatch;
     else if (equalLettersIgnoringASCIICase(markerType, "replacement"_s))
-        result = DocumentMarkerType::Replacement;
+        result = DocumentMarker::Type::Replacement;
     else if (equalLettersIgnoringASCIICase(markerType, "correctionindicator"_s))
-        result = DocumentMarkerType::CorrectionIndicator;
+        result = DocumentMarker::Type::CorrectionIndicator;
     else if (equalLettersIgnoringASCIICase(markerType, "rejectedcorrection"_s))
-        result = DocumentMarkerType::RejectedCorrection;
+        result = DocumentMarker::Type::RejectedCorrection;
     else if (equalLettersIgnoringASCIICase(markerType, "autocorrected"_s))
-        result = DocumentMarkerType::Autocorrected;
+        result = DocumentMarker::Type::Autocorrected;
     else if (equalLettersIgnoringASCIICase(markerType, "spellcheckingexemption"_s))
-        result = DocumentMarkerType::SpellCheckingExemption;
+        result = DocumentMarker::Type::SpellCheckingExemption;
     else if (equalLettersIgnoringASCIICase(markerType, "deletedautocorrection"_s))
-        result = DocumentMarkerType::DeletedAutocorrection;
+        result = DocumentMarker::Type::DeletedAutocorrection;
     else if (equalLettersIgnoringASCIICase(markerType, "dictationalternatives"_s))
-        result = DocumentMarkerType::DictationAlternatives;
+        result = DocumentMarker::Type::DictationAlternatives;
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
     else if (equalLettersIgnoringASCIICase(markerType, "telephonenumber"_s))
-        result = DocumentMarkerType::TelephoneNumber;
+        result = DocumentMarker::Type::TelephoneNumber;
 #endif
 #if ENABLE(WRITING_TOOLS)
     else if (equalLettersIgnoringASCIICase(markerType, "writingtoolstextsuggestion"_s))
-        result = DocumentMarkerType::WritingToolsTextSuggestion;
+        result = DocumentMarker::Type::WritingToolsTextSuggestion;
 #endif
     else if (equalLettersIgnoringASCIICase(markerType, "transparentcontent"_s))
-        result = DocumentMarkerType::TransparentContent;
+        result = DocumentMarker::Type::TransparentContent;
     else
         return false;
 
     return true;
 }
 
-static bool markerTypesFrom(const String& markerType, OptionSet<DocumentMarkerType>& result)
+static bool markerTypesFrom(const String& markerType, OptionSet<DocumentMarker::Type>& result)
 {
-    DocumentMarkerType singularResult;
+    DocumentMarker::Type singularResult;
 
     if (markerType.isEmpty() || equalLettersIgnoringASCIICase(markerType, "all"_s))
         result = DocumentMarker::allMarkers();
@@ -584,7 +583,9 @@ void Internals::resetToConsistentState(Page& page)
         mainFrameView->setUseFixedLayout(false);
         mainFrameView->setFixedLayoutSize(IntSize());
         mainFrameView->enableFixedWidthAutoSizeMode(false, { });
-
+#if USE(COORDINATED_GRAPHICS)
+        mainFrameView->setFixedVisibleContentRect(IntRect());
+#endif
         if (auto* backing = mainFrameView->tiledBacking())
             backing->setTileSizeUpdateDelayDisabledForTesting(false);
     }
@@ -605,16 +606,16 @@ void Internals::resetToConsistentState(Page& page)
 #if ENABLE(VIDEO)
     page.group().ensureCaptionPreferences().setCaptionDisplayMode(CaptionUserPreferences::CaptionDisplayMode::ForcedOnly);
     page.group().ensureCaptionPreferences().setCaptionsStyleSheetOverride(emptyString());
-    PlatformMediaSessionManager::singleton().resetHaveEverRegisteredAsNowPlayingApplicationForTesting();
-    PlatformMediaSessionManager::singleton().resetRestrictions();
-    PlatformMediaSessionManager::singleton().resetSessionState();
-    PlatformMediaSessionManager::singleton().setWillIgnoreSystemInterruptions(true);
-    PlatformMediaSessionManager::singleton().applicationWillEnterForeground(false);
+    PlatformMediaSessionManager::sharedManager().resetHaveEverRegisteredAsNowPlayingApplicationForTesting();
+    PlatformMediaSessionManager::sharedManager().resetRestrictions();
+    PlatformMediaSessionManager::sharedManager().resetSessionState();
+    PlatformMediaSessionManager::sharedManager().setWillIgnoreSystemInterruptions(true);
+    PlatformMediaSessionManager::sharedManager().applicationWillEnterForeground(false);
     if (page.mediaPlaybackIsSuspended())
         page.resumeAllMediaPlayback();
 #endif
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::singleton().setIsPlayingToAutomotiveHeadUnit(false);
+    PlatformMediaSessionManager::sharedManager().setIsPlayingToAutomotiveHeadUnit(false);
 #endif
     AXObjectCache::setEnhancedUserInterfaceAccessibility(false);
     AXObjectCache::disableAccessibility();
@@ -684,7 +685,7 @@ void Internals::resetToConsistentState(Page& page)
 #endif
 
 #if ENABLE(MEDIA_SESSION) && USE(GLIB)
-    auto& sessionManager = reinterpret_cast<MediaSessionManagerGLib&>(PlatformMediaSessionManager::singleton());
+    auto& sessionManager = reinterpret_cast<MediaSessionManagerGLib&>(PlatformMediaSessionManager::sharedManager());
     sessionManager.setDBusNotificationsEnabled(false);
 #endif
 
@@ -730,7 +731,7 @@ Internals::Internals(Document& document)
 #if ENABLE(APPLE_PAY)
     auto* frame = document.frame();
     if (frame && frame->page() && frame->isMainFrame()) {
-        auto mockPaymentCoordinator = MockPaymentCoordinator::create(*frame->page());
+        auto mockPaymentCoordinator = makeUniqueRefWithoutRefCountedCheck<MockPaymentCoordinator>(*frame->page());
         frame->page()->setPaymentCoordinator(PaymentCoordinator::create(WTFMove(mockPaymentCoordinator)));
     }
 #endif
@@ -2008,7 +2009,7 @@ ExceptionOr<unsigned> Internals::inspectorPaintRectCount()
 
 ExceptionOr<unsigned> Internals::markerCountForNode(Node& node, const String& markerType)
 {
-    OptionSet<DocumentMarkerType> markerTypes;
+    OptionSet<DocumentMarker::Type> markerTypes;
     if (!markerTypesFrom(markerType, markerTypes))
         return Exception { ExceptionCode::SyntaxError };
 
@@ -2020,7 +2021,7 @@ ExceptionOr<RenderedDocumentMarker*> Internals::markerAt(Node& node, const Strin
 {
     node.document().updateLayout(LayoutOptions::IgnorePendingStylesheets);
 
-    OptionSet<DocumentMarkerType> markerTypes;
+    OptionSet<DocumentMarker::Type> markerTypes;
     if (!markerTypesFrom(markerType, markerTypes))
         return Exception { ExceptionCode::SyntaxError };
 
@@ -2056,7 +2057,7 @@ ExceptionOr<String> Internals::markerDescriptionForNode(Node& node, const String
 
 ExceptionOr<String> Internals::dumpMarkerRects(const String& markerTypeString)
 {
-    DocumentMarkerType markerType;
+    DocumentMarker::Type markerType;
     if (!markerTypeFrom(markerTypeString, markerType))
         return Exception { ExceptionCode::SyntaxError };
 
@@ -2224,8 +2225,10 @@ ExceptionOr<void> Internals::setViewIsTransparent(bool transparent)
     Document* document = contextDocument();
     if (!document || !document->view())
         return Exception { ExceptionCode::InvalidAccessError };
-
-    document->view()->setTransparent(transparent);
+    std::optional<Color> backgroundColor;
+    if (transparent)
+        backgroundColor = Color(Color::transparentBlack);
+    document->view()->updateBackgroundRecursively(backgroundColor);
     return { };
 }
 
@@ -2234,9 +2237,6 @@ ExceptionOr<String> Internals::viewBaseBackgroundColor()
     Document* document = contextDocument();
     if (!document || !document->view())
         return Exception { ExceptionCode::InvalidAccessError };
-
-    document->updateLayout(LayoutOptions::IgnorePendingStylesheets);
-
     return serializationForCSS(document->view()->baseBackgroundColor());
 }
 
@@ -2255,28 +2255,6 @@ ExceptionOr<void> Internals::setViewBaseBackgroundColor(const String& colorValue
         return { };
     }
     return Exception { ExceptionCode::SyntaxError };
-}
-
-using LazySlowPathColorParsingParameters = std::tuple<
-    CSSPropertyParserHelpers::CSSColorParsingOptions,
-    CSSUnresolvedColorResolutionState,
-    std::optional<CSSUnresolvedColorResolutionDelegate>
->;
-
-ExceptionOr<void> Internals::setUnderPageBackgroundColorOverride(const String& colorValue)
-{
-    Document* document = contextDocument();
-    if (!document || !document->page())
-        return Exception { ExceptionCode::InvalidAccessError };
-
-    auto color = CSSPropertyParserHelpers::parseColorRaw(colorValue, document->cssParserContext(), [] {
-        return LazySlowPathColorParsingParameters { { }, { }, std::nullopt };
-    });
-    if (!color.isValid())
-        return Exception { ExceptionCode::SyntaxError };
-
-    document->page()->setUnderPageBackgroundColorOverride(WTFMove(color));
-    return { };
 }
 
 ExceptionOr<String> Internals::documentBackgroundColor()
@@ -2371,20 +2349,20 @@ bool Internals::elementShouldAutoComplete(HTMLInputElement& element)
 
 void Internals::setAutofilled(HTMLInputElement& element, bool enabled)
 {
-    element.setAutofilled(enabled);
+    element.setAutoFilled(enabled);
 }
 
-void Internals::setAutofilledAndViewable(HTMLInputElement& element, bool enabled)
+void Internals::setAutoFilledAndViewable(HTMLInputElement& element, bool enabled)
 {
-    element.setAutofilledAndViewable(enabled);
+    element.setAutoFilledAndViewable(enabled);
 }
 
-void Internals::setAutofilledAndObscured(HTMLInputElement& element, bool enabled)
+void Internals::setAutoFilledAndObscured(HTMLInputElement& element, bool enabled)
 {
-    element.setAutofilledAndObscured(enabled);
+    element.setAutoFilledAndObscured(enabled);
 }
 
-static AutoFillButtonType toAutofillButtonType(Internals::AutoFillButtonType type)
+static AutoFillButtonType toAutoFillButtonType(Internals::AutoFillButtonType type)
 {
     switch (type) {
     case Internals::AutoFillButtonType::None:
@@ -2404,7 +2382,7 @@ static AutoFillButtonType toAutofillButtonType(Internals::AutoFillButtonType typ
     return AutoFillButtonType::None;
 }
 
-static Internals::AutoFillButtonType toInternalsAutofillButtonType(AutoFillButtonType type)
+static Internals::AutoFillButtonType toInternalsAutoFillButtonType(AutoFillButtonType type)
 {
     switch (type) {
     case AutoFillButtonType::None:
@@ -2424,19 +2402,19 @@ static Internals::AutoFillButtonType toInternalsAutofillButtonType(AutoFillButto
     return Internals::AutoFillButtonType::None;
 }
 
-void Internals::setAutofillButtonType(HTMLInputElement& element, AutoFillButtonType type)
+void Internals::setShowAutoFillButton(HTMLInputElement& element, AutoFillButtonType type)
 {
-    element.setAutofillButtonType(toAutofillButtonType(type));
+    element.setShowAutoFillButton(toAutoFillButtonType(type));
 }
 
-auto Internals::autofillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
+auto Internals::autoFillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
 {
-    return toInternalsAutofillButtonType(element.autofillButtonType());
+    return toInternalsAutoFillButtonType(element.autoFillButtonType());
 }
 
-auto Internals::lastAutofillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
+auto Internals::lastAutoFillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
 {
-    return toInternalsAutofillButtonType(element.lastAutofillButtonType());
+    return toInternalsAutoFillButtonType(element.lastAutoFillButtonType());
 }
 
 Vector<String> Internals::recentSearches(const HTMLInputElement& element)
@@ -2809,7 +2787,7 @@ void Internals::updateEditorUINowIfScheduled()
     }
 }
 
-bool Internals::hasMarkerFor(DocumentMarkerType type, int from, int length)
+bool Internals::hasMarkerFor(DocumentMarker::Type type, int from, int length)
 {
     Document* document = contextDocument();
     if (!document || !document->frame())
@@ -2822,7 +2800,7 @@ bool Internals::hasMarkerFor(DocumentMarkerType type, int from, int length)
 
 ExceptionOr<void> Internals::setMarkerFor(const String& markerTypeString, int from, int length, const String& data)
 {
-    DocumentMarkerType markerType;
+    DocumentMarker::Type markerType;
     if (!markerTypeFrom(markerTypeString, markerType))
         return Exception { ExceptionCode::SyntaxError };
 
@@ -2838,39 +2816,39 @@ ExceptionOr<void> Internals::setMarkerFor(const String& markerTypeString, int fr
 
 bool Internals::hasSpellingMarker(int from, int length)
 {
-    return hasMarkerFor(DocumentMarkerType::Spelling, from, length);
+    return hasMarkerFor(DocumentMarker::Type::Spelling, from, length);
 }
 
 bool Internals::hasGrammarMarker(int from, int length)
 {
-    return hasMarkerFor(DocumentMarkerType::Grammar, from, length);
+    return hasMarkerFor(DocumentMarker::Type::Grammar, from, length);
 }
 
 bool Internals::hasAutocorrectedMarker(int from, int length)
 {
-    return hasMarkerFor(DocumentMarkerType::Autocorrected, from, length);
+    return hasMarkerFor(DocumentMarker::Type::Autocorrected, from, length);
 }
 
 bool Internals::hasDictationAlternativesMarker(int from, int length)
 {
-    return hasMarkerFor(DocumentMarkerType::DictationAlternatives, from, length);
+    return hasMarkerFor(DocumentMarker::Type::DictationAlternatives, from, length);
 }
 
 bool Internals::hasCorrectionIndicatorMarker(int from, int length)
 {
-    return hasMarkerFor(DocumentMarkerType::CorrectionIndicator, from, length);
+    return hasMarkerFor(DocumentMarker::Type::CorrectionIndicator, from, length);
 }
 
 #if ENABLE(WRITING_TOOLS)
 bool Internals::hasWritingToolsTextSuggestionMarker(int from, int length)
 {
-    return hasMarkerFor(DocumentMarkerType::WritingToolsTextSuggestion, from, length);
+    return hasMarkerFor(DocumentMarker::Type::WritingToolsTextSuggestion, from, length);
 }
 #endif
 
 bool Internals::hasTransparentContentMarker(int from, int length)
 {
-    return hasMarkerFor(DocumentMarkerType::TransparentContent, from, length);
+    return hasMarkerFor(DocumentMarker::Type::TransparentContent, from, length);
 }
 
 void Internals::setContinuousSpellCheckingEnabled(bool enabled)
@@ -4816,7 +4794,7 @@ ExceptionOr<void> Internals::beginMediaSessionInterruption(const String& interru
     else
         return Exception { ExceptionCode::InvalidAccessError };
 
-    PlatformMediaSessionManager::singleton().beginInterruption(interruption);
+    PlatformMediaSessionManager::sharedManager().beginInterruption(interruption);
     return { };
 }
 
@@ -4827,27 +4805,27 @@ void Internals::endMediaSessionInterruption(const String& flagsString)
     if (equalLettersIgnoringASCIICase(flagsString, "mayresumeplaying"_s))
         flags = PlatformMediaSession::EndInterruptionFlags::MayResumePlaying;
 
-    PlatformMediaSessionManager::singleton().endInterruption(flags);
+    PlatformMediaSessionManager::sharedManager().endInterruption(flags);
 }
 
 void Internals::applicationWillBecomeInactive()
 {
-    PlatformMediaSessionManager::singleton().applicationWillBecomeInactive();
+    PlatformMediaSessionManager::sharedManager().applicationWillBecomeInactive();
 }
 
 void Internals::applicationDidBecomeActive()
 {
-    PlatformMediaSessionManager::singleton().applicationDidBecomeActive();
+    PlatformMediaSessionManager::sharedManager().applicationDidBecomeActive();
 }
 
 void Internals::applicationWillEnterForeground(bool suspendedUnderLock) const
 {
-    PlatformMediaSessionManager::singleton().applicationWillEnterForeground(suspendedUnderLock);
+    PlatformMediaSessionManager::sharedManager().applicationWillEnterForeground(suspendedUnderLock);
 }
 
 void Internals::applicationDidEnterBackground(bool suspendedUnderLock) const
 {
-    PlatformMediaSessionManager::singleton().applicationDidEnterBackground(suspendedUnderLock);
+    PlatformMediaSessionManager::sharedManager().applicationDidEnterBackground(suspendedUnderLock);
 }
 
 static PlatformMediaSession::MediaType mediaTypeFromString(const String& mediaTypeString)
@@ -4870,8 +4848,8 @@ ExceptionOr<void> Internals::setMediaSessionRestrictions(const String& mediaType
     if (mediaType == PlatformMediaSession::MediaType::None)
         return Exception { ExceptionCode::InvalidAccessError };
 
-    auto restrictions = PlatformMediaSessionManager::singleton().restrictions(mediaType);
-    PlatformMediaSessionManager::singleton().removeRestriction(mediaType, restrictions);
+    auto restrictions = PlatformMediaSessionManager::sharedManager().restrictions(mediaType);
+    PlatformMediaSessionManager::sharedManager().removeRestriction(mediaType, restrictions);
 
     restrictions = PlatformMediaSessionManager::NoRestrictions;
 
@@ -4889,7 +4867,7 @@ ExceptionOr<void> Internals::setMediaSessionRestrictions(const String& mediaType
         if (equalLettersIgnoringASCIICase(restrictionString, "suspendedunderlockplaybackrestricted"_s))
             restrictions |= PlatformMediaSessionManager::SuspendedUnderLockPlaybackRestricted;
     }
-    PlatformMediaSessionManager::singleton().addRestriction(mediaType, restrictions);
+    PlatformMediaSessionManager::sharedManager().addRestriction(mediaType, restrictions);
     return { };
 }
 
@@ -4899,7 +4877,7 @@ ExceptionOr<String> Internals::mediaSessionRestrictions(const String& mediaTypeS
     if (mediaType == PlatformMediaSession::MediaType::None)
         return Exception { ExceptionCode::InvalidAccessError };
 
-    PlatformMediaSessionManager::SessionRestrictions restrictions = PlatformMediaSessionManager::singleton().restrictions(mediaType);
+    PlatformMediaSessionManager::SessionRestrictions restrictions = PlatformMediaSessionManager::sharedManager().restrictions(mediaType);
     if (restrictions == PlatformMediaSessionManager::NoRestrictions)
         return String();
 
@@ -5000,7 +4978,7 @@ ExceptionOr<void> Internals::postRemoteControlCommand(const String& commandStrin
     else
         return Exception { ExceptionCode::InvalidAccessError };
 
-    PlatformMediaSessionManager::singleton().processDidReceiveRemoteControlCommand(command, parameter);
+    PlatformMediaSessionManager::sharedManager().processDidReceiveRemoteControlCommand(command, parameter);
     return { };
 }
 
@@ -5129,20 +5107,20 @@ void Internals::useMockAudioDestinationCocoa()
 void Internals::simulateSystemSleep() const
 {
 #if ENABLE(VIDEO)
-    PlatformMediaSessionManager::singleton().processSystemWillSleep();
+    PlatformMediaSessionManager::sharedManager().processSystemWillSleep();
 #endif
 }
 
 void Internals::simulateSystemWake() const
 {
 #if ENABLE(VIDEO)
-    PlatformMediaSessionManager::singleton().processSystemDidWake();
+    PlatformMediaSessionManager::sharedManager().processSystemDidWake();
 #endif
 }
 
 std::optional<Internals::NowPlayingMetadata> Internals::nowPlayingMetadata() const
 {
-    if (auto nowPlayingInfo = PlatformMediaSessionManager::singleton().nowPlayingInfo())
+    if (auto nowPlayingInfo = PlatformMediaSessionManager::sharedManager().nowPlayingInfo())
         return nowPlayingInfo->metadata;
     return std::nullopt;
 }
@@ -5150,14 +5128,14 @@ std::optional<Internals::NowPlayingMetadata> Internals::nowPlayingMetadata() con
 ExceptionOr<Internals::NowPlayingState> Internals::nowPlayingState() const
 {
 #if ENABLE(VIDEO)
-    auto lastUpdatedNowPlayingInfoUniqueIdentifier = PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingInfoUniqueIdentifier();
-    return { { PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingTitle(),
-        PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingDuration(),
-        PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingElapsedTime(),
+    auto lastUpdatedNowPlayingInfoUniqueIdentifier = PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingInfoUniqueIdentifier();
+    return { { PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingTitle(),
+        PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingDuration(),
+        PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingElapsedTime(),
         lastUpdatedNowPlayingInfoUniqueIdentifier ? lastUpdatedNowPlayingInfoUniqueIdentifier->toUInt64() : 0,
-        PlatformMediaSessionManager::singleton().hasActiveNowPlayingSession(),
-        PlatformMediaSessionManager::singleton().registeredAsNowPlayingApplication(),
-        PlatformMediaSessionManager::singleton().haveEverRegisteredAsNowPlayingApplication()
+        PlatformMediaSessionManager::sharedManager().hasActiveNowPlayingSession(),
+        PlatformMediaSessionManager::sharedManager().registeredAsNowPlayingApplication(),
+        PlatformMediaSessionManager::sharedManager().haveEverRegisteredAsNowPlayingApplication()
     } };
 #else
     return Exception { ExceptionCode::InvalidAccessError };
@@ -5311,7 +5289,7 @@ void Internals::mockMediaPlaybackTargetPickerDismissPopup()
 bool Internals::isMonitoringWirelessRoutes() const
 {
 #if ENABLE(VIDEO)
-    return PlatformMediaSessionManager::singleton().isMonitoringWirelessTargets();
+    return PlatformMediaSessionManager::sharedManager().isMonitoringWirelessTargets();
 #else
     return false;
 #endif // ENABLE(VIDEO)
@@ -6865,14 +6843,14 @@ void Internals::setAlwaysAllowLocalWebarchive(bool alwaysAllowLocalWebarchive)
 void Internals::processWillSuspend()
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::singleton().processWillSuspend();
+    PlatformMediaSessionManager::sharedManager().processWillSuspend();
 #endif
 }
 
 void Internals::processDidResume()
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::singleton().processDidResume();
+    PlatformMediaSessionManager::sharedManager().processDidResume();
 #endif
 }
 
@@ -6909,7 +6887,7 @@ void Internals::setTransientActivationDuration(double seconds)
 void Internals::setIsPlayingToAutomotiveHeadUnit(bool isPlaying)
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::singleton().setIsPlayingToAutomotiveHeadUnit(isPlaying);
+    PlatformMediaSessionManager::sharedManager().setIsPlayingToAutomotiveHeadUnit(isPlaying);
 #else
     UNUSED_PARAM(isPlaying);
 #endif
@@ -7317,7 +7295,7 @@ ExceptionOr<Vector<String>> Internals::platformSupportedCommands() const
 {
     if (!contextDocument())
         return Exception { ExceptionCode::InvalidAccessError };
-    auto commands = PlatformMediaSessionManager::singleton().supportedCommands();
+    auto commands = PlatformMediaSessionManager::sharedManager().supportedCommands();
     Vector<String> commandStrings;
     for (auto command : commands)
         commandStrings.append(convertEnumerationToString(command));
@@ -7427,7 +7405,7 @@ String Internals::dumpStyleResolvers()
     document->updateStyleIfNeeded();
 
     unsigned currentIdentifier = 0;
-    HashMap<Style::Resolver*, unsigned> resolverIdentifiers;
+    UncheckedKeyHashMap<Style::Resolver*, unsigned> resolverIdentifiers;
 
     StringBuilder result;
 
@@ -7729,16 +7707,6 @@ void Internals::setResourceCachingDisabledByWebInspector(bool disabled)
         return;
 
     document->page()->setResourceCachingDisabledByWebInspector(disabled);
-}
-
-void Internals::setTopDocumentURLForQuirks(const String& urlString)
-{
-    RefPtr document = contextDocument();
-    if (!document)
-        return;
-
-    document->protectedPage()->settings().setNeedsSiteSpecificQuirks(true);
-    document->quirks().setTopDocumentURLForTesting(URL { urlString });
 }
 
 } // namespace WebCore

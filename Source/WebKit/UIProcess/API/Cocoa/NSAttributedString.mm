@@ -321,7 +321,8 @@ static NSMutableArray<NSURL *> *readOnlyAccessPaths()
 
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        MemoryPressureHandler::singleton().setLowMemoryHandler([self] (Critical, Synchronous) {
+        auto& memoryPressureHandler = MemoryPressureHandler::singleton();
+        memoryPressureHandler.setLowMemoryHandler([self] (Critical, Synchronous) {
             [self purgeAllWebViews];
         });
     });

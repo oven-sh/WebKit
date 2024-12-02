@@ -190,7 +190,6 @@ bool FunctionOverrides::initializeOverrideFor(const SourceCode& origCode, Functi
         exitProcess(EXIT_FAILURE); \
     } while (false)
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 static bool hasDisallowedCharacters(const char* str, size_t length)
 {
     while (length--) {
@@ -221,7 +220,7 @@ static String parseClause(const char* keyword, size_t keywordLength, FILE* file,
         FAIL_WITH_ERROR(SYNTAX_ERROR, ("Missing { after '", keyword, "' clause start delimiter:\n", line, "\n"));
 
     size_t delimiterLength = delimiterEnd - delimiterStart;
-    String delimiter(unsafeMakeSpan(delimiterStart, delimiterLength));
+    String delimiter(unsafeForgeSpan(delimiterStart, delimiterLength));
 
     if (hasDisallowedCharacters(delimiterStart, delimiterLength))
         FAIL_WITH_ERROR(SYNTAX_ERROR, ("Delimiter '", delimiter, "' cannot have '{', '}', or whitespace:\n", line, "\n"));
@@ -246,7 +245,6 @@ static String parseClause(const char* keyword, size_t keywordLength, FILE* file,
 
     FAIL_WITH_ERROR(SYNTAX_ERROR, ("'", keyword, "' clause end delimiter '", delimiter, "' not found:\n", builder.toString(), "\n", "Are you missing a '}' before the delimiter?\n"));
 }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void FunctionOverrides::parseOverridesInFile(const char* fileName)
 {
@@ -286,3 +284,4 @@ void FunctionOverrides::parseOverridesInFile(const char* fileName)
 }
     
 } // namespace JSC
+

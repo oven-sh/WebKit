@@ -107,12 +107,6 @@ enum class ImageLayout
 
     // Depth (Write), Stencil (Write)
     DepthWriteStencilWrite,
-    // Used only with dynamic rendering, because it needs a different VkImageLayout.  For
-    // simplicity, depth/stencil attachments when used as input attachments don't attempt to
-    // distinguish read-only aspects.  That's only useful for supporting feedback loops, but if an
-    // application is reading depth or stencil through an input attachment, it's safe to assume they
-    // wouldn't be accessing the other aspect through a sampler!
-    DepthStencilWriteAndInput,
 
     // Depth (Write), Stencil (Read)
     DepthWriteStencilRead,
@@ -267,18 +261,17 @@ class DynamicBuffer : angle::NonCopyable
 };
 
 // Class DescriptorSetHelper. This is a wrapper of VkDescriptorSet with GPU resource use tracking.
-using DescriptorPoolPointer     = SharedPtr<DescriptorPoolHelper>;
-using DescriptorPoolWeakPointer = WeakPtr<DescriptorPoolHelper>;
+using RefCountedDescriptorPool = RefCounted<DescriptorPoolHelper>;
 class DescriptorSetHelper final : public Resource
 {
   public:
-    DescriptorSetHelper() : mDescriptorSet(VK_NULL_HANDLE) {}
-    DescriptorSetHelper(const VkDescriptorSet &descriptorSet, const DescriptorPoolPointer &pool)
+    DescriptorSetHelper() : mDescriptorSet(VK_NULL_HANDLE), mPool(nullptr) {}
+    DescriptorSetHelper(const VkDescriptorSet &descriptorSet, RefCountedDescriptorPool *pool)
         : mDescriptorSet(descriptorSet), mPool(pool)
     {}
     DescriptorSetHelper(const ResourceUse &use,
                         const VkDescriptorSet &descriptorSet,
-                        const DescriptorPoolPointer pool)
+                        RefCountedDescriptorPool *pool)
         : mDescriptorSet(descriptorSet), mPool(pool)
     {
         mUse = use;
@@ -287,7 +280,7 @@ class DescriptorSetHelper final : public Resource
         : Resource(std::move(other)), mDescriptorSet(other.mDescriptorSet), mPool(other.mPool)
     {
         other.mDescriptorSet = VK_NULL_HANDLE;
-        other.mPool.reset();
+        other.mPool          = nullptr;
     }
 
     ~DescriptorSetHelper() override
@@ -299,7 +292,7 @@ class DescriptorSetHelper final : public Resource
     void destroy();
 
     VkDescriptorSet getDescriptorSet() const { return mDescriptorSet; }
-    DescriptorPoolWeakPointer &getPool() { return mPool; }
+    RefCountedDescriptorPool *getPool() const { return mPool; }
 
     bool valid() const { return mDescriptorSet != VK_NULL_HANDLE; }
 
@@ -307,10 +300,7 @@ class DescriptorSetHelper final : public Resource
     VkDescriptorSet mDescriptorSet;
     // So that DescriptorPoolHelper::resetGarbage can clear mPool weak pointer here
     friend class DescriptorPoolHelper;
-    // We hold weak pointer here due to DynamicDescriptorPool::allocateNewPool() and
-    // DynamicDescriptorPool::checkAndReleaseUnusedPool() rely on pool's refcount to tell if it is
-    // eligible for eviction or not.
-    DescriptorPoolWeakPointer mPool;
+    RefCountedDescriptorPool *mPool;
 };
 using DescriptorSetPointer = SharedPtr<DescriptorSetHelper>;
 using DescriptorSetList    = std::deque<DescriptorSetPointer>;
@@ -342,7 +332,7 @@ class DescriptorPoolHelper final : public Resource
 
     bool allocateDescriptorSet(Context *context,
                                const DescriptorSetLayout &descriptorSetLayout,
-                               const DescriptorPoolPointer &pool,
+                               RefCountedDescriptorPool *refCountedPool,
                                DescriptorSetPointer *descriptorSetOut);
 
     void addGarbage(DescriptorSetPointer &&garbage)
@@ -382,6 +372,7 @@ class DescriptorPoolHelper final : public Resource
     // Manages the texture descriptor set cache that allocated from this pool
     vk::DescriptorSetCacheManager mDescriptorSetCacheManager;
 };
+using DescriptorPoolPointer = SharedPtr<DescriptorPoolHelper>;
 
 class DynamicDescriptorPool final : angle::NonCopyable
 {
@@ -434,7 +425,7 @@ class DynamicDescriptorPool final : angle::NonCopyable
     }
 
     // Release the pool if it is no longer been used and contains no valid descriptorSet.
-    void checkAndReleaseUnusedPool(Renderer *renderer, const DescriptorPoolWeakPointer &pool);
+    void checkAndReleaseUnusedPool(Renderer *renderer, RefCountedDescriptorPool *pool);
 
     // For testing only!
     static uint32_t GetMaxSetsPerPoolForTesting();
@@ -1068,8 +1059,6 @@ class BufferHelper : public ReadWriteResource
     void fillWithColor(const angle::Color<uint8_t> &color,
                        const gl::InternalFormat &internalFormat);
 
-    void fillWithPattern(const void *pattern, size_t patternSize, size_t offset, size_t size);
-
     // Special handling for VertexArray code so that we can create a dedicated VkBuffer for the
     // sub-range of memory of the actual buffer data size that user requested (i.e, excluding extra
     // paddings that we added for alignment, which will not get zero filled).
@@ -1638,12 +1627,6 @@ enum class ImagelessFramebuffer
     Yes,
 };
 
-enum class ClearTextureMode
-{
-    FullClear,
-    PartialClear,
-};
-
 enum class RenderPassSource
 {
     DefaultFramebuffer,
@@ -1961,9 +1944,9 @@ class RenderPassCommandBufferHelper final : public CommandBufferHelperCommon
     const RenderPassDesc &getRenderPassDesc() const { return mRenderPassDesc; }
     const AttachmentOpsArray &getAttachmentOps() const { return mAttachmentOps; }
 
-    void setFramebufferFetchMode(FramebufferFetchMode framebufferFetchMode)
+    void setFramebufferFetchMode()
     {
-        mRenderPassDesc.setFramebufferFetchMode(framebufferFetchMode);
+        mRenderPassDesc.setFramebufferFetchMode(FramebufferFetchMode::Color);
     }
 
     void setImageOptimizeForPresent(ImageHelper *image) { mImageOptimizeForPresent = image; }
@@ -2339,7 +2322,7 @@ class ImageHelper final : public Resource, public angle::Subject
     void deriveImageViewFormatFromCreateInfoPNext(VkImageCreateInfo &imageInfo,
                                                   ImageFormats &formatOut);
 
-    // Release the underlying VkImage object for garbage collection.
+    // Release the underlining VkImage object for garbage collection.
     void releaseImage(Renderer *renderer);
     // Similar to releaseImage, but also notify all contexts in the same share group to stop
     // accessing to it.
@@ -2358,7 +2341,7 @@ class ImageHelper final : public Resource, public angle::Subject
     // True if image contains both depth & stencil aspects
     bool isCombinedDepthStencilFormat() const;
     void destroy(Renderer *renderer);
-    void release(Renderer *renderer) { releaseImage(renderer); }
+    void release(Renderer *renderer) { destroy(renderer); }
 
     void init2DWeakReference(Context *context,
                              VkImage handle,
@@ -2432,7 +2415,15 @@ class ImageHelper final : public Resource, public angle::Subject
         return mImageSerial;
     }
 
-    void setCurrentImageLayout(Renderer *renderer, ImageLayout newLayout);
+    void setCurrentImageLayout(ImageLayout newLayout)
+    {
+        // Once you transition to ImageLayout::SharedPresent, you never transition out of it.
+        if (mCurrentLayout == ImageLayout::SharedPresent)
+        {
+            return;
+        }
+        mCurrentLayout = newLayout;
+    }
     ImageLayout getCurrentImageLayout() const { return mCurrentLayout; }
     VkImageLayout getCurrentLayout(Renderer *renderer) const;
     const QueueSerial &getBarrierQueueSerial() const { return mBarrierQueueSerial; }
@@ -2501,7 +2492,6 @@ class ImageHelper final : public Resource, public angle::Subject
 
     angle::Result stagePartialClear(ContextVk *contextVk,
                                     const gl::Box &clearArea,
-                                    const ClearTextureMode clearMode,
                                     gl::TextureType textureType,
                                     uint32_t levelIndex,
                                     uint32_t layerIndex,
@@ -3960,16 +3950,6 @@ class CommandBufferAccess : angle::NonCopyable
                                 aspectFlags, ImageLayout::TransferSrcDst, image);
         onImageWrite(writeLevelStart, writeLevelCount, writeLayerStart, writeLayerCount,
                      aspectFlags, ImageLayout::TransferSrcDst, image);
-    }
-    void onImageDrawMipmapGenerationWrite(gl::LevelIndex levelStart,
-                                          uint32_t levelCount,
-                                          uint32_t layerStart,
-                                          uint32_t layerCount,
-                                          VkImageAspectFlags aspectFlags,
-                                          ImageHelper *image)
-    {
-        onImageWrite(levelStart, levelCount, layerStart, layerCount, aspectFlags,
-                     ImageLayout::ColorWrite, image);
     }
     void onImageComputeShaderRead(VkImageAspectFlags aspectFlags, ImageHelper *image)
     {

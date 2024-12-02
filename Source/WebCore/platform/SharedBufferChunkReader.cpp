@@ -36,8 +36,6 @@ namespace WebCore {
 
 #if ENABLE(MHTML)
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 SharedBufferChunkReader::SharedBufferChunkReader(FragmentedSharedBuffer* buffer, const Vector<char>& separator)
     : m_iteratorCurrent(buffer->begin())
     , m_iteratorEnd(buffer->end())
@@ -139,8 +137,6 @@ size_t SharedBufferChunkReader::peek(Vector<uint8_t>& data, size_t requestedSize
     }
     return readBytesCount;
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif
 

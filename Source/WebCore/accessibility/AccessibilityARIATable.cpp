@@ -35,33 +35,33 @@ namespace WebCore {
 
 class RenderObject;
 
-AccessibilityARIATable::AccessibilityARIATable(AXID axID, RenderObject& renderer)
-    : AccessibilityTable(axID, renderer)
+AccessibilityARIATable::AccessibilityARIATable(RenderObject& renderer)
+    : AccessibilityTable(renderer)
 {
 }
 
-AccessibilityARIATable::AccessibilityARIATable(AXID axID, Node& node)
-    : AccessibilityTable(axID, node)
+AccessibilityARIATable::AccessibilityARIATable(Node& node)
+    : AccessibilityTable(node)
 {
 }
 
 AccessibilityARIATable::~AccessibilityARIATable() = default;
 
-Ref<AccessibilityARIATable> AccessibilityARIATable::create(AXID axID, RenderObject& renderer)
+Ref<AccessibilityARIATable> AccessibilityARIATable::create(RenderObject& renderer)
 {
-    return adoptRef(*new AccessibilityARIATable(axID, renderer));
+    return adoptRef(*new AccessibilityARIATable(renderer));
 }
 
-Ref<AccessibilityARIATable> AccessibilityARIATable::create(AXID axID, Node& node)
+Ref<AccessibilityARIATable> AccessibilityARIATable::create(Node& node)
 {
-    return adoptRef(*new AccessibilityARIATable(axID, node));
+    return adoptRef(*new AccessibilityARIATable(node));
 }
 
 bool AccessibilityARIATable::isMultiSelectable() const
 {
     // Per https://w3c.github.io/aria/#table, role="table" elements don't support selection,
     // or aria-multiselectable — only role="grid" and role="treegrid".
-    if (!hasGridRole())
+    if (!hasGridAriaRole())
         return false;
 
     const AtomString& ariaMultiSelectable = getAttribute(HTMLNames::aria_multiselectableAttr);

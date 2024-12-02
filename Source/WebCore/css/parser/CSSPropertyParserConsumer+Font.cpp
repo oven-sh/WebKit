@@ -84,7 +84,7 @@ template<typename Result, typename... Ts> static Result forwardVariantTo(std::va
 
 template<typename T> static Ref<CSSPrimitiveValue> resolveToCSSPrimitiveValue(CSS::PrimitiveNumeric<T>&& primitive)
 {
-    return WTF::switchOn(WTFMove(primitive), [](auto&& alternative) { return CSSPrimitiveValueResolverBase::resolve(WTFMove(alternative), { }, { }); }).releaseNonNull();
+    return WTF::switchOn(WTFMove(primitive.value), [](auto&& alternative) { return CSSPrimitiveValueResolverBase::resolve(WTFMove(alternative), { }, { }); }).releaseNonNull();
 }
 
 static CSSParserMode parserMode(ScriptExecutionContext& context)
@@ -136,7 +136,7 @@ static std::optional<UnresolvedFontWeightNumber> consumeFontWeightNumberUnresolv
 
 #if !ENABLE(VARIATION_FONTS)
     // Additional validation is needed for the legacy path.
-    auto result = WTF::switchOn(WTFMove(*number),
+    auto result = WTF::switchOn(WTFMove(number->value),
         [](UnresolvedFontWeightNumber::Raw&& number) -> std::optional<UnresolvedFontWeightNumber> {
             if (auto validated = validateFontWeightNumber(WTFMove(number)))
                 return { { WTFMove(*validated) } };

@@ -31,7 +31,10 @@ namespace WebCore {
 class GStreamerRtpReceiverBackend final : public RTCRtpReceiverBackend {
     WTF_MAKE_TZONE_ALLOCATED(GStreamerRtpReceiverBackend);
 public:
-    explicit GStreamerRtpReceiverBackend(GRefPtr<GstWebRTCRTPTransceiver>&&);
+    explicit GStreamerRtpReceiverBackend(GRefPtr<GstWebRTCRTPReceiver>&& rtcReceiver)
+        : m_rtcReceiver(WTFMove(rtcReceiver))
+    {
+    }
 
     GstWebRTCRTPReceiver* rtcReceiver() { return m_rtcReceiver.get(); }
     Ref<RealtimeMediaSource> createSource(const String& trackKind, const String& trackId);
@@ -44,7 +47,6 @@ private:
     std::unique_ptr<RTCDtlsTransportBackend> dtlsTransportBackend() final;
 
     GRefPtr<GstWebRTCRTPReceiver> m_rtcReceiver;
-    GRefPtr<GstWebRTCRTPTransceiver> m_rtcTransceiver;
 };
 
 } // namespace WebCore

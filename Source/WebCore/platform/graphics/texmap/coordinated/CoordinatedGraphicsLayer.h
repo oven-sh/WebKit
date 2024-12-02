@@ -38,9 +38,15 @@
 
 #if USE(SKIA)
 namespace WebCore {
-class SkiaPaintingEngine;
+class BitmapTexture;
+class BitmapTexturePool;
+class SkiaThreadedPaintingPool;
 }
 #endif
+
+namespace Nicosia {
+class PaintingEngine;
+}
 
 namespace WebCore {
 class CoordinatedAnimatedBackingStoreClient;
@@ -49,11 +55,6 @@ class CoordinatedGraphicsLayer;
 class CoordinatedImageBackingStore;
 class CoordinatedTileBuffer;
 class TextureMapperPlatformLayerProxy;
-#if USE(CAIRO)
-namespace Cairo {
-class PaintingEngine;
-}
-#endif
 
 class CoordinatedGraphicsLayerClient {
 public:
@@ -62,9 +63,10 @@ public:
     virtual void detachLayer(CoordinatedGraphicsLayer*) = 0;
     virtual void attachLayer(CoordinatedGraphicsLayer*) = 0;
 #if USE(CAIRO)
-    virtual Cairo::PaintingEngine& paintingEngine() = 0;
+    virtual Nicosia::PaintingEngine& paintingEngine() = 0;
 #elif USE(SKIA)
-    virtual SkiaPaintingEngine& skiaPaintingEngine() const = 0;
+    virtual BitmapTexturePool* skiaAcceleratedBitmapTexturePool() const = 0;
+    virtual SkiaThreadedPaintingPool* skiaThreadedPaintingPool() const = 0;
 #endif
 
     virtual Ref<CoordinatedImageBackingStore> imageBackingStore(Ref<NativeImage>&&) = 0;
@@ -124,9 +126,7 @@ public:
     void setNeedsDisplay() override;
     void setNeedsDisplayInRect(const FloatRect&, ShouldClipToLayer = ClipToLayer) override;
     void setContentsNeedsDisplay() override;
-#if ENABLE(DAMAGE_TRACKING)
     void markDamageRectsUnreliable() override;
-#endif
     void deviceOrPageScaleFactorChanged() override;
     void flushCompositingState(const FloatRect&) override;
     void flushCompositingStateForThisLayerOnly() override;
@@ -163,6 +163,10 @@ public:
     double backingStoreMemoryEstimate() const override;
 
     Vector<std::pair<String, double>> acceleratedAnimationsForTesting(const Settings&) const final;
+
+#if USE(SKIA)
+    void paintIntoGraphicsContext(GraphicsContext&, const IntRect&) const;
+#endif
 
     float effectiveContentsScale() const;
 
@@ -234,9 +238,7 @@ private:
         bool completeLayer { false };
         Vector<FloatRect> rects;
     } m_needsDisplay;
-#if ENABLE(DAMAGE_TRACKING)
     bool m_damagedRectsAreUnreliable { false };
-#endif
 
     Timer m_animationStartedTimer;
     RunLoop::Timer m_requestPendingTileCreationTimer;
@@ -249,9 +251,9 @@ private:
         Nicosia::CompositionLayer::LayerState::RepaintCounter repaintCounter;
         Nicosia::CompositionLayer::LayerState::DebugBorder debugBorder;
         bool performLayerSync { false };
+        RefPtr<Nicosia::BackingStore> backingStore;
     } m_nicosia;
 
-    RefPtr<CoordinatedBackingStoreProxy> m_backingStore;
     RefPtr<CoordinatedAnimatedBackingStoreClient> m_animatedBackingStoreClient;
 
     RefPtr<NativeImage> m_pendingContentsImage;

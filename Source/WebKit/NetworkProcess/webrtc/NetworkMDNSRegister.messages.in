@@ -22,7 +22,7 @@
 
 #if ENABLE(WEB_RTC)
 
-messages -> NetworkMDNSRegister {
+messages -> NetworkMDNSRegister NotRefCounted {
     UnregisterMDNSNames(WebCore::ScriptExecutionContextIdentifier documentIdentifier)
     RegisterMDNSName(WebCore::ScriptExecutionContextIdentifier documentIdentifier, String ipAddress) -> (String mdnsName, std::optional<WebCore::MDNSRegisterError> error)
 }

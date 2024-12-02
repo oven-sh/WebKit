@@ -80,11 +80,6 @@ DetachedImageBitmap::~DetachedImageBitmap() = default;
 
 DetachedImageBitmap& DetachedImageBitmap::operator=(DetachedImageBitmap&&) = default;
 
-size_t DetachedImageBitmap::memoryCost() const
-{
-    return m_bitmap->memoryCost();
-}
-
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ImageBitmap);
 
 static inline RenderingMode bufferRenderingMode(ScriptExecutionContext& scriptExecutionContext)
@@ -166,11 +161,6 @@ RefPtr<ImageBuffer> ImageBitmap::createImageBuffer(ScriptExecutionContext& scrip
     return createImageBuffer(scriptExecutionContext, size, bufferRenderingMode(scriptExecutionContext), colorSpace, resolutionScale);
 }
 
-ImageBuffer* ImageBitmap::buffer() const
-{
-    return m_bitmap.get();
-}
-
 std::optional<DetachedImageBitmap> ImageBitmap::detach()
 {
     if (!m_bitmap)
@@ -182,11 +172,6 @@ std::optional<DetachedImageBitmap> ImageBitmap::detach()
     if (!serializedBitmap)
         return std::nullopt;
     return DetachedImageBitmap { makeUniqueRefFromNonNullUniquePtr(WTFMove(serializedBitmap)), originClean(), premultiplyAlpha(), forciblyPremultiplyAlpha() };
-}
-
-void ImageBitmap::close()
-{
-    takeImageBuffer();
 }
 
 #if USE(SKIA)

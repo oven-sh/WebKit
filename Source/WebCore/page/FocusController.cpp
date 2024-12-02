@@ -552,7 +552,7 @@ bool FocusController::setInitialFocus(FocusDirection direction, KeyboardEvent* p
     // of handleFocusedUIElementChanged, because this will send the notification even if the element is the same.
     RefPtr focusedOrMainFrame = this->focusedOrMainFrame();
     if (CheckedPtr cache = focusedOrMainFrame ? focusedOrMainFrame->document()->existingAXObjectCache() : nullptr)
-        cache->postNotification(focusedOrMainFrame->document(), AXNotification::FocusedUIElementChanged);
+        cache->postNotification(focusedOrMainFrame->document(), AXObjectCache::AXFocusedUIElementChanged);
 
     return didAdvanceFocus;
 }

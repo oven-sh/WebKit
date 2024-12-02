@@ -85,10 +85,9 @@ public:
         enum class AffectsElements : uint8_t { Unknown, No, Yes };
 
         ChildChange::Type type;
-        // Making these raw pointers RefPtr leads to a Speedometer 3 regression.
-        SUPPRESS_UNCOUNTED_MEMBER Element* siblingChanged;
-        SUPPRESS_UNCOUNTED_MEMBER Element* previousSiblingElement;
-        SUPPRESS_UNCOUNTED_MEMBER Element* nextSiblingElement;
+        Element* siblingChanged;
+        Element* previousSiblingElement;
+        Element* nextSiblingElement;
         ChildChange::Source source;
         AffectsElements affectsElements;
 
@@ -230,7 +229,7 @@ inline ContainerNode& ContainerNode::rootNode() const
 
 inline void collectChildNodes(Node& node, NodeVector& children)
 {
-    for (SUPPRESS_UNCOUNTED_LOCAL Node* child = node.firstChild(); child; child = child->nextSibling())
+    for (Node* child = node.firstChild(); child; child = child->nextSibling())
         children.append(*child);
 }
 

@@ -17,5 +17,4 @@ PASS :scope within nested and scoped rule (implied &)
 PASS :scope within nested and scoped rule (relative)
 PASS Scoped nested group rule
 PASS Scoped nested within another scope
-PASS Implicit (prelude-less) @scope as a nested group rule
 

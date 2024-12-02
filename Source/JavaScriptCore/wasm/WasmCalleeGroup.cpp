@@ -65,6 +65,7 @@ CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other)
     , m_wasmToWasmExitStubs(other.m_wasmToWasmExitStubs)
 {
     Locker locker { m_lock };
+    m_callers.fill(FixedBitVector(m_calleeCount));
     setCompilationFinished();
 }
 
@@ -74,6 +75,7 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
     , m_llintCallees(llintCallees)
     , m_callers(m_calleeCount)
 {
+    m_callers.fill(FixedBitVector(m_calleeCount));
     RefPtr<CalleeGroup> protectedThis = this;
     m_plan = adoptRef(*new LLIntPlan(vm, moduleInformation, m_llintCallees->data(), createSharedTask<Plan::CallbackType>([this, protectedThis = WTFMove(protectedThis)] (Plan&) {
         if (!m_plan) {
@@ -119,6 +121,7 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
     , m_ipintCallees(ipintCallees)
     , m_callers(m_calleeCount)
 {
+    m_callers.fill(FixedBitVector(m_calleeCount));
     RefPtr<CalleeGroup> protectedThis = this;
     m_plan = adoptRef(*new IPIntPlan(vm, moduleInformation, m_ipintCallees->data(), createSharedTask<Plan::CallbackType>([this, protectedThis = WTFMove(protectedThis)] (Plan&) {
         Locker locker { m_lock };
@@ -218,6 +221,7 @@ void CalleeGroup::releaseBBQCallee(const AbstractLocker&, FunctionCodeIndex func
     if (!Options::freeRetiredWasmCode())
         return;
 
+    RefPtr<BBQCallee> bbqCallee = m_bbqCallees[functionIndex].convertToWeak();
     // It's possible there are still a LLInt/IPIntCallee around even when the BBQCallee
     // is destroyed. Since this function was clearly hot enough to get to OMG we should
     // tier it up soon.
@@ -226,17 +230,7 @@ void CalleeGroup::releaseBBQCallee(const AbstractLocker&, FunctionCodeIndex func
     else if (m_llintCallees)
         m_llintCallees->at(functionIndex)->tierUpCounter().resetAndOptimizeSoon(m_mode);
 
-    // We could have triggered a tier up from a BBQCallee has MemoryMode::BoundsChecking
-    // but is currently running a MemoryMode::Signaling memory. In that case there may
-    // be nothing to release.
-    if (LIKELY(!m_bbqCallees.isEmpty())) {
-        if (RefPtr bbqCallee = m_bbqCallees[functionIndex].convertToWeak()) {
-            bbqCallee->reportToVMsForDestruction();
-            return;
-        }
-    }
-
-    ASSERT(mode() == MemoryMode::Signaling);
+    bbqCallee->reportToVMsForDestruction();
 }
 #endif
 
@@ -258,7 +252,7 @@ void CalleeGroup::updateCallsitesToCallUs(const AbstractLocker& locker, CodeLoca
     Vector<Callsite, 16> callsites;
 
     auto functionSpaceIndex = toSpaceIndex(functionIndex);
-    auto collectCallsites = [&](JITCallee* caller) {
+    auto collectCallsites = [&] (JITCallee* caller) {
         if (!caller)
             return;
 
@@ -272,9 +266,10 @@ void CalleeGroup::updateCallsitesToCallUs(const AbstractLocker& locker, CodeLoca
         }
     };
 
-    auto handleCallerIndex = [&](size_t caller) {
+    const auto& callers = m_callers[functionIndex];
+    callsites.reserveInitialCapacity(callers.bitCount());
+    for (size_t caller : callers) {
         auto callerIndex = FunctionCodeIndex(caller);
-        assertIsHeld(m_lock);
 #if ENABLE(WEBASSEMBLY_BBQJIT)
         // This callee could be weak but we still need to update it since it could call our BBQ callee
         // that we're going to want to destroy.
@@ -293,20 +288,7 @@ void CalleeGroup::updateCallsitesToCallUs(const AbstractLocker& locker, CodeLoca
                 m_osrEntryCallees.remove(iter);
         }
 #endif
-    };
-
-    WTF::switchOn(m_callers[functionIndex],
-        [&](SparseCallers& callers) {
-            callsites.reserveInitialCapacity(callers.size());
-            for (uint32_t caller : callers)
-                handleCallerIndex(caller);
-        },
-        [&](DenseCallers& callers) {
-            callsites.reserveInitialCapacity(callers.bitCount());
-            for (uint32_t caller : callers)
-                handleCallerIndex(caller);
-        }
-    );
+    }
 
     // It's important to make sure we do this before we make any of the code we just compiled visible. If we didn't, we could end up
     // where we are tiering up some function A to A' and we repatch some function B to call A' instead of A. Another CPU could see
@@ -339,24 +321,9 @@ void CalleeGroup::reportCallees(const AbstractLocker&, JITCallee* caller, const 
 #endif
     auto callerIndex = toCodeIndex(caller->index());
     ASSERT_WITH_MESSAGE(callees.size() == FixedBitVector(m_calleeCount).size(), "Make sure we're not indexing callees with the space index");
-
-    for (uint32_t calleeIndex : callees) {
-        WTF::switchOn(m_callers[calleeIndex],
-            [&](SparseCallers& callers) {
-                assertIsHeld(m_lock);
-                callers.add(callerIndex.rawIndex());
-                // FIXME: We should do this when we would resize to be bigger than the bitvectors count rather than after we've already resized.
-                if (callers.memoryUse() >= DenseCallers::outOfLineMemoryUse(m_calleeCount)) {
-                    BitVector vector;
-                    for (uint32_t caller : callers)
-                        vector.set(caller);
-                    m_callers[calleeIndex] = WTFMove(vector);
-                }
-            },
-            [&](DenseCallers& callers) {
-                callers.set(callerIndex);
-            }
-        );
+    for (size_t calleeIndex : callees) {
+        // dataLogLn(callerIndex, " reported as now calling ", calleeIndex);
+        m_callers[calleeIndex].testAndSet(callerIndex);
     }
 }
 #endif

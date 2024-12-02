@@ -71,7 +71,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URLParser.h>
 #include <wtf/glib/GRefPtr.h>
-#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
@@ -137,7 +136,7 @@ enum {
     N_PROPERTIES,
 };
 
-static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
+static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
 
 enum {
 #if !ENABLE(2022_GLIB_API)
@@ -291,7 +290,7 @@ struct _WebKitWebContextPrivate {
     CString timeZoneOverride;
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitWebContext, webkit_web_context, G_TYPE_OBJECT, GObject)
 
@@ -632,7 +631,7 @@ static void webkit_web_context_class_init(WebKitWebContextClass* webContextClass
             nullptr,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
-    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties.data());
+    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties);
 
 #if !ENABLE(2022_GLIB_API)
     /**
@@ -1455,9 +1454,7 @@ static bool pathIsBlocked(const char* path)
         return true;
 
     GUniquePtr<char*> splitPath(g_strsplit(path, G_DIR_SEPARATOR_S, 3));
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE Port
     return blockedPrefixes.contains(splitPath.get()[1]);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 /**
@@ -1610,8 +1607,8 @@ void webkit_web_context_set_spell_checking_languages(WebKitWebContext* context, 
 
 #if ENABLE(SPELLCHECK)
     Vector<String> spellCheckingLanguages;
-    for (const char* language : span(const_cast<char**>(languages)))
-        spellCheckingLanguages.append(String::fromUTF8(language));
+    for (size_t i = 0; languages[i]; ++i)
+        spellCheckingLanguages.append(String::fromUTF8(languages[i]));
     TextChecker::setSpellCheckingLanguages(spellCheckingLanguages);
 #endif
 }
@@ -1639,15 +1636,13 @@ void webkit_web_context_set_preferred_languages(WebKitWebContext* context, const
     if (!languageList || !g_strv_length(const_cast<char**>(languageList)))
         return;
 
-    auto languagesSpan = span(const_cast<char**>(languageList));
-
     Vector<String> languages;
-    for (auto language : languagesSpan) {
+    for (size_t i = 0; languageList[i]; ++i) {
         // Do not propagate the C locale to WebCore.
-        if (!g_ascii_strcasecmp(language, "C") || !g_ascii_strcasecmp(language, "POSIX"))
+        if (!g_ascii_strcasecmp(languageList[i], "C") || !g_ascii_strcasecmp(languageList[i], "POSIX"))
             languages.append("en-US"_s);
         else
-            languages.append(makeStringByReplacingAll(String::fromUTF8(language), '_', '-'));
+            languages.append(makeStringByReplacingAll(String::fromUTF8(languageList[i]), '_', '-'));
     }
     context->priv->processPool->setOverrideLanguages(WTFMove(languages));
 }

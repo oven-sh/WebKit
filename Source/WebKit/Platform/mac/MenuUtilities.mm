@@ -93,8 +93,8 @@ static DDMacAction *actionForMenuItem(NSMenuItem *item)
 static DDAction *actionForMenuItem(NSMenuItem *item)
 #endif
 {
-    auto *representedObject = dynamic_objc_cast<NSDictionary>(item.representedObject);
-    if (!representedObject)
+    NSDictionary *representedObject = item.representedObject;
+    if (![representedObject isKindOfClass:[NSDictionary class]])
         return nil;
 
     id action = [representedObject objectForKey:@"DDAction"];

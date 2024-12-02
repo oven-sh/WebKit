@@ -28,8 +28,6 @@
 
 #include "GCMemoryOperations.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 #if USE(JSVALUE64)
@@ -41,7 +39,7 @@ void clearArrayMemset(WriteBarrier<Unknown>* base, unsigned count)
 void clearArrayMemset(double* base, unsigned count)
 {
 #if CPU(X86_64)
-    uint64_t pnan = std::bit_cast<uint64_t>(PNaN);
+    uint64_t pnan = bitwise_cast<uint64_t>(PNaN);
     asm volatile (
         "rep stosq\n\t"
         : "+D"(base), "+c"(count)
@@ -58,4 +56,3 @@ void clearArrayMemset(double* base, unsigned count)
 
 } // namespace JSC
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

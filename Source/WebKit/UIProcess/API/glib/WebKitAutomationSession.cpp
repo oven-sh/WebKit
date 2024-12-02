@@ -74,7 +74,7 @@ struct _WebKitAutomationSessionPrivate {
     CString id;
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitAutomationSession, webkit_automation_session, G_TYPE_OBJECT, GObject)
 
@@ -353,11 +353,11 @@ static WebKitNetworkProxyMode parseProxyCapabilities(const Inspector::RemoteInsp
         return WEBKIT_NETWORK_PROXY_MODE_NO_PROXY;
 
     if (!proxy.ignoreAddressList.isEmpty()) {
-        Vector<const char*> ignoreAddressList(proxy.ignoreAddressList.size() + 1);
+        GUniquePtr<char*> ignoreAddressList(static_cast<char**>(g_new0(char*, proxy.ignoreAddressList.size() + 1)));
         unsigned i = 0;
         for (const auto& ignoreAddress : proxy.ignoreAddressList)
-            ignoreAddressList[i++] = ignoreAddress.utf8().data();
-        *settings = webkit_network_proxy_settings_new(nullptr, ignoreAddressList.data());
+            ignoreAddressList.get()[i++] = g_strdup(ignoreAddress.utf8().data());
+        *settings = webkit_network_proxy_settings_new(nullptr, ignoreAddressList.get());
     } else
         *settings = webkit_network_proxy_settings_new(nullptr, nullptr);
 

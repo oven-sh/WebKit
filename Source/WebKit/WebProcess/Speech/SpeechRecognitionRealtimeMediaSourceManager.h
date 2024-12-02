@@ -40,16 +40,11 @@ class CaptureDevice;
 
 namespace WebKit {
 
-class WebProcess;
-
 class SpeechRecognitionRealtimeMediaSourceManager final : public IPC::MessageReceiver, private IPC::MessageSender {
     WTF_MAKE_TZONE_ALLOCATED(SpeechRecognitionRealtimeMediaSourceManager);
 public:
-    explicit SpeechRecognitionRealtimeMediaSourceManager(WebProcess&);
+    explicit SpeechRecognitionRealtimeMediaSourceManager(Ref<IPC::Connection>&&);
     ~SpeechRecognitionRealtimeMediaSourceManager();
-
-    void ref() const;
-    void deref() const;
 
 private:
     // Messages::SpeechRecognitionRealtimeMediaSourceManager
@@ -65,10 +60,7 @@ private:
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final;
 
-    IPC::Connection& connection() const;
-    Ref<IPC::Connection> protectedConnection() const;
-
-    WeakRef<WebProcess> m_process;
+    Ref<IPC::Connection> m_connection;
 
     class Source;
     friend class Source;

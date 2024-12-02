@@ -33,7 +33,6 @@
 #include <WebKit/WKURLCF.h>
 #include <WebKit/WKContextPrivate.h>
 #include <wtf/RetainPtr.h>
-#include <wtf/cf/VectorCF.h>
 
 namespace TestWebKitAPI {
 
@@ -50,7 +49,9 @@ static void didReceiveMessageFromInjectedBundle(WKContextRef, WKStringRef messag
     WKDataRef receivedData = static_cast<WKDataRef>(body);
         
     // Do basic sanity checks on the returned webarchive. We have more thorough checks in LayoutTests.
-    RetainPtr data = toCFData(WKDataGetSpan(receivedData));
+    size_t size = WKDataGetSize(receivedData);
+    const unsigned char* bytes = WKDataGetBytes(receivedData);
+    RetainPtr<CFDataRef> data = adoptCF(CFDataCreate(0, bytes, size));
     RetainPtr<CFPropertyListRef> propertyList = adoptCF(CFPropertyListCreateWithData(0, data.get(), kCFPropertyListImmutable, 0, 0));
     EXPECT_TRUE(propertyList);
     

@@ -36,8 +36,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 namespace Disassembler {
@@ -204,4 +202,3 @@ const char* labelFor(void* thunkAddress)
 
 } // namespace JSC
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

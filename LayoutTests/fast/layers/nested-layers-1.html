@@ -2,15 +2,13 @@
 <html>
 <head>
 <script>
-async function test()
+function test()
 {
     document.body.offsetTop;
     if (window.testRunner) {
+        testRunner.displayAndTrackRepaints();
         testRunner.dumpAsText();
-        testRunner.waitUntilDone();
-        await testRunner.displayAndTrackRepaints();
         finish();
-        testRunner.notifyDone();
     } else {
         window.setTimeout(finish, 50);
     }

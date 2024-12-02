@@ -39,8 +39,6 @@
 #include <wtf/dtoa.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 bool isLexerKeyword(const Identifier& identifier)
@@ -2767,5 +2765,3 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL_TEMPLATE(LexerLChar);
 WTF_MAKE_TZONE_ALLOCATED_IMPL_TEMPLATE(LexerUChar);
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

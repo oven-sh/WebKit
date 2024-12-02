@@ -33,23 +33,22 @@ class RemoteFrame;
 
 class AXRemoteFrame final : public AccessibilityMockObject {
 public:
-    static Ref<AXRemoteFrame> create(AXID);
+    static Ref<AXRemoteFrame> create();
 
 #if PLATFORM(COCOA)
     void initializePlatformElementWithRemoteToken(std::span<const uint8_t>, int);
     std::span<const uint8_t> generateRemoteToken() const;
-    RetainPtr<id> remoteFramePlatformElement() const final { return m_remoteFramePlatformElement; }
+    RetainPtr<id> remoteFramePlatformElement() const { return m_remoteFramePlatformElement; }
     pid_t processIdentifier() const { return m_processIdentifier; }
 #endif
 
 private:
     virtual ~AXRemoteFrame() = default;
-    explicit AXRemoteFrame(AXID);
 
-    AccessibilityRole determineAccessibilityRole() final { return AccessibilityRole::RemoteFrame; }
-    bool computeIsIgnored() const final { return false; }
-    bool isAXRemoteFrame() const final { return true; }
-    LayoutRect elementRect() const final;
+    AccessibilityRole determineAccessibilityRole() { return AccessibilityRole::RemoteFrame; }
+    bool computeIsIgnored() const { return false; }
+    bool isAXRemoteFrame() const { return true; }
+    LayoutRect elementRect() const;
 
 #if PLATFORM(COCOA)
     RetainPtr<id> m_remoteFramePlatformElement;

@@ -39,14 +39,14 @@
 
 namespace WebKit {
 
-RTCDataChannelRemoteManager& RTCDataChannelRemoteManager::singleton()
+RTCDataChannelRemoteManager& RTCDataChannelRemoteManager::sharedManager()
 {
-    static NeverDestroyed<Ref<RTCDataChannelRemoteManager>> sharedManager = [] {
-        Ref instance = adoptRef(*new RTCDataChannelRemoteManager);
+    static RTCDataChannelRemoteManager* sharedManager = [] {
+        auto instance = new RTCDataChannelRemoteManager;
         instance->initialize();
         return instance;
     }();
-    return sharedManager.get();
+    return *sharedManager;
 }
 
 RTCDataChannelRemoteManager::RTCDataChannelRemoteManager()
@@ -184,10 +184,10 @@ RTCDataChannelRemoteManager::RemoteHandlerConnection::RemoteHandlerConnection(Re
 void RTCDataChannelRemoteManager::RemoteHandlerConnection::connectToSource(WebCore::RTCDataChannelRemoteHandler& handler, std::optional<WebCore::ScriptExecutionContextIdentifier> contextIdentifier, WebCore::RTCDataChannelIdentifier localIdentifier, WebCore::RTCDataChannelIdentifier remoteIdentifier)
 {
     m_queue->dispatch([handler = WeakPtr { handler }, contextIdentifier, localIdentifier]() mutable {
-        RTCDataChannelRemoteManager::singleton().m_handlers.add(localIdentifier.object(), RemoteHandler { WTFMove(handler), *contextIdentifier });
+        RTCDataChannelRemoteManager::sharedManager().m_handlers.add(localIdentifier.object(), RemoteHandler { WTFMove(handler), *contextIdentifier });
     });
     m_connection->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::ConnectToRTCDataChannelRemoteSource { localIdentifier, remoteIdentifier }, [localIdentifier](auto&& result) {
-        RTCDataChannelRemoteManager::singleton().postTaskToHandler(localIdentifier, [result](auto& handler) {
+        RTCDataChannelRemoteManager::sharedManager().postTaskToHandler(localIdentifier, [result](auto& handler) {
             if (!result || !*result) {
                 handler.didDetectError(WebCore::RTCError::create(WebCore::RTCErrorDetailType::DataChannelFailure, "Unable to find data channel"_s));
                 return;

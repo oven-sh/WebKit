@@ -15,9 +15,6 @@ esid: sec-array.prototype-@@iterator
 ---*/
 
 assert.sameValue(Array.prototype[Symbol.iterator], Array.prototype.values);
-
-verifyProperty(Array.prototype, Symbol.iterator, {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Array.prototype, Symbol.iterator);
+verifyWritable(Array.prototype, Symbol.iterator);
+verifyConfigurable(Array.prototype, Symbol.iterator);

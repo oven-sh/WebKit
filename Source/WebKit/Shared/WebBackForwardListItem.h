@@ -88,8 +88,6 @@ public:
     void wasRemovedFromBackForwardList();
 
     WebBackForwardCacheEntry* backForwardCacheEntry() const { return m_backForwardCacheEntry.get(); }
-    RefPtr<WebBackForwardCacheEntry> protectedBackForwardCacheEntry() const;
-
     SuspendedPageProxy* suspendedPage() const;
 
     void setNavigatedFrameID(WebCore::FrameIdentifier frameID) { m_navigatedFrameID = frameID; }
@@ -117,7 +115,7 @@ private:
 
     // WebBackForwardCache.
     friend class WebBackForwardCache;
-    void setBackForwardCacheEntry(RefPtr<WebBackForwardCacheEntry>&&);
+    void setBackForwardCacheEntry(std::unique_ptr<WebBackForwardCacheEntry>&&);
 
     RefPtr<WebsiteDataStore> m_dataStoreForWebArchive;
 
@@ -126,7 +124,7 @@ private:
     WebPageProxyIdentifier m_pageID;
     WebCore::ProcessIdentifier m_lastProcessIdentifier;
     Markable<WebCore::FrameIdentifier> m_navigatedFrameID;
-    RefPtr<WebBackForwardCacheEntry> m_backForwardCacheEntry;
+    std::unique_ptr<WebBackForwardCacheEntry> m_backForwardCacheEntry;
 #if PLATFORM(COCOA) || PLATFORM(GTK)
     RefPtr<ViewSnapshot> m_snapshot;
 #endif

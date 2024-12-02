@@ -98,7 +98,7 @@ GStreamerAudioCaptureSource::GStreamerAudioCaptureSource(GStreamerCaptureDevice&
     });
 
     auto& singleton = GStreamerAudioCaptureDeviceManager::singleton();
-    singleton.registerCapturer(m_capturer.copyRef());
+    singleton.registerCapturer(m_capturer);
 }
 
 GStreamerAudioCaptureSource::~GStreamerAudioCaptureSource()
@@ -111,14 +111,6 @@ void GStreamerAudioCaptureSource::captureEnded()
 {
     m_capturer->stop();
     captureFailed();
-}
-
-std::pair<GstClockTime, GstClockTime> GStreamerAudioCaptureSource::queryCaptureLatency() const
-{
-    if (!m_capturer)
-        return { GST_CLOCK_TIME_NONE, GST_CLOCK_TIME_NONE };
-
-    return m_capturer->queryLatency();
 }
 
 void GStreamerAudioCaptureSource::startProducingData()

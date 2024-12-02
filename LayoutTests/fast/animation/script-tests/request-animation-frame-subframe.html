@@ -19,7 +19,7 @@
     }
 
     async function doWork() {
-        await parent.doDisplay();
+        parent.doDisplay();
         await timeoutPromise(100);
         parent.doCheckResult();
         await timeoutPromise(100);

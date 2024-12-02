@@ -7,10 +7,11 @@
 // based on the OpenCL Specification V3.0.7, see https://www.khronos.org/registry/OpenCL/
 // Each used CL error code is preceeded by a citation of the relevant rule in the spec.
 
-#include "libANGLE/cl_utils.h"
 #include "libANGLE/validationCL_autogen.h"
 
 #include "common/string_utils.h"
+
+#include "libANGLE/cl_utils.h"
 
 #define ANGLE_VALIDATE_VERSION(version, major, minor)          \
     do                                                         \
@@ -489,14 +490,8 @@ cl_int ValidateHostRegionForImage(const Image &image,
         {
             return CL_INVALID_VALUE;
         }
-        else if (slicePitch < rowPitch)
-        {
-            return CL_INVALID_VALUE;
-        }
         // CL_INVALID_VALUE if slice_pitch is not 0 and is less than row_pitch x height.
-        else if (((image.getType() == MemObjectType::Image2D_Array) ||
-                  (image.getType() == MemObjectType::Image3D)) &&
-                 (slicePitch < rowPitch * region[1]))
+        if (slicePitch < rowPitch * region[1])
         {
             return CL_INVALID_VALUE;
         }
@@ -845,8 +840,7 @@ cl_int ValidateGetCommandQueueInfo(cl_command_queue command_queue,
     }
     const CommandQueue &queue = command_queue->cast<CommandQueue>();
     // or if command_queue is not a valid command-queue for param_name.
-    if (param_name == CommandQueueInfo::Size && queue.isOnDevice() &&
-        !queue.getDevice().hasDeviceEnqueueCaps())
+    if (param_name == CommandQueueInfo::Size && queue.isOnDevice())
     {
         return CL_INVALID_COMMAND_QUEUE;
     }
@@ -2229,12 +2223,6 @@ cl_int ValidateEnqueueNDRangeKernel(cl_command_queue command_queue,
         return CL_INVALID_GLOBAL_OFFSET;
     }
 
-    // CL_INVALID_KERNEL_ARGS if all the kernel arguments have not been set for the kernel
-    if (!krnl.areAllArgsSet())
-    {
-        return CL_INVALID_KERNEL_ARGS;
-    }
-
     size_t compileWorkGroupSize[3] = {0, 0, 0};
     if (IsError(krnl.getWorkGroupInfo(const_cast<cl_device_id>(device.getNative()),
                                       KernelWorkGroupInfo::CompileWorkGroupSize,
@@ -2244,22 +2232,6 @@ cl_int ValidateEnqueueNDRangeKernel(cl_command_queue command_queue,
     }
     if (local_work_size != nullptr)
     {
-        // CL_INVALID_WORK_GROUP_SIZE when non-uniform work-groups are not supported, the size of
-        // each work-group must be uniform. If local_work_size is specified, the values specified in
-        // global_work_size[0],...,global_work_size[work_dim - 1] must be evenly divisible by
-        // the corresponding values specified in local_work_size[0],...,
-        // local_work_size[work_dim-1].
-        if (!device.supportsNonUniformWorkGroups())
-        {
-            for (cl_uint i = 0; i < work_dim; ++i)
-            {
-                if (global_work_size[i] % local_work_size[i] != 0)
-                {
-                    return CL_INVALID_WORK_GROUP_SIZE;
-                }
-            }
-        }
-
         for (cl_uint i = 0; i < work_dim; ++i)
         {
             // CL_INVALID_WORK_GROUP_SIZE when non-uniform work-groups are not supported, the size
@@ -2682,18 +2654,6 @@ cl_int ValidateCreateSubBuffer(cl_mem buffer,
     if (region->size == 0u)
     {
         return CL_INVALID_BUFFER_SIZE;
-    }
-
-    // CL_MISALIGNED_SUB_BUFFER_OFFSET when the sub-buffer object is created with an offset that is
-    // not aligned to CL_DEVICE_MEM_BASE_ADDR_ALIGN value (which is in bits!) for devices associated
-    // with the context.
-    const Memory &memory = buffer->cast<Memory>();
-    for (const DevicePtr &device : memory.getContext().getDevices())
-    {
-        if (region->origin % (device->getInfo().memBaseAddrAlign / CHAR_BIT) != 0)
-        {
-            return CL_MISALIGNED_SUB_BUFFER_OFFSET;
-        }
     }
 
     return CL_SUCCESS;
@@ -3844,10 +3804,6 @@ cl_int ValidateCreateProgramWithIL(cl_context context, const void *il, size_t le
 
 cl_int ValidateCloneKernel(cl_kernel source_kernel)
 {
-    if (!Kernel::IsValid(source_kernel))
-    {
-        return CL_INVALID_KERNEL;
-    }
     return CL_SUCCESS;
 }
 

@@ -147,6 +147,7 @@ protected:
     void setCGStyle(const std::optional<GraphicsStyle>&, bool shadowsIgnoreTransforms);
 
 private:
+    void convertToDestinationColorSpaceIfNeeded(RetainPtr<CGImageRef>&);
     void drawNativeImageInternal(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
 
     void clearCGShadow();

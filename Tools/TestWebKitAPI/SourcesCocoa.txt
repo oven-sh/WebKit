@@ -128,7 +128,6 @@ Tests/WebKitCocoa/FullscreenAlert.mm
 Tests/WebKitCocoa/FullscreenDelegate.mm
 Tests/WebKitCocoa/FullscreenLayoutConstraints.mm
 Tests/WebKitCocoa/FullscreenRemoveNodeBeforeEnter.mm
-Tests/WebKitCocoa/FullscreenScrollAndResize.mm
 Tests/WebKitCocoa/FullscreenVideoTextRecognition.mm
 Tests/WebKitCocoa/GPUProcess.mm
 Tests/WebKitCocoa/Geolocation.mm
@@ -181,7 +180,6 @@ Tests/WebKitCocoa/MediaType.mm
 Tests/WebKitCocoa/MemoryFootprintThreshold.mm
 Tests/WebKitCocoa/MessagePortProviders.mm
 Tests/WebKitCocoa/ModalAlerts.mm
-Tests/WebKitCocoa/MouseSupportUIDelegate.mm
 Tests/WebKitCocoa/NSAttributedStringWebKitAdditions.mm
 Tests/WebKitCocoa/NSFileManagerExtras.mm
 Tests/WebKitCocoa/Navigation.mm

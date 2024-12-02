@@ -58,7 +58,7 @@ RefPtr<CSSPrimitiveValue> consumeColor(CSSParserTokenRange&, const CSSParserCont
 Color consumeColorRaw(CSSParserTokenRange&, const CSSParserContext&, const CSSColorParsingOptions&, CSSUnresolvedColorResolutionState&);
 
 // MARK: <color> parsing (raw)
-WEBCORE_EXPORT Color parseColorRawSlow(const String&, const CSSParserContext&, const CSSColorParsingOptions&, CSSUnresolvedColorResolutionState&);
+Color parseColorRawSlow(const String&, const CSSParserContext&, const CSSColorParsingOptions&, CSSUnresolvedColorResolutionState&);
 
 template<typename F> Color parseColorRaw(const String& string, const CSSParserContext& context, F&& lazySlowPathOptionsFunctor)
 {

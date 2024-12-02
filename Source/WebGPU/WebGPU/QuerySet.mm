@@ -47,22 +47,9 @@ Ref<QuerySet> Device::createQuerySet(const WGPUQuerySetDescriptor& descriptor)
     auto type = descriptor.type;
 
     switch (type) {
-    case WGPUQueryType_Timestamp: {
-#if !PLATFORM(WATCHOS)
-        MTLCounterSampleBufferDescriptor* sampleBufferDesc = [MTLCounterSampleBufferDescriptor new];
-        sampleBufferDesc.sampleCount = count;
-        sampleBufferDesc.storageMode = MTLStorageModeShared;
-        sampleBufferDesc.counterSet = m_capabilities.baseCapabilities.timestampCounterSet;
-
-        NSError* error = nil;
-        id<MTLCounterSampleBuffer> buffer = [m_device newCounterSampleBufferWithDescriptor:sampleBufferDesc error:&error];
-        if (error)
-            return QuerySet::createInvalid(*this);
-        return QuerySet::create(buffer, count, type, *this);
-#else
+    case WGPUQueryType_Timestamp:
         return QuerySet::createInvalid(*this);
-#endif
-    } case WGPUQueryType_Occlusion: {
+    case WGPUQueryType_Occlusion: {
         auto buffer = safeCreateBuffer(sizeof(uint64_t) * count, MTLStorageModePrivate);
         buffer.label = fromAPI(label);
         return QuerySet::create(buffer, count, type, *this);
@@ -116,8 +103,8 @@ void QuerySet::destroy()
     // https://gpuweb.github.io/gpuweb/#dom-gpuqueryset-destroy
     m_visibilityBuffer = nil;
     m_timestampBuffer = nil;
-    for (Ref commandEncoder : m_commandEncoders)
-        commandEncoder->makeSubmitInvalid();
+    for (auto& commandEncoder : m_commandEncoders)
+        commandEncoder.makeSubmitInvalid();
 
     m_commandEncoders.clear();
 }
@@ -134,7 +121,7 @@ void QuerySet::setOverrideLocation(QuerySet&, uint32_t, uint32_t)
 
 void QuerySet::setCommandEncoder(CommandEncoder& commandEncoder) const
 {
-    CommandEncoder::trackEncoder(commandEncoder, m_commandEncoders);
+    m_commandEncoders.add(commandEncoder);
     commandEncoder.addBuffer(m_visibilityBuffer);
     if (isDestroyed())
         commandEncoder.makeSubmitInvalid();

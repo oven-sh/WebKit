@@ -6,17 +6,17 @@ if (window.testRunner) {
     testRunner.waitUntilDone();
 }
 
-async function clickLink() {
+function clickLink() {
     var link = document.getElementById("anchorLink");
-    await eventSender.asyncMouseMoveTo(link.offsetLeft + 2, link.offsetTop + 2);
-    await eventSender.asyncMouseDown(); 
-    await eventSender.asyncMouseUp(); 
+    eventSender.mouseMoveTo(link.offsetLeft + 2, link.offsetTop + 2);
+    eventSender.mouseDown(); 
+    eventSender.mouseUp(); 
 }
 
-async function run() {
-    await clickLink();
+function run() {
+    clickLink();
     window.scroll(0, 0);
-    await clickLink();
+    clickLink();
     var scrollY = window.scrollY;
     var line = document.createElement('div');
     line.appendChild(document.createTextNode("Scroll position is " + scrollY + "px"));

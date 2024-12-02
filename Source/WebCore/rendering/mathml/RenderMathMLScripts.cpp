@@ -233,9 +233,6 @@ void RenderMathMLScripts::computePreferredLogicalWidths()
 
     m_minPreferredLogicalWidth = m_maxPreferredLogicalWidth;
 
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::CalculatePreferredLogicalWidth);
-    applySizeToMathContent(LayoutPhase::CalculatePreferredLogicalWidth, sizes);
-
     adjustPreferredLogicalWidthsForBorderAndPadding();
 
     setPreferredLogicalWidthsDirty(false);
@@ -483,10 +480,6 @@ void RenderMathMLScripts::layoutBlock(bool relayoutChildren, LayoutUnit)
         }
     }
     }
-
-    auto sizes = sizeAppliedToMathContent(LayoutPhase::Layout);
-    auto shift = applySizeToMathContent(LayoutPhase::Layout, sizes);
-    shiftInFlowChildren(shift, 0);
 
     adjustLayoutForBorderAndPadding();
 

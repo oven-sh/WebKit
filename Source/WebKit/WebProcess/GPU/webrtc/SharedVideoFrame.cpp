@@ -39,11 +39,15 @@
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #if USE(LIBWEBRTC)
 
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ALLOW_COMMA_BEGIN
+
 #include <webrtc/webkit_sdk/WebKit/WebKitUtilities.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+
+ALLOW_COMMA_END
 
 #endif
 
@@ -235,7 +239,7 @@ RetainPtr<CVPixelBufferRef> SharedVideoFrameReader::readBufferFromSharedMemory()
         return { };
     }
 
-    auto result = info->createPixelBufferFromMemory(data.subspan(SharedVideoFrameInfoEncodingLength), pixelBufferPool(*info));
+    auto result = info->createPixelBufferFromMemory(data.data() + SharedVideoFrameInfoEncodingLength, pixelBufferPool(*info));
     if (result && m_resourceOwner && m_useIOSurfaceBufferPool == UseIOSurfaceBufferPool::Yes)
         setOwnershipIdentityForCVPixelBuffer(result.get(), m_resourceOwner);
     return result;
@@ -310,5 +314,7 @@ bool SharedVideoFrameReader::setSharedMemory(SharedMemory::Handle&& handle)
 }
 
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

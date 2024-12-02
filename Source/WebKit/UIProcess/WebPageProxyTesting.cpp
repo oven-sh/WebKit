@@ -30,7 +30,6 @@
 #include "MessageSenderInlines.h"
 #include "NetworkProcessMessages.h"
 #include "NetworkProcessProxy.h"
-#include "WebBackForwardList.h"
 #include "WebFrameProxy.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
@@ -209,45 +208,6 @@ void WebPageProxyTesting::setTopContentInset(float contentInset, CompletionHandl
 Ref<WebPageProxy> WebPageProxyTesting::protectedPage() const
 {
     return m_page.get();
-}
-
-void WebPageProxyTesting::resetStateBetweenTests()
-{
-    protectedPage()->protectedLegacyMainFrameProcess()->resetState();
-
-    if (RefPtr mainFrame = m_page->mainFrame())
-        mainFrame->disownOpener();
-
-    protectedPage()->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
-        webProcess.send(Messages::WebPageTesting::ResetStateBetweenTests(), pageID);
-    });
-}
-
-void WebPageProxyTesting::clearBackForwardList(CompletionHandler<void()>&& completionHandler)
-{
-    Ref page = m_page.get();
-    page->protectedBackForwardList()->clear();
-
-    Ref callbackAggregator = CallbackAggregator::create(WTFMove(completionHandler));
-    page->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
-        webProcess.sendWithAsyncReply(Messages::WebPageTesting::ClearCachedBackForwardListCounts(), [callbackAggregator] { }, pageID);
-    });
-}
-
-void WebPageProxyTesting::setTracksRepaints(bool trackRepaints, CompletionHandler<void()>&& completionHandler)
-{
-    Ref callbackAggregator = CallbackAggregator::create(WTFMove(completionHandler));
-    protectedPage()->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
-        webProcess.sendWithAsyncReply(Messages::WebPageTesting::SetTracksRepaints(trackRepaints), [callbackAggregator] { }, pageID);
-    });
-}
-
-void WebPageProxyTesting::displayAndTrackRepaints(CompletionHandler<void()>&& completionHandler)
-{
-    Ref callbackAggregator = CallbackAggregator::create(WTFMove(completionHandler));
-    protectedPage()->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
-        webProcess.sendWithAsyncReply(Messages::WebPageTesting::DisplayAndTrackRepaints(), [callbackAggregator] { }, pageID);
-    });
 }
 
 } // namespace WebKit

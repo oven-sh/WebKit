@@ -15,8 +15,6 @@ features: [TypedArray]
 
 assert.sameValue(Uint8ClampedArray.prototype, Object.getPrototypeOf(new Uint8ClampedArray(0)));
 
-verifyProperty(Uint8ClampedArray, "prototype", {
-  writable: false,
-  enumerable: false,
-  configurable: false,
-});
+verifyNotEnumerable(Uint8ClampedArray, "prototype");
+verifyNotWritable(Uint8ClampedArray, "prototype");
+verifyNotConfigurable(Uint8ClampedArray, "prototype");

@@ -41,7 +41,7 @@ enum class ShouldMinimizeLanguages : bool { No, Yes };
 struct LocaleComponents {
     String languageCode;
     String scriptCode;
-    String regionCode;
+    String countryCode;
 };
 
 WTF_EXPORT_PRIVATE String defaultLanguage(ShouldMinimizeLanguages = ShouldMinimizeLanguages::Yes); // Thread-safe.

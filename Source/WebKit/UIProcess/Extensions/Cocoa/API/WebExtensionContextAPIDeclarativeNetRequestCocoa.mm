@@ -263,10 +263,9 @@ void WebExtensionContext::declarativeNetRequestGetMatchedRules(std::optional<Web
         allURLs.append(matchedRule.url);
     }
 
-    requestPermissionToAccessURLs(allURLs, tab, [this, protectedThis = Ref { *this }, filteredRules = WTFMove(filteredRules), completionHandler = WTFMove(completionHandler)](auto&& requestedURLs, auto&& allowedURLs, auto expirationDate) mutable {
+    requestPermissionToAccessURLs(allURLs, nullptr, [this, protectedThis = Ref { *this }, filteredRules = WTFMove(filteredRules), completionHandler = WTFMove(completionHandler)](auto&& requestedURLs, auto&& allowedURLs, auto expirationDate) mutable {
         auto result = WTF::compactMap(filteredRules, [&](auto& matchedRule) -> std::optional<WebExtensionMatchedRuleParameters> {
-            RefPtr matchTab = getTab(matchedRule.tabIdentifier);
-            return hasPermission(matchedRule.url, matchTab.get()) ? std::optional(matchedRule) : std::nullopt;
+            return hasPermission(matchedRule.url) ? std::optional(matchedRule) : std::nullopt;
         });
 
         completionHandler(WTFMove(result));

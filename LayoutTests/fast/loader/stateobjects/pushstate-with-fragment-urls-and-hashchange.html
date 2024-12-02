@@ -2,10 +2,12 @@
 <head>
 <script src="../../../resources/js-test.js"></script>
 <script>
-async function runTest()
+
+if (window.testRunner)
+    testRunner.clearBackForwardList();
+
+function runTest()
 {
-    testRunner?.waitUntilDone();
-    await testRunner?.clearBackForwardList();
     try {
         history.pushState(null, null, 'some-other.html');
         testFailed("history.pushState(null, null, 'some-other.html') didn't throw");

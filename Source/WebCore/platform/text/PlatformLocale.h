@@ -43,7 +43,7 @@ class Locale {
     WTF_MAKE_NONCOPYABLE(Locale);
 
 public:
-    WEBCORE_EXPORT static std::unique_ptr<Locale> create(const AtomString& localeIdentifier);
+    static std::unique_ptr<Locale> create(const AtomString& localeIdentifier);
     static std::unique_ptr<Locale> createDefault();
 
     // Converts the specified number string to another number string localized
@@ -58,17 +58,6 @@ public:
     // callers of this function are responsible to check the format of the
     // resultant string.
     String convertFromLocalizedNumber(const String&);
-
-    enum class WritingDirection: uint8_t {
-        Default,
-        LeftToRight,
-        RightToLeft
-    };
-
-#if PLATFORM(COCOA)
-    // Returns the default writing direction for the specified locale.
-    virtual WritingDirection defaultWritingDirection() const = 0;
-#endif
 
 #if ENABLE(DATE_AND_TIME_INPUT_TYPES)
     // Returns date format in Unicode TR35 LDML[1] containing day of month,
@@ -135,7 +124,7 @@ public:
     virtual String formatDateTime(const DateComponents&, FormatType = FormatTypeUnspecified);
 #endif
 
-    WEBCORE_EXPORT virtual ~Locale();
+    virtual ~Locale();
 
 protected:
     enum {

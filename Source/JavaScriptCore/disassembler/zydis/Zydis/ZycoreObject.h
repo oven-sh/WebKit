@@ -34,9 +34,6 @@
 
 #include "ZycoreStatus.h"
 #include "ZycoreTypes.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #ifdef __cplusplus
 extern "C" {
@@ -83,7 +80,5 @@ typedef ZyanStatus (*ZyanConstMemberFunction)(const void* object);
 #ifdef __cplusplus
 }
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ZYCORE_OBJECT_H */

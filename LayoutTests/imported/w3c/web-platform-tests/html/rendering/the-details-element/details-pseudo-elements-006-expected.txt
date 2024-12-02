@@ -1,5 +1,0 @@
-summary
-contents
-
-PASS ::details-content matches :hover when mouse pointer is over it
-

@@ -838,8 +838,6 @@ SUPPRESS_ASAN inline void JSGlobalObject::initStaticGlobals(VM& vm)
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 void JSGlobalObject::init(VM& vm)
 {
     ASSERT(vm.traps().isDeferringTermination());
@@ -1157,25 +1155,18 @@ void JSGlobalObject::init(VM& vm)
     m_setIteratorPrototype.set(vm, this, setIteratorPrototype);
     m_setIteratorStructure.set(vm, this, JSSetIterator::createStructure(vm, this, setIteratorPrototype));
 
-    m_asyncFromSyncIteratorStructure.initLater(
-        [] (const Initializer<Structure>& init) {
-            auto* asyncFromSyncIteratorPrototype = AsyncFromSyncIteratorPrototype::create(init.vm, init.owner, AsyncFromSyncIteratorPrototype::createStructure(init.vm, init.owner, init.owner->m_iteratorPrototype.get()));
-            init.set(JSAsyncFromSyncIterator::createStructure(init.vm, init.owner, asyncFromSyncIteratorPrototype));
-    });
+    auto* asyncFromSyncIteratorPrototype = AsyncFromSyncIteratorPrototype::create(vm, this, AsyncFromSyncIteratorPrototype::createStructure(vm, this, m_iteratorPrototype.get()));
+    m_asyncFromSyncIteratorPrototype.set(vm, this, asyncFromSyncIteratorPrototype);
+    m_asyncFromSyncIteratorStructure.set(vm, this, JSAsyncFromSyncIterator::createStructure(vm, this, asyncFromSyncIteratorPrototype));
 
-    m_regExpStringIteratorStructure.initLater(
-        [] (const Initializer<Structure>& init) {
-            auto* regExpStringIteratorPrototype = RegExpStringIteratorPrototype::create(init.vm, init.owner, RegExpStringIteratorPrototype::createStructure(init.vm, init.owner, init.owner->m_iteratorPrototype.get()));
-            init.set(JSRegExpStringIterator::createStructure(init.vm, init.owner, regExpStringIteratorPrototype));
-    });
+    auto* regExpStringIteratorPrototype = RegExpStringIteratorPrototype::create(vm, this, RegExpStringIteratorPrototype::createStructure(vm, this, m_iteratorPrototype.get()));
+    m_regExpStringIteratorPrototype.set(vm, this, regExpStringIteratorPrototype);
+    m_regExpStringIteratorStructure.set(vm, this, JSRegExpStringIterator::createStructure(vm, this, regExpStringIteratorPrototype));
 
     if (Options::useIteratorHelpers()) {
-        m_wrapForValidIteratorStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                auto* wrapForValidIteratorPrototype = WrapForValidIteratorPrototype::create(init.vm, init.owner, WrapForValidIteratorPrototype::createStructure(init.vm, init.owner, init.owner->m_iteratorPrototype.get()));
-                init.set(JSWrapForValidIterator::createStructure(init.vm, init.owner, wrapForValidIteratorPrototype));
-        });
-
+        auto* wrapForValidIteratorPrototype = WrapForValidIteratorPrototype::create(vm, this, WrapForValidIteratorPrototype::createStructure(vm, this, m_iteratorPrototype.get()));
+        m_wrapForValidIteratorPrototype.set(vm, this, wrapForValidIteratorPrototype);
+        m_wrapForValidIteratorStructure.set(vm, this, JSWrapForValidIterator::createStructure(vm, this, wrapForValidIteratorPrototype));
     }
 
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::sentinelString)].set(vm, this, vm.smallStrings.sentinelString());
@@ -2008,8 +1999,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         this->haveABadTime(vm);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 bool JSGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -2387,8 +2376,6 @@ IterationStatus ObjectsWithBrokenIndexingFinder<mode>::operator()(HeapCell* cell
 
 } // end private namespace for helpers for JSGlobalObject::haveABadTime()
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
 {
     if (isHavingABadTime())
@@ -2431,8 +2418,6 @@ void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
     m_havingABadTimeWatchpointSet->fireAll(vm, "Having a bad time");
     ASSERT(isHavingABadTime()); // The watchpoint is what tells us that we're having a bad time.
 };
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void JSGlobalObject::clearStructureCache(VM& vm)
 {
@@ -2575,8 +2560,6 @@ void JSGlobalObject::resetPrototype(VM& vm, JSValue prototype)
     setGlobalThis(vm, JSGlobalProxy::create(vm, JSGlobalProxy::createStructure(vm, this, prototype), this));
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 template<typename Visitor>
 void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 { 
@@ -2676,6 +2659,9 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncGeneratorPrototype);
     visitor.append(thisObject->m_asyncIteratorPrototype);
     visitor.append(thisObject->m_asyncGeneratorFunctionPrototype);
+    visitor.append(thisObject->m_wrapForValidIteratorPrototype);
+    visitor.append(thisObject->m_asyncFromSyncIteratorPrototype);
+    visitor.append(thisObject->m_regExpStringIteratorPrototype);
 
     thisObject->m_debuggerScopeStructure.visit(visitor);
     thisObject->m_withScopeStructure.visit(visitor);
@@ -2730,9 +2716,9 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_arrayIteratorStructure);
     visitor.append(thisObject->m_mapIteratorStructure);
     visitor.append(thisObject->m_setIteratorStructure);
-    thisObject->m_wrapForValidIteratorStructure.visit(visitor);
-    thisObject->m_asyncFromSyncIteratorStructure.visit(visitor);
-    thisObject->m_regExpStringIteratorStructure.visit(visitor);
+    visitor.append(thisObject->m_wrapForValidIteratorStructure);
+    visitor.append(thisObject->m_asyncFromSyncIteratorStructure);
+    visitor.append(thisObject->m_regExpStringIteratorStructure);
     thisObject->m_iteratorResultObjectStructure.visit(visitor);
     thisObject->m_dataPropertyDescriptorObjectStructure.visit(visitor);
     thisObject->m_accessorPropertyDescriptorObjectStructure.visit(visitor);
@@ -2795,20 +2781,15 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         if (thisObject->m_weakTickets) {
             Locker locker { thisObject->cellLock() };
             for (Ref<DeferredWorkTimer::TicketData> ticket : *thisObject->m_weakTickets) {
-                // FIXME: This seems like it should remove the cancelled ticket? Although, it would likely have to deal with deadlocking somehow.
                 if (ticket->isCancelled())
                     continue;
                 visitor.appendUnbarriered(ticket->scriptExecutionOwner());
-                // The check above is just an optimization since between the check and here the mutator could cancel the ticket.
-                constexpr bool mayBeCancelled = true;
-                for (auto& dependency : ticket->dependencies(mayBeCancelled))
-                    visitor.appendUnbarriered(dependency);
+                for (auto& dependency : ticket->dependencies())
+                    visitor.append(dependency);
             }
         }
     }
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, JSGlobalObject);
 
@@ -2827,8 +2808,6 @@ SUPPRESS_ASAN void JSGlobalObject::exposeDollarVM(VM& vm)
 
     putDirect(vm, Identifier::fromString(vm, "$vm"_s), dollarVM, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void JSGlobalObject::addStaticGlobals(GlobalPropertyInfo* globals, int count)
 {
@@ -2857,8 +2836,6 @@ void JSGlobalObject::addStaticGlobals(GlobalPropertyInfo* globals, int count)
         symbolTablePutTouchWatchpointSet(vm(), this, global.identifier, global.value, variable, watchpointSet);
     }
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 bool JSGlobalObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
@@ -3021,8 +2998,6 @@ void JSGlobalObject::installSaneChainWatchpoints()
     m_objectPrototypeAbsenceOfIndexedPropertiesWatchpointForString->install(m_objectPrototypeChainIsSaneWatchpointSet, *m_vm);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 void JSGlobalObject::tryInstallArrayBufferSpeciesWatchpoint(ArrayBufferSharingMode sharingMode)
 {
     static_assert(static_cast<unsigned>(ArrayBufferSharingMode::Default) == 0);
@@ -3030,8 +3005,6 @@ void JSGlobalObject::tryInstallArrayBufferSpeciesWatchpoint(ArrayBufferSharingMo
     unsigned index = static_cast<unsigned>(sharingMode);
     tryInstallSpeciesWatchpoint(arrayBufferPrototype(sharingMode), arrayBufferConstructor(sharingMode), m_arrayBufferPrototypeConstructorWatchpoints[index], m_arrayBufferConstructorSpeciesWatchpoints[index], arrayBufferSpeciesWatchpointSet(sharingMode), HasSpeciesProperty::Yes, arrayBufferSpeciesGetterSetter(sharingMode));
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& JSGlobalObject::typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType type)
 {

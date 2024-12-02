@@ -32,8 +32,6 @@
 #include "A64DOpcode.h"
 #include "MacroAssemblerCodeRef.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 bool tryToDisassemble(const CodePtr<DisassemblyPtrTag>& codePtr, size_t size, void* codeStart, void* codeEnd, const char* prefix, PrintStream& out)
@@ -41,17 +39,17 @@ bool tryToDisassemble(const CodePtr<DisassemblyPtrTag>& codePtr, size_t size, vo
     uint32_t* currentPC = codePtr.untaggedPtr<uint32_t*>();
     size_t byteCount = size;
 
-    uint32_t* armCodeStart = std::bit_cast<uint32_t*>(codeStart);
-    uint32_t* armCodeEnd = std::bit_cast<uint32_t*>(codeEnd);
+    uint32_t* armCodeStart = bitwise_cast<uint32_t*>(codeStart);
+    uint32_t* armCodeEnd = bitwise_cast<uint32_t*>(codeEnd);
     A64DOpcode arm64Opcode(armCodeStart, armCodeEnd);
 
     unsigned pcOffset = (currentPC - armCodeStart) * sizeof(uint32_t);
     char pcInfo[25];
     while (byteCount) {
         if (codeStart)
-            snprintf(pcInfo, sizeof(pcInfo) - 1, "<%u> %#llx", pcOffset, static_cast<unsigned long long>(std::bit_cast<uintptr_t>(currentPC)));
+            snprintf(pcInfo, sizeof(pcInfo) - 1, "<%u> %#llx", pcOffset, static_cast<unsigned long long>(bitwise_cast<uintptr_t>(currentPC)));
         else
-            snprintf(pcInfo, sizeof(pcInfo) - 1, "%#llx", static_cast<unsigned long long>(std::bit_cast<uintptr_t>(currentPC)));
+            snprintf(pcInfo, sizeof(pcInfo) - 1, "%#llx", static_cast<unsigned long long>(bitwise_cast<uintptr_t>(currentPC)));
         out.printf("%s%24s: %s", prefix, pcInfo, arm64Opcode.disassemble(currentPC));
         if (auto str = AssemblyCommentRegistry::singleton().comment(currentPC))
             out.printf("; %s\n", str->ascii().data());
@@ -67,6 +65,5 @@ bool tryToDisassemble(const CodePtr<DisassemblyPtrTag>& codePtr, size_t size, vo
 
 } // namespace JSC
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(ARM64_DISASSEMBLER)
+

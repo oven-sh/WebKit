@@ -35,14 +35,11 @@
 #import "TimeRanges.h"
 #import <AVFoundation/AVTime.h>
 #import <pal/spi/cocoa/AVKitSPI.h>
-#import <wtf/ObjCRuntimeExtras.h>
 #import <wtf/text/CString.h>
 #import <wtf/text/WTFString.h>
 
 #import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 SOFTLINK_AVKIT_FRAMEWORK()
 SOFT_LINK_CLASS_OPTIONAL(AVKit, AVPlayerController)
@@ -160,19 +157,22 @@ static Class createWebAVPlayerControllerForwarderClass()
     objc_registerClassPair(newClass);
 
     // Remove all of AVPlayerController's methods.
-    auto methods = class_copyMethodListSpan(superClass);
+    unsigned methodCount = 0;
+    Method *methods = class_copyMethodList(superClass, &methodCount);
     IMP unknownMethodImp = class_getMethodImplementation(superClass, NSSelectorFromString(@"_web_unknownMethod"));
-    for (auto& method : methods.span())
-        class_addMethod(newClass, method_getName(method), unknownMethodImp, method_getTypeEncoding(method));
+    for (unsigned i = 0; i < methodCount; i++)
+        class_addMethod(newClass, method_getName(methods[i]), unknownMethodImp, method_getTypeEncoding(methods[i]));
+    free(methods);
 
     // Copy methods from WebAVPlayerControllerForwarder.
-    methods = class_copyMethodListSpan(implClass);
-    for (auto& method : methods.span()) {
-        SEL selector = method_getName(method);
+    methods = class_copyMethodList(implClass, &methodCount);
+    for (unsigned i = 0; i < methodCount; i++) {
+        SEL selector = method_getName(methods[i]);
         if ([NSStringFromSelector(selector) hasPrefix:@"."])
             continue;
-        class_replaceMethod(newClass, selector, method_getImplementation(method), method_getTypeEncoding(method));
+        class_replaceMethod(newClass, selector, method_getImplementation(methods[i]), method_getTypeEncoding(methods[i]));
     }
+    free(methods);
 
     class_addIvar(newClass, "_playerController", sizeof(RetainPtr<WebAVPlayerController>), log2(sizeof(RetainPtr<WebAVPlayerController>)), @encode(RetainPtr<WebAVPlayerController>));
 
@@ -1306,8 +1306,6 @@ Class webAVPlayerControllerClass()
 #endif
 
 @end
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(COCOA) && HAVE(AVKIT)
 

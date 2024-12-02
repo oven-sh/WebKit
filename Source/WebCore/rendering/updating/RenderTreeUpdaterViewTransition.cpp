@@ -33,14 +33,13 @@
 #include "RenderTreeUpdater.h"
 #include "RenderView.h"
 #include "RenderViewTransitionCapture.h"
-#include "RenderViewTransitionRoot.h"
 #include "StyleTreeResolver.h"
 #include "ViewTransition.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(RenderTreeUpdater, ViewTransition);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(RenderTreeUpdaterViewTransition, RenderTreeUpdater::ViewTransition);
 
 RenderTreeUpdater::ViewTransition::ViewTransition(RenderTreeUpdater& updater)
     : m_updater(updater)
@@ -81,7 +80,7 @@ void RenderTreeUpdater::ViewTransition::updatePseudoElementTree(RenderElement& d
     if (viewTransitionRoot)
         viewTransitionRoot->setStyle(WTFMove(newRootStyle), minimalStyleDifference);
     else {
-        auto newViewTransitionRoot = WebCore::createRenderer<RenderViewTransitionRoot>(documentElementRenderer.document(), WTFMove(newRootStyle));
+        auto newViewTransitionRoot = WebCore::createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, documentElementRenderer.document(), WTFMove(newRootStyle), RenderObject::BlockFlowFlag::IsViewTransitionContainer);
         newViewTransitionRoot->initializeStyle();
         documentElementRenderer.view().setViewTransitionRoot(*newViewTransitionRoot.get());
         viewTransitionRoot = newViewTransitionRoot.get();
@@ -99,10 +98,9 @@ void RenderTreeUpdater::ViewTransition::updatePseudoElementTree(RenderElement& d
         ASSERT(!currentGroup || currentGroup->style().pseudoElementType() == PseudoId::ViewTransitionGroup);
         if (currentGroup && name == currentGroup->style().pseudoElementNameArgument()) {
             auto style = documentElementRenderer.getCachedPseudoStyle({ PseudoId::ViewTransitionGroup, name }, &documentElementRenderer.style());
-            if (!style || style->display() == DisplayType::None) {
-                documentElementRenderer.view().viewTransitionRoot()->removeChildGroup(name);
+            if (!style || style->display() == DisplayType::None)
                 descendantsToDelete.append(currentGroup);
-            } else
+            else
                 updatePseudoElementGroup(*style, downcast<RenderElement>(*currentGroup), documentElementRenderer, minimalStyleDifference);
             currentGroup = currentGroup->nextSibling();
         } else
@@ -161,10 +159,8 @@ void RenderTreeUpdater::ViewTransition::buildPseudoElementGroup(const AtomString
     if (viewTransitionImagePair)
         m_updater.m_builder.attach(*viewTransitionGroup, WTFMove(viewTransitionImagePair));
 
-    if (viewTransitionGroup) {
-        documentElementRenderer.view().viewTransitionRoot()->addChildGroup(name, *downcast<RenderBlockFlow>(viewTransitionGroup.get()));
+    if (viewTransitionGroup)
         m_updater.m_builder.attach(*documentElementRenderer.view().viewTransitionRoot(), WTFMove(viewTransitionGroup), beforeChild);
-    }
 }
 
 void RenderTreeUpdater::ViewTransition::updatePseudoElementGroup(const RenderStyle& groupStyle, RenderElement& group, RenderElement& documentElementRenderer, StyleDifference minimalStyleDifference)

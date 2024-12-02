@@ -30,7 +30,6 @@
 #pragma once
 
 #include "FetchOptions.h"
-#include "ResourceLoaderOptions.h"
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -55,8 +54,6 @@ bool shouldUpgradeInsecureContent(LocalFrame&, IsUpgradable, const URL&, FetchOp
 bool shouldBlockRequestForDisplayableContent(LocalFrame&, const URL&, ContentType, IsUpgradable = IsUpgradable::No);
 bool shouldBlockRequestForRunnableContent(LocalFrame&, SecurityOrigin&, const URL&, ShouldLogWarning = ShouldLogWarning::Yes);
 void checkFormForMixedContent(LocalFrame&, const URL&);
-
-WEBCORE_EXPORT bool canModifyRequest(const URL&, FetchOptions::Destination, Initiator, bool shouldUpgradeIPAddressAndLocalhostForTesting);
 
 } // namespace MixedContentChecker
 } // namespace WebCore

@@ -45,7 +45,7 @@ public:
     TextureMapperAnimation(TextureMapperAnimation&&) = default;
     TextureMapperAnimation& operator=(TextureMapperAnimation&&) = default;
 
-    enum class KeepInternalState : bool { No, Yes };
+    enum class KeepInternalState : bool { Yes, No };
     void apply(ApplicationResult&, MonotonicTime, KeepInternalState);
 
     void pause(Seconds);

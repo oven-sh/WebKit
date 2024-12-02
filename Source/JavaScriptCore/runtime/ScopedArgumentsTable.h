@@ -31,8 +31,6 @@
 #include <wtf/Assertions.h>
 #include <wtf/CagedUniquePtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class WatchpointSet;
@@ -107,5 +105,3 @@ private:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

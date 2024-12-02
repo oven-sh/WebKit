@@ -37,9 +37,13 @@
 #import <wtf/spi/darwin/SandboxSPI.h>
 #import <wtf/text/StringToIntegerConversion.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 
-XPCServiceInitializerDelegate::~XPCServiceInitializerDelegate() = default;
+XPCServiceInitializerDelegate::~XPCServiceInitializerDelegate()
+{
+}
 
 bool XPCServiceInitializerDelegate::checkEntitlements()
 {
@@ -234,3 +238,5 @@ void XPCServiceExit()
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

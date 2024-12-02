@@ -33,7 +33,7 @@
 #import <wtf/MainThread.h>
 
 @interface WebLowPowerModeObserver : NSObject
-@property (nonatomic) CheckedPtr<WebCore::LowPowerModeNotifier> notifier;
+@property (nonatomic) WebCore::LowPowerModeNotifier* notifier;
 @property (nonatomic, readonly) BOOL isLowPowerModeEnabled;
 @end
 
@@ -54,26 +54,17 @@
 
 - (void)dealloc
 {
-    if (_notifier)
-        [self detach];
-    [super dealloc];
-}
-
-- (void)detach
-{
-    ASSERT(isMainThread());
     [[NSNotificationCenter defaultCenter] removeObserver:self name:NSProcessInfoPowerStateDidChangeNotification object:nil];
-    _notifier = nullptr;
+    [super dealloc];
 }
 
 - (void)_didReceiveLowPowerModeChange
 {
+    _isLowPowerModeEnabled = [NSProcessInfo processInfo].lowPowerModeEnabled;
     // We need to make sure we notify the client on the main thread.
-    ensureOnMainRunLoop([self, protectedSelf = RetainPtr<WebLowPowerModeObserver>(self), lowPowerModeEnabled = [NSProcessInfo processInfo].lowPowerModeEnabled] {
-        if (!_notifier)
-            return;
-        _isLowPowerModeEnabled = lowPowerModeEnabled;
-        notifyLowPowerModeChanged(*_notifier, _isLowPowerModeEnabled);
+    callOnMainThread([self, protectedSelf = RetainPtr<WebLowPowerModeObserver>(self)] {
+        if (_notifier)
+            notifyLowPowerModeChanged(*_notifier, _isLowPowerModeEnabled);
     });
 }
 
@@ -85,13 +76,11 @@ LowPowerModeNotifier::LowPowerModeNotifier(LowPowerModeChangeCallback&& callback
     : m_observer(adoptNS([[WebLowPowerModeObserver alloc] initWithNotifier:*this]))
     , m_callback(WTFMove(callback))
 {
-    ASSERT(isMainThread());
 }
 
 LowPowerModeNotifier::~LowPowerModeNotifier()
 {
-    ASSERT(isMainThread());
-    [m_observer detach];
+    m_observer.get().notifier = nil;
 }
 
 bool LowPowerModeNotifier::isLowPowerModeEnabled() const

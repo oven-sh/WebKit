@@ -85,7 +85,7 @@ LayerContentsType RemoteLayerTreeHost::layerContentsType() const
         return LayerContentsType::IOSurface;
 
     // If e.g. SceneKit will be doing an in-process snapshot of the layer tree, CAMachPort cannot be used: rdar://problem/47481972
-    if (m_drawingArea->page() && m_drawingArea->page()->windowKind() == WindowKind::InProcessSnapshotting)
+    if (m_drawingArea->page().windowKind() == WindowKind::InProcessSnapshotting)
         return LayerContentsType::IOSurface;
 
     if (PAL::canLoad_QuartzCore_CAIOSurfaceCreate())
@@ -108,12 +108,12 @@ bool RemoteLayerTreeHost::replayDynamicContentScalingDisplayListsIntoBackingStor
 
 bool RemoteLayerTreeHost::threadedAnimationResolutionEnabled() const
 {
-    return m_drawingArea->page() && m_drawingArea->page()->preferences().threadedAnimationResolutionEnabled();
+    return m_drawingArea->page().preferences().threadedAnimationResolutionEnabled();
 }
 
 bool RemoteLayerTreeHost::cssUnprefixedBackdropFilterEnabled() const
 {
-    return m_drawingArea->page() && m_drawingArea->page()->preferences().cssUnprefixedBackdropFilterEnabled();
+    return m_drawingArea->page().preferences().cssUnprefixedBackdropFilterEnabled();
 }
 
 #if PLATFORM(MAC)
@@ -134,12 +134,8 @@ bool RemoteLayerTreeHost::updateBannerLayers(const RemoteLayerTreeTransaction& t
         return true;
     };
 
-    RefPtr page = m_drawingArea->page();
-    if (!page)
-        return false;
-
-    bool headerBannerLayerChanged = updateBannerLayer(page->headerBannerLayer(), scrolledContentsLayer);
-    bool footerBannerLayerChanged = updateBannerLayer(page->footerBannerLayer(), scrolledContentsLayer);
+    bool headerBannerLayerChanged = updateBannerLayer(m_drawingArea->page().headerBannerLayer(), scrolledContentsLayer);
+    bool footerBannerLayerChanged = updateBannerLayer(m_drawingArea->page().footerBannerLayer(), scrolledContentsLayer);
     return headerBannerLayerChanged || footerBannerLayerChanged;
 }
 #endif
@@ -298,7 +294,7 @@ void RemoteLayerTreeHost::layerWillBeRemoved(WebCore::ProcessIdentifier processI
 #if HAVE(AVKIT)
     auto videoLayerIter = m_videoLayers.find(layerID);
     if (videoLayerIter != m_videoLayers.end()) {
-        if (auto videoManager = m_drawingArea->page() ? m_drawingArea->page()->videoPresentationManager() : nullptr)
+        if (auto videoManager = m_drawingArea->page().videoPresentationManager())
             videoManager->willRemoveLayerForID(videoLayerIter->value);
         m_videoLayers.remove(videoLayerIter);
     }
@@ -444,7 +440,7 @@ RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteLayerTreeT
 
 #if HAVE(AVKIT)
         if (properties.videoElementData) {
-            if (auto videoManager = m_drawingArea->page() ? m_drawingArea->page()->videoPresentationManager() : nullptr) {
+            if (auto videoManager = m_drawingArea->page().videoPresentationManager()) {
                 m_videoLayers.add(*properties.layerID, properties.videoElementData->playerIdentifier);
                 return makeWithLayer(videoManager->createLayerWithID(properties.videoElementData->playerIdentifier, properties.hostingContextID(), properties.videoElementData->initialSize, properties.videoElementData->naturalSize, properties.hostingDeviceScaleFactor()));
             }

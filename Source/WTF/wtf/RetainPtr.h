@@ -385,6 +385,17 @@ inline CFHashCode safeCFHash(CFTypeRef a)
     return a ? CFHash(a) : 0;
 }
 
+#ifdef __OBJC__
+// FIXME: Move to TypeCastsCocoa.h once all clients include that header.
+template<typename T> T *dynamic_objc_cast(id object, Class theClass = [T class])
+{
+    if (![object isKindOfClass:theClass])
+        return nullptr;
+
+    return reinterpret_cast<T*>(object);
+}
+#endif
+
 } // namespace WTF
 
 using WTF::RetainPtr;
@@ -395,6 +406,7 @@ using WTF::safeCFHash;
 
 #ifdef __OBJC__
 using WTF::adoptNS;
+using WTF::dynamic_objc_cast;
 #endif
 
 #endif // USE(CF) || defined(__OBJC__)

@@ -35,7 +35,6 @@
 
 #include <functional>
 #include <wtf/CommaPrinter.h>
-#include <wtf/ZippedRange.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -66,17 +65,19 @@ constexpr auto trueToken = "true"_s;
 constexpr auto falseToken = "false"_s;
 
 template<typename CodeUnit>
-bool parseConstToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, ASCIILiteral token)
+bool parseConstToken(std::span<const CodeUnit> data, std::span<const CodeUnit>& tokenEnd, const char* token)
 {
-    if (data.size() < token.length())
-        return false;
-
-    for (auto [character, tokenCharacter] : zippedRange(data, token.span8())) {
-        if (character != tokenCharacter)
-            return false;
+    while (!data.empty() && *token != '\0') {
+        auto character = data.front();
+        data = data.subspan(1);
+        if (character != *token++)
+            break;
     }
 
-    tokenEnd = data.subspan(token.length());
+    if (*token != '\0')
+        return false;
+
+    tokenEnd = data;
     return true;
 }
 
@@ -386,7 +387,7 @@ RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const C
         String value;
         if (tokenEnd.data() - tokenStart.data() < 2)
             return nullptr;
-        bool ok = decodeString(tokenStart.subspan(1, std::to_address(tokenEnd.begin()) - std::to_address(tokenStart.begin()) - 2), value);
+        bool ok = decodeString(std::span { tokenStart.data() + 1, tokenEnd.data() - 1 }, value);
         if (!ok)
             return nullptr;
         result = JSON::Value::create(value);
@@ -429,7 +430,7 @@ RefPtr<JSON::Value> buildValue(std::span<const CodeUnit> data, std::span<const C
             String key;
             if (tokenEnd.data() - tokenStart.data() < 2)
                 return nullptr;
-            if (!decodeString(tokenStart.subspan(1, std::to_address(tokenEnd.begin()) - std::to_address(tokenStart.begin()) - 2), key))
+            if (!decodeString(std::span { tokenStart.data() + 1, tokenEnd.data() - 1 }, key))
                 return nullptr;
             data = tokenEnd;
 
@@ -793,13 +794,10 @@ ArrayBase::~ArrayBase() = default;
 void ArrayBase::writeJSONImpl(StringBuilder& output) const
 {
     output.append('[');
-    bool isFirst = true;
-    for (auto& value : m_map) {
-        if (isFirst)
-            isFirst = false;
-        else
+    for (auto it = m_map.begin(); it != m_map.end(); ++it) {
+        if (it != m_map.begin())
             output.append(',');
-        value->writeJSON(output);
+        (*it)->writeJSON(output);
     }
     output.append(']');
 }

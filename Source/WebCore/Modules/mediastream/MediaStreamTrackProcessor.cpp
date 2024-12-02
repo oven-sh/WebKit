@@ -32,7 +32,6 @@
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
 #include "HTMLVideoElement.h"
-#include "ImageBitmap.h"
 #include "JSWebCodecsVideoFrame.h"
 #include "Logging.h"
 #include "OffscreenCanvas.h"
@@ -131,7 +130,7 @@ void MediaStreamTrackProcessor::VideoFrameObserverWrapper::start()
     });
 }
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(MediaStreamTrackProcessor, VideoFrameObserver);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(MediaStreamTrackProcessorVideoFrameObserver, MediaStreamTrackProcessor::VideoFrameObserver);
 
 MediaStreamTrackProcessor::VideoFrameObserver::VideoFrameObserver(ScriptExecutionContextIdentifier identifier, WeakPtr<MediaStreamTrackProcessor>&& processor, Ref<RealtimeMediaSource>&& source, unsigned short maxVideoFramesCount)
     : m_contextIdentifier(identifier)

@@ -50,6 +50,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -114,9 +115,10 @@ template<> void JSTestNamedDeleterWithIdentifierDOMConstructor::initializeProper
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestNamedDeleterWithIdentifierPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedDeleterWithIdentifierConstructor, 0 } },
-    HashTableValue { "namedDeleter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedDeleterWithIdentifierPrototypeFunction_namedDeleter, 1 } },
+static const HashTableValue JSTestNamedDeleterWithIdentifierPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedDeleterWithIdentifierConstructor, 0 } },
+    { "namedDeleter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestNamedDeleterWithIdentifierPrototypeFunction_namedDeleter, 1 } },
 };
 
 const ClassInfo JSTestNamedDeleterWithIdentifierPrototype::s_info = { "TestNamedDeleterWithIdentifier"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestNamedDeleterWithIdentifierPrototype) };
@@ -381,7 +383,6 @@ void JSTestNamedDeleterWithIdentifierOwner::finalize(JSC::Handle<JSC::Unknown> h
     uncacheWrapper(world, jsTestNamedDeleterWithIdentifier->protectedWrapped().ptr(), jsTestNamedDeleterWithIdentifier);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -406,8 +407,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestNamedDele
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestNamedDeleterWithIdentifier>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

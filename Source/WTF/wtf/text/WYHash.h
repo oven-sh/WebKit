@@ -58,8 +58,6 @@
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringHasher.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 // https://github.com/wangyi-fudan/wyhash
@@ -338,5 +336,3 @@ private:
 } // namespace WTF
 
 using WTF::WYHash;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

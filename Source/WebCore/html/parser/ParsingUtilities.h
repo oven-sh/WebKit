@@ -34,8 +34,6 @@
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringParsingBuffer.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 template<typename CharacterType> inline bool isNotASCIISpace(CharacterType c)
@@ -267,5 +265,3 @@ template<typename CharacterType, unsigned characterCount> constexpr bool skipCha
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

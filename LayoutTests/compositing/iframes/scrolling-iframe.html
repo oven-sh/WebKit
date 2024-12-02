@@ -31,9 +31,9 @@
     function doTest()
     {
         // For some reason this delay is required for AppKit to not short-circuit the display.
-        window.setTimeout(async function() {
+        window.setTimeout(function() {
             if (window.testRunner)
-                await testRunner.displayAndTrackRepaints();
+                testRunner.displayAndTrackRepaints();
 
             document.getElementById('parent-iframe').contentWindow.scrollTo(80, 80);
             if (window.testRunner) {

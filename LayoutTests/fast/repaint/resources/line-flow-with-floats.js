@@ -1,22 +1,20 @@
 var frameDoc;
 var loadCount = 0;
 
-async function loaded()
+function loaded()
 {
-    testRunner?.waitUntilDone();
     loadCount++;
     if (loadCount == 2) {
         document.body.offsetTop;
-        await beginTest();
+        beginTest();
     }
-    testRunner?.notifyDone();
 }
 
-async function beginTest()
+function beginTest()
 {
     if (window.testRunner) {
         document.body.offsetTop;
-        await testRunner.displayAndTrackRepaints();
+        testRunner.displayAndTrackRepaints();
         test(document.getElementById("iframe").contentDocument);
     } else setTimeout(
         function() {

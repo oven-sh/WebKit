@@ -337,7 +337,7 @@ void SkAnimatedImage::onDraw(SkCanvas* canvas) {
     auto image = this->getCurrentFrameSimple();
 
     if (this->simple()) {
-        canvas->drawImage(image, 0, 0, SkSamplingOptions(fFilterMode), nullptr);
+        canvas->drawImage(image, 0, 0);
         return;
     }
 
@@ -349,7 +349,7 @@ void SkAnimatedImage::onDraw(SkCanvas* canvas) {
     {
         SkAutoCanvasRestore acr(canvas, fPostProcess != nullptr);
         canvas->concat(fMatrix);
-        canvas->drawImage(image, 0, 0, SkSamplingOptions(fFilterMode), nullptr);
+        canvas->drawImage(image, 0, 0, SkSamplingOptions(SkFilterMode::kLinear), nullptr);
     }
     if (fPostProcess) {
         canvas->drawPicture(fPostProcess);
@@ -386,8 +386,4 @@ sk_sp<SkImage> SkAnimatedImage::getCurrentFrame() {
     SkCanvas canvas(dst);
     this->draw(&canvas);
     return SkMakeImageFromRasterBitmap(dst, kNever_SkCopyPixelsMode);
-}
-
-void SkAnimatedImage::setFilterMode(SkFilterMode filterMode) {
-    fFilterMode = filterMode;
 }

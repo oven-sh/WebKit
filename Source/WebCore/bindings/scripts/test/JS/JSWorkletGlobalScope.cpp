@@ -44,6 +44,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -62,11 +63,12 @@ static const struct CompactHashIndex JSWorkletGlobalScopeTableIndex[2] = {
 };
 
 
-static const std::array<HashTableValue, 1> JSWorkletGlobalScopeTableValues {
-    HashTableValue { "WorkletGlobalScope"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkletGlobalScope_WorkletGlobalScopeConstructor, 0 } },
+static const HashTableValue JSWorkletGlobalScopeTableValues[] =
+{
+    { "WorkletGlobalScope"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkletGlobalScope_WorkletGlobalScopeConstructor, 0 } },
 };
 
-static const HashTable JSWorkletGlobalScopeTable = { 1, 1, static_cast<uint8_t>(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)), JSWorkletGlobalScope::info(), JSWorkletGlobalScopeTableValues.data(), JSWorkletGlobalScopeTableIndex };
+static const HashTable JSWorkletGlobalScopeTable = { 1, 1, static_cast<uint8_t>(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)), JSWorkletGlobalScope::info(), JSWorkletGlobalScopeTableValues, JSWorkletGlobalScopeTableIndex };
 template<> const ClassInfo JSWorkletGlobalScopeDOMConstructor::s_info = { "WorkletGlobalScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkletGlobalScopeDOMConstructor) };
 
 template<> JSValue JSWorkletGlobalScopeDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
@@ -91,11 +93,12 @@ static const struct CompactHashIndex JSWorkletGlobalScopePrototypeTableIndex[2] 
 };
 
 
-static const std::array<HashTableValue, 1> JSWorkletGlobalScopePrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkletGlobalScopeConstructor, 0 } },
+static const HashTableValue JSWorkletGlobalScopePrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkletGlobalScopeConstructor, 0 } },
 };
 
-static const HashTable JSWorkletGlobalScopePrototypeTable = { 1, 1, static_cast<uint8_t>(static_cast<unsigned>(PropertyAttribute::DontEnum)), JSWorkletGlobalScope::info(), JSWorkletGlobalScopePrototypeTableValues.data(), JSWorkletGlobalScopePrototypeTableIndex };
+static const HashTable JSWorkletGlobalScopePrototypeTable = { 1, 1, static_cast<uint8_t>(static_cast<unsigned>(PropertyAttribute::DontEnum)), JSWorkletGlobalScope::info(), JSWorkletGlobalScopePrototypeTableValues, JSWorkletGlobalScopePrototypeTableIndex };
 const ClassInfo JSWorkletGlobalScopePrototype::s_info = { "WorkletGlobalScope"_s, &Base::s_info, &JSWorkletGlobalScopePrototypeTable, nullptr, CREATE_METHOD_TABLE(JSWorkletGlobalScopePrototype) };
 
 void JSWorkletGlobalScopePrototype::finishCreation(VM& vm)

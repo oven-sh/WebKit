@@ -29,8 +29,6 @@
 
 #include "OpenTypeTypes.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 namespace OpenType {
 
@@ -66,5 +64,3 @@ bool tryGetTypoMetrics(CTFontRef font, short& ascent, short& descent, short& lin
 
 } // namespace OpenType
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

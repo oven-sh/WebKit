@@ -41,70 +41,69 @@ namespace WebCore {
 class AccessibilityMathMLElement : public AccessibilityRenderObject {
 
 public:
-    static Ref<AccessibilityMathMLElement> create(AXID, RenderObject&, bool isAnonymousOperator);
+    static Ref<AccessibilityMathMLElement> create(RenderObject&, bool isAnonymousOperator);
     virtual ~AccessibilityMathMLElement();
 
 protected:
-    explicit AccessibilityMathMLElement(AXID, RenderObject&, bool isAnonymousOperator);
+    explicit AccessibilityMathMLElement(RenderObject&, bool isAnonymousOperator);
 
 private:
     AccessibilityRole determineAccessibilityRole() final;
-    void addChildren() final;
     String textUnderElement(TextUnderElementMode = TextUnderElementMode()) const final;
-    String stringValue() const final;
+    String stringValue() const override;
     bool isIgnoredElementWithinMathTree() const final;
 
     bool isMathElement() const final { return true; }
 
-    bool isMathFraction() const final;
-    bool isMathFenced() const final;
-    bool isMathSubscriptSuperscript() const final;
-    bool isMathRow() const final;
-    bool isMathUnderOver() const final;
-    bool isMathRoot() const final;
-    bool isMathSquareRoot() const final;
-    bool isMathText() const final;
-    bool isMathNumber() const final;
-    bool isMathOperator() const final;
-    bool isMathFenceOperator() const final;
-    bool isMathSeparatorOperator() const final;
-    bool isMathIdentifier() const final;
-    bool isMathTable() const final;
-    bool isMathTableRow() const final;
-    bool isMathTableCell() const final;
-    bool isMathMultiscript() const final;
-    bool isMathToken() const final;
-    bool isMathScriptObject(AccessibilityMathScriptObjectType) const final;
-    bool isMathMultiscriptObject(AccessibilityMathMultiscriptObjectType) const final;
+    bool isMathFraction() const override;
+    bool isMathFenced() const override;
+    bool isMathSubscriptSuperscript() const override;
+    bool isMathRow() const override;
+    bool isMathUnderOver() const override;
+    bool isMathRoot() const override;
+    bool isMathSquareRoot() const override;
+    bool isMathText() const override;
+    bool isMathNumber() const override;
+    bool isMathOperator() const override;
+    bool isMathFenceOperator() const override;
+    bool isMathSeparatorOperator() const override;
+    bool isMathIdentifier() const override;
+    bool isMathTable() const override;
+    bool isMathTableRow() const override;
+    bool isMathTableCell() const override;
+    bool isMathMultiscript() const override;
+    bool isMathToken() const override;
+    bool isMathScriptObject(AccessibilityMathScriptObjectType) const override;
+    bool isMathMultiscriptObject(AccessibilityMathMultiscriptObjectType) const override;
 
     // Generic components.
-    AXCoreObject* mathBaseObject() final;
+    AXCoreObject* mathBaseObject() override;
 
     // Root components.
-    std::optional<AccessibilityChildrenVector> mathRadicand() final;
-    AXCoreObject* mathRootIndexObject() final;
+    std::optional<AccessibilityChildrenVector> mathRadicand() override;
+    AXCoreObject* mathRootIndexObject() override;
 
     // Fraction components.
-    AXCoreObject* mathNumeratorObject() final;
-    AXCoreObject* mathDenominatorObject() final;
+    AXCoreObject* mathNumeratorObject() override;
+    AXCoreObject* mathDenominatorObject() override;
 
     // Under over components.
-    AXCoreObject* mathUnderObject() final;
-    AXCoreObject* mathOverObject() final;
+    AXCoreObject* mathUnderObject() override;
+    AXCoreObject* mathOverObject() override;
 
     // Subscript/superscript components.
-    AXCoreObject* mathSubscriptObject() final;
-    AXCoreObject* mathSuperscriptObject() final;
+    AXCoreObject* mathSubscriptObject() override;
+    AXCoreObject* mathSuperscriptObject() override;
 
     // Fenced components.
-    String mathFencedOpenString() const final;
-    String mathFencedCloseString() const final;
-    int mathLineThickness() const final;
-    bool isAnonymousMathOperator() const final;
+    String mathFencedOpenString() const override;
+    String mathFencedCloseString() const override;
+    int mathLineThickness() const override;
+    bool isAnonymousMathOperator() const override;
 
     // Multiscripts components.
-    void mathPrescripts(AccessibilityMathMultiscriptPairs&) final;
-    void mathPostscripts(AccessibilityMathMultiscriptPairs&) final;
+    void mathPrescripts(AccessibilityMathMultiscriptPairs&) override;
+    void mathPostscripts(AccessibilityMathMultiscriptPairs&) override;
 
     bool m_isAnonymousOperator;
 };

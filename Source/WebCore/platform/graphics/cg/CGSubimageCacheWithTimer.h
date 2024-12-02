@@ -29,7 +29,6 @@
 #include "Timer.h"
 
 #include <CoreGraphics/CoreGraphics.h>
-#include <wtf/CheckedPtr.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
 #include <wtf/HashTraits.h>
@@ -44,10 +43,10 @@ namespace WebCore {
 
 #if CACHE_SUBIMAGES
 
-class CGSubimageCacheWithTimer final : public CanMakeThreadSafeCheckedPtr<CGSubimageCacheWithTimer> {
+class CGSubimageCacheWithTimer {
     WTF_MAKE_TZONE_ALLOCATED(CGSubimageCacheWithTimer);
     WTF_MAKE_NONCOPYABLE(CGSubimageCacheWithTimer);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CGSubimageCacheWithTimer);
+
 public:
     struct CacheEntry {
         RetainPtr<CGImageRef> image;

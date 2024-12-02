@@ -35,7 +35,7 @@
 
 namespace WebCore {
 
-static std::optional<size_t> getKeyLengthFromHash(CryptoAlgorithmIdentifier hash)
+static size_t getKeyLengthFromHash(CryptoAlgorithmIdentifier hash)
 {
     switch (hash) {
     case CryptoAlgorithmIdentifier::SHA_1:
@@ -46,8 +46,8 @@ static std::optional<size_t> getKeyLengthFromHash(CryptoAlgorithmIdentifier hash
     case CryptoAlgorithmIdentifier::SHA_512:
         return 1024;
     default:
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid Hash Algorithm");
-        return { };
+        ASSERT_NOT_REACHED();
+        return 0;
     }
 }
 
@@ -70,10 +70,9 @@ CryptoKeyHMAC::~CryptoKeyHMAC() = default;
 RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
 {
     if (!lengthBits) {
-        auto length = getKeyLengthFromHash(hash);
-        if (!length.value_or(0))
+        lengthBits = getKeyLengthFromHash(hash);
+        if (!lengthBits)
             return nullptr;
-        lengthBits = *length;
     }
     // CommonHMAC only supports key length that is a multiple of 8. Therefore, here we are a little bit different
     // from the spec as of 11 December 2014: https://www.w3.org/TR/WebCryptoAPI/#hmac-operations
@@ -127,14 +126,15 @@ JsonWebKey CryptoKeyHMAC::exportJwk() const
     return result;
 }
 
-ExceptionOr<std::optional<size_t>> CryptoKeyHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<size_t> CryptoKeyHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     auto& aesParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
 
-    auto length = aesParameters.length ? *(aesParameters.length) : getKeyLengthFromHash(aesParameters.hashIdentifier);
-    if (!length.value_or(0))
-        return Exception { ExceptionCode::TypeError };
-    return length;
+    size_t result = aesParameters.length ? *(aesParameters.length) : getKeyLengthFromHash(aesParameters.hashIdentifier);
+    if (result)
+        return result;
+
+    return Exception { ExceptionCode::TypeError };
 }
 
 auto CryptoKeyHMAC::algorithm() const -> KeyAlgorithm

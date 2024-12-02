@@ -16,8 +16,6 @@ includes: [propertyHelper.js]
 
 assert.sameValue(typeof Array.prototype.reduce, 'function', 'typeof');
 
-verifyProperty(Array.prototype, "reduce", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Array.prototype, "reduce");
+verifyWritable(Array.prototype, "reduce");
+verifyConfigurable(Array.prototype, "reduce");

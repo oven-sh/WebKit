@@ -33,7 +33,6 @@
 #include "Timer.h"
 #include <wtf/WeakRef.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 ALLOW_UNUSED_PARAMETERS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_COMMA_BEGIN
@@ -49,7 +48,6 @@ IGNORE_CLANG_WARNINGS_END
 ALLOW_COMMA_END
 ALLOW_DEPRECATED_DECLARATIONS_END
 ALLOW_UNUSED_PARAMETERS_END
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #include <wtf/LoggerHelper.h>
 #include <wtf/RobinHoodHashMap.h>
@@ -198,7 +196,7 @@ private:
     SetRemoteSessionDescriptionObserver<LibWebRTCMediaEndpoint> m_setRemoteSessionDescriptionObserver;
 
     MemoryCompactRobinHoodHashMap<String, RefPtr<MediaStream>> m_remoteStreamsById;
-    HashMap<MediaStreamTrack*, Vector<String>> m_remoteStreamsFromRemoteTrack;
+    UncheckedKeyHashMap<MediaStreamTrack*, Vector<String>> m_remoteStreamsFromRemoteTrack;
 
     bool m_isInitiator { false };
     Timer m_statsLogTimer;

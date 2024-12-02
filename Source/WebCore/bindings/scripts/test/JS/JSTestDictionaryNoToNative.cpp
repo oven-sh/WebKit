@@ -27,7 +27,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -74,4 +73,3 @@ template<> ConversionResult<IDLDictionary<TestDictionaryNoToNative::GenerateKeyw
 }
 
 } // namespace WebCore
-

@@ -34,8 +34,6 @@
 #include <unicode/uloc.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 const ClassInfo IntlDisplayNames::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlDisplayNames) };
@@ -421,5 +419,3 @@ ASCIILiteral IntlDisplayNames::languageDisplayString(LanguageDisplay languageDis
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

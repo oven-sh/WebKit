@@ -22,9 +22,17 @@
 
 #pragma once
 
-#include <wtf/CheckedPtr.h>
 #include "CachedResourceClient.h"
 #include "ImageTypes.h"
+
+namespace WebCore {
+class CachedImageClient;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
+template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::CachedImageClient> : std::true_type { };
+}
 
 namespace WebCore {
 
@@ -34,9 +42,7 @@ class IntRect;
 
 enum class VisibleInViewportState { Unknown, Yes, No };
 
-class CachedImageClient : public CachedResourceClient, public CanMakeCheckedPtr<CachedImageClient> {
-    WTF_MAKE_FAST_ALLOCATED;
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CachedImageClient);
+class CachedImageClient : public CachedResourceClient {
 public:
     virtual ~CachedImageClient() = default;
     static CachedResourceClientType expectedType() { return ImageType; }

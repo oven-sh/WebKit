@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 /*---
 description: >
-  GetModuleSource of SourceTextModule throws a SyntaxError.
+  GetModuleSource of SourceTextModule throws a ReferenceError.
 esid: sec-source-text-module-record-getmodulesource
 features: [source-phase-imports]
 flags: [async]
@@ -12,13 +12,13 @@ includes: [asyncHelpers.js]
 
 asyncTest(async function () {
   await assert.throwsAsync(
-    SyntaxError,
+    ReferenceError,
     () => import.source('./modules-simple_FIXTURE.js'),
-    "Promise should be rejected with SyntaxError");
+    "Promise should be rejected with ReferenceError");
 
   // Import a module that has a source phase import.
   await assert.throwsAsync(
-    SyntaxError,
+    ReferenceError,
     () => import('./modules-import-source_FIXTURE.js'),
-    "Promise should be rejected with SyntaxError in indirect import source");
+    "Promise should be rejected with ReferenceError in indirect import source");
 });

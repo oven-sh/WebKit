@@ -33,8 +33,6 @@
 #include "SuperSampler.h"
 #include "VM.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 inline unsigned MarkedBlock::Handle::cellsPerBlock()
@@ -316,8 +314,8 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
                 });
         }
 
-        char* payloadEnd = std::bit_cast<char*>(block.atoms() + numberOfAtoms);
-        char* payloadBegin = std::bit_cast<char*>(block.atoms() + m_startAtom);
+        char* payloadEnd = bitwise_cast<char*>(block.atoms() + numberOfAtoms);
+        char* payloadBegin = bitwise_cast<char*>(block.atoms() + m_startAtom);
         RELEASE_ASSERT(static_cast<size_t>(payloadEnd - payloadBegin) <= payloadSize, payloadBegin, payloadEnd, &block, cellSize, m_startAtom);
 
         setBits(true);
@@ -627,4 +625,3 @@ inline IterationStatus MarkedBlock::Handle::forEachMarkedCell(const Functor& fun
 
 } // namespace JSC
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

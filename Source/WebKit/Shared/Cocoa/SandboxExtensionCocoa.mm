@@ -35,6 +35,8 @@
 #import <wtf/spi/darwin/SandboxSPI.h>
 #import <wtf/text/CString.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 
 std::unique_ptr<SandboxExtensionImpl> SandboxExtensionImpl::create(const char* path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
@@ -312,7 +314,7 @@ auto SandboxExtension::createHandlesForMachLookup(std::span<const ASCIILiteral> 
 
 auto SandboxExtension::createHandlesForMachLookup(std::initializer_list<const ASCIILiteral> services, std::optional<audit_token_t> auditToken, MachBootstrapOptions machBootstrapOptions, OptionSet<Flags> flags) -> Vector<Handle>
 {
-    return createHandlesForMachLookup(std::span { services }, auditToken, machBootstrapOptions, flags);
+    return createHandlesForMachLookup(std::span(services.begin(), services.size()), auditToken, machBootstrapOptions, flags);
 }
 
 auto SandboxExtension::createHandleForReadByAuditToken(StringView path, audit_token_t auditToken) -> std::optional<Handle>
@@ -427,5 +429,7 @@ bool SandboxExtension::consumePermanently(const Vector<Handle>& handleArray)
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(SANDBOX_EXTENSIONS)

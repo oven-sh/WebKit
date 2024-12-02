@@ -388,7 +388,7 @@ static void assertProtocolIsGood(StringView protocol)
 
 static Lock defaultPortForProtocolMapForTestingLock;
 
-using DefaultPortForProtocolMapForTesting = HashMap<String, uint16_t>;
+using DefaultPortForProtocolMapForTesting = UncheckedKeyHashMap<String, uint16_t>;
 static DefaultPortForProtocolMapForTesting*& defaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
 {
     static DefaultPortForProtocolMapForTesting* defaultPortForProtocolMap;
@@ -512,14 +512,14 @@ static bool appendEncodedHostname(Vector<UChar, 512>& buffer, StringView string)
         return true;
     }
 
-    std::array<UChar, URLParser::hostnameBufferLength> hostnameBuffer;
+    UChar hostnameBuffer[URLParser::hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
     int32_t numCharactersConverted = uidna_nameToASCII(&URLParser::internationalDomainNameTranscoder(),
-        string.upconvertedCharacters(), string.length(), hostnameBuffer.data(), hostnameBuffer.size(), &processingDetails, &error);
+        string.upconvertedCharacters(), string.length(), hostnameBuffer, URLParser::hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~URLParser::allowedNameToASCIIErrors) && numCharactersConverted) {
-        buffer.append(std::span { hostnameBuffer }.first(numCharactersConverted));
+        buffer.append(std::span(hostnameBuffer, numCharactersConverted));
         return true;
     }
     return false;
@@ -926,10 +926,10 @@ String percentEncodeFragmentDirectiveSpecialCharacters(const String& input)
     return percentEncodeCharacters(input, URLParser::isSpecialCharacterForFragmentDirective);
 }
 
-static bool protocolIsInternal(StringView string, ASCIILiteral protocol)
+static bool protocolIsInternal(StringView string, ASCIILiteral protocolLiteral)
 {
-    assertProtocolIsGood(protocol);
-    size_t protocolIndex = 0;
+    assertProtocolIsGood(protocolLiteral);
+    auto* protocol = protocolLiteral.characters();
     bool isLeading = true;
     for (auto codeUnit : string.codeUnits()) {
         if (isLeading) {
@@ -943,10 +943,9 @@ static bool protocolIsInternal(StringView string, ASCIILiteral protocol)
                 continue;
         }
 
-
-        if (protocolIndex == protocol.length())
+        char expectedCharacter = *protocol++;
+        if (!expectedCharacter)
             return codeUnit == ':';
-        char expectedCharacter = protocol[protocolIndex++];
         if (!isASCIIAlphaCaselessEqual(codeUnit, expectedCharacter))
             return false;
     }
@@ -1261,6 +1260,8 @@ TextStream& operator<<(TextStream& ts, const URL& url)
     return ts;
 }
 
+#if !PLATFORM(COCOA) && !USE(SOUP)
+
 static bool isIPv4Address(StringView string)
 {
     auto count = 0;
@@ -1293,7 +1294,7 @@ static bool isIPv4Address(StringView string)
     return (count == 4);
 }
 
-bool URL::isIPv6Address(StringView string)
+static bool isIPv6Address(StringView string)
 {
     enum SkipState { None, WillSkip, Skipping, Skipped, Final };
     auto skipState = None;
@@ -1344,8 +1345,6 @@ bool URL::isIPv6Address(StringView string)
 
     return (count == 8 && skipState == None) || skipState == Skipped || skipState == Final;
 }
-
-#if !PLATFORM(COCOA) && !USE(SOUP)
 
 bool URL::hostIsIPAddress(StringView host)
 {

@@ -29,8 +29,6 @@
 
 #include "DFGEdge.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 class AdjacencyList {
@@ -200,7 +198,5 @@ private:
 };
 
 } } // namespace JSC::DFG
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(DFG_JIT)

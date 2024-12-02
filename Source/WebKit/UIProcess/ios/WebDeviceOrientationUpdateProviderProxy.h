@@ -35,10 +35,10 @@ namespace WebKit {
 
 class WebPageProxy;
 
-class WebDeviceOrientationUpdateProviderProxy : public WebCore::MotionManagerClient, private IPC::MessageReceiver, public RefCounted<WebDeviceOrientationUpdateProviderProxy> {
+class WebDeviceOrientationUpdateProviderProxy : public WebCore::MotionManagerClient, private IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(WebDeviceOrientationUpdateProviderProxy);
 public:
-    static Ref<WebDeviceOrientationUpdateProviderProxy> create(WebPageProxy&);
+    WebDeviceOrientationUpdateProviderProxy(WebPageProxy&);
     ~WebDeviceOrientationUpdateProviderProxy();
 
     void startUpdatingDeviceOrientation();
@@ -48,8 +48,6 @@ public:
     void stopUpdatingDeviceMotion();
 
 private:
-    explicit WebDeviceOrientationUpdateProviderProxy(WebPageProxy&);
-
     // WebCore::WebCoreMotionManagerClient
     void orientationChanged(double, double, double, double, double) final;
     void motionChanged(double, double, double, double, double, double, std::optional<double>, std::optional<double>, std::optional<double>) final;
@@ -57,7 +55,7 @@ private:
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    WeakPtr<WebPageProxy> m_page;
+    WeakRef<WebPageProxy> m_page;
 };
 
 } // namespace WebKit

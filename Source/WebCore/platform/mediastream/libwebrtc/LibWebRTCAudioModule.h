@@ -29,11 +29,10 @@
 
 #include "LibWebRTCMacros.h"
 #include "Timer.h"
-#include <wtf/CheckedPtr.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WorkQueue.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 ALLOW_UNUSED_PARAMETERS_BEGIN
 ALLOW_COMMA_BEGIN
 
@@ -41,38 +40,30 @@ ALLOW_COMMA_BEGIN
 
 ALLOW_UNUSED_PARAMETERS_END
 ALLOW_COMMA_END
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace WebCore {
 class BaseAudioMediaStreamTrackRendererUnit;
 class IncomingAudioMediaStreamTrackRendererUnit;
 
 // LibWebRTCAudioModule is pulling streamed data to ensure audio data is passed to the audio track.
-class LibWebRTCAudioModule : public webrtc::AudioDeviceModule, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<LibWebRTCAudioModule, WTF::DestructionThread::Main> {
+class LibWebRTCAudioModule : public webrtc::AudioDeviceModule {
+    WTF_MAKE_TZONE_ALLOCATED(LibWebRTCAudioModule);
 public:
-    static Ref<LibWebRTCAudioModule> create() { return adoptRef(*new LibWebRTCAudioModule()); }
+    LibWebRTCAudioModule();
     ~LibWebRTCAudioModule();
 
     static constexpr unsigned PollSamplesCount = 1;
+    void ref() { AddRef(); }
+    void deref() { Release(); }
 
 #if PLATFORM(COCOA)
-    void startIncomingAudioRendering() { ++m_isRenderingIncomingAudioCounter; }
-    void stopIncomingAudioRendering() { --m_isRenderingIncomingAudioCounter; }
-
+    void startIncomingAudioRendering() { m_isRenderingIncomingAudio = true; }
+    void stopIncomingAudioRendering() { m_isRenderingIncomingAudio = false; }
     BaseAudioMediaStreamTrackRendererUnit& incomingAudioMediaStreamTrackRendererUnit();
     uint64_t currentAudioSampleCount() const { return m_currentAudioSampleCount; }
 #endif
 
-    void AddRef() const final { ref(); }
-    webrtc::RefCountReleaseStatus Release() const final
-    {
-        deref();
-        return webrtc::RefCountReleaseStatus::kOtherRefsRemained;
-    }
-
 private:
-    LibWebRTCAudioModule();
-
     template<typename U> U shouldNotBeCalled(U value) const
     {
         ASSERT_NOT_REACHED();
@@ -87,7 +78,7 @@ private:
 
     int32_t ActiveAudioLayer(AudioLayer*) const final { return shouldNotBeCalled(-1); }
     int32_t Init() final { return 0; }
-    int32_t Terminate() final { return 0; }
+    int32_t Terminate() final;
     bool Initialized() const final { return true; }
     int16_t PlayoutDevices() final { return 0; }
     int16_t RecordingDevices() final { return 0; }
@@ -153,16 +144,16 @@ private:
 
     static constexpr Seconds logTimerInterval = 2_s;
 
-    const Ref<WorkQueue> m_queue;
+    Ref<WorkQueue> m_queue;
     bool m_isPlaying { false };
     webrtc::AudioTransport* m_audioTransport { nullptr };
     MonotonicTime m_pollingTime;
-    Timer m_logTimer;
+    std::unique_ptr<Timer> m_logTimer;
     int m_timeSpent { 0 };
 
 #if PLATFORM(COCOA)
     uint64_t m_currentAudioSampleCount { 0 };
-    std::atomic<uint64_t> m_isRenderingIncomingAudioCounter { 0 };
+    bool m_isRenderingIncomingAudio { false };
     std::unique_ptr<IncomingAudioMediaStreamTrackRendererUnit> m_incomingAudioMediaStreamTrackRendererUnit;
 #endif
 };

@@ -8,8 +8,6 @@ author: Jordan Harband
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(String.prototype, 'padEnd', {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(String.prototype, 'padEnd');
+verifyWritable(String.prototype, 'padEnd');
+verifyConfigurable(String.prototype, 'padEnd');

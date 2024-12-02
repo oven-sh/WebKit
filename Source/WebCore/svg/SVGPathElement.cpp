@@ -22,7 +22,7 @@
 #include "config.h"
 #include "SVGPathElement.h"
 
-#include "CSSPathValue.h"
+#include "CSSBasicShapes.h"
 #include "LegacyRenderSVGPath.h"
 #include "LegacyRenderSVGResource.h"
 #include "MutableStyleProperties.h"
@@ -178,9 +178,12 @@ void SVGPathElement::removedFromAncestor(RemovalType removalType, ContainerNode&
     invalidateMPathDependencies();
 }
 
-float SVGPathElement::getTotalLength() const
+ExceptionOr<float> SVGPathElement::getTotalLength() const
 {
     protectedDocument()->updateLayoutIgnorePendingStylesheets({ LayoutOptions::ContentVisibilityForceLayout }, this);
+
+    if (pathByteStream().isEmpty())
+        return Exception { ExceptionCode::InvalidStateError, "The element's path is empty."_s };
 
     return getTotalLengthOfSVGPathByteStream(pathByteStream());
 }
@@ -193,8 +196,11 @@ ExceptionOr<Ref<SVGPoint>> SVGPathElement::getPointAtLength(float distance) cons
     if (pathByteStream().isEmpty())
         return Exception { ExceptionCode::InvalidStateError, "The element's path is empty."_s };
 
+    auto totalLength =  getTotalLength();
+    if (totalLength.hasException())
+        return totalLength.releaseException();
     // Spec: Clamp distance to [0, length].
-    distance = clampTo<float>(distance, 0, getTotalLength());
+    distance = clampTo<float>(distance, 0, totalLength.returnValue());
 
     // Spec: Return a newly created, detached SVGPoint object.
     return SVGPoint::create(getPointAtLengthOfSVGPathByteStream(pathByteStream(), distance));
@@ -236,8 +242,10 @@ const SVGPathByteStream& SVGPathElement::pathByteStream() const
 {
     if (document().settings().cssDPropertyEnabled()) {
         if (CheckedPtr renderer = this->renderer()) {
-            if (RefPtr basicShapePath = renderer->style().d())
-                return basicShapePath->path()->data.byteStream;
+            if (RefPtr basicShapePath = renderer->style().d()) {
+                if (WeakPtr pathData = basicShapePath->pathData())
+                    return *pathData;
+            }
             return SVGPathByteStream::empty();
         }
     }
@@ -280,8 +288,8 @@ void SVGPathElement::collectDPresentationalHint(MutableStyleProperties& style)
     // In the case of the `d` property, we want to avoid providing a string value since it will require
     // the path data to be parsed again and path data can be unwieldy.
     auto property = cssPropertyIdForSVGAttributeName(SVGNames::dAttr, document().protectedSettings());
-    // The fill rule value passed here is not relevant for the `d` property.
-    auto cssPathValue = CSSPathValue::create(CSS::PathFunction { CSS::Nonzero { }, CSS::Path::Data { Ref { m_pathSegList }->currentPathByteStream() } });
+    // The WindRule value passed here is not relevant for the `d` property.
+    auto cssPathValue = CSSPathValue::create(Ref { m_pathSegList }->currentPathByteStream(), WindRule::NonZero);
     addPropertyToPresentationalHintStyle(style, property, WTFMove(cssPathValue));
 }
 

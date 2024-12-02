@@ -305,7 +305,7 @@ private:
     Ref<RealtimeMediaSource> m_source;
     std::unique_ptr<MediaStreamTrackPrivateSourceObserverSourceProxy> m_sourceProxy;
     std::function<void(Function<void()>&&)> m_postTask;
-    HashMap<uint64_t, ApplyConstraintsHandler> m_applyConstraintsCallbacks;
+    UncheckedKeyHashMap<uint64_t, ApplyConstraintsHandler> m_applyConstraintsCallbacks;
     uint64_t m_applyConstraintsCallbacksIdentifier { 0 };
 };
 
@@ -347,8 +347,6 @@ MediaStreamTrackPrivate::MediaStreamTrackPrivate(Ref<const Logger>&& logger, Uni
     , m_type(dataHolder->type)
     , m_deviceType(dataHolder->deviceType)
     , m_isCaptureTrack(false)
-    , m_isEnabled(dataHolder->isEnabled)
-    , m_isEnded(dataHolder->isEnded)
     , m_captureDidFail(false)
     , m_contentHint(dataHolder->contentHint)
     , m_logger(WTFMove(logger))
@@ -493,7 +491,7 @@ Ref<MediaStreamTrackPrivate> MediaStreamTrackPrivate::clone()
     clonedMediaStreamTrackPrivate->m_captureDidFail = this->m_captureDidFail;
     clonedMediaStreamTrackPrivate->updateReadyState();
 
-    if (m_isProducingData && !m_isMuted && !m_isInterrupted)
+    if (m_isProducingData)
         clonedMediaStreamTrackPrivate->startProducingData();
 
     return clonedMediaStreamTrackPrivate;

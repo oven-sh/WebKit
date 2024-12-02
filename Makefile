@@ -1,3 +1,7 @@
+ifeq ($(MAKECMDGOALS),installsrc)
+USE_WORKSPACE = NO
+endif
+
 ifneq ($(USE_WORKSPACE),NO)
 
 SCHEME = Everything up to WebKit + Tools
@@ -36,5 +40,12 @@ analyze:
 
 clean:
 	@$(build_target_for_each_module)
+
+installsrc:
+	$(build_target_for_each_module)
+	ditto Configurations "$(SRCROOT)/Configurations"
+	for sdk in WebKitLibraries/SDKs/*.internal-additions.sdk; do \
+		ditto -v $$sdk "$(SRCROOT)/WebKitLibraries/SDKs/`basename $$sdk`"; \
+		done
 
 endif # USE_WORKSPACE

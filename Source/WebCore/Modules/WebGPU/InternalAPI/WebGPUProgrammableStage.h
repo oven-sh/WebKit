@@ -39,8 +39,6 @@ struct ProgrammableStage {
     WeakRef<ShaderModule> module;
     std::optional<String> entryPoint;
     Vector<KeyValuePair<String, PipelineConstantValue>> constants;
-
-    Ref<ShaderModule> protectedModule() const { return module.get(); }
 };
 
 } // namespace WebCore::WebGPU

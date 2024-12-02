@@ -31,8 +31,6 @@
 #include "Opcode.h"
 #include "ProfilerDumper.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace Profiler {
 
 Ref<JSON::Value> Bytecode::toJSON(Dumper& dumper) const
@@ -46,4 +44,3 @@ Ref<JSON::Value> Bytecode::toJSON(Dumper& dumper) const
 
 } } // namespace JSC::Profiler
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

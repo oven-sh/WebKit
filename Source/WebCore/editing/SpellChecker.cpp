@@ -103,8 +103,8 @@ void SpellCheckRequest::requesterDestroyed()
     m_checker = nullptr;
 }
 
-SpellChecker::SpellChecker(Editor& editor)
-    : m_editor(editor)
+SpellChecker::SpellChecker(Document& document)
+    : m_document(document)
     , m_timerToProcessQueuedRequest(*this, &SpellChecker::timerFiredToProcessQueuedRequest)
 {
 }
@@ -117,19 +117,9 @@ SpellChecker::~SpellChecker()
         queue->requesterDestroyed();
 }
 
-void SpellChecker::ref() const
-{
-    m_editor->ref();
-}
-
-void SpellChecker::deref() const
-{
-    m_editor->deref();
-}
-
 TextCheckerClient* SpellChecker::client() const
 {
-    RefPtr page = document().page();
+    RefPtr page = m_document->page();
     if (!page)
         return nullptr;
     return page->editorClient().textChecker();
@@ -146,7 +136,7 @@ void SpellChecker::timerFiredToProcessQueuedRequest()
 
 bool SpellChecker::isAsynchronousEnabled() const
 {
-    return document().settings().asynchronousSpellCheckingEnabled();
+    return m_document->settings().asynchronousSpellCheckingEnabled();
 }
 
 bool SpellChecker::canCheckAsynchronously(const SimpleRange& range) const
@@ -229,25 +219,15 @@ void SpellChecker::didCheck(TextCheckingRequestIdentifier identifier, const Vect
         m_timerToProcessQueuedRequest.startOneShot(0_s);
 }
 
-Document& SpellChecker::document() const
-{
-    return m_editor->document();
-}
-
-Ref<Document> SpellChecker::protectedDocument() const
-{
-    return m_editor->document();
-}
-
 void SpellChecker::didCheckSucceed(TextCheckingRequestIdentifier identifier, const Vector<TextCheckingResult>& results)
 {
     TextCheckingRequestData requestData = m_processingRequest->data();
     if (requestData.identifier() == identifier) {
-        OptionSet<DocumentMarkerType> markerTypes;
+        OptionSet<DocumentMarker::Type> markerTypes;
         if (requestData.checkingTypes().contains(TextCheckingType::Spelling))
-            markerTypes.add(DocumentMarkerType::Spelling);
+            markerTypes.add(DocumentMarker::Type::Spelling);
         if (requestData.checkingTypes().contains(TextCheckingType::Grammar))
-            markerTypes.add(DocumentMarkerType::Grammar);
+            markerTypes.add(DocumentMarker::Type::Grammar);
         if (!markerTypes.isEmpty())
             removeMarkers(m_processingRequest->checkingRange(), markerTypes);
     }

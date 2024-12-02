@@ -106,6 +106,10 @@ public:
     bool visualViewportIsSmallerThanLayoutViewport() const { return m_visualViewportIsSmallerThanLayoutViewport; }
     WEBCORE_EXPORT void setVisualViewportIsSmallerThanLayoutViewport(bool);
 
+    // These are more like Settings, and should probably move to the Scrolling{State}Tree itself.
+    bool fixedElementsLayoutRelativeToFrame() const { return m_fixedElementsLayoutRelativeToFrame; }
+    WEBCORE_EXPORT void setFixedElementsLayoutRelativeToFrame(bool);
+
     bool asyncFrameOrOverflowScrollingEnabled() const { return m_asyncFrameOrOverflowScrollingEnabled; }
     WEBCORE_EXPORT void setAsyncFrameOrOverflowScrollingEnabled(bool);
 
@@ -153,7 +157,6 @@ private:
         ScrollbarEnabledState&&,
         UserInterfaceLayoutDirection,
         ScrollbarWidth,
-        bool useDarkAppearanceForScrollbars,
         RequestedKeyboardScrollData&&,
         float frameScaleFactor,
         EventTrackingRegions&&,
@@ -165,6 +168,7 @@ private:
         int footerHeight,
         ScrollBehaviorForFixedElements&&,
         float topContentInset,
+        bool fixedElementsLayoutRelativeToFrame,
         bool visualViewportIsSmallerThanLayoutViewport,
         bool asyncFrameOrOverflowScrollingEnabled,
         bool wheelEventGesturesBecomeNonBlocking,
@@ -200,6 +204,7 @@ private:
     int m_headerHeight { 0 };
     int m_footerHeight { 0 };
     ScrollBehaviorForFixedElements m_behaviorForFixed { ScrollBehaviorForFixedElements::StickToDocumentBounds };
+    bool m_fixedElementsLayoutRelativeToFrame { false };
     bool m_visualViewportIsSmallerThanLayoutViewport { false };
     bool m_asyncFrameOrOverflowScrollingEnabled { false };
     bool m_wheelEventGesturesBecomeNonBlocking { false };

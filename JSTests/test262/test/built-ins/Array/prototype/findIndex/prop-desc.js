@@ -14,8 +14,6 @@ assert.sameValue(
   '`typeof Array.prototype.findIndex` is `function`'
 );
 
-verifyProperty(Array.prototype, "findIndex", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Array.prototype, 'findIndex');
+verifyWritable(Array.prototype, 'findIndex');
+verifyConfigurable(Array.prototype, 'findIndex');

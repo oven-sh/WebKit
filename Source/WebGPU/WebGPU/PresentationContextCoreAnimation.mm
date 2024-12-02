@@ -126,7 +126,7 @@ auto PresentationContextCoreAnimation::Configuration::generateCurrentFrameState(
     return { currentDrawable, texture.ptr(), textureView.ptr() };
 }
 
-void PresentationContextCoreAnimation::present(uint32_t)
+void PresentationContextCoreAnimation::present()
 {
     if (!m_configuration)
         return;
@@ -139,7 +139,7 @@ void PresentationContextCoreAnimation::present(uint32_t)
     m_configuration->currentFrameState = std::nullopt;
 }
 
-Texture* PresentationContextCoreAnimation::getCurrentTexture(uint32_t)
+Texture* PresentationContextCoreAnimation::getCurrentTexture()
 {
     if (!m_configuration)
         return nullptr;

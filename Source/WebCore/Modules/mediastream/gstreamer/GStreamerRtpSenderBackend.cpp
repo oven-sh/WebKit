@@ -64,7 +64,7 @@ GStreamerRtpSenderBackend::GStreamerRtpSenderBackend(GStreamerPeerConnectionBack
     , m_initData(WTFMove(initData))
 {
     ensureDebugCategoryIsRegistered();
-    GST_DEBUG_OBJECT(m_rtcSender.get(), "constructed with associated source with init data: %" GST_PTR_FORMAT, m_initData.get());
+    GST_DEBUG_OBJECT(m_rtcSender.get(), "constructed with associated source");
 }
 
 void GStreamerRtpSenderBackend::clearSource()
@@ -80,17 +80,6 @@ void GStreamerRtpSenderBackend::setSource(Source&& source)
     GST_DEBUG_OBJECT(m_rtcSender.get(), "Setting source");
     m_source = WTFMove(source);
     ASSERT(hasSource());
-
-    if (!m_currentParameters && !m_initData)
-        return;
-
-    GUniquePtr<GstStructure> parameters(gst_structure_copy(m_currentParameters ? m_currentParameters.get() : m_initData.get()));
-    switchOn(m_source, [&](Ref<RealtimeOutgoingAudioSourceGStreamer>& source) {
-        source->setParameters(WTFMove(parameters));
-    }, [&](Ref<RealtimeOutgoingVideoSourceGStreamer>& source) {
-        source->setParameters(WTFMove(parameters));
-    }, [](std::nullptr_t&) {
-    });
 }
 
 void GStreamerRtpSenderBackend::takeSource(GStreamerRtpSenderBackend& backend)
@@ -156,7 +145,7 @@ bool GStreamerRtpSenderBackend::replaceTrack(RTCRtpSender& sender, MediaStreamTr
 
     bool replace = true;
     if (!sender.track()) {
-        m_source = m_peerConnectionBackend->createSourceForTrack(*track);
+        m_source = m_peerConnectionBackend->createLinkedSourceForTrack(*track);
         replace = false;
     }
 
@@ -259,23 +248,11 @@ void GStreamerRtpSenderBackend::setParameters(const RTCRtpSendParameters& parame
         return;
     }
 
-    auto kind = ""_s;
-    switchOn(m_source, [&](Ref<RealtimeOutgoingAudioSourceGStreamer>&) {
-        kind = "audio"_s;
-    }, [&](Ref<RealtimeOutgoingVideoSourceGStreamer>&) {
-        kind = "video"_s;
-    }, [](const std::nullptr_t&) {
-    });
-
-    auto newParameters = fromRTCSendParameters(parameters, kind);
-    if (newParameters.hasException()) {
-        promise.reject(newParameters.releaseException());
-        return;
-    }
+    auto newParameters(fromRTCSendParameters(parameters));
     switchOn(m_source, [&](Ref<RealtimeOutgoingAudioSourceGStreamer>& source) {
-        source->setParameters(newParameters.releaseReturnValue());
+        source->setParameters(WTFMove(newParameters));
     }, [&](Ref<RealtimeOutgoingVideoSourceGStreamer>& source) {
-        source->setParameters(newParameters.releaseReturnValue());
+        source->setParameters(WTFMove(newParameters));
     }, [](const std::nullptr_t&) {
     });
 

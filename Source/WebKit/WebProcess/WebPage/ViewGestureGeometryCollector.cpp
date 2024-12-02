@@ -62,39 +62,36 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ViewGestureGeometryCollector);
 
 ViewGestureGeometryCollector::ViewGestureGeometryCollector(WebPage& webPage)
     : m_webPage(webPage)
-    , m_webPageIdentifier(webPage.identifier())
 #if !PLATFORM(IOS_FAMILY)
     , m_renderTreeSizeNotificationThreshold(0)
 #endif
 {
-    WebProcess::singleton().addMessageReceiver(Messages::ViewGestureGeometryCollector::messageReceiverName(), m_webPageIdentifier, *this);
+    WebProcess::singleton().addMessageReceiver(Messages::ViewGestureGeometryCollector::messageReceiverName(), m_webPage->identifier(), *this);
 }
 
 ViewGestureGeometryCollector::~ViewGestureGeometryCollector()
 {
-    WebProcess::singleton().removeMessageReceiver(Messages::ViewGestureGeometryCollector::messageReceiverName(), m_webPageIdentifier);
+    WebProcess::singleton().removeMessageReceiver(Messages::ViewGestureGeometryCollector::messageReceiverName(), m_webPage->identifier());
 }
 
 void ViewGestureGeometryCollector::dispatchDidCollectGeometryForSmartMagnificationGesture(FloatPoint origin, FloatRect absoluteTargetRect, FloatRect visibleContentRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale)
 {
-    RefPtr webPage = m_webPage.get();
-    if (!webPage)
-        return;
-
 #if PLATFORM(MAC)
-    webPage->send(Messages::ViewGestureController::DidCollectGeometryForSmartMagnificationGesture(origin, absoluteTargetRect, visibleContentRect, fitEntireRect, viewportMinimumScale, viewportMaximumScale));
+    protectedWebPage()->send(Messages::ViewGestureController::DidCollectGeometryForSmartMagnificationGesture(origin, absoluteTargetRect, visibleContentRect, fitEntireRect, viewportMinimumScale, viewportMaximumScale));
 #endif
 #if PLATFORM(IOS_FAMILY)
-    webPage->send(Messages::SmartMagnificationController::DidCollectGeometryForSmartMagnificationGesture(origin, absoluteTargetRect, visibleContentRect, fitEntireRect, viewportMinimumScale, viewportMaximumScale));
+    protectedWebPage()->send(Messages::SmartMagnificationController::DidCollectGeometryForSmartMagnificationGesture(origin, absoluteTargetRect, visibleContentRect, fitEntireRect, viewportMinimumScale, viewportMaximumScale));
 #endif
+}
+
+Ref<WebPage> ViewGestureGeometryCollector::protectedWebPage() const
+{
+    return m_webPage.get();
 }
 
 void ViewGestureGeometryCollector::collectGeometryForSmartMagnificationGesture(FloatPoint gestureLocationInViewCoordinates)
 {
-    RefPtr webPage = m_webPage.get();
-    if (!webPage)
-        return;
-
+    Ref webPage = m_webPage.get();
     RefPtr frameView = webPage->localMainFrameView();
     if (!frameView)
         return;
@@ -169,9 +166,6 @@ std::optional<std::pair<double, double>> ViewGestureGeometryCollector::computeTe
     if (m_cachedTextLegibilityScales)
         return m_cachedTextLegibilityScales;
 
-    RefPtr webPage = m_webPage.get();
-    if (!webPage)
-        return std::nullopt;
     RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(m_webPage->mainFrame());
     if (!localMainFrame)
         return std::nullopt;
@@ -260,10 +254,6 @@ void ViewGestureGeometryCollector::computeZoomInformationForNode(Node& node, Flo
 void ViewGestureGeometryCollector::computeMinimumAndMaximumViewportScales(double& viewportMinimumScale, double& viewportMaximumScale) const
 {
 #if PLATFORM(IOS_FAMILY)
-    RefPtr webPage = m_webPage.get();
-    if (!webPage)
-        return;
-
     viewportMinimumScale = m_webPage->minimumPageScaleFactor();
     viewportMaximumScale = m_webPage->maximumPageScaleFactor();
 #else
@@ -275,10 +265,7 @@ void ViewGestureGeometryCollector::computeMinimumAndMaximumViewportScales(double
 #if !PLATFORM(IOS_FAMILY)
 void ViewGestureGeometryCollector::collectGeometryForMagnificationGesture()
 {
-    RefPtr webPage = m_webPage.get();
-    if (!webPage)
-        return;
-
+    Ref webPage = m_webPage.get();
     RefPtr frameView = webPage->localMainFrameView();
     if (!frameView)
         return;
@@ -296,10 +283,7 @@ void ViewGestureGeometryCollector::setRenderTreeSizeNotificationThreshold(uint64
 
 void ViewGestureGeometryCollector::sendDidHitRenderTreeSizeThresholdIfNeeded()
 {
-    RefPtr webPage = m_webPage.get();
-    if (!webPage)
-        return;
-
+    Ref webPage = m_webPage.get();
     if (m_renderTreeSizeNotificationThreshold && webPage->renderTreeSize() >= m_renderTreeSizeNotificationThreshold) {
         webPage->send(Messages::ViewGestureController::DidHitRenderTreeSizeThreshold());
         m_renderTreeSizeNotificationThreshold = 0;

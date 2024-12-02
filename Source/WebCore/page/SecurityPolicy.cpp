@@ -198,7 +198,7 @@ bool SecurityPolicy::allowSubstituteDataAccessToLocal()
 
 bool SecurityPolicy::isAccessAllowed(const SecurityOrigin& activeOrigin, const SecurityOrigin& targetOrigin, const URL& targetURL, const OriginAccessPatterns& patterns)
 {
-    ASSERT(targetOrigin.equal(SecurityOrigin::create(targetURL)));
+    ASSERT(targetOrigin.equal(SecurityOrigin::create(targetURL).ptr()));
     {
         Locker locker { originAccessMapLock };
         if (auto* list = originAccessMap().get(activeOrigin.data())) {

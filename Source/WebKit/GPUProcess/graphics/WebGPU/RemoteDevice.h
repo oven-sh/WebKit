@@ -160,7 +160,6 @@ private:
     void setLabel(String&&);
     void setSharedVideoFrameSemaphore(IPC::Semaphore&&);
     void setSharedVideoFrameMemory(WebCore::SharedMemoryHandle&&);
-    void pauseAllErrorReporting(bool pauseErrorReporting);
 
     Ref<WebCore::WebGPU::Device> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;

@@ -19,7 +19,7 @@
 
 #pragma once
 
-#if ENABLE(VIDEO) && USE(GSTREAMER)
+#if USE(GSTREAMER)
 
 #include "GRefPtrGStreamer.h"
 #include "VideoDecoder.h"
@@ -50,4 +50,4 @@ private:
 
 }
 
-#endif // ENABLE(VIDEO) && USE(GSTREAMER)
+#endif // USE(GSTREAMER)

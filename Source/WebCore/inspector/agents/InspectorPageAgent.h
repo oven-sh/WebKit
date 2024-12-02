@@ -40,7 +40,6 @@
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/WeakRef.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -59,7 +58,7 @@ class InspectorPageAgent final : public InspectorAgentBase, public Inspector::Pa
     WTF_MAKE_NONCOPYABLE(InspectorPageAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorPageAgent);
 public:
-    InspectorPageAgent(PageAgentContext&, InspectorClient*, InspectorOverlay&);
+    InspectorPageAgent(PageAgentContext&, InspectorClient*, InspectorOverlay*);
     ~InspectorPageAgent();
 
     enum ResourceType {
@@ -157,8 +156,6 @@ public:
 private:
     double timestamp();
 
-    Ref<InspectorOverlay> protectedOverlay() const;
-
     static bool mainResourceContent(LocalFrame*, bool withBase64Encode, String* result);
     static bool dataContent(std::span<const uint8_t> data, const String& textEncodingName, bool withBase64Encode, String* result);
 
@@ -174,11 +171,11 @@ private:
 
     Page& m_inspectedPage;
     InspectorClient* m_client { nullptr };
-    WeakRef<InspectorOverlay> m_overlay;
+    InspectorOverlay* m_overlay { nullptr };
 
     WeakHashMap<Frame, String> m_frameToIdentifier;
     MemoryCompactRobinHoodHashMap<String, WeakPtr<Frame>> m_identifierToFrame;
-    HashMap<DocumentLoader*, String> m_loaderToIdentifier;
+    UncheckedKeyHashMap<DocumentLoader*, String> m_loaderToIdentifier;
     String m_userAgentOverride;
     AtomString m_emulatedMedia;
     String m_bootstrapScript;

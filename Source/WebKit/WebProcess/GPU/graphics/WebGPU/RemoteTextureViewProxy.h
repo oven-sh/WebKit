@@ -46,7 +46,8 @@ public:
 
     virtual ~RemoteTextureViewProxy();
 
-    RemoteGPUProxy& root() { return m_root; }
+    RemoteTextureProxy& parent() { return m_parent; }
+    RemoteGPUProxy& root() { return m_parent->root(); }
 
 private:
     friend class DowncastConvertToBackingContext;
@@ -70,7 +71,7 @@ private:
 
     WebGPUIdentifier m_backing;
     Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteGPUProxy> m_root;
+    Ref<RemoteTextureProxy> m_parent;
 };
 
 } // namespace WebKit::WebGPU

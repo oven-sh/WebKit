@@ -28,8 +28,6 @@
 #include <wtf/DataLog.h>
 #include <wtf/TZoneMallocInlines.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PredictionFileCreatingFuzzerAgent);
@@ -72,5 +70,3 @@ SpeculatedType PredictionFileCreatingFuzzerAgent::getPredictionInternal(CodeBloc
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

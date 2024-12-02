@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -304,17 +304,18 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
             if (!childElement->hasClass())
                 continue;
 
-            if (childElement->hasClassName(imageOverlayDataDetectorClass())) {
+            auto& classes = childElement->classList();
+            if (classes.contains(imageOverlayDataDetectorClass())) {
                 elements.dataDetectors.append(childElement.get());
                 continue;
             }
 
-            if (childElement->hasClassName(imageOverlayBlockClass())) {
+            if (classes.contains(imageOverlayBlockClass())) {
                 elements.blocks.append(childElement.get());
                 continue;
             }
 
-            ASSERT(childElement->hasClassName(imageOverlayLineClass()));
+            ASSERT(classes.contains(imageOverlayLineClass()));
             Vector<Ref<HTMLElement>> lineChildren;
             for (Ref text : childrenOfType<HTMLDivElement>(childElement.get()))
                 lineChildren.append(text.get());

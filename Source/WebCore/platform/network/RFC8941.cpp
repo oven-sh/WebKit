@@ -33,8 +33,6 @@
 #include <wtf/text/StringParsingBuffer.h>
 #include <wtf/text/StringView.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace RFC8941 {
 
 using namespace WebCore;
@@ -276,5 +274,3 @@ std::optional<HashMap<String, std::pair<ItemOrInnerList, Parameters>>> parseDict
 }
 
 } // namespace RFC8941
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

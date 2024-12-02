@@ -55,7 +55,6 @@ enum class SnapshotFlags : uint16_t {
     Shareable = 1 << 7,
     Accelerated = 1 << 8,
     ExcludeReplacedContent = 1 << 9,
-    PaintWith3xBaseScale = 1 << 10,
 };
 
 struct SnapshotOptions {

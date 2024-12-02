@@ -49,7 +49,6 @@
 #include "WebCoreInstanceHandle.h"
 #include "markup.h"
 #include <pal/text/TextEncoding.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 #include <wtf/WindowsExtras.h>
 #include <wtf/text/CString.h>
@@ -602,18 +601,18 @@ static String fileSystemPathFromURLOrTitle(const String& urlString, const String
 {
     static const size_t fsPathMaxLengthExcludingNullTerminator = MAX_PATH - 1;
     bool usedURL = false;
-    std::array<UChar, MAX_PATH> fsPathBuffer;
+    UChar fsPathBuffer[MAX_PATH];
     fsPathBuffer[0] = 0;
     int fsPathMaxLengthExcludingExtension = fsPathMaxLengthExcludingNullTerminator - extension.length();
 
     if (!title.isEmpty()) {
         size_t len = std::min<size_t>(title.length(), fsPathMaxLengthExcludingExtension);
-        StringView(title).left(len).getCharacters(std::span<UChar> { fsPathBuffer });
+        StringView(title).left(len).getCharacters(fsPathBuffer);
         fsPathBuffer[len] = 0;
-        pathRemoveBadFSCharacters(wcharFrom(fsPathBuffer.data()), len);
+        pathRemoveBadFSCharacters(wcharFrom(fsPathBuffer), len);
     }
 
-    if (!wcslen(wcharFrom(fsPathBuffer.data()))) {
+    if (!wcslen(wcharFrom(fsPathBuffer))) {
         URL url { urlString };
         usedURL = true;
         // The filename for any content based drag or file url should be the last element of 
@@ -623,24 +622,24 @@ static String fileSystemPathFromURLOrTitle(const String& urlString, const String
         auto lastComponent = url.lastPathComponent();
         if (url.protocolIsFile() || (!isLink && !lastComponent.isEmpty())) {
             len = std::min<DWORD>(fsPathMaxLengthExcludingExtension, lastComponent.length());
-            lastComponent.left(len).getCharacters(std::span<UChar> { fsPathBuffer });
+            lastComponent.left(len).getCharacters(fsPathBuffer);
         } else {
             len = std::min<DWORD>(fsPathMaxLengthExcludingExtension, urlString.length());
-            StringView(urlString).left(len).getCharacters(std::span<UChar> { fsPathBuffer });
+            StringView(urlString).left(len).getCharacters(fsPathBuffer);
         }
         fsPathBuffer[len] = 0;
-        pathRemoveBadFSCharacters(wcharFrom(fsPathBuffer.data()), len);
+        pathRemoveBadFSCharacters(wcharFrom(fsPathBuffer), len);
     }
 
     if (extension.isEmpty())
-        return String(wcharFrom(fsPathBuffer.data()));
+        return String(wcharFrom(fsPathBuffer));
 
     if (!isLink && usedURL) {
-        PathRenameExtension(wcharFrom(fsPathBuffer.data()), extension.wideCharacters().data());
-        return String(wcharFrom(fsPathBuffer.data()));
+        PathRenameExtension(wcharFrom(fsPathBuffer), extension.wideCharacters().data());
+        return String(wcharFrom(fsPathBuffer));
     }
 
-    return makeString(const_cast<const UChar*>(fsPathBuffer.data()), extension);
+    return makeString(const_cast<const UChar*>(fsPathBuffer), extension);
 }
 
 // writeFileToDataObject takes ownership of fileDescriptor and fileContent
@@ -724,7 +723,7 @@ void Pasteboard::writeURLToDataObject(const URL& kurl, const String& titleStr)
     fgd->fgd[0].nFileSizeLow = content.length();
 
     unsigned maxSize = std::min<unsigned>(fsPath.length(), std::size(fgd->fgd[0].cFileName));
-    StringView(fsPath).left(maxSize).getCharacters(spanReinterpretCast<UChar>(std::span<wchar_t> { fgd->fgd[0].cFileName }));
+    StringView(fsPath).left(maxSize).getCharacters(ucharFrom(fgd->fgd[0].cFileName));
     GlobalUnlock(urlFileDescriptor);
 
     char* fileContents = static_cast<char*>(GlobalLock(urlFileContent));
@@ -962,7 +961,7 @@ static HGLOBAL createGlobalImageFileDescriptor(const String& url, const String& 
     }
 
     int maxSize = std::min<int>(fsPath.length(), std::size(fgd->fgd[0].cFileName));
-    StringView(fsPath).left(maxSize).getCharacters(spanReinterpretCast<UChar>(std::span<wchar_t> { fgd->fgd[0].cFileName }));
+    StringView(fsPath).left(maxSize).getCharacters(ucharFrom(fgd->fgd[0].cFileName));
     GlobalUnlock(memObj);
 
     return memObj;

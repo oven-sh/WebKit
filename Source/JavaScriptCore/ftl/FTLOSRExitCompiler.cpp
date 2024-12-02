@@ -46,8 +46,6 @@
 
 #include <wtf/Scope.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace FTL {
 
 using namespace DFG;
@@ -197,8 +195,8 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     EncodedJSValue* scratch = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
     EncodedJSValue* materializationPointers = scratch + exit.m_descriptor->m_values.size();
     EncodedJSValue* materializationArguments = materializationPointers + numMaterializations;
-    char* registerScratch = std::bit_cast<char*>(materializationArguments + maxMaterializationNumArguments);
-    uint64_t* unwindScratch = std::bit_cast<uint64_t*>(registerScratch + requiredScratchMemorySizeInBytes());
+    char* registerScratch = bitwise_cast<char*>(materializationArguments + maxMaterializationNumArguments);
+    uint64_t* unwindScratch = bitwise_cast<uint64_t*>(registerScratch + requiredScratchMemorySizeInBytes());
     
     UncheckedKeyHashMap<ExitTimeObjectMaterialization*, EncodedJSValue*> materializationToPointer;
     unsigned materializationCount = 0;
@@ -546,7 +544,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             // but we can get their values that were preserved by using the unwind data. We've already
             // copied all unwind-able preserved registers into the unwind scratch buffer, so we can get
             // the values to restore from there.
-            ASSERT((std::bit_cast<uintptr_t>(unwindScratch) - std::bit_cast<uintptr_t>(registerScratch)) == requiredScratchMemorySizeInBytes());
+            ASSERT((bitwise_cast<uintptr_t>(unwindScratch) - bitwise_cast<uintptr_t>(registerScratch)) == requiredScratchMemorySizeInBytes());
             jit.addPtr(CCallHelpers::TrustedImm32(requiredScratchMemorySizeInBytes()), GPRInfo::regT3); // Change registerScratch to unwindScratch.
             {
                 // Load from unwindScratch buffer to callee-save registers.
@@ -687,6 +685,5 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
 
 } } // namespace JSC::FTL
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(FTL_JIT)
+

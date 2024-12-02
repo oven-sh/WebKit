@@ -77,8 +77,6 @@
 #include <wtf/text/StringParsingBuffer.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(IntlObject);
@@ -1147,7 +1145,7 @@ static VariantCode parseVariantCode(StringView string)
     Code code { };
     for (unsigned index = 0; index < string.length(); ++index)
         code.characters[index] = toASCIILower(string[index]);
-    VariantCode result = std::bit_cast<VariantCode>(code);
+    VariantCode result = bitwise_cast<VariantCode>(code);
     ASSERT(result); // Not possible since some characters exist.
     ASSERT(result != static_cast<VariantCode>(-1)); // Not possible since all characters are ASCII (not Latin-1).
     return result;
@@ -1633,7 +1631,7 @@ const Vector<String>& intlAvailableCalendars()
             int32_t length = 0;
             const char* pointer = uenum_next(enumeration.get(), &length, &status);
             ASSERT(U_SUCCESS(status));
-            String calendar(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+            String calendar(unsafeForgeSpan(pointer, static_cast<size_t>(length)));
             if (auto mapped = mapICUCalendarKeywordToBCP47(calendar))
                 return createImmortalThreadSafeString(WTFMove(mapped.value()));
             return createImmortalThreadSafeString(WTFMove(calendar));
@@ -1704,7 +1702,7 @@ static JSArray* availableCollations(JSGlobalObject* globalObject)
             throwTypeError(globalObject, scope, "failed to enumerate available collations"_s);
             return { };
         }
-        String collation(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+        String collation(unsafeForgeSpan(pointer, static_cast<size_t>(length)));
         if (collation == "standard"_s || collation == "search"_s)
             continue;
         if (auto mapped = mapICUCollationKeywordToBCP47(collation))
@@ -1761,7 +1759,7 @@ static JSArray* availableCurrencies(JSGlobalObject* globalObject)
             throwTypeError(globalObject, scope, "failed to enumerate available currencies"_s);
             return { };
         }
-        String currency(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+        String currency(unsafeForgeSpan(pointer, static_cast<size_t>(length)));
         if (currency == "EQE"_s)
             continue;
         if (currency == "LSM"_s)
@@ -1870,7 +1868,7 @@ const Vector<String>& intlAvailableTimeZones()
             int32_t length = 0;
             const char* pointer = uenum_next(enumeration.get(), &length, &status);
             ASSERT(U_SUCCESS(status));
-            String timeZone(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+            String timeZone(unsafeForgeSpan(pointer, static_cast<size_t>(length)));
             if (isValidTimeZoneNameFromICUTimeZone(timeZone)) {
                 if (auto mapped = canonicalizeTimeZoneNameFromICUTimeZone(WTFMove(timeZone)))
                     temporary.append(WTFMove(mapped.value()));
@@ -1975,5 +1973,3 @@ JSC_DEFINE_HOST_FUNCTION(intlObjectFuncSupportedValuesOf, (JSGlobalObject* globa
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

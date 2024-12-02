@@ -30,8 +30,6 @@
 #include <unicode/uscript.h>
 #include <wtf/unicode/CharacterNames.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 static ChineseCompositionRules::ChineseCharacterClass characterToCharacterClass(UTF32Char character)
 {
     if (character == zeroWidthSpace)
@@ -182,5 +180,3 @@ CompositionRules::CharacterSpacingType ChineseCompositionRules::characterSpacing
 
     return chineseSpacingTable[beforeClass][afterClass];
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

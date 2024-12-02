@@ -116,8 +116,10 @@ public:
     static RenderPtr<RenderTableCell> createAnonymousWithParentRenderer(const RenderTableRow&);
     RenderPtr<RenderBox> createAnonymousBoxWithSameTypeAs(const RenderBox&) const override;
 
-    // Table layout always uses the table's writing mode.
-    const WritingMode tableWritingMode() const { return table()->writingMode(); }
+    // This function is used to unify which table part's style we use for computing direction and
+    // writing mode. Writing modes are not allowed on internal table boxes.
+    // This means we can safely use the same style in all cases to simplify our code.
+    const RenderStyle& styleForCellFlow() const { return table()->style(); }
 
     inline const BorderValue& borderAdjoiningTableStart() const;
     inline const BorderValue& borderAdjoiningTableEnd() const;
@@ -269,6 +271,15 @@ inline unsigned RenderTableCell::rowIndex() const
     // This function shouldn't be called on a detached cell.
     ASSERT(row());
     return row()->rowIndex();
+}
+
+inline bool RenderTableCell::isBaselineAligned() const
+{
+    if (auto alignContent = style().alignContent(); !alignContent.isNormal())
+        return alignContent.position() == ContentPosition::Baseline;
+
+    VerticalAlign va = style().verticalAlign();
+    return va == VerticalAlign::Baseline || va == VerticalAlign::TextBottom || va == VerticalAlign::TextTop || va == VerticalAlign::Super || va == VerticalAlign::Sub || va == VerticalAlign::Length;
 }
 
 inline RenderTableCell* RenderTableRow::firstCell() const

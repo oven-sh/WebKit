@@ -18,8 +18,6 @@ var MapIteratorProto = Object.getPrototypeOf(new Map()[Symbol.iterator]());
 
 assert.sameValue('Map Iterator', MapIteratorProto[Symbol.toStringTag]);
 
-verifyProperty(MapIteratorProto, Symbol.toStringTag, {
-  writable: false,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(MapIteratorProto, Symbol.toStringTag);
+verifyNotWritable(MapIteratorProto, Symbol.toStringTag);
+verifyConfigurable(MapIteratorProto, Symbol.toStringTag);

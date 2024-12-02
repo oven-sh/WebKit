@@ -35,7 +35,6 @@
 #include <wtf/HashSet.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/WeakRef.h>
 
 namespace WebCore {
 struct FetchOptions;
@@ -46,18 +45,14 @@ namespace WebKit {
 class NetworkProcessConnection;
 class WebFrame;
 class WebPage;
-class WebProcess;
 class WebURLSchemeTaskProxy;
 
 class WebLoaderStrategy final : public WebCore::LoaderStrategy {
     WTF_MAKE_TZONE_ALLOCATED(WebLoaderStrategy);
     WTF_MAKE_NONCOPYABLE(WebLoaderStrategy);
 public:
-    explicit WebLoaderStrategy(WebProcess&);
+    WebLoaderStrategy();
     ~WebLoaderStrategy() final;
-
-    void ref() const;
-    void deref() const;
     
     void loadResource(WebCore::LocalFrame&, WebCore::CachedResource&, WebCore::ResourceRequest&&, const WebCore::ResourceLoaderOptions&, CompletionHandler<void(RefPtr<WebCore::SubresourceLoader>&&)>&&) final;
     void loadResourceSynchronously(WebCore::FrameLoader&, WebCore::ResourceLoaderIdentifier, const WebCore::ResourceRequest&, WebCore::ClientCredentialPolicy, const WebCore::FetchOptions&, const WebCore::HTTPHeaderMap&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>& data) final;
@@ -138,7 +133,6 @@ private:
         });
     }
 
-    WeakRef<WebProcess> m_webProcess;
     HashSet<RefPtr<WebCore::ResourceLoader>> m_internallyFailedResourceLoaders;
     RunLoop::Timer m_internallyFailedLoadTimer;
     

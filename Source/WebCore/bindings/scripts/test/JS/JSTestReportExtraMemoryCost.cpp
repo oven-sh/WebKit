@@ -42,6 +42,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -102,8 +103,9 @@ template<> void JSTestReportExtraMemoryCostDOMConstructor::initializeProperties(
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 1> JSTestReportExtraMemoryCostPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestReportExtraMemoryCostConstructor, 0 } },
+static const HashTableValue JSTestReportExtraMemoryCostPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestReportExtraMemoryCostConstructor, 0 } },
 };
 
 const ClassInfo JSTestReportExtraMemoryCostPrototype::s_info = { "TestReportExtraMemoryCost"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestReportExtraMemoryCostPrototype) };
@@ -216,7 +218,6 @@ void JSTestReportExtraMemoryCostOwner::finalize(JSC::Handle<JSC::Unknown> handle
     uncacheWrapper(world, jsTestReportExtraMemoryCost->protectedWrapped().ptr(), jsTestReportExtraMemoryCost);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -241,8 +242,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestReportExt
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestReportExtraMemoryCost>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

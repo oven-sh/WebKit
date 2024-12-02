@@ -39,8 +39,6 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 String serializeForNumberType(const Decimal& number)
@@ -528,5 +526,3 @@ std::optional<HTMLDimension> parseHTMLMultiLength(StringView multiLengthString)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

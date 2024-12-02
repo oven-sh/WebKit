@@ -62,7 +62,6 @@ ScrollingStatePluginScrollingNode::ScrollingStatePluginScrollingNode(
     ScrollbarEnabledState&& scrollbarEnabledState,
     UserInterfaceLayoutDirection scrollbarLayoutDirection,
     ScrollbarWidth scrollbarWidth,
-    bool useDarkAppearanceForScrollbars,
     RequestedKeyboardScrollData&& scrollData
 ) : ScrollingStateScrollingNode(
     ScrollingNodeType::PluginScrolling,
@@ -94,7 +93,6 @@ ScrollingStatePluginScrollingNode::ScrollingStatePluginScrollingNode(
     WTFMove(scrollbarEnabledState),
     scrollbarLayoutDirection,
     scrollbarWidth,
-    useDarkAppearanceForScrollbars,
     WTFMove(scrollData)
 )
 {

@@ -357,13 +357,13 @@ private:
     const FatEntry* fatEntry() const
     {
         ASSERT(isFat());
-        return std::bit_cast<const FatEntry*>(m_bits);
+        return bitwise_cast<const FatEntry*>(m_bits);
     }
     
     FatEntry* fatEntry()
     {
         ASSERT(isFat());
-        return std::bit_cast<FatEntry*>(m_bits);
+        return bitwise_cast<FatEntry*>(m_bits);
     }
     
     FatEntry* inflate()

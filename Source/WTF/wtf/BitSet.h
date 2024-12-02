@@ -144,8 +144,8 @@ public:
 
     constexpr size_t storageLengthInBytes() { return sizeof(bits); }
 
-    std::span<uint8_t> storageBytes() { return unsafeMakeSpan(reinterpret_cast<uint8_t*>(storage()), storageLengthInBytes()); }
-    std::span<const uint8_t> storageBytes() const { return unsafeMakeSpan(reinterpret_cast<const uint8_t*>(storage()), storageLengthInBytes()); }
+    std::span<uint8_t> storageBytes() { return unsafeForgeSpan(reinterpret_cast<uint8_t*>(storage()), storageLengthInBytes()); }
+    std::span<const uint8_t> storageBytes() const { return unsafeForgeSpan(reinterpret_cast<const uint8_t*>(storage()), storageLengthInBytes()); }
 
 private:
     void cleanseLastWord();
@@ -213,7 +213,7 @@ ALWAYS_INLINE constexpr bool BitSet<bitSetSize, WordType>::concurrentTestAndSet(
     // transactionRelaxed() returns true if the bit was changed. If the bit was changed,
     // then the previous bit must have been false since we're trying to set it. Hence,
     // the result of transactionRelaxed() is the inverse of our expected result.
-    return !std::bit_cast<Atomic<WordType>*>(data)->transactionRelaxed(
+    return !bitwise_cast<Atomic<WordType>*>(data)->transactionRelaxed(
         [&] (WordType& value) -> bool {
             if (value & mask)
                 return false;
@@ -232,7 +232,7 @@ ALWAYS_INLINE constexpr bool BitSet<bitSetSize, WordType>::concurrentTestAndClea
     // transactionRelaxed() returns true if the bit was changed. If the bit was changed,
     // then the previous bit must have been true since we're trying to clear it. Hence,
     // the result of transactionRelaxed() matches our expected result.
-    return std::bit_cast<Atomic<WordType>*>(data)->transactionRelaxed(
+    return bitwise_cast<Atomic<WordType>*>(data)->transactionRelaxed(
         [&] (WordType& value) -> bool {
             if (!(value & mask))
                 return false;

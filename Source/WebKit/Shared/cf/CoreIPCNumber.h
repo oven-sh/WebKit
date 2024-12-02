@@ -120,7 +120,6 @@ public:
     }
 
     CoreIPCNumber(const CoreIPCNumber& other) = default;
-    CoreIPCNumber& operator=(const CoreIPCNumber& other) = default;
 
     RetainPtr<CFNumberRef> createCFNumber() const
     {

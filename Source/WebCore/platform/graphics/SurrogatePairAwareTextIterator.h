@@ -23,8 +23,6 @@
 #include <unicode/utf16.h>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 class SurrogatePairAwareTextIterator {
@@ -81,5 +79,3 @@ private:
 };
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

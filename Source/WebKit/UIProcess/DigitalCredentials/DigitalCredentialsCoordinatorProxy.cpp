@@ -38,28 +38,27 @@
 namespace WebKit {
 using namespace WebCore;
 
-Ref<DigitalCredentialsCoordinatorProxy> DigitalCredentialsCoordinatorProxy::create(WebPageProxy& page)
-{
-    return adoptRef(*new DigitalCredentialsCoordinatorProxy(page));
-}
-
 DigitalCredentialsCoordinatorProxy::DigitalCredentialsCoordinatorProxy(WebPageProxy& page)
     : m_page(page)
 {
-    page.protectedLegacyMainFrameProcess()->addMessageReceiver(Messages::DigitalCredentialsCoordinatorProxy::messageReceiverName(), page.webPageIDInMainFrameProcess(), *this);
+    Ref pageRef = m_page.get();
+    pageRef->protectedLegacyMainFrameProcess()->addMessageReceiver(Messages::DigitalCredentialsCoordinatorProxy::messageReceiverName(), pageRef->webPageIDInMainFrameProcess(), *this);
 }
 
 DigitalCredentialsCoordinatorProxy::~DigitalCredentialsCoordinatorProxy()
 {
-    if (RefPtr page = m_page.get())
-        page->protectedLegacyMainFrameProcess()->removeMessageReceiver(Messages::DigitalCredentialsCoordinatorProxy::messageReceiverName(), page->webPageIDInMainFrameProcess());
+    Ref page = m_page.get();
+    page->protectedLegacyMainFrameProcess()->removeMessageReceiver(Messages::DigitalCredentialsCoordinatorProxy::messageReceiverName(), page->webPageIDInMainFrameProcess());
 }
 
 std::optional<SharedPreferencesForWebProcess> DigitalCredentialsCoordinatorProxy::sharedPreferencesForWebProcess() const
 {
-    if (RefPtr page = m_page.get())
-        return page->protectedLegacyMainFrameProcess()->sharedPreferencesForWebProcess();
-    return std::nullopt;
+    return protectedPage()->protectedLegacyMainFrameProcess()->sharedPreferencesForWebProcess();
+}
+
+Ref<WebPageProxy> DigitalCredentialsCoordinatorProxy::protectedPage() const
+{
+    return m_page.get();
 }
 
 void DigitalCredentialsCoordinatorProxy::requestDigitalCredential(FrameIdentifier frameId, FrameInfoData&& frameInfo, DigitalCredentialRequestOptions&& options, DigitalRequestCompletionHandler&& handler)

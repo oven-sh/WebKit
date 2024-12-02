@@ -27,7 +27,7 @@
 #pragma once
 
 #include "WebProcessProxy.h"
-#include <WebCore/Site.h>
+#include <WebCore/RegistrableDomain.h>
 #include <pal/SessionID.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
@@ -48,12 +48,12 @@ public:
     explicit WebProcessCache(WebProcessPool&);
 
     bool addProcessIfPossible(Ref<WebProcessProxy>&&);
-    RefPtr<WebProcessProxy> takeProcess(const WebCore::Site&, WebsiteDataStore&, WebProcessProxy::LockdownMode, const API::PageConfiguration&);
+    RefPtr<WebProcessProxy> takeProcess(const WebCore::RegistrableDomain&, WebsiteDataStore&, WebProcessProxy::LockdownMode, const API::PageConfiguration&);
 
     void updateCapacity(WebProcessPool&);
     unsigned capacity() const { return m_capacity; }
 
-    unsigned size() const { return m_processesPerSite.size(); }
+    unsigned size() const { return m_processesPerRegistrableDomain.size(); }
 
     void clear();
     void setApplicationIsActive(bool);
@@ -68,10 +68,10 @@ private:
     static Seconds cachedProcessLifetime;
     static Seconds clearingDelayAfterApplicationResignsActive;
 
-    class CachedProcess : public RefCounted<CachedProcess> {
+    class CachedProcess {
         WTF_MAKE_TZONE_ALLOCATED(CachedProcess);
     public:
-        static Ref<CachedProcess> create(Ref<WebProcessProxy>&&);
+        CachedProcess(Ref<WebProcessProxy>&&);
         ~CachedProcess();
 
         Ref<WebProcessProxy> takeProcess();
@@ -83,8 +83,6 @@ private:
 #endif
 
     private:
-        explicit CachedProcess(Ref<WebProcessProxy>&&);
-
         void evictionTimerFired();
 #if PLATFORM(MAC) || PLATFORM(GTK) || PLATFORM(WPE)
         void suspensionTimerFired();
@@ -100,12 +98,12 @@ private:
 
     bool canCacheProcess(WebProcessProxy&) const;
     void platformInitialize();
-    bool addProcess(Ref<CachedProcess>&&);
+    bool addProcess(std::unique_ptr<CachedProcess>&&);
 
     unsigned m_capacity { 0 };
 
-    HashMap<uint64_t, Ref<CachedProcess>> m_pendingAddRequests;
-    HashMap<WebCore::Site, Ref<CachedProcess>> m_processesPerSite;
+    HashMap<uint64_t, std::unique_ptr<CachedProcess>> m_pendingAddRequests;
+    HashMap<WebCore::RegistrableDomain, std::unique_ptr<CachedProcess>> m_processesPerRegistrableDomain;
     RunLoop::Timer m_evictionTimer;
 };
 

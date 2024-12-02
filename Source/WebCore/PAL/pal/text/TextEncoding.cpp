@@ -39,11 +39,11 @@ namespace PAL {
 
 static const TextEncoding& UTF7Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF7Encoding("UTF-7"_s);
+    static NeverDestroyed<TextEncoding> globalUTF7Encoding("UTF-7");
     return globalUTF7Encoding;
 }
 
-TextEncoding::TextEncoding(ASCIILiteral name)
+TextEncoding::TextEncoding(const char* name)
     : m_name(atomCanonicalTextEncodingName(name))
     , m_backslashAsCurrencySymbol(backslashAsCurrencySymbol())
 {
@@ -93,7 +93,7 @@ ASCIILiteral TextEncoding::domName() const
     // FIXME: This is not thread-safe. At the moment, this function is
     // only accessed in a single thread, but eventually has to be made
     // thread-safe along with usesVisualOrdering().
-    static const ASCIILiteral windows949 = atomCanonicalTextEncodingName("windows-949"_s);
+    static const ASCIILiteral windows949 = atomCanonicalTextEncodingName("windows-949");
     if (m_name == windows949)
         return "EUC-KR"_s;
     return m_name;
@@ -104,7 +104,7 @@ bool TextEncoding::usesVisualOrdering() const
     if (noExtendedTextEncodingNameUsed())
         return false;
 
-    static const ASCIILiteral iso88598 = atomCanonicalTextEncodingName("ISO-8859-8"_s);
+    static const ASCIILiteral iso88598 = atomCanonicalTextEncodingName("ISO-8859-8");
     return m_name == iso88598;
 }
 
@@ -152,38 +152,38 @@ const TextEncoding& TextEncoding::encodingForFormSubmissionOrURLParsing() const
 
 const TextEncoding& ASCIIEncoding()
 {
-    static NeverDestroyed<TextEncoding> globalASCIIEncoding("ASCII"_s);
+    static NeverDestroyed<TextEncoding> globalASCIIEncoding("ASCII");
     return globalASCIIEncoding;
 }
 
 const TextEncoding& Latin1Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalLatin1Encoding("latin1"_s);
+    static NeverDestroyed<TextEncoding> globalLatin1Encoding("latin1");
     return globalLatin1Encoding;
 }
 
 const TextEncoding& UTF16BigEndianEncoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF16BigEndianEncoding("UTF-16BE"_s);
+    static NeverDestroyed<TextEncoding> globalUTF16BigEndianEncoding("UTF-16BE");
     return globalUTF16BigEndianEncoding;
 }
 
 const TextEncoding& UTF16LittleEndianEncoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF16LittleEndianEncoding("UTF-16LE"_s);
+    static NeverDestroyed<TextEncoding> globalUTF16LittleEndianEncoding("UTF-16LE");
     return globalUTF16LittleEndianEncoding;
 }
 
 const TextEncoding& UTF8Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalUTF8Encoding("UTF-8"_s);
+    static NeverDestroyed<TextEncoding> globalUTF8Encoding("UTF-8");
     ASSERT(globalUTF8Encoding.get().isValid());
     return globalUTF8Encoding;
 }
 
 const TextEncoding& WindowsLatin1Encoding()
 {
-    static NeverDestroyed<TextEncoding> globalWindowsLatin1Encoding("WinLatin-1"_s);
+    static NeverDestroyed<TextEncoding> globalWindowsLatin1Encoding("WinLatin-1");
     return globalWindowsLatin1Encoding;
 }
 

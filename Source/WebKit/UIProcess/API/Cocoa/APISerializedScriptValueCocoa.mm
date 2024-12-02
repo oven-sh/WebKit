@@ -41,15 +41,10 @@ static constexpr auto sharedJSContextMaxIdleTime = 10_s;
 
 class SharedJSContext {
 public:
-    static SharedJSContext& singleton()
+    SharedJSContext()
+        : m_timer(RunLoop::main(), this, &SharedJSContext::releaseContextIfNecessary)
     {
-        static MainThreadNeverDestroyed<SharedJSContext> sharedContext;
-        return sharedContext.get();
     }
-
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
 
     RetainPtr<JSContext> ensureContext()
     {
@@ -87,22 +82,21 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     }
 
 private:
-    friend class NeverDestroyed<SharedJSContext, MainThreadAccessTraits>;
-
-    SharedJSContext()
-        : m_timer(RunLoop::main(), this, &SharedJSContext::releaseContextIfNecessary)
-    {
-    }
-
     RetainPtr<JSContext> m_context;
     RunLoop::Timer m_timer;
     MonotonicTime m_lastUseTime;
 };
 
+static SharedJSContext& sharedContext()
+{
+    static MainThreadNeverDestroyed<SharedJSContext> sharedContext;
+    return sharedContext.get();
+}
+
 id SerializedScriptValue::deserialize(WebCore::SerializedScriptValue& serializedScriptValue)
 {
     ASSERT(RunLoop::isMain());
-    RetainPtr context = SharedJSContext::singleton().ensureContext();
+    RetainPtr context = sharedContext().ensureContext();
     JSRetainPtr globalContextRef = [context JSGlobalContextRef];
 
     JSValueRef valueRef = serializedScriptValue.deserialize(globalContextRef.get(), nullptr);
@@ -153,7 +147,7 @@ static RefPtr<WebCore::SerializedScriptValue> coreValueFromNSObject(id object)
         return nullptr;
 
     ASSERT(RunLoop::isMain());
-    RetainPtr context = SharedJSContext::singleton().ensureContext();
+    RetainPtr context = sharedContext().ensureContext();
     JSValue *value = [JSValue valueWithObject:object inContext:context.get()];
     if (!value)
         return nullptr;

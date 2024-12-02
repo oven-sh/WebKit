@@ -30,9 +30,6 @@
 
 #include "ZycoreString.h"
 #include "ZycoreLibC.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 /* ============================================================================================== */
 /* Internal macros                                                                                */
@@ -1127,7 +1124,5 @@ ZyanStatus ZyanStringGetData(const ZyanString* string, const char** value)
 /* ---------------------------------------------------------------------------------------------- */
 
 /* ============================================================================================== */
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

@@ -74,18 +74,18 @@ enum class ShapeKeyword : bool { Circle, Ellipse };
 
 // MARK: Deprecated <gradient> values
 
-template<CSSValueID zeroValue, CSSValueID oneHundredValue> static std::optional<CSS::NumberOrPercentage<>> consumeDeprecatedGradientPositionComponent(CSSParserTokenRange& range, const CSSParserContext& context)
+template<CSSValueID zeroValue, CSSValueID oneHundredValue> static std::optional<CSS::PercentageOrNumber> consumeDeprecatedGradientPositionComponent(CSSParserTokenRange& range, const CSSParserContext& context)
 {
     if (range.peek().type() == IdentToken) {
         if (consumeIdent<zeroValue>(range))
-            return CSS::NumberOrPercentage<> { CSS::Percentage<> { CSS::PercentageRaw<> { 0 } } };
+            return CSS::PercentageOrNumber { CSS::Percentage<> { CSS::PercentageRaw<> { 0 } } };
         if (consumeIdent<oneHundredValue>(range))
-            return CSS::NumberOrPercentage<> { CSS::Percentage<> { CSS::PercentageRaw<> { 100 } } };
+            return CSS::PercentageOrNumber { CSS::Percentage<> { CSS::PercentageRaw<> { 100 } } };
         if (consumeIdent<CSSValueCenter>(range))
-            return CSS::NumberOrPercentage<> { CSS::Percentage<> { CSS::PercentageRaw<> { 50 } } };
+            return CSS::PercentageOrNumber { CSS::Percentage<> { CSS::PercentageRaw<> { 50 } } };
         return std::nullopt;
     }
-    return MetaConsumer<CSS::Number<>, CSS::Percentage<>>::consume(range, context, { }, { });
+    return MetaConsumer<CSS::Percentage<>, CSS::Number<>>::consume(range, context, { }, { });
 }
 
 static std::optional<CSS::DeprecatedGradientPosition> consumeDeprecatedGradientPosition(CSSParserTokenRange& range, const CSSParserContext& context)
@@ -130,15 +130,13 @@ static std::optional<CSS::GradientDeprecatedColorStop> consumeDeprecatedGradient
     case CSSValueTo:
         position = CSS::NumberRaw<> { 1 };
         break;
-    case CSSValueColorStop: {
-        auto numberOrPercentage = MetaConsumer<CSS::Number<>, CSS::Percentage<>>::consume(args, context, { }, { });
-        if (!numberOrPercentage)
+    case CSSValueColorStop:
+        position = MetaConsumer<CSS::Percentage<>, CSS::Number<>>::consume(args, context, { }, { });
+        if (!position)
             return std::nullopt;
         if (!consumeCommaIncludingWhitespace(args))
             return std::nullopt;
-        position = WTFMove(*numberOrPercentage);
         break;
-    }
     default:
         ASSERT_NOT_REACHED();
         return std::nullopt;
@@ -436,7 +434,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedLinearGradient(
     };
 
     if (auto angle = MetaConsumer<CSS::Angle<>>::consume(range, context, { }, angleConsumeOptions)) {
-        gradientLine = WTF::switchOn(WTFMove(*angle), [](auto&& value) -> CSS::PrefixedLinearGradient::GradientLine { return value; });
+        gradientLine = WTF::switchOn(WTFMove(angle->value), [](auto&& value) -> CSS::PrefixedLinearGradient::GradientLine { return value; });
         if (!consumeCommaIncludingWhitespace(range))
             return nullptr;
     } else if (auto keywordGradientLine = consumeKeywordGradientLine(range)) {

@@ -195,6 +195,8 @@ set(WebKit_MESSAGES_IN_FILES
 
     GPUProcess/webrtc/LibWebRTCCodecsProxy
     GPUProcess/webrtc/RemoteAudioMediaStreamTrackRendererInternalUnitManager
+    GPUProcess/webrtc/RemoteMediaRecorder
+    GPUProcess/webrtc/RemoteMediaRecorderManager
     GPUProcess/webrtc/RemoteSampleBufferDisplayLayer
     GPUProcess/webrtc/RemoteSampleBufferDisplayLayerManager
 
@@ -256,6 +258,8 @@ set(WebKit_MESSAGES_IN_FILES
     UIProcess/WebProcessPool
     UIProcess/WebProcessProxy
     UIProcess/WebScreenOrientationManagerProxy
+
+    UIProcess/Automation/WebAutomationSession
 
     UIProcess/Downloads/DownloadProxy
 
@@ -405,7 +409,6 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/BackgroundFetchState.serialization.in
     Shared/CacheModel.serialization.in
     Shared/CallbackID.serialization.in
-    Shared/ContentWorldData.serialization.in
     Shared/ContextMenuContextData.serialization.in
     Shared/CoordinateSystem.serialization.in
     Shared/DebuggableInfoData.serialization.in
@@ -470,7 +473,6 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebEvent.serialization.in
     Shared/WebFindOptions.serialization.in
     Shared/WebFoundTextRange.serialization.in
-    Shared/WebFrameMetrics.serialization.in
     Shared/WebHitTestResultData.serialization.in
     Shared/WebImage.serialization.in
     Shared/WebNavigationDataStore.serialization.in
@@ -635,7 +637,6 @@ set(WebCore_SERIALIZATION_IN_FILES
     PlatformMediaSession.serialization.in
     PlatformScreen.serialization.in
     PlatformWheelEvent.serialization.in
-    ProcessSyncData.serialization.in
     ProtectionSpaceBase.serialization.in
     ScrollTypes.serialization.in
     WebGPU.serialization.in

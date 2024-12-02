@@ -307,17 +307,16 @@ SkTypeface::LocalizedStrings* SkTypeface_Fontations::onCreateFamilyNameIterator(
 
 class SkFontationsScalerContext : public SkScalerContext {
 public:
-    SkFontationsScalerContext(sk_sp<SkTypeface_Fontations> proxyTypeface,
+    SkFontationsScalerContext(sk_sp<SkTypeface_Fontations> face,
                               const SkScalerContextEffects& effects,
-                              const SkDescriptor* desc,
-                              sk_sp<SkTypeface> realTypeface)
-            : SkScalerContext(realTypeface, effects, desc)
+                              const SkDescriptor* desc)
+            : SkScalerContext(face, effects, desc)
             , fBridgeFontRef(
-                      static_cast<SkTypeface_Fontations*>(proxyTypeface.get())->getBridgeFontRef())
-            , fBridgeNormalizedCoords(static_cast<SkTypeface_Fontations*>(proxyTypeface.get())
+                      static_cast<SkTypeface_Fontations*>(this->getTypeface())->getBridgeFontRef())
+            , fBridgeNormalizedCoords(static_cast<SkTypeface_Fontations*>(this->getTypeface())
                                               ->getBridgeNormalizedCoords())
-            , fOutlines(static_cast<SkTypeface_Fontations*>(proxyTypeface.get())->getOutlines())
-            , fPalette(static_cast<SkTypeface_Fontations*>(proxyTypeface.get())->getPalette())
+            , fOutlines(static_cast<SkTypeface_Fontations*>(this->getTypeface())->getOutlines())
+            , fPalette(static_cast<SkTypeface_Fontations*>(this->getTypeface())->getPalette())
             , fHintingInstance(fontations_ffi::no_hinting_instance()) {
         fRec.computeMatrices(
                 SkScalerContextRec::PreMatrixScale::kVertical, &fScale, &fRemainingMatrix);
@@ -878,18 +877,8 @@ sk_sp<SkTypeface> SkTypeface_Fontations::onMakeClone(const SkFontArguments& args
 
 std::unique_ptr<SkScalerContext> SkTypeface_Fontations::onCreateScalerContext(
         const SkScalerContextEffects& effects, const SkDescriptor* desc) const {
-    return this->onCreateScalerContextAsProxyTypeface(effects, desc, nullptr);
-}
-
-std::unique_ptr<SkScalerContext> SkTypeface_Fontations::onCreateScalerContextAsProxyTypeface(
-                                    const SkScalerContextEffects& effects,
-                                    const SkDescriptor* desc,
-                                    sk_sp<SkTypeface> realTypeface) const {
     return std::make_unique<SkFontationsScalerContext>(
-            sk_ref_sp(const_cast<SkTypeface_Fontations*>(this)),
-            effects,
-            desc,
-            realTypeface ? realTypeface : sk_ref_sp(const_cast<SkTypeface_Fontations*>(this)));
+            sk_ref_sp(const_cast<SkTypeface_Fontations*>(this)), effects, desc);
 }
 
 std::unique_ptr<SkAdvancedTypefaceMetrics> SkTypeface_Fontations::onGetAdvancedMetrics() const {
@@ -1523,7 +1512,7 @@ BoundsPainter::BoundsPainter(SkFontationsScalerContext& scaler_context,
                              SkMatrix initialTransfom,
                              uint16_t upem)
         : fScalerContext(scaler_context)
-        , fMatrixStack({initialTransfom})
+        , fCurrentTransform(initialTransfom)
         , fUpem(upem)
         , fBounds(SkRect::MakeEmpty()) {}
 
@@ -1531,25 +1520,35 @@ SkRect BoundsPainter::getBoundingBox() { return fBounds; }
 
 // fontations_ffi::ColorPainter interface.
 void BoundsPainter::push_transform(const fontations_ffi::Transform& transform_arg) {
-    SkMatrix newTop(fMatrixStack.back());
-    newTop.preConcat(SkMatrixFromFontationsTransform(transform_arg));
-    fMatrixStack.push_back(newTop);
+    SkMatrix transform = SkMatrix::MakeAll(transform_arg.xx,
+                                           -transform_arg.xy,
+                                           transform_arg.dx,
+                                           -transform_arg.yx,
+                                           transform_arg.yy,
+                                           -transform_arg.dy,
+                                           0.f,
+                                           0.f,
+                                           1.0f);
+    fCurrentTransform.preConcat(transform);
+    bool invertResult = transform.invert(&fStackTopTransformInverse);
+    SkASSERT(invertResult);
 }
 void BoundsPainter::pop_transform() {
-    fMatrixStack.pop_back();
+    fCurrentTransform.preConcat(fStackTopTransformInverse);
+    fStackTopTransformInverse = SkMatrix();
 }
 
 void BoundsPainter::push_clip_glyph(uint16_t glyph_id) {
     SkPath path;
     fScalerContext.generateYScalePathForGlyphId(glyph_id, &path, fUpem, *fontations_ffi::no_hinting_instance());
-    path.transform(fMatrixStack.back());
+    path.transform(fCurrentTransform);
     fBounds.join(path.getBounds());
 }
 
 void BoundsPainter::push_clip_rectangle(float x_min, float y_min, float x_max, float y_max) {
     SkRect clipRect = SkRect::MakeLTRB(x_min, -y_min, x_max, -y_max);
     SkPath rectPath = SkPath::Rect(clipRect);
-    rectPath.transform(fMatrixStack.back());
+    rectPath.transform(fCurrentTransform);
     fBounds.join(rectPath.getBounds());
 }
 

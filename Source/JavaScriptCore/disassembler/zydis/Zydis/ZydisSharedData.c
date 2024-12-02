@@ -29,9 +29,6 @@
 #if ENABLE(ZYDIS)
 
 #include "ZydisInternalSharedData.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 /* ============================================================================================== */
 /* Data tables                                                                                    */
@@ -204,7 +201,5 @@ ZyanBool ZydisGetAccessedFlags(const ZydisInstructionDefinition* definition,
 /* ---------------------------------------------------------------------------------------------- */
 
 /* ============================================================================================== */
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

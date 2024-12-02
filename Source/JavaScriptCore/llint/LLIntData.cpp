@@ -33,8 +33,6 @@
 #include "LLIntThunks.h"
 #include "Opcode.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 namespace LLInt {
@@ -72,15 +70,15 @@ static void neuterOpcodeMaps()
 {
 #if CPU(ARM64E)
 #define SET_CRASH_TARGET(entry) do { \
-        void* crashTarget = reinterpret_cast<void*>(llint_check_vm_entry_permission); \
-        uint64_t address = std::bit_cast<uint64_t>(&entry); \
-        uint64_t newTag = (std::bit_cast<uint64_t>(BytecodePtrTag) << 48) | address; \
+        void* crashTarget = bitwise_cast<void*>(llint_check_vm_entry_permission); \
+        uint64_t address = bitwise_cast<uint64_t>(&entry); \
+        uint64_t newTag = (bitwise_cast<uint64_t>(BytecodePtrTag) << 48) | address; \
         void* signedTarget = ptrauth_auth_and_resign(crashTarget, ptrauth_key_function_pointer, 0, ptrauth_key_process_dependent_code, newTag); \
-        entry = std::bit_cast<Opcode>(signedTarget); \
+        entry = bitwise_cast<Opcode>(signedTarget); \
     } while (false)
 #else
 #define SET_CRASH_TARGET(entry) do { \
-        entry = reinterpret_cast<Opcode>(llint_check_vm_entry_permission); \
+        entry = bitwise_cast<Opcode>(llint_check_vm_entry_permission); \
     } while (false)
 #endif
     for (unsigned i = 0; i < numOpcodeIDs + numWasmOpcodeIDs; ++i) {
@@ -214,14 +212,6 @@ void initialize()
     {
         static LazyNeverDestroyed<MacroAssemblerCodeRef<NativeToJITGatePtrTag>> codeRef;
         if (Options::useJIT())
-            codeRef.construct(createWasmTailCallGate(WasmEntryPtrTag));
-        else
-            codeRef.construct(MacroAssemblerCodeRef<NativeToJITGatePtrTag>::createSelfManagedCodeRef(CodePtr<NativeToJITGatePtrTag>::fromTaggedPtr(retagCodePtr<void*, CFunctionPtrTag, NativeToJITGatePtrTag>(&wasmTailCallTrampoline))));
-        g_jscConfig.llint.gateMap[static_cast<unsigned>(Gate::wasmIPIntTailCallWasmEntryPtrTag)]= codeRef.get().code().taggedPtr();
-    }
-    {
-        static LazyNeverDestroyed<MacroAssemblerCodeRef<NativeToJITGatePtrTag>> codeRef;
-        if (Options::useJIT())
             codeRef.construct(exceptionHandlerGateThunk());
         else
             codeRef.construct(MacroAssemblerCodeRef<NativeToJITGatePtrTag>::createSelfManagedCodeRef(CodePtr<NativeToJITGatePtrTag>::fromTaggedPtr(retagCodePtr<void*, CFunctionPtrTag, NativeToJITGatePtrTag>(&exceptionHandlerTrampoline))));
@@ -273,5 +263,3 @@ void initialize()
 }
 
 } } // namespace JSC::LLInt
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -55,10 +55,8 @@ class BindGroupLayout;
 struct BindGroupLayoutDescriptor;
 class Buffer;
 struct BufferDescriptor;
-class CommandBuffer;
 class CommandEncoder;
 struct CommandEncoderDescriptor;
-class ComputePassEncoder;
 class ComputePipeline;
 struct ComputePipelineDescriptor;
 class ExternalTexture;
@@ -73,7 +71,6 @@ struct QuerySetDescriptor;
 class Queue;
 class RenderBundleEncoder;
 struct RenderBundleEncoderDescriptor;
-class RenderPassEncoder;
 class RenderPipeline;
 struct RenderPipelineDescriptor;
 class Sampler;
@@ -134,11 +131,6 @@ public:
     virtual void popErrorScope(CompletionHandler<void(bool, std::optional<Error>&&)>&&) = 0;
     virtual void resolveUncapturedErrorEvent(CompletionHandler<void(bool, std::optional<Error>&&)>&&) = 0;
     virtual void resolveDeviceLostPromise(CompletionHandler<void(WebCore::WebGPU::DeviceLostReason)>&&) = 0;
-    virtual Ref<CommandEncoder> invalidCommandEncoder() = 0;
-    virtual Ref<CommandBuffer> invalidCommandBuffer() = 0;
-    virtual Ref<RenderPassEncoder> invalidRenderPassEncoder() = 0;
-    virtual Ref<ComputePassEncoder> invalidComputePassEncoder() = 0;
-    virtual void pauseAllErrorReporting(bool pause) = 0;
 
 protected:
     Device(Ref<SupportedFeatures>&& features, Ref<SupportedLimits>&& limits)

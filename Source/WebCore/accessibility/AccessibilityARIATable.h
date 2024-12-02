@@ -35,14 +35,16 @@ namespace WebCore {
 
 class AccessibilityARIATable final : public AccessibilityTable {
 public:
-    static Ref<AccessibilityARIATable> create(AXID, RenderObject&);
-    static Ref<AccessibilityARIATable> create(AXID, Node&);
+    static Ref<AccessibilityARIATable> create(RenderObject&);
+    static Ref<AccessibilityARIATable> create(Node&);
     virtual ~AccessibilityARIATable();
 
 private:
-    explicit AccessibilityARIATable(AXID, RenderObject&);
-    explicit AccessibilityARIATable(AXID, Node&);
+    explicit AccessibilityARIATable(RenderObject&);
+    explicit AccessibilityARIATable(Node&);
 
+    // ARIA treegrids and grids support selected rows.
+    bool supportsSelectedRows() const final { return hasGridAriaRole(); }
     bool isMultiSelectable() const final;
     bool computeIsTableExposableThroughAccessibility() const final { return true; }
     bool isAriaTable() const final { return true; }

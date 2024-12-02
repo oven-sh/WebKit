@@ -65,9 +65,6 @@ public:
 
     WEBCORE_EXPORT ~MediaKeys();
 
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
-
     ExceptionOr<Ref<MediaKeySession>> createSession(Document&, MediaKeySessionType);
     void setServerCertificate(const BufferSource&, Ref<DeferredPromise>&&);
 

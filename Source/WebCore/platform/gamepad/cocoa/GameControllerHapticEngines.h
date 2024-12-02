@@ -28,7 +28,6 @@
 #if ENABLE(GAMEPAD) && HAVE(WIDE_GAMECONTROLLER_SUPPORT)
 
 #include <wtf/Forward.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -37,15 +36,24 @@ OBJC_CLASS CHHapticEngine;
 OBJC_CLASS GCController;
 
 namespace WebCore {
+class GameControllerHapticEngines;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
+template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::GameControllerHapticEngines> : std::true_type { };
+}
+
+namespace WebCore {
 
 class GameControllerHapticEffect;
 struct GamepadEffectParameters;
 enum class GamepadHapticEffectType : uint8_t;
 
-class GameControllerHapticEngines final : public RefCountedAndCanMakeWeakPtr<GameControllerHapticEngines> {
+class GameControllerHapticEngines : public CanMakeWeakPtr<GameControllerHapticEngines> {
     WTF_MAKE_TZONE_ALLOCATED(GameControllerHapticEngines);
 public:
-    static Ref<GameControllerHapticEngines> create(GCController *);
+    static std::unique_ptr<GameControllerHapticEngines> create(GCController *);
     ~GameControllerHapticEngines();
 
     void playEffect(GamepadHapticEffectType, const GamepadEffectParameters&, CompletionHandler<void(bool)>&&);
@@ -61,14 +69,19 @@ public:
 private:
     explicit GameControllerHapticEngines(GCController *);
 
-    RefPtr<GameControllerHapticEffect>& currentEffectForType(GamepadHapticEffectType);
+    void ensureStarted(GamepadHapticEffectType, CompletionHandler<void(bool)>&&);
+    std::unique_ptr<GameControllerHapticEffect>& currentEffectForType(GamepadHapticEffectType);
 
     RetainPtr<CHHapticEngine> m_leftHandleEngine;
     RetainPtr<CHHapticEngine> m_rightHandleEngine;
     RetainPtr<CHHapticEngine> m_leftTriggerEngine;
     RetainPtr<CHHapticEngine> m_rightTriggerEngine;
-    RefPtr<GameControllerHapticEffect> m_currentDualRumbleEffect;
-    RefPtr<GameControllerHapticEffect> m_currentTriggerRumbleEffect;
+    bool m_failedToStartLeftHandleEngine { false };
+    bool m_failedToStartRightHandleEngine { false };
+    bool m_failedToStartLeftTriggerEngine { false };
+    bool m_failedToStartRightTriggerEngine { false };
+    std::unique_ptr<GameControllerHapticEffect> m_currentDualRumbleEffect;
+    std::unique_ptr<GameControllerHapticEffect> m_currentTriggerRumbleEffect;
 };
 
 } // namespace WebCore

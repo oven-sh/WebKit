@@ -18,8 +18,6 @@ includes: [propertyHelper.js]
 
 assert.sameValue(EvalError.prototype.constructor, EvalError);
 
-verifyProperty(EvalError.prototype, "constructor", {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(EvalError.prototype, "constructor");
+verifyWritable(EvalError.prototype, "constructor");
+verifyConfigurable(EvalError.prototype, "constructor");

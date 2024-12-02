@@ -73,7 +73,6 @@ public:
 private:
 #if ENABLE(CONTEXT_MENUS)
     class ContextMenuClient : public API::ContextMenuClient {
-        WTF_MAKE_TZONE_ALLOCATED(ContextMenuClient);
     public:
         explicit ContextMenuClient(UIDelegate&);
         ~ContextMenuClient();

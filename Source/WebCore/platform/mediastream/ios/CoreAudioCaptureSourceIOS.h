@@ -27,6 +27,7 @@
 
 #if ENABLE(MEDIA_STREAM) && PLATFORM(IOS_FAMILY)
 
+#include "AudioSession.h"
 #include "CoreAudioCaptureSource.h"
 #include <wtf/WeakHashSet.h>
 

@@ -23,9 +23,10 @@
 #include <glib.h>
 #include <optional>
 
-#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace IPC {
 
@@ -39,9 +40,8 @@ template<> struct ArgumentCoder<GUniquePtr<char*>> {
         if (!length)
             return;
 
-        auto strvSpan = span(strv.get());
-        for (auto str : strvSpan)
-            encoder << CString(str);
+        for (uint32_t i = 0; strv.get()[i]; i++)
+            encoder << CString(strv.get()[i]);
     }
 
     static std::optional<GUniquePtr<char*>> decode(Decoder& decoder)
@@ -52,13 +52,12 @@ template<> struct ArgumentCoder<GUniquePtr<char*>> {
             return std::nullopt;
 
         GUniquePtr<char*>strv(g_new0(char*, *length + 1));
-        auto strvSpan = unsafeMakeSpan(strv.get(), *length);
-
-        for (auto& str : strvSpan) {
+        for (uint32_t i = 0; i < *length; i++) {
             auto strOptional = decoder.decode<CString>();
             if (UNLIKELY(!strOptional))
                 return std::nullopt;
-            str = g_strdup(strOptional->data());
+
+            strv.get()[i] = g_strdup(strOptional->data());
         }
 
         return strv;
@@ -66,3 +65,5 @@ template<> struct ArgumentCoder<GUniquePtr<char*>> {
 };
 
 } // namespace IPC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

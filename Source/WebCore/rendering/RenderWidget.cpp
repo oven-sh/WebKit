@@ -34,7 +34,6 @@
 #include "RemoteFrameView.h"
 #include "RenderBoxInlines.h"
 #include "RenderElementInlines.h"
-#include "RenderEmbeddedObject.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
 #include "RenderLayerScrollableArea.h"
@@ -163,7 +162,7 @@ bool RenderWidget::updateWidgetGeometry()
 
     LayoutRect contentBox = contentBoxRect();
     LayoutRect absoluteContentBox(localToAbsoluteQuad(FloatQuad(contentBox)).boundingBox());
-    if (is<FrameView>(m_widget)) {
+    if (m_widget->isLocalFrameView()) {
         contentBox.setLocation(absoluteContentBox.location());
         return setWidgetGeometry(contentBox);
     }
@@ -334,7 +333,7 @@ void RenderWidget::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
         clipToContentBoxShape(paintInfo.context(), adjustedPaintOffset, document().deviceScaleFactor());
     }
 
-    if (m_widget && !isSkippedContentRoot(*this))
+    if (m_widget && !isSkippedContentRoot())
         paintContents(paintInfo, paintOffset);
 
     if (style().hasBorderRadius())

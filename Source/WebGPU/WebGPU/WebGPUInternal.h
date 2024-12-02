@@ -29,6 +29,7 @@
 #include <wtf/text/WTFString.h>
 
 extern "C" {
+#endif
 
 typedef void (^WGPUBufferMapBlockCallback)(WGPUBufferMapAsyncStatus);
 typedef void (^WGPUCompilationInfoBlockCallback)(WGPUCompilationInfoRequestStatus, const WGPUCompilationInfo* compilationInfo);
@@ -68,5 +69,6 @@ void wgpuShaderModuleGetCompilationInfoWithBlock(WGPUShaderModule, WGPUCompilati
 
 #endif // !defined(WGPU_SKIP_DECLARATIONS)
 
+#ifdef __cplusplus
 } // extern "C"
 #endif

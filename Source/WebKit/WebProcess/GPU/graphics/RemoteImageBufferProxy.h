@@ -109,7 +109,6 @@ private:
 };
 
 class RemoteSerializedImageBufferProxy : public WebCore::SerializedImageBuffer {
-    WTF_MAKE_TZONE_ALLOCATED(RemoteSerializedImageBufferProxy);
     friend class RemoteRenderingBackendProxy;
 public:
     ~RemoteSerializedImageBufferProxy();

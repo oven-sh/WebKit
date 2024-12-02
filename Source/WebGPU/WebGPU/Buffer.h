@@ -30,7 +30,6 @@
 #import <utility>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
-#import <wtf/HashMap.h>
 #import <wtf/Range.h>
 #import <wtf/RangeSet.h>
 #import <wtf/Ref.h>
@@ -49,7 +48,7 @@ class CommandEncoder;
 class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpubuffer
-class Buffer : public WGPUBufferImpl, public ThreadSafeRefCounted<Buffer> {
+class Buffer : public WGPUBufferImpl, public RefCounted<Buffer>, public CanMakeWeakPtr<Buffer> {
     WTF_MAKE_TZONE_ALLOCATED(Buffer);
 public:
     enum class State : uint8_t;
@@ -88,8 +87,7 @@ public:
 
     id<MTLBuffer> buffer() const { return m_buffer; }
     id<MTLBuffer> indirectBuffer() const;
-    id<MTLBuffer> indirectIndexedBuffer() const { return m_indirectIndexedBuffer; }
-
+    id<MTLBuffer> indirectIndexedBuffer() const;
     uint64_t initialSize() const;
     uint64_t currentSize() const;
     WGPUBufferUsageFlags usage() const { return m_usage; }
@@ -97,26 +95,19 @@ public:
 
     Device& device() const { return m_device; }
     Ref<Device> protectedDevice() const { return m_device; }
-    bool isDestroyed() const { return state() == State::Destroyed; }
-
+    bool isDestroyed() const;
     void setCommandEncoder(CommandEncoder&, bool mayModifyBuffer = false) const;
     std::span<uint8_t> getBufferContents();
-
+    bool indirectBufferRequiresRecomputation(uint32_t baseIndex, uint32_t indexCount, uint32_t minVertexCount, uint32_t minInstanceCount, MTLIndexType, uint32_t firstInstance) const;
     bool indirectIndexedBufferRequiresRecomputation(MTLIndexType, NSUInteger indexBufferOffsetInBytes, uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount) const;
     bool indirectBufferRequiresRecomputation(uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount) const;
 
+    void indirectBufferRecomputed(uint32_t baseIndex, uint32_t indexCount, uint32_t minVertexCount, uint32_t minInstanceCount, MTLIndexType, uint32_t firstInstance);
     void indirectBufferRecomputed(uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount);
     void indirectIndexedBufferRecomputed(MTLIndexType, NSUInteger indexBufferOffsetInBytes, uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount);
-
-    bool canSkipDrawIndexedValidation(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, MTLIndexType) const;
-    void drawIndexedValidated(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, MTLIndexType);
-
-    bool didReadOOB() const { return m_didReadOOB; }
-    void didReadOOB(uint32_t v) { m_didReadOOB = !!v; }
-
     void indirectBufferInvalidated();
 #if ENABLE(WEBGPU_SWIFT)
-    void copyFrom(const std::span<const uint8_t>, const size_t offset) HAS_SWIFTCXX_THUNK;
+    void copy(const std::span<const uint8_t>, const size_t offset);
 #endif
 
 private:
@@ -130,9 +121,7 @@ private:
     void incrementBufferMapCount();
     void decrementBufferMapCount();
 
-private PUBLIC_IN_WEBGPU_SWIFT:
     id<MTLBuffer> m_buffer { nil };
-private:
     id<MTLBuffer> m_indirectBuffer { nil };
     id<MTLBuffer> m_indirectIndexedBuffer { nil };
 
@@ -149,29 +138,29 @@ private:
     struct IndirectArgsCache {
         uint64_t indirectOffset { UINT64_MAX };
         uint64_t indexBufferOffsetInBytes { UINT64_MAX };
+        uint32_t lastBaseIndex { 0 };
+        uint32_t indexCount { 0 };
         uint32_t minVertexCount { 0 };
         uint32_t minInstanceCount { 0 };
+        uint32_t firstInstance { 0 };
         MTLIndexType indexType { MTLIndexTypeUInt16 };
     } m_indirectCache;
-
-    HashMap<uint64_t, uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_drawIndexedCache;
 
     const Ref<Device> m_device;
     mutable WeakHashSet<CommandEncoder> m_commandEncoders;
 #if CPU(X86_64)
     bool m_mappedAtCreation { false };
 #endif
-    bool m_didReadOOB { false };
 } SWIFT_SHARED_REFERENCE(retainBuffer, releaseBuffer);
 
 } // namespace WebGPU
 
 inline void retainBuffer(WebGPU::Buffer* obj)
 {
-    WTF::retainThreadSafeRefCounted(obj);
+    WTF::retainRefCounted(obj);
 }
 
 inline void releaseBuffer(WebGPU::Buffer* obj)
 {
-    WTF::releaseThreadSafeRefCounted(obj);
+    WTF::releaseRefCounted(obj);
 }

@@ -26,7 +26,7 @@
 
 #if USE(APPLE_INTERNAL_SDK)
 
-#include <kern/cs_blobs.h>
+#include <Kernel/kern/cs_blobs.h>
 
 #else
 

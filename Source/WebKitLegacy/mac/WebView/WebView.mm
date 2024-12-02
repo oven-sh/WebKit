@@ -191,6 +191,7 @@
 #import <WebCore/LocalizedStrings.h>
 #import <WebCore/LogInitialization.h>
 #import <WebCore/MIMETypeRegistry.h>
+#import <WebCore/MediaRecorderProvider.h>
 #import <WebCore/MemoryCache.h>
 #import <WebCore/MemoryRelease.h>
 #import <WebCore/MutableStyleProperties.h>
@@ -205,7 +206,6 @@
 #import <WebCore/PlatformEventFactoryMac.h>
 #import <WebCore/PlatformScreen.h>
 #import <WebCore/PlatformTextAlternatives.h>
-#import <WebCore/ProcessSyncClient.h>
 #import <WebCore/ProgressTracker.h>
 #import <WebCore/Range.h>
 #import <WebCore/RemoteFrameClient.h>
@@ -1524,6 +1524,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         WebCore::FrameIdentifier::generate(),
         nullptr, // Opener may be set by setOpenerForWebKitLegacy after instantiation.
         makeUniqueRef<WebCore::DummySpeechRecognitionProvider>(),
+        makeUniqueRef<WebCore::MediaRecorderProvider>(),
         WebBroadcastChannelRegistry::getOrCreate([[self preferences] privateBrowsingEnabled]),
         makeUniqueRef<WebCore::DummyStorageProvider>(),
         makeUniqueRef<WebCore::DummyModelPlayerProvider>(),
@@ -1533,15 +1534,14 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         makeUniqueRef<WebContextMenuClient>(self),
 #endif
 #if ENABLE(APPLE_PAY)
-        WebPaymentCoordinatorClient::create(),
+        makeUniqueRef<WebPaymentCoordinatorClient>(),
 #endif
 #if !PLATFORM(IOS_FAMILY)
         makeUniqueRef<WebChromeClient>(self),
 #else
         makeUniqueRef<WebChromeClientIOS>(self),
 #endif
-        makeUniqueRef<WebCryptoClient>(self),
-        makeUniqueRef<WebCore::ProcessSyncClient>()
+        makeUniqueRef<WebCryptoClient>(self)
     );
 #if !PLATFORM(IOS_FAMILY)
     pageConfiguration.validationMessageClient = makeUnique<WebValidationMessageClient>(self);
@@ -1790,17 +1790,17 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         WebCore::FrameIdentifier::generate(),
         nullptr, // Opener may be set by setOpenerForWebKitLegacy after instantiation.
         makeUniqueRef<WebCore::DummySpeechRecognitionProvider>(),
+        makeUniqueRef<WebCore::MediaRecorderProvider>(),
         WebBroadcastChannelRegistry::getOrCreate([[self preferences] privateBrowsingEnabled]),
         makeUniqueRef<WebCore::DummyStorageProvider>(),
         makeUniqueRef<WebCore::DummyModelPlayerProvider>(),
         WebCore::EmptyBadgeClient::create(),
         LegacyHistoryItemClient::singleton(),
 #if ENABLE(APPLE_PAY)
-        WebPaymentCoordinatorClient::create(),
+        makeUniqueRef<WebPaymentCoordinatorClient>(),
 #endif
         makeUniqueRef<WebChromeClientIOS>(self),
-        makeUniqueRef<WebCryptoClient>(self),
-        makeUniqueRef<WebCore::ProcessSyncClient>()
+        makeUniqueRef<WebCryptoClient>(self)
     );
 #if ENABLE(DRAG_SUPPORT)
     pageConfiguration.dragClient = makeUnique<WebDragClient>(self);

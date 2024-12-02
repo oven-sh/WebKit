@@ -25,14 +25,12 @@
 
 #pragma once
 
-#include "ImageDataStorageFormat.h"
 #include "PredefinedColorSpace.h"
 
 namespace WebCore {
 
 struct ImageDataSettings {
     std::optional<PredefinedColorSpace> colorSpace;
-    ImageDataStorageFormat storageFormat { ImageDataStorageFormat::Uint8 };
 };
 
 } // namespace WebCore

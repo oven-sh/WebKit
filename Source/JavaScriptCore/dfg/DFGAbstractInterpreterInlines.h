@@ -63,8 +63,6 @@
 #include <wtf/BooleanLattice.h>
 #include <wtf/CheckedArithmetic.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace DFG {
 
 template<typename AbstractStateType>
@@ -748,7 +746,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         if (child && child.isNumber()) {
             double asDouble = child.asNumber();
             int32_t asInt = JSC::toInt32(asDouble);
-            if (std::bit_cast<int64_t>(static_cast<double>(asInt)) == std::bit_cast<int64_t>(asDouble)) {
+            if (bitwise_cast<int64_t>(static_cast<double>(asInt)) == bitwise_cast<int64_t>(asDouble)) {
                 setConstant(node, JSValue(asInt));
                 break;
             }
@@ -5791,7 +5789,5 @@ void AbstractInterpreter<AbstractStateType>::executeDoubleUnaryOpEffects(Node* n
 }
 
 } } // namespace JSC::DFG
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(DFG_JIT)

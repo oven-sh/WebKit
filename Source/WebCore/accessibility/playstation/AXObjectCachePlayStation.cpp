@@ -63,18 +63,18 @@ static AXCoreObject* notifyChildrenSelectionChange(AXCoreObject* object)
     const AccessibilityObject::AccessibilityChildrenVector& items = object->children();
     if (changedItemIndex < 0 || changedItemIndex >= static_cast<int>(items.size()))
         return object;
-    return items.at(changedItemIndex).ptr();
+    return items.at(changedItemIndex).get();
 }
 
-static AXNotification checkInteractableObjects(AXCoreObject* object)
+static AXObjectCache::AXNotification checkInteractableObjects(AXCoreObject* object)
 {
     if (!object->isEnabled())
-        return AXNotification::PressDidFail;
+        return AXObjectCache::AXNotification::AXPressDidFail;
 
     if (object->isTextControl() && !object->canSetValueAttribute()) // Also determine whether it is readonly
-        return AXNotification::PressDidFail;
+        return AXObjectCache::AXNotification::AXPressDidFail;
 
-    return AXNotification::PressDidSucceed;
+    return AXObjectCache::AXNotification::AXPressDidSucceed;
 }
 
 void AXObjectCache::postPlatformNotification(AccessibilityObject& object, AXNotification notification)
@@ -87,10 +87,10 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& object, AXNoti
 
     RefPtr protectedObject = &object;
     switch (notification) {
-    case AXNotification::SelectedChildrenChanged:
+    case AXNotification::AXSelectedChildrenChanged:
         protectedObject = downcast<AccessibilityObject>(notifyChildrenSelectionChange(protectedObject.get()));
         break;
-    case AXNotification::PressDidSucceed:
+    case AXNotification::AXPressDidSucceed:
         notification = checkInteractableObjects(protectedObject.get());
         break;
     default:
@@ -128,20 +128,20 @@ void AXObjectCache::frameLoadingEventPlatformNotification(AccessibilityObject* o
 void AXObjectCache::handleScrolledToAnchor(const Node& scrolledToNode)
 {
     if (RefPtr object = AccessibilityObject::firstAccessibleObjectFromNode(&scrolledToNode))
-        postPlatformNotification(*object, AXNotification::ScrolledToAnchor);
+        postPlatformNotification(*object, AXScrolledToAnchor);
 }
 
-void AXObjectCache::platformHandleFocusedUIElementChanged(Element*, Element* newFocus)
+void AXObjectCache::platformHandleFocusedUIElementChanged(Node*, Node* newFocusedNode)
 {
-    if (!newFocus)
+    if (!newFocusedNode)
         return;
 
-    Page* page = newFocus->document().page();
+    Page* page = newFocusedNode->document().page();
     if (!page || !page->chrome().platformPageClient())
         return;
 
     if (RefPtr focusedObject = focusedObjectForPage(page))
-        postPlatformNotification(*focusedObject, AXNotification::FocusedUIElementChanged);
+        postPlatformNotification(*focusedObject, AXFocusedUIElementChanged);
 }
 
 void AXObjectCache::platformPerformDeferredCacheUpdate()

@@ -105,6 +105,7 @@
 #include "Logging.h"
 #include "LowPowerModeNotifier.h"
 #include "MediaCanStartListener.h"
+#include "MediaRecorderProvider.h"
 #include "MemoryCache.h"
 #include "ModelPlayerProvider.h"
 #include "NavigationScheduler.h"
@@ -129,8 +130,6 @@
 #include "PluginViewBase.h"
 #include "PointerCaptureController.h"
 #include "PointerLockController.h"
-#include "ProcessSyncClient.h"
-#include "ProcessSyncData.h"
 #include "ProgressTracker.h"
 #include "Range.h"
 #include "RemoteFrame.h"
@@ -344,7 +343,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #if ENABLE(CONTEXT_MENUS)
     , m_contextMenuController(makeUniqueRef<ContextMenuController>(*this, WTFMove(pageConfiguration.contextMenuClient)))
 #endif
-    , m_inspectorController(makeUniqueRefWithoutRefCountedCheck<InspectorController>(*this, WTFMove(pageConfiguration.inspectorClient)))
+    , m_inspectorController(makeUniqueRef<InspectorController>(*this, WTFMove(pageConfiguration.inspectorClient)))
     , m_pointerCaptureController(makeUniqueRef<PointerCaptureController>(*this))
 #if ENABLE(POINTER_LOCK)
     , m_pointerLockController(makeUniqueRef<PointerLockController>(*this))
@@ -353,7 +352,6 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_settings(Settings::create(this))
     , m_cryptoClient(WTFMove(pageConfiguration.cryptoClient))
     , m_progress(makeUniqueRef<ProgressTracker>(*this, WTFMove(pageConfiguration.progressTrackerClient)))
-    , m_processSyncClient(WTFMove(pageConfiguration.processSyncClient))
     , m_backForwardController(makeUniqueRef<BackForwardController>(*this, WTFMove(pageConfiguration.backForwardClient)))
     , m_editorClient(WTFMove(pageConfiguration.editorClient))
     , m_mainFrame(createMainFrame(*this, WTFMove(pageConfiguration.mainFrameCreationParameters), WTFMove(pageConfiguration.mainFrameOpener), pageConfiguration.mainFrameIdentifier))
@@ -364,6 +362,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_speechSynthesisClient(WTFMove(pageConfiguration.speechSynthesisClient))
 #endif
     , m_speechRecognitionProvider((WTFMove(pageConfiguration.speechRecognitionProvider)))
+    , m_mediaRecorderProvider((WTFMove(pageConfiguration.mediaRecorderProvider)))
     , m_webRTCProvider(WTFMove(pageConfiguration.webRTCProvider))
     , m_rtcController(RTCController::create())
 #if PLATFORM(IOS_FAMILY)
@@ -393,12 +392,12 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_playbackControlsManagerUpdateTimer(*this, &Page::playbackControlsManagerUpdateTimerFired)
 #endif
     , m_isUtilityPage(isUtilityPageChromeClient(chrome().client()))
-    , m_performanceMonitor(isUtilityPage() ? nullptr : makeUniqueWithoutRefCountedCheck<PerformanceMonitor>(*this))
+    , m_performanceMonitor(isUtilityPage() ? nullptr : makeUnique<PerformanceMonitor>(*this))
     , m_lowPowerModeNotifier(makeUnique<LowPowerModeNotifier>([this](bool isLowPowerModeEnabled) { handleLowPowerModeChange(isLowPowerModeEnabled); }))
     , m_thermalMitigationNotifier(makeUnique<ThermalMitigationNotifier>([this](bool thermalMitigationEnabled) { handleThermalMitigationChange(thermalMitigationEnabled); }))
     , m_performanceLogging(makeUnique<PerformanceLogging>(*this))
 #if PLATFORM(MAC) && (ENABLE(SERVICE_CONTROLS) || ENABLE(TELEPHONE_NUMBER_DETECTION))
-    , m_servicesOverlayController(makeUniqueRefWithoutRefCountedCheck<ServicesOverlayController>(*this))
+    , m_servicesOverlayController(makeUnique<ServicesOverlayController>(*this))
 #endif
     , m_recentWheelEventDeltaFilter(WheelEventDeltaFilter::create())
     , m_pageOverlayController(makeUnique<PageOverlayController>(*this))
@@ -781,15 +780,6 @@ void Page::setMainFrameURL(const URL& url)
     m_mainFrameOrigin = SecurityOrigin::create(url);
 }
 
-void Page::updateProcessSyncData(const ProcessSyncData& data)
-{
-    switch (data.type) {
-    case ProcessSyncDataType::MainFrameURLChange:
-        setMainFrameURL(std::get<URL>(data.value));
-        break;
-    }
-}
-
 void Page::setMainFrameURLFragment(String&& fragment)
 {
     if (!fragment.isEmpty())
@@ -813,15 +803,17 @@ void Page::setOpenedByDOM()
     m_openedByDOM = true;
 }
 
-void Page::goToItem(LocalFrame& frame, HistoryItem& item, FrameLoadType type, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad)
+void Page::goToItem(Frame& frame, HistoryItem& item, FrameLoadType type, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad)
 {
     // stopAllLoaders may end up running onload handlers, which could cause further history traversals that may lead to the passed in HistoryItem
     // being deref()-ed. Make sure we can still use it with HistoryController::goToItem later.
     Ref protectedItem { item };
 
     ASSERT(frame.isRootFrame());
-    if (frame.checkedHistory()->shouldStopLoadingForHistoryItem(item))
-        frame.protectedLoader()->stopAllLoadersAndCheckCompleteness();
+    if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame)) {
+        if (localFrame->checkedHistory()->shouldStopLoadingForHistoryItem(item))
+            localFrame->protectedLoader()->stopAllLoadersAndCheckCompleteness();
+    }
     frame.checkedHistory()->goToItem(item, type, shouldTreatAsContinuingLoad);
 }
 
@@ -1005,7 +997,7 @@ std::optional<FrameIdentifier> Page::findString(const String& target, FindOption
     if (canWrap == CanWrap::Yes && focusedLocalFrame && !focusedLocalFrame->selection().isNone()) {
         if (didWrap)
             *didWrap = DidWrap::Yes;
-        bool found = focusedLocalFrame->protectedEditor()->findString(target, options | FindOption::WrapAround | FindOption::StartInSelection);
+        bool found = focusedLocalFrame->checkedEditor()->findString(target, options | FindOption::WrapAround | FindOption::StartInSelection);
         if (!options.contains(FindOption::DoNotSetSelection))
             focusController->setFocusedFrame(frame.get());
         return found ? std::make_optional(focusedLocalFrame->frameID()) : std::nullopt;
@@ -1018,11 +1010,10 @@ std::optional<FrameIdentifier> Page::findString(const String& target, FindOption
 void Page::analyzeImagesForFindInPage(Function<void()>&& callback)
 {
     if (settings().imageAnalysisDuringFindInPageEnabled()) {
-        Ref imageAnalysisQueue = this->imageAnalysisQueue();
-        imageAnalysisQueue->setDidBecomeEmptyCallback(WTFMove(callback));
+        imageAnalysisQueue().setDidBecomeEmptyCallback(WTFMove(callback));
         auto* localMainFrame = dynamicDowncast<LocalFrame>(m_mainFrame.get());
         if (RefPtr mainDocument = localMainFrame ? localMainFrame->document() : nullptr)
-            imageAnalysisQueue->enqueueAllImagesIfNeeded(*mainDocument, { }, { });
+            imageAnalysisQueue().enqueueAllImagesIfNeeded(*mainDocument, { }, { });
     }
 }
 #endif
@@ -1039,7 +1030,7 @@ auto Page::findTextMatches(const String& target, FindOptions options, unsigned l
             frame = incrementFrame(frame.get(), true, CanWrap::No);
             continue;
         }
-        localFrame->protectedEditor()->countMatchesForText(target, { }, options, limit ? (limit - result.ranges.size()) : 0, markMatches, &result.ranges);
+        localFrame->checkedEditor()->countMatchesForText(target, { }, options, limit ? (limit - result.ranges.size()) : 0, markMatches, &result.ranges);
         if (localFrame->selection().isRange())
             frameWithSelection = localFrame;
         frame = incrementFrame(frame.get(), true, CanWrap::No);
@@ -1095,7 +1086,7 @@ std::optional<SimpleRange> Page::rangeOfString(const String& target, const std::
             frame = incrementFrame(frame.get(), !options.contains(FindOption::Backwards), canWrap);
             continue;
         }
-        if (auto resultRange = localFrame->protectedEditor()->rangeOfString(target, localFrame.get() == startFrame.get() ? referenceRange : std::nullopt, options - FindOption::WrapAround))
+        if (auto resultRange = localFrame->checkedEditor()->rangeOfString(target, localFrame.get() == startFrame.get() ? referenceRange : std::nullopt, options - FindOption::WrapAround))
             return resultRange;
         frame = incrementFrame(localFrame.get(), !options.contains(FindOption::Backwards), canWrap);
     } while (frame && frame != startFrame);
@@ -1103,7 +1094,7 @@ std::optional<SimpleRange> Page::rangeOfString(const String& target, const std::
     // Search contents of startFrame, on the other side of the reference range that we did earlier.
     // We cheat a bit and just search again with wrap on.
     if (canWrap == CanWrap::Yes && referenceRange) {
-        if (auto resultRange = startFrame->protectedEditor()->rangeOfString(target, *referenceRange, options | FindOption::WrapAround | FindOption::StartInSelection))
+        if (auto resultRange = startFrame->checkedEditor()->rangeOfString(target, *referenceRange, options | FindOption::WrapAround | FindOption::StartInSelection))
             return resultRange;
     }
 
@@ -1125,8 +1116,8 @@ unsigned Page::findMatchesForText(const String& target, FindOptions options, uns
             continue;
         }
         if (shouldMarkMatches == MarkMatches)
-            localFrame->protectedEditor()->setMarkedTextMatchesAreHighlighted(shouldHighlightMatches == HighlightMatches);
-        matchCount += localFrame->protectedEditor()->countMatchesForText(target, std::nullopt, options, maxMatchCount ? (maxMatchCount - matchCount) : 0, shouldMarkMatches == MarkMatches, nullptr);
+            localFrame->checkedEditor()->setMarkedTextMatchesAreHighlighted(shouldHighlightMatches == HighlightMatches);
+        matchCount += localFrame->checkedEditor()->countMatchesForText(target, std::nullopt, options, maxMatchCount ? (maxMatchCount - matchCount) : 0, shouldMarkMatches == MarkMatches, nullptr);
         frame = incrementFrame(frame.get(), true, CanWrap::No);
     } while (frame);
 
@@ -1150,7 +1141,7 @@ struct FindReplacementRange {
 
 static void replaceRanges(Page& page, const Vector<FindReplacementRange>& ranges, const String& replacementText)
 {
-    HashMap<RefPtr<ContainerNode>, Vector<FindReplacementRange>> rangesByContainerNode;
+    UncheckedKeyHashMap<RefPtr<ContainerNode>, Vector<FindReplacementRange>> rangesByContainerNode;
     for (auto& range : ranges) {
         auto& rangeList = rangesByContainerNode.ensure(range.root, [] {
             return Vector<FindReplacementRange> { };
@@ -1168,7 +1159,7 @@ static void replaceRanges(Page& page, const Vector<FindReplacementRange>& ranges
         rangeList.insert(insertionIndex, range);
     }
 
-    HashMap<RefPtr<LocalFrame>, unsigned> frameToTraversalIndexMap;
+    UncheckedKeyHashMap<RefPtr<LocalFrame>, unsigned> frameToTraversalIndexMap;
     unsigned currentFrameTraversalIndex = 0;
     for (auto* frame = &page.mainFrame(); frame; frame = frame->tree().traverseNext()) {
         if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
@@ -1211,7 +1202,7 @@ static void replaceRanges(Page& page, const Vector<FindReplacementRange>& ranges
                 continue;
 
             frame->checkedSelection()->setSelectedRange(range, Affinity::Downstream, FrameSelection::ShouldCloseTyping::Yes);
-            frame->protectedEditor()->replaceSelectionWithText(replacementText, Editor::SelectReplacement::Yes, Editor::SmartReplace::No, EditAction::InsertReplacement);
+            frame->checkedEditor()->replaceSelectionWithText(replacementText, Editor::SelectReplacement::Yes, Editor::SmartReplace::No, EditAction::InsertReplacement);
         }
     }
 }
@@ -1243,7 +1234,7 @@ uint32_t Page::replaceSelectionWithText(const String& replacementText)
         return 0;
 
     auto editAction = selection.isRange() ? EditAction::InsertReplacement : EditAction::Insert;
-    frame->protectedEditor()->replaceSelectionWithText(replacementText, Editor::SelectReplacement::Yes, Editor::SmartReplace::No, editAction);
+    frame->checkedEditor()->replaceSelectionWithText(replacementText, Editor::SelectReplacement::Yes, Editor::SmartReplace::No, editAction);
     return 1;
 }
 
@@ -1251,7 +1242,7 @@ void Page::unmarkAllTextMatches()
 {
     forEachDocument([] (Document& document) {
         if (CheckedPtr markers = document.markersIfExists())
-            markers->removeMarkers(DocumentMarkerType::TextMatch);
+            markers->removeMarkers(DocumentMarker::Type::TextMatch);
     });
 }
 
@@ -1488,6 +1479,10 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
     if (mainFrameView && mainFrameView->scrollPosition() != origin) {
         if (mainFrameView->delegatedScrollingMode() != DelegatedScrollingMode::DelegatedToNativeScrollView)
             mainFrameView->setScrollPosition(origin);
+#if USE(COORDINATED_GRAPHICS)
+        else
+            mainFrameView->requestScrollToPosition(origin);
+#endif
     }
 
 #if ENABLE(VIDEO)
@@ -1606,8 +1601,8 @@ void Page::updateMediaElementRateChangeRestrictions()
 
 void Page::didStartProvisionalLoad()
 {
-    if (RefPtr performanceMonitor = m_performanceMonitor.get())
-        performanceMonitor->didStartProvisionalLoad();
+    if (m_performanceMonitor)
+        m_performanceMonitor->didStartProvisionalLoad();
 
     if (m_settings->resourceLoadSchedulingEnabled())
         setLoadSchedulingMode(LoadSchedulingMode::Prioritized);
@@ -1651,8 +1646,8 @@ void Page::didFinishLoad()
 {
     resetRelevantPaintedObjectCounter();
 
-    if (RefPtr performanceMonitor = m_performanceMonitor.get())
-        performanceMonitor->didFinishLoad();
+    if (m_performanceMonitor)
+        m_performanceMonitor->didFinishLoad();
 
     setLoadSchedulingMode(LoadSchedulingMode::Direct);
 
@@ -1853,19 +1848,15 @@ void Page::scheduleRenderingUpdateInternal()
 {
     if (!chrome().client().scheduleRenderingUpdate())
         renderingUpdateScheduler().scheduleRenderingUpdate();
-    m_renderingUpdateIsScheduled = true;
-}
 
-std::optional<MonotonicTime> Page::nextRenderingUpdateTimestamp() const
-{
-    if (!m_lastRenderingUpdateTimestamp)
-        return std::nullopt;
-    if (!m_renderingUpdateIsScheduled)
-        return std::nullopt;
-    auto interval = preferredRenderingUpdateInterval();
     auto now = MonotonicTime::now();
-    ASSERT(now > m_lastRenderingUpdateTimestamp);
-    return m_lastRenderingUpdateTimestamp + std::floor((now + interval - m_lastRenderingUpdateTimestamp) / interval) * interval;
+    forEachWindowEventLoop([&](WindowEventLoop& windowEventLoop) {
+        auto interval = preferredRenderingUpdateInterval();
+        auto nextRenderingUpdateTime = m_lastRenderingUpdateTimestamp + interval;
+        if (nextRenderingUpdateTime < now)
+            nextRenderingUpdateTime = now + interval;
+        windowEventLoop.didScheduleRenderingUpdate(*this, nextRenderingUpdateTime);
+    });
 }
 
 void Page::didScheduleRenderingUpdate()
@@ -1921,7 +1912,10 @@ void Page::updateRendering()
     }
 
     m_lastRenderingUpdateTimestamp = MonotonicTime::now();
-    m_renderingUpdateIsScheduled = false;
+
+    forEachWindowEventLoop([&](WindowEventLoop& eventLoop) {
+        eventLoop.didStartRenderingUpdate(*this);
+    });
 
     bool isSVGImagePage = chrome().client().isSVGImageChromeClient();
     if (!isSVGImagePage)
@@ -2090,10 +2084,23 @@ void Page::doAfterUpdateRendering()
     forEachRenderableDocument([] (Document& document) {
         document.updateHighlightPositions();
     });
-
 #if ENABLE(APP_HIGHLIGHTS)
-    forEachRenderableDocument([timestamp = m_lastRenderingUpdateTimestamp] (Document& document) {
-        document.restoreUnrestoredAppHighlights(timestamp);
+    forEachRenderableDocument([] (Document& document) {
+        auto appHighlightStorage = document.appHighlightStorageIfExists();
+        if (!appHighlightStorage)
+            return;
+        
+        if (appHighlightStorage->hasUnrestoredHighlights() && MonotonicTime::now() - appHighlightStorage->lastRangeSearchTime() > 1_s) {
+            appHighlightStorage->resetLastRangeSearchTime();
+            document.eventLoop().queueTask(TaskSource::InternalAsyncTask, [weakDocument = WeakPtr<Document, WeakPtrImplWithEventTargetData> { document }] {
+                RefPtr document { weakDocument.get() };
+                if (!document)
+                    return;
+
+                if (auto* appHighlightStorage = document->appHighlightStorageIfExists())
+                    appHighlightStorage->restoreUnrestoredAppHighlights();
+            });
+        }
     });
 #endif
 
@@ -2155,7 +2162,11 @@ void Page::doAfterUpdateRendering()
             view->notifyAllFramesThatContentAreaWillPaint();
     }
 
-    computeSampledPageTopColorIfNecessary();
+    if (!m_sampledPageTopColor) {
+        m_sampledPageTopColor = PageColorSampler::sampleTop(*this);
+        if (m_sampledPageTopColor)
+            chrome().client().sampledPageTopColorChanged();
+    }
 }
 
 void Page::finalizeRenderingUpdate(OptionSet<FinalizeRenderingUpdateFlags> flags)
@@ -2849,7 +2860,7 @@ void Page::stopMediaCapture(MediaProducerMediaCaptureKind kind)
 bool Page::mediaPlaybackExists()
 {
 #if ENABLE(VIDEO)
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
         return !platformMediaSessionManager->hasNoSession();
 #endif
     return false;
@@ -2858,7 +2869,7 @@ bool Page::mediaPlaybackExists()
 bool Page::mediaPlaybackIsPaused()
 {
 #if ENABLE(VIDEO)
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
         return platformMediaSessionManager->mediaPlaybackIsPaused(mediaSessionGroupIdentifier());
 #endif
     return false;
@@ -2867,7 +2878,7 @@ bool Page::mediaPlaybackIsPaused()
 void Page::pauseAllMediaPlayback()
 {
 #if ENABLE(VIDEO)
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
         platformMediaSessionManager->pauseAllMediaPlaybackForGroup(mediaSessionGroupIdentifier());
 #endif
 }
@@ -2879,7 +2890,7 @@ void Page::suspendAllMediaPlayback()
     if (m_mediaPlaybackIsSuspended)
         return;
 
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
         platformMediaSessionManager->suspendAllMediaPlaybackForGroup(mediaSessionGroupIdentifier());
 
     // FIXME: We cannot set m_mediaPlaybackIsSuspended before, see https://bugs.webkit.org/show_bug.cgi?id=192829#c7.
@@ -2904,7 +2915,7 @@ void Page::resumeAllMediaPlayback()
         return;
     m_mediaPlaybackIsSuspended = false;
 
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
         platformMediaSessionManager->resumeAllMediaPlaybackForGroup(mediaSessionGroupIdentifier());
 #endif
 }
@@ -2917,7 +2928,7 @@ void Page::suspendAllMediaBuffering()
         return;
     m_mediaBufferingIsSuspended = true;
 
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
         platformMediaSessionManager->suspendAllMediaBufferingForGroup(mediaSessionGroupIdentifier());
 #endif
 }
@@ -2929,7 +2940,7 @@ void Page::resumeAllMediaBuffering()
         return;
     m_mediaBufferingIsSuspended = false;
 
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
         platformMediaSessionManager->resumeAllMediaBufferingForGroup(mediaSessionGroupIdentifier());
 #endif
 }
@@ -2990,8 +3001,8 @@ void Page::setActivityState(OptionSet<ActivityState> activityState)
             cache->onPageActivityStateChange(m_activityState);
     }
 
-    if (RefPtr performanceMonitor = m_performanceMonitor.get())
-        performanceMonitor->activityStateChanged(oldActivityState, activityState);
+    if (m_performanceMonitor)
+        m_performanceMonitor->activityStateChanged(oldActivityState, activityState);
 }
 
 void Page::stopKeyboardScrollAnimation()
@@ -3253,22 +3264,6 @@ Color Page::pageExtendedBackgroundColor() const
 Color Page::sampledPageTopColor() const
 {
     return valueOrDefault(m_sampledPageTopColor);
-}
-
-void Page::computeSampledPageTopColorIfNecessary()
-{
-    if (m_sampledPageTopColor)
-        return;
-
-    m_sampledPageTopColor = PageColorSampler::sampleTop(*this);
-    if (m_sampledPageTopColor)
-        chrome().client().sampledPageTopColorChanged();
-}
-
-void Page::clearSampledPageTopColor()
-{
-    if (std::exchange(m_sampledPageTopColor, std::nullopt))
-        chrome().client().sampledPageTopColorChanged();
 }
 
 #if HAVE(APP_ACCENT_COLORS) && PLATFORM(MAC)
@@ -3927,8 +3922,8 @@ void Page::setUseSystemAppearance(bool value)
 
     appearanceDidChange();
 
-    forEachDocument([&](Document& document) {
-        // System appearance change may affect stylesheet parsing. We need to re-parse.
+    forEachDocument([&] (Document& document) {
+        // System apperance change may affect stylesheet parsing. We need to reparse.
         if (CheckedPtr extensionStyleSheets = document.extensionStyleSheetsIfExists()) {
             extensionStyleSheets->clearPageUserSheet();
             extensionStyleSheets->invalidateInjectedStyleSheetCache();
@@ -4076,7 +4071,10 @@ void Page::didChangeMainDocument(Document* newDocument)
 #endif
     m_pointerCaptureController->reset();
 
-    clearSampledPageTopColor();
+    if (m_sampledPageTopColor) {
+        m_sampledPageTopColor = std::nullopt;
+        chrome().client().sampledPageTopColorChanged();
+    }
 
     checkedElementTargetingController()->didChangeMainDocument(newDocument);
 }
@@ -4112,21 +4110,6 @@ void Page::forEachDocumentFromMainFrame(const Frame& mainFrame, const Function<v
 void Page::forEachDocument(const Function<void(Document&)>& functor) const
 {
     forEachDocumentFromMainFrame(protectedMainFrame(), functor);
-}
-
-bool Page::findMatchingLocalDocument(const Function<bool(Document&)>& functor) const
-{
-    for (RefPtr frame = &mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame);
-        if (!localFrame)
-            continue;
-        RefPtr document = localFrame->document();
-        if (!document)
-            continue;
-        if (functor(*document))
-            return true;
-    }
-    return false;
 }
 
 void Page::forEachRenderableDocument(const Function<void(Document&)>& functor) const
@@ -4257,7 +4240,7 @@ void Page::applicationDidBecomeActive()
 ScrollLatchingController& Page::scrollLatchingController()
 {
     if (!m_scrollLatchingController)
-        m_scrollLatchingController = makeUniqueWithoutRefCountedCheck<ScrollLatchingController>(*this);
+        m_scrollLatchingController = makeUnique<ScrollLatchingController>();
         
     return *m_scrollLatchingController;
 }
@@ -4383,7 +4366,7 @@ void Page::configureLoggingChannel(const String& channelName, WTFLogChannelState
 
 #if USE(LIBWEBRTC)
         RefPtr localMainFrame = dynamicDowncast<LocalFrame>(m_mainFrame.get());
-        if (channel == &LogWebRTC && localMainFrame && localMainFrame->document() && isAlwaysOnLoggingAllowed() && (m_settings->webCodecsVideoEnabled() || m_settings->peerConnectionEnabled()))
+        if (channel == &LogWebRTC && localMainFrame && localMainFrame->document() && !sessionID().isEphemeral() && (m_settings->webCodecsVideoEnabled() || m_settings->peerConnectionEnabled()))
             webRTCProvider().setLoggingLevel(LogWebRTC.level);
 #endif
     }
@@ -4403,14 +4386,14 @@ void Page::didFinishLoadingImageForElement(HTMLImageElement& element)
         if (!frame)
             return;
 
-        frame->protectedEditor()->revealSelectionIfNeededAfterLoadingImageForElement(element);
+        frame->checkedEditor()->revealSelectionIfNeededAfterLoadingImageForElement(element);
 
         if (element->document().frame() != frame)
             return;
 
         if (RefPtr page = frame->page()) {
 #if ENABLE(IMAGE_ANALYSIS)
-            if (RefPtr queue = page->imageAnalysisQueueIfExists())
+            if (auto* queue = page->imageAnalysisQueueIfExists())
                 queue->enqueueIfNeeded(element);
 #endif
             page->chrome().client().didFinishLoadingImageForElement(element);
@@ -4608,18 +4591,13 @@ Page* Page::serviceWorkerPage(ScriptExecutionContextIdentifier serviceWorkerPage
 ImageAnalysisQueue& Page::imageAnalysisQueue()
 {
     if (!m_imageAnalysisQueue)
-        m_imageAnalysisQueue = ImageAnalysisQueue::create(*this);
+        m_imageAnalysisQueue = makeUnique<ImageAnalysisQueue>(*this);
     return *m_imageAnalysisQueue;
-}
-
-Ref<ImageAnalysisQueue> Page::protectedImageAnalysisQueue()
-{
-    return imageAnalysisQueue();
 }
 
 void Page::resetImageAnalysisQueue()
 {
-    if (RefPtr previousQueue = std::exchange(m_imageAnalysisQueue, { }))
+    if (auto previousQueue = std::exchange(m_imageAnalysisQueue, { }))
         previousQueue->clear();
 }
 
@@ -4872,15 +4850,15 @@ void Page::reloadExecutionContextsForOrigin(const ClientOrigin& origin, std::opt
             frame = frame->tree().traverseNext();
             continue;
         }
-        localFrame->protectedNavigationScheduler()->scheduleRefresh(*document);
+        localFrame->checkedNavigationScheduler()->scheduleRefresh(*document);
         frame = frame->tree().traverseNextSkippingChildren();
     }
 }
 
-void Page::opportunisticallyRunIdleCallbacks(MonotonicTime deadline)
+void Page::opportunisticallyRunIdleCallbacks()
 {
     forEachWindowEventLoop([&](auto& eventLoop) {
-        eventLoop.opportunisticallyRunIdleCallbacks(deadline);
+        eventLoop.opportunisticallyRunIdleCallbacks();
     });
 }
 
@@ -5030,19 +5008,19 @@ void Page::didBeginWritingToolsSession(const WritingTools::Session& session, con
     m_writingToolsController->didBeginWritingToolsSession(session, contexts);
 }
 
-void Page::proofreadingSessionDidReceiveSuggestions(const WritingTools::Session& session, const Vector<WritingTools::TextSuggestion>& suggestions, const CharacterRange& processedRange, const WritingTools::Context& context, bool finished)
+void Page::proofreadingSessionDidReceiveSuggestions(const WritingTools::Session& session, const Vector<WritingTools::TextSuggestion>& suggestions, const WritingTools::Context& context, bool finished)
 {
-    m_writingToolsController->proofreadingSessionDidReceiveSuggestions(session, suggestions, processedRange, context, finished);
+    m_writingToolsController->proofreadingSessionDidReceiveSuggestions(session, suggestions, context, finished);
+}
+
+void Page::proofreadingSessionDidCompletePartialReplacement(const WritingTools::Session& session, const Vector<WritingTools::TextSuggestion>& suggestions, const WritingTools::Context& context, bool finished)
+{
+    m_writingToolsController->proofreadingSessionDidCompletePartialReplacement(session, suggestions, context, finished);
 }
 
 void Page::proofreadingSessionDidUpdateStateForSuggestion(const WritingTools::Session& session, WritingTools::TextSuggestion::State state, const WritingTools::TextSuggestion& suggestion, const WritingTools::Context& context)
 {
     m_writingToolsController->proofreadingSessionDidUpdateStateForSuggestion(session, state, suggestion, context);
-}
-
-void Page::willEndWritingToolsSession(const WritingTools::Session& session, bool accepted)
-{
-    m_writingToolsController->willEndWritingToolsSession(session, accepted);
 }
 
 void Page::didEndWritingToolsSession(const WritingTools::Session& session, bool accepted)
@@ -5093,7 +5071,7 @@ Vector<FloatRect> Page::proofreadingSessionSuggestionTextRectsInRootViewCoordina
     return IntelligenceTextEffectsSupport::writingToolsTextSuggestionRectsInRootViewCoordinates(*document, *scope, enclosingRangeRelativeToSessionRange);
 }
 
-void Page::updateTextVisibilityForActiveWritingToolsSession(const CharacterRange& rangeRelativeToSessionRange, bool visible, const WTF::UUID& identifier)
+void Page::updateTextVisibilityForActiveWritingToolsSession(const CharacterRange& rangeRelativeToSessionRange, bool visible)
 {
     RefPtr localMainFrame = dynamicDowncast<LocalFrame>(mainFrame());
     RefPtr document = localMainFrame ? localMainFrame->document() : nullptr;
@@ -5108,7 +5086,7 @@ void Page::updateTextVisibilityForActiveWritingToolsSession(const CharacterRange
         return;
     }
 
-    IntelligenceTextEffectsSupport::updateTextVisibility(*document, *scope, rangeRelativeToSessionRange, visible, identifier);
+    IntelligenceTextEffectsSupport::updateTextVisibility(*document, *scope, rangeRelativeToSessionRange, visible);
 }
 
 std::optional<TextIndicatorData> Page::textPreviewDataForActiveWritingToolsSession(const CharacterRange& rangeRelativeToSessionRange)
@@ -5127,47 +5105,6 @@ std::optional<TextIndicatorData> Page::textPreviewDataForActiveWritingToolsSessi
     }
 
     return IntelligenceTextEffectsSupport::textPreviewDataForRange(*document, *scope, rangeRelativeToSessionRange);
-}
-
-void Page::decorateTextReplacementsForActiveWritingToolsSession(const CharacterRange& rangeRelativeToSessionRange)
-{
-    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(mainFrame());
-    RefPtr document = localMainFrame ? localMainFrame->document() : nullptr;
-    if (!document) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    auto scope = m_writingToolsController->activeSessionRange();
-    if (!scope) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    IntelligenceTextEffectsSupport::decorateWritingToolsTextReplacements(*document, *scope, rangeRelativeToSessionRange);
-}
-
-void Page::setSelectionForActiveWritingToolsSession(const CharacterRange& rangeRelativeToSessionRange)
-{
-    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(mainFrame());
-    RefPtr document = localMainFrame ? localMainFrame->document() : nullptr;
-    if (!document) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    auto scope = m_writingToolsController->activeSessionRange();
-    if (!scope) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    auto resolvedRange = resolveCharacterRange(*scope, rangeRelativeToSessionRange);
-    auto visibleSelection = VisibleSelection { resolvedRange };
-    if (visibleSelection.isNoneOrOrphaned())
-        return;
-
-    document->selection().setSelection(visibleSelection);
 }
 
 std::optional<SimpleRange> Page::contextRangeForActiveWritingToolsSession() const
@@ -5189,7 +5126,7 @@ void Page::hasActiveNowPlayingSessionChanged()
 
 void Page::activeNowPlayingSessionUpdateTimerFired()
 {
-    bool hasActiveNowPlayingSession = PlatformMediaSessionManager::singleton().hasActiveNowPlayingSessionInGroup(mediaSessionGroupIdentifier());
+    bool hasActiveNowPlayingSession = PlatformMediaSessionManager::sharedManager().hasActiveNowPlayingSessionInGroup(mediaSessionGroupIdentifier());
     if (hasActiveNowPlayingSession == m_hasActiveNowPlayingSession)
         return;
 
@@ -5212,32 +5149,6 @@ bool Page::isFullscreenManagerEnabled() const
     return settings->fullScreenEnabled() || settings->videoFullscreenRequiresElementFullscreen();
 }
 #endif
-
-void Page::startDeferringResizeEvents()
-{
-    m_shouldDeferResizeEvents = true;
-}
-
-void Page::flushDeferredResizeEvents()
-{
-    m_shouldDeferResizeEvents = false;
-    forEachDocument([&] (Document& document) {
-        document.flushDeferredResizeEvents();
-    });
-}
-
-void Page::startDeferringScrollEvents()
-{
-    m_shouldDeferScrollEvents = true;
-}
-
-void Page::flushDeferredScrollEvents()
-{
-    m_shouldDeferScrollEvents = false;
-    forEachDocument([&] (Document& document) {
-        document.flushDeferredScrollEvents();
-    });
-}
 
 bool Page::reportScriptTelemetry(const URL& url, ScriptTelemetryCategory category)
 {
@@ -5321,22 +5232,5 @@ void Page::applyWindowFeatures(const WindowFeatures& features)
         localFrame->setViewportArguments(arguments);
 #endif
 }
-
-bool Page::isAlwaysOnLoggingAllowed() const
-{
-    return m_sessionID.isAlwaysOnLoggingAllowed() || protectedSettings()->allowPrivacySensitiveOperationsInNonPersistentDataStores();
-}
-
-Ref<InspectorController> Page::protectedInspectorController()
-{
-    return m_inspectorController.get();
-}
-
-#if PLATFORM(MAC) && (ENABLE(SERVICE_CONTROLS) || ENABLE(TELEPHONE_NUMBER_DETECTION))
-Ref<ServicesOverlayController> Page::protectedServicesOverlayController()
-{
-    return m_servicesOverlayController.get();
-}
-#endif
 
 } // namespace WebCore

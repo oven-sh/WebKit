@@ -43,6 +43,8 @@
 #import <wtf/spi/cocoa/SecuritySPI.h>
 #import <wtf/text/CString.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 @interface NSURLError : NSError
 @end
 
@@ -598,7 +600,7 @@ static NSString *escapeKey(NSString *key)
 
 - (void)encodeBytes:(const uint8_t *)bytes length:(NSUInteger)length forKey:(NSString *)key
 {
-    _currentDictionary->set(escapeKey(key), API::Data::create(unsafeMakeSpan(bytes, length)));
+    _currentDictionary->set(escapeKey(key), API::Data::create({ bytes, length }));
 }
 
 - (void)encodeBool:(BOOL)value forKey:(NSString *)key
@@ -1177,3 +1179,5 @@ static id decodeObject(WKRemoteObjectDecoder *decoder, const API::Dictionary* di
 }
 
 @end
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

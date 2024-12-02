@@ -43,8 +43,6 @@
 #include <wtf/ParallelJobs.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FEGaussianBlurSoftwareApplier);
@@ -460,5 +458,3 @@ bool FEGaussianBlurSoftwareApplier::apply(const Filter& filter, const FilterImag
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

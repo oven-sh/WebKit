@@ -19,6 +19,17 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkOverdrawColorFilter.h"
 
+static inline void set_bitmap(SkBitmap* bitmap, uint8_t alpha) {
+    for (int y = 0; y < bitmap->height(); y++) {
+        for (int x = 0; x < bitmap->width(); x++) {
+            uint8_t* addr = bitmap->getAddr8(x, y);
+            *addr = alpha;
+        }
+    }
+
+    bitmap->notifyPixelsChanged();
+}
+
 struct OverdrawColorFilter : public skiagm::GM {
     SkString getName() const override { return SkString{"overdrawcolorfilter"}; }
 
@@ -36,19 +47,19 @@ struct OverdrawColorFilter : public skiagm::GM {
         SkImageInfo info = SkImageInfo::MakeA8(100, 100);
         SkBitmap bitmap;
         bitmap.allocPixels(info);
-        bitmap.eraseARGB(0, 0, 0, 0);
+        set_bitmap(&bitmap, 0);
         canvas->drawImage(bitmap.asImage(), 0, 0, sampling, &paint);
-        bitmap.eraseARGB(1, 0, 0, 0);
+        set_bitmap(&bitmap, 1);
         canvas->drawImage(bitmap.asImage(), 0, 100, sampling, &paint);
-        bitmap.eraseARGB(2, 0, 0, 0);
+        set_bitmap(&bitmap, 2);
         canvas->drawImage(bitmap.asImage(), 0, 200, sampling, &paint);
-        bitmap.eraseARGB(3, 0, 0, 0);
+        set_bitmap(&bitmap, 3);
         canvas->drawImage(bitmap.asImage(), 0, 300, sampling, &paint);
-        bitmap.eraseARGB(4, 0, 0, 0);
+        set_bitmap(&bitmap, 4);
         canvas->drawImage(bitmap.asImage(), 100, 0, sampling, &paint);
-        bitmap.eraseARGB(5, 0, 0, 0);
+        set_bitmap(&bitmap, 5);
         canvas->drawImage(bitmap.asImage(), 100, 100, sampling, &paint);
-        bitmap.eraseARGB(6, 0, 0, 0);
+        set_bitmap(&bitmap, 6);
         canvas->drawImage(bitmap.asImage(), 100, 200, sampling, &paint);
     }
 };

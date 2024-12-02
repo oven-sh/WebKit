@@ -66,8 +66,7 @@ void compile(const RendererProvider* rendererProvider,
             sk_sp<GraphicsPipeline> pipeline = resourceProvider->findOrCreateGraphicsPipeline(
                     keyContext.rtEffectDict(),
                     pipelineDesc,
-                    renderPassDesc,
-                    PipelineCreationFlags::kForPrecompilation);
+                    renderPassDesc);
             if (!pipeline) {
                 SKGPU_LOG_W("Failed to create GraphicsPipeline in precompile!");
                 return;
@@ -89,8 +88,7 @@ bool Precompile(Context* context,
     sk_sp<GraphicsPipeline> pipeline = resourceProvider->findOrCreateGraphicsPipeline(
             rteDict,
             pipelineDesc,
-            renderPassDesc,
-            PipelineCreationFlags::kForPrecompilation);
+            renderPassDesc);
     if (!pipeline) {
         SKGPU_LOG_W("Failed to create GraphicsPipeline in precompile!");
         return false;
@@ -106,20 +104,6 @@ void Precompile(Context* context, const PaintOptions& options, DrawTypeFlags dra
     const Caps* caps = context->priv().caps();
 
     auto rtEffectDict = std::make_unique<RuntimeEffectDictionary>();
-
-    // Here we are creating a ResourceProvider for each call to 'Precompile'. The issue is that
-    // 'Precompile' can be called from any number of threads but the ResourceProvider and
-    // its nested ResourceCache were never intended to be thread-safe. This allocation fixes
-    // the thread-safety issue but at the cost of excessive (re)allocations.
-    // TODO(b/373849852): implement a better solution to the Precompile thread-safety problem.
-    SharedContext* sharedContext = context->priv().sharedContext();
-    SingleOwner singleOwner;
-    static constexpr size_t kDefaultBudgetInBytes = 0;
-    std::unique_ptr<ResourceProvider> tmpResourceProvider = sharedContext->makeResourceProvider(
-            &singleOwner,
-            SK_InvalidGenID,
-            kDefaultBudgetInBytes,
-            /* avoidBufferAlloc= */ true);
 
     for (const RenderPassProperties& rpp : renderPassProperties) {
         // TODO: Allow the client to pass in mipmapping and protection too?
@@ -162,8 +146,7 @@ void Precompile(Context* context, const PaintOptions& options, DrawTypeFlags dra
 
             for (Coverage coverage : { Coverage::kNone, Coverage::kSingleChannel }) {
                 PrecompileCombinations(
-                        context->priv().rendererProvider(),
-                        tmpResourceProvider.get(), options, keyContext,
+                        context, options, keyContext,
                         static_cast<DrawTypeFlags>(drawTypes & ~(DrawTypeFlags::kBitmapText_Color |
                                                                  DrawTypeFlags::kBitmapText_LCD |
                                                                  DrawTypeFlags::kSDFText_LCD |
@@ -179,10 +162,7 @@ void Precompile(Context* context, const PaintOptions& options, DrawTypeFlags dra
                 tmp.setShaders({});
 
                 // ARGB text doesn't emit coverage and always has a primitive blender
-                PrecompileCombinations(context->priv().rendererProvider(),
-                                       tmpResourceProvider.get(),
-                                       tmp,
-                                       keyContext,
+                PrecompileCombinations(context, tmp, keyContext,
                                        DrawTypeFlags::kBitmapText_Color,
                                        /* withPrimitiveBlender= */ true,
                                        Coverage::kNone,
@@ -192,8 +172,7 @@ void Precompile(Context* context, const PaintOptions& options, DrawTypeFlags dra
             if (drawTypes & (DrawTypeFlags::kBitmapText_LCD | DrawTypeFlags::kSDFText_LCD)) {
                 // LCD-based text always emits LCD coverage but never has primitiveBlenders
                 PrecompileCombinations(
-                        context->priv().rendererProvider(),
-                        tmpResourceProvider.get(), options, keyContext,
+                        context, options, keyContext,
                         static_cast<DrawTypeFlags>(drawTypes & (DrawTypeFlags::kBitmapText_LCD |
                                                                 DrawTypeFlags::kSDFText_LCD)),
                         /* withPrimitiveBlender= */ false,
@@ -205,8 +184,7 @@ void Precompile(Context* context, const PaintOptions& options, DrawTypeFlags dra
                 // drawVertices w/ colors use a primitiveBlender while those w/o don't. It never
                 // emits coverage.
                 for (bool withPrimitiveBlender : { true, false }) {
-                    PrecompileCombinations(context->priv().rendererProvider(),
-                                           tmpResourceProvider.get(), options, keyContext,
+                    PrecompileCombinations(context, options, keyContext,
                                            DrawTypeFlags::kDrawVertices,
                                            withPrimitiveBlender,
                                            Coverage::kNone,
@@ -217,8 +195,7 @@ void Precompile(Context* context, const PaintOptions& options, DrawTypeFlags dra
     }
 }
 
-void PrecompileCombinations(const RendererProvider* rendererProvider,
-                            ResourceProvider* resourceProvider,
+void PrecompileCombinations(Context* context,
                             const PaintOptions& options,
                             const KeyContext& keyContext,
                             DrawTypeFlags drawTypes,
@@ -240,13 +217,13 @@ void PrecompileCombinations(const RendererProvider* rendererProvider,
         withPrimitiveBlender,
         coverage,
         renderPassDescIn,
-        [rendererProvider, resourceProvider, &keyContext](UniquePaintParamsID uniqueID,
-                                                          DrawTypeFlags drawTypes,
-                                                          bool withPrimitiveBlender,
-                                                          Coverage coverage,
-                                                          const RenderPassDesc& renderPassDesc) {
-               compile(rendererProvider,
-                       resourceProvider,
+        [context, &keyContext](UniquePaintParamsID uniqueID,
+                               DrawTypeFlags drawTypes,
+                               bool withPrimitiveBlender,
+                               Coverage coverage,
+                               const RenderPassDesc& renderPassDesc) {
+               compile(context->priv().rendererProvider(),
+                       context->priv().resourceProvider(),
                        keyContext,
                        uniqueID,
                        drawTypes,

@@ -46,7 +46,6 @@
 #include "Length.h"
 #include "RenderStyleConstants.h"
 #include "Timer.h"
-#include <wtf/CheckedPtr.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -54,10 +53,9 @@ namespace WebCore {
 class RenderLayer;
 
 // This class handles the auto-scrolling for <marquee>
-class RenderMarquee final : public CanMakeCheckedPtr<RenderMarquee> {
+class RenderMarquee final {
     WTF_MAKE_TZONE_ALLOCATED(RenderMarquee);
     WTF_MAKE_NONCOPYABLE(RenderMarquee);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMarquee);
 public:
     explicit RenderMarquee(RenderLayer*);
     ~RenderMarquee();

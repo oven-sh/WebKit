@@ -25,7 +25,6 @@
 
 #import "config.h"
 #import "Cookie.h"
-#import <wtf/cocoa/TypeCastsCocoa.h>
 
 // FIXME: Remove NS_ASSUME_NONNULL_BEGIN/END and all _Nullable annotations once we remove the NSHTTPCookie forward declaration below.
 NS_ASSUME_NONNULL_BEGIN
@@ -63,11 +62,11 @@ static double cookieCreated(NSHTTPCookie *cookie)
         return 1000.0 * (referenceFormat + NSTimeIntervalSince1970);
     };
 
-    if (auto *number = dynamic_objc_cast<NSNumber>(value))
-        return toCanonicalFormat(number.doubleValue);
+    if ([value isKindOfClass:[NSNumber class]])
+        return toCanonicalFormat(((NSNumber *)value).doubleValue);
 
-    if (auto *string = dynamic_objc_cast<NSString>(value))
-        return toCanonicalFormat(string.doubleValue);
+    if ([value isKindOfClass:[NSString class]])
+        return toCanonicalFormat(((NSString *)value).doubleValue);
 
     return 0;
 }

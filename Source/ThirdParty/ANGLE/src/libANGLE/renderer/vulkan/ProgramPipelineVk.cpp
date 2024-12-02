@@ -37,8 +37,8 @@ angle::Result ProgramPipelineVk::link(const gl::Context *glContext,
     vk::Renderer *renderer                    = contextVk->getRenderer();
     const gl::ProgramExecutable &glExecutable = mState.getExecutable();
     ProgramExecutableVk *executableVk         = vk::GetImpl(&glExecutable);
-    SpvSourceOptions options                  = SpvCreateSourceOptions(contextVk->getFeatures(),
-                                                                       renderer->getMaxColorInputAttachmentCount());
+    SpvSourceOptions options =
+        SpvCreateSourceOptions(contextVk->getFeatures(), renderer->getMaxInputAttachmentCount());
     SpvProgramInterfaceInfo spvProgramInterfaceInfo = {};
 
     reset(contextVk);

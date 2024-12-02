@@ -27,8 +27,6 @@
 
 #include <wtf/MathExtras.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 // Would be nice if this was a static const member, but the OS X linker
@@ -266,5 +264,3 @@ private:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

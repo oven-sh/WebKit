@@ -242,7 +242,7 @@ bool GPUProcessConnection::dispatchMessage(IPC::Connection& connection, IPC::Dec
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
     if (decoder.messageReceiverName() == Messages::UserMediaCaptureManager::messageReceiverName()) {
-        if (RefPtr captureManager = WebProcess::singleton().supplement<UserMediaCaptureManager>())
+        if (auto* captureManager = WebProcess::singleton().supplement<UserMediaCaptureManager>())
             captureManager->didReceiveMessageFromGPUProcess(connection, decoder);
         return true;
     }
@@ -337,7 +337,7 @@ bool GPUProcessConnection::waitForDidInitialize()
 void GPUProcessConnection::didReceiveRemoteCommand(PlatformMediaSession::RemoteControlCommandType type, const PlatformMediaSession::RemoteCommandArgument& argument)
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::singleton().processDidReceiveRemoteControlCommand(type, argument);
+    PlatformMediaSessionManager::sharedManager().processDidReceiveRemoteControlCommand(type, argument);
 #endif
 }
 

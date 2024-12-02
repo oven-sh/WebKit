@@ -75,14 +75,17 @@ public:
     bool standalone() const;
 #endif
 
-    int maxTouchPoints() const;
+#if ENABLE(IOS_TOUCH_EVENTS) && !PLATFORM(MACCATALYST)
+    int maxTouchPoints() const { return 5; }
+#else
+    int maxTouchPoints() const { return 0; }
+#endif
 
     GPU* gpu();
 
     Page* page();
     RefPtr<Page> protectedPage();
 
-    const Document* document() const;
     Document* document();
     RefPtr<Document> protectedDocument();
 

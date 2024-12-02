@@ -42,14 +42,14 @@ namespace WebCore {
     
 using namespace HTMLNames;
 
-AccessibilitySlider::AccessibilitySlider(AXID axID, RenderObject& renderer)
-    : AccessibilityRenderObject(axID, renderer)
+AccessibilitySlider::AccessibilitySlider(RenderObject& renderer)
+    : AccessibilityRenderObject(renderer)
 {
 }
 
-Ref<AccessibilitySlider> AccessibilitySlider::create(AXID axID, RenderObject& renderer)
+Ref<AccessibilitySlider> AccessibilitySlider::create(RenderObject& renderer)
 {
-    return adoptRef(*new AccessibilitySlider(axID, renderer));
+    return adoptRef(*new AccessibilitySlider(renderer));
 }
 
 AccessibilityOrientation AccessibilitySlider::orientation() const
@@ -102,7 +102,7 @@ void AccessibilitySlider::addChildren()
     if (thumb->isIgnored())
         cache->remove(thumb->objectID());
     else
-        addChild(thumb.get());
+        addChild(thumb.ptr());
 }
 
 AccessibilityObject* AccessibilitySlider::elementAccessibilityHitTest(const IntPoint& point) const
@@ -154,14 +154,13 @@ HTMLInputElement* AccessibilitySlider::inputElement() const
 }
 
 
-AccessibilitySliderThumb::AccessibilitySliderThumb(AXID axID)
-    : AccessibilityMockObject(axID)
+AccessibilitySliderThumb::AccessibilitySliderThumb()
 {
 }
 
-Ref<AccessibilitySliderThumb> AccessibilitySliderThumb::create(AXID axID)
+Ref<AccessibilitySliderThumb> AccessibilitySliderThumb::create()
 {
-    return adoptRef(*new AccessibilitySliderThumb(axID));
+    return adoptRef(*new AccessibilitySliderThumb());
 }
     
 LayoutRect AccessibilitySliderThumb::elementRect() const

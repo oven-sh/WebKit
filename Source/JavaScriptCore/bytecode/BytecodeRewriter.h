@@ -34,8 +34,6 @@
 #include "UnlinkedCodeBlock.h"
 #include <wtf/Insertion.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 // BytecodeRewriter offers the ability to insert and remove the bytecodes including jump operations.
@@ -276,5 +274,3 @@ void BytecodeRewriter::forEachLabelPoint(Func func)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

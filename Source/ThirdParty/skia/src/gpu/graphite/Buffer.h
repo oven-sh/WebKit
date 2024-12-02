@@ -17,7 +17,6 @@ namespace skgpu::graphite {
 class Buffer : public Resource {
 public:
     size_t size() const { return fSize; }
-    Protected isProtected() const { return fIsProtected; }
 
     // TODO(b/262249983): Separate into mapRead(), mapWrite() methods.
     // If the buffer is already mapped then pointer is returned. If an asyncMap() was started then
@@ -38,15 +37,13 @@ public:
 protected:
     Buffer(const SharedContext* sharedContext,
            size_t size,
-           Protected isProtected,
            bool commandBufferRefsAsUsageRefs = false)
             : Resource(sharedContext,
                        Ownership::kOwned,
                        skgpu::Budgeted::kYes,
                        size,
                        /*commandBufferRefsAsUsageRefs=*/commandBufferRefsAsUsageRefs)
-            , fSize(size)
-            , fIsProtected(isProtected) {}
+            , fSize(size) {}
 
     void* fMapPtr = nullptr;
 
@@ -55,8 +52,7 @@ private:
     virtual void onAsyncMap(GpuFinishedProc, GpuFinishedContext);
     virtual void onUnmap() = 0;
 
-    size_t    fSize;
-    Protected fIsProtected;
+    size_t             fSize;
 };
 
 } // namespace skgpu::graphite

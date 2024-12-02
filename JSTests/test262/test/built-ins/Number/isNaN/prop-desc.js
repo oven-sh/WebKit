@@ -14,8 +14,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Number, "isNaN", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Number, "isNaN");
+verifyWritable(Number, "isNaN");
+verifyConfigurable(Number, "isNaN");

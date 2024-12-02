@@ -44,11 +44,11 @@
 #endif
 
 #if USE(SKIA)
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <skia/core/SkPixmap.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 IGNORE_CLANG_WARNINGS_END
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 using namespace WebKit;
@@ -120,12 +120,10 @@ ViewPlatform::ViewPlatform(WPEDisplay* display, const API::PageConfiguration& co
         auto& webView = *reinterpret_cast<ViewPlatform*>(userData);
         webView.toplevelStateChanged(previousState, wpe_view_get_toplevel_state(view));
     }), this);
-#if USE(GBM)
     g_signal_connect(m_wpeView.get(), "preferred-dma-buf-formats-changed", G_CALLBACK(+[](WPEView*, gpointer userData) {
         auto& webView = *reinterpret_cast<ViewPlatform*>(userData);
         webView.page().preferredBufferFormatsDidChange();
     }), this);
-#endif
 
     createWebPage(configuration);
     m_pageProxy->setIntrinsicDeviceScaleFactor(wpe_view_get_scale(m_wpeView.get()));

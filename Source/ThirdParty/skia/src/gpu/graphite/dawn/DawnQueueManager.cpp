@@ -120,7 +120,7 @@ const DawnSharedContext* DawnQueueManager::dawnSharedContext() const {
 }
 
 std::unique_ptr<CommandBuffer> DawnQueueManager::getNewCommandBuffer(
-        ResourceProvider* resourceProvider, Protected) {
+        ResourceProvider* resourceProvider) {
     return DawnCommandBuffer::Make(dawnSharedContext(),
                                    static_cast<DawnResourceProvider*>(resourceProvider));
 }

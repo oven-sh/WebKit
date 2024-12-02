@@ -1,3 +1,4 @@
 
-PASS traverseTo() promise rejections when detaching an iframe inside onnavigate (cross-document)
+
+FAIL traverseTo() promise rejections when detaching an iframe inside onnavigate (cross-document) assert_equals: expected 2 but got 1
 

@@ -30,8 +30,6 @@
 #include <CoreText/CoreText.h>
 #include <pal/spi/cf/CoreTextSPI.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 static CTParagraphStyleRef paragraphStyleWithCompositionLanguageNone()
@@ -95,5 +93,3 @@ RetainPtr<CFDictionaryRef> Font::getCFStringAttributes(bool enableKerning, FontO
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

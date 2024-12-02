@@ -149,7 +149,7 @@ void SQLTransaction::enqueueStatement(std::unique_ptr<SQLStatement> statement)
 
 SQLTransaction::StateFunction SQLTransaction::stateFunctionFor(SQLTransactionState state)
 {
-    static constexpr std::array<StateFunction, 13> stateFunctions {
+    static const StateFunction stateFunctions[] = {
         &SQLTransaction::unreachableState,                // 0. illegal
         &SQLTransaction::unreachableState,                // 1. idle
         &SQLTransaction::unreachableState,                // 2. acquireLock
@@ -165,7 +165,7 @@ SQLTransaction::StateFunction SQLTransaction::stateFunctionFor(SQLTransactionSta
         &SQLTransaction::deliverSuccessCallback           // 12.
     };
 
-    ASSERT(stateFunctions.size() == static_cast<int>(SQLTransactionState::NumberOfStates));
+    ASSERT(std::size(stateFunctions) == static_cast<int>(SQLTransactionState::NumberOfStates));
     ASSERT(state < SQLTransactionState::NumberOfStates);
 
     return stateFunctions[static_cast<int>(state)];

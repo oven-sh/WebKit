@@ -29,8 +29,6 @@
 #include <algorithm>
 #include <string.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 // Relocate pointer from source into destination as required.
@@ -72,5 +70,3 @@ UText* uTextCloneImpl(UText* destination, const UText* source, UBool deep, UErro
 }
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

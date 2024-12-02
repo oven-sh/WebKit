@@ -47,6 +47,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -111,9 +112,10 @@ template<> void JSTestScheduledActionDOMConstructor::initializeProperties(VM& vm
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestScheduledActionPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestScheduledActionConstructor, 0 } },
-    HashTableValue { "method"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestScheduledActionPrototypeFunction_method, 1 } },
+static const HashTableValue JSTestScheduledActionPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestScheduledActionConstructor, 0 } },
+    { "method"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestScheduledActionPrototypeFunction_method, 1 } },
 };
 
 const ClassInfo JSTestScheduledActionPrototype::s_info = { "TestScheduledActionReal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestScheduledActionPrototype) };
@@ -222,7 +224,6 @@ void JSTestScheduledActionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void
     uncacheWrapper(world, jsTestScheduledAction->protectedWrapped().ptr(), jsTestScheduledAction);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -247,8 +248,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestScheduled
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestScheduledAction>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

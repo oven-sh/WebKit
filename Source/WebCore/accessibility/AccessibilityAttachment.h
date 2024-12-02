@@ -37,21 +37,21 @@ class RenderAttachment;
     
 class AccessibilityAttachment final : public AccessibilityRenderObject {
 public:
-    static Ref<AccessibilityAttachment> create(AXID, RenderAttachment&);
+    static Ref<AccessibilityAttachment> create(RenderAttachment&);
     HTMLAttachmentElement* attachmentElement() const;
     bool hasProgress(float* progress = nullptr) const;
     
 private:
-    explicit AccessibilityAttachment(AXID, RenderAttachment&);
+    explicit AccessibilityAttachment(RenderAttachment&);
 
     AccessibilityRole determineAccessibilityRole() final { return AccessibilityRole::Button; }
 
-    bool isAttachmentElement() const final { return true; }
+    bool isAttachmentElement() const override { return true; }
 
-    String roleDescription() const final;
-    float valueForRange() const final;
-    bool computeIsIgnored() const final;
-    void accessibilityText(Vector<AccessibilityText>&) const final;
+    String roleDescription() const override;
+    float valueForRange() const override;
+    bool computeIsIgnored() const override;
+    void accessibilityText(Vector<AccessibilityText>&) const override;
 };
     
 } // namespace WebCore

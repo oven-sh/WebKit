@@ -50,8 +50,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/unicode/CharacterNames.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalObject);
@@ -688,5 +686,3 @@ void rejectObjectWithCalendarOrTimeZone(JSGlobalObject* globalObject, JSObject* 
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

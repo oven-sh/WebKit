@@ -553,9 +553,9 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
         uuid_t proxyIdentifier;
         nw_proxy_config_get_identifier(proxyConfig, proxyIdentifier);
 
-        configDataVector.append({ makeVector(agentData.get()), WTF::UUID(std::span<const uint8_t, 16> { proxyIdentifier }) });
+        configDataVector.append({ makeVector(agentData.get()), WTF::UUID(proxyIdentifier) });
     }
-
+    
     _websiteDataStore->setProxyConfigData(WTFMove(configDataVector));
 }
 
@@ -1416,14 +1416,6 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
         RELEASE_LOG_ERROR(Push, "Unhandled webPushAction: %@", webPushAction);
         completionHandler();
     }
-}
-
-- (void)_runningOrTerminatingServiceWorkerCountForTesting:(void(^)(NSUInteger))completionHandler
-{
-    auto completionHandlerCopy = makeBlockPtr(completionHandler);
-    _websiteDataStore->runningOrTerminatingServiceWorkerCountForTesting([completionHandlerCopy = WTFMove(completionHandlerCopy)](auto result) {
-        completionHandlerCopy(result);
-    });
 }
 
 @end

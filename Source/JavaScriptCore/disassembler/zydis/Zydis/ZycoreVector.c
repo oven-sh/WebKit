@@ -30,9 +30,6 @@
 
 #include "ZycoreLibC.h"
 #include "ZycoreVector.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 /* ============================================================================================== */
 /* Internal macros                                                                                */
@@ -853,7 +850,5 @@ ZyanStatus ZyanVectorGetSize(const ZyanVector* vector, ZyanUSize* size)
 /* ---------------------------------------------------------------------------------------------- */
 
 /* ============================================================================================== */
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

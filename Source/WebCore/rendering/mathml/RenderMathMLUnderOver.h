@@ -43,7 +43,6 @@ public:
 
 private:
     bool isRenderMathMLScripts() const final { return false; }
-    bool isMathContentCentered() const final { return !shouldMoveLimits(); }
     ASCIILiteral renderName() const final { return "RenderMathMLUnderOver"_s; }
     MathMLUnderOverElement& element() const;
 

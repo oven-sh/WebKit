@@ -27,17 +27,9 @@
 #include "GPUCommandEncoder.h"
 
 #include "GPUBuffer.h"
-#include "GPUCommandBuffer.h"
 #include "GPUQuerySet.h"
-#include "WebGPUDevice.h"
 
 namespace WebCore {
-
-GPUCommandEncoder::GPUCommandEncoder(Ref<WebGPU::CommandEncoder>&& backing, WebGPU::Device& device)
-    : m_backing(WTFMove(backing))
-    , m_device(&device)
-{
-}
 
 String GPUCommandEncoder::label() const
 {
@@ -52,17 +44,17 @@ void GPUCommandEncoder::setLabel(String&& label)
 ExceptionOr<Ref<GPURenderPassEncoder>> GPUCommandEncoder::beginRenderPass(const GPURenderPassDescriptor& renderPassDescriptor)
 {
     RefPtr encoder = m_backing->beginRenderPass(renderPassDescriptor.convertToBacking());
-    if (!encoder || !m_device.get())
+    if (!encoder)
         return Exception { ExceptionCode::InvalidStateError, "GPUCommandEncoder.beginRenderPass: Unable to begin render pass."_s };
-    return GPURenderPassEncoder::create(encoder.releaseNonNull(), *m_device.get());
+    return GPURenderPassEncoder::create(encoder.releaseNonNull());
 }
 
 ExceptionOr<Ref<GPUComputePassEncoder>> GPUCommandEncoder::beginComputePass(const std::optional<GPUComputePassDescriptor>& computePassDescriptor)
 {
     RefPtr computePass = m_backing->beginComputePass(computePassDescriptor ? std::optional { computePassDescriptor->convertToBacking() } : std::nullopt);
-    if (!computePass || !m_device.get())
+    if (!computePass)
         return Exception { ExceptionCode::InvalidStateError, "GPUCommandEncoder.beginComputePass: Unable to begin compute pass."_s };
-    return GPUComputePassEncoder::create(computePass.releaseNonNull(), *m_device.get());
+    return GPUComputePassEncoder::create(computePass.releaseNonNull());
 }
 
 void GPUCommandEncoder::copyBufferToBuffer(
@@ -151,12 +143,7 @@ ExceptionOr<Ref<GPUCommandBuffer>> GPUCommandEncoder::finish(const std::optional
     RefPtr buffer = m_backing->finish(convertToBacking(commandBufferDescriptor));
     if (!buffer)
         return Exception { ExceptionCode::InvalidStateError, "GPUCommandEncoder.finish: Unable to finish."_s };
-    return GPUCommandBuffer::create(buffer.releaseNonNull(), *this);
-}
-
-void GPUCommandEncoder::setBacking(WebGPU::CommandEncoder& newBacking)
-{
-    m_backing = newBacking;
+    return GPUCommandBuffer::create(buffer.releaseNonNull());
 }
 
 }

@@ -82,7 +82,7 @@ static void* displayRefreshRateObservationContext = &displayRefreshRateObservati
             [_displayLink.display addObserver:self forKeyPath:@"refreshRate" options:NSKeyValueObservingOptionNew context:displayRefreshRateObservationContext];
             _displayLink.paused = YES;
 
-            if (drawingAreaProxy && drawingAreaProxy->page() && !drawingAreaProxy->page()->preferences().preferPageRenderingUpdatesNear60FPSEnabled()) {
+            if (drawingAreaProxy && !drawingAreaProxy->page().preferences().preferPageRenderingUpdatesNear60FPSEnabled()) {
 #if HAVE(CORE_ANIMATION_FRAME_RATE_RANGE)
                 [_displayLink setPreferredFrameRateRange:WebKit::highFrameRateRange()];
                 [_displayLink setHighFrameRateReason:WebKit::preferPageRenderingUpdatesNear60FPSDisabledHighFrameRateReason];
@@ -160,8 +160,8 @@ static void* displayRefreshRateObservationContext = &displayRefreshRateObservati
 
 - (WebCore::FramesPerSecond)nominalFramesPerSecond
 {
-    RefPtr page = _drawingAreaProxy->page();
-    if (page && (page->preferences().webAnimationsCustomFrameRateEnabled() || !page->preferences().preferPageRenderingUpdatesNear60FPSEnabled())) {
+    auto& page = _drawingAreaProxy->page();
+    if (page.preferences().webAnimationsCustomFrameRateEnabled() || !page.preferences().preferPageRenderingUpdatesNear60FPSEnabled()) {
         auto minimumRefreshInterval = _displayLink.maximumRefreshRate;
         if (minimumRefreshInterval > 0)
             return std::round(1.0 / minimumRefreshInterval);
@@ -172,9 +172,7 @@ static void* displayRefreshRateObservationContext = &displayRefreshRateObservati
 
 - (void)didChangeNominalFramesPerSecond
 {
-    RefPtr page = _drawingAreaProxy->page();
-    if (!page)
-        return;
+    Ref page = _drawingAreaProxy->page();
     if (auto displayID = page->displayID())
         page->windowScreenDidChange(*displayID);
 }
@@ -186,11 +184,6 @@ using namespace IPC;
 using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerTreeDrawingAreaProxyIOS);
-
-Ref<RemoteLayerTreeDrawingAreaProxyIOS> RemoteLayerTreeDrawingAreaProxyIOS::create(WebPageProxy& page, WebProcessProxy& webProcessProxy)
-{
-    return adoptRef(*new RemoteLayerTreeDrawingAreaProxyIOS(page, webProcessProxy));
-}
 
 RemoteLayerTreeDrawingAreaProxyIOS::RemoteLayerTreeDrawingAreaProxyIOS(WebPageProxy& pageProxy, WebProcessProxy& webProcessProxy)
     : RemoteLayerTreeDrawingAreaProxy(pageProxy, webProcessProxy)
@@ -204,7 +197,7 @@ RemoteLayerTreeDrawingAreaProxyIOS::~RemoteLayerTreeDrawingAreaProxyIOS()
 
 std::unique_ptr<RemoteScrollingCoordinatorProxy> RemoteLayerTreeDrawingAreaProxyIOS::createScrollingCoordinatorProxy() const
 {
-    return makeUnique<RemoteScrollingCoordinatorProxyIOS>(*m_webPageProxy);
+    return makeUnique<RemoteScrollingCoordinatorProxyIOS>(m_webPageProxy);
 }
 
 DelegatedScrollingMode RemoteLayerTreeDrawingAreaProxyIOS::delegatedScrollingMode() const
@@ -233,11 +226,8 @@ void RemoteLayerTreeDrawingAreaProxyIOS::didRefreshDisplay()
         RemoteLayerTreeDrawingAreaProxy::didRefreshDisplay();
 
     if (m_needsDisplayRefreshCallbacksForAnimation) {
-        RefPtr page = m_webPageProxy.get();
-        if (!page)
-            return;
-        if (auto displayID = page->displayID())
-            page->scrollingCoordinatorProxy()->displayDidRefresh(*displayID);
+        if (auto displayID = m_webPageProxy->displayID())
+            m_webPageProxy->scrollingCoordinatorProxy()->displayDidRefresh(*displayID);
     }
 }
 

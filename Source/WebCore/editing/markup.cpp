@@ -774,9 +774,6 @@ RefPtr<Node> StyledMarkupAccumulator::traverseNodesForSerialization(Node& startN
         if (!node.renderer() && !isDisplayContents && !enclosingElementWithTag(firstPositionInOrBeforeNode(&node), selectTag))
             return false;
 
-        if (node.renderer() && node.renderer()->isSkippedContent())
-            return false;
-
         if (m_ignoresUserSelectNone && userSelectNoneStateCache.nodeOnlyContainsUserSelectNone(node))
             return false;
 

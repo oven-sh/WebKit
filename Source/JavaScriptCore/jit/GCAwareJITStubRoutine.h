@@ -144,7 +144,6 @@ public:
 
 protected:
     void observeZeroRefCountImpl();
-    VM& vm() { return m_vm; }
 
 private:
     VM& m_vm;

@@ -37,48 +37,49 @@ class ScrollView;
     
 class AccessibilityScrollView final : public AccessibilityObject {
 public:
-    static Ref<AccessibilityScrollView> create(AXID, ScrollView&);
+    static Ref<AccessibilityScrollView> create(ScrollView*);
     AccessibilityRole determineAccessibilityRole() final { return AccessibilityRole::ScrollArea; }
-    ScrollView* scrollView() const final { return currentScrollView(); }
+    ScrollView* scrollView() const override { return currentScrollView(); }
 
     virtual ~AccessibilityScrollView();
 
-    AccessibilityObject* webAreaObject() const final;
-    void setNeedsToUpdateChildren() final { m_childrenDirty = true; }
+    AccessibilityObject* webAreaObject() const override;
+    void setNeedsToUpdateChildren() override { m_childrenDirty = true; }
 
 private:
-    explicit AccessibilityScrollView(AXID, ScrollView&);
-    void detachRemoteParts(AccessibilityDetachmentType) final;
+    explicit AccessibilityScrollView(ScrollView*);
+    void detachRemoteParts(AccessibilityDetachmentType) override;
 
     ScrollView* currentScrollView() const;
-    ScrollableArea* getScrollableAreaIfScrollable() const final { return currentScrollView(); }
-    void scrollTo(const IntPoint&) const final;
-    bool computeIsIgnored() const final;
-    bool isAccessibilityScrollViewInstance() const final { return true; }
-    bool isEnabled() const final { return true; }
+    ScrollableArea* getScrollableAreaIfScrollable() const override { return currentScrollView(); }
+    void scrollTo(const IntPoint&) const override;
+    bool computeIsIgnored() const override;
+    bool isAccessibilityScrollViewInstance() const override { return true; }
+    bool isEnabled() const override { return true; }
     bool hasRemoteFrameChild() const final { return m_remoteFrame; }
 
-    bool isAttachment() const final;
-    PlatformWidget platformWidget() const final;
-    Widget* widgetForAttachmentView() const final { return currentScrollView(); }
-
-    AccessibilityObject* scrollBar(AccessibilityOrientation) final;
-    void addChildren() final;
-    void clearChildren() final;
-    AccessibilityObject* accessibilityHitTest(const IntPoint&) const final;
-    void updateChildrenIfNecessary() final;
+    bool isAttachment() const override;
+    PlatformWidget platformWidget() const override;
+    Widget* widgetForAttachmentView() const override { return currentScrollView(); }
+    
+    AccessibilityObject* scrollBar(AccessibilityOrientation) override;
+    void addChildren() override;
+    void clearChildren() override;
+    AccessibilityObject* accessibilityHitTest(const IntPoint&) const override;
+    void updateChildrenIfNecessary() override;
     void updateScrollbars();
-    void setFocused(bool) final;
-    bool canSetFocusAttribute() const final;
-    bool isFocused() const final;
+    void setFocused(bool) override;
+    bool canSetFocusAttribute() const override;
+    bool isFocused() const override;
     void addRemoteFrameChild();
 
-    Document* document() const final;
-    LocalFrameView* documentFrameView() const final;
-    LayoutRect elementRect() const final;
-    AccessibilityObject* parentObject() const final;
+    Document* document() const override;
+    LocalFrameView* documentFrameView() const override;
+    LayoutRect elementRect() const override;
+    AccessibilityObject* parentObject() const override;
+    AccessibilityObject* parentObjectIfExists() const override { return parentObject(); }
 
-    AccessibilityObject* firstChild() const final { return webAreaObject(); }
+    AccessibilityObject* firstChild() const override { return webAreaObject(); }
     AccessibilityScrollbar* addChildScrollbar(Scrollbar*);
     void removeChildScrollbar(AccessibilityObject*);
 

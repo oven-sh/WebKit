@@ -19,15 +19,16 @@
 
 #pragma once
 
-#include "ImageBuffer.h"
 #include "LegacyRenderSVGResourceContainer.h"
 #include "SVGUnitTypes.h"
+
 #include <wtf/EnumeratedArray.h>
 #include <wtf/HashMap.h>
 
 namespace WebCore {
 
 class GraphicsContext;
+class ImageBuffer;
 class SVGClipPathElement;
 
 struct ClipperData {

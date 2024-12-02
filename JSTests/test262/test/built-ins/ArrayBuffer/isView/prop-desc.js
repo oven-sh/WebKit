@@ -12,8 +12,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(ArrayBuffer, "isView", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(ArrayBuffer, "isView");
+verifyWritable(ArrayBuffer, "isView");
+verifyConfigurable(ArrayBuffer, "isView");

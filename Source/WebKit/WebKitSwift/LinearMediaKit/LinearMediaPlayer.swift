@@ -127,9 +127,6 @@ enum LinearMediaPlayerErrors: Error {
 #endif
         }
     }
-    var enteredFromInline: Bool {
-        get { swiftOnlyData.enteredFromInline }
-    }
 
     // FIXME: These should be stored properties on WKSLinearMediaPlayer, but a bug prevents that from compiling (rdar://121877511).
     var startDate: Date? {

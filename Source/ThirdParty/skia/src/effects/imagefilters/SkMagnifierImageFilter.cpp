@@ -193,9 +193,7 @@ skif::FilterResult SkMagnifierImageFilter::onFilterImage(const skif::Context& co
     // the parameter-space scale matrix is a no-op. Thus layerZoom == fZoomAmount and we can avoid
     // all of that math. This assumption is invalid if the matrix complexity is more than S+T.
     SkASSERT(this->getCTMCapability() == MatrixCapability::kScaleTranslate);
-    // But also clamp the maximum amount of zoom to scale half of a layer pixel to the entire lens.
-    const float maxLensSize = std::max(1.f, std::max(lensBounds.width(), lensBounds.height()));
-    const float invZoom = 1.f /  std::min(fZoomAmount, 2.f * maxLensSize);
+    float invZoom = 1.f / fZoomAmount;
 
     // The srcRect is the bounding box of the pixels that are linearly scaled up, about zoomCenter.
     // This is not the visual bounds of this upscaled region, but the bounds of the source pixels
@@ -245,9 +243,7 @@ skif::FilterResult SkMagnifierImageFilter::onFilterImage(const skif::Context& co
         // input from the child filter, and transform it by the inverse of zoomXform (to go from
         // src to lens bounds, since it was constructed to go from lens to src).
         skif::LayerSpace<SkMatrix> invZoomXform;
-        if (!zoomXform.invert(&invZoomXform)) {
-            return {}; // pathological input
-        }
+        SkAssertResult(zoomXform.invert(&invZoomXform));
         skif::FilterResult childOutput =
                 this->getChildOutput(0, context.withNewDesiredOutput(srcRect.roundOut()));
         return childOutput.applyTransform(context, invZoomXform, fSampling)

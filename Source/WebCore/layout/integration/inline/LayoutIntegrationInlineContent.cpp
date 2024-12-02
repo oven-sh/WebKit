@@ -31,8 +31,6 @@
 #include "RenderStyleInlines.h"
 #include "TextPainter.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 namespace LayoutIntegration {
 
@@ -184,4 +182,3 @@ void InlineContent::shrinkToFit()
 }
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

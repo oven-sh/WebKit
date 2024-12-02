@@ -37,12 +37,6 @@ public:
 
     wgpu::CommandBuffer finishEncoding();
 
-#if defined(SK_DEBUG)
-    bool hasActivePassEncoder() const {
-        return fActiveRenderPassEncoder || fActiveComputePassEncoder;
-    }
-#endif
-
 private:
     DawnCommandBuffer(const DawnSharedContext* sharedContext,
                       DawnResourceProvider* resourceProvider);
@@ -92,7 +86,7 @@ private:
     void bindTextureAndSamplers(const DrawPass& drawPass,
                                 const DrawPassCommands::BindTexturesAndSamplers& command);
 
-    void setScissor(const Scissor&);
+    void setScissor(unsigned int left, unsigned int top, unsigned int width, unsigned int height);
     bool updateIntrinsicUniforms(SkIRect viewport);
     void setViewport(SkIRect viewport);
 
@@ -152,6 +146,9 @@ private:
     bool fBoundUniformBuffersDirty = false;
 
     std::array<BindBufferInfo, DawnGraphicsPipeline::kNumUniformBuffers> fBoundUniforms;
+
+    class IntrinsicConstantsManager;
+    std::unique_ptr<IntrinsicConstantsManager> fIntrinsicConstants;
 
     wgpu::CommandEncoder fCommandEncoder;
     wgpu::RenderPassEncoder fActiveRenderPassEncoder;

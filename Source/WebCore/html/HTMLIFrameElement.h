@@ -73,7 +73,6 @@ private:
 
     bool rendererIsNeeded(const RenderStyle&) final;
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle&) const final { return true; }
 
     bool shouldLoadFrameLazily() final;
     bool isLazyLoadObserverActive() const final;

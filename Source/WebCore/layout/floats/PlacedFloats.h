@@ -27,7 +27,7 @@
 
 #include "LayoutBoxGeometry.h"
 #include "LayoutElementBox.h"
-#include "LayoutShape.h"
+#include "Shape.h"
 #include <wtf/OptionSet.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -38,38 +38,37 @@ class Box;
 class BoxGeometry;
 class Rect;
 
-// PlacedFloats are relative to the BFC's logical top/left.
-// When floats added by nested IFCs with mismatching inline direcctions (e.g. where BFC is RTL but IFC is RTL)
-// they get converted as if they had the same inline direction as BFC. What it simply means that
-// PlacedFloats::Item::isStartPositioned is always relative to BFC, regardless of what it is relative to in its IFC.
+// PlacedFloats holds the floating boxes for BFC/IFC using the BFC's writing mode.
+// PlacedFloats may be inherited by IFCs with mismataching writing mode. In such cases floats
+// are added to PlacledFloats as if they had matching inline direction (i.e. all boxes within PlacedFloats share the same writing mode)
 class PlacedFloats {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(PlacedFloats);
 public:
     PlacedFloats(const ElementBox& blockFormattingContextRoot);
 
-    const ElementBox& blockFormattingContextRoot() const { return m_blockFormattingContextRoot; }
+    const ElementBox& formattingContextRoot() const { return m_blockFormattingContextRoot; }
 
     class Item {
     public:
         // FIXME: This c'tor is only used by the render tree integation codepath.
-        enum class Position { Start, End };
-        Item(Position, const BoxGeometry& absoluteBoxGeometry, LayoutPoint localTopLeft, const LayoutShape*);
+        enum class Position { Left, Right };
+        Item(Position, const BoxGeometry& absoluteBoxGeometry, LayoutPoint localTopLeft, const Shape*);
         Item(const Box&, Position, const BoxGeometry& absoluteBoxGeometry, LayoutPoint localTopLeft, std::optional<size_t> line);
 
         ~Item();
 
-        bool isStartPositioned() const { return m_position == Position::Start; }
-        bool isEndPositioned() const { return m_position == Position::End; }
+        bool isLeftPositioned() const { return m_position == Position::Left; }
+        bool isRightPositioned() const { return m_position == Position::Right; }
         bool isInFormattingContextOf(const ElementBox& formattingContextRoot) const;
 
         BoxGeometry boxGeometry() const;
 
         Rect absoluteRectWithMargin() const { return BoxGeometry::marginBoxRect(m_absoluteBoxGeometry); }
         Rect absoluteBorderBoxRect() const { return BoxGeometry::borderBoxRect(m_absoluteBoxGeometry); }
-        BoxGeometry::HorizontalEdges inlineAxisMargin() const { return m_absoluteBoxGeometry.horizontalMargin(); }
+        BoxGeometry::HorizontalEdges horizontalMargin() const { return m_absoluteBoxGeometry.horizontalMargin(); }
         PositionInContextRoot absoluteBottom() const { return { absoluteRectWithMargin().bottom() }; }
 
-        const LayoutShape* shape() const { return m_shape.get(); }
+        const Shape* shape() const { return m_shape.get(); }
         std::optional<size_t> placedByLine() const { return m_placedByLine; }
 
         const Box* layoutBox() const { return m_layoutBox.get(); }
@@ -79,7 +78,7 @@ public:
         Position m_position;
         BoxGeometry m_absoluteBoxGeometry;
         LayoutPoint m_localTopLeft;
-        RefPtr<const LayoutShape> m_shape;
+        RefPtr<const Shape> m_shape;
         std::optional<size_t> m_placedByLine;
     };
     using List = Vector<Item>;
@@ -91,11 +90,13 @@ public:
     void clear();
 
     bool isEmpty() const { return list().isEmpty(); }
-    bool hasStartPositioned() const;
-    bool hasEndPositioned() const;
+    bool hasLeftPositioned() const;
+    bool hasRightPositioned() const;
 
-    std::optional<LayoutUnit> highestPositionOnBlockAxis() const;
-    std::optional<LayoutUnit> lowestPositionOnBlockAxis(Clear = Clear::Both) const;
+    WritingMode writingMode() const { return m_writingMode; }
+    // FIXME: This should always be placedFloats's root().writingMode() if we used the actual containing block of the intrusive
+    // floats to initiate the floating state in the integration codepath (i.e. when the float comes from the parent BFC).
+    void setWritingMode(WritingMode writingMode) { m_writingMode = writingMode; }
 
     void shrinkToFit();
 
@@ -103,8 +104,8 @@ private:
     CheckedRef<const ElementBox> m_blockFormattingContextRoot;
     List m_list;
     enum class PositionType {
-        Start = 1 << 0,
-        End  = 1 << 1
+        Left = 1 << 0,
+        Right  = 1 << 1
     };
     OptionSet<PositionType> m_positionTypes;
     WritingMode m_writingMode;
@@ -117,14 +118,14 @@ inline bool PlacedFloats::remove(const Box& floatBox)
     });
 }
 
-inline bool PlacedFloats::hasStartPositioned() const
+inline bool PlacedFloats::hasLeftPositioned() const
 {
-    return m_positionTypes.contains(PositionType::Start);
+    return m_positionTypes.contains(PositionType::Left);
 }
 
-inline bool PlacedFloats::hasEndPositioned() const
+inline bool PlacedFloats::hasRightPositioned() const
 {
-    return m_positionTypes.contains(PositionType::End);
+    return m_positionTypes.contains(PositionType::Right);
 }
 
 }

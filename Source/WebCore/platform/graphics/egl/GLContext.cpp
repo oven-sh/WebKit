@@ -80,7 +80,6 @@ bool GLContext::getEGLConfig(PlatformDisplay& platformDisplay, EGLConfig* config
             WTFLogAlways("Unknown pixel layout %s, falling back to RGBA8888", environmentVariable);
     }
 
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     EGLint attributeList[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
         EGL_RED_SIZE, rgbaSize[0],
@@ -92,7 +91,6 @@ bool GLContext::getEGLConfig(PlatformDisplay& platformDisplay, EGLConfig* config
         EGL_DEPTH_SIZE, 0,
         EGL_NONE
     };
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     switch (surfaceType) {
     case GLContext::Surfaceless:
@@ -390,9 +388,7 @@ GLContext::~GLContext()
 
 EGLContext GLContext::createContextForEGLVersion(PlatformDisplay& platformDisplay, EGLConfig config, EGLContext sharingContext)
 {
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     static EGLint contextAttributes[3];
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     static bool contextAttributesInitialized = false;
 
     if (!contextAttributesInitialized) {
@@ -485,9 +481,7 @@ bool GLContext::isExtensionSupported(const char* extensionList, const char* exte
 
     ASSERT(extension);
     int extensionLen = strlen(extension);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     const char* extensionListPtr = extensionList;
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     while ((extensionListPtr = strstr(extensionListPtr, extension))) {
         if (extensionListPtr[extensionLen] == ' ' || extensionListPtr[extensionLen] == '\0')
             return true;

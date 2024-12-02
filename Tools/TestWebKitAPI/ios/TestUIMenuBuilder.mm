@@ -27,7 +27,6 @@
 #import "TestUIMenuBuilder.h"
 
 #import <wtf/RetainPtr.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 

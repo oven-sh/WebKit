@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,7 +30,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/OverflowPolicy.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -109,7 +108,7 @@ class JS_EXPORT_PRIVATE HeapSnapshotBuilder final : public HeapAnalyzer {
 public:
     enum SnapshotType { InspectorSnapshot, GCDebuggingSnapshot };
 
-    HeapSnapshotBuilder(HeapProfiler&, SnapshotType = SnapshotType::InspectorSnapshot, OverflowPolicy = OverflowPolicy::CrashOnOverflow);
+    HeapSnapshotBuilder(HeapProfiler&, SnapshotType = SnapshotType::InspectorSnapshot);
     ~HeapSnapshotBuilder() final;
 
     static void resetNextAvailableObjectIdentifier();
@@ -133,8 +132,6 @@ public:
     String json();
     String json(Function<bool (const HeapSnapshotNode&)> allowNodeCallback);
 
-    bool hasOverflowed() const { return m_hasOverflowed; }
-
 private:
     static NodeIdentifier nextAvailableObjectIdentifier;
     static NodeIdentifier getNextObjectIdentifier();
@@ -151,8 +148,6 @@ private:
     };
     
     HeapProfiler& m_profiler;
-    OverflowPolicy m_overflowPolicy;
-    bool m_hasOverflowed { false };
 
     // SlotVisitors run in parallel.
     Lock m_buildingNodeMutex;

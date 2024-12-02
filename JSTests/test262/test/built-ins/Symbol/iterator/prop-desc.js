@@ -12,8 +12,6 @@ features: [Symbol.iterator]
 ---*/
 
 assert.sameValue(typeof Symbol.iterator, 'symbol');
-verifyProperty(Symbol, 'iterator', {
-  writable: false,
-  enumerable: false,
-  configurable: false,
-});
+verifyNotEnumerable(Symbol, 'iterator');
+verifyNotWritable(Symbol, 'iterator');
+verifyNotConfigurable(Symbol, 'iterator');

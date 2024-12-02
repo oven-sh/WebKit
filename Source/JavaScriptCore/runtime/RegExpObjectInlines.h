@@ -38,7 +38,8 @@ inline Structure* RegExpObject::createStructure(VM& vm, JSGlobalObject* globalOb
     return Structure::create(vm, globalObject, prototype, TypeInfo(RegExpObjectType, StructureFlags), info());
 }
 
-ALWAYS_INLINE unsigned getRegExpObjectLastIndexAsUnsigned(JSGlobalObject* globalObject, RegExpObject* regExpObject, const String& input)
+ALWAYS_INLINE unsigned getRegExpObjectLastIndexAsUnsigned(
+    JSGlobalObject* globalObject, RegExpObject* regExpObject, const String& input)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -58,7 +59,7 @@ ALWAYS_INLINE unsigned getRegExpObjectLastIndexAsUnsigned(JSGlobalObject* global
     return lastIndex;
 }
 
-ALWAYS_INLINE JSValue RegExpObject::execInline(JSGlobalObject* globalObject, JSString* string)
+inline JSValue RegExpObject::execInline(JSGlobalObject* globalObject, JSString* string)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -98,7 +99,8 @@ ALWAYS_INLINE JSValue RegExpObject::execInline(JSGlobalObject* globalObject, JSS
 }
 
 // Shared implementation used by test and exec.
-ALWAYS_INLINE MatchResult RegExpObject::matchInline(JSGlobalObject* globalObject, JSString* string)
+inline MatchResult RegExpObject::matchInline(
+    JSGlobalObject* globalObject, JSString* string)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -236,18 +238,13 @@ ALWAYS_INLINE void oneCharMatches(std::span<const Char> input, Char pattern, siz
     }
 }
 
-template<typename SubjectChar, typename PatternChar>
-ALWAYS_INLINE void genericMatches(VM& vm, std::span<const SubjectChar> input, std::span<const PatternChar> pattern, size_t& numberOfMatches, size_t& startIndex)
+ALWAYS_INLINE void genericMatches(StringView input, StringView pattern, size_t& numberOfMatches, size_t& startIndex)
 {
-    ASSERT(!pattern.empty());
-    if (startIndex > input.size())
-        return;
-    AdaptiveStringSearcher<PatternChar, SubjectChar> search(vm.adaptiveStringSearcherTables(), pattern);
-    size_t found = search.search(input, startIndex);
+    size_t found = input.find(pattern, startIndex);
     while (found != notFound) {
-        startIndex = found + pattern.size();
+        startIndex = found + pattern.length();
         numberOfMatches++;
-        found = search.search(input, startIndex);
+        found = input.find(pattern, startIndex);
         if (numberOfMatches > MAX_STORAGE_VECTOR_LENGTH)
             return;
     }
@@ -271,21 +268,21 @@ ALWAYS_INLINE JSValue collectGlobalAtomMatches(JSGlobalObject* globalObject, JSS
             if (pattern.length() == 1)
                 oneCharMatches(input->span8(), pattern.span8()[0], numberOfMatches, startIndex);
             else
-                genericMatches(vm, input->span8(), pattern.span8(), numberOfMatches, startIndex);
+                genericMatches(input, pattern, numberOfMatches, startIndex);
         } else {
             if (pattern.length() == 1)
                 oneCharMatches(input->span16(), pattern.characterAt(0), numberOfMatches, startIndex);
             else
-                genericMatches(vm, input->span16(), pattern.span8(), numberOfMatches, startIndex);
+                genericMatches(input, pattern, numberOfMatches, startIndex);
         }
     } else {
         if (input->is8Bit())
-            genericMatches(vm, input->span8(), pattern.span16(), numberOfMatches, startIndex);
+            genericMatches(input, pattern, numberOfMatches, startIndex);
         else {
             if (pattern.length() == 1)
                 oneCharMatches(input->span16(), pattern.characterAt(0), numberOfMatches, startIndex);
             else
-                genericMatches(vm, input->span16(), pattern.span16(), numberOfMatches, startIndex);
+                genericMatches(input, pattern, numberOfMatches, startIndex);
         }
     }
 

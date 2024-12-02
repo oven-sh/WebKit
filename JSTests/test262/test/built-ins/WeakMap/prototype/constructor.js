@@ -16,8 +16,6 @@ includes: [propertyHelper.js]
 assert.sameValue(WeakMap.prototype.constructor, WeakMap);
 assert.sameValue((new WeakMap()).constructor, WeakMap);
 
-verifyProperty(WeakMap.prototype, 'constructor', {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(WeakMap.prototype, 'constructor');
+verifyWritable(WeakMap.prototype, 'constructor');
+verifyConfigurable(WeakMap.prototype, 'constructor');

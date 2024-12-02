@@ -12,8 +12,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Math, "clz32", {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(Math, "clz32");
+verifyWritable(Math, "clz32");
+verifyConfigurable(Math, "clz32");

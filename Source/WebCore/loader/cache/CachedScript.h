@@ -50,7 +50,7 @@ private:
     bool shouldIgnoreHTTPStatusCodeErrors() const final;
 
     void setEncoding(const String&) final;
-    ASCIILiteral encoding() const final;
+    String encoding() const final;
     const TextResourceDecoder* textResourceDecoder() const final { return m_decoder.get(); }
     RefPtr<TextResourceDecoder> protectedDecoder() const;
     void finishLoading(const FragmentedSharedBuffer*, const NetworkLoadMetrics&) final;

@@ -82,7 +82,7 @@ static void paintRepaintRectOverlay(WebView* webView, CGContextRef context)
 static RetainPtr<CGImageRef> takeWindowSnapshot(CGSWindowID windowID, CGWindowImageOption imageOptions)
 {
     imageOptions |= kCGWindowImageBoundsIgnoreFraming | kCGWindowImageShouldBeOpaque;
-    return WebCore::cgWindowListCreateImage(CGRectNull, kCGWindowListOptionIncludingWindow, windowID, imageOptions);
+    return adoptCF(WebCore::cgWindowListCreateImage(CGRectNull, kCGWindowListOptionIncludingWindow, windowID, imageOptions));
 }
 
 RefPtr<BitmapContext> createBitmapContextFromWebView(bool onscreen, bool incrementalRepaint, bool sweepHorizontally, bool drawSelectionRect)

@@ -1,3 +1,0 @@
-
-PASS showModal should throw when the document isn't active
-

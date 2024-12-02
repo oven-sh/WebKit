@@ -51,6 +51,7 @@
 #include "JSDOMConvertBase.h"
 #endif
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -120,17 +121,18 @@ template<> void JSTestOperationConditionalDOMConstructor::initializeProperties(V
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 3> JSTestOperationConditionalPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestOperationConditionalConstructor, 0 } },
+static const HashTableValue JSTestOperationConditionalPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestOperationConditionalConstructor, 0 } },
 #if ENABLE(ConditionBase)
-    HashTableValue { "nonConditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestOperationConditionalPrototypeFunction_nonConditionalOperation, 0 } },
+    { "nonConditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestOperationConditionalPrototypeFunction_nonConditionalOperation, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 #if ENABLE(ConditionBase) && ENABLE(ConditionOperation)
-    HashTableValue { "conditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestOperationConditionalPrototypeFunction_conditionalOperation, 0 } },
+    { "conditionalOperation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestOperationConditionalPrototypeFunction_conditionalOperation, 0 } },
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
 };
 
@@ -255,7 +257,6 @@ void JSTestOperationConditionalOwner::finalize(JSC::Handle<JSC::Unknown> handle,
     uncacheWrapper(world, jsTestOperationConditional->protectedWrapped().ptr(), jsTestOperationConditional);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -280,8 +281,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestOperation
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestOperationConditional>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

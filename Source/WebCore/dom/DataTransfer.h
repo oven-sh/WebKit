@@ -61,8 +61,8 @@ public:
     void setEffectAllowed(const String&);
 
     DataTransferItemList& items(Document&);
-    Vector<String> types(Document&) const;
-    Vector<String> typesForItemList(Document&) const;
+    Vector<String> types() const;
+    Vector<String> typesForItemList() const;
 
     FileList& files(Document*) const;
     FileList& files(Document&) const;
@@ -84,7 +84,7 @@ public:
     bool canWriteData() const;
 
     bool hasFileOfType(const String&);
-    bool hasStringOfType(Document&, const String&);
+    bool hasStringOfType(const String&);
 
     Pasteboard& pasteboard() { return *m_pasteboard; }
     void commitToPasteboard(Pasteboard&);
@@ -137,7 +137,7 @@ private:
     bool shouldSuppressGetAndSetDataToAvoidExposingFilePaths() const;
 
     enum class AddFilesType : bool { No, Yes };
-    Vector<String> types(Document&, AddFilesType) const;
+    Vector<String> types(AddFilesType) const;
     Vector<Ref<File>> filesFromPasteboardAndItemList(ScriptExecutionContext*) const;
 
     String m_originIdentifier;

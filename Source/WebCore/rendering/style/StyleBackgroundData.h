@@ -31,10 +31,6 @@
 #include <wtf/RefCounted.h>
 #include <wtf/Ref.h>
 
-namespace WTF {
-class TextStream;
-}
-
 namespace WebCore {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleBackgroundData);
@@ -45,10 +41,6 @@ public:
     Ref<StyleBackgroundData> copy() const;
 
     bool operator==(const StyleBackgroundData&) const;
-
-#if !LOG_DISABLED
-    void dumpDifferences(TextStream&, const StyleBackgroundData&) const;
-#endif
 
     bool isEquivalentForPainting(const StyleBackgroundData&, bool currentColorDiffers) const;
 

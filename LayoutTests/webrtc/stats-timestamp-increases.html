@@ -39,10 +39,8 @@
                                        kMinimumTimeElapsedBetweenGetStatsCallsMs);
              // The delta must be at most the time elapsed before the first getStats()
              // call and after the second getStats() call.
-             // We increase a bit maximumTimeElapsedBetweenGetStatsCallsMs as we reduce
-             // stat timestamp resolution by 1 ms.
              assert_less_than_equal(deltaTimestampMs,
-                                    maximumTimeElapsedBetweenGetStatsCallsMs + 2);
+                                    maximumTimeElapsedBetweenGetStatsCallsMs);
          }, `RTCStats.timestamp increases with time passing`);
         </script>
     </body>

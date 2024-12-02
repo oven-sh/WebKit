@@ -28,7 +28,6 @@
 
 #if ENABLE(MEDIA_STREAM) && USE(AVFOUNDATION)
 
-#import "AudioMediaStreamTrackRenderer.h"
 #import "AudioTrackPrivateMediaStream.h"
 #import "GraphicsContextCG.h"
 #import "LocalSampleBufferDisplayLayer.h"
@@ -488,7 +487,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::load(MediaStreamPrivate& stream)
 {
     INFO_LOG(LOGIDENTIFIER);
 
-    m_intrinsicSize = { };
+    m_intrinsicSize = FloatSize();
 
     m_mediaStreamPrivate = &stream;
     m_mediaStreamPrivate->addObserver(*this);
@@ -771,7 +770,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::characteristicsChanged()
 {
     SizeChanged sizeChanged = SizeChanged::No;
 
-    IntSize intrinsicSize = m_mediaStreamPrivate->intrinsicSize();
+    FloatSize intrinsicSize = m_mediaStreamPrivate->intrinsicSize();
     if (intrinsicSize.isEmpty() || m_intrinsicSize.isEmpty()) {
         if (intrinsicSize.height() != m_intrinsicSize.height() || intrinsicSize.width() != m_intrinsicSize.width()) {
             m_intrinsicSize = intrinsicSize;
@@ -1147,8 +1146,6 @@ void MediaPlayerPrivateMediaStreamAVFObjC::audioOutputDeviceChanged()
     if (!player)
         return;
     auto deviceId = player->audioOutputDeviceId();
-    if (deviceId.isEmpty())
-        deviceId = AudioMediaStreamTrackRenderer::defaultDeviceID();
     for (auto& audioTrack : m_audioTrackMap.values())
         audioTrack->setAudioOutputDevice(deviceId);
 }

@@ -32,35 +32,29 @@
 #include "CoreIPCSkData.h"
 #include "StreamConnectionEncoder.h"
 #include <WebCore/Font.h>
-#include <WebCore/FontCache.h>
-#include <WebCore/FontCustomPlatformData.h>
 
 namespace IPC {
 
-void ArgumentCoder<SkString>::encode(Encoder& encoder, const SkString& string)
+void ArgumentCoder<WebCore::Font>::encodePlatformData(Encoder&, const WebCore::Font&)
 {
-    encoder << std::span { string.data(), string.size() };
+    ASSERT_NOT_REACHED();
 }
 
-std::optional<SkString> ArgumentCoder<SkString>::decode(Decoder& decoder)
+std::optional<WebCore::FontPlatformData> ArgumentCoder<WebCore::Font>::decodePlatformData(Decoder&)
 {
-    auto span = decoder.decode<std::span<const char>>();
-    if (UNLIKELY(!decoder.isValid()))
-        return std::nullopt;
-    return SkString(span->data(), span->size());
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
 }
 
-void ArgumentCoder<SkFontStyle::Slant>::encode(Encoder& encoder, const SkFontStyle::Slant& slant)
+void ArgumentCoder<WebCore::FontPlatformData::Attributes>::encodePlatformData(Encoder&, const WebCore::FontPlatformData::Attributes&)
 {
-    encoder << static_cast<int8_t>(slant);
+    ASSERT_NOT_REACHED();
 }
 
-std::optional<SkFontStyle::Slant> ArgumentCoder<SkFontStyle::Slant>::decode(Decoder& decoder)
+bool ArgumentCoder<WebCore::FontPlatformData::Attributes>::decodePlatformData(Decoder&, WebCore::FontPlatformData::Attributes&)
 {
-    auto slant = decoder.decode<int8_t>();
-    if (UNLIKELY(!decoder.isValid()))
-        return std::nullopt;
-    return static_cast<SkFontStyle::Slant>(*slant);
+    ASSERT_NOT_REACHED();
+    return false;
 }
 
 void ArgumentCoder<sk_sp<SkColorSpace>>::encode(Encoder& encoder, const sk_sp<SkColorSpace>& colorSpace)

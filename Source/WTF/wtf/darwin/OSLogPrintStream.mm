@@ -26,8 +26,6 @@
 #include "config.h"
 #include "OSLogPrintStream.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 #if OS(DARWIN)
@@ -91,4 +89,3 @@ ALLOW_NONLITERAL_FORMAT_END
 
 } // namespace WTF
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

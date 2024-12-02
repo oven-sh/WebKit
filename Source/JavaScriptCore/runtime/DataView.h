@@ -28,8 +28,6 @@
 #include "ArrayBufferView.h"
 #include <wtf/FlipBytes.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class DataView final : public ArrayBufferView {
@@ -86,5 +84,3 @@ private:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

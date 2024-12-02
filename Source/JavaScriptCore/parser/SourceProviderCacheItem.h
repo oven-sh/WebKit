@@ -31,8 +31,6 @@
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 struct SourceProviderCacheItemCreationParameters {
@@ -159,5 +157,3 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

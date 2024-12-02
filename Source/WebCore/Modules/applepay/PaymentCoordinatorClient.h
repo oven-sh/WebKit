@@ -29,7 +29,6 @@
 
 #include "ApplePaySessionPaymentRequest.h"
 #include "ApplePaySetupFeatureWebCore.h"
-#include <wtf/AbstractRefCounted.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
@@ -46,7 +45,7 @@ struct ApplePaySetupConfiguration;
 struct ApplePayShippingContactUpdate;
 struct ApplePayShippingMethodUpdate;
 
-class PaymentCoordinatorClient : public AbstractRefCounted {
+class PaymentCoordinatorClient {
 public:
     bool supportsVersion(unsigned version) const;
 
@@ -75,6 +74,8 @@ public:
     virtual void endApplePaySetup() { }
 
     virtual ~PaymentCoordinatorClient() = default;
+
+    virtual void setPaymentCoordinator(PaymentCoordinator&) { }
 };
 
 }

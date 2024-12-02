@@ -44,6 +44,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -105,9 +106,10 @@ template<> void JSTestInterfaceLeadingUnderscoreDOMConstructor::initializeProper
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestInterfaceLeadingUnderscorePrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestInterfaceLeadingUnderscoreConstructor, 0 } },
-    HashTableValue { "readonly"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestInterfaceLeadingUnderscore_readonly, 0 } },
+static const HashTableValue JSTestInterfaceLeadingUnderscorePrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestInterfaceLeadingUnderscoreConstructor, 0 } },
+    { "readonly"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestInterfaceLeadingUnderscore_readonly, 0 } },
 };
 
 const ClassInfo JSTestInterfaceLeadingUnderscorePrototype::s_info = { "TestInterfaceLeadingUnderscore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestInterfaceLeadingUnderscorePrototype) };
@@ -208,7 +210,6 @@ void JSTestInterfaceLeadingUnderscoreOwner::finalize(JSC::Handle<JSC::Unknown> h
     uncacheWrapper(world, jsTestInterfaceLeadingUnderscore->protectedWrapped().ptr(), jsTestInterfaceLeadingUnderscore);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -233,8 +234,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestInterface
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestInterfaceLeadingUnderscore>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

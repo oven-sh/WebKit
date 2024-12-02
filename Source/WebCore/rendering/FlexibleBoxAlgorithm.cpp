@@ -70,9 +70,9 @@ void FlexLayoutAlgorithm::removeMarginEndFromFlexSizes(FlexLayoutItem& flexLayou
 {
     LayoutUnit margin;
     if (m_flexbox.isHorizontalFlow())
-        margin = flexLayoutItem.renderer->marginEnd(m_flexbox.writingMode());
+        margin = flexLayoutItem.renderer->marginEnd(&m_flexbox.style());
     else
-        margin = flexLayoutItem.renderer->marginAfter(m_flexbox.writingMode());
+        margin = flexLayoutItem.renderer->marginAfter(&m_flexbox.style());
     sumFlexBaseSize -= margin;
     sumHypotheticalMainSize -= margin;
 } 

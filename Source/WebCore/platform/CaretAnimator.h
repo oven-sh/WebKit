@@ -29,7 +29,6 @@
 #include "LayoutRect.h"
 #include "RenderTheme.h"
 #include "Timer.h"
-#include <wtf/CheckedPtr.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -74,9 +73,8 @@ public:
     virtual Node* caretNode() = 0;
 };
 
-class CaretAnimator : public CanMakeCheckedPtr<CaretAnimator> {
+class CaretAnimator {
     WTF_MAKE_TZONE_ALLOCATED(CaretAnimator);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CaretAnimator);
 public:
     struct PresentationProperties {
         enum class BlinkState : bool { 

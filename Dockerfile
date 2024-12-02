@@ -2,10 +2,9 @@ ARG MARCH_FLAG=""
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG CPU=native
 ARG LTO_FLAG="-flto=full -fwhole-program-vtables -fforce-emit-vtables "
-ARG LLVM_VERSION="18"
+ARG LLVM_VERSION="16"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
-ARG DEBIAN_VERSION="bookworm"
-ARG GLIBC_VERSION="2.27"
+ARG DEBIAN_VERSION="bullseye"
 
 FROM bitnami/minideb:${DEBIAN_VERSION} as base
 
@@ -15,8 +14,6 @@ ARG CPU
 ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
-ARG DEBIAN_VERSION
-ARG GLIBC_VERSION
 
 RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2
 
@@ -48,30 +45,7 @@ RUN install_packages \
     pkg-config \
     ruby-dev \
     llvm-${LLVM_VERSION}-runtime \
-    llvm-${LLVM_VERSION}-dev \
-    cmake \
-    gawk \
-    bison \
-    binutils \
-    gcc \
-    build-essential
-
-
-ENV WEBKIT_OUT_DIR=/webkitbuild
-RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/glibc /output/include/wtf /output/include/bmalloc /output/include/unicode
-
-ADD https://ftp.gnu.org/gnu/glibc/glibc-${GLIBC_VERSION}.tar.gz /glibc.tar.gz
-RUN --mount=type=tmpfs,target=/glibc \
-    export CC=gcc && \
-    export CXX=g++ && \
-    cd /glibc && \
-    tar -xf /glibc.tar.gz --strip-components=1 && \
-    rm /glibc.tar.gz && \
-    mkdir -p build && cd build && \
-    ../configure --prefix=/usr \
-        --with-headers=/usr/include \
-        --enable-kernel=3.2 && \
-    make install-headers prefix=/output/include/glibc
+    llvm-${LLVM_VERSION}-dev
 
 RUN  for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
     && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
@@ -96,16 +70,15 @@ ENV RANLIB llvm-ranlib-${LLVM_VERSION}
 ENV LD lld-${LLVM_VERSION}
 ENV LTO_FLAG="${LTO_FLAG}"
 
-
-ENV CFLAGS="${DEFAULT_CFLAGS} $CFLAGS -isystem /output/include/glibc -D__GLIBC__=2 -D__GLIBC_MINOR__=27 -D_GNU_SOURCE"
-ENV CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS -isystem /output/include/glibc -D__GLIBC__=2 -D__GLIBC_MINOR__=27 -D_GNU_SOURCE"
+ENV WEBKIT_OUT_DIR=/webkitbuild
+RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
 
 # Debian repos may not have the latest ICU version, so we ensure build reliability by downloading
 # the exact version we need. Unfortunately, aarch64 is not pre-built so we have to build it from source.
 ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \ 
-    export CFLAGS="$CFLAGS -Os -std=c17 $LTO_FLAG" && \
-    export CXXFLAGS="$CXXFLAGS -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS -Os -std=c17 $LTO_FLAG" && \
+    export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     cd /icu && \
     tar -xf /icu.tgz --strip-components=1 && \
@@ -114,6 +87,15 @@ RUN --mount=type=tmpfs,target=/icu \
     ./configure --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \ 
     make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode
+
+# WebKit has a minimum cmake version of 3.20
+ADD https://github.com/Kitware/CMake/releases/download/v3.29.6/cmake-3.29.6.tar.gz /cmake.tar.gz
+RUN --mount=type=tmpfs,target=/cmakebuild install_packages libssl-dev && tar -xf /cmake.tar.gz -C /cmakebuild && \
+    cd /cmakebuild/cmake-3.29.6 && \
+    ./configure && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /cmakebuild/cmake-3.29.6 /cmake.tar.gz
 
 
 COPY . /webkit
@@ -124,8 +106,8 @@ ENV MARCH_FLAG=${MARCH_FLAG}
 
 
 RUN --mount=type=tmpfs,target=/webkitbuild \
-    export CFLAGS="$CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
-    export CXXFLAGS="$CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
+    export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
+    export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
     cd /webkitbuild && \
     cmake \
@@ -138,6 +120,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_FTL_JIT=ON \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
+    -DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
     -DENABLE_REMOTE_INSPECTOR=ON \
     -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
     -DCMAKE_AR=$(which llvm-ar) \

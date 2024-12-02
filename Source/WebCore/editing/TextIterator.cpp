@@ -53,7 +53,6 @@
 #include "NodeTraversal.h"
 #include "Range.h"
 #include "RenderBoxInlines.h"
-#include "RenderElementInlines.h"
 #include "RenderImage.h"
 #include "RenderIterator.h"
 #include "RenderTableCell.h"
@@ -80,8 +79,6 @@
 #include <unicode/usearch.h>
 #include <wtf/text/TextBreakIteratorInternalICU.h>
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -438,7 +435,7 @@ static inline bool hasDisplayContents(Node& node)
 
 static bool isRendererVisible(const RenderObject* renderer, TextIteratorBehaviors behaviors)
 {
-    return renderer && !renderer->isSkippedContent() && !(renderer->style().usedUserSelect() == UserSelect::None && behaviors.contains(TextIteratorBehavior::IgnoresUserSelectNone));
+    return renderer && !(renderer->style().usedUserSelect() == UserSelect::None && behaviors.contains(TextIteratorBehavior::IgnoresUserSelectNone));
 }
 
 void TextIterator::advance()
@@ -489,9 +486,9 @@ void TextIterator::advance()
             if (!isRendererVisible(renderer.get(), m_behaviors)) {
                 m_handledNode = true;
                 m_handledChildren = !hasDisplayContents(*protectedCurrentNode()) && !renderer;
-            } else if (auto* renderElement = dynamicDowncast<RenderElement>(renderer.get()); renderElement && isSkippedContentRoot(*renderElement))
+            } else if (is<Element>(m_currentNode.get()) && renderer->isSkippedContentRoot()) {
                 m_handledChildren = true;
-            else {
+            } else {
                 // handle current node according to its type
                 if (renderer->isRenderText() && m_currentNode->isTextNode())
                     m_handledNode = handleTextNode();
@@ -2714,5 +2711,3 @@ void showTree(const WebCore::TextIterator* pos)
 }
 
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

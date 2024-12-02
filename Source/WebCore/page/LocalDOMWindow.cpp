@@ -609,15 +609,8 @@ bool LocalDOMWindow::isCurrentlyDisplayedInFrame() const
 
 CustomElementRegistry& LocalDOMWindow::ensureCustomElementRegistry()
 {
-    if (!m_customElementRegistry) {
-        m_customElementRegistry = CustomElementRegistry::create(*scriptExecutionContext(), *this);
-        for (Ref shadowRoot : document()->inDocumentShadowRoots()) {
-            if (shadowRoot->mode() == ShadowRootMode::UserAgent)
-                continue;
-            const_cast<ShadowRoot&>(shadowRoot.get()).setCustomElementRegistry(*m_customElementRegistry);
-        }
-        document()->setCustomElementRegistry(*m_customElementRegistry);
-    }
+    if (!m_customElementRegistry)
+        m_customElementRegistry = CustomElementRegistry::create(*this, scriptExecutionContext());
     ASSERT(m_customElementRegistry->scriptExecutionContext() == document());
     return *m_customElementRegistry;
 }
@@ -1078,7 +1071,7 @@ void LocalDOMWindow::focus(bool allowFocus)
         return;
 
     // Clear the current frame's focused node if a new frame is about to be focused.
-    RefPtr focusedFrame = page->focusController().focusedLocalFrame();
+    RefPtr focusedFrame = page->checkedFocusController()->focusedLocalFrame();
     if (focusedFrame && focusedFrame != frame)
         focusedFrame->protectedDocument()->setFocusedElement(nullptr);
 
@@ -1146,10 +1139,6 @@ void LocalDOMWindow::stop()
         return;
 
     SetForScope isStopping { m_isStopping, true };
-
-    if (frame->document() && frame->document()->settings().navigationAPIEnabled())
-        protectedNavigation()->abortOngoingNavigationIfNeeded();
-
     // We must check whether the load is complete asynchronously, because we might still be parsing
     // the document until the callstack unwinds.
     frame->protectedLoader()->stopForUserCancel(true);
@@ -2479,7 +2468,7 @@ void LocalDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& comple
     // We want a new history item if we are processing a user gesture.
     LockHistory lockHistory = (locking != SetLocationLocking::LockHistoryBasedOnGestureState || !UserGestureIndicator::processingUserGesture()) ? LockHistory::Yes : LockHistory::No;
     LockBackForwardList lockBackForwardList = (locking != SetLocationLocking::LockHistoryBasedOnGestureState) ? LockBackForwardList::Yes : LockBackForwardList::No;
-    frame->protectedNavigationScheduler()->scheduleLocationChange(*activeDocument, activeDocument->protectedSecurityOrigin(),
+    frame->checkedNavigationScheduler()->scheduleLocationChange(*activeDocument, activeDocument->protectedSecurityOrigin(),
         // FIXME: What if activeDocument()->frame() is 0?
         completedURL, activeDocument->frame()->loader().outgoingReferrer(),
         lockHistory, lockBackForwardList,
@@ -2636,7 +2625,7 @@ ExceptionOr<RefPtr<Frame>> LocalDOMWindow::createWindow(const String& urlString,
         newFrame->changeLocation(WTFMove(frameLoadRequest));
     } else if (!urlString.isEmpty()) {
         LockHistory lockHistory = UserGestureIndicator::processingUserGesture() ? LockHistory::No : LockHistory::Yes;
-        newFrame->protectedNavigationScheduler()->scheduleLocationChange(*activeDocument, activeDocument->protectedSecurityOrigin(), completedURL, referrer, lockHistory, LockBackForwardList::No);
+        newFrame->checkedNavigationScheduler()->scheduleLocationChange(*activeDocument, activeDocument->protectedSecurityOrigin(), completedURL, referrer, lockHistory, LockBackForwardList::No);
     }
 
     // Navigating the new frame could result in it being detached from its page by a navigation policy delegate.
@@ -2717,7 +2706,7 @@ ExceptionOr<RefPtr<WindowProxy>> LocalDOMWindow::open(LocalDOMWindow& activeWind
         // For whatever reason, Firefox uses the first window rather than the active window to
         // determine the outgoing referrer. We replicate that behavior here.
         LockHistory lockHistory = UserGestureIndicator::processingUserGesture() ? LockHistory::No : LockHistory::Yes;
-        targetFrame->protectedNavigationScheduler()->scheduleLocationChange(*activeDocument, activeDocument->protectedSecurityOrigin(), completedURL, firstFrame->loader().outgoingReferrer(),
+        targetFrame->checkedNavigationScheduler()->scheduleLocationChange(*activeDocument, activeDocument->protectedSecurityOrigin(), completedURL, firstFrame->loader().outgoingReferrer(),
             lockHistory, LockBackForwardList::No);
         return &targetFrame->windowProxy();
     }

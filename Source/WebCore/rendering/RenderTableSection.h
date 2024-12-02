@@ -177,8 +177,6 @@ private:
     LayoutUnit verticalRowGroupBorderHeight(RenderTableCell*, const LayoutRect& rowGroupRect, unsigned row);
     LayoutUnit horizontalRowGroupBorderWidth(RenderTableCell*, const LayoutRect& rowGroupRect, unsigned row, unsigned column);
 
-    void computeIntrinsicLogicalWidths(LayoutUnit&, LayoutUnit&) const override { }
-
     void imageChanged(WrappedImagePtr, const IntRect* = 0) override;
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;

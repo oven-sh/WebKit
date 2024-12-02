@@ -27,8 +27,6 @@
 #define ViewGestureGeometryCollector_h
 
 #include "MessageReceiver.h"
-#include <WebCore/PageIdentifier.h>
-#include <wtf/RefCounted.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
@@ -43,14 +41,10 @@ namespace WebKit {
 
 class WebPage;
 
-class ViewGestureGeometryCollector : private IPC::MessageReceiver, public RefCounted<ViewGestureGeometryCollector> {
+class ViewGestureGeometryCollector : private IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(ViewGestureGeometryCollector);
 public:
-    static Ref<ViewGestureGeometryCollector> create(WebPage& webPage)
-    {
-        return adoptRef(*new ViewGestureGeometryCollector(webPage));
-    }
-
+    ViewGestureGeometryCollector(WebPage&);
     ~ViewGestureGeometryCollector();
 
     void mainFrameDidLayout();
@@ -58,8 +52,6 @@ public:
     void computeZoomInformationForNode(WebCore::Node&, WebCore::FloatPoint& origin, WebCore::FloatRect& absoluteBoundingRect, bool& isReplaced, double& viewportMinimumScale, double& viewportMaximumScale);
 
 private:
-    explicit ViewGestureGeometryCollector(WebPage&);
-
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
@@ -80,8 +72,9 @@ private:
     std::optional<std::pair<double, double>> computeTextLegibilityScales(double& viewportMinimumScale, double& viewportMaximumScale);
 #endif
 
-    WeakPtr<WebPage> m_webPage;
-    WebCore::PageIdentifier m_webPageIdentifier;
+    Ref<WebPage> protectedWebPage() const;
+
+    WeakRef<WebPage> m_webPage;
 
 #if !PLATFORM(IOS_FAMILY)
     uint64_t m_renderTreeSizeNotificationThreshold;

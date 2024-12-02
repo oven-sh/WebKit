@@ -36,7 +36,9 @@ inline std::span<const uint8_t> span(NSData *data)
     if (!data)
         return { };
 
-    return unsafeMakeSpan(static_cast<const uint8_t*>(data.bytes), data.length);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    return { static_cast<const uint8_t*>(data.bytes), data.length };
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 inline RetainPtr<NSData> toNSData(std::span<const uint8_t> span)

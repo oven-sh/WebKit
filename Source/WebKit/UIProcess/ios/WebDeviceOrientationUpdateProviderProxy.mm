@@ -40,21 +40,15 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebDeviceOrientationUpdateProviderProxy);
 
-Ref<WebDeviceOrientationUpdateProviderProxy> WebDeviceOrientationUpdateProviderProxy::create(WebPageProxy& page)
-{
-    return adoptRef(*new WebDeviceOrientationUpdateProviderProxy(page));
-}
-
 WebDeviceOrientationUpdateProviderProxy::WebDeviceOrientationUpdateProviderProxy(WebPageProxy& page)
     : m_page(page)
 {
-    page.protectedLegacyMainFrameProcess()->addMessageReceiver(Messages::WebDeviceOrientationUpdateProviderProxy::messageReceiverName(), page.webPageIDInMainFrameProcess(), *this);
+    m_page->protectedLegacyMainFrameProcess()->addMessageReceiver(Messages::WebDeviceOrientationUpdateProviderProxy::messageReceiverName(), m_page->webPageIDInMainFrameProcess(), *this);
 }
 
 WebDeviceOrientationUpdateProviderProxy::~WebDeviceOrientationUpdateProviderProxy()
 {
-    if (RefPtr page = m_page.get())
-        page->protectedLegacyMainFrameProcess()->removeMessageReceiver(Messages::WebDeviceOrientationUpdateProviderProxy::messageReceiverName(), page->webPageIDInMainFrameProcess());
+    m_page->protectedLegacyMainFrameProcess()->removeMessageReceiver(Messages::WebDeviceOrientationUpdateProviderProxy::messageReceiverName(), m_page->webPageIDInMainFrameProcess());
 }
 
 void WebDeviceOrientationUpdateProviderProxy::startUpdatingDeviceOrientation()
@@ -79,14 +73,12 @@ void WebDeviceOrientationUpdateProviderProxy::stopUpdatingDeviceMotion()
 
 void WebDeviceOrientationUpdateProviderProxy::orientationChanged(double alpha, double beta, double gamma, double compassHeading, double compassAccuracy)
 {
-    if (RefPtr page = m_page.get())
-        page->protectedLegacyMainFrameProcess()->send(Messages::WebDeviceOrientationUpdateProvider::DeviceOrientationChanged(alpha, beta, gamma, compassHeading, compassAccuracy), m_page->webPageIDInMainFrameProcess());
+    m_page->protectedLegacyMainFrameProcess()->send(Messages::WebDeviceOrientationUpdateProvider::DeviceOrientationChanged(alpha, beta, gamma, compassHeading, compassAccuracy), m_page->webPageIDInMainFrameProcess());
 }
 
 void WebDeviceOrientationUpdateProviderProxy::motionChanged(double xAcceleration, double yAcceleration, double zAcceleration, double xAccelerationIncludingGravity, double yAccelerationIncludingGravity, double zAccelerationIncludingGravity, std::optional<double> xRotationRate, std::optional<double> yRotationRate, std::optional<double> zRotationRate)
 {
-    if (RefPtr page = m_page.get())
-        page->protectedLegacyMainFrameProcess()->send(Messages::WebDeviceOrientationUpdateProvider::DeviceMotionChanged(xAcceleration, yAcceleration, zAcceleration, xAccelerationIncludingGravity, yAccelerationIncludingGravity, zAccelerationIncludingGravity, xRotationRate, yRotationRate, zRotationRate), m_page->webPageIDInMainFrameProcess());
+    m_page->protectedLegacyMainFrameProcess()->send(Messages::WebDeviceOrientationUpdateProvider::DeviceMotionChanged(xAcceleration, yAcceleration, zAcceleration, xAccelerationIncludingGravity, yAccelerationIncludingGravity, zAccelerationIncludingGravity, xRotationRate, yRotationRate, zRotationRate), m_page->webPageIDInMainFrameProcess());
 }
 
 } // namespace WebKit

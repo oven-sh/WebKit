@@ -16,8 +16,6 @@ includes: [propertyHelper.js]
 
 assert.sameValue(typeof Array.prototype.map, 'function', 'typeof');
 
-verifyProperty(Array.prototype, "map", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Array.prototype, "map");
+verifyWritable(Array.prototype, "map");
+verifyConfigurable(Array.prototype, "map");

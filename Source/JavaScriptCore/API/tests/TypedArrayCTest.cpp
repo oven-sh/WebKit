@@ -32,8 +32,6 @@
 #include <stdio.h>
 #include <wtf/Assertions.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 extern "C" void JSSynchronousGarbageCollectForDebugging(JSContextRef);
 
 static void id(void*, void*) { }
@@ -281,5 +279,3 @@ int testTypedArrayCAPI()
 
     return failed;
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

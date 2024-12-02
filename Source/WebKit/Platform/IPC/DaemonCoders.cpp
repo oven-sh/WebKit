@@ -35,9 +35,10 @@
 
 #if PLATFORM(COCOA)
 #include <CoreFoundation/CoreFoundation.h>
-#include <wtf/cf/VectorCF.h>
 #include <wtf/spi/cocoa/SecuritySPI.h>
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit::Daemon {
 
@@ -58,7 +59,7 @@ std::optional<WTF::WallTime> Coder<WTF::WallTime>::decode(Decoder& decoder)
 void Coder<WebCore::CertificateInfo>::encode(Encoder& encoder, const WebCore::CertificateInfo& instance)
 {
 #if PLATFORM(COCOA)
-    RetainPtr data = adoptCF(SecTrustSerialize(instance.trust().get(), nullptr));
+    auto data = adoptCF(SecTrustSerialize(instance.trust().get(), nullptr));
     if (!data) {
         encoder << false;
         return;
@@ -66,7 +67,7 @@ void Coder<WebCore::CertificateInfo>::encode(Encoder& encoder, const WebCore::Ce
     encoder << true;
     uint64_t length = CFDataGetLength(data.get());
     encoder << length;
-    encoder.encodeFixedLengthData(span(data.get()));
+    encoder.encodeFixedLengthData({ CFDataGetBytePtr(data.get()), static_cast<size_t>(length) });
 #endif
 }
 
@@ -311,3 +312,5 @@ std::optional<WebCore::RegistrableDomain> Coder<WebCore::RegistrableDomain, void
 }
 
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -1573,6 +1573,7 @@ interface OffscreenCanvas : EventTarget {
 
 [Exposed=(Window,Worker)]
 interface OffscreenCanvasRenderingContext2D {
+  undefined commit();
   readonly attribute OffscreenCanvas canvas;
 };
 

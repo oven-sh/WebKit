@@ -896,7 +896,7 @@ pas_local_allocator_try_allocate_in_primordial_partial_view(
         page_config);
 
     if (result.did_succeed) {
-        PAS_PROFILE(PRIMORDIAL_BUMP_ALLOCATION, &page_config, result.begin, allocator->object_size, allocation_mode);
+        PAS_PROFILE(PRIMORDIAL_BUMP_ALLOCATION, result.begin, allocator->object_size, allocation_mode);
     }
 
     pas_lock_switch(&held_lock, NULL);
@@ -1472,7 +1472,7 @@ pas_local_allocator_try_allocate_with_free_bits(
             pas_log("current_word = %llx\n", (unsigned long long)current_word);
         found_bit_index = (uintptr_t)__builtin_clzll(current_word);
         if (verbose)
-            pas_log("found_bit_index = %zu\n", found_bit_index);
+            pas_log("found_bit_index = %lu\n", found_bit_index);
         current_word &= ~(0x8000000000000000llu >> found_bit_index);
         if (verbose)
             pas_log("new current_word = %llx\n", (unsigned long long)current_word);
@@ -1494,7 +1494,7 @@ pas_local_allocator_try_allocate_with_free_bits(
             (void*)result);
     }
 
-    PAS_PROFILE(LOCAL_FREEBITS_ALLOCATION, &page_config, result, allocator->object_size, allocation_mode);
+    PAS_PROFILE(LOCAL_FREEBITS_ALLOCATION, result, allocator->object_size, allocation_mode);
     
     return pas_allocation_result_create_success(result);
 }
@@ -1539,7 +1539,7 @@ pas_local_allocator_try_allocate_inline_cases(pas_local_allocator* allocator,
         if (verbose)
             pas_log("Returning bump allocation %p.\n", (void*)result);
 
-        PAS_PROFILE(LOCAL_BUMP_ALLOCATION, &config, result, object_size, allocation_mode);
+        PAS_PROFILE(LOCAL_BUMP_ALLOCATION, result, object_size, allocation_mode);
         return pas_allocation_result_create_success(result);
     }
 

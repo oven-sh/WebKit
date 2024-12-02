@@ -31,7 +31,6 @@
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPUIntegralTypes.h>
 #include <WebCore/WebGPUPresentationContext.h>
-#include <array>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -57,7 +56,7 @@ public:
     RemoteGPUProxy& root() { return m_parent->root(); }
     Ref<RemoteGPUProxy> protectedRoot() { return m_parent->root(); }
 
-    void present(uint32_t frameIndex, bool = false) final;
+    void present(bool = false) final;
 
 private:
     friend class DowncastConvertToBackingContext;
@@ -83,13 +82,12 @@ private:
     bool configure(const WebCore::WebGPU::CanvasConfiguration&) final;
     void unconfigure() final;
 
-    RefPtr<WebCore::WebGPU::Texture> getCurrentTexture(uint32_t) final;
+    RefPtr<WebCore::WebGPU::Texture> getCurrentTexture() final;
 
     WebGPUIdentifier m_backing;
     Ref<ConvertToBackingContext> m_convertToBackingContext;
     Ref<RemoteGPUProxy> m_parent;
-    static constexpr size_t textureCount = 3;
-    std::array<RefPtr<RemoteTextureProxy>, textureCount> m_currentTexture;
+    RefPtr<RemoteTextureProxy> m_currentTexture;
 };
 
 } // namespace WebKit::WebGPU

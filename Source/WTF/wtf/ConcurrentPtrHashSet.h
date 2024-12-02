@@ -32,8 +32,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 // This is a concurrent hash-based set for pointers. It's optimized for:
@@ -184,5 +182,3 @@ private:
 } // namespace WTF
 
 using WTF::ConcurrentPtrHashSet;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -221,7 +221,6 @@ public:
     WTF_EXPORT_PRIVATE void removeQueryAndFragmentIdentifier();
 
     WTF_EXPORT_PRIVATE static bool hostIsIPAddress(StringView);
-    WTF_EXPORT_PRIVATE static bool isIPv6Address(StringView);
 
     WTF_EXPORT_PRIVATE unsigned pathStart() const;
     unsigned pathEnd() const;

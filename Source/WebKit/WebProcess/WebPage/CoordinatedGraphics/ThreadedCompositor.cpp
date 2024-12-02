@@ -79,7 +79,7 @@ ThreadedCompositor::ThreadedCompositor(LayerTreeHost& layerTreeHost, float scale
 ThreadedCompositor::ThreadedCompositor(LayerTreeHost& layerTreeHost, ThreadedDisplayRefreshMonitor::Client& displayRefreshMonitorClient, float scaleFactor, PlatformDisplayID displayID)
 #endif
     : m_layerTreeHost(&layerTreeHost)
-    , m_surface(AcceleratedSurface::create(*this, layerTreeHost.webPage(), [this] { frameComplete(); }))
+    , m_surface(AcceleratedSurface::create(layerTreeHost.webPage(), [this] { frameComplete(); }))
     , m_flipY(m_surface->shouldPaintMirrored())
     , m_compositingRunLoop(makeUnique<CompositingRunLoop>([this] { renderLayerTree(); }))
 #if HAVE(DISPLAY_LINK)
@@ -96,6 +96,15 @@ ThreadedCompositor::ThreadedCompositor(LayerTreeHost& layerTreeHost, ThreadedDis
     m_attributes.needsResize = !m_attributes.viewportSize.isEmpty();
     m_attributes.scaleFactor = scaleFactor;
 
+    auto& webPage = layerTreeHost.webPage();
+    m_damagePropagation = ([](const WebCore::Settings& settings) {
+        if (!settings.propagateDamagingInformation())
+            return DamagePropagation::None;
+        if (settings.unifyDamagedRegions())
+            return DamagePropagation::Unified;
+        return DamagePropagation::Region;
+    })(webPage.corePage()->settings());
+
 #if !HAVE(DISPLAY_LINK)
     m_display.displayID = displayID;
     m_display.displayUpdate = { 0, c_defaultRefreshRate / 1000 };
@@ -111,7 +120,9 @@ ThreadedCompositor::ThreadedCompositor(LayerTreeHost& layerTreeHost, ThreadedDis
         m_display.updateTimer->startOneShot(Seconds { 1.0 / m_display.displayUpdate.updatesPerSecond });
 #endif
 
-        m_scene = adoptRef(new CoordinatedGraphicsScene(this));
+        const auto propagateDamage = (m_damagePropagation == DamagePropagation::None)
+            ? WebCore::Damage::ShouldPropagate::No : WebCore::Damage::ShouldPropagate::Yes;
+        m_scene = adoptRef(new CoordinatedGraphicsScene(this, propagateDamage));
 
         // GLNativeWindowType depends on the EGL implementation: reinterpret_cast works
         // for pointers (only if they are 64-bit wide and not for other cases), and static_cast for
@@ -200,6 +211,16 @@ void ThreadedCompositor::resume()
     m_compositingRunLoop->resume();
 }
 
+void ThreadedCompositor::setScrollPosition(const IntPoint& scrollPosition, float scaleFactor)
+{
+    ASSERT(RunLoop::isMain());
+    Locker locker { m_attributes.lock };
+    m_attributes.scrollPosition = scrollPosition;
+    m_attributes.scrolledSinceLastFrame = true;
+    m_attributes.scaleFactor = scaleFactor;
+    m_compositingRunLoop->scheduleUpdate();
+}
+
 void ThreadedCompositor::setViewportSize(const IntSize& size, float scaleFactor)
 {
     ASSERT(RunLoop::isMain());
@@ -231,18 +252,6 @@ void ThreadedCompositor::updateViewport()
     m_compositingRunLoop->scheduleUpdate();
 }
 
-#if ENABLE(DAMAGE_TRACKING)
-void ThreadedCompositor::setDamagePropagation(WebCore::Damage::Propagation damagePropagation)
-{
-    m_scene->setDamagePropagation(damagePropagation);
-}
-
-const Damage& ThreadedCompositor::addSurfaceDamage(const Damage& damage)
-{
-    return m_surface->addDamage(damage);
-}
-#endif
-
 void ThreadedCompositor::forceRepaint()
 {
     // FIXME: Implement this once it's possible to do these forced updates
@@ -268,8 +277,10 @@ void ThreadedCompositor::renderLayerTree()
 
     // Retrieve the scene attributes in a thread-safe manner.
     WebCore::IntSize viewportSize;
+    WebCore::IntPoint scrollPosition;
     float scaleFactor;
     bool needsResize;
+    bool scrolledSinceLastFrame;
     uint32_t compositionRequestID;
 
     Vector<RefPtr<Nicosia::Scene>> states;
@@ -277,8 +288,10 @@ void ThreadedCompositor::renderLayerTree()
     {
         Locker locker { m_attributes.lock };
         viewportSize = m_attributes.viewportSize;
+        scrollPosition = m_attributes.scrollPosition;
         scaleFactor = m_attributes.scaleFactor;
         needsResize = m_attributes.needsResize;
+        scrolledSinceLastFrame = m_attributes.scrolledSinceLastFrame;
         compositionRequestID = m_attributes.compositionRequestID;
 
         states = WTFMove(m_attributes.states);
@@ -288,12 +301,14 @@ void ThreadedCompositor::renderLayerTree()
             m_attributes.clientRendersNextFrame = true;
         }
 
-        // Reset the needsResize attribute to false.
+        // Reset the needsResize and scrolledSinceLastFrame attributes to false.
         m_attributes.needsResize = false;
+        m_attributes.scrolledSinceLastFrame = false;
     }
 
     TransformationMatrix viewportTransform;
     viewportTransform.scale(scaleFactor);
+    viewportTransform.translate(-scrollPosition.x(), -scrollPosition.y());
 
     // Resize the client, if necessary, before the will-render-frame call is dispatched.
     // GL viewport is updated separately, if necessary. This establishes sequencing where
@@ -323,10 +338,38 @@ void ThreadedCompositor::renderLayerTree()
 
     WTFEmitSignpost(this, DidRenderFrame, "compositionResponseID %i", compositionRequestID);
 
+    auto damageRegion = [&]() -> WebCore::Region {
+        if (scrolledSinceLastFrame)
+            return { };
+
+        const auto& damage = m_scene->lastDamage();
+        if (m_damagePropagation == DamagePropagation::None || damage.isInvalid())
+            return { };
+
+        WebCore::Damage boundsDamage;
+        const auto& region = [&] -> WebCore::Region {
+            if (m_damagePropagation == DamagePropagation::Unified) {
+                boundsDamage.add(damage.bounds());
+                if (boundsDamage.isInvalid() || boundsDamage.isEmpty())
+                    return { };
+
+                return boundsDamage.region();
+            }
+            if (damage.isEmpty())
+                return { };
+
+            return damage.region();
+        }();
+
+        if (region.isRect() && region.contains(IntRect({ }, viewportSize)))
+            return { };
+
+        return region;
+    }();
+
     m_context->swapBuffers();
 
-    m_surface->didRenderFrame();
-
+    m_surface->didRenderFrame(WTFMove(damageRegion));
 #if HAVE(DISPLAY_LINK)
     m_compositionResponseID = compositionRequestID;
     if (!m_didRenderFrameTimer.isActive())

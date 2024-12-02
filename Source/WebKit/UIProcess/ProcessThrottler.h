@@ -87,20 +87,17 @@ private:
     IsQuietActivity m_isQuietActivity;
 };
 
-class ProcessThrottlerTimedActivity : public RefCounted<ProcessThrottlerTimedActivity> {
+class ProcessThrottlerTimedActivity {
     WTF_MAKE_TZONE_ALLOCATED(ProcessThrottlerTimedActivity);
     WTF_MAKE_NONCOPYABLE(ProcessThrottlerTimedActivity);
     using Activity = ProcessThrottlerActivity;
 public:
-    static Ref<ProcessThrottlerTimedActivity> create(Seconds, RefPtr<Activity>&& = nullptr);
+    explicit ProcessThrottlerTimedActivity(Seconds, RefPtr<Activity>&& = nullptr);
+    ProcessThrottlerTimedActivity& operator=(RefPtr<Activity>&&);
     const RefPtr<Activity> activity() const { return m_activity; }
     void setTimeout(Seconds);
 
-    void setActivity(RefPtr<Activity>&&);
-
 private:
-    explicit ProcessThrottlerTimedActivity(Seconds, RefPtr<Activity>&&);
-
     void activityTimedOut();
     void updateTimer();
 

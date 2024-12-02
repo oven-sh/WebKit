@@ -455,7 +455,7 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
                 workdir='wkdir',
                 timeout=3600,
                 logEnviron=True,
-                command=['perl', 'Tools/Scripts/build-webkit', '--no-fatal-warnings', '--release', '--gtk'],
+                command=['perl', 'Tools/Scripts/build-webkit', '--no-fatal-warnings', '--release', '--prefix=/app/webkit/WebKitBuild/Release/install', '--gtk'],
             ) + 0,
         )
         self.expectOutcome(result=SUCCESS, state_string='compiled')
@@ -1194,153 +1194,6 @@ class TestCleanUpGitIndexLock(BuildStepMixinAdditions, unittest.TestCase):
         return self.runStep()
 
 
-class TestCheckOutSourceNextSteps(BuildStepMixinAdditions, unittest.TestCase):
-    def setUp(self):
-        def fakeaddStepsAfterCurrentStep(self, step_factories):
-            self.addedStepsAfterCurrentStep = step_factories
-
-        FakeBuild.addedStepsAfterCurrentStep = []
-        FakeBuild.addStepsAfterCurrentStep = fakeaddStepsAfterCurrentStep
-        self.longMessage = True
-        self.patch(git.Git, 'checkFeatureSupport', lambda *args, **kwargs: True)
-        return self.setUpBuildStep()
-
-    def tearDown(self):
-        return self.tearDownBuildStep()
-
-    @defer.inlineCallbacks
-    def test_sucess_checkout_source(self):
-        self.setupStep(CheckOutSource(alwaysUseLatest=True))
-        self.expectRemoteCommands(
-            Expect(
-                'stat', dict(
-                    file='wkdir/.buildbot-patched',
-                    logEnviron=False,
-                ),
-            ) + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'clean', '-f', '-f', '-d', '-x'],
-            ) + 0,
-            Expect(
-                'listdir', dict(
-                    dir='wkdir',
-                    timeout=7200,
-                    logEnviron=False,
-                ),
-            ) + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'clone', 'https://github.com/WebKit/WebKit.git', '.'],
-            ) + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'rev-parse', 'HEAD'],
-            ) + ExpectShell.log('stdio', stdout='3b84731a5f6a0a38b6f48a16ab927e5dbcb5c770\n') + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'remote', 'set-url', '--push', 'origin', 'PUSH_DISABLED_BY_ADMIN'],
-            ) + 0,
-        )
-        self.expectOutcome(result=SUCCESS, state_string='Cleaned and updated working directory')
-        rc = yield self.runStep()
-        self.assertFalse(CleanUpGitIndexLock() in self.build.addedStepsAfterCurrentStep)
-        defer.returnValue(rc)
-
-    @defer.inlineCallbacks
-    def test_failure_checkout_source(self):
-        self.setupStep(CheckOutSource(alwaysUseLatest=True))
-        self.expectRemoteCommands(
-            Expect(
-                'stat', dict(
-                    file='wkdir/.buildbot-patched',
-                    logEnviron=False,
-                ),
-            ) + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'clean', '-f', '-f', '-d', '-x'],
-            ) + 0,
-            Expect(
-                'listdir', dict(
-                    dir='wkdir',
-                    timeout=7200,
-                    logEnviron=False,
-                ),
-            ) + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'clone', 'https://github.com/WebKit/WebKit.git', '.'],
-            ) + 1,
-            Expect(
-                'rmdir', dict(
-                    dir='wkdir',
-                    timeout=7200,
-                    logEnviron=False,
-                ),
-            )
-        )
-        self.expectOutcome(result=FAILURE, state_string='Failed to update working directory')
-        rc = yield self.runStep()
-        self.assertTrue(CleanUpGitIndexLock() in self.build.addedStepsAfterCurrentStep)
-        defer.returnValue(rc)
-
-    @defer.inlineCallbacks
-    def test_failure_checkout_source_retry(self):
-        self.setupStep(CheckOutSource(alwaysUseLatest=True))
-        self.setProperty('cleanUpGitIndexLockAlreadyTried', True)
-        self.expectRemoteCommands(
-            Expect(
-                'stat', dict(
-                    file='wkdir/.buildbot-patched',
-                    logEnviron=False,
-                ),
-            ) + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'clean', '-f', '-f', '-d', '-x'],
-            ) + 0,
-            Expect(
-                'listdir', dict(
-                    dir='wkdir',
-                    timeout=7200,
-                    logEnviron=False,
-                ),
-            ) + 0,
-            ExpectShell(
-                workdir='wkdir',
-                timeout=7200,
-                logEnviron=False,
-                command=['git', 'clone', 'https://github.com/WebKit/WebKit.git', '.'],
-            ) + 1,
-            Expect(
-                'rmdir', dict(
-                    dir='wkdir',
-                    timeout=7200,
-                    logEnviron=False,
-                ),
-            )
-        )
-        self.expectOutcome(result=FAILURE, state_string='Failed to update working directory')
-        rc = yield self.runStep()
-        self.assertFalse(CleanUpGitIndexLock() in self.build.addedStepsAfterCurrentStep)
-        defer.returnValue(rc)
-
-
 class TestPrintConfiguration(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
         self.longMessage = True
@@ -1525,6 +1378,46 @@ OSError: [Errno 2] No such file or directory''')
             + 1,
         )
         self.expectOutcome(result=FAILURE, state_string='Failed to print configuration')
+        return self.runStep()
+
+
+class TestInstallBuiltProduct(BuildStepMixinAdditions, unittest.TestCase):
+    def setUp(self):
+        self.longMessage = True
+        return self.setUpBuildStep()
+
+    def tearDown(self):
+        return self.tearDownBuildStep()
+
+    def test_success(self):
+        self.setupStep(InstallBuiltProduct())
+        self.setProperty('fullPlatform', 'ios-14')
+        self.setProperty('configuration', 'release')
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        command=['python3', 'Tools/Scripts/install-built-product', '--platform=ios-14', '--release'],
+                        logEnviron=True,
+                        timeout=1200,
+                        )
+            + 0,
+        )
+        self.expectOutcome(result=SUCCESS, state_string='Installed Built Product')
+        return self.runStep()
+
+    def test_failure(self):
+        self.setupStep(InstallBuiltProduct())
+        self.setProperty('fullPlatform', 'ios-14')
+        self.setProperty('configuration', 'debug')
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        command=['python3', 'Tools/Scripts/install-built-product', '--platform=ios-14', '--debug'],
+                        logEnviron=True,
+                        timeout=1200,
+                        )
+            + ExpectShell.log('stdio', stdout='Unexpected error.')
+            + 2,
+        )
+        self.expectOutcome(result=FAILURE, state_string='Installed Built Product (failure)')
         return self.runStep()
 
 
@@ -2056,11 +1949,9 @@ class TestParseStaticAnalyzerResults(BuildStepMixinAdditions, unittest.TestCase)
         self.setProperty('builddir', 'wkdir')
         self.setProperty('buildnumber', 1234)
 
-        command = ['python3', 'Tools/Scripts/generate-dirty-files', f'wkdir/build/{SCAN_BUILD_OUTPUT_DIR}', '--output-dir', 'wkdir/smart-pointer-result-archive/1234', '--build-dir', 'wkdir/build']
-
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
-                        command=command)
+                        command=['python3', 'Tools/Scripts/generate-dirty-files', f'wkdir/build/{SCAN_BUILD_OUTPUT_DIR}', '--output-dir', 'wkdir/smart-pointer-result-archive/1234', '--build-dir', 'wkdir/build'])
             + ExpectShell.log('stdio', stdout='Total (24247) WebKit (327) WebCore (23920)\n')
             + 0,
         )
@@ -2069,53 +1960,39 @@ class TestParseStaticAnalyzerResults(BuildStepMixinAdditions, unittest.TestCase)
 
 
 class TestFindUnexpectedStaticAnalyzerResults(BuildStepMixinAdditions, unittest.TestCase):
-    command = ['python3', 'Tools/Scripts/compare-static-analysis-results', 'wkdir/smart-pointer-result-archive/1234', '--scan-build-path', '../llvm-project/clang/tools/scan-build/bin/scan-build', '--build-output', SCAN_BUILD_OUTPUT_DIR, '--check-expectations']
-    upload_options = ['--builder-name', 'Safer-CPP-Checks', '--build-number', 1234, '--buildbot-worker', 'bot600', '--buildbot-master', CURRENT_HOSTNAME, '--report', 'https://results.webkit.org']
-    configuration = ['--architecture', 'arm64', '--platform', 'mac', '--version', '14.6.1', '--version-name', 'Sonoma', '--style', 'release', '--sdk', '23G93']
-
     def setUp(self):
-        os.environ['RESULTS_SERVER_API_KEY'] = 'test-api-key'
         return self.setUpBuildStep()
 
     def tearDown(self):
-        del os.environ['RESULTS_SERVER_API_KEY']
         return self.tearDownBuildStep()
 
     def configureStep(self):
         self.setupStep(FindUnexpectedStaticAnalyzerResults())
-        self.setProperty('builddir', 'wkdir')
-        self.setProperty('buildnumber', 1234)
-        self.setProperty('architecture', 'arm64')
-        self.setProperty('platform', 'mac')
-        self.setProperty('os_version', '14.6.1')
-        self.setProperty('os_name', 'Sonoma')
-        self.setProperty('configuration', 'release')
-        self.setProperty('build_version', '23G93')
-        self.setProperty('got_revision', '1234567')
-        self.setProperty('branch', 'main')
-        self.setProperty('buildername', 'Safer-CPP-Checks')
-        self.setProperty('workername', 'bot600')
 
     def test_success_no_issues(self):
         self.configureStep()
+        self.setProperty('builddir', 'wkdir')
+        self.setProperty('buildnumber', 2)
 
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
-                        command=self.command + self.upload_options + self.configuration,
-                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'})
-            + ExpectShell.log('stdio', stdout='') + 0,
+                        command=['python3', 'Tools/Scripts/compare-static-analysis-results', 'wkdir/smart-pointer-result-archive/2', '--scan-build-path', '../llvm-project/clang/tools/scan-build/bin/scan-build', '--build-output', SCAN_BUILD_OUTPUT_DIR, '--check-expectations'],)
+            + ExpectShell.log('stdio', stdout='')
+            + 0,
         )
         self.expectOutcome(result=SUCCESS, state_string='Found no unexpected results')
         return self.runStep()
 
     def test_new_issues(self):
         self.configureStep()
+        self.setProperty('builddir', 'wkdir')
+        self.setProperty('buildnumber', 1234)
 
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
-                        command=self.command + self.upload_options + self.configuration,
-                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'})
-            + ExpectShell.log('stdio', stdout='Total unexpected failing files: 123\nTotal unexpected passing files: 456\nTotal unexpected issues: 789\n') + 0,
+                        command=['python3', 'Tools/Scripts/compare-static-analysis-results', 'wkdir/smart-pointer-result-archive/1234', '--scan-build-path', '../llvm-project/clang/tools/scan-build/bin/scan-build', '--build-output', SCAN_BUILD_OUTPUT_DIR, '--check-expectations'],)
+            + ExpectShell.log('stdio', stdout='Total unexpected failing files: 123\nTotal unexpected passing files: 456\nTotal unexpected issues: 789\n')
+            + 0,
         )
         self.expectOutcome(result=SUCCESS, state_string='Unexpected failing files: 123 Unexpected passing files: 456 Unexpected issues: 789')
         return self.runStep()

@@ -217,7 +217,7 @@ class ClearValuesArray final
     gl::AttachmentsMask mEnabled;
 };
 
-void GenerateCaps(const wgpu::Limits &limitWgpu,
+void GenerateCaps(const wgpu::Device &device,
                   gl::Caps *glCaps,
                   gl::TextureCapsMap *glTextureCapsMap,
                   gl::Extensions *glExtensions,
@@ -286,7 +286,6 @@ constexpr uint32_t kReservedPerStageDefaultUniformSlotCount = 0;
 }  // namespace rx
 
 #define ANGLE_WGPU_WRAPPER_OBJECTS_X(PROC) \
-    PROC(BindGroup)                        \
     PROC(Buffer)                           \
     PROC(RenderPipeline)
 

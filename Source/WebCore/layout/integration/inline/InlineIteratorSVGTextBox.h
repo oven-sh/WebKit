@@ -30,7 +30,6 @@
 
 namespace WebCore {
 
-class RenderSVGText;
 class SVGInlineTextBox;
 struct SVGTextFragment;
 
@@ -65,11 +64,23 @@ private:
     const SVGTextBox& get() const { return downcast<SVGTextBox>(m_box); }
 };
 
+class SVGTextBoxRange {
+public:
+    SVGTextBoxRange(SVGTextBoxIterator begin)
+        : m_begin(begin)
+    {
+    }
+
+    SVGTextBoxIterator begin() const { return m_begin; }
+    EndIterator end() const { return { }; }
+
+private:
+    SVGTextBoxIterator m_begin;
+};
+
 SVGTextBoxIterator firstSVGTextBoxFor(const RenderSVGInlineText&);
 BoxRange<SVGTextBoxIterator> svgTextBoxesFor(const RenderSVGInlineText&);
 SVGTextBoxIterator svgTextBoxFor(const SVGInlineTextBox*);
-
-BoxRange<BoxIterator> boxesFor(const RenderSVGText&);
 
 SVGTextBox::Key makeKey(const SVGTextBox&);
 

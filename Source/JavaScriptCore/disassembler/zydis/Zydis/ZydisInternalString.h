@@ -46,9 +46,6 @@
 #include "ZycoreFormat.h"
 #include "ZydisShortString.h"
 #include "ZydisStatus.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #ifdef __cplusplus
 extern "C" {
@@ -463,7 +460,5 @@ ZYAN_INLINE ZyanStatus ZydisStringAppendHexS(ZyanString* string, ZyanI64 value,
 #ifdef __cplusplus
 }
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ZYDIS_INTERNAL_STRING_H

@@ -36,13 +36,10 @@
 #include "GraphicsContext.h"
 #include "HostWindow.h"
 #include "Image.h"
-#include "ImageBuffer.h"
 #include "ImageObserver.h"
 #include "NotImplemented.h"
 #include "PixelBuffer.h"
 #include "VideoFrame.h"
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -641,7 +638,5 @@ RefPtr<Image> GraphicsContextGL::videoFrameToImage(VideoFrame& frame)
 #endif
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBGL)

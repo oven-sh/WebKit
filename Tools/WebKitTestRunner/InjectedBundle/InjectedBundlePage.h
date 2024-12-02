@@ -45,6 +45,7 @@ public:
     void forceImmediateCompletion();
     void dump(bool forceRepaint);
 
+    void prepare();
     void resetAfterTest();
 
     String dumpHistory();

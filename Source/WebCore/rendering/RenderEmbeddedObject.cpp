@@ -151,20 +151,20 @@ void RenderEmbeddedObject::didAttachScrollingNode()
 }
 
 #if !PLATFORM(IOS_FAMILY)
-static String unavailablePluginReplacementText(PluginUnavailabilityReason pluginUnavailabilityReason)
+static String unavailablePluginReplacementText(RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason)
 {
     switch (pluginUnavailabilityReason) {
-    case PluginUnavailabilityReason::PluginMissing:
+    case RenderEmbeddedObject::PluginMissing:
         return missingPluginText();
-    case PluginUnavailabilityReason::PluginCrashed:
+    case RenderEmbeddedObject::PluginCrashed:
         return crashedPluginText();
-    case PluginUnavailabilityReason::PluginBlockedByContentSecurityPolicy:
+    case RenderEmbeddedObject::PluginBlockedByContentSecurityPolicy:
         return blockedPluginByContentSecurityPolicyText();
-    case PluginUnavailabilityReason::InsecurePluginVersion:
+    case RenderEmbeddedObject::InsecurePluginVersion:
         return insecurePluginVersionText();
-    case PluginUnavailabilityReason::UnsupportedPlugin:
+    case RenderEmbeddedObject::UnsupportedPlugin:
         return unsupportedPluginText();
-    case PluginUnavailabilityReason::PluginTooSmall:
+    case RenderEmbeddedObject::PluginTooSmall:
         return pluginTooSmallText();
     }
 
@@ -173,7 +173,7 @@ static String unavailablePluginReplacementText(PluginUnavailabilityReason plugin
 }
 #endif
 
-static bool shouldUnavailablePluginMessageBeButton(Page& page, PluginUnavailabilityReason pluginUnavailabilityReason)
+static bool shouldUnavailablePluginMessageBeButton(Page& page, RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason)
 {
     return page.chrome().client().shouldUnavailablePluginMessageBeButton(pluginUnavailabilityReason);
 }
@@ -376,8 +376,7 @@ void RenderEmbeddedObject::layout()
     updateLogicalWidth();
     updateLogicalHeight();
 
-    LayoutSize oldSize = contentBoxRect().size();
-    RenderReplaced::layout();
+    RenderWidget::layout();
 
     clearOverflow();
     addVisualEffectOverflow();
@@ -388,9 +387,6 @@ void RenderEmbeddedObject::layout()
         view().frameView().addEmbeddedObjectToUpdate(*this);
 
     clearNeedsLayout();
-
-    if (m_hasShadowContent)
-        layoutShadowContent(oldSize);
 }
 
 bool RenderEmbeddedObject::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
@@ -491,11 +487,6 @@ CursorDirective RenderEmbeddedObject::getCursor(const LayoutPoint& point, Cursor
         return DoNotSetCursor;
     }
     return RenderWidget::getCursor(point, cursor);
-}
-
-bool RenderEmbeddedObject::paintsContent() const
-{
-    return !requiresAcceleratedCompositing();
 }
 
 }

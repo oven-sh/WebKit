@@ -28,7 +28,6 @@
 
 #include "Identifier.h"
 #include "IdentifierInlines.h"
-#include <wtf/MallocSpan.h>
 #include <wtf/text/StringView.h>
 
 using namespace JSC;
@@ -89,13 +88,15 @@ const UChar* OpaqueJSString::characters()
     if (m_string.isNull())
         return nullptr;
 
-    auto newCharacters = MallocSpan<UChar>::malloc(m_string.length() * sizeof(UChar));
-    StringView { m_string }.getCharacters(newCharacters.mutableSpan());
+    UChar* newCharacters = static_cast<UChar*>(fastMalloc(m_string.length() * sizeof(UChar)));
+    StringView { m_string }.getCharacters(newCharacters);
 
-    if (!m_characters.compare_exchange_strong(characters, newCharacters.mutableSpan().data()))
+    if (!m_characters.compare_exchange_strong(characters, newCharacters)) {
+        fastFree(newCharacters);
         return characters;
+    }
 
-    return newCharacters.leakSpan().data();
+    return newCharacters;
 }
 
 bool OpaqueJSString::equal(const OpaqueJSString* a, const OpaqueJSString* b)

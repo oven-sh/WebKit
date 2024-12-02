@@ -388,7 +388,6 @@ char* jsc_exception_report(JSCException* exception)
 
     jscExceptionEnsureProperties(exception);
     GString* report = g_string_new(nullptr);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
     if (priv->sourceURI)
         report = g_string_append(report, priv->sourceURI.get());
     if (priv->lineNumber)
@@ -406,7 +405,6 @@ char* jsc_exception_report(JSCException* exception)
         for (unsigned i = 0; lines.get()[i]; ++i)
             g_string_append_printf(report, "  %s\n", lines.get()[i]);
     }
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     return g_string_free(report, FALSE);
 }

@@ -19,7 +19,6 @@
 
 #pragma once
 
-#include "CaretRectComputation.h"
 #include "RenderBlockFlow.h"
 
 namespace WebCore {

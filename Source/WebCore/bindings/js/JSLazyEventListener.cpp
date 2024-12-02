@@ -210,7 +210,6 @@ RefPtr<JSLazyEventListener> JSLazyEventListener::create(CreationArguments&& argu
         sourceURL = arguments.document.url();
     }
 
-    JSLockHolder locker(arguments.document.vm());
     return adoptRef(*new JSLazyEventListener(WTFMove(arguments), sourceURL, position));
 }
 

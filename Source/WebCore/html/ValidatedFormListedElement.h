@@ -128,7 +128,7 @@ private:
     void startDelayingUpdateValidity() { ++m_delayedUpdateValidityCount; }
     void endDelayingUpdateValidity();
 
-    RefPtr<ValidationMessage> m_validationMessage;
+    std::unique_ptr<ValidationMessage> m_validationMessage;
 
     // Cache of validity()->valid().
     // But "candidate for constraint validation" doesn't affect isValid.

@@ -39,8 +39,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace Yarr {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodePattern);
@@ -185,7 +183,7 @@ public:
 
         DisjunctionContext* getDisjunctionContext()
         {
-            return std::bit_cast<DisjunctionContext*>(std::bit_cast<uintptr_t>(this) + allocationSize(m_numBackupIds));
+            return bitwise_cast<DisjunctionContext*>(bitwise_cast<uintptr_t>(this) + allocationSize(m_numBackupIds));
         }
 
         unsigned backupOffsetForDuplicateNamedGroup(unsigned duplicateNamedGroup)
@@ -3169,5 +3167,3 @@ static_assert(sizeof(Interpreter<UChar>::BackTrackInfoParentheses) <= (YarrStack
 
 
 } }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

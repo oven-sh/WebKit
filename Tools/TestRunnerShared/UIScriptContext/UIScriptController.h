@@ -238,8 +238,7 @@ public:
     virtual void keyboardAccessoryBarNext() { notImplemented(); }
     virtual void keyboardAccessoryBarPrevious() { notImplemented(); }
 
-    virtual void selectWordForReplacement() { notImplemented(); }
-    virtual void applyAutocorrection(JSStringRef, JSStringRef, JSValueRef, bool) { notImplemented(); }
+    virtual void applyAutocorrection(JSStringRef, JSStringRef, JSValueRef) { notImplemented(); }
 
     virtual bool isShowingKeyboard() const { notImplemented(); return false; }
     virtual bool hasInputSession() const { notImplemented(); return false; }

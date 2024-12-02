@@ -172,8 +172,8 @@ public:
         static constexpr unsigned exp = 1;
 
         static constexpr std::pair<ComparableASCIILiteral, unsigned> mapEntries[] {
-            { "exp"_s, exp },
-            { "fract"_s, fract },
+            { "exp", exp },
+            { "fract", fract },
         };
 
         static constexpr SortedArrayMap map { mapEntries };
@@ -185,8 +185,8 @@ public:
         static constexpr unsigned whole = 1;
 
         static constexpr std::pair<ComparableASCIILiteral, unsigned> mapEntries[] {
-            { "fract"_s, fract },
-            { "whole"_s, whole },
+            { "fract", fract },
+            { "whole", whole },
         };
 
         static constexpr SortedArrayMap map { mapEntries };
@@ -198,8 +198,8 @@ public:
         static constexpr unsigned exchanged = 1;
 
         static constexpr std::pair<ComparableASCIILiteral, unsigned> mapEntries[] {
-            { "exchanged"_s, exchanged },
-            { "old_value"_s, oldValue },
+            { "exchanged", exchanged },
+            { "old_value", oldValue },
         };
 
         static constexpr SortedArrayMap map { mapEntries };
@@ -320,7 +320,7 @@ public:
     unsigned length() const { return m_string.length(); }
     bool is8Bit() const { return m_string.is8Bit(); }
     template<typename CharacterType>
-    void writeTo(std::span<CharacterType> destination) const
+    void writeTo(CharacterType* destination) const
     {
         StringView { m_string }.getCharacters(destination);
         WTF_STRINGTYPEADAPTER_COPIED_WTF_STRING();

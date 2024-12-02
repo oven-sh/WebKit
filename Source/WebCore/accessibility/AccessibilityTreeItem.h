@@ -34,17 +34,17 @@ namespace WebCore {
     
 class AccessibilityTreeItem final : public AccessibilityRenderObject {
 public:
-    static Ref<AccessibilityTreeItem> create(AXID, RenderObject&);
-    static Ref<AccessibilityTreeItem> create(AXID, Node&);
+    static Ref<AccessibilityTreeItem> create(RenderObject&);
+    static Ref<AccessibilityTreeItem> create(Node&);
     virtual ~AccessibilityTreeItem();
 
-    bool supportsCheckedState() const final;
+    bool supportsCheckedState() const override;
 
 private:
-    explicit AccessibilityTreeItem(AXID, RenderObject&);
-    explicit AccessibilityTreeItem(AXID, Node&);
+    explicit AccessibilityTreeItem(RenderObject&);
+    explicit AccessibilityTreeItem(Node&);
     bool shouldIgnoreAttributeRole() const final { return !m_isTreeItemValid; }
-    AccessibilityRole determineAccessibilityRole() final;
+    AccessibilityRole determineAccessibilityRole() override;
     bool m_isTreeItemValid;
 };
     

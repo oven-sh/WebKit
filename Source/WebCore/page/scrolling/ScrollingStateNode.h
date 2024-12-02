@@ -198,7 +198,7 @@ private:
 enum class ScrollingStateNodeProperty : uint64_t {
     // ScrollingStateNode
     Layer                                       = 1LLU << 0,
-    ChildNodes                                  = 1LLU << 45,
+    ChildNodes                                  = 1LLU << 44,
     // ScrollingStateScrollingNode
     ScrollableAreaSize                          = 1LLU << 1, // Same value as RelatedOverflowScrollingNodes, ViewportConstraints and OverflowScrollingNode
     TotalContentsSize                           = 1LLU << 2, // Same value as LayoutConstraintData
@@ -220,16 +220,15 @@ enum class ScrollingStateNodeProperty : uint64_t {
     ScrolledContentsLayer                       = ScrollContainerLayer << 1,
     HorizontalScrollbarLayer                    = ScrolledContentsLayer << 1,
     VerticalScrollbarLayer                      = HorizontalScrollbarLayer << 1,
-    PainterForScrollbar                         = 1LLU << 44, // Not serialized
+    PainterForScrollbar                         = 1LLU << 43, // Not serialized
     ContentAreaHoverState                       = VerticalScrollbarLayer << 1,
     MouseActivityState                          = ContentAreaHoverState << 1,
     ScrollbarHoverState                         = MouseActivityState << 1,
     ScrollbarEnabledState                       = ScrollbarHoverState << 1,
     ScrollbarLayoutDirection                    = ScrollbarEnabledState << 1,
     ScrollbarWidth                              = ScrollbarLayoutDirection << 1,
-    UseDarkAppearanceForScrollbars              = ScrollbarWidth << 1,
     // ScrollingStateFrameScrollingNode
-    KeyboardScrollData                          = UseDarkAppearanceForScrollbars << 1,
+    KeyboardScrollData                          = ScrollbarWidth << 1,
     FrameScaleFactor                            = KeyboardScrollData << 1,
     EventTrackingRegion                         = FrameScaleFactor << 1,
     RootContentsLayer                           = EventTrackingRegion << 1,
@@ -238,11 +237,12 @@ enum class ScrollingStateNodeProperty : uint64_t {
     ContentShadowLayer                          = InsetClipLayer << 1,
     HeaderHeight                                = ContentShadowLayer << 1,
     FooterHeight                                = HeaderHeight << 1,
-    HeaderLayer                                 = 1LLU << 50, // Not serialized
-    FooterLayer                                 = 1LLU << 43, // Not serialized
+    HeaderLayer                                 = 1LLU << 49, // Not serialized
+    FooterLayer                                 = 1LLU << 42, // Not serialized
     BehaviorForFixedElements                    = FooterHeight << 1,
     TopContentInset                             = BehaviorForFixedElements << 1,
-    VisualViewportIsSmallerThanLayoutViewport   = TopContentInset << 1,
+    FixedElementsLayoutRelativeToFrame          = TopContentInset << 1,
+    VisualViewportIsSmallerThanLayoutViewport   = FixedElementsLayoutRelativeToFrame << 1,
     AsyncFrameOrOverflowScrollingEnabled        = VisualViewportIsSmallerThanLayoutViewport << 1,
     WheelEventGesturesBecomeNonBlocking         = AsyncFrameOrOverflowScrollingEnabled << 1,
     ScrollingPerformanceTestingEnabled          = WheelEventGesturesBecomeNonBlocking << 1,

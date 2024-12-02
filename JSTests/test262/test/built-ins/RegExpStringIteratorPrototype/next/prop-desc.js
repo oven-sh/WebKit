@@ -20,8 +20,6 @@ var RegExpStringIteratorProto = Object.getPrototypeOf(/./[Symbol.matchAll](''));
 
 assert.sameValue(typeof RegExpStringIteratorProto.next, 'function');
 
-verifyProperty(RegExpStringIteratorProto, 'next', {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(RegExpStringIteratorProto, 'next');
+verifyWritable(RegExpStringIteratorProto, 'next');
+verifyConfigurable(RegExpStringIteratorProto, 'next');

@@ -32,8 +32,6 @@
 #include "DFA.h"
 #include "DFANode.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore::ContentExtensions {
 
 template <typename IntType>
@@ -569,7 +567,5 @@ void DFABytecodeCompiler::compile()
 }
 
 } // namespace WebCore::ContentExtensions
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

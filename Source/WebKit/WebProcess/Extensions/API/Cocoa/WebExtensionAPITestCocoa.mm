@@ -36,7 +36,6 @@
 #import "WebExtensionControllerMessages.h"
 #import "WebExtensionControllerProxy.h"
 #import "WebExtensionEventListenerType.h"
-#import "WebPage.h"
 #import "WebProcess.h"
 #import <JavaScriptCore/APICast.h>
 #import <JavaScriptCore/ScriptCallStack.h>

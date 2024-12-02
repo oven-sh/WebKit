@@ -91,10 +91,10 @@ public:
         // Optional connection, as the message might be generated without a connection object available (e.g. inside a method handler).
         // In this case, it gets associated to the connection when sending the message back to the client.
         Connection connection;
-        const CString payload;
+        const char* data { nullptr };
+        size_t dataLength { 0 };
 
-        static Message fail(CommandResult::ErrorCode, std::optional<Connection>, std::optional<String> errorMessage = std::nullopt, std::optional<int> commandId = std::nullopt);
-        static Message reply(const String& type, unsigned id, Ref<JSON::Value>&& result);
+        static Message fail(CommandResult::ErrorCode, std::optional<Connection>, std::optional<String> errorMessage = std::nullopt, std::optional<String> commandId = std::nullopt);
     };
 
     virtual bool acceptHandshake(HTTPRequestHandler::Request&&) = 0;
@@ -128,7 +128,6 @@ public:
     String getResourceName(const String& sessionId);
     String getWebSocketURL(const RefPtr<WebSocketListener>, const String& sessionId);
     String getSessionID(const String& resource);
-    void sendMessage(const String& session, const String& message);
 
     // Non-spec method
     void removeResourceForSession(const String& sessionId);

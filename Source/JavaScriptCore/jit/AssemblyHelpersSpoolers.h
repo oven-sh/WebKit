@@ -31,8 +31,6 @@
 #include "SIMDInfo.h"
 #include "Width.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 template<typename RegType>
@@ -636,7 +634,5 @@ private:
 };
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(JIT)

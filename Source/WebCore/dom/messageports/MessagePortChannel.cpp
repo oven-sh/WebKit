@@ -31,8 +31,6 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 Ref<MessagePortChannel> MessagePortChannel::create(MessagePortChannelRegistry& registry, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2)
@@ -191,5 +189,3 @@ bool MessagePortChannel::hasAnyMessagesPendingOrInFlight() const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

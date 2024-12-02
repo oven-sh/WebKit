@@ -94,7 +94,6 @@ typedef float CGFloat;
 
 #ifdef __cplusplus
 #include <wtf/FastMalloc.h>
-#include <wtf/TZoneMalloc.h>
 #endif
 
 #include <wtf/DisallowCType.h>

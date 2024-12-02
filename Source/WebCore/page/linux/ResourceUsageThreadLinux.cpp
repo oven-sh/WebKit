@@ -59,9 +59,7 @@ static float cpuPeriod()
 
     static const unsigned statMaxLineLength = 512;
     char buffer[statMaxLineLength + 1];
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
     char* line = fgets(buffer, statMaxLineLength, file);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     if (!line) {
         fclose(file);
         return 0;
@@ -141,9 +139,7 @@ static bool threadCPUUsage(pid_t id, float period, ThreadInfo& info)
         return false;
 
     static const ssize_t maxBufferLength = BUFSIZ - 1;
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
     char buffer[BUFSIZ];
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     buffer[0] = '\0';
 
     ssize_t totalBytesRead = 0;
@@ -166,7 +162,6 @@ static bool threadCPUUsage(pid_t id, float period, ThreadInfo& info)
     buffer[totalBytesRead] = '\0';
 
     // Skip tid and name.
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
     char* position = strchr(buffer, ')');
     if (!position)
         return false;
@@ -178,7 +173,6 @@ static bool threadCPUUsage(pid_t id, float period, ThreadInfo& info)
         name++;
         info.name = String::fromUTF8({ name, position });
     }
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     // Move after state.
     position += 4;

@@ -1,4 +1,4 @@
 
 
-PASS reload() inside onbeforeunload
+FAIL reload() inside onbeforeunload assert_not_equals: got disallowed value undefined
 

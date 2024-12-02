@@ -38,8 +38,7 @@ private:
 
     sk_sp<GraphicsPipeline> createGraphicsPipeline(const RuntimeEffectDictionary*,
                                                    const GraphicsPipelineDesc&,
-                                                   const RenderPassDesc&,
-                                                   SkEnumBitMask<PipelineCreationFlags>) override;
+                                                   const RenderPassDesc&) override;
     sk_sp<ComputePipeline> createComputePipeline(const ComputePipelineDesc&) override;
 
     sk_sp<Texture> createTexture(SkISize,

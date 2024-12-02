@@ -49,7 +49,6 @@
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
-#include "NativeCallee.h"
 #include "OperationResult.h"
 #include "Options.h"
 #include "Parser.h"
@@ -2138,7 +2137,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionBreakpoint);
 static JSC_DECLARE_HOST_FUNCTION(functionExit);
 static JSC_DECLARE_HOST_FUNCTION(functionDFGTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionFTLTrue);
-static JSC_DECLARE_HOST_FUNCTION(functionOMGTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuMfence);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuRdtsc);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuCpuid);
@@ -2354,84 +2352,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFTLTrue, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsBoolean(false));
 }
 
-// Returns true if the calling frame is an OMG frame.
-// Usage: isOMG = $vm.omgTrue() (from WASM only)
-JSC_DEFINE_HOST_FUNCTION(functionOMGTrue, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    DollarVMAssertScope assertScope;
-#if ENABLE(WEBASSEMBLY)
-    VM& vm = globalObject->vm();
-
-    bool allFramesAreValid = true;
-    bool seenOMGFrame = false;
-    bool seenOtherWasmFrame = false;
-
-    auto modeForWasm = [&](StackVisitor& visitor) {
-        if (visitor->codeType() != StackVisitor::Frame::Wasm
-            || !visitor->callee().isNativeCallee()) {
-            allFramesAreValid = false;
-            return Wasm::CompilationMode::LLIntMode;
-        }
-        return static_cast<Wasm::Callee*>(visitor->callee().asNativeCallee())->compilationMode();
-    };
-
-    auto expectWasmToJS = [&](StackVisitor& visitor) {
-        if (visitor->codeType() != StackVisitor::Frame::Wasm
-            || !visitor->callee().isNativeCallee()
-            || !isAnyWasmToJS(static_cast<Wasm::Callee*>(visitor->callee().asNativeCallee())->compilationMode())) {
-            allFramesAreValid = false;
-            return;
-        }
-    };
-
-    auto expectNative = [&](StackVisitor& visitor) {
-        if (visitor->codeType() != StackVisitor::Frame::Native
-            || !visitor->callee().isCell()) {
-            allFramesAreValid = false;
-            return;
-        }
-    };
-
-    unsigned frameIndex = 0;
-    StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) {
-        DollarVMAssertScope assertScope;
-
-        switch (frameIndex) {
-        case 0:
-            expectNative(visitor);
-            break;
-        case 1:
-            expectWasmToJS(visitor);
-            break;
-        case 2: {
-            auto mode = modeForWasm(visitor);
-            seenOMGFrame = isAnyOMG(mode);
-            seenOtherWasmFrame = isAnyBBQ(mode) || isAnyInterpreter(mode);
-            return IterationStatus::Done;
-        }
-        default:
-            return IterationStatus::Done;
-        }
-
-        ++frameIndex;
-        return IterationStatus::Continue;
-    });
-
-    if (allFramesAreValid && seenOMGFrame && !seenOtherWasmFrame)
-        return JSValue::encode(jsNumber(1));
-
-    if (allFramesAreValid && !seenOMGFrame && seenOtherWasmFrame)
-        return JSValue::encode(jsNumber(0));
-
-    dataLogLn("omgTrue INVALID FRAME: ", allFramesAreValid, " ", seenOMGFrame, " ", seenOtherWasmFrame);
-#else
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(callFrame);
-#endif // ENABLE(WEBASSEMBLY)
-
-    return JSValue::encode(jsNumber(2));
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionCpuMfence, (JSGlobalObject*, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -2472,8 +2392,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCpuPause, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsUndefined());
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 // This takes either a JSArrayBuffer, JSArrayBufferView*, or any other object as its first
 // argument. The second argument is expected to be an integer.
 //
@@ -2501,14 +2419,14 @@ JSC_DEFINE_HOST_FUNCTION(functionCpuClflush, (JSGlobalObject*, CallFrame* callFr
     uint32_t offset = callFrame->argument(1).asUInt32();
 
     if (JSArrayBufferView* view = jsDynamicCast<JSArrayBufferView*>(callFrame->argument(0)))
-        toFlush.append(std::bit_cast<char*>(view->vector()) + offset);
+        toFlush.append(bitwise_cast<char*>(view->vector()) + offset);
     else if (JSObject* object = jsDynamicCast<JSObject*>(callFrame->argument(0))) {
         switch (object->indexingType()) {
         case ALL_INT32_INDEXING_TYPES:
         case ALL_CONTIGUOUS_INDEXING_TYPES:
         case ALL_DOUBLE_INDEXING_TYPES:
-            toFlush.append(std::bit_cast<char*>(object->butterfly()) + Butterfly::offsetOfVectorLength());
-            toFlush.append(std::bit_cast<char*>(object->butterfly()) + Butterfly::offsetOfPublicLength());
+            toFlush.append(bitwise_cast<char*>(object->butterfly()) + Butterfly::offsetOfVectorLength());
+            toFlush.append(bitwise_cast<char*>(object->butterfly()) + Butterfly::offsetOfPublicLength());
         }
     }
 
@@ -2523,8 +2441,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCpuClflush, (JSGlobalObject*, CallFrame* callFr
     return JSValue::encode(jsBoolean(false));
 #endif
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 class CallerFrameJITTypeFunctor {
 public:
@@ -3006,11 +2922,11 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHavingABadTime, (JSGlobalObject* globalObject
 #if ENABLE(ASSEMBLER) && OS(DARWIN) && CPU(X86_64)
 static void callWithStackSizeProbeFunction(Probe::State* state)
 {
-    JSGlobalObject* globalObject = std::bit_cast<JSGlobalObject*>(state->arg);
+    JSGlobalObject* globalObject = bitwise_cast<JSGlobalObject*>(state->arg);
     // The bits loaded from state->probeFunction will be tagged like
     // a C function. So, we'll need to untag it to extract the bits
     // for the JSFunction*.
-    JSFunction* function = std::bit_cast<JSFunction*>(untagCodePtr<CFunctionPtrTag>(state->probeFunction));
+    JSFunction* function = bitwise_cast<JSFunction*>(untagCodePtr<CFunctionPtrTag>(state->probeFunction));
     state->initializeStackFunction = nullptr;
     state->initializeStackArg = nullptr;
 
@@ -3021,8 +2937,6 @@ static void callWithStackSizeProbeFunction(Probe::State* state)
     call(globalObject, function, callData, jsUndefined(), args);
 }
 #endif // ENABLE(ASSEMBLER) && OS(DARWIN) && CPU(X86_64)
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(functionCallWithStackSize, SUPPRESS_ASAN, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -3056,8 +2970,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(functionCallWithStackSize, SUPPRESS_ASA
     size_t desiredStackSize = arg1.asNumber();
 
     const StackBounds& bounds = Thread::current().stack();
-    uint8_t* currentStackPosition = std::bit_cast<uint8_t*>(currentStackPointer());
-    uint8_t* end = std::bit_cast<uint8_t*>(bounds.end());
+    uint8_t* currentStackPosition = bitwise_cast<uint8_t*>(currentStackPointer());
+    uint8_t* end = bitwise_cast<uint8_t*>(bounds.end());
     uint8_t* desiredStart = end + desiredStackSize;
     if (desiredStart >= currentStackPosition)
         return throwVMError(globalObject, throwScope, "Unable to setup desired stack size"_s);
@@ -3070,7 +2984,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(functionCallWithStackSize, SUPPRESS_ASA
 
     // This is a hack to make the VM think it's stack limits are near the end
     // of the physical stack.
-    uint8_t* vmStackStart = std::bit_cast<uint8_t*>(vm.stackPointerAtVMEntry());
+    uint8_t* vmStackStart = bitwise_cast<uint8_t*>(vm.stackPointerAtVMEntry());
     uint8_t* vmStackEnd = vmStackStart - originalMaxPerThreadStackUsage;
     ptrdiff_t sizeDiff = vmStackEnd - end;
     RELEASE_ASSERT(sizeDiff >= 0);
@@ -3113,8 +3027,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(functionCallWithStackSize, SUPPRESS_ASA
     return throwVMError(globalObject, throwScope, "Not supported for this platform"_s);
 #endif // ENABLE(ASSEMBLER)
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 // Creates a new global object.
 // Usage: $vm.createGlobalObject()
@@ -3789,7 +3701,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeltaBetweenButterflies, (JSGlobalObject*, Call
     if (!a || !b)
         return JSValue::encode(jsNumber(PNaN));
 
-    ptrdiff_t delta = std::bit_cast<char*>(a->butterfly()) - std::bit_cast<char*>(b->butterfly());
+    ptrdiff_t delta = bitwise_cast<char*>(a->butterfly()) - bitwise_cast<char*>(b->butterfly());
     if (delta < 0)
         return JSValue::encode(jsNumber(PNaN));
     if (delta > std::numeric_limits<int32_t>::max())
@@ -4203,7 +4115,7 @@ JSC_DEFINE_HOST_FUNCTION(functionAssertFrameAligned, (JSGlobalObject*, CallFrame
 {
     DollarVMAssertScope assertScope;
 #if CPU(X86_64) || CPU(ARM64)
-    RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(callFrame) % stackAlignmentBytes()));
+    RELEASE_ASSERT(bitwise_cast<uintptr_t>(callFrame) % stackAlignmentBytes() == 0);
 #else
     UNUSED_PARAM(callFrame);
 #endif
@@ -4325,7 +4237,6 @@ void JSDollarVM::finishCreation(VM& vm)
 
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "dfgTrue"_s), 0, functionDFGTrue, ImplementationVisibility::Public, DFGTrueIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "ftlTrue"_s), 0, functionFTLTrue, ImplementationVisibility::Public, FTLTrueIntrinsic, jsDollarVMPropertyAttributes);
-    putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "omgTrue"_s), 0, functionOMGTrue, ImplementationVisibility::Public, NoIntrinsic, jsDollarVMPropertyAttributes);
 
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuMfence"_s), 0, functionCpuMfence, ImplementationVisibility::Public, CPUMfenceIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuRdtsc"_s), 0, functionCpuRdtsc, ImplementationVisibility::Public, CPURdtscIntrinsic, jsDollarVMPropertyAttributes);
@@ -4534,3 +4445,4 @@ REFTRACKER_IMPL(StrongRefTracker);
 } // namespace JSC
 
 IGNORE_WARNINGS_END
+

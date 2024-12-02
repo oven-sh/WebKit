@@ -64,7 +64,7 @@ void RemoteQueue::stopListeningForIPC()
 
 void RemoteQueue::submit(Vector<WebGPUIdentifier>&& commandBuffers)
 {
-    Vector<Ref<WebCore::WebGPU::CommandBuffer>> convertedCommandBuffers;
+    Vector<std::reference_wrapper<WebCore::WebGPU::CommandBuffer>> convertedCommandBuffers;
     convertedCommandBuffers.reserveInitialCapacity(commandBuffers.size());
     for (WebGPUIdentifier identifier : commandBuffers) {
         auto convertedCommandBuffer = protectedObjectHeap()->convertCommandBufferFromBacking(identifier);

@@ -29,8 +29,6 @@
 #include "JSCJSValueInlines.h"
 #include <wtf/text/StringImpl.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 SmallStrings::SmallStrings()
@@ -129,5 +127,3 @@ void SmallStrings::initialize(VM* vm, JSString*& string, ASCIILiteral value)
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

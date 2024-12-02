@@ -124,10 +124,10 @@ public:
         virtual ~AudioSampleObserver() = default;
 
         // CheckedPtr interface
-        virtual uint32_t checkedPtrCount() const = 0;
-        virtual uint32_t checkedPtrCountWithoutThreadCheck() const = 0;
-        virtual void incrementCheckedPtrCount() const = 0;
-        virtual void decrementCheckedPtrCount() const = 0;
+        virtual uint32_t ptrCount() const = 0;
+        virtual uint32_t ptrCountWithoutThreadCheck() const = 0;
+        virtual void incrementPtrCount() const = 0;
+        virtual void decrementPtrCount() const = 0;
 
         // May be called on a background thread.
         virtual void audioSamplesAvailable(const WTF::MediaTime&, const PlatformAudioData&, const AudioStreamDescription&, size_t /*numberOfFrames*/) = 0;
@@ -302,10 +302,6 @@ public:
 
     virtual bool isPowerEfficient() const { return false; }
 
-#if USE(GSTREAMER)
-    virtual std::pair<GstClockTime, GstClockTime> queryCaptureLatency() const;
-#endif
-
 protected:
     RealtimeMediaSource(const CaptureDevice&, MediaDeviceHashSalts&& hashSalts = { }, std::optional<PageIdentifier> = std::nullopt);
 
@@ -388,7 +384,7 @@ private:
     HashSet<CheckedPtr<AudioSampleObserver>> m_audioSampleObservers WTF_GUARDED_BY_LOCK(m_audioSampleObserversLock);
 
     mutable Lock m_videoFrameObserversLock;
-    HashMap<VideoFrameObserver*, std::unique_ptr<VideoFrameAdaptor>> m_videoFrameObservers WTF_GUARDED_BY_LOCK(m_videoFrameObserversLock);
+    UncheckedKeyHashMap<VideoFrameObserver*, std::unique_ptr<VideoFrameAdaptor>> m_videoFrameObservers WTF_GUARDED_BY_LOCK(m_videoFrameObserversLock);
 
     CaptureDevice m_device;
 

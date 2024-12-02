@@ -197,6 +197,7 @@ static Atspi::Role atspiRole(AccessibilityRole role)
         return Atspi::Role::Menu;
     case AccessibilityRole::MenuListOption:
     case AccessibilityRole::MenuItem:
+    case AccessibilityRole::MenuButton:
         return Atspi::Role::MenuItem;
     case AccessibilityRole::MenuItemCheckbox:
         return Atspi::Role::CheckMenuItem;
@@ -353,6 +354,7 @@ static Atspi::Role atspiRole(AccessibilityRole role)
     case AccessibilityRole::Details:
     case AccessibilityRole::Emphasis:
     case AccessibilityRole::Ignored:
+    case AccessibilityRole::Incrementor:
     case AccessibilityRole::LineBreak:
     case AccessibilityRole::Model:
     case AccessibilityRole::Presentational:
@@ -441,7 +443,7 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_accessibleFunctions = {
             return g_variant_new_string(atspiObject->locale().utf8().data());
         if (!g_strcmp0(propertyName, "AccessibleId")) {
             auto objectID = atspiObject->m_coreObject->objectID();
-            return g_variant_new_string(atspiObject->m_coreObject ? String::number(objectID.toUInt64()).utf8().data() : "");
+            return g_variant_new_string(atspiObject->m_coreObject ? String::number(objectID ? objectID->toUInt64() : 0).utf8().data() : "");
         }
         if (!g_strcmp0(propertyName, "Parent"))
             return atspiObject->parentReference();
@@ -585,16 +587,16 @@ AccessibilityObjectAtspi* AccessibilityObjectAtspi::childAt(unsigned index) cons
     return children[index]->wrapper();
 }
 
-Vector<Ref<AccessibilityObjectAtspi>> AccessibilityObjectAtspi::wrapperVector(const Vector<Ref<AXCoreObject>>& elements) const
+Vector<RefPtr<AccessibilityObjectAtspi>> AccessibilityObjectAtspi::wrapperVector(const Vector<RefPtr<AXCoreObject>>& elements) const
 {
-    return WTF::compactMap(elements, [&](auto& element) -> std::optional<Ref<AccessibilityObjectAtspi>> {
+    return WTF::compactMap(elements, [&](auto& element) -> std::optional<RefPtr<AccessibilityObjectAtspi>> {
         if (RefPtr wrapper = element->wrapper())
-            return wrapper.releaseNonNull();
+            return wrapper;
         return std::nullopt;
     });
 }
 
-Vector<Ref<AccessibilityObjectAtspi>> AccessibilityObjectAtspi::children() const
+Vector<RefPtr<AccessibilityObjectAtspi>> AccessibilityObjectAtspi::children() const
 {
     if (!m_coreObject)
         return { };
@@ -618,7 +620,7 @@ int AccessibilityObjectAtspi::indexInParent() const
     const auto& children = axParent->children();
     unsigned index = 0;
     for (const auto& child : children) {
-        if (child.ptr() == m_coreObject) {
+        if (child.get() == m_coreObject) {
             m_indexInParent = index;
             return m_indexInParent;
         }
@@ -1024,10 +1026,10 @@ RelationMap AccessibilityObjectAtspi::relationMap() const
         return map;
 
     auto addRelation = [&](Atspi::Relation relation, const AccessibilityObject::AccessibilityChildrenVector& children) {
-        Vector<Ref<AccessibilityObjectAtspi>> wrappers;
+        Vector<RefPtr<AccessibilityObjectAtspi>> wrappers;
         for (const auto& child : children) {
             if (auto* wrapper = child->wrapper())
-                wrappers.append(*wrapper);
+                wrappers.append(wrapper);
         }
         if (!wrappers.isEmpty())
             map.add(relation, WTFMove(wrappers));
@@ -1036,11 +1038,11 @@ RelationMap AccessibilityObjectAtspi::relationMap() const
     AccessibilityObject::AccessibilityChildrenVector ariaLabelledByElements;
     if (m_coreObject->isControl() || m_coreObject->isFieldset()) {
         if (auto* label = m_coreObject->titleUIElement())
-            ariaLabelledByElements.append(*label);
+            ariaLabelledByElements.append(label);
     } else if (m_coreObject->roleValue() == AccessibilityRole::Legend) {
         if (auto* renderFieldset = ancestorsOfType<RenderBlock>(*m_coreObject->renderer()).first()) {
             if (renderFieldset->isFieldset())
-                ariaLabelledByElements.append(*m_coreObject->axObjectCache()->getOrCreate(renderFieldset));
+                ariaLabelledByElements.append(m_coreObject->axObjectCache()->getOrCreate(renderFieldset));
         }
     } else {
         auto* liveObject = dynamicDowncast<AccessibilityObject>(m_coreObject.get());

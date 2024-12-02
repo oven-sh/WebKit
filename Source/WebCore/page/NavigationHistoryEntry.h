@@ -25,12 +25,10 @@
 
 #pragma once
 
-#include "ActiveDOMObject.h"
 #include "ContextDestructionObserver.h"
 #include "EventHandler.h"
 #include "EventTarget.h"
 #include "HistoryItem.h"
-#include "ReferrerPolicy.h"
 #include <wtf/RefCounted.h>
 
 namespace JSC {
@@ -41,14 +39,14 @@ namespace WebCore {
 
 class SerializedScriptValue;
 
-class NavigationHistoryEntry final : public RefCounted<NavigationHistoryEntry>, public EventTarget, public ActiveDOMObject {
+class NavigationHistoryEntry final : public RefCounted<NavigationHistoryEntry>, public EventTarget, public ContextDestructionObserver {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(NavigationHistoryEntry);
 public:
-    static Ref<NavigationHistoryEntry> create(ScriptExecutionContext*, Ref<HistoryItem>&&);
-    static Ref<NavigationHistoryEntry> create(ScriptExecutionContext*, const NavigationHistoryEntry&);
+    using RefCounted<NavigationHistoryEntry>::ref;
+    using RefCounted<NavigationHistoryEntry>::deref;
 
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
+    static Ref<NavigationHistoryEntry> create(ScriptExecutionContext* context, Ref<HistoryItem>&& historyItem) { return adoptRef(*new NavigationHistoryEntry(context, WTFMove(historyItem), historyItem->urlString(), historyItem->uuidIdentifier())); }
+    static Ref<NavigationHistoryEntry> create(ScriptExecutionContext*, const NavigationHistoryEntry&);
 
     const String& url() const;
     String key() const;
@@ -62,14 +60,7 @@ public:
     HistoryItem& associatedHistoryItem() const { return m_associatedHistoryItem; }
 
 private:
-    struct DocumentState {
-        static DocumentState fromContext(ScriptExecutionContext*);
-
-        std::optional<ScriptExecutionContextIdentifier> identifier;
-        ReferrerPolicy referrerPolicy { ReferrerPolicy::Default };
-    };
-
-    NavigationHistoryEntry(ScriptExecutionContext*, const DocumentState&, Ref<HistoryItem>&&, String urlString, WTF::UUID key, RefPtr<SerializedScriptValue>&& state = { }, WTF::UUID = WTF::UUID::createVersion4());
+    NavigationHistoryEntry(ScriptExecutionContext*, Ref<HistoryItem>&&, String urlString, WTF::UUID key, RefPtr<SerializedScriptValue>&& state = { }, WTF::UUID = WTF::UUID::createVersion4());
 
     enum EventTargetInterfaceType eventTargetInterface() const final;
     ScriptExecutionContext* scriptExecutionContext() const final;
@@ -81,7 +72,6 @@ private:
     const WTF::UUID m_id;
     RefPtr<SerializedScriptValue> m_state;
     Ref<HistoryItem> m_associatedHistoryItem;
-    DocumentState m_originalDocumentState;
 };
 
 } // namespace WebCore

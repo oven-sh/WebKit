@@ -40,15 +40,6 @@
 #endif
 
 namespace WebKit {
-class GeoclueGeolocationProvider;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedTimerSmartPointerException;
-template<> struct IsDeprecatedTimerSmartPointerException<WebKit::GeoclueGeolocationProvider> : std::true_type { };
-}
-
-namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GeoclueGeolocationProvider);
 

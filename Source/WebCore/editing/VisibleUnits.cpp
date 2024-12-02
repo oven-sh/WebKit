@@ -51,8 +51,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextBreakIterator.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 static Node* previousLeafWithSameEditability(Node* node, EditableType editableType)
@@ -1997,5 +1995,3 @@ std::pair<VisiblePosition, WithinWordBoundary> wordBoundaryForPositionWithoutCro
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

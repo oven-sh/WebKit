@@ -27,11 +27,12 @@
 #pragma once
 
 #include <wtf/CheckedArithmetic.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringConcatenateNumbers.h>
 #include <wtf/text/StringView.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WTF {
 
@@ -45,23 +46,23 @@ RefPtr<StringImpl> tryMakeStringImplFromAdaptersInternal(unsigned length, bool a
 {
     ASSERT(length <= String::MaxLength);
     if (areAllAdapters8Bit) {
-        std::span<LChar> buffer;
+        LChar* buffer;
         RefPtr result = StringImpl::tryCreateUninitialized(length, buffer);
         if (!result)
             return nullptr;
 
-        if (buffer.data())
+        if (buffer)
             stringTypeAdapterAccumulator(buffer, adapters...);
 
         return result;
     }
 
-    std::span<UChar> buffer;
+    UChar* buffer;
     RefPtr result = StringImpl::tryCreateUninitialized(length, buffer);
     if (!result)
         return nullptr;
 
-    if (buffer.data())
+    if (buffer)
         stringTypeAdapterAccumulator(buffer, adapters...);
 
     return result;
@@ -122,13 +123,13 @@ AtomString tryMakeAtomStringFromAdapters(StringTypeAdapters ...adapters)
         constexpr size_t maxLengthToUseStackVariable = 64;
         if (length < maxLengthToUseStackVariable) {
             if (areAllAdapters8Bit) {
-                std::array<LChar, maxLengthToUseStackVariable> buffer;
-                stringTypeAdapterAccumulator(std::span<LChar> { buffer }, adapters...);
-                return std::span<const LChar> { buffer }.first(length);
+                LChar buffer[maxLengthToUseStackVariable];
+                stringTypeAdapterAccumulator(buffer, adapters...);
+                return std::span<const LChar> { buffer, length };
             }
-            std::array<UChar, maxLengthToUseStackVariable> buffer;
-            stringTypeAdapterAccumulator(std::span<UChar> { buffer }, adapters...);
-            return std::span<const UChar> { buffer }.first(length);
+            UChar buffer[maxLengthToUseStackVariable];
+            stringTypeAdapterAccumulator(buffer, adapters...);
+            return std::span<const UChar> { buffer, length };
         }
         return tryMakeStringImplFromAdaptersInternal(length, areAllAdapters8Bit, adapters...).get();
     }
@@ -171,3 +172,5 @@ using WTF::makeStringByInserting;
 using WTF::tryMakeAtomString;
 using WTF::tryMakeString;
 using WTF::SerializeUsingMakeString;
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

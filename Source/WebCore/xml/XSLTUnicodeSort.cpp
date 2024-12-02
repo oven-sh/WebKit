@@ -36,8 +36,6 @@
 #include <wtf/Vector.h>
 #include <wtf/unicode/Collator.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // Based on default implementation from libxslt 1.1.22 and xsltICUSort.c example.
@@ -265,7 +263,5 @@ void xsltUnicodeSortFunction(xsltTransformContextPtr ctxt, xmlNodePtr *sorts, in
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

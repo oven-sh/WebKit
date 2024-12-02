@@ -34,7 +34,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-#if !PLATFORM(GTK) && (!PLATFORM(WPE) || !ENABLE(WPE_PLATFORM))
+#if !PLATFORM(GTK)
 
 SystemSettingsManagerProxy::SystemSettingsManagerProxy() = default;
 
@@ -108,7 +108,7 @@ bool SystemSettingsManagerProxy::enableAnimations() const
     return true;
 }
 
-#endif // !PLATFORM(GTK) && (!PLATFORM(WPE) || !ENABLE(WPE_PLATFORM))
+#endif // !PLATFORM(GTK)
 
 void SystemSettingsManagerProxy::initialize()
 {

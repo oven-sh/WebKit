@@ -48,7 +48,7 @@ def callfunc(obj, method_name, *args, **kwargs):
 
 class WebDriverTests():
 
-    def __init__(self, browser_path, webdriver_path, platform_name, number_retries):
+    def __init__(self, browser_path, webdriver_path, platform_name):
         self.started = False
         if platform_name == 'gtk':
             from selenium.webdriver import WebKitGTKOptions as WebKitOptions
@@ -68,7 +68,6 @@ class WebDriverTests():
         service = Service(executable_path=webdriver_path, service_args=['--host=127.0.0.1'])
         self.driver = WebKitDriver(options=options, service=service)
         self.driver.maximize_window()
-        self.number_retries = max(number_retries, 1)
         self.started = True
 
     def __del__(self):
@@ -245,14 +244,11 @@ class WebDriverTests():
             return False
 
     def do_test(self, test_name, test_url):
-        for i in range(1, self.number_retries + 1):
-            if callfunc(self, test_name, test_url):
-                print(f'PASS [try:{i}]: {test_name} {test_url}')
-                return 0
-            else:
-                print(f'FAIL [try:{i}]: {test_name} {test_url}')
-        print(f'Number of maximum retries reached: {self.number_retries}')
-        print(f'FAIL [ALL RETRIES]: {test_name} {test_url}')
+        retval = callfunc(self, test_name, test_url)
+        if retval:
+            print(f'PASS: {test_name} {test_url}')
+            return 0
+        print(f'FAIL: {test_name}')
         return 1
 
     def do_local_test(self, test_name):
@@ -264,7 +260,7 @@ class WebDriverTests():
         return self.do_test(test_name, html_test_url)
 
 
-def run_all_tests(bundle_dir, platform_name, number_retries):
+def run_all_tests(bundle_dir, platform_name):
     assert (platform_name in ['gtk', 'wpe'])
     if not os.path.isdir(bundle_dir):
         raise ValueError(f'{bundle_dir} is not a valid directory')
@@ -274,30 +270,25 @@ def run_all_tests(bundle_dir, platform_name, number_retries):
     for binary_path in [browser_path, webdriver_path]:
         if not (os.path.isfile(binary_path) and os.access(binary_path, os.X_OK)):
             raise ValueError(f'Can not find an executable at: {binary_path}')
-    tester = WebDriverTests(browser_path, webdriver_path, platform_name, number_retries)
+    tester = WebDriverTests(browser_path, webdriver_path, platform_name)
     total_tests_failed = 0
     for test in ['test_dynamic_rendering', 'test_video_playback', 'test_css_animations', 'test_webgl_support', 'test_webgl_rainbow']:
         total_tests_failed += tester.do_local_test(test)
     for bad_ssl_url in ['https://expired.badssl.com/', 'https://wrong.host.badssl.com/', 'https://self-signed.badssl.com/', 'https://untrusted-root.badssl.com/']:
         total_tests_failed += tester.do_test('test_ssl_errors', bad_ssl_url)
     total_tests_failed += tester.do_test('test_wasm_doom_load', 'https://people.igalia.com/clopez/wkbug/wasm/doom/index.html')
-    if total_tests_failed == 0:
-        print('PASSED all tests: OK')
-    elif total_tests_failed == 1:
-        print(f'FAILED 1 test that was retried {number_retries} times')
-    else:
-        print(f'FAILED a total of {total_tests_failed} tests each one retried {number_retries} times')
+    if total_tests_failed > 0:
+        print(f'FAILED a total of {total_tests_failed} tests')
     return total_tests_failed
+
 
 def main():
     parser = argparse.ArgumentParser('usage: %prog [options]')
     parser.add_argument('--platform', dest='platform', choices=['gtk', 'wpe'], required=True,
                         help='The WebKit port to test the bundle')
-    parser.add_argument('--number-retries-test', dest='number_retries', default=3, type=int,
-                        help='The number of retries per test before marking it as a failure.')
     parser.add_argument('bundle_dir', help='Directory path where the bundle is uncompressed.')
     options = parser.parse_args()
-    return run_all_tests(options.bundle_dir, options.platform, options.number_retries)
+    return run_all_tests(options.bundle_dir, options.platform)
 
 
 if __name__ == '__main__':

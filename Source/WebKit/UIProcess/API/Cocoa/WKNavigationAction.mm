@@ -159,11 +159,6 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
     return WebKit::WebIOSEventFactory::toUIKeyModifierFlags(_navigationAction->modifiers());
 }
 
-- (UIEventButtonMask)buttonNumber
-{
-    return WebKit::WebIOSEventFactory::toUIEventButtonMask(_navigationAction->mouseButton());
-}
-
 #endif
 
 #pragma mark WKObject protocol implementation

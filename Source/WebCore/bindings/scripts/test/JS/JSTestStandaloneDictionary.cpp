@@ -42,7 +42,6 @@
 #include <wtf/SortedArrayMap.h>
 
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -356,7 +355,7 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 
 String convertEnumerationToString(TestStandaloneDictionary::EnumInStandaloneDictionaryFile enumerationValue)
 {
-    static const std::array<NeverDestroyed<String>, 2> values {
+    static const NeverDestroyed<String> values[] = {
         MAKE_STATIC_STRING_IMPL("enumValue1"),
         MAKE_STATIC_STRING_IMPL("enumValue2"),
     };
@@ -373,9 +372,9 @@ template<> JSString* convertEnumerationToJS(VM& vm, TestStandaloneDictionary::En
 
 template<> std::optional<TestStandaloneDictionary::EnumInStandaloneDictionaryFile> parseEnumerationFromString<TestStandaloneDictionary::EnumInStandaloneDictionaryFile>(const String& stringValue)
 {
-    static constexpr std::array<std::pair<ComparableASCIILiteral, TestStandaloneDictionary::EnumInStandaloneDictionaryFile>, 2> mappings {
-        std::pair<ComparableASCIILiteral, TestStandaloneDictionary::EnumInStandaloneDictionaryFile> { "enumValue1"_s, TestStandaloneDictionary::EnumInStandaloneDictionaryFile::EnumValue1 },
-        std::pair<ComparableASCIILiteral, TestStandaloneDictionary::EnumInStandaloneDictionaryFile> { "enumValue2"_s, TestStandaloneDictionary::EnumInStandaloneDictionaryFile::EnumValue2 },
+    static constexpr std::pair<ComparableASCIILiteral, TestStandaloneDictionary::EnumInStandaloneDictionaryFile> mappings[] = {
+        { "enumValue1", TestStandaloneDictionary::EnumInStandaloneDictionaryFile::EnumValue1 },
+        { "enumValue2", TestStandaloneDictionary::EnumInStandaloneDictionaryFile::EnumValue2 },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))
@@ -394,6 +393,5 @@ template<> ASCIILiteral expectedEnumerationValues<TestStandaloneDictionary::Enum
 }
 
 } // namespace WebCore
-
 
 #endif // ENABLE(Condition1)

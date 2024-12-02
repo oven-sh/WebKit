@@ -304,9 +304,9 @@ LayoutUnit BlockFormattingContext::usedContentHeight() const
     }
 
     auto floatingContext = FloatingContext { root(), layoutState(), formattingState().placedFloats() };
-    if (auto floatTop = floatingContext.placedFloats().highestPositionOnBlockAxis()) {
+    if (auto floatTop = floatingContext.top()) {
         top = std::min(*floatTop, top.value_or(*floatTop));
-        auto floatBottom = *floatingContext.placedFloats().lowestPositionOnBlockAxis();
+        auto floatBottom = *floatingContext.bottom();
         bottom = std::max(floatBottom, bottom.value_or(floatBottom));
     }
     return *bottom - *top;
@@ -336,29 +336,29 @@ std::optional<LayoutUnit> BlockFormattingContext::usedAvailableWidthForFloatAvoi
     };
 
     auto floatConstraintsInContainingBlockCoordinate = [&] (auto floatConstraints) {
-        if (!floatConstraints.start && !floatConstraints.end)
+        if (!floatConstraints.left && !floatConstraints.right)
             return FloatingContext::Constraints { };
         auto offset = LayoutSize { };
         for (auto& ancestor : containingBlockChainWithinFormattingContext(layoutBox, root()))
             offset += toLayoutSize(BoxGeometry::borderBoxTopLeft(geometryForBox(ancestor)));
-        if (floatConstraints.start)
-            floatConstraints.start = PointInContextRoot { *floatConstraints.start - offset };
-        if (floatConstraints.end)
-            floatConstraints.end = PointInContextRoot { *floatConstraints.end - offset };
+        if (floatConstraints.left)
+            floatConstraints.left = PointInContextRoot { *floatConstraints.left - offset };
+        if (floatConstraints.right)
+            floatConstraints.right = PointInContextRoot { *floatConstraints.right - offset };
         return floatConstraints;
     };
 
     // FIXME: Check if the non-yet-computed height affects this computation - and whether we have to resolve it at a later point.
     auto logicalTop = logicalTopInFormattingContextRootCoordinate(layoutBox);
     auto constraints = floatConstraintsInContainingBlockCoordinate(floatingContext.constraints(logicalTop, logicalTop, FloatingContext::MayBeAboveLastFloat::No));
-    if (!constraints.start && !constraints.end)
+    if (!constraints.left && !constraints.right)
         return { };
     // Shrink the available space if the floats are actually intruding at this vertical position.
     auto availableWidth = constraintsPair.containingBlock.horizontal().logicalWidth;
-    if (constraints.start)
-        availableWidth -= constraints.start->x;
-    if (constraints.end)
-        availableWidth -= std::max(0_lu, constraintsPair.containingBlock.horizontal().logicalRight() - constraints.end->x);
+    if (constraints.left)
+        availableWidth -= constraints.left->x;
+    if (constraints.right)
+        availableWidth -= std::max(0_lu, constraintsPair.containingBlock.horizontal().logicalRight() - constraints.right->x);
     return availableWidth;
 }
 
@@ -455,7 +455,7 @@ void BlockFormattingContext::computeVerticalPositionForFloatClear(const Floating
     if (floatingContext.isEmpty())
         return;
     auto& boxGeometry = formattingState().boxGeometry(layoutBox);
-    auto verticalPositionAndClearance = floatingContext.blockAxisPositionWithClearance(layoutBox, boxGeometry);
+    auto verticalPositionAndClearance = floatingContext.verticalPositionWithClearance(layoutBox, boxGeometry);
     if (!verticalPositionAndClearance)
         return;
 

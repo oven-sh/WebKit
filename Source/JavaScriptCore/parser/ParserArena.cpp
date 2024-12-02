@@ -33,8 +33,6 @@
 #include "VMTrapsInlines.h"
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(IdentifierArena);
@@ -127,5 +125,3 @@ const Identifier& IdentifierArena::makePrivateIdentifier(VM& vm, ASCIILiteral pr
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

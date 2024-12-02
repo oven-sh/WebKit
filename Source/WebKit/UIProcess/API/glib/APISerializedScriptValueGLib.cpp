@@ -45,15 +45,11 @@ static constexpr auto sharedJSContextMaxIdleTime = 10_s;
 
 class SharedJSContext {
 public:
-    static SharedJSContext& singleton()
+    SharedJSContext()
+        : m_timer(RunLoop::main(), this, &SharedJSContext::releaseContextIfNecessary)
     {
-        static NeverDestroyed<SharedJSContext> sharedContext;
-        return sharedContext.get();
+        m_timer.setPriority(RunLoopSourcePriority::ReleaseUnusedResourcesTimer);
     }
-
-    // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
 
     JSCContext* ensureContext()
     {
@@ -82,22 +78,20 @@ public:
     }
 
 private:
-    friend class NeverDestroyed<SharedJSContext>;
-
-    SharedJSContext()
-        : m_timer(RunLoop::main(), this, &SharedJSContext::releaseContextIfNecessary)
-    {
-        m_timer.setPriority(RunLoopSourcePriority::ReleaseUnusedResourcesTimer);
-    }
-
     GRefPtr<JSCContext> m_context;
     RunLoop::Timer m_timer;
     MonotonicTime m_lastUseTime;
 };
 
+static SharedJSContext& sharedContext()
+{
+    static NeverDestroyed<SharedJSContext> sharedContext;
+    return sharedContext.get();
+}
+
 JSCContext* SerializedScriptValue::sharedJSCContext()
 {
-    return SharedJSContext::singleton().ensureContext();
+    return sharedContext().ensureContext();
 }
 
 GRefPtr<JSCValue> SerializedScriptValue::deserialize(WebCore::SerializedScriptValue& serializedScriptValue)

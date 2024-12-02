@@ -28,7 +28,6 @@
 
 #include "AXObjectCache.h"
 #include "CSSPrimitiveValueMappings.h"
-#include "CaretRectComputation.h"
 #include "ChromeClient.h"
 #include "CommonAtomStrings.h"
 #include "DocumentInlines.h"
@@ -691,7 +690,7 @@ void HTMLTextFormControlElement::setInnerTextValue(String&& value)
             }
 #endif
             if (AXObjectCache* cache = document().existingAXObjectCache())
-                cache->postNotification(this, AXNotification::ValueChanged, PostTarget::ObservableParent);
+                cache->postNotification(this, AXObjectCache::AXValueChanged, PostTarget::ObservableParent);
         }
 #endif
 

@@ -25,8 +25,6 @@
 #include "CSSValueKeywords.h"
 #include <wtf/Vector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 class StylePropertyShorthand {
@@ -72,5 +70,3 @@ unsigned indexOfShorthandForLonghand(CSSPropertyID, const StylePropertyShorthand
 namespace WTF {
 template<> inline size_t containerSize(const WebCore::StylePropertyShorthand& container) { return container.length(); }
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

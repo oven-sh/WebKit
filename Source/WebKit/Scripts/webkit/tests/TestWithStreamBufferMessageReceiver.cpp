@@ -42,8 +42,12 @@ void TestWithStreamBuffer::didReceiveMessage(IPC::Connection& connection, IPC::D
     if (decoder.messageName() == Messages::TestWithStreamBuffer::SendStreamBuffer::name())
         return IPC::handleMessage<Messages::TestWithStreamBuffer::SendStreamBuffer>(connection, decoder, this, &TestWithStreamBuffer::sendStreamBuffer);
     UNUSED_PARAM(connection);
-    RELEASE_LOG_ERROR(IPC, "Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
-    decoder.markInvalid();
+    UNUSED_PARAM(decoder);
+#if ENABLE(IPC_TESTING_API)
+    if (connection.ignoreInvalidMessageForTesting())
+        return;
+#endif // ENABLE(IPC_TESTING_API)
+    ASSERT_NOT_REACHED_WITH_MESSAGE("Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
 }
 
 } // namespace WebKit

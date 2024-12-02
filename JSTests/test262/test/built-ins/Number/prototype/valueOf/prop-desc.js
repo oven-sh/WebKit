@@ -14,8 +14,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Number.prototype, "valueOf", {
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+verifyNotEnumerable(Number.prototype, "valueOf");
+verifyWritable(Number.prototype, "valueOf");
+verifyConfigurable(Number.prototype, "valueOf");

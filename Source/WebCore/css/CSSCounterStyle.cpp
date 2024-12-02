@@ -35,8 +35,6 @@
 #include <wtf/text/TextBreakIterator.h>
 #include <wtf/unicode/CharacterNames.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // https://www.w3.org/TR/css-counter-styles-3/#cyclic-system
@@ -375,15 +373,15 @@ String CSSCounterStyle::initialRepresentation(int value, WritingMode writingMode
     case CSSCounterStyleDescriptors::System::DisclosureOpen:
         return counterForSystemDisclosureOpen(writingMode);
     case CSSCounterStyleDescriptors::System::SimplifiedChineseInformal:
-        return counterForSystemSimplifiedChineseInformal(value);
+        return CSSCounterStyle::counterForSystemSimplifiedChineseInformal(value);
     case CSSCounterStyleDescriptors::System::SimplifiedChineseFormal:
-        return counterForSystemSimplifiedChineseFormal(value);
+        return CSSCounterStyle::counterForSystemSimplifiedChineseFormal(value);
     case CSSCounterStyleDescriptors::System::TraditionalChineseInformal:
-        return counterForSystemTraditionalChineseInformal(value);
+        return CSSCounterStyle::counterForSystemTraditionalChineseInformal(value);
     case CSSCounterStyleDescriptors::System::TraditionalChineseFormal:
-        return counterForSystemTraditionalChineseFormal(value);
+        return CSSCounterStyle::counterForSystemTraditionalChineseFormal(value);
     case CSSCounterStyleDescriptors::System::EthiopicNumeric:
-        return counterForSystemEthiopicNumeric(value);
+        return CSSCounterStyle::counterForSystemEthiopicNumeric(value);
     case CSSCounterStyleDescriptors::System::Extends:
         // CounterStyle with extends system should have been promoted to another system at this point
         ASSERT_NOT_REACHED();
@@ -526,5 +524,3 @@ void CSSCounterStyle::extendAndResolve(const CSSCounterStyle& extendedCounterSty
         setSpeakAs(extendedCounterStyle.speakAs());
 }
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

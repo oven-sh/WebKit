@@ -147,8 +147,7 @@ void RuleSet::addRule(RuleData&& ruleData, CascadeLayerIdentifier cascadeLayerId
         if (identifier) {
             auto oldSize = container.size();
             container.grow(m_ruleCount);
-            auto newlyAllocated = container.mutableSpan().subspan(oldSize);
-            std::fill(newlyAllocated.begin(), newlyAllocated.end(), 0);
+            std::fill(container.begin() + oldSize, container.end(), 0);
             container.last() = identifier;
         }
     };
@@ -455,7 +454,7 @@ std::optional<DynamicMediaQueryEvaluationChanges> RuleSet::evaluateDynamicMediaQ
         return ruleSet;
     }).iterator->value;
 
-    return { { DynamicMediaQueryEvaluationChanges::Type::InvalidateStyle, { { ruleSet.copyRef() } } } };
+    return { { DynamicMediaQueryEvaluationChanges::Type::InvalidateStyle, { ruleSet.copyRef() } } };
 }
 
 RuleSet::CollectedMediaQueryChanges RuleSet::evaluateDynamicMediaQueryRules(const MQ::MediaQueryEvaluator& evaluator, size_t startIndex)

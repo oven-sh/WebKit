@@ -30,21 +30,23 @@
 #include "Logging.h"
 #include "MessageFlags.h"
 #include <stdio.h>
-#include <wtf/MallocSpan.h>
-#include <wtf/ObjectIdentifier.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace IPC {
 
-static MallocSpan<uint8_t> copyBuffer(std::span<const uint8_t> buffer)
+static uint8_t* copyBuffer(std::span<const uint8_t> buffer)
 {
-    auto bufferCopy = MallocSpan<uint8_t>::tryMalloc(buffer.size());
-    if (!bufferCopy) {
-        RELEASE_LOG_FAULT(IPC, "Decoder::copyBuffer: tryMalloc(%lu) failed", buffer.size());
-        return { };
+    uint8_t* bufferCopy;
+    const size_t bufferSize = buffer.size_bytes();
+    if (!tryFastMalloc(bufferSize).getValue(bufferCopy)) {
+        RELEASE_LOG_FAULT(IPC, "Decoder::copyBuffer: tryFastMalloc(%lu) failed", bufferSize);
+        return nullptr;
     }
-    memcpySpan(bufferCopy.mutableSpan(), buffer);
+
+    memcpy(bufferCopy, buffer.data(), bufferSize);
     return bufferCopy;
 }
 
@@ -52,9 +54,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Decoder);
 
 std::unique_ptr<Decoder> Decoder::create(std::span<const uint8_t> buffer, Vector<Attachment>&& attachments)
 {
-    auto bufferCopy = copyBuffer(buffer);
-    auto bufferCopySpan = bufferCopy.span();
-    return Decoder::create(bufferCopySpan, [bufferCopy = WTFMove(bufferCopy)](auto) { }, WTFMove(attachments)); // NOLINT
+    return Decoder::create({ copyBuffer(buffer), buffer.size() }, [](auto buffer) { fastFree(const_cast<uint8_t*>(buffer.data())); }, WTFMove(attachments)); // NOLINT
 }
 
 std::unique_ptr<Decoder> Decoder::create(std::span<const uint8_t> buffer, BufferDeallocator&& bufferDeallocator, Vector<Attachment>&& attachments)
@@ -95,11 +95,6 @@ Decoder::Decoder(std::span<const uint8_t> buffer, BufferDeallocator&& bufferDeal
     auto destinationID = decode<uint64_t>();
     if (UNLIKELY(!destinationID))
         return;
-    // 0 is a valid destinationID but we can at least reject -1 which is the HashTable deleted value.
-    if (*destinationID && !WTF::ObjectIdentifierGenericBase<uint64_t>::isValidIdentifier(*destinationID)) {
-        markInvalid();
-        return;
-    }
     m_destinationID = WTFMove(*destinationID);
     if (messageIsSync(m_messageName)) {
         auto syncRequestID = decode<SyncRequestID>();
@@ -115,12 +110,6 @@ Decoder::Decoder(std::span<const uint8_t> stream, uint64_t destinationID)
     , m_bufferDeallocator { nullptr }
     , m_destinationID { destinationID }
 {
-    // 0 is a valid destinationID but we can at least reject -1 which is the HashTable deleted value.
-    if (destinationID && !WTF::ObjectIdentifierGenericBase<uint64_t>::isValidIdentifier(destinationID)) {
-        markInvalid();
-        return;
-    }
-
     auto messageName = decode<MessageName>();
     if (UNLIKELY(!messageName))
         return;
@@ -191,3 +180,5 @@ std::optional<Attachment> Decoder::takeLastAttachment()
 }
 
 } // namespace IPC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

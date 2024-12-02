@@ -44,9 +44,9 @@ static String localeInfo(LCTYPE localeType, const String& fallback)
     int localeChars = GetLocaleInfo(langID, localeType, nullptr, 0);
     if (!localeChars)
         return fallback;
-    std::span<UChar> localeNameBuf;
+    UChar* localeNameBuf;
     String localeName = String::createUninitialized(localeChars, localeNameBuf);
-    localeChars = GetLocaleInfo(langID, localeType, wcharFrom(localeNameBuf.data()), localeChars);
+    localeChars = GetLocaleInfo(langID, localeType, wcharFrom(localeNameBuf), localeChars);
     if (!localeChars)
         return fallback;
     if (localeName.isEmpty())

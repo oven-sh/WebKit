@@ -22,12 +22,12 @@
 </style>
 </head>
 <script>
-    async function doTest() {
+    function doTest() {
         if (window.testRunner)
             testRunner.dumpAsText(true);
         window.scrollTo(0, 2000);
         if (window.testRunner)
-            await testRunner.displayAndTrackRepaints();
+            testRunner.displayAndTrackRepaints();
         window.scrollTo(0, 1800);
     }
     window.addEventListener("load", doTest, false);

@@ -4,19 +4,17 @@
     img {
         width: 200px;
         height: 200px;
-        position: absolute;
     }
-    div.image-container {
+    div {
         width: 200px;
-        height: 200px;
         position: relative;
     }
 </style>
 <body>
-    <div class="image-container">
+    <div>
         <img controls src="resources/spatial.heic">
     </div>
-    <div class="image-container">
+    <div>
         <template shadowrootmode="open">
             <img style="width: 200px; height: 200px" controls src="resources/spatial.heic">
         </template>

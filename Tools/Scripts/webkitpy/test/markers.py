@@ -28,9 +28,6 @@ except ImportError:
     pass
 
 
-_running_under_pytest = False
-
-
 def xfail(*args, **kwargs):
     """a pytest.mark.xfail-like wrapper for unittest.expectedFailure
 
@@ -38,17 +35,14 @@ def xfail(*args, **kwargs):
 
     Note that this doesn't support raises or strict"""
 
-    if _running_under_pytest:
-        return pytest.mark.xfail(*args, **kwargs)
-
     # shortcut if we're being called as a decorator ourselves
     if len(args) == 1 and callable(args[0]) and not kwargs:
         return unittest.expectedFailure(args[0])
 
     def decorator(func):
         conditions = args
-        reason = kwargs.get("reason", None)
-        run = kwargs.get("run", True)
+        reason = kwargs.get(reason, None)
+        run = kwargs.get(run, True)
         if "raises" in kwargs:
             raise TypeError("xfail(raises=...) is not supported")
         if "strict" in kwargs:
@@ -66,9 +60,10 @@ def xfail(*args, **kwargs):
 
 
 def slow(func):
-    if _running_under_pytest:
+    try:
         return pytest.mark.slow(func)
-    return func
+    except NameError:
+        return func
 
 
 skip = unittest.skip

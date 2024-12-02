@@ -41,8 +41,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC::Wasm {
 
 WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(Callee);
@@ -67,8 +65,8 @@ Callee::Callee(Wasm::CompilationMode compilationMode)
 Callee::Callee(Wasm::CompilationMode compilationMode, FunctionSpaceIndex index, std::pair<const Name*, RefPtr<NameSection>>&& name)
     : NativeCallee(NativeCallee::Category::Wasm, ImplementationVisibility::Public)
     , m_compilationMode(compilationMode)
-    , m_index(index)
     , m_indexOrName(index, WTFMove(name))
+    , m_index(index)
 {
 }
 
@@ -527,7 +525,7 @@ void OptimizingJITCallee::linkExceptionHandlers(Vector<UnlinkedHandlerInfo> unli
 
 BBQCallee::~BBQCallee()
 {
-    if (Options::freeRetiredWasmCode() && m_osrEntryCallee) {
+    if (m_osrEntryCallee) {
         ASSERT(m_osrEntryCallee->hasOneRef());
         m_osrEntryCallee->reportToVMsForDestruction();
     }
@@ -536,7 +534,5 @@ BBQCallee::~BBQCallee()
 #endif
 
 } // namespace JSC::Wasm
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

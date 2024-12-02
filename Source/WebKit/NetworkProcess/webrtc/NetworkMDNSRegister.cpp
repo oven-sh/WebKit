@@ -47,16 +47,6 @@ NetworkMDNSRegister::NetworkMDNSRegister(NetworkConnectionToWebProcess& connecti
 
 NetworkMDNSRegister::~NetworkMDNSRegister() = default;
 
-void NetworkMDNSRegister::ref() const
-{
-    m_connection->ref();
-}
-
-void NetworkMDNSRegister::deref() const
-{
-    m_connection->deref();
-}
-
 bool NetworkMDNSRegister::hasRegisteredName(const String& name) const
 {
     return m_registeredNames.contains(name);
@@ -114,7 +104,7 @@ static void registerMDNSNameCallback(DNSServiceRef service, DNSRecordRef record,
     MDNS_RELEASE_LOG_IN_CALLBACK(request->sessionID, "registerMDNSNameCallback with error %d", errorCode);
 
     if (errorCode) {
-        request->connection->protectedMDNSRegister()->closeAndForgetService(service);
+        request->connection->mdnsRegister().closeAndForgetService(service);
         request->completionHandler(request->name, WebCore::MDNSRegisterError::DNSSD);
         return;
     }

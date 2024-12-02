@@ -39,7 +39,7 @@ struct PathElement {
         CloseSubpath
     };
     Type type;
-    std::array<FloatPoint, 3> points;
+    FloatPoint points[3];
 };
 
 using PathElementApplier = Function<void(const PathElement&)>;

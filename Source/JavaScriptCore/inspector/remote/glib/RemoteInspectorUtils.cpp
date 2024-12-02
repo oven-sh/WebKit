@@ -31,7 +31,7 @@
 #include <gio/gio.h>
 #include <mutex>
 #include <wtf/SHA1.h>
-#include <wtf/glib/GSpanExtras.h>
+#include <wtf/glib/GUniquePtr.h>
 
 #define INSPECTOR_BACKEND_COMMANDS_PATH "/org/webkit/inspector/UserInterface/Protocol/InspectorBackendCommands.js"
 
@@ -67,10 +67,11 @@ const CString& backendCommandsHash()
     static CString hexDigest;
     if (hexDigest.isNull()) {
         auto bytes = backendCommands();
-        auto bytesSpan = span(bytes);
-        ASSERT(bytesSpan.size());
+        size_t dataSize;
+        gconstpointer data = g_bytes_get_data(bytes.get(), &dataSize);
+        ASSERT(dataSize);
         SHA1 sha1;
-        sha1.addBytes(bytesSpan);
+        sha1.addBytes(std::span { static_cast<const uint8_t*>(data), dataSize });
         hexDigest = sha1.computeHexDigest();
     }
     return hexDigest;

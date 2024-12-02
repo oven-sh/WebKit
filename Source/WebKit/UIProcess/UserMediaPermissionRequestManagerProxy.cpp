@@ -62,6 +62,8 @@
 #include <WebCore/ScreenCaptureKitCaptureSource.h>
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -374,23 +376,23 @@ void UserMediaPermissionRequestManagerProxy::didCommitLoadForFrame(FrameIdentifi
     m_frameEphemeralHashSalts.remove(frameID);
 }
 
-void UserMediaPermissionRequestManagerProxy::resetAccess(WebFrameProxy* frame)
+void UserMediaPermissionRequestManagerProxy::resetAccess(std::optional<FrameIdentifier> frameID)
 {
-    ALWAYS_LOG(LOGIDENTIFIER, frame ? frame->frameID().object().toUInt64() : 0);
+    ALWAYS_LOG(LOGIDENTIFIER, frameID ? frameID->object().toUInt64() : 0);
 
-    if (RefPtr currentUserMediaRequest = m_currentUserMediaRequest; currentUserMediaRequest && (!frame || m_currentUserMediaRequest->frameID() == frame->frameID())) {
+    if (RefPtr currentUserMediaRequest = m_currentUserMediaRequest; currentUserMediaRequest && (!frameID || m_currentUserMediaRequest->frameID() == *frameID)) {
         // Avoid starting pending requests after denying current request.
         auto pendingUserMediaRequests = std::exchange(m_pendingUserMediaRequests, { });
         currentUserMediaRequest->deny(UserMediaPermissionRequestProxy::UserMediaAccessDenialReason::OtherFailure);
         m_pendingUserMediaRequests = std::exchange(pendingUserMediaRequests, { });
     }
 
-    if (frame) {
-        m_grantedRequests.removeAllMatching([frame](const auto& grantedRequest) {
-            return grantedRequest->mainFrameID() == frame->frameID() && !grantedRequest->userMediaDocumentSecurityOrigin().isSameOriginAs(SecurityOrigin::create(frame->url()).get());
+    if (frameID) {
+        m_grantedRequests.removeAllMatching([frameID](const auto& grantedRequest) {
+            return grantedRequest->mainFrameID() == frameID;
         });
-        m_grantedFrames.remove(frame->frameID());
-        m_frameEphemeralHashSalts.remove(frame->frameID());
+        m_grantedFrames.remove(*frameID);
+        m_frameEphemeralHashSalts.remove(*frameID);
     } else {
         m_grantedRequests.clear();
         m_grantedFrames.clear();
@@ -894,6 +896,14 @@ bool UserMediaPermissionRequestManagerProxy::wasGrantedVideoOrAudioAccess(FrameI
     return m_grantedFrames.contains(frameID);
 }
 
+static inline bool haveMicrophoneDevice(const Vector<CaptureDeviceWithCapabilities>& devices, const String& deviceID)
+{
+    return std::any_of(devices.begin(), devices.end(), [&deviceID](auto& deviceWithCapabilities) {
+        auto& device = deviceWithCapabilities.device;
+        return device.persistentId() == deviceID && device.type() == CaptureDevice::DeviceType::Microphone;
+    });
+}
+
 #if !USE(GLIB)
 void UserMediaPermissionRequestManagerProxy::platformGetMediaStreamDevices(bool revealIdsAndLabels, CompletionHandler<void(Vector<CaptureDeviceWithCapabilities>&&)>&& completionHandler)
 {
@@ -949,6 +959,10 @@ void UserMediaPermissionRequestManagerProxy::computeFilteredDeviceList(bool reve
                 if (device.type() == WebCore::CaptureDevice::DeviceType::Microphone && ++microphoneCount > defaultMaximumMicrophoneCount)
                     continue;
                 if (device.type() != WebCore::CaptureDevice::DeviceType::Camera && device.type() != WebCore::CaptureDevice::DeviceType::Microphone)
+                    continue;
+            } else {
+                // We only expose speakers tied to a microphone for the moment.
+                if (device.type() == WebCore::CaptureDevice::DeviceType::Speaker && !haveMicrophoneDevice(devicesWithCapabilities, device.groupId()))
                     continue;
             }
 
@@ -1147,7 +1161,7 @@ const Logger& UserMediaPermissionRequestManagerProxy::logger() const
 
 String convertEnumerationToString(UserMediaPermissionRequestManagerProxy::RequestAction enumerationValue)
 {
-    static const std::array<NeverDestroyed<String>, 3> values = {
+    static const NeverDestroyed<String> values[] = {
         MAKE_STATIC_STRING_IMPL("Deny"),
         MAKE_STATIC_STRING_IMPL("Grant"),
         MAKE_STATIC_STRING_IMPL("Prompt"),
@@ -1155,7 +1169,10 @@ String convertEnumerationToString(UserMediaPermissionRequestManagerProxy::Reques
     static_assert(static_cast<size_t>(UserMediaPermissionRequestManagerProxy::RequestAction::Deny) == 0, "UserMediaPermissionRequestManagerProxy::RequestAction::Deny is not 0 as expected");
     static_assert(static_cast<size_t>(UserMediaPermissionRequestManagerProxy::RequestAction::Grant) == 1, "UserMediaPermissionRequestManagerProxy::RequestAction::Grant is not 1 as expected");
     static_assert(static_cast<size_t>(UserMediaPermissionRequestManagerProxy::RequestAction::Prompt) == 2, "UserMediaPermissionRequestManagerProxy::RequestAction::Prompt is not 2 as expected");
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -70,7 +70,8 @@ public:
     }
 
     void dump(PrintStream&) const;
-    void forEachFrame(NOESCAPE const std::invocable<int, void*, const char*> auto&) const;
+    template<typename Functor> // void Functor(int frameNumber, void* stackFrame, const char* name)
+    void forEachFrame(Functor) const;
     WTF_EXPORT_PRIVATE String toString() const;
 
 private:
@@ -115,7 +116,8 @@ public:
 
     WTF_EXPORT_PRIVATE static std::optional<DemangleEntry> demangle(void*);
 
-    void forEach(NOESCAPE const std::invocable<int, void*, const char*> auto& functor) const
+    template<typename Functor>
+    void forEach(Functor functor) const
     {
 #if USE(LIBBACKTRACE)
         char** symbols = symbolize(m_stack.data(), m_stack.size());
@@ -186,7 +188,8 @@ inline void StackTrace::dump(PrintStream& out) const
     StackTracePrinter { *this }.dump(out);
 }
 
-void StackTrace::forEachFrame(NOESCAPE const std::invocable<int, void*, const char*> auto& functor) const
+template<typename Functor>
+void StackTrace::forEachFrame(Functor functor) const
 {
     StackTraceSymbolResolver { *this }.forEach(functor);
 }

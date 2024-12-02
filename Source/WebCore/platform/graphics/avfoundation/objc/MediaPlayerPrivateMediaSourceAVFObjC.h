@@ -54,7 +54,7 @@ typedef struct OpaqueFigVideoTarget *FigVideoTargetRef;
 namespace WebCore {
 
 class AudioTrackPrivate;
-class CDMSessionAVContentKeySession;
+class CDMSessionMediaSourceAVFObjC;
 class EffectiveRateChangedListener;
 class InbandTextTrackPrivate;
 class MediaSourcePrivateAVFObjC;
@@ -134,8 +134,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     void setCDMSession(LegacyCDMSession*) override;
-    CDMSessionAVContentKeySession* cdmSession() const;
-    void keyAdded() final;
+    CDMSessionMediaSourceAVFObjC* cdmSession() const;
 #endif
 
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -242,6 +241,9 @@ private:
     void maybePurgeLastImage();
     void paint(GraphicsContext&, const FloatRect&) override;
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) override;
+#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+    void willBeAskedToPaintGL() final;
+#endif
     RefPtr<VideoFrame> videoFrameForCurrentTime() final;
     DestinationColorSpace colorSpace() final;
 
@@ -370,7 +372,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     Deque<RetainPtr<id>> m_sizeChangeObservers;
     Timer m_seekTimer;
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
-    WeakPtr<CDMSessionAVContentKeySession> m_session;
+    WeakPtr<CDMSessionMediaSourceAVFObjC> m_session;
 #endif
     MediaPlayer::NetworkState m_networkState;
     MediaPlayer::ReadyState m_readyState;
@@ -383,6 +385,9 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     bool m_isSynchronizerSeeking { false };
     SeekState m_seekState { SeekCompleted };
     mutable bool m_loadingProgressed { false };
+#if !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+    bool m_hasBeenAskedToPaintGL { false };
+#endif
     bool m_hasAvailableVideoFrame { false };
     bool m_allRenderersHaveAvailableSamples { false };
     bool m_visible { false };

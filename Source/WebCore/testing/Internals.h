@@ -31,6 +31,7 @@
 #include "CSSComputedStyleDeclaration.h"
 #include "ContextDestructionObserver.h"
 #include "Cookie.h"
+#include "DocumentMarker.h"
 #include "EpochTimeStamp.h"
 #include "EventTrackingRegions.h"
 #include "ExceptionOr.h"
@@ -144,8 +145,6 @@ class WebAnimation;
 class WebGLRenderingContext;
 class WindowProxy;
 class XMLHttpRequest;
-
-enum class DocumentMarkerType : uint32_t;
 
 #if ENABLE(ENCRYPTED_MEDIA)
 class MediaKeys;
@@ -378,18 +377,8 @@ public:
 
     ExceptionOr<String> viewBaseBackgroundColor();
     ExceptionOr<void> setViewBaseBackgroundColor(const String& colorValue);
-    ExceptionOr<void> setUnderPageBackgroundColorOverride(const String& colorValue);
 
     ExceptionOr<String> documentBackgroundColor();
-
-    ExceptionOr<bool> displayP3Available()
-    {
-#if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3)
-        return true;
-#else
-        return false;
-#endif
-    }
 
     ExceptionOr<void> setPagination(const String& mode, int gap, int pageLength);
     ExceptionOr<uint64_t> lineIndexAfterPageBreak(Element&);
@@ -398,12 +387,12 @@ public:
     ExceptionOr<bool> wasLastChangeUserEdit(Element& textField);
     bool elementShouldAutoComplete(HTMLInputElement&);
     void setAutofilled(HTMLInputElement&, bool enabled);
-    void setAutofilledAndViewable(HTMLInputElement&, bool enabled);
-    void setAutofilledAndObscured(HTMLInputElement&, bool enabled);
+    void setAutoFilledAndViewable(HTMLInputElement&, bool enabled);
+    void setAutoFilledAndObscured(HTMLInputElement&, bool enabled);
     enum class AutoFillButtonType { None, Contacts, Credentials, StrongPassword, CreditCard, Loading };
-    void setAutofillButtonType(HTMLInputElement&, AutoFillButtonType);
-    AutoFillButtonType autofillButtonType(const HTMLInputElement&);
-    AutoFillButtonType lastAutofillButtonType(const HTMLInputElement&);
+    void setShowAutoFillButton(HTMLInputElement&, AutoFillButtonType);
+    AutoFillButtonType autoFillButtonType(const HTMLInputElement&);
+    AutoFillButtonType lastAutoFillButtonType(const HTMLInputElement&);
     Vector<String> recentSearches(const HTMLInputElement&);
     ExceptionOr<void> scrollElementToRect(Element&, int x, int y, int w, int h);
 
@@ -1400,9 +1389,7 @@ public:
 
     ExceptionOr<unsigned> createSleepDisabler(const String& reason, bool display);
     bool destroySleepDisabler(unsigned identifier);
-
-    void setTopDocumentURLForQuirks(const String&);
-
+        
 #if ENABLE(APP_HIGHLIGHTS)
     Vector<String> appHighlightContextMenuItemTitles() const;
     unsigned numberOfAppHighlights();
@@ -1534,10 +1521,10 @@ private:
 
 #if ENABLE(MEDIA_STREAM)
     // CheckedPtr interface
-    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
-    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
-    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
-    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    uint32_t ptrCount() const final { return CanMakeCheckedPtr::ptrCount(); }
+    uint32_t ptrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::ptrCountWithoutThreadCheck(); }
+    void incrementPtrCount() const final { CanMakeCheckedPtr::incrementPtrCount(); }
+    void decrementPtrCount() const final { CanMakeCheckedPtr::decrementPtrCount(); }
 #endif // ENABLE(MEDIA_STREAM)
 
     Document* contextDocument() const;
@@ -1562,7 +1549,7 @@ private:
 
     CachedResource* resourceFromMemoryCache(const String& url);
 
-    bool hasMarkerFor(DocumentMarkerType, int from, int length);
+    bool hasMarkerFor(DocumentMarker::Type, int from, int length);
 
 #if ENABLE(MEDIA_STREAM)
     // RealtimeMediaSourceObserver API
@@ -1583,7 +1570,7 @@ private:
     std::unique_ptr<InspectorStubFrontend> m_inspectorFrontend;
     RefPtr<CacheStorageConnection> m_cacheStorageConnection;
 
-    HashMap<unsigned, std::unique_ptr<WebCore::SleepDisabler>> m_sleepDisablers;
+    UncheckedKeyHashMap<unsigned, std::unique_ptr<WebCore::SleepDisabler>> m_sleepDisablers;
 
     std::unique_ptr<TextIterator> m_textIterator;
 

@@ -38,6 +38,15 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
+namespace WebCore {
+class ScrollableArea;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
+template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::ScrollableArea> : std::true_type { };
+}
+
 namespace WTF {
 class TextStream;
 }
@@ -75,10 +84,10 @@ class ScrollableArea : public CanMakeWeakPtr<ScrollableArea> {
     WTF_MAKE_TZONE_ALLOCATED(ScrollableArea);
 public:
     // CheckedPtr interface
-    virtual uint32_t checkedPtrCount() const = 0;
-    virtual uint32_t checkedPtrCountWithoutThreadCheck() const = 0;
-    virtual void incrementCheckedPtrCount() const = 0;
-    virtual void decrementCheckedPtrCount() const = 0;
+    virtual uint32_t ptrCount() const = 0;
+    virtual uint32_t ptrCountWithoutThreadCheck() const = 0;
+    virtual void incrementPtrCount() const = 0;
+    virtual void decrementPtrCount() const = 0;
 
     virtual bool isScrollView() const { return false; }
     virtual bool isRenderLayer() const { return false; }

@@ -1,4 +1,4 @@
 
 
-PASS entry.sameDocument is properly restored after cross-document back
+FAIL entry.sameDocument is properly restored after cross-document back assert_equals: expected 3 but got 1
 

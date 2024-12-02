@@ -2651,8 +2651,16 @@ WI.undockedTitleAreaHeight = function()
         return 0;
 
     if (WI.Platform.name === "mac") {
-        /* Keep in sync with `--undocked-title-area-height` CSS variable. */
-        return 27 / WI.getZoomFactor();
+        switch (WI.Platform.version.name) {
+        case "monterey":
+        case "big-sur":
+            /* Keep in sync with `--undocked-title-area-height` CSS variable. */
+            return 27 / WI.getZoomFactor();
+
+        case "catalina":
+            /* Keep in sync with `--undocked-title-area-height` CSS variable. */
+            return 22 / WI.getZoomFactor();
+        }
     }
 
     return 0;

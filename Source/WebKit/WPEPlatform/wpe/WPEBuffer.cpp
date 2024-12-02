@@ -65,7 +65,7 @@ enum {
     N_PROPERTIES
 };
 
-static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
+static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
 
 static void wpeBufferSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
@@ -155,7 +155,7 @@ static void wpe_buffer_class_init(WPEBufferClass* bufferClass)
             0, G_MAXINT, 0,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
 }
 
 /**

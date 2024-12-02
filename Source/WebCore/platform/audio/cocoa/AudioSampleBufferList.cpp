@@ -33,8 +33,6 @@
 #include <pal/cf/AudioToolboxSoftLink.h>
 #include <wtf/SetForScope.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 Ref<AudioSampleBufferList> AudioSampleBufferList::create(const CAAudioStreamDescription& format, size_t maximumSampleCount)
@@ -315,5 +313,3 @@ OSStatus AudioSampleBufferList::copyFrom(CARingBuffer& ringBuffer, size_t sample
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -33,8 +33,6 @@
 #import "WKUtilities.h"
 #import <wtf/Assertions.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 void _WKViewSetSuperview (WKViewRef view, WKViewRef superview)
 {
     // Not retained.
@@ -746,7 +744,5 @@ void WKViewSetAutoresizingMask (WKViewRef view, unsigned int mask)
     }    
     view->autoresizingMask = mask;
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(IOS_FAMILY)

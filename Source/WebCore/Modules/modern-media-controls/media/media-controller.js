@@ -98,7 +98,6 @@ class MediaController
         scheduler.flushScheduledLayoutCallbacks();
 
         shadowRoot.addEventListener("resize", this);
-        shadowRoot.addEventListener("fullscreenchange", this);
 
         media.videoTracks.addEventListener("addtrack", this);
         media.videoTracks.addEventListener("removetrack", this);
@@ -257,8 +256,6 @@ class MediaController
             this._updateControlsIfNeeded();
             // We must immediately perform layouts so that we don't lag behind the media layout size.
             scheduler.flushScheduledLayoutCallbacks();
-        } else if (event.type === "fullscreenchange" && event.currentTarget === this.shadowRoot) {
-            this._updateControlsAvailability();
         } else if (event.type === "keydown" && this.isFullscreen && event.key === " ") {
             this.togglePlayback();
             event.preventDefault();
@@ -425,9 +422,6 @@ class MediaController
         }
 
         this._updateControlsAvailability();
-
-        if (this.host?.needsChromeMediaControlsPseudoElement)
-            this.controls.element.setAttribute('useragentpart', '-webkit-media-controls');
     }
 
     _stopPropagationOnClickEvents()

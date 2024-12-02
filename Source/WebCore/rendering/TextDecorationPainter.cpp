@@ -121,23 +121,24 @@ static DashArray translateIntersectionPointsToSkipInkBoundaries(const DashArray&
     
     // Step 1: Make pairs so we can sort based on range starting-point. We dilate the ranges in this step as well.
     Vector<std::pair<float, float>> tuples;
-    for (size_t i = 0; i < intersections.size(); i += 2)
-        tuples.append(std::pair { intersections[i] - dilationAmount, intersections[i + 1] + dilationAmount });
+    for (auto i = intersections.begin(); i != intersections.end(); i++, i++)
+        tuples.append(std::make_pair(*i - dilationAmount, *(i + 1) + dilationAmount));
     std::sort(tuples.begin(), tuples.end(), &compareTuples);
 
     // Step 2: Deal with intersecting ranges.
     Vector<std::pair<float, float>> intermediateTuples;
     if (tuples.size() >= 2) {
-        intermediateTuples.append(tuples.first());
-        for (size_t i = 1; i < tuples.size(); ++i) {
-            auto [secondStart, secondEnd] = tuples[i];
+        intermediateTuples.append(*tuples.begin());
+        for (auto i = tuples.begin() + 1; i != tuples.end(); i++) {
             float& firstEnd = intermediateTuples.last().second;
+            float secondStart = i->first;
+            float secondEnd = i->second;
             if (secondStart <= firstEnd && secondEnd <= firstEnd) {
                 // Ignore this range completely
             } else if (secondStart <= firstEnd)
                 firstEnd = secondEnd;
             else
-                intermediateTuples.append(std::pair { secondStart, secondEnd });
+                intermediateTuples.append(*i);
         }
     } else {
         // XXX(274780): A plain assignment or move here makes Clang generate bad code in LTO builds.
@@ -205,30 +206,26 @@ TextDecorationPainter::TextDecorationPainter(GraphicsContext& context, const Fon
 // Paint text-shadow, underline, overline
 void TextDecorationPainter::paintBackgroundDecorations(const RenderStyle& style, const TextRun& textRun, const BackgroundDecorationGeometry& decorationGeometry, OptionSet<TextDecorationLine> decorationType, const Styles& decorationStyle)
 {
-    auto paintDecoration = [&] (auto decoration, auto underlineStyle, auto& color, auto& rect) {
+    auto paintDecoration = [&] (auto decoration, auto style, auto& color, auto& rect) {
         m_context.setStrokeColor(color);
 
-        auto strokeStyle = textDecorationStyleToStrokeStyle(underlineStyle);
+        auto strokeStyle = textDecorationStyleToStrokeStyle(style);
 
-        if (underlineStyle == TextDecorationStyle::Wavy)
+        if (style == TextDecorationStyle::Wavy)
             strokeWavyTextDecoration(m_context, rect, decorationGeometry.wavyStrokeParameters);
         else if (decoration == TextDecorationLine::Underline || decoration == TextDecorationLine::Overline) {
-            if ((style.textDecorationSkipInk() == TextDecorationSkipInk::Auto || style.textDecorationSkipInk() == TextDecorationSkipInk::All) && m_isHorizontal) {
+            if ((decorationStyle.skipInk == TextDecorationSkipInk::Auto || decorationStyle.skipInk == TextDecorationSkipInk::All) && m_isHorizontal) {
                 if (!m_context.paintingDisabled()) {
                     auto underlineBoundingBox = m_context.computeUnderlineBoundsForText(rect, m_isPrinting);
-                    auto intersections = m_font.dashesForIntersectionsWithRect(textRun, decorationGeometry.textOrigin, underlineBoundingBox);
-                    if (!intersections.isEmpty()) {
-                        auto dilationAmount = std::min(underlineBoundingBox.height(), style.metricsOfPrimaryFont().height() / 5);
-                        auto boundaries = translateIntersectionPointsToSkipInkBoundaries(intersections, dilationAmount, rect.width());
-                        ASSERT(!(boundaries.size() % 2));
-                        // We don't use underlineBoundingBox here because drawLinesForText() will run computeUnderlineBoundsForText() internally.
-                        m_context.drawLinesForText(rect.location(), rect.height(), boundaries, m_isPrinting, underlineStyle == TextDecorationStyle::Double, strokeStyle);
-                    } else
-                    m_context.drawLineForText(rect, m_isPrinting, underlineStyle == TextDecorationStyle::Double, strokeStyle);
+                    DashArray intersections = m_font.dashesForIntersectionsWithRect(textRun, decorationGeometry.textOrigin, underlineBoundingBox);
+                    DashArray boundaries = translateIntersectionPointsToSkipInkBoundaries(intersections, underlineBoundingBox.height(), rect.width());
+                    ASSERT(!(boundaries.size() % 2));
+                    // We don't use underlineBoundingBox here because drawLinesForText() will run computeUnderlineBoundsForText() internally.
+                    m_context.drawLinesForText(rect.location(), rect.height(), boundaries, m_isPrinting, style == TextDecorationStyle::Double, strokeStyle);
                 }
             } else {
                 // FIXME: Need to support text-decoration-skip: none.
-                m_context.drawLineForText(rect, m_isPrinting, underlineStyle == TextDecorationStyle::Double, strokeStyle);
+                m_context.drawLineForText(rect, m_isPrinting, style == TextDecorationStyle::Double, strokeStyle);
             }
         } else
             ASSERT_NOT_REACHED();
@@ -405,6 +402,7 @@ auto TextDecorationPainter::stylesForRenderer(const RenderObject& renderer, Opti
     collectStylesForRenderer(result, renderer, requestedDecorations, false, paintBehavior, pseudoId);
     if (firstLineStyle)
         collectStylesForRenderer(result, renderer, requestedDecorations, true, paintBehavior, pseudoId);
+    result.skipInk = renderer.style().textDecorationSkipInk();
     return result;
 }
 

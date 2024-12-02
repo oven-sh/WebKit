@@ -122,11 +122,6 @@ bool WebEditorClient::shouldRemoveDictationAlternativesAfterEditing() const
     return m_page->shouldRemoveDictationAlternativesAfterEditing();
 }
 
-bool WebEditorClient::shouldDrawVisuallyContiguousBidiSelection() const
-{
-    return m_page->shouldDrawVisuallyContiguousBidiSelection();
-}
-
 } // namespace WebKit
 
 #endif // PLATFORM(IOS_FAMILY)

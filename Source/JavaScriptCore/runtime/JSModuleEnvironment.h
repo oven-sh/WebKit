@@ -30,8 +30,6 @@
 
 #include "JSLexicalEnvironment.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class AbstractModuleRecord;
@@ -85,7 +83,7 @@ private:
 
     WriteBarrierBase<AbstractModuleRecord>& moduleRecordSlot()
     {
-        return *std::bit_cast<WriteBarrierBase<AbstractModuleRecord>*>(std::bit_cast<char*>(this) + offsetOfModuleRecord(symbolTable()));
+        return *bitwise_cast<WriteBarrierBase<AbstractModuleRecord>*>(bitwise_cast<char*>(this) + offsetOfModuleRecord(symbolTable()));
     }
 
     DECLARE_VISIT_CHILDREN;
@@ -98,5 +96,3 @@ inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JS
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

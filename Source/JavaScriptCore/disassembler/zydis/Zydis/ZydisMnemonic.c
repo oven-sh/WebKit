@@ -30,9 +30,6 @@
 
 #include "ZydisMnemonic.h"
 #include "ZydisGeneratedEnumMnemonic.inc"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 /* ============================================================================================== */
 /* Exported functions                                                                             */
@@ -57,7 +54,5 @@ const ZydisShortString* ZydisMnemonicGetStringWrapped(ZydisMnemonic mnemonic)
 }
 
 /* ============================================================================================== */
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ENABLE(ZYDIS) */

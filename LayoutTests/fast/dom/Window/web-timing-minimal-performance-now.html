@@ -15,7 +15,7 @@ function checkTimestamp(previousTimestamp) {
         setTimeout('checkTimestamp(currentTimestamp)', 0);
 }
     
-async function start() {
+function start() {
     if (!window.testRunner)
         return;
 
@@ -26,7 +26,7 @@ async function start() {
         finishJSTest(); }
         , 100);
 
-    await testRunner.displayAndTrackRepaints();
+    window.testRunner.displayAndTrackRepaints();
 }
 
 onload = start();

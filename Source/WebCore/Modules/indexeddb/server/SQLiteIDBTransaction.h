@@ -26,7 +26,6 @@
 #pragma once
 
 #include "IDBError.h"
-#include "IDBIndexIdentifier.h"
 #include "IDBObjectStoreIdentifier.h"
 #include "IDBResourceIdentifier.h"
 #include "IDBTransactionInfo.h"
@@ -63,7 +62,7 @@ public:
     IDBError commit();
     IDBError abort();
 
-    std::unique_ptr<SQLiteIDBCursor> maybeOpenBackingStoreCursor(IDBObjectStoreIdentifier, std::optional<IDBIndexIdentifier>, const IDBKeyRangeData&);
+    std::unique_ptr<SQLiteIDBCursor> maybeOpenBackingStoreCursor(IDBObjectStoreIdentifier, uint64_t indexID, const IDBKeyRangeData&);
     SQLiteIDBCursor* maybeOpenCursor(const IDBCursorInfo&);
 
     void closeCursor(SQLiteIDBCursor&);
@@ -94,7 +93,7 @@ private:
     CheckedRef<SQLiteIDBBackingStore> m_backingStore;
     CheckedPtr<SQLiteDatabase> m_sqliteDatabase;
     std::unique_ptr<SQLiteTransaction> m_sqliteTransaction;
-    HashMap<IDBResourceIdentifier, std::unique_ptr<SQLiteIDBCursor>> m_cursors;
+    UncheckedKeyHashMap<IDBResourceIdentifier, std::unique_ptr<SQLiteIDBCursor>> m_cursors;
     HashSet<SQLiteIDBCursor*> m_backingStoreCursors;
     Vector<std::pair<String, String>> m_blobTemporaryAndStoredFilenames;
     MemoryCompactRobinHoodHashSet<String> m_blobRemovedFilenames;

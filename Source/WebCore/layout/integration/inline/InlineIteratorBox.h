@@ -34,7 +34,6 @@ namespace WebCore {
 class RenderLineBreak;
 class RenderObject;
 class RenderStyle;
-class RenderSVGText;
 
 namespace InlineIterator {
 
@@ -123,10 +122,6 @@ private:
 
 class BoxIterator {
 public:
-    BoxIterator() : m_box(BoxLegacyPath { nullptr }) { };
-    BoxIterator(Box::PathVariant&&);
-    BoxIterator(const Box&);
-
     explicit operator bool() const { return !atEnd(); }
 
     bool operator==(const BoxIterator&) const;
@@ -135,14 +130,13 @@ public:
     const Box& operator*() const { return m_box; }
     const Box* operator->() const { return &m_box; }
 
-    BoxIterator& traverseNextOnLine();
-    BoxIterator& traverseNextOnLineSkippingChildren();
-
-    BoxIterator& operator++() { return traverseNextOnLine(); }
-
     bool atEnd() const;
 
 protected:
+    BoxIterator() : m_box(BoxLegacyPath { nullptr }) { };
+    BoxIterator(Box::PathVariant&&);
+    BoxIterator(const Box&);
+
     Box m_box;
 };
 
@@ -156,8 +150,6 @@ public:
     LeafBoxIterator& traversePreviousOnLine();
     LeafBoxIterator& traverseNextOnLineIgnoringLineBreak();
     LeafBoxIterator& traversePreviousOnLineIgnoringLineBreak();
-
-    LeafBoxIterator& operator++() { return traverseNextOnLine(); }
 };
 
 template<class IteratorType>

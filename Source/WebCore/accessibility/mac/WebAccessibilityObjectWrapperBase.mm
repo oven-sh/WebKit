@@ -68,8 +68,6 @@
 #import "WebAccessibilityObjectWrapperIOS.h"
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 using namespace WebCore;
 
 // Search Keys
@@ -265,6 +263,9 @@ static NSArray *convertMathPairsToNSArray(const AccessibilityObject::Accessibili
 NSArray *makeNSArray(const WebCore::AXCoreObject::AccessibilityChildrenVector& children)
 {
     return createNSArray(children, [] (const auto& child) -> id {
+        if (!child)
+            return nil;
+
         auto wrapper = child->wrapper();
         // We want to return the attachment view instead of the object representing the attachment,
         // otherwise, we get palindrome errors in the AX hierarchy.
@@ -294,7 +295,7 @@ NSArray *makeNSArray(const WebCore::AXCoreObject::AccessibilityChildrenVector& c
 
 - (void)attachAXObject:(AccessibilityObject&)axObject
 {
-    ASSERT(!_identifier || _identifier == axObject.objectID());
+    ASSERT(!_identifier || *_identifier == axObject.objectID());
     m_axObject = axObject;
     if (!_identifier)
         _identifier = m_axObject->objectID();
@@ -941,5 +942,3 @@ AccessibilitySearchCriteria accessibilitySearchCriteriaForSearchPredicate(AXCore
 }
 
 @end
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

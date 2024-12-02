@@ -39,7 +39,6 @@
 #include <WebCore/CAAudioStreamDescription.h>
 #include <WebCore/CARingBuffer.h>
 #include <WebCore/WebAudioBufferList.h>
-#include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
@@ -51,19 +50,13 @@ enum class VideoFrameRotation : uint16_t;
 }
 
 namespace WebKit {
-
 class RemoteVideoFrameObjectHeapProxy;
-class UserMediaCaptureManager;
 
 class RemoteCaptureSampleManager : public IPC::WorkQueueMessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteCaptureSampleManager);
 public:
-    explicit RemoteCaptureSampleManager(UserMediaCaptureManager&);
+    RemoteCaptureSampleManager();
     ~RemoteCaptureSampleManager();
-
-    void ref() const;
-    void deref() const;
-
     void stopListeningForIPC();
 
     void addSource(Ref<RemoteRealtimeAudioSource>&&);
@@ -111,7 +104,6 @@ private:
         std::atomic<bool> m_shouldStopThread { false };
     };
 
-    CheckedRef<UserMediaCaptureManager> m_manager;
     bool m_isRegisteredToParentProcessConnection { false };
     Ref<WorkQueue> m_queue;
     RefPtr<IPC::Connection> m_connection;

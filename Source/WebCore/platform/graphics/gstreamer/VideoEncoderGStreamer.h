@@ -19,7 +19,7 @@
 
 #pragma once
 
-#if ENABLE(VIDEO) && USE(GSTREAMER)
+#if ENABLE(WEB_CODECS) && USE(GSTREAMER)
 
 #include "VideoEncoder.h"
 
@@ -50,4 +50,4 @@ private:
 
 } // namespace WebCore
 
-#endif // ENABLE(VIDEO) && USE(GSTREAMER)
+#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)

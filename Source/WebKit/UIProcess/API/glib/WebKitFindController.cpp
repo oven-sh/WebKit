@@ -79,7 +79,7 @@ struct _WebKitFindControllerPrivate {
     WebKitWebView* webView;
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitFindController, webkit_find_controller, G_TYPE_OBJECT, GObject)
 

@@ -41,7 +41,6 @@
 #import <WebCore/WebCoreCALayerExtras.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/BlockObjCExceptions.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 #if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
@@ -322,13 +321,10 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
 
     if (properties.changedProperties & LayerChange::ContentsFormatChanged) {
         auto contentsFormat = properties.contentsFormat;
-        if (NSString *formatString = contentsFormatString(contentsFormat))
-            [layer setContentsFormat:formatString];
+        [layer setContentsFormat:contentsFormatString(contentsFormat)];
 #if HAVE(HDR_SUPPORT)
-        if (contentsFormat == ContentsFormat::RGBA16F) {
-            [layer setWantsExtendedDynamicRangeContent:true];
-            [layer setToneMapMode:CAToneMapModeIfSupported];
-        }
+        [layer setWantsExtendedDynamicRangeContent:contentsFormatWantsExtendedDynamicRangeContent(contentsFormat)];
+        [layer setToneMapMode:contentsFormatWantsToneMapMode(contentsFormat) ? CAToneMapModeIfSupported : CAToneMapModeAutomatic];
 #endif
     }
 }
@@ -442,11 +438,11 @@ void RemoteLayerTreePropertyApplier::updateMask(RemoteLayerTreeNode& node, const
     ASSERT(maskNode);
     if (!maskNode)
         return;
-
-    RetainPtr maskLayer = maskNode->layer();
-    [maskLayer removeFromSuperlayer];
-
-    maskOwnerLayer.mask = maskLayer.get();
+    CALayer *maskLayer = maskNode->layer();
+    ASSERT(!maskLayer.superlayer);
+    if (maskLayer.superlayer)
+        return;
+    maskOwnerLayer.mask = maskLayer;
 }
 
 #if PLATFORM(IOS_FAMILY)

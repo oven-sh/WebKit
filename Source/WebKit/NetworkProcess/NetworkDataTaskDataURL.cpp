@@ -173,9 +173,10 @@ void NetworkDataTaskDataURL::downloadDecodedData(Vector<uint8_t>&& data)
     }
 
     auto& downloadManager = m_session->networkProcess().downloadManager();
-    Ref download = Download::create(downloadManager, *m_pendingDownloadID, *this, *m_session, suggestedFilename());
-    downloadManager.dataTaskBecameDownloadTask(*m_pendingDownloadID, download.copyRef());
-    download->didCreateDestination(m_pendingDownloadLocation);
+    auto download = makeUnique<Download>(downloadManager, *m_pendingDownloadID, *this, *m_session, suggestedFilename());
+    auto* downloadPtr = download.get();
+    downloadManager.dataTaskBecameDownloadTask(*m_pendingDownloadID, WTFMove(download));
+    downloadPtr->didCreateDestination(m_pendingDownloadLocation);
 
     if (-1 == FileSystem::writeToFile(downloadDestinationFile, data.span())) {
         FileSystem::closeFile(downloadDestinationFile);
@@ -185,14 +186,14 @@ void NetworkDataTaskDataURL::downloadDecodedData(Vector<uint8_t>&& data)
 #elif USE(SOUP)
         ResourceError error(downloadDestinationError(m_response, "Cannot write destination file."_s));
 #endif
-        download->didFail(error, { });
+        downloadPtr->didFail(error, { });
         invalidateAndCancel();
         return;
     }
 
-    download->didReceiveData(data.size(), 0, 0);
+    downloadPtr->didReceiveData(data.size(), 0, 0);
     FileSystem::closeFile(downloadDestinationFile);
-    download->didFinish();
+    downloadPtr->didFinish();
     m_state = State::Completed;
 }
 

@@ -44,6 +44,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -108,9 +109,10 @@ template<> void JSTestStringifierDOMConstructor::initializeProperties(VM& vm, JS
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 2> JSTestStringifierPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierConstructor, 0 } },
-    HashTableValue { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierPrototypeFunction_toString, 0 } },
+static const HashTableValue JSTestStringifierPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierConstructor, 0 } },
+    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierPrototypeFunction_toString, 0 } },
 };
 
 const ClassInfo JSTestStringifierPrototype::s_info = { "TestStringifier"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestStringifierPrototype) };
@@ -213,7 +215,6 @@ void JSTestStringifierOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* co
     uncacheWrapper(world, jsTestStringifier->protectedWrapped().ptr(), jsTestStringifier);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -238,8 +239,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestStringifi
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestStringifier>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

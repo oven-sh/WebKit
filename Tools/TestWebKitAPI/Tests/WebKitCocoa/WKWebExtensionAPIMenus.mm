@@ -33,7 +33,6 @@
 #import "TestWebExtensionsDelegate.h"
 #import "WebExtensionUtilities.h"
 #import <WebKit/WKWebViewConfigurationPrivate.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace TestWebKitAPI {
 

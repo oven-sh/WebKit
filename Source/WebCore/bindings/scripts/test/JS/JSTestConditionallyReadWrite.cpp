@@ -50,6 +50,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -119,11 +120,12 @@ static const struct CompactHashIndex JSTestConditionallyReadWriteTableIndex[4] =
 };
 
 
-static const std::array<HashTableValue, 1> JSTestConditionallyReadWriteTableValues {
-    HashTableValue { "enabledConditionallyReadWriteBySettingAttributeUnforgeable"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributeUnforgeable, setJSTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributeUnforgeable } },
+static const HashTableValue JSTestConditionallyReadWriteTableValues[] =
+{
+    { "enabledConditionallyReadWriteBySettingAttributeUnforgeable"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributeUnforgeable, setJSTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributeUnforgeable } },
 };
 
-static const HashTable JSTestConditionallyReadWriteTable = { 1, 3, static_cast<uint8_t>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontDelete), JSTestConditionallyReadWrite::info(), JSTestConditionallyReadWriteTableValues.data(), JSTestConditionallyReadWriteTableIndex };
+static const HashTable JSTestConditionallyReadWriteTable = { 1, 3, static_cast<uint8_t>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontDelete), JSTestConditionallyReadWrite::info(), JSTestConditionallyReadWriteTableValues, JSTestConditionallyReadWriteTableIndex };
 template<> const ClassInfo JSTestConditionallyReadWriteDOMConstructor::s_info = { "TestConditionallyReadWrite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestConditionallyReadWriteDOMConstructor) };
 
 template<> JSValue JSTestConditionallyReadWriteDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
@@ -143,24 +145,25 @@ template<> void JSTestConditionallyReadWriteDOMConstructor::initializeProperties
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 5> JSTestConditionallyReadWritePrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWriteConstructor, 0 } },
+static const HashTableValue JSTestConditionallyReadWritePrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWriteConstructor, 0 } },
 #if ENABLE(CONDITION)
-    HashTableValue { "conditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionallyReadWriteAttribute, setJSTestConditionallyReadWrite_conditionallyReadWriteAttribute } },
+    { "conditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionallyReadWriteAttribute, setJSTestConditionallyReadWrite_conditionallyReadWriteAttribute } },
 #else
-    HashTableValue { "conditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::ReadOnly, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionallyReadWriteAttribute, 0 } },
+    { "conditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::ReadOnly, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionallyReadWriteAttribute, 0 } },
 #endif
 #if ENABLE(CONDITION2)
 #if ENABLE(CONDITION)
-    HashTableValue { "conditionalAndConditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionalAndConditionallyReadWriteAttribute, setJSTestConditionallyReadWrite_conditionalAndConditionallyReadWriteAttribute } },
+    { "conditionalAndConditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionalAndConditionallyReadWriteAttribute, setJSTestConditionallyReadWrite_conditionalAndConditionallyReadWriteAttribute } },
 #else
-    HashTableValue { "conditionalAndConditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::ReadOnly, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionalAndConditionallyReadWriteAttribute, 0 } },
+    { "conditionalAndConditionallyReadWriteAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::ReadOnly, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_conditionalAndConditionallyReadWriteAttribute, 0 } },
 #endif
 #else
-    HashTableValue { { }, 0, NoIntrinsic, { HashTableValue::End } },
+    { { }, 0, NoIntrinsic, { HashTableValue::End } },
 #endif
-    HashTableValue { "enabledConditionallyReadWriteBySettingAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttribute, setJSTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttribute } },
-    HashTableValue { "enabledConditionallyReadWriteBySettingAttributePromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributePromise, setJSTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributePromise } },
+    { "enabledConditionallyReadWriteBySettingAttribute"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttribute, setJSTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttribute } },
+    { "enabledConditionallyReadWriteBySettingAttributePromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributePromise, setJSTestConditionallyReadWrite_enabledConditionallyReadWriteBySettingAttributePromise } },
 };
 
 const ClassInfo JSTestConditionallyReadWritePrototype::s_info = { "TestConditionallyReadWrite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestConditionallyReadWritePrototype) };
@@ -489,7 +492,6 @@ void JSTestConditionallyReadWriteOwner::finalize(JSC::Handle<JSC::Unknown> handl
     uncacheWrapper(world, jsTestConditionallyReadWrite->protectedWrapped().ptr(), jsTestConditionallyReadWrite);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -514,8 +516,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestCondition
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestConditionallyReadWrite>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

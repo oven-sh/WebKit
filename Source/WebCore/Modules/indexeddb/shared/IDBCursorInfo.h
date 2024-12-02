@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "IDBIndexIdentifier.h"
 #include "IDBKeyRangeData.h"
 #include "IDBObjectStoreIdentifier.h"
 #include "IDBResourceIdentifier.h"
@@ -51,12 +50,11 @@ enum class CursorDuplicity {
 class IDBCursorInfo {
 public:
     static IDBCursorInfo objectStoreCursor(IDBTransaction&, IDBObjectStoreIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
-    static IDBCursorInfo indexCursor(IDBTransaction&, IDBObjectStoreIdentifier, IDBIndexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
+    static IDBCursorInfo indexCursor(IDBTransaction&, IDBObjectStoreIdentifier, uint64_t indexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
 
     IDBResourceIdentifier identifier() const { return m_cursorIdentifier; }
     IDBResourceIdentifier transactionIdentifier() const { return m_transactionIdentifier; }
-    std::variant<IDBObjectStoreIdentifier, IDBIndexIdentifier> sourceIdentifier() const { return m_sourceIdentifier; }
-    std::optional<IDBIndexIdentifier> sourceIndexIdentifier() const;
+    uint64_t sourceIdentifier() const { return m_sourceIdentifier; }
     IDBObjectStoreIdentifier objectStoreIdentifier() const { return m_objectStoreIdentifier; }
 
     IndexedDB::CursorSource cursorSource() const { return m_source; }
@@ -75,14 +73,14 @@ public:
 
 private:
     friend struct IPC::ArgumentCoder<IDBCursorInfo, void>;
-    WEBCORE_EXPORT IDBCursorInfo(const IDBResourceIdentifier&, const IDBResourceIdentifier&, IDBObjectStoreIdentifier, std::variant<IDBObjectStoreIdentifier, IDBIndexIdentifier>, const IDBKeyRangeData&, IndexedDB::CursorSource, IndexedDB::CursorDirection, IndexedDB::CursorType);
+    WEBCORE_EXPORT IDBCursorInfo(const IDBResourceIdentifier&, const IDBResourceIdentifier&, IDBObjectStoreIdentifier, uint64_t, const IDBKeyRangeData&, IndexedDB::CursorSource, IndexedDB::CursorDirection, IndexedDB::CursorType);
     IDBCursorInfo(IDBTransaction&, IDBObjectStoreIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
-    IDBCursorInfo(IDBTransaction&, IDBObjectStoreIdentifier, IDBIndexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
+    IDBCursorInfo(IDBTransaction&, IDBObjectStoreIdentifier, uint64_t indexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
 
     IDBResourceIdentifier m_cursorIdentifier;
     IDBResourceIdentifier m_transactionIdentifier;
     IDBObjectStoreIdentifier m_objectStoreIdentifier;
-    std::variant<IDBObjectStoreIdentifier, IDBIndexIdentifier> m_sourceIdentifier;
+    uint64_t m_sourceIdentifier { 0 };
 
     IDBKeyRangeData m_range;
 

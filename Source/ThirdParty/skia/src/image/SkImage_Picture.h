@@ -14,7 +14,6 @@
 
 #include <cstdint>
 
-class GrDirectContext;
 class SkCanvas;
 class SkColorSpace;
 class SkImage;
@@ -22,11 +21,9 @@ class SkMatrix;
 class SkPaint;
 class SkPicture;
 class SkSurfaceProps;
-struct SkIRect;
 struct SkISize;
 
 namespace SkImages { enum class BitDepth; }
-namespace skgpu::graphite { class Recorder; }
 
 class SkImage_Picture : public SkImage_Lazy {
 public:
@@ -44,11 +41,6 @@ public:
 
     // Call drawPicture on the provided canvas taking care of any required mutex locking.
     void replay(SkCanvas*) const;
-
-    sk_sp<SkImage> onMakeSubset(GrDirectContext*, const SkIRect&) const override;
-    sk_sp<SkImage> onMakeSubset(skgpu::graphite::Recorder*,
-                                const SkIRect&,
-                                RequiredProperties) const override;
 
     // If possible, extract key data based on the underlying drawPicture-call's parameters.
     // Takes care of any required mutex locking.

@@ -30,8 +30,6 @@
 #include <wtf/HashTraits.h>
 #include <wtf/PtrTag.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 class PrintStream;
@@ -162,7 +160,7 @@ public:
     template<typename T = void*>
     T taggedPtr() const
     {
-        return std::bit_cast<T>(m_value);
+        return bitwise_cast<T>(m_value);
     }
 
     template<typename T = void*>
@@ -183,7 +181,7 @@ public:
     T dataLocation() const
     {
         ASSERT_VALID_CODE_POINTER(m_value);
-        return std::bit_cast<T>(m_value ? std::bit_cast<char*>(m_value) - 1 : nullptr);
+        return bitwise_cast<T>(m_value ? bitwise_cast<char*>(m_value) - 1 : nullptr);
     }
 #else
     template<typename T = void*>
@@ -250,8 +248,8 @@ private:
         assertIsTaggedWith<tag>(ptr);
     }
 
-    static void* emptyValue() { return std::bit_cast<void*>(static_cast<intptr_t>(1)); }
-    static void* deletedValue() { return std::bit_cast<void*>(static_cast<intptr_t>(2)); }
+    static void* emptyValue() { return bitwise_cast<void*>(static_cast<intptr_t>(1)); }
+    static void* deletedValue() { return bitwise_cast<void*>(static_cast<intptr_t>(2)); }
 
     template<typename FuncPtr>
     ALWAYS_INLINE static constexpr void* encodeFunc(FuncPtr ptr)
@@ -299,5 +297,3 @@ struct HashTraits<CodePtr<tag, attr>> : public CustomHashTraits<CodePtr<tag, att
 } // namespace WTF
 
 using WTF::CodePtr;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

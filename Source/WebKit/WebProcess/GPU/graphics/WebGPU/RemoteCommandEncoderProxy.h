@@ -39,19 +39,20 @@ class ConvertToBackingContext;
 class RemoteCommandEncoderProxy final : public WebCore::WebGPU::CommandEncoder {
     WTF_MAKE_TZONE_ALLOCATED(RemoteCommandEncoderProxy);
 public:
-    static Ref<RemoteCommandEncoderProxy> create(RemoteGPUProxy& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteCommandEncoderProxy> create(RemoteDeviceProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteCommandEncoderProxy(root, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteCommandEncoderProxy(parent, convertToBackingContext, identifier));
     }
 
     virtual ~RemoteCommandEncoderProxy();
 
-    RemoteGPUProxy& root() { return m_root; }
+    RemoteDeviceProxy& parent() { return m_parent; }
+    RemoteGPUProxy& root() { return m_parent->root(); }
 
 private:
     friend class DowncastConvertToBackingContext;
 
-    RemoteCommandEncoderProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteCommandEncoderProxy(RemoteDeviceProxy&, ConvertToBackingContext&, WebGPUIdentifier);
 
     RemoteCommandEncoderProxy(const RemoteCommandEncoderProxy&) = delete;
     RemoteCommandEncoderProxy(RemoteCommandEncoderProxy&&) = delete;
@@ -122,7 +123,7 @@ private:
 
     WebGPUIdentifier m_backing;
     Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteGPUProxy> m_root;
+    Ref<RemoteDeviceProxy> m_parent;
 };
 
 } // namespace WebKit::WebGPU

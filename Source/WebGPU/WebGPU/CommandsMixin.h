@@ -32,7 +32,7 @@ class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandsmixin
 class CommandsMixin {
-protected PUBLIC_IN_WEBGPU_SWIFT:
+public:
     bool prepareTheEncoderState() const;
 protected:
     NSString* encoderStateName() const;

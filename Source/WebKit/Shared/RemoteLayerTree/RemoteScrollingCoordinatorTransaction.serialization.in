@@ -94,7 +94,6 @@ header: <WebCore/ScrollingStatePositionedNode.h>
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarEnabledState] WebCore::ScrollbarEnabledState scrollbarEnabledState();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarLayoutDirection] WebCore::UserInterfaceLayoutDirection scrollbarLayoutDirection();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarWidth] WebCore::ScrollbarWidth scrollbarWidth();
-    [OptionalTupleBit=WebCore::ScrollingStateNode::Property::UseDarkAppearanceForScrollbars] bool useDarkAppearanceForScrollbars();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::KeyboardScrollData] WebCore::RequestedKeyboardScrollData keyboardScrollData()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::FrameScaleFactor] float frameScaleFactor()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::EventTrackingRegion] WebCore::EventTrackingRegions eventTrackingRegions()
@@ -106,6 +105,7 @@ header: <WebCore/ScrollingStatePositionedNode.h>
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::FooterHeight] int footerHeight()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::BehaviorForFixedElements] WebCore::ScrollBehaviorForFixedElements scrollBehaviorForFixedElements()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::TopContentInset] float topContentInset()
+    [OptionalTupleBit=WebCore::ScrollingStateNode::Property::FixedElementsLayoutRelativeToFrame] bool fixedElementsLayoutRelativeToFrame()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::VisualViewportIsSmallerThanLayoutViewport] bool visualViewportIsSmallerThanLayoutViewport()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::AsyncFrameOrOverflowScrollingEnabled] bool asyncFrameOrOverflowScrollingEnabled()
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::WheelEventGesturesBecomeNonBlocking] bool wheelEventGesturesBecomeNonBlocking();
@@ -147,7 +147,6 @@ header: <WebCore/ScrollingStatePositionedNode.h>
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarEnabledState] WebCore::ScrollbarEnabledState scrollbarEnabledState();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarLayoutDirection] WebCore::UserInterfaceLayoutDirection scrollbarLayoutDirection();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarWidth] WebCore::ScrollbarWidth scrollbarWidth();
-    [OptionalTupleBit=WebCore::ScrollingStateNode::Property::UseDarkAppearanceForScrollbars] bool useDarkAppearanceForScrollbars();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::KeyboardScrollData] WebCore::RequestedKeyboardScrollData keyboardScrollData()
 };
 
@@ -188,7 +187,6 @@ header: <WebCore/ScrollingStatePositionedNode.h>
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarEnabledState] WebCore::ScrollbarEnabledState scrollbarEnabledState();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarLayoutDirection] WebCore::UserInterfaceLayoutDirection scrollbarLayoutDirection();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::ScrollbarWidth] WebCore::ScrollbarWidth scrollbarWidth();
-    [OptionalTupleBit=WebCore::ScrollingStateNode::Property::UseDarkAppearanceForScrollbars] bool useDarkAppearanceForScrollbars();
     [OptionalTupleBit=WebCore::ScrollingStateNode::Property::KeyboardScrollData] WebCore::RequestedKeyboardScrollData keyboardScrollData()
 }
 

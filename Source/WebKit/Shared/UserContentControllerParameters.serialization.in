@@ -22,7 +22,7 @@
 
 struct WebKit::UserContentControllerParameters {
     WebKit::UserContentControllerIdentifier identifier;
-    Vector<WebKit::ContentWorldData> userContentWorlds;
+    Vector<std::pair<WebKit::ContentWorldIdentifier, String>> userContentWorlds;
     Vector<WebKit::WebUserScriptData> userScripts;
     Vector<WebKit::WebUserStyleSheetData> userStyleSheets;
     Vector<WebKit::WebScriptMessageHandlerData> messageHandlers;

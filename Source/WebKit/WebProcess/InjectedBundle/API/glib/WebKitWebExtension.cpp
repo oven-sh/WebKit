@@ -128,7 +128,7 @@ struct _WebKitWebExtensionPrivate {
 #endif
 };
 
-static std::array<unsigned, LAST_SIGNAL> signals;
+static guint signals[LAST_SIGNAL] = { 0, };
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitWebExtension, webkit_web_extension, G_TYPE_OBJECT, GObject)
 

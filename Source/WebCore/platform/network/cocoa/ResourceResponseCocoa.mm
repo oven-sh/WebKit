@@ -37,7 +37,6 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/cf/TypeCastsCF.h>
-#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/text/StringView.h>
 
 WTF_DECLARE_CF_TYPE_TRAIT(SecTrust);
@@ -165,8 +164,7 @@ void ResourceResponse::platformLazyInit(InitLevel initLevel)
     
     @autoreleasepool {
 
-        RetainPtr urlResponse = dynamic_objc_cast<NSHTTPURLResponse>(m_nsResponse.get());
-        RetainPtr messageRef = urlResponse ? CFURLResponseGetHTTPResponse([urlResponse _CFURLResponse]) : nullptr;
+        auto messageRef = [m_nsResponse isKindOfClass:[NSHTTPURLResponse class]] ? CFURLResponseGetHTTPResponse([ (NSHTTPURLResponse *)m_nsResponse.get() _CFURLResponse]) : nullptr;
 
         if (m_initLevel < CommonFieldsOnly) {
             m_url = [m_nsResponse URL];
@@ -174,13 +172,13 @@ void ResourceResponse::platformLazyInit(InitLevel initLevel)
             m_expectedContentLength = [m_nsResponse expectedContentLength];
             // Stripping double quotes as a workaround for <rdar://problem/8757088>, can be removed once that is fixed.
             m_textEncodingName = stripLeadingAndTrailingDoubleQuote([m_nsResponse textEncodingName]);
-            m_httpStatusCode = messageRef ? CFHTTPMessageGetResponseStatusCode(messageRef.get()) : 0;
+            m_httpStatusCode = messageRef ? CFHTTPMessageGetResponseStatusCode(messageRef) : 0;
             if (messageRef)
-                m_httpHeaderFields = initializeHTTPHeaders(messageRef.get());
+                m_httpHeaderFields = initializeHTTPHeaders(messageRef);
         }
         if (messageRef && initLevel == AllFields) {
-            m_httpStatusText = extractHTTPStatusText(messageRef.get());
-            m_httpVersion = AtomString { String(adoptCF(CFHTTPMessageCopyVersion(messageRef.get())).get()).convertToASCIIUppercase() };
+            m_httpStatusText = extractHTTPStatusText(messageRef);
+            m_httpVersion = AtomString { String(adoptCF(CFHTTPMessageCopyVersion(messageRef)).get()).convertToASCIIUppercase() };
         }
     }
 

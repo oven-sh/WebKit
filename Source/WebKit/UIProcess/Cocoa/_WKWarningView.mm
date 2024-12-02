@@ -113,7 +113,8 @@ static WebCore::CocoaFont *fontOfSize(WarningTextSize size)
 
 static WebCore::CocoaColor *colorForItem(WarningItem item, ViewType *warning)
 {
-    auto *warningView = checked_objc_cast<_WKWarningView>(warning);
+    ASSERT([warning isKindOfClass:[_WKWarningView class]]);
+    _WKWarningView *warningView = (_WKWarningView *)warning;
 #if PLATFORM(MAC)
 
     auto colorNamed = [] (NSString *name) -> WebCore::CocoaColor * {

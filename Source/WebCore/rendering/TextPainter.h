@@ -61,15 +61,15 @@ public:
     void paintRange(const TextRun&, const FloatRect& boxRect, const FloatPoint& textOrigin, unsigned start, unsigned end);
 
     template<typename LayoutRun>
-    void setGlyphDisplayListIfNeeded(const LayoutRun& run, const PaintInfo& paintInfo, const RenderStyle& style, const TextRun& textRun)
+    void setGlyphDisplayListIfNeeded(const LayoutRun& run, const PaintInfo& paintInfo, const TextRun& textRun)
     {
-        if (!TextPainter::shouldUseGlyphDisplayList(paintInfo, style))
+        if (!TextPainter::shouldUseGlyphDisplayList(paintInfo))
             const_cast<LayoutRun&>(run).removeFromGlyphDisplayListCache();
         else
             m_glyphDisplayList = GlyphDisplayListCache::singleton().get(run, m_font, m_context, textRun, paintInfo);
     }
 
-    static bool shouldUseGlyphDisplayList(const PaintInfo&, const RenderStyle&);
+    static bool shouldUseGlyphDisplayList(const PaintInfo&);
     WEBCORE_EXPORT static void setForceUseGlyphDisplayListForTesting(bool);
     WEBCORE_EXPORT static String cachedGlyphDisplayListsForTextNodeAsText(Text&, OptionSet<DisplayList::AsTextFlag>);
     WEBCORE_EXPORT static void clearGlyphDisplayListCacheForTesting();

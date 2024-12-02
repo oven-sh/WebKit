@@ -147,7 +147,11 @@ void CustomElementReactionQueue::tryToUpgradeElement(Element& element)
 {
     ASSERT(CustomElementReactionDisallowedScope::isReactionAllowed());
     ASSERT(element.isCustomElementUpgradeCandidate());
-    RefPtr registry = element.treeScope().customElementRegistry();
+    RefPtr window = element.document().domWindow();
+    if (!window)
+        return;
+
+    RefPtr registry = window->customElementRegistry();
     if (!registry)
         return;
 

@@ -98,12 +98,7 @@ void RemoteRealtimeMediaSourceProxy::createRemoteMediaSource(const MediaDeviceHa
 
 RemoteRealtimeMediaSourceProxy RemoteRealtimeMediaSourceProxy::clone()
 {
-    RemoteRealtimeMediaSourceProxy clone = { RealtimeMediaSourceIdentifier::generate(), m_device, m_shouldCaptureInGPUProcess, &m_constraints };
-
-    clone.m_interrupted = m_interrupted;
-    clone.m_isEnded = m_isEnded;
-
-    return clone;
+    return { RealtimeMediaSourceIdentifier::generate(), m_device, m_shouldCaptureInGPUProcess, &m_constraints };
 }
 
 void RemoteRealtimeMediaSourceProxy::createRemoteCloneSource(WebCore::RealtimeMediaSourceIdentifier cloneIdentifier, WebCore::PageIdentifier pageIdentifier)

@@ -125,7 +125,6 @@ namespace WebCore {
     M(SQLDatabase) \
     M(Storage) \
     M(StorageAPI) \
-    M(Style) \
     M(StyleSheets) \
     M(SVG) \
     M(TextAutosizing) \

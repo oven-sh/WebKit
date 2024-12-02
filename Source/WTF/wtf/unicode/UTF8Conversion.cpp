@@ -32,8 +32,6 @@
 #include <wtf/text/StringHasherInlines.h>
 #include <wtf/unicode/CharacterNames.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF::Unicode {
 
 static constexpr char32_t sentinelCodePoint = U_SENTINEL;
@@ -211,5 +209,3 @@ bool equal(std::span<const LChar> a, std::span<const char8_t> b)
 }
 
 } // namespace WTF::Unicode
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -235,7 +235,7 @@ typedef std::pair<WebKit::InteractionInformationRequest, InteractionInformationC
 namespace WebKit {
 
 enum SuppressSelectionAssistantReason : uint8_t {
-    SelectionIsTransparentOrFullyClipped = 1 << 0,
+    EditableRootIsTransparentOrFullyClipped = 1 << 0,
     FocusedElementIsTooSmall = 1 << 1,
     InteractionIsHappening = 1 << 2,
     ShowingFullscreenVideo = 1 << 3,
@@ -436,7 +436,7 @@ struct ImageAnalysisContextMenuActionData {
     RetainPtr<WKSTextAnimationManager> _textAnimationManager;
 #endif
 
-    RefPtr<WebKit::SmartMagnificationController> _smartMagnificationController;
+    std::unique_ptr<WebKit::SmartMagnificationController> _smartMagnificationController;
 
     WeakObjCPtr<id <UITextInputDelegate>> _inputDelegate;
 
@@ -619,7 +619,7 @@ struct ImageAnalysisContextMenuActionData {
 
 @end
 
-@interface WKContentView (WKInteraction) <UIGestureRecognizerDelegate, UITextInput, WKFormAccessoryViewDelegate, WKActionSheetAssistantDelegate, WKFileUploadPanelDelegate, WKKeyboardScrollViewAnimatorDelegate, WKDeferringGestureRecognizerDelegate
+@interface WKContentView (WKInteraction) <UIGestureRecognizerDelegate, UITextInput, WKFormAccessoryViewDelegate, WKTouchEventsGestureRecognizerDelegate, WKActionSheetAssistantDelegate, WKFileUploadPanelDelegate, WKKeyboardScrollViewAnimatorDelegate, WKDeferringGestureRecognizerDelegate
 #if HAVE(CONTACTSUI)
     , WKContactPickerDelegate
 #endif
@@ -671,7 +671,6 @@ struct ImageAnalysisContextMenuActionData {
 @property (nonatomic, readonly) UIView *unscaledView;
 @property (nonatomic, readonly) BOOL isPresentingEditMenu;
 @property (nonatomic, readonly) CGSize sizeForLegacyFormControlPickerViews;
-@property (nonatomic, readonly, getter=isPotentialTapInProgress) BOOL potentialTapInProgress;
 
 #if ENABLE(DATALIST_ELEMENT)
 @property (nonatomic, strong) UIView <WKFormControl> *dataListTextSuggestionsInputView;
@@ -743,7 +742,6 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)_elementDidBlur;
 - (void)_didUpdateInputMode:(WebCore::InputMode)mode;
 - (void)_didUpdateEditorState;
-- (void)_reconcileEnclosingScrollViewContentOffset:(WebKit::EditorState&)state;
 - (void)_hardwareKeyboardAvailabilityChanged;
 - (void)_selectionChanged;
 - (void)_updateChangedSelection;
@@ -911,9 +909,6 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 
 - (BOOL)_tryToHandlePressesEvent:(UIPressesEvent *)event;
 - (void)_closeCurrentTypingCommand;
-
-- (BOOL)_shouldIgnoreTouchEvent:(UIEvent *)event;
-- (void)_touchEventsRecognized;
 
 @property (nonatomic, readonly) BOOL shouldUseAsyncInteractions;
 @property (nonatomic, readonly) BOOL selectionHonorsOverflowScrolling;

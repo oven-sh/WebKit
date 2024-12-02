@@ -30,31 +30,39 @@
 #include "MessageFlags.h"
 #include <algorithm>
 #include <wtf/OptionSet.h>
-#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UniqueRef.h>
 
 #if OS(DARWIN)
-#include <wtf/Mmap.h>
+#include <sys/mman.h>
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace IPC {
 
 static constexpr uint8_t defaultMessageFlags = 0;
 
+static inline std::span<uint8_t> allocBuffer(size_t size)
+{
 #if OS(DARWIN)
-static inline MallocSpan<uint8_t, Mmap> allocateBuffer(size_t size)
-{
-    auto buffer = MallocSpan<uint8_t, Mmap>::mmap(size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1);
-    RELEASE_ASSERT(!!buffer);
-    return buffer;
-}
+    auto* buffer = static_cast<uint8_t*>(mmap(0, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0));
+    RELEASE_ASSERT(buffer != MAP_FAILED);
+    return std::span { buffer, size };
 #else
-static inline MallocSpan<uint8_t> allocateBuffer(size_t size)
-{
-    return MallocSpan<uint8_t>::malloc(size);
-}
+    auto* buffer = static_cast<uint8_t*>(fastMalloc(size));
+    return std::span { buffer, size };
 #endif
+}
+
+static inline void freeBuffer(std::span<uint8_t> buffer)
+{
+#if OS(DARWIN)
+    munmap(buffer.data(), buffer.size());
+#else
+    fastFree(buffer.data());
+#endif
+}
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Encoder);
 
@@ -65,8 +73,17 @@ Encoder::Encoder(MessageName messageName, uint64_t destinationID)
     encodeHeader();
 }
 
-// FIXME: We need to dispose of the attachments in cases of failure.
-Encoder::~Encoder() = default;
+Encoder::~Encoder()
+{
+    freeBufferIfNecessary();
+    // FIXME: We need to dispose of the attachments in cases of failure.
+}
+
+void Encoder::freeBufferIfNecessary()
+{
+    if (m_capacityBuffer.data() != m_inlineBuffer.data())
+        freeBuffer(m_capacityBuffer);
+}
 
 void Encoder::setShouldDispatchMessageWhenWaitingForSyncReply(ShouldDispatchWhenWaitingForSyncReply shouldDispatchWhenWaitingForSyncReply)
 {
@@ -123,18 +140,18 @@ static inline size_t roundUpToAlignment(size_t value, size_t alignment)
 
 void Encoder::reserve(size_t size)
 {
-    auto oldCapacityBufferSize = capacityBuffer().size();
-    if (size <= oldCapacityBufferSize)
+    if (size <= m_capacityBuffer.size())
         return;
 
-    size_t newCapacity = roundUpToAlignment(oldCapacityBufferSize * 2, 4096);
+    size_t newCapacity = roundUpToAlignment(m_capacityBuffer.size() * 2, 4096);
     while (newCapacity < size)
         newCapacity *= 2;
 
-    auto newBuffer = allocateBuffer(newCapacity);
-    memcpySpan(newBuffer.mutableSpan(), span());
+    auto newBuffer = allocBuffer(newCapacity);
+    memcpySpan(newBuffer, span());
 
-    m_outOfLineBuffer = WTFMove(newBuffer);
+    freeBufferIfNecessary();
+    m_capacityBuffer = newBuffer;
 }
 
 void Encoder::encodeHeader()
@@ -148,12 +165,12 @@ OptionSet<MessageFlags>& Encoder::messageFlags()
 {
     // FIXME: We should probably pass an OptionSet<MessageFlags> into the Encoder constructor instead of encoding defaultMessageFlags then using this to change it later.
     static_assert(sizeof(OptionSet<MessageFlags>::StorageType) == 1, "Encoder uses the first byte of the buffer for message flags.");
-    return reinterpretCastSpanStartTo<OptionSet<MessageFlags>>(capacityBuffer());
+    return *reinterpret_cast<OptionSet<MessageFlags>*>(m_capacityBuffer.data());
 }
 
 const OptionSet<MessageFlags>& Encoder::messageFlags() const
 {
-    return reinterpretCastSpanStartTo<OptionSet<MessageFlags>>(capacityBuffer());
+    return *reinterpret_cast<OptionSet<MessageFlags>*>(m_capacityBuffer.data());
 }
 
 std::span<uint8_t> Encoder::grow(size_t alignment, size_t size)
@@ -161,26 +178,11 @@ std::span<uint8_t> Encoder::grow(size_t alignment, size_t size)
     size_t alignedSize = roundUpToAlignment(m_bufferSize, alignment);
     reserve(alignedSize + size);
 
-    auto capacityBuffer = this->capacityBuffer();
-    memsetSpan(capacityBuffer.subspan(m_bufferSize, alignedSize - m_bufferSize), 0);
+    memsetSpan(m_capacityBuffer.subspan(m_bufferSize, alignedSize - m_bufferSize), 0);
 
     m_bufferSize = alignedSize + size;
 
-    return capacityBuffer.subspan(alignedSize);
-}
-
-std::span<uint8_t> Encoder::capacityBuffer()
-{
-    if (m_outOfLineBuffer)
-        return m_outOfLineBuffer.mutableSpan();
-    return m_inlineBuffer;
-}
-
-std::span<const uint8_t> Encoder::capacityBuffer() const
-{
-    if (m_outOfLineBuffer)
-        return m_outOfLineBuffer.span();
-    return m_inlineBuffer;
+    return m_capacityBuffer.subspan(alignedSize);
 }
 
 void Encoder::addAttachment(Attachment&& attachment)
@@ -199,3 +201,5 @@ bool Encoder::hasAttachments() const
 }
 
 } // namespace IPC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -43,8 +43,7 @@ public:
                                            MtlResourceProvider*,
                                            const RuntimeEffectDictionary*,
                                            const GraphicsPipelineDesc&,
-                                           const RenderPassDesc&,
-                                           SkEnumBitMask<PipelineCreationFlags>);
+                                           const RenderPassDesc&);
 
     static sk_sp<MtlGraphicsPipeline> MakeLoadMSAAPipeline(const MtlSharedContext*,
                                                            MtlResourceProvider*,

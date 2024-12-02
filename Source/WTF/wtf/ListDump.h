@@ -29,8 +29,6 @@
 #include <wtf/PrintStream.h>
 #include <wtf/StringPrintStream.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
 template<typename T>
@@ -183,5 +181,3 @@ using WTF::mapDump;
 using WTF::pointerListDump;
 using WTF::sortedListDump;
 using WTF::sortedMapDump;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

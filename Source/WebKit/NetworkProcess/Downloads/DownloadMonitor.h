@@ -26,9 +26,9 @@
 #pragma once
 
 #include <WebCore/Timer.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/WeakRef.h>
 
 namespace WebKit {
 
@@ -45,11 +45,8 @@ public:
     void downloadReceivedBytes(uint64_t);
     void timerFired();
 
-    void ref() const;
-    void deref() const;
-
 private:
-    WeakRef<Download> m_download;
+    CheckedRef<Download> m_download;
 
     double measuredThroughputRate() const;
     uint32_t testSpeedMultiplier() const;

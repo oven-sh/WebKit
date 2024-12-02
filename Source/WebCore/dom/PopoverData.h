@@ -28,7 +28,6 @@
 #include "Element.h"
 #include "HTMLElement.h"
 #include "HTMLFormControlElement.h"
-#include "ToggleEventTask.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -36,6 +35,11 @@ namespace WebCore {
 enum class PopoverVisibilityState : bool {
     Hidden,
     Showing,
+};
+
+struct PopoverToggleEventData {
+    PopoverVisibilityState oldState;
+    PopoverVisibilityState newState;
 };
 
 class PopoverData {
@@ -52,7 +56,9 @@ public:
     Element* previouslyFocusedElement() const { return m_previouslyFocusedElement.get(); }
     void setPreviouslyFocusedElement(Element* element) { m_previouslyFocusedElement = element; }
 
-    Ref<ToggleEventTask> ensureToggleEventTask(Element&);
+    std::optional<PopoverToggleEventData> queuedToggleEventData() const { return m_queuedToggleEventData; }
+    void setQueuedToggleEventData(PopoverToggleEventData data) { m_queuedToggleEventData = data; }
+    void clearQueuedToggleEventData() { m_queuedToggleEventData = std::nullopt; }
 
     HTMLFormControlElement* invoker() const { return m_invoker.get(); }
     void setInvoker(const HTMLFormControlElement* element) { m_invoker = element; }
@@ -80,8 +86,8 @@ public:
 private:
     PopoverState m_popoverState;
     PopoverVisibilityState m_visibilityState;
+    std::optional<PopoverToggleEventData> m_queuedToggleEventData;
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_previouslyFocusedElement;
-    RefPtr<ToggleEventTask> m_toggleEventTask;
     WeakPtr<HTMLFormControlElement, WeakPtrImplWithEventTargetData> m_invoker;
     bool m_isHidingOrShowingPopover = false;
 };

@@ -126,11 +126,37 @@ function clearAttachmentFields() {
 /* Functions used when viewing patches in Diff mode. */
 
 function collapse_all() {
-  [...document.getElementsByClassName('file')].forEach(e => e.className = "file_collapse");
+  var elem = document.checkboxform.firstChild;
+  while (elem != null) {
+    if (elem.firstChild != null) {
+      var tbody = elem.firstChild.nextSibling;
+      if (tbody.className == 'file') {
+        tbody.className = 'file_collapse';
+        twisty = get_twisty_from_tbody(tbody);
+        twisty.firstChild.nodeValue = '(+)';
+        twisty.nextSibling.checked = false;
+      }
+    }
+    elem = elem.nextSibling;
+  }
+  return false;
 }
 
 function expand_all() {
-  [...document.getElementsByClassName('file_collapse')].forEach(e => e.className = "file");
+  var elem = document.checkboxform.firstChild;
+  while (elem != null) {
+    if (elem.firstChild != null) {
+      var tbody = elem.firstChild.nextSibling;
+      if (tbody.className == 'file_collapse') {
+        tbody.className = 'file';
+        twisty = get_twisty_from_tbody(tbody);
+        twisty.firstChild.nodeValue = '(-)';
+        twisty.nextSibling.checked = true;
+      }
+    }
+    elem = elem.nextSibling;
+  }
+  return false;
 }
 
 var current_restore_elem;
@@ -190,7 +216,7 @@ function twisty_click(twisty) {
 }
 
 function get_tbody_from_twisty(twisty) {
-  return twisty.parentNode.parentNode.nextSibling;
+  return twisty.parentNode.parentNode.parentNode.nextSibling;
 }
 function get_twisty_from_tbody(tbody) {
   return tbody.previousSibling.firstChild.nextSibling.firstChild.firstChild;

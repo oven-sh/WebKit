@@ -27,10 +27,6 @@
 #include "Length.h"
 #include <wtf/RefCounted.h>
 
-namespace WTF {
-class TextStream;
-}
-
 namespace WebCore {
 
 struct StyleMarqueeData : RefCounted<StyleMarqueeData> {
@@ -38,10 +34,6 @@ struct StyleMarqueeData : RefCounted<StyleMarqueeData> {
     Ref<StyleMarqueeData> copy() const;
 
     bool operator==(const StyleMarqueeData&) const;
-
-#if !LOG_DISABLED
-    void dumpDifferences(TextStream&, const StyleMarqueeData&) const;
-#endif
 
     Length increment;
     int speed;

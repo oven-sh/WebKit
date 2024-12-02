@@ -14,11 +14,13 @@ function test()
     shouldBeFalse("'IDBDatabaseException' in self");
     shouldBeFalse("'errorCode' in indexedDB.open(dbname)");
     shouldBeFalse("'setVersion' in IDBDatabase.prototype");
-    shouldThrow("document.createEvent('IDBUpgradeNeededEvent')");
-    shouldThrow("document.createEvent('IDBVersionChangeEvent')");
+
+    if ('document' in self) {
+        shouldThrow("document.createEvent('IDBUpgradeNeededEvent')");
+        shouldBeFalse("'version' in document.createEvent('IDBVersionChangeEvent')");
+    }
 
     finishJSTest();
 }
 
 test();
-

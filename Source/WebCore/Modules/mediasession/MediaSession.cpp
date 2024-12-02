@@ -279,7 +279,7 @@ ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefP
         }
         auto platformCommand = platformCommandForMediaSessionAction(action);
         if (platformCommand != PlatformMediaSession::RemoteControlCommandType::NoCommand)
-            PlatformMediaSessionManager::singleton().addSupportedCommand(platformCommand);
+            PlatformMediaSessionManager::sharedManager().addSupportedCommand(platformCommand);
     } else {
         bool containedAction;
         {
@@ -289,7 +289,7 @@ ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefP
 
         if (containedAction)
             ALWAYS_LOG(LOGIDENTIFIER, "removing ", action);
-        PlatformMediaSessionManager::singleton().removeSupportedCommand(platformCommandForMediaSessionAction(action));
+        PlatformMediaSessionManager::sharedManager().removeSupportedCommand(platformCommandForMediaSessionAction(action));
     }
 
     notifyActionHandlerObservers();
@@ -527,7 +527,7 @@ void MediaSession::updateCaptureState(bool isActive, DOMPromiseDeferred<void>&& 
         return;
     }
 
-    if (isActive && (document->hidden() || !UserGestureIndicator::currentUserGesture())) {
+    if (isActive && (document->topDocument().hidden() || !UserGestureIndicator::currentUserGesture())) {
         promise.reject(Exception { ExceptionCode::InvalidStateError, "Activating capture must be called from a user gesture handler."_s });
         return;
     }

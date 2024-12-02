@@ -59,7 +59,6 @@
 #include <algorithm>
 #include <span>
 #include <type_traits>
-#include <wtf/Compiler.h>
 
 namespace WTF {
 
@@ -199,13 +198,13 @@ constexpr std::span<const char> enumNameImpl()
 #if COMPILER(CLANG)
     const size_t prefix = sizeof("std::span<const char> WTF::enumNameImpl() [V = ") - 1;
     const size_t suffix = sizeof("]") - 1;
-    auto name = std::span { __PRETTY_FUNCTION__ }.subspan(prefix, sizeof(__PRETTY_FUNCTION__) - prefix - suffix - 1);
+    std::span<const char> name { __PRETTY_FUNCTION__ + prefix, sizeof(__PRETTY_FUNCTION__) - prefix - suffix - 1 };
     if (name[0] == '(' || name[0] == '-' || ('0' <= name[0] && name[0] <= '9'))
         return { };
 #elif COMPILER(GCC)
     const size_t prefix = sizeof("constexpr std::span<const char> WTF::enumNameImpl() [with auto V = ") - 1;
     const size_t suffix = sizeof("]") - 1;
-    std::span<const char> name = std::span { __PRETTY_FUNCTION__ }.subspan(prefix, sizeof(__PRETTY_FUNCTION__) - prefix - suffix - 1);
+    std::span<const char> name { __PRETTY_FUNCTION__ + prefix, sizeof(__PRETTY_FUNCTION__) - prefix - suffix - 1 };
     if (name[0] == '(')
         name = { };
 #else

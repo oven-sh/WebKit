@@ -258,10 +258,7 @@ namespace sh
 using Resources = ShBuiltInResources;
 using TableBase = TSymbolTableBase;
 
-struct SymbolIdChecker
-{{
-    static_assert(TSymbolTable::kFirstUserDefinedSymbolId > {last_builtin_id});
-}};
+const int TSymbolTable::kLastBuiltInId = {last_builtin_id};
 
 namespace BuiltInName
 {{

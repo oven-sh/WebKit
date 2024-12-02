@@ -196,12 +196,8 @@ void IndentOutdentCommand::outdentParagraph()
         RefPtr highestInlineNode = highestEnclosingNodeOfType(visibleStartOfParagraph.deepEquivalent(), isInline, CannotCrossEditingBoundary, enclosingBlockFlow.get());
         splitElement(*enclosingNode, highestInlineNode ? *highestInlineNode : *visibleStartOfParagraph.deepEquivalent().deprecatedNode());
     }
-
-    Ref placeholder = HTMLBRElement::create(document);
-    Ref placeholderWrapper = createDefaultParagraphElement(document);
-    placeholderWrapper->appendChild(placeholder.get());
-    insertNodeBefore(placeholderWrapper, *splitBlockquoteNode);
-
+    auto placeholder = HTMLBRElement::create(document);
+    insertNodeBefore(placeholder, *splitBlockquoteNode);
     if (!placeholder->isConnected())
         return;
     auto visibleStartOfParagraphToMove = startOfParagraph(visibleStartOfParagraph);

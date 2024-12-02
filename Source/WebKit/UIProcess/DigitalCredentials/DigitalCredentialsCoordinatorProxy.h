@@ -49,18 +49,17 @@ struct FrameInfoData;
 // we are just initially handling exceptions as we build this out.
 using DigitalRequestCompletionHandler = CompletionHandler<void(const WebCore::ExceptionData&)>;
 
-class DigitalCredentialsCoordinatorProxy final : public IPC::MessageReceiver, public RefCounted<DigitalCredentialsCoordinatorProxy> {
+class DigitalCredentialsCoordinatorProxy final : public IPC::MessageReceiver {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(DigitalCredentialsCoordinatorProxy);
+
 public:
-    static Ref<DigitalCredentialsCoordinatorProxy> create(WebPageProxy&);
+    explicit DigitalCredentialsCoordinatorProxy(WebPageProxy&);
     ~DigitalCredentialsCoordinatorProxy();
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 private:
-    explicit DigitalCredentialsCoordinatorProxy(WebPageProxy&);
-
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
@@ -68,7 +67,9 @@ private:
     void requestDigitalCredential(WebCore::FrameIdentifier, FrameInfoData&&, WebCore::DigitalCredentialRequestOptions&&, DigitalRequestCompletionHandler&&);
     void cancel(CompletionHandler<void()>&&);
 
-    WeakPtr<WebPageProxy> m_page;
+    Ref<WebPageProxy> protectedPage() const;
+
+    WeakRef<WebPageProxy> m_page;
 };
 
 } // namespace WebKit

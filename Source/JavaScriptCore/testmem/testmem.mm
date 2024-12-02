@@ -27,7 +27,6 @@
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <inttypes.h>
 #import <stdio.h>
-#import <wtf/Compiler.h>
 
 #if __has_include(<libproc.h>)
 #define HAS_LIBPROC 1
@@ -35,8 +34,6 @@
 #else
 #define HAS_LIBPROC 0
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if HAS_LIBPROC && RUSAGE_INFO_CURRENT >= 4 && JSC_OBJC_API_ENABLED
 static void description()
@@ -112,5 +109,3 @@ int main(int, char*[])
     return 1;
 }
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

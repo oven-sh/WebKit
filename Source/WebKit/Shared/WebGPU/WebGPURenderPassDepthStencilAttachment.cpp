@@ -37,7 +37,7 @@ namespace WebKit::WebGPU {
 
 std::optional<RenderPassDepthStencilAttachment> ConvertToBackingContext::convertToBacking(const WebCore::WebGPU::RenderPassDepthStencilAttachment& renderPassDepthStencilAttachment)
 {
-    auto view = convertToBacking(renderPassDepthStencilAttachment.protectedView().get());
+    auto view = convertToBacking(renderPassDepthStencilAttachment.view);
 
     return { { view, renderPassDepthStencilAttachment.depthClearValue, renderPassDepthStencilAttachment.depthLoadOp, renderPassDepthStencilAttachment.depthStoreOp, renderPassDepthStencilAttachment.depthReadOnly, renderPassDepthStencilAttachment.stencilClearValue, renderPassDepthStencilAttachment.stencilLoadOp, renderPassDepthStencilAttachment.stencilStoreOp, renderPassDepthStencilAttachment.stencilReadOnly } };
 }

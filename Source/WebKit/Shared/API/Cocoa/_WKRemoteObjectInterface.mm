@@ -29,10 +29,11 @@
 #import <objc/runtime.h>
 #import <wtf/HashMap.h>
 #import <wtf/NeverDestroyed.h>
-#import <wtf/ObjCRuntimeExtras.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/Vector.h>
 #import <wtf/text/CString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 extern "C"
 const char *_protocol_getMethodTypeEncoding(Protocol *p, SEL sel, BOOL isRequiredMethod, BOOL isInstanceMethod);
@@ -88,15 +89,15 @@ static void initializeMethod(MethodInfo& methodInfo, Protocol *protocol, SEL sel
 
     bool foundBlock = false;
     for (NSUInteger i = firstArgument; i < argumentCount; ++i) {
-        auto argumentType = span([methodSignature getArgumentTypeAtIndex:i]);
+        const char* argumentType = [methodSignature getArgumentTypeAtIndex:i];
 
-        if (argumentType.empty() || argumentType.front() != '@') {
+        if (*argumentType != '@') {
             // This is a non-object type; we won't allow any classes to be decoded for it.
             allowedClasses.append({ });
             continue;
         }
 
-        if (argumentType.size() > 1 && argumentType[1] == '?') {
+        if (*(argumentType + 1) == '?') {
             if (forReplyBlock)
                 [NSException raise:NSInvalidArgumentException format:@"Blocks as arguments to the reply block of method (%s / %s) are not allowed", protocol_getName(protocol), sel_getName(selector)];
 
@@ -121,10 +122,11 @@ static void initializeMethod(MethodInfo& methodInfo, Protocol *protocol, SEL sel
 
 static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *protocol, bool requiredMethods)
 {
-    auto methods = protocol_copyMethodDescriptionListSpan(protocol, requiredMethods, true);
+    unsigned methodCount;
+    struct objc_method_description *methods = protocol_copyMethodDescriptionList(protocol, requiredMethods, true, &methodCount);
 
-    for (auto& method : methods.span()) {
-        SEL selector = method.name;
+    for (unsigned i = 0; i < methodCount; ++i) {
+        SEL selector = methods[i].name;
 
         ASSERT(!interface->_methods.contains(selector));
         MethodInfo& methodInfo = interface->_methods.add(selector, MethodInfo()).iterator->value;
@@ -137,16 +139,23 @@ static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *pro
 
         initializeMethod(methodInfo, protocol, selector, methodSignature, false);
     }
+
+    free(methods);
 }
 
 static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *protocol)
 {
-    auto conformingProtocols = protocol_copyProtocolListSpan(protocol);
-    for (auto* conformingProtocol : conformingProtocols.span()) {
+    unsigned conformingProtocolCount;
+    auto conformingProtocols = protocol_copyProtocolList(protocol, &conformingProtocolCount);
+
+    for (unsigned i = 0; i < conformingProtocolCount; ++i) {
+        auto conformingProtocol = conformingProtocols[i];
         if (conformingProtocol == @protocol(NSObject))
             continue;
         initializeMethods(interface, conformingProtocol);
     }
+
+    free(conformingProtocols);
 
     initializeMethods(interface, protocol, true);
     initializeMethods(interface, protocol, false);
@@ -312,3 +321,5 @@ static HashSet<CFTypeRef>& classesForSelectorArgument(_WKRemoteObjectInterface *
 }
 
 @end
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

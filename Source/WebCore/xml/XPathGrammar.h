@@ -1,9 +1,5 @@
-/* This file is generated using the following command:
-   bison -d -p xpathyy XPathGrammar.y -o XPathGrammar.cpp
- */
-
-#pragma once
-
+#ifndef CSSGRAMMAR_H
+#define CSSGRAMMAR_H
 /* A Bison parser, made by GNU Bison 2.3.  */
 
 /* Skeleton interface for Bison's Yacc-like parsers in C
@@ -96,7 +92,7 @@
 
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 typedef union YYSTYPE
-#line 59 "XPathGrammar.y"
+#line 60 "WebCore/xml/XPathGrammar.y"
 { 
     WebCore::XPath::NumericOp::Opcode numericOpcode;
     WebCore::XPath::EqTestOp::Opcode equalityTestOpcode;
@@ -109,8 +105,8 @@ typedef union YYSTYPE
     WebCore::XPath::Expression* expression;
 }
 /* Line 1529 of yacc.c.  */
-#line 107 "XPathGrammar.h"
-	YYSTYPE;
+#line 107 "./XPathGrammar.hpp"
+    YYSTYPE;
 # define yystype YYSTYPE /* obsolescent; will be withdrawn */
 # define YYSTYPE_IS_DECLARED 1
 # define YYSTYPE_IS_TRIVIAL 1
@@ -118,3 +114,4 @@ typedef union YYSTYPE
 
 
 
+#endif

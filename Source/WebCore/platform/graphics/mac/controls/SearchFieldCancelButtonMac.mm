@@ -34,8 +34,6 @@
 #import "LocalDefaultSystemAppearance.h"
 #import "SearchFieldCancelButtonPart.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 SearchFieldCancelButtonMac::SearchFieldCancelButtonMac(SearchFieldCancelButtonPart& owningPart, ControlFactoryMac& controlFactory, NSSearchFieldCell *searchFieldCell)
@@ -100,7 +98,5 @@ void SearchFieldCancelButtonMac::draw(GraphicsContext& context, const FloatRound
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

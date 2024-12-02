@@ -27,8 +27,6 @@
 
 #include "NestingLevelIncrementer.h"
 #include "Timer.h"
-#include <wtf/CheckedPtr.h>
-#include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -63,14 +61,12 @@ public:
     bool didSeeScript { false };
 };
 
-class HTMLParserScheduler final : public RefCounted<HTMLParserScheduler> {
+class HTMLParserScheduler {
     WTF_MAKE_TZONE_ALLOCATED(HTMLParserScheduler);
     WTF_MAKE_NONCOPYABLE(HTMLParserScheduler);
 public:
-    static Ref<HTMLParserScheduler> create(HTMLDocumentParser&);
+    explicit HTMLParserScheduler(HTMLDocumentParser&);
     ~HTMLParserScheduler();
-
-    void detach();
 
     bool shouldYieldBeforeToken(PumpSession& session)
     {
@@ -111,8 +107,6 @@ public:
     }
 
 private:
-    explicit HTMLParserScheduler(HTMLDocumentParser&);
-
     static const unsigned numberOfTokensBeforeCheckingForYield = 4096; // Performance optimization
 
     void continueNextChunkTimerFired();
@@ -126,7 +120,7 @@ private:
         return elapsedTime > m_parserTimeLimit;
     }
 
-    CheckedPtr<HTMLDocumentParser> m_parser;
+    HTMLDocumentParser& m_parser;
 
     Seconds m_parserTimeLimit;
     Timer m_continueNextChunkTimer;

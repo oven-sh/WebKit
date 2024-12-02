@@ -14,8 +14,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(Number, "isSafeInteger", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Number, "isSafeInteger");
+verifyWritable(Number, "isSafeInteger");
+verifyConfigurable(Number, "isSafeInteger");

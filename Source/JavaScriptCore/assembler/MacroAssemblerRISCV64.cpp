@@ -267,7 +267,6 @@ static_assert(!(RA_RESTORATION_SIZE & 0xf));
 asm(
     ".text" "\n"
     ".globl " SYMBOL_STRING(ctiMasmProbeTrampoline) "\n"
-    ".attribute arch, \"rv64gc\"" "\n"
     HIDE_SYMBOL(ctiMasmProbeTrampoline) "\n"
     SYMBOL_STRING(ctiMasmProbeTrampoline) ":" "\n"
 

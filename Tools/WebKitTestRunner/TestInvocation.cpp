@@ -317,14 +317,16 @@ void TestInvocation::dumpResults()
 
 void TestInvocation::dumpAudio(WKDataRef audioData)
 {
-    auto span = WKDataGetSpan(audioData);
-    if (span.empty())
+    size_t length = WKDataGetSize(audioData);
+    if (!length)
         return;
 
-    printf("Content-Type: audio/wav\n");
-    printf("Content-Length: %lu\n", static_cast<unsigned long>(span.size()));
+    const unsigned char* data = WKDataGetBytes(audioData);
 
-    fwrite(span.data(), 1, span.size(), stdout);
+    printf("Content-Type: audio/wav\n");
+    printf("Content-Length: %lu\n", static_cast<unsigned long>(length));
+
+    fwrite(data, 1, length, stdout);
     printf("#EOF\n");
     fprintf(stderr, "#EOF\n");
 }

@@ -34,7 +34,6 @@
 
 #include "Color.h"
 #include "ImageBackingStore.h"
-#include "ImageBuffer.h"
 #include <cairo.h>
 #include <wtf/TZoneMallocInlines.h>
 

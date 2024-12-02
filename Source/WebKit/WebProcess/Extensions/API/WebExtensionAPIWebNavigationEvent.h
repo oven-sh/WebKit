@@ -31,6 +31,7 @@
 #include "JSWebExtensionWrappable.h"
 #include "WebExtensionAPIObject.h"
 #include "WebExtensionEventListenerType.h"
+#include "WebPage.h"
 
 OBJC_CLASS JSValue;
 OBJC_CLASS NSDictionary;
@@ -51,8 +52,8 @@ public:
 
     const ListenerVector& listeners() const { return m_listeners; }
 
-    void addListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>, NSDictionary *filter, NSString **outExceptionString);
-    void removeListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>);
+    void addListener(WebPage&, RefPtr<WebExtensionCallbackHandler>, NSDictionary *filter, NSString **outExceptionString);
+    void removeListener(WebPage&, RefPtr<WebExtensionCallbackHandler>);
     bool hasListener(RefPtr<WebExtensionCallbackHandler>);
 
     void removeAllListeners();
@@ -70,7 +71,7 @@ private:
         setPropertyPath(toAPIString(type), &parentObject);
     }
 
-    Markable<WebCore::FrameIdentifier> m_frameIdentifier;
+    Markable<WebPageProxyIdentifier> m_pageProxyIdentifier;
     WebExtensionEventListenerType m_type;
     ListenerVector m_listeners;
 };

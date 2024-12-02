@@ -29,7 +29,8 @@
 
 #import <Security/SecCertificate.h>
 #import <wtf/RetainPtr.h>
-#import <wtf/cf/VectorCF.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -60,7 +61,9 @@ public:
     std::span<const uint8_t> dataReference() const
     {
         RELEASE_ASSERT(m_certificateData);
-        return span(m_certificateData.get());
+        CFDataRef data = m_certificateData.get();
+        RELEASE_ASSERT(data);
+        return { CFDataGetBytePtr(data), static_cast<size_t>(CFDataGetLength(data)) };
     }
 
 private:
@@ -76,5 +79,7 @@ private:
 };
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(CF)

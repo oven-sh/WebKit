@@ -33,19 +33,14 @@
 
 namespace WebCore {
 
-AccessibilityMenuList::AccessibilityMenuList(AXID axID, RenderMenuList& renderer, AXObjectCache& cache)
-    : AccessibilityRenderObject(axID, renderer)
-    , m_popup(downcast<AccessibilityMenuListPopup>(*cache.create(AccessibilityRole::MenuListPopup)))
+AccessibilityMenuList::AccessibilityMenuList(RenderMenuList& renderer)
+    : AccessibilityRenderObject(renderer)
 {
-    m_popup->setParent(this);
-
-    addChild(m_popup.get());
-    m_childrenInitialized = true;
 }
 
-Ref<AccessibilityMenuList> AccessibilityMenuList::create(AXID axID, RenderMenuList& renderer, AXObjectCache& cache)
+Ref<AccessibilityMenuList> AccessibilityMenuList::create(RenderMenuList& renderer)
 {
-    return adoptRef(*new AccessibilityMenuList(axID, renderer, cache));
+    return adoptRef(*new AccessibilityMenuList(renderer));
 }
 
 bool AccessibilityMenuList::press()
@@ -54,43 +49,48 @@ bool AccessibilityMenuList::press()
         return false;
 
 #if !PLATFORM(IOS_FAMILY)
-    RefPtr element = this->element();
-    auto notification = AXNotification::PressDidFail;
+    auto element = this->element();
+    AXObjectCache::AXNotification notification = AXObjectCache::AXPressDidFail;
     if (CheckedPtr menuList = dynamicDowncast<RenderMenuList>(renderer()); menuList && element && !element->isDisabledFormControl()) {
         if (menuList->popupIsVisible())
             menuList->hidePopup();
         else
             menuList->showPopup();
-        notification = AXNotification::PressDidSucceed;
+        notification = AXObjectCache::AXPressDidSucceed;
     }
-    if (CheckedPtr cache = axObjectCache())
-        cache->postNotification(element.get(), notification);
+    if (auto cache = axObjectCache())
+        cache->postNotification(element, notification);
     return true;
 #endif
     return false;
 }
 
-void AccessibilityMenuList::updateChildrenIfNecessary()
-{
-    // Typically for AccessibilityNodeObject subclasses, updateChildrenIfNecessary() is what
-    // calls addChildren(), which in turn passes m_subtreeDirty down the tree as objects are inserted.
-    // However, we purposely never allow our children to be cleared or become unitialized, which
-    // by the definition of the AccessibilityNodeObject::updateChildrenIfNecessary() means addChildren()
-    // will never be called. (We add our only child, m_popup, once in the constructor).
-    //
-    // Despite this, we still want to pass down the m_subtreeDirty flag if we have it set, so do that here.
-    if (m_subtreeDirty)
-        m_popup->setNeedsToUpdateSubtree();
-
-    m_subtreeDirty = false;
-}
-
 void AccessibilityMenuList::addChildren()
 {
-    // This class sets its children once in the constructor, and should never
-    // have dirty or uninitialized children afterwards.
-    ASSERT(m_childrenInitialized);
-    ASSERT(!m_childrenDirty);
+    auto clearDirtySubtree = makeScopeExit([&] {
+        m_subtreeDirty = false;
+    });
+
+    if (!m_renderer)
+        return;
+    
+    AXObjectCache* cache = axObjectCache();
+    if (!cache)
+        return;
+    
+    auto list = cache->create(AccessibilityRole::MenuListPopup);
+    if (!list)
+        return;
+
+    downcast<AccessibilityMockObject>(*list).setParent(this);
+    if (list->isIgnored()) {
+        cache->remove(list->objectID());
+        return;
+    }
+
+    m_childrenInitialized = true;
+    addChild(list);
+    list->addChildren();
 }
 
 bool AccessibilityMenuList::isCollapsed() const
@@ -110,20 +110,20 @@ bool AccessibilityMenuList::isCollapsed() const
 
 bool AccessibilityMenuList::canSetFocusAttribute() const
 {
-    RefPtr element = this->element();
-    return element && !element->isDisabledFormControl();
+    if (!node())
+        return false;
+
+    return !downcast<Element>(*node()).isDisabledFormControl();
 }
 
 void AccessibilityMenuList::didUpdateActiveOption(int optionIndex)
 {
-    RefPtr document = m_renderer ? &m_renderer->document() : nullptr;
-    if (!document)
-        return;
+    Ref<Document> document(m_renderer->document());
 
     const auto& childObjects = unignoredChildren();
     if (!childObjects.isEmpty()) {
         ASSERT(childObjects.size() == 1);
-        ASSERT(is<AccessibilityMenuListPopup>(childObjects[0].get()));
+        ASSERT(is<AccessibilityMenuListPopup>(*childObjects[0]));
 
         // We might be calling this method in situations where the renderers for list items
         // associated to the menu list have not been created (e.g. they might be rendered
@@ -133,12 +133,11 @@ void AccessibilityMenuList::didUpdateActiveOption(int optionIndex)
         // You can reproduce the issue in the GTK+ port by removing this check and running
         // accessibility/insert-selected-option-into-select-causes-crash.html (will crash).
         int popupChildrenSize = static_cast<int>(childObjects[0]->unignoredChildren().size());
-        RefPtr accessibilityMenuListPopup = dynamicDowncast<AccessibilityMenuListPopup>(childObjects[0].get());
-        if (accessibilityMenuListPopup && optionIndex >= 0 && optionIndex < popupChildrenSize)
+        if (auto* accessibilityMenuListPopup = dynamicDowncast<AccessibilityMenuListPopup>(*childObjects[0]); accessibilityMenuListPopup && optionIndex >= 0 && optionIndex < popupChildrenSize)
             accessibilityMenuListPopup->didUpdateActiveOption(optionIndex);
     }
 
-    if (CheckedPtr cache = document->axObjectCache())
+    if (auto* cache = document->axObjectCache())
         cache->deferMenuListValueChange(element());
 }
 

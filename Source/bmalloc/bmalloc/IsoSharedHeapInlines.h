@@ -28,7 +28,7 @@
 #include "IsoSharedHeap.h"
 
 #include "IsoSharedPage.h"
-#include <bit>
+#include "StdLibExtras.h"
 
 #if !BUSE(LIBPAS)
 

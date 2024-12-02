@@ -33,7 +33,7 @@
 #include "IntSize.h"
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
-#include <wtf/MallocSpan.h>
+#include <wtf/MallocPtr.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
@@ -66,9 +66,9 @@ public:
 
     bool supportsAlpha() const { return m_flags & SupportsAlpha; }
 
-    virtual void beginPainting();
-    virtual void completePainting();
-    virtual void waitUntilPaintingComplete();
+    virtual void beginPainting() = 0;
+    virtual void completePainting() = 0;
+    virtual void waitUntilPaintingComplete() = 0;
 
 #if USE(SKIA)
     SkCanvas* canvas();
@@ -89,17 +89,6 @@ protected:
     static double s_currentLayersMemoryUsage;
     static double s_maxLayersMemoryUsage;
 
-    enum class PaintingState {
-        InProgress,
-        Complete
-    };
-
-    struct {
-        Lock lock;
-        Condition condition;
-        PaintingState state { PaintingState::Complete };
-    } m_painting;
-
 private:
     Flags m_flags;
 };
@@ -110,9 +99,7 @@ public:
     WEBCORE_EXPORT virtual ~CoordinatedUnacceleratedTileBuffer();
 
     int stride() const { return m_size.width() * 4; }
-
-    const unsigned char* data() const { return m_data.span().data(); }
-    unsigned char* data() { return m_data.mutableSpan().data(); }
+    unsigned char* data() const { return m_data.get(); }
 
     PixelFormat pixelFormat() const;
 
@@ -125,8 +112,11 @@ private:
 #if USE(SKIA)
     bool tryEnsureSurface() final;
 #endif
+    void beginPainting() final;
+    void completePainting() final;
+    void waitUntilPaintingComplete() final;
 
-    MallocSpan<unsigned char> m_data;
+    MallocPtr<unsigned char> m_data;
     IntSize m_size;
 
     enum class PaintingState {
@@ -156,6 +146,7 @@ private:
     IntSize size() const final;
 
     bool tryEnsureSurface() final;
+    void beginPainting() final { }
     void completePainting() final;
     void waitUntilPaintingComplete() final;
 

@@ -105,13 +105,11 @@ TextStream& operator<<(TextStream& ts, TextStreamSeparator& sep)
 static TextStream& operator<<(TextStream& ts, const DashArray& a)
 {
     ts << '{';
-    bool isFirst = true;
-    for (auto& value : a) {
-        if (isFirst)
-            isFirst = false;
-        else
+    DashArray::const_iterator end = a.end();
+    for (DashArray::const_iterator it = a.begin(); it != end; ++it) {
+        if (it != a.begin())
             ts << ", "_s;
-        ts << value;
+        ts << *it;
     }
     ts << '}';
     return ts;

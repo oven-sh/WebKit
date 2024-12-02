@@ -87,10 +87,12 @@ namespace WebCore {
 CoreAudioCaptureSourceFactoryIOS::CoreAudioCaptureSourceFactoryIOS()
     : m_listener(adoptNS([[WebCoreAudioCaptureSourceIOSListener alloc] initWithCallback:this]))
 {
+    AudioSession::sharedSession().addInterruptionObserver(*this);
 }
 
 CoreAudioCaptureSourceFactoryIOS::~CoreAudioCaptureSourceFactoryIOS()
 {
+    AudioSession::sharedSession().removeInterruptionObserver(*this);
     [m_listener invalidate];
     m_listener = nullptr;
 }

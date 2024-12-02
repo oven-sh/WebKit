@@ -107,6 +107,7 @@ Ref<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDescrip
     // https://gpuweb.github.io/gpuweb/#dom-gpudevice-createcommandencoder
 
     auto *commandBufferDescriptor = [MTLCommandBufferDescriptor new];
+    commandBufferDescriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
     auto commandBuffer = protectedQueue()->commandBufferWithDescriptor(commandBufferDescriptor);
     if (!commandBuffer)
         return CommandEncoder::createInvalid(*this);
@@ -230,18 +231,6 @@ Ref<ComputePassEncoder> CommandEncoder::beginComputePass(const WGPUComputePassDe
 
     MTLComputePassDescriptor* computePassDescriptor = [MTLComputePassDescriptor new];
     computePassDescriptor.dispatchType = MTLDispatchTypeSerial;
-    id<MTLCounterSampleBuffer> counterSampleBuffer;
-    if (auto* wgpuTimestampWrites = descriptor.timestampWrites) {
-        Ref timestampWrites = protectedFromAPI(wgpuTimestampWrites->querySet);
-        counterSampleBuffer = timestampWrites->counterSampleBuffer();
-    }
-
-    if (m_device->enableEncoderTimestamps() || counterSampleBuffer) {
-        auto* timestampWrites = descriptor.timestampWrites;
-        computePassDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer ?: m_device->timestampsBuffer(m_commandBuffer, 2);
-        computePassDescriptor.sampleBufferAttachments[0].startOfEncoderSampleIndex = timestampWrites ? timestampWrites->beginningOfPassWriteIndex : 0;
-        computePassDescriptor.sampleBufferAttachments[0].endOfEncoderSampleIndex = timestampWrites ? timestampWrites->endOfPassWriteIndex : 1;
-    }
 
     id<MTLComputeCommandEncoder> computeCommandEncoder = [m_commandBuffer computeCommandEncoderWithDescriptor:computePassDescriptor];
     setExistingEncoder(computeCommandEncoder);
@@ -264,7 +253,7 @@ void CommandEncoder::discardCommandBuffer()
         return;
     }
 
-    id<MTLCommandEncoder> existingEncoder = m_device->protectedQueue()->encoderForBuffer(m_commandBuffer);
+    id<MTLCommandEncoder> existingEncoder = m_device->getQueue().encoderForBuffer(m_commandBuffer);
     auto queue = m_device->protectedQueue();
     queue->endEncoding(existingEncoder, m_commandBuffer);
     queue->removeMTLCommandBuffer(m_commandBuffer);
@@ -469,27 +458,6 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
         return RenderPassEncoder::createInvalid(*this, m_device, @"command buffer has already been committed");
 
     MTLRenderPassDescriptor* mtlDescriptor = [MTLRenderPassDescriptor new];
-    id<MTLCounterSampleBuffer> counterSampleBuffer;
-    if (auto* wgpuTimestampWrites = descriptor.timestampWrites) {
-        Ref timestampWrites = protectedFromAPI(wgpuTimestampWrites->querySet);
-        counterSampleBuffer = timestampWrites->counterSampleBuffer();
-    }
-
-    if (m_device->enableEncoderTimestamps() || counterSampleBuffer) {
-        if (counterSampleBuffer) {
-            mtlDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer;
-            mtlDescriptor.sampleBufferAttachments[0].startOfVertexSampleIndex = descriptor.timestampWrites->beginningOfPassWriteIndex;
-            mtlDescriptor.sampleBufferAttachments[0].endOfVertexSampleIndex = descriptor.timestampWrites->endOfPassWriteIndex;
-            mtlDescriptor.sampleBufferAttachments[0].startOfFragmentSampleIndex = descriptor.timestampWrites->endOfPassWriteIndex;
-            mtlDescriptor.sampleBufferAttachments[0].endOfFragmentSampleIndex = descriptor.timestampWrites->endOfPassWriteIndex;
-        } else {
-            mtlDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer ?: m_device->timestampsBuffer(m_commandBuffer, 4);
-            mtlDescriptor.sampleBufferAttachments[0].startOfVertexSampleIndex = 0;
-            mtlDescriptor.sampleBufferAttachments[0].endOfVertexSampleIndex = 1;
-            mtlDescriptor.sampleBufferAttachments[0].startOfFragmentSampleIndex = 2;
-            mtlDescriptor.sampleBufferAttachments[0].endOfFragmentSampleIndex = 3;
-        }
-    }
 
     if (descriptor.colorAttachmentCount > 8)
         return RenderPassEncoder::createInvalid(*this, m_device, @"color attachment count is > 8");
@@ -502,7 +470,7 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     uint32_t textureWidth = 0, textureHeight = 0, sampleCount = 0;
     using SliceSet = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     HashMap<void*, SliceSet> depthSlices;
-    for (auto [ i, attachment ] : indexedRange(descriptor.colorAttachmentsSpan())) {
+    for (auto [ i, attachment ] : IndexedRange(descriptor.colorAttachmentsSpan())) {
         if (!attachment.view)
             continue;
 
@@ -661,7 +629,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             return RenderPassEncoder::createInvalid(*this, m_device, @"depth clear value is invalid");
 
         if (zeroColorTargets) {
-            mtlDescriptor.defaultRasterSampleCount = metalDepthStencilTexture.sampleCount;
+            mtlDescriptor.defaultRasterSampleCount = textureView->sampleCount();
             if (!mtlDescriptor.defaultRasterSampleCount)
                 return RenderPassEncoder::createInvalid(*this, m_device, @"no color targets and depth-stencil texture is nil");
             mtlDescriptor.renderTargetWidth = metalDepthStencilTexture.width;
@@ -977,7 +945,7 @@ void CommandEncoder::copyBufferToTexture(const WGPUImageCopyBuffer& source, cons
         return;
     }
 
-    auto logicalSize = protectedFromAPI(destination.texture)->logicalMiplevelSpecificTextureExtent(destination.mipLevel);
+    auto logicalSize = fromAPI(destination.texture).logicalMiplevelSpecificTextureExtent(destination.mipLevel);
     auto widthForMetal = logicalSize.width < destination.origin.x ? 0 : std::min(copySize.width, logicalSize.width - destination.origin.x);
     auto heightForMetal = logicalSize.height < destination.origin.y ? 0 : std::min(copySize.height, logicalSize.height - destination.origin.y);
     auto depthForMetal = logicalSize.depthOrArrayLayers < destination.origin.z ? 0 : std::min(copySize.depthOrArrayLayers, logicalSize.depthOrArrayLayers - destination.origin.z);
@@ -2115,21 +2083,13 @@ void CommandEncoder::resolveQuerySet(const QuerySet& querySet, uint32_t firstQue
     if (querySet.isDestroyed() || destination.isDestroyed() || !queryCount)
         return;
 
+    ensureBlitCommandEncoder();
     switch (querySet.type()) {
     case WGPUQueryType_Occlusion: {
-        ensureBlitCommandEncoder();
         [m_blitCommandEncoder copyFromBuffer:querySet.visibilityBuffer() sourceOffset:sizeof(uint64_t) * firstQuery toBuffer:destination.buffer() destinationOffset:destinationOffset size:sizeof(uint64_t) * queryCount];
         break;
     }
     case WGPUQueryType_Timestamp: {
-        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=283385 - https://bugs.webkit.org/show_bug.cgi?id=283088 should be reverted when the blocking issue is resolved
-        finalizeBlitCommandEncoder();
-        id<MTLSharedEvent> workaround = m_device->resolveTimestampsSharedEvent();
-        // The signal value does not matter, the event alone prevents reordering
-        [m_commandBuffer encodeSignalEvent:workaround value:1];
-        [m_commandBuffer encodeWaitForEvent:workaround value:1];
-        ensureBlitCommandEncoder();
-        [m_blitCommandEncoder resolveCounters:querySet.counterSampleBuffer() inRange:NSMakeRange(0, querySet.count()) destinationBuffer:destination.buffer() destinationOffset:destinationOffset];
         break;
     }
     default:
@@ -2173,11 +2133,6 @@ void CommandEncoder::lock(bool shouldLock)
     m_state = shouldLock ? EncoderState::Locked : EncoderState::Open;
     if (!shouldLock)
         setExistingEncoder(nil);
-}
-
-void CommandEncoder::trackEncoder(CommandEncoder& commandEncoder, WeakHashSet<CommandEncoder>& encoderHashSet)
-{
-    encoderHashSet.add(commandEncoder);
 }
 
 #undef GENERATE_INVALID_ENCODER_STATE_ERROR

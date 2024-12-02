@@ -1,9 +1,9 @@
 
 PASS Allows setting the delay to a positive number
-PASS Allows setting the delay to a negative number
-PASS Allows setting the delay of an animation in progress: positive delay that causes the animation to be no longer in-effect
-PASS Allows setting the delay of an animation in progress: negative delay that seeks into the active interval
-PASS Allows setting the delay of an animation in progress: large negative delay that causes the animation to be finished
+FAIL Allows setting the delay to a negative number assert_approx_equals: values do not match for "getComputedTiming().endTime after set delay -100" expected 0 +/- 0.125 but got 100
+FAIL Allows setting the delay of an animation in progress: positive delay that causes the animation to be no longer in-effect assert_equals: expected (object) null but got (number) 0
+FAIL Allows setting the delay of an animation in progress: negative delay that seeks into the active interval assert_equals: expected 0.5 but got 0
+FAIL Allows setting the delay of an animation in progress: large negative delay that causes the animation to be finished assert_equals: expected 1 but got 0
 PASS Throws when setting invalid delay value: NaN
 PASS Throws when setting invalid delay value: Infinity
 PASS Throws when setting invalid delay value: -Infinity
@@ -26,10 +26,10 @@ PASS Allows setting iterations to a double value
 FAIL Throws when setting iterations to Infinity assert_throws_js: test function "() => {
     anim.effect.updateTiming({ iterations: Infinity });
   }" did not throw
-PASS Allows setting the iterations of an animation in progress
-FAIL Allows setting the iterations of an animation in progress with duration "auto" assert_equals: progress after adding an iteration expected 1 but got 0
-PASS Allows setting the duration to 123.45
-PASS Allows setting the duration to auto
+FAIL Allows setting the iterations of an animation in progress assert_equals: 'actual' unit type must be 'percent' for "duration when animation is finished" expected (string) "percent" but got (undefined) undefined
+FAIL Allows setting the iterations of an animation in progress with duration "auto" assert_equals: 'actual' unit type must be 'percent' for "duration when animation is finished" expected (string) "percent" but got (undefined) undefined
+FAIL Allows setting the duration to 123.45 assert_approx_equals: Updates specified duration expected a number but got a "string"
+FAIL Allows setting the duration to auto assert_equals: 'actual' unit type must be 'percent' for "Updates computed duration" expected (string) "percent" but got (undefined) undefined
 PASS Throws when setting invalid duration: -1
 PASS Throws when setting invalid duration: NaN
 FAIL Throws when setting invalid duration: Infinity assert_throws_js: function "() => {
@@ -40,7 +40,7 @@ PASS Throws when setting invalid duration: -Infinity
 PASS Throws when setting invalid duration: "abc"
 PASS Throws when setting invalid duration: "100"
 PASS Allows setting the duration of an animation in progress
-PASS Allows setting the duration of an animation in progress such that the the start and current time do not change
+FAIL Allows setting the duration of an animation in progress such that the the start and current time do not change assert_equals: 'actual' unit type must be 'percent' for "Initial duration should be as set on KeyframeEffect" expected (string) "percent" but got (undefined) undefined
 PASS Allows setting the direction to each of the possible keywords
 PASS Allows setting the direction of an animation in progress from 'normal' to 'reverse'
 PASS Allows setting the direction of an animation in progress from 'normal' to 'reverse' while at start of active interval

@@ -35,9 +35,6 @@
 #include "ZycoreDefines.h"
 #include "ZydisDecoderTypes.h"
 #include "ZydisStatus.h"
-#include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #ifdef __cplusplus
 extern "C" {
@@ -274,7 +271,5 @@ ZYDIS_EXPORT ZyanStatus ZydisGetInstructionSegments(const ZydisDecodedInstructio
 #ifdef __cplusplus
 }
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif /* ZYDIS_UTILS_H */

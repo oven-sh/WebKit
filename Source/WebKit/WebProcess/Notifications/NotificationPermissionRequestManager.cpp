@@ -86,7 +86,7 @@ void NotificationPermissionRequestManager::startRequest(const SecurityOriginData
     m_page->sendWithAsyncReply(Messages::WebPageProxy::RequestNotificationPermission(securityOrigin.toString()), [this, protectedThis = Ref { *this }, securityOrigin, permissionHandler = WTFMove(permissionHandler)](bool allowed) mutable {
 
         auto innerPermissionHandler = [this, protectedThis = Ref { *this }, securityOrigin, permissionHandler = WTFMove(permissionHandler)] (bool allowed) mutable {
-            WebProcess::singleton().protectedNotificationManager()->didUpdateNotificationDecision(securityOrigin.toString(), allowed);
+            WebProcess::singleton().supplement<WebNotificationManager>()->didUpdateNotificationDecision(securityOrigin.toString(), allowed);
 
             auto permissionHandlers = m_requestsPerOrigin.take(securityOrigin);
             callPermissionHandlersWith(permissionHandlers, allowed ? Permission::Granted : Permission::Denied);
@@ -109,7 +109,7 @@ auto NotificationPermissionRequestManager::permissionLevel(const SecurityOriginD
     if (!m_page->corePage()->settings().notificationsEnabled())
         return Permission::Denied;
     
-    return WebProcess::singleton().protectedNotificationManager()->policyForOrigin(securityOrigin.toString());
+    return WebProcess::singleton().supplement<WebNotificationManager>()->policyForOrigin(securityOrigin.toString());
 #else
     UNUSED_PARAM(securityOrigin);
     return Permission::Denied;
@@ -119,7 +119,7 @@ auto NotificationPermissionRequestManager::permissionLevel(const SecurityOriginD
 void NotificationPermissionRequestManager::setPermissionLevelForTesting(const String& originString, bool allowed)
 {
 #if ENABLE(NOTIFICATIONS)
-    WebProcess::singleton().protectedNotificationManager()->didUpdateNotificationDecision(originString, allowed);
+    WebProcess::singleton().supplement<WebNotificationManager>()->didUpdateNotificationDecision(originString, allowed);
 #else
     UNUSED_PARAM(originString);
     UNUSED_PARAM(allowed);
@@ -129,7 +129,7 @@ void NotificationPermissionRequestManager::setPermissionLevelForTesting(const St
 void NotificationPermissionRequestManager::removeAllPermissionsForTesting()
 {
 #if ENABLE(NOTIFICATIONS)
-    WebProcess::singleton().protectedNotificationManager()->removeAllPermissionsForTesting();
+    WebProcess::singleton().supplement<WebNotificationManager>()->removeAllPermissionsForTesting();
 #endif
 }
 

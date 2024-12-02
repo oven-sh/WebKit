@@ -778,7 +778,12 @@ TEST(WebpagePreferences, WebsitePoliciesUpdates)
 }
 
 #if PLATFORM(MAC)
+// rdar://137267112
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000
+TEST(WebpagePreferences, DISABLED_WebsitePoliciesAutoplayQuirks)
+#else
 TEST(WebpagePreferences, WebsitePoliciesAutoplayQuirks)
+#endif
 {
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
@@ -796,9 +801,9 @@ TEST(WebpagePreferences, WebsitePoliciesAutoplayQuirks)
     [delegate setAutoplayPolicyForURL:^(NSURL *) {
         return _WKWebsiteAutoplayPolicyDeny;
     }];
-
     [webView loadRequest:requestWithAudio];
-    [webView waitForMessages:@[@"did-not-play", @"on-pause"]];
+    [webView waitForMessage:@"did-not-play"];
+    [webView waitForMessage:@"on-pause"];
 
     receivedAutoplayEvent = std::nullopt;
     [webView loadHTMLString:@"" baseURL:nil];
@@ -815,7 +820,8 @@ TEST(WebpagePreferences, WebsitePoliciesAutoplayQuirks)
         return _WKWebsiteAutoplayPolicyDeny;
     }];
     [webView loadRequest:requestWithAudioInFrame];
-    [webView waitForMessages:@[@"did-not-play", @"on-pause"]];
+    [webView waitForMessage:@"did-not-play"];
+    [webView waitForMessage:@"on-pause"];
 
     receivedAutoplayEvent = std::nullopt;
     [webView loadHTMLString:@"" baseURL:nil];
@@ -905,7 +911,8 @@ TEST(WebpagePreferences, WebsitePoliciesPerDocumentAutoplayBehaviorQuirks)
 }
 #endif
 
-TEST(WebpagePreferences, WebsitePoliciesAutoplayQuirksAsyncPolicyDelegate)
+// FIXME: Re-enable this test once webkit.org/b/230494 is resolved.
+TEST(WebpagePreferences, DISABLED_WebsitePoliciesAutoplayQuirksAsyncPolicyDelegate)
 {
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
 #if PLATFORM(IOS_FAMILY)
@@ -927,8 +934,8 @@ TEST(WebpagePreferences, WebsitePoliciesAutoplayQuirksAsyncPolicyDelegate)
         return _WKWebsiteAutoplayPolicyDeny;
     }];
     [webView loadRequest:requestWithAudio];
-
-    [webView waitForMessages:@[@"did-not-play", @"on-pause"]];
+    [webView waitForMessage:@"did-not-play"];
+    [webView waitForMessage:@"on-pause"];
 
     receivedAutoplayEvent = std::nullopt;
     [webView loadHTMLString:@"" baseURL:nil];
@@ -945,7 +952,8 @@ TEST(WebpagePreferences, WebsitePoliciesAutoplayQuirksAsyncPolicyDelegate)
         return _WKWebsiteAutoplayPolicyDeny;
     }];
     [webView loadRequest:requestWithAudioInFrame];
-    [webView waitForMessages:@[@"did-not-play", @"on-pause"]];
+    [webView waitForMessage:@"did-not-play"];
+    [webView waitForMessage:@"on-pause"];
 }
 
 TEST(WebpagePreferences, InvalidCustomHeaders)

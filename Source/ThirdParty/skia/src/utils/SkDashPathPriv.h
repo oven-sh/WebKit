@@ -9,7 +9,6 @@
 #define SkDashPathPriv_DEFINED
 
 #include "include/core/SkPathEffect.h"
-#include "src/core/SkPathEffectBase.h"
 
 namespace SkDashPath {
     /**
@@ -25,7 +24,7 @@ namespace SkDashPath {
                             SkScalar* intervalLength, SkScalar* adjustedPhase = nullptr);
 
     bool FilterDashPath(SkPath* dst, const SkPath& src, SkStrokeRec*, const SkRect*,
-                        const SkPathEffectBase::DashInfo& info);
+                        const SkPathEffect::DashInfo& info);
 
 #ifdef SK_BUILD_FOR_FUZZER
     const SkScalar kMaxDashCount = 10000;

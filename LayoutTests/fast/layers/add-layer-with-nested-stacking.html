@@ -19,15 +19,11 @@
         document.getElementById("test").style.display = "block";
     }
 
-    onload = async () => {
-        if (!window.testRunner)
-            setTimeout(test, 0);
-        else {
-            document.body.offsetTop;
-            testRunner.waitUntilDone();
-            await testRunner.displayAndTrackRepaints();
-            test();
-            testRunner.notifyDone();
-        }
+    if (!window.testRunner)
+        setTimeout(test, 0);
+    else {
+        document.body.offsetTop;
+        testRunner.displayAndTrackRepaints();
+        test();
     }
 </script>

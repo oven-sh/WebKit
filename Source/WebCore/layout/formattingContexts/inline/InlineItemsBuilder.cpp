@@ -38,8 +38,6 @@
 #include <wtf/text/TextBreakIterator.h>
 #include <wtf/unicode/CharacterNames.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 namespace Layout {
 
@@ -104,7 +102,7 @@ void InlineItemsBuilder::build(InlineItemPosition startPosition)
     computeInlineTextItemWidths(inlineItemList);
 
     auto adjustInlineContentCacheWithNewInlineItems = [&] {
-        auto contentAttributes = InlineContentCache::InlineItems::ContentAttributes { m_contentRequiresVisualReordering, m_isTextAndForcedLineBreakOnlyContent, m_hasTextAutospace, m_inlineBoxCount };
+        auto contentAttributes = InlineContentCache::InlineItems::ContentAttributes { m_contentRequiresVisualReordering, m_isTextAndForcedLineBreakOnlyContent, m_inlineBoxCount };
         auto& inlineItemCache = inlineContentCache().inlineItems();
         if (!startPosition)
             return inlineItemCache.set(WTFMove(inlineItemList), contentAttributes);
@@ -742,26 +740,9 @@ static inline bool canCacheMeasuredWidthOnInlineTextItem(const InlineTextBox& in
     return !inlineTextBox.hasPositionDependentContentWidth();
 }
 
-static void handleTextSpacing(TextSpacing::SpacingState& spacingState, TrimmableTextSpacings& trimmableTextSpacings, const InlineTextItem& inlineTextItem, size_t inlineItemIndex)
-{
-    const auto& autospace = inlineTextItem.style().textAutospace();
-    auto& content = inlineTextItem.inlineTextBox().content();
-    if (!autospace.isNoAutospace()) {
-        // We need to store information about spacing added between inline text items since it needs to be trimmed during line breaking if the consecutive items are placed on different lines
-        auto characterClass = TextSpacing::characterClass(content.characterAt(inlineTextItem.start()));
-        if (autospace.shouldApplySpacing(spacingState.lastCharacterClassFromPreviousRun, characterClass))
-            trimmableTextSpacings.add(inlineItemIndex, autospace.textAutospaceSize(inlineTextItem.style().fontCascade().primaryFont()));
-
-        spacingState.lastCharacterClassFromPreviousRun = TextSpacing::characterClass(content.characterAt(inlineTextItem.start() + inlineTextItem.length() - 1));
-    } else
-        spacingState.lastCharacterClassFromPreviousRun = TextSpacing::CharacterClass::Undefined;
-};
-
 void InlineItemsBuilder::computeInlineTextItemWidths(InlineItemList& inlineItemList)
 {
     TextSpacing::SpacingState spacingState;
-    TrimmableTextSpacings trimmableTextSpacings;
-
     auto& inlineBoxBoundaryTextSpacings = inlineContentCache().inlineBoxBoundaryTextSpacings();
     for (size_t inlineItemIndex = 0; inlineItemIndex < inlineItemList.size(); ++inlineItemIndex) {
         auto extraInlineTextSpacing= 0.f;
@@ -782,10 +763,8 @@ void InlineItemsBuilder::computeInlineTextItemWidths(InlineItemList& inlineItemL
             extraInlineTextSpacing = inlineBoxBoundaryTextSpacing->value;
 
         inlineTextItem->setWidth(TextUtil::width(*inlineTextItem, inlineTextItem->style().fontCascade(), start, start + length, { }, TextUtil::UseTrailingWhitespaceMeasuringOptimization::Yes, spacingState) + extraInlineTextSpacing);
-
-        handleTextSpacing(spacingState, trimmableTextSpacings, *inlineTextItem, inlineItemIndex);
+        spacingState.lastCharacterClassFromPreviousRun = inlineItem.style().textAutospace().isNoAutospace() ? TextSpacing::CharacterClass::Undefined : TextSpacing::characterClass(inlineTextBox.content().characterAt(start + length - 1));
     }
-    inlineContentCache().setTrimmableTextSpacings(WTFMove(trimmableTextSpacings));
 }
 
 bool InlineItemsBuilder::buildInlineItemListForTextFromBreakingPositionsCache(const InlineTextBox& inlineTextBox, InlineItemList& inlineItemList)
@@ -1044,4 +1023,3 @@ void InlineItemsBuilder::populateBreakingPositionCache(const InlineItemList& inl
 }
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

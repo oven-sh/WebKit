@@ -14,8 +14,6 @@ features: [Symbol.species]
 assert(Symbol !== undefined, "Symbol exists");
 assert(Symbol.species !== undefined, "Symbol.species exists");
 
-verifyProperty(Symbol, "species", {
-  writable: false,
-  enumerable: false,
-  configurable: false,
-});
+verifyNotWritable(Symbol, "species");
+verifyNotEnumerable(Symbol, "species");
+verifyNotConfigurable(Symbol, "species");

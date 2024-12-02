@@ -164,7 +164,7 @@ private:
         WebCore::append32(m_result, value);
     }
 
-    void append32BitCode(ASCIILiteral code)
+    void append32BitCode(const char code[4])
     {
         m_result.append(code[0]);
         m_result.append(code[1]);
@@ -207,7 +207,7 @@ private:
     void processGlyphElement(const SVGElement& glyphOrMissingGlyphElement, const SVGGlyphElement*, float defaultHorizontalAdvance, float defaultVerticalAdvance, const String& codepoints, std::optional<FloatRect>& boundingBox);
 
     typedef void (SVGToOTFFontConverter::*FontAppendingFunction)();
-    void appendTable(ASCIILiteral identifier, FontAppendingFunction);
+    void appendTable(const char identifier[4], FontAppendingFunction);
     void appendFormat12CMAPTable(const Vector<std::pair<char32_t, Glyph>>& codepointToGlyphMappings);
     void appendFormat4CMAPTable(const Vector<std::pair<char32_t, Glyph>>& codepointToGlyphMappings);
     void appendCMAPTable();
@@ -525,7 +525,7 @@ void SVGToOTFFontConverter::appendOS2Table()
 
     unsigned numPanoseBytes = 0;
     constexpr unsigned panoseSize = 10;
-    std::array<char, panoseSize> panoseBytes;
+    char panoseBytes[panoseSize];
     if (m_fontFaceElement) {
         auto segments = StringView(m_fontFaceElement->attributeWithoutSynchronization(SVGNames::panose_1Attr)).split(' ');
         for (auto segment : segments) {
@@ -538,8 +538,8 @@ void SVGToOTFFontConverter::appendOS2Table()
         }
     }
     if (numPanoseBytes != panoseSize)
-        memset(panoseBytes.data(), 0, panoseSize);
-    m_result.append(std::span<char> { panoseBytes });
+        memset(panoseBytes, 0, panoseSize);
+    m_result.append(std::span { panoseBytes });
 
     for (int i = 0; i < 4; ++i)
         append32(0); // "Bit assignments are pending. Set to 0"
@@ -872,9 +872,9 @@ void SVGToOTFFontConverter::appendGSUBTable()
     // ScriptList
     auto scriptListLocation = m_result.size();
     append16(2); // Number of ScriptRecords
-    append32BitCode("DFLT"_s);
+    append32BitCode("DFLT");
     append16(0); // Placeholder for offset of Script table, relative to beginning of ScriptList
-    append32BitCode("arab"_s);
+    append32BitCode("arab");
     append16(0); // Placeholder for offset of Script table, relative to beginning of ScriptList
 
     overwrite16(scriptListLocation + 6, m_result.size() - scriptListLocation);
@@ -890,15 +890,15 @@ void SVGToOTFFontConverter::appendGSUBTable()
     size_t featureListSize = 2 + 6 * featureCount;
     size_t featureTableSize = 6;
     append16(featureCount); // FeatureCount
-    append32BitCode("liga"_s);
+    append32BitCode("liga");
     append16(featureListSize + featureTableSize * 0); // Offset of feature table, relative to beginning of FeatureList table
-    append32BitCode("fina"_s);
+    append32BitCode("fina");
     append16(featureListSize + featureTableSize * 1); // Offset of feature table, relative to beginning of FeatureList table
-    append32BitCode("medi"_s);
+    append32BitCode("medi");
     append16(featureListSize + featureTableSize * 2); // Offset of feature table, relative to beginning of FeatureList table
-    append32BitCode("init"_s);
+    append32BitCode("init");
     append16(featureListSize + featureTableSize * 3); // Offset of feature table, relative to beginning of FeatureList table
-    append32BitCode("rlig"_s);
+    append32BitCode("rlig");
     append16(featureListSize + featureTableSize * 4); // Offset of feature table, relative to beginning of FeatureList table
     ASSERT_UNUSED(featureListLocation, featureListLocation + featureListSize == m_result.size());
 
@@ -916,7 +916,7 @@ void SVGToOTFFontConverter::appendGSUBTable()
     append16(featureCount); // LookupCount
     for (unsigned i = 0; i < featureCount; ++i)
         append16(0); // Placeholder for offset to feature table, relative to beginning of LookupList
-    std::array<size_t, featureCount> subtableRecordLocations;
+    size_t subtableRecordLocations[featureCount];
     for (unsigned i = 0; i < featureCount; ++i) {
         subtableRecordLocations[i] = m_result.size();
         overwrite16(lookupListLocation + 2 + 2 * i, m_result.size() - lookupListLocation);
@@ -1006,11 +1006,11 @@ void SVGToOTFFontConverter::appendVMTXTable()
 
 static String codepointToString(char32_t codepoint)
 {
-    std::array<UChar, 2> buffer;
+    UChar buffer[2];
     uint8_t length = 0;
     UBool error = false;
     U16_APPEND(buffer, length, 2, codepoint, error);
-    return error ? String() : String(std::span<UChar> { buffer }.first(length));
+    return error ? String() : String({ buffer, length });
 }
 
 Vector<Glyph, 1> SVGToOTFFontConverter::glyphsForCodepoint(char32_t codepoint) const
@@ -1495,7 +1495,7 @@ uint32_t SVGToOTFFontConverter::calculateChecksum(size_t startingOffset, size_t 
     return sum;
 }
 
-void SVGToOTFFontConverter::appendTable(ASCIILiteral identifier, FontAppendingFunction appendingFunction)
+void SVGToOTFFontConverter::appendTable(const char identifier[4], FontAppendingFunction appendingFunction)
 {
     size_t offset = m_result.size();
     ASSERT(isFourByteAligned(offset));
@@ -1539,21 +1539,21 @@ bool SVGToOTFFontConverter::convertSVGToOTFFont()
     for (size_t i = 0; i < directoryEntrySize * numTables; ++i)
         m_result.append(0);
 
-    appendTable("CFF "_s, &SVGToOTFFontConverter::appendCFFTable);
-    appendTable("GSUB"_s, &SVGToOTFFontConverter::appendGSUBTable);
-    appendTable("OS/2"_s, &SVGToOTFFontConverter::appendOS2Table);
-    appendTable("VORG"_s, &SVGToOTFFontConverter::appendVORGTable);
-    appendTable("cmap"_s, &SVGToOTFFontConverter::appendCMAPTable);
+    appendTable("CFF ", &SVGToOTFFontConverter::appendCFFTable);
+    appendTable("GSUB", &SVGToOTFFontConverter::appendGSUBTable);
+    appendTable("OS/2", &SVGToOTFFontConverter::appendOS2Table);
+    appendTable("VORG", &SVGToOTFFontConverter::appendVORGTable);
+    appendTable("cmap", &SVGToOTFFontConverter::appendCMAPTable);
     auto headTableOffset = m_result.size();
-    appendTable("head"_s, &SVGToOTFFontConverter::appendHEADTable);
-    appendTable("hhea"_s, &SVGToOTFFontConverter::appendHHEATable);
-    appendTable("hmtx"_s, &SVGToOTFFontConverter::appendHMTXTable);
-    appendTable("kern"_s, &SVGToOTFFontConverter::appendKERNTable);
-    appendTable("maxp"_s, &SVGToOTFFontConverter::appendMAXPTable);
-    appendTable("name"_s, &SVGToOTFFontConverter::appendNAMETable);
-    appendTable("post"_s, &SVGToOTFFontConverter::appendPOSTTable);
-    appendTable("vhea"_s, &SVGToOTFFontConverter::appendVHEATable);
-    appendTable("vmtx"_s, &SVGToOTFFontConverter::appendVMTXTable);
+    appendTable("head", &SVGToOTFFontConverter::appendHEADTable);
+    appendTable("hhea", &SVGToOTFFontConverter::appendHHEATable);
+    appendTable("hmtx", &SVGToOTFFontConverter::appendHMTXTable);
+    appendTable("kern", &SVGToOTFFontConverter::appendKERNTable);
+    appendTable("maxp", &SVGToOTFFontConverter::appendMAXPTable);
+    appendTable("name", &SVGToOTFFontConverter::appendNAMETable);
+    appendTable("post", &SVGToOTFFontConverter::appendPOSTTable);
+    appendTable("vhea", &SVGToOTFFontConverter::appendVHEATable);
+    appendTable("vmtx", &SVGToOTFFontConverter::appendVMTXTable);
 
     ASSERT(numTables == m_tablesAppendedCount);
 

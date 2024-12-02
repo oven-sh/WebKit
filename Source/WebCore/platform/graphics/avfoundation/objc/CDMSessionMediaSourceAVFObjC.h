@@ -27,7 +27,7 @@
 
 #include "LegacyCDMSession.h"
 #include "SourceBufferPrivateAVFObjC.h"
-#include <wtf/AbstractRefCounted.h>
+#include <wtf/RefCounted.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -36,6 +36,15 @@
 
 OBJC_CLASS AVStreamDataParser;
 OBJC_CLASS NSError;
+
+namespace WebCore {
+class CDMSessionMediaSourceAVFObjC;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
+template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::CDMSessionMediaSourceAVFObjC> : std::true_type { };
+}
 
 namespace WebCore {
 

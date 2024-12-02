@@ -28,8 +28,6 @@
 
 #include <math.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
     struct UnitBezier {
@@ -183,7 +181,4 @@ namespace WebCore {
         double splineSamples[CUBIC_BEZIER_SPLINE_SAMPLES];
     };
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif

@@ -63,6 +63,7 @@
 #include "JSTestDefaultToJSONEnum.h"
 #endif
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -130,11 +131,12 @@ template<> void JSTestDefaultToJSONInheritFinalDOMConstructor::initializePropert
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 4> JSTestDefaultToJSONInheritFinalPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONInheritFinalConstructor, 0 } },
-    HashTableValue { "finalLongAttributeFoo"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONInheritFinal_finalLongAttributeFoo, setJSTestDefaultToJSONInheritFinal_finalLongAttributeFoo } },
-    HashTableValue { "finalLongAttributeBar"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONInheritFinal_finalLongAttributeBar, setJSTestDefaultToJSONInheritFinal_finalLongAttributeBar } },
-    HashTableValue { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestDefaultToJSONInheritFinalPrototypeFunction_toJSON, 0 } },
+static const HashTableValue JSTestDefaultToJSONInheritFinalPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONInheritFinalConstructor, 0 } },
+    { "finalLongAttributeFoo"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONInheritFinal_finalLongAttributeFoo, setJSTestDefaultToJSONInheritFinal_finalLongAttributeFoo } },
+    { "finalLongAttributeBar"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestDefaultToJSONInheritFinal_finalLongAttributeBar, setJSTestDefaultToJSONInheritFinal_finalLongAttributeBar } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestDefaultToJSONInheritFinalPrototypeFunction_toJSON, 0 } },
 };
 
 const ClassInfo JSTestDefaultToJSONInheritFinalPrototype::s_info = { "TestDefaultToJSONInheritFinal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestDefaultToJSONInheritFinalPrototype) };

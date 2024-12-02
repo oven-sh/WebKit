@@ -128,7 +128,8 @@ struct Atomic {
 
     // func is supposed to return false if the value is already in the desired state.
     // Returns true if the value was changed. Else returns false.
-    ALWAYS_INLINE bool transaction(const Invocable<bool(T&)> auto& func, std::memory_order order = std::memory_order_seq_cst)
+    template<typename Func>
+    ALWAYS_INLINE bool transaction(const Func& func, std::memory_order order = std::memory_order_seq_cst)
     {
         for (;;) {
             T oldValue = load(std::memory_order_relaxed);
@@ -160,79 +161,79 @@ struct Atomic {
 template<typename T>
 inline T atomicLoad(T* location, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->load(order);
+    return bitwise_cast<Atomic<T>*>(location)->load(order);
 }
 
 template<typename T>
 inline T atomicLoadFullyFenced(T* location)
 {
-    return std::bit_cast<Atomic<T>*>(location)->loadFullyFenced();
+    return bitwise_cast<Atomic<T>*>(location)->loadFullyFenced();
 }
 
 template<typename T>
 inline void atomicStore(T* location, T newValue, std::memory_order order = std::memory_order_seq_cst)
 {
-    std::bit_cast<Atomic<T>*>(location)->store(newValue, order);
+    bitwise_cast<Atomic<T>*>(location)->store(newValue, order);
 }
 
 template<typename T>
 inline void atomicStoreFullyFenced(T* location, T newValue)
 {
-    std::bit_cast<Atomic<T>*>(location)->storeFullyFenced(newValue);
+    bitwise_cast<Atomic<T>*>(location)->storeFullyFenced(newValue);
 }
 
 template<typename T>
 inline bool atomicCompareExchangeWeak(T* location, T expected, T newValue, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->compareExchangeWeak(expected, newValue, order);
+    return bitwise_cast<Atomic<T>*>(location)->compareExchangeWeak(expected, newValue, order);
 }
 
 template<typename T>
 inline bool atomicCompareExchangeWeakRelaxed(T* location, T expected, T newValue)
 {
-    return std::bit_cast<Atomic<T>*>(location)->compareExchangeWeakRelaxed(expected, newValue);
+    return bitwise_cast<Atomic<T>*>(location)->compareExchangeWeakRelaxed(expected, newValue);
 }
 
 template<typename T>
 inline T atomicCompareExchangeStrong(T* location, T expected, T newValue, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->compareExchangeStrong(expected, newValue, order);
+    return bitwise_cast<Atomic<T>*>(location)->compareExchangeStrong(expected, newValue, order);
 }
 
 template<typename T, typename U>
 inline T atomicExchangeAdd(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->exchangeAdd(operand, order);
+    return bitwise_cast<Atomic<T>*>(location)->exchangeAdd(operand, order);
 }
 
 template<typename T, typename U>
 inline T atomicExchangeAnd(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->exchangeAnd(operand, order);
+    return bitwise_cast<Atomic<T>*>(location)->exchangeAnd(operand, order);
 }
 
 template<typename T, typename U>
 inline T atomicExchangeOr(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->exchangeOr(operand, order);
+    return bitwise_cast<Atomic<T>*>(location)->exchangeOr(operand, order);
 }
 
 template<typename T, typename U>
 inline T atomicExchangeSub(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->exchangeSub(operand, order);
+    return bitwise_cast<Atomic<T>*>(location)->exchangeSub(operand, order);
 }
 
 template<typename T, typename U>
 inline T atomicExchangeXor(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->exchangeXor(operand, order);
+    return bitwise_cast<Atomic<T>*>(location)->exchangeXor(operand, order);
 }
 
 template<typename T>
 inline T atomicExchange(T* location, T newValue, std::memory_order order = std::memory_order_seq_cst)
 {
-    return std::bit_cast<Atomic<T>*>(location)->exchange(newValue, order);
+    return bitwise_cast<Atomic<T>*>(location)->exchange(newValue, order);
 }
 
 // Just a compiler fence. Has no effect on the hardware, but tells the compiler
@@ -441,7 +442,7 @@ public:
     T* consume(T* pointer)
     {
 #if CPU(ARM64) || CPU(ARM)
-        return std::bit_cast<T*>(std::bit_cast<char*>(pointer) + m_value);
+        return bitwise_cast<T*>(bitwise_cast<char*>(pointer) + m_value);
 #else
         UNUSED_PARAM(m_value);
         return pointer;

@@ -39,8 +39,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringParsingBuffer.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // HTML defines minimum week of year is one.
@@ -788,5 +786,3 @@ String DateComponents::toString(SecondFormat format) const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

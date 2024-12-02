@@ -109,6 +109,8 @@ class GlobalMutex final : angle::NonCopyable
     uint32_t mLockLevel = 0;
 };
 #endif  // defined(ANGLE_ENABLE_GLOBAL_MUTEX_RECURSION)
+}  // namespace priv
+
 namespace
 {
 #if defined(ANGLE_ENABLE_GLOBAL_MUTEX_LOAD_TIME_ALLOCATE)
@@ -117,37 +119,31 @@ namespace
             "'angle_enable_global_mutex_load_time_allocate' " \
                "requires constructor/destructor compiler atributes."
 #    endif
-GlobalMutex *g_MutexPtr        = nullptr;
-GlobalMutex *g_EGLSyncMutexPtr = nullptr;
+priv::GlobalMutex *g_MutexPtr = nullptr;
 
 void ANGLE_CONSTRUCTOR AllocateGlobalMutex()
 {
     ASSERT(g_MutexPtr == nullptr);
-    g_MutexPtr = new GlobalMutex();
-    ASSERT(g_EGLSyncMutexPtr == nullptr);
-    g_EGLSyncMutexPtr = new GlobalMutex();
+    g_MutexPtr = new priv::GlobalMutex();
 }
 
 void ANGLE_DESTRUCTOR DeallocateGlobalMutex()
 {
     SafeDelete(g_MutexPtr);
-    SafeDelete(g_EGLSyncMutexPtr);
 }
+
 #else
-ANGLE_REQUIRE_CONSTANT_INIT std::atomic<GlobalMutex *> g_Mutex(nullptr);
-ANGLE_REQUIRE_CONSTANT_INIT std::atomic<GlobalMutex *> g_EGLSyncMutex(nullptr);
+ANGLE_REQUIRE_CONSTANT_INIT std::atomic<priv::GlobalMutex *> g_Mutex(nullptr);
 static_assert(std::is_trivially_destructible<decltype(g_Mutex)>::value,
               "global mutex is not trivially destructible");
-static_assert(std::is_trivially_destructible<decltype(g_EGLSyncMutex)>::value,
-              "global EGL Sync mutex is not trivially destructible");
 
-GlobalMutex *AllocateGlobalMutexImpl(std::atomic<GlobalMutex *> *globalMutex)
+priv::GlobalMutex *AllocateGlobalMutexImpl()
 {
-    GlobalMutex *currentMutex = nullptr;
-    std::unique_ptr<GlobalMutex> newMutex(new GlobalMutex());
+    priv::GlobalMutex *currentMutex = nullptr;
+    std::unique_ptr<priv::GlobalMutex> newMutex(new priv::GlobalMutex());
     do
     {
-        if (globalMutex->compare_exchange_weak(currentMutex, newMutex.get()))
+        if (g_Mutex.compare_exchange_weak(currentMutex, newMutex.get()))
         {
             return newMutex.release();
         }
@@ -155,85 +151,36 @@ GlobalMutex *AllocateGlobalMutexImpl(std::atomic<GlobalMutex *> *globalMutex)
     return currentMutex;
 }
 
-GlobalMutex *GetGlobalMutex()
+priv::GlobalMutex *GetGlobalMutex()
 {
-    GlobalMutex *mutex = g_Mutex.load();
-    return mutex != nullptr ? mutex : AllocateGlobalMutexImpl(&g_Mutex);
-}
-
-GlobalMutex *GetGlobalEGLSyncObjectMutex()
-{
-    GlobalMutex *mutex = g_EGLSyncMutex.load();
-    return mutex != nullptr ? mutex : AllocateGlobalMutexImpl(&g_EGLSyncMutex);
+    priv::GlobalMutex *mutex = g_Mutex.load();
+    return mutex != nullptr ? mutex : AllocateGlobalMutexImpl();
 }
 #endif
 }  // anonymous namespace
 
 // ScopedGlobalMutexLock implementation.
 #if defined(ANGLE_ENABLE_GLOBAL_MUTEX_LOAD_TIME_ALLOCATE)
-template <GlobalMutexChoice mutexChoice>
-ScopedGlobalMutexLock<mutexChoice>::ScopedGlobalMutexLock()
+ScopedGlobalMutexLock::ScopedGlobalMutexLock()
 {
-    switch (mutexChoice)
-    {
-        case GlobalMutexChoice::EGL:
-            g_MutexPtr->lock();
-            break;
-        case GlobalMutexChoice::Sync:
-            g_EGLSyncMutexPtr->lock();
-            break;
-        default:
-            UNREACHABLE();
-            break;
-    }
+    g_MutexPtr->lock();
 }
 
-template <GlobalMutexChoice mutexChoice>
-ScopedGlobalMutexLock<mutexChoice>::~ScopedGlobalMutexLock()
+ScopedGlobalMutexLock::~ScopedGlobalMutexLock()
 {
-    switch (mutexChoice)
-    {
-        case GlobalMutexChoice::EGL:
-            g_MutexPtr->unlock();
-            break;
-        case GlobalMutexChoice::Sync:
-            g_EGLSyncMutexPtr->unlock();
-            break;
-        default:
-            UNREACHABLE();
-            break;
-    }
+    g_MutexPtr->unlock();
 }
 #else
-template <GlobalMutexChoice mutexChoice>
-ScopedGlobalMutexLock<mutexChoice>::ScopedGlobalMutexLock()
+ScopedGlobalMutexLock::ScopedGlobalMutexLock() : mMutex(*GetGlobalMutex())
 {
-    switch (mutexChoice)
-    {
-        case GlobalMutexChoice::EGL:
-            mMutex = GetGlobalMutex();
-            break;
-        case GlobalMutexChoice::Sync:
-            mMutex = GetGlobalEGLSyncObjectMutex();
-            break;
-        default:
-            UNREACHABLE();
-            break;
-    }
-
-    mMutex->lock();
+    mMutex.lock();
 }
 
-template <GlobalMutexChoice mutexChoice>
-ScopedGlobalMutexLock<mutexChoice>::~ScopedGlobalMutexLock()
+ScopedGlobalMutexLock::~ScopedGlobalMutexLock()
 {
-    mMutex->unlock();
+    mMutex.unlock();
 }
 #endif
-
-template class ScopedGlobalMutexLock<GlobalMutexChoice::EGL>;
-template class ScopedGlobalMutexLock<GlobalMutexChoice::Sync>;
-}  // namespace priv
 
 // ScopedOptionalGlobalMutexLock implementation.
 ScopedOptionalGlobalMutexLock::ScopedOptionalGlobalMutexLock(bool enabled)
@@ -241,9 +188,9 @@ ScopedOptionalGlobalMutexLock::ScopedOptionalGlobalMutexLock(bool enabled)
     if (enabled)
     {
 #if defined(ANGLE_ENABLE_GLOBAL_MUTEX_LOAD_TIME_ALLOCATE)
-        mMutex = priv::g_MutexPtr;
+        mMutex = g_MutexPtr;
 #else
-        mMutex = priv::GetGlobalMutex();
+        mMutex = GetGlobalMutex();
 #endif
         mMutex->lock();
     }
@@ -269,13 +216,12 @@ ScopedOptionalGlobalMutexLock::~ScopedOptionalGlobalMutexLock()
 
 void AllocateGlobalMutex()
 {
-    (void)priv::AllocateGlobalMutexImpl(&priv::g_Mutex);
-    (void)priv::AllocateGlobalMutexImpl(&priv::g_EGLSyncMutex);
+    (void)AllocateGlobalMutexImpl();
 }
 
-void DeallocateGlobalMutexImpl(std::atomic<priv::GlobalMutex *> *globalMutex)
+void DeallocateGlobalMutex()
 {
-    priv::GlobalMutex *mutex = globalMutex->exchange(nullptr);
+    priv::GlobalMutex *mutex = g_Mutex.exchange(nullptr);
     if (mutex != nullptr)
     {
         {
@@ -284,12 +230,6 @@ void DeallocateGlobalMutexImpl(std::atomic<priv::GlobalMutex *> *globalMutex)
         }
         delete mutex;
     }
-}
-
-void DeallocateGlobalMutex()
-{
-    DeallocateGlobalMutexImpl(&priv::g_Mutex);
-    DeallocateGlobalMutexImpl(&priv::g_EGLSyncMutex);
 }
 #endif
 

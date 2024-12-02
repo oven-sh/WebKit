@@ -28,7 +28,6 @@
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
 
 #include "Timer.h"
-#include <wtf/CheckedPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
@@ -37,9 +36,8 @@ namespace WebCore {
 
 class DOMTimer;
 
-class DOMTimerHoldingTank final : public CanMakeCheckedPtr<DOMTimerHoldingTank> {
+class DOMTimerHoldingTank {
     WTF_MAKE_TZONE_ALLOCATED(DOMTimerHoldingTank);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DOMTimerHoldingTank);
 public:
     DOMTimerHoldingTank();
     ~DOMTimerHoldingTank();

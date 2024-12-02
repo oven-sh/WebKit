@@ -33,7 +33,6 @@
 namespace WebCore {
 
 class Font;
-class TextSpacingTrim;
 
 namespace TextSpacing {
 
@@ -67,7 +66,6 @@ struct SpacingState {
 
 bool isIdeograph(char32_t character);
 
-RefPtr<Font> getHalfWidthFontIfNeeded(const Font&, const TextSpacingTrim&, CharactersData&);
 } // namespace TextSpacing
 
 class TextSpacingTrim {
@@ -152,6 +150,5 @@ inline WTF::TextStream& operator<<(WTF::TextStream& ts, const TextAutospace& val
         ts << "ideograph-numeric";
     return ts;
 }
-
 
 } // namespace WebCore

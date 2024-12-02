@@ -42,8 +42,6 @@ typedef const struct __CTLine * CTLineRef;
 
 typedef struct hb_buffer_t hb_buffer_t;
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 class CachedTextBreakIterator;
 }
@@ -228,5 +226,3 @@ private:
 };
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

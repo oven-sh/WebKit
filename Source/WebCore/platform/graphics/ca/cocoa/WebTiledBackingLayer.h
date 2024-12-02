@@ -30,7 +30,6 @@ class IntRect;
 class PlatformCALayer;
 class TileController;
 class TiledBacking;
-enum class ContentsFormat : uint8_t;
 }
 
 @interface WebTiledBackingLayer : CALayer {

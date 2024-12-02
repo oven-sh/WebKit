@@ -24,13 +24,11 @@ const VulkanSharedContext* VulkanQueueManager::vkSharedContext() const {
 }
 
 std::unique_ptr<CommandBuffer> VulkanQueueManager::getNewCommandBuffer(
-        ResourceProvider* resourceProvider, Protected isProtected) {
+        ResourceProvider* resourceProvider) {
     VulkanResourceProvider* vkResourceProvider =
             static_cast<VulkanResourceProvider*>(resourceProvider);
 
-    auto cmdBuffer = VulkanCommandBuffer::Make(this->vkSharedContext(),
-                                               vkResourceProvider,
-                                               isProtected);
+    auto cmdBuffer = VulkanCommandBuffer::Make(this->vkSharedContext(), vkResourceProvider);
     return cmdBuffer;
 }
 

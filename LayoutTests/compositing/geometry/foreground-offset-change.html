@@ -50,13 +50,12 @@
     if (window.testRunner)
       testRunner.dumpAsText(true);
 
-    async function doTest()
+    function doTest()
     {
-      testRunner?.waitUntilDone();
-      await testRunner?.displayAndTrackRepaints();
+      if (window.testRunner)
+        testRunner.displayAndTrackRepaints();
 
       document.getElementById("stretch").style.left = "-100px";
-      testRunner?.notifyDone();
     }
 
     window.addEventListener('load', doTest, false);

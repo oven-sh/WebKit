@@ -1229,6 +1229,11 @@ bool BindGroup::isValid() const
     return !!bindGroupLayout();
 }
 
+const BindGroupLayout* BindGroup::bindGroupLayout() const
+{
+    return m_bindGroupLayout.get();
+}
+
 BindGroup::BindGroup(id<MTLBuffer> vertexArgumentBuffer, id<MTLBuffer> fragmentArgumentBuffer, id<MTLBuffer> computeArgumentBuffer, Vector<BindableResources>&& resources, const BindGroupLayout& bindGroupLayout, DynamicBuffersContainer&& dynamicBuffers, SamplersContainer&& samplers, ShaderStageArray<ExternalTextureIndices>&& externalTextureIndices, Device& device)
     : m_vertexArgumentBuffer(vertexArgumentBuffer)
     , m_fragmentArgumentBuffer(fragmentArgumentBuffer)
@@ -1331,7 +1336,7 @@ void BindGroup::rebindSamplersIfNeeded() const
         return;
 
     for (auto& [samplerRefPtr, shaderStageArray] : m_samplers) {
-        auto sampler = samplerRefPtr;
+        auto* sampler = samplerRefPtr.get();
         ASSERT(sampler);
         if (!sampler || sampler->cachedSampler())
             continue;

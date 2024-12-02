@@ -33,7 +33,6 @@
 #import "LayerProperties.h"
 #import "NativeWebWheelEvent.h"
 #import "NavigationState.h"
-#import "PointerTouchCompatibilitySimulator.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
 #import "RemoteLayerTreeScrollingPerformanceData.h"
 #import "RemoteLayerTreeViews.h"
@@ -1163,7 +1162,7 @@ static void addOverlayEventRegions(WebCore::PlatformLayerIdentifier layerID, con
 
     const auto& layerProperties = *it->value;
     if (layerProperties.changedProperties & WebKit::LayerChange::EventRegionChanged) {
-        CGRect rect = layerProperties.eventRegion.scrollOverlayRegion().bounds();
+        CGRect rect = layerProperties.eventRegion.region().bounds();
         if (!CGRectIsEmpty(rect))
             overlayRegionsIDs.add(layerID);
     }
@@ -1212,8 +1211,8 @@ static void configureScrollViewWithOverlayRegionsIDs(WKBaseScrollView* scrollVie
         HashSet<UIView *> overlayAncestorsChain;
         for (UIView *overlayAncestor = (UIView *)overlayView; overlayAncestor; overlayAncestor = [overlayAncestor superview]) {
             overlayAncestorsChain.add(overlayAncestor);
-            if (auto *layer = dynamic_objc_cast<WKBaseScrollView>(overlayAncestor)) {
-                enclosingScrollView = layer;
+            if ([overlayAncestor isKindOfClass:[WKBaseScrollView class]]) {
+                enclosingScrollView = (WKBaseScrollView *)overlayAncestor;
                 break;
             }
         }
@@ -2189,9 +2188,6 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
 - (void)scrollView:(WKBaseScrollView *)scrollView handleScrollUpdate:(WKBEScrollViewScrollUpdate *)update completion:(void (^)(BOOL handled))completion
 {
-    if (_pointerTouchCompatibilitySimulator)
-        _pointerTouchCompatibilitySimulator->handleScrollUpdate(scrollView, update);
-
     BOOL isHandledByDefault = !scrollView.scrollEnabled;
 
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)

@@ -26,7 +26,6 @@
 #pragma once
 
 #include "ResponsivenessTimer.h"
-#include <wtf/CheckedPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/WeakRef.h>
 
@@ -34,9 +33,7 @@ namespace WebKit {
 
 class WebProcessProxy;
 
-class BackgroundProcessResponsivenessTimer : public CanMakeCheckedPtr<BackgroundProcessResponsivenessTimer> {
-    WTF_MAKE_FAST_ALLOCATED;
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(BackgroundProcessResponsivenessTimer);
+class BackgroundProcessResponsivenessTimer {
 public:
     explicit BackgroundProcessResponsivenessTimer(WebProcessProxy&);
     ~BackgroundProcessResponsivenessTimer();

@@ -228,22 +228,19 @@ void RemoteScrollingTreeMac::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNo
     if (auto* scrollingNode = dynamicDowncast<ScrollingTreeFrameScrollingNode>(node))
         layoutViewportOrigin = scrollingNode->layoutViewport().location();
 
-    if (isHandlingProgrammaticScroll())
-        return;
-
-    auto scrollUpdate = ScrollUpdate { node.scrollingNodeID(), node.currentScrollPosition(), layoutViewportOrigin, ScrollUpdateType::PositionUpdate, action };
-    addPendingScrollUpdate(WTFMove(scrollUpdate));
+    auto nodeID = node.scrollingNodeID();
+    auto scrollPosition = node.currentScrollPosition();
 
     // Happens when the this is called as a result of the scrolling tree commmit.
     if (RunLoop::isMain()) {
         if (auto* scrollingCoordinatorProxy = this->scrollingCoordinatorProxy())
-            scrollingCoordinatorProxy->scrollingThreadAddedPendingUpdate();
+            scrollingCoordinatorProxy->scrollingTreeNodeDidScroll(nodeID, scrollPosition, layoutViewportOrigin, action);
         return;
     }
 
-    RunLoop::main().dispatch([protectedThis = Ref { *this }] {
+    RunLoop::main().dispatch([protectedThis = Ref { *this }, nodeID, scrollPosition, layoutViewportOrigin, action] {
         if (auto* scrollingCoordinatorProxy = protectedThis->scrollingCoordinatorProxy())
-            scrollingCoordinatorProxy->scrollingThreadAddedPendingUpdate();
+            scrollingCoordinatorProxy->scrollingTreeNodeDidScroll(nodeID, scrollPosition, layoutViewportOrigin, action);
     });
 }
 

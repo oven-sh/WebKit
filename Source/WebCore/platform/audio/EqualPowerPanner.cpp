@@ -34,8 +34,6 @@
 #include <algorithm>
 #include <wtf/MathExtras.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 EqualPowerPanner::EqualPowerPanner()
@@ -202,7 +200,5 @@ void EqualPowerPanner::panWithSampleAccurateValues(double* azimuth, double*, con
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUDIO)

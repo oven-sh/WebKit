@@ -17,11 +17,11 @@
       testRunner.waitUntilDone();
     }
 
-    async function runRepaintTest()
+    function runRepaintTest()
     {
         if (window.testRunner) {
             document.body.offsetTop;
-            await testRunner.displayAndTrackRepaints();
+            testRunner.displayAndTrackRepaints();
             repaintTest();
             testRunner.notifyDone();
         } else {

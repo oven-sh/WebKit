@@ -26,7 +26,6 @@
 #pragma once
 
 #include "IDBDatabaseIdentifier.h"
-#include "IDBIndexIdentifier.h"
 #include "IDBObjectStoreIdentifier.h"
 #include "IDBResourceIdentifier.h"
 #include "IndexedDB.h"
@@ -63,7 +62,7 @@ public:
     WEBCORE_EXPORT IDBResourceIdentifier requestIdentifier() const;
     WEBCORE_EXPORT IDBResourceIdentifier transactionIdentifier() const;
     IDBObjectStoreIdentifier objectStoreIdentifier() const;
-    std::optional<IDBIndexIdentifier> indexIdentifier() const;
+    uint64_t indexIdentifier() const;
     IndexedDB::IndexRecordType indexRecordType() const;
     IDBResourceIdentifier cursorIdentifier() const;
     uint64_t requestedVersion() const;
@@ -71,7 +70,7 @@ public:
 
 private:
     friend struct IPC::ArgumentCoder<IDBRequestData, void>;
-    WEBCORE_EXPORT IDBRequestData(IDBConnectionIdentifier serverConnectionIdentifier, IDBResourceIdentifier requestIdentifier, IDBResourceIdentifier transactionIdentifier, std::optional<IDBResourceIdentifier>&& cursorIdentifier, std::optional<IDBObjectStoreIdentifier>, std::optional<IDBIndexIdentifier>, IndexedDB::IndexRecordType, uint64_t requestedVersion, IndexedDB::RequestType);
+    WEBCORE_EXPORT IDBRequestData(IDBConnectionIdentifier serverConnectionIdentifier, IDBResourceIdentifier requestIdentifier, IDBResourceIdentifier transactionIdentifier, std::optional<IDBResourceIdentifier>&& cursorIdentifier, std::optional<IDBObjectStoreIdentifier>, uint64_t indexIdentifier, IndexedDB::IndexRecordType, uint64_t requestedVersion, IndexedDB::RequestType);
     static void isolatedCopy(const IDBRequestData& source, IDBRequestData& destination);
 
     IDBConnectionIdentifier m_serverConnectionIdentifier;
@@ -79,7 +78,7 @@ private:
     IDBResourceIdentifier m_transactionIdentifier;
     std::optional<IDBResourceIdentifier> m_cursorIdentifier;
     Markable<IDBObjectStoreIdentifier> m_objectStoreIdentifier;
-    Markable<IDBIndexIdentifier> m_indexIdentifier;
+    uint64_t m_indexIdentifier { 0 };
     IndexedDB::IndexRecordType m_indexRecordType { IndexedDB::IndexRecordType::Key };
     uint64_t m_requestedVersion { 0 };
 

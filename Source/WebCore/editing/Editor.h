@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CompositionUnderline.h"
+#include "DocumentMarker.h"
 #include "EditAction.h"
 #include "EditingBehavior.h"
 #include "EditingStyle.h"
@@ -43,7 +44,7 @@
 #include "WritingDirection.h"
 #include <memory>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/WeakPtr.h>
+#include <wtf/WeakRef.h>
 
 #if PLATFORM(COCOA)
 OBJC_CLASS NSAttributedString;
@@ -64,7 +65,6 @@ class SharedBuffer;
 class CustomUndoStep;
 class DataTransfer;
 class DeleteButtonController;
-class DocumentMarker;
 class EditCommand;
 class EditCommandComposition;
 class EditorClient;
@@ -97,8 +97,6 @@ struct FontAttributes;
 struct PasteboardPlainText;
 struct PasteboardURL;
 struct TextCheckingResult;
-
-enum class DocumentMarkerType : uint32_t;
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 struct PromisedAttachmentInfo;
@@ -179,8 +177,9 @@ private:
     TemporarySelectionChange m_selectionChange;
 };
 
-class Editor final : public CanMakeWeakPtr<Editor> {
+class Editor final : public CanMakeCheckedPtr<Editor> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(Editor, WEBCORE_EXPORT);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Editor);
 public:
     explicit Editor(Document&);
     ~Editor();
@@ -195,12 +194,6 @@ public:
     WEBCORE_EXPORT TextCheckerClient* textChecker() const;
 
     CompositeEditCommand* lastEditCommand() { return m_lastEditCommand.get(); }
-
-    Document& document() const { return m_document.get(); }
-    Ref<Document> protectedDocument() const { return m_document.get(); }
-
-    WEBCORE_EXPORT void ref() const;
-    WEBCORE_EXPORT void deref() const;
 
     void handleKeyboardEvent(KeyboardEvent&);
     void handleInputMethodKeydown(KeyboardEvent&);
@@ -524,8 +517,8 @@ public:
     enum class MatchStyle : bool { No, Yes };
     WEBCORE_EXPORT void replaceSelectionWithFragment(DocumentFragment&, SelectReplacement, SmartReplace, MatchStyle, EditAction = EditAction::Insert, MailBlockquoteHandling = MailBlockquoteHandling::RespectBlockquote);
     WEBCORE_EXPORT void replaceSelectionWithText(const String&, SelectReplacement, SmartReplace, EditAction = EditAction::Insert);
-    WEBCORE_EXPORT bool selectionStartHasMarkerFor(DocumentMarkerType, int from, int length) const;
-    WEBCORE_EXPORT void selectionStartSetMarkerForTesting(DocumentMarkerType, int from, int length, const String&);
+    WEBCORE_EXPORT bool selectionStartHasMarkerFor(DocumentMarker::Type, int from, int length) const;
+    WEBCORE_EXPORT void selectionStartSetMarkerForTesting(DocumentMarker::Type, int from, int length, const String&);
     void updateMarkersForWordsAffectedByEditing(bool doNotRemoveIfSelectionAtWordBoundary);
     void deletedAutocorrectionAtPosition(const Position&, const String& originalString);
     
@@ -641,11 +634,10 @@ public:
 
     WEBCORE_EXPORT void closeTyping();
 
-#if PLATFORM(IOS_FAMILY)
-    bool shouldDrawVisuallyContiguousBidiSelection() const;
-#endif
-
 private:
+    Document& document() const { return m_document.get(); }
+    Ref<Document> protectedDocument() const { return m_document.get(); }
+
     bool canDeleteRange(const SimpleRange&) const;
     bool canSmartReplaceWithPasteboard(Pasteboard&);
     void pasteAsPlainTextWithPasteboard(Pasteboard&);
@@ -711,9 +703,9 @@ private:
     bool m_ignoreSelectionChanges { false };
     bool m_shouldStartNewKillRingSequence { false };
     bool m_shouldStyleWithCSS { false };
-    const UniqueRef<PAL::KillRing> m_killRing;
-    const UniqueRef<SpellChecker> m_spellChecker;
-    const UniqueRef<AlternativeTextController> m_alternativeTextController;
+    const std::unique_ptr<PAL::KillRing> m_killRing;
+    const std::unique_ptr<SpellChecker> m_spellChecker;
+    const std::unique_ptr<AlternativeTextController> m_alternativeTextController;
     EditorParagraphSeparator m_defaultParagraphSeparator { EditorParagraphSeparator::div };
     bool m_overwriteModeEnabled { false };
 

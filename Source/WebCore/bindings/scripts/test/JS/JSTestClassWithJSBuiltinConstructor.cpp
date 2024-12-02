@@ -43,6 +43,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
+
 namespace WebCore {
 using namespace JSC;
 
@@ -108,8 +109,9 @@ template<> FunctionExecutable* JSTestClassWithJSBuiltinConstructorDOMConstructor
 
 /* Hash table for prototype */
 
-static const std::array<HashTableValue, 1> JSTestClassWithJSBuiltinConstructorPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestClassWithJSBuiltinConstructorConstructor, 0 } },
+static const HashTableValue JSTestClassWithJSBuiltinConstructorPrototypeTableValues[] =
+{
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestClassWithJSBuiltinConstructorConstructor, 0 } },
 };
 
 const ClassInfo JSTestClassWithJSBuiltinConstructorPrototype::s_info = { "TestClassWithJSBuiltinConstructor"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestClassWithJSBuiltinConstructorPrototype) };
@@ -197,7 +199,6 @@ void JSTestClassWithJSBuiltinConstructorOwner::finalize(JSC::Handle<JSC::Unknown
     uncacheWrapper(world, jsTestClassWithJSBuiltinConstructor->protectedWrapped().ptr(), jsTestClassWithJSBuiltinConstructor);
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -222,8 +223,6 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestClassWith
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestClassWithJSBuiltinConstructor>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

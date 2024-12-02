@@ -28,7 +28,6 @@
 
 #include "GeometryUtilities.h"
 #include "GraphicsContext.h"
-#include "ImageBuffer.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {

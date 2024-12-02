@@ -85,9 +85,6 @@ public:
     static GPUProcess& singleton();
     static constexpr WTF::AuxiliaryProcessType processType = WTF::AuxiliaryProcessType::GPU;
 
-    void ref() const final { ThreadSafeRefCounted::ref(); }
-    void deref() const final { ThreadSafeRefCounted::deref(); }
-
     void removeGPUConnectionToWebProcess(GPUConnectionToWebProcess&);
 
     void prepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime, CompletionHandler<void()>&&);
@@ -263,7 +260,9 @@ private:
     std::optional<WebCore::ProcessIdentity> m_processIdentity;
 #endif
 #if ENABLE(VP9) && PLATFORM(COCOA)
+    bool m_haveEnabledVP8Decoder { false };
     bool m_haveEnabledVP9Decoder { false };
+    bool m_haveEnabledSWVPDecoders { false };
 #endif
 
 };

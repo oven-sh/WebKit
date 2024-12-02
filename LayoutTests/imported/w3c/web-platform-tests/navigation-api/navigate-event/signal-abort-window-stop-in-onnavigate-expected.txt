@@ -1,3 +1,4 @@
+CONSOLE MESSAGE: Unhandled Promise Rejection: AbortError: Navigation aborted
 
 PASS window.stop() signals event.signal inside a navigate event handler
 

@@ -37,12 +37,13 @@
             testRunner.waitUntilDone();
         }
 
-        async function doTest()
+        function doTest()
         {
             var overflow = document.getElementById('overflow');
             overflow.scrollTop = 50;
 
-            await testRunner?.displayAndTrackRepaints();
+            if (window.testRunner)
+                testRunner.displayAndTrackRepaints();
             
             window.setTimeout(function() {
                 overflow.scrollTop = 75;

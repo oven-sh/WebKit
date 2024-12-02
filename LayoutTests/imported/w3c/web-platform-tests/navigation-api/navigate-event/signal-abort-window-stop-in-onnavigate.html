@@ -3,7 +3,7 @@
 <script src="/resources/testharnessreport.js"></script>
 <script>
 async_test(t => {
-  window.onload = t.step_func(() => {
+  window.onload = t.step_func_done(() => {
     let abort_signal;
     let onabort_called = false;
     let canceled_in_second_handler = false;
@@ -15,12 +15,10 @@ async_test(t => {
     navigation.addEventListener("navigate", t.step_func(e => {
       canceled_in_second_handler = e.defaultPrevented;
     }));
-    navigation.navigate("?1").committed.catch((error) => {
-      assert_true(abort_signal.aborted);
-      assert_true(onabort_called);
-      assert_true(canceled_in_second_handler);
-      t.done();
-    });
+    navigation.navigate("?1");
+    assert_true(abort_signal.aborted);
+    assert_true(onabort_called);
+    assert_true(canceled_in_second_handler);
   });
 }, "window.stop() signals event.signal inside a navigate event handler");
 </script>

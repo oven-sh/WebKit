@@ -36,6 +36,7 @@
 #include "CSSGradientValue.h"
 #include "CSSGridTemplateAreasValue.h"
 #include "CSSPropertyParserConsumer+Font.h"
+#include "CSSPropertyParserHelpers.h"
 #include "CSSRectValue.h"
 #include "CSSRegisteredCustomProperty.h"
 #include "CSSShadowValue.h"
@@ -1257,19 +1258,13 @@ inline void BuilderCustom::applyValueContent(BuilderState& builderState, CSSValu
             builderState.style().setHasAttrContent();
         else
             const_cast<RenderStyle&>(builderState.parentStyle()).setHasAttrContent();
-
-        auto value = primitiveValue.cssAttrValue();
-        QualifiedName attr(nullAtom(), value->attributeName().impl(), nullAtom());
+        QualifiedName attr(nullAtom(), primitiveValue.stringValue().impl(), nullAtom());
         const AtomString& attributeValue = builderState.element() ? builderState.element()->getAttribute(attr) : nullAtom();
 
         // Register the fact that the attribute value affects the style.
         builderState.registerContentAttribute(attr.localName());
 
-        if (attributeValue.isNull()) {
-            auto fallback = dynamicDowncast<CSSPrimitiveValue>(value->fallback());
-            return fallback && fallback->isString() ? fallback->stringValue().impl() : emptyAtom();
-        }
-        return attributeValue.impl();
+        return attributeValue.isNull() ? emptyAtom() : attributeValue.impl();
     };
 
     bool didSet = false;

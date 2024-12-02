@@ -11,8 +11,6 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-verifyProperty(this, "Boolean", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(this, "Boolean");
+verifyWritable(this, "Boolean");
+verifyConfigurable(this, "Boolean");

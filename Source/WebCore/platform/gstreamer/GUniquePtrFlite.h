@@ -21,7 +21,7 @@
 
 #include <wtf/Platform.h>
 
-#if USE(FLITE)
+#if ENABLE(SPEECH_SYNTHESIS)
 
 #include <flite/flite.h>
 #include <wtf/glib/GUniquePtr.h>
@@ -33,4 +33,4 @@ WTF_DEFINE_GPTR_DELETER(cst_wave, delete_wave)
 
 } // namespace WTF
 
-#endif // USE(FLITE)
+#endif // ENABLE(SPEECH_SYNTHESIS)

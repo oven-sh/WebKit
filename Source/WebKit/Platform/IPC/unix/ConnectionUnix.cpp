@@ -37,7 +37,6 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <wtf/Assertions.h>
-#include <wtf/MallocSpan.h>
 #include <wtf/SafeStrerror.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -63,7 +62,7 @@
 #endif
 #endif // SOCK_SEQPACKET
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // Unix port
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace IPC {
 
@@ -260,10 +259,10 @@ static ssize_t readBytesFromSocket(int socketDescriptor, Vector<uint8_t>& buffer
     struct iovec iov[1];
     memset(&iov, 0, sizeof(iov));
 
-    auto attachmentDescriptorBuffer = MallocSpan<char>::zeroedMalloc(CMSG_SPACE(sizeof(int) * attachmentMaxAmount));
-    auto attachmentDescriptorSpan = attachmentDescriptorBuffer.mutableSpan();
-    message.msg_control = attachmentDescriptorSpan.data();
-    message.msg_controllen = attachmentDescriptorSpan.size();
+    message.msg_controllen = CMSG_SPACE(sizeof(int) * attachmentMaxAmount);
+    MallocPtr<char> attachmentDescriptorBuffer = MallocPtr<char>::malloc(sizeof(char) * message.msg_controllen);
+    memset(attachmentDescriptorBuffer.get(), 0, sizeof(char) * message.msg_controllen);
+    message.msg_control = attachmentDescriptorBuffer.get();
 
     size_t previousBufferSize = buffer.size();
     buffer.grow(buffer.capacity());
@@ -463,7 +462,7 @@ bool Connection::sendOutputMessage(UnixMessage& outputMessage)
     iov[0].iov_len = sizeof(messageInfo);
 
     Vector<AttachmentInfo> attachmentInfo;
-    MallocSpan<char> attachmentFDBuffer;
+    MallocPtr<char> attachmentFDBuffer;
 
     auto& attachments = outputMessage.attachments();
     if (!attachments.isEmpty()) {
@@ -475,10 +474,11 @@ bool Connection::sendOutputMessage(UnixMessage& outputMessage)
             });
 
         if (attachmentFDBufferLength) {
-            attachmentFDBuffer = MallocSpan<char>::zeroedMalloc(CMSG_SPACE(sizeof(int) * attachmentFDBufferLength));
-            auto span = attachmentFDBuffer.mutableSpan();
-            message.msg_control = span.data();
-            message.msg_controllen = span.size();
+            attachmentFDBuffer = MallocPtr<char>::malloc(sizeof(char) * CMSG_SPACE(sizeof(int) * attachmentFDBufferLength));
+
+            message.msg_control = attachmentFDBuffer.get();
+            message.msg_controllen = CMSG_SPACE(sizeof(int) * attachmentFDBufferLength);
+            memset(message.msg_control, 0, message.msg_controllen);
 
             struct cmsghdr* cmsg = CMSG_FIRSTHDR(&message);
             cmsg->cmsg_level = SOL_SOCKET;

@@ -34,8 +34,6 @@
 #include "NodeList.h"
 #include <wtf/Assertions.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 static JSValueRef JSNode_appendChild(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
 {
     UNUSED_PARAM(function);
@@ -197,5 +195,3 @@ JSObjectRef JSNode_construct(JSContextRef context, JSObjectRef object, size_t ar
 
     return JSNode_new(context, Node_new());
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

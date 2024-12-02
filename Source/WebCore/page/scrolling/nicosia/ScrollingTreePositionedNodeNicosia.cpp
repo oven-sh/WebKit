@@ -33,7 +33,6 @@
 
 #include "Logging.h"
 #include "ScrollingStatePositionedNode.h"
-#include "ScrollingTree.h"
 
 namespace WebCore {
 

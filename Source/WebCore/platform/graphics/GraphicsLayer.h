@@ -70,7 +70,6 @@ class GraphicsLayerContentsDisplayDelegate;
 class GraphicsLayerAsyncContentsDisplayDelegate;
 class HTMLVideoElement;
 class Image;
-class ImageBuffer;
 class Model;
 class Settings;
 class TiledBacking;
@@ -535,11 +534,6 @@ public:
     // Layer contents
     virtual void setContentsToImage(Image*) { }
     virtual bool shouldDirectlyCompositeImage(Image*) const { return true; }
-
-    // FIXME: Merge this with setContentsToImage once we can efficiently convert an
-    // ImageBuffer to NativeImage without GPUP readback.
-    virtual void setContentsToImageBuffer(ImageBuffer*) { }
-    virtual bool shouldDirectlyCompositeImageBuffer(ImageBuffer*) const { return false; }
 #if PLATFORM(IOS_FAMILY)
     virtual PlatformLayer* contentsLayerForMedia() const { return 0; }
 #endif

@@ -40,9 +40,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCNetwork);
 
 LibWebRTCNetwork::LibWebRTCNetwork(WebProcess& webProcess)
     : m_webProcess(webProcess)
-#if USE(LIBWEBRTC)
-    , m_webNetworkMonitor(*this)
-#endif
 #if ENABLE(WEB_RTC)
     , m_mdnsRegister(*this)
 #endif

@@ -91,7 +91,6 @@ using CocoaColor = UIColor;
 
 @property (nonatomic, weak) TestWebExtensionTab *parentTab;
 
-@property (nonatomic) bool shouldBypassPermissions;
 @property (nonatomic, getter=isPinned) bool pinned;
 @property (nonatomic, getter=isMuted) bool muted;
 @property (nonatomic, getter=isSelected) bool selected;

@@ -37,7 +37,6 @@ class TextureMapperFPSCounter {
 public:
     WEBCORE_EXPORT TextureMapperFPSCounter();
     WEBCORE_EXPORT void updateFPSAndDisplay(TextureMapper&, const FloatPoint& = FloatPoint::zero(), const TransformationMatrix& = TransformationMatrix());
-    bool isActive() const { return m_isShowingFPS; }
 
 private:
     bool m_isShowingFPS;

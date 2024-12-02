@@ -191,30 +191,10 @@ std::optional<double> evaluate(const IndirectNode<Anchor>& anchor, const Evaluat
 
 }
 
-std::optional<double> evaluate(const IndirectNode<AnchorSize>& anchorSize, const EvaluationOptions& options)
+std::optional<double> evaluate(const IndirectNode<AnchorSize>&, const EvaluationOptions&)
 {
-    if (!options.conversionData || !options.conversionData->styleBuilderState())
-        return { };
-
-    auto& builderState = *options.conversionData->styleBuilderState();
-
-    std::optional<Style::ScopedName> anchorSizeScopedName;
-    if (!anchorSize->elementName.isNull()) {
-        anchorSizeScopedName = Style::ScopedName {
-            .name = anchorSize->elementName,
-            .scopeOrdinal = builderState.styleScopeOrdinal()
-        };
-    }
-
-    auto result = Style::AnchorPositionEvaluator::evaluateSize(builderState, anchorSizeScopedName, anchorSize->dimension);
-
-    if (!result && anchorSize->fallback)
-        result = evaluate(*anchorSize->fallback, options);
-
-    if (!result)
-        options.conversionData->styleBuilderState()->setCurrentPropertyInvalidAtComputedValueTime();
-
-    return result;
+    // FIXME (webkit.org/b/280789): evaluate anchor-size()
+    return 0.0;
 }
 
 template<typename Op> std::optional<double> evaluate(const IndirectNode<Op>& root, const EvaluationOptions& options)
@@ -239,15 +219,7 @@ std::optional<double> evaluateWithoutFallback(const Anchor& anchor, const Evalua
         }
     );
 
-    std::optional<Style::ScopedName> anchorScopedName;
-    if (!anchor.elementName.isNull()) {
-        anchorScopedName = Style::ScopedName {
-            .name = anchor.elementName,
-            .scopeOrdinal = builderState.styleScopeOrdinal()
-        };
-    }
-
-    return Style::AnchorPositionEvaluator::evaluate(builderState, anchorScopedName, side);
+    return Style::AnchorPositionEvaluator::evaluate(builderState, anchor.elementName, side);
 }
 
 } // namespace CSSCalc

@@ -66,25 +66,25 @@ namespace WebCore {
 ALWAYS_INLINE bool isAutofilled(const Element& element)
 {
     auto* inputElement = dynamicDowncast<HTMLInputElement>(element);
-    return inputElement && inputElement->autofilled();
+    return inputElement && inputElement->isAutoFilled();
 }
 
 ALWAYS_INLINE bool isAutofilledStrongPassword(const Element& element)
 {
     auto* inputElement = dynamicDowncast<HTMLInputElement>(element);
-    return inputElement && inputElement->autofilled() && inputElement->hasAutofillStrongPasswordButton();
+    return inputElement && inputElement->isAutoFilled() && inputElement->hasAutoFillStrongPasswordButton();
 }
 
 ALWAYS_INLINE bool isAutofilledStrongPasswordViewable(const Element& element)
 {
     auto* inputElement = dynamicDowncast<HTMLInputElement>(element);
-    return inputElement && inputElement->autofilledAndViewable();
+    return inputElement && inputElement->isAutoFilledAndViewable();
 }
 
 ALWAYS_INLINE bool isAutofilledAndObscured(const Element& element)
 {
     auto* inputElement = dynamicDowncast<HTMLInputElement>(element);
-    return inputElement && inputElement->autofilledAndObscured();
+    return inputElement && inputElement->isAutoFilledAndObscured();
 }
 
 ALWAYS_INLINE bool matchesDefaultPseudoClass(const Element& element)
@@ -425,19 +425,16 @@ ALWAYS_INLINE bool matchesFullscreenDocumentPseudoClass(const Element& element)
     return fullscreenManager && fullscreenManager->fullscreenElement();
 }
 
+#if ENABLE(VIDEO)
 ALWAYS_INLINE bool matchesInWindowFullscreenPseudoClass(const Element& element)
 {
-#if ENABLE(VIDEO)
     if (&element != element.document().fullscreenManager().currentFullscreenElement())
         return false;
 
     auto* mediaElement = dynamicDowncast<HTMLMediaElement>(element);
     return mediaElement && mediaElement->fullscreenMode() == HTMLMediaElementEnums::VideoFullscreenModeInWindow;
-#else
-    UNUSED_PARAM(element);
-    return false;
-#endif
 }
+#endif
 
 #endif
 
@@ -588,6 +585,29 @@ ALWAYS_INLINE bool matchesActiveViewTransitionPseudoClass(const Element& element
     if (&element != element.document().documentElement())
         return false;
     return !!element.document().activeViewTransition();
+}
+
+ALWAYS_INLINE bool matchesActiveViewTransitionTypePseudoClass(const Element& element, const FixedVector<AtomString>& types)
+{
+    // This pseudo class only matches the root element.
+    if (&element != element.document().documentElement())
+        return false;
+
+    if (const auto* viewTransition = element.document().activeViewTransition()) {
+        const auto& activeTypes = viewTransition->types();
+
+        for (const auto& type : types) {
+            // https://github.com/w3c/csswg-drafts/issues/9534#issuecomment-1802364085
+            // RESOLVED: type can accept any idents, except 'none' or '-ua-' prefixes
+            if (type.convertToASCIILowercase() == "none"_s || type.convertToASCIILowercase().startsWith("-ua-"_s))
+                continue;
+
+            if (activeTypes.hasType(type))
+                return true;
+        }
+    }
+
+    return false;
 }
 
 } // namespace WebCore

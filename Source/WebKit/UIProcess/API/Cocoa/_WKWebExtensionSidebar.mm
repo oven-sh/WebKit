@@ -22,7 +22,6 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #if !__has_feature(objc_arc)
 #error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
 #endif
@@ -30,8 +29,6 @@
 #import "config.h"
 #import "_WKWebExtensionSidebarInternal.h"
 
-#import "CocoaHelpers.h"
-#import "CocoaImage.h"
 #import "WebExtensionContext.h"
 #import "WebExtensionSidebar.h"
 #import "WebExtensionTab.h"
@@ -56,10 +53,19 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(_WKWebExtensionSidebar, WebExtensionSideba
     return _webExtensionSidebar->title();
 }
 
-- (CocoaImage *)iconForSize:(CGSize)size
+#if PLATFORM(MAC)
+- (NSImage *)iconForSize:(CGSize)size
 {
-    return WebKit::toCocoaImage(_webExtensionSidebar->icon(WebCore::FloatSize(size)));
+    return _webExtensionSidebar->icon(size).get();
 }
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+- (UIImage *)iconForSize:(CGSize)size
+{
+    return _webExtensionSidebar->icon(size).get();
+}
+#endif
 
 - (SidebarViewControllerType *)viewController
 {

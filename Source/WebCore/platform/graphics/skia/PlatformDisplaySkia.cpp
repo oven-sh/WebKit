@@ -29,28 +29,26 @@
 #if USE(SKIA)
 #include "FontRenderOptions.h"
 #include "GLContext.h"
-
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
 #include <skia/gpu/ganesh/GrBackendSurface.h>
-#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
 #include <skia/gpu/ganesh/gl/GrGLInterface.h>
-
-#if USE(LIBEPOXY)
-#include <skia/gpu/ganesh/gl/epoxy/GrGLMakeEpoxyEGLInterface.h>
-#else
-#include <skia/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.h>
-#endif
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
-
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/threads/BinarySemaphore.h>
 
+IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
+IGNORE_CLANG_WARNINGS_END
+
+#if USE(LIBEPOXY)
+#include <skia/gpu/ganesh/gl/epoxy/GrGLMakeEpoxyEGLInterface.h>
+#else
+#include <skia/gpu/gl/egl/GrGLMakeEGLInterface.h>
+#endif
 
 namespace WebCore {
 
@@ -72,7 +70,7 @@ static const unsigned s_defaultSampleCount = 0;
 #if !(PLATFORM(PLAYSTATION) && USE(COORDINATED_GRAPHICS))
 static sk_sp<const GrGLInterface> skiaGLInterface()
 {
-    static NeverDestroyed<sk_sp<const GrGLInterface>> grGLInterface {
+    static NeverDestroyed<sk_sp<const GrGLInterface>> interface {
 #if USE(LIBEPOXY)
         GrGLInterfaces::MakeEpoxyEGL()
 #else
@@ -80,7 +78,7 @@ static sk_sp<const GrGLInterface> skiaGLInterface()
 #endif
     };
 
-    return grGLInterface.get();
+    return interface.get();
 }
 
 static thread_local RefPtr<SkiaGLContext> s_skiaGLContext;

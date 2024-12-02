@@ -587,7 +587,7 @@ public:
 
     void rshift32(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
-        if (!(imm.m_value & 0x1f))
+        if (!imm.m_value)
             move(src, dest);
         else
             m_assembler.asr(dest, src, imm.m_value & 0x1f);
@@ -616,7 +616,7 @@ public:
     
     void urshift32(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
-        if (!(imm.m_value & 0x1f))
+        if (!imm.m_value)
             move(src, dest);
         else
             m_assembler.lsr(dest, src, imm.m_value & 0x1f);
@@ -922,12 +922,6 @@ public:
         load32(setupArmAddress(address), dest);
     }
 
-    void loadAcq32(Address address, RegisterID dest)
-    {
-        load32(address, dest);
-        loadFence();
-    }
-
     void load32(BaseIndex address, RegisterID dest)
     {
         load32(setupArmAddress(address), dest);
@@ -973,21 +967,9 @@ public:
         load8(setupArmAddress(address), dest);
     }
 
-    void loadAcq8(Address address, RegisterID dest)
-    {
-        load8(address, dest);
-        loadFence();
-    }
-
     void load8SignedExtendTo32(Address address, RegisterID dest)
     {
         load8SignedExtendTo32(setupArmAddress(address), dest);
-    }
-
-    void loadAcq8SignedExtendTo32(Address address, RegisterID dest)
-    {
-        load8SignedExtendTo32(address, dest);
-        loadFence();
     }
 
     void load8(BaseIndex address, RegisterID dest)
@@ -1030,22 +1012,10 @@ public:
             m_assembler.ldrh(dest, address.base, dataTempRegister);
         }
     }
-
-    void loadAcq16(Address address, RegisterID dest)
-    {
-        load16(address, dest);
-        loadFence();
-    }
     
     void load16SignedExtendTo32(Address address, RegisterID dest)
     {
         load16SignedExtendTo32(setupArmAddress(address), dest);
-    }
-
-    void loadAcq16SignedExtendTo32(Address address, RegisterID dest)
-    {
-        load16SignedExtendTo32(address, dest);
-        loadFence();
     }
 
     void loadPair32(RegisterID src, RegisterID dest1, RegisterID dest2)
@@ -1211,12 +1181,6 @@ public:
         store32(dataTempRegister, address);
     }
 
-    void storeRel32(RegisterID src, Address address)
-    {
-        storeFence();
-        store32(src, address);
-    }
-
     void store8(RegisterID src, Address address)
     {
         store8(src, setupArmAddress(address));
@@ -1250,12 +1214,6 @@ public:
     {
         store8(src, ArmAddress(addrreg, 0));
     }
-
-    void storeRel8(RegisterID src, Address address)
-    {
-        storeFence();
-        store8(src, address);
-    }
     
     void store16(RegisterID src, Address address)
     {
@@ -1276,12 +1234,6 @@ public:
     {
         move(imm, dataTempRegister);
         store16(dataTempRegister, address);
-    }
-
-    void storeRel16(RegisterID src, Address address)
-    {
-        storeFence();
-        store16(src, address);
     }
 
     void storePair32(RegisterID src1, TrustedImm32 imm, Address address)
@@ -3166,10 +3118,8 @@ public:
         // generate a specific number of instructions. Specifically, move(x, x)
         // would not generate an instruction, so the IT block would apply to
         // some later, unrelated instruction.
-        if (thenCase == elseCase) {
-            move(thenCase, dest);
+        if (thenCase == elseCase)
             return;
-        }
         m_assembler.tst(left, right);
         if (thenCase == dest) {
             m_assembler.it(armV7Condition(cond), false);

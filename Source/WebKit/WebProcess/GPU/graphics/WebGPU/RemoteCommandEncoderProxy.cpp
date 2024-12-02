@@ -39,10 +39,10 @@ namespace WebKit::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteCommandEncoderProxy);
 
-RemoteCommandEncoderProxy::RemoteCommandEncoderProxy(RemoteGPUProxy& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+RemoteCommandEncoderProxy::RemoteCommandEncoderProxy(RemoteDeviceProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
     : m_backing(identifier)
     , m_convertToBackingContext(convertToBackingContext)
-    , m_root(root)
+    , m_parent(parent)
 {
 }
 
@@ -66,8 +66,7 @@ RefPtr<WebCore::WebGPU::RenderPassEncoder> RemoteCommandEncoderProxy::beginRende
         return nullptr;
 
     auto result = RemoteRenderPassEncoderProxy::create(*this, convertToBackingContext, identifier);
-    if (convertedDescriptor)
-        result->setLabel(WTFMove(convertedDescriptor->label));
+    result->setLabel(WTFMove(convertedDescriptor->label));
     return result;
 }
 
@@ -88,8 +87,7 @@ RefPtr<WebCore::WebGPU::ComputePassEncoder> RemoteCommandEncoderProxy::beginComp
         return nullptr;
 
     auto result = RemoteComputePassEncoderProxy::create(*this, convertToBackingContext, identifier);
-    if (convertedDescriptor)
-        result->setLabel(WTFMove(convertedDescriptor->label));
+    result->setLabel(WTFMove(convertedDescriptor->label));
     return result;
 }
 
@@ -230,7 +228,7 @@ RefPtr<WebCore::WebGPU::CommandBuffer> RemoteCommandEncoderProxy::finish(const W
     if (sendResult != IPC::Error::NoError)
         return nullptr;
 
-    auto result = RemoteCommandBufferProxy::create(m_root, convertToBackingContext, identifier);
+    auto result = RemoteCommandBufferProxy::create(m_parent, convertToBackingContext, identifier);
     result->setLabel(WTFMove(convertedDescriptor->label));
     return result;
 }

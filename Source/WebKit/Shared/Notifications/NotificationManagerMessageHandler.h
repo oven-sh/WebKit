@@ -28,7 +28,6 @@
 #include "MessageReceiver.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/NotificationDirection.h>
-#include <wtf/AbstractRefCounted.h>
 #include <wtf/UUID.h>
 
 namespace WebCore {
@@ -40,7 +39,7 @@ struct NotificationData;
 
 namespace WebKit {
 
-class NotificationManagerMessageHandler : public IPC::MessageReceiver, public AbstractRefCounted {
+class NotificationManagerMessageHandler : public IPC::MessageReceiver {
 public:
     virtual ~NotificationManagerMessageHandler() = default;
 

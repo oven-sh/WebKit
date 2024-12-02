@@ -165,6 +165,7 @@ if (USE_COORDINATED_GRAPHICS)
         WebProcess/WebPage/CoordinatedGraphics/CompositingRunLoop.cpp
         WebProcess/WebPage/CoordinatedGraphics/CoordinatedGraphicsScene.cpp
         WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+        WebProcess/WebPage/CoordinatedGraphics/SimpleViewportController.cpp
         WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
         WebProcess/WebPage/CoordinatedGraphics/ThreadedDisplayRefreshMonitor.cpp
     )

@@ -36,7 +36,6 @@
 #include <WebCore/ScrollingCoordinatorTypes.h>
 #include <WebCore/WheelEventDeltaFilter.h>
 #include <memory>
-#include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -65,7 +64,6 @@ namespace WebKit {
 class MomentumEventDispatcher;
 class ScrollingAccelerationCurve;
 class WebPage;
-class WebProcess;
 class WebWheelEvent;
 
 class EventDispatcher final :
@@ -78,11 +76,8 @@ class EventDispatcher final :
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EventDispatcher);
 #endif
 public:
-    explicit EventDispatcher(WebProcess&);
+    EventDispatcher();
     ~EventDispatcher();
-
-    void ref() const;
-    void deref() const;
 
     enum class WheelEventOrigin : bool { UIProcess, MomentumEventDispatcher };
 
@@ -120,7 +115,7 @@ private:
     void touchEvent(WebCore::PageIdentifier, WebCore::FrameIdentifier, const WebTouchEvent&, CompletionHandler<void(bool, std::optional<WebCore::RemoteUserInputEventData>)>&&);
 #endif
 #if ENABLE(MAC_GESTURE_EVENTS)
-    void gestureEvent(WebCore::FrameIdentifier, WebCore::PageIdentifier, const WebGestureEvent&);
+    void gestureEvent(WebCore::FrameIdentifier, WebCore::PageIdentifier, const WebGestureEvent&, CompletionHandler<void(std::optional<WebEventType>, bool, std::optional<WebCore::RemoteUserInputEventData>)>&&);
 #endif
 
     // This is called on the main thread.
@@ -133,7 +128,7 @@ private:
     void dispatchTouchEvents();
 #endif
 #if ENABLE(MAC_GESTURE_EVENTS)
-    void dispatchGestureEvent(WebCore::FrameIdentifier, WebCore::PageIdentifier, const WebGestureEvent&);
+    void dispatchGestureEvent(WebCore::FrameIdentifier, WebCore::PageIdentifier, const WebGestureEvent&, CompletionHandler<void(std::optional<WebEventType>, bool, std::optional<WebCore::RemoteUserInputEventData>)>&&);
 #endif
 
     static void sendDidReceiveEvent(WebCore::PageIdentifier, WebEventType, bool didHandleEvent);
@@ -159,7 +154,6 @@ private:
 
     void pageScreenDidChange(WebCore::PageIdentifier, WebCore::PlatformDisplayID, std::optional<unsigned> nominalFramesPerSecond);
 
-    CheckedRef<WebProcess> m_process;
     Ref<WorkQueue> m_queue;
 
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)

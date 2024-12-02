@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2003-2024 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2022 Apple Inc. All rights reserved.
  *  Copyright (C) 2007 Eric Seidel <eric@webkit.org>
  *
  *  This library is free software; you can redistribute it and/or
@@ -28,8 +28,6 @@
 #include "MarkedSpaceInlines.h"
 #include <wtf/ListDump.h>
 #include <wtf/SimpleStats.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -360,7 +358,7 @@ bool MarkedSpace::isPagedOut()
     return pagedOutPagesStats.mean() > pagedOutPagesStats.count() * bailoutPercentage;
 }
 
-// FIXME: rdar://139998916
+// Don't forget to remove this once we're done debugging (rdar://136782494)
 MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
 {
     MarkedBlock::Handle* result = nullptr;
@@ -593,5 +591,3 @@ void MarkedSpace::addBlockDirectory(const AbstractLocker&, BlockDirectory* direc
 }
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -29,11 +29,7 @@
 #if ENABLE(WEB_RTC) && USE(LIBWEBRTC)
 
 #include <LibWebRTCMacros.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/rtc_base/byte_order.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 namespace WebRTC {
@@ -123,7 +119,5 @@ Vector<uint8_t> extractMessages(Vector<uint8_t>&& buffer, MessageType type, cons
 
 } // namespace WebRTC
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_RTC) && USE(LIBWEBRTC)

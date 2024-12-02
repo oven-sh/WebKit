@@ -61,15 +61,15 @@ template<typename CharacterType> static std::optional<ResourceCryptographicDiges
     if (!skipExactly(buffer, '-'))
         return std::nullopt;
 
-    auto beginHashValue = buffer.span();
+    auto beginHashValue = buffer.position();
     skipWhile<isBase64OrBase64URLCharacter>(buffer);
     skipExactly(buffer, '=');
     skipExactly(buffer, '=');
 
-    if (buffer.position() == beginHashValue.data())
+    if (buffer.position() == beginHashValue)
         return std::nullopt;
 
-    StringView hashValue(beginHashValue.first(buffer.position() - beginHashValue.data()));
+    StringView hashValue(std::span(beginHashValue, buffer.position()));
 
     if (auto digest = base64Decode(hashValue))
         return ResourceCryptographicDigest { *algorithm, WTFMove(*digest) };
@@ -102,15 +102,15 @@ template<typename CharacterType> static std::optional<EncodedResourceCryptograph
     if (!skipExactly(buffer, '-'))
         return std::nullopt;
 
-    auto beginHashValue = buffer.span();
+    auto beginHashValue = buffer.position();
     skipWhile<isBase64OrBase64URLCharacter>(buffer);
     skipExactly(buffer, '=');
     skipExactly(buffer, '=');
 
-    if (buffer.position() == beginHashValue.data())
+    if (buffer.position() == beginHashValue)
         return std::nullopt;
 
-    return EncodedResourceCryptographicDigest { *algorithm, beginHashValue.first(buffer.position() - beginHashValue.data()) };
+    return EncodedResourceCryptographicDigest { *algorithm, String({ beginHashValue, buffer.position() }) };
 }
 
 std::optional<EncodedResourceCryptographicDigest> parseEncodedCryptographicDigest(StringParsingBuffer<UChar>& buffer)

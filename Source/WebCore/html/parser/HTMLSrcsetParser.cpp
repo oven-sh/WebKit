@@ -39,8 +39,6 @@
 #include <wtf/URL.h>
 #include <wtf/text/StringBuilder.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 static inline bool compareByDensity(const ImageCandidate& first, const ImageCandidate& second)
@@ -315,5 +313,3 @@ ImageCandidate bestFitSourceForImageAttributes(float deviceScaleFactor, const At
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

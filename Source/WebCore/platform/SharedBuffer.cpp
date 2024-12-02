@@ -207,8 +207,8 @@ Vector<uint8_t> FragmentedSharedBuffer::takeData()
 
 SharedBufferDataView FragmentedSharedBuffer::getSomeData(size_t position) const
 {
-    auto& element = segmentForPosition(position).front();
-    return { element.segment.copyRef(), position - element.beginPosition };
+    const DataSegmentVectorEntry* element = getSegmentForPosition(position);
+    return { element->segment.copyRef(), position - element->beginPosition };
 }
 
 Ref<SharedBuffer> FragmentedSharedBuffer::getContiguousData(size_t position, size_t length) const
@@ -216,33 +216,30 @@ Ref<SharedBuffer> FragmentedSharedBuffer::getContiguousData(size_t position, siz
     if (position >= m_size)
         return SharedBuffer::create();
     length = std::min(m_size - position, length);
-    auto elements = segmentForPosition(position);
-    auto& element = elements[0];
-    size_t offsetInSegment = position - element.beginPosition;
-    ASSERT(element.segment->size() > offsetInSegment);
-    if (element.segment->size() - offsetInSegment >= length)
-        return SharedBufferDataView { element.segment.copyRef(), offsetInSegment, length }.createSharedBuffer();
+    const DataSegmentVectorEntry* element = getSegmentForPosition(position);
+    size_t offsetInSegment = position - element->beginPosition;
+    ASSERT(element->segment->size() > offsetInSegment);
+    if (element->segment->size() - offsetInSegment >= length)
+        return SharedBufferDataView { element->segment.copyRef(), offsetInSegment, length }.createSharedBuffer();
     Vector<uint8_t> combinedData;
     combinedData.reserveInitialCapacity(length);
-    combinedData.append(element.segment->span().subspan(offsetInSegment));
-
-    for (elements = elements.subspan(1); combinedData.size() < length && !elements.empty(); elements = elements.subspan(1)) {
-        auto& element = elements[0];
-        auto canCopy = std::min(length - combinedData.size(), element.segment->size());
-        combinedData.append(element.segment->span().first(canCopy));
+    combinedData.append(element->segment->span().subspan(offsetInSegment));
+    for (++element; combinedData.size() < length && element != m_segments.end(); element++) {
+        auto canCopy = std::min(length - combinedData.size(), element->segment->size());
+        combinedData.append(element->segment->span().first(canCopy));
     }
     return SharedBuffer::create(WTFMove(combinedData));
 }
 
-std::span<const FragmentedSharedBuffer::DataSegmentVectorEntry> FragmentedSharedBuffer::segmentForPosition(size_t position) const
+const FragmentedSharedBuffer::DataSegmentVectorEntry* FragmentedSharedBuffer::getSegmentForPosition(size_t position) const
 {
     RELEASE_ASSERT(position < m_size);
     auto comparator = [](const size_t& position, const DataSegmentVectorEntry& entry) {
         return position < entry.beginPosition;
     };
-    auto* element = std::upper_bound(m_segments.begin(), m_segments.end(), position, comparator);
-    // std::upper_bound gives a pointer to the element that is greater than position. We want the element just before that.
-    return m_segments.subspan(element - m_segments.begin() - 1);
+    const DataSegmentVectorEntry* element = std::upper_bound(m_segments.begin(), m_segments.end(), position, comparator);
+    element--; // std::upper_bound gives a pointer to the element that is greater than position. We want the element just before that.
+    return element;
 }
 
 String FragmentedSharedBuffer::toHexString() const
@@ -352,15 +349,16 @@ bool FragmentedSharedBuffer::startsWith(std::span<const uint8_t> prefix) const
     if (size() < prefix.size())
         return false;
 
+    const uint8_t* prefixPtr = prefix.data();
     size_t remaining = prefix.size();
     for (auto& segment : m_segments) {
         size_t amountToCompareThisTime = std::min(remaining, segment.segment->size());
-        if (!equalSpans(prefix.first(amountToCompareThisTime), segment.segment->span().first(amountToCompareThisTime)))
+        if (memcmp(prefixPtr, segment.segment->span().data(), amountToCompareThisTime))
             return false;
         remaining -= amountToCompareThisTime;
         if (!remaining)
             return true;
-        prefix = prefix.subspan(amountToCompareThisTime);
+        prefixPtr += amountToCompareThisTime;
     }
     return false;
 }
@@ -375,21 +373,18 @@ Vector<uint8_t> FragmentedSharedBuffer::read(size_t offset, size_t length) const
         return data;
 
     data.reserveInitialCapacity(remaining);
-    auto segments = segmentForPosition(offset);
-    auto& currentSegment = segments[0];
-    size_t offsetInSegment = offset - currentSegment.beginPosition;
-    size_t availableInSegment = std::min(currentSegment.segment->size() - offsetInSegment, remaining);
-    data.append(currentSegment.segment->span().subspan(offsetInSegment, availableInSegment));
+    auto* currentSegment = getSegmentForPosition(offset);
+    size_t offsetInSegment = offset - currentSegment->beginPosition;
+    size_t availableInSegment = std::min(currentSegment->segment->size() - offsetInSegment, remaining);
+    data.append(currentSegment->segment->span().subspan(offsetInSegment, availableInSegment));
 
     remaining -= availableInSegment;
 
-    while (remaining) {
-        segments = segments.subspan(1);
-        if (segments.empty())
-            break;
-        auto& currentSegment = segments[0];
-        size_t lengthInSegment = std::min(currentSegment.segment->size(), remaining);
-        data.append(currentSegment.segment->span().first(lengthInSegment));
+    auto* afterLastSegment = end();
+
+    while (remaining && ++currentSegment != afterLastSegment) {
+        size_t lengthInSegment = std::min(currentSegment->segment->size(), remaining);
+        data.append(currentSegment->segment->span().first(lengthInSegment));
         remaining -= lengthInSegment;
     }
     return data;
@@ -408,30 +403,27 @@ void FragmentedSharedBuffer::copyTo(std::span<uint8_t> destination, size_t offse
     if (!remaining)
         return;
 
-    auto segments = m_segments.span();
-    if (offset >= segments[0].segment->size()) {
+    auto segment = begin();
+    if (offset >= segment->segment->size()) {
         auto comparator = [](const size_t& position, const DataSegmentVectorEntry& entry) {
             return position < entry.beginPosition;
         };
-        auto* segment = std::upper_bound(m_segments.begin(), m_segments.end(), offset, comparator);
-        // std::upper_bound gives a pointer to the segment that is greater than offset. We want the segment just before that.
-        segments = segments.subspan(segment - m_segments.begin() - 1);
+        segment = std::upper_bound(segment, end(), offset, comparator);
+        segment--; // std::upper_bound gives a pointer to the segment that is greater than offset. We want the segment just before that.
     }
 
-    auto& segment = segments[0];
-    size_t positionInSegment = offset - segment.beginPosition;
-    size_t amountToCopyThisTime = std::min(remaining, segment.segment->size() - positionInSegment);
-    memcpySpan(destination, segment.segment->span().subspan(positionInSegment, amountToCopyThisTime));
+    size_t positionInSegment = offset - segment->beginPosition;
+    size_t amountToCopyThisTime = std::min(remaining, segment->segment->size() - positionInSegment);
+    memcpySpan(destination, segment->segment->span().subspan(positionInSegment, amountToCopyThisTime));
     remaining -= amountToCopyThisTime;
     if (!remaining)
         return;
     destination = destination.subspan(amountToCopyThisTime);
 
     // If we reach here, there must be at least another segment available as we have content left to be fetched.
-    for (segments = segments.subspan(1); !segments.empty(); segments = segments.subspan(1)) {
-        auto& segment = segments[0];
-        size_t amountToCopyThisTime = std::min(remaining, segment.segment->size());
-        memcpySpan(destination, segment.segment->span().first(amountToCopyThisTime));
+    for (++segment; segment != end(); ++segment) {
+        size_t amountToCopyThisTime = std::min(remaining, segment->segment->size());
+        memcpySpan(destination, segment->segment->span().first(amountToCopyThisTime));
         remaining -= amountToCopyThisTime;
         if (!remaining)
             return;
@@ -466,18 +458,18 @@ bool FragmentedSharedBuffer::operator==(const FragmentedSharedBuffer& other) con
     if (m_size != other.m_size)
         return false;
 
-    auto thisSpan = m_segments.span();
+    auto thisIterator = begin();
     size_t thisOffset = 0;
-    auto otherSpan = other.m_segments.span();
+    auto otherIterator = other.begin();
     size_t otherOffset = 0;
 
-    while (!thisSpan.empty() && !otherSpan.empty()) {
-        auto& thisSegment = thisSpan[0].segment.get();
-        auto& otherSegment = otherSpan[0].segment.get();
+    while (thisIterator != end() && otherIterator != other.end()) {
+        auto& thisSegment = thisIterator->segment.get();
+        auto& otherSegment = otherIterator->segment.get();
 
         if (&thisSegment == &otherSegment && !thisOffset && !otherOffset) {
-            thisSpan = thisSpan.subspan(1);
-            otherSpan = otherSpan.subspan(1);
+            ++thisIterator;
+            ++otherIterator;
             continue;
         }
 
@@ -495,12 +487,12 @@ bool FragmentedSharedBuffer::operator==(const FragmentedSharedBuffer& other) con
         otherOffset += remaining;
 
         if (thisOffset == thisSegment.size()) {
-            thisSpan = thisSpan.subspan(1);
+            ++thisIterator;
             thisOffset = 0;
         }
 
         if (otherOffset == otherSegment.size()) {
-            otherSpan = otherSpan.subspan(1);
+            ++otherIterator;
             otherOffset = 0;
         }
     }

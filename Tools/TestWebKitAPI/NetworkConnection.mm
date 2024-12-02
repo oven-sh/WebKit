@@ -29,10 +29,18 @@
 #import "HTTPServer.h"
 #import <wtf/BlockPtr.h>
 #import <wtf/SHA1.h>
-#import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/Base64.h>
 
 namespace TestWebKitAPI {
+
+RetainPtr<dispatch_data_t> dataFromVector(Vector<uint8_t>&& v)
+{
+    auto bufferSize = v.size();
+    auto rawPointer = v.releaseBuffer().leakPtr();
+    return adoptNS(dispatch_data_create(rawPointer, bufferSize, dispatch_get_main_queue(), ^{
+        fastFree(rawPointer);
+    }));
+}
 
 static Vector<uint8_t> vectorFromData(dispatch_data_t content)
 {
@@ -116,7 +124,7 @@ void SendOperation::await_suspend(std::coroutine_handle<> handle)
 
 SendOperation Connection::awaitableSend(Vector<uint8_t>&& message)
 {
-    return { makeDispatchData(WTFMove(message)), *this };
+    return { dataFromVector(WTFMove(message)), *this };
 }
 
 SendOperation Connection::awaitableSend(String&& message)
@@ -139,7 +147,7 @@ void Connection::send(String&& message, CompletionHandler<void()>&& completionHa
 
 void Connection::send(Vector<uint8_t>&& message, CompletionHandler<void()>&& completionHandler) const
 {
-    send(makeDispatchData(WTFMove(message)), [completionHandler = WTFMove(completionHandler)] (bool) mutable {
+    send(dataFromVector(WTFMove(message)), [completionHandler = WTFMove(completionHandler)] (bool) mutable {
         if (completionHandler)
             completionHandler();
     });
@@ -147,7 +155,7 @@ void Connection::send(Vector<uint8_t>&& message, CompletionHandler<void()>&& com
 
 void Connection::sendAndReportError(Vector<uint8_t>&& message, CompletionHandler<void(bool)>&& completionHandler) const
 {
-    send(makeDispatchData(WTFMove(message)), WTFMove(completionHandler));
+    send(dataFromVector(WTFMove(message)), WTFMove(completionHandler));
 }
 
 void Connection::send(RetainPtr<dispatch_data_t>&& message, CompletionHandler<void(bool)>&& completionHandler) const

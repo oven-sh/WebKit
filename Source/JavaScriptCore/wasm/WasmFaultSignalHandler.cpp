@@ -43,8 +43,6 @@
 #include <wtf/Lock.h>
 #include <wtf/threads/Signals.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace Wasm {
 
 using WTF::CodePtr;
@@ -154,6 +152,5 @@ void prepareSignalingMemory()
     
 } } // namespace JSC::Wasm
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(WEBASSEMBLY)
+

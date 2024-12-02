@@ -39,11 +39,14 @@
 #include "RenderStyleInlines.h"
 #include "RenderView.h"
 #include "SVGInlineTextBoxInlines.h"
+#include "SVGPaintServerHandling.h"
 #include "SVGRenderStyle.h"
 #include "SVGRenderingContext.h"
 #include "SVGResourcesCache.h"
 #include "SVGRootInlineBox.h"
+#include "SVGTextBoxPainter.h"
 #include "TextBoxSelectableRange.h"
+#include "TextPainter.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -159,6 +162,18 @@ LayoutRect SVGInlineTextBox::localSelectionRect(unsigned start, unsigned end) co
     return enclosingIntRect(selectionRect);
 }
 
+void SVGInlineTextBox::paintSelectionBackground(PaintInfo& paintInfo)
+{
+    auto painter = LegacySVGTextBoxPainter { *this, paintInfo, { } };
+    painter.paintSelectionBackground();
+}
+
+void SVGInlineTextBox::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset, LayoutUnit, LayoutUnit)
+{
+    auto painter = LegacySVGTextBoxPainter { *this, paintInfo, paintOffset };
+    painter.paint();
+}
+
 TextRun SVGInlineTextBox::constructTextRun(const RenderStyle& style, const SVGTextFragment& fragment) const
 {
     TextRun run(StringView(renderer().text()).substring(fragment.characterOffset, fragment.length),
@@ -213,6 +228,43 @@ FloatRect SVGInlineTextBox::calculateBoundaries() const
     }
 
     return textRect;
+}
+
+bool SVGInlineTextBox::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, LayoutUnit, LayoutUnit, HitTestAction)
+{
+    // FIXME: integrate with LegacyInlineTextBox::nodeAtPoint better.
+    ASSERT(!isLineBreak());
+
+    PointerEventsHitRules hitRules(PointerEventsHitRules::HitTestingTargetType::SVGText, request, renderer().usedPointerEvents());
+    if (isVisibleToHitTesting(renderer().style(), request) || !hitRules.requireVisible) {
+        if ((hitRules.canHitStroke && (renderer().style().svgStyle().hasStroke() || !hitRules.requireStroke))
+            || (hitRules.canHitFill && (renderer().style().svgStyle().hasFill() || !hitRules.requireFill))) {
+            FloatRect rect(topLeft(), FloatSize(logicalWidth(), logicalHeight()));
+            rect.moveBy(accumulatedOffset);
+            if (locationInContainer.intersects(rect)) {
+
+                float scalingFactor = renderer().scalingFactor();
+                ASSERT(scalingFactor);
+                
+                float baseline = renderer().scaledFont().metricsOfPrimaryFont().ascent() / scalingFactor;
+
+                AffineTransform fragmentTransform;
+                for (auto& fragment : m_textFragments) {
+                    FloatQuad fragmentQuad(FloatRect(fragment.x, fragment.y - baseline, fragment.width, fragment.height));
+                    fragment.buildFragmentTransform(fragmentTransform);
+                    if (!fragmentTransform.isIdentity())
+                        fragmentQuad = fragmentTransform.mapQuad(fragmentQuad);
+                    
+                    if (fragmentQuad.containsPoint(locationInContainer.point())) {
+                        renderer().updateHitTestResult(result, locationInContainer.point() - toLayoutSize(accumulatedOffset));
+                        if (result.addNodeToListBasedTestResult(renderer().protectedNodeForHitTest().get(), request, locationInContainer, rect) == HitTestProgress::Stop)
+                            return true;
+                    }
+                }
+             }
+        }
+    }
+    return false;
 }
 
 } // namespace WebCore

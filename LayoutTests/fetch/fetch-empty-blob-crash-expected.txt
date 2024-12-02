@@ -1,3 +1,0 @@
-
-PASS Consuming form data with empty blob
-

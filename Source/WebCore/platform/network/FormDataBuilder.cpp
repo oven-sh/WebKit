@@ -34,8 +34,6 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/StringView.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 namespace FormDataBuilder {
@@ -221,5 +219,3 @@ void encodeStringAsFormData(Vector<uint8_t>& buffer, const CString& string)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

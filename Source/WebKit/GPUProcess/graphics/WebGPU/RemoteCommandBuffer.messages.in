@@ -24,7 +24,7 @@
 #if ENABLE(GPU_PROCESS)
 
 [EnabledBy=WebGPUEnabled]
-messages -> RemoteCommandBuffer Stream {
+messages -> RemoteCommandBuffer NotRefCounted Stream {
     void Destruct()
     void SetLabel(String label)
 }

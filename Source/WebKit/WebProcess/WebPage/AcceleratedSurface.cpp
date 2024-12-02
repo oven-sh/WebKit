@@ -49,15 +49,15 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AcceleratedSurface);
 
-std::unique_ptr<AcceleratedSurface> AcceleratedSurface::create(ThreadedCompositor& compositor, WebPage& webPage, Function<void()>&& frameCompleteHandler)
+std::unique_ptr<AcceleratedSurface> AcceleratedSurface::create(WebPage& webPage, Function<void()>&& frameCompleteHandler)
 {
 #if (PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM)))
 #if USE(GBM)
     if (PlatformDisplay::sharedDisplay().type() == PlatformDisplay::Type::GBM)
-        return AcceleratedSurfaceDMABuf::create(compositor, webPage, WTFMove(frameCompleteHandler));
+        return AcceleratedSurfaceDMABuf::create(webPage, WTFMove(frameCompleteHandler));
 #endif
     if (PlatformDisplay::sharedDisplay().type() == PlatformDisplay::Type::Surfaceless)
-        return AcceleratedSurfaceDMABuf::create(compositor, webPage, WTFMove(frameCompleteHandler));
+        return AcceleratedSurfaceDMABuf::create(webPage, WTFMove(frameCompleteHandler));
 #endif
 #if USE(WPE_RENDERER)
     if (PlatformDisplay::sharedDisplay().type() == PlatformDisplay::Type::WPE)

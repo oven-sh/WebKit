@@ -70,6 +70,11 @@ public:
 
     static void ensureCodecsRegistered();
 
+#if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
+    static WEBCORE_EXPORT void setMediaSourceInlinePaintingEnabled(bool);
+    static WEBCORE_EXPORT bool mediaSourceInlinePaintingEnabled();
+#endif
+
     static WEBCORE_EXPORT void setShouldUseModernAVContentKeySession(bool);
     static WEBCORE_EXPORT bool shouldUseModernAVContentKeySession();
 

@@ -16,8 +16,6 @@ includes: [propertyHelper.js]
 
 assert.sameValue(typeof Array.prototype.slice, 'function', 'typeof');
 
-verifyProperty(Array.prototype, "slice", {
-  writable: true,
-  enumerable: false,
-  configurable: true
-});
+verifyNotEnumerable(Array.prototype, "slice");
+verifyWritable(Array.prototype, "slice");
+verifyConfigurable(Array.prototype, "slice");

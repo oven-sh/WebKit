@@ -46,7 +46,8 @@ public:
 
     virtual ~RemoteComputePassEncoderProxy();
 
-    RemoteGPUProxy& root() { return m_root; }
+    RemoteCommandEncoderProxy& parent() { return m_parent; }
+    RemoteGPUProxy& root() { return m_parent->root(); }
 
 private:
     friend class DowncastConvertToBackingContext;
@@ -76,7 +77,8 @@ private:
         std::optional<Vector<WebCore::WebGPU::BufferDynamicOffset>>&&) final;
 
     void setBindGroup(WebCore::WebGPU::Index32, const WebCore::WebGPU::BindGroup&,
-        std::span<const uint32_t> dynamicOffsetsArrayBuffer,
+        const uint32_t* dynamicOffsetsArrayBuffer,
+        size_t dynamicOffsetsArrayBufferLength,
         WebCore::WebGPU::Size64 dynamicOffsetsDataStart,
         WebCore::WebGPU::Size32 dynamicOffsetsDataLength) final;
 
@@ -88,7 +90,7 @@ private:
 
     WebGPUIdentifier m_backing;
     Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteGPUProxy> m_root;
+    Ref<RemoteCommandEncoderProxy> m_parent;
 };
 
 } // namespace WebKit::WebGPU

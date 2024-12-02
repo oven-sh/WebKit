@@ -34,8 +34,6 @@
 #include "B3ValueInlines.h"
 #include "B3ValueKeyInlines.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC { namespace B3 {
 
 ValueKey ValueKey::intConstant(Type type, int64_t value)
@@ -207,6 +205,5 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
 
 } } // namespace JSC::B3
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(B3_JIT)
+

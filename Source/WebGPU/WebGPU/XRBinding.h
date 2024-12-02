@@ -62,9 +62,7 @@ public:
     bool isValid() const;
     Ref<XRProjectionLayer> createXRProjectionLayer(WGPUTextureFormat, WGPUTextureFormat*, WGPUTextureUsageFlags, double);
     RefPtr<XRSubImage> getViewSubImage(XRProjectionLayer&);
-    Device& device() { return m_device; }
-    Ref<Device> protectedDevice() { return m_device; }
-
+    Device& device();
 
 private:
     XRBinding(bool, Device&);

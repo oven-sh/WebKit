@@ -205,15 +205,13 @@ public:
     void prepareForDetach();
     void detachCustomScrollbars();
     WEBCORE_EXPORT void recalculateScrollbarOverlayStyle();
-
 #if ENABLE(DARK_MODE_CSS)
-    void updateBaseBackgroundColorIfNecessary();
+    void recalculateBaseBackgroundColor();
 #endif
 
     void clear();
     void resetLayoutMilestones();
 
-    // This represents externally-imposed transparency. iframes are transparent by default, but that's handled in RenderView::shouldPaintBaseBackground().
     WEBCORE_EXPORT bool isTransparent() const;
     WEBCORE_EXPORT void setTransparent(bool isTransparent);
     
@@ -275,6 +273,9 @@ public:
     IntRect windowClipRect() const final;
     WEBCORE_EXPORT IntRect windowClipRectForFrameOwner(const HTMLFrameOwnerElement*, bool clipToLayerContents) const;
 
+#if USE(COORDINATED_GRAPHICS)
+    WEBCORE_EXPORT void setFixedVisibleContentRect(const IntRect&) final;
+#endif
     WEBCORE_EXPORT void setScrollPosition(const ScrollPosition&, const ScrollPositionChangeOptions& = ScrollPositionChangeOptions::createProgrammatic()) final;
     void restoreScrollbar();
     void scheduleScrollToFocusedElement(SelectionRevealMode);

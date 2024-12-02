@@ -263,10 +263,9 @@ static inline std::optional<RTCErrorDetailType> toRTCErrorDetailType(GstWebRTCEr
 
 RefPtr<RTCError> toRTCError(GError*);
 
-ExceptionOr<GUniquePtr<GstStructure>> fromRTCEncodingParameters(const RTCRtpEncodingParameters&, const String& kind);
-GUniquePtr<GstStructure> fromRTCCodecParameters(const RTCRtpCodecParameters&);
+GUniquePtr<GstStructure> fromRTCEncodingParameters(const RTCRtpEncodingParameters&);
 RTCRtpSendParameters toRTCRtpSendParameters(const GstStructure*);
-ExceptionOr<GUniquePtr<GstStructure>>fromRTCSendParameters(const RTCRtpSendParameters&, const String& kind);
+GUniquePtr<GstStructure> fromRTCSendParameters(const RTCRtpSendParameters&);
 
 std::optional<Ref<RTCCertificate>> generateCertificate(Ref<SecurityOrigin>&&, const PeerConnectionBackend::CertificateInformation&);
 
@@ -286,7 +285,7 @@ private:
 
 std::optional<int> payloadTypeForEncodingName(StringView encodingName);
 
-WARN_UNUSED_RETURN GRefPtr<GstCaps> capsFromRtpCapabilities(const RTCRtpCapabilities&, Function<void(GstStructure*)> supplementCapsCallback);
+WARN_UNUSED_RETURN GRefPtr<GstCaps> capsFromRtpCapabilities(RefPtr<UniqueSSRCGenerator>, const RTCRtpCapabilities&, Function<void(GstStructure*)> supplementCapsCallback);
 
 GstWebRTCRTPTransceiverDirection getDirectionFromSDPMedia(const GstSDPMedia*);
 WARN_UNUSED_RETURN GRefPtr<GstCaps> capsFromSDPMedia(const GstSDPMedia*);
@@ -322,24 +321,6 @@ private:
     WallTime m_epoch { WallTime::now() };
     MonotonicTime m_initialMonotonicTime { MonotonicTime::now() };
 };
-
-inline GstWebRTCKind webrtcKindFromCaps(const GRefPtr<GstCaps>& caps)
-{
-    if (!caps || !gst_caps_get_size(caps.get()))
-        return GST_WEBRTC_KIND_UNKNOWN;
-
-    auto media = gstStructureGetString(gst_caps_get_structure(caps.get(), 0), "media"_s);
-    if (!media)
-        return GST_WEBRTC_KIND_UNKNOWN;
-
-    if (media == "audio"_s)
-        return GST_WEBRTC_KIND_AUDIO;
-
-    if (media == "video"_s)
-        return GST_WEBRTC_KIND_VIDEO;
-
-    return GST_WEBRTC_KIND_UNKNOWN;
-}
 
 } // namespace WebCore
 

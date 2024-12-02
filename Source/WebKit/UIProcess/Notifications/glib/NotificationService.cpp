@@ -47,16 +47,18 @@
 #include <wtf/glib/Sandbox.h>
 #include <wtf/text/CString.h>
 
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #if USE(CAIRO)
 #include <WebCore/RefPtrCairo.h>
 #include <cairo.h>
 #elif USE(SKIA)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
 #include <skia/core/SkPixmap.h>
+IGNORE_CLANG_WARNINGS_END
 #include <skia/core/SkStream.h>
 #include <skia/encode/SkPngEncoder.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #if PLATFORM(GTK)
 #include <WebCore/GtkVersioning.h>
@@ -65,15 +67,6 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #if HAVE(GDESKTOPAPPINFO)
 #include <gio/gdesktopappinfo.h>
 #endif
-
-namespace WebKit {
-class IconCache;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedTimerSmartPointerException;
-template<> struct IsDeprecatedTimerSmartPointerException<WebKit::IconCache> : std::true_type { };
-}
 
 namespace WebKit {
 

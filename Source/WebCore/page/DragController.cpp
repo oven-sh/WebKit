@@ -595,10 +595,10 @@ bool DragController::concludeEditDrag(const DragData& dragData)
             return false;
         Ref style = MutableStyleProperties::create();
         style->setProperty(CSSPropertyColor, serializationForHTML(color));
-        if (!innerFrame->protectedEditor()->shouldApplyStyle(style, *innerRange))
+        if (!innerFrame->checkedEditor()->shouldApplyStyle(style, *innerRange))
             return false;
         client().willPerformDragDestinationAction(DragDestinationAction::Edit, dragData);
-        innerFrame->protectedEditor()->applyStyle(style.ptr(), EditAction::SetColor);
+        innerFrame->checkedEditor()->applyStyle(style.ptr(), EditAction::SetColor);
         return true;
     }
 
@@ -625,7 +625,7 @@ bool DragController::concludeEditDrag(const DragData& dragData)
         return false;
 
     ResourceCacheValidationSuppressor validationSuppressor(range->start.document().cachedResourceLoader());
-    Ref editor = innerFrame->editor();
+    CheckedRef editor = innerFrame->editor();
     bool isMove = dragIsMove(innerFrame->selection(), dragData);
     if (isMove || dragCaret.isContentRichlyEditable()) {
         bool chosePlainText = false;
@@ -956,7 +956,7 @@ void DragController::prepareForDragStart(LocalFrame& source, OptionSet<DragSourc
         return;
 
     auto& pasteboard = dataTransfer.pasteboard();
-    Ref editor = source.editor();
+    CheckedRef editor = source.editor();
     if (actionMask == DragSourceAction::Selection) {
         if (enclosingTextFormControl(source.selection().selection().start()))
             pasteboard.writePlainText(editor->selectedTextForDataTransfer(), Pasteboard::CannotSmartReplace);
@@ -1071,7 +1071,7 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
             auto selectionRange = src.selection().selection().toNormalizedRange();
             ASSERT(selectionRange);
 
-            src.protectedEditor()->willWriteSelectionToPasteboard(*selectionRange);
+            src.checkedEditor()->willWriteSelectionToPasteboard(*selectionRange);
             auto selection = src.selection().selection();
             bool shouldDragAsPlainText = enclosingTextFormControl(selection.start());
             if (auto range = selection.range(); range && ImageOverlay::isInsideOverlay(*range))
@@ -1089,19 +1089,19 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
             } else {
                 if (mustUseLegacyDragClient) {
 #if !PLATFORM(WIN)
-                    src.protectedEditor()->writeSelectionToPasteboard(dataTransfer->pasteboard());
+                    src.checkedEditor()->writeSelectionToPasteboard(dataTransfer->pasteboard());
 #else
                     // FIXME: Convert Windows to match the other platforms and delete this.
                     dataTransfer->pasteboard().writeSelection(*selectionRange, src.editor().canSmartCopyOrDelete(), src, IncludeImageAltTextForDataTransfer);
 #endif
                 } else {
 #if PLATFORM(COCOA)
-                    src.protectedEditor()->writeSelection(pasteboardWriterData);
+                    src.checkedEditor()->writeSelection(pasteboardWriterData);
 #endif
                 }
             }
 
-            src.protectedEditor()->didWriteSelectionToPasteboard();
+            src.checkedEditor()->didWriteSelectionToPasteboard();
         }
         client().willPerformDragSourceAction(DragSourceAction::Selection, dragOrigin, dataTransfer);
         if (!dragImage) {
@@ -1230,13 +1230,13 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     if (RefPtr attachment = dynamicDowncast<HTMLAttachmentElement>(element); attachment && m_dragSourceAction.contains(DragSourceAction::Attachment)) {
-        src.protectedEditor()->setIgnoreSelectionChanges(true);
+        src.checkedEditor()->setIgnoreSelectionChanges(true);
         auto previousSelection = src.selection().selection();
         selectElement(element);
 
         PromisedAttachmentInfo promisedAttachment;
         if (hasData == HasNonDefaultPasteboardData::No) {
-            Ref editor = src.editor();
+            CheckedRef editor = src.editor();
             promisedAttachment = editor->promisedAttachmentInfo(*attachment);
 #if PLATFORM(COCOA)
             if (!promisedAttachment && editor->client()) {
@@ -1266,7 +1266,7 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         doSystemDrag(WTFMove(dragImage), dragLoc, dragOrigin, src, state, WTFMove(promisedAttachment));
         if (!element->isContentRichlyEditable())
             src.checkedSelection()->setSelection(previousSelection);
-        src.protectedEditor()->setIgnoreSelectionChanges(false);
+        src.checkedEditor()->setIgnoreSelectionChanges(false);
         return true;
     }
 #endif

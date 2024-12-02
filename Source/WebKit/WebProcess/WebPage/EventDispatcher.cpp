@@ -62,9 +62,8 @@
 namespace WebKit {
 using namespace WebCore;
 
-EventDispatcher::EventDispatcher(WebProcess& process)
-    : m_process(process)
-    , m_queue(WorkQueue::create("com.apple.WebKit.EventDispatcher"_s, WorkQueue::QOS::UserInteractive))
+EventDispatcher::EventDispatcher()
+    : m_queue(WorkQueue::create("com.apple.WebKit.EventDispatcher"_s, WorkQueue::QOS::UserInteractive))
     , m_recentWheelEventDeltaFilter(WheelEventDeltaFilter::create())
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
     , m_momentumEventDispatcher(WTF::makeUnique<MomentumEventDispatcher>(*this))
@@ -76,16 +75,6 @@ EventDispatcher::EventDispatcher(WebProcess& process)
 EventDispatcher::~EventDispatcher()
 {
     ASSERT_NOT_REACHED();
-}
-
-void EventDispatcher::ref() const
-{
-    m_process->ref();
-}
-
-void EventDispatcher::deref() const
-{
-    m_process->deref();
 }
 
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
@@ -207,10 +196,10 @@ void EventDispatcher::wheelEvent(PageIdentifier pageID, const WebWheelEvent& whe
 }
 
 #if ENABLE(MAC_GESTURE_EVENTS)
-void EventDispatcher::gestureEvent(FrameIdentifier frameID, PageIdentifier pageID, const WebGestureEvent& gestureEvent)
+void EventDispatcher::gestureEvent(FrameIdentifier frameID, PageIdentifier pageID, const WebGestureEvent& gestureEvent, CompletionHandler<void(std::optional<WebEventType>, bool, std::optional<RemoteUserInputEventData>)>&& completionHandler)
 {
-    RunLoop::main().dispatch([this, frameID, pageID, gestureEvent] mutable {
-        dispatchGestureEvent(frameID, pageID, gestureEvent);
+    RunLoop::main().dispatch([this, frameID, pageID, gestureEvent, completionHandler = WTFMove(completionHandler)] () mutable {
+        dispatchGestureEvent(frameID, pageID, gestureEvent, WTFMove(completionHandler));
     });
 }
 #endif
@@ -301,15 +290,15 @@ void EventDispatcher::dispatchWheelEvent(PageIdentifier pageID, const WebWheelEv
 }
 
 #if ENABLE(MAC_GESTURE_EVENTS)
-void EventDispatcher::dispatchGestureEvent(FrameIdentifier frameID, PageIdentifier pageID, const WebGestureEvent& gestureEvent)
+void EventDispatcher::dispatchGestureEvent(FrameIdentifier frameID, PageIdentifier pageID, const WebGestureEvent& gestureEvent, CompletionHandler<void(std::optional<WebEventType>, bool, std::optional<RemoteUserInputEventData>)>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
 
     RefPtr webPage = WebProcess::singleton().webPage(pageID);
     if (!webPage)
-        return;
+        return completionHandler(gestureEvent.type(), false, std::nullopt);
 
-    webPage->gestureEvent(frameID, gestureEvent);
+    webPage->gestureEvent(frameID, gestureEvent, WTFMove(completionHandler));
 }
 #endif
 

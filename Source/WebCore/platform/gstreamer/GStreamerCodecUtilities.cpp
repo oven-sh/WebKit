@@ -50,15 +50,14 @@ std::pair<const char*, const char*> GStreamerCodecUtilities::parseH264ProfileAnd
     ensureDebugCategoryInitialized();
 
     auto components = codec.split('.');
-
-    auto spsAsInteger = parseInteger<uint64_t>(components[1], 16).value_or(0);
-    std::array<uint8_t, 3> sps;
+    long int spsAsInteger = strtol(components[1].utf8().data(), nullptr, 16);
+    uint8_t sps[3];
     sps[0] = spsAsInteger >> 16;
-    sps[1] = (spsAsInteger >> 8) & 0xff;
-    sps[2] = spsAsInteger & 0xff;
+    sps[1] = spsAsInteger >> 8;
+    sps[2] = spsAsInteger;
 
-    const char* profile = gst_codec_utils_h264_get_profile(sps.data(), 3);
-    const char* level = gst_codec_utils_h264_get_level(sps.data(), 3);
+    const char* profile = gst_codec_utils_h264_get_profile(sps, 3);
+    const char* level = gst_codec_utils_h264_get_level(sps, 3);
 
     // To avoid going through a class hierarchy for such a simple
     // string conversion, we use a little trick here: See
@@ -76,11 +75,10 @@ std::pair<const char*, const char*> GStreamerCodecUtilities::parseH264ProfileAnd
 static std::pair<GRefPtr<GstCaps>, GRefPtr<GstCaps>> h264CapsFromCodecString(const String& codecString)
 {
     auto outputCaps = adoptGRef(gst_caps_new_empty_simple("video/x-h264"));
-    auto [gstProfile, level] = GStreamerCodecUtilities::parseH264ProfileAndLevel(codecString);
+    // FIXME: Set level on caps too?
+    auto [gstProfile, _] = GStreamerCodecUtilities::parseH264ProfileAndLevel(codecString);
     if (gstProfile)
         gst_caps_set_simple(outputCaps.get(), "profile", G_TYPE_STRING, gstProfile, nullptr);
-    if (level)
-        gst_caps_set_simple(outputCaps.get(), "level", G_TYPE_STRING, level, nullptr);
 
     StringBuilder formatBuilder;
     auto profile = StringView::fromLatin1(gstProfile);
@@ -132,10 +130,8 @@ const char* GStreamerCodecUtilities::parseHEVCProfile(const String& codec)
         return nullptr;
     }
 
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
     uint8_t profileTierLevel[11] = { 0, };
     memset(profileTierLevel, 0, 11);
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     profileTierLevel[0] = parameters->generalProfileIDC;
 
     if (profileTierLevel[0] >= 4) {

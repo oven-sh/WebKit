@@ -42,7 +42,6 @@
 #include "StylePropertyMap.h"
 #include "StylePropertyMapReadOnly.h"
 #include "VisibilityAdjustment.h"
-#include <wtf/HashMap.h>
 #include <wtf/Markable.h>
 
 namespace WebCore {
@@ -95,9 +94,6 @@ public:
     NamedNodeMap* attributeMap() const { return m_attributeMap.get(); }
     void setAttributeMap(std::unique_ptr<NamedNodeMap>&& attributeMap) { m_attributeMap = WTFMove(attributeMap); }
 
-    String userInfo() const { return m_userInfo; }
-    void setUserInfo(String&& userInfo) { m_userInfo = WTFMove(userInfo); }
-
     RenderStyle* computedStyle() const { return m_computedStyle.get(); }
     void setComputedStyle(std::unique_ptr<RenderStyle>&& computedStyle) { m_computedStyle = WTFMove(computedStyle); }
 
@@ -118,9 +114,6 @@ public:
 
     ElementAnimationRareData* animationRareData(const std::optional<Style::PseudoElementIdentifier>&) const;
     ElementAnimationRareData& ensureAnimationRareData(const std::optional<Style::PseudoElementIdentifier>&);
-
-    AtomString viewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>&) const;
-    void setViewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>&, AtomString);
 
     DOMTokenList* partList() const { return m_partList.get(); }
     void setPartList(std::unique_ptr<DOMTokenList>&& partList) { m_partList = WTFMove(partList); }
@@ -218,8 +211,6 @@ public:
             result.add(UseType::ChildIndex);
         if (!m_customStateSet.isEmpty())
             result.add(UseType::CustomStateSet);
-        if (m_userInfo)
-            result.add(UseType::UserInfo);
         return result;
     }
 #endif
@@ -230,8 +221,6 @@ private:
 
     std::optional<OptionSet<ContentRelevancy>> m_contentRelevancy;
     ScrollPosition m_savedLayerScrollPosition;
-
-    String m_userInfo;
 
     std::unique_ptr<RenderStyle> m_computedStyle;
     std::unique_ptr<RenderStyle> m_displayContentsOrNoneStyle;
@@ -252,9 +241,7 @@ private:
     Markable<LayoutUnit, LayoutUnitMarkableTraits> m_lastRememberedLogicalWidth;
     Markable<LayoutUnit, LayoutUnitMarkableTraits> m_lastRememberedLogicalHeight;
 
-    HashMap<std::optional<Style::PseudoElementIdentifier>, std::unique_ptr<ElementAnimationRareData>> m_animationRareData;
-
-    HashMap<std::optional<Style::PseudoElementIdentifier>, AtomString> m_viewTransitionCapturedName;
+    Vector<std::unique_ptr<ElementAnimationRareData>> m_animationRareData;
 
     RefPtr<PseudoElement> m_beforePseudoElement;
     RefPtr<PseudoElement> m_afterPseudoElement;
@@ -319,7 +306,11 @@ inline void ElementRareData::setUnusualTabIndex(int tabIndex)
 
 inline ElementAnimationRareData* ElementRareData::animationRareData(const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier) const
 {
-    return m_animationRareData.get(pseudoElementIdentifier);
+    for (auto& animationRareData : m_animationRareData) {
+        if (animationRareData->pseudoElementIdentifier() == pseudoElementIdentifier)
+            return animationRareData.get();
+    }
+    return nullptr;
 }
 
 inline ElementAnimationRareData& ElementRareData::ensureAnimationRareData(const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier)
@@ -327,19 +318,8 @@ inline ElementAnimationRareData& ElementRareData::ensureAnimationRareData(const 
     if (auto* animationRareData = this->animationRareData(pseudoElementIdentifier))
         return *animationRareData;
 
-    auto result = m_animationRareData.add(pseudoElementIdentifier, makeUnique<ElementAnimationRareData>());
-    ASSERT(result.isNewEntry);
-    return *result.iterator->value.get();
-}
-
-inline AtomString ElementRareData::viewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier) const
-{
-    return m_viewTransitionCapturedName.get(pseudoElementIdentifier);
-}
-
-inline void ElementRareData::setViewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier, AtomString captureName)
-{
-    m_viewTransitionCapturedName.set(pseudoElementIdentifier, captureName);
+    m_animationRareData.append(makeUnique<ElementAnimationRareData>(pseudoElementIdentifier));
+    return *m_animationRareData.last().get();
 }
 
 inline ElementRareData* Element::elementRareData() const

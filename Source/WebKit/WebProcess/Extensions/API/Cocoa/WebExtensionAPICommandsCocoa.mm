@@ -41,9 +41,7 @@
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionContextProxy.h"
 #import "WebExtensionUtilities.h"
-#import "WebFrame.h"
 #import "WebProcess.h"
-#import <WebCore/LocalFrame.h>
 
 namespace WebKit {
 

@@ -43,18 +43,10 @@ inline TypeInformation& TypeInformation::singleton()
     return *theOne;
 }
 
-inline TypeIndex TypeDefinition::index() const
-{
-    ASSERT(refCount() > 1); // TypeInformation::m_typeSet + caller
-    return std::bit_cast<TypeIndex>(this);
-}
-
 inline const TypeDefinition& TypeInformation::get(TypeIndex index)
 {
     ASSERT(index != TypeDefinition::invalidIndex);
-    auto def = std::bit_cast<const TypeDefinition*>(index);
-    ASSERT(def->refCount() > 1); // TypeInformation::m_typeSet + caller
-    return *def;
+    return *bitwise_cast<const TypeDefinition*>(index);
 }
 
 inline const FunctionSignature& TypeInformation::getFunctionSignature(TypeIndex index)
@@ -64,15 +56,6 @@ inline const FunctionSignature& TypeInformation::getFunctionSignature(TypeIndex 
     return *signature.as<FunctionSignature>();
 }
 
-inline std::optional<const FunctionSignature*> TypeInformation::tryGetFunctionSignature(TypeIndex index)
-{
-    const TypeDefinition& signature = get(index).expand();
-    if (signature.is<FunctionSignature>())
-        return signature.as<FunctionSignature>();
-    return std::nullopt;
-}
-
-// TODO: merge with TypeDefinition::index().
 inline TypeIndex TypeInformation::get(const TypeDefinition& type)
 {
     if (ASSERT_ENABLED) {
@@ -80,7 +63,7 @@ inline TypeIndex TypeInformation::get(const TypeDefinition& type)
         Locker locker { info.m_lock };
         ASSERT_UNUSED(info, info.m_typeSet.contains(TypeHash { const_cast<TypeDefinition&>(type) }));
     }
-    return type.index();
+    return bitwise_cast<TypeIndex>(&type);
 }
 
 } } // namespace JSC::Wasm

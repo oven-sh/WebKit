@@ -106,7 +106,6 @@ private:
     void dispatchDidCancelClientRedirect() final;
     void dispatchWillPerformClientRedirect(const URL&, double interval, WallTime fireDate, WebCore::LockBackForwardList) final;
     void dispatchDidChangeLocationWithinPage() final;
-    void dispatchDidNavigateWithinPage() final;
     void dispatchDidPushStateWithinPage() final;
     void dispatchDidReplaceStateWithinPage() final;
     void dispatchDidPopStateWithinPage() final;
@@ -276,13 +275,13 @@ private:
 
     inline bool hasPlugInView() const;
 
+    void broadcastMainFrameURLChangeToOtherProcesses(const URL&) final;
+
     void documentLoaderDetached(WebCore::NavigationIdentifier, WebCore::LoadWillContinueInAnotherProcess) final;
 
 #if ENABLE(WINDOW_PROXY_PROPERTY_ACCESS_NOTIFICATION)
     void didAccessWindowProxyPropertyViaOpener(WebCore::SecurityOriginData&&, WebCore::WindowProxyProperty) final;
 #endif
-
-    bool siteIsolationEnabled() const;
 
 #if ENABLE(PDF_PLUGIN)
     RefPtr<PluginView> m_pluginView;

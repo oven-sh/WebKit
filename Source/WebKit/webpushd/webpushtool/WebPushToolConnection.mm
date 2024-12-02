@@ -41,6 +41,8 @@
 #import <wtf/RetainPtr.h>
 #import <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebPushTool {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Connection);
@@ -191,5 +193,7 @@ bool Connection::performSendWithAsyncReplyWithoutUsingIPCConnection(UniqueRef<IP
 
 
 } // namespace WebPushTool
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_PUSH_NOTIFICATIONS)

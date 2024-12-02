@@ -29,8 +29,6 @@
 #include "IdentityTransformOperation.h"
 #include <wtf/text/TextStream.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 void IdentityTransformOperation::dump(TextStream& ts) const
@@ -110,5 +108,3 @@ std::optional<TransformOperation::Type> TransformOperation::sharedPrimitiveType(
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

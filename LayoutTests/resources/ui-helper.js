@@ -1334,21 +1334,13 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => testRunner.runUIScript(uiScript, resolve));
     }
 
-    static selectWordForReplacement()
-    {
-        if (!this.isWebKit2())
-            return;
-
-        return new Promise(resolve => testRunner.runUIScript("uiController.selectWordForReplacement()", resolve));
-    }
-
-    static applyAutocorrection(newText, oldText, underline)
+    static applyAutocorrection(newText, oldText)
     {
         if (!this.isWebKit2())
             return;
 
         const [escapedNewText, escapedOldText] = [newText.replace(/`/g, "\\`"), oldText.replace(/`/g, "\\`")];
-        const uiScript = `uiController.applyAutocorrection(\`${escapedNewText}\`, \`${escapedOldText}\`, () => uiController.uiScriptComplete(), ${underline})`;
+        const uiScript = `uiController.applyAutocorrection(\`${escapedNewText}\`, \`${escapedOldText}\`, () => uiController.uiScriptComplete())`;
         return new Promise(resolve => testRunner.runUIScript(uiScript, resolve));
     }
 

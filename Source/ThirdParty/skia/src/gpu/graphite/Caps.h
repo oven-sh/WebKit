@@ -11,7 +11,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
 
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkRefCnt.h"
@@ -330,8 +329,8 @@ protected:
     void finishInitialization(const ContextOptions&);
 
 #if defined(GPU_TEST_UTILS)
-    void setDeviceName(std::string n) {
-        fDeviceName = std::move(n);
+    void setDeviceName(const char* n) {
+        fDeviceName = n;
     }
 #endif
 

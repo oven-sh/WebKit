@@ -97,15 +97,6 @@ public:
         m_partitionHash
     }; }
 
-    Key isolatedCopy() const & { return {
-        crossThreadCopy(m_partition),
-        crossThreadCopy(m_type),
-        crossThreadCopy(m_identifier),
-        crossThreadCopy(m_range),
-        m_hash,
-        m_partitionHash
-    }; }
-
 private:
     friend struct WTF::Persistence::Coder<Key>;
     static String hashAsString(const HashType&);

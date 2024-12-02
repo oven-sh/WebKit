@@ -25,8 +25,6 @@
 #include <wtf/Hasher.h>
 #include <wtf/text/StringBuilder.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 CSSValueContainingVector::CSSValueContainingVector(ClassType type, ValueSeparator separator)
@@ -299,5 +297,3 @@ IterationStatus CSSValueContainingVector::customVisitChildren(const Function<Ite
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

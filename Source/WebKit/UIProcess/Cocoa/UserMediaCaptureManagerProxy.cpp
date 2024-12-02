@@ -110,7 +110,6 @@ public:
         });
     }
 
-    bool isUsingSource(const RealtimeMediaSource& source) const { return m_source.ptr() == &source; }
     Ref<RealtimeMediaSource> protectedSource() { return m_source; }
 
     void audioUnitWillStart() final
@@ -307,10 +306,10 @@ private:
     }
 
     // CheckedPtr interface
-    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
-    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
-    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
-    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    uint32_t ptrCount() const final { return CanMakeCheckedPtr::ptrCount(); }
+    uint32_t ptrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::ptrCountWithoutThreadCheck(); }
+    void incrementPtrCount() const final { CanMakeCheckedPtr::incrementPtrCount(); }
+    void decrementPtrCount() const final { CanMakeCheckedPtr::decrementPtrCount(); }
 
     void sourceStopped() final
     {
@@ -461,11 +460,6 @@ private:
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(UserMediaCaptureManagerProxy);
-
-Ref<UserMediaCaptureManagerProxy> UserMediaCaptureManagerProxy::create(UniqueRef<ConnectionProxy>&& connectionProxy)
-{
-    return adoptRef(*new UserMediaCaptureManagerProxy(WTFMove(connectionProxy)));
-}
 
 UserMediaCaptureManagerProxy::UserMediaCaptureManagerProxy(UniqueRef<ConnectionProxy>&& connectionProxy)
     : m_connectionProxy(WTFMove(connectionProxy))
@@ -649,18 +643,11 @@ void UserMediaCaptureManagerProxy::stopProducingData(RealtimeMediaSourceIdentifi
 
 void UserMediaCaptureManagerProxy::removeSource(RealtimeMediaSourceIdentifier id)
 {
-    auto iterator = m_proxies.find(id);
-    if (iterator == m_proxies.end())
+    RefPtr proxy = m_proxies.get(id);
+    if (!proxy)
         return;
 
-    Ref source = iterator->value->protectedSource();
-    m_proxies.remove(iterator);
-
-    for (Ref proxy : m_proxies.values()) {
-        if (proxy->isUsingSource(source))
-            return;
-    }
-
+    Ref source = proxy->protectedSource();
     if (auto pageIdentifier = source->pageIdentifier()) {
         auto iterator = m_pageSources.find(*pageIdentifier);
         if (iterator != m_pageSources.end()) {
@@ -680,6 +667,7 @@ void UserMediaCaptureManagerProxy::removeSource(RealtimeMediaSourceIdentifier id
             }
         }
     }
+    m_proxies.remove(id);
 }
 
 void UserMediaCaptureManagerProxy::capabilities(RealtimeMediaSourceIdentifier id, CompletionHandler<void(RealtimeMediaSourceCapabilities&&)>&& completionHandler)

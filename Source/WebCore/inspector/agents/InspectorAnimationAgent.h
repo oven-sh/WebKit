@@ -31,7 +31,6 @@
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorFrontendDispatchers.h>
 #include <JavaScriptCore/InspectorProtocolObjects.h>
-#include <wtf/CheckedPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -51,10 +50,9 @@ class WeakPtrImplWithEventTargetData;
 
 struct Styleable;
 
-class InspectorAnimationAgent final : public InspectorAgentBase, public Inspector::AnimationBackendDispatcherHandler, public CanMakeCheckedPtr<InspectorAnimationAgent> {
+class InspectorAnimationAgent final : public InspectorAgentBase, public Inspector::AnimationBackendDispatcherHandler {
     WTF_MAKE_NONCOPYABLE(InspectorAnimationAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorAnimationAgent);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorAnimationAgent);
 public:
     InspectorAnimationAgent(PageAgentContext&);
     ~InspectorAnimationAgent();
@@ -111,7 +109,7 @@ private:
         String trackingAnimationId;
         ComputedEffectTiming lastComputedTiming;
     };
-    HashMap<StyleOriginatedAnimation*, UniqueRef<TrackedStyleOriginatedAnimationData>> m_trackedStyleOriginatedAnimationData;
+    UncheckedKeyHashMap<StyleOriginatedAnimation*, UniqueRef<TrackedStyleOriginatedAnimationData>> m_trackedStyleOriginatedAnimationData;
 };
 
 } // namespace WebCore

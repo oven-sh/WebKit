@@ -26,8 +26,6 @@
 #include "JSCell.h"
 #include "JSObject.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace JSC {
 
 class JSArray;
@@ -409,5 +407,3 @@ template<ArrayFillMode fillMode>
 JSArray* tryCloneArrayFromFast(JSGlobalObject*, JSValue arrayValue);
 
 } // namespace JSC
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

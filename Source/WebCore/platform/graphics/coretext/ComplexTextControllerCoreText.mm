@@ -33,8 +33,6 @@
 #import <wtf/SoftLinking.h>
 #import <wtf/WeakPtr.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 ComplexTextController::ComplexTextRun::ComplexTextRun(CTRunRef ctRun, const Font& font, const UChar* characters, unsigned stringLocation, unsigned stringLength, unsigned indexBegin, unsigned indexEnd)
@@ -275,5 +273,3 @@ void ComplexTextController::collectComplexTextRunsForCharacters(std::span<const 
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

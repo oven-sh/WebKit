@@ -28,7 +28,6 @@
 
 #import "Buffer.h"
 #import "Device.h"
-#import "PipelineLayout.h"
 #import "RenderPipeline.h"
 
 namespace WebGPU {

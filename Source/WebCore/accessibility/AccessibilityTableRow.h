@@ -36,12 +36,12 @@ class AccessibilityTable;
 
 class AccessibilityTableRow : public AccessibilityRenderObject {
 public:
-    static Ref<AccessibilityTableRow> create(AXID, RenderObject&);
-    static Ref<AccessibilityTableRow> create(AXID, Node&);
+    static Ref<AccessibilityTableRow> create(RenderObject&);
+    static Ref<AccessibilityTableRow> create(Node&);
     virtual ~AccessibilityTableRow();
 
     // retrieves the "row" header (a th tag in the rightmost column)
-    AccessibilityObject* rowHeader() override;
+    AXCoreObject* rowHeader() override;
     virtual AccessibilityTable* parentTable() const;
 
     void setRowIndex(unsigned);
@@ -51,20 +51,18 @@ public:
     // in the row, but their col/row spans overlap into it
     void appendChild(AccessibilityObject*);
     
-    void addChildren() final;
+    void addChildren() override;
 
-    int axColumnIndex() const final;
-    int axRowIndex() const final;
+    int axColumnIndex() const override;
+    int axRowIndex() const override;
 
 protected:
-    explicit AccessibilityTableRow(AXID, RenderObject&);
-    explicit AccessibilityTableRow(AXID, Node&);
+    explicit AccessibilityTableRow(RenderObject&);
+    explicit AccessibilityTableRow(Node&);
 
     AccessibilityRole determineAccessibilityRole() final;
 
 private:
-    // FIXME: This implementation of isTableRow() causes us to do an ancestry traversal every time is<AccessibilityTableRow>
-    // is called. Can we replace this with a simpler check? And this function should then maybe be called isExposedTableRow()?
     bool isTableRow() const final;
     AccessibilityObject* observableObject() const final;
     bool computeIsIgnored() const final;

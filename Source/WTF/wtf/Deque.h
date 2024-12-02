@@ -36,6 +36,8 @@
 #include <iterator>
 #include <wtf/Vector.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WTF {
 
 template<typename T, size_t inlineCapacity> class DequeIteratorBase;
@@ -77,12 +79,12 @@ public:
     
     template<typename U> bool contains(const U&) const;
 
-    T& first() { return m_buffer.capacitySpan()[m_start]; }
-    const T& first() const { return m_buffer.capacitySpan()[m_start]; }
+    T& first() { RELEASE_ASSERT(m_start != m_end); return m_buffer.buffer()[m_start]; }
+    const T& first() const { RELEASE_ASSERT(m_start != m_end); return m_buffer.buffer()[m_start]; }
     T takeFirst();
 
-    T& last() { return m_end ? m_buffer.capacitySpan()[m_end - 1] : m_buffer.capacitySpan().back(); }
-    const T& last() const { return m_end ? m_buffer.capacitySpan()[m_end - 1] : m_buffer.capacitySpan().back(); }
+    T& last() { RELEASE_ASSERT(m_start != m_end); return *(--end()); }
+    const T& last() const { RELEASE_ASSERT(m_start != m_end); return *(--end()); }
     T takeLast();
 
     void append(T&& value) { append<T>(std::forward<T>(value)); }
@@ -329,12 +331,12 @@ inline Deque<T, inlineCapacity>::Deque(const Deque& other)
     , m_iterators(0)
 #endif
 {
-    auto otherBuffer = other.m_buffer.capacitySpan();
+    const T* otherBuffer = other.m_buffer.buffer();
     if (m_start <= m_end)
-        TypeOperations::uninitializedCopy(otherBuffer.subspan(m_start, m_end - m_start), m_buffer.capacitySpan().subspan(m_start));
+        TypeOperations::uninitializedCopy(otherBuffer + m_start, otherBuffer + m_end, m_buffer.buffer() + m_start);
     else {
-        TypeOperations::uninitializedCopy(otherBuffer.first(m_end), m_buffer.capacitySpan());
-        TypeOperations::uninitializedCopy(otherBuffer.subspan(m_start, m_buffer.capacity() - m_start), m_buffer.capacitySpan().subspan(m_start));
+        TypeOperations::uninitializedCopy(otherBuffer, otherBuffer + m_end, m_buffer.buffer());
+        TypeOperations::uninitializedCopy(otherBuffer + m_start, otherBuffer + m_buffer.capacity(), m_buffer.buffer() + m_start);
     }
 }
 
@@ -365,12 +367,11 @@ inline auto Deque<T, inlineCapacity>::operator=(Deque&& other) -> Deque&
 template<typename T, size_t inlineCapacity>
 inline void Deque<T, inlineCapacity>::destroyAll()
 {
-    auto span = m_buffer.capacitySpan();
     if (m_start <= m_end)
-        TypeOperations::destruct(span.subspan(m_start, m_end - m_start));
+        TypeOperations::destruct(m_buffer.buffer() + m_start, m_buffer.buffer() + m_end);
     else {
-        TypeOperations::destruct(span.first(m_end));
-        TypeOperations::destruct(span.subspan(m_start));
+        TypeOperations::destruct(m_buffer.buffer(), m_buffer.buffer() + m_end);
+        TypeOperations::destruct(m_buffer.buffer() + m_start, m_buffer.buffer() + m_buffer.capacity());
     }
 }
 
@@ -441,17 +442,17 @@ void Deque<T, inlineCapacity>::expandCapacity()
 {
     checkValidity();
     size_t oldCapacity = m_buffer.capacity();
-    auto oldBuffer = m_buffer.capacitySpan();
+    T* oldBuffer = m_buffer.buffer();
     m_buffer.allocateBuffer(std::max(static_cast<size_t>(16), oldCapacity + oldCapacity / 4 + 1));
     if (m_start <= m_end)
-        TypeOperations::move(oldBuffer.subspan(m_start, m_end - m_start), m_buffer.capacitySpan().subspan(m_start));
+        TypeOperations::move(oldBuffer + m_start, oldBuffer + m_end, m_buffer.buffer() + m_start);
     else {
-        TypeOperations::move(oldBuffer.first(m_end), m_buffer.capacitySpan());
+        TypeOperations::move(oldBuffer, oldBuffer + m_end, m_buffer.buffer());
         size_t newStart = m_buffer.capacity() - (oldCapacity - m_start);
-        TypeOperations::move(oldBuffer.subspan(m_start, oldCapacity - m_start), m_buffer.capacitySpan().subspan(newStart));
+        TypeOperations::move(oldBuffer + m_start, oldBuffer + oldCapacity, m_buffer.buffer() + newStart);
         m_start = newStart;
     }
-    m_buffer.deallocateBuffer(oldBuffer.data());
+    m_buffer.deallocateBuffer(oldBuffer);
     checkValidity();
 }
 
@@ -484,7 +485,7 @@ inline void Deque<T, inlineCapacity>::append(U&& value)
 {
     checkValidity();
     expandCapacityIfNeeded();
-    new (NotNull, std::addressof(m_buffer.capacitySpan()[m_end])) T(std::forward<U>(value));
+    new (NotNull, std::addressof(m_buffer.buffer()[m_end])) T(std::forward<U>(value));
     if (m_end == m_buffer.capacity() - 1)
         m_end = 0;
     else
@@ -501,7 +502,7 @@ inline void Deque<T, inlineCapacity>::prepend(U&& value)
         m_start = m_buffer.capacity() - 1;
     else
         --m_start;
-    new (NotNull, std::addressof(m_buffer.capacitySpan()[m_start])) T(std::forward<U>(value));
+    new (NotNull, std::addressof(m_buffer.buffer()[m_start])) T(std::forward<U>(value));
     checkValidity();
 }
 
@@ -511,7 +512,7 @@ inline void Deque<T, inlineCapacity>::removeFirst()
     checkValidity();
     invalidateIterators();
     RELEASE_ASSERT(!isEmpty());
-    TypeOperations::destruct(m_buffer.capacitySpan().subspan(m_start, 1));
+    TypeOperations::destruct(std::addressof(m_buffer.buffer()[m_start]), std::addressof(m_buffer.buffer()[m_start + 1]));
     if (m_start == m_buffer.capacity() - 1)
         m_start = 0;
     else
@@ -529,7 +530,7 @@ inline void Deque<T, inlineCapacity>::removeLast()
         m_end = m_buffer.capacity() - 1;
     else
         --m_end;
-    TypeOperations::destruct(m_buffer.capacitySpan().subspan(m_end, 1));
+    TypeOperations::destruct(std::addressof(m_buffer.buffer()[m_end]), std::addressof(m_buffer.buffer()[m_end + 1]));
     checkValidity();
 }
 
@@ -556,15 +557,15 @@ inline void Deque<T, inlineCapacity>::remove(size_t position)
     checkValidity();
     invalidateIterators();
 
-    auto buffer = m_buffer.capacitySpan();
-    TypeOperations::destruct(buffer.subspan(position, 1));
+    T* buffer = m_buffer.buffer();
+    TypeOperations::destruct(std::addressof(buffer[position]), std::addressof(buffer[position + 1]));
 
     // Find which segment of the circular buffer contained the remove element, and only move elements in that part.
     if (position >= m_start) {
-        TypeOperations::moveOverlapping(buffer.subspan(m_start, position - m_start), buffer.subspan(m_start + 1));
+        TypeOperations::moveOverlapping(buffer + m_start, buffer + position, buffer + m_start + 1);
         m_start = (m_start + 1) % m_buffer.capacity();
     } else {
-        TypeOperations::moveOverlapping(buffer.subspan(position + 1, m_end - (position + 1)), buffer.subspan(position));
+        TypeOperations::moveOverlapping(buffer + position + 1, buffer + m_end, buffer + position);
         m_end = (m_end - 1 + m_buffer.capacity()) % m_buffer.capacity();
     }
     checkValidity();
@@ -801,7 +802,7 @@ inline T* DequeIteratorBase<T, inlineCapacity>::after() const
 {
     checkValidity();
     ASSERT(m_index != m_deque->m_end);
-    return std::addressof(m_deque->m_buffer.capacitySpan()[m_index]);
+    return std::addressof(m_deque->m_buffer.buffer()[m_index]);
 }
 
 template<typename T, size_t inlineCapacity>
@@ -810,8 +811,10 @@ inline T* DequeIteratorBase<T, inlineCapacity>::before() const
     checkValidity();
     ASSERT(m_index != m_deque->m_start);
     if (!m_index)
-        return std::addressof(m_deque->m_buffer.capacitySpan()[m_deque->m_buffer.capacity() - 1]);
-    return std::addressof(m_deque->m_buffer.capacitySpan()[m_index - 1]);
+        return std::addressof(m_deque->m_buffer.buffer()[m_deque->m_buffer.capacity() - 1]);
+    return std::addressof(m_deque->m_buffer.buffer()[m_index - 1]);
 }
 
 } // namespace WTF
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

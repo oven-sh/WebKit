@@ -33,6 +33,8 @@
 #include <wtf/RefCounted.h>
 #include <wtf/StdLibExtras.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WTF {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CStringBuffer);
@@ -42,10 +44,8 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CStringBuffer);
 class CStringBuffer final : public RefCounted<CStringBuffer> {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CStringBuffer);
 public:
+    const char* data() { return mutableData(); }
     size_t length() const { return m_length; }
-
-    std::span<const LChar> span() const { return unsafeMakeSpan(byteCast<LChar>(data()), m_length); }
-    std::span<const char> spanIncludingNullCharacter() const { return unsafeMakeSpan(data(), m_length + 1); }
 
 private:
     friend class CString;
@@ -53,12 +53,7 @@ private:
     static Ref<CStringBuffer> createUninitialized(size_t length);
 
     CStringBuffer(size_t length) : m_length(length) { }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    const char* data() const { return reinterpret_cast_ptr<const char*>(this + 1); }
     char* mutableData() { return reinterpret_cast_ptr<char*>(this + 1); }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    std::span<char> mutableSpan() { return unsafeMakeSpan(mutableData(), m_length); }
-    std::span<char> mutableSpanIncludingNullCharacter() { return unsafeMakeSpan(mutableData(), m_length + 1); }
 
     const size_t m_length;
 };
@@ -71,17 +66,17 @@ public:
     CString() { }
     WTF_EXPORT_PRIVATE CString(const char*);
     WTF_EXPORT_PRIVATE CString(std::span<const char>);
-    CString(std::span<const LChar>);
-    CString(std::span<const char8_t> characters) : CString(byteCast<LChar>(characters)) { }
+    CString(std::span<const uint8_t>);
+    CString(std::span<const char8_t> characters) : CString(byteCast<uint8_t>(characters)) { }
     CString(CStringBuffer* buffer) : m_buffer(buffer) { }
-    WTF_EXPORT_PRIVATE static CString newUninitialized(size_t length, std::span<char>& characterBuffer);
+    WTF_EXPORT_PRIVATE static CString newUninitialized(size_t length, char*& characterBuffer);
     CString(HashTableDeletedValueType) : m_buffer(HashTableDeletedValue) { }
 
     const char* data() const;
 
     std::string toStdString() const { return m_buffer ? std::string(m_buffer->data()) : std::string(); }
 
-    std::span<const LChar> span() const;
+    std::span<const uint8_t> span() const;
     std::span<const char> spanIncludingNullTerminator() const;
 
     WTF_EXPORT_PRIVATE char* mutableData();
@@ -121,7 +116,7 @@ template<> struct DefaultHash<CString> : CStringHash { };
 template<typename> struct HashTraits;
 template<> struct HashTraits<CString> : SimpleClassHashTraits<CString> { };
 
-inline CString::CString(std::span<const LChar> bytes)
+inline CString::CString(std::span<const uint8_t> bytes)
     : CString(byteCast<char>(bytes))
 {
 }
@@ -131,17 +126,17 @@ inline const char* CString::data() const
     return m_buffer ? m_buffer->data() : nullptr;
 }
 
-inline std::span<const LChar> CString::span() const
+inline std::span<const uint8_t> CString::span() const
 {
     if (m_buffer)
-        return m_buffer->span();
+        return { byteCast<uint8_t>(m_buffer->data()), m_buffer->length() };
     return { };
 }
 
 inline std::span<const char> CString::spanIncludingNullTerminator() const
 {
     if (m_buffer)
-        return m_buffer->spanIncludingNullCharacter();
+        return { m_buffer->data(), m_buffer->length() + 1 };
     return { };
 }
 
@@ -153,3 +148,5 @@ inline size_t CString::length() const
 } // namespace WTF
 
 using WTF::CString;
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -429,17 +429,21 @@ We need to ensure we're getting the same frame times and memory usage.
 
 The easiest way to do that is on Android, which can show us GPU and CPU memory.
 
-First, restore the original trace, then build and install the most optimized build:
+First, restore the original trace, then build and install the most optimized build,
+along with the ANGLE apk itself:
 ```
 rm -r src/tests/restricted_traces/${TRACE_NAME}
 cp -r retrace-wip/${TRACE_NAME}_orig src/tests/restricted_traces/${TRACE_NAME}
-autoninja -C out/AndroidPerformance angle_trace_tests
+autoninja -C out/AndroidPerformance angle_trace_tests angle_apks
+adb install -r --force-queryable ./out/AndroidPerformance/apks/AngleLibraries.apk
 out/AndroidPerformance/angle_trace_tests --gtest_filter=TraceTest.${TRACE_NAME} --run-to-key-frame --no-warmup
 ```
 
 Then run the `restricted_trace_perf.py` script to gather frame times and memory:
 ```
-out/AndroidPerformance/restricted_trace_perf --fixedtime 10 --sleep 10 --power --output-tag ${TRACE_NAME}.before --loop-count 5 --renderer vulkan --filter ${TRACE_NAME}
+pushd src/tests/restricted_traces
+vpython3 restricted_trace_perf.py --fixedtime 10 --sleep 10 --power --output-tag ${TRACE_NAME}.before --loop-count 5 --renderer vulkan --filter ${TRACE_NAME}
+popd
 ```
 
 You should get output like this:
@@ -477,7 +481,9 @@ out/AndroidPerformance/angle_trace_tests --gtest_filter=TraceTest.${TRACE_NAME} 
 
 And collect performance data:
 ```
-out/AndroidPerformance/restricted_trace_perf --fixedtime 10 --sleep 10 --power --output-tag ${TRACE_NAME}.after --loop-count 5 --renderer vulkan --filter ${TRACE_NAME}
+pushd src/tests/restricted_traces
+vpython3 restricted_trace_perf.py --fixedtime 10 --sleep 10 --power --output-tag ${TRACE_NAME}.after --loop-count 5 --renderer vulkan --filter ${TRACE_NAME}
+popd
 ```
 
 Verify using a spreadsheet that the values are relatively the same.

@@ -13,7 +13,7 @@ window.requestAnimationFrame(function(time) {
     var callbackTimeRef = time;
     var timeRefInMs = Date.now();
 
-    setTimeout(async function() {
+    setTimeout(function() {
         window.requestAnimationFrame(function(time) {
             var delta = time - callbackTimeRef;
             var deltaTimeInMs = Date.now() - timeRefInMs;
@@ -26,14 +26,16 @@ window.requestAnimationFrame(function(time) {
                 testRunner.notifyDone();
         });
 
-        await testRunner?.displayAndTrackRepaints();
+        if (window.testRunner)
+            testRunner.displayAndTrackRepaints();
     }, 1);
 });
 
-onload = async () => {
-    testRunner?.waitUntilDone();
-    await testRunner?.displayAndTrackRepaints();
-}
+if (window.testRunner)
+    testRunner.displayAndTrackRepaints();
+
+if (window.testRunner)
+    testRunner.waitUntilDone();
 </script>
 </body>
 </html>

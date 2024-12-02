@@ -35,6 +35,7 @@
 #include "GraphicsLayerAsyncContentsDisplayDelegateTextureMapper.h"
 #include "GraphicsLayerContentsDisplayDelegate.h"
 #include "GraphicsLayerFactory.h"
+#include "NicosiaBackingStore.h"
 #include "ScrollableArea.h"
 #include "TextureMapperPlatformLayerProxyProvider.h"
 #include "TransformOperation.h"
@@ -172,7 +173,7 @@ CoordinatedGraphicsLayer::~CoordinatedGraphicsLayer()
         m_coordinator->detachLayer(this);
     }
     ASSERT(!m_imageBacking.store);
-    ASSERT(!m_backingStore);
+    ASSERT(!m_nicosia.backingStore);
     ASSERT(!m_animatedBackingStoreClient);
 
     if (CoordinatedGraphicsLayer* parentLayer = downcast<CoordinatedGraphicsLayer>(parent()))
@@ -416,9 +417,7 @@ void CoordinatedGraphicsLayer::setContentsOpaque(bool b)
     if (!m_needsDisplay.completeLayer) {
         m_needsDisplay.completeLayer = true;
         m_needsDisplay.rects.clear();
-#if ENABLE(DAMAGE_TRACKING)
         m_nicosia.delta.damageChanged = true;
-#endif
 
         addRepaintRect({ { }, m_size });
     }
@@ -513,7 +512,6 @@ void CoordinatedGraphicsLayer::setContentsNeedsDisplay()
     addRepaintRect(contentsRect());
 }
 
-#if ENABLE(DAMAGE_TRACKING)
 void CoordinatedGraphicsLayer::markDamageRectsUnreliable()
 {
     if (m_damagedRectsAreUnreliable)
@@ -522,7 +520,6 @@ void CoordinatedGraphicsLayer::markDamageRectsUnreliable()
     m_damagedRectsAreUnreliable = true;
     m_nicosia.delta.damageChanged = true;
 }
-#endif
 
 void CoordinatedGraphicsLayer::setContentsToPlatformLayer(PlatformLayer* platformLayer, ContentsLayerPurpose)
 {
@@ -711,9 +708,7 @@ void CoordinatedGraphicsLayer::setNeedsDisplay()
 
     m_needsDisplay.completeLayer = true;
     m_needsDisplay.rects.clear();
-#if ENABLE(DAMAGE_TRACKING)
     m_nicosia.delta.damageChanged = true;
-#endif
 
     notifyFlushRequired();
     addRepaintRect({ { }, m_size });
@@ -738,9 +733,7 @@ void CoordinatedGraphicsLayer::setNeedsDisplayInRect(const FloatRect& initialRec
         return;
 
     rects.append(rect);
-#if ENABLE(DAMAGE_TRACKING)
     m_nicosia.delta.damageChanged = true;
-#endif
 
     notifyFlushRequired();
     addRepaintRect(rect);
@@ -822,17 +815,20 @@ void CoordinatedGraphicsLayer::flushCompositingStateForThisLayerOnly()
 
     // Determine the backing store presence. Content is painted later, in the updateContentBuffers() traversal.
     if (shouldHaveBackingStore()) {
-        if (!m_backingStore) {
-            m_backingStore = CoordinatedBackingStoreProxy::create(effectiveContentsScale());
-            m_pendingVisibleRectAdjustment = true;
+        if (!m_nicosia.backingStore) {
+            m_nicosia.backingStore = Nicosia::BackingStore::create();
             m_nicosia.delta.backingStoreChanged = true;
         }
-    } else if (m_backingStore) {
-        m_backingStore = nullptr;
+    } else if (m_nicosia.backingStore) {
+        auto& layerState = m_nicosia.backingStore->layerState();
+        layerState.isPurging = true;
+        layerState.mainBackingStore = nullptr;
+
+        m_nicosia.backingStore = nullptr;
         m_nicosia.delta.backingStoreChanged = true;
     }
 
-    if (hasActiveTransformAnimation && m_backingStore) {
+    if (hasActiveTransformAnimation && m_nicosia.backingStore) {
         // The layer has a backingStore and a transformation animation. This means that we need to add an
         // AnimatedBackingStoreClient to check whether we need to update the backingStore due to the animation.
         // At this point we don't know the area covered by tiles available, so we just pass an empty rectangle
@@ -961,7 +957,7 @@ void CoordinatedGraphicsLayer::flushCompositingStateForThisLayerOnly()
                     state.debugBorder = m_nicosia.debugBorder;
 
                 if (localDelta.backingStoreChanged)
-                    state.backingStore = m_backingStore;
+                    state.backingStore = m_nicosia.backingStore;
                 if (localDelta.contentLayerChanged)
                     state.contentLayer = m_contentsLayer;
                 if (localDelta.imageBackingChanged) {
@@ -976,7 +972,6 @@ void CoordinatedGraphicsLayer::flushCompositingStateForThisLayerOnly()
 #endif
                 if (localDelta.eventRegionChanged)
                     state.eventRegion = eventRegion();
-#if ENABLE(DAMAGE_TRACKING)
                 if (localDelta.damageChanged) {
                     state.damage = Damage();
                     if (m_needsDisplay.completeLayer)
@@ -988,7 +983,6 @@ void CoordinatedGraphicsLayer::flushCompositingStateForThisLayerOnly()
                     if (m_damagedRectsAreUnreliable)
                         state.damage.invalidate();
                 }
-#endif
             });
         m_nicosia.performLayerSync = !!m_nicosia.delta.value;
         m_nicosia.delta = { };
@@ -1076,23 +1070,45 @@ std::pair<bool, bool> CoordinatedGraphicsLayer::finalizeCompositingStateFlush()
 
 void CoordinatedGraphicsLayer::updateContentBuffers()
 {
-    if (!m_backingStore)
+    if (!m_nicosia.backingStore)
         return;
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     TraceScope traceScope(UpdateLayerContentBuffersStart, UpdateLayerContentBuffersEnd);
 #endif
 
+    // Prepare for painting on the impl-contained backing store. isFlushing is used there
+    // for internal sanity checks.
+    auto& layerState = m_nicosia.backingStore->layerState();
+    layerState.isFlushing = true;
+
+    // Helper lambda that finished the flush update and determines layer sync necessity.
+    auto finishUpdate =
+        [this, &layerState] {
+            auto& update = layerState.update;
+            m_nicosia.performLayerSync |= !update.tilesToCreate.isEmpty()
+                || !update.tilesToRemove.isEmpty() || !update.tilesToUpdate.isEmpty();
+            layerState.isFlushing = false;
+        };
+
     // Address the content scale adjustment.
     if (m_pendingContentsScaleAdjustment) {
-        if (m_backingStore->setContentsScale(effectiveContentsScale()))
+        if (layerState.mainBackingStore && layerState.mainBackingStore->setContentsScale(effectiveContentsScale()))
             m_pendingVisibleRectAdjustment = true;
         m_pendingContentsScaleAdjustment = false;
     }
 
+    // Ensure the CoordinatedBackingStoreProxy object, and enforce a complete repaint if it's not been present yet.
+    if (!layerState.mainBackingStore) {
+        layerState.mainBackingStore = makeUnique<CoordinatedBackingStoreProxy>(*m_nicosia.backingStore, effectiveContentsScale());
+        m_pendingVisibleRectAdjustment = true;
+    }
+
     // Bail if there's no painting recorded or enforced.
-    if (!m_pendingVisibleRectAdjustment && !m_needsDisplay.completeLayer && m_needsDisplay.rects.isEmpty())
+    if (!m_pendingVisibleRectAdjustment && !m_needsDisplay.completeLayer && m_needsDisplay.rects.isEmpty()) {
+        finishUpdate();
         return;
+    }
 
     IntRect contentsRect(IntPoint::zero(), IntSize(m_size));
     Vector<IntRect, 1> dirtyRegion;
@@ -1107,17 +1123,14 @@ void CoordinatedGraphicsLayer::updateContentBuffers()
 
     ASSERT(m_coordinator && m_coordinator->isFlushingLayerChanges());
 
-    auto updateResult = m_backingStore->updateIfNeeded(transformedVisibleRectIncludingFuture(), contentsRect, m_pendingVisibleRectAdjustment, dirtyRegion, *this);
+    auto updateResult = layerState.mainBackingStore->updateIfNeeded(transformedVisibleRectIncludingFuture(), contentsRect, m_pendingVisibleRectAdjustment, dirtyRegion, *this);
     m_pendingVisibleRectAdjustment = false;
 
     if (m_animatedBackingStoreClient)
-        m_animatedBackingStoreClient->setCoverRect(m_backingStore->coverRect());
+        m_animatedBackingStoreClient->setCoverRect(layerState.mainBackingStore->coverRect());
 
-    if (updateResult.contains(CoordinatedBackingStoreProxy::UpdateResult::TilesChanged)) {
-        m_nicosia.performLayerSync |= true;
-        if (updateResult.contains(CoordinatedBackingStoreProxy::UpdateResult::BuffersChanged))
-            didUpdateTileBuffers();
-    }
+    if (updateResult.contains(CoordinatedBackingStoreProxy::UpdateResult::BuffersChanged))
+        didUpdateTileBuffers();
 
     // Request a new update immediately if some tiles are still pending creation. Do this on a timer
     // as we're in a layer flush and flush requests at this point would be discarded.
@@ -1125,6 +1138,8 @@ void CoordinatedGraphicsLayer::updateContentBuffers()
         setNeedsVisibleRectAdjustment();
         m_requestPendingTileCreationTimer.startOneShot(0_s);
     }
+
+    finishUpdate();
 }
 
 void CoordinatedGraphicsLayer::purgeBackingStores()
@@ -1133,7 +1148,13 @@ void CoordinatedGraphicsLayer::purgeBackingStores()
     SetForScope updateModeProtector(m_isPurging, true);
 #endif
 
-    m_backingStore = nullptr;
+    if (m_nicosia.backingStore) {
+        auto& layerState = m_nicosia.backingStore->layerState();
+        layerState.isPurging = true;
+        layerState.mainBackingStore = nullptr;
+
+        m_nicosia.backingStore = nullptr;
+    }
 
     if (m_animatedBackingStoreClient) {
         m_animatedBackingStoreClient->invalidate();

@@ -71,7 +71,7 @@ void XRSubImage::update(id<MTLTexture> colorTexture, id<MTLTexture> depthTexture
         return;
 
     m_currentTextureIndex = currentTextureIndex;
-    RefPtr texture = this->colorTexture();
+    auto* texture = this->colorTexture();
     if (!texture || texture->texture() != colorTexture) {
         auto colorFormat = WGPUTextureFormat_BGRA8UnormSrgb;
         WGPUTextureDescriptor colorTextureDescriptor = {
@@ -134,7 +134,7 @@ Texture* XRSubImage::depthTexture()
 
 RefPtr<XRSubImage> XRBinding::getViewSubImage(XRProjectionLayer& projectionLayer)
 {
-    return protectedDevice()->getXRViewSubImage(projectionLayer);
+    return device().getXRViewSubImage(projectionLayer);
 }
 
 } // namespace WebGPU

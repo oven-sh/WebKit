@@ -30,7 +30,6 @@
 #include "CSSUnresolvedStyleColorResolutionState.h"
 #include "CSSValueKeywords.h"
 #include "ColorFromPrimitiveValue.h"
-#include "Document.h"
 #include "StyleBuilderState.h"
 
 namespace WebCore {
@@ -47,8 +46,7 @@ String serializationForCSS(const CSSUnresolvedColorKeyword& unresolved)
 
 StyleColor createStyleColor(const CSSUnresolvedColorKeyword& unresolved, CSSUnresolvedStyleColorResolutionState& state)
 {
-    Ref protectedDocument = state.document;
-    return Style::colorFromValueID(protectedDocument, state.style, unresolved.valueID, state.forVisitedLink);
+    return Style::colorFromValueID(state.document, state.style, unresolved.valueID, state.forVisitedLink);
 }
 
 Color createColor(const CSSUnresolvedColorKeyword& unresolved, CSSUnresolvedColorResolutionState& state)

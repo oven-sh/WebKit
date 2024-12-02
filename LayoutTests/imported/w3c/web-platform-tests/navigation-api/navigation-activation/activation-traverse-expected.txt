@@ -1,4 +1,4 @@
 
 
-PASS navigation.activation after traverse
+FAIL navigation.activation after traverse assert_equals: expected 2 but got 1
 

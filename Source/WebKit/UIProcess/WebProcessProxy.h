@@ -47,8 +47,8 @@
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ProcessIdentity.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/SharedStringHash.h>
-#include <WebCore/Site.h>
 #include <WebCore/UserGestureTokenIdentifier.h>
 #include <pal/SessionID.h>
 #include <wtf/Forward.h>
@@ -171,7 +171,7 @@ public:
     enum class LockdownMode : bool { Disabled, Enabled };
 
     static Ref<WebProcessProxy> create(WebProcessPool&, WebsiteDataStore*, LockdownMode, IsPrewarmed, WebCore::CrossOriginMode = WebCore::CrossOriginMode::Shared, ShouldLaunchProcess = ShouldLaunchProcess::Yes);
-    static Ref<WebProcessProxy> createForRemoteWorkers(RemoteWorkerType, WebProcessPool&, WebCore::Site&&, WebsiteDataStore&, LockdownMode);
+    static Ref<WebProcessProxy> createForRemoteWorkers(RemoteWorkerType, WebProcessPool&, WebCore::RegistrableDomain&&, WebsiteDataStore&, LockdownMode);
 
     ~WebProcessProxy();
 
@@ -200,9 +200,9 @@ public:
 #endif
     void waitForSharedPreferencesForWebProcessToSync(uint64_t sharedPreferencesVersion, CompletionHandler<void(bool success)>&&);
 
-    bool isMatchingRegistrableDomain(const WebCore::RegistrableDomain& domain) const { return m_site ? m_site->domain() == domain : false; }
-    WebCore::RegistrableDomain registrableDomain() const { return m_site ? m_site->domain() : WebCore::RegistrableDomain(); }
-    const std::optional<WebCore::Site>& optionalSite() const { return m_site; }
+    bool isMatchingRegistrableDomain(const WebCore::RegistrableDomain& domain) const { return m_registrableDomain ? *m_registrableDomain == domain : false; }
+    WebCore::RegistrableDomain registrableDomain() const { return valueOrDefault(m_registrableDomain); }
+    const std::optional<WebCore::RegistrableDomain>& optionalRegistrableDomain() const { return m_registrableDomain; }
 
     enum class WillShutDown : bool { No, Yes };
     void setIsInProcessCache(bool, WillShutDown = WillShutDown::No);
@@ -418,7 +418,7 @@ public:
 
     void setRemoteWorkerUserAgent(const String&);
     void updateRemoteWorkerPreferencesStore(const WebPreferencesStore&);
-    void establishRemoteWorkerContext(RemoteWorkerType, const WebPreferencesStore&, const WebCore::Site&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, CompletionHandler<void()>&&);
+    void establishRemoteWorkerContext(RemoteWorkerType, const WebPreferencesStore&, const WebCore::RegistrableDomain&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, CompletionHandler<void()>&&);
     void registerRemoteWorkerClientProcess(RemoteWorkerType, WebProcessProxy&);
     void unregisterRemoteWorkerClientProcess(RemoteWorkerType, WebProcessProxy&);
     void updateRemoteWorkerProcessAssertion(RemoteWorkerType);
@@ -430,8 +430,7 @@ public:
     void setThrottleStateForTesting(ProcessThrottleState);
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    UserMediaCaptureManagerProxy& userMediaCaptureManagerProxy() { return m_userMediaCaptureManagerProxy.get(); }
-    Ref<UserMediaCaptureManagerProxy> protectedUserMediaCaptureManagerProxy();
+    UserMediaCaptureManagerProxy* userMediaCaptureManagerProxy() { return m_userMediaCaptureManagerProxy.get(); }
 #endif
 
 #if ENABLE(GPU_PROCESS)
@@ -524,8 +523,6 @@ public:
 #endif
 
     void markAsUsedForSiteIsolation() { m_usedForSiteIsolation = true; }
-
-    bool isAlwaysOnLoggingAllowed() const;
 
 private:
     Type type() const final { return Type::WebContent; }
@@ -647,9 +644,6 @@ private:
     void updateRuntimeStatistics();
     void enableMediaPlaybackIfNecessary();
 
-    void updateSharedWorkerProcessAssertion();
-    void updateServiceWorkerProcessAssertion();
-
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
     void setupLogStream(uint32_t pid, IPC::StreamServerConnectionHandle&&, LogStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&&);
 #endif
@@ -719,7 +713,7 @@ private:
 
     HashMap<String, uint64_t> m_pageURLRetainCountMap;
 
-    std::optional<WebCore::Site> m_site;
+    std::optional<WebCore::RegistrableDomain> m_registrableDomain;
     bool m_isInProcessCache { false };
     bool m_usedForSiteIsolation { false };
 
@@ -732,7 +726,7 @@ private:
     SystemMemoryPressureStatus m_memoryPressureStatus { SystemMemoryPressureStatus::Normal };
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    const Ref<UserMediaCaptureManagerProxy> m_userMediaCaptureManagerProxy;
+    std::unique_ptr<UserMediaCaptureManagerProxy> m_userMediaCaptureManagerProxy;
 #endif
 
     bool m_hasCommittedAnyProvisionalLoads { false };
@@ -760,10 +754,10 @@ private:
         RemoteWorkerInitializationData initializationData;
         RefPtr<ProcessThrottler::Activity> activity;
         WeakHashSet<WebProcessProxy> clientProcesses;
-        bool hasBackgroundProcessing { false };
     };
     std::optional<RemoteWorkerInformation> m_serviceWorkerInformation;
     std::optional<RemoteWorkerInformation> m_sharedWorkerInformation;
+    bool m_hasServiceWorkerBackgroundProcessing { false };
 
     struct AudibleMediaActivity {
         Ref<ProcessAssertion> assertion;
@@ -787,7 +781,7 @@ private:
     std::unique_ptr<SpeechRecognitionRemoteRealtimeMediaSourceManager> m_speechRecognitionRemoteRealtimeMediaSourceManager;
 #endif
     std::unique_ptr<WebLockRegistryProxy> m_webLockRegistry;
-    UniqueRef<WebPermissionControllerProxy> m_webPermissionController;
+    std::unique_ptr<WebPermissionControllerProxy> m_webPermissionController;
 #if ENABLE(ROUTING_ARBITRATION)
     std::unique_ptr<AudioSessionRoutingArbitratorProxy> m_routingArbitrator;
 #endif

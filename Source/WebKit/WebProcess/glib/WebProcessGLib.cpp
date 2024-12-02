@@ -129,7 +129,7 @@ void WebProcess::platformInitializeProcess(const AuxiliaryProcessInitializationP
     RealTimeThreads::singleton().setEnabled(false);
 #endif
 
-    addSupplementWithoutRefCountedCheck<SystemSettingsManager>();
+    addSupplement<SystemSettingsManager>();
 }
 
 void WebProcess::initializePlatformDisplayIfNeeded() const
@@ -178,7 +178,7 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 #endif
 
 #if ENABLE(MEDIA_STREAM)
-    addSupplementWithoutRefCountedCheck<UserMediaCaptureManager>();
+    addSupplement<UserMediaCaptureManager>();
 #endif
 
 #if USE(GBM)

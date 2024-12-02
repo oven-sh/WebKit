@@ -273,10 +273,10 @@ struct WebPageProxy::Internals final : WebPopupMenuProxy::Client
 public:
     virtual ~Internals();
 
-    uint32_t checkedPtrCount() const { return WebPopupMenuProxy::Client::checkedPtrCount(); }
-    uint32_t checkedPtrCountWithoutThreadCheck() const { return WebPopupMenuProxy::Client::checkedPtrCountWithoutThreadCheck(); }
-    void incrementCheckedPtrCount() const { WebPopupMenuProxy::Client::incrementCheckedPtrCount(); }
-    void decrementCheckedPtrCount() const { WebPopupMenuProxy::Client::decrementCheckedPtrCount(); }
+    uint32_t ptrCount() const { return WebPopupMenuProxy::Client::ptrCount(); }
+    uint32_t ptrCountWithoutThreadCheck() const { return WebPopupMenuProxy::Client::ptrCountWithoutThreadCheck(); }
+    void incrementPtrCount() const { WebPopupMenuProxy::Client::incrementPtrCount(); }
+    void decrementPtrCount() const { WebPopupMenuProxy::Client::decrementPtrCount(); }
 
     WeakRef<WebPageProxy> page;
     OptionSet<WebCore::ActivityState> activityState;
@@ -437,10 +437,6 @@ public:
     RunLoop::Timer activityStateChangeTimer;
 #endif
 
-#if PLATFORM(MAC)
-    WebCore::FloatPoint scrollPositionDuringLastEditorStateUpdate;
-#endif
-
     bool allowsLayoutViewportHeightExpansion { true };
 
     explicit Internals(WebPageProxy&);
@@ -510,7 +506,7 @@ public:
     void externalOutputDeviceAvailableDidChange(WebCore::PlaybackTargetClientContextIdentifier, bool) final;
     void setShouldPlayToPlaybackTarget(WebCore::PlaybackTargetClientContextIdentifier, bool) final;
     void playbackTargetPickerWasDismissed(WebCore::PlaybackTargetClientContextIdentifier) final;
-    bool alwaysOnLoggingAllowed() const final { return protectedPage()->isAlwaysOnLoggingAllowed(); }
+    bool alwaysOnLoggingAllowed() const final { return protectedPage()->sessionID().isAlwaysOnLoggingAllowed(); }
     RetainPtr<PlatformView> platformView() const final;
 #endif
 };

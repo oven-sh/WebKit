@@ -48,7 +48,7 @@ public:
     RemoteWorkerLibWebRTCProvider() = default;
 
 private:
-    RefPtr<WebCore::RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final { return &RTCDataChannelRemoteManager::singleton().remoteHandlerConnection(); }
+    RefPtr<WebCore::RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final { return &RTCDataChannelRemoteManager::sharedManager().remoteHandlerConnection(); }
 };
 #endif
 

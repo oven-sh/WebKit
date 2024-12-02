@@ -38,6 +38,8 @@ private:
 
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const final;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
+
+    void didAttachRenderers() final;
 };
 
 } // namespace WebCore

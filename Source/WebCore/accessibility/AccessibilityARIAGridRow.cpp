@@ -34,26 +34,26 @@
 
 namespace WebCore {
     
-AccessibilityARIAGridRow::AccessibilityARIAGridRow(AXID axID, RenderObject& renderer)
-    : AccessibilityTableRow(axID, renderer)
+AccessibilityARIAGridRow::AccessibilityARIAGridRow(RenderObject& renderer)
+    : AccessibilityTableRow(renderer)
 {
 }
 
-AccessibilityARIAGridRow::AccessibilityARIAGridRow(AXID axID, Node& node)
-    : AccessibilityTableRow(axID, node)
+AccessibilityARIAGridRow::AccessibilityARIAGridRow(Node& node)
+    : AccessibilityTableRow(node)
 {
 }
 
 AccessibilityARIAGridRow::~AccessibilityARIAGridRow() = default;
 
-Ref<AccessibilityARIAGridRow> AccessibilityARIAGridRow::create(AXID axID, RenderObject& renderer)
+Ref<AccessibilityARIAGridRow> AccessibilityARIAGridRow::create(RenderObject& renderer)
 {
-    return adoptRef(*new AccessibilityARIAGridRow(axID, renderer));
+    return adoptRef(*new AccessibilityARIAGridRow(renderer));
 }
 
-Ref<AccessibilityARIAGridRow> AccessibilityARIAGridRow::create(AXID axID, Node& node)
+Ref<AccessibilityARIAGridRow> AccessibilityARIAGridRow::create(Node& node)
 {
-    return adoptRef(*new AccessibilityARIAGridRow(axID, node));
+    return adoptRef(*new AccessibilityARIAGridRow(node));
 }
 
 bool AccessibilityARIAGridRow::isARIATreeGridRow() const
@@ -76,30 +76,31 @@ AXCoreObject::AccessibilityChildrenVector AccessibilityARIAGridRow::disclosedRow
 
     // Search for rows that match the correct level. 
     // Only take the subsequent rows from this one that are +1 from this row's level.
-    int rowIndex = this->rowIndex();
-    if (rowIndex < 0)
+    int index = rowIndex();
+    if (index < 0)
         return disclosedRows;
 
     unsigned level = hierarchicalLevel();
     auto allRows = parent->rows();
     int rowCount = allRows.size();
-    for (int k = rowIndex + 1; k < rowCount; ++k) {
-        auto& row = allRows[k].get();
+    for (int k = index + 1; k < rowCount; ++k) {
+        RefPtr row = allRows[k].get();
         // Stop at the first row that doesn't match the correct level.
-        if (row.hierarchicalLevel() != level + 1)
+        if (row->hierarchicalLevel() != level + 1)
             break;
 
         disclosedRows.append(row);
     }
+
     return disclosedRows;
 }
     
-AccessibilityObject* AccessibilityARIAGridRow::disclosedByRow() const
+AXCoreObject* AccessibilityARIAGridRow::disclosedByRow() const
 {
     // The row that discloses this one is the row in the table
     // that is aria-level subtract 1 from this row.
-    RefPtr parent = dynamicDowncast<AccessibilityTable>(parentObjectUnignored());
-    if (!parent || !parent->isExposable())
+    RefPtr parent = parentObjectUnignored();
+    if (auto* axTable = dynamicDowncast<AccessibilityTable>(*parent); !axTable || !axTable->isExposable())
         return nullptr;
 
     // If the level is 1 or less, than nothing discloses this row.
@@ -115,11 +116,19 @@ AccessibilityObject* AccessibilityARIAGridRow::disclosedByRow() const
         return nullptr;
 
     for (int k = index - 1; k >= 0; --k) {
-        auto& row = allRows[k].get();
-        if (row.hierarchicalLevel() == level - 1)
-            return &downcast<AccessibilityObject>(row);
+        auto* row = allRows[k].get();
+        if (row->hierarchicalLevel() == level - 1)
+            return row;
     }
+
     return nullptr;
+}
+
+AccessibilityObject* AccessibilityARIAGridRow::parentObjectUnignored() const
+{
+    if (auto* table = parentTable())
+        return table;
+    return AccessibilityTableRow::parentObjectUnignored();
 }
 
 AccessibilityTable* AccessibilityARIAGridRow::parentTable() const
@@ -136,12 +145,13 @@ AccessibilityTable* AccessibilityARIAGridRow::parentTable() const
     }));
 }
 
-AccessibilityObject* AccessibilityARIAGridRow::rowHeader()
+AXCoreObject* AccessibilityARIAGridRow::rowHeader()
 {
     for (const auto& child : unignoredChildren()) {
         if (child->roleValue() == AccessibilityRole::RowHeader)
-            return &downcast<AccessibilityObject>(child.get());
+            return child.get();
     }
+
     return nullptr;
 }
 

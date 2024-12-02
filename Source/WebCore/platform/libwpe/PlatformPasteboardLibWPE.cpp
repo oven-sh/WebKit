@@ -56,9 +56,10 @@ void PlatformPasteboard::getTypes(Vector<String>& types) const
 {
     struct wpe_pasteboard_string_vector pasteboardTypes = { nullptr, 0 };
     wpe_pasteboard_get_types(m_pasteboard, &pasteboardTypes);
-    for (auto& typeString : unsafeMakeSpan(pasteboardTypes.strings, pasteboardTypes.length)) {
-        const auto length = std::min(static_cast<size_t>(typeString.length), std::numeric_limits<size_t>::max());
-        types.append(String({ typeString.data, length }));
+
+    for (unsigned i = 0; i < pasteboardTypes.length; ++i) {
+        auto& typeString = pasteboardTypes.strings[i];
+        types.append(String({ typeString.data, typeString.length }));
     }
 
     wpe_pasteboard_string_vector_free(&pasteboardTypes);
@@ -71,8 +72,7 @@ String PlatformPasteboard::readString(size_t, const String& type) const
     if (!string.length)
         return String();
 
-    const auto length = std::min(static_cast<size_t>(string.length), std::numeric_limits<size_t>::max());
-    String returnValue({ string.data, length });
+    String returnValue({ string.data, string.length });
 
     wpe_pasteboard_string_free(&string);
     return returnValue;
@@ -80,21 +80,21 @@ String PlatformPasteboard::readString(size_t, const String& type) const
 
 void PlatformPasteboard::write(const PasteboardWebContent& content)
 {
-    static constexpr auto plainText = "text/plain;charset=utf-8"_s;
-    static constexpr auto htmlText = "text/html;charset=utf-8"_s;
+    static const char plainText[] = "text/plain;charset=utf-8";
+    static const char htmlText[] = "text/html;charset=utf-8";
 
     CString textString = content.text.utf8();
     CString markupString = content.markup.utf8();
 
-    std::array<struct wpe_pasteboard_string_pair, 2> pairs = { {
+    struct wpe_pasteboard_string_pair pairs[] = {
         { { nullptr, 0 }, { nullptr, 0 } },
         { { nullptr, 0 }, { nullptr, 0 } },
-    } };
+    };
     wpe_pasteboard_string_initialize(&pairs[0].type, plainText, strlen(plainText));
     wpe_pasteboard_string_initialize(&pairs[0].string, textString.data(), textString.length());
     wpe_pasteboard_string_initialize(&pairs[1].type, htmlText, strlen(htmlText));
     wpe_pasteboard_string_initialize(&pairs[1].string, markupString.data(), markupString.length());
-    struct wpe_pasteboard_string_map map = { pairs.data(), pairs.size() };
+    struct wpe_pasteboard_string_map map = { pairs, 2 };
 
     wpe_pasteboard_write(m_pasteboard, &map);
 
