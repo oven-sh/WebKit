@@ -84,7 +84,7 @@ HTMLImageElement::HTMLImageElement(const QualifiedName& tagName, Document& docum
     : HTMLElement(tagName, document, { TypeFlag::HasCustomStyleResolveCallbacks, TypeFlag::HasDidMoveToNewDocument })
     , FormAssociatedElement(form)
     , ActiveDOMObject(document)
-    , m_imageLoader(makeUnique<HTMLImageLoader>(*this))
+    , m_imageLoader(makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this))
     , m_compositeOperator(CompositeOperator::SourceOver)
     , m_imageDevicePixelRatio(1.0f)
 {
@@ -472,6 +472,11 @@ RenderPtr<RenderElement> HTMLImageElement::createElementRenderer(RenderStyle&& s
         return RenderElement::createFor(*this, WTFMove(style));
 
     return createRenderer<RenderImage>(RenderObject::Type::Image, *this, WTFMove(style), nullptr, m_imageDevicePixelRatio);
+}
+
+bool HTMLImageElement::isReplaced(const RenderStyle& style) const
+{
+    return !style.hasContent();
 }
 
 bool HTMLImageElement::canStartSelection() const

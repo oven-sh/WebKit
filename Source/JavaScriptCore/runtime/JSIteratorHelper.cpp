@@ -33,22 +33,26 @@ namespace JSC {
 
 const ClassInfo JSIteratorHelper::s_info = { "Iterator Helper"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSIteratorHelper) };
 
+void JSIteratorHelper::finishCreation(VM& vm, JSValue generator, JSValue underlyingIterator)
+{
+    Base::finishCreation(vm);
+    internalField(Field::Generator).set(vm, this, generator);
+    internalField(Field::UnderlyingIterator).set(vm, this, underlyingIterator);
+}
+
 JSIteratorHelper* JSIteratorHelper::createWithInitialValues(VM& vm, Structure* structure)
 {
     auto values = initialValues();
     JSIteratorHelper* result = new (NotNull, allocateCell<JSIteratorHelper>(vm)) JSIteratorHelper(vm, structure);
-    result->finishCreation(vm);
-    result->internalField(Field::Generator).set(vm, result, values[0]);
-    result->internalField(Field::UnderlyingIterator).set(vm, result, values[1]);
+    result->finishCreation(vm, values[0], values[1]);
     return result;
 }
 
-JSIteratorHelper* JSIteratorHelper::create(VM& vm, Structure* structure, JSObject* generator, JSObject* underlyingIterator)
+JSIteratorHelper* JSIteratorHelper::create(VM& vm, Structure* structure, JSValue generator, JSValue underlyingIterator)
 {
+    ASSERT(generator.isObject() && (underlyingIterator.isObject() || underlyingIterator.isNull()));
     JSIteratorHelper* result = new (NotNull, allocateCell<JSIteratorHelper>(vm)) JSIteratorHelper(vm, structure);
-    result->finishCreation(vm);
-    result->internalField(Field::Generator).set(vm, result, generator);
-    result->internalField(Field::UnderlyingIterator).set(vm, result, underlyingIterator);
+    result->finishCreation(vm, generator, underlyingIterator);
     return result;
 }
 
@@ -74,7 +78,7 @@ DEFINE_VISIT_CHILDREN(JSIteratorHelper);
 
 JSC_DEFINE_HOST_FUNCTION(iteratorHelperPrivateFuncCreate, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(JSIteratorHelper::create(globalObject->vm(), globalObject->iteratorHelperStructure(), jsCast<JSObject*>(callFrame->uncheckedArgument(0)), jsCast<JSObject*>(callFrame->uncheckedArgument(1))));
+    return JSValue::encode(JSIteratorHelper::create(globalObject->vm(), globalObject->iteratorHelperStructure(), callFrame->uncheckedArgument(0), callFrame->uncheckedArgument(1)));
 }
 
 } // namespace JSC

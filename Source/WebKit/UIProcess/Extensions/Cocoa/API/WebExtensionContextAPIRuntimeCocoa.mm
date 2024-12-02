@@ -42,7 +42,6 @@
 #import "WebExtensionMessagePort.h"
 #import "WebExtensionMessageSenderParameters.h"
 #import "WebExtensionUtilities.h"
-#import "WebPageProxy.h"
 #import <wtf/BlockPtr.h>
 #import <wtf/CallbackAggregator.h>
 

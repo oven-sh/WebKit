@@ -26,9 +26,8 @@
 #pragma once
 
 #include <array>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/AtomString.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WTF {
 
@@ -104,9 +103,10 @@ inline std::pair<unsigned, unsigned> BloomFilter<keyBits>::keysFromHash(const st
 {
     // We could use larger k value than 2 for long hashes.
     static_assert(hashSize >= 2 * sizeof(unsigned), "Hash array too short");
+    std::span hashSpan { hash };
     return {
-        *reinterpret_cast_ptr<const unsigned*>(hash.data()),
-        *reinterpret_cast_ptr<const unsigned*>(hash.data() + sizeof(unsigned))
+        reinterpretCastSpanStartTo<unsigned>(hashSpan),
+        reinterpretCastSpanStartTo<unsigned>(hashSpan.subspan(sizeof(unsigned)))
     };
 }
 
@@ -266,5 +266,3 @@ bool CountingBloomFilter<keyBits>::isClear() const
 
 using WTF::BloomFilter;
 using WTF::CountingBloomFilter;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

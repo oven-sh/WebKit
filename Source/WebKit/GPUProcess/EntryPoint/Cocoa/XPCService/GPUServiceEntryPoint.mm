@@ -30,8 +30,6 @@
 #import "WKBase.h"
 #import "XPCServiceEntryPoint.h"
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 #if ENABLE(GPU_PROCESS)
 
 namespace WebKit {
@@ -72,5 +70,3 @@ void GPU_SERVICE_INITIALIZER(xpc_connection_t connection, xpc_object_t initializ
 
     JSC::Config::finalize();
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

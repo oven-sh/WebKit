@@ -26,7 +26,7 @@
 
 // Version number for shader translation API.
 // It is incremented every time the API changes.
-#define ANGLE_SH_VERSION 368
+#define ANGLE_SH_VERSION 371
 
 enum ShShaderSpec
 {
@@ -103,6 +103,18 @@ enum class ShPixelLocalStorageType : uint8_t
     NotSupported,
     ImageLoadStore,
     FramebufferFetch,
+};
+
+// For ANGLE_shader_pixel_local_storage.
+// Used to track the PLS format at each binding index in a shader.
+enum class ShPixelLocalStorageFormat : uint8_t
+{
+    NotPLS,  // Indicates that no PLS uniform was declared at the binding index in question.
+    RGBA8,
+    RGBA8I,
+    RGBA8UI,
+    R32F,
+    R32UI,
 };
 
 // For ANGLE_shader_pixel_local_storage_coherent.
@@ -455,6 +467,12 @@ struct ShCompileOptions
 
     // Emulate r32f image with an r32ui image
     uint64_t emulateR32fImageAtomicExchange : 1;
+
+    // Rewrite for and while loops to loop normal form.
+    uint64_t simplifyLoopConditions : 1;
+
+    // Specify struct in one statement, declare instance in other.
+    uint64_t separateCompoundStructDeclarations : 1;
 
     ShCompileOptionsMetal metal;
     ShPixelLocalStorageOptions pls;
@@ -860,6 +878,9 @@ sh::WorkGroupSize GetComputeShaderLocalGroupSize(const ShHandle handle);
 // Returns the number of views specified through the num_views layout qualifier. If num_views is
 // not set, the function returns -1.
 int GetVertexShaderNumViews(const ShHandle handle);
+// Returns the pixel local storage uniform format at each binding index, or "NotPLS" if there is
+// not one.
+const std::vector<ShPixelLocalStorageFormat> *GetPixelLocalStorageFormats(const ShHandle handle);
 
 // Returns specialization constant usage bits
 uint32_t GetShaderSpecConstUsageBits(const ShHandle handle);

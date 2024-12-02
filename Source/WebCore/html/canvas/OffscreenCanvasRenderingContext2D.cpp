@@ -37,7 +37,6 @@
 
 #include "CSSFontSelector.h"
 #include "CSSPropertyParserConsumer+Font.h"
-#include "CSSPropertyParserHelpers.h"
 #include "InspectorInstrumentation.h"
 #include "RenderStyle.h"
 #include "ScriptExecutionContext.h"
@@ -77,11 +76,6 @@ OffscreenCanvasRenderingContext2D::OffscreenCanvasRenderingContext2D(CanvasBase&
 }
 
 OffscreenCanvasRenderingContext2D::~OffscreenCanvasRenderingContext2D() = default;
-
-void OffscreenCanvasRenderingContext2D::commit()
-{
-    downcast<OffscreenCanvas>(canvasBase()).commitToPlaceholderCanvas();
-}
 
 void OffscreenCanvasRenderingContext2D::setFont(const String& newFont)
 {

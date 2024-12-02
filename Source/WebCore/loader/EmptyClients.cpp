@@ -42,6 +42,7 @@
 #include "DataListSuggestionPicker.h"
 #include "DatabaseProvider.h"
 #include "DiagnosticLoggingClient.h"
+#include "DisplayRefreshMonitor.h"
 #include "DisplayRefreshMonitorFactory.h"
 #include "DocumentFragment.h"
 #include "DocumentLoader.h"
@@ -58,20 +59,23 @@
 #include "HTMLFormElement.h"
 #include "HistoryItem.h"
 #include "IDBConnectionToServer.h"
+#include "IDBIndexIdentifier.h"
 #include "IDBObjectStoreIdentifier.h"
+#include "Icon.h"
 #include "InspectorClient.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
-#include "MediaRecorderPrivate.h"
-#include "MediaRecorderProvider.h"
 #include "ModalContainerTypes.h"
 #include "NetworkStorageSession.h"
 #include "Page.h"
 #include "PageConfiguration.h"
 #include "PaymentCoordinatorClient.h"
 #include "PluginInfoProvider.h"
+#include "PopupMenu.h"
+#include "ProcessSyncClient.h"
 #include "ProgressTrackerClient.h"
 #include "RemoteFrameClient.h"
+#include "SearchPopupMenu.h"
 #include "SecurityOriginData.h"
 #include "SocketProvider.h"
 #include "StorageArea.h"
@@ -206,7 +210,7 @@ class EmptyDatabaseProvider final : public DatabaseProvider {
         void clearObjectStore(const IDBRequestData&, IDBObjectStoreIdentifier) final { }
         void createIndex(const IDBRequestData&, const IDBIndexInfo&) final { }
         void deleteIndex(const IDBRequestData&, IDBObjectStoreIdentifier, const String&) final { }
-        void renameIndex(const IDBRequestData&, IDBObjectStoreIdentifier, uint64_t, const String&) final { }
+        void renameIndex(const IDBRequestData&, IDBObjectStoreIdentifier, IDBIndexIdentifier, const String&) final { }
         void putOrAdd(const IDBRequestData&, const IDBKeyData&, const IDBValue&, const IndexedDB::ObjectStoreOverwriteMode) final { }
         void getRecord(const IDBRequestData&, const IDBGetRecordData&) final { }
         void getAllRecords(const IDBRequestData&, const IDBGetAllRecordsData&) final { }
@@ -423,8 +427,20 @@ class EmptyInspectorClient final : public InspectorClient {
 
 #if ENABLE(APPLE_PAY)
 
-class EmptyPaymentCoordinatorClient final : public PaymentCoordinatorClient {
+class EmptyPaymentCoordinatorClient final : public PaymentCoordinatorClient, public RefCounted<EmptyPaymentCoordinatorClient> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(EmptyPaymentCoordinatorClient);
+public:
+    static Ref<EmptyPaymentCoordinatorClient> create()
+    {
+        return adoptRef(*new EmptyPaymentCoordinatorClient);
+    }
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+private:
+    EmptyPaymentCoordinatorClient() = default;
+
     std::optional<String> validatedPaymentNetwork(const String&) const final { return std::nullopt; }
     bool canMakePayments() final { return false; }
     void canMakePaymentsWithActiveCard(const String&, const String&, CompletionHandler<void(bool)>&& completionHandler) final { callOnMainThread([completionHandler = WTFMove(completionHandler)]() mutable { completionHandler(false); }); }
@@ -594,6 +610,13 @@ void EmptyChromeClient::requestCookieConsent(CompletionHandler<void(CookieConsen
     completion(CookieConsentDecisionResult::NotSupported);
 }
 
+RefPtr<Icon> EmptyChromeClient::createIconForFiles(const Vector<String>& /* filenames */)
+{
+    return nullptr;
+}
+
+// MARK: -
+
 void EmptyFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const NavigationAction&, const ResourceRequest&, FormState*, const String&, std::optional<HitTestResult>&&, FramePolicyFunction&&)
 {
 }
@@ -607,10 +630,6 @@ void EmptyFrameLoaderClient::updateSandboxFlags(SandboxFlags)
 }
 
 void EmptyFrameLoaderClient::updateOpener(const Frame&)
-{
-}
-
-void EmptyFrameLoaderClient::broadcastMainFrameURLChangeToOtherProcesses(const URL&)
 {
 }
 
@@ -1173,16 +1192,6 @@ class EmptyStorageSessionProvider final : public StorageSessionProvider {
     NetworkStorageSession* storageSession() const final { return nullptr; }
 };
 
-class EmptyMediaRecorderProvider final : public MediaRecorderProvider {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(EmptyMediaRecorderProvider);
-public:
-    EmptyMediaRecorderProvider() = default;
-private:
-#if ENABLE(MEDIA_RECORDER)
-    std::unique_ptr<MediaRecorderPrivate> createMediaRecorderPrivate(MediaStreamPrivate&, const MediaRecorderPrivateOptions&) final { return nullptr; }
-#endif
-};
-
 class EmptyBroadcastChannelRegistry final : public BroadcastChannelRegistry {
 public:
     static Ref<EmptyBroadcastChannelRegistry> create()
@@ -1232,7 +1241,6 @@ PageConfiguration pageConfigurationWithEmptyClients(std::optional<PageIdentifier
         FrameIdentifier::generate(),
         nullptr,
         makeUniqueRef<DummySpeechRecognitionProvider>(),
-        makeUniqueRef<EmptyMediaRecorderProvider>(),
         EmptyBroadcastChannelRegistry::create(),
         makeUniqueRef<DummyStorageProvider>(),
         makeUniqueRef<DummyModelPlayerProvider>(),
@@ -1242,10 +1250,11 @@ PageConfiguration pageConfigurationWithEmptyClients(std::optional<PageIdentifier
         makeUniqueRef<EmptyContextMenuClient>(),
 #endif
 #if ENABLE(APPLE_PAY)
-        makeUniqueRef<EmptyPaymentCoordinatorClient>(),
+        EmptyPaymentCoordinatorClient::create(),
 #endif
         makeUniqueRef<EmptyChromeClient>(),
-        makeUniqueRef<EmptyCryptoClient>()
+        makeUniqueRef<EmptyCryptoClient>(),
+        makeUniqueRef<ProcessSyncClient>()
     };
 
 #if ENABLE(DRAG_SUPPORT)

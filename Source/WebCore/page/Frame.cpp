@@ -112,7 +112,7 @@ Frame::Frame(Page& page, FrameIdentifier frameID, FrameType frameType, HTMLFrame
     , m_mainFrame(parent ? page.mainFrame() : *this)
     , m_settings(page.settings())
     , m_frameType(frameType)
-    , m_navigationScheduler(makeUniqueRef<NavigationScheduler>(*this))
+    , m_navigationScheduler(makeUniqueRefWithoutRefCountedCheck<NavigationScheduler>(*this))
     , m_opener(opener)
     , m_history(makeUniqueRef<HistoryController>(*this))
 {
@@ -183,9 +183,7 @@ void Frame::takeWindowProxyAndOpenerFrom(Frame& frame)
     frame.resetWindowProxy();
     m_windowProxy->replaceFrame(*this);
 
-    // FIXME: We ought to be able to assert that there is no existing opener here,
-    // but WKBundleFrameClearOpener is used to clear state between tests and it
-    // only clears in one process.
+    ASSERT(!m_opener);
     m_opener = frame.m_opener;
     for (auto& opened : frame.m_openedFrames) {
         ASSERT(opened.m_opener.get() == &frame);
@@ -198,7 +196,7 @@ Ref<WindowProxy> Frame::protectedWindowProxy() const
     return m_windowProxy;
 }
 
-CheckedRef<NavigationScheduler> Frame::checkedNavigationScheduler() const
+Ref<NavigationScheduler> Frame::protectedNavigationScheduler() const
 {
     return m_navigationScheduler.get();
 }

@@ -51,7 +51,6 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -116,10 +115,9 @@ template<> void JSTestLegacyOverrideBuiltInsDOMConstructor::initializeProperties
 
 /* Hash table for prototype */
 
-static const HashTableValue JSTestLegacyOverrideBuiltInsPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestLegacyOverrideBuiltInsConstructor, 0 } },
-    { "namedItem"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestLegacyOverrideBuiltInsPrototypeFunction_namedItem, 1 } },
+static const std::array<HashTableValue, 2> JSTestLegacyOverrideBuiltInsPrototypeTableValues {
+    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestLegacyOverrideBuiltInsConstructor, 0 } },
+    HashTableValue { "namedItem"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestLegacyOverrideBuiltInsPrototypeFunction_namedItem, 1 } },
 };
 
 const ClassInfo JSTestLegacyOverrideBuiltInsPrototype::s_info = { "TestLegacyOverrideBuiltIns"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestLegacyOverrideBuiltInsPrototype) };
@@ -392,6 +390,7 @@ void JSTestLegacyOverrideBuiltInsOwner::finalize(JSC::Handle<JSC::Unknown> handl
     uncacheWrapper(world, jsTestLegacyOverrideBuiltIns->protectedWrapped().ptr(), jsTestLegacyOverrideBuiltIns);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -416,6 +415,8 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestLegacyOve
     }
 }
 #endif
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestLegacyOverrideBuiltIns>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

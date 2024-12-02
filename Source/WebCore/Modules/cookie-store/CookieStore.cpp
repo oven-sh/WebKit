@@ -105,7 +105,7 @@ void CookieStore::MainThreadBridge::ensureOnMainThread(Function<void(ScriptExecu
         return;
     ASSERT(context->isContextThread());
 
-    if (RefPtr document = dynamicDowncast<Document>(*context)) {
+    if (is<Document>(*context)) {
         task(*context);
         return;
     }
@@ -606,17 +606,14 @@ ScriptExecutionContext* CookieStore::scriptExecutionContext() const
 void CookieStore::eventListenersDidChange()
 {
     // FIXME: This should work for service worker contexts as well.
-    if (!is<Document>(scriptExecutionContext()))
+    RefPtr document = dynamicDowncast<Document>(scriptExecutionContext());
+    if (!document)
         return;
 
     bool hadChangeEventListener = m_hasChangeEventListener;
     m_hasChangeEventListener = hasEventListeners(eventNames().changeEvent);
 
     if (hadChangeEventListener == m_hasChangeEventListener)
-        return;
-
-    RefPtr document = downcast<Document>(scriptExecutionContext());
-    if (!document)
         return;
 
     WeakPtr page = document->page();

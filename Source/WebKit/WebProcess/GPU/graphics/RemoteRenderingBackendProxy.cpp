@@ -60,16 +60,16 @@ namespace WebKit {
 
 using namespace WebCore;
 
-std::unique_ptr<RemoteRenderingBackendProxy> RemoteRenderingBackendProxy::create(WebPage& webPage)
+Ref<RemoteRenderingBackendProxy> RemoteRenderingBackendProxy::create(WebPage& webPage)
 {
-    std::unique_ptr instance = std::unique_ptr<RemoteRenderingBackendProxy>(new RemoteRenderingBackendProxy(RunLoop::main()));
+    Ref instance = adoptRef(*new RemoteRenderingBackendProxy(RunLoop::main()));
     RELEASE_LOG(RemoteLayerBuffers, "[renderingBackend=%" PRIu64 "] Created rendering backend for pageProxyID=%" PRIu64 ", webPageID=%" PRIu64, instance->renderingBackendIdentifier().toUInt64(),  webPage.webPageProxyIdentifier().toUInt64(), webPage.identifier().toUInt64());
     return instance;
 }
 
-std::unique_ptr<RemoteRenderingBackendProxy> RemoteRenderingBackendProxy::create(SerialFunctionDispatcher& dispatcher)
+Ref<RemoteRenderingBackendProxy> RemoteRenderingBackendProxy::create(SerialFunctionDispatcher& dispatcher)
 {
-    std::unique_ptr instance = std::unique_ptr<RemoteRenderingBackendProxy>(new RemoteRenderingBackendProxy(dispatcher));
+    Ref instance = adoptRef(*new RemoteRenderingBackendProxy(dispatcher));
     RELEASE_LOG(RemoteLayerBuffers, "[renderingBackend=%" PRIu64 "] Created rendering backend for a worker", instance->renderingBackendIdentifier().toUInt64());
     return instance;
 }
@@ -378,7 +378,7 @@ void RemoteRenderingBackendProxy::cacheFont(const WebCore::Font::Attributes& fon
 void RemoteRenderingBackendProxy::cacheFontCustomPlatformData(Ref<const FontCustomPlatformData>&& customPlatformData)
 {
     Ref<FontCustomPlatformData> data = adoptRef(const_cast<FontCustomPlatformData&>(customPlatformData.leakRef()));
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || USE(SKIA)
     send(Messages::RemoteRenderingBackend::CacheFontCustomPlatformData(data->serializedData()));
 #else
     send(Messages::RemoteRenderingBackend::CacheFontCustomPlatformData(WTFMove(data)));

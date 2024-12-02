@@ -75,6 +75,8 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 #if ENABLE(DFG_JIT)
@@ -527,7 +529,7 @@ public:
     BaselineJITData* baselineJITData()
     {
         if (!JSC::JITCode::isOptimizingJIT(jitType()))
-            return bitwise_cast<BaselineJITData*>(m_jitData);
+            return std::bit_cast<BaselineJITData*>(m_jitData);
         return nullptr;
     }
 
@@ -542,7 +544,7 @@ public:
     DFG::JITData* dfgJITData()
     {
         if (JSC::JITCode::isOptimizingJIT(jitType()))
-            return bitwise_cast<DFG::JITData*>(m_jitData);
+            return std::bit_cast<DFG::JITData*>(m_jitData);
         return nullptr;
     }
 #endif
@@ -831,7 +833,7 @@ public:
     template<typename Metadata>
     ptrdiff_t offsetInMetadataTable(Metadata* metadata)
     {
-        return bitwise_cast<uint8_t*>(metadata) - bitwise_cast<uint8_t*>(metadataTable());
+        return std::bit_cast<uint8_t*>(metadata) - std::bit_cast<uint8_t*>(metadataTable());
     }
 
     size_t metadataSizeInBytes()
@@ -1023,3 +1025,5 @@ namespace WTF {
 JS_EXPORT_PRIVATE void printInternal(PrintStream&, JSC::CodeBlock*);
 
 } // namespace WTF
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

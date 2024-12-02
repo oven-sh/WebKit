@@ -28,6 +28,7 @@
 #include "ActiveDOMObject.h"
 #include "ExceptionOr.h"
 #include "IDBCursorDirection.h"
+#include "IDBIndexIdentifier.h"
 #include "IDBKeyPath.h"
 #include "IDBObjectStoreInfo.h"
 #include <wtf/CheckedRef.h>
@@ -144,8 +145,8 @@ private:
     bool m_deleted { false };
 
     mutable Lock m_referencedIndexLock;
-    UncheckedKeyHashMap<String, std::unique_ptr<IDBIndex>> m_referencedIndexes WTF_GUARDED_BY_LOCK(m_referencedIndexLock);
-    UncheckedKeyHashMap<uint64_t, std::unique_ptr<IDBIndex>> m_deletedIndexes WTF_GUARDED_BY_LOCK(m_referencedIndexLock);
+    HashMap<String, std::unique_ptr<IDBIndex>> m_referencedIndexes WTF_GUARDED_BY_LOCK(m_referencedIndexLock);
+    HashMap<IDBIndexIdentifier, std::unique_ptr<IDBIndex>> m_deletedIndexes WTF_GUARDED_BY_LOCK(m_referencedIndexLock);
 };
 
 WebCoreOpaqueRoot root(IDBObjectStore*);

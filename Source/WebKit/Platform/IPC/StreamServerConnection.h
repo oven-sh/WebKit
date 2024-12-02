@@ -91,6 +91,7 @@ public:
         HasMoreMessages
     };
     DispatchResult dispatchStreamMessages(size_t messageLimit);
+    void markCurrentlyDispatchedMessageAsInvalid();
 
     void open(StreamConnectionWorkQueue&);
     void invalidate();
@@ -143,6 +144,7 @@ private:
     ReceiversMap m_receivers WTF_GUARDED_BY_LOCK(m_receiversLock);
     uint64_t m_currentDestinationID { 0 };
     Semaphore m_clientWaitSemaphore;
+    bool m_didReceiveInvalidMessage { false };
 
     friend class StreamConnectionWorkQueue;
 };
@@ -160,11 +162,11 @@ void StreamServerConnection::sendSyncReply(Connection::SyncRequestID syncRequest
         if (m_isProcessingStreamMessage) {
             auto span = m_buffer.acquireAll();
             {
-                StreamConnectionEncoder messageEncoder { MessageName::SyncMessageReply, span.data(), span.size() };
+                StreamConnectionEncoder messageEncoder { MessageName::SyncMessageReply, span };
                 if ((messageEncoder << ... << arguments))
                     return;
             }
-            StreamConnectionEncoder outOfStreamEncoder { MessageName::ProcessOutOfStreamMessage, span.data(), span.size() };
+            StreamConnectionEncoder outOfStreamEncoder { MessageName::ProcessOutOfStreamMessage, span };
         }
     }
     auto encoder = makeUniqueRef<Encoder>(MessageName::SyncMessageReply, syncRequestID.toUInt64());

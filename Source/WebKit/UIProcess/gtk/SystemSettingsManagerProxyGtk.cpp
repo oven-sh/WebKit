@@ -56,14 +56,19 @@ bool SystemSettingsManagerProxy::darkMode() const
         return true;
 
     // FIXME: These are just heuristics, we should get the dark mode from libhandy/libadwaita, falling back to the settings portal.
-
-    if (auto* themeNameEnv = g_getenv("GTK_THEME"))
-        return g_str_has_suffix(themeNameEnv, "-dark") || g_str_has_suffix(themeNameEnv, "-Dark") || g_str_has_suffix(themeNameEnv, ":dark");
+    // Or maybe just use the settings portal, because we don't want to depend on libhandy, and maybe don't want to depend on libadwaita?
+    if (const char* themeNameEnv = g_getenv("GTK_THEME")) {
+        String themeNameEnvString = String::fromUTF8(themeNameEnv);
+        return themeNameEnvString.endsWith("-dark"_s) || themeNameEnvString.endsWith("-Dark"_s) || themeNameEnvString.endsWith(":dark"_s);
+    }
 
     GUniqueOutPtr<char> themeName;
     g_object_get(m_settings, "gtk-theme-name", &themeName.outPtr(), nullptr);
-    if (g_str_has_suffix(themeName.get(), "-dark") || (g_str_has_suffix(themeName.get(), "-Dark")))
-        return true;
+    if (themeName) {
+        String themeNameString = String::fromUTF8(themeName.get());
+        if (themeNameString.endsWith("-dark"_s) || themeNameString.endsWith("-Dark"_s))
+            return true;
+    }
 
     return false;
 }
@@ -188,3 +193,4 @@ SystemSettingsManagerProxy::SystemSettingsManagerProxy()
 }
 
 } // namespace WebKit
+

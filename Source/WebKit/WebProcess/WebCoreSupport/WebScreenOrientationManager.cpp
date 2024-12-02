@@ -48,6 +48,16 @@ WebScreenOrientationManager::~WebScreenOrientationManager()
     WebProcess::singleton().removeMessageReceiver(Messages::WebScreenOrientationManager::messageReceiverName(), m_page->identifier());
 }
 
+void WebScreenOrientationManager::ref() const
+{
+    m_page->ref();
+}
+
+void WebScreenOrientationManager::deref() const
+{
+    m_page->deref();
+}
+
 Ref<WebPage> WebScreenOrientationManager::protectedPage() const
 {
     return m_page.get();

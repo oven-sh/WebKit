@@ -21,31 +21,32 @@
 
 #include "RenderStyleInlines.h"
 #include "RenderTableCell.h"
+#include "StyleContentAlignmentData.h"
 
 namespace WebCore {
 
 inline const BorderValue& RenderTableCell::borderAdjoiningCellAfter(const RenderTableCell& cell)
 {
     ASSERT_UNUSED(cell, table()->cellBefore(&cell) == this);
-    return style().borderEnd(table()->style());
+    return style().borderEnd(tableWritingMode());
 }
 
 inline const BorderValue& RenderTableCell::borderAdjoiningCellBefore(const RenderTableCell& cell)
 {
     ASSERT_UNUSED(cell, table()->cellAfter(&cell) == this);
-    return style().borderStart(table()->style());
+    return style().borderStart(tableWritingMode());
 }
 
 inline const BorderValue& RenderTableCell::borderAdjoiningTableEnd() const
 {
     ASSERT(isFirstOrLastCellInRow());
-    return style().borderEnd(table()->style());
+    return style().borderEnd(tableWritingMode());
 }
 
 inline const BorderValue& RenderTableCell::borderAdjoiningTableStart() const
 {
     ASSERT(isFirstOrLastCellInRow());
-    return style().borderStart(table()->style());
+    return style().borderStart(tableWritingMode());
 }
 
 inline LayoutUnit RenderTableCell::logicalHeightForRowSizing() const
@@ -70,6 +71,15 @@ inline Length RenderTableCell::styleOrColLogicalWidth() const
     if (RenderTableCol* firstColumn = table()->colElement(col()))
         return logicalWidthFromColumns(firstColumn, styleWidth);
     return styleWidth;
+}
+
+inline bool RenderTableCell::isBaselineAligned() const
+{
+    if (auto alignContent = style().alignContent(); !alignContent.isNormal())
+        return alignContent.position() == ContentPosition::Baseline;
+
+    VerticalAlign va = style().verticalAlign();
+    return va == VerticalAlign::Baseline || va == VerticalAlign::TextBottom || va == VerticalAlign::TextTop || va == VerticalAlign::Super || va == VerticalAlign::Sub || va == VerticalAlign::Length;
 }
 
 } // namespace WebCore

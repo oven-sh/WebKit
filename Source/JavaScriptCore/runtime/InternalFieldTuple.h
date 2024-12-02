@@ -2,6 +2,8 @@
 
 #include "JSInternalFieldObjectImpl.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 // InternalFieldTuple is a generic InternalFieldObject that currently has two internal fields
@@ -80,3 +82,5 @@ public:
 };
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AllocationCounts.h"
 #include "BAssert.h"
 #include "BCompiler.h"
 #include "BSyscall.h"
@@ -40,7 +41,7 @@
 #include <mach/vm_page_size.h>
 #endif
 
-BCOMPILER_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+BALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace bmalloc {
 
@@ -126,6 +127,9 @@ inline void vmValidatePhysical(void* p, size_t vmSize)
 inline void* tryVMAllocate(size_t vmSize, VMTag usage = VMTag::Malloc)
 {
     vmValidate(vmSize);
+
+    BPROFILE_ALLOCATION(VM_ALLOCATION, vmSize, usage);
+
     void* result = mmap(0, vmSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | BMALLOC_NORESERVE, static_cast<int>(usage), 0);
     if (result == MAP_FAILED)
         return nullptr;
@@ -154,9 +158,12 @@ inline void vmRevokePermissions(void* p, size_t vmSize)
 inline void vmZeroAndPurge(void* p, size_t vmSize, VMTag usage = VMTag::Malloc)
 {
     vmValidate(p, vmSize);
+    int flags = MAP_PRIVATE | MAP_ANON | MAP_FIXED | BMALLOC_NORESERVE;
+    int tag = static_cast<int>(usage);
+    BPROFILE_ZERO_FILL_PAGE(p, vmSize, flags, tag);
     // MAP_ANON guarantees the memory is zeroed. This will also cause
     // page faults on accesses to this range following this call.
-    void* result = mmap(p, vmSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED | BMALLOC_NORESERVE, static_cast<int>(usage), 0);
+    void* result = mmap(p, vmSize, PROT_READ | PROT_WRITE, flags, tag, 0);
     RELEASE_BASSERT(result == p);
 }
 
@@ -268,4 +275,4 @@ inline void vmAllocatePhysicalPagesSloppy(void* p, size_t size)
 
 } // namespace bmalloc
 
-BCOMPILER_ALLOW_UNSAFE_BUFFER_USAGE_END
+BALLOW_UNSAFE_BUFFER_USAGE_END

@@ -32,6 +32,7 @@
 #include "WebExtensionAPIObject.h"
 #include "WebExtensionFrameIdentifier.h"
 #include "WebExtensionTab.h"
+#include "WebPageProxyIdentifier.h"
 
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSString;
@@ -51,35 +52,35 @@ public:
 #if PLATFORM(COCOA)
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
 
-    void createTab(WebPage&, NSDictionary *properties, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void createTab(WebPageProxyIdentifier, NSDictionary *properties, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
-    void query(WebPage&, NSDictionary *info, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void query(WebPageProxyIdentifier, NSDictionary *info, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     void get(double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void getCurrent(WebPage&, Ref<WebExtensionCallbackHandler>&&);
-    void getSelected(WebPage&, double windowID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void getCurrent(WebPageProxyIdentifier, Ref<WebExtensionCallbackHandler>&&);
+    void getSelected(WebPageProxyIdentifier, double windowID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     void duplicate(double tabID, NSDictionary *properties, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void update(WebPage&, double tabID, NSDictionary *properties, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void update(WebPageProxyIdentifier, double tabID, NSDictionary *properties, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
     void remove(NSObject *tabIDs, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
-    void reload(WebPage&, double tabID, NSDictionary *properties, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void goBack(WebPage&, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void goForward(WebPage&, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void reload(WebPageProxyIdentifier, double tabID, NSDictionary *properties, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void goBack(WebPageProxyIdentifier, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void goForward(WebPageProxyIdentifier, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
-    void getZoom(WebPage&, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void setZoom(WebPage&, double tabID, double zoomFactor, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void getZoom(WebPageProxyIdentifier, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void setZoom(WebPageProxyIdentifier, double tabID, double zoomFactor, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
-    void detectLanguage(WebPage&, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void toggleReaderMode(WebPage&, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void captureVisibleTab(WebPage&, double windowID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void detectLanguage(WebPageProxyIdentifier, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void toggleReaderMode(WebPageProxyIdentifier, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void captureVisibleTab(WebPageProxyIdentifier, double windowID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     void sendMessage(WebFrame&, double tabID, NSString *message, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
     RefPtr<WebExtensionAPIPort> connect(WebFrame&, JSContextRef, double tabID, NSDictionary *options, NSString **outExceptionString);
 
-    void executeScript(WebPage&, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void insertCSS(WebPage&, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void removeCSS(WebPage&, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void executeScript(WebPageProxyIdentifier, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void insertCSS(WebPageProxyIdentifier, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void removeCSS(WebPageProxyIdentifier, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     double tabIdentifierNone() const { return -1; }
 

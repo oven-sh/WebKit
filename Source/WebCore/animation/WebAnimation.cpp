@@ -90,6 +90,8 @@ Ref<WebAnimation> WebAnimation::create(Document& document, AnimationEffect* effe
     result->setEffect(effect);
     if (timeline)
         result->setTimeline(timeline);
+    else
+        AnimationTimeline::updateGlobalPosition(result);
 
     InspectorInstrumentation::didCreateWebAnimation(result.get());
 
@@ -589,8 +591,10 @@ void WebAnimation::setPlaybackRate(double newPlaybackRate)
     if (previousTime)
         setCurrentTime(previousTime);
 
-    if (m_effect)
+    if (m_effect) {
         m_effect->animationDidChangeTimingProperties();
+        m_effect->animationPlaybackRateDidChange();
+    }
 }
 
 void WebAnimation::updatePlaybackRate(double newPlaybackRate)
@@ -666,6 +670,9 @@ void WebAnimation::applyPendingPlaybackRate()
 
     // 3. Clear animation's pending playback rate.
     m_pendingPlaybackRate = std::nullopt;
+
+    if (m_effect)
+        m_effect->animationPlaybackRateDidChange();
 }
 
 void WebAnimation::setBindingsFrameRate(std::variant<FramesPerSecond, AnimationFrameRatePreset>&& frameRate)
@@ -744,7 +751,7 @@ auto WebAnimation::playState() const -> PlayState
     // animation's effective playback rate > 0 and current time ≥ target effect end; or
     // animation's effective playback rate < 0 and current time ≤ 0,
     // → finished
-    if (animationCurrentTime && ((effectivePlaybackRate() > 0 && (*animationCurrentTime + animationCurrentTime->matchingEpsilon()) >= effectEndTime()) || (effectivePlaybackRate() < 0 && (*animationCurrentTime - animationCurrentTime->matchingEpsilon()) <= zeroTime())))
+    if (animationCurrentTime && ((effectivePlaybackRate() > 0 && (*animationCurrentTime + animationCurrentTime->matchingEpsilon()) >= effectEndTime()) || (effectivePlaybackRate() < 0 && (*animationCurrentTime - animationCurrentTime->matchingEpsilon()) <= animationCurrentTime->matchingZero())))
         return PlayState::Finished;
 
     // Otherwise → running
@@ -1000,7 +1007,7 @@ void WebAnimation::updateFinishedState(DidSeek didSeek, SynchronouslyNotify sync
     //    - animation does not have a pending play task or a pending pause task,
     if (unconstrainedCurrentTime && m_startTime && !pending()) {
         // then update animation's hold time based on the first matching condition for animation from below, if any:
-        if (m_playbackRate > 0 && unconstrainedCurrentTime >= endTime) {
+        if (m_playbackRate > 0 && *unconstrainedCurrentTime >= endTime) {
             // If animation playback rate > 0 and unconstrained current time is greater than or equal to target effect end,
             // If did seek is true, let the hold time be the value of unconstrained current time.
             if (didSeek == DidSeek::Yes)
@@ -1010,7 +1017,7 @@ void WebAnimation::updateFinishedState(DidSeek didSeek, SynchronouslyNotify sync
                 m_holdTime = endTime;
             else
                 m_holdTime = std::max(m_previousCurrentTime.value(), endTime);
-        } else if (m_playbackRate < 0 && unconstrainedCurrentTime <= zeroTime()) {
+        } else if (m_playbackRate < 0 && *unconstrainedCurrentTime <= unconstrainedCurrentTime->matchingZero()) {
             // If animation playback rate < 0 and unconstrained current time is less than or equal to 0,
             // If did seek is true, let the hold time be the value of unconstrained current time.
             if (didSeek == DidSeek::Yes)
@@ -1019,7 +1026,7 @@ void WebAnimation::updateFinishedState(DidSeek didSeek, SynchronouslyNotify sync
             else if (!m_previousCurrentTime)
                 m_holdTime = zeroTime();
             else
-                m_holdTime = std::min(m_previousCurrentTime.value(), zeroTime());
+                m_holdTime = std::min(*m_previousCurrentTime, m_previousCurrentTime->matchingZero());
         } else if (m_playbackRate && m_timeline && m_timeline->currentTime()) {
             // If animation playback rate ≠ 0, and animation is associated with an active timeline,
             // Perform the following steps:
@@ -1162,7 +1169,7 @@ ExceptionOr<void> WebAnimation::play(AutoRewind autoRewind)
     } else if (!playbackRate && !previousCurrentTime) {
         // If animation’s effective playback rate = 0 and animation’s current time is unresolved,
         // Set the animation’s hold time to zero.
-        m_holdTime = 0_s;
+        m_holdTime = zeroTime();
     }
 
     // 7. If has finite timeline and previous current time is unresolved:
@@ -1582,6 +1589,10 @@ void WebAnimation::updateRelevance()
 
 bool WebAnimation::computeRelevance()
 {
+    // https://drafts.csswg.org/web-animations-1/#relevant-animations-section
+    // https://drafts.csswg.org/web-animations-1/#current
+    // https://drafts.csswg.org/web-animations-1/#in-effect
+
     // An animation is relevant if:
     // - its associated effect is current or in effect, and
     if (!m_effect)
@@ -1607,6 +1618,11 @@ bool WebAnimation::computeRelevance()
 
     // - the animation effect is associated with an animation with a playback rate < 0 and the animation effect is in the after phase.
     if (m_playbackRate < 0 && timing.phase == AnimationEffectPhase::After)
+        return true;
+
+    // - the animation effect is associated with an animation not in the idle play state with a non-null
+    // associated timeline that is not monotonically increasing.
+    if (m_timeline && !m_timeline->isMonotonic() && playState() != PlayState::Idle)
         return true;
 
     // An animation effect is in effect if its active time, as calculated according to the procedure in
@@ -1805,6 +1821,8 @@ std::optional<Seconds> WebAnimation::convertAnimationTimeToTimelineTime(Seconds 
 
 bool WebAnimation::isSkippedContentAnimation() const
 {
+    if (pending())
+        return false;
     if (auto animation = dynamicDowncast<StyleOriginatedAnimation>(this)) {
         if (auto element = animation->owningElement())
             return element->element.renderer() && element->element.renderer()->isSkippedContent();
@@ -1812,17 +1830,17 @@ bool WebAnimation::isSkippedContentAnimation() const
     return false;
 }
 
-std::optional<double> WebAnimation::progress() const
+std::optional<double> WebAnimation::overallProgress() const
 {
-    // https://drafts.csswg.org/web-animations-2/#the-progress-of-an-animation
-    // An animation’s progress is the ratio of its current time to its associated effect end.
+    // https://drafts.csswg.org/web-animations-2/#the-overall-progress-of-an-animation
+    // An animation's overallProgress is the ratio of its current time to its associated effect end.
     //
-    // The progress of an animation, animation, is calculated as follows:
+    // The overallProgress of an animation, animation, is calculated as follows:
     //
     // If any of the following are true:
     //     - animation does not have an associated effect, or
-    //     - animation’s current time is an unresolved time value,
-    // animation’s progress is null.
+    //     - animation's current time is an unresolved time value,
+    // animation's overallProgress is null.
     if (!m_effect)
         return std::nullopt;
 
@@ -1832,27 +1850,27 @@ std::optional<double> WebAnimation::progress() const
 
     auto endTime = effectEndTime();
 
-    // If animation’s associated effect end is zero,
-    //     - If animation’s current time is negative, animation’s progress is zero.
-    //     - Otherwise, animation’s progress is one.
+    // If animation's associated effect end is zero,
+    //     - If animation's current time is negative, animation's overallProgress is zero.
+    //     - Otherwise, animation's overallProgress is one.
     if (endTime.isZero())
-        return *currentTime < zeroTime() ? 0 : 1;
+        return *currentTime < endTime.matchingZero() ? 0 : 1;
 
-    // If animation’s associated effect end is infinite, animation’s progress is zero.
+    // If animation's associated effect end is infinite, animation's overallProgress is zero.
     if (endTime.isInfinity())
         return 0;
 
-    // Otherwise, progress = min(max(current time / animation’s associated effect end, 0), 1)
+    // Otherwise, overallProgress = min(max(current time / animation's associated effect end, 0), 1)
     return std::min(std::max(*currentTime / endTime, 0.0), 1.0);
 }
 
-void WebAnimation::setRangeStart(TimelineRangeValue&& rangeStart)
+void WebAnimation::setBindingsRangeStart(TimelineRangeValue&& rangeStart)
 {
     if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect.get()))
         m_timelineRange.start = SingleTimelineRange::parse(WTFMove(rangeStart), keyframeEffect->target(), SingleTimelineRange::Type::Start);
 }
 
-void WebAnimation::setRangeEnd(TimelineRangeValue&& rangeEnd)
+void WebAnimation::setBindingsRangeEnd(TimelineRangeValue&& rangeEnd)
 {
     if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect.get()))
         m_timelineRange.end = SingleTimelineRange::parse(WTFMove(rangeEnd), keyframeEffect->target(), SingleTimelineRange::Type::End);

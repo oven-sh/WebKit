@@ -42,6 +42,9 @@
 
 namespace bmalloc { namespace api {
 
+static constexpr unsigned defaultBucketsForSmallSizes = 5;
+static constexpr unsigned defaultBucketsForLargeSizes = 3;
+static constexpr unsigned defaultMaxSmallSize = 128;
 
 class TZoneHeapManager {
     enum State {
@@ -132,6 +135,56 @@ class TZoneHeapManager {
         } m_value;
     };
 
+    struct TZoneTypeAndSize : public bmalloc_type {
+        TZoneTypeAndSize()
+        {
+            name = nullptr;
+            size = 0;
+            alignment = 0;
+            m_key = 0;
+        }
+
+        TZoneTypeAndSize(const bmalloc_type* type)
+        {
+            name = bmalloc_type_name(type);
+            size = bmalloc_type_size(type);
+            alignment = bmalloc_type_alignment(type);
+            m_key = reinterpret_cast<uintptr_t>(name) << 12 ^ size << 3 ^ alignment >> 3;
+        }
+
+        inline unsigned long key() const { return m_key; }
+
+        static unsigned long hash(TZoneTypeAndSize value)
+        {
+            return value.m_key;
+        }
+
+        bool operator==(const TZoneTypeAndSize& other) const
+        {
+            return name == other.name
+                && size == other.size
+                && alignment == other.alignment;
+        }
+
+        bool operator<(const TZoneTypeAndSize& other) const
+        {
+            if (name != other.name)
+                return name < other.name;
+
+            if (size != other.size)
+                return size < other.size;
+
+            return alignment < other.alignment;
+        }
+
+        operator bool() const
+        {
+            return !!key();
+        }
+
+        uintptr_t m_key;
+    };
+
 protected:
     TZoneHeapManager()
         : m_state(TZoneHeapManager::Uninitialized)
@@ -147,37 +200,59 @@ public:
 
     BINLINE static TZoneHeapManager& singleton()
     {
-        if (!theTZoneHeapManager)
+        if (!theTZoneHeapManager) {
             ensureSingleton();
+            theTZoneHeapManager->init();
+        }
         BASSERT(theTZoneHeapManager);
         return *theTZoneHeapManager;
     }
 
-    BEXPORT pas_heap_ref* heapRefForTZoneType(bmalloc_type* classType);
+    BINLINE static void initWithBucketSettings(unsigned smallSizeCount, unsigned largeSizeCount = 0, unsigned smallSizeLimit = 0)
+    {
+        RELEASE_BASSERT(!theTZoneHeapManager);
+        if (!theTZoneHeapManager) {
+            ensureSingleton();
+            RELEASE_BASSERT(theTZoneHeapManager);
+            theTZoneHeapManager->setBucketParams(smallSizeCount, largeSizeCount, smallSizeLimit);
+            theTZoneHeapManager->init();
+        }
+    }
+
+    BEXPORT pas_heap_ref* heapRefForTZoneType(const bmalloc_type* classType);
+    BEXPORT pas_heap_ref* heapRefForTZoneTypeDifferentSize(const bmalloc_type* classType);
     BEXPORT void dumpRegisteredTypes();
 
 private:
     BEXPORT static void ensureSingleton();
+
+    BEXPORT void setBucketParams(unsigned smallSizeCount, unsigned largeSizeCount = 0, unsigned smallSizeLimit = 0);
 
     BEXPORT void init();
 
     void initTypenameTemplate();
 
     BINLINE Mutex& mutex() { return m_mutex; }
+    BINLINE Mutex& differentSizeMutex() { return m_differentSizeMutex; }
 
     inline unsigned bucketCountForSizeClass(SizeAndAlign typeSizeAlign);
 
-    inline unsigned tzoneBucketForKey(UniqueLockHolder&, bmalloc_type*, unsigned bucketCountForSize);
+    inline unsigned tzoneBucketForKey(UniqueLockHolder&, const bmalloc_type*, unsigned bucketCountForSize);
     TZoneTypeBuckets* populateBucketsForSizeClass(UniqueLockHolder&, SizeAndAlign);
 
     BEXPORT static TZoneHeapManager* theTZoneHeapManager;
 
     TZoneHeapManager::State m_state;
     Mutex m_mutex;
+    Mutex m_differentSizeMutex;
     TZoneHeapRandomizeKey m_tzoneKey;
+    unsigned bucketsForSmallSizes { defaultBucketsForSmallSizes };
+    unsigned bucketsForLargeSizes { defaultBucketsForLargeSizes };
+    unsigned maxSmallSize { defaultMaxSmallSize };
     unsigned largestBucketCount { 0 };
     Vector<SizeAndAlign> m_typeSizes;
     Map<SizeAndAlign, TZoneTypeBuckets*, SizeAndAlign> m_heapRefsBySizeAndAlignment;
+    Map<TZoneTypeAndSize, pas_heap_ref*, TZoneTypeAndSize> m_heapRefsByTypeAndSize;
 };
 
 } } // namespace bmalloc::api

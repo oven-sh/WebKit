@@ -708,6 +708,20 @@ public:
                 VALIDATE(value->asSIMDValue()->signMode() == SIMDSignMode::None, ("At ", *value));
                 break;
 
+            case VectorRelaxedLaneSelect:
+                VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
+                VALIDATE(value->numChildren() == 3, ("At ", *value));
+                VALIDATE(value->type() == V128, ("At ", *value));
+                VALIDATE(value->child(0)->type() == V128, ("At ", *value));
+                VALIDATE(value->child(1)->type() == V128, ("At ", *value));
+                VALIDATE(value->child(2)->type() == V128, ("At ", *value));
+                VALIDATE((value->asSIMDValue()->simdLane() == SIMDLane::i8x16)
+                    || (value->asSIMDValue()->simdLane() == SIMDLane::i16x8)
+                    || (value->asSIMDValue()->simdLane() == SIMDLane::i32x4)
+                    || (value->asSIMDValue()->simdLane() == SIMDLane::i64x2), ("At ", *value));
+                VALIDATE(value->asSIMDValue()->signMode() == SIMDSignMode::None, ("At ", *value));
+                break;
+
             case CCall:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(value->numChildren() >= 1, ("At ", *value));
@@ -915,6 +929,9 @@ private:
                     VALIDATE(value.value()->type().isFloat() || value.value()->type().isVector(), ("At ", *context, ": ", value));
             }
             break;
+#if USE(JSVALUE32_64)
+        case ValueRep::RegisterPair:
+#endif
         case ValueRep::Constant:
         case ValueRep::Stack:
             VALIDATE(false, ("At ", *context, ": ", value));

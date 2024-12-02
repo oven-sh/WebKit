@@ -65,7 +65,7 @@ public:
     ~Queue();
 
     void onSubmittedWorkDone(CompletionHandler<void(WGPUQueueWorkDoneStatus)>&& callback);
-    void submit(Vector<std::reference_wrapper<CommandBuffer>>&& commands);
+    void submit(Vector<Ref<WebGPU::CommandBuffer>>&& commands);
     void writeBuffer(Buffer&, uint64_t bufferOffset, std::span<uint8_t> data);
     void writeBuffer(id<MTLBuffer>, uint64_t bufferOffset, std::span<uint8_t> data);
     void writeTexture(const WGPUImageCopyTexture& destination, std::span<uint8_t> data, const WGPUTextureDataLayout&, const WGPUExtent3D& writeSize, bool skipValidation = false);
@@ -91,11 +91,13 @@ public:
     id<MTLBlitCommandEncoder> ensureBlitCommandEncoder();
     void finalizeBlitCommandEncoder();
 
+    // This can be called on a background thread.
+    void scheduleWork(Instance::WorkItem&&);
 private:
     Queue(id<MTLCommandQueue>, Device&);
     Queue(Device&);
 
-    NSString* errorValidatingSubmit(const Vector<std::reference_wrapper<CommandBuffer>>&) const;
+    NSString* errorValidatingSubmit(const Vector<Ref<WebGPU::CommandBuffer>>&) const;
     bool validateWriteBuffer(const Buffer&, uint64_t bufferOffset, size_t) const;
 
 
@@ -103,8 +105,6 @@ private:
     bool isSchedulingIdle() const { return m_submittedCommandBufferCount == m_scheduledCommandBufferCount; }
     void removeMTLCommandBufferInternal(id<MTLCommandBuffer>);
 
-    // This can be called on a background thread.
-    void scheduleWork(Instance::WorkItem&&);
     NSString* errorValidatingWriteTexture(const WGPUImageCopyTexture&, const WGPUTextureDataLayout&, const WGPUExtent3D&, size_t, const Texture&) const;
 
     id<MTLCommandQueue> m_commandQueue { nil };

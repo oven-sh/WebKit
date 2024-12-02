@@ -66,6 +66,7 @@
 #include "WebMediaKeyStorageManager.h"
 #include "WebMemorySampler.h"
 #include "WebMessagePortChannelProvider.h"
+#include "WebNotificationManager.h"
 #include "WebPage.h"
 #include "WebPageCreationParameters.h"
 #include "WebPageGroupProxy.h"
@@ -125,6 +126,7 @@
 #include <WebCore/PermissionController.h>
 #include <WebCore/PlatformKeyboardEvent.h>
 #include <WebCore/PlatformMediaSessionManager.h>
+#include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ProcessWarming.h>
 #include <WebCore/Quirks.h>
 #include <WebCore/RegistrableDomain.h>
@@ -285,7 +287,12 @@ WebProcess& WebProcess::singleton()
 }
 
 WebProcess::WebProcess()
-    : m_webLoaderStrategy(makeUniqueRef<WebLoaderStrategy>())
+    : m_eventDispatcher(*this)
+#if PLATFORM(IOS_FAMILY)
+    , m_viewUpdateDispatcher(*this)
+#endif
+    , m_webInspectorInterruptDispatcher(*this)
+    , m_webLoaderStrategy(makeUniqueRefWithoutRefCountedCheck<WebLoaderStrategy>(*this))
 #if PLATFORM(COCOA) && USE(LIBWEBRTC) && ENABLE(WEB_CODECS)
     , m_remoteVideoCodecFactory(*this)
 #endif
@@ -313,7 +320,7 @@ WebProcess::WebProcess()
     // FIXME: This should moved to where WebProcess::initialize is called,
     // so that ports have a chance to customize, and ifdefs in this file are
     // limited.
-    addSupplement<WebGeolocationManager>();
+    addSupplementWithoutRefCountedCheck<WebGeolocationManager>();
 
 #if ENABLE(NOTIFICATIONS)
     addSupplement<WebNotificationManager>();
@@ -866,9 +873,9 @@ void WebProcess::setCacheModel(CacheModel cacheModel)
     unsigned backForwardCacheSize = 0;
     calculateMemoryCacheSizes(cacheModel, cacheTotalCapacity, cacheMinDeadCapacity, cacheMaxDeadCapacity, deadDecodedDataDeletionInterval, backForwardCacheSize);
 
-    auto& memoryCache = MemoryCache::singleton();
-    memoryCache.setCapacities(cacheMinDeadCapacity, cacheMaxDeadCapacity, cacheTotalCapacity);
-    memoryCache.setDeadDecodedDataDeletionInterval(deadDecodedDataDeletionInterval);
+    Ref memoryCache = MemoryCache::singleton();
+    memoryCache->setCapacities(cacheMinDeadCapacity, cacheMaxDeadCapacity, cacheTotalCapacity);
+    memoryCache->setDeadDecodedDataDeletionInterval(deadDecodedDataDeletionInterval);
     BackForwardCache::singleton().setMaxSize(backForwardCacheSize);
 
     platformSetCacheModel(cacheModel);
@@ -1186,6 +1193,7 @@ static NetworkProcessConnectionInfo getNetworkProcessConnection(IPC::Connection&
 {
     NetworkProcessConnectionInfo connectionInfo;
     auto requestConnection = [&]() -> bool {
+        RELEASE_LOG(Process, "getNetworkProcessConnection: Request connection for core identifier %" PRIu64, WebCore::Process::identifier().toUInt64());
         auto sendResult = connection.sendSync(Messages::WebProcessProxy::GetNetworkProcessConnection(), 0, IPC::Timeout::infinity(), IPC::SendSyncOption::MaintainOrderingWithAsyncMessages);
         if (!sendResult.succeeded()) {
             RELEASE_LOG_ERROR(Process, "getNetworkProcessConnection: Failed to send message or receive invalid message: error %" PUBLIC_LOG_STRING, IPC::errorAsString(sendResult.error()).characters());
@@ -1631,7 +1639,7 @@ void WebProcess::prepareToSuspend(bool isSuspensionImminent, MonotonicTime estim
 
 #if ENABLE(VIDEO)
     suspendAllMediaBuffering();
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
         platformMediaSessionManager->processWillSuspend();
 #endif
 
@@ -1725,7 +1733,7 @@ void WebProcess::processDidResume()
 #endif
 
 #if ENABLE(VIDEO)
-    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::sharedManagerIfExists())
+    if (auto* platformMediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
         platformMediaSessionManager->processDidResume();
     resumeAllMediaBuffering();
 #endif
@@ -1941,9 +1949,9 @@ RefPtr<API::Object> WebProcess::transformObjectsToHandles(API::Object* object)
 
 void WebProcess::setMemoryCacheDisabled(bool disabled)
 {
-    auto& memoryCache = MemoryCache::singleton();
-    if (memoryCache.disabled() != disabled)
-        memoryCache.setDisabled(disabled);
+    Ref memoryCache = MemoryCache::singleton();
+    if (memoryCache->disabled() != disabled)
+        memoryCache->setDisabled(disabled);
 }
 
 #if ENABLE(SERVICE_CONTROLS)
@@ -1957,7 +1965,7 @@ void WebProcess::setEnabledServices(bool hasImageServices, bool hasSelectionServ
 
 void WebProcess::ensureAutomationSessionProxy(const String& sessionIdentifier)
 {
-    m_automationSessionProxy = makeUnique<WebAutomationSessionProxy>(sessionIdentifier);
+    m_automationSessionProxy = WebAutomationSessionProxy::create(sessionIdentifier);
 }
 
 void WebProcess::destroyAutomationSessionProxy()
@@ -2010,7 +2018,7 @@ Ref<LibWebRTCNetwork> WebProcess::protectedLibWebRTCNetwork()
     return libWebRTCNetwork();
 }
 
-void WebProcess::establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType workerType, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, PageIdentifier pageID, const WebPreferencesStore& store, RegistrableDomain&& registrableDomain, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, RemoteWorkerInitializationData&& initializationData, CompletionHandler<void()>&& completionHandler)
+void WebProcess::establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType workerType, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, PageIdentifier pageID, const WebPreferencesStore& store, Site&& site, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, RemoteWorkerInitializationData&& initializationData, CompletionHandler<void()>&& completionHandler)
 {
     // We are in the Remote Worker context process and the call below establishes our connection to the Network Process
     // by calling ensureNetworkProcessConnection. SWContextManager / SharedWorkerContextManager need to use the same underlying IPC::Connection as the
@@ -2018,11 +2026,11 @@ void WebProcess::establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWo
     Ref ipcConnection = ensureNetworkProcessConnection().connection();
     switch (workerType) {
     case RemoteWorkerType::ServiceWorker:
-        SWContextManager::singleton().setConnection(WebSWContextManagerConnection::create(WTFMove(ipcConnection), WTFMove(registrableDomain), serviceWorkerPageIdentifier, pageGroupID, webPageProxyID, pageID, store, WTFMove(initializationData)));
+        SWContextManager::singleton().setConnection(WebSWContextManagerConnection::create(WTFMove(ipcConnection), WTFMove(site), serviceWorkerPageIdentifier, pageGroupID, webPageProxyID, pageID, store, WTFMove(initializationData)));
         SWContextManager::singleton().connection()->establishConnection(WTFMove(completionHandler));
         break;
     case RemoteWorkerType::SharedWorker:
-        SharedWorkerContextManager::singleton().setConnection(makeUnique<WebSharedWorkerContextManagerConnection>(WTFMove(ipcConnection), WTFMove(registrableDomain), pageGroupID, webPageProxyID, pageID, store, WTFMove(initializationData)));
+        SharedWorkerContextManager::singleton().setConnection(WebSharedWorkerContextManagerConnection::create(WTFMove(ipcConnection), WTFMove(site), pageGroupID, webPageProxyID, pageID, store, WTFMove(initializationData)));
         SharedWorkerContextManager::singleton().connection()->establishConnection(WTFMove(completionHandler));
         break;
     }
@@ -2348,7 +2356,7 @@ bool WebProcess::shouldUseRemoteRenderingForWebGL() const
 SpeechRecognitionRealtimeMediaSourceManager& WebProcess::ensureSpeechRecognitionRealtimeMediaSourceManager()
 {
     if (!m_speechRecognitionRealtimeMediaSourceManager)
-        m_speechRecognitionRealtimeMediaSourceManager = makeUnique<SpeechRecognitionRealtimeMediaSourceManager>(Ref { *parentProcessConnection() });
+        m_speechRecognitionRealtimeMediaSourceManager = makeUniqueWithoutRefCountedCheck<SpeechRecognitionRealtimeMediaSourceManager>(*this);
 
     return *m_speechRecognitionRealtimeMediaSourceManager;
 }
@@ -2384,6 +2392,11 @@ RemoteMediaEngineConfigurationFactory& WebProcess::mediaEngineConfigurationFacto
     return *supplement<RemoteMediaEngineConfigurationFactory>();
 }
 #endif
+
+Ref<WebNotificationManager> WebProcess::protectedNotificationManager()
+{
+    return *supplement<WebNotificationManager>();
+}
 
 WebTransportSession* WebProcess::webTransportSession(WebTransportSessionIdentifier identifier)
 {

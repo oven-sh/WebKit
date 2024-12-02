@@ -42,6 +42,7 @@
 
 namespace JSC {
 class JSGlobalObject;
+class JSValue;
 }
 
 namespace WebCore {
@@ -185,6 +186,9 @@ public:
     WEBCORE_EXPORT void setElementsArrayAttribute(const QualifiedName& attributeName, std::optional<Vector<Ref<Element>>>&& value);
     static bool isElementReflectionAttribute(const Settings&, const QualifiedName&);
     static bool isElementsArrayReflectionAttribute(const QualifiedName&);
+
+    WEBCORE_EXPORT void setUserInfo(JSC::JSGlobalObject&, JSC::JSValue);
+    WEBCORE_EXPORT String userInfo() const;
 
     // Call this to get the value of an attribute that is known not to be the style
     // attribute or one of the SVG animatable attributes.
@@ -391,6 +395,7 @@ public:
 
     virtual RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&);
     virtual bool rendererIsNeeded(const RenderStyle&);
+    virtual bool isReplaced(const RenderStyle&) const { return false; }
 
     inline ShadowRoot* shadowRoot() const; // Defined in ElementRareData.h
     RefPtr<ShadowRoot> shadowRootForBindings(JSC::JSGlobalObject&) const;
@@ -398,7 +403,7 @@ public:
     WEBCORE_EXPORT ExceptionOr<ShadowRoot&> attachShadow(const ShadowRootInit&);
     ExceptionOr<ShadowRoot&> attachDeclarativeShadow(ShadowRootMode, ShadowRootDelegatesFocus, ShadowRootClonable, ShadowRootSerializable);
 
-    ShadowRoot* userAgentShadowRoot() const;
+    WEBCORE_EXPORT ShadowRoot* userAgentShadowRoot() const;
     RefPtr<ShadowRoot> protectedUserAgentShadowRoot() const;
     WEBCORE_EXPORT ShadowRoot& ensureUserAgentShadowRoot();
     WEBCORE_EXPORT ShadowRoot& createUserAgentShadowRoot();
@@ -821,6 +826,9 @@ public:
 
     void updateEffectiveTextDirection();
     void updateEffectiveTextDirectionIfNeeded();
+
+    AtomString viewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>&) const;
+    void setViewTransitionCapturedName(const std::optional<Style::PseudoElementIdentifier>&, AtomString);
 
 protected:
     Element(const QualifiedName&, Document&, OptionSet<TypeFlag>);

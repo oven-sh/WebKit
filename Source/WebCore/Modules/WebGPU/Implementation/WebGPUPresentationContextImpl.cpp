@@ -90,16 +90,18 @@ bool PresentationContextImpl::configure(const CanvasConfiguration& canvasConfigu
 
     m_format = canvasConfiguration.format;
 
+    Ref convertToBackingContext = m_convertToBackingContext;
+
     WGPUSwapChainDescriptor backingDescriptor {
         .nextInChain = nullptr,
         .label = nullptr,
-        .usage = m_convertToBackingContext->convertTextureUsageFlagsToBacking(canvasConfiguration.usage),
-        .format = m_convertToBackingContext->convertToBacking(canvasConfiguration.format),
+        .usage = convertToBackingContext->convertTextureUsageFlagsToBacking(canvasConfiguration.usage),
+        .format = convertToBackingContext->convertToBacking(canvasConfiguration.format),
         .width = m_width,
         .height = m_height,
         .presentMode = WGPUPresentMode_Immediate,
-        .viewFormats = canvasConfiguration.viewFormats.map([&convertToBackingContext = m_convertToBackingContext.get()](auto colorFormat) {
-            return convertToBackingContext.convertToBacking(colorFormat);
+        .viewFormats = canvasConfiguration.viewFormats.map([&](auto colorFormat) {
+            return convertToBackingContext->convertToBacking(colorFormat);
         }),
         .colorSpace = canvasConfiguration.colorSpace == WebCore::WebGPU::PredefinedColorSpace::SRGB ? WGPUColorSpace::SRGB : WGPUColorSpace::DisplayP3,
         .toneMappingMode = convertToToneMappingMode(canvasConfiguration.toneMappingMode),
@@ -107,7 +109,7 @@ bool PresentationContextImpl::configure(const CanvasConfiguration& canvasConfigu
         .reportValidationErrors = canvasConfiguration.reportValidationErrors
     };
 
-    m_swapChain = adoptWebGPU(wgpuDeviceCreateSwapChain(m_convertToBackingContext->convertToBacking(canvasConfiguration.device), m_backing.get(), &backingDescriptor));
+    m_swapChain = adoptWebGPU(wgpuDeviceCreateSwapChain(convertToBackingContext->convertToBacking(canvasConfiguration.protectedDevice().get()), m_backing.get(), &backingDescriptor));
     return true;
 }
 
@@ -125,13 +127,13 @@ void PresentationContextImpl::unconfigure()
     m_currentTexture = nullptr;
 }
 
-RefPtr<Texture> PresentationContextImpl::getCurrentTexture()
+RefPtr<Texture> PresentationContextImpl::getCurrentTexture(uint32_t frameIndex)
 {
     if (!m_swapChain)
         return nullptr; // FIXME: This should return an invalid texture instead.
 
     if (!m_currentTexture) {
-        auto texturePtr = wgpuSwapChainGetCurrentTexture(m_swapChain.get());
+        auto texturePtr = wgpuSwapChainGetCurrentTexture(m_swapChain.get(), frameIndex);
         if (!texturePtr)
             return nullptr;
 
@@ -140,10 +142,10 @@ RefPtr<Texture> PresentationContextImpl::getCurrentTexture()
     return m_currentTexture;
 }
 
-void PresentationContextImpl::present(bool)
+void PresentationContextImpl::present(uint32_t frameIndex, bool)
 {
     if (auto* surface = m_swapChain.get())
-        wgpuSwapChainPresent(surface);
+        wgpuSwapChainPresent(surface, frameIndex);
     m_currentTexture = nullptr;
 }
 

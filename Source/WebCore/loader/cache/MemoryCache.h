@@ -93,6 +93,10 @@ public:
 
     WEBCORE_EXPORT static MemoryCache& singleton();
 
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
+
     WEBCORE_EXPORT CachedResource* resourceForRequest(const ResourceRequest&, PAL::SessionID);
 
     bool add(CachedResource&);
@@ -170,7 +174,7 @@ public:
     WEBCORE_EXPORT void pruneLiveResourcesToSize(unsigned targetSize, bool shouldDestroyDecodedDataForAllLiveResources = false);
 
 private:
-    using CachedResourceMap = UncheckedKeyHashMap<std::pair<URL, String /* partitionName */>, WeakPtr<CachedResource>>;
+    using CachedResourceMap = HashMap<std::pair<URL, String /* partitionName */>, WeakPtr<CachedResource>>;
     using LRUList = WeakListHashSet<CachedResource>;
 
     MemoryCache();
@@ -211,7 +215,7 @@ private:
     
     // A URL-based map of all resources that are in the cache (including the freshest version of objects that are currently being 
     // referenced by a Web page).
-    typedef UncheckedKeyHashMap<PAL::SessionID, std::unique_ptr<CachedResourceMap>> SessionCachedResourceMap;
+    typedef HashMap<PAL::SessionID, std::unique_ptr<CachedResourceMap>> SessionCachedResourceMap;
     SessionCachedResourceMap m_sessionResources;
 
     Timer m_pruneTimer;

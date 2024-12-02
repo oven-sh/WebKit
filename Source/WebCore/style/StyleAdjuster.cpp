@@ -373,14 +373,6 @@ static bool shouldInlinifyForRuby(const RenderStyle& style, const RenderStyle& p
     return hasRubyParent && !style.hasOutOfFlowPosition() && !style.isFloating();
 }
 
-static bool isRubyContainerOrInternalRubyBox(const RenderStyle& style)
-{
-    auto display = style.display();
-    return display == DisplayType::Ruby
-        || display == DisplayType::RubyAnnotation
-        || display == DisplayType::RubyBase;
-}
-
 static bool hasUnsupportedRubyDisplay(DisplayType display, const Element* element)
 {
     // Only allow ruby elements to have ruby display types for now.
@@ -497,7 +489,7 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
         if (shouldInlinifyForRuby(style, m_parentBoxStyle))
             style.setEffectiveDisplay(equivalentInlineDisplay(style));
         // https://drafts.csswg.org/css-ruby-1/#bidi
-        if (isRubyContainerOrInternalRubyBox(style))
+        if (style.isRubyContainerOrInternalRubyBox())
             style.setUnicodeBidi(forceBidiIsolationForRuby(style.unicodeBidi()));
     }
 
@@ -575,8 +567,9 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
         if (RefPtr input = dynamicDowncast<HTMLInputElement>(*element); input && input->isPasswordField())
             style.setTextSecurity(style.inputSecurity() == InputSecurity::Auto ? TextSecurity::Disc : TextSecurity::None);
 
-        // Disallow -webkit-user-modify on :pseudo and ::pseudo elements.
-        if (element->isInUserAgentShadowTree() && !element->userAgentPart().isNull())
+        // Disallow -webkit-user-modify on ::pseudo elements, except if that pseudo-element targets a slot,
+        // in which case we want the editability to be passed onto the slotted contents.
+        if (element->isInUserAgentShadowTree() && !element->userAgentPart().isNull() && !is<HTMLSlotElement>(element))
             style.setUserModify(UserModify::ReadOnly);
 
         if (is<HTMLMarqueeElement>(*element)) {
@@ -759,9 +752,11 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
             adjustForTextAutosizing(style, *m_element);
 #endif
     }
-    if (isSkippedContentRoot(style, m_element.get()) && m_parentStyle.contentVisibility() != ContentVisibility::Hidden)
-        style.setUsedContentVisibility(style.contentVisibility());
 
+    if (m_parentStyle.contentVisibility() != ContentVisibility::Hidden) {
+        if (m_element && isSkippedContentRoot(style, *m_element))
+            style.setUsedContentVisibility(style.contentVisibility());
+    }
     if (style.contentVisibility() == ContentVisibility::Auto) {
         style.containIntrinsicWidthAddAuto();
         style.containIntrinsicHeightAddAuto();
@@ -923,6 +918,11 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
     if (!m_element)
         return;
 
+    if (is<HTMLBodyElement>(*m_element) && m_document->quirks().needsBodyScrollbarWidthNoneDisabledQuirk()) {
+        if (style.scrollbarWidth() == ScrollbarWidth::None)
+            style.setScrollbarWidth(ScrollbarWidth::Auto);
+    }
+
     if (m_document->quirks().needsGMailOverflowScrollQuirk()) {
         // This turns sidebar scrollable without mouse move event.
         static MainThreadNeverDestroyed<const AtomString> roleValue("navigation"_s);
@@ -932,8 +932,8 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
     if (m_document->quirks().needsIPadSkypeOverflowScrollQuirk()) {
         // This makes the layout scrollable and makes visible the buttons hidden outside of the viewport.
         // static MainThreadNeverDestroyed<const AtomString> selectorValue(".app-container .noFocusOutline > div"_s);
-        if (RefPtr div = dynamicDowncast<HTMLDivElement>(m_element)) {
-            auto matchesNoFocus = div->matches(".app-container .noFocusOutline > div"_s);
+        if (is<HTMLDivElement>(*m_element)) {
+            auto matchesNoFocus = m_element->matches(".app-container .noFocusOutline > div"_s);
             if (matchesNoFocus.hasException())
                 return;
             if (matchesNoFocus.returnValue()) {
@@ -958,8 +958,8 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
             && style.flexShrink() == 1
             && (flexBasis.isPercent() || flexBasis.isFixed())
             && flexBasis.value() == 0
-            && const_cast<Element*>(m_element.get())->classList().contains(class1)
-            && const_cast<Element*>(m_element.get())->classList().contains(class2))
+            && m_element->hasClassName(class1)
+            && m_element->hasClassName(class2))
             style.setMinHeight(WebCore::Length(0, LengthType::Fixed));
     }
     if (m_document->quirks().needsPrimeVideoUserSelectNoneQuirk()) {
@@ -968,14 +968,35 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
             style.setUserSelect(UserSelect::None);
     }
 
+#if PLATFORM(IOS)
+    if (m_document->quirks().hideForbesVolumeSlider()) {
+        static MainThreadNeverDestroyed<const AtomString> localName("cnx-volume-slider"_s);
+        if (m_element->hasLocalName(localName))
+            style.setEffectiveDisplay(DisplayType::None);
+    }
+    if (m_document->quirks().hideIGNVolumeSlider()) {
+        static MainThreadNeverDestroyed<const AtomString> className("volume-slider"_s);
+        if (is<HTMLDivElement>(*m_element) && m_element->hasClassName(className))
+            style.setEffectiveDisplay(DisplayType::None);
+    }
+#endif // PLATFORM(IOS)
+
+#if PLATFORM(IOS_FAMILY)
+    if (m_document->quirks().needsGoogleMapsScrollingQuirk()) {
+        static MainThreadNeverDestroyed<const AtomString> className("PUtLdf"_s);
+        if (is<HTMLBodyElement>(*m_element) && m_element->hasClassName(className))
+            style.setUsedTouchActions({ TouchAction::Auto });
+    }
+#endif
+
 #if ENABLE(VIDEO)
     if (m_document->quirks().needsFullscreenDisplayNoneQuirk()) {
-        if (RefPtr div = dynamicDowncast<HTMLDivElement>(m_element); div && style.display() == DisplayType::None) {
+        if (is<HTMLDivElement>(*m_element) && style.display() == DisplayType::None) {
             static MainThreadNeverDestroyed<const AtomString> instreamNativeVideoDivClass("instream-native-video--mobile"_s);
             static MainThreadNeverDestroyed<const AtomString> videoElementID("vjs_video_3_html5_api"_s);
 
-            if (div->hasClassName(instreamNativeVideoDivClass)) {
-                RefPtr video = dynamicDowncast<HTMLVideoElement>(div->treeScope().getElementById(videoElementID));
+            if (m_element->hasClassName(instreamNativeVideoDivClass)) {
+                RefPtr video = dynamicDowncast<HTMLVideoElement>(m_element->treeScope().getElementById(videoElementID));
                 if (video && video->isFullscreen())
                     style.setEffectiveDisplay(DisplayType::Block);
             }
@@ -985,8 +1006,7 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
     if (CheckedPtr fullscreenManager = m_document->fullscreenManagerIfExists(); fullscreenManager && m_document->quirks().needsFullscreenObjectFitQuirk()) {
         static MainThreadNeverDestroyed<const AtomString> playerClassName("top-player-video-element"_s);
         bool isFullscreen = fullscreenManager->isFullscreen();
-        RefPtr video = dynamicDowncast<HTMLVideoElement>(m_element);
-        if (video && isFullscreen && video->hasClassName(playerClassName) && style.objectFit() == ObjectFit::Fill)
+        if (is<HTMLVideoElement>(*m_element) && isFullscreen && m_element->hasClassName(playerClassName) && style.objectFit() == ObjectFit::Fill)
             style.setObjectFit(ObjectFit::Contain);
     }
 #endif

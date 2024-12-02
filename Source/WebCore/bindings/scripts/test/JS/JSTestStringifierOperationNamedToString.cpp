@@ -44,7 +44,6 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -109,10 +108,9 @@ template<> void JSTestStringifierOperationNamedToStringDOMConstructor::initializ
 
 /* Hash table for prototype */
 
-static const HashTableValue JSTestStringifierOperationNamedToStringPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierOperationNamedToStringConstructor, 0 } },
-    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierOperationNamedToStringPrototypeFunction_toString, 0 } },
+static const std::array<HashTableValue, 2> JSTestStringifierOperationNamedToStringPrototypeTableValues {
+    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierOperationNamedToStringConstructor, 0 } },
+    HashTableValue { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierOperationNamedToStringPrototypeFunction_toString, 0 } },
 };
 
 const ClassInfo JSTestStringifierOperationNamedToStringPrototype::s_info = { "TestStringifierOperationNamedToString"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestStringifierOperationNamedToStringPrototype) };
@@ -215,6 +213,7 @@ void JSTestStringifierOperationNamedToStringOwner::finalize(JSC::Handle<JSC::Unk
     uncacheWrapper(world, jsTestStringifierOperationNamedToString->protectedWrapped().ptr(), jsTestStringifierOperationNamedToString);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -239,6 +238,8 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestStringifi
     }
 }
 #endif
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestStringifierOperationNamedToString>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

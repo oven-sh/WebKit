@@ -99,6 +99,8 @@ public:
 
     static uint64_t objectCountForTesting() { return gObjectCountForTesting; }
 
+    bool isAlwaysOnLoggingAllowed() const;
+
 private:
     ModelConnectionToWebProcess(ModelProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&);
 
@@ -139,7 +141,7 @@ private:
 #endif
 
 #if ENABLE(IPC_TESTING_API)
-    IPCTester m_ipcTester;
+    const Ref<IPCTester> m_ipcTester;
 #endif
 
     SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;

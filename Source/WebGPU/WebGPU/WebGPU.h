@@ -30,6 +30,8 @@
 #ifndef WEBGPU_H_
 #define WEBGPU_H_
 
+#ifdef __cplusplus
+
 #if defined(WGPU_SHARED_LIBRARY)
 #    if defined(_WIN32)
 #        if defined(WGPU_IMPLEMENTATION)
@@ -67,11 +69,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#ifdef __cplusplus
 #include <span>
 #include <wtf/text/WTFString.h>
 #include <wtf/Platform.h>
-#endif
 
 #define WGPU_ARRAY_LAYER_COUNT_UNDEFINED (0xffffffffUL)
 #define WGPU_COPY_STRIDE_UNDEFINED (0xffffffffUL)
@@ -741,13 +741,8 @@ typedef WGPUFlags WGPUTextureUsageFlags WGPU_ENUM_ATTRIBUTE;
 
 typedef void (*WGPUBufferMapCallback)(WGPUBufferMapAsyncStatus status, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUCompilationInfoCallback)(WGPUCompilationInfoRequestStatus status, struct WGPUCompilationInfo const * compilationInfo, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
-#ifdef __cplusplus
 typedef void (*WGPUCreateComputePipelineAsyncCallback)(WGPUCreatePipelineAsyncStatus status, WGPUComputePipeline pipeline, WTF::String&& message, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUCreateRenderPipelineAsyncCallback)(WGPUCreatePipelineAsyncStatus status, WGPURenderPipeline pipeline, WTF::String&& message, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
-#else
-typedef void (*WGPUCreateComputePipelineAsyncCallback)(WGPUCreatePipelineAsyncStatus status, WGPUComputePipeline pipeline, const char* message, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUCreateRenderPipelineAsyncCallback)(WGPUCreatePipelineAsyncStatus status, WGPURenderPipeline pipeline, const char* message, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
-#endif
 typedef void (*WGPUDeviceLostCallback)(WGPUDeviceLostReason reason, char const * message, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUErrorCallback)(WGPUErrorType type, char const * message, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProc)(void) WGPU_FUNCTION_ATTRIBUTE;
@@ -828,11 +823,7 @@ typedef struct WGPUCommandEncoderDescriptor {
 
 typedef struct WGPUCompilationMessage {
     WGPUChainedStruct const * nextInChain;
-#ifdef __cplusplus
     WTF::String message;
-#else
-    WGPU_NULLABLE char const * message;
-#endif
     WGPUCompilationMessageType type;
     uint64_t lineNum;
     uint64_t linePos;
@@ -919,7 +910,7 @@ typedef struct WGPUPipelineLayoutDescriptor {
     size_t bindGroupLayoutCount;
     WGPUBindGroupLayout const * bindGroupLayouts;
 
-    auto bindGroupLayoutsSpan() const { return unsafeForgeSpan(bindGroupLayouts, bindGroupLayoutCount); }
+    auto bindGroupLayoutsSpan() const { return unsafeMakeSpan(bindGroupLayouts, bindGroupLayoutCount); }
 } WGPUPipelineLayoutDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 // Can be chained in WGPUPrimitiveState
@@ -963,7 +954,7 @@ typedef struct WGPURenderBundleEncoderDescriptor {
     WGPUBool depthReadOnly;
     WGPUBool stencilReadOnly;
 
-    auto colorFormatsSpan() const { return unsafeForgeSpan(colorFormats, colorFormatCount); }
+    auto colorFormatsSpan() const { return unsafeMakeSpan(colorFormats, colorFormatCount); }
 } WGPURenderBundleEncoderDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPURenderPassDepthStencilAttachment {
@@ -1006,11 +997,7 @@ typedef struct WGPUSamplerBindingLayout {
 
 typedef struct WGPUSamplerDescriptor {
     WGPUChainedStruct const * nextInChain;
-#ifdef __cplusplus
     WTF::String label;
-#else
-    WGPU_NULLABLE char const * label;
-#endif
     WGPUAddressMode addressModeU;
     WGPUAddressMode addressModeV;
     WGPUAddressMode addressModeW;
@@ -1115,9 +1102,7 @@ typedef struct WGPUSwapChainDescriptor {
     uint32_t width;
     uint32_t height;
     WGPUPresentMode presentMode;
-#ifdef __cplusplus
     Vector<WGPUTextureFormat> viewFormats;
-#endif
     WGPUColorSpace colorSpace;
     WGPUToneMappingMode toneMappingMode;
     WGPUCompositeAlphaMode compositeAlphaMode;
@@ -1163,7 +1148,7 @@ typedef struct WGPUBindGroupDescriptor {
     size_t entryCount;
     WGPUBindGroupEntry const * entries;
 
-    auto entriesSpan() const { return unsafeForgeSpan(entries, entryCount); }
+    auto entriesSpan() const { return unsafeMakeSpan(entries, entryCount); }
 } WGPUBindGroupDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUBindGroupLayoutEntry {
@@ -1197,11 +1182,7 @@ typedef struct WGPUComputePassDescriptor {
 typedef struct WGPUDepthStencilState {
     WGPUChainedStruct const * nextInChain;
     WGPUTextureFormat format;
-#ifdef __cplusplus
     std::optional<WGPUBool> depthWriteEnabled;
-#else
-    WGPUBool depthWriteEnabled;
-#endif
     WGPUCompareFunction depthCompare;
     WGPUStencilFaceState stencilFront;
     WGPUStencilFaceState stencilBack;
@@ -1233,15 +1214,13 @@ typedef struct WGPUProgrammableStageDescriptor {
     size_t constantCount;
     WGPUConstantEntry const * constants;
 
-    auto constantsSpan() const { return unsafeForgeSpan(constants, constantCount); }
+    auto constantsSpan() const { return unsafeMakeSpan(constants, constantCount); }
 } WGPUProgrammableStageDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPURenderPassColorAttachment {
     WGPUChainedStruct const * nextInChain;
     WGPU_NULLABLE WGPUTextureView view;
-#ifdef __cplusplus
     std::optional<uint32_t> depthSlice;
-#endif
     WGPU_NULLABLE WGPUTextureView resolveTarget;
     WGPULoadOp loadOp;
     WGPUStoreOp storeOp;
@@ -1259,7 +1238,7 @@ typedef struct WGPUShaderModuleDescriptor {
     size_t hintCount;
     WGPUShaderModuleCompilationHint const * hints;
 
-    auto hintsSpan() const { return unsafeForgeSpan(hints, hintCount); }
+    auto hintsSpan() const { return unsafeMakeSpan(hints, hintCount); }
 } WGPUShaderModuleDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUSupportedLimits {
@@ -1279,7 +1258,7 @@ typedef struct WGPUTextureDescriptor {
     size_t viewFormatCount;
     WGPUTextureFormat const * viewFormats;
 
-    auto viewFormatsSpan() const { return unsafeForgeSpan(viewFormats, viewFormatCount); }
+    auto viewFormatsSpan() const { return unsafeMakeSpan(viewFormats, viewFormatCount); }
 } WGPUTextureDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUVertexBufferLayout {
@@ -1288,7 +1267,7 @@ typedef struct WGPUVertexBufferLayout {
     size_t attributeCount;
     WGPUVertexAttribute const * attributes;
 
-    auto attributesSpan() const { return unsafeForgeSpan(attributes, attributeCount); }
+    auto attributesSpan() const { return unsafeMakeSpan(attributes, attributeCount); }
 } WGPUVertexBufferLayout WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUBindGroupLayoutDescriptor {
@@ -1297,7 +1276,7 @@ typedef struct WGPUBindGroupLayoutDescriptor {
     size_t entryCount;
     WGPUBindGroupLayoutEntry const * entries;
 
-    auto entriesSpan() const { return unsafeForgeSpan(entries, entryCount); }
+    auto entriesSpan() const { return unsafeMakeSpan(entries, entryCount); }
 } WGPUBindGroupLayoutDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUColorTargetState {
@@ -1324,7 +1303,7 @@ typedef struct WGPUDeviceDescriptor {
     WGPUDeviceLostCallback deviceLostCallback;
     void * deviceLostUserdata;
 
-    auto requiredFeaturesSpan() const { return unsafeForgeSpan(requiredFeatures, requiredFeatureCount); }
+    auto requiredFeaturesSpan() const { return unsafeMakeSpan(requiredFeatures, requiredFeatureCount); }
 } WGPUDeviceDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPURenderPassDescriptor {
@@ -1336,7 +1315,7 @@ typedef struct WGPURenderPassDescriptor {
     WGPU_NULLABLE WGPUQuerySet occlusionQuerySet;
     WGPU_NULLABLE WGPURenderPassTimestampWrites const * timestampWrites;
 
-    auto colorAttachmentsSpan() const { return unsafeForgeSpan(colorAttachments, colorAttachmentCount); }
+    auto colorAttachmentsSpan() const { return unsafeMakeSpan(colorAttachments, colorAttachmentCount); }
 } WGPURenderPassDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUVertexState {
@@ -1348,8 +1327,8 @@ typedef struct WGPUVertexState {
     size_t bufferCount;
     WGPUVertexBufferLayout const * buffers;
 
-    auto buffersSpan() const { return unsafeForgeSpan(buffers, bufferCount); }
-    auto constantsSpan() const { return unsafeForgeSpan(constants, constantCount); }
+    auto buffersSpan() const { return unsafeMakeSpan(buffers, bufferCount); }
+    auto constantsSpan() const { return unsafeMakeSpan(constants, constantCount); }
 } WGPUVertexState WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUFragmentState {
@@ -1361,8 +1340,8 @@ typedef struct WGPUFragmentState {
     size_t targetCount;
     WGPUColorTargetState const * targets;
 
-    auto targetsSpan() const { return unsafeForgeSpan(targets, targetCount); }
-    auto constantsSpan() const { return unsafeForgeSpan(constants, constantCount); }
+    auto targetsSpan() const { return unsafeMakeSpan(targets, targetCount); }
+    auto constantsSpan() const { return unsafeMakeSpan(constants, constantCount); }
 } WGPUFragmentState WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPURenderPipelineDescriptor {
@@ -1375,10 +1354,6 @@ typedef struct WGPURenderPipelineDescriptor {
     WGPUMultisampleState multisample;
     WGPU_NULLABLE WGPUFragmentState const * fragment;
 } WGPURenderPipelineDescriptor WGPU_STRUCTURE_ATTRIBUTE;
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #if !defined(WGPU_SKIP_PROCS)
 
@@ -1584,7 +1559,7 @@ typedef void (*WGPUProcSurfaceRelease)(WGPUSurface surface) WGPU_FUNCTION_ATTRIB
 
 // Procs of SwapChain
 typedef WGPUTextureView (*WGPUProcSwapChainGetCurrentTextureView)(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUProcSwapChainPresent)(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
+typedef void (*WGPUProcSwapChainPresent)(WGPUSwapChain swapChain, uint32_t frameIndex) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProcSwapChainReference)(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProcSwapChainRelease)(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
 
@@ -1645,10 +1620,8 @@ WGPU_EXPORT void wgpuBufferSetLabel(WGPUBuffer buffer, char const * label) WGPU_
 WGPU_EXPORT void wgpuBufferUnmap(WGPUBuffer buffer) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuBufferReference(WGPUBuffer buffer) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuBufferRelease(WGPUBuffer buffer) WGPU_FUNCTION_ATTRIBUTE;
-#ifdef __cplusplus
 #if ENABLE(WEBGPU_SWIFT)
 WGPU_EXPORT void wgpuBufferCopy(WGPUBuffer buffer, std::span<const uint8_t> data, size_t offset) WGPU_FUNCTION_ATTRIBUTE;
-#endif
 #endif
 
 // Methods of CommandBuffer
@@ -1745,10 +1718,8 @@ WGPU_EXPORT void wgpuQuerySetRelease(WGPUQuerySet querySet) WGPU_FUNCTION_ATTRIB
 WGPU_EXPORT void wgpuQueueOnSubmittedWorkDone(WGPUQueue queue, WGPUQueueWorkDoneCallback callback, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuQueueSetLabel(WGPUQueue queue, char const * label) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuQueueSubmit(WGPUQueue queue, size_t commandCount, WGPUCommandBuffer const * commands) WGPU_FUNCTION_ATTRIBUTE;
-#ifdef __cplusplus
 WGPU_EXPORT void wgpuQueueWriteBuffer(WGPUQueue queue, WGPUBuffer buffer, uint64_t bufferOffset, std::span<uint8_t> data) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuQueueWriteTexture(WGPUQueue queue, WGPUImageCopyTexture const * destination, std::span<uint8_t> data, WGPUTextureDataLayout const * dataLayout, WGPUExtent3D const * writeSize) WGPU_FUNCTION_ATTRIBUTE;
-#endif
 WGPU_EXPORT void wgpuQueueReference(WGPUQueue queue) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuQueueRelease(WGPUQueue queue) WGPU_FUNCTION_ATTRIBUTE;
 
@@ -1822,13 +1793,14 @@ WGPU_EXPORT void wgpuSurfaceRelease(WGPUSurface surface) WGPU_FUNCTION_ATTRIBUTE
 
 // Methods of SwapChain
 WGPU_EXPORT WGPUTextureView wgpuSwapChainGetCurrentTextureView(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuSwapChainPresent(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
+WGPU_EXPORT void wgpuSwapChainPresent(WGPUSwapChain swapChain, uint32_t frameIndex) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuSwapChainReference(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuSwapChainRelease(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
 
 // Methods of Texture
 WGPU_EXPORT WGPUTextureView wgpuTextureCreateView(WGPUTexture texture, WGPU_NULLABLE WGPUTextureViewDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuTextureDestroy(WGPUTexture texture) WGPU_FUNCTION_ATTRIBUTE;
+WGPU_EXPORT void wgpuTextureUndestroy(WGPUTexture texture) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT uint32_t wgpuTextureGetDepthOrArrayLayers(WGPUTexture texture) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUTextureDimension wgpuTextureGetDimension(WGPUTexture texture) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUTextureFormat wgpuTextureGetFormat(WGPUTexture texture) WGPU_FUNCTION_ATTRIBUTE;
@@ -1890,13 +1862,10 @@ WGPU_EXPORT void wgpuXRViewRelease(WGPUXRView view) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuXRViewIsValid(WGPUXRView view) WGPU_FUNCTION_ATTRIBUTE;
 
 #endif  // !defined(WGPU_SKIP_DECLARATIONS)
-#ifdef __cplusplus
-} // extern "C"
-#endif
 
-#ifdef __cplusplus
 WGPU_EXPORT std::span<uint8_t> wgpuBufferGetBufferContents(WGPUBuffer buffer) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT std::span<uint8_t> wgpuBufferGetMappedRange(WGPUBuffer buffer, size_t offset, size_t size) WGPU_FUNCTION_ATTRIBUTE;
+
 #endif
 
 #endif // WEBGPU_H_

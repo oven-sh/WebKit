@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include "AnchorPositionEvaluator.h"
 #include "CSSCalcSymbolTable.h"
 #include "CSSCalcValue.h"
 #include "CSSFontFaceSrcValue.h"
@@ -212,9 +213,11 @@ template<> constexpr OutlineIsAuto fromCSSValueID(CSSValueID valueID)
 
 template<> constexpr BlockStepInsert fromCSSValueID(CSSValueID valueID)
 {
-    if (valueID == CSSValueMargin)
-        return BlockStepInsert::Margin;
-    return BlockStepInsert::Padding;
+    if (valueID == CSSValueMarginBox)
+        return BlockStepInsert::MarginBox;
+    if (valueID == CSSValuePaddingBox)
+        return BlockStepInsert::PaddingBox;
+    return BlockStepInsert::ContentBox;
 }
 
 constexpr CSSValueID toCSSValueID(CompositeOperator e, CSSPropertyID propertyID)
@@ -2544,6 +2547,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 
 #define TYPE OverflowContinue
 #define FOR_EACH(CASE) CASE(Auto) CASE(Discard)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE Style::PositionTryOrder
+#define FOR_EACH(CASE) CASE(Normal) CASE(MostWidth) CASE(MostHeight) CASE(MostBlockSize) CASE(MostInlineSize)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

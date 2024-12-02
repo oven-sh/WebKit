@@ -38,7 +38,6 @@
 #include "CSSPrimitiveValue.h"
 #include "CSSProperty.h"
 #include "CSSPropertyParser.h"
-#include "CSSPropertyParserHelpers.h"
 #include "CSSPropertyParsing.h"
 #include "CSSTransformListValue.h"
 #include "CSSValueList.h"
@@ -47,6 +46,8 @@
 #include "HashTools.h"
 #include "StyleColor.h"
 #include "StylePropertyShorthand.h"
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -1106,3 +1107,5 @@ RefPtr<CSSValue> CSSParserFastPaths::maybeParseValue(CSSPropertyID propertyID, S
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

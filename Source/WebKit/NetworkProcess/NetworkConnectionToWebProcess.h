@@ -81,6 +81,7 @@ class LoginStatus;
 class MockContentFilterSettings;
 class ResourceError;
 class ResourceRequest;
+class Site;
 enum class AdvancedPrivacyProtections : uint16_t;
 enum class ApplyTrackingPrevention : bool;
 enum class StorageAccessScope : bool;
@@ -148,10 +149,10 @@ public:
     static Ref<NetworkConnectionToWebProcess> create(NetworkProcess&, WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&, IPC::Connection::Identifier);
     virtual ~NetworkConnectionToWebProcess();
 
-    using IPC::Connection::Client::ptrCount;
-    using IPC::Connection::Client::ptrCountWithoutThreadCheck;
-    using IPC::Connection::Client::incrementPtrCount;
-    using IPC::Connection::Client::decrementPtrCount;
+    using IPC::Connection::Client::checkedPtrCount;
+    using IPC::Connection::Client::checkedPtrCountWithoutThreadCheck;
+    using IPC::Connection::Client::incrementCheckedPtrCount;
+    using IPC::Connection::Client::decrementCheckedPtrCount;
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
     void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess&& sharedPreferencesForWebProcess) { m_sharedPreferencesForWebProcess = WTFMove(sharedPreferencesForWebProcess); }
@@ -164,7 +165,6 @@ public:
     NetworkProcess& networkProcess() { return m_networkProcess.get(); }
     Ref<NetworkProcess> protectedNetworkProcess();
 
-    bool isWebTransportEnabled() const { return m_sharedPreferencesForWebProcess.webTransportEnabled; }
     bool usesSingleWebProcess() const { return m_sharedPreferencesForWebProcess.usesSingleWebProcess; }
     bool blobFileAccessEnforcementEnabled() const { return m_sharedPreferencesForWebProcess.blobFileAccessEnforcementEnabled; }
 
@@ -225,7 +225,9 @@ public:
 
     WebCore::ProcessIdentifier webProcessIdentifier() const { return m_webProcessIdentifier; }
 
+    void terminateIdleServiceWorkers();
     void serviceWorkerServerToContextConnectionNoLongerNeeded();
+    void terminateSWContextConnectionDueToUnresponsiveness();
     WebSWServerConnection* swConnection();
     RefPtr<ServiceWorkerFetchTask> createFetchTask(NetworkResourceLoader&, const WebCore::ResourceRequest&);
     void sharedWorkerServerToContextConnectionIsNoLongerNeeded();
@@ -250,6 +252,7 @@ public:
 
 #if ENABLE(WEB_RTC)
     NetworkMDNSRegister& mdnsRegister() { return m_mdnsRegister; }
+    Ref<NetworkMDNSRegister> protectedMDNSRegister() { return m_mdnsRegister; }
 #endif
 
     WebSWServerToContextConnection* swContextConnection() { return m_swContextConnection.get(); }
@@ -257,6 +260,8 @@ public:
     void allowAccessToFile(const String& path);
     void allowAccessToFiles(const Vector<String>& filePaths);
     void loadCancelledDownloadRedirectRequestInFrame(const WebCore::ResourceRequest&, const WebCore::FrameIdentifier&, const WebCore::PageIdentifier&);
+
+    bool isAlwaysOnLoggingAllowed() const;
 
 private:
     NetworkConnectionToWebProcess(NetworkProcess&, WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&, IPC::Connection::Identifier);
@@ -326,11 +331,11 @@ private:
     void unregisterSharedWorkerConnection();
 
     void establishSWServerConnection();
-    void establishSWContextConnection(WebPageProxyIdentifier, WebCore::RegistrableDomain&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, CompletionHandler<void()>&&);
+    void establishSWContextConnection(WebPageProxyIdentifier, WebCore::Site&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, CompletionHandler<void()>&&);
     void closeSWContextConnection();
     void unregisterSWConnection();
 
-    void establishSharedWorkerContextConnection(WebPageProxyIdentifier, WebCore::RegistrableDomain&&, CompletionHandler<void()>&&);
+    void establishSharedWorkerContextConnection(WebPageProxyIdentifier, WebCore::Site&&, CompletionHandler<void()>&&);
     void closeSharedWorkerContextConnection();
 
     void createRTCProvider(CompletionHandler<void()>&&);
@@ -467,7 +472,7 @@ private:
     Ref<NetworkProcess> m_networkProcess;
     PAL::SessionID m_sessionID;
 
-    HashMap<WebCore::WebSocketIdentifier, std::unique_ptr<NetworkSocketChannel>> m_networkSocketChannels;
+    HashMap<WebCore::WebSocketIdentifier, RefPtr<NetworkSocketChannel>> m_networkSocketChannels;
     NetworkResourceLoadMap m_networkResourceLoaders;
     HashMap<String, RefPtr<WebCore::BlobDataFileReference>> m_blobDataFileReferences;
     Vector<ResourceNetworkActivityTracker> m_networkActivityTrackers;
@@ -488,7 +493,7 @@ private:
     bool m_captureExtraNetworkLoadMetricsEnabled { false };
 
     WeakPtr<WebSWServerConnection> m_swConnection;
-    std::unique_ptr<WebSWServerToContextConnection> m_swContextConnection;
+    RefPtr<WebSWServerToContextConnection> m_swContextConnection;
     WeakPtr<WebSharedWorkerServerConnection> m_sharedWorkerConnection;
     RefPtr<WebSharedWorkerServerToContextConnection> m_sharedWorkerContextConnection;
 
@@ -512,7 +517,7 @@ private:
     SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
     HashSet<String> m_allowedFilePaths;
 #if ENABLE(IPC_TESTING_API)
-    IPCTester m_ipcTester;
+    const Ref<IPCTester> m_ipcTester;
 #endif
 
     HashMap<WebTransportSessionIdentifier, Ref<NetworkTransportSession>> m_networkTransportSessions;

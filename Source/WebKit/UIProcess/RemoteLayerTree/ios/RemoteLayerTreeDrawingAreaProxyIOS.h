@@ -38,7 +38,7 @@ class RemoteLayerTreeDrawingAreaProxyIOS final : public RemoteLayerTreeDrawingAr
     WTF_MAKE_NONCOPYABLE(RemoteLayerTreeDrawingAreaProxyIOS);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteLayerTreeDrawingAreaProxyIOS);
 public:
-    RemoteLayerTreeDrawingAreaProxyIOS(WebPageProxy&, WebProcessProxy&);
+    static Ref<RemoteLayerTreeDrawingAreaProxyIOS> create(WebPageProxy&, WebProcessProxy&);
     virtual ~RemoteLayerTreeDrawingAreaProxyIOS();
 
     bool isRemoteLayerTreeDrawingAreaProxyIOS() const final { return true; }
@@ -47,6 +47,8 @@ public:
     void pauseDisplayRefreshCallbacksForAnimation();
 
 private:
+    RemoteLayerTreeDrawingAreaProxyIOS(WebPageProxy&, WebProcessProxy&);
+
     WebCore::DelegatedScrollingMode delegatedScrollingMode() const override;
 
     std::unique_ptr<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const override;

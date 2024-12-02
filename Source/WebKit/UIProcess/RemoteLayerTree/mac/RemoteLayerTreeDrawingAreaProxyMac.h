@@ -46,7 +46,7 @@ friend class RemoteScrollingCoordinatorProxyMac;
     WTF_MAKE_NONCOPYABLE(RemoteLayerTreeDrawingAreaProxyMac);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteLayerTreeDrawingAreaProxyMac);
 public:
-    RemoteLayerTreeDrawingAreaProxyMac(WebPageProxy&, WebProcessProxy&);
+    static Ref<RemoteLayerTreeDrawingAreaProxyMac> create(WebPageProxy&, WebProcessProxy&);
     ~RemoteLayerTreeDrawingAreaProxyMac();
 
     void didRefreshDisplay() override;
@@ -59,6 +59,8 @@ public:
     std::optional<WebCore::PlatformLayerIdentifier> pageScrollingLayerID() { return m_pageScrollingLayerID.asOptional(); }
 
 private:
+    RemoteLayerTreeDrawingAreaProxyMac(WebPageProxy&, WebProcessProxy&);
+
     WebCore::DelegatedScrollingMode delegatedScrollingMode() const override;
     std::unique_ptr<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const override;
 
@@ -81,6 +83,9 @@ private:
     void setPreferredFramesPerSecond(IPC::Connection&, WebCore::FramesPerSecond) override;
     void windowScreenDidChange(WebCore::PlatformDisplayID) override;
     std::optional<WebCore::FramesPerSecond> displayNominalFramesPerSecond() override;
+
+    void dispatchSetTopContentInset() override;
+
     void colorSpaceDidChange() override;
 
     void viewIsBecomingVisible() final;

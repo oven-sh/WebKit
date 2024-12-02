@@ -21,7 +21,6 @@
 #pragma once
 
 #if USE(COORDINATED_GRAPHICS)
-
 #include <WebCore/Damage.h>
 #include <WebCore/NicosiaPlatformLayer.h>
 #include <WebCore/NicosiaScene.h>
@@ -30,6 +29,7 @@
 #include <WebCore/TextureMapperLayer.h>
 #include <WebCore/TextureMapperPlatformLayerProxy.h>
 #include <wtf/Function.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/RunLoop.h>
 #include <wtf/ThreadingPrimitives.h>
@@ -45,12 +45,14 @@ class CoordinatedGraphicsSceneClient {
 public:
     virtual ~CoordinatedGraphicsSceneClient() { }
     virtual void updateViewport() = 0;
+#if ENABLE(DAMAGE_TRACKING)
+    virtual const WebCore::Damage& addSurfaceDamage(const WebCore::Damage&) = 0;
+#endif
 };
 
-class CoordinatedGraphicsScene : public ThreadSafeRefCounted<CoordinatedGraphicsScene>, public WebCore::TextureMapperPlatformLayerProxy::Compositor
-    , public WebCore::TextureMapperLayerDamageVisitor {
+class CoordinatedGraphicsScene : public ThreadSafeRefCounted<CoordinatedGraphicsScene>, public WebCore::TextureMapperPlatformLayerProxy::Compositor {
 public:
-    CoordinatedGraphicsScene(CoordinatedGraphicsSceneClient*, WebCore::Damage::ShouldPropagate);
+    explicit CoordinatedGraphicsScene(CoordinatedGraphicsSceneClient*);
     virtual ~CoordinatedGraphicsScene();
 
     void applyStateChanges(const Vector<RefPtr<Nicosia::Scene>>&);
@@ -65,13 +67,16 @@ public:
     bool isActive() const { return m_isActive; }
     void setActive(bool active) { m_isActive = active; }
 
-    const WebCore::Damage& lastDamage() const { return m_damage; }
-    void recordDamage(const WebCore::FloatRect&) override;
+#if ENABLE(DAMAGE_TRACKING)
+    void setDamagePropagation(WebCore::Damage::Propagation damagePropagation) { m_damagePropagation = damagePropagation; }
+#endif
 
 private:
     void commitSceneState(const RefPtr<Nicosia::Scene>&);
 
     WebCore::TextureMapperLayer* rootLayer() { return m_rootLayer.get(); }
+
+    void removeLayer(Nicosia::CompositionLayer&);
 
     void updateViewport();
 
@@ -90,12 +95,15 @@ private:
     CoordinatedGraphicsSceneClient* m_client;
     bool m_isActive { false };
 
-    WebCore::Damage::ShouldPropagate m_propagateDamage;
-    WebCore::Damage m_damage;
+#if ENABLE(DAMAGE_TRACKING)
+    WebCore::Damage::Propagation m_damagePropagation { WebCore::Damage::Propagation::None };
+#endif
 
     std::unique_ptr<WebCore::TextureMapperLayer> m_rootLayer;
 
     Nicosia::PlatformLayer::LayerID m_rootLayerID { 0 };
+
+    HashMap<WebCore::TextureMapperLayer*, Ref<WebCore::CoordinatedBackingStore>> m_backingStores;
 
     WebCore::TextureMapperFPSCounter m_fpsCounter;
 };

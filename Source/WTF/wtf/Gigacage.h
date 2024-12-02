@@ -30,6 +30,8 @@
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/MathExtras.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #if USE(SYSTEM_MALLOC)
 #define GIGACAGE_ENABLED 0
 
@@ -108,4 +110,4 @@ WTF_EXPORT_PRIVATE void* mallocArray(Kind, size_t numElements, size_t elementSiz
 
 } // namespace Gigacage
 
-
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

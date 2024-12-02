@@ -55,6 +55,8 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 const int defaultBufferLength = 32768;
@@ -100,6 +102,7 @@ void FileReaderLoader::start(ScriptExecutionContext* scriptExecutionContext, con
     // Construct and load the request.
     ResourceRequest request(m_urlForReading);
     request.setHTTPMethod("GET"_s);
+    request.setHiddenFromInspector(true);
 
     ThreadableLoaderOptions options;
     options.sendLoadCallbacks = SendCallbackPolicy::SendCallbacks;
@@ -380,3 +383,5 @@ void FileReaderLoader::setEncoding(StringView encoding)
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

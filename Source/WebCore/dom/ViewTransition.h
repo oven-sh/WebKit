@@ -30,16 +30,18 @@
 #include "Element.h"
 #include "ExceptionOr.h"
 #include "ImageBuffer.h"
-#include "JSValueInWrappedObject.h"
 #include "MutableStyleProperties.h"
 #include "Styleable.h"
-#include "ViewTransitionTypeSet.h"
 #include "ViewTransitionUpdateCallback.h"
 #include "VisibilityChangeClient.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/AtomString.h>
+
+namespace JSC {
+class JSValue;
+}
 
 namespace WebCore {
 
@@ -48,6 +50,7 @@ class DeferredPromise;
 class RenderLayerModelObject;
 class RenderViewTransitionCapture;
 class RenderLayerModelObject;
+class ViewTransitionTypeSet;
 
 enum class ViewTransitionPhase : uint8_t {
     PendingCapture,
@@ -67,9 +70,13 @@ public:
     LayoutPoint oldLayerToLayoutOffset;
     LayoutSize oldSize;
     RefPtr<MutableStyleProperties> oldProperties;
-    WeakStyleable newElement;
-    Vector<AtomString> classList;
+    bool initiallyIntersectsViewport { false };
 
+    WeakStyleable newElement;
+    LayoutRect newOverflowRect;
+    LayoutSize newSize;
+
+    Vector<AtomString> classList;
     RefPtr<MutableStyleProperties> groupStyleProperties;
 };
 
@@ -139,7 +146,7 @@ public:
 
 private:
     ListHashSet<AtomString> m_keys;
-    UncheckedKeyHashMap<AtomString, UniqueRef<CapturedElement>> m_map;
+    HashMap<AtomString, UniqueRef<CapturedElement>> m_map;
 };
 
 struct ViewTransitionParams {
@@ -186,16 +193,18 @@ public:
     bool documentElementIsCaptured() const;
 
     const ViewTransitionTypeSet& types() const { return m_types; }
-    void setTypes(Ref<ViewTransitionTypeSet>&& newTypes) { m_types = WTFMove(newTypes); }
+    void setTypes(Ref<ViewTransitionTypeSet>&&);
 
     RenderViewTransitionCapture* viewTransitionNewPseudoForCapturedElement(RenderLayerModelObject&);
 
     static constexpr Seconds defaultTimeout = 4_s;
+
 private:
     ViewTransition(Document&, RefPtr<ViewTransitionUpdateCallback>&&, Vector<AtomString>&&);
     ViewTransition(Document&, Vector<AtomString>&&);
 
-    Ref<MutableStyleProperties> copyElementBaseProperties(RenderLayerModelObject&, LayoutSize&);
+    Ref<MutableStyleProperties> copyElementBaseProperties(RenderLayerModelObject&, LayoutSize&, LayoutRect& overflowRect, bool& intersectsViewport);
+    bool updatePropertiesForRenderer(CapturedElement&, RenderBoxModelObject*, const AtomString&);
 
     // Setup view transition sub-algorithms.
     ExceptionOr<void> captureOldState();
@@ -205,7 +214,8 @@ private:
 
     void callUpdateCallback();
 
-    ExceptionOr<void> updatePseudoElementStyles();
+    void updatePseudoElementStyles();
+    ExceptionOr<void> updatePseudoElementSizes();
     ExceptionOr<void> checkForViewportSizeChange();
 
     void clearViewTransition();
@@ -215,6 +225,7 @@ private:
 
     // ActiveDOMObject.
     void stop() final;
+    bool virtualHasPendingActivity() const final;
 
     bool isCrossDocument() { return m_isCrossDocument; }
 

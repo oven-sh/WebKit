@@ -34,11 +34,9 @@
 #include <wtf/Identified.h>
 #include <wtf/TZoneMalloc.h>
 
-ALLOW_COMMA_BEGIN
-
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/rtc_base/async_packet_socket.h>
-
-ALLOW_COMMA_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace IPC {
 class Connection;
@@ -100,7 +98,7 @@ private:
     State m_state { STATE_BINDING };
 
     static const unsigned MAX_SOCKET_OPTION { rtc::Socket::OPT_RTP_SENDTIME_EXTN_ID + 1 };
-    std::optional<int> m_options[MAX_SOCKET_OPTION];
+    std::array<std::optional<int>, MAX_SOCKET_OPTION> m_options;
 
     bool m_isSuspended { false };
     WebCore::ScriptExecutionContextIdentifier m_contextIdentifier;

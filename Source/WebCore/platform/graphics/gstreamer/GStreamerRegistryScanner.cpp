@@ -740,11 +740,12 @@ GStreamerRegistryScanner::CodecLookupResult GStreamerRegistryScanner::isHEVCCode
     return areCapsSupported(configuration, h265Caps, shouldCheckForHardwareUse);
 }
 
-GStreamerRegistryScanner::CodecLookupResult GStreamerRegistryScanner::isCodecSupported(Configuration configuration, const String& codec, bool shouldCheckForHardwareUse) const
+GStreamerRegistryScanner::CodecLookupResult GStreamerRegistryScanner::isCodecSupported(Configuration configuration, const String& codec, bool shouldCheckForHardwareUse, CaseSensitiveCodecName caseSensitive) const
 {
     // If the codec is named like a mimetype (eg: video/avc) remove the "video/" part.
     size_t slashIndex = codec.find('/');
-    String codecName = slashIndex != notFound ? codec.substring(slashIndex + 1) : codec;
+    String subType = slashIndex != notFound ? codec.substring(slashIndex + 1) : codec;
+    auto codecName = caseSensitive == CaseSensitiveCodecName::Yes ? subType : subType.convertToASCIILowercase();
 
     CodecLookupResult result;
     if (codecName.startsWith("avc1"_s))
@@ -767,7 +768,7 @@ GStreamerRegistryScanner::CodecLookupResult GStreamerRegistryScanner::isCodecSup
 
 #ifndef GST_DISABLE_GST_DEBUG
     ASCIILiteral configLogString = configurationNameForLogging(configuration);
-    GST_LOG("Checked %s %s codec \"%s\" supported %s", shouldCheckForHardwareUse ? "hardware" : "software", configLogString.characters(), codecName.utf8().data(), boolForPrinting(result.isSupported));
+    GST_LOG("Checked %s %s codec \"%s\" supported %s", shouldCheckForHardwareUse ? "hardware" : "software", configLogString.characters(), codec.utf8().data(), boolForPrinting(result.isSupported));
 #endif
     return result;
 }
@@ -782,7 +783,7 @@ bool GStreamerRegistryScanner::supportsFeatures(const String& features) const
     return false;
 }
 
-MediaPlayerEnums::SupportsType GStreamerRegistryScanner::isContentTypeSupported(Configuration configuration, const ContentType& contentType, const Vector<ContentType>& contentTypesRequiringHardwareSupport) const
+MediaPlayerEnums::SupportsType GStreamerRegistryScanner::isContentTypeSupported(Configuration configuration, const ContentType& contentType, const Vector<ContentType>& contentTypesRequiringHardwareSupport, CaseSensitiveCodecName caseSensitive) const
 {
     VideoDecodingLimits* videoDecodingLimits = nullptr;
 #ifdef VIDEO_DECODING_LIMIT
@@ -885,7 +886,7 @@ MediaPlayerEnums::SupportsType GStreamerRegistryScanner::isContentTypeSupported(
                     return !fnmatch(hardwareCodec.utf8().data(), codec.utf8().data(), 0);
             }) != notFound;
         }) != notFound;
-        if (!isCodecSupported(configuration, codec, requiresHardwareSupport))
+        if (!isCodecSupported(configuration, codec, requiresHardwareSupport, caseSensitive))
             return SupportsType::IsNotSupported;
     }
     return SupportsType::IsSupported;
@@ -1014,16 +1015,16 @@ GStreamerRegistryScanner::RegistryLookupResult GStreamerRegistryScanner::isConfi
 #if USE(GSTREAMER_WEBRTC)
 RTCRtpCapabilities GStreamerRegistryScanner::audioRtpCapabilities(Configuration configuration)
 {
-    RTCRtpCapabilities capabilies;
-    fillAudioRtpCapabilities(configuration, capabilies);
-    return capabilies;
+    RTCRtpCapabilities capabilities;
+    fillAudioRtpCapabilities(configuration, capabilities);
+    return capabilities;
 }
 
 RTCRtpCapabilities GStreamerRegistryScanner::videoRtpCapabilities(Configuration configuration)
 {
-    RTCRtpCapabilities capabilies;
-    fillVideoRtpCapabilities(configuration, capabilies);
-    return capabilies;
+    RTCRtpCapabilities capabilities;
+    fillVideoRtpCapabilities(configuration, capabilities);
+    return capabilities;
 }
 
 static inline Vector<RTCRtpCapabilities::HeaderExtensionCapability> probeRtpExtensions(const Vector<ASCIILiteral>& candidates)
@@ -1108,13 +1109,13 @@ void GStreamerRegistryScanner::fillVideoRtpCapabilities(Configuration configurat
                         continue;
                 } else {
                     auto spsAsInteger = parseInteger<uint64_t>(profileLevelId, 16).value_or(0);
-                    uint8_t sps[3];
+                    std::array<uint8_t, 3> sps;
                     sps[0] = spsAsInteger >> 16;
                     sps[1] = (spsAsInteger >> 8) & 0xff;
                     sps[2] = spsAsInteger & 0xff;
 
                     auto caps = adoptGRef(gst_caps_new_empty_simple("video/x-h264"));
-                    gst_codec_utils_h264_caps_set_level_and_profile(caps.get(), sps, 3);
+                    gst_codec_utils_h264_caps_set_level_and_profile(caps.get(), sps.data(), 3);
                     if (!gst_element_factory_can_sink_any_caps(gst_element_get_factory(element.get()), caps.get()))
                         continue;
                 }

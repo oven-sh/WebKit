@@ -38,7 +38,11 @@ namespace WebKit {
 
 class RTCDataChannelRemoteManager final : private IPC::MessageReceiver {
 public:
-    static RTCDataChannelRemoteManager& sharedManager();
+    static RTCDataChannelRemoteManager& singleton();
+
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
 
     WebCore::RTCDataChannelRemoteHandlerConnection& remoteHandlerConnection();
     bool connectToRemoteSource(WebCore::RTCDataChannelIdentifier source, WebCore::RTCDataChannelIdentifier handler);

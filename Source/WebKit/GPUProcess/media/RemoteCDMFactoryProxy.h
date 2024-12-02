@@ -69,11 +69,11 @@ public:
     void addProxy(const RemoteCDMIdentifier&, RefPtr<RemoteCDMProxy>&&);
     void removeProxy(const RemoteCDMIdentifier&);
 
-    void addInstance(const RemoteCDMInstanceIdentifier&, std::unique_ptr<RemoteCDMInstanceProxy>&&);
+    void addInstance(const RemoteCDMInstanceIdentifier&, Ref<RemoteCDMInstanceProxy>&&);
     void removeInstance(const RemoteCDMInstanceIdentifier&);
     RemoteCDMInstanceProxy* getInstance(const RemoteCDMInstanceIdentifier&);
 
-    void addSession(const RemoteCDMInstanceSessionIdentifier&, std::unique_ptr<RemoteCDMInstanceSessionProxy>&&);
+    void addSession(const RemoteCDMInstanceSessionIdentifier&, Ref<RemoteCDMInstanceSessionProxy>&&);
     void removeSession(const RemoteCDMInstanceSessionIdentifier&);
 
     RefPtr<GPUConnectionToWebProcess> gpuConnectionToWebProcess() { return m_gpuConnectionToWebProcess.get(); }
@@ -101,8 +101,8 @@ private:
 
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     HashMap<RemoteCDMIdentifier, RefPtr<RemoteCDMProxy>> m_proxies;
-    HashMap<RemoteCDMInstanceIdentifier, std::unique_ptr<RemoteCDMInstanceProxy>> m_instances;
-    HashMap<RemoteCDMInstanceSessionIdentifier, std::unique_ptr<RemoteCDMInstanceSessionProxy>> m_sessions;
+    HashMap<RemoteCDMInstanceIdentifier, Ref<RemoteCDMInstanceProxy>> m_instances;
+    HashMap<RemoteCDMInstanceSessionIdentifier, Ref<RemoteCDMInstanceSessionProxy>> m_sessions;
 
 #if !RELEASE_LOG_DISABLED
     mutable RefPtr<Logger> m_logger;

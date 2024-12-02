@@ -52,13 +52,13 @@ PageClientImpl::PageClientImpl(WebView& view)
 }
 
 // PageClient's pure virtual functions
-std::unique_ptr<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
+Ref<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
 {
 #if USE(GRAPHICS_LAYER_WC)
     if (m_view.page()->preferences().useGPUProcessForWebGLEnabled())
-        return makeUnique<DrawingAreaProxyWC>(*m_view.page(), webProcessProxy);
+        return DrawingAreaProxyWC::create(*m_view.page(), webProcessProxy);
 #endif
-    return makeUnique<DrawingAreaProxyCoordinatedGraphics>(*m_view.page(), webProcessProxy);
+    return DrawingAreaProxyCoordinatedGraphics::create(*m_view.page(), webProcessProxy);
 }
 
 void PageClientImpl::setViewNeedsDisplay(const WebCore::Region& region)
@@ -123,11 +123,6 @@ void PageClientImpl::setCursor(const WebCore::Cursor& cursor)
 }
 
 void PageClientImpl::setCursorHiddenUntilMouseMoves(bool /* hiddenUntilMouseMoves */)
-{
-    notImplemented();
-}
-
-void PageClientImpl::didChangeViewportProperties(const WebCore::ViewportAttributes&)
 {
     notImplemented();
 }

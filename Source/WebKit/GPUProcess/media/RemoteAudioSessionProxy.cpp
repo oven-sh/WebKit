@@ -164,14 +164,7 @@ void RemoteAudioSessionProxy::setSoundStageSize(AudioSession::SoundStageSize siz
 
 RemoteAudioSessionProxyManager& RemoteAudioSessionProxy::audioSessionManager()
 {
-    return m_gpuConnection.get()->gpuProcess().audioSessionManager();
-}
-
-bool RemoteAudioSessionProxy::allowTestOnlyIPC()
-{
-    if (auto connection = m_gpuConnection.get())
-        return connection->allowTestOnlyIPC();
-    return false;
+    return m_gpuConnection.get()->protectedGPUProcess()->audioSessionManager();
 }
 
 Ref<RemoteAudioSessionProxyManager> RemoteAudioSessionProxy::protectedAudioSessionManager()
@@ -186,13 +179,11 @@ Ref<IPC::Connection> RemoteAudioSessionProxy::protectedConnection() const
 
 void RemoteAudioSessionProxy::triggerBeginInterruptionForTesting()
 {
-    MESSAGE_CHECK(m_gpuConnection.get()->allowTestOnlyIPC());
     AudioSession::protectedSharedSession()->beginInterruptionForTesting();
 }
 
 void RemoteAudioSessionProxy::triggerEndInterruptionForTesting()
 {
-    MESSAGE_CHECK(m_gpuConnection.get()->allowTestOnlyIPC());
     AudioSession::protectedSharedSession()->endInterruptionForTesting();
 }
 

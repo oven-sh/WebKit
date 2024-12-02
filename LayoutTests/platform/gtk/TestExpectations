@@ -42,7 +42,6 @@ security/contentSecurityPolicy/plugins-types-allows-youtube-plugin-replacement.h
 webkit.org/b/175290 imported/w3c/web-platform-tests/css/css-ui/text-overflow-005.html [ Pass ]
 
 imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-color-input-background-color-001.html [ Pass ]
-imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-select-dropdown-box-background-color-001.html [ Pass ]
 
 webkit.org/b/191506 fast/css-grid-layout/grid-item-scroll-position.html [ Pass ]
 
@@ -957,6 +956,9 @@ webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/
 webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/worker-src-wildcard/sharedworker-import.http.html [ Failure ]
 webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/worker-src-wildcard/sharedworker-import.https.html [ Failure ]
 
+# Test started timing out after changes on 11/6/24
+webkit.org/b/282711 imported/w3c/web-platform-tests/pointerevents/pointerevent_touch-action-keyboard.html [ Failure ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Expected failures.
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -998,6 +1000,10 @@ webkit.org/b/114735 svg/filters/filter-hidden-content.svg [ Failure Pass ]
 
 webkit.org/b/116961 perf/show-hide-table-rows.html [ Failure Pass ]
 
+webkit.org/b/263872 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/animation-with-animatable-interface.html [ ImageOnlyFailure ]
+webkit.org/b/263872 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/animation-with-display-none.html [ ImageOnlyFailure ]
+webkit.org/b/263872 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/progress-based-effect-delay.tentative.html [ ImageOnlyFailure ]
+
 # These tests started to time out (or time out more often) since the FTL merge
 webkit.org/b/119253 [ Debug ] js/dfg-osr-entry-hoisted-clobbered-structure-check.html [ Timeout Pass ]
 webkit.org/b/119253 [ Debug ] fast/media/update-media-query-css-parser.html [ Timeout Pass ]
@@ -1037,7 +1043,6 @@ webkit.org/b/190703 inspector/worker/debugger-pause.html [ Failure Pass Timeout 
 
 webkit.org/b/194382 mathml/presentation/stretchy-depth-height-symmetric.html [ Failure ]
 imported/w3c/web-platform-tests/mathml/presentation-markup/tables/table-002.html [ Pass ]
-imported/w3c/web-platform-tests/mathml/relations/css-styling/not-participating-to-parent-layout.html [ Pass ]
 
 webkit.org/b/195466 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/ready-states/autoplay.html [ Failure ]
 
@@ -1660,6 +1665,9 @@ webkit.org/b/186601 fullscreen/full-screen-layer-dump.html [ Failure ]
 
 webkit.org/b/187994 compositing/backing/backing-store-attachment-fill-forwards-animation.html [ Failure ]
 
+# No support for compositing clip-path?
+webkit.org/b/282148 compositing/masks/clip-path-on-tiled-toggle.html [ Failure ]
+
 webkit.org/b/188218 fast/repaint/canvas-object-fit.html [ Failure ]
 
 webkit.org/b/188436 svg/custom/href-svg-namespace-static.svg [ ImageOnlyFailure ]
@@ -1773,7 +1781,6 @@ imported/w3c/web-platform-tests/xhr/send-authentication-basic-setrequestheader-e
 
 webkit.org/b/252953 imported/w3c/web-platform-tests/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/video-default-object-height-constrained-by-max-width.html [ ImageOnlyFailure ]
 webkit.org/b/252953 imported/w3c/web-platform-tests/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/video-default-object-width-constrained-by-max-height.html [ ImageOnlyFailure ]
-webkit.org/b/257752 imported/w3c/web-platform-tests/html/rendering/the-details-element/summary-text-decoration.html [ ImageOnlyFailure ]
 # Ftp code is disabled in gtk port
 http/tests/misc/ftp-eplf-directory.py [ Skip ]
 
@@ -1892,8 +1899,6 @@ webkit.org/b/264680 media/video-seek-past-end-playing.html [ Pass Timeout ]
 webkit.org/b/264680 scrollbars/scrollbar-selectors.html [ Pass Timeout ]
 webkit.org/b/264680 webrtc/peer-connection-audio-mute2.html [ Failure Pass Timeout ]
 
-webkit.org/b/276587 webrtc/video-av1.html [ Pass Timeout ]
-
 fast/dom/no-scroll-when-command-click-fragment-URL.html [ Skip ]
 
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus-2.html [ Failure ]
@@ -1908,6 +1913,7 @@ compositing/repaint/copy-forward-dirty-region.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/web-animations-api.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-on-top-of-viewport-partially-onscreen-new.html [ Pass ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/scroller.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-view-transitions/view-transition-types-stay.html [ Pass ImageOnlyFailure ]
 
 http/tests/login-status/login-status-api-getter-setter-functions.html [ Failure ]
 
@@ -1926,6 +1932,7 @@ webkit.org/b/278719 fast/events/touch/emulate-touch-events.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/input-touch-target.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/inserted-fragment-touch-target.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/moved-touch-target.html [ Timeout ]
+webkit.org/b/278719 fast/events/touch/multi-touch-inside-iframes.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/removed-fragment-touch-target.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/removed-touch-target.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/tap-highlight-color.html [ Timeout ]
@@ -1945,3 +1952,7 @@ webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/touch-globaleve
 
 fast/text/simple-line-layout-hyphenation-constrains.html [ ImageOnlyFailure ]
 editing/spelling/spelling-marker-includes-hyphen.html [ ImageOnlyFailure ]
+
+http/tests/cookies/same-site/fetch-after-navigating-iframe-in-cross-origin-page.html [ Failure ]
+http/tests/cookies/same-site/fetch-in-cross-origin-service-worker.html [ Failure ]
+http/tests/cookies/same-site/popup-cross-site-post.html [ Failure ]

@@ -443,7 +443,7 @@ public:
     // This is different from the asynchronous MediaKeyError.
     enum MediaKeyException { NoError, InvalidPlayerState, KeySystemNotSupported };
 
-    std::unique_ptr<LegacyCDMSession> createSession(const String& keySystem, LegacyCDMSessionClient&);
+    RefPtr<LegacyCDMSession> createSession(const String& keySystem, LegacyCDMSessionClient&);
     void setCDM(LegacyCDM*);
     void setCDMSession(LegacyCDMSession*);
     void keyAdded();
@@ -525,10 +525,6 @@ public:
 
     void paint(GraphicsContext&, const FloatRect& destination);
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect& destination);
-
-#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
-    void willBeAskedToPaintGL();
-#endif
 
     RefPtr<VideoFrame> videoFrameForCurrentTime();
     RefPtr<NativeImage> nativeImageForCurrentTime();

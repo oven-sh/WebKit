@@ -32,6 +32,7 @@
 #include "HTMLTableCellElement.h"
 #include "HTMLTableColElement.h"
 #include "HTMLTableElement.h"
+#include "InlineDisplayContent.h"
 #include "LayoutBox.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutChildIterator.h"
@@ -60,6 +61,8 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextStream.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 namespace Layout {
@@ -590,3 +593,4 @@ void printLayoutTreeForLiveDocuments()
 }
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

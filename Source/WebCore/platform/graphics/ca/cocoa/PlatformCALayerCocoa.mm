@@ -1138,10 +1138,13 @@ void PlatformCALayerCocoa::updateContentsFormat()
         BEGIN_BLOCK_OBJC_EXCEPTIONS
         auto contentsFormat = this->contentsFormat();
 
-        [m_layer setContentsFormat:contentsFormatString(contentsFormat)];
+        if (NSString *formatString = contentsFormatString(contentsFormat))
+            [m_layer setContentsFormat:formatString];
 #if HAVE(HDR_SUPPORT)
-        [m_layer setWantsExtendedDynamicRangeContent:contentsFormatWantsExtendedDynamicRangeContent(contentsFormat)];
-        [m_layer setToneMapMode:contentsFormatWantsToneMapMode(contentsFormat) ? CAToneMapModeIfSupported : CAToneMapModeAutomatic];
+        if (contentsFormat == ContentsFormat::RGBA16F) {
+            [m_layer setWantsExtendedDynamicRangeContent:true];
+            [m_layer setToneMapMode:CAToneMapModeIfSupported];
+        }
 #endif
         END_BLOCK_OBJC_EXCEPTIONS
     }
@@ -1323,8 +1326,8 @@ AVPlayerLayer *PlatformCALayerCocoa::avPlayerLayer() const
     if ([platformLayer() isKindOfClass:PAL::getAVPlayerLayerClass()])
         return static_cast<AVPlayerLayer *>(platformLayer());
 
-    if ([platformLayer() isKindOfClass:WebVideoContainerLayer.class])
-        return static_cast<WebVideoContainerLayer *>(platformLayer()).playerLayer;
+    if (auto *layer = dynamic_objc_cast<WebVideoContainerLayer>(platformLayer()))
+        return layer.playerLayer;
 
     ASSERT_NOT_REACHED();
     return nil;

@@ -32,6 +32,7 @@
 #include <WebCore/IntSize.h>
 #include <WebCore/Region.h>
 #include <wtf/HashMap.h>
+#include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/unix/UnixFileDescriptor.h>
@@ -51,12 +52,13 @@ class UnixFileDescriptor;
 namespace WebKit {
 
 class WebPageProxy;
+class WebProcessProxy;
 
-class AcceleratedBackingStoreDMABuf final : public IPC::MessageReceiver {
+class AcceleratedBackingStoreDMABuf final : public IPC::MessageReceiver, public RefCounted<AcceleratedBackingStoreDMABuf> {
     WTF_MAKE_TZONE_ALLOCATED(AcceleratedBackingStoreDMABuf);
     WTF_MAKE_NONCOPYABLE(AcceleratedBackingStoreDMABuf);
 public:
-    static std::unique_ptr<AcceleratedBackingStoreDMABuf> create(WebPageProxy&, WPEView*);
+    static Ref<AcceleratedBackingStoreDMABuf> create(WebPageProxy&, WPEView*);
     ~AcceleratedBackingStoreDMABuf();
 
     void updateSurfaceID(uint64_t);
@@ -78,10 +80,11 @@ private:
     void bufferRendered();
     void bufferReleased(WPEBuffer*);
 
-    WebPageProxy& m_webPage;
+    WeakPtr<WebPageProxy> m_webPage;
     GRefPtr<WPEView> m_wpeView;
     FenceMonitor m_fenceMonitor;
     uint64_t m_surfaceID { 0 };
+    WeakPtr<WebProcessProxy> m_legacyMainFrameProcess;
     GRefPtr<WPEBuffer> m_pendingBuffer;
     GRefPtr<WPEBuffer> m_committedBuffer;
     WebCore::Region m_pendingDamageRegion;

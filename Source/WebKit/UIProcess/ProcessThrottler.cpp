@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -66,7 +66,7 @@ public:
         auto type = assertion->type();
         assertion->setInvalidationHandler(nullptr);
         ASSERT(!m_entries.contains(type));
-        m_entries.add(type, makeUniqueRef<CachedAssertion>(*this, WTFMove(assertion)));
+        m_entries.add(type, CachedAssertion::create(*this, WTFMove(assertion)));
     }
 
     RefPtr<ProcessAssertion> tryTake(ProcessAssertionType type)
@@ -89,9 +89,18 @@ public:
     }
 
 private:
-    class CachedAssertion {
+    class CachedAssertion : public RefCounted<CachedAssertion> {
         WTF_MAKE_TZONE_ALLOCATED(CachedAssertion);
     public:
+        static Ref<CachedAssertion> create(ProcessAssertionCache& cache, Ref<ProcessAssertion>&& assertion)
+        {
+            return adoptRef(*new CachedAssertion(cache, WTFMove(assertion)));
+        }
+
+        bool isValid() const { return m_assertion->isValid(); }
+        Ref<ProcessAssertion> release() { return m_assertion.releaseNonNull(); }
+
+    private:
         CachedAssertion(ProcessAssertionCache& cache, Ref<ProcessAssertion>&& assertion)
             : m_cache(cache)
             , m_assertion(WTFMove(assertion))
@@ -100,10 +109,6 @@ private:
             m_expirationTimer.startOneShot(processAssertionCacheLifetime);
         }
 
-        bool isValid() const { return m_assertion->isValid(); }
-        Ref<ProcessAssertion> release() { return m_assertion.releaseNonNull(); }
-
-    private:
         void entryExpired()
         {
             ASSERT(m_assertion);
@@ -115,12 +120,16 @@ private:
         RunLoop::Timer m_expirationTimer;
     };
 
-    HashMap<ProcessAssertionType, UniqueRef<CachedAssertion>, IntHash<ProcessAssertionType>, WTF::StrongEnumHashTraits<ProcessAssertionType>> m_entries;
+    HashMap<ProcessAssertionType, Ref<CachedAssertion>, IntHash<ProcessAssertionType>, WTF::StrongEnumHashTraits<ProcessAssertionType>> m_entries;
     bool m_isEnabled { true };
 };
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(ProcessThrottlerProcessAssertionCache, ProcessThrottler::ProcessAssertionCache);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(ProcessThrottlerProcessAssertionCacheCachedAssertion, ProcessThrottler::ProcessAssertionCache::CachedAssertion);
+} // namespace WebKit
+
+namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(ProcessThrottler, ProcessAssertionCache);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED_2X(ProcessThrottler, ProcessAssertionCache, CachedAssertion);
 
 static uint64_t generatePrepareToSuspendRequestID()
 {
@@ -529,6 +538,11 @@ Ref<AuxiliaryProcessProxy> ProcessThrottler::protectedProcess() const
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottlerTimedActivity);
 
+Ref<ProcessThrottlerTimedActivity> ProcessThrottlerTimedActivity::create(Seconds timeout, RefPtr<Activity>&& activity)
+{
+    return adoptRef(*new ProcessThrottlerTimedActivity(timeout, WTFMove(activity)));
+}
+
 ProcessThrottlerTimedActivity::ProcessThrottlerTimedActivity(Seconds timeout, RefPtr<ProcessThrottlerTimedActivity::Activity>&& activity)
     : m_timer(RunLoop::main(), this, &ProcessThrottlerTimedActivity::activityTimedOut)
     , m_timeout(timeout)
@@ -537,11 +551,10 @@ ProcessThrottlerTimedActivity::ProcessThrottlerTimedActivity(Seconds timeout, Re
     updateTimer();
 }
 
-auto ProcessThrottlerTimedActivity::operator=(RefPtr<ProcessThrottlerTimedActivity::Activity>&& activity) -> ProcessThrottlerTimedActivity&
+void ProcessThrottlerTimedActivity::setActivity(RefPtr<ProcessThrottlerTimedActivity::Activity>&& activity)
 {
     m_activity = WTFMove(activity);
     updateTimer();
-    return *this;
 }
 
 void ProcessThrottlerTimedActivity::activityTimedOut()

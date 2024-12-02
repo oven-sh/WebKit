@@ -54,6 +54,7 @@
 #include "FrameLoader.h"
 #include "FrameSelection.h"
 #include "FrameTree.h"
+#include "FullscreenManager.h"
 #include "GraphicsContext.h"
 #include "HTMLBodyElement.h"
 #include "HTMLEmbedElement.h"
@@ -382,23 +383,6 @@ void LocalFrameView::recalculateScrollbarOverlayStyle()
     if (scrollbarOverlayStyle() != style)
         setScrollbarOverlayStyle(style);
 }
-
-#if ENABLE(DARK_MODE_CSS)
-
-void LocalFrameView::recalculateBaseBackgroundColor()
-{
-    auto styleColorOptions = this->styleColorOptions();
-    if (m_styleColorOptions == styleColorOptions)
-        return;
-
-    m_styleColorOptions = styleColorOptions;
-    std::optional<Color> backgroundColor;
-    if (m_isTransparent)
-        backgroundColor = Color(Color::transparentBlack);
-    updateBackgroundRecursively(backgroundColor);
-}
-
-#endif
 
 void LocalFrameView::clear()
 {
@@ -1325,7 +1309,7 @@ void LocalFrameView::didLayout(SingleThreadWeakPtr<RenderElement> layoutRoot, bo
 
 #if PLATFORM(COCOA) || PLATFORM(WIN) || PLATFORM(GTK)
     if (CheckedPtr cache = document->existingAXObjectCache())
-        cache->postNotification(layoutRoot.get(), AXObjectCache::AXLayoutComplete);
+        cache->postNotification(layoutRoot.get(), AXNotification::LayoutComplete);
 #else
     UNUSED_PARAM(layoutRoot);
 #endif
@@ -2514,7 +2498,6 @@ void LocalFrameView::scrollToFocusedElementImmediatelyIfNeeded()
 
 void LocalFrameView::scrollToFocusedElementTimerFired()
 {
-    Ref protectedThis { *this };
     scrollToFocusedElementInternal();
 }
 
@@ -2555,8 +2538,6 @@ void LocalFrameView::scrollToFocusedElementInternal()
 
 void LocalFrameView::textFragmentIndicatorTimerFired()
 {
-    Ref protectedThis { *this };
-    
     ASSERT(m_frame->document());
     auto& document = *m_frame->document();
     
@@ -2781,35 +2762,6 @@ void LocalFrameView::delegatedScrollingModeDidChange()
         compositor.clearBackingForAllLayers();
     }
 }
-
-#if USE(COORDINATED_GRAPHICS)
-void LocalFrameView::setFixedVisibleContentRect(const IntRect& visibleContentRect)
-{
-    bool visibleContentSizeDidChange = false;
-    if (visibleContentRect.size() != this->fixedVisibleContentRect().size()) {
-        // When the viewport size changes or the content is scaled, we need to
-        // reposition the fixed and sticky positioned elements.
-        setViewportConstrainedObjectsNeedLayout();
-        visibleContentSizeDidChange = true;
-    }
-
-    IntPoint oldPosition = scrollPosition();
-    ScrollView::setFixedVisibleContentRect(visibleContentRect);
-    IntPoint newPosition = scrollPosition();
-    if (oldPosition != newPosition) {
-        updateLayerPositionsAfterScrolling();
-        if (m_frame->settings().acceleratedCompositingForFixedPositionEnabled())
-            updateCompositingLayersAfterScrolling();
-        scrollAnimator().setCurrentPosition(newPosition);
-        scrollPositionChanged(oldPosition, newPosition);
-    }
-    if (visibleContentSizeDidChange) {
-        // Update the scroll-bars to calculate new page-step size.
-        updateScrollbars(scrollPosition());
-    }
-    didChangeScrollOffset();
-}
-#endif
 
 void LocalFrameView::setViewportConstrainedObjectsNeedLayout()
 {
@@ -3459,26 +3411,43 @@ void LocalFrameView::setBaseBackgroundColor(const Color& backgroundColor)
     setNeedsCompositingConfigurationUpdate();
 }
 
+#if ENABLE(DARK_MODE_CSS)
+void LocalFrameView::updateBaseBackgroundColorIfNecessary()
+{
+    auto styleColorOptions = this->styleColorOptions();
+    if (m_styleColorOptions == styleColorOptions)
+        return;
+
+    m_styleColorOptions = styleColorOptions;
+    std::optional<Color> backgroundColor;
+    if (m_isTransparent)
+        backgroundColor = Color(Color::transparentBlack);
+
+    updateBackgroundRecursively(backgroundColor);
+}
+#endif
+
 void LocalFrameView::updateBackgroundRecursively(const std::optional<Color>& backgroundColor)
 {
+    auto intrinsicBaseBackgroundColor = [](LocalFrameView& view) -> Color {
 #if HAVE(OS_DARK_MODE_SUPPORT)
 #if PLATFORM(COCOA)
-    static const auto cssValueControlBackground = CSSValueAppleSystemControlBackground;
+        static const auto cssValueControlBackground = CSSValueAppleSystemControlBackground;
 #else
-    static const auto cssValueControlBackground = CSSValueWindow;
+        static const auto cssValueControlBackground = CSSValueWindow;
 #endif
+        return RenderTheme::singleton().systemColor(cssValueControlBackground, view.styleColorOptions());
 #endif
+        return Color::white;
+    };
 
     for (Frame* frame = m_frame.ptr(); frame; frame = frame->tree().traverseNext(m_frame.ptr())) {
         auto* localFrame = dynamicDowncast<LocalFrame>(frame);
         if (!localFrame)
             continue;
-        if (auto* view = localFrame->view()) {
-#if HAVE(OS_DARK_MODE_SUPPORT)
-            auto baseBackgroundColor = backgroundColor.value_or(RenderTheme::singleton().systemColor(cssValueControlBackground, view->styleColorOptions()));
-#else
-            auto baseBackgroundColor = backgroundColor.value_or(Color::white);
-#endif
+
+        if (RefPtr view = localFrame->view()) {
+            auto baseBackgroundColor = backgroundColor.value_or(intrinsicBaseBackgroundColor(*view));
             view->setTransparent(!baseBackgroundColor.isVisible());
             view->setBaseBackgroundColor(baseBackgroundColor);
             if (view->needsLayout())
@@ -3780,7 +3749,6 @@ bool LocalFrameView::updateEmbeddedObjects()
 
 void LocalFrameView::updateEmbeddedObjectsTimerFired()
 {
-    Ref protectedThis { *this };
     m_updateEmbeddedObjectsTimer.stop();
     for (unsigned i = 0; i < maxUpdateEmbeddedObjectsIterations; ++i) {
         if (updateEmbeddedObjects())

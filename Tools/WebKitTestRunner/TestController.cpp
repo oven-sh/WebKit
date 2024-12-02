@@ -1071,6 +1071,7 @@ void TestController::ensureViewSupportsOptionsForTest(const TestInvocation& test
         m_createdOtherPage = false;
     }
 
+    platformEnsureGPUProcessConfiguredForOptions(options);
     createWebViewWithOptions(options);
 
     if (!resetStateToConsistentValues(options, ResetStage::BeforeTest))
@@ -1197,6 +1198,8 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 
     WKPageClearUserMediaState(m_mainWebView->page());
 
+    setTracksRepaints(false);
+
     // Reset notification permissions
     m_webNotificationProvider.reset();
     m_notificationOriginsToDenyOnPrompt.clear();
@@ -1274,7 +1277,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 
     WKPageDispatchActivityStateUpdateForTesting(m_mainWebView->page());
 
-    WKPageResetProcessState(m_mainWebView->page());
+    WKPageResetStateBetweenTests(m_mainWebView->page());
 
     m_didReceiveServerRedirectForProvisionalNavigation = false;
     m_serverTrustEvaluationCallbackCallsCount = 0;
@@ -1298,7 +1301,9 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
             return false;
         }
     }
-    
+
+    WKPageClearBackForwardListForTesting(TestController::singleton().mainWebView()->page(), nullptr, [](void*) { });
+
     if (resetStage == ResetStage::AfterTest) {
         updateLiveDocumentsAfterTest();
 #if PLATFORM(COCOA)
@@ -2191,6 +2196,12 @@ void TestController::didReceiveAsyncMessageFromInjectedBundle(WKStringRef messag
     if (WKStringIsEqualToUTF8CString(messageName, "SetTopContentInset"))
         return WKPageSetTopContentInsetForTesting(TestController::singleton().mainWebView()->page(), static_cast<float>(doubleValue(messageBody)), completionHandler.leak(), adoptAndCallCompletionHandler);
 
+    if (WKStringIsEqualToUTF8CString(messageName, "ClearBackForwardList"))
+        return WKPageClearBackForwardListForTesting(TestController::singleton().mainWebView()->page(), completionHandler.leak(), adoptAndCallCompletionHandler);
+
+    if (WKStringIsEqualToUTF8CString(messageName, "DisplayAndTrackRepaints"))
+        return WKPageDisplayAndTrackRepaintsForTesting(TestController::singleton().mainWebView()->page(), completionHandler.leak(), adoptAndCallCompletionHandler);
+
     ASSERT_NOT_REACHED();
 }
 
@@ -2827,6 +2838,9 @@ void TestController::downloadDidWriteData(WKDownloadRef download, long long byte
 
 void TestController::webProcessDidTerminate(WKProcessTerminationReason reason)
 {
+    if (m_currentInvocation->options().shouldIgnoreWebProcessTermination())
+        return;
+
     // This function can be called multiple times when crash logs are being saved on Windows, so
     // ensure we only print the crashed message once.
     if (!m_didPrintWebProcessCrashedMessage) {
@@ -4263,6 +4277,10 @@ bool TestController::keyExistsInKeychain(const String&, const String&)
 void TestController::setAllowedMenuActions(const Vector<String>&)
 {
 }
+
+void TestController::platformEnsureGPUProcessConfiguredForOptions(const TestOptions&)
+{
+}
 #endif
 
 #if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WPE)
@@ -4282,6 +4300,13 @@ WKRetainPtr<WKArrayRef> TestController::getAndClearReportedWindowProxyAccessDoma
 void TestController::setServiceWorkerFetchTimeoutForTesting(double seconds)
 {
     WKWebsiteDataStoreSetServiceWorkerFetchTimeoutForTesting(websiteDataStore(), seconds);
+}
+
+void TestController::setTracksRepaints(bool trackRepaints)
+{
+    GenericVoidContext context(*this);
+    WKPageSetTracksRepaintsForTesting(TestController::singleton().mainWebView()->page(), &context, trackRepaints, genericVoidCallback);
+    runUntil(context.done, noTimeout);
 }
 
 struct PrivateClickMeasurementStringResultCallbackContext {

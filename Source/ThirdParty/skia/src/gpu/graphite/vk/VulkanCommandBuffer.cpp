@@ -21,6 +21,7 @@
 #include "src/gpu/graphite/TextureProxy.h"
 #include "src/gpu/graphite/UniformManager.h"
 #include "src/gpu/graphite/vk/VulkanBuffer.h"
+#include "src/gpu/graphite/vk/VulkanCaps.h"
 #include "src/gpu/graphite/vk/VulkanDescriptorSet.h"
 #include "src/gpu/graphite/vk/VulkanFramebuffer.h"
 #include "src/gpu/graphite/vk/VulkanGraphiteUtilsPriv.h"
@@ -36,12 +37,89 @@ namespace skgpu::graphite {
 
 class VulkanDescriptorSet;
 
+/**
+ * Since intrinsic uniforms need to be read in the vertex shader, we cannot use protected buffers
+ * for them when submitting protected work. Thus in order to upload data to them, we need to make
+ * them mappable instead of using commands to copy data to them (would require them to be
+ * protected if we did). This helper class manages rotating through buffers and writing each new
+ * occurrence of a set of intrinsic uniforms into the current buffer.
+ *
+ * Ideally we would remove this class and instead use push constants for all intrinsic uniforms.
+ */
+class VulkanCommandBuffer::IntrinsicConstantsManager {
+public:
+    BindBufferInfo add(VulkanCommandBuffer* cb, UniformDataBlock intrinsicValues) {
+        static constexpr int kNumSlots = 8;
+
+        BindBufferInfo* existing = fCachedIntrinsicValues.find(intrinsicValues);
+        if (existing) {
+            return *existing;
+        }
+
+        SkASSERT(!cb->fActiveRenderPass);
+
+        const Caps* caps = cb->fSharedContext->caps();
+        const uint32_t stride =
+                SkAlignTo(intrinsicValues.size(), caps->requiredUniformBufferAlignment());
+        if (!fCurrentBuffer || fSlotsUsed == kNumSlots) {
+            VulkanResourceProvider* resourceProvider = cb->fResourceProvider;
+            sk_sp<Buffer> buffer = resourceProvider->findOrCreateBuffer(stride * kNumSlots,
+                                                                        BufferType::kUniform,
+                                                                        AccessPattern::kHostVisible,
+                                                                        "IntrinsicConstantBuffer");
+            if (!buffer) {
+                return {};
+            }
+            VulkanBuffer* ptr = static_cast<VulkanBuffer*>(buffer.release());
+            fCurrentBuffer = sk_sp<VulkanBuffer>(ptr);
+
+            fSlotsUsed = 0;
+
+            if (!fCurrentBuffer) {
+                // If we failed to create a GPU buffer to hold the intrinsic uniforms, we will fail
+                // the Recording being inserted, so return an empty bind info.
+                return {};
+            }
+            cb->trackResource(fCurrentBuffer);
+        }
+
+        SkASSERT(fCurrentBuffer && fSlotsUsed < kNumSlots);
+        void* mapPtr = fCurrentBuffer->map();
+        if (!mapPtr) {
+            return {};
+        }
+        uint32_t offset = (fSlotsUsed++) * stride;
+        mapPtr = SkTAddOffset<void>(mapPtr, static_cast<ptrdiff_t>(offset));
+        memcpy(mapPtr, intrinsicValues.data(), intrinsicValues.size());
+        fCurrentBuffer->unmap();
+        BindBufferInfo binding{
+                fCurrentBuffer.get(), offset, SkTo<uint32_t>(intrinsicValues.size())};
+        fCachedIntrinsicValues.set(UniformDataBlock::Make(intrinsicValues, &fUniformData), binding);
+        return binding;
+    }
+
+private:
+    // The current buffer being filled up, as well as the how much of it has been written to.
+    sk_sp<VulkanBuffer> fCurrentBuffer;
+    int fSlotsUsed = 0;  // in multiples of the intrinsic uniform size and UBO binding requirement
+
+    // All uploaded intrinsic uniform sets and where they are on the GPU. All uniform sets are
+    // cached for the duration of a CommandBuffer since the maximum number of elements in this
+    // collection will equal the number of render passes and the intrinsic constants aren't that
+    // large. This maximizes the chance for reuse between passes.
+    skia_private::THashMap<UniformDataBlock, BindBufferInfo, UniformDataBlock::Hash>
+            fCachedIntrinsicValues;
+    SkArenaAlloc fUniformData{0};
+};
+
+
 std::unique_ptr<VulkanCommandBuffer> VulkanCommandBuffer::Make(
         const VulkanSharedContext* sharedContext,
-        VulkanResourceProvider* resourceProvider) {
+        VulkanResourceProvider* resourceProvider,
+        Protected isProtected) {
     // Create VkCommandPool
     VkCommandPoolCreateFlags cmdPoolCreateFlags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    if (sharedContext->isProtected() == Protected::kYes) {
+    if (isProtected == Protected::kYes) {
         cmdPoolCreateFlags |= VK_COMMAND_POOL_CREATE_PROTECTED_BIT;
     }
 
@@ -82,14 +160,17 @@ std::unique_ptr<VulkanCommandBuffer> VulkanCommandBuffer::Make(
     return std::unique_ptr<VulkanCommandBuffer>(new VulkanCommandBuffer(pool,
                                                                         primaryCmdBuffer,
                                                                         sharedContext,
-                                                                        resourceProvider));
+                                                                        resourceProvider,
+                                                                        isProtected));
 }
 
 VulkanCommandBuffer::VulkanCommandBuffer(VkCommandPool pool,
                                          VkCommandBuffer primaryCommandBuffer,
                                          const VulkanSharedContext* sharedContext,
-                                         VulkanResourceProvider* resourceProvider)
-        : fPool(pool)
+                                         VulkanResourceProvider* resourceProvider,
+                                         Protected isProtected)
+        : CommandBuffer(isProtected)
+        , fPool(pool)
         , fPrimaryCommandBuffer(primaryCommandBuffer)
         , fSharedContext(sharedContext)
         , fResourceProvider(resourceProvider) {
@@ -117,6 +198,7 @@ void VulkanCommandBuffer::onResetCommandBuffer() {
     SkASSERT(!fActive);
     VULKAN_CALL_ERRCHECK(fSharedContext, ResetCommandPool(fSharedContext->device(), fPool, 0));
     fActiveGraphicsPipeline = nullptr;
+    fIntrinsicConstants = nullptr;
     fBindUniformBuffers = true;
     fBoundIndexBuffer = VK_NULL_HANDLE;
     fBoundIndexBufferOffset = 0;
@@ -152,6 +234,7 @@ void VulkanCommandBuffer::begin() {
 
     VULKAN_CALL_ERRCHECK(fSharedContext,
                          BeginCommandBuffer(fPrimaryCommandBuffer, &cmdBufferBeginInfo));
+    fIntrinsicConstants = std::make_unique<IntrinsicConstantsManager>();
     fActive = true;
 }
 
@@ -306,7 +389,7 @@ bool VulkanCommandBuffer::submit(VkQueue queue) {
                                             &fPrimaryCommandBuffer,
                                             fSignalSemaphores.size(),
                                             fSignalSemaphores.data(),
-                                            fSharedContext->isProtected());
+                                            this->isProtected());
     fWaitSemaphores.clear();
     fSignalSemaphores.clear();
     if (submitResult != VK_SUCCESS) {
@@ -365,33 +448,24 @@ void VulkanCommandBuffer::waitUntilFinished() {
                                        /*timeout=*/UINT64_MAX));
 }
 
-void VulkanCommandBuffer::updateIntrinsicUniforms(SkIRect viewport) {
+bool VulkanCommandBuffer::updateIntrinsicUniforms(SkIRect viewport) {
     SkASSERT(fActive && !fActiveRenderPass);
 
     // The SkSL has declared these as a top-level interface block, which will use std140 in Vulkan.
     // If we switch to supporting push constants here, it would be std430 instead.
     UniformManager intrinsicValues{Layout::kStd140};
     CollectIntrinsicUniforms(fSharedContext->caps(), viewport, fDstCopyBounds, &intrinsicValues);
-    SkSpan<const char> bytes = intrinsicValues.finish();
-    SkASSERT(bytes.size_bytes() == VulkanResourceProvider::kIntrinsicConstantSize);
+    BindBufferInfo binding =
+            fIntrinsicConstants->add(this, UniformDataBlock::Wrap(&intrinsicValues));
+    if (!binding) {
+        return false;
+    } else if (binding ==
+               fUniformBuffersToBind[VulkanGraphicsPipeline::kIntrinsicUniformBufferIndex]) {
+        return true;  // no binding change needed
+    }
 
-    sk_sp<Buffer> intrinsicUniformBuffer = fResourceProvider->refIntrinsicConstantBuffer();
-    const VulkanBuffer* intrinsicVulkanBuffer =
-            static_cast<VulkanBuffer*>(intrinsicUniformBuffer.get());
-    SkASSERT(intrinsicVulkanBuffer && intrinsicVulkanBuffer->size() >= bytes.size_bytes());
-
-    fUniformBuffersToBind[VulkanGraphicsPipeline::kIntrinsicUniformBufferIndex] = {
-            intrinsicUniformBuffer.get(),
-            /*offset=*/0,
-            SkTo<uint32_t>(bytes.size_bytes())
-        };
-
-    this->updateBuffer(intrinsicVulkanBuffer, bytes.data(), bytes.size_bytes());
-
-    // Ensure the buffer update is completed and made visible before reading
-    intrinsicVulkanBuffer->setBufferAccess(this, VK_ACCESS_UNIFORM_READ_BIT,
-                                           VK_PIPELINE_STAGE_VERTEX_SHADER_BIT);
-    this->trackResource(std::move(intrinsicUniformBuffer));
+    fUniformBuffersToBind[VulkanGraphicsPipeline::kIntrinsicUniformBufferIndex] = binding;
+    return true;
 }
 
 bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
@@ -416,11 +490,21 @@ bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
                                           VK_ACCESS_SHADER_READ_BIT,
                                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                           false);
-            this->submitPipelineBarriers();
         }
     }
+    if (fDstCopy.first) {
+        VulkanTexture* vulkanTexture =
+                const_cast<VulkanTexture*>(static_cast<const VulkanTexture*>(fDstCopy.first));
+        vulkanTexture->setImageLayout(this,
+                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                      VK_ACCESS_SHADER_READ_BIT,
+                                      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                      false);
+    }
 
-    this->updateIntrinsicUniforms(viewport);
+    if (!this->updateIntrinsicUniforms(viewport)) {
+        return false;
+    }
     this->setViewport(viewport);
 
     if (!this->beginRenderPass(renderPassDesc,
@@ -436,32 +520,6 @@ bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
     }
 
     this->endRenderPass();
-    return true;
-}
-
-bool VulkanCommandBuffer::updateLoadMSAAVertexBuffer() {
-    const Buffer* vertexBuffer = fResourceProvider->loadMSAAVertexBuffer();
-    if (!vertexBuffer) {
-        return false;
-    }
-    const VulkanBuffer* vulkanVertexBuffer = static_cast<const VulkanBuffer*>(vertexBuffer);
-    SkASSERT(vulkanVertexBuffer->bufferUsageFlags() & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-
-    // Determine vertices in NDC. TODO: When only wanting to draw a portion of the resolve
-    // texture, these values will need to be dynamically determined. For now, simply span the
-    // range of NDC since we want to reference the entire resolve texture.
-    static constexpr float kVertices[8] = { 1.f,  1.f,
-                                            1.f, -1.f,
-                                           -1.f,  1.f,
-                                           -1.f, -1.f };
-    this->updateBuffer(vulkanVertexBuffer,
-                       &kVertices,
-                       VulkanResourceProvider::kLoadMSAAVertexBufferSize);
-
-    // Ensure the buffer update is completed and made visible before reading
-    vulkanVertexBuffer->setBufferAccess(this, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
-                                        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT);
-
     return true;
 }
 
@@ -519,7 +577,8 @@ bool VulkanCommandBuffer::updateAndBindLoadMSAAInputAttachment(const VulkanTextu
 
 bool VulkanCommandBuffer::loadMSAAFromResolve(const RenderPassDesc& renderPassDesc,
                                               VulkanTexture& resolveTexture,
-                                              SkISize dstDimensions) {
+                                              SkISize dstDimensions,
+                                              const SkIRect nativeDrawBounds) {
     sk_sp<VulkanGraphicsPipeline> loadPipeline =
             fResourceProvider->findOrCreateLoadMSAAPipeline(renderPassDesc);
     if (!loadPipeline) {
@@ -533,7 +592,7 @@ bool VulkanCommandBuffer::loadMSAAFromResolve(const RenderPassDesc& renderPassDe
     fBindUniformBuffers = false;
     fBindTextureSamplers = false;
 
-    this->setScissor(/*left=*/0, /*top=*/0, dstDimensions.width(), dstDimensions.height());
+    this->setScissor(SkIRect::MakeXYWH(0, 0, dstDimensions.width(), dstDimensions.height()));
 
     if (!this->updateAndBindLoadMSAAInputAttachment(resolveTexture)) {
         SKGPU_LOG_E("Unable to update and bind an input attachment descriptor for loading MSAA "
@@ -541,11 +600,23 @@ bool VulkanCommandBuffer::loadMSAAFromResolve(const RenderPassDesc& renderPassDe
         return false;
     }
 
-    SkASSERT(fResourceProvider->loadMSAAVertexBuffer());
-    this->bindVertexBuffers(fResourceProvider->loadMSAAVertexBuffer(),
-                            /*vertexOffset=*/0,
-                            /*instanceBuffer=*/nullptr,
-                            /*instanceOffset=*/0);
+    // Update and bind uniform descriptor set
+    int w = nativeDrawBounds.width();
+    int h = nativeDrawBounds.height();
+
+    // dst rect edges in NDC (-1 to 1)
+    int dw = dstDimensions.width();
+    int dh = dstDimensions.height();
+    float dx0 = 2.f * nativeDrawBounds.fLeft / dw - 1.f;
+    float dx1 = 2.f * (nativeDrawBounds.fLeft + w) / dw - 1.f;
+    float dy0 = 2.f * nativeDrawBounds.fTop / dh - 1.f;
+    float dy1 = 2.f * (nativeDrawBounds.fTop + h) / dh - 1.f;
+    float uniData[] = {dx1 - dx0, dy1 - dy0, dx0, dy0};  // posXform
+
+    this->pushConstants(VK_SHADER_STAGE_VERTEX_BIT,
+                        /*offset=*/0,
+                        /*size=*/sizeof(uniData),
+                        uniData);
 
     this->draw(PrimitiveType::kTriangleStrip, /*baseVertex=*/0, /*vertexCount=*/4);
     this->nextSubpass();
@@ -814,7 +885,13 @@ bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
                 GetRenderAreaGranularity(fSharedContext->device(),
                                          vulkanRenderPass->renderPass(),
                                          &granularity));
-    VkRect2D renderArea = get_render_area(renderPassBounds,
+
+    bool useFullBounds = loadMSAAFromResolve &&
+                         fSharedContext->vulkanCaps().mustLoadFullImageForMSAA();
+
+    VkRect2D renderArea = get_render_area(useFullBounds ? SkIRect::MakeWH(frameBufferWidth,
+                                                                          frameBufferHeight)
+                                                        : renderPassBounds,
                                           granularity,
                                           frameBufferWidth,
                                           frameBufferHeight);
@@ -829,22 +906,6 @@ bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
     beginInfo.clearValueCount = clearValues.size();
     beginInfo.pClearValues = clearValues.begin();
 
-    // If loading MSAA from resolve, we need to update and bind a vertex buffer w/ NDC. This entails
-    // take care of some necessary preparations that must be performed while there is not an active
-    // renderpass.
-    if (loadMSAAFromResolve) {
-        // We manually load the contents of the resolve texture into the MSAA attachment as a draw,
-        // so the MSAA attachment's load op should be LoadOp::kDiscard.
-        SkASSERT(renderPassDesc.fColorAttachment.fLoadOp == LoadOp::kDiscard);
-        SkASSERT(!fActiveRenderPass);
-        SkASSERT(resolveTexture);
-
-        if (!this->updateLoadMSAAVertexBuffer()) {
-            SKGPU_LOG_E("Failed to update vertex buffer for loading MSAA from resolve");
-            return false;
-        }
-    }
-
     // Submit pipeline barriers to ensure any image layout transitions are recorded prior to
     // beginning the render pass.
     this->submitPipelineBarriers();
@@ -855,9 +916,14 @@ bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
                                    VK_SUBPASS_CONTENTS_INLINE));
     fActiveRenderPass = true;
 
+    SkIRect nativeBounds = SkIRect::MakeXYWH(renderArea.offset.x,
+                                             renderArea.offset.y,
+                                             renderArea.extent.width,
+                                             renderArea.extent.height);
     if (loadMSAAFromResolve && !this->loadMSAAFromResolve(renderPassDesc,
                                                           *vulkanResolveTexture,
-                                                          vulkanColorTexture->dimensions())) {
+                                                          vulkanColorTexture->dimensions(),
+                                                          nativeBounds)) {
         SKGPU_LOG_E("Failed to load MSAA from resolve");
         this->endRenderPass();
         return false;
@@ -906,8 +972,7 @@ void VulkanCommandBuffer::addDrawPass(const DrawPass* drawPass) {
             }
             case DrawPassCommands::Type::kSetScissor: {
                 auto ss = static_cast<DrawPassCommands::SetScissor*>(cmdPtr);
-                const SkIRect& rect = ss->fScissor;
-                this->setScissor(rect.fLeft, rect.fTop, rect.width(), rect.height());
+                this->setScissor(ss->fScissor);
                 break;
             }
             case DrawPassCommands::Type::kDraw: {
@@ -1067,6 +1132,13 @@ void VulkanCommandBuffer::bindUniformBuffers() {
         int descriptorBindingIndex = descriptors[i].fBindingIndex;
         SkASSERT(static_cast<unsigned long>(descriptorBindingIndex) < fUniformBuffersToBind.size());
         const auto& bindInfo = fUniformBuffersToBind[descriptorBindingIndex];
+#ifdef SK_DEBUG
+        if (descriptors[i].fPipelineStageFlags & PipelineStageFlags::kVertexShader) {
+            // TODO (b/356874190): Renable once we fix the intrinsic uniform buffer to not be
+            // protected.
+            //SkASSERT(bindInfo.fBuffer->isProtected() == Protected::kNo);
+        }
+#endif
         dynamicOffsets[i] = bindInfo.fOffset;
     }
 
@@ -1107,6 +1179,7 @@ void VulkanCommandBuffer::bindVertexBuffers(const Buffer* vertexBuffer,
 void VulkanCommandBuffer::bindInputBuffer(const Buffer* buffer, VkDeviceSize offset,
                                           uint32_t binding) {
     if (buffer) {
+        SkASSERT(buffer->isProtected() == Protected::kNo);
         VkBuffer vkBuffer = static_cast<const VulkanBuffer*>(buffer)->vkBuffer();
         SkASSERT(vkBuffer != VK_NULL_HANDLE);
         if (vkBuffer != fBoundInputBuffers[binding] ||
@@ -1126,6 +1199,7 @@ void VulkanCommandBuffer::bindInputBuffer(const Buffer* buffer, VkDeviceSize off
 
 void VulkanCommandBuffer::bindIndexBuffer(const Buffer* indexBuffer, size_t offset) {
     if (indexBuffer) {
+        SkASSERT(indexBuffer->isProtected() == Protected::kNo);
         VkBuffer vkBuffer = static_cast<const VulkanBuffer*>(indexBuffer)->vkBuffer();
         SkASSERT(vkBuffer != VK_NULL_HANDLE);
         if (vkBuffer != fBoundIndexBuffer || offset != fBoundIndexBufferOffset) {
@@ -1146,6 +1220,7 @@ void VulkanCommandBuffer::bindIndexBuffer(const Buffer* indexBuffer, size_t offs
 void VulkanCommandBuffer::bindIndirectBuffer(const Buffer* indirectBuffer, size_t offset) {
     // Indirect buffers are not bound via the command buffer, but specified in the draw cmd.
     if (indirectBuffer) {
+        SkASSERT(indirectBuffer->isProtected() == Protected::kNo);
         fBoundIndirectBuffer = static_cast<const VulkanBuffer*>(indirectBuffer)->vkBuffer();
         fBoundIndirectBufferOffset = offset;
         this->trackResource(sk_ref_sp(indirectBuffer));
@@ -1296,12 +1371,14 @@ void VulkanCommandBuffer::bindTextureSamplers() {
     }
 }
 
-void VulkanCommandBuffer::setScissor(unsigned int left, unsigned int top, unsigned int width,
-                                     unsigned int height) {
+void VulkanCommandBuffer::setScissor(const Scissor& scissor) {
+    this->setScissor(scissor.getRect(fReplayTranslation, fReplayClip));
+}
+
+void VulkanCommandBuffer::setScissor(const SkIRect& rect) {
     VkRect2D scissor = {
-        {(int32_t)left, (int32_t)top},
-        {width, height}
-    };
+            {rect.x(), rect.y()},
+            {static_cast<unsigned int>(rect.width()), static_cast<unsigned int>(rect.height())}};
     VULKAN_CALL(fSharedContext->interface(),
                 CmdSetScissor(fPrimaryCommandBuffer,
                               /*firstScissor=*/0,
@@ -1574,6 +1651,26 @@ bool VulkanCommandBuffer::onCopyTextureToTexture(const Texture* src,
                              /*regionCount=*/1,
                              &copyRegion));
 
+    return true;
+}
+
+
+bool VulkanCommandBuffer::pushConstants(VkShaderStageFlags stageFlags,
+                                        uint32_t offset,
+                                        uint32_t size,
+                                        const void* values) {
+    SkASSERT(fActiveGraphicsPipeline);
+    // offset and size must be a multiple of 4
+    SkASSERT(!SkToBool(offset & 0x3));
+    SkASSERT(!SkToBool(size & 0x3));
+
+    VULKAN_CALL(fSharedContext->interface(),
+                CmdPushConstants(fPrimaryCommandBuffer,
+                                 fActiveGraphicsPipeline->layout(),
+                                 stageFlags,
+                                 offset,
+                                 size,
+                                 values));
     return true;
 }
 

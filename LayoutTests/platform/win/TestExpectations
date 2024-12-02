@@ -507,6 +507,8 @@ fast/dom/ParentNode-append-fragments.html [ ImageOnlyFailure ]
 fast/flexbox/line-clamp-with-float.html [ ImageOnlyFailure ]
 fast/forms/auto-fill-button/input-strong-password-viewable-baseline-alignment.html [ ImageOnlyFailure ]
 fast/forms/auto-fill-button/input-strong-password-viewable-taller-button-height.html [ ImageOnlyFailure ]
+fast/text/capitalize-content-with-outside-bmp-previous-characters.html [ ImageOnlyFailure ]
+fast/text/capitalize-decomposed-ligatures.html [ ImageOnlyFailure ]
 fast/text/complex-text-selection.html [ ImageOnlyFailure ]
 fast/text/incorrect-baseline-with-nested-inline-box.html [ ImageOnlyFailure ]
 fast/text/soft-hyphen-min-preferred-width.html [ ImageOnlyFailure ]
@@ -695,7 +697,6 @@ http/tests/contentdispositionattachmentsandbox [ Skip ]
 http/tests/contentfiltering [ Skip ]
 
 http/tests/cookies/double-quoted-value-with-semi-colon.html [ Failure ]
-http/tests/cookies/only-accept-first-party-cookies.html [ Pass ]
 
 http/tests/dom/document-attributes-null-handling.html [ Failure ]
 
@@ -984,6 +985,8 @@ webkit.org/b/212532 http/wpt/service-workers/service-worker-crashing-while-fetch
 
 http/wpt/push-api [ Skip ]
 
+webkit.org/b/282475 http/wpt/navigation-api/transition-promises.html [ Failure Pass ]
+
 http/tests/misc/slow-loading-animated-image.html [ ImageOnlyFailure ]
 
 http/tests/misc/webtiming-one-redirect.py [ Failure Pass ]
@@ -1029,8 +1032,13 @@ webkit.org/b/191584 fast/animation/css-animation-resuming-when-visible-with-styl
 
 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/layout-changes-on-percentage-based-timeline.html [ Pass ]
 
-imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/setting-timeline.tentative.html [ Failure ]
+imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/animation-with-animatable-interface.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/animation-with-display-none.html [ ImageOnlyFailure ]
 
+webkit.org/b/263870 imported/w3c/web-platform-tests/scroll-animations/css/animation-range-ignored.html [ Skip ]
+webkit.org/b/263870 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/scroll-timeline-range.html [ Skip ]
+
+imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/progress-based-effect-delay.tentative.html [ ImageOnlyFailure ]
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # Compositing
@@ -1171,6 +1179,9 @@ fast/css/accent-color/text.html [ Pass ]
 
 fast/css/caret-color-with-inherited-color-property.html [ Skip ] # ImageOnlyFailure
 fast/css/caret-color-with-initial-color-property.html [ Skip ] # ImageOnlyFailure
+
+# GPU process hangs. Makes the subsequent test Timeout
+fast/css/repeating-conic-gradient-small-range.html [ Skip ]
 
 webkit.org/b/143153 imported/w3c/web-platform-tests/css/css-text/text-transform/text-transform-multiple-001.html [ Skip ]
 
@@ -1945,7 +1956,6 @@ html5lib [ Skip ]
 http/wpt/audio-output [ Skip ]
 http/wpt/beacon [ Skip ]
 http/wpt/cache-storage [ Skip ]
-http/wpt/credential-management [ Skip ]
 http/wpt/cross-origin-opener-policy [ Skip ]
 http/wpt/cross-origin-resource-policy [ Skip ]
 http/wpt/crypto [ Skip ]
@@ -2157,6 +2167,7 @@ imported/w3c/web-platform-tests/inert [ Skip ]
 imported/w3c/web-platform-tests/infrastructure [ Skip ]
 imported/w3c/web-platform-tests/interfaces [ Skip ]
 imported/w3c/web-platform-tests/intersection-observer [ Skip ]
+imported/w3c/web-platform-tests/loading [ Skip ]
 imported/w3c/web-platform-tests/mathml [ Skip ]
 imported/w3c/web-platform-tests/media [ Skip ]
 imported/w3c/web-platform-tests/media-capabilities [ Skip ]
@@ -3375,7 +3386,6 @@ fast/css/text-overflow-ellipsis.html [ Skip ]
 fast/css/text-overflow-input.html [ Skip ]
 fast/css/text-rendering.html [ Skip ]
 fast/css/text-security.html [ Skip ]
-fast/css/text-transform-select.html [ Skip ]
 fast/css/textCapitalizeEdgeCases.html [ Skip ]
 fast/css/transform-default-parameter.html [ Skip ]
 fast/css/transformed-mask.html [ Skip ]
@@ -4216,6 +4226,10 @@ imported/w3c/web-platform-tests/permissions/all-permissions.html [ Failure ]
 loader/go-back-cached-main-resource.html [ Failure ]
 streams/pipe-to.html [ Failure ]
 
+# Failing after ICU 76.1. Needs to rebaseline.
+fast/url/idna2003.html [ Failure ]
+fast/url/idna2008.html [ Failure ]
+
 fast/canvas/canvas-composite-text-alpha.html [ Failure Pass ]
 
 animations/stacking-context-not-fill-forwards.html [ ImageOnlyFailure ]
@@ -4320,7 +4334,7 @@ http/tests/navigation/keyboard-events-during-provisional-navigation.html [ Failu
 
 # waitForCompositorReady().then(takeScreenshot) times out on the internal Buildbot
 imported/w3c/web-platform-tests/scroll-animations/css/animation-range-visual-test.html [ ImageOnlyFailure Timeout ]
-imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/custom-property.html [ ImageOnlyFailure Timeout ]
+imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/custom-property.html [ Pass Timeout ]
 [ Debug ] imported/w3c/web-platform-tests/scroll-animations/css/animation-inactive-outside-range-test.html [ Skip ] # Timeout
 
 imported/w3c/web-platform-tests/scroll-animations/view-timelines/animation-events.html [ Failure Pass ]
@@ -4336,8 +4350,6 @@ streams/writable-stream-create-within-multiple-workers-crash.html [ Skip ]
 
 # Timeout only on Buildbot
 http/tests/misc/embed-image-load-outlives-gc-without-crashing.html [ Pass Timeout ]
-
-fast/dom/no-scroll-when-command-click-fragment-URL.html [ Failure ]
 
 [ Release ] imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-inset-animation.html [ Pass Failure ]
 imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-lookup.html [ Pass Failure ]
@@ -4387,3 +4399,5 @@ imported/w3c/web-platform-tests/css/css-viewport/zoom/background-image.html [ Im
 imported/w3c/web-platform-tests/css/css-viewport/zoom/image-intrinsic-size.html [ ImageOnlyFailure Pass ]
 
 http/tests/login-status/login-status-api-getter-setter-functions.html [ Failure ]
+
+fast/css/view-transitions-no-content-for-new-pseudo.html [ Failure ]

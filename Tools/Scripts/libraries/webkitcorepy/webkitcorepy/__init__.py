@@ -22,8 +22,8 @@
 
 import sys
 
-if sys.version_info < (3, 6):
-    raise ImportError("webkitcorepy requires Python 3.6 or above")
+if sys.version_info < (3, 9):  # noqa: UP036
+    raise ImportError("webkitcorepy requires Python 3.9 or above")
 
 import logging
 import platform
@@ -103,7 +103,7 @@ AutoInstall.register(Package('tblib', Version(1, 7, 0)))
 AutoInstall.register(Package('urllib3', Version(1, 26, 17)))
 
 AutoInstall.register(Package('wheel', Version(0, 35, 1)))
-AutoInstall.register(Package('cffi', Version(1, 15, 1)))
+AutoInstall.register(Package('cffi', Version(1, 17, 1)))
 
 if sys.version_info > (3, 0):
     if sys.version_info >= (3, 9):

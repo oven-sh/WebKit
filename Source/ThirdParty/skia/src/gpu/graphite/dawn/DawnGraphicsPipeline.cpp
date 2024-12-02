@@ -17,6 +17,7 @@
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RenderPassDesc.h"
 #include "src/gpu/graphite/RendererProvider.h"
+#include "src/gpu/graphite/ShaderInfo.h"
 #include "src/gpu/graphite/UniformManager.h"
 #include "src/gpu/graphite/dawn/DawnCaps.h"
 #include "src/gpu/graphite/dawn/DawnErrorChecker.h"
@@ -247,7 +248,57 @@ static wgpu::BlendOperation blend_equation_to_dawn_blend_op(skgpu::BlendEquation
 struct AsyncPipelineCreationBase {
     wgpu::RenderPipeline fRenderPipeline;
     bool fFinished = false;
+#if SK_HISTOGRAMS_ENABLED
+    // We need these three for the Graphite.PipelineCreationTimes.* histograms (cf.
+    // log_pipeline_creation)
+    skgpu::StdSteadyClock::time_point fStartTime;
+    bool fFromPrecompile;
+    bool fAsynchronous = false;
+#endif
 };
+
+void log_pipeline_creation(const AsyncPipelineCreationBase* apcb) {
+#if SK_HISTOGRAMS_ENABLED
+    [[maybe_unused]] static constexpr int kBucketCount = 100;
+    [[maybe_unused]] static constexpr int kOneSecInUS = 1000000;
+
+    SkASSERT(apcb->fFinished);
+
+    if (!apcb->fRenderPipeline) {
+        // A null fRenderPipeline means Pipeline creation failed
+        return; // TODO: log failures to their own UMA stat
+    }
+
+    [[maybe_unused]] auto micros_since = [](skgpu::StdSteadyClock::time_point start) {
+        skgpu::StdSteadyClock::duration elapsed = skgpu::StdSteadyClock::now() - start;
+        return std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    };
+
+    if (apcb->fFromPrecompile) {
+        SkASSERT(!apcb->fAsynchronous);     // precompile is done synchronously on a thread
+        SK_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+            "Graphite.PipelineCreationTimes.Precompile",
+            micros_since(apcb->fStartTime),
+            /* minUSec= */ 1,
+            /* maxUSec= */ kOneSecInUS,
+            kBucketCount);
+    } else if (apcb->fAsynchronous) {
+        SK_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+            "Graphite.PipelineCreationTimes.Asynchronous",
+            micros_since(apcb->fStartTime),
+            /* minUSec= */ 1,
+            /* maxUSec= */ kOneSecInUS,
+            kBucketCount);
+    } else {
+        SK_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+            "Graphite.PipelineCreationTimes.Synchronous",
+            micros_since(apcb->fStartTime),
+            /* minUSec= */ 1,
+            /* maxUSec= */ kOneSecInUS,
+            kBucketCount);
+    }
+#endif // SK_HISTOGRAMS_ENABLED
+}
 
 } // anonymous namespace
 
@@ -261,11 +312,13 @@ struct DawnGraphicsPipeline::AsyncPipelineCreation : public AsyncPipelineCreatio
 #endif
 
 // static
-sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* sharedContext,
-                                                       DawnResourceProvider* resourceProvider,
-                                                       const RuntimeEffectDictionary* runtimeDict,
-                                                       const GraphicsPipelineDesc& pipelineDesc,
-                                                       const RenderPassDesc& renderPassDesc) {
+sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(
+        const DawnSharedContext* sharedContext,
+        DawnResourceProvider* resourceProvider,
+        const RuntimeEffectDictionary* runtimeDict,
+        const GraphicsPipelineDesc& pipelineDesc,
+        const RenderPassDesc& renderPassDesc,
+        SkEnumBitMask<PipelineCreationFlags> pipelineCreationFlags) {
     const DawnCaps& caps = *static_cast<const DawnCaps*>(sharedContext->caps());
     const auto& device = sharedContext->device();
 
@@ -292,20 +345,21 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
     skia_private::TArray<SamplerDesc> samplerDescArr {};
     samplerDescArrPtr = &samplerDescArr;
 #endif
-    FragSkSLInfo fsSkSLInfo = BuildFragmentSkSL(&caps,
-                                                sharedContext->shaderCodeDictionary(),
-                                                runtimeDict,
-                                                step,
-                                                paintID,
-                                                useStorageBuffers,
-                                                renderPassDesc.fWriteSwizzle,
-                                                samplerDescArrPtr);
-    std::string& fsSkSL = fsSkSLInfo.fSkSL;
-    const BlendInfo& blendInfo = fsSkSLInfo.fBlendInfo;
-    const bool localCoordsNeeded = fsSkSLInfo.fRequiresLocalCoords;
-    const int numTexturesAndSamplers = fsSkSLInfo.fNumTexturesAndSamplers;
 
-    bool hasFragmentSkSL = !fsSkSL.empty();
+    std::unique_ptr<ShaderInfo> shaderInfo = ShaderInfo::Make(&caps,
+                                                              sharedContext->shaderCodeDictionary(),
+                                                              runtimeDict,
+                                                              step,
+                                                              paintID,
+                                                              useStorageBuffers,
+                                                              renderPassDesc.fWriteSwizzle,
+                                                              samplerDescArrPtr);
+
+    const std::string& fsSkSL = shaderInfo->fragmentSkSL();
+    const BlendInfo& blendInfo = shaderInfo->blendInfo();
+    const int numTexturesAndSamplers = shaderInfo->numFragmentTexturesAndSamplers();
+
+    const bool hasFragmentSkSL = !fsSkSL.empty();
     if (hasFragmentSkSL) {
         if (!skgpu::SkSLToWGSL(caps.shaderCaps(),
                                fsSkSL,
@@ -316,17 +370,13 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
                                errorHandler)) {
             return {};
         }
-        if (!DawnCompileWGSLShaderModule(sharedContext, fsSkSLInfo.fLabel.c_str(), fsCode,
+        if (!DawnCompileWGSLShaderModule(sharedContext, shaderInfo->fsLabel().c_str(), fsCode,
                                          &fsModule, errorHandler)) {
             return {};
         }
     }
 
-    VertSkSLInfo vsSkSLInfo = BuildVertexSkSL(caps.resourceBindingRequirements(),
-                                              step,
-                                              useStorageBuffers,
-                                              localCoordsNeeded);
-    const std::string& vsSkSL = vsSkSLInfo.fSkSL;
+    const std::string& vsSkSL = shaderInfo->vertexSkSL();
     if (!skgpu::SkSLToWGSL(caps.shaderCaps(),
                            vsSkSL,
                            SkSL::ProgramKind::kGraphiteVertex,
@@ -336,7 +386,7 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
                            errorHandler)) {
         return {};
     }
-    if (!DawnCompileWGSLShaderModule(sharedContext, vsSkSLInfo.fLabel.c_str(), vsCode,
+    if (!DawnCompileWGSLShaderModule(sharedContext, shaderInfo->vsLabel().c_str(), vsCode,
                                      &vsModule, errorHandler)) {
         return {};
     }
@@ -501,7 +551,7 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
 
                 wgpu::BindGroupLayoutDescriptor groupLayoutDesc;
                 if (sharedContext->caps()->setBackendLabels()) {
-                    groupLayoutDesc.label = vsSkSLInfo.fLabel.c_str();
+                    groupLayoutDesc.label = shaderInfo->vsLabel().c_str();
                 }
                 groupLayoutDesc.entryCount = entries.size();
                 groupLayoutDesc.entries = entries.data();
@@ -514,7 +564,7 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
 
         wgpu::PipelineLayoutDescriptor layoutDesc;
         if (sharedContext->caps()->setBackendLabels()) {
-            layoutDesc.label = fsSkSLInfo.fLabel.c_str();
+            layoutDesc.label = shaderInfo->fsLabel().c_str();
         }
         layoutDesc.bindGroupLayoutCount =
             hasFragmentSamplers ? groupLayouts.size() : groupLayouts.size() - 1;
@@ -597,9 +647,19 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
     descriptor.multisample.mask = 0xFFFFFFFF;
     descriptor.multisample.alphaToCoverageEnabled = false;
 
-    auto asyncCreation = std::make_unique<AsyncPipelineCreation>();
+    const bool forPrecompilation =
+            SkToBool(pipelineCreationFlags & PipelineCreationFlags::kForPrecompilation);
+    // For Dawn, we want Precompilation to happen synchronously
+    const bool useAsync = caps.useAsyncPipelineCreation() && !forPrecompilation;
 
-    if (caps.useAsyncPipelineCreation()) {
+    auto asyncCreation = std::make_unique<AsyncPipelineCreation>();
+#if SK_HISTOGRAMS_ENABLED
+    asyncCreation->fStartTime = skgpu::StdSteadyClock::now();
+    asyncCreation->fFromPrecompile = forPrecompilation;
+    asyncCreation->fAsynchronous = useAsync;
+#endif
+
+    if (useAsync) {
 #if defined(__EMSCRIPTEN__)
         // We shouldn't use CreateRenderPipelineAsync in wasm.
         SKGPU_LOG_F("CreateRenderPipelineAsync shouldn't be used in WASM");
@@ -622,6 +682,8 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
                     }
 
                     asyncCreationPtr->fFinished = true;
+
+                    log_pipeline_creation(asyncCreationPtr);
                 });
 #endif
     } else {
@@ -635,13 +697,16 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
         if (errorChecker.has_value() && errorChecker->popErrorScopes() != DawnErrorType::kNoError) {
             asyncCreation->fRenderPipeline = nullptr;
         }
+
+        log_pipeline_creation(asyncCreation.get());
     }
 
-    PipelineInfo pipelineInfo{vsSkSLInfo, fsSkSLInfo};
+    PipelineInfo pipelineInfo{*shaderInfo, pipelineCreationFlags};
 #if defined(GPU_TEST_UTILS)
     pipelineInfo.fNativeVertexShader = std::move(vsCode);
     pipelineInfo.fNativeFragmentShader = std::move(fsCode);
 #endif
+
     return sk_sp<DawnGraphicsPipeline>(
             new DawnGraphicsPipeline(sharedContext,
                                      pipelineInfo,

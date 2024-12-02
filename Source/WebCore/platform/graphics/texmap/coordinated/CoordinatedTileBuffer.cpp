@@ -38,6 +38,7 @@
 #include "GLFence.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
 #include <skia/core/SkImage.h>
 #include <skia/core/SkStream.h>
@@ -45,6 +46,7 @@
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/MainThread.h>
 
 #if USE(LIBEPOXY)
@@ -86,6 +88,34 @@ SkCanvas* CoordinatedTileBuffer::canvas()
 }
 #endif
 
+void CoordinatedTileBuffer::beginPainting()
+{
+    Locker locker { m_painting.lock };
+    ASSERT(m_painting.state == PaintingState::Complete);
+    m_painting.state = PaintingState::InProgress;
+}
+
+void CoordinatedTileBuffer::completePainting()
+{
+    Locker locker { m_painting.lock };
+    ASSERT(m_painting.state == PaintingState::InProgress);
+    m_painting.state = PaintingState::Complete;
+    m_painting.condition.notifyOne();
+
+#if USE(SKIA)
+    // Surface is no longer needed, destroy it (in the same thread that created it).
+    m_surface = nullptr;
+#endif
+}
+
+void CoordinatedTileBuffer::waitUntilPaintingComplete()
+{
+    Locker locker { m_painting.lock };
+    m_painting.condition.wait(m_painting.lock, [this] {
+        return m_painting.state == PaintingState::Complete;
+    });
+}
+
 Ref<CoordinatedTileBuffer> CoordinatedUnacceleratedTileBuffer::create(const IntSize& size, Flags flags)
 {
     return adoptRef(*new CoordinatedUnacceleratedTileBuffer(size, flags));
@@ -96,7 +126,7 @@ CoordinatedUnacceleratedTileBuffer::CoordinatedUnacceleratedTileBuffer(const Int
     , m_size(size)
 {
     const auto checkedArea = size.area() * 4;
-    m_data = MallocPtr<unsigned char>::tryZeroedMalloc(checkedArea);
+    m_data = MallocSpan<unsigned char>::tryZeroedMalloc(checkedArea);
 
     {
         Locker locker { s_layersMemoryUsageLock };
@@ -135,38 +165,10 @@ bool CoordinatedUnacceleratedTileBuffer::tryEnsureSurface()
     auto imageInfo = SkImageInfo::Make(m_size.width(), m_size.height(), colorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
     // FIXME: ref buffer and unref on release proc?
     SkSurfaceProps properties = { 0, FontRenderOptions::singleton().subpixelOrder() };
-    m_surface = SkSurfaces::WrapPixels(imageInfo, m_data.get(), imageInfo.minRowBytes64(), &properties);
+    m_surface = SkSurfaces::WrapPixels(imageInfo, data(), imageInfo.minRowBytes64(), &properties);
     return true;
 }
 #endif
-
-void CoordinatedUnacceleratedTileBuffer::beginPainting()
-{
-    Locker locker { m_painting.lock };
-    ASSERT(m_painting.state == PaintingState::Complete);
-    m_painting.state = PaintingState::InProgress;
-}
-
-void CoordinatedUnacceleratedTileBuffer::completePainting()
-{
-    Locker locker { m_painting.lock };
-    ASSERT(m_painting.state == PaintingState::InProgress);
-    m_painting.state = PaintingState::Complete;
-    m_painting.condition.notifyOne();
-
-#if USE(SKIA)
-    // Surface is no longer needed, destroy it here (in the same thread that created it).
-    m_surface = nullptr;
-#endif
-}
-
-void CoordinatedUnacceleratedTileBuffer::waitUntilPaintingComplete()
-{
-    Locker locker { m_painting.lock };
-    m_painting.condition.wait(m_painting.lock, [this] {
-        return m_painting.state == PaintingState::Complete;
-    });
-}
 
 #if USE(SKIA)
 Ref<CoordinatedTileBuffer> CoordinatedAcceleratedTileBuffer::create(Ref<BitmapTexture>&& texture)
@@ -233,12 +235,13 @@ void CoordinatedAcceleratedTileBuffer::completePainting()
     } else
         grContext->flushAndSubmit(m_surface.get(), GrSyncCpu::kYes);
 
-    // Surface is no longer needed, destroy it here (in the same thread that created it).
-    m_surface = nullptr;
+    CoordinatedTileBuffer::completePainting();
 }
 
 void CoordinatedAcceleratedTileBuffer::waitUntilPaintingComplete()
 {
+    CoordinatedTileBuffer::waitUntilPaintingComplete();
+
     if (!m_fence)
         return;
 

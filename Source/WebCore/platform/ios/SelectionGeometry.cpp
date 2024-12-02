@@ -62,7 +62,7 @@ SelectionGeometry::SelectionGeometry(const FloatQuad& quad, SelectionRenderingBe
 {
 }
 
-SelectionGeometry::SelectionGeometry(const FloatQuad& quad, SelectionRenderingBehavior behavior, TextDirection direction, int minX, int maxX, int maxY, int lineNumber, bool isLineBreak, bool isFirstOnLine, bool isLastOnLine, bool containsStart, bool containsEnd, bool isHorizontal, bool mayAppearLogicallyDiscontiguous)
+SelectionGeometry::SelectionGeometry(const FloatQuad& quad, SelectionRenderingBehavior behavior, TextDirection direction, int minX, int maxX, int maxY, int lineNumber, bool isLineBreak, bool isFirstOnLine, bool isLastOnLine, bool containsStart, bool containsEnd, bool isHorizontal)
     : m_quad(quad)
     , m_behavior(behavior)
     , m_direction(direction)
@@ -76,7 +76,6 @@ SelectionGeometry::SelectionGeometry(const FloatQuad& quad, SelectionRenderingBe
     , m_containsStart(containsStart)
     , m_containsEnd(containsEnd)
     , m_isHorizontal(isHorizontal)
-    , m_mayAppearLogicallyDiscontiguous(mayAppearLogicallyDiscontiguous)
 {
 }
 
@@ -139,6 +138,15 @@ void SelectionGeometry::setRect(const IntRect& rect)
     m_cachedEnclosingRect = rect;
 }
 
+void SelectionGeometry::move(float x, float y)
+{
+    m_quad.move(x, y);
+    m_minX += x;
+    m_maxX += x;
+    m_maxY += y;
+    m_cachedEnclosingRect.reset();
+}
+
 TextStream& operator<<(TextStream& stream, const SelectionGeometry& rect)
 {
     TextStream::GroupScope group(stream);
@@ -173,9 +181,6 @@ TextStream& operator<<(TextStream& stream, const SelectionGeometry& rect)
 
     if (rect.behavior() == SelectionRenderingBehavior::UseIndividualQuads)
         stream.dumpProperty("using individual quads", true);
-
-    if (rect.mayAppearLogicallyDiscontiguous())
-        stream.dumpProperty("reverse bidi", true);
 
     stream.dumpProperty("page number", rect.pageNumber());
     return stream;

@@ -32,6 +32,8 @@
 #include "WasmFunctionParser.h"
 #include "WasmLimits.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC { namespace Wasm {
 
 namespace BBQJITImpl {
@@ -666,7 +668,7 @@ public:
             CatchKind type;
             uint32_t tag;
             const TypeDefinition* exceptionSignature;
-            ControlData* target;
+            ControlRef target;
         };
         using TargetList = Vector<TryTableTarget>;
 
@@ -1449,22 +1451,22 @@ public:
 
     inline float floatCopySign(float lhs, float rhs)
     {
-        uint32_t lhsAsInt32 = bitwise_cast<uint32_t>(lhs);
-        uint32_t rhsAsInt32 = bitwise_cast<uint32_t>(rhs);
+        uint32_t lhsAsInt32 = std::bit_cast<uint32_t>(lhs);
+        uint32_t rhsAsInt32 = std::bit_cast<uint32_t>(rhs);
         lhsAsInt32 &= 0x7fffffffu;
         rhsAsInt32 &= 0x80000000u;
         lhsAsInt32 |= rhsAsInt32;
-        return bitwise_cast<float>(lhsAsInt32);
+        return std::bit_cast<float>(lhsAsInt32);
     }
 
     inline double doubleCopySign(double lhs, double rhs)
     {
-        uint64_t lhsAsInt64 = bitwise_cast<uint64_t>(lhs);
-        uint64_t rhsAsInt64 = bitwise_cast<uint64_t>(rhs);
+        uint64_t lhsAsInt64 = std::bit_cast<uint64_t>(lhs);
+        uint64_t rhsAsInt64 = std::bit_cast<uint64_t>(rhs);
         lhsAsInt64 &= 0x7fffffffffffffffu;
         rhsAsInt64 &= 0x8000000000000000u;
         lhsAsInt64 |= rhsAsInt64;
-        return bitwise_cast<double>(lhsAsInt64);
+        return std::bit_cast<double>(lhsAsInt64);
     }
 
     PartialResult WARN_UNUSED_RETURN addI32And(Value lhs, Value rhs, Value& result);
@@ -2172,7 +2174,7 @@ private:
             RegisterBinding& binding = m_generator.m_gprBindings[reg];
             m_generator.m_gprLRU.unlock(reg);
             if (UNLIKELY(Options::verboseBBQJITAllocation()))
-                dataLogLn("BBQ\tReleasing GPR ", MacroAssembler::gprName(reg));
+                dataLogLn("BBQ\tReleasing GPR ", MacroAssembler::gprName(reg), " preserved? ", m_preserved.contains(reg, IgnoreVectors), " binding: ", binding);
             if (m_preserved.contains(reg, IgnoreVectors) && !binding.isScratch())
                 return; // It's okay if the register isn't bound to a scratch if we meant to preserve it - maybe it was just already bound to something.
             ASSERT(binding.isScratch());
@@ -2187,7 +2189,7 @@ private:
             RegisterBinding& binding = m_generator.m_fprBindings[reg];
             m_generator.m_fprLRU.unlock(reg);
             if (UNLIKELY(Options::verboseBBQJITAllocation()))
-                dataLogLn("BBQ\tReleasing FPR ", MacroAssembler::fprName(reg));
+                dataLogLn("BBQ\tReleasing FPR ", MacroAssembler::fprName(reg), " preserved? ", m_preserved.contains(reg, Width::Width128), " binding: ", binding);
             if (m_preserved.contains(reg, Width::Width128) && !binding.isScratch())
                 return; // It's okay if the register isn't bound to a scratch if we meant to preserve it - maybe it was just already bound to something.
             ASSERT(binding.isScratch());
@@ -2331,5 +2333,7 @@ using BBQJIT = BBQJITImpl::BBQJIT;
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(CompilationContext&, BBQCallee&, const FunctionData&, const TypeDefinition&, Vector<UnlinkedWasmToWasmCall>&, const ModuleInformation&, MemoryMode, FunctionCodeIndex functionIndex, std::optional<bool> hasExceptionHandlers, unsigned);
 
 } } // namespace JSC::Wasm
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY_BBQJIT)

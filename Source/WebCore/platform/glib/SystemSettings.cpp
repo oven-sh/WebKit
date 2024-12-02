@@ -82,8 +82,12 @@ void SystemSettings::updateSettings(const SystemSettings::State& state)
     if (state.enableAnimations)
         m_state.enableAnimations = state.enableAnimations;
 
-    for (const auto& observer : m_observers.values())
-        observer(state);
+    for (auto* context : copyToVector(m_observers.keys())) {
+        const auto it = m_observers.find(context);
+        if (it == m_observers.end())
+            continue;
+        it->value(state);
+    }
 }
 
 std::optional<FontRenderOptions::Hinting> SystemSettings::hintStyle() const
@@ -130,6 +134,19 @@ std::optional<FontRenderOptions::Antialias> SystemSettings::antialiasMode() cons
         antialiasMode = subpixelOrder().has_value() ? FontRenderOptions::Antialias::Subpixel : FontRenderOptions::Antialias::Normal;
 
     return antialiasMode;
+}
+
+String SystemSettings::defaultSystemFont() const
+{
+    auto fontDescription = fontName();
+    if (!fontDescription || fontDescription->isEmpty())
+        return "Sans"_s;
+
+    // We need to remove the size from the value of the property,
+    // which is separated from the font family using a space.
+    if (auto index = fontDescription->reverseFind(' '); index != notFound)
+        fontDescription = fontDescription->left(index);
+    return *fontDescription;
 }
 
 void SystemSettings::addObserver(Function<void(const SystemSettings::State&)>&& handler, void* context)

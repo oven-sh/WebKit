@@ -151,7 +151,7 @@ void IDBConnectionProxy::renameObjectStore(TransactionOperation& operation, IDBO
     callConnectionOnMainThread(&IDBConnectionToServer::renameObjectStore, requestData, objectStoreIdentifier, newName);
 }
 
-void IDBConnectionProxy::renameIndex(TransactionOperation& operation, IDBObjectStoreIdentifier objectStoreIdentifier, uint64_t indexIdentifier, const String& newName)
+void IDBConnectionProxy::renameIndex(TransactionOperation& operation, IDBObjectStoreIdentifier objectStoreIdentifier, IDBIndexIdentifier indexIdentifier, const String& newName)
 {
     const IDBRequestData requestData { operation };
     saveOperation(operation);
@@ -572,7 +572,7 @@ void IDBConnectionProxy::forgetTransaction(IDBTransaction& transaction)
 }
 
 template<typename KeyType, typename ValueType, typename FunctionType>
-void removeItemsMatchingCurrentThread(UncheckedKeyHashMap<KeyType, ValueType>& map, FunctionType&& cleanupFunction)
+void removeItemsMatchingCurrentThread(HashMap<KeyType, ValueType>& map, FunctionType&& cleanupFunction)
 {
     // FIXME: Revisit when introducing WebThread aware thread comparison.
     // https://bugs.webkit.org/show_bug.cgi?id=204345
@@ -586,7 +586,7 @@ void removeItemsMatchingCurrentThread(UncheckedKeyHashMap<KeyType, ValueType>& m
 }
 
 template<typename KeyType, typename ValueType>
-void setMatchingItemsContextSuspended(ScriptExecutionContext& currentContext, UncheckedKeyHashMap<KeyType, ValueType>& map, bool isContextSuspended)
+void setMatchingItemsContextSuspended(ScriptExecutionContext& currentContext, HashMap<KeyType, ValueType>& map, bool isContextSuspended)
 {
     // FIXME: Revisit when introducing WebThread aware thread comparison.
     // https://bugs.webkit.org/show_bug.cgi?id=204345

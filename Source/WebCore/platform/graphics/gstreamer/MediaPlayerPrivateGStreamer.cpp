@@ -122,6 +122,8 @@
 #include "MediaPlayerPrivateHolePunch.h"
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
+
 GST_DEBUG_CATEGORY(webkit_media_player_debug);
 #define GST_CAT_DEFAULT webkit_media_player_debug
 
@@ -353,8 +355,8 @@ void MediaPlayerPrivateGStreamer::load(const String& urlString)
         m_fillTimer.stop();
 
     ASSERT(m_pipeline);
-    setVisibleInViewport(player->isVisibleInViewport());
     setPlaybinURL(url);
+    setVisibleInViewport(player->isVisibleInViewport());
 
     GST_DEBUG_OBJECT(pipeline(), "preload: %s", convertEnumerationToString(m_preload).utf8().data());
     if (m_preload == MediaPlayer::Preload::None && !isMediaSource()) {
@@ -1117,7 +1119,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
     ASSERT(m_isLegacyPlaybin);
 
     using TrackType = TrackPrivateBaseGStreamer::TrackType;
-    std::variant<UncheckedKeyHashMap<AtomString, Ref<AudioTrackPrivateGStreamer>>*, UncheckedKeyHashMap<AtomString, Ref<VideoTrackPrivateGStreamer>>*, UncheckedKeyHashMap<AtomString, Ref<InbandTextTrackPrivateGStreamer>>*> variantTracks = static_cast<UncheckedKeyHashMap<AtomString, Ref<TrackPrivateType>>*>(0);
+    std::variant<TrackIDHashMap<Ref<AudioTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<VideoTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<InbandTextTrackPrivateGStreamer>>*> variantTracks = static_cast<TrackIDHashMap<Ref<TrackPrivateType>>*>(0);
     auto type(static_cast<TrackType>(variantTracks.index()));
     const char* typeName;
     bool* hasType;
@@ -1140,7 +1142,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
     default:
         ASSERT_NOT_REACHED();
     }
-    auto& tracks = *std::get<UncheckedKeyHashMap<AtomString, Ref<TrackPrivateType>>*>(variantTracks);
+    auto& tracks = *std::get<TrackIDHashMap<Ref<TrackPrivateType>>*>(variantTracks);
 
     // Ignore notifications after a EOS. We don't want the tracks to disappear when the video is finished.
     if (m_isEndReached && (type == TrackType::Audio || type == TrackType::Video))
@@ -1163,7 +1165,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
             player->sizeChanged();
     }
 
-    Vector<AtomString> validStreams;
+    Vector<TrackID> validStreams;
     StringPrintStream getPadProperty;
     getPadProperty.printf("get-%s-pad", typeName);
 
@@ -1175,7 +1177,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
         if (!pad)
             continue;
 
-        AtomString streamId(TrackPrivateBaseGStreamer::trackIdFromPadStreamStartOrUniqueID(type, i, pad));
+        TrackID streamId(getStreamIdFromPad(pad).value_or(i));
         validStreams.append(streamId);
 
         if (i < tracks.size()) {
@@ -1193,7 +1195,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
         }
 
         auto track = TrackPrivateType::create(*this, i, GRefPtr(pad));
-        ASSERT(track->stringId() == streamId);
+        ASSERT(track->streamId() == streamId);
         if (!track->trackIndex() && (type == TrackType::Audio || type == TrackType::Video))
             track->setActive(true);
 
@@ -1209,7 +1211,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
             player->addTextTrack(*std::get<InbandTextTrackPrivate*>(variantTrack));
             break;
         }
-        tracks.add(track->stringId(), WTFMove(track));
+        tracks.add(track->streamId(), WTFMove(track));
         changed = true;
     }
 
@@ -1254,16 +1256,16 @@ void MediaPlayerPrivateGStreamer::videoSinkCapsChanged(GstPad* videoSinkPad)
     });
 }
 
-void MediaPlayerPrivateGStreamer::handleTextSample(GRefPtr<GstSample>&& sample, const String& streamId)
+void MediaPlayerPrivateGStreamer::handleTextSample(GRefPtr<GstSample>&& sample, TrackID streamId)
 {
     for (auto& track : m_textTracks.values()) {
-        if (track->stringId() == streamId) {
+        if (track->streamId() == streamId) {
             track->handleSample(WTFMove(sample));
             return;
         }
     }
 
-    GST_WARNING_OBJECT(m_pipeline.get(), "Got sample with unknown stream ID %s.", streamId.utf8().data());
+    GST_WARNING_OBJECT(m_pipeline.get(), "Got sample with unknown stream ID %" PRIu64 ".", streamId);
 }
 
 MediaTime MediaPlayerPrivateGStreamer::platformDuration() const
@@ -1554,7 +1556,7 @@ void MediaPlayerPrivateGStreamer::updateEnabledVideoTrack()
         GST_DEBUG_OBJECT(m_pipeline.get(), "Setting playbin2 current-video=%d", wantedTrack->trackIndex());
         g_object_set(m_pipeline.get(), "current-video", wantedTrack->trackIndex(), nullptr);
     } else {
-        m_wantedVideoStreamId = wantedTrack->stringId();
+        m_wantedVideoStreamId = wantedTrack->streamId();
         playbin3SendSelectStreamsIfAppropriate();
     }
 }
@@ -1578,7 +1580,7 @@ void MediaPlayerPrivateGStreamer::updateEnabledAudioTrack()
         GST_DEBUG_OBJECT(m_pipeline.get(), "Setting playbin2 current-audio=%d", wantedTrack->trackIndex());
         g_object_set(m_pipeline.get(), "current-audio", wantedTrack->trackIndex(), nullptr);
     } else {
-        m_wantedAudioStreamId = wantedTrack->stringId();
+        m_wantedAudioStreamId = wantedTrack->streamId();
         playbin3SendSelectStreamsIfAppropriate();
     }
 }
@@ -1595,17 +1597,20 @@ void MediaPlayerPrivateGStreamer::playbin3SendSelectStreamsIfAppropriate()
         return;
 
     GList* streams = nullptr;
-    if (!m_wantedVideoStreamId.isNull()) {
+    if (m_wantedVideoStreamId) {
+        auto track = m_videoTracks.get(m_wantedVideoStreamId.value());
         m_requestedVideoStreamId = m_wantedVideoStreamId;
-        streams = g_list_append(streams, g_strdup(m_wantedVideoStreamId.string().utf8().data()));
+        streams = g_list_append(streams, g_strdup(track->gstStreamId().string().utf8().data()));
     }
-    if (!m_wantedAudioStreamId.isNull()) {
+    if (m_wantedAudioStreamId) {
+        auto track = m_audioTracks.get(m_wantedAudioStreamId.value());
         m_requestedAudioStreamId = m_wantedAudioStreamId;
-        streams = g_list_append(streams, g_strdup(m_wantedAudioStreamId.string().utf8().data()));
+        streams = g_list_append(streams, g_strdup(track->gstStreamId().string().utf8().data()));
     }
-    if (!m_wantedTextStreamId.isNull()) {
+    if (m_wantedTextStreamId) {
+        auto track = m_textTracks.get(m_wantedTextStreamId.value());
         m_requestedTextStreamId = m_wantedTextStreamId;
-        streams = g_list_append(streams, g_strdup(m_wantedTextStreamId.string().utf8().data()));
+        streams = g_list_append(streams, g_strdup(track->gstStreamId().string().utf8().data()));
     }
 
     if (!streams)
@@ -1683,7 +1688,7 @@ void MediaPlayerPrivateGStreamer::updateTracks([[maybe_unused]] const GRefPtr<Gs
         auto track = m_##type##Tracks.get(streamId);                    \
         if (isTrackCached)                                              \
             track->updateConfigurationFromCaps(WTFMove(caps));          \
-        auto trackId = track->stringId();                               \
+        auto trackId = track->streamId();                               \
         if (!type##TrackIndex) { \
             m_wanted##Type##StreamId = trackId;                         \
             m_requested##Type##StreamId = trackId;                      \
@@ -1701,11 +1706,11 @@ void MediaPlayerPrivateGStreamer::updateTracks([[maybe_unused]] const GRefPtr<Gs
     for (unsigned i = 0; i < length; i++) {
         auto* stream = gst_stream_collection_get_stream(m_streamCollection.get(), i);
         RELEASE_ASSERT(stream);
-        auto streamId = AtomString::fromLatin1(gst_stream_get_stream_id(stream));
+        auto streamId = getStreamIdFromStream(stream).value_or(0);
         auto type = gst_stream_get_stream_type(stream);
         auto caps = adoptGRef(gst_stream_get_caps(stream));
 
-        GST_DEBUG_OBJECT(pipeline(), "#%u %s track with ID %s and caps %" GST_PTR_FORMAT, i, gst_stream_type_get_name(type), streamId.string().ascii().data(), caps.get());
+        GST_DEBUG_OBJECT(pipeline(), "#%u %s track with ID %" PRIu64 " and caps %" GST_PTR_FORMAT, i, gst_stream_type_get_name(type), streamId, caps.get());
 
         if (type & GST_STREAM_TYPE_AUDIO) {
             CREATE_OR_SELECT_TRACK(audio, Audio);
@@ -1715,7 +1720,7 @@ void MediaPlayerPrivateGStreamer::updateTracks([[maybe_unused]] const GRefPtr<Gs
         else if (type & GST_STREAM_TYPE_TEXT && !useMediaSource)
             CREATE_OR_SELECT_TRACK(text, Text);
         else
-            GST_WARNING("Unknown track type found for stream %s", streamId.string().ascii().data());
+            GST_WARNING("Unknown track type found for stream %" PRIu64 "", streamId);
     }
 #undef CREATE_OR_SELECT_TRACK
 }
@@ -2117,14 +2122,6 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
         // variants of a stream.
         gst_element_set_state(m_pipeline.get(), GST_STATE_PAUSED);
         gst_element_set_state(m_pipeline.get(), GST_STATE_PLAYING);
-        break;
-    case GST_MESSAGE_LATENCY:
-        // Recalculate the latency, we don't need any special handling
-        // here other than the GStreamer default.
-        // This can happen if the latency of live elements changes, or
-        // for one reason or another a new live element is added or
-        // removed from the pipeline.
-        gst_bin_recalculate_latency(GST_BIN(m_pipeline.get()));
         break;
     case GST_MESSAGE_ELEMENT:
 #if USE(GSTREAMER_MPEGTS)
@@ -3149,6 +3146,13 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
 #endif
     registerActivePipeline(m_pipeline);
 
+    if (isMediaStream) {
+        auto clock = adoptGRef(gst_system_clock_obtain());
+        gst_pipeline_use_clock(GST_PIPELINE(m_pipeline.get()), clock.get());
+        gst_element_set_base_time(m_pipeline.get(), 0);
+        gst_element_set_start_time(m_pipeline.get(), GST_CLOCK_TIME_NONE);
+    }
+
     setStreamVolumeElement(GST_STREAM_VOLUME(m_pipeline.get()));
 
     GST_INFO_OBJECT(pipeline(), "Using legacy playbin element: %s", boolForPrinting(m_isLegacyPlaybin));
@@ -3247,17 +3251,17 @@ void MediaPlayerPrivateGStreamer::setupCodecProbe(GstElement* element)
         if (!codec)
             return GST_PAD_PROBE_REMOVE;
 
-        GUniquePtr<char> streamId(gst_pad_get_stream_id(pad));
+        std::optional<TrackID> streamId(getStreamIdFromPad(pad));
         if (UNLIKELY(!streamId)) {
             // FIXME: This is a workaround for https://bugs.webkit.org/show_bug.cgi?id=256428.
             GST_WARNING_OBJECT(player->pipeline(), "Caps event received before stream-start. This shouldn't happen!");
             return GST_PAD_PROBE_REMOVE;
         }
 
-        GST_INFO_OBJECT(player->pipeline(), "Setting codec for stream %s to %s", streamId.get(), codec.get());
+        GST_INFO_OBJECT(player->pipeline(), "Setting codec for stream %" PRIu64 " to %s", streamId.value(), codec.get());
         {
             Locker locker { player->m_codecsLock };
-            player->m_codecs.add(String::fromLatin1(streamId.get()), String::fromLatin1(codec.get()));
+            player->m_codecs.add(streamId.value(), String::fromLatin1(codec.get()));
         }
         return GST_PAD_PROBE_REMOVE;
     }), this, nullptr);
@@ -3407,13 +3411,17 @@ PlatformLayer* MediaPlayerPrivateGStreamer::platformLayer() const
     return m_platformLayer.get();
 }
 
-void MediaPlayerPrivateGStreamer::pushTextureToCompositor()
+void MediaPlayerPrivateGStreamer::pushTextureToCompositor(bool isDuplicateSample)
 {
     Locker sampleLocker { m_sampleMutex };
     if (!GST_IS_SAMPLE(m_sample.get()))
         return;
 
-    ++m_sampleCount;
+    // The GL video appsink reports the sample following a preroll with the same buffer, so don't
+    // account for this scenario, this is important for rvfc, ensuring timestamps in metadata
+    // increase monotonically during playback.
+    if (!isDuplicateSample)
+        ++m_sampleCount;
 
     if (!m_platformLayer->isActive()) {
         GST_ERROR_OBJECT(pipeline(), "TextureMapperPlatformLayerProxy is inactive");
@@ -3618,6 +3626,7 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
     ASSERT(!isMainThread());
 
     GstBuffer* buffer = gst_sample_get_buffer(sample.get());
+    RELEASE_ASSERT(buffer);
     if (buffer && GST_BUFFER_PTS_IS_VALID(buffer)) {
         // Heuristic to avoid asking for playbackPosition() from a non-main thread.
         MediaTime currentTime = MediaTime(gst_segment_to_stream_time(gst_sample_get_segment(sample.get()), GST_FORMAT_TIME, GST_BUFFER_PTS(buffer)), GST_SECOND);
@@ -3627,9 +3636,15 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
     }
 
     bool shouldTriggerResize;
+    bool isDuplicateSample = false;
     {
         Locker sampleLocker { m_sampleMutex };
         shouldTriggerResize = !m_sample;
+        if (!shouldTriggerResize) {
+            auto previousBuffer = gst_sample_get_buffer(m_sample.get());
+            RELEASE_ASSERT(previousBuffer);
+            isDuplicateSample = buffer == previousBuffer;
+        }
         m_sample = WTFMove(sample);
     }
 
@@ -3642,6 +3657,22 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
             if (!caps) {
                 GST_ERROR_OBJECT(pipeline(), "Received sample without caps: %" GST_PTR_FORMAT, m_sample.get());
                 return;
+            }
+
+            if (UNLIKELY(!gst_caps_is_empty(caps.get()) && !gst_caps_is_any(caps.get()))) {
+                auto structure = gst_caps_get_structure(caps.get(), 0);
+                int framerateNumerator, framerateDenominator;
+                if (gst_structure_get_fraction(structure, "framerate", &framerateNumerator, &framerateDenominator)) {
+                    // In case the framerate is unknown, the frame duration won't be set on buffers. In that
+                    // case, estimate it. Otherwise use 0 and expect the PTS to be set depending on the
+                    // framerate when computing the rvfc frame mediaTime.
+                    if (!framerateNumerator) {
+                        if (GST_BUFFER_PTS_IS_VALID(buffer) && !GST_BUFFER_DURATION_IS_VALID(buffer)) {
+                            GST_DEBUG_OBJECT(pipeline(), "Video framerate is unknown, estimating from first buffer PTS");
+                            m_estimatedVideoFrameDuration = fromGstClockTime(GST_BUFFER_PTS(buffer));
+                        }
+                    }
+                }
             }
         }
         RunLoop::main().dispatch([weakThis = ThreadSafeWeakPtr { *this }, this, caps = WTFMove(caps)] {
@@ -3674,7 +3705,7 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
     }
 
 #if USE(TEXTURE_MAPPER)
-    pushTextureToCompositor();
+    pushTextureToCompositor(isDuplicateSample);
 #endif // USE(TEXTURE_MAPPER)
 }
 
@@ -3794,7 +3825,7 @@ RefPtr<VideoFrame> MediaPlayerPrivateGStreamer::videoFrameForCurrentTime()
         return nullptr;
 
     auto size = getVideoResolutionFromCaps(gst_sample_get_caps(m_sample.get())).value_or(FloatSize { 0, 0 });
-    return VideoFrameGStreamer::create(WTFMove(convertedSample), size);
+    return VideoFrameGStreamer::create(WTFMove(convertedSample), IntSize(size));
 }
 
 bool MediaPlayerPrivateGStreamer::setVideoSourceOrientation(ImageOrientation orientation)
@@ -4238,14 +4269,14 @@ WTFLogChannel& MediaPlayerPrivateGStreamer::logChannel() const
 
 std::optional<VideoFrameMetadata> MediaPlayerPrivateGStreamer::videoFrameMetadata()
 {
+    Locker sampleLocker { m_sampleMutex };
+    if (!GST_IS_SAMPLE(m_sample.get()))
+        return { };
+
     if (m_sampleCount == m_lastVideoFrameMetadataSampleCount)
         return { };
 
     m_lastVideoFrameMetadataSampleCount = m_sampleCount;
-
-    Locker sampleLocker { m_sampleMutex };
-    if (!GST_IS_SAMPLE(m_sample.get()))
-        return { };
 
     auto* buffer = gst_sample_get_buffer(m_sample.get());
     auto metadata = webkitGstBufferGetVideoFrameMetadata(buffer);
@@ -4254,9 +4285,15 @@ std::optional<VideoFrameMetadata> MediaPlayerPrivateGStreamer::videoFrameMetadat
     metadata.height = size.height();
     metadata.presentedFrames = m_sampleCount;
 
-    // FIXME: presentationTime and expectedDisplayTime might not always have the same value, we should try getting more precise values.
-    metadata.presentationTime = MonotonicTime::now().secondsSinceEpoch().seconds();
-    metadata.expectedDisplayTime = metadata.presentationTime;
+    if (GST_BUFFER_PTS_IS_VALID(buffer)) {
+        auto bufferPts = fromGstClockTime(GST_BUFFER_PTS(buffer));
+        metadata.mediaTime = (bufferPts - m_estimatedVideoFrameDuration).toDouble();
+
+        // FIXME: presentationTime and expectedDisplayTime might not always have the same value, we should try getting more precise values.
+        const auto currentTime = this->currentTime();
+        metadata.presentationTime = MonotonicTime::now().secondsSinceEpoch().seconds() - (currentTime - bufferPts).toDouble();
+        metadata.expectedDisplayTime = metadata.presentationTime;
+    }
 
     return metadata;
 }
@@ -4296,7 +4333,7 @@ void MediaPlayerPrivateGStreamer::checkPlayingConsistency()
     }
 }
 
-String MediaPlayerPrivateGStreamer::codecForStreamId(const String& streamId)
+String MediaPlayerPrivateGStreamer::codecForStreamId(TrackID streamId)
 {
     Locker locker { m_codecsLock };
     if (UNLIKELY(!m_codecs.contains(streamId)))
@@ -4308,5 +4345,7 @@ String MediaPlayerPrivateGStreamer::codecForStreamId(const String& streamId)
 #undef GST_CAT_DEFAULT
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif //  ENABLE(VIDEO) && USE(GSTREAMER)

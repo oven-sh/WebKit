@@ -34,8 +34,8 @@ import re
 import socket
 import sys
 
-if sys.version_info < (3, 5):
-    print('ERROR: Please use Python 3. This code is not compatible with Python 2.')
+if sys.version_info < (3, 9):  # noqa: UP036
+    print('ERROR: Minimum supported Python version for this code is Python 3.9')
     sys.exit(1)
 
 CURRENT_HOSTNAME = socket.gethostname().strip()
@@ -234,20 +234,27 @@ class CheckOutSource(git.Git):
 
     def getResultSummary(self):
         revision = self.getProperty('got_revision')
-        self.setProperty('revision', revision[:HASH_LENGTH_TO_DISPLAY], 'CheckOutSource')
+        if revision is not None:
+            self.setProperty('revision', revision[:HASH_LENGTH_TO_DISPLAY], 'CheckOutSource')
 
-        if self.results == FAILURE:
-            self.build.addStepsAfterCurrentStep([CleanUpGitIndexLock()])
-
-        if self.results != SUCCESS:
-            return {'step': 'Failed to updated working directory'}
-        else:
+        if self.results == SUCCESS:
             return {'step': 'Cleaned and updated working directory'}
+        return {'step': 'Failed to update working directory'}
 
     @defer.inlineCallbacks
     def run(self):
-        rc = yield super().run()
-        if rc == SUCCESS:
+        try:
+            # The "git fetch" command is executed by the git class with "abandonOnFailure=True"
+            # which means that if the command fails a BuildStepFailed exception is raised here.
+            rc = yield super().run()
+        except buildstep.BuildStepFailed:
+            rc = FAILURE
+        if rc == FAILURE:
+            if self.getProperty("cleanUpGitIndexLockAlreadyTried", False):
+                self.build.buildFinished(['Git issue'], FAILURE)
+            else:
+                self.build.addStepsAfterCurrentStep([CleanUpGitIndexLock()])
+        else:
             yield self._dovccmd(['remote', 'set-url', '--push', 'origin', 'PUSH_DISABLED_BY_ADMIN'])
         defer.returnValue(rc)
 
@@ -268,7 +275,12 @@ class CleanUpGitIndexLock(shell.ShellCommandNewStyle):
 
         rc = yield super().run()
         if rc != SUCCESS:
-            self.build.buildFinished(['Git issue, retrying build'], RETRY)
+            self.build.buildFinished(['Error deleting stale .git/index.lock file. Please inform an admin.'], FAILURE)
+
+        if not self.getProperty("cleanUpGitIndexLockAlreadyTried", False):
+            self.setProperty("cleanUpGitIndexLockAlreadyTried", True)
+            self.build.addStepsAfterCurrentStep([CheckOutSource()])
+
         defer.returnValue(rc)
 
 
@@ -423,9 +435,6 @@ class CompileWebKit(shell.Compile, CustomFlagsMixin):
                 # Some projects (namely lldbWebKitTester) require full debug info, and may override this.
                 build_command += ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym']
                 build_command += ['CLANG_DEBUG_INFORMATION_LEVEL=\\$\\(WK_OVERRIDE_DEBUG_INFORMATION_LEVEL:default=line-tables-only\\)']
-        if platform == 'gtk':
-            prefix = os.path.join("/app", "webkit", "WebKitBuild", self.getProperty("configuration").title(), "install")
-            build_command += [f'--prefix={prefix}']
 
         build_command += self.customBuildFlag(platform, self.getProperty('fullPlatform'))
 
@@ -570,12 +579,9 @@ class ArchiveMinifiedBuiltProduct(ArchiveBuiltProduct):
                WithProperties("--platform=%(fullPlatform)s"), WithProperties("--%(configuration)s"), "--minify"]
 
 
-# UploadBuiltProductViaSftp() is still unused. Check HOWTO_config_SFTP_uploads.md about how to enable it.
 class UploadBuiltProductViaSftp(shell.ShellCommandNewStyle):
     command = ["python3", "Tools/CISupport/Shared/transfer-archive-via-sftp",
                "--remote-config-file", "../../remote-built-product-upload-config.json",
-               "--user-name", WithProperties("%(buildername)s"),
-               "--remote-dir", WithProperties("%(buildername)s"),
                "--remote-file", WithProperties("%(archive_revision)s.zip"),
                WithProperties("WebKitBuild/%(configuration)s.zip")]
     name = "upload-built-product-via-sftp"
@@ -1747,10 +1753,25 @@ class FindUnexpectedStaticAnalyzerResults(shell.ShellCommandNewStyle):
 
     @defer.inlineCallbacks
     def run(self):
+        self.env[RESULTS_SERVER_API_KEY] = os.getenv(RESULTS_SERVER_API_KEY)
         results_dir = os.path.join(self.getProperty('builddir'), f"smart-pointer-result-archive/{self.getProperty('buildnumber')}")
         self.command = ['python3', 'Tools/Scripts/compare-static-analysis-results', results_dir]
         self.command += ['--scan-build-path', '../llvm-project/clang/tools/scan-build/bin/scan-build']
         self.command += ['--build-output', SCAN_BUILD_OUTPUT_DIR, '--check-expectations']
+
+        self.command += [
+            '--builder-name', self.getProperty('buildername'),
+            '--build-number', self.getProperty('buildnumber'),
+            '--buildbot-worker', self.getProperty('workername'),
+            '--buildbot-master', DNS_NAME,
+            '--report', RESULTS_WEBKIT_URL,
+            '--architecture', self.getProperty('architecture', ''),
+            '--platform', self.getProperty('platform', ''),
+            '--version', self.getProperty('os_version', ''),
+            '--version-name', self.getProperty('os_name', ''),
+            '--style', self.getProperty('configuration', ''),
+            '--sdk', self.getProperty('build_version', '')
+        ]
 
         self.log_observer = logobserver.BufferLogObserver()
         self.addLogObserver('stdio', self.log_observer)
@@ -1994,6 +2015,12 @@ class PrintConfiguration(steps.ShellSequence):
             os_version = match.group(1).strip()
             os_name = self.convert_build_to_os_name(os_version)
             configuration = f'OS: {os_name} ({os_version})'
+            self.setProperty('os_name', os_name)
+            self.setProperty('os_version', os_version)
+        match = re.search('BuildVersion:[ \t]*(.+?)\n', logText)
+        if match:
+            build_version = match.group(1).strip()
+            self.setProperty('build_version', build_version)
 
         xcode_re = sdk_re = 'Xcode[ \t]+?([0-9.]+?)\n'
         match = re.search(xcode_re, logText)

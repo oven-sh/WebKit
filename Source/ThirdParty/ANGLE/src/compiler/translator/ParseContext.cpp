@@ -180,6 +180,25 @@ constexpr bool IsValidWithPixelLocalStorage(TLayoutImageInternalFormat internalF
     }
 }
 
+constexpr ShPixelLocalStorageFormat ImageFormatToPLSFormat(TLayoutImageInternalFormat format)
+{
+    switch (format)
+    {
+        default:
+            return ShPixelLocalStorageFormat::NotPLS;
+        case EiifRGBA8:
+            return ShPixelLocalStorageFormat::RGBA8;
+        case EiifRGBA8I:
+            return ShPixelLocalStorageFormat::RGBA8I;
+        case EiifRGBA8UI:
+            return ShPixelLocalStorageFormat::RGBA8UI;
+        case EiifR32F:
+            return ShPixelLocalStorageFormat::R32F;
+        case EiifR32UI:
+            return ShPixelLocalStorageFormat::R32UI;
+    }
+}
+
 bool UsesDerivatives(TIntermAggregate *functionCall)
 {
     const TOperator op = functionCall->getOp();
@@ -312,6 +331,7 @@ TParseContext::TParseContext(TSymbolTable &symt,
       mMaxAtomicCounterBindings(resources.MaxAtomicCounterBindings),
       mMaxAtomicCounterBufferSize(resources.MaxAtomicCounterBufferSize),
       mMaxShaderStorageBufferBindings(resources.MaxShaderStorageBufferBindings),
+      mMaxPixelLocalStoragePlanes(resources.MaxPixelLocalStoragePlanes),
       mDeclaringFunction(false),
       mGeometryShaderInputPrimitiveType(EptUndefined),
       mGeometryShaderOutputPrimitiveType(EptUndefined),
@@ -471,7 +491,7 @@ void TParseContext::errorIfPLSDeclared(const TSourceLoc &loc, PLSIllegalOperatio
     {
         return;
     }
-    if (mPLSBindings.empty())
+    if (mPLSFormats.empty())
     {
         // No pixel local storage uniforms have been declared yet. Remember this potential error in
         // case PLS gets declared later.
@@ -859,6 +879,14 @@ bool TParseContext::checkIsAtGlobalLevel(const TSourceLoc &line, const char *tok
     return true;
 }
 
+void TParseContext::checkIsValidExpressionStatement(const TSourceLoc &line, TIntermTyped *expr)
+{
+    if (expr->isInterfaceBlock())
+    {
+        error(line, "expression statement is not allowed for interface blocks", "");
+    }
+}
+
 // ESSL 3.00.5 sections 3.8 and 3.9.
 // If it starts "gl_" or contains two consecutive underscores, it's reserved.
 // Also checks for "webgl_" and "_webgl_" reserved identifiers if parsing a webgl shader.
@@ -1173,17 +1201,6 @@ void TParseContext::checkStd430IsForShaderStorageBlock(const TSourceLoc &locatio
     if (blockStorage == EbsStd430 && qualifier != EvqBuffer)
     {
         error(location, "The std430 layout is supported only for shader storage blocks.", "std430");
-    }
-}
-
-void TParseContext::checkOutParameterIsNotOpaqueType(const TSourceLoc &line,
-                                                     TQualifier qualifier,
-                                                     const TType &type)
-{
-    ASSERT(qualifier == EvqParamOut || qualifier == EvqParamInOut);
-    if (IsOpaqueType(type.getBasicType()))
-    {
-        error(line, "opaque types cannot be output parameters", type.getBasicString());
     }
 }
 
@@ -1625,39 +1642,41 @@ bool TParseContext::declareVariable(const TSourceLoc &line,
     return true;
 }
 
-void TParseContext::checkIsParameterQualifierValid(
-    const TSourceLoc &line,
-    const TTypeQualifierBuilder &typeQualifierBuilder,
-    TType *type)
+void TParseContext::parseParameterQualifier(const TSourceLoc &line,
+                                            const TTypeQualifierBuilder &typeQualifierBuilder,
+                                            TPublicType &type)
 {
     // The only parameter qualifiers a parameter can have are in, out, inout or const.
     TTypeQualifier typeQualifier =
-        typeQualifierBuilder.getParameterTypeQualifier(type->getBasicType(), mDiagnostics);
+        typeQualifierBuilder.getParameterTypeQualifier(type.getBasicType(), mDiagnostics);
 
     if (typeQualifier.qualifier == EvqParamOut || typeQualifier.qualifier == EvqParamInOut)
     {
-        checkOutParameterIsNotOpaqueType(line, typeQualifier.qualifier, *type);
+        if (IsOpaqueType(type.getBasicType()))
+        {
+            error(line, "opaque types cannot be output parameters", type.getBasicString());
+        }
     }
 
-    if (!IsImage(type->getBasicType()))
+    if (!IsImage(type.getBasicType()))
     {
         checkMemoryQualifierIsNotSpecified(typeQualifier.memoryQualifier, line);
     }
     else
     {
-        type->setMemoryQualifier(typeQualifier.memoryQualifier);
+        type.setMemoryQualifier(typeQualifier.memoryQualifier);
     }
 
-    type->setQualifier(typeQualifier.qualifier);
+    type.setQualifier(typeQualifier.qualifier);
 
     if (typeQualifier.precision != EbpUndefined)
     {
-        type->setPrecision(typeQualifier.precision);
+        type.setPrecision(typeQualifier.precision);
     }
 
     if (typeQualifier.precise)
     {
-        type->setPrecise(true);
+        type.setPrecise(true);
     }
 }
 
@@ -2307,19 +2326,21 @@ void TParseContext::checkPixelLocalStorageBindingIsValid(const TSourceLoc &locat
         error(location, "pixel local storage requires a binding index", "layout qualifier");
     }
     // TODO(anglebug.com/40096838):
-    // else if (binding >= GL_MAX_LOCAL_STORAGE_PLANES_ANGLE)
-    // {
-    // }
-    else if (mPLSBindings.find(layoutQualifier.binding) != mPLSBindings.end())
+    else if (layoutQualifier.binding >= mMaxPixelLocalStoragePlanes)
+    {
+        error(location, "pixel local storage binding out of range", "layout qualifier");
+    }
+    else if (mPLSFormats.find(layoutQualifier.binding) != mPLSFormats.end())
     {
         error(location, "duplicate pixel local storage binding index",
               std::to_string(layoutQualifier.binding).c_str());
     }
     else
     {
-        mPLSBindings[layoutQualifier.binding] = layoutQualifier.imageInternalFormat;
-        // "mPLSBindings" is how we know whether pixel local storage uniforms have been declared, so
-        // flush the queue of potential errors once mPLSBindings isn't empty.
+        mPLSFormats[layoutQualifier.binding] =
+            ImageFormatToPLSFormat(layoutQualifier.imageInternalFormat);
+        // "mPLSFormats" is how we know whether any pixel local storage uniforms have been declared,
+        // so flush the queue of potential errors once mPLSFormats isn't empty.
         if (!mPLSPotentialErrors.empty())
         {
             for (const auto &[loc, op] : mPLSPotentialErrors)
@@ -2697,6 +2718,18 @@ TIntermTyped *TParseContext::parseVariableIdentifier(const TSourceLoc &location,
     }
     else
     {
+        // gl_LastFragDepthARM and gl_LastFragStencilARM cannot be accessed if early_fragment_tests
+        // is specified.
+        if ((variableType.getQualifier() == EvqLastFragDepth ||
+             variableType.getQualifier() == EvqLastFragStencil) &&
+            isEarlyFragmentTestsSpecified())
+        {
+            error(location,
+                  "gl_LastFragDepthARM and gl_LastFragStencilARM cannot be accessed because "
+                  "early_fragment_tests is specified",
+                  name);
+        }
+
         node = new TIntermSymbol(variable);
     }
     ASSERT(node != nullptr);
@@ -4413,15 +4446,6 @@ TIntermFunctionPrototype *TParseContext::createPrototypeNodeFromFunction(
             // Unsized type of a named parameter should have already been checked and sanitized.
             ASSERT(!param->getType().isUnsizedArray());
         }
-        else
-        {
-            if (param->getType().isUnsizedArray())
-            {
-                error(location, "function parameter array must be sized at compile time", "[]");
-                // We don't need to size the arrays since the parameter is unnamed and hence
-                // inaccessible.
-            }
-        }
     }
     return prototype;
 }
@@ -4530,13 +4554,6 @@ TFunction *TParseContext::parseFunctionDeclarator(const TSourceLoc &location, TF
     {
         const TVariable *param = function->getParam(i);
         const TType &paramType = param->getType();
-
-        if (paramType.isStructSpecifier())
-        {
-            // ESSL 3.00.6 section 12.10.
-            error(location, "Function parameter type cannot be a structure definition",
-                  function->name());
-        }
 
         checkPrecisionSpecified(location, paramType.getPrecision(), paramType.getBasicType());
     }
@@ -4705,38 +4722,41 @@ void TParseContext::checkIsNotUnsizedArray(const TSourceLoc &line,
     }
 }
 
-TParameter TParseContext::parseParameterDeclarator(TType *type,
+TParameter TParseContext::parseParameterDeclarator(const TPublicType &type,
                                                    const ImmutableString &name,
                                                    const TSourceLoc &nameLoc)
 {
-    ASSERT(type);
-    checkIsNotUnsizedArray(nameLoc, "function parameter array must specify a size", name, type);
-    if (type->getBasicType() == EbtVoid)
+    if (!name.empty())
     {
-        error(nameLoc, "illegal use of type 'void'", name);
+        if (type.getBasicType() == EbtVoid)
+        {
+            error(nameLoc, "illegal use of type 'void'", name);
+        }
+    }
+    if (type.isStructSpecifier())
+    {
+        // ESSL 3.00.6 section 12.10.
+        error(nameLoc, "Function parameter type cannot be a structure definition", name);
     }
     checkIsNotReserved(nameLoc, name);
-    TParameter param = {name.data(), type};
+    TParameter param{name.data(), type};
+    if (param.type.isUnsizedArray())
+    {
+        error(nameLoc, "function parameter array must specify a size", name);
+        param.type.sizeUnsizedArrays();
+    }
     return param;
 }
 
-TParameter TParseContext::parseParameterDeclarator(const TPublicType &publicType,
-                                                   const ImmutableString &name,
-                                                   const TSourceLoc &nameLoc)
-{
-    TType *type = new TType(publicType);
-    return parseParameterDeclarator(type, name, nameLoc);
-}
-
-TParameter TParseContext::parseParameterArrayDeclarator(const ImmutableString &name,
+TParameter TParseContext::parseParameterArrayDeclarator(const TPublicType &elementType,
+                                                        const ImmutableString &name,
                                                         const TSourceLoc &nameLoc,
-                                                        const TVector<unsigned int> &arraySizes,
-                                                        const TSourceLoc &arrayLoc,
-                                                        TPublicType *elementType)
+                                                        TVector<unsigned int> *arraySizes,
+                                                        const TSourceLoc &arrayLoc)
 {
-    checkArrayElementIsNotArray(arrayLoc, *elementType);
-    TType *arrayType = new TType(*elementType);
-    arrayType->makeArrays(arraySizes);
+    checkArrayElementIsNotArray(arrayLoc, elementType);
+    TPublicType arrayType{elementType};
+    arrayType.makeArrays(arraySizes);
     return parseParameterDeclarator(arrayType, name, nameLoc);
 }
 
@@ -7245,6 +7265,10 @@ TIntermTyped *TParseContext::addComma(TIntermTyped *left,
         error(loc,
               "sequence operator is not allowed for void, arrays, or structs containing arrays",
               ",");
+    }
+    if (left->isInterfaceBlock() || right->isInterfaceBlock())
+    {
+        error(loc, "sequence operator is not allowed for interface blocks", ",");
     }
 
     TIntermBinary *commaNode = TIntermBinary::CreateComma(left, right, mShaderVersion);

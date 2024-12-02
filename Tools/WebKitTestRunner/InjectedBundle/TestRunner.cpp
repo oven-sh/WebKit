@@ -98,12 +98,9 @@ void TestRunner::display()
     WKBundlePageForceRepaint(page());
 }
 
-void TestRunner::displayAndTrackRepaints()
+void TestRunner::displayAndTrackRepaints(JSContextRef context, JSValueRef callback)
 {
-    auto page = WTR::page();
-    WKBundlePageForceRepaint(page);
-    WKBundlePageSetTracksRepaints(page, true);
-    WKBundlePageResetTrackedRepaints(page);
+    postMessageWithAsyncReply(context, "DisplayAndTrackRepaints", callback);
 }
 
 static WKRetainPtr<WKDoubleRef> toWK(double value)
@@ -484,9 +481,9 @@ unsigned TestRunner::windowCount()
     return InjectedBundle::singleton().pageCount();
 }
 
-void TestRunner::clearBackForwardList()
+void TestRunner::clearBackForwardList(JSContextRef context, JSValueRef callback)
 {
-    WKBundleClearHistoryForTesting(page());
+    postMessageWithAsyncReply(context, "ClearBackForwardList", callback);
 }
 
 void TestRunner::makeWindowObject(JSContextRef context)

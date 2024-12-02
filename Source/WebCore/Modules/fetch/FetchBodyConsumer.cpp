@@ -62,12 +62,12 @@ static bool isHTTPQuotedStringTokenCodePoint(UChar c)
 struct MimeType {
     String type;
     String subtype;
-    UncheckedKeyHashMap<String, String> parameters;
+    HashMap<String, String> parameters;
 };
 
-static UncheckedKeyHashMap<String, String> parseParameters(StringView input, size_t position)
+static HashMap<String, String> parseParameters(StringView input, size_t position)
 {
-    UncheckedKeyHashMap<String, String> parameters;
+    HashMap<String, String> parameters;
     while (position < input.length()) {
         while (position < input.length() && isTabOrSpace(input[position]))
             position++;
@@ -138,6 +138,7 @@ FetchBodyConsumer::FetchBodyConsumer(FetchBodyConsumer&&) = default;
 FetchBodyConsumer::~FetchBodyConsumer() = default;
 FetchBodyConsumer& FetchBodyConsumer::operator=(FetchBodyConsumer&&) = default;
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // https://fetch.spec.whatwg.org/#concept-body-package-data
 RefPtr<DOMFormData> FetchBodyConsumer::packageFormData(ScriptExecutionContext* context, const String& contentType, std::span<const uint8_t> data)
 {
@@ -219,6 +220,7 @@ RefPtr<DOMFormData> FetchBodyConsumer::packageFormData(ScriptExecutionContext* c
 
     return form;
 }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static void resolveWithTypeAndData(Ref<DeferredPromise>&& promise, FetchBodyConsumer::Type type, const String& contentType, std::span<const uint8_t> data)
 {

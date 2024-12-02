@@ -165,6 +165,7 @@ struct RenderLayerCompositor::CompositingState {
         childState.fullPaintOrderTraversalRequired = fullPaintOrderTraversalRequired;
         childState.descendantsRequireCompositingUpdate = descendantsRequireCompositingUpdate;
         childState.ancestorHasTransformAnimation = ancestorHasTransformAnimation;
+        childState.ancestorAllowsBackingStoreDetachingForFixed = ancestorAllowsBackingStoreDetachingForFixed;
         childState.hasCompositedNonContainedDescendants = false;
         childState.hasNotIsolatedCompositedBlendingDescendants = false; // FIXME: should this only be reset for stacking contexts?
         childState.hasBackdropFilterDescendantsWithoutRoot = false;
@@ -226,6 +227,7 @@ struct RenderLayerCompositor::CompositingState {
     bool fullPaintOrderTraversalRequired { false };
     bool descendantsRequireCompositingUpdate { false };
     bool ancestorHasTransformAnimation { false };
+    bool ancestorAllowsBackingStoreDetachingForFixed { false };
     bool hasCompositedNonContainedDescendants { false };
     bool hasNotIsolatedCompositedBlendingDescendants { false };
     bool hasBackdropFilterDescendantsWithoutRoot { false };
@@ -960,13 +962,28 @@ void RenderLayerCompositor::applyToCompositedLayerIncludingDescendants(RenderLay
         applyToCompositedLayerIncludingDescendants(*childLayer, function);
 }
 
-void RenderLayerCompositor::updateEventRegions()
+void RenderLayerCompositor::updateEventRegionsRecursive(RenderLayer& layer)
 {
 #if ENABLE(ASYNC_SCROLLING)
-    applyToCompositedLayerIncludingDescendants(*m_renderView.layer(), [](auto& layer) {
+    if (layer.isComposited())
         layer.backing()->updateEventRegion();
-    });
+
+    if (!layer.hasDescendantNeedingEventRegionUpdate())
+        return;
+
+    for (auto* childLayer = layer.firstChild(); childLayer; childLayer = childLayer->nextSibling())
+        updateEventRegionsRecursive(*childLayer);
+
+    layer.clearHasDescendantNeedingEventRegionUpdate();
+#else
+    UNUSED_PARAM(layer);
 #endif
+}
+
+void RenderLayerCompositor::updateEventRegions()
+{
+    updateEventRegionsRecursive(*m_renderView.layer());
+    m_renderView.setNeedsEventRegionUpdateForNonCompositedFrame(false);
 }
 
 static std::optional<ScrollingNodeID> frameHostingNodeForFrame(LocalFrame& frame)
@@ -1177,6 +1194,24 @@ static bool canSkipComputeCompositingRequirementsForSubtree(const RenderLayer& l
     return layer.renderer().hasNonVisibleOverflow();
 }
 
+bool RenderLayerCompositor::allowBackingStoreDetachingForFixedPosition(RenderLayer& layer, const LayoutRect& absoluteBounds)
+{
+    ASSERT_UNUSED(layer, layer.behavesAsFixed());
+
+    // We'll allow detaching if the layer is outside the layout viewport. Fixed layers inside
+    // the layout viewport can be revealed by async scrolling, so we want to pin their backing store.
+    LocalFrameView& frameView = m_renderView.frameView();
+    LayoutRect fixedLayoutRect;
+    if (frameView.useFixedLayout())
+        fixedLayoutRect = m_renderView.unscaledDocumentRect();
+    else
+        fixedLayoutRect = frameView.rectForFixedPositionLayout();
+
+    bool allowDetaching = !fixedLayoutRect.intersects(absoluteBounds);
+    LOG_WITH_STREAM(Compositing, stream << "RenderLayerCompositor (layer " << &layer << ") allowsBackingStoreDetaching - absoluteBounds " << absoluteBounds << " layoutViewportRect " << fixedLayoutRect << ", allowDetaching " << allowDetaching);
+    return allowDetaching;
+}
+
 void RenderLayerCompositor::computeCompositingRequirements(RenderLayer* ancestorLayer, RenderLayer& layer, LayerOverlapMap& overlapMap, CompositingState& compositingState, BackingSharingState& backingSharingState)
 {
 #if !LOG_DISABLED
@@ -1295,10 +1330,19 @@ void RenderLayerCompositor::computeCompositingRequirements(RenderLayer* ancestor
         willBeComposited = true;
     };
 
+
+    // Unless we leave the containing block chain, or have an animated transform,
+    // then we can continue to use the inherited backing store attachment.
+    bool allowsBackingStoreDetachingForFixed = false;
+    if (currentState.ancestorAllowsBackingStoreDetachingForFixed && ancestorLayer && layer.ancestorLayerIsInContainingBlockChain(*ancestorLayer) && !layerExtent.hasTransformAnimation)
+        allowsBackingStoreDetachingForFixed = true;
+
     auto layerWillCompositePostDescendants = [&] {
         layerWillComposite();
         currentState.subtreeIsCompositing = true;
         becameCompositedAfterDescendantTraversal = true;
+        if (layer.behavesAsFixed())
+            allowsBackingStoreDetachingForFixed = allowBackingStoreDetachingForFixedPosition(layer, layerExtent.bounds);
     };
 
     if (willBeComposited) {
@@ -1306,6 +1350,10 @@ void RenderLayerCompositor::computeCompositingRequirements(RenderLayer* ancestor
 
         computeExtent(overlapMap, layer, layerExtent);
         currentState.ancestorHasTransformAnimation |= layerExtent.hasTransformAnimation;
+
+        if (!allowsBackingStoreDetachingForFixed && layer.behavesAsFixed())
+            currentState.ancestorAllowsBackingStoreDetachingForFixed = allowsBackingStoreDetachingForFixed = allowBackingStoreDetachingForFixedPosition(layer, layerExtent.bounds);
+
         // Too hard to compute animated bounds if both us and some ancestor is animating transform.
         layerExtent.animationCausesExtentUncertainty |= layerExtent.hasTransformAnimation && compositingState.ancestorHasTransformAnimation;
     } else if (layerPaintsIntoProvidedBacking) {
@@ -1417,12 +1465,19 @@ void RenderLayerCompositor::computeCompositingRequirements(RenderLayer* ancestor
 
     // Create or destroy backing here. However, we can't update geometry because layers above us may become composited
     // during post-order traversal (e.g. for clipping).
+    bool needsCompositingStatusUpdate = false;
     if (updateBacking(layer, queryData, &backingSharingState, willBeComposited ? BackingRequired::Yes : BackingRequired::No)) {
         layer.setNeedsCompositingLayerConnection();
         // Child layers need to get a geometry update to recompute their position.
         layer.setChildrenNeedCompositingGeometryUpdate();
         // The composited bounds of enclosing layers depends on which descendants are composited, so they need a geometry update.
         layer.setNeedsCompositingGeometryUpdateOnAncestors();
+
+        // This layer and all of its descendants have cached repaints rects that are relative to
+        // the repaint container, so change when compositing changes; we need to update them here,
+        // as long as shared backing isn't going to change our repaint container.
+        if (willBeComposited || !layerRepaintTargetsBackingSharingLayer(layer, backingSharingState))
+            needsCompositingStatusUpdate = true;
     }
 
     // Update layer state bits.
@@ -1441,11 +1496,23 @@ void RenderLayerCompositor::computeCompositingRequirements(RenderLayer* ancestor
     compositingState.updateWithDescendantStateAndLayer(currentState, layer, ancestorLayer, layerExtent);
     updateBackingSharingAfterDescendantTraversal(backingSharingState, treeDepth, overlapMap, layer, layerExtent, compositingState.stackingContextAncestor, backingSharingSnapshot);
 
+    // Update the cached repaint rects now that we've finished updating backing
+    // sharing state on descendants
+    if (needsCompositingStatusUpdate) {
+        layer.compositingStatusChanged(queryData.layoutUpToDate);
+        if (!layer.isComposited()) {
+            if (layerRepaintTargetsBackingSharingLayer(layer, backingSharingState))
+                backingSharingState.addLayerNeedingRepaint(layer);
+            else
+                repaintOnCompositingChange(layer);
+        }
+    }
+
     bool layerContributesToOverlap = (currentState.compositingAncestor && !currentState.compositingAncestor->isRenderViewLayer()) || currentState.backingSharingAncestor;
     updateOverlapMap(overlapMap, layer, layerExtent, didPushOverlapContainer, layerContributesToOverlap, becameCompositedAfterDescendantTraversal && !descendantsAddedToOverlap);
 
     if (layer.isComposited())
-        layer.backing()->updateAllowsBackingStoreDetaching(layerExtent.bounds);
+        layer.backing()->updateAllowsBackingStoreDetaching(allowsBackingStoreDetachingForFixed);
 
     overlapMap.geometryMap().popMappingsToAncestor(ancestorLayer);
 
@@ -2049,6 +2116,9 @@ void RenderLayerCompositor::layerGainedCompositedScrollableOverflow(RenderLayer&
 
     bool layerChanged = updateBacking(layer, queryData, nullptr, BackingRequired::Yes);
     if (layerChanged) {
+        layer.compositingStatusChanged(queryData.layoutUpToDate);
+        if (!layer.isComposited())
+            repaintOnCompositingChange(layer);
         layer.setChildrenNeedCompositingGeometryUpdate();
         layer.setNeedsCompositingLayerConnection();
         layer.setSubsequentLayersNeedCompositingRequirementsTraversal();
@@ -2077,6 +2147,9 @@ void RenderLayerCompositor::layerStyleChanged(StyleDifference diff, RenderLayer&
     
     bool layerChanged = updateBacking(layer, queryData);
     if (layerChanged) {
+        layer.compositingStatusChanged(queryData.layoutUpToDate);
+        if (!layer.isComposited())
+            repaintOnCompositingChange(layer);
         layer.setChildrenNeedCompositingGeometryUpdate();
         layer.setNeedsCompositingLayerConnection();
         layer.setSubsequentLayersNeedCompositingRequirementsTraversal();
@@ -2232,6 +2305,7 @@ void RenderLayerCompositor::updateRootContentLayerClipping()
     m_rootContentsLayer->setMasksToBounds(!m_renderView.settings().backgroundShouldExtendBeyondPage());
 }
 
+
 bool RenderLayerCompositor::updateBacking(RenderLayer& layer, RequiresCompositingData& queryData, BackingSharingState* backingSharingState, BackingRequired backingRequired)
 {
     bool layerChanged = false;
@@ -2280,10 +2354,6 @@ bool RenderLayerCompositor::updateBacking(RenderLayer& layer, RequiresCompositin
                     tiledBacking->setTopContentInset(frameView.topContentInset());
             }
 
-            // This layer and all of its descendants have cached repaints rects that are relative to
-            // the repaint container, so change when compositing changes; we need to update them here.
-            layer.compositingStatusChanged(queryData.layoutUpToDate);
-
             layer.setNeedsCompositingGeometryUpdate();
             layer.setNeedsCompositingConfigurationUpdate();
             layer.setNeedsCompositingPaintOrderChildrenUpdate();
@@ -2305,12 +2375,6 @@ bool RenderLayerCompositor::updateBacking(RenderLayer& layer, RequiresCompositin
 
             layer.clearBacking();
             layerChanged = true;
-
-            // This layer and all of its descendants have cached repaints rects that are relative to
-            // the repaint container, so change when compositing changes; we need to update them here,
-            // as long as shared backing isn't going to change our repaint container.
-            if (!repaintTargetsSharedBacking(layer))
-                layer.compositingStatusChanged(queryData.layoutUpToDate);
 
             // If we need to repaint, do so now that we've removed the backing.
             repaintLayer(layer);
@@ -2360,6 +2424,11 @@ bool RenderLayerCompositor::updateBacking(RenderLayer& layer, RequiresCompositin
 bool RenderLayerCompositor::updateLayerCompositingState(RenderLayer& layer, const RenderLayer* compositingAncestor, RequiresCompositingData& queryData, BackingSharingState& backingSharingState)
 {
     bool layerChanged = updateBacking(layer, queryData, &backingSharingState);
+    if (layerChanged) {
+        layer.compositingStatusChanged(queryData.layoutUpToDate);
+        if (!layer.isComposited())
+            repaintOnCompositingChange(layer);
+    }
 
     // See if we need content or clipping layers. Methods called here should assume
     // that the compositing state of descendant layers has not been updated yet.
@@ -3617,6 +3686,13 @@ bool RenderLayerCompositor::isCompositedPlugin(const RenderObject& renderer)
     return renderEmbeddedObject->requiresAcceleratedCompositing();
 }
 
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
+bool RenderLayerCompositor::isSeparated(const RenderObject& renderer)
+{
+    return renderer.style().usedTransformStyle3D() == TransformStyle3D::Separated;
+}
+#endif
+
 // Return true if the given layer is a stacking context and has compositing child
 // layers that it needs to clip. In this case we insert a clipping GraphicsLayer
 // into the hierarchy between this layer and its children in the z-order hierarchy.
@@ -4659,6 +4735,24 @@ void RenderLayerCompositor::rootOrBodyStyleChanged(RenderElement& renderer, cons
     }
 }
 
+void RenderLayerCompositor::setRootElementCapturedInViewTransition(bool captured)
+{
+    if (m_rootElementCapturedInViewTransition == captured)
+        return;
+    m_rootElementCapturedInViewTransition = captured;
+    updateRootContentsLayerBackgroundColor();
+}
+
+void RenderLayerCompositor::updateRootContentsLayerBackgroundColor()
+{
+    if (!m_rootContentsLayer)
+        return;
+    if (m_rootElementCapturedInViewTransition)
+        m_rootContentsLayer->setBackgroundColor(m_viewBackgroundColor);
+    else
+        m_rootContentsLayer->setBackgroundColor(Color());
+}
+
 void RenderLayerCompositor::rootBackgroundColorOrTransparencyChanged()
 {
     if (!usesCompositing())
@@ -4688,6 +4782,7 @@ void RenderLayerCompositor::rootBackgroundColorOrTransparencyChanged()
 #if HAVE(RUBBER_BANDING)
         updateLayerForOverhangAreasBackgroundColor();
 #endif
+        updateRootContentsLayerBackgroundColor();
     }
     
     rootLayerConfigurationChanged();
@@ -4825,6 +4920,7 @@ void RenderLayerCompositor::ensureRootLayer()
 
         // Need to clip to prevent transformed content showing outside this frame
         updateRootContentLayerClipping();
+        updateRootContentsLayerBackgroundColor();
     }
 
     if (requiresScrollLayer(expectedAttachment)) {

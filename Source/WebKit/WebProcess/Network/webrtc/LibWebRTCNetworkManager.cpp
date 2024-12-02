@@ -56,7 +56,7 @@ RefPtr<LibWebRTCNetworkManager> LibWebRTCNetworkManager::getOrCreate(WebCore::Sc
         auto newNetworkManager = adoptRef(*new LibWebRTCNetworkManager(identifier));
         networkManager = newNetworkManager.ptr();
         document->setRTCNetworkManager(WTFMove(newNetworkManager));
-        WebProcess::singleton().libWebRTCNetwork().monitor().addObserver(*networkManager);
+        WebProcess::singleton().libWebRTCNetwork().protectedMonitor()->addObserver(*networkManager);
     }
 
     return networkManager;
@@ -85,7 +85,7 @@ void LibWebRTCNetworkManager::close()
 #if ASSERT_ENABLED
     m_isClosed = true;
 #endif
-    WebProcess::singleton().libWebRTCNetwork().monitor().removeObserver(*this);
+    WebProcess::singleton().libWebRTCNetwork().protectedMonitor()->removeObserver(*this);
 }
 
 void LibWebRTCNetworkManager::unregisterMDNSNames()
@@ -125,7 +125,7 @@ void LibWebRTCNetworkManager::StopUpdating()
     callOnMainRunLoop([weakThis = WeakPtr { *this }] {
         if (!weakThis)
             return;
-        WebProcess::singleton().libWebRTCNetwork().monitor().stopUpdating();
+        WebProcess::singleton().libWebRTCNetwork().protectedMonitor()->stopUpdating();
     });
 }
 

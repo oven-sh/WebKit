@@ -46,14 +46,17 @@
 #include "CSSParserFastPaths.h"
 #include "CSSParserIdioms.h"
 #include "CSSPendingSubstitutionValue.h"
-#include "CSSPrimitiveValueMappings.h"
+#include "CSSPrimitiveNumericTypes+CSSValueCreation.h"
 #include "CSSPropertyParserConsumer+Align.h"
 #include "CSSPropertyParserConsumer+Angle.h"
+#include "CSSPropertyParserConsumer+Background.h"
 #include "CSSPropertyParserConsumer+Color.h"
+#include "CSSPropertyParserConsumer+Conditional.h"
 #include "CSSPropertyParserConsumer+Font.h"
 #include "CSSPropertyParserConsumer+Grid.h"
 #include "CSSPropertyParserConsumer+Ident.h"
 #include "CSSPropertyParserConsumer+Image.h"
+#include "CSSPropertyParserConsumer+Inline.h"
 #include "CSSPropertyParserConsumer+Integer.h"
 #include "CSSPropertyParserConsumer+Length.h"
 #include "CSSPropertyParserConsumer+LengthPercentage.h"
@@ -62,11 +65,14 @@
 #include "CSSPropertyParserConsumer+Percentage.h"
 #include "CSSPropertyParserConsumer+Position.h"
 #include "CSSPropertyParserConsumer+Resolution.h"
+#include "CSSPropertyParserConsumer+Sizing.h"
 #include "CSSPropertyParserConsumer+String.h"
+#include "CSSPropertyParserConsumer+TextDecoration.h"
 #include "CSSPropertyParserConsumer+Time.h"
 #include "CSSPropertyParserConsumer+Timeline.h"
 #include "CSSPropertyParserConsumer+TimingFunction.h"
 #include "CSSPropertyParserConsumer+Transform.h"
+#include "CSSPropertyParserConsumer+Transitions.h"
 #include "CSSPropertyParserConsumer+URL.h"
 #include "CSSPropertyParsing.h"
 #include "CSSQuadValue.h"
@@ -88,6 +94,8 @@
 #include <memory>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringBuilder.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -170,7 +178,7 @@ CSSPropertyID cssPropertyID(StringView string)
     
     return string.is8Bit() ? cssPropertyID(string.span8()) : cssPropertyID(string.span16());
 }
-    
+
 using namespace CSSPropertyParserHelpers;
 
 CSSPropertyParser::CSSPropertyParser(const CSSParserTokenRange& range, const CSSParserContext& context, Vector<CSSProperty, 256>* parsedProperties, bool consumeWhitespace)
@@ -1678,6 +1686,19 @@ bool CSSPropertyParser::consume4ValueShorthand(const StylePropertyShorthand& sho
     return m_range.atEnd();
 }
 
+bool CSSPropertyParser::consumeBorderRadius(CSSPropertyID property, bool important)
+{
+    auto borderRadius = property == CSSPropertyWebkitBorderRadius ? consumeUnresolvedWebKitBorderRadius(m_range, m_context) : consumeUnresolvedBorderRadius(m_range, m_context);
+    if (!borderRadius)
+        return false;
+
+    addProperty(CSSPropertyBorderTopLeftRadius, CSSPropertyBorderRadius, WebCore::CSS::createCSSValue(borderRadius->topLeft()), important);
+    addProperty(CSSPropertyBorderTopRightRadius, CSSPropertyBorderRadius, WebCore::CSS::createCSSValue(borderRadius->topRight()), important);
+    addProperty(CSSPropertyBorderBottomRightRadius, CSSPropertyBorderRadius, WebCore::CSS::createCSSValue(borderRadius->bottomRight()), important);
+    addProperty(CSSPropertyBorderBottomLeftRadius, CSSPropertyBorderRadius, WebCore::CSS::createCSSValue(borderRadius->bottomLeft()), important);
+    return true;
+}
+
 bool CSSPropertyParser::consumeBorderImage(CSSPropertyID property, bool important)
 {
     RefPtr<CSSValue> source;
@@ -3005,17 +3026,8 @@ bool CSSPropertyParser::parseShorthand(CSSPropertyID property, bool important)
     case CSSPropertyListStyle:
         return consumeListStyleShorthand(important);
     case CSSPropertyBorderRadius:
-    case CSSPropertyWebkitBorderRadius: {
-        std::array<RefPtr<CSSValue>, 4> horizontalRadii;
-        std::array<RefPtr<CSSValue>, 4> verticalRadii;
-        if (!consumeRadii(horizontalRadii, verticalRadii, m_range, m_context, property == CSSPropertyWebkitBorderRadius))
-            return false;
-        addProperty(CSSPropertyBorderTopLeftRadius, CSSPropertyBorderRadius, CSSValuePair::create(horizontalRadii[0].releaseNonNull(), verticalRadii[0].releaseNonNull()), important);
-        addProperty(CSSPropertyBorderTopRightRadius, CSSPropertyBorderRadius, CSSValuePair::create(horizontalRadii[1].releaseNonNull(), verticalRadii[1].releaseNonNull()), important);
-        addProperty(CSSPropertyBorderBottomRightRadius, CSSPropertyBorderRadius, CSSValuePair::create(horizontalRadii[2].releaseNonNull(), verticalRadii[2].releaseNonNull()), important);
-        addProperty(CSSPropertyBorderBottomLeftRadius, CSSPropertyBorderRadius, CSSValuePair::create(horizontalRadii[3].releaseNonNull(), verticalRadii[3].releaseNonNull()), important);
-        return true;
-    }
+    case CSSPropertyWebkitBorderRadius:
+        return consumeBorderRadius(property, important);
     case CSSPropertyBorderColor:
         return consume4ValueShorthand(borderColorShorthand(), important);
     case CSSPropertyBorderStyle:
@@ -3128,3 +3140,5 @@ bool CSSPropertyParser::parseShorthand(CSSPropertyID property, bool important)
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

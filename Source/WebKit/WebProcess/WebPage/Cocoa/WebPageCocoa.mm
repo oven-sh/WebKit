@@ -172,7 +172,7 @@ void WebPage::platformDidReceiveLoadParameters(const LoadParameters& parameters)
 
 void WebPage::requestActiveNowPlayingSessionInfo(CompletionHandler<void(bool, WebCore::NowPlayingInfo&&)>&& completionHandler)
 {
-    if (auto* sharedManager = WebCore::PlatformMediaSessionManager::sharedManagerIfExists()) {
+    if (auto* sharedManager = WebCore::PlatformMediaSessionManager::singletonIfExists()) {
         if (auto nowPlayingInfo = sharedManager->nowPlayingInfo()) {
             bool registeredAsNowPlayingApplication = sharedManager->registeredAsNowPlayingApplication();
             completionHandler(registeredAsNowPlayingApplication, WTFMove(*nowPlayingInfo));
@@ -239,15 +239,6 @@ void WebPage::performDictionaryLookupForSelection(LocalFrame& frame, const Visib
         return;
 
     performDictionaryLookupForRange(frame, *range, presentationTransition);
-}
-
-void WebPage::performDictionaryLookupOfCurrentSelection()
-{
-    RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
-    if (!frame)
-        return;
-
-    performDictionaryLookupForSelection(*frame, frame->selection().selection(), TextIndicatorPresentationTransition::BounceAndCrossfade);
 }
 
 void WebPage::performDictionaryLookupForRange(LocalFrame& frame, const SimpleRange& range, TextIndicatorPresentationTransition presentationTransition)
@@ -383,7 +374,7 @@ void WebPage::addDictationAlternative(const String& text, DictationContext conte
         return;
     }
 
-    document->markers().addMarker(matchRange, DocumentMarker::Type::DictationAlternatives, { DocumentMarker::DictationData { context, text } });
+    document->markers().addMarker(matchRange, DocumentMarkerType::DictationAlternatives, { DocumentMarker::DictationData { context, text } });
     completion(true);
 }
 
@@ -406,7 +397,7 @@ void WebPage::dictationAlternativesAtSelection(CompletionHandler<void(Vector<Dic
         return;
     }
 
-    auto markers = document->markers().markersInRange(*expandedSelectionRange, DocumentMarker::Type::DictationAlternatives);
+    auto markers = document->markers().markersInRange(*expandedSelectionRange, DocumentMarkerType::DictationAlternatives);
     auto contexts = WTF::compactMap(markers, [](auto& marker) -> std::optional<DictationContext> {
         if (std::holds_alternative<DocumentMarker::DictationData>(marker->data()))
             return std::get<DocumentMarker::DictationData>(marker->data()).context;
@@ -435,7 +426,7 @@ void WebPage::clearDictationAlternatives(Vector<DictationContext>&& contexts)
         if (!std::holds_alternative<DocumentMarker::DictationData>(marker.data()))
             return FilterMarkerResult::Keep;
         return setOfContextsToRemove.contains(std::get<WebCore::DocumentMarker::DictationData>(marker.data()).context) ? FilterMarkerResult::Remove : FilterMarkerResult::Keep;
-    }, DocumentMarker::Type::DictationAlternatives);
+    }, DocumentMarkerType::DictationAlternatives);
 }
 
 void WebPage::accessibilityTransferRemoteToken(RetainPtr<NSData> remoteToken)
@@ -578,9 +569,9 @@ void WebPage::getProcessDisplayName(CompletionHandler<void(String&&)>&& completi
 #endif
 }
 
-bool WebPage::isTransparentOrFullyClipped(const Element& element) const
+bool WebPage::isTransparentOrFullyClipped(const Node& node) const
 {
-    auto* renderer = element.renderer();
+    CheckedPtr renderer = node.renderer();
     if (!renderer)
         return false;
 
@@ -670,10 +661,13 @@ void WebPage::getPlatformEditorStateCommon(const LocalFrame& frame, EditorState&
 
     RefPtr enclosingFormControl = enclosingTextFormControl(selection.start());
     if (RefPtr editableRootOrFormControl = enclosingFormControl.get() ?: selection.rootEditableElement()) {
-        postLayoutData.editableRootIsTransparentOrFullyClipped = result.isContentEditable && isTransparentOrFullyClipped(*editableRootOrFormControl);
+        postLayoutData.selectionIsTransparentOrFullyClipped = result.isContentEditable && isTransparentOrFullyClipped(*editableRootOrFormControl);
 #if PLATFORM(IOS_FAMILY)
         result.visualData->editableRootBounds = rootViewInteractionBounds(Ref { *editableRootOrFormControl });
 #endif
+    } else if (result.selectionIsRange) {
+        if (RefPtr ancestorContainer = commonInclusiveAncestor(selection.start(), selection.end()))
+            postLayoutData.selectionIsTransparentOrFullyClipped = isTransparentOrFullyClipped(*ancestorContainer);
     }
 
 #if PLATFORM(IOS_FAMILY)
@@ -946,21 +940,21 @@ void WebPage::didBeginWritingToolsSession(const WebCore::WritingTools::Session& 
     corePage()->didBeginWritingToolsSession(session, contexts);
 }
 
-void WebPage::proofreadingSessionDidReceiveSuggestions(const WebCore::WritingTools::Session& session, const Vector<WebCore::WritingTools::TextSuggestion>& suggestions, const WebCore::WritingTools::Context& context, bool finished, CompletionHandler<void()>&& completionHandler)
+void WebPage::proofreadingSessionDidReceiveSuggestions(const WebCore::WritingTools::Session& session, const Vector<WebCore::WritingTools::TextSuggestion>& suggestions, const WebCore::CharacterRange& processedRange, const WebCore::WritingTools::Context& context, bool finished, CompletionHandler<void()>&& completionHandler)
 {
-    corePage()->proofreadingSessionDidReceiveSuggestions(session, suggestions, context, finished);
-    completionHandler();
-}
-
-void WebPage::proofreadingSessionDidCompletePartialReplacement(const WebCore::WritingTools::Session& session, const Vector<WebCore::WritingTools::TextSuggestion>& suggestions, const WebCore::WritingTools::Context& context, bool finished, CompletionHandler<void()>&& completionHandler)
-{
-    corePage()->proofreadingSessionDidCompletePartialReplacement(session, suggestions, context, finished);
+    corePage()->proofreadingSessionDidReceiveSuggestions(session, suggestions, processedRange, context, finished);
     completionHandler();
 }
 
 void WebPage::proofreadingSessionDidUpdateStateForSuggestion(const WebCore::WritingTools::Session& session, WebCore::WritingTools::TextSuggestion::State state, const WebCore::WritingTools::TextSuggestion& suggestion, const WebCore::WritingTools::Context& context)
 {
     corePage()->proofreadingSessionDidUpdateStateForSuggestion(session, state, suggestion, context);
+}
+
+void WebPage::willEndWritingToolsSession(const WebCore::WritingTools::Session& session, bool accepted, CompletionHandler<void()>&& completionHandler)
+{
+    corePage()->willEndWritingToolsSession(session, accepted);
+    completionHandler();
 }
 
 void WebPage::didEndWritingToolsSession(const WebCore::WritingTools::Session& session, bool accepted)
@@ -1057,9 +1051,9 @@ void WebPage::proofreadingSessionSuggestionTextRectsInRootViewCoordinates(const 
     completionHandler(WTFMove(rects));
 }
 
-void WebPage::updateTextVisibilityForActiveWritingToolsSession(const WebCore::CharacterRange& rangeRelativeToSessionRange, bool visible, CompletionHandler<void()>&& completionHandler)
+void WebPage::updateTextVisibilityForActiveWritingToolsSession(const WebCore::CharacterRange& rangeRelativeToSessionRange, bool visible, const WTF::UUID& identifier, CompletionHandler<void()>&& completionHandler)
 {
-    corePage()->updateTextVisibilityForActiveWritingToolsSession(rangeRelativeToSessionRange, visible);
+    corePage()->updateTextVisibilityForActiveWritingToolsSession(rangeRelativeToSessionRange, visible, identifier);
     completionHandler();
 }
 
@@ -1067,6 +1061,18 @@ void WebPage::textPreviewDataForActiveWritingToolsSession(const WebCore::Charact
 {
     auto data = corePage()->textPreviewDataForActiveWritingToolsSession(rangeRelativeToSessionRange);
     completionHandler(WTFMove(data));
+}
+
+void WebPage::decorateTextReplacementsForActiveWritingToolsSession(const WebCore::CharacterRange& rangeRelativeToSessionRange, CompletionHandler<void(void)>&& completionHandler)
+{
+    corePage()->decorateTextReplacementsForActiveWritingToolsSession(rangeRelativeToSessionRange);
+    completionHandler();
+}
+
+void WebPage::setSelectionForActiveWritingToolsSession(const WebCore::CharacterRange& rangeRelativeToSessionRange, CompletionHandler<void(void)>&& completionHandler)
+{
+    corePage()->setSelectionForActiveWritingToolsSession(rangeRelativeToSessionRange);
+    completionHandler();
 }
 
 void WebPage::intelligenceTextAnimationsDidComplete()
@@ -1137,7 +1143,10 @@ void WebPage::createTextIndicatorForElementWithID(const String& elementID, Compl
         WebCore::TextIndicatorOption::IncludeSnapshotOfAllVisibleContentWithoutSelection,
         WebCore::TextIndicatorOption::ExpandClipBeyondVisibleRect,
         WebCore::TextIndicatorOption::SkipReplacedContent,
-        WebCore::TextIndicatorOption::RespectTextColor
+        WebCore::TextIndicatorOption::RespectTextColor,
+#if PLATFORM(VISION)
+        WebCore::TextIndicatorOption::SnapshotContentAt3xBaseScale,
+#endif
     };
 
     RefPtr textIndicator = WebCore::TextIndicator::createWithRange(elementRange, textIndicatorOptions, WebCore::TextIndicatorPresentationTransition::None, { });

@@ -49,6 +49,49 @@ namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AnchorPositionedState);
 
+static bool isSizingProperty(CSSPropertyID propertyID)
+{
+    switch (propertyID) {
+    case CSSPropertyWidth:
+    case CSSPropertyMinWidth:
+    case CSSPropertyMaxWidth:
+
+    case CSSPropertyHeight:
+    case CSSPropertyMinHeight:
+    case CSSPropertyMaxHeight:
+
+    case CSSPropertyBlockSize:
+    case CSSPropertyMinBlockSize:
+    case CSSPropertyMaxBlockSize:
+
+    case CSSPropertyInlineSize:
+    case CSSPropertyMinInlineSize:
+    case CSSPropertyMaxInlineSize:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool isMarginProperty(CSSPropertyID propertyID)
+{
+    switch (propertyID) {
+    case CSSPropertyMarginLeft:
+    case CSSPropertyMarginRight:
+    case CSSPropertyMarginTop:
+    case CSSPropertyMarginBottom:
+
+    case CSSPropertyMarginBlockStart:
+    case CSSPropertyMarginBlockEnd:
+    case CSSPropertyMarginInlineStart:
+    case CSSPropertyMarginInlineEnd:
+        return true;
+
+    default:
+        return false;
+    }
+}
+
 static BoxAxis mapInsetPropertyToPhysicalAxis(CSSPropertyID id, const WritingMode writingMode)
 {
     switch (id) {
@@ -230,7 +273,7 @@ static LayoutSize scrollOffsetFromAncestorContainer(const RenderElement& descend
 
 // This computes the top left location, physical width, and physical height of the specified
 // anchor element. The location is computed relative to the specified containing block.
-static LayoutRect computeAnchorRectRelativeToContainingBlock(CheckedRef<const RenderBoxModelObject> anchorBox, const RenderBlock& containingBlock)
+LayoutRect AnchorPositionEvaluator::computeAnchorRectRelativeToContainingBlock(CheckedRef<const RenderBoxModelObject> anchorBox, const RenderBlock& containingBlock)
 {
     // Fragmented flows are a little tricky to deal with. One example of a fragmented
     // flow is a block anchor element that is "fragmented" or split across multiple columns
@@ -283,7 +326,7 @@ static LayoutUnit computeInsetValue(CSSPropertyID insetPropertyID, CheckedRef<co
 
     auto insetPropertySide = mapInsetPropertyToPhysicalSide(insetPropertyID, anchorPositionedRenderer->writingMode());
     auto anchorSideID = std::holds_alternative<CSSValueID>(anchorSide) ? std::get<CSSValueID>(anchorSide) : CSSValueInvalid;
-    auto anchorRect = computeAnchorRectRelativeToContainingBlock(anchorBox, *containingBlock);
+    auto anchorRect = AnchorPositionEvaluator::computeAnchorRectRelativeToContainingBlock(anchorBox, *containingBlock);
 
     // Explicitly deal with the center/percentage value here.
     // "Refers to a position a corresponding percentage between the start and end sides, with
@@ -377,13 +420,11 @@ static LayoutUnit computeInsetValue(CSSPropertyID insetPropertyID, CheckedRef<co
     return removeBorderForInsetValue(insetValue, insetPropertySide, *containingBlock);
 }
 
-std::optional<double> AnchorPositionEvaluator::evaluate(const BuilderState& builderState, AtomString elementName, Side side)
+RefPtr<Element> AnchorPositionEvaluator::findAnchorAndAttemptResolution(const BuilderState& builderState, std::optional<ScopedName> elementName)
 {
-    auto propertyID = builderState.cssPropertyID();
     const auto& style = builderState.style();
 
-    // https://drafts.csswg.org/css-anchor-position-1/#anchor-valid
-    auto isValidAnchor = [&] {
+    auto isValid = [&] {
         if (!builderState.element())
             return false;
 
@@ -391,6 +432,75 @@ std::optional<double> AnchorPositionEvaluator::evaluate(const BuilderState& buil
         if (style.pseudoElementType() != PseudoId::None)
             return false;
 
+        return true;
+    };
+
+    if (!isValid())
+        return { };
+
+    Ref anchorPositionedElement = *builderState.element();
+
+    auto& anchorPositionedStates = anchorPositionedElement->document().styleScope().anchorPositionedStates();
+    auto& anchorPositionedState = *anchorPositionedStates.ensure(anchorPositionedElement, [&] {
+        return WTF::makeUnique<AnchorPositionedState>();
+    }).iterator->value.get();
+
+    if (!elementName)
+        elementName = builderState.style().positionAnchor();
+
+    if (elementName) {
+        // Collect anchor names that this element refers to in anchor() or anchor-size()
+        bool isNewAnchorName = anchorPositionedState.anchorNames.add(elementName->name).isNewEntry;
+
+        // If anchor resolution has progressed past Initial, and we pick up a new anchor name, set the
+        // stage back to Initial. This restarts the resolution process to resolve newly added names.
+        if (isNewAnchorName)
+            anchorPositionedState.stage = AnchorPositionResolutionStage::Initial;
+    }
+
+    // An anchor() instance will be ready to be resolved when all referenced anchor-names
+    // have been mapped to an actual anchor element in the DOM tree. At that point, we
+    // should also have layout information for the anchor-positioned element alongside
+    // the anchors referenced by the anchor-positioned element. Until then, we cannot
+    // resolve this anchor() instance.
+    if (anchorPositionedState.stage == AnchorPositionResolutionStage::Initial)
+        return { };
+
+    CheckedPtr anchorPositionedRenderer = anchorPositionedElement->renderer();
+    if (!anchorPositionedRenderer) {
+        // If no render tree information is present, the procedure is finished.
+        anchorPositionedState.stage = AnchorPositionResolutionStage::Resolved;
+        return { };
+    }
+
+    // Anchor value may now be resolved using layout information
+
+    RefPtr anchorElement = elementName ? anchorPositionedState.anchorElements.get(elementName->name) : nullptr;
+    if (!anchorElement) {
+        // See: https://drafts.csswg.org/css-anchor-position-1/#valid-anchor-function
+        anchorPositionedState.stage = AnchorPositionResolutionStage::Resolved;
+
+        return { };
+    }
+
+    if (auto* state = anchorPositionedStates.get(*anchorElement)) {
+        // Check if the anchor is itself anchor-positioned but hasn't been positioned yet.
+        if (state->stage != AnchorPositionResolutionStage::Positioned)
+            return { };
+    }
+
+    anchorPositionedState.stage = AnchorPositionResolutionStage::Resolved;
+
+    return anchorElement;
+}
+
+std::optional<double> AnchorPositionEvaluator::evaluate(const BuilderState& builderState, std::optional<ScopedName> elementName, Side side)
+{
+    auto propertyID = builderState.cssPropertyID();
+    const auto& style = builderState.style();
+
+    // https://drafts.csswg.org/css-anchor-position-1/#anchor-valid
+    auto isValidAnchor = [&] {
         // It’s being used in an inset property...
         if (!CSSProperty::isInsetProperty(propertyID))
             return false;
@@ -410,58 +520,144 @@ std::optional<double> AnchorPositionEvaluator::evaluate(const BuilderState& buil
     if (!isValidAnchor())
         return { };
 
-    Ref anchorPositionedElement = *builderState.element();
-
-    auto& anchorPositionedStates = anchorPositionedElement->document().styleScope().anchorPositionedStates();
-    auto& anchorPositionedState = *anchorPositionedStates.ensure(anchorPositionedElement, [&] {
-        return WTF::makeUnique<AnchorPositionedState>();
-    }).iterator->value.get();
-
-    if (elementName.isNull())
-        elementName = builderState.style().positionAnchor();
-
-    if (!elementName.isNull())
-        anchorPositionedState.anchorNames.add(elementName);
-
-    // An anchor() instance will be ready to be resolved when all referenced anchor-names
-    // have been mapped to an actual anchor element in the DOM tree. At that point, we
-    // should also have layout information for the anchor-positioned element alongside
-    // the anchors referenced by the anchor-positioned element. Until then, we cannot
-    // resolve this anchor() instance.
-    if (anchorPositionedState.stage == AnchorPositionResolutionStage::Initial)
+    auto anchorElement = findAnchorAndAttemptResolution(builderState, elementName);
+    if (!anchorElement)
         return { };
-
-    CheckedPtr anchorPositionedRenderer = anchorPositionedElement->renderer();
-    if (!anchorPositionedRenderer) {
-        // If no render tree information is present, the procedure is finished.
-        anchorPositionedState.stage = AnchorPositionResolutionStage::Resolved;
-        return { };
-    }
-
-    // Anchor value may now be resolved using layout information
-
-    RefPtr anchorElement = elementName.isNull() ? nullptr : anchorPositionedState.anchorElements.get(elementName);
-    if (!anchorElement) {
-        // See: https://drafts.csswg.org/css-anchor-position-1/#valid-anchor-function
-        anchorPositionedState.stage = AnchorPositionResolutionStage::Resolved;
-
-        return { };
-    }
-
-    if (auto* state = anchorPositionedStates.get(*anchorElement)) {
-        // Check if the anchor is itself anchor-positioned but hasn't been positioned yet.
-        if (state->stage != AnchorPositionResolutionStage::Positioned)
-            return { };
-    }
-
-    anchorPositionedState.stage = AnchorPositionResolutionStage::Resolved;
 
     CheckedPtr anchorRenderer = anchorElement->renderer();
     ASSERT(anchorRenderer);
 
+    CheckedPtr anchorPositionedElement = builderState.element();
+    ASSERT(anchorPositionedElement);
+    CheckedPtr anchorPositionedRenderer = anchorPositionedElement->renderer();
+    ASSERT(anchorPositionedRenderer);
+
     // Proceed with computing the inset value for the specified inset property.
     CheckedRef anchorBox = downcast<RenderBoxModelObject>(*anchorRenderer);
     return computeInsetValue(propertyID, anchorBox, *anchorPositionedRenderer, side);
+}
+
+// Returns the default anchor size dimension to use when it is not specified in
+// anchor-size(). This matches the axis of the property that anchor-size() is used in.
+static AnchorSizeDimension defaultDimensionForPropertyID(CSSPropertyID propertyID)
+{
+    switch (propertyID) {
+    case CSSPropertyWidth:
+    case CSSPropertyMinWidth:
+    case CSSPropertyMaxWidth:
+    case CSSPropertyLeft:
+    case CSSPropertyRight:
+    case CSSPropertyMarginLeft:
+    case CSSPropertyMarginRight:
+        return AnchorSizeDimension::Width;
+
+    case CSSPropertyHeight:
+    case CSSPropertyMinHeight:
+    case CSSPropertyMaxHeight:
+    case CSSPropertyTop:
+    case CSSPropertyBottom:
+    case CSSPropertyMarginTop:
+    case CSSPropertyMarginBottom:
+        return AnchorSizeDimension::Height;
+
+    case CSSPropertyBlockSize:
+    case CSSPropertyMinBlockSize:
+    case CSSPropertyMaxBlockSize:
+    case CSSPropertyInsetBlockStart:
+    case CSSPropertyInsetBlockEnd:
+    case CSSPropertyMarginBlockStart:
+    case CSSPropertyMarginBlockEnd:
+        return AnchorSizeDimension::Block;
+
+    case CSSPropertyInlineSize:
+    case CSSPropertyMinInlineSize:
+    case CSSPropertyMaxInlineSize:
+    case CSSPropertyInsetInlineStart:
+    case CSSPropertyInsetInlineEnd:
+    case CSSPropertyMarginInlineStart:
+    case CSSPropertyMarginInlineEnd:
+        return AnchorSizeDimension::Inline;
+
+    default:
+        ASSERT_NOT_REACHED("anchor-size() being used in disallowed CSS property, which should not happen");
+        return AnchorSizeDimension::Width;
+    }
+}
+
+// Convert anchor size dimension to the physical dimension (width or height).
+static BoxAxis anchorSizeDimensionToPhysicalDimension(AnchorSizeDimension dimension, const RenderStyle& style, const RenderStyle& containerStyle)
+{
+    switch (dimension) {
+    case AnchorSizeDimension::Width:
+        return BoxAxis::Horizontal;
+    case AnchorSizeDimension::Height:
+        return BoxAxis::Vertical;
+    case AnchorSizeDimension::Block:
+        return mapAxisLogicalToPhysical(containerStyle.writingMode(), LogicalBoxAxis::Block);
+    case AnchorSizeDimension::Inline:
+        return mapAxisLogicalToPhysical(containerStyle.writingMode(), LogicalBoxAxis::Inline);
+    case AnchorSizeDimension::SelfBlock:
+        return mapAxisLogicalToPhysical(style.writingMode(), LogicalBoxAxis::Block);
+    case AnchorSizeDimension::SelfInline:
+        return mapAxisLogicalToPhysical(style.writingMode(), LogicalBoxAxis::Inline);
+    }
+
+    ASSERT_NOT_REACHED();
+    return BoxAxis::Horizontal;
+}
+
+std::optional<double> AnchorPositionEvaluator::evaluateSize(const BuilderState& builderState, std::optional<ScopedName> elementName, std::optional<AnchorSizeDimension> dimension)
+{
+    auto propertyID = builderState.cssPropertyID();
+    const auto& style = builderState.style();
+
+    auto isValidAnchorSize = [&] {
+        // It’s being used in a sizing property, an inset property, or a margin property...
+        if (!isSizingProperty(propertyID) && !CSSProperty::isInsetProperty(propertyID) && !isMarginProperty(propertyID))
+            return false;
+
+        // ...on an absolutely-positioned element.
+        if (!style.hasOutOfFlowPosition())
+            return false;
+
+        return true;
+    };
+
+    if (!isValidAnchorSize())
+        return { };
+
+    auto anchorElement = findAnchorAndAttemptResolution(builderState, elementName);
+    if (!anchorElement)
+        return { };
+
+    // Resolve the dimension (width or height) to return from the anchor positioned element.
+    CheckedPtr anchorPositionedElement = builderState.element();
+    ASSERT(anchorPositionedElement);
+    CheckedPtr anchorPositionedRenderer = anchorPositionedElement->renderer();
+    ASSERT(anchorPositionedRenderer);
+
+    CheckedPtr anchorPositionedContainerRenderer = anchorPositionedRenderer->container();
+    ASSERT(anchorPositionedContainerRenderer);
+
+    auto resolvedDimension = dimension.value_or(defaultDimensionForPropertyID(propertyID));
+    auto physicalDimension = anchorSizeDimensionToPhysicalDimension(resolvedDimension, anchorPositionedRenderer->style(), anchorPositionedContainerRenderer->style());
+
+    // Return the dimension information from the anchor element.
+    CheckedPtr anchorRenderer = anchorElement->renderer();
+    ASSERT(anchorRenderer);
+
+    CheckedRef anchorBox = downcast<RenderBoxModelObject>(*anchorRenderer);
+    auto anchorBorderBoundingBox = anchorBox->borderBoundingBox();
+
+    switch (physicalDimension) {
+    case BoxAxis::Horizontal:
+        return anchorBorderBoundingBox.width();
+    case BoxAxis::Vertical:
+        return anchorBorderBoundingBox.height();
+    }
+
+    ASSERT_NOT_REACHED();
+    return { };
 }
 
 static const RenderElement* penultimateContainingBlockChainElement(const RenderElement& descendant, const RenderElement* ancestor)
@@ -539,8 +735,8 @@ static AnchorsForAnchorName collectAnchorsForAnchorName(const Document& document
 
     auto& anchors = document.renderView()->anchors();
     for (auto& anchorRenderer : anchors) {
-        for (auto& name : anchorRenderer.style().anchorNames()) {
-            anchorsForAnchorName.ensure(name, [&] {
+        for (auto& scopedName : anchorRenderer.style().anchorNames()) {
+            anchorsForAnchorName.ensure(scopedName.name, [&] {
                 return AnchorsForAnchorName::MappedType { };
             }).iterator->value.append(anchorRenderer);
         }
@@ -609,7 +805,7 @@ void AnchorPositionEvaluator::updateSnapshottedScrollOffsets(Document& document)
 
         auto needsScrollAdjustment = [&] {
             // FIXME: This is incomplete.
-            if (anchorPositionedRenderer->style().positionAnchor().isNull())
+            if (!anchorPositionedRenderer->style().positionAnchor())
                 return false;
 
             if (elementAndState.value->anchorElements.size() != 1)
@@ -642,6 +838,19 @@ void AnchorPositionEvaluator::cleanupAnchorPositionedState(Element& element)
         if (auto* renderer = dynamicDowncast<RenderBox>(element.renderer()); renderer && renderer->layer())
             renderer->layer()->clearSnapshottedScrollOffsetForAnchorPositioning();
     }
+}
+
+WTF::TextStream& operator<<(WTF::TextStream& ts, PositionTryOrder order)
+{
+    switch (order) {
+    case PositionTryOrder::Normal: ts << "normal"; break;
+    case PositionTryOrder::MostWidth: ts << "most-width"; break;
+    case PositionTryOrder::MostHeight: ts << "most-height"; break;
+    case PositionTryOrder::MostBlockSize: ts << "most-block-size"; break;
+    case PositionTryOrder::MostInlineSize: ts << "most-inline-size"; break;
+    }
+
+    return ts;
 }
 
 } // namespace WebCore::Style

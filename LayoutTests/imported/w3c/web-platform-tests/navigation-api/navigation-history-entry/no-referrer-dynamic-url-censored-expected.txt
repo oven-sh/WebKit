@@ -1,3 +1,4 @@
-FAIL: Timed out waiting for notifyDone to be called
 
+
+PASS The url of a document is censored by a no-referrer policy dynamically
 

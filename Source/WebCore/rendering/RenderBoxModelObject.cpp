@@ -657,7 +657,7 @@ FloatRect RenderBoxModelObject::constrainingRectForStickyPosition() const
 
         float scrollbarOffset = 0;
         if (enclosingClippingBox.hasLayer() && enclosingClippingBox.shouldPlaceVerticalScrollbarOnLeft() && scrollableArea)
-            scrollbarOffset = scrollableArea->verticalScrollbarWidth(IgnoreOverlayScrollbarSize, isHorizontalWritingMode());
+            scrollbarOffset = scrollableArea->verticalScrollbarWidth(OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, isHorizontalWritingMode());
 
         constrainingRect.setLocation(FloatPoint(scrollOffset.x() + scrollbarOffset, scrollOffset.y()));
         return constrainingRect;
@@ -717,13 +717,7 @@ void RenderBoxModelObject::paintMaskForTextFillBox(GraphicsContext& context, con
         for (auto box = inlineBox->firstLeafBox(), end = inlineBox->endLeafBox(); box != end; box.traverseNextOnLine()) {
             if (!box->isText())
                 continue;
-            if (auto* legacyTextBox = downcast<LegacyInlineTextBox>(box->legacyInlineBox())) {
-                LegacyTextBoxPainter textBoxPainter(*legacyTextBox, maskInfo, paintOffset);
-                textBoxPainter.paint();
-                continue;
-            }
-            ModernTextBoxPainter textBoxPainter(box->modernPath().inlineContent(), box->modernPath().box(), maskInfo, paintOffset);
-            textBoxPainter.paint();
+            TextBoxPainter { box->modernPath().inlineContent(), box->modernPath().box(), box->modernPath().box().style(), maskInfo, paintOffset }.paint();
         }
         return;
     }

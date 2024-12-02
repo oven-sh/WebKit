@@ -44,6 +44,7 @@
 #include "QuotesData.h"
 #include "RenderBlock.h"
 #include "RenderObject.h"
+#include "RenderStyleDifference.h"
 #include "RenderStyleSetters.h"
 #include "RenderTheme.h"
 #include "ScaleTransformOperation.h"
@@ -63,6 +64,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/PointerComparison.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(TEXT_AUTOSIZING)
 #include <wtf/text/StringHash.h>
@@ -428,7 +430,7 @@ void RenderStyle::copyPseudoElementsFrom(const RenderStyle& other)
     if (!other.m_cachedPseudoStyles)
         return;
 
-    for (auto& pseudoElementStyle : other.m_cachedPseudoStyles->styles)
+    for (auto& [key, pseudoElementStyle] : other.m_cachedPseudoStyles->styles)
         addCachedPseudoStyle(makeUnique<RenderStyle>(cloneIncludingPseudoElements(*pseudoElementStyle)));
 }
 
@@ -453,7 +455,7 @@ bool RenderStyle::hasUniquePseudoStyle() const
     if (!m_cachedPseudoStyles || pseudoElementType() != PseudoId::None)
         return false;
 
-    for (auto& pseudoStyle : m_cachedPseudoStyles->styles) {
+    for (auto& [key, pseudoStyle] : m_cachedPseudoStyles->styles) {
         if (pseudoStyle->unique())
             return true;
     }
@@ -466,12 +468,7 @@ RenderStyle* RenderStyle::getCachedPseudoStyle(const Style::PseudoElementIdentif
     if (!m_cachedPseudoStyles)
         return nullptr;
 
-    for (auto& pseudoStyle : m_cachedPseudoStyles->styles) {
-        if (pseudoStyle->pseudoElementType() == pseudoElementIdentifier.pseudoId && pseudoStyle->pseudoElementNameArgument() == pseudoElementIdentifier.nameArgument)
-            return pseudoStyle.get();
-    }
-
-    return nullptr;
+    return m_cachedPseudoStyles->styles.get(pseudoElementIdentifier);
 }
 
 RenderStyle* RenderStyle::addCachedPseudoStyle(std::unique_ptr<RenderStyle> pseudo)
@@ -486,7 +483,7 @@ RenderStyle* RenderStyle::addCachedPseudoStyle(std::unique_ptr<RenderStyle> pseu
     if (!m_cachedPseudoStyles)
         m_cachedPseudoStyles = makeUnique<PseudoStyleCache>();
 
-    m_cachedPseudoStyles->styles.append(WTFMove(pseudo));
+    m_cachedPseudoStyles->styles.add(Style::PseudoElementIdentifier { result->pseudoElementType(), result->pseudoElementNameArgument() }, WTFMove(pseudo));
 
     return result;
 }
@@ -722,7 +719,8 @@ inline bool RenderStyle::changeAffectsVisualOverflow(const RenderStyle& other) c
         // is specified. We can take an early out here.
         if (isAlignedForUnder(*this) || isAlignedForUnder(other))
             return true;
-        return visualOverflowForDecorations(*this) != visualOverflowForDecorations(other);
+        if (visualOverflowForDecorations(*this) != visualOverflowForDecorations(other))
+            return true;
     }
 
     auto hasOutlineInVisualOverflow = this->hasOutlineInVisualOverflow();
@@ -808,7 +806,7 @@ static bool rareDataChangeRequiresLayout(const StyleRareNonInheritedData& first,
         return true;
 
     // If the counter directives change, trigger a relayout to re-calculate counter values and rebuild the counter node tree.
-    if (first.counterDirectives.map != second.counterDirectives.map)
+    if (first.counterDirectives != second.counterDirectives)
         return true;
 
     if (!arePointingToEqualData(first.scale, second.scale)
@@ -1353,7 +1351,8 @@ bool RenderStyle::changeRequiresRepaintIfText(const RenderStyle& other, OptionSe
             || m_rareInheritedData->textEmphasisColor != other.m_rareInheritedData->textEmphasisColor
             || m_rareInheritedData->textEmphasisFill != other.m_rareInheritedData->textEmphasisFill
             || m_rareInheritedData->strokeColor != other.m_rareInheritedData->strokeColor
-            || m_rareInheritedData->caretColor != other.m_rareInheritedData->caretColor)
+            || m_rareInheritedData->caretColor != other.m_rareInheritedData->caretColor
+            || m_rareInheritedData->textUnderlineOffset != other.m_rareInheritedData->textUnderlineOffset)
             return true;
     }
 
@@ -1418,7 +1417,7 @@ bool RenderStyle::scrollAnchoringSuppressionStyleDidChange(const RenderStyle* ot
             return true;
     }
 
-    if (hasTransformRelatedProperty() != other->hasTransformRelatedProperty())
+    if (hasTransformRelatedProperty() != other->hasTransformRelatedProperty() || transform() != other->transform())
         return true;
 
     return false;
@@ -1843,7 +1842,7 @@ void RenderStyle::conservativelyCollectChangedAnimatableProperties(const RenderS
         }
         if (first.clip != second.clip)
             changingProperties.m_properties.set(CSSPropertyClip);
-        if (first.counterDirectives.map != second.counterDirectives.map) {
+        if (first.counterDirectives != second.counterDirectives) {
             changingProperties.m_properties.set(CSSPropertyCounterIncrement);
             changingProperties.m_properties.set(CSSPropertyCounterReset);
             changingProperties.m_properties.set(CSSPropertyCounterSet);
@@ -1934,6 +1933,8 @@ void RenderStyle::conservativelyCollectChangedAnimatableProperties(const RenderS
             changingProperties.m_properties.set(CSSPropertyAnchorName);
         if (first.positionAnchor != second.positionAnchor)
             changingProperties.m_properties.set(CSSPropertyPositionAnchor);
+        if (first.positionTryOrder != second.positionTryOrder)
+            changingProperties.m_properties.set(CSSPropertyPositionTryOrder);
         if (first.scrollSnapAlign != second.scrollSnapAlign)
             changingProperties.m_properties.set(CSSPropertyScrollSnapAlign);
         if (first.scrollSnapStop != second.scrollSnapStop)
@@ -3168,9 +3169,9 @@ Color RenderStyle::usedScrollbarTrackColor() const
     return colorResolvingCurrentColor(scrollbarColor().value().trackColor);
 }
 
-const BorderValue& RenderStyle::borderBefore(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderBefore(const WritingMode writingMode) const
 {
-    switch (styleForFlow.writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderTop();
     case FlowDirection::BottomToTop:
@@ -3184,9 +3185,9 @@ const BorderValue& RenderStyle::borderBefore(const RenderStyle& styleForFlow) co
     return borderTop();
 }
 
-const BorderValue& RenderStyle::borderAfter(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderAfter(const WritingMode writingMode) const
 {
-    switch (styleForFlow.writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderBottom();
     case FlowDirection::BottomToTop:
@@ -3200,23 +3201,23 @@ const BorderValue& RenderStyle::borderAfter(const RenderStyle& styleForFlow) con
     return borderBottom();
 }
 
-const BorderValue& RenderStyle::borderStart(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderStart(const WritingMode writingMode) const
 {
-    if (styleForFlow.writingMode().isHorizontal())
-        return styleForFlow.writingMode().isInlineLeftToRight() ? borderLeft() : borderRight();
-    return styleForFlow.writingMode().isInlineTopToBottom() ? borderTop() : borderBottom();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderLeft() : borderRight();
+    return writingMode.isInlineTopToBottom() ? borderTop() : borderBottom();
 }
 
-const BorderValue& RenderStyle::borderEnd(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderEnd(const WritingMode writingMode) const
 {
-    if (styleForFlow.writingMode().isHorizontal())
-        return styleForFlow.writingMode().isInlineLeftToRight() ? borderRight() : borderLeft();
-    return styleForFlow.writingMode().isInlineTopToBottom() ? borderBottom() : borderTop();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderRight() : borderLeft();
+    return writingMode.isInlineTopToBottom() ? borderBottom() : borderTop();
 }
 
-float RenderStyle::borderBeforeWidth() const
+float RenderStyle::borderBeforeWidth(const WritingMode writingMode) const
 {
-    switch (writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderTopWidth();
     case FlowDirection::BottomToTop:
@@ -3230,9 +3231,9 @@ float RenderStyle::borderBeforeWidth() const
     return borderTopWidth();
 }
 
-float RenderStyle::borderAfterWidth() const
+float RenderStyle::borderAfterWidth(const WritingMode writingMode) const
 {
-    switch (writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderBottomWidth();
     case FlowDirection::BottomToTop:
@@ -3246,18 +3247,18 @@ float RenderStyle::borderAfterWidth() const
     return borderBottomWidth();
 }
 
-float RenderStyle::borderStartWidth() const
+float RenderStyle::borderStartWidth(const WritingMode writingMode) const
 {
-    if (writingMode().isHorizontal())
-        return writingMode().isInlineLeftToRight() ? borderLeftWidth() : borderRightWidth();
-    return writingMode().isInlineTopToBottom() ? borderTopWidth() : borderBottomWidth();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderLeftWidth() : borderRightWidth();
+    return writingMode.isInlineTopToBottom() ? borderTopWidth() : borderBottomWidth();
 }
 
-float RenderStyle::borderEndWidth() const
+float RenderStyle::borderEndWidth(const WritingMode writingMode) const
 {
-    if (writingMode().isHorizontal())
-        return writingMode().isInlineLeftToRight() ? borderRightWidth() : borderLeftWidth();
-    return writingMode().isInlineTopToBottom() ? borderBottomWidth() : borderTopWidth();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderRightWidth() : borderLeftWidth();
+    return writingMode.isInlineTopToBottom() ? borderBottomWidth() : borderTopWidth();
 }
 
 void RenderStyle::setMarginStart(Length&& margin)
@@ -3972,6 +3973,93 @@ void RenderStyle::adjustViewTimelines()
         timelines.append(ViewTimeline::create(names[i], axis, WTFMove(inset)));
     }
 }
+
+#if !LOG_DISABLED
+void RenderStyle::NonInheritedFlags::dumpDifferences(TextStream& ts, const NonInheritedFlags& other) const
+{
+    if (*this == other)
+        return;
+
+    LOG_IF_DIFFERENT_WITH_CAST(DisplayType, effectiveDisplay);
+    LOG_IF_DIFFERENT_WITH_CAST(DisplayType, originalDisplay);
+    LOG_IF_DIFFERENT_WITH_CAST(Overflow, overflowX);
+    LOG_IF_DIFFERENT_WITH_CAST(Overflow, overflowY);
+    LOG_IF_DIFFERENT_WITH_CAST(Clear, clear);
+    LOG_IF_DIFFERENT_WITH_CAST(PositionType, position);
+    LOG_IF_DIFFERENT_WITH_CAST(UnicodeBidi, unicodeBidi);
+    LOG_IF_DIFFERENT_WITH_CAST(Float, floating);
+
+    LOG_IF_DIFFERENT(usesViewportUnits);
+    LOG_IF_DIFFERENT(usesContainerUnits);
+    LOG_IF_DIFFERENT(isUnique);
+    LOG_IF_DIFFERENT(hasContentNone);
+
+    LOG_IF_DIFFERENT_WITH_CAST(TextDecorationLine, textDecorationLine);
+
+    LOG_IF_DIFFERENT(hasExplicitlyInheritedProperties);
+    LOG_IF_DIFFERENT(disallowsFastPathInheritance);
+
+    LOG_IF_DIFFERENT(emptyState);
+    LOG_IF_DIFFERENT(firstChildState);
+    LOG_IF_DIFFERENT(lastChildState);
+    LOG_IF_DIFFERENT(isLink);
+
+    LOG_IF_DIFFERENT_WITH_CAST(PseudoId, pseudoElementType);
+    LOG_IF_DIFFERENT_WITH_CAST(unsigned, pseudoBits);
+}
+
+void RenderStyle::InheritedFlags::dumpDifferences(TextStream& ts, const InheritedFlags& other) const
+{
+    if (*this == other)
+        return;
+
+    LOG_IF_DIFFERENT(writingMode);
+
+    LOG_IF_DIFFERENT_WITH_CAST(WhiteSpaceCollapse, whiteSpaceCollapse);
+    LOG_IF_DIFFERENT_WITH_CAST(TextWrapMode, textWrapMode);
+    LOG_IF_DIFFERENT_WITH_CAST(TextAlignMode, textAlign);
+    LOG_IF_DIFFERENT_WITH_CAST(TextWrapStyle, textWrapStyle);
+
+    LOG_RAW_OPTIONSET_IF_DIFFERENT(TextTransform, textTransform);
+    LOG_RAW_OPTIONSET_IF_DIFFERENT(TextDecorationLine, textDecorationLines);
+
+    LOG_IF_DIFFERENT_WITH_CAST(PointerEvents, pointerEvents);
+    LOG_IF_DIFFERENT_WITH_CAST(Visibility, visibility);
+    LOG_IF_DIFFERENT_WITH_CAST(CursorType, cursor);
+
+#if ENABLE(CURSOR_VISIBILITY)
+    LOG_IF_DIFFERENT_WITH_CAST(bool, cursorVisibility);
+#endif
+
+    LOG_IF_DIFFERENT_WITH_CAST(ListStylePosition, listStylePosition);
+    LOG_IF_DIFFERENT_WITH_CAST(EmptyCell, emptyCells);
+    LOG_IF_DIFFERENT_WITH_CAST(BorderCollapse, borderCollapse);
+    LOG_IF_DIFFERENT_WITH_CAST(CaptionSide, captionSide);
+    LOG_IF_DIFFERENT_WITH_CAST(BoxDirection, boxDirection);
+    LOG_IF_DIFFERENT_WITH_CAST(Order, rtlOrdering);
+    LOG_IF_DIFFERENT_WITH_CAST(bool, hasExplicitlySetColor);
+    LOG_IF_DIFFERENT_WITH_CAST(PrintColorAdjust, printColorAdjust);
+    LOG_IF_DIFFERENT_WITH_CAST(InsideLink, insideLink);
+    LOG_IF_DIFFERENT_WITH_CAST(bool, insideDefaultButton);
+
+#if ENABLE(TEXT_AUTOSIZING)
+    LOG_IF_DIFFERENT_WITH_CAST(unsigned, autosizeStatus);
+#endif
+}
+
+void RenderStyle::dumpDifferences(TextStream& ts, const RenderStyle& other) const
+{
+    m_nonInheritedData->dumpDifferences(ts, *other.m_nonInheritedData);
+    m_nonInheritedFlags.dumpDifferences(ts, other.m_nonInheritedFlags);
+
+    m_rareInheritedData->dumpDifferences(ts, *other.m_rareInheritedData);
+    m_inheritedData->dumpDifferences(ts, *other.m_inheritedData);
+    m_inheritedFlags.dumpDifferences(ts, other.m_inheritedFlags);
+
+    m_svgStyle->dumpDifferences(ts, other.m_svgStyle);
+}
+#endif
+
 
 } // namespace WebCore
 

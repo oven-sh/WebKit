@@ -38,6 +38,7 @@
 #import <WebKit/WKWebExtensionWindowConfiguration.h>
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 @interface TestWebExtensionManager () <WKWebExtensionControllerDelegatePrivate>
 @end
@@ -577,6 +578,11 @@ static WKUserContentController *userContentController(BOOL usingPrivateBrowsing)
 
         completionHandler(nil);
     });
+}
+
+- (BOOL)shouldBypassPermissionsForWebExtensionContext:(WKWebExtensionContext *)context
+{
+    return _shouldBypassPermissions;
 }
 
 @end

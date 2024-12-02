@@ -71,6 +71,9 @@ ModelConnectionToWebProcess::ModelConnectionToWebProcess(ModelProcess& modelProc
 #if HAVE(AUDIT_TOKEN)
     , m_presentingApplicationAuditToken(parameters.presentingApplicationAuditToken ? std::optional(parameters.presentingApplicationAuditToken->auditToken()) : std::nullopt)
 #endif
+#if ENABLE(IPC_TESTING_API)
+    , m_ipcTester(IPCTester::create())
+#endif
     , m_sharedPreferencesForWebProcess(WTFMove(parameters.sharedPreferencesForWebProcess))
 {
     RELEASE_ASSERT(RunLoop::isMain());
@@ -157,7 +160,7 @@ Logger& ModelConnectionToWebProcess::logger()
 {
     if (!m_logger) {
         m_logger = Logger::create(this);
-        m_logger->setEnabled(this, m_sessionID.isAlwaysOnLoggingAllowed());
+        m_logger->setEnabled(this, isAlwaysOnLoggingAllowed());
     }
 
     return *m_logger;
@@ -190,7 +193,7 @@ bool ModelConnectionToWebProcess::dispatchMessage(IPC::Connection& connection, I
 
 #if ENABLE(IPC_TESTING_API)
     if (decoder.messageReceiverName() == Messages::IPCTester::messageReceiverName()) {
-        m_ipcTester.didReceiveMessage(connection, decoder);
+        m_ipcTester->didReceiveMessage(connection, decoder);
         return true;
     }
 #endif
@@ -202,11 +205,16 @@ bool ModelConnectionToWebProcess::dispatchSyncMessage(IPC::Connection& connectio
 {
 #if ENABLE(IPC_TESTING_API)
     if (decoder.messageReceiverName() == Messages::IPCTester::messageReceiverName()) {
-        m_ipcTester.didReceiveSyncMessage(connection, decoder, replyEncoder);
+        m_ipcTester->didReceiveSyncMessage(connection, decoder, replyEncoder);
         return true;
     }
 #endif
     return messageReceiverMap().dispatchSyncMessage(connection, decoder, replyEncoder);
+}
+
+bool ModelConnectionToWebProcess::isAlwaysOnLoggingAllowed() const
+{
+    return m_sessionID.isAlwaysOnLoggingAllowed() || m_sharedPreferencesForWebProcess.allowPrivacySensitiveOperationsInNonPersistentDataStores;
 }
 
 } // namespace WebKit

@@ -38,12 +38,10 @@
 #include <wtf/HashMap.h>
 #include <wtf/WeakRef.h>
 
-ALLOW_COMMA_BEGIN
-
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/rtc_base/net_helpers.h>
 #include <webrtc/api/packet_socket_factory.h>
-
-ALLOW_COMMA_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebKit {
 

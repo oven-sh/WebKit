@@ -216,8 +216,6 @@
 #define UIWKDocumentRequestAutocorrectedRanges (1 << 7)
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 #if USE(BROWSERENGINEKIT)
 
 @interface WKUITextSelectionRect : UITextSelectionRect
@@ -1053,7 +1051,7 @@ inline static NSString *textRelativeToSelectionStart(WKRelativeTextRange *range,
 
 static WKDragSessionContext *existingLocalDragSessionContext(id <UIDragSession> session)
 {
-    return [session.localContext isKindOfClass:[WKDragSessionContext class]] ? (WKDragSessionContext *)session.localContext : nil;
+    return dynamic_objc_cast<WKDragSessionContext>(session.localContext);
 }
 
 static WKDragSessionContext *ensureLocalDragSessionContext(id <UIDragSession> session)
@@ -1067,7 +1065,7 @@ static WKDragSessionContext *ensureLocalDragSessionContext(id <UIDragSession> se
     }
 
     session.localContext = adoptNS([[WKDragSessionContext alloc] init]).get();
-    return (WKDragSessionContext *)session.localContext;
+    return existingLocalDragSessionContext(session);
 }
 
 #endif // ENABLE(DRAG_SUPPORT)
@@ -1346,7 +1344,7 @@ static WKDragSessionContext *ensureLocalDragSessionContext(id <UIDragSession> se
     if (_gestureRecognizerConsistencyEnforcer)
         _gestureRecognizerConsistencyEnforcer->reset();
 
-    _touchEventGestureRecognizer = adoptNS([[WKTouchEventsGestureRecognizer alloc] initWithTarget:self action:@selector(_touchEventsRecognized:) touchDelegate:self]);
+    _touchEventGestureRecognizer = adoptNS([[WKTouchEventsGestureRecognizer alloc] initWithContentView:self]);
     [_touchEventGestureRecognizer setDelegate:self];
     [self addGestureRecognizer:_touchEventGestureRecognizer.get()];
 
@@ -1448,7 +1446,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     
     _actionSheetAssistant = adoptNS([[WKActionSheetAssistant alloc] initWithView:self]);
     [_actionSheetAssistant setDelegate:self];
-    _smartMagnificationController = makeUnique<WebKit::SmartMagnificationController>(self);
+    _smartMagnificationController = WebKit::SmartMagnificationController::create(self);
     _touchEventsCanPreventNativeGestures = YES;
     _isExpectingFastSingleTapCommit = NO;
     _potentialTapInProgress = NO;
@@ -2123,13 +2121,13 @@ typedef NS_ENUM(NSInteger, EndEditingReason) {
     return [uiDelegate respondsToSelector:@selector(_webView:gestureRecognizerCanBePreventedByTouchEvents:)] && [uiDelegate _webView:self.webView gestureRecognizerCanBePreventedByTouchEvents:gestureRecognizer];
 }
 
-- (void)_touchEventsRecognized:(WKTouchEventsGestureRecognizer *)gestureRecognizer
+- (void)_touchEventsRecognized
 {
     if (!_page->hasRunningProcess())
         return;
 
-    auto& lastTouchEvent = gestureRecognizer.lastTouchEvent;
-    _lastInteractionLocation = lastTouchEvent.locationInDocumentCoordinates;
+    auto& lastTouchEvent = [_touchEventGestureRecognizer lastTouchEvent];
+    _lastInteractionLocation = lastTouchEvent.locationInRootViewCoordinates;
 
     if (lastTouchEvent.type == WebKit::WKTouchEventType::Begin) {
         if (!_failedTouchStartDeferringGestures)
@@ -2149,8 +2147,8 @@ typedef NS_ENUM(NSInteger, EndEditingReason) {
     }
 
 #if ENABLE(TOUCH_EVENTS)
-    WebKit::NativeWebTouchEvent nativeWebTouchEvent { lastTouchEvent, gestureRecognizer.modifierFlags };
-    nativeWebTouchEvent.setCanPreventNativeGestures(_touchEventsCanPreventNativeGestures || [gestureRecognizer isDefaultPrevented]);
+    WebKit::NativeWebTouchEvent nativeWebTouchEvent { lastTouchEvent, [_touchEventGestureRecognizer modifierFlags] };
+    nativeWebTouchEvent.setCanPreventNativeGestures(_touchEventsCanPreventNativeGestures || [_touchEventGestureRecognizer isDefaultPrevented]);
 
     [self _handleTouchActionsForTouchEvent:nativeWebTouchEvent];
 
@@ -2201,8 +2199,8 @@ typedef NS_ENUM(NSInteger, EndEditingReason) {
     for (const auto& touchPoint : touchEvent.touchPoints()) {
         auto phase = touchPoint.phase();
         if (phase == WebKit::WebPlatformTouchPoint::State::Pressed) {
-            auto touchActions = WebKit::touchActionsForPoint(self, touchPoint.location());
-            LOG_WITH_STREAM(UIHitTesting, stream << "touchActionsForPoint " << touchPoint.location() << " found " << touchActions);
+            auto touchActions = WebKit::touchActionsForPoint(self, touchPoint.locationInRootView());
+            LOG_WITH_STREAM(UIHitTesting, stream << "touchActionsForPoint " << touchPoint.locationInRootView() << " found " << touchActions);
             if (!touchActions || touchActions.contains(WebCore::TouchAction::Auto))
                 continue;
             [_touchActionGestureRecognizer setTouchActions:touchActions forTouchIdentifier:touchPoint.identifier()];
@@ -2332,7 +2330,7 @@ static WebCore::FloatQuad inflateQuad(const WebCore::FloatQuad& quad, float infl
     //  p1------p4
 
     // 1) Sort the points horizontally.
-    WebCore::FloatPoint points[4] = { quad.p1(), quad.p4(), quad.p2(), quad.p3() };
+    std::array points { quad.p1(), quad.p4(), quad.p2(), quad.p3() };
     if (points[0].x() > points[1].x())
         std::swap(points[0], points[1]);
     if (points[2].x() > points[3].x())
@@ -2381,7 +2379,7 @@ static WebCore::FloatQuad inflateQuad(const WebCore::FloatQuad& quad, float infl
 - (WebKit::GestureRecognizerConsistencyEnforcer&)gestureRecognizerConsistencyEnforcer
 {
     if (!_gestureRecognizerConsistencyEnforcer)
-        _gestureRecognizerConsistencyEnforcer = makeUnique<WebKit::GestureRecognizerConsistencyEnforcer>(self);
+        _gestureRecognizerConsistencyEnforcer = makeUniqueWithoutRefCountedCheck<WebKit::GestureRecognizerConsistencyEnforcer>(self);
 
     return *_gestureRecognizerConsistencyEnforcer;
 }
@@ -2400,32 +2398,28 @@ static WebCore::FloatQuad inflateQuad(const WebCore::FloatQuad& quad, float infl
     return gestures;
 }
 
+static void appendRecognizerIfNonNull(RetainPtr<NSMutableArray>& array, const RetainPtr<WKDeferringGestureRecognizer>& recognizer)
+{
+    if (recognizer)
+        [array addObject:recognizer.get()];
+}
+
 - (NSArray<WKDeferringGestureRecognizer *> *)_touchStartDeferringGestures
 {
-    WKDeferringGestureRecognizer *recognizers[3];
-    NSUInteger count = 0;
-    auto add = [&] (const RetainPtr<WKDeferringGestureRecognizer>& recognizer) {
-        if (recognizer)
-            recognizers[count++] = recognizer.get();
-    };
-    add(_touchStartDeferringGestureRecognizerForImmediatelyResettableGestures);
-    add(_touchStartDeferringGestureRecognizerForDelayedResettableGestures);
-    add(_touchStartDeferringGestureRecognizerForSyntheticTapGestures);
-    return [NSArray arrayWithObjects:recognizers count:count];
+    RetainPtr recognizers = adoptNS([[NSMutableArray alloc] initWithCapacity:3]);
+    appendRecognizerIfNonNull(recognizers, _touchStartDeferringGestureRecognizerForImmediatelyResettableGestures);
+    appendRecognizerIfNonNull(recognizers, _touchStartDeferringGestureRecognizerForDelayedResettableGestures);
+    appendRecognizerIfNonNull(recognizers, _touchStartDeferringGestureRecognizerForSyntheticTapGestures);
+    return recognizers.autorelease();
 }
 
 - (NSArray<WKDeferringGestureRecognizer *> *)_touchEndDeferringGestures
 {
-    WKDeferringGestureRecognizer *recognizers[3];
-    NSUInteger count = 0;
-    auto add = [&] (const RetainPtr<WKDeferringGestureRecognizer>& recognizer) {
-        if (recognizer)
-            recognizers[count++] = recognizer.get();
-    };
-    add(_touchEndDeferringGestureRecognizerForImmediatelyResettableGestures);
-    add(_touchEndDeferringGestureRecognizerForDelayedResettableGestures);
-    add(_touchEndDeferringGestureRecognizerForSyntheticTapGestures);
-    return [NSArray arrayWithObjects:recognizers count:count];
+    RetainPtr recognizers = adoptNS([[NSMutableArray alloc] initWithCapacity:3]);
+    appendRecognizerIfNonNull(recognizers, _touchEndDeferringGestureRecognizerForImmediatelyResettableGestures);
+    appendRecognizerIfNonNull(recognizers, _touchEndDeferringGestureRecognizerForDelayedResettableGestures);
+    appendRecognizerIfNonNull(recognizers, _touchEndDeferringGestureRecognizerForSyntheticTapGestures);
+    return recognizers.autorelease();
 }
 
 - (void)_doneDeferringTouchStart:(BOOL)preventNativeGestures
@@ -3268,6 +3262,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!pointIsInSelectionRect)
         return NO;
 
+    if (!self.selectionHonorsOverflowScrolling)
+        return YES;
+
     RetainPtr hitView = [self hitTest:point withEvent:nil];
     if (!hitView)
         return NO;
@@ -3726,6 +3723,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     RELEASE_LOG(ViewGestures, "Ending potential tap. (%p, pageProxyID=%llu)", self, _page->identifier().toUInt64());
 
     _potentialTapInProgress = NO;
+}
+
+- (BOOL)isPotentialTapInProgress
+{
+    return _potentialTapInProgress;
 }
 
 - (void)_singleTapIdentified:(UITapGestureRecognizer *)gestureRecognizer
@@ -4523,7 +4525,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (BOOL)shouldAllowHighlightLinkCreation
 {
     URL url { _page->currentURL() };
-    if (!url.isValid() || !url.protocolIsInHTTPFamily())
+    if (!url.isValid() || !url.protocolIsInHTTPFamily() || [_webView _isDisplayingPDF])
         return NO;
 
     auto editorState = _page->editorState();
@@ -8455,6 +8457,30 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _actionsToPerformAfterEditorStateUpdate.append(makeBlockPtr(block));
 }
 
+- (void)_reconcileEnclosingScrollViewContentOffset:(WebKit::EditorState&)state
+{
+    if (!state.hasVisualData())
+        return;
+
+    auto scrollingNodeID = state.visualData->enclosingScrollingNodeID;
+    if (!scrollingNodeID)
+        return;
+
+    RetainPtr scroller = [self _scrollViewForScrollingNodeID:*scrollingNodeID];
+    if (!scroller)
+        return;
+
+    auto possiblyStaleScrollPosition = state.visualData->enclosingScrollPosition;
+    auto scrollDelta = possiblyStaleScrollPosition - WebCore::roundedIntPoint([scroller contentOffset]);
+
+    static constexpr auto adjustmentThreshold = 1;
+    if (std::abs(scrollDelta.width()) <= adjustmentThreshold && std::abs(scrollDelta.height()) <= adjustmentThreshold)
+        return;
+
+    CGSize contentDelta = [scroller convertRect:CGRectMake(0, 0, scrollDelta.width(), scrollDelta.height()) toView:self].size;
+    state.move(std::copysign(contentDelta.width, scrollDelta.width()), std::copysign(contentDelta.height, scrollDelta.height()));
+}
+
 - (void)_didUpdateEditorState
 {
     [self _updateInitialWritingDirectionIfNecessary];
@@ -8909,13 +8935,13 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
     if (!editorState.hasPostLayoutAndVisualData())
         return;
 
-    BOOL editableRootIsTransparentOrFullyClipped = NO;
+    BOOL selectionIsTransparentOrFullyClipped = NO;
     BOOL focusedElementIsTooSmall = NO;
     if (!editorState.selectionIsNone) {
         auto& postLayoutData = *editorState.postLayoutData;
         auto& visualData = *editorState.visualData;
-        if (postLayoutData.editableRootIsTransparentOrFullyClipped)
-            editableRootIsTransparentOrFullyClipped = YES;
+        if (postLayoutData.selectionIsTransparentOrFullyClipped)
+            selectionIsTransparentOrFullyClipped = YES;
 
         if (self._hasFocusedElement) {
             auto elementArea = visualData.editableRootBounds.area<RecordOverflow>();
@@ -8924,10 +8950,10 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
         }
     }
 
-    if (editableRootIsTransparentOrFullyClipped)
-        [self _startSuppressingSelectionAssistantForReason:WebKit::EditableRootIsTransparentOrFullyClipped];
+    if (selectionIsTransparentOrFullyClipped)
+        [self _startSuppressingSelectionAssistantForReason:WebKit::SelectionIsTransparentOrFullyClipped];
     else
-        [self _stopSuppressingSelectionAssistantForReason:WebKit::EditableRootIsTransparentOrFullyClipped];
+        [self _stopSuppressingSelectionAssistantForReason:WebKit::SelectionIsTransparentOrFullyClipped];
 
     if (focusedElementIsTooSmall)
         [self _startSuppressingSelectionAssistantForReason:WebKit::FocusedElementIsTooSmall];
@@ -8999,6 +9025,14 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
 - (void)_updateChangedSelection
 {
     [self _updateChangedSelection:NO];
+}
+
+- (UIScrollView *)_scrollViewForScrollingNodeID:(WebCore::ScrollingNodeID)scrollingNodeID
+{
+    if (WeakPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy()))
+        return coordinator->scrollViewForScrollingNodeID(scrollingNodeID);
+
+    return nil;
 }
 
 - (void)_updateChangedSelection:(BOOL)force
@@ -9106,7 +9140,7 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
 
 - (BOOL)hasHiddenContentEditable
 {
-    return _suppressSelectionAssistantReasons.containsAny({ WebKit::EditableRootIsTransparentOrFullyClipped, WebKit::FocusedElementIsTooSmall });
+    return _suppressSelectionAssistantReasons.containsAny({ WebKit::SelectionIsTransparentOrFullyClipped, WebKit::FocusedElementIsTooSmall });
 }
 
 - (BOOL)_shouldSuppressSelectionCommands
@@ -9473,18 +9507,16 @@ static String fallbackLabelTextForUnlabeledInputFieldInZoomedFormControls(WebCor
         _focusStateStack.append(false);
 }
 
-#pragma mark - Implementation of WKTouchEventsGestureRecognizerDelegate.
-
-- (BOOL)gestureRecognizer:(WKTouchEventsGestureRecognizer *)gestureRecognizer shouldIgnoreTouchEvent:(UIEvent *)event
+- (BOOL)_shouldIgnoreTouchEvent:(UIEvent *)event
 {
     _touchEventsCanPreventNativeGestures = YES;
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    if ([_imageAnalysisInteraction interactableItemExistsAtPoint:[gestureRecognizer locationInView:self]])
+    if ([_imageAnalysisInteraction interactableItemExistsAtPoint:[_touchEventGestureRecognizer locationInView:self]])
         return YES;
 #endif
 
-    return [self gestureRecognizer:gestureRecognizer isInterruptingMomentumScrollingWithEvent:event];
+    return [self gestureRecognizer:_touchEventGestureRecognizer.get() isInterruptingMomentumScrollingWithEvent:event];
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer isInterruptingMomentumScrollingWithEvent:(UIEvent *)event
@@ -9495,11 +9527,6 @@ static String fallbackLabelTextForUnlabeledInputFieldInZoomedFormControls(WebCor
             return YES;
     }
     return self._scroller._wk_isInterruptingDeceleration;
-}
-
-- (BOOL)isAnyTouchOverActiveArea:(NSSet *)touches
-{
-    return YES;
 }
 
 #pragma mark - Implementation of WKActionSheetAssistantDelegate.
@@ -9888,10 +9915,8 @@ static WebCore::DataOwnerType coreDataOwnerType(_UIDataOwner platformType)
 - (void)_updateTargetedPreviewScrollViewUsingContainerScrollingNodeID:(std::optional<WebCore::ScrollingNodeID>)scrollingNodeID
 {
     if (scrollingNodeID) {
-        if (auto* scrollingCoordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
-            if (UIScrollView *scrollViewForScrollingNode = scrollingCoordinator->scrollViewForScrollingNodeID(*scrollingNodeID))
-                _scrollViewForTargetedPreview = scrollViewForScrollingNode;
-        }
+        if (RetainPtr scrollViewForScrollingNode = [self _scrollViewForScrollingNodeID:*scrollingNodeID])
+            _scrollViewForTargetedPreview = scrollViewForScrollingNode.get();
     }
 
     if (!_scrollViewForTargetedPreview)
@@ -15313,7 +15338,5 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 }
 
 @end
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(IOS_FAMILY)

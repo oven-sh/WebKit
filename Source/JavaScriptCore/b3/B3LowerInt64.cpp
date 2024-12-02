@@ -35,6 +35,7 @@
 #include "B3ExtractValue.h"
 #include "B3InsertionSet.h"
 #include "B3InsertionSetInlines.h"
+#include "B3MemoryValue.h"
 #include "B3PhaseScope.h"
 #include "B3Procedure.h"
 #include "B3StackmapGenerationParams.h"
@@ -78,7 +79,7 @@ public:
                     // not an identity, so do the (trivial) lowering here.
                     lo = insert<Value>(m_index + 1, Phi, Int32, m_value->origin());
                     hi = insert<Value>(m_index + 1, Phi, Int32, m_value->origin());
-                } else if (m_value->type() == Int64 || (m_value->opcode() == Upsilon && m_value->child(0)->type() == Int64)) {
+                } else if (m_value->type() == Int64) {
                     lo = insert<Value>(m_index + 1, Identity, m_value->origin(), m_zero);
                     hi = insert<Value>(m_index + 1, Identity, m_value->origin(), m_zero);
                 } else
@@ -106,6 +107,9 @@ public:
             for (size_t index = 0; index < block->size(); ++index) {
                 Value* value = block->at(index);
                 if ((value->opcode() == Identity) && value->child(0) == m_zero)
+                    value->replaceWithBottom(dropSynthetic, index);
+                // The upsilons feeding this will go away, so we had better not need it.
+                if (value->opcode() == Phi && value->type() == Int64)
                     value->replaceWithBottom(dropSynthetic, index);
             }
             dropSynthetic.execute(block);
@@ -302,26 +306,10 @@ private:
     }
 
     template <class Fn>
-    Value* unaryCCall(Fn&& function, Type type, Value* arg)
+    Value* unaryCCall(Fn&& function, Type type, Value* argLo, Value* argHi)
     {
         Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(function));
-        return m_insertionSet.insert<CCallValue>(m_index, type, m_origin, Effects::none(), functionAddress, arg);
-    }
-
-    void splitRange(const HeapRange& original, HeapRange&lo, HeapRange&hi)
-    {
-        if (original.distance() == 1) {
-            // XXX: testb3 uses single-byte range for Int64 access.
-            hi = HeapRange(original.begin() + bytesForWidth(Width32));
-            lo = original;
-        } else if (!original || (original == HeapRange::top())) {
-            hi = original;
-            lo = original;
-        } else {
-            hi = HeapRange(original.begin() + bytesForWidth(Width32), original.end());
-            lo = HeapRange(original.begin(), original.begin() + bytesForWidth(Width32));
-            RELEASE_ASSERT(!hi.overlaps(lo));
-        }
+        return m_insertionSet.insert<CCallValue>(m_index, type, m_origin, Effects::none(), functionAddress, argLo, argHi);
     }
 
     bool hasInt64Arg()
@@ -377,8 +365,7 @@ private:
             lo->setPhi(phi.first);
             UpsilonValue* hi = insert<UpsilonValue>(m_index, m_origin, input.second);
             hi->setPhi(phi.second);
-            setMapping(m_value, lo, hi);
-            valueReplaced();
+            m_value->replaceWithNop();
             return;
         }
         case CCall: {
@@ -386,6 +373,8 @@ private:
                 return;
             Vector<Value*> args;
             size_t gprCount = 0;
+            size_t fprCount = 0;
+            size_t stackOffset = 0;
             for (size_t index = 1; index < m_value->numChildren(); ++index) {
                 Value* child = m_value->child(index);
                 if (child->type() == Int32 || child->type() == Int64) {
@@ -395,6 +384,21 @@ private:
                         args.append(insert<Const32Value>(m_index, m_origin, 0));
                         ++gprCount;
                     }
+
+                    if (gprCount < GPRInfo::numberOfArgumentRegisters)
+                        gprCount += Air::cCallArgumentRegisterCount(child->type());
+                    else {
+                        // This argument goes on the stack.
+                        size_t modulo = 0;
+                        if (stackOffset)
+                            modulo = stackOffset % sizeofType(child->type());
+                        if (modulo) {
+                            RELEASE_ASSERT(modulo == 4);
+                            args.append(insert<Const32Value>(m_index, m_origin, 0));
+                            stackOffset += 4;
+                        }
+                        stackOffset += sizeofType(child->type());
+                    }
                     if (child->type() == Int32)
                         args.append(child);
                     else {
@@ -403,8 +407,11 @@ private:
                         args.append(childParts.first);
                         args.append(childParts.second);
                     }
-                    gprCount += Air::cCallArgumentRegisterCount(child->type());
                 } else {
+                    if (fprCount < FPRInfo::numberOfArgumentRegisters)
+                        fprCount += Air::cCallArgumentRegisterCount(child->type());
+                    else
+                        stackOffset += sizeofType(child->type());
                     args.append(child);
                 }
             }
@@ -593,8 +600,10 @@ private:
                 return;
             std::pair<Value*, Value*> input = getMapping(m_value->child(0));
             Value* testValue = insert<Value>(m_index, BitOr, m_origin, input.first, input.second);
-            Value* branchValue = insert<Value>(m_index, Branch, m_origin, testValue);
-            m_value->replaceWithIdentity(branchValue);
+            insert<Value>(m_index, Branch, m_origin, testValue);
+            ASSERT(m_block->last() == m_value);
+            m_block->removeLast(m_proc);
+            m_value = nullptr;
             return;
         }
         case Equal:
@@ -1086,25 +1095,24 @@ private:
             }
             if (!(m_value->type() == Int64 || (!hasUnalignedFPMemoryAccess() && m_value->type() == Double)))
                 return;
-            HeapRange rangeHi, rangeLo;
-            splitRange(memory->range(), rangeLo, rangeHi);
 
-            HeapRange fenceRangeHi, fenceRangeLo;
-            splitRange(memory->fenceRange(), fenceRangeLo, fenceRangeHi);
-
+            Value* hiBase = memory->child(0);
             // Assumes little-endian arch.
             CheckedInt32 offsetHi = CheckedInt32(memory->offset()) + CheckedInt32(bytesForWidth(Width32));
-            RELEASE_ASSERT(!offsetHi.hasOverflowed());
+            if (offsetHi.hasOverflowed()) {
+                hiBase = insert<Value>(m_index, Add, m_origin, hiBase, insert<Const32Value>(m_index, m_origin, bytesForWidth(Width32)));
+                offsetHi = CheckedInt32(memory->offset());
+            }
 
-            MemoryValue* hi = insert<MemoryValue>(m_index, Load, Int32, m_origin, memory->child(0));
+            MemoryValue* hi = insert<MemoryValue>(m_index, Load, Int32, m_origin, hiBase);
             hi->setOffset(offsetHi);
-            hi->setRange(rangeHi);
-            hi->setFenceRange(fenceRangeHi);
+            hi->setRange(memory->range());
+            hi->setFenceRange(memory->fenceRange());
 
             MemoryValue* lo = insert<MemoryValue>(m_index, Load, Int32, m_origin, memory->child(0));
             lo->setOffset(memory->offset());
-            lo->setRange(rangeLo);
-            lo->setFenceRange(fenceRangeLo);
+            lo->setRange(memory->range());
+            lo->setFenceRange(memory->fenceRange());
             if (m_value->type() == Double) {
                 Value* result = insert<Value>(m_index, BitwiseCast, m_origin, valueLoHi(lo, hi));
                 m_value->replaceWithIdentity(result);
@@ -1137,24 +1145,23 @@ private:
             else
                 return;
 
-            HeapRange rangeHi, rangeLo;
-            splitRange(memory->range(), rangeLo, rangeHi);
 
-            HeapRange fenceRangeHi, fenceRangeLo;
-            splitRange(memory->fenceRange(), fenceRangeLo, fenceRangeHi);
-
-
-            MemoryValue* hi = insert<MemoryValue>(m_index, Store, m_origin, value.second, memory->child(1));
+            Value* hiBase = memory->child(1);
             CheckedInt32 offsetHi = CheckedInt32(memory->offset()) + CheckedInt32(bytesForWidth(Width32));
-            RELEASE_ASSERT(!offsetHi.hasOverflowed());
+            // B3 offsets are signed, and it's valid for offset + width to overflow.
+            if (offsetHi.hasOverflowed()) {
+                hiBase = insert<Value>(m_index, Add, m_origin, hiBase, insert<Const32Value>(m_index, m_origin, bytesForWidth(Width32)));
+                offsetHi = CheckedInt32(memory->offset());
+            }
+            MemoryValue* hi = insert<MemoryValue>(m_index, Store, m_origin, value.second, hiBase);
             hi->setOffset(offsetHi);
-            hi->setRange(rangeHi);
-            hi->setFenceRange(fenceRangeHi);
+            hi->setRange(memory->range());
+            hi->setFenceRange(memory->fenceRange());
 
             MemoryValue* lo = insert<MemoryValue>(m_index, Store, m_origin, value.first, memory->child(1));
             lo->setOffset(memory->offset());
-            lo->setRange(rangeLo);
-            lo->setFenceRange(fenceRangeLo);
+            lo->setRange(memory->range());
+            lo->setFenceRange(memory->fenceRange());
             valueReplaced();
             return;
         }
@@ -1162,16 +1169,14 @@ private:
             if (m_value->child(0)->type() != Int64)
                 return;
             auto input = getMapping(m_value->child(0));
-            Value* arg = valueLoHi(input.first, input.second);
-            m_value->replaceWithIdentity(unaryCCall(Math::f64_convert_s_i64, m_value->type(), arg));
+            m_value->replaceWithIdentity(unaryCCall(Math::f64_convert_s_i64, m_value->type(), input.first, input.second));
             return;
         }
         case IToF: {
             if (m_value->child(0)->type() != Int64)
                 return;
             auto input = getMapping(m_value->child(0));
-            Value* arg = valueLoHi(input.first, input.second);
-            m_value->replaceWithIdentity(unaryCCall(Math::f32_convert_s_i64, m_value->type(), arg));
+            m_value->replaceWithIdentity(unaryCCall(Math::f32_convert_s_i64, m_value->type(), input.first, input.second));
             return;
         }
         case Neg: {
@@ -1180,8 +1185,50 @@ private:
             auto input = getMapping(m_value->child(0));
             Value* zero32 = insert<Const32Value>(m_index, m_origin, 0);
             Value* zero = valueLoHi(zero32, zero32);
-            m_value->replaceWithIdentity(insert<Value>(m_index, Sub, m_origin, zero, valueLoHi(input.first, input.second)));
-            setMapping(m_value, valueLo(m_value, m_index + 1), valueHi(m_value, m_index + 1));
+            Value* sub = insert<Value>(m_index, Sub, m_origin, zero, valueLoHi(input.first, input.second));
+            setMapping(m_value, valueLo(sub, m_index + 1), valueHi(sub, m_index + 1));
+            valueReplaced();
+            return;
+        }
+        case AtomicStrongCAS:
+        case AtomicWeakCAS: {
+            auto atomic = m_value->as<AtomicValue>();
+            if (atomic->accessWidth() != Width64)
+                return;
+            auto expectedValue = getMapping(atomic->child(0));
+            auto newValue = getMapping(atomic->child(1));
+            auto address = atomic->child(2);
+            auto stitchedExpected = valueLoHi(expectedValue.first, expectedValue.second, m_index);
+            auto stitchedNew = valueLoHi(newValue.first, newValue.second, m_index);
+            auto stitched = insert<AtomicValue>(m_index, atomic->opcode(), m_origin, atomic->accessWidth(), stitchedExpected, stitchedNew, address);
+            stitched->setOffset(atomic->offset());
+            stitched->setRange(atomic->range());
+            stitched->setFenceRange(atomic->fenceRange());
+            if (stitched->type() == Int64) {
+                setMapping(m_value, valueLo(stitched, m_index), valueHi(stitched, m_index));
+                valueReplaced();
+            } else
+                m_value->replaceWithIdentity(stitched);
+            return;
+        }
+        case AtomicXchg:
+        case AtomicXchgAdd:
+        case AtomicXchgSub:
+        case AtomicXchgAnd:
+        case AtomicXchgOr:
+        case AtomicXchgXor: {
+            auto atomic = m_value->as<AtomicValue>();
+            if (atomic->accessWidth() != Width64)
+                return;
+            auto value = getMapping(atomic->child(0));
+            auto address = atomic->child(1);
+            auto stitchedValue = valueLoHi(value.first, value.second, m_index);
+            auto stitched = insert<AtomicValue>(m_index, atomic->opcode(), m_origin, atomic->accessWidth(), stitchedValue, address);
+            stitched->setOffset(atomic->offset());
+            stitched->setRange(atomic->range());
+            stitched->setFenceRange(atomic->fenceRange());
+            setMapping(m_value, valueLo(stitched, m_index), valueHi(stitched, m_index));
+            valueReplaced();
             return;
         }
         default: {

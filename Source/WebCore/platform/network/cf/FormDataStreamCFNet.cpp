@@ -96,7 +96,7 @@ struct FormStreamFields {
     Vector<FormDataElement> remainingElements; // in reverse order
     RetainPtr<CFReadStreamRef> currentStream;
     long long currentStreamRangeLength { BlobDataItem::toEndOfFile };
-    MallocPtr<uint8_t, WTF::VectorBufferMalloc> currentData;
+    MallocSpan<uint8_t, WTF::VectorBufferMalloc> currentData;
     CFReadStreamRef formStream { nullptr };
     unsigned long long streamLength { 0 };
     unsigned long long bytesSent { 0 };
@@ -113,7 +113,7 @@ static void closeCurrentStream(FormStreamFields* form)
         form->currentStream = nullptr;
         form->currentStreamRangeLength = BlobDataItem::toEndOfFile;
     }
-    form->currentData = nullptr;
+    form->currentData = { };
 }
 
 // Return false if we cannot advance the stream. Currently the only possible failure is that the underlying file has been removed or changed since File.slice.
@@ -131,9 +131,9 @@ static bool advanceCurrentStream(FormStreamFields* form)
 
     bool success = WTF::switchOn(nextInput.data,
         [form] (Vector<uint8_t>& bytes) {
-            size_t size = bytes.size();
-            MallocPtr<uint8_t, WTF::VectorBufferMalloc> data = bytes.releaseBuffer();
-            form->currentStream = adoptCF(CFReadStreamCreateWithBytesNoCopy(0, data.get(), size, kCFAllocatorNull));
+            auto data = bytes.releaseBuffer();
+            auto span = data.span();
+            form->currentStream = adoptCF(CFReadStreamCreateWithBytesNoCopy(0, span.data(), span.size_bytes(), kCFAllocatorNull));
             form->currentData = WTFMove(data);
             return true;
         }, [form] (const FormDataElement::EncodedFileData& fileData) {
@@ -402,7 +402,7 @@ FormData* httpBodyFromStream(CFReadStreamRef stream)
 
     // Passing the pointer as property appears to be the only way to associate a stream with FormData.
     // A new stream is always created in CFURLRequestCopyHTTPRequestBodyStream (or -[NSURLRequest HTTPBodyStream]),
-    // so a side UncheckedKeyHashMap wouldn't work.
+    // so a side HashMap wouldn't work.
     // Even the stream's context pointer is different from the one we returned from formCreate().
 
     RetainPtr<CFNumberRef> formDataPointerAsCFNumber = adoptCF(static_cast<CFNumberRef>(CFReadStreamCopyProperty(stream, formDataPointerPropertyName)));

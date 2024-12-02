@@ -38,6 +38,11 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebRTCResolver);
 
+Ref<WebRTCResolver> WebRTCResolver::create(LibWebRTCSocketFactory& socketFactory, LibWebRTCResolverIdentifier identifier)
+{
+    return adoptRef(*new WebRTCResolver(socketFactory, identifier));
+}
+
 WebRTCResolver::WebRTCResolver(LibWebRTCSocketFactory& socketFactory, LibWebRTCResolverIdentifier identifier)
     : m_socketFactory(socketFactory)
     , m_identifier(identifier)

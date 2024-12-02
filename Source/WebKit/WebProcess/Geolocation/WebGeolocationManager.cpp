@@ -57,11 +57,22 @@ ASCIILiteral WebGeolocationManager::supplementName()
 }
 
 WebGeolocationManager::WebGeolocationManager(WebProcess& process)
+    : m_process(process)
 {
     process.addMessageReceiver(Messages::WebGeolocationManager::messageReceiverName(), *this);
 }
 
 WebGeolocationManager::~WebGeolocationManager() = default;
+
+void WebGeolocationManager::ref() const
+{
+    m_process->ref();
+}
+
+void WebGeolocationManager::deref() const
+{
+    m_process->deref();
+}
 
 void WebGeolocationManager::registerWebPage(WebPage& page, const String& authorizationToken, bool needsHighAccuracy)
 {

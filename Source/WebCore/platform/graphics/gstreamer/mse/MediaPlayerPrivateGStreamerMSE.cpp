@@ -109,7 +109,7 @@ static Vector<RefPtr<MediaSourceTrackGStreamer>> filterOutRepeatingTracks(const 
     uniqueTracks.reserveInitialCapacity(tracks.size());
 
     for (const auto& track : tracks) {
-        if (!uniqueTracks.containsIf([&track](const auto& current) { return track->stringId() == current->stringId(); }))
+        if (!uniqueTracks.containsIf([&track](const auto& current) { return track->id() == current->id(); }))
             uniqueTracks.append(track);
     }
 
@@ -170,6 +170,11 @@ void MediaPlayerPrivateGStreamerMSE::play()
 void MediaPlayerPrivateGStreamerMSE::pause()
 {
     GST_DEBUG_OBJECT(pipeline(), "Pause requested");
+    if (m_playbackRatePausedState == PlaybackRatePausedState::ManuallyPaused) {
+        GST_DEBUG_OBJECT(pipeline(), "Player is paused already.");
+        return;
+    }
+
     m_isPaused = true;
     m_playbackRatePausedState = PlaybackRatePausedState::ManuallyPaused;
     updateStates();

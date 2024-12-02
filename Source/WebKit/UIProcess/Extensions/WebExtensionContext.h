@@ -43,6 +43,7 @@
 #include "WebExtensionEventListenerType.h"
 #include "WebExtensionFrameIdentifier.h"
 #include "WebExtensionFrameParameters.h"
+#include "WebExtensionLocalization.h"
 #include "WebExtensionMatchPattern.h"
 #include "WebExtensionMatchedRuleParameters.h"
 #include "WebExtensionMenuItem.h"
@@ -54,6 +55,7 @@
 #include "WebExtensionWindow.h"
 #include "WebExtensionWindowIdentifier.h"
 #include "WebExtensionWindowParameters.h"
+#include "WebFrameProxy.h"
 #include "WebPageProxyIdentifier.h"
 #include "WebProcessProxy.h"
 #include <WebCore/ContentRuleListResults.h>
@@ -90,6 +92,7 @@ OBJC_CLASS NSArray;
 OBJC_CLASS NSDate;
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSMapTable;
+OBJC_CLASS NSMutableArray;
 OBJC_CLASS NSMutableDictionary;
 OBJC_CLASS NSNumber;
 OBJC_CLASS NSString;
@@ -103,7 +106,6 @@ OBJC_CLASS WKWebView;
 OBJC_CLASS WKWebViewConfiguration;
 OBJC_CLASS _WKWebExtensionContextDelegate;
 OBJC_CLASS _WKWebExtensionDeclarativeNetRequestSQLiteStore;
-OBJC_CLASS _WKWebExtensionLocalization;
 OBJC_CLASS _WKWebExtensionRegisteredScriptsSQLiteStore;
 OBJC_CLASS _WKWebExtensionStorageSQLiteStore;
 OBJC_PROTOCOL(WKWebExtensionTab);
@@ -122,6 +124,7 @@ class SessionID;
 namespace WebKit {
 
 class ContextMenuContextData;
+class ProcessThrottlerActivity;
 class WebExtension;
 class WebUserContentControllerProxy;
 struct WebExtensionContextParameters;
@@ -176,9 +179,9 @@ public:
     using URLSet = HashSet<URL>;
     using URLVector = Vector<URL>;
 
-    using WeakPageCountedSet = WeakHashCountedSet<WebPageProxy>;
+    using WeakFrameCountedSet = WeakHashCountedSet<WebFrameProxy>;
     using EventListenerTypeCountedSet = HashCountedSet<WebExtensionEventListenerType>;
-    using EventListenerTypePageMap = HashMap<WebExtensionEventListenerTypeWorldPair, WeakPageCountedSet>;
+    using EventListenerTypeFrameMap = HashMap<WebExtensionEventListenerTypeWorldPair, WeakFrameCountedSet>;
     using EventListenerTypeSet = HashSet<WebExtensionEventListenerType>;
     using ContentWorldTypeSet = HashSet<WebExtensionContentWorldType>;
     using VoidCompletionHandlerVector = Vector<CompletionHandler<void()>>;
@@ -221,7 +224,6 @@ public:
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
     using InspectorTabVector = Vector<std::pair<Ref<WebInspectorUIProxy>, RefPtr<WebExtensionTab>>>;
-    using TabIdentifierWebViewPair = std::pair<WebExtensionTabIdentifier, RetainPtr<WKWebView>>;
 #endif
 
     using ReloadFromOrigin = WebExtensionTab::ReloadFromOrigin;
@@ -271,6 +273,15 @@ public:
         Tab,
     };
 
+#if ENABLE(INSPECTOR_EXTENSIONS)
+    struct InspectorContext {
+        std::optional<WebExtensionTabIdentifier> tabIdentifier;
+        RefPtr<API::InspectorExtension> extension;
+        RetainPtr<WKWebView> backgroundWebView;
+        RefPtr<ProcessThrottlerActivity> activity;
+    };
+#endif
+
     WebExtensionContextParameters parameters() const;
 
     bool operator==(const WebExtensionContext& other) const { return (this == &other); }
@@ -309,7 +320,10 @@ public:
     const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
     void setUniqueIdentifier(String&&);
 
-    _WKWebExtensionLocalization *localization();
+    RefPtr<WebExtensionLocalization> localization();
+
+    RefPtr<API::Data> localizedResourceData(const RefPtr<API::Data>&, const String& mimeType);
+    String localizedResourceString(const String&, const String& mimeType);
 
     bool isInspectable() const { return m_inspectable; }
     void setInspectable(bool);
@@ -545,6 +559,7 @@ public:
     WKWebView *relatedWebView();
     NSString *processDisplayName();
     NSArray *corsDisablingPatterns();
+    void updateCORSDisablingPatternsOnAllExtensionPages();
     WKWebViewConfiguration *webViewConfiguration(WebViewPurpose = WebViewPurpose::Any);
 
     WebsiteDataStore* websiteDataStore(std::optional<PAL::SessionID> = std::nullopt) const;
@@ -566,11 +581,9 @@ public:
         return processes(WTFMove(typeSet), ContentWorldTypeSet { contentWorldType });
     }
 
-    HashSet<Ref<WebProcessProxy>> processes(EventListenerTypeSet&&, ContentWorldTypeSet&&) const;
+    HashSet<Ref<WebProcessProxy>> processes(EventListenerTypeSet&&, ContentWorldTypeSet&&, Function<bool(WebPageProxy&, WebFrameProxy&)>&& predicate = nullptr) const;
 
     const UserContentControllerProxySet& userContentControllers() const;
-
-    bool pageListensForEvent(const WebPageProxy&, WebExtensionEventListenerType, WebExtensionContentWorldType) const;
 
     template<typename T>
     void sendToProcesses(const WebProcessProxySet&, const T& message) const;
@@ -613,6 +626,7 @@ private:
 
     void populateWindowsAndTabs();
 
+    bool isBackgroundPage(WebCore::FrameIdentifier) const;
     bool isBackgroundPage(WebPageProxyIdentifier) const;
     bool backgroundContentIsLoaded() const;
 
@@ -776,8 +790,8 @@ private:
 #endif
 
     // Event APIs
-    void addListener(WebPageProxyIdentifier, WebExtensionEventListenerType, WebExtensionContentWorldType);
-    void removeListener(WebPageProxyIdentifier, WebExtensionEventListenerType, WebExtensionContentWorldType, size_t removedCount);
+    void addListener(WebCore::FrameIdentifier, WebExtensionEventListenerType, WebExtensionContentWorldType);
+    void removeListener(WebCore::FrameIdentifier, WebExtensionEventListenerType, WebExtensionContentWorldType, size_t removedCount);
 
     // Extension APIs
     void extensionIsAllowedIncognitoAccess(CompletionHandler<void(bool)>&&);
@@ -931,7 +945,7 @@ private:
     String m_uniqueIdentifier = WTF::UUID::createVersion4().toString();
     bool m_customUniqueIdentifier { false };
 
-    RetainPtr<_WKWebExtensionLocalization> m_localization;
+    RefPtr<WebExtensionLocalization> m_localization;
 
     bool m_inspectable { false };
 
@@ -961,13 +975,14 @@ private:
 
     VoidCompletionHandlerVector m_actionsToPerformAfterBackgroundContentLoads;
     EventListenerTypeCountedSet m_backgroundContentEventListeners;
-    EventListenerTypePageMap m_eventListenerPages;
+    EventListenerTypeFrameMap m_eventListenerFrames;
 
     bool m_shouldFireStartupEvent { false };
     InstallReason m_installReason { InstallReason::None };
     String m_previousVersion;
 
     RetainPtr<WKWebView> m_backgroundWebView;
+    RefPtr<ProcessThrottlerActivity> m_backgroundWebViewActivity;
     RetainPtr<NSError> m_backgroundContentLoadError;
     RetainPtr<_WKWebExtensionContextDelegate> m_delegate;
 
@@ -979,8 +994,7 @@ private:
     bool m_safeToLoadBackgroundContent { false };
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
-    WeakHashMap<WebInspectorUIProxy, TabIdentifierWebViewPair> m_inspectorBackgroundPageMap;
-    WeakHashMap<WebInspectorUIProxy, Ref<API::InspectorExtension>> m_inspectorExtensionMap;
+    WeakHashMap<WebInspectorUIProxy, InspectorContext> m_inspectorContextMap;
 #endif
 
     HashMap<Ref<WebExtensionMatchPattern>, UserScriptVector> m_injectedScriptsPerPatternMap;

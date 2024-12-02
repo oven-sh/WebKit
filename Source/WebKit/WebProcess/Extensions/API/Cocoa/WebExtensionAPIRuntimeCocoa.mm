@@ -44,6 +44,8 @@
 #import "WebExtensionMessageSenderParameters.h"
 #import "WebExtensionMessageTargetParameters.h"
 #import "WebExtensionUtilities.h"
+#import "WebFrame.h"
+#import "WebPage.h"
 #import "WebProcess.h"
 #import <WebCore/SecurityOrigin.h>
 #import <wtf/BlockPtr.h>
@@ -297,7 +299,7 @@ JSValue *WebExtensionAPIRuntime::lastError()
     return m_lastError.get();
 }
 
-void WebExtensionAPIRuntime::sendMessage(WebFrame& frame, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+void WebExtensionAPIRuntime::sendMessage(WebPageProxyIdentifier webPageProxyIdentifier, WebFrame& frame, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/sendMessage
 
@@ -318,7 +320,7 @@ void WebExtensionAPIRuntime::sendMessage(WebFrame& frame, NSString *extensionID,
         extensionContext().uniqueIdentifier(),
         std::nullopt, // tabParameters
         toWebExtensionFrameIdentifier(frame),
-        frame.page()->webPageProxyIdentifier(),
+        webPageProxyIdentifier,
         contentWorldType(),
         frame.url(),
         documentIdentifier.value(),
@@ -334,7 +336,7 @@ void WebExtensionAPIRuntime::sendMessage(WebFrame& frame, NSString *extensionID,
     }, extensionContext().identifier());
 }
 
-RefPtr<WebExtensionAPIPort> WebExtensionAPIRuntime::connect(WebFrame& frame, JSContextRef context, NSString *extensionID, NSDictionary *options, NSString **outExceptionString)
+RefPtr<WebExtensionAPIPort> WebExtensionAPIRuntime::connect(WebPageProxyIdentifier webPageProxyIdentifier, WebFrame& frame, JSContextRef context, NSString *extensionID, NSDictionary *options, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/connect
 
@@ -354,13 +356,13 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPIRuntime::connect(WebFrame& frame, JSC
         extensionContext().uniqueIdentifier(),
         std::nullopt, // tabParameters
         toWebExtensionFrameIdentifier(frame),
-        frame.page()->webPageProxyIdentifier(),
+        webPageProxyIdentifier,
         contentWorldType(),
         frame.url(),
         documentIdentifier.value(),
     };
 
-    auto port = WebExtensionAPIPort::create(*this, *frame.page(), WebExtensionContentWorldType::Main, resolvedName);
+    Ref port = WebExtensionAPIPort::create(*this, webPageProxyIdentifier, WebExtensionContentWorldType::Main, resolvedName);
 
     WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::RuntimeConnect(extensionID, port->channelIdentifier(), resolvedName, senderParameters), [=, this, protectedThis = Ref { *this }, globalContext = JSRetainPtr { JSContextGetGlobalContext(context) }](Expected<void, WebExtensionError>&& result) {
         if (result)
@@ -387,13 +389,13 @@ void WebExtensionAPIRuntime::sendNativeMessage(WebFrame& frame, NSString *applic
     }, extensionContext().identifier());
 }
 
-RefPtr<WebExtensionAPIPort> WebExtensionAPIRuntime::connectNative(WebFrame& frame, JSContextRef context, NSString *applicationID)
+RefPtr<WebExtensionAPIPort> WebExtensionAPIRuntime::connectNative(WebPageProxyIdentifier webPageProxyIdentifier, JSContextRef context, NSString *applicationID)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/connectNative
 
-    auto port = WebExtensionAPIPort::create(*this, *frame.page(), WebExtensionContentWorldType::Native, applicationID);
+    Ref port = WebExtensionAPIPort::create(*this, webPageProxyIdentifier, WebExtensionContentWorldType::Native, applicationID);
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::RuntimeConnectNative(applicationID, port->channelIdentifier(), frame.page()->webPageProxyIdentifier()), [=, this, protectedThis = Ref { *this }, globalContext = JSRetainPtr { JSContextGetGlobalContext(context) }](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::RuntimeConnectNative(applicationID, port->channelIdentifier(), webPageProxyIdentifier), [=, this, protectedThis = Ref { *this }, globalContext = JSRetainPtr { JSContextGetGlobalContext(context) }](Expected<void, WebExtensionError>&& result) {
         if (result)
             return;
 
@@ -404,7 +406,7 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPIRuntime::connectNative(WebFrame& fram
     return port;
 }
 
-void WebExtensionAPIWebPageRuntime::sendMessage(WebFrame& frame, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+void WebExtensionAPIWebPageRuntime::sendMessage(WebPage& page, WebFrame& frame, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/sendMessage
 
@@ -419,20 +421,17 @@ void WebExtensionAPIWebPageRuntime::sendMessage(WebFrame& frame, NSString *exten
         return;
     }
 
-    // No options are supported currently.
-
     WebExtensionMessageSenderParameters senderParameters {
         std::nullopt, // unique identifer
         std::nullopt, // tabParameters
         toWebExtensionFrameIdentifier(frame),
-        frame.page()->webPageProxyIdentifier(),
+        page.webPageProxyIdentifier(),
         WebExtensionContentWorldType::WebPage,
         frame.url(),
         documentIdentifier.value(),
     };
 
-    Ref page = *frame.page();
-    RefPtr destinationExtensionContext = page->webExtensionControllerProxy()->extensionContext(extensionID);
+    RefPtr destinationExtensionContext = page.webExtensionControllerProxy()->extensionContext(extensionID);
     if (!destinationExtensionContext) {
         // Respond after a random delay to prevent the page from easily detecting if extensions are not installed.
         callAfterRandomDelay([callback = WTFMove(callback)]() {
@@ -452,7 +451,7 @@ void WebExtensionAPIWebPageRuntime::sendMessage(WebFrame& frame, NSString *exten
     }, destinationExtensionContext->identifier());
 }
 
-RefPtr<WebExtensionAPIPort> WebExtensionAPIWebPageRuntime::connect(WebFrame& frame, JSContextRef context, NSString *extensionID, NSDictionary *options, NSString **outExceptionString)
+RefPtr<WebExtensionAPIPort> WebExtensionAPIWebPageRuntime::connect(WebPage& page, WebFrame& frame, JSContextRef context, NSString *extensionID, NSDictionary *options, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/connect
 
@@ -472,14 +471,13 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPIWebPageRuntime::connect(WebFrame& fra
         std::nullopt, // unique identifier
         std::nullopt, // tabParameters
         toWebExtensionFrameIdentifier(frame),
-        frame.page()->webPageProxyIdentifier(),
+        page.webPageProxyIdentifier(),
         WebExtensionContentWorldType::WebPage,
         frame.url(),
         documentIdentifier.value(),
     };
 
-    Ref page = *frame.page();
-    RefPtr destinationExtensionContext = page->webExtensionControllerProxy()->extensionContext(extensionID);
+    RefPtr destinationExtensionContext = page.webExtensionControllerProxy()->extensionContext(extensionID);
     if (!destinationExtensionContext) {
         // Return a port that cant send messages, and disconnect after a random delay to prevent the page from easily detecting if extensions are not installed.
         Ref port = WebExtensionAPIPort::create(*this, resolvedName);
@@ -491,7 +489,7 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPIWebPageRuntime::connect(WebFrame& fra
         return port;
     }
 
-    Ref port = WebExtensionAPIPort::create(contentWorldType(), runtime(), *destinationExtensionContext, page, WebExtensionContentWorldType::Main, resolvedName);
+    Ref port = WebExtensionAPIPort::create(contentWorldType(), runtime(), *destinationExtensionContext, page.webPageProxyIdentifier(), WebExtensionContentWorldType::Main, resolvedName);
 
     WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::RuntimeWebPageConnect(extensionID, port->channelIdentifier(), resolvedName, senderParameters), [=, this, protectedThis = Ref { *this }, globalContext = JSRetainPtr { JSContextGetGlobalContext(context) }](Expected<void, WebExtensionError>&& result) {
         if (result)
@@ -647,7 +645,7 @@ void WebExtensionContextProxy::internalDispatchRuntimeMessageEvent(WebExtensionC
     bool anyListenerHandledMessage = false;
     enumerateFramesAndNamespaceObjects([&, callbackAggregatorWrapper = RetainPtr { callbackAggregatorWrapper }](WebFrame& frame, WebExtensionAPINamespace& namespaceObject) {
         // Don't send the message to any listeners in the sender's page.
-        if (senderParameters.pageProxyIdentifier == frame.page()->webPageProxyIdentifier())
+        if (senderParameters.pageProxyIdentifier == frame.protectedPage()->webPageProxyIdentifier())
             return;
 
         // Skip all frames that don't match the target parameters.
@@ -749,7 +747,7 @@ void WebExtensionContextProxy::internalDispatchRuntimeConnectEvent(WebExtensionC
 
         auto globalContext = frame.jsContextForWorld(toDOMWrapperWorld(contentWorldType));
         for (auto& listener : listeners) {
-            auto port = WebExtensionAPIPort::create(namespaceObject, *frame.page(), sourceContentWorldType, channelIdentifier, name, senderParameters);
+            Ref port = WebExtensionAPIPort::create(namespaceObject, frame.protectedPage()->webPageProxyIdentifier(), sourceContentWorldType, channelIdentifier, name, senderParameters);
             listener->call(toJSValue(globalContext, toJS(globalContext, port.ptr())));
         }
     }, toDOMWrapperWorld(contentWorldType));

@@ -46,7 +46,7 @@
 #include "RemoteVideoFrameObjectHeap.h"
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#define MESSAGE_CHECK(assertion, connection) MESSAGE_CHECK_OPTIONAL_CONNECTION_BASE(assertion, connection)
 
 namespace WebKit {
 
@@ -56,7 +56,7 @@ namespace {
 template<typename S, int I, typename T>
 Vector<S> vectorCopyCast(const T& arrayReference)
 {
-    return Vector(std::span { reinterpret_cast<const S*>(arrayReference.template data<I>()), arrayReference.size() });
+    return Vector(spanReinterpretCast<const S>(arrayReference.template span<I>()));
 }
 }
 
@@ -295,11 +295,11 @@ void RemoteGraphicsContextGL::getBufferSubDataInline(uint32_t target, uint64_t o
         return;
     }
 
-    MallocPtr<uint8_t> bufferStore;
+    MallocSpan<uint8_t> bufferStore;
     std::span<uint8_t> bufferData;
-    bufferStore = MallocPtr<uint8_t>::tryMalloc(dataSize);
+    bufferStore = MallocSpan<uint8_t>::tryMalloc(dataSize);
     if (bufferStore) {
-        bufferData = { bufferStore.get(), dataSize };
+        bufferData = bufferStore.mutableSpan();
         if (!context->getBufferSubDataWithStatus(target, offset, bufferData))
             bufferData = { };
     } else
@@ -342,12 +342,12 @@ void RemoteGraphicsContextGL::readPixelsInline(WebCore::IntRect rect, uint32_t f
         completionHandler(std::nullopt, { });
         return;
     }
-    MallocPtr<uint8_t> pixelsStore;
+    MallocSpan<uint8_t> pixelsStore;
     std::span<uint8_t> pixels;
     if (replyImageBytes && replyImageBytes <= readPixelsInlineSizeLimit) {
-        pixelsStore = MallocPtr<uint8_t>::tryMalloc(replyImageBytes);
+        pixelsStore = MallocSpan<uint8_t>::tryMalloc(replyImageBytes);
         if (pixelsStore)
-            pixels = { pixelsStore.get(), replyImageBytes };
+            pixels = pixelsStore.mutableSpan();
     }
 
     RefPtr context = m_context;
@@ -456,8 +456,13 @@ Ref<RemoteVideoFrameObjectHeap> RemoteGraphicsContextGL::protectedVideoFrameObje
 }
 #endif
 
+void RemoteGraphicsContextGL::messageCheck(bool assertion)
+{
+    MESSAGE_CHECK(assertion, m_streamConnection);
+}
+
 } // namespace WebKit
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#undef MESSAGE_CHECK
 
 #endif // ENABLE(GPU_PROCESS) && ENABLE(WEBGL)

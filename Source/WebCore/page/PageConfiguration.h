@@ -76,11 +76,11 @@ class FrameLoader;
 class HistoryItemClient;
 class InspectorClient;
 class LocalFrameLoaderClient;
-class MediaRecorderProvider;
 class ModelPlayerProvider;
 class PaymentCoordinatorClient;
 class PerformanceLoggingClient;
 class PluginInfoProvider;
+class ProcessSyncClient;
 class ProgressTrackerClient;
 class RemoteFrame;
 class RemoteFrameClient;
@@ -125,7 +125,6 @@ public:
         FrameIdentifier mainFrameIdentifier,
         RefPtr<Frame>&& mainFrameOpener,
         UniqueRef<SpeechRecognitionProvider>&&,
-        UniqueRef<MediaRecorderProvider>&&,
         Ref<BroadcastChannelRegistry>&&,
         UniqueRef<StorageProvider>&&,
         UniqueRef<ModelPlayerProvider>&&,
@@ -135,10 +134,11 @@ public:
         UniqueRef<ContextMenuClient>&&,
 #endif
 #if ENABLE(APPLE_PAY)
-        UniqueRef<PaymentCoordinatorClient>&&,
+        Ref<PaymentCoordinatorClient>&&,
 #endif
         UniqueRef<ChromeClient>&&,
-        UniqueRef<CryptoClient>&&
+        UniqueRef<CryptoClient>&&,
+        UniqueRef<ProcessSyncClient>&&
     );
     WEBCORE_EXPORT ~PageConfiguration();
     PageConfiguration(PageConfiguration&&);
@@ -155,7 +155,7 @@ public:
     std::unique_ptr<DragClient> dragClient;
     std::unique_ptr<InspectorClient> inspectorClient;
 #if ENABLE(APPLE_PAY)
-    UniqueRef<PaymentCoordinatorClient> paymentCoordinatorClient;
+    Ref<PaymentCoordinatorClient> paymentCoordinatorClient;
 #endif
 
 #if ENABLE(WEB_AUTHN)
@@ -200,7 +200,6 @@ public:
     Vector<UserContentURLPattern> corsDisablingPatterns;
     HashSet<String> maskedURLSchemes;
     UniqueRef<SpeechRecognitionProvider> speechRecognitionProvider;
-    UniqueRef<MediaRecorderProvider> mediaRecorderProvider;
 
     // FIXME: These should be all be Settings.
     bool loadsSubresources { true };
@@ -226,6 +225,8 @@ public:
 
     ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension { WebCore::ContentSecurityPolicyModeForExtension::None };
     UniqueRef<CryptoClient> cryptoClient;
+
+    UniqueRef<ProcessSyncClient> processSyncClient;
 
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
     ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent { ShouldRequireExplicitConsentForGamepadAccess::No };

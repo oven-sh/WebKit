@@ -51,7 +51,6 @@
 #include "RenderBlockFlow.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderCounter.h"
-#include "RenderDetailsMarker.h"
 #include "RenderElementInlines.h"
 #include "RenderFileUploadControl.h"
 #include "RenderFragmentContainer.h"
@@ -356,26 +355,8 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
     if (auto* cell = dynamicDowncast<RenderTableCell>(o))
         ts << " [r=" << cell->rowIndex() << " c=" << cell->col() << " rs=" << cell->rowSpan() << " cs=" << cell->colSpan() << "]";
 
-    if (auto* detailsMarker = dynamicDowncast<RenderDetailsMarker>(o)) {
-        ts << ": ";
-        switch (detailsMarker->orientation()) {
-        case RenderDetailsMarker::Left:
-            ts << "left";
-            break;
-        case RenderDetailsMarker::Right:
-            ts << "right";
-            break;
-        case RenderDetailsMarker::Up:
-            ts << "up";
-            break;
-        case RenderDetailsMarker::Down:
-            ts << "down";
-            break;
-        }
-    }
-
     if (auto* listMarker = dynamicDowncast<RenderListMarker>(o)) {
-        String text = listMarker->textWithoutSuffix().toString();
+        auto text = listMarker->textWithoutSuffix();
         if (!text.isEmpty()) {
             if (text.length() != 1)
                 text = quoteAndEscapeNonPrintables(text);
@@ -916,7 +897,7 @@ String markerTextForListItem(Element* element)
     auto* renderer = dynamicDowncast<RenderListItem>(element->renderer());
     if (!renderer)
         return String();
-    return renderer->markerTextWithoutSuffix().toString();
+    return renderer->markerTextWithoutSuffix();
 }
 
 } // namespace WebCore

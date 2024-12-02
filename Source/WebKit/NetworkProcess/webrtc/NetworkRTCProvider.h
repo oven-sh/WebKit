@@ -43,14 +43,10 @@
 
 #if !PLATFORM(COCOA)
 
-ALLOW_COMMA_BEGIN
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/p2p/base/basic_packet_socket_factory.h>
 #include <webrtc/rtc_base/third_party/sigslot/sigslot.h>
-
-ALLOW_DEPRECATED_DECLARATIONS_END
-ALLOW_COMMA_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #endif
 

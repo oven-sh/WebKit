@@ -29,6 +29,7 @@
 
 #include "DrawingAreaProxy.h"
 #include "LayerTreeContext.h"
+#include <wtf/RefCounted.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -42,13 +43,16 @@ class Region;
 
 namespace WebKit {
 
-class DrawingAreaProxyCoordinatedGraphics final : public DrawingAreaProxy {
+class DrawingAreaProxyCoordinatedGraphics final : public DrawingAreaProxy, public RefCounted<DrawingAreaProxyCoordinatedGraphics> {
     WTF_MAKE_TZONE_ALLOCATED(DrawingAreaProxyCoordinatedGraphics);
     WTF_MAKE_NONCOPYABLE(DrawingAreaProxyCoordinatedGraphics);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DrawingAreaProxyCoordinatedGraphics);
 public:
-    DrawingAreaProxyCoordinatedGraphics(WebPageProxy&, WebProcessProxy&);
+    static Ref<DrawingAreaProxyCoordinatedGraphics> create(WebPageProxy&, WebProcessProxy&);
     virtual ~DrawingAreaProxyCoordinatedGraphics();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
 #if !PLATFORM(WPE)
     void paint(PlatformPaintContextPtr, const WebCore::IntRect&, WebCore::Region& unpaintedRegion);
@@ -60,6 +64,8 @@ public:
     void dispatchAfterEnsuringDrawing(CompletionHandler<void()>&&);
 
 private:
+    DrawingAreaProxyCoordinatedGraphics(WebPageProxy&, WebProcessProxy&);
+
     // DrawingAreaProxy
     void sizeDidChange() override;
     void deviceScaleFactorDidChange(CompletionHandler<void()>&&) override;
@@ -133,5 +139,10 @@ private:
 };
 
 } // namespace WebKit
+
+namespace WTF {
+template<typename T> struct IsDeprecatedTimerSmartPointerException;
+template<> struct IsDeprecatedTimerSmartPointerException<WebKit::DrawingAreaProxyCoordinatedGraphics::DrawingMonitor> : std::true_type { };
+}
 
 SPECIALIZE_TYPE_TRAITS_DRAWING_AREA_PROXY(DrawingAreaProxyCoordinatedGraphics, DrawingAreaType::CoordinatedGraphics)

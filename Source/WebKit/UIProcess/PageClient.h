@@ -132,7 +132,6 @@ struct AppHighlight;
 struct DataDetectorElementInfo;
 struct DictionaryPopupInfo;
 struct TextIndicatorData;
-struct ViewportAttributes;
 struct ShareDataWithParsedURL;
 
 template <typename> class RectEdges;
@@ -196,6 +195,7 @@ class WebProcessProxy;
 
 enum class ContinueUnsafeLoad : bool { No, Yes };
 
+struct EditorState;
 struct FocusedElementInformation;
 struct FrameInfoData;
 struct InteractionInformationAtPosition;
@@ -243,7 +243,7 @@ public:
     void deref() { derefView(); }
 
     // Create a new drawing area proxy for the given page.
-    virtual std::unique_ptr<DrawingAreaProxy> createDrawingAreaProxy(WebProcessProxy&) = 0;
+    virtual Ref<DrawingAreaProxy> createDrawingAreaProxy(WebProcessProxy&) = 0;
 
     // Tell the view to invalidate the given region. The region is in view coordinates.
     virtual void setViewNeedsDisplay(const WebCore::Region&) = 0;
@@ -342,7 +342,6 @@ public:
 
     virtual void setCursor(const WebCore::Cursor&) = 0;
     virtual void setCursorHiddenUntilMouseMoves(bool) = 0;
-    virtual void didChangeViewportProperties(const WebCore::ViewportAttributes&) = 0;
 
     virtual void registerEditCommand(Ref<WebEditCommandProxy>&&, UndoOrRedo) = 0;
     virtual void clearAllEditCommands() = 0;
@@ -539,9 +538,12 @@ public:
     virtual CocoaWindow *platformWindow() const = 0;
 #endif
 
+    virtual void reconcileEnclosingScrollViewContentOffset(EditorState&) { };
+
 #if PLATFORM(IOS_FAMILY)
     virtual void commitPotentialTapFailed() = 0;
     virtual void didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& highlightedQuads, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling) = 0;
+    virtual bool isPotentialTapInProgress() const = 0;
 
     virtual void couldNotRestorePageState() = 0;
     virtual void restorePageState(std::optional<WebCore::FloatPoint> scrollPosition, const WebCore::FloatPoint& scrollOrigin, const WebCore::FloatBoxExtent& obscuredInsetsOnSave, double scale) = 0;
@@ -691,6 +693,8 @@ public:
     virtual void didRestoreScrollPosition() = 0;
 
     virtual bool windowIsFrontWindowUnderMouse(const NativeWebMouseEvent&) { return false; }
+
+    virtual std::optional<float> computeAutomaticTopContentInset() { return std::nullopt; }
 
     virtual WebCore::UserInterfaceLayoutDirection userInterfaceLayoutDirection() = 0;
 

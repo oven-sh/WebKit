@@ -880,12 +880,8 @@ static GstURIType webKitWebSrcUriGetType(GType)
 
 const gchar* const* webKitWebSrcGetProtocols(GType)
 {
-    static const char* protocols[4];
-    protocols[0] = "http";
-    protocols[1] = "https";
-    protocols[2] = "blob";
-    protocols[3] = nullptr;
-    return protocols;
+    static std::array<const char*, 4> protocols { "http", "https", "blob" };
+    return protocols.data();
 }
 
 static URL convertPlaybinURI(const char* uriString)

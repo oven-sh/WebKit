@@ -326,7 +326,7 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
 
     static constexpr auto shapeHighlightColor = SRGBA<uint8_t> { 96, 82, 127, 204 };
 
-    Shape::DisplayPaths paths;
+    LayoutShape::DisplayPaths paths;
     shapeOutsideInfo->computedShape().buildDisplayPaths(paths);
 
     if (paths.shape.isEmpty()) {
@@ -390,8 +390,8 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
     context.fillPath(shapePath);
 }
 
-InspectorOverlay::InspectorOverlay(Page& page, InspectorClient* client)
-    : m_page(page)
+InspectorOverlay::InspectorOverlay(InspectorController& controller, InspectorClient* client)
+    : m_controller(controller)
     , m_client(client)
     , m_paintRectUpdateTimer(*this, &InspectorOverlay::updatePaintRectsTimerFired)
 {
@@ -399,12 +399,27 @@ InspectorOverlay::InspectorOverlay(Page& page, InspectorClient* client)
 
 InspectorOverlay::~InspectorOverlay() = default;
 
+void InspectorOverlay::ref() const
+{
+    m_controller->ref();
+}
+
+void InspectorOverlay::deref() const
+{
+    m_controller->deref();
+}
+
+Page& InspectorOverlay::page() const
+{
+    return m_controller->inspectedPage();
+}
+
 void InspectorOverlay::paint(GraphicsContext& context)
 {
     if (!shouldShowOverlay())
         return;
 
-    auto viewportSize = m_page.mainFrame().virtualView()->sizeForVisibleContent();
+    auto viewportSize = page().mainFrame().virtualView()->sizeForVisibleContent();
 
     context.clearRect({ FloatPoint::zero(), viewportSize });
 
@@ -602,7 +617,7 @@ void InspectorOverlay::highlightNode(Node* node, const InspectorOverlay::Highlig
 void InspectorOverlay::highlightQuad(std::unique_ptr<FloatQuad> quad, const InspectorOverlay::Highlight::Config& highlightConfig)
 {
     if (highlightConfig.usePageCoordinates)
-        *quad -= toIntSize(m_page.mainFrame().virtualView()->scrollPosition());
+        *quad -= toIntSize(page().mainFrame().virtualView()->scrollPosition());
 
     m_quadHighlightConfig = highlightConfig;
     m_highlightQuad = WTFMove(quad);
@@ -648,7 +663,7 @@ void InspectorOverlay::update()
         return;
     }
 
-    if (!m_page.mainFrame().virtualView())
+    if (!page().mainFrame().virtualView())
         return;
 
     m_client->highlight();
@@ -672,7 +687,7 @@ void InspectorOverlay::showPaintRect(const FloatRect& rect)
     if (!m_showPaintRects)
         return;
 
-    auto rootRect = m_page.mainFrame().virtualView()->contentsToRootView(enclosingIntRect(rect));
+    auto rootRect = page().mainFrame().virtualView()->contentsToRootView(enclosingIntRect(rect));
 
     const auto removeDelay = 250_ms;
 
@@ -844,7 +859,7 @@ void InspectorOverlay::drawPaintRects(GraphicsContext& context, const Deque<Time
 
 void InspectorOverlay::drawBounds(GraphicsContext& context, const InspectorOverlay::Highlight::Bounds& bounds)
 {
-    Ref mainFrame = m_page.mainFrame();
+    Ref mainFrame = page().mainFrame();
     RefPtr pageView = mainFrame->virtualView();
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     FloatSize contentInset(0, pageView->topContentInset(ScrollView::TopContentInsetType::WebCoreOrPlatformContentInset));
@@ -900,7 +915,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     constexpr auto darkRulerColor = Color::black.colorWithAlphaByte(128);
 
     IntPoint scrollOffset;
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(page().mainFrame());
     if (!localMainFrame)
         return;
 
@@ -910,7 +925,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
 
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     FloatSize contentInset(0, pageView->topContentInset(ScrollView::TopContentInsetType::WebCoreOrPlatformContentInset));
-    float pageScaleFactor = m_page.pageScaleFactor();
+    float pageScaleFactor = page().pageScaleFactor();
     float pageZoomFactor = localMainFrame->pageZoomFactor();
 
     float pageFactor = pageZoomFactor * pageScaleFactor;
@@ -975,7 +990,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     // Draw lines.
     {
         FontCascadeDescription fontDescription;
-        fontDescription.setOneFamily(AtomString { m_page.settings().sansSerifFontFamily() });
+        fontDescription.setOneFamily(AtomString { page().settings().sansSerifFontFamily() });
         fontDescription.setComputedSize(10);
 
         FontCascade font(WTFMove(fontDescription));
@@ -1065,7 +1080,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     // Draw viewport size.
     {
         FontCascadeDescription fontDescription;
-        fontDescription.setOneFamily(AtomString { m_page.settings().sansSerifFontFamily() });
+        fontDescription.setOneFamily(AtomString { page().settings().sansSerifFontFamily() });
         fontDescription.setComputedSize(12);
 
         FontCascade font(WTFMove(fontDescription));
@@ -1243,7 +1258,7 @@ Path InspectorOverlay::drawElementTitle(GraphicsContext& context, Node& node, co
         }
     }
 
-    Ref mainFrame = m_page.mainFrame();
+    Ref mainFrame = page().mainFrame();
     RefPtr pageView = mainFrame->virtualView();
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     FloatSize contentInset(0, pageView->topContentInset(ScrollView::TopContentInsetType::WebCoreOrPlatformContentInset));
@@ -1509,7 +1524,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
 
     constexpr auto translucentLabelBackgroundColor = Color::white.colorWithAlphaByte(230);
 
-    RefPtr pageView = m_page.mainFrame().virtualView();
+    RefPtr pageView = page().mainFrame().virtualView();
     if (!pageView)
         return { };
     FloatRect viewportBounds = { { 0, 0 }, pageView->sizeForVisibleContent() };
@@ -1902,7 +1917,7 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
 
     auto& renderFlex = *downcast<RenderFlexibleBox>(renderer);
 
-    auto itemsAtStartOfLine = m_page.inspectorController().ensureDOMAgent().flexibleBoxRendererCachedItemsAtStartOfLine(renderFlex);
+    auto itemsAtStartOfLine = m_controller->ensureDOMAgent().flexibleBoxRendererCachedItemsAtStartOfLine(renderFlex);
 
     auto* containingFrame = node->document().frame();
     if (!containingFrame)

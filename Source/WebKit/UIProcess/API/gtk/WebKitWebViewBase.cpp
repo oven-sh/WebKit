@@ -104,6 +104,13 @@
 using namespace WebKit;
 using namespace WebCore;
 
+struct _WebKitWebViewBasePrivate;
+
+namespace WTF {
+template<typename T> struct IsDeprecatedTimerSmartPointerException;
+template<> struct IsDeprecatedTimerSmartPointerException<_WebKitWebViewBasePrivate> : std::true_type { };
+}
+
 #if !USE(GTK4)
 struct ClickCounter {
 public:
@@ -344,7 +351,7 @@ struct _WebKitWebViewBasePrivate {
     std::unique_ptr<PAL::SleepDisabler> sleepDisabler;
 #endif
 
-    std::unique_ptr<AcceleratedBackingStore> acceleratedBackingStore;
+    RefPtr<AcceleratedBackingStore> acceleratedBackingStore;
 
 #if ENABLE(DRAG_SUPPORT)
     std::unique_ptr<DragSource> dragSource;
@@ -352,7 +359,7 @@ struct _WebKitWebViewBasePrivate {
 #endif
 
     GtkGesture* touchGestureGroup;
-    std::unique_ptr<ViewGestureController> viewGestureController;
+    RefPtr<ViewGestureController> viewGestureController;
     bool isBackForwardNavigationGestureEnabled { false };
 
 #if GTK_CHECK_VERSION(3, 24, 0)
@@ -1132,7 +1139,7 @@ static bool shouldForwardWheelEvent(WebKitWebViewBase* webViewBase, GdkEvent* ev
             if (length > 0)
                 length--;
             for (unsigned i = 0; i < length; i++) {
-                WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+                WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK port
                 auto oldTime = history.get()[i].time;
                 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 webViewBase->priv->wheelEventsToPropagate.removeAllMatching([&oldTime] (GRefPtr<GdkEvent>& current) {
@@ -2938,7 +2945,7 @@ void webkitWebViewBaseDidRelaunchWebProcess(WebKitWebViewBase* webkitWebViewBase
     if (priv->viewGestureController)
         priv->viewGestureController->connectToProcess();
     else {
-        priv->viewGestureController = makeUnique<WebKit::ViewGestureController>(*priv->pageProxy);
+        priv->viewGestureController = WebKit::ViewGestureController::create(*priv->pageProxy);
         priv->viewGestureController->setSwipeGestureEnabled(priv->isBackForwardNavigationGestureEnabled);
     }
     if (priv->displayID)

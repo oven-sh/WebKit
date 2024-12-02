@@ -30,6 +30,7 @@
 
 #include "Color.h"
 #include "CoordinatedAnimatedBackingStoreClient.h"
+#include "CoordinatedBackingStoreProxy.h"
 #include "CoordinatedImageBackingStore.h"
 #include "Damage.h"
 #include "FilterOperations.h"
@@ -37,7 +38,6 @@
 #include "FloatPoint3D.h"
 #include "FloatRect.h"
 #include "FloatSize.h"
-#include "NicosiaBackingStore.h"
 #include "NicosiaPlatformLayer.h"
 #include "ScrollTypes.h"
 #include "TextureMapperAnimation.h"
@@ -88,7 +88,9 @@ public:
                     bool debugBorderChanged : 1;
                     bool scrollingNodeChanged : 1;
                     bool eventRegionChanged : 1;
+#if ENABLE(DAMAGE_TRACKING)
                     bool damageChanged : 1;
+#endif
                 };
                 uint32_t value { 0 };
             };
@@ -126,7 +128,9 @@ public:
         WebCore::FloatSize contentsTilePhase;
         WebCore::FloatSize contentsTileSize;
         WebCore::FloatRoundedRect contentsClippingRect;
+#if ENABLE(DAMAGE_TRACKING)
         WebCore::Damage damage;
+#endif
 
         float opacity { 0 };
         WebCore::Color solidColor;
@@ -141,12 +145,12 @@ public:
         WebCore::FloatRoundedRect backdropFiltersRect;
 
         RefPtr<WebCore::TextureMapperPlatformLayerProxy> contentLayer;
-        RefPtr<BackingStore> backingStore;
+        RefPtr<WebCore::CoordinatedBackingStoreProxy> backingStore;
+        RefPtr<WebCore::CoordinatedAnimatedBackingStoreClient> animatedBackingStoreClient;
         struct {
             RefPtr<WebCore::CoordinatedImageBackingStore> store;
             bool isVisible { false };
         } imageBacking;
-        RefPtr<WebCore::CoordinatedAnimatedBackingStoreClient> animatedBackingStoreClient;
 
         struct RepaintCounter {
             unsigned count { 0 };
@@ -162,8 +166,7 @@ public:
         WebCore::EventRegion eventRegion;
     };
 
-    template<typename T>
-    void flushState(const T& functor)
+    void flushState()
     {
         Locker locker { PlatformLayer::m_state.lock };
         auto& pending = m_state.pending;
@@ -237,12 +240,12 @@ public:
             staging.imageBacking = pending.imageBacking;
         if (pending.delta.animatedBackingStoreClientChanged)
             staging.animatedBackingStoreClient = pending.animatedBackingStoreClient;
+#if ENABLE(DAMAGE_TRACKING)
         if (pending.delta.damageChanged)
             staging.damage = pending.damage;
+#endif
 
         pending.delta = { };
-
-        functor(staging);
     }
 
     template<typename T>

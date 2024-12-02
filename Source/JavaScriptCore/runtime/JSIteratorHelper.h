@@ -57,7 +57,7 @@ public:
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
     static JSIteratorHelper* createWithInitialValues(VM&, Structure*);
-    static JSIteratorHelper* create(VM&, Structure*, JSObject* generator, JSObject* underlyingIterator);
+    static JSIteratorHelper* create(VM&, Structure*, JSValue generator, JSValue underlyingIterator);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_INFO;
@@ -66,6 +66,8 @@ public:
 
 private:
     JSIteratorHelper(VM&, Structure*);
+
+    void finishCreation(VM&, JSValue generator, JSValue underlyingIterator);
 };
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSIteratorHelper);

@@ -45,6 +45,7 @@
 #include "WritingMode.h"
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <unicode/uscript.h>
+#include <wtf/AbstractRefCounted.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
@@ -59,7 +60,7 @@ namespace WebCore {
 
 class Page;
 
-class SettingsBase {
+class SettingsBase : public AbstractRefCounted {
     WTF_MAKE_TZONE_ALLOCATED(SettingsBase);
     WTF_MAKE_NONCOPYABLE(SettingsBase);
 public:

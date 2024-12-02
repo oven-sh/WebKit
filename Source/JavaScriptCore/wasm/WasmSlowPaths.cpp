@@ -27,6 +27,8 @@
 #include "WasmSlowPaths.h"
 #include "JSCJSValue.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #if ENABLE(WEBASSEMBLY)
 
 #include "BytecodeStructs.h"
@@ -381,7 +383,7 @@ WASM_SLOW_PATH_DECL(trace)
         pc);
     if (opcodeID == wasm_enter) {
         dataLogF("Frame will eventually return to %p\n", callFrame->returnPCForInspection());
-        *bitwise_cast<volatile char*>(callFrame->returnPCForInspection());
+        *std::bit_cast<volatile char*>(callFrame->returnPCForInspection());
     }
     if (opcodeID == wasm_ret) {
         dataLogF("Will be returning to %p\n", callFrame->returnPCForInspection());
@@ -424,10 +426,10 @@ WASM_SLOW_PATH_DECL(array_new)
         if (Wasm::isRefType(elementType))
             value = JSValue::encode(jsNull());
         else if (elementType.unpacked().isV128()) {
-            EncodedJSValue result = Wasm::arrayNew(instance, instruction.m_typeIndex, size, vectorAllZeros());
-            if (JSValue::decode(result).isNull())
+            JSValue result = Wasm::arrayNew(instance, instruction.m_typeIndex, size, vectorAllZeros());
+            if (UNLIKELY(result.isNull()))
                 WASM_THROW(Wasm::ExceptionType::BadArrayNew);
-            WASM_RETURN(result);
+            WASM_RETURN(JSValue::encode(result));
         }
         break;
     }
@@ -435,14 +437,17 @@ WASM_SLOW_PATH_DECL(array_new)
         // In this case, m_value must refer to a possibly-empty array of arguments,
         // so m_value being constant would be a bug.
         ASSERT(!instruction.m_value.isConstant());
-        WASM_RETURN(Wasm::arrayNewFixed(instance, instruction.m_typeIndex, size, reinterpret_cast<uint64_t*>(&callFrame->r(instruction.m_value))));
+        JSValue result = Wasm::arrayNewFixed(instance, instruction.m_typeIndex, size, reinterpret_cast<uint64_t*>(&callFrame->r(instruction.m_value)));
+        if (UNLIKELY(result.isNull()))
+            WASM_THROW(Wasm::ExceptionType::BadArrayNew);
+        WASM_RETURN(JSValue::encode(result));
     }
     }
     ASSERT(!elementType.unpacked().isV128());
-    EncodedJSValue result = Wasm::arrayNew(instance, instruction.m_typeIndex, size, value);
-    if (JSValue::decode(result).isNull())
+    JSValue result = Wasm::arrayNew(instance, instruction.m_typeIndex, size, value);
+    if (UNLIKELY(result.isNull()))
         WASM_THROW(Wasm::ExceptionType::BadArrayNew);
-    WASM_RETURN(result);
+    WASM_RETURN(JSValue::encode(result));
 }
 
 WASM_SLOW_PATH_DECL(array_get)
@@ -633,9 +638,9 @@ static inline UGPRPair doWasmCall(Register* partiallyConstructedCalleeFrame, JSW
         JSWebAssemblyInstance::ImportFunctionInfo* functionInfo = instance->importFunctionInfo(functionIndex);
         codePtr = functionInfo->importFunctionStub;
 #if USE(JSVALUE64)
-        calleeStackSlot = bitwise_cast<uint64_t>(functionInfo->boxedTargetCalleeLoadLocation);
+        calleeStackSlot = std::bit_cast<uint64_t>(functionInfo->boxedTargetCalleeLoadLocation);
 #else
-        calleeStackSlot = bitwise_cast<uint32_t>(functionInfo->boxedTargetCalleeLoadLocation);
+        calleeStackSlot = std::bit_cast<uint32_t>(functionInfo->boxedTargetCalleeLoadLocation);
 #endif
     } else {
         // Target is a wasm function within the same instance
@@ -1086,7 +1091,7 @@ WASM_SLOW_PATH_DECL(retrieve_and_clear_exception)
     const auto& handleCatch = [&](const auto& instruction) {
         JSWebAssemblyException* wasmException = jsDynamicCast<JSWebAssemblyException*>(thrownValue);
         RELEASE_ASSERT(!!wasmException);
-        payload = bitwise_cast<void*>(wasmException->payload().span().data());
+        payload = std::bit_cast<void*>(wasmException->payload().span().data());
         callFrame->uncheckedR(instruction.m_exception) = thrownValue;
     };
 
@@ -1095,7 +1100,9 @@ WASM_SLOW_PATH_DECL(retrieve_and_clear_exception)
     else if (pc->is<WasmCatchAll>())
         handleCatchAll(pc->as<WasmCatchAll>());
     else if (pc->is<WasmTryTableCatch>()) {
-        payload = bitwise_cast<void*>(jsDynamicCast<JSWebAssemblyException*>(thrownValue)->payload().span().data());
+        JSWebAssemblyException* wasmException = jsDynamicCast<JSWebAssemblyException*>(thrownValue);
+        RELEASE_ASSERT(!!wasmException);
+        payload = std::bit_cast<void*>(wasmException->payload().span().data());
         auto instr = pc->as<WasmTryTableCatch>();
         if (instr.m_kind == static_cast<unsigned>(Wasm::CatchKind::CatchRef) || instr.m_kind == static_cast<unsigned>(Wasm::CatchKind::CatchAllRef))
             callFrame->uncheckedR(pc->as<WasmTryTableCatch>().m_exception) = thrownValue;
@@ -1324,16 +1331,18 @@ extern "C" UGPRPair SYSV_ABI slow_path_wasm_throw_exception(CallFrame* callFrame
 
 extern "C" UGPRPair SYSV_ABI slow_path_wasm_popcount(const WasmInstruction* pc, uint32_t x)
 {
-    void* result = bitwise_cast<void*>(static_cast<size_t>(std::popcount(x)));
+    void* result = std::bit_cast<void*>(static_cast<size_t>(std::popcount(x)));
     WASM_RETURN_TWO(pc, result);
 }
 
 extern "C" UGPRPair SYSV_ABI slow_path_wasm_popcountll(const WasmInstruction* pc, uint64_t x)
 {
-    void* result = bitwise_cast<void*>(static_cast<size_t>(std::popcount(x)));
+    void* result = std::bit_cast<void*>(static_cast<size_t>(std::popcount(x)));
     WASM_RETURN_TWO(pc, result);
 }
 
 } } // namespace JSC::LLInt
 
 #endif // ENABLE(WEBASSEMBLY)
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -56,7 +56,6 @@ _license_header = """/*
 
 WANTS_DISPATCH_MESSAGE_ATTRIBUTE = 'WantsDispatchMessage'
 WANTS_ASYNC_DISPATCH_MESSAGE_ATTRIBUTE = 'WantsAsyncDispatchMessage'
-NOT_REFCOUNTED_RECEIVER_ATTRIBUTE = 'NotRefCounted'
 NOT_STREAM_ENCODABLE_ATTRIBUTE = 'NotStreamEncodable'
 NOT_STREAM_ENCODABLE_REPLY_ATTRIBUTE = 'NotStreamEncodableReply'
 STREAM_BATCHED_ATTRIBUTE = 'StreamBatched'
@@ -240,6 +239,7 @@ def message_to_struct_declaration(receiver, message):
     result.append('    static constexpr bool isSync = %s;\n' % ('false', 'true')[message.reply_parameters is not None and message.has_attribute(SYNCHRONOUS_ATTRIBUTE)])
     result.append('    static constexpr bool canDispatchOutOfOrder = %s;\n' % ('false', 'true')[message.has_attribute(CAN_DISPATCH_OUT_OF_ORDER_ATTRIBUTE)])
     result.append('    static constexpr bool replyCanDispatchOutOfOrder = %s;\n' % ('false', 'true')[message.reply_parameters is not None and message.has_attribute(REPLY_CAN_DISPATCH_OUT_OF_ORDER_ATTRIBUTE)])
+    result.append(f'    static constexpr bool deferSendingIfSuspended = {"true" if message.coalescing_key_indices is not None else "false"};\n')
     if receiver.has_attribute(STREAM_ATTRIBUTE):
         result.append('    static constexpr bool isStreamEncodable = %s;\n' % ('true', 'false')[message.has_attribute(NOT_STREAM_ENCODABLE_ATTRIBUTE)])
         if message.reply_parameters is not None:
@@ -272,6 +272,20 @@ def message_to_struct_declaration(receiver, message):
         result.append('\n        : m_arguments(%s)\n' % ', '.join(arguments_constructor_parameters))
         result.append('    {\n')
         result.append('    }\n\n')
+
+    if message.coalescing_key_indices is not None:
+        result.append('    // Not valid to call this after arguments() is called.\n')
+        if message.coalescing_key_indices:
+            result.append('    void encodeCoalescingKey(IPC::Encoder& encoder) const\n')
+            result.append('    {\n')
+            get_arguments_string = ' << '.join((f'std::get<{i}>(m_arguments)' for i in message.coalescing_key_indices))
+            result.append(f'        encoder << {get_arguments_string};\n')
+        else:
+            result.append('    void encodeCoalescingKey(IPC::Encoder&) const\n')
+            result.append('    {\n')
+        result.append('    }\n')
+        result.append('\n')
+
     result.append('    auto&& arguments()\n')
     result.append('    {\n')
     result.append('        return WTFMove(m_arguments);\n')
@@ -320,6 +334,7 @@ def serialized_identifiers():
         'WebCore::FileSystemHandleIdentifier',
         'WebCore::FileSystemSyncAccessHandleIdentifier',
         'WebCore::FrameIdentifierID',
+        'WebCore::IDBIndexIdentifier',
         'WebCore::IDBObjectStoreIdentifier',
         'WebCore::ImageDecoderIdentifier',
         'WebCore::InbandGenericCueIdentifier',
@@ -377,7 +392,6 @@ def serialized_identifiers():
         'WebKit::LibWebRTCResolverIdentifier',
         'WebKit::LogStreamIdentifier',
         'WebKit::MarkSurfacesAsVolatileRequestIdentifier',
-        'WebKit::MediaRecorderIdentifier',
         'WebKit::NetworkResourceLoadIdentifier',
         'WebKit::PDFPluginIdentifier',
         'WebKit::PageGroupIdentifier',
@@ -662,14 +676,13 @@ def handler_function(receiver, message):
         return '%s::%s' % (receiver.name, 'gpu' + message.name[3:])
     return '%s::%s' % (receiver.name, message.name[0].lower() + message.name[1:])
 
-
 def generate_enabled_by(receiver, enabled_by, enabled_by_conjunction):
     conjunction = ' %s ' % (enabled_by_conjunction or '&&')
     return conjunction.join(['sharedPreferences->' + preference[0].lower() + preference[1:] for preference in enabled_by])
 
 def generate_runtime_enablement(receiver, message):
     if not message.enabled_by:
-        return message.enabled_if
+        return
     runtime_enablement = generate_enabled_by(receiver, message.enabled_by, message.enabled_by_conjunction)
     if len(message.enabled_by) > 1:
         return 'sharedPreferences && (%s)' % runtime_enablement
@@ -695,11 +708,19 @@ def async_message_statement(receiver, message):
 
     result = []
     runtime_enablement = generate_runtime_enablement(receiver, message)
-    if runtime_enablement:
+    if runtime_enablement or message.validator:
         result.append('    if (decoder.messageName() == Messages::%s::%s::name()) {\n' % (receiver.name, message.name))
-        result.append('        if (%s)\n' % runtime_enablement)
-        result.append('            return IPC::%s<Messages::%s::%s>(%s%s);\n' % (dispatch_function, receiver.name, message.name, connection, ', '.join(dispatch_function_args)))
-        result.append('        runtimeEnablementCheckFailed = true;\n')
+        if runtime_enablement:
+            result.append('        if (!(%s)) {\n' % runtime_enablement)
+            result.append('            RELEASE_LOG_ERROR(IPC, "Message %s received by a disabled message endpoint", IPC::description(decoder.messageName()).characters());\n')
+            result.append('            return decoder.markInvalid();\n')
+            result.append('        }\n')
+        if message.validator:
+            result.append('        if (!%s()) {\n' % message.validator)
+            result.append('            RELEASE_LOG_ERROR(IPC, "Message %s fails validation", IPC::description(decoder.messageName()).characters());\n')
+            result.append('            return decoder.markInvalid();\n')
+            result.append('        }\n')
+        result.append('        return IPC::%s<Messages::%s::%s>(%s%s);\n' % (dispatch_function, receiver.name, message.name, connection, ', '.join(dispatch_function_args)))
         result.append('    }\n')
     else:
         result.append('    if (decoder.messageName() == Messages::%s::%s::name())\n' % (receiver.name, message.name))
@@ -1054,7 +1075,6 @@ def headers_for_type(type):
         'WebCore::VideoFrameRotation': ['<WebCore/VideoFrame.h>'],
         'WebCore::VideoPlaybackQualityMetrics': ['<WebCore/VideoPlaybackQualityMetrics.h>'],
         'WebCore::VideoPresetData': ['<WebCore/VideoPreset.h>'],
-        'WebCore::ViewportAttributes': ['<WebCore/ViewportArguments.h>'],
         'WebCore::WindowIdentifier': ['<WebCore/GlobalWindowIdentifier.h>'],
         'WebCore::WebGPU::AddressMode': ['<WebCore/WebGPUAddressMode.h>'],
         'WebCore::WebGPU::BlendFactor': ['<WebCore/WebGPUBlendFactor.h>'],
@@ -1120,6 +1140,8 @@ def headers_for_type(type):
         'WebKit::CallDownloadDidStart': ['"DownloadManager.h"'],
         'WebKit::ConsumerSharedCARingBufferHandle': ['"SharedCARingBuffer.h"'],
         'WebKit::ContentWorldIdentifier': ['"ContentWorldShared.h"'],
+        'WebKit::ContentWorldData': ['"ContentWorldData.h"'],
+        'WebKit::ContentWorldOption': ['"ContentWorldShared.h"'],
         'WebKit::DocumentEditingContextRequest': ['"DocumentEditingContext.h"'],
         'WebKit::DrawingAreaIdentifier': ['"DrawingAreaInfo.h"'],
         'WebKit::FindDecorationStyle': ['"WebFindOptions.h"'],
@@ -1323,13 +1345,9 @@ def generate_header_includes_from_conditions(header_conditions):
     return result
 
 
-def generate_enabled_by_for_receiver(receiver, messages, ignore_invalid_message_for_testing, return_value=None):
+def generate_enabled_by_for_receiver(receiver, messages, return_value=None):
     enabled_by = receiver.receiver_enabled_by
     enabled_by_conjunction = receiver.receiver_enabled_by_conjunction
-    enablement_check = [
-        '    bool runtimeEnablementCheckFailed = false;\n'
-        '    UNUSED_VARIABLE(runtimeEnablementCheckFailed);\n',
-    ]
     shared_preferences_retrieval = [
         '    auto sharedPreferences = sharedPreferencesForWebProcess(%s);\n' % ('connection' if receiver.shared_preferences_needs_connection else ''),
         '    UNUSED_VARIABLE(sharedPreferences);\n'
@@ -1337,26 +1355,29 @@ def generate_enabled_by_for_receiver(receiver, messages, ignore_invalid_message_
     result = []
     if not enabled_by:
         if any([message.enabled_by for message in messages]):
-            result += enablement_check
             result += shared_preferences_retrieval
-        elif any([message.enabled_if for message in messages]):
-            result += enablement_check
         return result
 
     runtime_enablement = generate_enabled_by(receiver, enabled_by, enabled_by_conjunction)
     return_statement_line = 'return %s' % return_value if return_value else 'return'
-    mark_message_invalid_line = 'connection.markCurrentlyDispatchedMessageAsInvalid()' if not receiver.has_attribute(STREAM_ATTRIBUTE) else ''
-    return enablement_check + shared_preferences_retrieval + [
+    mark_message_invalid_line = 'decoder.markInvalid()'
+    return shared_preferences_retrieval + [
         '    if (!sharedPreferences || !%s) {\n' % ('(%s)' % runtime_enablement if len(enabled_by) > 1 else runtime_enablement),
-        '#if ENABLE(IPC_TESTING_API)\n',
-        '        if (%s)\n' % ignore_invalid_message_for_testing,
-        '            %s;\n' % return_statement_line,
-        '#endif // ENABLE(IPC_TESTING_API)\n',
-        '        ASSERT_NOT_REACHED_WITH_MESSAGE("Message %s received by a disabled message receiver %s", IPC::description(decoder.messageName()).characters());\n' % ('%s', receiver.name),
-        '        %s;\n' % mark_message_invalid_line if mark_message_invalid_line else '',
+        '        RELEASE_LOG_ERROR(IPC, "Message %s received by a disabled message receiver %s", IPC::description(decoder.messageName()).characters());\n' % ('%s', receiver.name),
+        '        %s;\n' % mark_message_invalid_line,
         '        %s;\n' % return_statement_line,
         '    }\n',
     ]
+
+def header_for_receiver_name(name):
+    # By default, the header name should usually be the same as the receiver name.
+
+    special_headers = {
+        # WebInspector.h is taken by the public API header, so this name is used instead.
+        'WebInspector': 'WebInspectorInternal'
+    }
+
+    return special_headers.get(name, name)
 
 
 def generate_message_handler(receiver):
@@ -1376,7 +1397,7 @@ def generate_message_handler(receiver):
     if receiver.condition:
         result.append('#if %s\n' % receiver.condition)
 
-    result.append('#include "%s.h"\n\n' % receiver.name)
+    result.append('#include "%s.h"\n\n' % header_for_receiver_name(receiver.name))
     result += generate_header_includes_from_conditions(header_conditions)
     result.append('\n')
 
@@ -1411,22 +1432,17 @@ def generate_message_handler(receiver):
     if receiver.has_attribute(STREAM_ATTRIBUTE):
         result.append('void %s::didReceiveStreamMessage(IPC::StreamServerConnection& connection, IPC::Decoder& decoder)\n' % (receiver.name))
         result.append('{\n')
-        result += generate_enabled_by_for_receiver(receiver, receiver.messages, 'connection.ignoreInvalidMessageForTesting()')
-        assert(receiver.has_attribute(NOT_REFCOUNTED_RECEIVER_ATTRIBUTE))
+        result += generate_enabled_by_for_receiver(receiver, receiver.messages)
         assert(not receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE))
         assert(not receiver.has_attribute(WANTS_ASYNC_DISPATCH_MESSAGE_ATTRIBUTE))
+        result.append('    Ref protectedThis { *this };\n')
         result += async_message_statements
         result += sync_message_statements
         if (receiver.superclass):
             result.append('    %s::didReceiveStreamMessage(connection, decoder);\n' % (receiver.superclass))
         else:
-            result.append('    UNUSED_PARAM(decoder);\n')
-            result.append('    UNUSED_PARAM(connection);\n')
-            result.append('#if ENABLE(IPC_TESTING_API)\n')
-            result.append('    if (connection.ignoreInvalidMessageForTesting())\n')
-            result.append('        return;\n')
-            result.append('#endif // ENABLE(IPC_TESTING_API)\n')
-            result.append('    ASSERT_NOT_REACHED_WITH_MESSAGE("Unhandled stream message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());\n')
+            result.append('    RELEASE_LOG_ERROR(IPC, "Unhandled stream message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());\n')
+            result.append('    decoder.markInvalid();\n')
         result.append('}\n')
     else:
         if receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE):
@@ -1434,10 +1450,9 @@ def generate_message_handler(receiver):
         else:
             result.append('void %s::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)\n' % (receiver.name))
         result.append('{\n')
-        enable_by_statement = generate_enabled_by_for_receiver(receiver, async_messages, 'connection.ignoreInvalidMessageForTesting()')
+        enable_by_statement = generate_enabled_by_for_receiver(receiver, async_messages)
         result += enable_by_statement
-        if not (receiver.has_attribute(NOT_REFCOUNTED_RECEIVER_ATTRIBUTE) or receiver.has_attribute(STREAM_ATTRIBUTE)):
-            result.append('    Ref protectedThis { *this };\n')
+        result.append('    Ref protectedThis { *this };\n')
         result += async_message_statements
         if receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE) or receiver.has_attribute(WANTS_ASYNC_DISPATCH_MESSAGE_ATTRIBUTE):
             result.append('    if (dispatchMessage(connection, decoder))\n')
@@ -1447,25 +1462,16 @@ def generate_message_handler(receiver):
         else:
             if not receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE):
                 result.append('    UNUSED_PARAM(connection);\n')
-            result.append('    UNUSED_PARAM(decoder);\n')
-            if not receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE):
-                result.append('#if ENABLE(IPC_TESTING_API)\n')
-                result.append('    if (connection.ignoreInvalidMessageForTesting())\n')
-                result.append('        return;\n')
-                result.append('#endif // ENABLE(IPC_TESTING_API)\n')
-            result.append('    ASSERT_NOT_REACHED_WITH_MESSAGE("Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());\n')
-            if enable_by_statement:
-                result.append('    if (runtimeEnablementCheckFailed)\n')
-                result.append('        connection.markCurrentlyDispatchedMessageAsInvalid();\n')
+            result.append('    RELEASE_LOG_ERROR(IPC, "Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());\n')
+            result.append('    decoder.markInvalid();\n')
         result.append('}\n')
 
     if not receiver.has_attribute(STREAM_ATTRIBUTE) and (sync_messages or receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE)):
         result.append('\n')
         result.append('bool %s::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)\n' % (receiver.name))
         result.append('{\n')
-        result += generate_enabled_by_for_receiver(receiver, sync_messages, 'connection.ignoreInvalidMessageForTesting()', 'false')
-        if not receiver.has_attribute(NOT_REFCOUNTED_RECEIVER_ATTRIBUTE):
-            result.append('    Ref protectedThis { *this };\n')
+        result += generate_enabled_by_for_receiver(receiver, sync_messages, 'false')
+        result.append('    Ref protectedThis { *this };\n')
         result += sync_message_statements
         if receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE):
             result.append('    if (dispatchSyncMessage(connection, decoder, replyEncoder))\n')
@@ -1475,15 +1481,9 @@ def generate_message_handler(receiver):
         else:
             if not receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE):
                 result.append('    UNUSED_PARAM(connection);\n')
-            result.append('    UNUSED_PARAM(decoder);\n')
             result.append('    UNUSED_PARAM(replyEncoder);\n')
-
-            if not receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE):
-                result.append('#if ENABLE(IPC_TESTING_API)\n')
-                result.append('    if (connection.ignoreInvalidMessageForTesting())\n')
-                result.append('        return false;\n')
-                result.append('#endif // ENABLE(IPC_TESTING_API)\n')
-            result.append('    ASSERT_NOT_REACHED_WITH_MESSAGE("Unhandled synchronous message %s to %" PRIu64, description(decoder.messageName()).characters(), decoder.destinationID());\n')
+            result.append('    RELEASE_LOG_ERROR(IPC, "Unhandled synchronous message %s to %" PRIu64, description(decoder.messageName()).characters(), decoder.destinationID());\n')
+            result.append('    decoder.markInvalid();\n')
             result.append('    return false;\n')
         result.append('}\n')
 
@@ -1533,8 +1533,6 @@ def generate_message_names_header(receivers):
     result.append('#include <wtf/EnumTraits.h>\n')
     result.append('#include <wtf/text/ASCIILiteral.h>\n')
     result.append('\n')
-    result.append('WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN\n')
-    result.append('\n')
     result.append('namespace IPC {\n')
     result.append('\n')
     result.append('enum class ReceiverName : uint8_t {')
@@ -1572,7 +1570,8 @@ def generate_message_names_header(receivers):
         result.append('    bool %s : 1;\n' % fname)
     result.append('};\n')
     result.append('\n')
-    result.append('extern const MessageDescription messageDescriptions[static_cast<size_t>(MessageName::Count) + 1];\n')
+    result.append('using MessageDescriptionsArray = std::array<MessageDescription, static_cast<size_t>(MessageName::Count) + 1>;\n')
+    result.append('extern const MessageDescriptionsArray messageDescriptions;\n\n')
     result.append('}\n')
     result.append('\n')
     fnames = [('ReceiverName', 'receiverName'), ('ASCIILiteral', 'description')]
@@ -1603,8 +1602,6 @@ def generate_message_names_header(receivers):
     result.append('}\n')
     result.append('\n')
     result.append('} // namespace WTF\n')
-    result.append('\n')
-    result.append('WTF_ALLOW_UNSAFE_BUFFER_USAGE_END\n')
     return ''.join(result)
 
 
@@ -1616,21 +1613,21 @@ def generate_message_names_implementation(receivers):
     result.append('\n')
     result.append('namespace IPC::Detail {\n')
     result.append('\n')
-    result.append('const MessageDescription messageDescriptions[static_cast<size_t>(MessageName::Count) + 1] = {\n')
+    result.append('const MessageDescriptionsArray messageDescriptions {\n')
 
     message_enumerators = get_message_enumerators(receivers)
     for condition, enumerators in itertools.groupby(message_enumerators, lambda e: e.condition()):
         if condition:
             result.append('#if %s\n' % condition)
         for enumerator in enumerators:
-            result.append('    { "%s"_s, ReceiverName::%s' % (enumerator, enumerator.receiver.name))
+            result.append('    MessageDescription { "%s"_s, ReceiverName::%s' % (enumerator, enumerator.receiver.name))
             for attr_list in sorted(attributes_to_generate_validators.values()):
                 value = "true" if set(attr_list).intersection(set(enumerator.messages[0].attributes).union(set(enumerator.receiver.attributes))) else "false"
                 result.append(', %s' % value)
             result.append(' },\n')
         if condition:
             result.append('#endif\n')
-    result.append('    { "<invalid message name>"_s, ReceiverName::Invalid%s }\n' % (", false" * len(attributes_to_generate_validators)))
+    result.append('    MessageDescription { "<invalid message name>"_s, ReceiverName::Invalid%s }\n' % (", false" * len(attributes_to_generate_validators)))
     result.append('};\n')
     result.append('\n')
     result.append('} // namespace IPC::Detail\n')

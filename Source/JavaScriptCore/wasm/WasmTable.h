@@ -36,6 +36,8 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 class JSWebAssemblyTable;
@@ -158,7 +160,7 @@ public:
 private:
     FuncRefTable(uint32_t initial, std::optional<uint32_t> maximum, Type wasmType);
 
-    Function* tailPointer() { return bitwise_cast<Function*>(bitwise_cast<uint8_t*>(this) + offsetOfTail()); }
+    Function* tailPointer() { return std::bit_cast<Function*>(std::bit_cast<uint8_t*>(this) + offsetOfTail()); }
 
     static Ref<FuncRefTable> createFixedSized(uint32_t size, Type wasmType);
 
@@ -166,5 +168,7 @@ private:
 };
 
 } } // namespace JSC::Wasm
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

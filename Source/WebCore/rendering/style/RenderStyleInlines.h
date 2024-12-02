@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include "AnchorPositionEvaluator.h"
 #include "AnimationList.h"
 #include "CSSLineBoxContainValue.h"
 #include "Element.h"
@@ -72,7 +73,7 @@ inline const StyleSelfAlignmentData& RenderStyle::alignSelf() const { return m_n
 constexpr auto RenderStyle::allTransformOperations() -> OptionSet<TransformOperationOption> { return { TransformOperationOption::TransformOrigin, TransformOperationOption::Translate, TransformOperationOption::Rotate, TransformOperationOption::Scale, TransformOperationOption::Offset }; }
 inline const AnimationList* RenderStyle::animations() const { return m_nonInheritedData->miscData->animations.get(); }
 inline AnimationList* RenderStyle::animations() { return m_nonInheritedData->miscData->animations.get(); }
-inline const Vector<AtomString>& RenderStyle::anchorNames() const { return m_nonInheritedData->rareData->anchorNames; }
+inline const Vector<Style::ScopedName>& RenderStyle::anchorNames() const { return m_nonInheritedData->rareData->anchorNames; }
 inline StyleAppearance RenderStyle::appearance() const { return static_cast<StyleAppearance>(m_nonInheritedData->miscData->appearance); }
 inline const FilterOperations& RenderStyle::appleColorFilter() const { return m_rareInheritedData->appleColorFilter->operations; }
 inline double RenderStyle::aspectRatioHeight() const { return m_nonInheritedData->miscData->aspectRatioHeight; }
@@ -102,8 +103,6 @@ inline const BlockEllipsis& RenderStyle::blockEllipsis() const { return m_rareIn
 inline BlockStepInsert RenderStyle::blockStepInsert() const { return static_cast<BlockStepInsert>(m_nonInheritedData->rareData->blockStepInsert); }
 inline std::optional<Length> RenderStyle::blockStepSize() const { return m_nonInheritedData->rareData->blockStepSize; }
 inline const BorderData& RenderStyle::border() const { return m_nonInheritedData->surroundData->border; }
-inline const BorderValue& RenderStyle::borderAfter() const { return borderAfter(*this); }
-inline const BorderValue& RenderStyle::borderBefore() const { return borderBefore(*this); }
 inline const BorderValue& RenderStyle::borderBottom() const { return border().bottom(); }
 inline const StyleColor& RenderStyle::borderBottomColor() const { return border().bottom().color(); }
 inline bool RenderStyle::borderBottomIsTransparent() const { return border().bottom().isTransparent(); }
@@ -111,7 +110,6 @@ inline const LengthSize& RenderStyle::borderBottomLeftRadius() const { return bo
 inline const LengthSize& RenderStyle::borderBottomRightRadius() const { return border().bottomRightRadius(); }
 inline BorderStyle RenderStyle::borderBottomStyle() const { return border().bottom().style(); }
 inline float RenderStyle::borderBottomWidth() const { return border().borderBottomWidth(); }
-inline const BorderValue& RenderStyle::borderEnd() const { return borderEnd(*this); }
 inline const NinePieceImage& RenderStyle::borderImage() const { return border().image(); }
 inline NinePieceImageRule RenderStyle::borderImageHorizontalRule() const { return border().image().horizontalRule(); }
 inline const LengthBox& RenderStyle::borderImageOutset() const { return border().image().outset(); }
@@ -132,7 +130,6 @@ inline const StyleColor& RenderStyle::borderRightColor() const { return border()
 inline bool RenderStyle::borderRightIsTransparent() const { return border().right().isTransparent(); }
 inline BorderStyle RenderStyle::borderRightStyle() const { return border().right().style(); }
 inline float RenderStyle::borderRightWidth() const { return border().borderRightWidth(); }
-inline const BorderValue& RenderStyle::borderStart() const { return borderStart(*this); }
 inline const BorderValue& RenderStyle::borderTop() const { return border().top(); }
 inline const StyleColor& RenderStyle::borderTopColor() const { return border().top().color(); }
 inline bool RenderStyle::borderTopIsTransparent() const { return border().top().isTransparent(); }
@@ -333,14 +330,14 @@ inline const NamedGridLinesMap& RenderStyle::implicitNamedGridColumnLines() cons
 inline const NamedGridLinesMap& RenderStyle::implicitNamedGridRowLines() const { return m_nonInheritedData->rareData->grid->implicitNamedGridRowLines; }
 constexpr auto RenderStyle::individualTransformOperations() -> OptionSet<TransformOperationOption> { return { TransformOperationOption::Translate, TransformOperationOption::Rotate, TransformOperationOption::Scale, TransformOperationOption::Offset }; }
 inline const StyleCustomPropertyData& RenderStyle::inheritedCustomProperties() const { return m_rareInheritedData->customProperties.get(); }
-inline Vector<AtomString> RenderStyle::initialAnchorNames() { return { }; }
+inline Vector<Style::ScopedName> RenderStyle::initialAnchorNames() { return { }; }
 constexpr StyleAppearance RenderStyle::initialAppearance() { return StyleAppearance::None; }
 inline FilterOperations RenderStyle::initialAppleColorFilter() { return { }; }
 constexpr AspectRatioType RenderStyle::initialAspectRatioType() { return AspectRatioType::Auto; }
 constexpr BackfaceVisibility RenderStyle::initialBackfaceVisibility() { return BackfaceVisibility::Visible; }
 inline StyleColor RenderStyle::initialBackgroundColor() { return Color::transparentBlack; }
 inline BlockEllipsis RenderStyle::initialBlockEllipsis() { return { }; }
-constexpr BlockStepInsert RenderStyle::initialBlockStepInsert() { return BlockStepInsert::Margin; }
+constexpr BlockStepInsert RenderStyle::initialBlockStepInsert() { return BlockStepInsert::MarginBox; }
 inline std::optional<Length> RenderStyle::initialBlockStepSize() { return std::nullopt; }
 constexpr BorderCollapse RenderStyle::initialBorderCollapse() { return BorderCollapse::Separate; }
 inline LengthSize RenderStyle::initialBorderRadius() { return { zeroLength(), zeroLength() }; }
@@ -451,7 +448,8 @@ inline Length RenderStyle::initialPerspectiveOriginX() { return { 50.0f, LengthT
 inline Length RenderStyle::initialPerspectiveOriginY() { return { 50.0f, LengthType::Percent }; }
 constexpr PointerEvents RenderStyle::initialPointerEvents() { return PointerEvents::Auto; }
 constexpr PositionType RenderStyle::initialPosition() { return PositionType::Static; }
-inline const AtomString& RenderStyle::initialPositionAnchor() { return nullAtom(); }
+inline std::optional<Style::ScopedName> RenderStyle::initialPositionAnchor() { return { }; }
+constexpr Style::PositionTryOrder RenderStyle::initialPositionTryOrder() { return Style::PositionTryOrder::Normal; }
 constexpr PrintColorAdjust RenderStyle::initialPrintColorAdjust() { return PrintColorAdjust::Economy; }
 constexpr Order RenderStyle::initialRTLOrdering() { return Order::Logical; }
 inline Length RenderStyle::initialRadius() { return LengthType::Auto; }
@@ -538,6 +536,8 @@ constexpr bool RenderStyle::isDisplayGridBox(DisplayType display) { return displ
 constexpr bool RenderStyle::isDisplayInlineType() const { return isDisplayInlineType(display()); }
 constexpr bool RenderStyle::isDisplayListItemType(DisplayType display) { return display == DisplayType::ListItem; }
 constexpr bool RenderStyle::isDisplayTableOrTablePart() const { return isDisplayTableOrTablePart(display()); }
+constexpr bool RenderStyle::isInternalTableBox() const { return isInternalTableBox(display()); }
+constexpr bool RenderStyle::isRubyContainerOrInternalRubyBox() const { return isRubyContainerOrInternalRubyBox(display()); }
 inline bool RenderStyle::isFixedTableLayout() const { return tableLayout() == TableLayoutType::Fixed && (logicalWidth().isSpecified() || logicalWidth().isFitContent() || logicalWidth().isFillAvailable() || logicalWidth().isMinContent()); }
 inline bool RenderStyle::isFloating() const { return floating() != Float::None; }
 inline bool RenderStyle::isGridAutoFlowAlgorithmDense() const { return m_nonInheritedData->rareData->grid->gridAutoFlow & InternalAutoFlowAlgorithmDense; }
@@ -563,26 +563,33 @@ inline const AtomString& RenderStyle::lineGrid() const { return m_rareInheritedD
 inline LineSnap RenderStyle::lineSnap() const { return static_cast<LineSnap>(m_rareInheritedData->lineSnap); }
 inline ListStyleType RenderStyle::listStyleType() const { return m_rareInheritedData->listStyleType; }
 inline const Length& RenderStyle::logicalBottom() const { return m_nonInheritedData->surroundData->offset.after(writingMode()); }
-inline const Length& RenderStyle::logicalHeight() const { return writingMode().isHorizontal() ? height() : width(); }
+inline const Length& RenderStyle::logicalHeight() const { return logicalHeight(writingMode()); }
+inline const Length& RenderStyle::logicalHeight(const WritingMode writingMode) const { return writingMode.isHorizontal() ? height() : width(); }
 inline const Length& RenderStyle::logicalLeft() const { return m_nonInheritedData->surroundData->offset.logicalLeft(writingMode()); }
-inline const Length& RenderStyle::logicalMaxHeight() const { return writingMode().isHorizontal() ? maxHeight() : maxWidth(); }
-inline const Length& RenderStyle::logicalMaxWidth() const { return writingMode().isHorizontal() ? maxWidth() : maxHeight(); }
-inline const Length& RenderStyle::logicalMinHeight() const { return writingMode().isHorizontal() ? minHeight() : minWidth(); }
-inline const Length& RenderStyle::logicalMinWidth() const { return writingMode().isHorizontal() ? minWidth() : minHeight(); }
+inline const Length& RenderStyle::logicalMaxHeight() const { return logicalMaxHeight(writingMode()); }
+inline const Length& RenderStyle::logicalMaxHeight(const WritingMode writingMode) const { return writingMode.isHorizontal() ? maxHeight() : maxWidth(); }
+inline const Length& RenderStyle::logicalMaxWidth() const { return logicalMaxWidth(writingMode()); }
+inline const Length& RenderStyle::logicalMaxWidth(const WritingMode writingMode) const { return writingMode.isHorizontal() ? maxWidth() : maxHeight(); }
+inline const Length& RenderStyle::logicalMinHeight() const { return logicalMinHeight(writingMode()); }
+inline const Length& RenderStyle::logicalMinHeight(const WritingMode writingMode) const { return writingMode.isHorizontal() ? minHeight() : minWidth(); }
+inline const Length& RenderStyle::logicalMinWidth() const { return logicalMinWidth(writingMode()); }
+inline const Length& RenderStyle::logicalMinWidth(const WritingMode writingMode) const { return writingMode.isHorizontal() ? minWidth() : minHeight(); }
 inline const Length& RenderStyle::logicalRight() const { return m_nonInheritedData->surroundData->offset.logicalRight(writingMode()); }
 inline const Length& RenderStyle::logicalTop() const { return m_nonInheritedData->surroundData->offset.before(writingMode()); }
-inline const Length& RenderStyle::logicalWidth() const { return writingMode().isHorizontal() ? width() : height(); }
-inline const Length& RenderStyle::marginAfter() const { return m_nonInheritedData->surroundData->margin.after(writingMode()); }
-inline const Length& RenderStyle::marginAfterUsing(const RenderStyle* otherStyle) const { return m_nonInheritedData->surroundData->margin.after(otherStyle->writingMode()); }
-inline const Length& RenderStyle::marginBefore() const { return m_nonInheritedData->surroundData->margin.before(writingMode()); }
-inline const Length& RenderStyle::marginBeforeUsing(const RenderStyle* otherStyle) const { return m_nonInheritedData->surroundData->margin.before(otherStyle->writingMode()); }
+inline const Length& RenderStyle::logicalWidth() const { return logicalWidth(writingMode()); }
+inline const Length& RenderStyle::logicalWidth(const WritingMode writingMode) const { return writingMode.isHorizontal() ? width() : height(); }
+inline const LengthBox& RenderStyle::marginBox() const { return m_nonInheritedData->surroundData->margin; }
+inline const Length& RenderStyle::marginAfter() const { return marginAfter(writingMode()); }
+inline const Length& RenderStyle::marginAfter(const WritingMode writingMode) const { return m_nonInheritedData->surroundData->margin.after(writingMode); }
+inline const Length& RenderStyle::marginBefore() const { return marginBefore(writingMode()); }
+inline const Length& RenderStyle::marginBefore(const WritingMode writingMode) const { return m_nonInheritedData->surroundData->margin.before(writingMode); }
 inline const Length& RenderStyle::marginBottom() const { return m_nonInheritedData->surroundData->margin.bottom(); }
-inline const Length& RenderStyle::marginEnd() const { return m_nonInheritedData->surroundData->margin.end(writingMode()); }
-inline const Length& RenderStyle::marginEndUsing(const RenderStyle* otherStyle) const { return m_nonInheritedData->surroundData->margin.end(otherStyle->writingMode()); }
+inline const Length& RenderStyle::marginEnd() const { return marginEnd(writingMode()); }
+inline const Length& RenderStyle::marginEnd(const WritingMode writingMode) const { return m_nonInheritedData->surroundData->margin.end(writingMode); }
 inline const Length& RenderStyle::marginLeft() const { return m_nonInheritedData->surroundData->margin.left(); }
 inline const Length& RenderStyle::marginRight() const { return m_nonInheritedData->surroundData->margin.right(); }
-inline const Length& RenderStyle::marginStart() const { return m_nonInheritedData->surroundData->margin.start(writingMode()); }
-inline const Length& RenderStyle::marginStartUsing(const RenderStyle* otherStyle) const { return m_nonInheritedData->surroundData->margin.start(otherStyle->writingMode()); }
+inline const Length& RenderStyle::marginStart() const { return marginStart(writingMode()); }
+inline const Length& RenderStyle::marginStart(const WritingMode writingMode) const { return m_nonInheritedData->surroundData->margin.start(writingMode); }
 inline const Length& RenderStyle::marginTop() const { return m_nonInheritedData->surroundData->margin.top(); }
 inline OptionSet<MarginTrimType> RenderStyle::marginTrim() const { return m_nonInheritedData->rareData->marginTrim; }
 inline MarqueeBehavior RenderStyle::marqueeBehavior() const { return static_cast<MarqueeBehavior>(m_nonInheritedData->rareData->marquee->behavior); }
@@ -644,14 +651,18 @@ inline OverflowContinue RenderStyle::overflowContinue() const { return m_nonInhe
 inline OverflowWrap RenderStyle::overflowWrap() const { return static_cast<OverflowWrap>(m_rareInheritedData->overflowWrap); }
 inline OverscrollBehavior RenderStyle::overscrollBehaviorX() const { return static_cast<OverscrollBehavior>(m_nonInheritedData->rareData->overscrollBehaviorX); }
 inline OverscrollBehavior RenderStyle::overscrollBehaviorY() const { return static_cast<OverscrollBehavior>(m_nonInheritedData->rareData->overscrollBehaviorY); }
-inline const Length& RenderStyle::paddingAfter() const { return paddingBox().after(writingMode()); }
-inline const Length& RenderStyle::paddingBefore() const { return paddingBox().before(writingMode()); }
+inline const Length& RenderStyle::paddingAfter() const { return paddingAfter(writingMode()); }
+inline const Length& RenderStyle::paddingAfter(const WritingMode writingMode) const { return paddingBox().after(writingMode); }
+inline const Length& RenderStyle::paddingBefore() const { return paddingBefore(writingMode()); }
+inline const Length& RenderStyle::paddingBefore(const WritingMode writingMode) const { return paddingBox().before(writingMode); }
 inline const Length& RenderStyle::paddingBottom() const { return paddingBox().bottom(); }
 inline const LengthBox& RenderStyle::paddingBox() const { return m_nonInheritedData->surroundData->padding; }
-inline const Length& RenderStyle::paddingEnd() const { return paddingBox().end(writingMode()); }
+inline const Length& RenderStyle::paddingEnd() const { return paddingEnd(writingMode()); }
+inline const Length& RenderStyle::paddingEnd(const WritingMode writingMode) const { return paddingBox().end(writingMode); }
 inline const Length& RenderStyle::paddingLeft() const { return paddingBox().left(); }
 inline const Length& RenderStyle::paddingRight() const { return paddingBox().right(); }
-inline const Length& RenderStyle::paddingStart() const { return paddingBox().start(writingMode()); }
+inline const Length& RenderStyle::paddingStart() const { return paddingStart(writingMode()); }
+inline const Length& RenderStyle::paddingStart(const WritingMode writingMode) const { return paddingBox().start(writingMode); }
 inline const Length& RenderStyle::paddingTop() const { return paddingBox().top(); }
 inline const LengthSize& RenderStyle::pageSize() const { return m_nonInheritedData->rareData->pageSize; }
 inline PageSizeType RenderStyle::pageSizeType() const { return static_cast<PageSizeType>(m_nonInheritedData->rareData->pageSizeType); }
@@ -660,7 +671,8 @@ inline float RenderStyle::perspective() const { return m_nonInheritedData->rareD
 inline LengthPoint RenderStyle::perspectiveOrigin() const { return m_nonInheritedData->rareData->perspectiveOrigin(); }
 inline const Length& RenderStyle::perspectiveOriginX() const { return m_nonInheritedData->rareData->perspectiveOriginX; }
 inline const Length& RenderStyle::perspectiveOriginY() const { return m_nonInheritedData->rareData->perspectiveOriginY; }
-inline const AtomString& RenderStyle::positionAnchor() const { return m_nonInheritedData->rareData->positionAnchor; }
+inline const std::optional<Style::ScopedName>& RenderStyle::positionAnchor() const { return m_nonInheritedData->rareData->positionAnchor; }
+inline Style::PositionTryOrder RenderStyle::positionTryOrder() const { return static_cast<Style::PositionTryOrder>(m_nonInheritedData->rareData->positionTryOrder); }
 inline bool RenderStyle::preserveNewline() const { return preserveNewline(whiteSpace()); }
 inline bool RenderStyle::preserves3D() const { return usedTransformStyle3D() == TransformStyle3D::Preserve3D; }
 inline QuotesData* RenderStyle::quotes() const { return m_rareInheritedData->quotes.get(); }
@@ -805,8 +817,8 @@ constexpr CursorVisibility RenderStyle::initialCursorVisibility() { return Curso
 #endif
 
 #if ENABLE(DARK_MODE_CSS)
-inline StyleColorScheme RenderStyle::colorScheme() const { return m_rareInheritedData->colorScheme; }
-constexpr StyleColorScheme RenderStyle::initialColorScheme() { return { }; }
+inline Style::ColorScheme RenderStyle::colorScheme() const { return m_rareInheritedData->colorScheme; }
+inline Style::ColorScheme RenderStyle::initialColorScheme() { return Style::ColorScheme { .schemes = { }, .only = { } }; }
 inline bool RenderStyle::hasExplicitlySetColorScheme() const { return m_nonInheritedData->miscData->hasExplicitlySetColorScheme; }
 #endif
 
@@ -945,6 +957,25 @@ constexpr bool RenderStyle::isDisplayTableOrTablePart(DisplayType display)
         || display == DisplayType::TableColumn;
 }
 
+constexpr bool RenderStyle::isInternalTableBox(DisplayType display)
+{
+    // https://drafts.csswg.org/css-display-3/#layout-specific-display
+    return display == DisplayType::TableCell
+        || display == DisplayType::TableRowGroup
+        || display == DisplayType::TableHeaderGroup
+        || display == DisplayType::TableFooterGroup
+        || display == DisplayType::TableRow
+        || display == DisplayType::TableColumnGroup
+        || display == DisplayType::TableColumn;
+}
+
+constexpr bool RenderStyle::isRubyContainerOrInternalRubyBox(DisplayType display)
+{
+    return display == DisplayType::Ruby
+        || display == DisplayType::RubyAnnotation
+        || display == DisplayType::RubyBase;
+}
+
 inline double RenderStyle::logicalAspectRatio() const
 {
     ASSERT(aspectRatioType() != AspectRatioType::Auto);
@@ -957,20 +988,6 @@ constexpr bool RenderStyle::preserveNewline(WhiteSpace mode)
 {
     // Normal and nowrap do not preserve newlines.
     return mode != WhiteSpace::Normal && mode != WhiteSpace::NoWrap;
-}
-
-inline bool isSkippedContentRoot(const RenderStyle& style, const Element* element)
-{
-    if (style.contentVisibility() == ContentVisibility::Visible)
-        return false;
-    // FIXME (https://bugs.webkit.org/show_bug.cgi?id=265020): check more display types.
-    // FIXME: try to avoid duplication with shouldApplySizeOrStyleContainment.
-    if (auto displayType = style.display(); (displayType != DisplayType::TableCaption && style.isDisplayTableOrTablePart()) || displayType == DisplayType::Contents)
-        return false;
-    if (style.contentVisibility() == ContentVisibility::Hidden)
-        return true;
-    ASSERT(style.contentVisibility() == ContentVisibility::Auto);
-    return element && !element->isRelevantToUser();
 }
 
 inline float adjustFloatForAbsoluteZoom(float value, const RenderStyle& style)
@@ -1038,6 +1055,109 @@ inline bool pseudoElementRendererIsNeeded(const RenderStyle* style)
 inline bool isVisibleToHitTesting(const RenderStyle& style, const HitTestRequest& request)
 {
     return (request.userTriggered() ? style.usedVisibility() : style.visibility()) == Visibility::Visible;
+}
+
+inline bool shouldApplyLayoutContainment(const RenderStyle& style, const Element& element)
+{
+    // content-visibility hidden and auto turns on layout containment.
+    auto hasContainment = style.containsLayout() || style.contentVisibility() == ContentVisibility::Hidden || style.contentVisibility() == ContentVisibility::Auto;
+    if (!hasContainment)
+        return false;
+    // Giving an element layout containment has no effect if any of the following are true:
+    //   if the element does not generate a principal box (as is the case with display: contents or display: none)
+    //   if its principal box is an internal table box other than table-cell
+    //   if its principal box is an internal ruby box or a non-atomic inline-level box
+    if (style.display() == DisplayType::None || style.display() == DisplayType::Contents)
+        return false;
+    if (style.isInternalTableBox() && style.display() != DisplayType::TableCell)
+        return false;
+    if (style.isRubyContainerOrInternalRubyBox() || (style.display() == DisplayType::Inline && !element.isReplaced(style)))
+        return false;
+    return true;
+}
+
+inline bool shouldApplySizeContainment(const RenderStyle& style, const Element& element)
+{
+    auto hasContainment = style.containsSize() || style.contentVisibility() == ContentVisibility::Hidden || (style.contentVisibility() == ContentVisibility::Auto && !element.isRelevantToUser());
+    if (!hasContainment)
+        return false;
+    // Giving an element size containment has no effect if any of the following are true:
+    //   if the element does not generate a principal box (as is the case with display: contents or display: none)
+    //   if its inner display type is table
+    //   if its principal box is an internal table box
+    //   if its principal box is an internal ruby box or a non-atomic inline-level box
+    if (style.display() == DisplayType::None || style.display() == DisplayType::Contents)
+        return false;
+    if (style.display() == DisplayType::Table || style.display() == DisplayType::InlineTable)
+        return false;
+    if (style.isInternalTableBox())
+        return false;
+    if (style.isRubyContainerOrInternalRubyBox() || (style.display() == DisplayType::Inline && !element.isReplaced(style)))
+        return false;
+    return true;
+}
+
+inline bool shouldApplyInlineSizeContainment(const RenderStyle& style, const Element& element)
+{
+    if (!style.containsInlineSize())
+        return false;
+    // Giving an element inline-size containment has no effect if any of the following are true:
+    //   if the element does not generate a principal box (as is the case with display: contents or display: none)
+    //   if its inner display type is table
+    //   if its principal box is an internal table box
+    //   if its principal box is an internal ruby box or a non-atomic inline-level box
+    if (style.display() == DisplayType::None || style.display() == DisplayType::Contents)
+        return false;
+    if (style.display() == DisplayType::Table || style.display() == DisplayType::InlineTable)
+        return false;
+    if (style.isInternalTableBox())
+        return false;
+    if (style.isRubyContainerOrInternalRubyBox() || (style.display() == DisplayType::Inline && !element.isReplaced(style)))
+        return false;
+    return true;
+}
+
+inline bool shouldApplyStyleContainment(const RenderStyle& style, const Element&)
+{
+    // content-visibility hidden and auto turns on style containment.
+    return style.containsStyle() || style.contentVisibility() == ContentVisibility::Hidden || style.contentVisibility() == ContentVisibility::Auto;
+}
+
+inline bool shouldApplyPaintContainment(const RenderStyle& style, const Element& element)
+{
+    // content-visibility hidden and auto turns on paint containment.
+    auto hasContainment = style.containsPaint() || style.contentVisibility() == ContentVisibility::Hidden || style.contentVisibility() == ContentVisibility::Auto;
+    if (!hasContainment)
+        return false;
+    // Giving an element paint containment has no effect if any of the following are true:
+    //   if the element does not generate a principal box (as is the case with display: contents or display: none)
+    //   if its principal box is an internal table box other than table-cell
+    //   if its principal box is an internal ruby box or a non-atomic inline-level box
+    if (style.display() == DisplayType::None || style.display() == DisplayType::Contents)
+        return false;
+    if (style.isInternalTableBox() && style.display() != DisplayType::TableCell)
+        return false;
+    if (style.isRubyContainerOrInternalRubyBox() || (style.display() == DisplayType::Inline && !element.isReplaced(style)))
+        return false;
+    return true;
+}
+
+inline bool isSkippedContentRoot(const RenderStyle& style, const Element& element)
+{
+    if (!shouldApplySizeContainment(style, element))
+        return false;
+
+    switch (style.contentVisibility()) {
+    case ContentVisibility::Visible:
+        return false;
+    case ContentVisibility::Hidden:
+        return true;
+    case ContentVisibility::Auto:
+        return !element.isRelevantToUser();
+    default:
+        ASSERT_NOT_REACHED();
+        return false;
+    }
 }
 
 } // namespace WebCore

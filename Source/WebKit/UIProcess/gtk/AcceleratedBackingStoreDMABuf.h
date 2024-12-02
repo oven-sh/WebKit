@@ -61,9 +61,10 @@ class UnixFileDescriptor;
 namespace WebKit {
 
 class WebPageProxy;
+class WebProcessProxy;
 enum class DMABufRendererBufferMode : uint8_t;
 
-class AcceleratedBackingStoreDMABuf final : public AcceleratedBackingStore, public IPC::MessageReceiver {
+class AcceleratedBackingStoreDMABuf final : public AcceleratedBackingStore, public IPC::MessageReceiver, public RefCounted<AcceleratedBackingStoreDMABuf> {
     WTF_MAKE_TZONE_ALLOCATED(AcceleratedBackingStoreDMABuf);
     WTF_MAKE_NONCOPYABLE(AcceleratedBackingStoreDMABuf);
 public:
@@ -72,8 +73,11 @@ public:
 #if USE(GBM)
     static Vector<DMABufRendererBufferFormat> preferredBufferFormats();
 #endif
-    static std::unique_ptr<AcceleratedBackingStoreDMABuf> create(WebPageProxy&);
+    static Ref<AcceleratedBackingStoreDMABuf> create(WebPageProxy&);
     ~AcceleratedBackingStoreDMABuf();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
 private:
     AcceleratedBackingStoreDMABuf(WebPageProxy&);
@@ -238,6 +242,7 @@ private:
     GRefPtr<GdkGLContext> m_gdkGLContext;
     bool m_glContextInitialized { false };
     uint64_t m_surfaceID { 0 };
+    WeakPtr<WebProcessProxy> m_legacyMainFrameProcess;
     RefPtr<Buffer> m_pendingBuffer;
     RefPtr<Buffer> m_committedBuffer;
     WebCore::Region m_pendingDamageRegion;

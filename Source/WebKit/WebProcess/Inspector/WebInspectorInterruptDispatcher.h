@@ -27,6 +27,7 @@
 
 #include "MessageReceiver.h"
 #include <wtf/Ref.h>
+#include <wtf/WeakRef.h>
 
 namespace WTF {
 class WorkQueue;
@@ -34,12 +35,17 @@ class WorkQueue;
 
 namespace WebKit {
 
+class WebProcess;
+
 class WebInspectorInterruptDispatcher final : private IPC::MessageReceiver {
 public:
-    WebInspectorInterruptDispatcher();
+    explicit WebInspectorInterruptDispatcher(WebProcess&);
     ~WebInspectorInterruptDispatcher();
     
     void initializeConnection(IPC::Connection&);
+
+    void ref() const;
+    void deref() const;
     
 private:
     // IPC::MessageReceiver overrides.
@@ -47,6 +53,7 @@ private:
     
     void notifyNeedDebuggerBreak();
     
+    WeakRef<WebProcess> m_process;
     Ref<WTF::WorkQueue> m_queue;
 };
 

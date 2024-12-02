@@ -38,8 +38,9 @@
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionContextProxyMessages.h"
 #import "WebExtensionControllerProxy.h"
+#import "WebExtensionLocalization.h"
+#import "WebPage.h"
 #import "WebProcess.h"
-#import "_WKWebExtensionLocalization.h"
 #import <wtf/HashMap.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/ObjectIdentifier.h>
@@ -80,7 +81,7 @@ Ref<WebExtensionContextProxy> WebExtensionContextProxy::getOrCreate(const WebExt
         context.m_uniqueIdentifier = parameters.uniqueIdentifier;
         context.m_unsupportedAPIs = parameters.unsupportedAPIs;
         context.m_grantedPermissions = parameters.grantedPermissions;
-        context.m_localization = parseLocalization(parameters.localizationJSON.get(), parameters.baseURL);
+        context.m_localization = parseLocalization(parameters.localizationJSON, parameters.baseURL);
         context.m_manifest = parseJSON(parameters.manifestJSON.get());
         context.m_manifestVersion = parameters.manifestVersion;
         context.m_isSessionStorageAllowedInContentScripts = parameters.isSessionStorageAllowedInContentScripts;
@@ -166,9 +167,17 @@ void WebExtensionContextProxy::updateGrantedPermissions(PermissionsMap&& permiss
     m_nextGrantedPermissionsExpirationDate = WallTime::nan();
 }
 
-_WKWebExtensionLocalization *WebExtensionContextProxy::parseLocalization(API::Data& json, const URL& baseURL)
+RefPtr<WebExtensionLocalization> WebExtensionContextProxy::parseLocalization(RefPtr<API::Data> json, const URL& baseURL)
 {
-    return [[_WKWebExtensionLocalization alloc] initWithLocalizedDictionary:parseJSON(json) uniqueIdentifier:baseURL.host().toString()];
+    if (!json)
+        return nullptr;
+
+    if (RefPtr value = JSON::Value::parseJSON(String::fromUTF8(json->span()))) {
+        if (RefPtr object = value->asObject())
+            return WebExtensionLocalization::create(object, baseURL.host().toString());
+    }
+
+    return nullptr;
 }
 
 WebCore::DOMWrapperWorld& WebExtensionContextProxy::toDOMWrapperWorld(WebExtensionContentWorldType contentWorldType) const

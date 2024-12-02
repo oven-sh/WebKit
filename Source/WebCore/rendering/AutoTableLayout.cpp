@@ -462,7 +462,7 @@ float AutoTableLayout::calcEffectiveLogicalWidth()
 /* gets all cells that originate in a column and have a cellspan > 1
    Sorts them by increasing cellspan
 */
-void AutoTableLayout::insertSpanCell(RenderTableCell *cell)
+void AutoTableLayout::insertSpanCell(RenderTableCell* cell)
 {
     ASSERT_ARG(cell, cell && cell->colSpan() != 1);
     if (!cell || cell->colSpan() == 1)
@@ -480,8 +480,8 @@ void AutoTableLayout::insertSpanCell(RenderTableCell *cell)
     unsigned pos = 0;
     unsigned span = cell->colSpan();
     while (pos < m_spanCells.size() && m_spanCells[pos] && span > m_spanCells[pos]->colSpan())
-        pos++;
-    memmove(m_spanCells.data()+pos+1, m_spanCells.data()+pos, (size-pos-1)*sizeof(RenderTableCell *));
+        ++pos;
+    memmoveSpan(m_spanCells.mutableSpan().subspan(pos + 1), m_spanCells.subspan(pos, size - (pos + 1)));
     m_spanCells[pos] = cell;
 }
 

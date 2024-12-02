@@ -223,11 +223,18 @@ WK_EXPORT void WKPagePermissionChanged(WKStringRef permissionName, WKStringRef o
 WK_EXPORT void WKPageExecuteCommandForTesting(WKPageRef pageRef, WKStringRef command, WKStringRef value);
 WK_EXPORT bool WKPageIsEditingCommandEnabledForTesting(WKPageRef page, WKStringRef command);
 WK_EXPORT void WKPageSetPermissionLevelForTesting(WKPageRef page, WKStringRef origin, bool allowed);
+WK_EXPORT void WKPageResetStateBetweenTests(WKPageRef pageRef);
 
 typedef void (*WKPageSetTopContentInsetForTestingFunction)(void* functionContext);
 WK_EXPORT void WKPageSetTopContentInsetForTesting(WKPageRef page, float contentInset, void* context, WKPageSetTopContentInsetForTestingFunction callback);
 typedef void (*WKPageSetPageScaleFactorForTestingFunction)(void* functionContext);
 WK_EXPORT void WKPageSetPageScaleFactorForTesting(WKPageRef page, float scaleFactor, WKPoint point, void* context, WKPageSetPageScaleFactorForTestingFunction completionHandler);
+typedef void (*WKPageClearBackForwardListForTestingFunction)(void* functionContext);
+WK_EXPORT void WKPageClearBackForwardListForTesting(WKPageRef page, void* context, WKPageClearBackForwardListForTestingFunction completionHandler);
+typedef void (*WKPageSetTracksRepaintsForTestingFunction)(void* functionContext);
+WK_EXPORT void WKPageSetTracksRepaintsForTesting(WKPageRef page, void* context, bool trackRepaints, WKPageSetTracksRepaintsForTestingFunction completionHandler);
+typedef void (*WKPageDisplayAndTrackRepaintsForTestingFunction)(void* functionContext);
+WK_EXPORT void WKPageDisplayAndTrackRepaintsForTesting(WKPageRef page, void* context, WKPageDisplayAndTrackRepaintsForTestingFunction completionHandler);
 #ifdef __cplusplus
 }
 #endif

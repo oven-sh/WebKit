@@ -96,7 +96,7 @@ PageClientImpl::~PageClientImpl()
 {
 }
 
-std::unique_ptr<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
+Ref<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
 {
     return [contentView() _createDrawingAreaProxy:webProcessProxy];
 }
@@ -356,11 +356,6 @@ void PageClientImpl::setCursor(const Cursor& cursor)
 }
 
 void PageClientImpl::setCursorHiddenUntilMouseMoves(bool)
-{
-    notImplemented();
-}
-
-void PageClientImpl::didChangeViewportProperties(const ViewportAttributes&)
 {
     notImplemented();
 }
@@ -703,6 +698,11 @@ void PageClientImpl::focusedElementDidChangeInputMode(WebCore::InputMode mode)
 void PageClientImpl::didUpdateEditorState()
 {
     [contentView() _didUpdateEditorState];
+}
+
+void PageClientImpl::reconcileEnclosingScrollViewContentOffset(EditorState& state)
+{
+    [contentView() _reconcileEnclosingScrollViewContentOffset:state];
 }
 
 void PageClientImpl::showPlaybackTargetPicker(bool hasVideo, const IntRect& elementRect, WebCore::RouteSharingPolicy policy, const String& contextUID)
@@ -1252,6 +1252,11 @@ void PageClientImpl::pluginDidInstallPDFDocument(double initialScale)
     [webView() _pluginDidInstallPDFDocument:initialScale];
 }
 #endif
+
+bool PageClientImpl::isPotentialTapInProgress() const
+{
+    return [m_contentView isPotentialTapInProgress];
+}
 
 } // namespace WebKit
 

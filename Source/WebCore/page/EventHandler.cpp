@@ -112,6 +112,7 @@
 #include "ScrollAnimator.h"
 #include "ScrollLatchingController.h"
 #include "Scrollbar.h"
+#include "ScrollingCoordinator.h"
 #include "ScrollingEffectsController.h"
 #include "SelectionRestorationMode.h"
 #include "Settings.h"
@@ -2321,7 +2322,13 @@ bool EventHandler::swallowAnyClickEvent(const PlatformMouseEvent& platformMouseE
     // The click event should only be fired for the primary pointer button.
 
     auto& eventName = isPrimaryPointerButton ? eventNames().clickEvent : eventNames().auxclickEvent;
-    return !dispatchMouseEvent(eventName, nodeToClick.get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
+    if (dispatchMouseEvent(eventName, nodeToClick.get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes))
+        return false;
+
+    if (RefPtr page = m_frame->protectedPage())
+        page->chrome().client().didSwallowClickEvent(platformMouseEvent, *nodeToClick);
+
+    return true;
 }
 
 HandleUserInputEventResult EventHandler::handleMouseReleaseEvent(const PlatformMouseEvent& platformMouseEvent)
@@ -2484,15 +2491,15 @@ bool EventHandler::dispatchDragEvent(const AtomString& eventType, Element& dragT
     if (CheckedPtr cache = frame->document()->existingAXObjectCache()) {
         auto& eventNames = WebCore::eventNames();
         if (eventType == eventNames.dragstartEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingStarted);
+            cache->postNotification(&dragTarget, AXNotification::DraggingStarted);
         else if (eventType == eventNames.dragendEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingEnded);
+            cache->postNotification(&dragTarget, AXNotification::DraggingEnded);
         else if (eventType == eventNames.dragenterEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingEnteredDropZone);
+            cache->postNotification(&dragTarget, AXNotification::DraggingEnteredDropZone);
         else if (eventType == eventNames.dragleaveEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingExitedDropZone);
+            cache->postNotification(&dragTarget, AXNotification::DraggingExitedDropZone);
         else if (eventType == eventNames.dropEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingDropped);
+            cache->postNotification(&dragTarget, AXNotification::DraggingDropped);
     }
 
     return dragEvent->defaultPrevented();
@@ -2544,13 +2551,13 @@ static String convertDragOperationToDropZoneOperation(std::optional<DragOperatio
     return "copy"_s;
 }
 
-static bool hasDropZoneType(DataTransfer& dataTransfer, const String& keyword)
+static bool hasDropZoneType(Document& document, DataTransfer& dataTransfer, const String& keyword)
 {
     if (keyword.startsWith("file:"_s))
         return dataTransfer.hasFileOfType(keyword.substring(5));
 
     if (keyword.startsWith("string:"_s))
-        return dataTransfer.hasStringOfType(keyword.substring(7));
+        return dataTransfer.hasStringOfType(document, keyword.substring(7));
 
     return false;
 }
@@ -2569,7 +2576,7 @@ static bool findDropZone(Node& target, DataTransfer& dataTransfer)
                 if (!dragOperation)
                     dragOperation = operationFromKeyword;
             } else
-                matched = matched || hasDropZoneType(dataTransfer, keyword.string());
+                matched = matched || hasDropZoneType(target.protectedDocument(), dataTransfer, keyword.string());
             if (matched && dragOperation)
                 break;
         }
@@ -3912,7 +3919,7 @@ bool EventHandler::internalKeyEvent(const PlatformKeyboardEvent& initialKeyEvent
     if (initialKeyEvent.type() == PlatformEvent::Type::RawKeyDown) {
         element->dispatchEvent(keydown);
         // If frame changed as a result of keydown dispatch, then return true to avoid sending a subsequent keypress message to the new frame.
-        bool changedFocusedFrame = frame->page() && frame.ptr() != frame->page()->focusController().focusedOrMainFrame();
+        bool changedFocusedFrame = frame->page() && frame.ptr() != frame->page()->checkedFocusController()->focusedOrMainFrame();
         return keydown->defaultHandled() || keydown->defaultPrevented() || changedFocusedFrame;
     }
 
@@ -3946,7 +3953,7 @@ bool EventHandler::internalKeyEvent(const PlatformKeyboardEvent& initialKeyEvent
     }
 
     // If frame changed as a result of keydown dispatch, then return early to avoid sending a subsequent keypress message to the new frame.
-    bool changedFocusedFrame = frame->page() && frame.ptr() != frame->page()->focusController().focusedOrMainFrame();
+    bool changedFocusedFrame = frame->page() && frame.ptr() != frame->page()->checkedFocusController()->focusedOrMainFrame();
     bool keydownResult = keydown->defaultHandled() || keydown->defaultPrevented() || changedFocusedFrame;
     if (keydownResult && !backwardCompatibilityMode)
         return keydownResult;
@@ -4201,7 +4208,7 @@ void EventHandler::invalidateDataTransfer()
 static void removeDraggedContentDocumentMarkersFromAllFramesInPage(Page& page)
 {
     page.forEachDocument([] (Document& document) {
-        document.markers().removeMarkers(DocumentMarker::Type::DraggedContent);
+        document.markers().removeMarkers(DocumentMarkerType::DraggedContent);
     });
 
     if (auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame())) {
@@ -4962,12 +4969,14 @@ HandleUserInputEventResult EventHandler::handleTouchEvent(const PlatformTouchEve
 
     // Array of touches per state, used to assemble the 'changedTouches' list in the JS event.
     typedef HashSet<RefPtr<EventTarget>> EventTargetSet;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     struct {
         // The touches corresponding to the particular change state this struct instance represents.
         RefPtr<TouchList> m_touches;
         // Set of targets involved in m_touches.
         EventTargetSet m_targets;
     } changedTouches[PlatformTouchPoint::TouchStateEnd];
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     const Vector<PlatformTouchPoint>& points = event.touchPoints();
 

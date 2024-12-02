@@ -193,14 +193,14 @@ public:
     // Returns true if changed.
     bool updateCompositedBounds();
     
-    void updateAllowsBackingStoreDetaching(const LayoutRect& absoluteBounds);
+    void updateAllowsBackingStoreDetaching(bool allowDetachingForFixed);
 
 #if ENABLE(ASYNC_SCROLLING)
     bool maintainsEventRegion() const;
     void updateEventRegion();
     
     bool needsEventRegionUpdate() const { return m_needsEventRegionUpdate; }
-    void setNeedsEventRegionUpdate(bool needsUpdate = true) { m_needsEventRegionUpdate = needsUpdate; }
+    void setNeedsEventRegionUpdate(bool needsUpdate = true);
 #endif
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)

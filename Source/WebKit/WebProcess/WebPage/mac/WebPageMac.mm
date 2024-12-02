@@ -47,7 +47,7 @@
 #import "WebFrame.h"
 #import "WebHitTestResultData.h"
 #import "WebImage.h"
-#import "WebInspector.h"
+#import "WebInspectorInternal.h"
 #import "WebKeyboardEvent.h"
 #import "WebMouseEvent.h"
 #import "WebPageOverlay.h"
@@ -237,13 +237,13 @@ static String commandNameForSelectorName(const String& selectorName)
     // Map selectors into Editor command names.
     // This is not needed for any selectors that have the same name as the Editor command.
     static constexpr std::pair<ComparableASCIILiteral, ASCIILiteral> selectorExceptions[] = {
-        { "insertNewlineIgnoringFieldEditor:", "InsertNewline"_s },
-        { "insertParagraphSeparator:", "InsertNewline"_s },
-        { "insertTabIgnoringFieldEditor:", "InsertTab"_s },
-        { "pageDown:", "MovePageDown"_s },
-        { "pageDownAndModifySelection:", "MovePageDownAndModifySelection"_s },
-        { "pageUp:", "MovePageUp"_s },
-        { "pageUpAndModifySelection:", "MovePageUpAndModifySelection"_s },
+        { "insertNewlineIgnoringFieldEditor:"_s, "InsertNewline"_s },
+        { "insertParagraphSeparator:"_s, "InsertNewline"_s },
+        { "insertTabIgnoringFieldEditor:"_s, "InsertTab"_s },
+        { "pageDown:"_s, "MovePageDown"_s },
+        { "pageDownAndModifySelection:"_s, "MovePageDownAndModifySelection"_s },
+        { "pageUp:"_s, "MovePageUp"_s },
+        { "pageUpAndModifySelection:"_s, "MovePageUpAndModifySelection"_s },
     };
     static constexpr SortedArrayMap map { selectorExceptions };
     if (auto commandName = map.tryGet(selectorName))
@@ -1086,7 +1086,7 @@ bool WebPage::shouldAvoidComputingPostLayoutDataForEditorState() const
         return false;
     }
 
-    if (!m_requiresUserActionForEditingControlsManager || m_hasEverFocusedElementDueToUserInteractionSincePageTransition) {
+    if (!m_requiresUserActionForEditingControlsManager || !m_userInteractionsSincePageTransition.isEmpty()) {
         // Text editing controls on the touch bar depend on having post-layout editor state data.
         return false;
     }

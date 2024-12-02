@@ -56,7 +56,6 @@ AXIsolatedObject::AXIsolatedObject(const Ref<AccessibilityObject>& axObject, AXI
     , m_cachedTree(tree)
 {
     ASSERT(isMainThread());
-    ASSERT(objectID());
 
     if (auto* axParent = axObject->parentInCoreTree())
         m_parentID = axParent->objectID();
@@ -77,12 +76,26 @@ AXIsolatedObject::~AXIsolatedObject()
     ASSERT(!wrapper());
 }
 
-String AXIsolatedObject::dbg() const
+String AXIsolatedObject::dbgInternal(bool verbose, OptionSet<AXDebugStringOption> debugOptions) const
 {
-    return makeString(
-        "{role: "_s, accessibilityRoleToString(roleValue()),
-        ", ID "_s, objectID() ? objectID()->loggingString() : ""_s, '}'
-    );
+    StringBuilder result;
+    result.append("{"_s);
+    result.append("role: "_s, accessibilityRoleToString(roleValue()));
+    result.append(", ID "_s, objectID().loggingString());
+
+    if (verbose || debugOptions & AXDebugStringOption::Ignored)
+        result.append(isIgnored() ? ", ignored"_s : emptyString());
+
+    if (verbose || debugOptions & AXDebugStringOption::RelativeFrame) {
+        FloatRect frame = relativeFrame();
+        result.append(", relativeFrame ((x: "_s, frame.x(), ", y: "_s, frame.y(), "), (w: "_s, frame.width(), ", h: "_s, frame.height(), "))"_s);
+    }
+
+    if (verbose || debugOptions & AXDebugStringOption::RemoteFrameOffset)
+        result.append(", remoteFrameOffset ("_s, remoteFrameOffset().x(), ", "_s, remoteFrameOffset().y(), ")"_s);
+
+    result.append("}"_s);
+    return result.toString();
 }
 
 void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axObject)
@@ -90,14 +103,20 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     AXTRACE("AXIsolatedObject::initializeProperties"_s);
     auto& object = axObject.get();
 
+    // These properties are cached for all objects, ignored and unignored.
+    setProperty(AXPropertyName::HasBodyTag, object.hasBodyTag());
+    setProperty(AXPropertyName::HasClickHandler, object.hasClickHandler());
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     if (object.includeIgnoredInCoreTree()) {
         bool isIgnored = object.isIgnored();
         setProperty(AXPropertyName::IsIgnored, isIgnored);
-        // If an object is unconnected, it is involved in a relation or part of an outgoing notification,
-        // both of which require all properties to maintain correct AT behavior.
-        bool needsAllProperties = !isIgnored || tree()->isUnconnectedNode(axObject->objectID());
+        // Maintain full properties for objects meeting this criteria:
+        //   - Unconnected objects, which are involved in relations or outgoing notifications
+        //   - Static text. We sometimes ignore static text (e.g. because it descends from a text field),
+        //     but need full properties for proper text marker behavior.
+        // FIXME: We shouldn't cache all properties for empty / non-rendered text?
+        bool needsAllProperties = !isIgnored || tree()->isUnconnectedNode(axObject->objectID()) || is<RenderText>(axObject->renderer());
         if (!needsAllProperties) {
             // FIXME: If isIgnored, we should only cache a small subset of necessary properties, e.g. those used in the text marker APIs.
             return;
@@ -116,16 +135,12 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
 
     setProperty(AXPropertyName::IsAttachment, object.isAttachment());
     setProperty(AXPropertyName::IsBusy, object.isBusy());
-    setProperty(AXPropertyName::IsControl, object.isControl());
     setProperty(AXPropertyName::IsEnabled, object.isEnabled());
     setProperty(AXPropertyName::IsExpanded, object.isExpanded());
     setProperty(AXPropertyName::IsFileUploadButton, object.isFileUploadButton());
     setProperty(AXPropertyName::IsIndeterminate, object.isIndeterminate());
     setProperty(AXPropertyName::IsInlineText, object.isInlineText());
     setProperty(AXPropertyName::IsInputImage, object.isInputImage());
-    setProperty(AXPropertyName::IsLink, object.isLink());
-    setProperty(AXPropertyName::IsList, object.isList());
-    setProperty(AXPropertyName::IsMeter, object.isMeter());
     setProperty(AXPropertyName::IsMultiSelectable, object.isMultiSelectable());
     setProperty(AXPropertyName::IsRequired, object.isRequired());
     setProperty(AXPropertyName::IsSecureField, object.isSecureField());
@@ -136,13 +151,9 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     setProperty(AXPropertyName::RolePlatformString, object.rolePlatformString().isolatedCopy());
     setProperty(AXPropertyName::RoleValue, static_cast<int>(object.roleValue()));
     setProperty(AXPropertyName::SubrolePlatformString, object.subrolePlatformString().isolatedCopy());
-    setProperty(AXPropertyName::SupportsDatetimeAttribute, object.supportsDatetimeAttribute());
-    setProperty(AXPropertyName::DatetimeAttributeValue, object.datetimeAttributeValue().isolatedCopy());
     setProperty(AXPropertyName::CanSetFocusAttribute, object.canSetFocusAttribute());
     setProperty(AXPropertyName::CanSetValueAttribute, object.canSetValueAttribute());
-    setProperty(AXPropertyName::SupportsRequiredAttribute, object.supportsRequiredAttribute());
     setProperty(AXPropertyName::CanSetSelectedAttribute, object.canSetSelectedAttribute());
-    setProperty(AXPropertyName::CanSetSelectedChildren, object.canSetSelectedChildren());
     setProperty(AXPropertyName::BlockquoteLevel, object.blockquoteLevel());
     setProperty(AXPropertyName::HeadingLevel, object.headingLevel());
     setProperty(AXPropertyName::ValueDescription, object.valueDescription().isolatedCopy());
@@ -160,22 +171,10 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     // Don't cache ID when logging is disabled because we don't expect non-test AX clients to actually request it.
     setProperty(AXPropertyName::IdentifierAttribute, object.identifierAttribute().isolatedCopy());
 #endif
-    setProperty(AXPropertyName::CurrentState, static_cast<int>(object.currentState()));
-    setProperty(AXPropertyName::SupportsCurrent, object.supportsCurrent());
-    setProperty(AXPropertyName::SupportsKeyShortcuts, object.supportsKeyShortcuts());
-    setProperty(AXPropertyName::KeyShortcuts, object.keyShortcuts().isolatedCopy());
-    setProperty(AXPropertyName::SupportsSetSize, object.supportsSetSize());
-    setProperty(AXPropertyName::SupportsPath, object.supportsPath());
-    setProperty(AXPropertyName::SupportsPosInSet, object.supportsPosInSet());
-    setProperty(AXPropertyName::SetSize, object.setSize());
-    setProperty(AXPropertyName::PosInSet, object.posInSet());
     setProperty(AXPropertyName::SupportsDropping, object.supportsDropping());
     setProperty(AXPropertyName::SupportsDragging, object.supportsDragging());
-    setProperty(AXPropertyName::SupportsPressAction, object.supportsPressAction());
     setProperty(AXPropertyName::IsGrabbed, object.isGrabbed());
     setProperty(AXPropertyName::PlaceholderValue, object.placeholderValue().isolatedCopy());
-    setProperty(AXPropertyName::ExpandedTextValue, object.expandedTextValue().isolatedCopy());
-    setProperty(AXPropertyName::SupportsExpandedTextValue, object.supportsExpandedTextValue());
     setProperty(AXPropertyName::ValueAutofillButtonType, static_cast<int>(object.valueAutofillButtonType()));
     setProperty(AXPropertyName::URL, std::make_shared<URL>(object.url().isolatedCopy()));
     setProperty(AXPropertyName::AccessKey, object.accessKey().isolatedCopy());
@@ -187,7 +186,6 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     setProperty(AXPropertyName::LiveRegionStatus, object.liveRegionStatus().isolatedCopy());
     setProperty(AXPropertyName::LiveRegionRelevant, object.liveRegionRelevant().isolatedCopy());
     setProperty(AXPropertyName::LiveRegionAtomic, object.liveRegionAtomic());
-    setProperty(AXPropertyName::Path, std::make_shared<Path>(object.elementPath()));
     setProperty(AXPropertyName::HasHighlighting, object.hasHighlighting());
     setProperty(AXPropertyName::HasBoldFont, object.hasBoldFont());
     setProperty(AXPropertyName::HasItalicFont, object.hasItalicFont());
@@ -199,7 +197,7 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     setProperty(AXPropertyName::IsNonLayerSVGObject, object.isNonLayerSVGObject());
 
     RefPtr geometryManager = tree()->geometryManager();
-    std::optional frame = geometryManager ? geometryManager->cachedRectForID(*object.objectID()) : std::nullopt;
+    std::optional frame = geometryManager ? geometryManager->cachedRectForID(object.objectID()) : std::nullopt;
     if (frame)
         setProperty(AXPropertyName::RelativeFrame, WTFMove(*frame));
     else if (object.isScrollView() || object.isWebArea() || object.isScrollbar()) {
@@ -215,6 +213,41 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     } else
         setProperty(AXPropertyName::InitialFrameRect, object.frameRect());
 
+    if (object.supportsPath()) {
+        setProperty(AXPropertyName::SupportsPath, true);
+        setProperty(AXPropertyName::Path, std::make_shared<Path>(object.elementPath()));
+    }
+
+    if (object.supportsKeyShortcuts()) {
+        setProperty(AXPropertyName::SupportsKeyShortcuts, true);
+        setProperty(AXPropertyName::KeyShortcuts, object.keyShortcuts().isolatedCopy());
+    }
+
+    if (object.supportsCurrent()) {
+        setProperty(AXPropertyName::SupportsCurrent, true);
+        setProperty(AXPropertyName::CurrentState, static_cast<int>(object.currentState()));
+    }
+
+    if (object.supportsSetSize()) {
+        setProperty(AXPropertyName::SupportsSetSize, true);
+        setProperty(AXPropertyName::SetSize, object.setSize());
+    }
+
+    if (object.supportsPosInSet()) {
+        setProperty(AXPropertyName::SupportsPosInSet, true);
+        setProperty(AXPropertyName::PosInSet, object.posInSet());
+    }
+
+    if (object.supportsExpandedTextValue()) {
+        setProperty(AXPropertyName::SupportsExpandedTextValue, true);
+        setProperty(AXPropertyName::ExpandedTextValue, object.expandedTextValue().isolatedCopy());
+    }
+
+    if (object.supportsDatetimeAttribute()) {
+        setProperty(AXPropertyName::SupportsDatetimeAttribute, true);
+        setProperty(AXPropertyName::DatetimeAttributeValue, object.datetimeAttributeValue().isolatedCopy());
+    }
+
     if (object.supportsCheckedState()) {
         setProperty(AXPropertyName::SupportsCheckedState, true);
         setProperty(AXPropertyName::IsChecked, object.isChecked());
@@ -224,7 +257,6 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     if (object.isTable()) {
         setProperty(AXPropertyName::IsTable, true);
         setProperty(AXPropertyName::IsExposable, object.isExposable());
-        setProperty(AXPropertyName::SupportsSelectedRows, object.supportsSelectedRows());
         setObjectVectorProperty(AXPropertyName::Columns, object.columns());
         setObjectVectorProperty(AXPropertyName::Rows, object.rows());
         setObjectVectorProperty(AXPropertyName::Cells, object.cells());
@@ -241,6 +273,7 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
         setProperty(AXPropertyName::RowIndexRange, object.rowIndexRange());
         setProperty(AXPropertyName::AXColumnIndex, object.axColumnIndex());
         setProperty(AXPropertyName::AXRowIndex, object.axRowIndex());
+        // FIXME: This doesn't get updated when the scope attribute dynamically changes.
         setProperty(AXPropertyName::IsColumnHeader, object.isColumnHeader());
         setProperty(AXPropertyName::IsRowHeader, object.isRowHeader());
         setProperty(AXPropertyName::CellScope, object.cellScope().isolatedCopy());
@@ -298,7 +331,6 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     }
 
     if (object.isSpinButton()) {
-        // FIXME: These properties get out of date every time AccessibilitySpinButton::{clearChildren, addChildren} is called. We should probably just not cache these properties.
         setObjectProperty(AXPropertyName::DecrementButton, object.decrementButton());
         setObjectProperty(AXPropertyName::IncrementButton, object.incrementButton());
     }
@@ -381,7 +413,7 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
 
         auto range = object.textInputMarkedTextMarkerRange();
         if (auto characterRange = range.characterRange(); range && characterRange)
-            setProperty(AXPropertyName::TextInputMarkedTextMarkerRange, std::pair<Markable<AXID>, CharacterRange>(*range.start().objectID(), *characterRange));
+            setProperty(AXPropertyName::TextInputMarkedTextMarkerRange, std::pair<Markable<AXID>, CharacterRange>(range.start().objectID(), *characterRange));
 
         bool isNonNativeTextControl = object.isNonNativeTextControl();
         setProperty(AXPropertyName::CanBeMultilineTextField, canBeMultilineTextField(object, isNonNativeTextControl));
@@ -431,13 +463,12 @@ bool AXIsolatedObject::canBeMultilineTextField(AccessibilityObject& object, bool
 AccessibilityObject* AXIsolatedObject::associatedAXObject() const
 {
     ASSERT(isMainThread());
-    ASSERT(objectID());
 
     auto* axObjectCache = this->axObjectCache();
-    return axObjectCache ? axObjectCache->objectForID(*objectID()) : nullptr;
+    return axObjectCache ? axObjectCache->objectForID(objectID()) : nullptr;
 }
 
-void AXIsolatedObject::setMathscripts(AXPropertyName propertyName, AXCoreObject& object)
+void AXIsolatedObject::setMathscripts(AXPropertyName propertyName, AccessibilityObject& object)
 {
     AccessibilityMathMultiscriptPairs pairs;
     if (propertyName == AXPropertyName::MathPrescripts)
@@ -487,9 +518,6 @@ void AXIsolatedObject::setProperty(AXPropertyName propertyName, AXPropertyValueV
         case AXPropertyName::HasPlainText:
             setPropertyFlag(AXPropertyFlag::HasPlainText, std::get<bool>(value));
             return;
-        case AXPropertyName::IsControl:
-            setPropertyFlag(AXPropertyFlag::IsControl, std::get<bool>(value));
-            return;
         case AXPropertyName::IsEnabled:
             setPropertyFlag(AXPropertyFlag::IsEnabled, std::get<bool>(value));
             return;
@@ -507,12 +535,6 @@ void AXIsolatedObject::setProperty(AXPropertyName propertyName, AXPropertyValueV
             return;
         case AXPropertyName::IsKeyboardFocusable:
             setPropertyFlag(AXPropertyFlag::IsKeyboardFocusable, std::get<bool>(value));
-            return;
-        case AXPropertyName::IsLink:
-            setPropertyFlag(AXPropertyFlag::IsLink, std::get<bool>(value));
-            return;
-        case AXPropertyName::IsList:
-            setPropertyFlag(AXPropertyFlag::IsList, std::get<bool>(value));
             return;
         case AXPropertyName::IsNonLayerSVGObject:
             setPropertyFlag(AXPropertyFlag::IsNonLayerSVGObject, std::get<bool>(value));
@@ -537,12 +559,6 @@ void AXIsolatedObject::setProperty(AXPropertyName propertyName, AXPropertyValueV
             return;
         case AXPropertyName::SupportsPosInSet:
             setPropertyFlag(AXPropertyFlag::SupportsPosInSet, std::get<bool>(value));
-            return;
-        case AXPropertyName::SupportsPressAction:
-            setPropertyFlag(AXPropertyFlag::SupportsPressAction, std::get<bool>(value));
-            return;
-        case AXPropertyName::SupportsRequiredAttribute:
-            setPropertyFlag(AXPropertyFlag::SupportsRequiredAttribute, std::get<bool>(value));
             return;
         case AXPropertyName::SupportsSetSize:
             setPropertyFlag(AXPropertyFlag::SupportsSetSize, std::get<bool>(value));
@@ -657,9 +673,9 @@ const AXCoreObject::AccessibilityChildrenVector& AXIsolatedObject::children(bool
         updateBackingStore();
 
         if (m_childrenDirty) {
-            m_children = WTF::compactMap(m_childrenIDs, [&](auto& childID) -> std::optional<RefPtr<AXCoreObject>> {
+            m_children = WTF::compactMap(m_childrenIDs, [&](auto& childID) -> std::optional<Ref<AXCoreObject>> {
                 if (RefPtr child = tree()->objectForID(childID))
-                    return child;
+                    return child.releaseNonNull();
                 return std::nullopt;
             });
             m_childrenDirty = false;
@@ -685,7 +701,7 @@ std::optional<AXCoreObject::AccessibilityChildrenVector> AXIsolatedObject::selec
 
 void AXIsolatedObject::setSelectedChildren(const AccessibilityChildrenVector& selectedChildren)
 {
-    ASSERT(selectedChildren.isEmpty() || (selectedChildren[0] && selectedChildren[0]->isAXIsolatedObjectInstance()));
+    ASSERT(selectedChildren.isEmpty() || selectedChildren[0]->isAXIsolatedObjectInstance());
 
     auto childrenIDs = axIDs(selectedChildren);
     performFunctionOnMainThread([selectedChildrenIDs = WTFMove(childrenIDs), protectedThis = Ref { *this }] (auto* object) {
@@ -736,7 +752,7 @@ void AXIsolatedObject::accessibilityText(Vector<AccessibilityText>& texts) const
     texts = vectorAttributeValue<AccessibilityText>(AXPropertyName::AccessibilityText);
 }
 
-void AXIsolatedObject::insertMathPairs(Vector<std::pair<AXID, AXID>>& isolatedPairs, AccessibilityMathMultiscriptPairs& pairs)
+void AXIsolatedObject::insertMathPairs(Vector<std::pair<Markable<AXID>, Markable<AXID>>>& isolatedPairs, AccessibilityMathMultiscriptPairs& pairs)
 {
     for (const auto& pair : isolatedPairs) {
         AccessibilityMathMultiscriptPair prescriptPair;
@@ -750,20 +766,20 @@ void AXIsolatedObject::insertMathPairs(Vector<std::pair<AXID, AXID>>& isolatedPa
 
 void AXIsolatedObject::mathPrescripts(AccessibilityMathMultiscriptPairs& pairs)
 {
-    auto isolatedPairs = vectorAttributeValue<std::pair<AXID, AXID>>(AXPropertyName::MathPrescripts);
+    auto isolatedPairs = vectorAttributeValue<std::pair<Markable<AXID>, Markable<AXID>>>(AXPropertyName::MathPrescripts);
     insertMathPairs(isolatedPairs, pairs);
 }
 
 void AXIsolatedObject::mathPostscripts(AccessibilityMathMultiscriptPairs& pairs)
 {
-    auto isolatedPairs = vectorAttributeValue<std::pair<AXID, AXID>>(AXPropertyName::MathPostscripts);
+    auto isolatedPairs = vectorAttributeValue<std::pair<Markable<AXID>, Markable<AXID>>>(AXPropertyName::MathPostscripts);
     insertMathPairs(isolatedPairs, pairs);
 }
 
 std::optional<AXCoreObject::AccessibilityChildrenVector> AXIsolatedObject::mathRadicand()
 {
     if (m_propertyMap.contains(AXPropertyName::MathRadicand)) {
-        Vector<RefPtr<AXCoreObject>> radicand;
+        Vector<Ref<AXCoreObject>> radicand;
         fillChildrenVectorForProperty(AXPropertyName::MathRadicand, radicand);
         return { radicand };
     }
@@ -1105,8 +1121,6 @@ bool AXIsolatedObject::boolAttributeValue(AXPropertyName propertyName) const
         return hasPropertyFlag(AXPropertyFlag::HasItalicFont);
     case AXPropertyName::HasPlainText:
         return hasPropertyFlag(AXPropertyFlag::HasPlainText);
-    case AXPropertyName::IsControl:
-        return hasPropertyFlag(AXPropertyFlag::IsControl);
     case AXPropertyName::IsEnabled:
         return hasPropertyFlag(AXPropertyFlag::IsEnabled);
     case AXPropertyName::IsExposedTableCell:
@@ -1119,10 +1133,6 @@ bool AXIsolatedObject::boolAttributeValue(AXPropertyName propertyName) const
         return hasPropertyFlag(AXPropertyFlag::IsInlineText);
     case AXPropertyName::IsKeyboardFocusable:
         return hasPropertyFlag(AXPropertyFlag::IsKeyboardFocusable);
-    case AXPropertyName::IsLink:
-        return hasPropertyFlag(AXPropertyFlag::IsLink);
-    case AXPropertyName::IsList:
-        return hasPropertyFlag(AXPropertyFlag::IsList);
     case AXPropertyName::IsNonLayerSVGObject:
         return hasPropertyFlag(AXPropertyFlag::IsNonLayerSVGObject);
     case AXPropertyName::IsTableColumn:
@@ -1139,10 +1149,6 @@ bool AXIsolatedObject::boolAttributeValue(AXPropertyName propertyName) const
         return hasPropertyFlag(AXPropertyFlag::SupportsPath);
     case AXPropertyName::SupportsPosInSet:
         return hasPropertyFlag(AXPropertyFlag::SupportsPosInSet);
-    case AXPropertyName::SupportsPressAction:
-        return hasPropertyFlag(AXPropertyFlag::SupportsPressAction);
-    case AXPropertyName::SupportsRequiredAttribute:
-        return hasPropertyFlag(AXPropertyFlag::SupportsRequiredAttribute);
     case AXPropertyName::SupportsSetSize:
         return hasPropertyFlag(AXPropertyFlag::SupportsSetSize);
     default:
@@ -1232,7 +1238,7 @@ void AXIsolatedObject::fillChildrenVectorForProperty(AXPropertyName propertyName
     children.reserveCapacity(childIDs.size());
     for (const auto& childID : childIDs) {
         if (RefPtr object = tree()->objectForID(childID))
-            children.append(object);
+            children.append(object.releaseNonNull());
     }
 }
 
@@ -2043,44 +2049,6 @@ OptionSet<AXAncestorFlag> AXIsolatedObject::ancestorFlags() const
     );
 }
 
-AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::columnHeaders()
-{
-    AccessibilityChildrenVector headers;
-    if (isTable()) {
-        auto columnsCopy = columns();
-        for (const auto& column : columnsCopy) {
-            if (auto* header = column->columnHeader())
-                headers.append(header);
-        }
-    } else if (isExposedTableCell()) {
-        auto* parent = exposedTableAncestor();
-        if (!parent)
-            return { };
-
-        // Choose columnHeaders as the place where the "headers" attribute is reported.
-        headers = relatedObjects(AXRelationType::Headers);
-        // If the headers attribute returned valid values, then do not further search for column headers.
-        if (!headers.isEmpty())
-            return headers;
-
-        auto rowRange = rowIndexRange();
-        auto colRange = columnIndexRange();
-
-        for (unsigned row = 0; row < rowRange.first; row++) {
-            auto* tableCell = parent->cellForColumnAndRow(colRange.first, row);
-            if (!tableCell || tableCell == this || headers.contains(tableCell))
-                continue;
-
-            if (tableCell->cellScope() == "colgroup"_s && isTableCellInSameColGroup(tableCell))
-                headers.append(tableCell);
-            else if (tableCell->isColumnHeader())
-                headers.append(tableCell);
-        }
-    }
-
-    return headers;
-}
-
 String AXIsolatedObject::innerHTML() const
 {
     return const_cast<AXIsolatedObject*>(this)->getOrRetrievePropertyValue<String>(AXPropertyName::InnerHTML);
@@ -2098,27 +2066,26 @@ AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::rowHeaders()
         auto rowsCopy = rows();
         for (const auto& row : rowsCopy) {
             if (auto* header = row->rowHeader())
-                headers.append(header);
+                headers.append(*header);
         }
     } else if (isExposedTableCell()) {
-        auto* parent = exposedTableAncestor();
+        RefPtr parent = exposedTableAncestor();
         if (!parent)
             return { };
 
         auto rowRange = rowIndexRange();
         auto colRange = columnIndexRange();
         for (unsigned column = 0; column < colRange.first; column++) {
-            auto* tableCell = parent->cellForColumnAndRow(column, rowRange.first);
-            if (!tableCell || tableCell == this || headers.contains(tableCell))
+            RefPtr tableCell = parent->cellForColumnAndRow(column, rowRange.first);
+            if (!tableCell || tableCell == this || headers.contains(Ref { *tableCell }))
                 continue;
 
-            if (tableCell->cellScope() == "rowgroup"_s && isTableCellInSameRowGroup(tableCell))
-                headers.append(tableCell);
+            if (tableCell->cellScope() == "rowgroup"_s && isTableCellInSameRowGroup(*tableCell))
+                headers.append(tableCell.releaseNonNull());
             else if (tableCell->isRowHeader())
-                headers.append(tableCell);
+                headers.append(tableCell.releaseNonNull());
         }
     }
-
     return headers;
 }
 

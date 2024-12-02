@@ -181,6 +181,7 @@ const TestFeatures& TestOptions::defaults()
             { "findInteractionEnabled", false },
             { "ignoreSynchronousMessagingTimeouts", false },
             { "ignoresViewportScaleLimits", false },
+            { "ignoreWebProcessTermination", false },
             { "isAppBoundWebView", false },
             { "isAppInitiated", true },
             { "advancedPrivacyProtectionsEnabled", false },
@@ -206,6 +207,8 @@ const TestFeatures& TestOptions::defaults()
             { "enhancedWindowingEnabled", false },
             { "textExtractionEnabled", false },
             { "useHardwareKeyboardMode", false },
+            { "enableMetalDebugDevice", false },
+            { "enableMetalShaderValidation", false },
         };
         features.doubleTestRunnerFeatures = {
             { "contentInset.top", 0 },
@@ -254,6 +257,7 @@ const std::unordered_map<std::string, TestHeaderKeyType>& TestOptions::keyTypeMa
         { "findInteractionEnabled", TestHeaderKeyType::BoolTestRunner },
         { "ignoreSynchronousMessagingTimeouts", TestHeaderKeyType::BoolTestRunner },
         { "ignoresViewportScaleLimits", TestHeaderKeyType::BoolTestRunner },
+        { "ignoreWebProcessTermination", TestHeaderKeyType::BoolTestRunner },
         { "isAppBoundWebView", TestHeaderKeyType::BoolTestRunner },
         { "isAppInitiated", TestHeaderKeyType::BoolTestRunner },
         { "advancedPrivacyProtectionsEnabled", TestHeaderKeyType::BoolTestRunner },
@@ -278,6 +282,9 @@ const std::unordered_map<std::string, TestHeaderKeyType>& TestOptions::keyTypeMa
         { "enhancedWindowingEnabled", TestHeaderKeyType::BoolTestRunner },
         { "textExtractionEnabled", TestHeaderKeyType::BoolTestRunner },
         { "useHardwareKeyboardMode", TestHeaderKeyType::BoolTestRunner },
+        { "enableMetalDebugDevice", TestHeaderKeyType::BoolTestRunner },
+        { "enableMetalShaderValidation", TestHeaderKeyType::BoolTestRunner },
+
         { "contentInset.top", TestHeaderKeyType::DoubleTestRunner },
         { "obscuredInset.top", TestHeaderKeyType::DoubleTestRunner },
         { "horizontalSystemMinimumLayoutMargin", TestHeaderKeyType::DoubleTestRunner },

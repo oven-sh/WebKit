@@ -104,7 +104,7 @@ void RemoteCDMFactoryProxy::didReceiveCDMMessage(IPC::Connection& connection, IP
 void RemoteCDMFactoryProxy::didReceiveCDMInstanceMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
     if (ObjectIdentifier<RemoteCDMInstanceIdentifierType>::isValidIdentifier(decoder.destinationID())) {
-        if (auto* instance = m_instances.get(ObjectIdentifier<RemoteCDMInstanceIdentifierType>(decoder.destinationID())))
+        if (RefPtr instance = m_instances.get(ObjectIdentifier<RemoteCDMInstanceIdentifierType>(decoder.destinationID())))
             instance->didReceiveMessage(connection, decoder);
     }
 }
@@ -129,7 +129,7 @@ bool RemoteCDMFactoryProxy::didReceiveSyncCDMMessage(IPC::Connection& connection
 bool RemoteCDMFactoryProxy::didReceiveSyncCDMInstanceMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& encoder)
 {
     if (ObjectIdentifier<RemoteCDMInstanceIdentifierType>::isValidIdentifier(decoder.destinationID())) {
-        if (auto* instance = m_instances.get(ObjectIdentifier<RemoteCDMInstanceIdentifierType>(decoder.destinationID())))
+        if (RefPtr instance = m_instances.get(ObjectIdentifier<RemoteCDMInstanceIdentifierType>(decoder.destinationID())))
             return instance->didReceiveSyncMessage(connection, decoder, encoder);
     }
     return false;
@@ -156,7 +156,7 @@ void RemoteCDMFactoryProxy::removeProxy(const RemoteCDMIdentifier& identifier)
     m_proxies.remove(identifier);
 }
 
-void RemoteCDMFactoryProxy::addInstance(const RemoteCDMInstanceIdentifier& identifier, std::unique_ptr<RemoteCDMInstanceProxy>&& instance)
+void RemoteCDMFactoryProxy::addInstance(const RemoteCDMInstanceIdentifier& identifier, Ref<RemoteCDMInstanceProxy>&& instance)
 {
     ASSERT(!m_instances.contains(identifier));
     m_instances.set(identifier, WTFMove(instance));
@@ -168,7 +168,7 @@ void RemoteCDMFactoryProxy::removeInstance(const RemoteCDMInstanceIdentifier& id
     m_instances.remove(identifier);
     auto connection = m_gpuConnectionToWebProcess.get();
     if (connection && allowsExitUnderMemoryPressure())
-        connection->gpuProcess().tryExitIfUnusedAndUnderMemoryPressure();
+        connection->protectedGPUProcess()->tryExitIfUnusedAndUnderMemoryPressure();
 }
 
 RemoteCDMInstanceProxy* RemoteCDMFactoryProxy::getInstance(const RemoteCDMInstanceIdentifier& identifier)
@@ -176,7 +176,7 @@ RemoteCDMInstanceProxy* RemoteCDMFactoryProxy::getInstance(const RemoteCDMInstan
     return m_instances.get(identifier);
 }
 
-void RemoteCDMFactoryProxy::addSession(const RemoteCDMInstanceSessionIdentifier& identifier, std::unique_ptr<RemoteCDMInstanceSessionProxy>&& session)
+void RemoteCDMFactoryProxy::addSession(const RemoteCDMInstanceSessionIdentifier& identifier, Ref<RemoteCDMInstanceSessionProxy>&& session)
 {
     ASSERT(!m_sessions.contains(identifier));
     m_sessions.set(identifier, WTFMove(session));
@@ -205,8 +205,8 @@ const Logger& RemoteCDMFactoryProxy::logger() const
 {
     if (!m_logger) {
         m_logger = Logger::create(this);
-        auto connection = m_gpuConnectionToWebProcess.get();
-        m_logger->setEnabled(this, connection ? connection->sessionID().isAlwaysOnLoggingAllowed() : false);
+        RefPtr connection { m_gpuConnectionToWebProcess.get() };
+        m_logger->setEnabled(this, connection && connection->isAlwaysOnLoggingAllowed());
     }
 
     return *m_logger;

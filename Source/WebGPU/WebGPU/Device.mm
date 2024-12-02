@@ -128,6 +128,96 @@ int GPUFrameCapture::maxSubmitCallsToCapture = 1;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Device);
 
+GPUShaderValidation Device::shaderValidationState() const
+{
+#if ENABLE(WEBGPU_BY_DEFAULT)
+    static MTLShaderValidation shaderValidationState = MTLShaderValidationDefault;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        int captureFirstFrameToken;
+        notify_register_dispatch("com.apple.WebKit.WebGPU.ToggleShaderValidationState", &captureFirstFrameToken, dispatch_get_main_queue(), ^(int) {
+            shaderValidationState = (shaderValidationState == MTLShaderValidationEnabled ? MTLShaderValidationDefault : MTLShaderValidationEnabled);
+        });
+    });
+
+    return shaderValidationState;
+#else
+    return 0;
+#endif
+}
+
+bool Device::enableEncoderTimestamps() const
+{
+    static bool enable = false;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        int token;
+        notify_register_dispatch("com.apple.WebKit.WebGPU.EnableEncoderTimestamps", &token, dispatch_get_main_queue(), ^(int) {
+            enable = !enable;
+            WTFLogAlways("Encoder timestamps are %s", enable ? "ENABLED" : "DISABLED");
+        });
+    });
+
+    return enable;
+}
+
+id<MTLCounterSampleBuffer> Device::timestampsBuffer(id<MTLCommandBuffer> commandBuffer, size_t timestampCount)
+{
+#if !PLATFORM(WATCHOS)
+    MTLCounterSampleBufferDescriptor* sampleBufferDesc = [MTLCounterSampleBufferDescriptor new];
+    sampleBufferDesc.sampleCount = timestampCount;
+    sampleBufferDesc.storageMode = MTLStorageModeShared;
+    sampleBufferDesc.counterSet = m_capabilities.baseCapabilities.timestampCounterSet;
+
+    NSError* error = nil;
+    id<MTLCounterSampleBuffer> buffer = [m_device newCounterSampleBufferWithDescriptor:sampleBufferDesc error:&error];
+    if (error) {
+        WTFLogAlways("newCounterSamplerBufferWithDescriptor failed %@", error.localizedDescription);
+        return nil;
+    }
+
+    [m_sampleCounterBuffers setObject:buffer forKey:commandBuffer];
+
+    return buffer;
+#else
+    UNUSED_PARAM(commandBuffer);
+    UNUSED_PARAM(timestampCount);
+    return nil;
+#endif
+}
+
+void Device::resolveTimestampsForBuffer(id<MTLCommandBuffer> commandBuffer)
+{
+    id<MTLCounterSampleBuffer> sampleBuffer = [m_sampleCounterBuffers objectForKey:commandBuffer];
+    if (!sampleBuffer)
+        return;
+
+    [m_sampleCounterBuffers removeObjectForKey:commandBuffer];
+    id<MTLBlitCommandEncoder> blitCommandEncoder = [commandBuffer blitCommandEncoder];
+    auto timestampCount = sampleBuffer.sampleCount;
+    id<MTLBuffer> counterDataBuffer = safeCreateBuffer(sizeof(MTLCounterResultTimestamp) * timestampCount);
+    [blitCommandEncoder resolveCounters:sampleBuffer inRange:NSMakeRange(0, timestampCount) destinationBuffer:counterDataBuffer destinationOffset:0];
+    [blitCommandEncoder endEncoding];
+    NSMutableArray<id<MTLBuffer>>* resolvedBuffers = [m_resolvedSampleCounterBuffers objectForKey:commandBuffer];
+    if (!resolvedBuffers) {
+        resolvedBuffers = [NSMutableArray arrayWithObject:counterDataBuffer];
+        [m_resolvedSampleCounterBuffers setObject:resolvedBuffers forKey:commandBuffer];
+    } else
+        [resolvedBuffers addObject:counterDataBuffer];
+
+    [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> completedCommandBuffer) {
+        for (id<MTLBuffer> buffer in resolvedBuffers) {
+            auto timestamps = unsafeMakeSpan(static_cast<MTLCounterResultTimestamp*>(buffer.contents), buffer.length);
+            WTFLogAlways("Timestamps for buffer %@", buffer.label);
+            for (size_t i = 0, timestampCount = buffer.length / sizeof(MTLCounterResultTimestamp); (i + 1) < timestampCount; i += 2) {
+                auto timeDifference = timestamps[i + 1].timestamp - timestamps[i].timestamp;
+                WTFLogAlways("\tencoder time %f", timeDifference / 100000.0f);
+            }
+        }
+        [m_resolvedSampleCounterBuffers removeObjectForKey:completedCommandBuffer];
+    }];
+}
+
 bool Device::shouldStopCaptureAfterSubmit()
 {
     return GPUFrameCapture::shouldStopCaptureAfterSubmit();
@@ -159,6 +249,7 @@ Device::Device(id<MTLDevice> device, id<MTLCommandQueue> defaultQueue, HardwareC
     , m_xrSubImage(XRSubImage::create(*this))
     , m_capabilities(WTFMove(capabilities))
     , m_adapter(adapter)
+    , m_instance(adapter.weakInstance())
 {
 #if PLATFORM(MAC)
     auto devices = MTLCopyAllDevicesWithObserver(&m_deviceObserver, [weakThis = ThreadSafeWeakPtr { *this }](id<MTLDevice> device, MTLDeviceNotificationName) {
@@ -213,11 +304,14 @@ Device::Device(id<MTLDevice> device, id<MTLCommandQueue> defaultQueue, HardwareC
     desc.pixelFormat = MTLPixelFormatDepth32Float_Stencil8;
     desc.storageMode = MTLStorageModePrivate;
     m_placeholderDepthStencilTexture = [m_device newTextureWithDescriptor:desc];
+    m_sampleCounterBuffers = [NSMapTable weakToStrongObjectsMapTable];
+    m_resolvedSampleCounterBuffers = [NSMapTable weakToStrongObjectsMapTable];
 }
 
 Device::Device(Adapter& adapter)
     : m_defaultQueue(Queue::createInvalid(*this))
     , m_adapter(adapter)
+    , m_instance(adapter.weakInstance())
 {
     if (!m_adapter->isValid())
         makeInvalid();
@@ -241,14 +335,14 @@ Device::~Device()
 
 RefPtr<XRSubImage> Device::getXRViewSubImage(XRProjectionLayer& projectionLayer)
 {
-    m_xrSubImage->update(projectionLayer.colorTexture(), projectionLayer.depthTexture(), projectionLayer.reusableTextureIndex(), projectionLayer.completionEvent());
+    RefPtr { m_xrSubImage }->update(projectionLayer.colorTexture(), projectionLayer.depthTexture(), projectionLayer.reusableTextureIndex(), projectionLayer.completionEvent());
     return m_xrSubImage;
 }
 
 void Device::makeInvalid()
 {
     m_device = nil;
-    m_defaultQueue->makeInvalid();
+    protectedQueue()->makeInvalid();
 }
 
 void Device::loseTheDevice(WGPUDeviceLostReason reason)
@@ -262,7 +356,7 @@ void Device::loseTheDevice(WGPUDeviceLostReason reason)
         m_deviceLostCallback = nullptr;
     }
 
-    m_defaultQueue->makeInvalid();
+    protectedQueue()->makeInvalid();
     m_isLost = true;
 }
 
@@ -313,11 +407,6 @@ bool Device::getLimits(WGPUSupportedLimits& limits)
     return true;
 }
 
-id<MTLBuffer> Device::placeholderBuffer() const
-{
-    return m_placeholderBuffer;
-}
-
 id<MTLTexture> Device::placeholderTexture(WGPUTextureFormat format) const
 {
     return Texture::isDepthOrStencilFormat(format) ? m_placeholderDepthStencilTexture : m_placeholderTexture;
@@ -346,6 +435,9 @@ void Device::generateAValidationError(NSString * message)
 
 void Device::generateAValidationError(String&& message)
 {
+    if (m_supressAllErrors)
+        return;
+
     // https://gpuweb.github.io/gpuweb/#abstract-opdef-generate-a-validation-error
     auto* scope = currentErrorScope(WGPUErrorFilter_Validation);
     if (scope) {
@@ -362,6 +454,9 @@ void Device::generateAValidationError(String&& message)
 
 void Device::generateAnOutOfMemoryError(String&& message)
 {
+    if (m_supressAllErrors)
+        return;
+
     // https://gpuweb.github.io/gpuweb/#abstract-opdef-generate-an-out-of-memory-error
 
     auto* scope = currentErrorScope(WGPUErrorFilter_OutOfMemory);
@@ -380,6 +475,9 @@ void Device::generateAnOutOfMemoryError(String&& message)
 
 void Device::generateAnInternalError(String&& message)
 {
+    if (m_supressAllErrors)
+        return;
+
     // https://gpuweb.github.io/gpuweb/#abstract-opdef-generate-an-internal-error
 
     auto* scope = currentErrorScope(WGPUErrorFilter_Internal);
@@ -394,23 +492,6 @@ void Device::generateAnInternalError(String&& message)
         m_uncapturedErrorCallback(WGPUErrorType_Internal, WTFMove(message));
         m_uncapturedErrorCallback = nullptr;
     }
-}
-
-uint32_t Device::maxBuffersPlusVertexBuffersForVertexStage() const
-{
-    ASSERT(m_capabilities.limits.maxBindGroupsPlusVertexBuffers > 0);
-    return m_capabilities.limits.maxBindGroupsPlusVertexBuffers;
-}
-
-uint32_t Device::maxBuffersForFragmentStage() const
-{
-    return m_capabilities.limits.maxBindGroups;
-}
-
-uint32_t Device::vertexBufferIndexForBindGroup(uint32_t groupIndex) const
-{
-    ASSERT(maxBuffersPlusVertexBuffersForVertexStage() > 0);
-    return WGSL::vertexBufferIndexForBindGroup(groupIndex, maxBuffersPlusVertexBuffersForVertexStage() - 1);
 }
 
 id<MTLBuffer> Device::newBufferWithBytes(const void* pointer, size_t length, MTLResourceOptions options) const
@@ -617,13 +698,17 @@ id<MTLRenderPipelineState> Device::indexBufferClampPipeline(MTLIndexType indexTy
     using namespace metal;
     [[vertex]] void vsUshort(device const ushort* indexBuffer [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], const constant uint* data [[buffer(2)]], uint indexId [[vertex_id]]) {
         ushort vertexIndex = data[primitiveRestart] + indexBuffer[indexId];
-        if (vertexIndex + indexedOutput.baseVertex >= data[vertexCount] + data[primitiveRestart])
+        if (vertexIndex + indexedOutput.baseVertex >= data[vertexCount] + data[primitiveRestart]) {
             indexedOutput.indexCount = 0u;
+            *(&indexedOutput.baseInstance + 1) = 1;
+        }
     }
     [[vertex]] void vsUint(device const uint* indexBuffer [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], const constant uint* data [[buffer(2)]], uint indexId [[vertex_id]]) {
         uint vertexIndex = data[primitiveRestart] + indexBuffer[indexId];
-        if (vertexIndex + indexedOutput.baseVertex >= data[vertexCount] + data[primitiveRestart])
+        if (vertexIndex + indexedOutput.baseVertex >= data[vertexCount] + data[primitiveRestart]) {
             indexedOutput.indexCount = 0u;
+            *(&indexedOutput.baseInstance + 1) = 1;
+        }
     })" /* NOLINT */ options:options error:&error];
         if (error) {
             WTFLogAlways("%@", error);
@@ -829,7 +914,8 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
         /* NOLINT */ id<MTLLibrary> library = [m_device newLibraryWithSource:@R"(
     using namespace metal;
     struct ICBContainer {
-        command_buffer commandBuffer [[ id(0) ]];
+        device uint* outOfBoundsRead [[ id(0) ]];
+        command_buffer commandBuffer [[ id(1) ]];
     };
     struct IndexDataUshort {
         uint64_t renderCommand { 0 };
@@ -864,6 +950,7 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
         uint32_t k = (data.primitiveType == primitive_type::triangle_strip || data.primitiveType == primitive_type::line_strip) ? 1 : 0;
         uint32_t vertexIndex = data.indexBuffer[indexId] + k;
         if (data.baseVertex + vertexIndex >= data.minVertexCount + k) {
+            *icb_container->outOfBoundsRead = 1;
             render_command cmd(icb_container->commandBuffer, data.renderCommand);
             cmd.draw_indexed_primitives(data.primitiveType,
                 0u,
@@ -882,6 +969,7 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
         uint32_t k = (data.primitiveType == primitive_type::triangle_strip || data.primitiveType == primitive_type::line_strip) ? 1 : 0;
         ushort vertexIndex = data.indexBuffer[indexId] + k;
         if (data.baseVertex + vertexIndex >= data.minVertexCount + k) {
+            *icb_container->outOfBoundsRead = 1;
             render_command cmd(icb_container->commandBuffer, data.renderCommand);
             cmd.draw_indexed_primitives(data.primitiveType,
                 0u,
@@ -902,6 +990,19 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
     }
 
     return indexType == MTLIndexTypeUInt16 ? functionUshort : function;
+}
+
+void Device::pauseErrorReporting(bool pauseReporting)
+{
+    m_supressAllErrors = pauseReporting;
+}
+
+id<MTLSharedEvent> Device::resolveTimestampsSharedEvent()
+{
+    if (!m_resolveTimestampsSharedEvent)
+        m_resolveTimestampsSharedEvent = [m_device newSharedEvent];
+
+    return m_resolveTimestampsSharedEvent;
 }
 
 } // namespace WebGPU
@@ -946,6 +1047,11 @@ WGPUCommandEncoder wgpuDeviceCreateCommandEncoder(WGPUDevice device, const WGPUC
 WGPUComputePipeline wgpuDeviceCreateComputePipeline(WGPUDevice device, const WGPUComputePipelineDescriptor* descriptor)
 {
     return WebGPU::releaseToAPI(WebGPU::protectedFromAPI(device)->createComputePipeline(*descriptor).first);
+}
+
+void wgpuDevicePauseErrorReporting(WGPUDevice device, WGPUBool pauseErrors)
+{
+    WebGPU::protectedFromAPI(device)->pauseErrorReporting(!!pauseErrors);
 }
 
 void wgpuDeviceCreateComputePipelineAsync(WGPUDevice device, const WGPUComputePipelineDescriptor* descriptor, WGPUCreateComputePipelineAsyncCallback callback, void* userdata)

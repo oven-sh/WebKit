@@ -103,6 +103,7 @@ class PageConfiguration;
 
 namespace WebCore {
 class RegistrableDomain;
+class Site;
 enum class EventMakesGamepadsVisible : bool;
 enum class GamepadHapticEffectType : uint8_t;
 struct GamepadEffectParameters;
@@ -147,7 +148,6 @@ void setLockdownModeEnabledGloballyForTesting(std::optional<bool>);
 
 enum class CallDownloadDidStart : bool;
 enum class ProcessSwapRequestedByClient : bool;
-enum class ShouldSkipSuspendedProcesses : bool { No, Yes };
 
 class WebProcessPool final
     : public API::ObjectImpl<API::Object::Type::ProcessPool>
@@ -196,7 +196,7 @@ public:
     void removeMessageReceiver(IPC::ReceiverName, uint64_t destinationID);
 
     WebBackForwardCache& backForwardCache() { return m_backForwardCache.get(); }
-    CheckedRef<WebBackForwardCache> checkedBackForwardCache();
+    Ref<WebBackForwardCache> protectedBackForwardCache();
     
     template<typename RawValue>
     void addMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase<RawValue>& destinationID, IPC::MessageReceiver& receiver)
@@ -226,10 +226,10 @@ public:
     WebProcessProxy* dummyProcessProxy(PAL::SessionID sessionID) const { return m_dummyProcessProxies.get(sessionID).get(); }
 
     void forEachProcessForSession(PAL::SessionID, const Function<void(WebProcessProxy&)>&);
-    template<typename T> void sendToAllProcesses(const T& message, ShouldSkipSuspendedProcesses = ShouldSkipSuspendedProcesses::No);
-    template<typename T> void sendToAllProcessesForSession(const T& message, PAL::SessionID, ShouldSkipSuspendedProcesses = ShouldSkipSuspendedProcesses::No);
+    template<typename T> void sendToAllProcesses(const T& message);
+    template<typename T> void sendToAllProcessesForSession(const T& message, PAL::SessionID);
 
-    template<typename T> static void sendToAllRemoteWorkerProcesses(const T& message, ShouldSkipSuspendedProcesses = ShouldSkipSuspendedProcesses::No);
+    template<typename T> static void sendToAllRemoteWorkerProcesses(const T& message);
 
     void processDidFinishLaunching(WebProcessProxy&);
 
@@ -338,7 +338,7 @@ public:
 
     void reportWebContentCPUTime(Seconds cpuTime, uint64_t activityState);
 
-    Ref<WebProcessProxy> processForRegistrableDomain(WebsiteDataStore&, const WebCore::RegistrableDomain&, WebProcessProxy::LockdownMode, const API::PageConfiguration&); // Will return an existing one if limit is met or due to caching.
+    Ref<WebProcessProxy> processForSite(WebsiteDataStore&, const std::optional<WebCore::Site>&, WebProcessProxy::LockdownMode, const API::PageConfiguration&); // Will return an existing one if limit is met or due to caching.
 
     void prewarmProcess();
 
@@ -420,7 +420,7 @@ public:
 
     void updateRemoteWorkerUserAgent(const String& userAgent);
     UserContentControllerIdentifier userContentControllerIdentifierForRemoteWorkers();
-    static void establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType, WebCore::RegistrableDomain&&, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID, CompletionHandler<void(WebCore::ProcessIdentifier)>&&);
+    static void establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType, WebCore::Site&&, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID, CompletionHandler<void(WebCore::ProcessIdentifier)>&&);
 
 #if PLATFORM(COCOA)
     bool processSuppressionEnabled() const;
@@ -447,7 +447,6 @@ public:
     void updateProcessSuppressionState() const { }
 #endif
 
-    Seconds hiddenPageThrottlingAutoIncreaseLimit() const;
     void updateHiddenPageThrottlingAutoIncreaseLimit();
 
     void setMemoryCacheDisabled(bool);
@@ -621,7 +620,7 @@ private:
     void platformInvalidateContext();
 
     std::tuple<Ref<WebProcessProxy>, SuspendedPageProxy*, ASCIILiteral> processForNavigationInternal(WebPageProxy&, const API::Navigation&, Ref<WebProcessProxy>&& sourceProcess, const URL& sourceURL, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, const FrameInfoData&, Ref<WebsiteDataStore>&&);
-    void prepareProcessForNavigation(Ref<WebProcessProxy>&&, WebPageProxy&, SuspendedPageProxy*, ASCIILiteral reason, const WebCore::RegistrableDomain&, const API::Navigation&, WebProcessProxy::LockdownMode, Ref<WebsiteDataStore>&&, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&, unsigned previousAttemptsCount = 0);
+    void prepareProcessForNavigation(Ref<WebProcessProxy>&&, WebPageProxy&, SuspendedPageProxy*, ASCIILiteral reason, const WebCore::Site&, const API::Navigation&, WebProcessProxy::LockdownMode, Ref<WebsiteDataStore>&&, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&, unsigned previousAttemptsCount = 0);
 
     RefPtr<WebProcessProxy> tryTakePrewarmedProcess(WebsiteDataStore&, WebProcessProxy::LockdownMode, const API::PageConfiguration&);
 
@@ -801,7 +800,7 @@ private:
     RetainPtr<NSObject> m_deactivationObserver;
     RetainPtr<WKWebInspectorPreferenceObserver> m_webInspectorPreferenceObserver;
 
-    std::unique_ptr<PerActivityStateCPUUsageSampler> m_perActivityStateCPUUsageSampler;
+    UniqueRef<PerActivityStateCPUUsageSampler> m_perActivityStateCPUUsageSampler;
 #endif
 
 #if PLATFORM(COCOA)
@@ -929,9 +928,6 @@ private:
     Vector<int> m_notifyTokens;
     Vector<RetainPtr<NSObject>> m_notificationObservers;
 #endif
-#if ENABLE(IPC_TESTING_API)
-    IPCTester m_ipcTester;
-#endif
 
 #if ENABLE(EXTENSION_CAPABILITIES)
     RefPtr<ExtensionCapabilityGranter> m_extensionCapabilityGranter;
@@ -950,43 +946,39 @@ private:
 
     bool m_webProcessStateUpdatesForPageClientEnabled { false };
 
-#if PLATFORM(MAC)
+#if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
     ApproximateTime m_lastCriticalMemoryPressureStatusTime;
     RunLoop::Timer m_checkMemoryPressureStatusTimer;
+#endif
+
+#if ENABLE(IPC_TESTING_API)
+    const Ref<IPCTester> m_ipcTester;
 #endif
 };
 
 template<typename T>
-void WebProcessPool::sendToAllProcesses(const T& message, ShouldSkipSuspendedProcesses shouldSkipSuspendedProcesses)
+void WebProcessPool::sendToAllProcesses(const T& message)
 {
     for (auto& process : m_processes) {
-        if (!process->canSendMessage())
-            continue;
-        if (shouldSkipSuspendedProcesses == ShouldSkipSuspendedProcesses::Yes && process->throttler().isSuspended())
-            continue;
-        process->send(T(message), 0);
+        if (process->canSendMessage())
+            process->send(T(message), 0);
     }
 }
 
 template<typename T>
-void WebProcessPool::sendToAllProcessesForSession(const T& message, PAL::SessionID sessionID, ShouldSkipSuspendedProcesses shouldSkipSuspendedProcesses)
+void WebProcessPool::sendToAllProcessesForSession(const T& message, PAL::SessionID sessionID)
 {
     forEachProcessForSession(sessionID, [&](auto& process) {
-        if (shouldSkipSuspendedProcesses == ShouldSkipSuspendedProcesses::Yes && process.throttler().isSuspended())
-            return;
         process.send(T(message), 0);
     });
 }
 
 template<typename T>
-void WebProcessPool::sendToAllRemoteWorkerProcesses(const T& message, ShouldSkipSuspendedProcesses shouldSkipSuspendedProcesses)
+void WebProcessPool::sendToAllRemoteWorkerProcesses(const T& message)
 {
     for (Ref process : remoteWorkerProcesses()) {
-        if (!process->canSendMessage())
-            continue;
-        if (shouldSkipSuspendedProcesses == ShouldSkipSuspendedProcesses::Yes && process->throttler().isSuspended())
-            continue;
-        process->send(T(message), 0);
+        if (process->canSendMessage())
+            process->send(T(message), 0);
     }
 }
 

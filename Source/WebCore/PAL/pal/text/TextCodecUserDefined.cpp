@@ -75,6 +75,8 @@ static Vector<uint8_t> encodeComplexUserDefined(StringView string, UnencodableHa
     return result;
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 Vector<uint8_t> TextCodecUserDefined::encode(StringView string, UnencodableHandling handling) const
 {
     {
@@ -95,5 +97,7 @@ Vector<uint8_t> TextCodecUserDefined::encode(StringView string, UnencodableHandl
     // If it wasn't all ASCII, call the function that handles more-complex cases.
     return encodeComplexUserDefined(string, handling);
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace PAL

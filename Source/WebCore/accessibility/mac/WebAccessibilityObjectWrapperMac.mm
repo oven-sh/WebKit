@@ -85,6 +85,8 @@
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/MakeString.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 using namespace WebCore;
 
 static id attributeValueForTesting(const RefPtr<AXCoreObject>&, NSString *);
@@ -825,16 +827,15 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     static NeverDestroyed<RetainPtr<NSArray>> incrementorActions = [defaultElementActions.get() arrayByAddingObjectsFromArray:@[NSAccessibilityIncrementAction, NSAccessibilityDecrementAction]];
 
     NSArray *actions;
-    if (backingObject->supportsPressAction())
-        actions = actionElementActions.get().get();
-    else if (backingObject->isMenuRelated())
-        actions = menuElementActions.get().get();
-    else if (backingObject->isSlider() || (backingObject->isSpinButton() && backingObject->spinButtonType() == SpinButtonType::Standalone)) {
+    if (backingObject->isSlider() || (backingObject->isSpinButton() && backingObject->spinButtonType() == SpinButtonType::Standalone)) {
         // Non-standalone spinbuttons should not advertise the increment and decrement actions because they have separate increment and decrement controls.
         actions = incrementorActions.get().get();
-    }
+    } else if (backingObject->isMenuRelated())
+        actions = menuElementActions.get().get();
     else if (backingObject->isAttachment())
         actions = [[self attachmentView] accessibilityActionNames];
+    else if (backingObject->supportsPressAction())
+        actions = actionElementActions.get().get();
     else
         actions = defaultElementActions.get().get();
 
@@ -1119,18 +1120,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         [tempArray addObject:NSAccessibilityFocusedAttribute];
         return tempArray;
     }();
-    static NeverDestroyed<RetainPtr<NSArray>> menuButtonAttrs = @[
-        NSAccessibilityRoleAttribute,
-        NSAccessibilityRoleDescriptionAttribute,
-        NSAccessibilityParentAttribute,
-        NSAccessibilityPositionAttribute,
-        NSAccessibilitySizeAttribute,
-        NSAccessibilityWindowAttribute,
-        NSAccessibilityEnabledAttribute,
-        NSAccessibilityFocusedAttribute,
-        NSAccessibilityTitleAttribute,
-        NSAccessibilityChildrenAttribute,
-    ];
     static NeverDestroyed<RetainPtr<NSArray>> sharedControlAttrs = @[
         NSAccessibilityAccessKeyAttribute,
         NSAccessibilityRequiredAttribute,
@@ -1347,8 +1336,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         objectAttributes = menuAttrs.get().get();
     else if (backingObject->isMenuBar())
         objectAttributes = menuBarAttrs.get().get();
-    else if (backingObject->isMenuButton())
-        objectAttributes = menuButtonAttrs.get().get();
     else if (backingObject->isMenuItem())
         objectAttributes = menuItemAttrs.get().get();
     else if (backingObject->isVideo())
@@ -1379,9 +1366,8 @@ static void convertToVector(NSArray* array, AccessibilityObject::AccessibilityCh
     unsigned length = [array count];
     vector.reserveInitialCapacity(length);
     for (unsigned i = 0; i < length; ++i) {
-        AXCoreObject* obj = [[array objectAtIndex:i] axBackingObject];
-        if (obj)
-            vector.append(obj);
+        if (auto* object = [[array objectAtIndex:i] axBackingObject])
+            vector.append(*object);
     }
 }
 
@@ -1462,7 +1448,7 @@ static void WebTransformCGPathToNSBezierPath(void* info, const CGPathElement *el
 }
 
 // `unignoredChildren` must be the children of `backingObject`.
-static NSArray *transformSpecialChildrenCases(AXCoreObject& backingObject, const Vector<RefPtr<AXCoreObject>>& unignoredChildren)
+static NSArray *transformSpecialChildrenCases(AXCoreObject& backingObject, const Vector<Ref<AXCoreObject>>& unignoredChildren)
 {
 #if ENABLE(MODEL_ELEMENT)
     if (backingObject.isModel()) {
@@ -2047,13 +2033,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if ([attributeName isEqualToString: NSAccessibilityARIACurrentAttribute])
         return backingObject->currentValue();
 
-    if ([attributeName isEqualToString: NSAccessibilityServesAsTitleForUIElementsAttribute] && backingObject->isMenuButton()) {
-        if (auto* axRenderObject = dynamicDowncast<AccessibilityRenderObject>(backingObject.get())) {
-            if (auto* uiElement = axRenderObject->menuForMenuButton())
-                return @[uiElement->wrapper()];
-        }
-    }
-
     if ([attributeName isEqualToString:NSAccessibilityTitleUIElementAttribute]) {
         // FIXME: change to return an array instead of a single object.
         auto* object = backingObject->titleUIElement();
@@ -2359,6 +2338,13 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
 
     if ([attributeName isEqualToString:@"AXIsOnScreen"])
         return [NSNumber numberWithBool:backingObject->isOnScreen()];
+
+    if ([attributeName isEqualToString:@"_AXIsInTable"]) {
+        auto* table = Accessibility::findAncestor(*backingObject, false, [&] (const auto& ancestor) {
+            return ancestor.isTable();
+        });
+        return [NSNumber numberWithBool:!!table];
+    }
 
     return nil;
 }
@@ -3064,6 +3050,8 @@ enum class TextUnit {
             return inputMarker.wordRange(WordRangeType::Right).platformData().autorelease();
         case TextUnit::Sentence:
             return inputMarker.sentenceRange(SentenceRangeType::Current).platformData().autorelease();
+        case TextUnit::Paragraph:
+            return inputMarker.paragraphRange().platformData().autorelease();
         default:
             // TODO: Not implemented!
             break;
@@ -3141,6 +3129,10 @@ enum class TextUnit {
             return inputMarker.nextSentenceEnd().platformData().autorelease();
         case TextUnit::PreviousSentenceStart:
             return inputMarker.previousSentenceStart().platformData().autorelease();
+        case TextUnit::NextParagraphEnd:
+            return inputMarker.nextParagraphEnd().platformData().autorelease();
+        case TextUnit::PreviousParagraphStart:
+            return inputMarker.previousParagraphStart().platformData().autorelease();
         default:
             // TODO: Not implemented!
             break;
@@ -3909,8 +3901,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     size_t childCount = children.size();
     for (size_t i = 0; i < childCount; i++) {
         const auto& child = children[i];
-        if (!child)
-            continue;
         WebAccessibilityObjectWrapper *childWrapper = child->wrapper();
         if (childWrapper == targetChild || (child->isAttachment() && [childWrapper attachmentView] == targetChild)
             || (child->isRemoteFrame() && child->remoteFramePlatformElement() == targetChild)) {
@@ -4018,5 +4008,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 }
 
 @end
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

@@ -45,7 +45,7 @@ struct WebExtensionContextParameters {
 
     HashMap<String, WallTime> grantedPermissions;
 
-    Ref<API::Data> localizationJSON;
+    RefPtr<API::Data> localizationJSON;
     Ref<API::Data> manifestJSON;
 
     double manifestVersion { 0 };

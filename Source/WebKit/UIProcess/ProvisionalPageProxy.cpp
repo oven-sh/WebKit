@@ -200,7 +200,7 @@ void ProvisionalPageProxy::processDidTerminate()
         page->provisionalProcessDidTerminate();
 }
 
-std::unique_ptr<DrawingAreaProxy> ProvisionalPageProxy::takeDrawingArea()
+RefPtr<DrawingAreaProxy> ProvisionalPageProxy::takeDrawingArea()
 {
     return WTFMove(m_drawingArea);
 }
@@ -235,7 +235,7 @@ void ProvisionalPageProxy::cancel()
         m_mainFrame->frameID(),
         std::nullopt,
         m_mainFrame->processID(),
-        m_mainFrame->isFocused()
+        m_mainFrame->isFocused(),
     };
     didFailProvisionalLoadForFrame(WTFMove(frameInfo), ResourceRequest { m_request }, m_navigationID, m_provisionalLoadURL.string(), error, WebCore::WillContinueLoading::No, UserData { }, WebCore::WillInternallyHandleFailure::No); // Will delete |this|.
 }
@@ -503,10 +503,10 @@ void ProvisionalPageProxy::startURLSchemeTask(IPC::Connection& connection, URLSc
         page->startURLSchemeTaskShared(connection, protectedProcess(), m_webPageID, WTFMove(parameters));
 }
 
-void ProvisionalPageProxy::backForwardGoToItem(const WebCore::BackForwardItemIdentifier& identifier, CompletionHandler<void(const WebBackForwardListCounts&)>&& completionHandler)
+void ProvisionalPageProxy::backForwardGoToItem(IPC::Connection& connection, const WebCore::BackForwardItemIdentifier& identifier, CompletionHandler<void(const WebBackForwardListCounts&)>&& completionHandler)
 {
     if (RefPtr page = m_page.get())
-        page->backForwardGoToItemShared(identifier, WTFMove(completionHandler));
+        page->backForwardGoToItemShared(connection, identifier, WTFMove(completionHandler));
     else
         completionHandler({ });
 }

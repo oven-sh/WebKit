@@ -40,15 +40,15 @@ if [ "$WEBKIT_RELEASE_TYPE" == "relwithdebuginfo" ]; then
     CONTAINER_NAME=bun-webkit-linux-$BUILDKIT_ARCH-dbg
 fi
 
-# If LTO is not enabled, we still need to be able to do a local release build.
-# We use bullseye for CI to support older versions of glibc, but that requires libc++.
-if [[ "$WEBKIT_RELEASE_TYPE" == "Debug" || "$LTO_FLAG" == "" ]]; then
-    export DEBIAN_VERSION="bookworm"
-else
-    export DEBIAN_VERSION="bullseye"
-fi
+export DEBIAN_VERSION="bookworm"
+
+export temp=${temp:-"$(mktemp -d -t bun-webkit-linux-$BUILDKIT_ARCH-release-$(date +%s)-XXXX)"}
 
 mkdir -p $temp
 rm -rf $temp/bun-webkit
 
-docker buildx build -f Dockerfile -t $CONTAINER_NAME --build-arg LTO_FLAG="$LTO_FLAG" --build-arg WEBKIT_RELEASE_TYPE=$WEBKIT_RELEASE_TYPE --build-arg DEBIAN_VERSION=$DEBIAN_VERSION --progress=plain --platform=linux/$BUILDKIT_ARCH --target=artifact --output type=local,dest=$temp/bun-webkit .
+echo "Building $CONTAINER_NAME to $temp/bun-webkit"
+
+docker buildx build -f Dockerfile -t $CONTAINER_NAME --build-arg LTO_FLAG="$LTO_FLAG" --build-arg WEBKIT_RELEASE_TYPE=$WEBKIT_RELEASE_TYPE  --progress=plain --platform=linux/$BUILDKIT_ARCH --target=artifact --output type=local,dest=$temp/bun-webkit .
+
+echo "Successfully built $CONTAINER_NAME to $temp/bun-webkit"

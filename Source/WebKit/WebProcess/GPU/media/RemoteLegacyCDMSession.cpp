@@ -65,9 +65,9 @@ static RefPtr<SharedBuffer> convertToSharedBuffer(T array)
     return SharedBuffer::create(array->span());
 }
 
-std::unique_ptr<RemoteLegacyCDMSession> RemoteLegacyCDMSession::create(RemoteLegacyCDMFactory& factory, RemoteLegacyCDMSessionIdentifier&& identifier, LegacyCDMSessionClient& client)
+RefPtr<RemoteLegacyCDMSession> RemoteLegacyCDMSession::create(RemoteLegacyCDMFactory& factory, RemoteLegacyCDMSessionIdentifier&& identifier, LegacyCDMSessionClient& client)
 {
-    auto session = std::unique_ptr<RemoteLegacyCDMSession>(new RemoteLegacyCDMSession(factory, WTFMove(identifier), client));
+    RefPtr session = adoptRef(new RemoteLegacyCDMSession(factory, WTFMove(identifier), client));
     if (session->m_factory)
         session->m_factory->addSession(identifier, *session);
     return session;
@@ -82,8 +82,15 @@ RemoteLegacyCDMSession::RemoteLegacyCDMSession(RemoteLegacyCDMFactory& factory, 
 
 RemoteLegacyCDMSession::~RemoteLegacyCDMSession()
 {
-    if (m_factory)
-        m_factory->removeSession(m_identifier);
+    ASSERT(!m_factory);
+}
+
+void RemoteLegacyCDMSession::invalidate()
+{
+    if (RefPtr factory = m_factory.get()) {
+        factory->removeSession(m_identifier);
+        m_factory = nullptr;
+    }
 }
 
 RefPtr<Uint8Array> RemoteLegacyCDMSession::generateKeyRequest(const String& mimeType, Uint8Array* initData, String& destinationURL, unsigned short& errorCode, uint32_t& systemCode)

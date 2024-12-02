@@ -42,8 +42,6 @@
 #include "WebPageProxy.h"
 #include "WebProcessPool.h"
 #include <Commctrl.h>
-#include <WebCore/BitmapInfo.h>
-#include <WebCore/CairoUtilities.h>
 #include <WebCore/Cursor.h>
 #include <WebCore/Editor.h>
 #include <WebCore/FloatRect.h>
@@ -64,6 +62,7 @@
 #endif
 
 #if USE(CAIRO)
+#include <WebCore/CairoUtilities.h>
 #include <cairo-win32.h>
 #include <cairo.h>
 #endif
@@ -112,7 +111,7 @@ LRESULT WebView::wndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_DESTROY:
         m_isBeingDestroyed = true;
-        close();
+        closeInternal();
         break;
     case WM_ERASEBKGND:
         lResult = 1;
@@ -500,6 +499,8 @@ void WebView::paint(HDC hdc, const IntRect& dirtyRect)
     
             cairo_destroy(context);
             cairo_surface_destroy(surface);
+#elif USE(SKIA)
+            drawingArea->paint(hdc, dirtyRect, unpaintedRegion);
 #endif
     
             auto unpaintedRects = unpaintedRegion.rects();
@@ -777,15 +778,13 @@ bool WebView::shouldInitializeTrackPointHack()
 
 void WebView::close()
 {
-    if (m_window) {
-        // We can't check IsWindow(m_window) here, because that will return true even while
-        // we're already handling WM_DESTROY. So we check !m_isBeingDestroyed instead.
-        if (!m_isBeingDestroyed)
-            DestroyWindow(m_window);
-        // Either we just destroyed m_window, or it's in the process of being destroyed. Either
-        // way, we clear it out to make sure we don't try to use it later.
-        m_window = 0;
-    }
+    if (m_window && !m_isBeingDestroyed)
+        DestroyWindow(m_window);
+}
+
+void WebView::closeInternal()
+{
+    m_window = 0;
     setParentWindow(0);
     m_page->close();
 }

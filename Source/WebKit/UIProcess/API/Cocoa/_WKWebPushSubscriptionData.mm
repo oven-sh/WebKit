@@ -25,6 +25,8 @@
 
 #import "config.h"
 #import "_WKWebPushSubscriptionDataInternal.h"
+#import <WebCore/WebCoreObjCExtras.h>
+#import <wtf/cocoa/SpanCocoa.h>
 
 @implementation _WKWebPushSubscriptionData
 

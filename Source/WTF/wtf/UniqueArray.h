@@ -27,9 +27,8 @@
 
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/Vector.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WTF {
 
@@ -75,9 +74,9 @@ struct UniqueArrayMaker<true, T> {
         // Do not use placement new like `new (storage) T[size]()`. `new T[size]()` requires
         // larger storage than the `sizeof(T) * size` storage since it want to store `size`
         // to somewhere.
-        T* storage = static_cast<T*>(UniqueArrayMalloc::malloc(Checked<size_t>(sizeof(T)) * size));
-        VectorTypeOperations<T>::initialize(storage, storage + size);
-        return ResultType(storage);
+        auto storage = MallocSpan<T, UniqueArrayMalloc>::malloc(Checked<size_t>(sizeof(T)) * size);
+        VectorTypeOperations<T>::initialize(storage.mutableSpan().data(), storage.mutableSpan().subspan(size).data());
+        return ResultType(storage.leakSpan().data());
     }
 };
 
@@ -93,7 +92,7 @@ struct UniqueArrayMaker<false, T> {
         struct Deleter {
             void operator()(T* pointer)
             {
-                delete [] bitwise_cast<UniqueArrayElement*>(pointer);
+                delete [] std::bit_cast<UniqueArrayElement*>(pointer);
             };
         };
 
@@ -107,7 +106,7 @@ struct UniqueArrayMaker<false, T> {
 
     static ResultType make(size_t size)
     {
-        return ResultType(bitwise_cast<T*>(new UniqueArrayElement[size]()));
+        return ResultType(std::bit_cast<T*>(new UniqueArrayElement[size]()));
     }
 };
 
@@ -125,5 +124,3 @@ UniqueArray<T> makeUniqueArray(size_t size)
 
 using WTF::UniqueArray;
 using WTF::makeUniqueArray;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

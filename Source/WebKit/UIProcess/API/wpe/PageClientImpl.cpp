@@ -82,9 +82,9 @@ UnixFileDescriptor PageClientImpl::hostFileDescriptor()
     return UnixFileDescriptor { wpe_view_backend_get_renderer_host_fd(m_view.backend()), UnixFileDescriptor::Adopt };
 }
 
-std::unique_ptr<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
+Ref<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
 {
-    return makeUnique<DrawingAreaProxyCoordinatedGraphics>(m_view.page(), webProcessProxy);
+    return DrawingAreaProxyCoordinatedGraphics::create(m_view.page(), webProcessProxy);
 }
 
 void PageClientImpl::setViewNeedsDisplay(const WebCore::Region&)
@@ -162,10 +162,6 @@ void PageClientImpl::setCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
 {
     if (hiddenUntilMouseMoves)
         setCursor(WebCore::noneCursor());
-}
-
-void PageClientImpl::didChangeViewportProperties(const WebCore::ViewportAttributes&)
-{
 }
 
 void PageClientImpl::registerEditCommand(Ref<WebEditCommandProxy>&&, UndoOrRedo)

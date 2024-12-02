@@ -52,15 +52,15 @@ constexpr Seconds idleTerminationDelay { 5_s };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSharedWorkerServerToContextConnection);
 
-Ref<WebSharedWorkerServerToContextConnection> WebSharedWorkerServerToContextConnection::create(NetworkConnectionToWebProcess& connection, const WebCore::RegistrableDomain& registrableDomain, WebSharedWorkerServer& server)
+Ref<WebSharedWorkerServerToContextConnection> WebSharedWorkerServerToContextConnection::create(NetworkConnectionToWebProcess& connection, const WebCore::Site& site, WebSharedWorkerServer& server)
 {
-    return adoptRef(*new WebSharedWorkerServerToContextConnection(connection, registrableDomain, server));
+    return adoptRef(*new WebSharedWorkerServerToContextConnection(connection, site, server));
 }
 
-WebSharedWorkerServerToContextConnection::WebSharedWorkerServerToContextConnection(NetworkConnectionToWebProcess& connection, const WebCore::RegistrableDomain& registrableDomain, WebSharedWorkerServer& server)
+WebSharedWorkerServerToContextConnection::WebSharedWorkerServerToContextConnection(NetworkConnectionToWebProcess& connection, const WebCore::Site& site, WebSharedWorkerServer& server)
     : m_connection(connection)
     , m_server(server)
-    , m_registrableDomain(registrableDomain)
+    , m_site(site)
     , m_idleTerminationTimer(*this, &WebSharedWorkerServerToContextConnection::idleTerminationTimerFired)
 {
     CONTEXT_CONNECTION_RELEASE_LOG("WebSharedWorkerServerToContextConnection:");
@@ -131,10 +131,10 @@ void WebSharedWorkerServerToContextConnection::launchSharedWorker(WebSharedWorke
     if (auto contextIdentifier = initializationData.clientIdentifier) {
         initializationData.clientIdentifier = WebCore::ScriptExecutionContextIdentifier { contextIdentifier->object(), *webProcessIdentifier() };
         if (RefPtr serviceWorkerOldConnection = connection->protectedNetworkProcess()->webProcessConnection(contextIdentifier->processIdentifier())) {
-            if (CheckedPtr swOldConnection = serviceWorkerOldConnection->swConnection()) {
+            if (RefPtr swOldConnection = serviceWorkerOldConnection->swConnection()) {
                 if (auto clientData = swOldConnection->gatherClientData(*contextIdentifier)) {
                     swOldConnection->unregisterServiceWorkerClient(*contextIdentifier);
-                    if (CheckedPtr swNewConnection = connection->swConnection()) {
+                    if (RefPtr swNewConnection = connection->swConnection()) {
                         clientData->serviceWorkerClientData.identifier = *initializationData.clientIdentifier;
                         swNewConnection->registerServiceWorkerClient(WTFMove(clientData->clientOrigin), WTFMove(clientData->serviceWorkerClientData), clientData->controllingServiceWorkerRegistrationIdentifier, WTFMove(clientData->userAgent));
                     }

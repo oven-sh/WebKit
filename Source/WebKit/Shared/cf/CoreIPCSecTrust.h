@@ -28,9 +28,8 @@
 #if USE(CF)
 
 #import <wtf/RetainPtr.h>
+#import <wtf/cf/VectorCF.h>
 #import <wtf/spi/cocoa/SecuritySPI.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -39,6 +38,9 @@ namespace WebKit {
 
 class CoreIPCSecTrust {
 public:
+    CoreIPCSecTrust()
+        : m_trustData() { };
+
     CoreIPCSecTrust(SecTrustRef trust)
         : m_trustData(adoptCF(SecTrustSerialize(trust, NULL)))
     {
@@ -67,8 +69,7 @@ public:
         if (!m_trustData)
             return { };
 
-        CFDataRef data = m_trustData.get();
-        return { CFDataGetBytePtr(data), static_cast<size_t>(CFDataGetLength(data)) };
+        return span(m_trustData.get());
     }
 
 private:
@@ -76,7 +77,5 @@ private:
 };
 
 } // namespace WebKit
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(CF)

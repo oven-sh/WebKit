@@ -35,7 +35,7 @@ public:
     WebAnimationTime() = default;
     WEBCORE_EXPORT WebAnimationTime(std::optional<Seconds>, std::optional<double>);
 
-    WebAnimationTime(const Seconds&);
+    WEBCORE_EXPORT WebAnimationTime(const Seconds&);
     WebAnimationTime(const CSSNumberish&);
 
     static WebAnimationTime fromMilliseconds(double);
@@ -47,9 +47,11 @@ public:
     bool isValid() const;
     bool isInfinity() const;
     bool isZero() const;
+    bool isNaN() const;
 
     WebAnimationTime matchingZero() const;
     WebAnimationTime matchingEpsilon() const;
+    WebAnimationTime matchingInfinity() const;
 
     bool approximatelyEqualTo(const WebAnimationTime&) const;
     bool approximatelyLessThan(const WebAnimationTime&) const;
@@ -77,7 +79,7 @@ public:
     WebAnimationTime operator*(double) const;
     WebAnimationTime operator/(double) const;
 
-    operator Seconds() const;
+    WEBCORE_EXPORT operator Seconds() const;
     operator CSSNumberish() const;
 
     void dump(TextStream&) const;

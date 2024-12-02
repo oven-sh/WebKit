@@ -57,10 +57,10 @@ InlineLayoutUnit InlineFormattingUtils::logicalTopForNextLine(const LineLayoutRe
         auto& lastRunLayoutBox = lineLayoutResult.inlineContent.last().layoutBox();
         if (!lastRunLayoutBox.hasFloatClear() || lastRunLayoutBox.isOutOfFlowPositioned())
             return lineLogicalRect.bottom();
-        auto positionWithClearance = floatingContext.verticalPositionWithClearance(lastRunLayoutBox, formattingContext().geometryForBox(lastRunLayoutBox));
-        if (!positionWithClearance)
+        auto blockAxisPositionWithClearance = floatingContext.blockAxisPositionWithClearance(lastRunLayoutBox, formattingContext().geometryForBox(lastRunLayoutBox));
+        if (!blockAxisPositionWithClearance)
             return lineLogicalRect.bottom();
-        return std::max(lineLogicalRect.bottom(), InlineLayoutUnit(positionWithClearance->position));
+        return std::max(lineLogicalRect.bottom(), InlineLayoutUnit(blockAxisPositionWithClearance->position));
     }
 
     auto intrusiveFloatBottom = [&]() -> std::optional<InlineLayoutUnit> {
@@ -75,14 +75,14 @@ InlineLayoutUnit InlineFormattingUtils::logicalTopForNextLine(const LineLayoutRe
             return LayoutUnit { lineLogicalRect.top() + formattingContext().root().style().computedLineHeight() };
         };
         auto floatConstraints = floatingContext.constraints(toLayoutUnit(lineLogicalRect.top()), nextLineLogicalTop(), FloatingContext::MayBeAboveLastFloat::Yes);
-        if (floatConstraints.left && floatConstraints.right) {
+        if (floatConstraints.start && floatConstraints.end) {
             // In case of left and right constraints, we need to pick the one that's closer to the current line.
-            return std::min(floatConstraints.left->y, floatConstraints.right->y);
+            return std::min(floatConstraints.start->y, floatConstraints.end->y);
         }
-        if (floatConstraints.left)
-            return floatConstraints.left->y;
-        if (floatConstraints.right)
-            return floatConstraints.right->y;
+        if (floatConstraints.start)
+            return floatConstraints.start->y;
+        if (floatConstraints.end)
+            return floatConstraints.end->y;
         // If we didn't manage to place a content on this vertical position due to intrusive floats, we have to have
         // at least one float here.
         ASSERT_NOT_REACHED();
@@ -406,9 +406,6 @@ bool InlineFormattingUtils::isAtSoftWrapOpportunity(const InlineItem& previous, 
     ASSERT(previous.isText() || previous.isAtomicInlineBox() || previous.layoutBox().isRubyInlineBox());
     ASSERT(next.isText() || next.isAtomicInlineBox() || next.layoutBox().isRubyInlineBox());
 
-    if (previous.layoutBox().isRubyInlineBox() || next.layoutBox().isRubyInlineBox())
-        return RubyFormattingContext::isAtSoftWrapOpportunity(previous, next);
-
     auto mayWrapPrevious = TextUtil::isWrappingAllowed(previous.layoutBox().parent().style());
     auto mayWrapNext = TextUtil::isWrappingAllowed(next.layoutBox().parent().style());
     if (&previous.layoutBox().parent() == &next.layoutBox().parent() && !mayWrapPrevious && !mayWrapNext)
@@ -449,7 +446,7 @@ bool InlineFormattingUtils::isAtSoftWrapOpportunity(const InlineItem& previous, 
     }
     if (previous.layoutBox().isListMarkerBox()) {
         auto& listMarkerBox = downcast<ElementBox>(previous.layoutBox());
-        return !listMarkerBox.isListMarkerInsideList() || !listMarkerBox.isListMarkerOutside();
+        return !listMarkerBox.isListMarkerOutside();
     }
     if (next.layoutBox().isListMarkerBox()) {
         // FIXME: SHould this ever be the case?
@@ -485,8 +482,8 @@ size_t InlineFormattingUtils::nextWrapOpportunity(size_t startIndex, const Inlin
             for (++index; index < layoutRange.endIndex() && inlineItemList[index].isInlineBoxEnd(); ++index) { }
             return index;
         }
-        auto isNonRubyInlineBox = (currentItem.isInlineBoxStart() || currentItem.isInlineBoxEnd()) && !currentItem.layoutBox().isRubyInlineBox();
-        if (isNonRubyInlineBox) {
+        auto isInlineBox = currentItem.isInlineBoxStart() || currentItem.isInlineBoxEnd();
+        if (isInlineBox) {
             // Need to see what comes next to decide.
             continue;
         }

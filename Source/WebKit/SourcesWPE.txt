@@ -257,6 +257,7 @@ UIProcess/soup/WebProcessPoolSoup.cpp
 
 UIProcess/wpe/AcceleratedBackingStoreDMABuf.cpp
 UIProcess/wpe/ScreenManagerWPE.cpp
+UIProcess/wpe/SystemSettingsManagerProxyWPE.cpp
 UIProcess/wpe/WebPageProxyWPE.cpp
 UIProcess/wpe/WebPreferencesWPE.cpp
 
@@ -291,7 +292,6 @@ WebProcess/WebPage/CoordinatedGraphics/CoordinatedGraphicsScene.cpp
 WebProcess/WebPage/CoordinatedGraphics/CompositingRunLoop.cpp
 WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
 WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
-WebProcess/WebPage/CoordinatedGraphics/SimpleViewportController.cpp
 WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 
 WebProcess/WebPage/dmabuf/AcceleratedSurfaceDMABuf.cpp @no-unify

@@ -37,7 +37,13 @@
 #import "Logging.h"
 #import "WebExtensionAPITabs.h"
 #import "WebExtensionMessageSenderParameters.h"
+#import "WebFrame.h"
+#import <WebCore/LocalFrame.h>
 #import <objc/runtime.h>
+
+#if PLATFORM(IOS_FAMILY)
+#import <UIKit/UIKit.h>
+#endif
 
 namespace WebKit {
 
@@ -371,9 +377,12 @@ NSString *toWebAPI(NSLocale *locale)
     if (!locale.languageCode.length)
         return @"und";
 
+    NSMutableString *result = [locale.languageCode mutableCopy];
+    if (locale.scriptCode.length)
+        [result appendFormat:@"-%@", locale.scriptCode];
     if (locale.countryCode.length)
-        return [NSString stringWithFormat:@"%@-%@", locale.languageCode, locale.countryCode];
-    return locale.languageCode;
+        [result appendFormat:@"-%@", locale.countryCode];
+    return [result copy];
 }
 
 size_t storageSizeOf(NSString *keyOrValue)
@@ -423,6 +432,27 @@ Markable<WTF::UUID> toDocumentIdentifier(WebFrame& frame)
     if (!document)
         return { };
     return document->identifier().object();
+}
+
+Vector<double> availableScreenScales()
+{
+    Vector<double> screenScales;
+
+#if USE(APPKIT)
+    for (NSScreen *screen in NSScreen.screens)
+        screenScales.append(screen.backingScaleFactor);
+#else
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    for (UIScreen *screen in UIScreen.screens)
+        screenScales.append(screen.scale);
+    ALLOW_DEPRECATED_DECLARATIONS_END
+#endif
+
+    if (screenScales.size())
+        return screenScales;
+
+    // Assume 1x if we got no results. This can happen on headless devices (bots).
+    return { 1.0 };
 }
 
 } // namespace WebKit

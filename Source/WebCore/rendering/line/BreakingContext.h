@@ -757,9 +757,9 @@ inline TrailingObjects::CollapseFirstSpace checkWhitespaceCollapsingTransitions(
     // shave it off the list, and shave off a trailing space if the previous end point doesn't
     // preserve whitespace.
     if (lBreak.renderer() && lineWhitespaceCollapsingState.numTransitions() && !(lineWhitespaceCollapsingState.numTransitions() % 2)) {
-        const LegacyInlineIterator* transitions = lineWhitespaceCollapsingState.transitions().data();
-        const LegacyInlineIterator& endpoint = transitions[lineWhitespaceCollapsingState.numTransitions() - 2];
-        const LegacyInlineIterator& startpoint = transitions[lineWhitespaceCollapsingState.numTransitions() - 1];
+        auto transitions = lineWhitespaceCollapsingState.transitions().span();
+        auto& endpoint = transitions[lineWhitespaceCollapsingState.numTransitions() - 2];
+        auto& startpoint = transitions[lineWhitespaceCollapsingState.numTransitions() - 1];
         LegacyInlineIterator currpoint = endpoint;
         while (!currpoint.atEnd() && currpoint != startpoint && currpoint != lBreak)
             currpoint.increment();

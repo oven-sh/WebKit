@@ -43,6 +43,8 @@
 #include <CoreText/CoreText.h>
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ComplexTextController);
@@ -316,6 +318,7 @@ void ComplexTextController::collectComplexTextRuns()
     bool dontSynthesizeSmallCaps = !m_font.fontDescription().hasAutoFontSynthesisSmallCaps();
     bool engageAllSmallCapsProcessing = fontVariantCaps == FontVariantCaps::AllSmall || fontVariantCaps == FontVariantCaps::AllPetite;
     bool engageSmallCapsProcessing = engageAllSmallCapsProcessing || fontVariantCaps == FontVariantCaps::Small || fontVariantCaps == FontVariantCaps::Petite;
+    auto shouldProcessTextSpacingTrim = !m_font.textSpacingTrim().isSpaceAll();
 
     if (engageAllSmallCapsProcessing || engageSmallCapsProcessing)
         m_smallCapsBuffer.resize(m_end);
@@ -327,6 +330,7 @@ void ComplexTextController::collectComplexTextRuns()
     RefPtr<const Font> nextFont;
     RefPtr<const Font> synthesizedFont;
     RefPtr<const Font> smallSynthesizedFont;
+    RefPtr<const Font> halfWidthFont;
 
     CachedTextBreakIterator graphemeClusterIterator(m_run.text(), { }, TextBreakIterator::CharacterMode { }, m_font.fontDescription().computedLocale());
 
@@ -337,6 +341,12 @@ void ComplexTextController::collectComplexTextRuns()
     // We may want to change this code to do so in the future; if we do, then the logic in initiateFontLoadingByAccessingGlyphDataIfApplicable()
     // would need to be updated accordingly too.
     nextFont = m_font.fontForCombiningCharacterSequence(baseOfString.first(currentIndex));
+
+    if (shouldProcessTextSpacingTrim && nextFont && !nextFont->isSystemFontFallbackPlaceholder()) {
+        TextSpacing::CharactersData charactersData = { .currentCharacter = baseCharacter, .currentCharacterClass = TextSpacing::characterClass(baseCharacter) };
+        halfWidthFont = TextSpacing::getHalfWidthFontIfNeeded(*nextFont, m_font.textSpacingTrim(), charactersData);
+        nextFont = halfWidthFont ? halfWidthFont : nextFont;
+    }
 
     bool isSmallCaps = false;
     bool nextIsSmallCaps = false;
@@ -357,6 +367,7 @@ void ComplexTextController::collectComplexTextRuns()
         font = nextFont.get();
         isSmallCaps = nextIsSmallCaps;
         auto previousIndex = currentIndex;
+        halfWidthFont = nullptr;
 
         advanceByCombiningCharacterSequence(graphemeClusterIterator, currentIndex, baseCharacter);
 
@@ -377,6 +388,12 @@ void ComplexTextController::collectComplexTextRuns()
         }
 
         nextFont = m_font.fontForCombiningCharacterSequence(baseOfString.subspan(previousIndex, currentIndex - previousIndex));
+
+        if (shouldProcessTextSpacingTrim && nextFont && !nextFont->isSystemFontFallbackPlaceholder()) {
+            TextSpacing::CharactersData charactersData = { .currentCharacter = baseCharacter, .currentCharacterClass = TextSpacing::characterClass(baseCharacter) };
+            halfWidthFont = TextSpacing::getHalfWidthFontIfNeeded(*nextFont, m_font.textSpacingTrim(), charactersData);
+            nextFont = halfWidthFont ? halfWidthFont : nextFont;
+        }
 
         capitalizedBase = capitalized(baseCharacter);
         if (!synthesizedFont && shouldSynthesizeSmallCaps(dontSynthesizeSmallCaps, nextFont.get(), baseCharacter, capitalizedBase, fontVariantCaps, engageAllSmallCapsProcessing)) {
@@ -859,3 +876,5 @@ ComplexTextController::ComplexTextRun::ComplexTextRun(const Vector<FloatSize>& a
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

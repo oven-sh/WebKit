@@ -169,30 +169,13 @@ bool initializeTranslators()
                 TCompiler* translator = ConstructCompiler(type, spec, output);
                 ShBuiltInResources resources;
                 sh::InitBuiltInResources(&resources);
-                // Enable all the extensions to have more coverage
-                resources.OES_standard_derivatives        = 1;
-                resources.OES_EGL_image_external          = 1;
-                resources.OES_EGL_image_external_essl3    = 1;
-                resources.NV_EGL_stream_consumer_external = 1;
-                resources.ARB_texture_rectangle           = 1;
-                resources.EXT_blend_func_extended         = 1;
-                resources.EXT_conservative_depth          = 1;
-                resources.EXT_draw_buffers                = 1;
-                resources.EXT_frag_depth                  = 1;
-                resources.EXT_shader_texture_lod          = 1;
-                resources.EXT_shader_framebuffer_fetch    = 1;
-                resources.NV_shader_framebuffer_fetch     = 1;
-                resources.ARM_shader_framebuffer_fetch    = 1;
-                resources.EXT_YUV_target                  = 1;
-                resources.APPLE_clip_distance             = 1;
-                resources.MaxDualSourceDrawBuffers        = 1;
-                resources.EXT_gpu_shader5                 = 1;
-                resources.MaxClipDistances                = 1;
-                resources.EXT_shadow_samplers             = 1;
-                resources.EXT_clip_cull_distance          = 1;
-                resources.ANGLE_clip_cull_distance        = 1;
-                resources.EXT_primitive_bounding_box      = 1;
-                resources.OES_primitive_bounding_box      = 1;
+                const bool any = true;
+                const bool msl = output == SH_MSL_METAL_OUTPUT;
+#define ENABLE_EXTENSION(name, forced) if ((forced)) resources.name = 1;
+                FOR_EACH_SH_BUILT_IN_RESOURCES_EXTENSION_OPTION(ENABLE_EXTENSION);
+#undef ENABLE_EXTENSION
+                resources.MaxDualSourceDrawBuffers = 1;
+                resources.MaxDrawBuffers = 8;
                 if (!translator->Init(resources))
                     return false;
                 translators[translatorsCount++] = { translator, type, spec, output };
@@ -236,9 +219,52 @@ void filterOptions(ShShaderOutput output, ShCompileOptions& options)
 #endif
     const bool hlsl = IsOutputHLSL(output);
     const bool spirvVk = output == SH_SPIRV_VULKAN_OUTPUT;
+    const bool wgsl = output == SH_WGSL_OUTPUT;
 #define CHECK_VALID_OPTION(name, i, allowed, forced) options.name = (allowed) ? options.name : (forced);
     FOR_EACH_SH_COMPILE_OPTIONS_BOOL_OPTION(CHECK_VALID_OPTION)
 #undef CHECK_VALID_OPTION
+}
+
+ShShaderOutput resolveShaderOutput(ShShaderOutput output)
+{
+    // Constants in ShaderLang.h version 363.
+    switch (static_cast<unsigned>(output)) {
+    case 0x8B45:
+        return SH_ESSL_OUTPUT;
+    case 0x8B46:
+        return SH_GLSL_COMPATIBILITY_OUTPUT;
+    case 0x8B47:
+        return SH_GLSL_130_OUTPUT;
+    case 0x8B80:
+        return SH_GLSL_140_OUTPUT;
+    case 0x8B81:
+        return SH_GLSL_150_CORE_OUTPUT;
+    case 0x8B82:
+        return SH_GLSL_330_CORE_OUTPUT;
+    case 0x8B83:
+        return SH_GLSL_400_CORE_OUTPUT;
+    case 0x8B84:
+        return SH_GLSL_410_CORE_OUTPUT;
+    case 0x8B85:
+        return SH_GLSL_420_CORE_OUTPUT;
+    case 0x8B86:
+        return SH_GLSL_430_CORE_OUTPUT;
+    case 0x8B87:
+        return SH_GLSL_440_CORE_OUTPUT;
+    case 0x8B88:
+        return SH_GLSL_450_CORE_OUTPUT;
+    case 0x8B48:
+        return SH_HLSL_3_0_OUTPUT;
+    case 0x8B49:
+        return SH_HLSL_4_1_OUTPUT;
+    case 0x8B4B:
+        return SH_SPIRV_VULKAN_OUTPUT;
+    case 0x8B4D:
+        return SH_MSL_METAL_OUTPUT;
+    case 0x8B4E:
+        return SH_WGSL_OUTPUT;
+    };
+    return output;
 }
 
 extern "C" size_t LLVMFuzzerCustomMutator(uint8_t *data, size_t size, size_t maxSize, unsigned int seed)
@@ -272,6 +298,7 @@ extern "C" int LLVMFuzzerTestOneInput (const uint8_t* data, size_t size)
         return 0;
 
     GLSLDumpHeader header { data };
+    header.output = resolveShaderOutput(header.output);
     filterOptions(header.output, header.options);
     auto* translator = getTranslator(header.type, header.spec, header.output);
     if (!translator)

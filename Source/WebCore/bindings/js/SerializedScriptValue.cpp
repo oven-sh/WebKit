@@ -37,6 +37,7 @@
 #include "CryptoKeyRSAComponents.h"
 #include "CryptoKeyRaw.h"
 #include "IDBValue.h"
+#include "ImageBuffer.h"
 #include "JSAudioWorkletGlobalScope.h"
 #include "JSBlob.h"
 #include "JSCryptoKey.h"
@@ -132,6 +133,8 @@
 #else
 #define ASSUME_LITTLE_ENDIAN 1
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -624,7 +627,7 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 const uint32_t currentKeyFormatVersion = 1;
 
-enum class CryptoKeyClassSubtag {
+enum class CryptoKeyClassSubtag : uint8_t {
     HMAC = 0,
     AES = 1,
     RSA = 2,
@@ -634,13 +637,13 @@ enum class CryptoKeyClassSubtag {
 };
 const uint8_t cryptoKeyClassSubtagMaximumValue = 5;
 
-enum class CryptoKeyAsymmetricTypeSubtag {
+enum class CryptoKeyAsymmetricTypeSubtag : bool {
     Public = 0,
     Private = 1
 };
 const uint8_t cryptoKeyAsymmetricTypeSubtagMaximumValue = 1;
 
-enum class CryptoKeyUsageTag {
+enum class CryptoKeyUsageTag : uint8_t {
     Encrypt = 0,
     Decrypt = 1,
     Sign = 2,
@@ -689,7 +692,7 @@ static unsigned countUsages(CryptoKeyUsageBitmap usages)
     return count;
 }
 
-enum class CryptoKeyOKPOpNameTag {
+enum class CryptoKeyOKPOpNameTag : bool {
     X25519 = 0,
     ED25519 = 1,
 };
@@ -1948,11 +1951,7 @@ private:
                 if (arrayBuffer->isResizableOrGrowableShared()) {
                     appendObjectPoolTag(ResizableArrayBufferTag);
                     write(ResizableArrayBufferTag);
-                    uint64_t byteLength = arrayBuffer->byteLength();
-                    write(byteLength);
-                    uint64_t maxByteLength = arrayBuffer->maxByteLength().value_or(0);
-                    write(maxByteLength);
-                    write(arrayBuffer->span());
+                    writeResizableArrayBuffer(arrayBuffer->span(), arrayBuffer->maxByteLength().value_or(0));
                     return true;
                 }
 
@@ -2027,8 +2026,10 @@ private:
                 rawKeySerializer.write(key);
 
                 auto wrappedKey = wrapCryptoKey(m_lexicalGlobalObject, serializedKey);
-                if (!wrappedKey)
-                    return false;
+                if (!wrappedKey) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
 
                 write(*wrappedKey);
                 return true;
@@ -2627,6 +2628,13 @@ private:
     void write(std::span<const uint8_t> data)
     {
         m_buffer.append(data);
+    }
+
+    void writeResizableArrayBuffer(std::span<const uint8_t> data, size_t maxByteLength)
+    {
+        write(static_cast<uint64_t>(data.size()));
+        write(static_cast<uint64_t>(maxByteLength));
+        write(data);
     }
 
     Vector<uint8_t>& m_buffer;
@@ -3512,7 +3520,7 @@ private:
             str = String({ reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
-        UChar* characters;
+        std::span<UChar> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -4515,8 +4523,11 @@ private:
             return JSValue();
 
         Vector<RTCCertificate::DtlsFingerprint> fingerprints;
-        if (!fingerprints.tryReserveInitialCapacity(size))
+        if (!fingerprints.tryReserveInitialCapacity(size)) {
+            SERIALIZE_TRACE("FAIL deserialize");
+            fail();
             return JSValue();
+        }
         for (unsigned i = 0; i < size; i++) {
             CachedStringRef algorithm;
             if (!readStringData(algorithm))
@@ -6488,3 +6499,5 @@ std::optional<ErrorInformation> extractErrorInformationFromErrorInstance(JSC::JS
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
