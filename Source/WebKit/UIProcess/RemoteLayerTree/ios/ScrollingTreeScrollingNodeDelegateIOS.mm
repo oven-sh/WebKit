@@ -188,6 +188,15 @@
 
 #pragma mark - WKBaseScrollViewDelegate
 
+- (BOOL)shouldAllowPanGestureRecognizerToReceiveTouchesInScrollView:(WKBaseScrollView *)scrollView
+{
+    CheckedPtr scrollingTreeNodeDelegate = _scrollingTreeNodeDelegate.get();
+    if (UNLIKELY(!scrollingTreeNodeDelegate))
+        return YES;
+
+    return scrollingTreeNodeDelegate->shouldAllowPanGestureRecognizerToReceiveTouches();
+}
+
 - (UIAxis)axesToPreventScrollingForPanGestureInScrollView:(WKBaseScrollView *)scrollView
 {
     CheckedPtr scrollingTreeNodeDelegate = _scrollingTreeNodeDelegate.get();
@@ -488,6 +497,18 @@ UIScrollView *ScrollingTreeScrollingNodeDelegateIOS::findActingScrollParent(UISc
         return nil;
     
     return WebKit::findActingScrollParent(scrollView, *host);
+}
+
+bool ScrollingTreeScrollingNodeDelegateIOS::shouldAllowPanGestureRecognizerToReceiveTouches() const
+{
+    WeakPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    if (!scrollingCoordinatorProxy)
+        return true;
+
+    if (RefPtr pageClient = scrollingCoordinatorProxy->protectedWebPageProxy()->pageClient())
+        return !pageClient->isSimulatingCompatibilityPointerTouches();
+
+    return true;
 }
 
 void ScrollingTreeScrollingNodeDelegateIOS::computeActiveTouchActionsForGestureRecognizer(UIGestureRecognizer* gestureRecognizer)

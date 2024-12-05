@@ -25,6 +25,7 @@
 #include "AudioSampleFormat.h"
 #include "GStreamerCommon.h"
 #include "GUniquePtrGStreamer.h"
+#include "MediaSampleGStreamer.h"
 #include "SharedBuffer.h"
 #include "WebCodecsAudioDataAlgorithms.h"
 #include <gst/audio/audio-converter.h>
@@ -75,6 +76,12 @@ static std::pair<GstAudioFormat, GstAudioLayout> convertAudioSampleFormatToGStre
     }
     RELEASE_ASSERT_NOT_REACHED();
     return { GST_AUDIO_FORMAT_UNKNOWN, GST_AUDIO_LAYOUT_INTERLEAVED };
+}
+
+Ref<PlatformRawAudioData> PlatformRawAudioData::create(Ref<MediaSample>&& sample)
+{
+    ASSERT(sample->platformSample().type == PlatformSample::GStreamerSampleType);
+    return PlatformRawAudioDataGStreamer::create(GRefPtr { sample->platformSample().sample.gstSample });
 }
 
 RefPtr<PlatformRawAudioData> PlatformRawAudioData::create(std::span<const uint8_t> sourceData, AudioSampleFormat format, float sampleRate, int64_t timestamp, size_t numberOfFrames, size_t numberOfChannels)
@@ -157,8 +164,8 @@ size_t PlatformRawAudioDataGStreamer::numberOfChannels() const
 
 size_t PlatformRawAudioDataGStreamer::numberOfFrames() const
 {
-    auto totalFrames = gst_buffer_get_size(gst_sample_get_buffer(m_sample.get())) / GST_AUDIO_INFO_BPS(&m_info);
-    return totalFrames / numberOfChannels();
+    auto totalSamples = gst_buffer_get_size(gst_sample_get_buffer(m_sample.get())) / GST_AUDIO_INFO_BPS(&m_info);
+    return totalSamples / numberOfChannels();
 }
 
 std::optional<uint64_t> PlatformRawAudioDataGStreamer::duration() const

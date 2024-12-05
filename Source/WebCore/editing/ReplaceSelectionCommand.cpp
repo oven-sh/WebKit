@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2024 Apple Inc. All rights reserved.
  * Copyright (C) 2009-2022 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -87,7 +87,7 @@ enum EFragmentType { EmptyFragment, SingleTextNodeFragment, TreeFragment };
 // --- ReplacementFragment helper class
 
 class ReplacementFragment {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(ReplacementFragment);
+    WTF_MAKE_TZONE_ALLOCATED(ReplacementFragment);
     WTF_MAKE_NONCOPYABLE(ReplacementFragment);
 public:
     ReplacementFragment(RefPtr<DocumentFragment>&&, const VisibleSelection&);
@@ -120,6 +120,8 @@ private:
     bool m_hasInterchangeNewlineAtStart;
     bool m_hasInterchangeNewlineAtEnd;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ReplacementFragment);
 
 static bool isInterchangeNewlineNode(const Node& node)
 {

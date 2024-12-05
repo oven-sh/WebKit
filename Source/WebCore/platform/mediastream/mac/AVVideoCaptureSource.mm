@@ -212,6 +212,12 @@ static WorkQueue& photoQueue()
     return queue.get();
 }
 
+static bool s_useAVCaptureDeviceRotationCoordinatorAPI = false;
+void AVVideoCaptureSource::setUseAVCaptureDeviceRotationCoordinatorAPI(bool value)
+{
+    s_useAVCaptureDeviceRotationCoordinatorAPI = value;
+}
+
 CaptureSourceOrError AVVideoCaptureSource::create(const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, std::optional<PageIdentifier> pageIdentifier)
 {
     auto *avDevice = [PAL::getAVCaptureDeviceClass() deviceWithUniqueID:device.persistentId()];
@@ -1127,6 +1133,16 @@ bool AVVideoCaptureSource::setupCaptureSession()
         return false;
     }
     [session() addOutput:m_videoOutput.get()];
+
+#if PLATFORM(IOS_FAMILY)
+    if (s_useAVCaptureDeviceRotationCoordinatorAPI) {
+        AVCaptureConnection* connection = [m_videoOutput connectionWithMediaType:AVMediaTypeVideo];
+        if ([connection isVideoRotationAngleSupported:0]) {
+            RELEASE_LOG(WebRTC, "Setting AVVideoCaptureSource connection angle to 0");
+            [connection setVideoRotationAngle:0];
+        }
+    }
+#endif
 
     setSessionSizeFrameRateAndZoom();
     m_needsTorchReconfiguration = m_needsTorchReconfiguration || torch();

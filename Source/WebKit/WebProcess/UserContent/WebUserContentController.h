@@ -57,6 +57,9 @@ public:
     static Ref<WebUserContentController> getOrCreate(UserContentControllerIdentifier);
     virtual ~WebUserContentController();
 
+    void ref() const final { WebCore::UserContentProvider::ref(); }
+    void deref() const final { WebCore::UserContentProvider::deref(); }
+
     UserContentControllerIdentifier identifier() { return m_identifier; }
 
     void addUserScript(InjectedBundleScriptWorld&, WebCore::UserScript&&);

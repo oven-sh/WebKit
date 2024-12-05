@@ -86,6 +86,8 @@ private:
     NavigationAPIMethodTrackerIdentifier identifier;
 };
 
+enum class ShouldCopyStateObjectFromCurrentEntry : bool { No, Yes };
+
 class Navigation final : public RefCounted<Navigation>, public EventTarget, public LocalDOMWindowProperty {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(Navigation);
 public:
@@ -145,7 +147,7 @@ public:
     bool dispatchPushReplaceReloadNavigateEvent(const URL&, NavigationNavigationType, bool isSameDocument, FormState*, SerializedScriptValue* classicHistoryAPIState = nullptr);
     bool dispatchDownloadNavigateEvent(const URL&, const String& downloadFilename);
 
-    void updateForNavigation(Ref<HistoryItem>&&, NavigationNavigationType);
+    void updateForNavigation(Ref<HistoryItem>&&, NavigationNavigationType, ShouldCopyStateObjectFromCurrentEntry = ShouldCopyStateObjectFromCurrentEntry::No);
     void updateForReactivation(Vector<Ref<HistoryItem>>& newHistoryItems, HistoryItem& reactivatedItem);
     void updateForActivation(HistoryItem* previousItem, std::optional<NavigationNavigationType>);
 

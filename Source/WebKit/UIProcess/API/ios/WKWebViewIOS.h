@@ -212,6 +212,7 @@ enum class TapHandlingResult : uint8_t;
 @property (nonatomic, readonly) BOOL _isWindowResizingEnabled;
 #endif
 
+@property (nonatomic, readonly) BOOL _isSimulatingCompatibilityPointerTouches;
 @property (nonatomic, readonly) WKVelocityTrackingScrollView *_scrollViewInternal;
 @property (nonatomic, readonly) CGRect _contentRectForUserInteraction;
 
@@ -223,6 +224,8 @@ enum class TapHandlingResult : uint8_t;
 
 - (void)_overrideZoomScaleParametersWithMinimumZoomScale:(CGFloat)minimumZoomScale maximumZoomScale:(CGFloat)maximumZoomScale allowUserScaling:(BOOL)allowUserScaling;
 - (void)_clearOverrideZoomScaleParameters;
+
+- (void)_setPointerTouchCompatibilitySimulatorEnabled:(BOOL)enabled;
 
 #if ENABLE(PAGE_LOAD_OBSERVER)
 - (void)_updatePageLoadObserverState NS_DIRECT;

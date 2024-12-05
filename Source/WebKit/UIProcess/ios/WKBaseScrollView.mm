@@ -35,6 +35,7 @@
 #import <wtf/RetainPtr.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/SetForScope.h>
+#import <wtf/WeakObjCPtr.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
@@ -214,6 +215,21 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return YES;
 
     return [super gestureRecognizerShouldBegin:gestureRecognizer];
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch
+{
+    if (self.panGestureRecognizer == gestureRecognizer) {
+        RetainPtr delegate = [self baseScrollViewDelegate];
+        if (delegate && ![delegate shouldAllowPanGestureRecognizerToReceiveTouchesInScrollView:self])
+            return NO;
+    }
+
+    static BOOL callIntoSuperclass = [UIScrollView instancesRespondToSelector:@selector(gestureRecognizer:shouldReceiveTouch:)];
+    if (!callIntoSuperclass)
+        return YES;
+
+    return [super gestureRecognizer:gestureRecognizer shouldReceiveTouch:touch];
 }
 
 @end

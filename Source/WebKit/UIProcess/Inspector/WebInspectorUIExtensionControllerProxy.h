@@ -53,6 +53,9 @@ public:
     static Ref<WebInspectorUIExtensionControllerProxy> create(WebPageProxy& inspectorPage);
     virtual ~WebInspectorUIExtensionControllerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     // Implemented in generated WebInspectorUIExtensionControllerProxyMessageReceiver.cpp
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 

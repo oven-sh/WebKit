@@ -35,6 +35,7 @@
 #include <WebCore/LayerPool.h>
 #include <WebCore/PlatformCALayer.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -47,7 +48,7 @@ class WebFrame;
 class WebPage;
 
 // FIXME: This class doesn't do much now. Roll into RemoteLayerTreeDrawingArea?
-class RemoteLayerTreeContext : public WebCore::GraphicsLayerFactory,  public RefCounted<RemoteLayerTreeContext>, public CanMakeWeakPtr<RemoteLayerTreeContext> {
+class RemoteLayerTreeContext : public RefCountedAndCanMakeWeakPtr<RemoteLayerTreeContext>, public WebCore::GraphicsLayerFactory {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeContext);
 public:
     static Ref<RemoteLayerTreeContext> create(WebPage& webpage)

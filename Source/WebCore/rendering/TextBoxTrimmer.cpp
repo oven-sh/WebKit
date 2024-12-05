@@ -26,6 +26,7 @@
 #include "config.h"
 #include "TextBoxTrimmer.h"
 
+#include "InlineIteratorBox.h"
 #include "InlineIteratorLineBox.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderMultiColumnFlow.h"

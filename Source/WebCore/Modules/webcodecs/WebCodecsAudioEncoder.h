@@ -94,7 +94,7 @@ private:
 
     ExceptionOr<void> closeEncoder(Exception&&);
     ExceptionOr<void> resetEncoder(const Exception&);
-    void setInternalEncoder(UniqueRef<AudioEncoder>&&);
+    void setInternalEncoder(Ref<AudioEncoder>&&);
     void scheduleDequeueEvent();
 
     void queueControlMessageAndProcess(WebCodecsControlMessage<WebCodecsAudioEncoder>&&);
@@ -105,10 +105,9 @@ private:
     size_t m_encodeQueueSize { 0 };
     Ref<WebCodecsEncodedAudioChunkOutputCallback> m_output;
     Ref<WebCodecsErrorCallback> m_error;
-    std::unique_ptr<AudioEncoder> m_internalEncoder;
+    RefPtr<AudioEncoder> m_internalEncoder;
     bool m_dequeueEventScheduled { false };
-    Deque<Ref<DeferredPromise>> m_pendingFlushPromises;
-    size_t m_clearFlushPromiseCount { 0 };
+    Vector<Ref<DeferredPromise>> m_pendingFlushPromises;
     bool m_isKeyChunkRequired { false };
     Deque<WebCodecsControlMessage<WebCodecsAudioEncoder>> m_controlMessageQueue;
     bool m_isMessageQueueBlocked { false };

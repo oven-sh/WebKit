@@ -216,7 +216,7 @@ public:
     WEBCORE_EXPORT HandleUserInputEventResult handleMouseReleaseEvent(const PlatformMouseEvent&);
     WEBCORE_EXPORT bool handleMouseForceEvent(const PlatformMouseEvent&);
 
-    WEBCORE_EXPORT HandleUserInputEventResult handleWheelEvent(const PlatformWheelEvent&, OptionSet<WheelEventProcessingSteps>);
+    WEBCORE_EXPORT std::pair<HandleUserInputEventResult, OptionSet<EventHandling>> handleWheelEvent(const PlatformWheelEvent&, OptionSet<WheelEventProcessingSteps>);
     void defaultWheelEventHandler(Node*, WheelEvent&);
     void wheelEventWasProcessedByMainThread(const PlatformWheelEvent&, OptionSet<EventHandling>);
 

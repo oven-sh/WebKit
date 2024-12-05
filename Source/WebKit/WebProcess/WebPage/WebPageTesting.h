@@ -46,6 +46,9 @@ public:
     static Ref<WebPageTesting> create(WebPage&);
     virtual ~WebPageTesting();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
 private:
     explicit WebPageTesting(WebPage&);
 

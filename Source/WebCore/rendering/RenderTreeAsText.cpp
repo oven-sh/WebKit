@@ -302,7 +302,7 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
         if (borderTop || borderRight || borderBottom || borderLeft) {
             ts << " [border:";
 
-            auto printBorder = [&ts, &o] (const LayoutUnit& width, const BorderStyle& style, const StyleColor& color) {
+            auto printBorder = [&ts, &o] (const LayoutUnit& width, const BorderStyle& style, const Style::Color& color) {
                 if (!width)
                     ts << " none";
                 else {

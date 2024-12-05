@@ -47,13 +47,14 @@ namespace WebKit {
 static WebExtensionFrameParameters frameParametersForFrame(_WKFrameTreeNode *frame, _WKFrameTreeNode *parentFrame, WebExtensionTab* tab, WebExtensionContext* extensionContext, bool includeFrameIdentifier)
 {
     auto *frameInfo = frame.info;
-    auto *frameURL = frameInfo.request.URL;
+    auto frameURL = URL { frameInfo.request.URL };
 
     return {
-        static_cast<bool>(frameInfo._errorOccurred),
-        extensionContext->hasPermission(frameURL, tab) ? std::optional(frameURL) : std::nullopt,
-        parentFrame ? toWebExtensionFrameIdentifier(parentFrame.info) : WebExtensionFrameConstants::NoneIdentifier,
-        includeFrameIdentifier ? std::optional(toWebExtensionFrameIdentifier(frameInfo)) : std::nullopt
+        .errorOccurred = static_cast<bool>(frameInfo._errorOccurred),
+        .url = extensionContext->hasPermission(frameURL, tab) ? std::optional { frameURL } : std::nullopt,
+        .parentFrameIdentifier = parentFrame ? toWebExtensionFrameIdentifier(parentFrame.info) : WebExtensionFrameConstants::NoneIdentifier,
+        .frameIdentifier = includeFrameIdentifier ? std::optional { toWebExtensionFrameIdentifier(frameInfo) } : std::nullopt,
+        .documentIdentifier = WTF::UUID::fromNSUUID(frameInfo._documentIdentifier)
     };
 }
 

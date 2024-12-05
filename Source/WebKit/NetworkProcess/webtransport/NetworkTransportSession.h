@@ -40,9 +40,7 @@
 namespace WebKit {
 
 class NetworkConnectionToWebProcess;
-class NetworkTransportBidirectionalStream;
-class NetworkTransportReceiveStream;
-class NetworkTransportSendStream;
+class NetworkTransportStream;
 
 struct SharedPreferencesForWebProcess;
 struct WebTransportSessionIdentifierType;
@@ -57,6 +55,9 @@ public:
     static void initialize(NetworkConnectionToWebProcess&, URL&&, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&&);
 
     ~NetworkTransportSession();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     void sendDatagram(std::span<const uint8_t>, CompletionHandler<void()>&&);
     void createOutgoingUnidirectionalStream(CompletionHandler<void(std::optional<WebTransportStreamIdentifier>)>&&);
@@ -83,9 +84,9 @@ private:
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final;
 
-    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportBidirectionalStream>> m_bidirectionalStreams;
-    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportReceiveStream>> m_receiveStreams;
-    HashMap<WebTransportStreamIdentifier, UniqueRef<NetworkTransportSendStream>> m_sendStreams;
+    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportStream>> m_bidirectionalStreams;
+    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportStream>> m_receiveStreams;
+    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportStream>> m_sendStreams;
     WeakPtr<NetworkConnectionToWebProcess> m_connectionToWebProcess;
 
 #if PLATFORM(COCOA)

@@ -424,6 +424,11 @@ Layout::ConstraintsForInlineContent BoxGeometryUpdater::formattingContextConstra
     auto& rootRenderer = this->rootRenderer();
     auto writingMode = this->writingMode();
 
+    if (rootRenderer.isRenderSVGText()) {
+        auto horizontalConstraints = Layout::HorizontalConstraints { 0_lu, LayoutUnit::max() };
+        return { { horizontalConstraints, 0_lu }, 0_lu };
+    }
+
     auto padding = logicalPadding(rootRenderer, availableWidth, writingMode);
     auto border = logicalBorder(rootRenderer, writingMode);
     if (writingMode.isVertical() && !writingMode.isBlockFlipped()) {

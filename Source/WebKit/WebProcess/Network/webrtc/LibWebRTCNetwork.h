@@ -46,8 +46,8 @@ public:
     explicit LibWebRTCNetwork(WebProcess&);
     ~LibWebRTCNetwork();
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
     IPC::Connection* connection() { return m_connection.get(); }
     void setConnection(RefPtr<IPC::Connection>&&);

@@ -117,6 +117,7 @@
 		5311BD531EA71CAD00525281 /* Signals.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5311BD511EA71CAD00525281 /* Signals.cpp */; };
 		5311BD5C1EA822F900525281 /* ThreadMessage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5311BD5B1EA822F900525281 /* ThreadMessage.cpp */; };
 		53534F2A1EC0E10E00141B2F /* MachExceptions.defs in Sources */ = {isa = PBXBuildFile; fileRef = 53534F291EC0E10E00141B2F /* MachExceptions.defs */; settings = {ATTRIBUTES = (Client, Server, ); }; };
+		5363861F2CFE391C0034E883 /* AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h in Headers */ = {isa = PBXBuildFile; fileRef = 5363861E2CFE391C0034E883 /* AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		53CAC0632C6FBD8200B1A77C /* ScopedPrintStream.h in Headers */ = {isa = PBXBuildFile; fileRef = 53CAC0622C6FBD8200B1A77C /* ScopedPrintStream.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		53F202252CAB267000A33D14 /* TaggedPtr.h in Headers */ = {isa = PBXBuildFile; fileRef = 53F202242CAB267000A33D14 /* TaggedPtr.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		53FC70D023FB950C005B1990 /* OSLogPrintStream.mm in Sources */ = {isa = PBXBuildFile; fileRef = 53FC70CF23FB950C005B1990 /* OSLogPrintStream.mm */; };
@@ -1278,6 +1279,7 @@
 		5311BD5B1EA822F900525281 /* ThreadMessage.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ThreadMessage.cpp; sourceTree = "<group>"; };
 		5338EBA423AB04D100382662 /* EnumClassOperatorOverloads.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EnumClassOperatorOverloads.h; sourceTree = "<group>"; };
 		53534F291EC0E10E00141B2F /* MachExceptions.defs */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.mig; path = MachExceptions.defs; sourceTree = "<group>"; };
+		5363861E2CFE391C0034E883 /* AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h; sourceTree = "<group>"; };
 		539EB0621D55284200C82EF7 /* LEBDecoder.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LEBDecoder.h; sourceTree = "<group>"; };
 		53CAC0622C6FBD8200B1A77C /* ScopedPrintStream.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ScopedPrintStream.h; sourceTree = "<group>"; };
 		53EC253C1E95AD30000831B9 /* PriorityQueue.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PriorityQueue.h; sourceTree = "<group>"; };
@@ -2133,6 +2135,7 @@
 				A8A4731B151A825B004123FF /* text */,
 				A8A47339151A825B004123FF /* threads */,
 				A8A47348151A825B004123FF /* unicode */,
+				5363861E2CFE391C0034E883 /* AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h */,
 				E3B8E6012961EA7600A8AEE3 /* AccessibleAddress.h */,
 				CDCC9BC422382FCE00FFB51C /* AggregateLogger.h */,
 				CD6D9FCD1EEF3AD4008B0671 /* Algorithms.h */,
@@ -3204,6 +3207,7 @@
 				FE6997E129D241630078B9C6 /* AbortWithReasonSPI.h in Headers */,
 				144EB7462CBC94B100926E1B /* AbstractRefCounted.h in Headers */,
 				1404B3E52CBC954D00A7471C /* AbstractRefCountedAndCanMakeWeakPtr.h in Headers */,
+				5363861F2CFE391C0034E883 /* AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h in Headers */,
 				E3B8E6032961EA7600A8AEE3 /* AccessibleAddress.h in Headers */,
 				E383AAC92B6C730B00058E60 /* AdaptiveStringSearcher.h in Headers */,
 				DD3DC8FA27A4BF8E007E5B61 /* AggregateLogger.h in Headers */,

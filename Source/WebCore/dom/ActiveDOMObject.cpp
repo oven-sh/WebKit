@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2024 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -148,7 +148,7 @@ void ActiveDOMObject::queueTaskInEventLoop(TaskSource source, Function<void ()>&
 }
 
 class ActiveDOMObjectEventDispatchTask : public EventLoopTask {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(ActiveDOMObjectEventDispatchTask);
+    WTF_MAKE_TZONE_ALLOCATED(ActiveDOMObjectEventDispatchTask);
 public:
     ActiveDOMObjectEventDispatchTask(TaskSource source, EventLoopTaskGroup& group, ActiveDOMObject& object, Function<void()>&& dispatchEvent)
         : EventLoopTask(source, group)
@@ -176,6 +176,8 @@ private:
     Ref<ActiveDOMObject> m_object;
     Function<void()> m_dispatchEvent;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ActiveDOMObjectEventDispatchTask);
 
 void ActiveDOMObject::queueTaskToDispatchEventInternal(EventTarget& target, TaskSource source, Ref<Event>&& event)
 {

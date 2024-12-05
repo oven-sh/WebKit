@@ -37,7 +37,7 @@ namespace CSS {
 void Serialize<ColorScheme>::operator()(StringBuilder& builder, const ColorScheme& value)
 {
     if (value.isNormal()) {
-        serializationForCSS(builder, Constant<CSSValueNormal> { });
+        serializationForCSS(builder, Keyword::Normal { });
         return;
     }
 

@@ -63,6 +63,9 @@ public:
     static Ref<RemoteSourceBufferProxy> create(GPUConnectionToWebProcess&, RemoteSourceBufferIdentifier, Ref<WebCore::SourceBufferPrivate>&&, RemoteMediaPlayerProxy&);
     virtual ~RemoteSourceBufferProxy();
 
+    void ref() const final { WebCore::SourceBufferPrivateClient::ref(); }
+    void deref() const final { WebCore::SourceBufferPrivateClient::deref(); }
+
     void setMediaPlayer(RemoteMediaPlayerProxy&);
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;

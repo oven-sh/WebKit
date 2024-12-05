@@ -57,7 +57,7 @@ private:
     GRefPtr<GstElement> incomingTrackProcessor();
     GRefPtr<GstElement> createParser();
 
-    void installRtpBufferPadProbe(GRefPtr<GstPad>&&);
+    void installRtpBufferPadProbe(const GRefPtr<GstPad>&);
 
     void trackReady();
 

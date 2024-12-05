@@ -33,6 +33,7 @@
 #include "PlatformSpeechSynthesisVoice.h"
 #include "WebKitAudioSinkGStreamer.h"
 #include <spiel/spiel.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -162,15 +163,14 @@ Vector<RefPtr<PlatformSpeechSynthesisVoice>> SpielSpeechWrapper::initializeVoice
     while (auto item = g_list_model_get_item(voices, position++)) {
         auto voice = SPIEL_VOICE(item);
         auto name = makeString(span(spiel_voice_get_name(voice)));
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN; // GLib port
-        const char* const* languages = spiel_voice_get_languages(voice);
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END;
-        for (unsigned i = 0; i < G_N_ELEMENTS(languages); i++) {
-            auto language = makeString(span(languages[i]));
-            bool isDefault = !i;
-            auto uri = generateVoiceURI(voice, language);
-            platformVoices.append(PlatformSpeechSynthesisVoice::create(uri, name, language, false, isDefault));
+        auto isDefault = true;
+        const auto languages = span(const_cast<char**>(spiel_voice_get_languages(voice)));
+        for (const auto language : languages) {
+            auto languageString = makeString(span(language));
+            auto uri = generateVoiceURI(voice, languageString);
+            platformVoices.append(PlatformSpeechSynthesisVoice::create(uri, name, languageString, false, isDefault));
             m_voices.add(uri, GRefPtr(voice));
+            isDefault = false;
         }
     }
     return platformVoices;

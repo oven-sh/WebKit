@@ -91,13 +91,13 @@ std::optional<SourceImage> RemoteDisplayListRecorder::sourceImage(RenderingResou
 
 void RemoteDisplayListRecorder::startListeningForIPC()
 {
-    m_renderingBackend->streamConnection().startReceivingMessages(*this, Messages::RemoteDisplayListRecorder::messageReceiverName(), m_imageBufferIdentifier.toUInt64());
+    protectedRenderingBackend()->protectedStreamConnection()->startReceivingMessages(*this, Messages::RemoteDisplayListRecorder::messageReceiverName(), m_imageBufferIdentifier.toUInt64());
 }
 
 void RemoteDisplayListRecorder::stopListeningForIPC()
 {
-    if (auto renderingBackend = std::exchange(m_renderingBackend, { }))
-        renderingBackend->streamConnection().stopReceivingMessages(Messages::RemoteDisplayListRecorder::messageReceiverName(), m_imageBufferIdentifier.toUInt64());
+    if (RefPtr renderingBackend = std::exchange(m_renderingBackend, nullptr))
+        renderingBackend->protectedStreamConnection()->stopReceivingMessages(Messages::RemoteDisplayListRecorder::messageReceiverName(), m_imageBufferIdentifier.toUInt64());
 }
 
 void RemoteDisplayListRecorder::save()
@@ -525,9 +525,10 @@ void RemoteDisplayListRecorder::fillEllipse(const FloatRect& rect)
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
 SharedVideoFrameReader& RemoteDisplayListRecorder::sharedVideoFrameReader()
 {
-    if (!m_sharedVideoFrameReader)
-        m_sharedVideoFrameReader = makeUnique<SharedVideoFrameReader>(Ref { m_renderingBackend->gpuConnectionToWebProcess().videoFrameObjectHeap() }, m_renderingBackend->gpuConnectionToWebProcess().webProcessIdentity());
-
+    if (!m_sharedVideoFrameReader) {
+        Ref gpuConnectionToWebProcess = m_renderingBackend->gpuConnectionToWebProcess();
+        m_sharedVideoFrameReader = makeUnique<SharedVideoFrameReader>(Ref { gpuConnectionToWebProcess->videoFrameObjectHeap() }, gpuConnectionToWebProcess->webProcessIdentity());
+    }
     return *m_sharedVideoFrameReader;
 }
 

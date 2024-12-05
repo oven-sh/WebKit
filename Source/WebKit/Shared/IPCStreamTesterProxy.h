@@ -45,6 +45,9 @@ class IPCStreamTesterProxy final : public IPC::MessageReceiver, public RefCounte
 public:
     ~IPCStreamTesterProxy() = default;
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     // IPC::MessageReceiver overrides.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 

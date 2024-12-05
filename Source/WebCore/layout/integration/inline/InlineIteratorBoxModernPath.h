@@ -193,11 +193,12 @@ public:
     void traverseNextBoxOnLineSkippingChildren()
     {
         auto lineIndex = box().lineIndex();
+        bool wasInlineBox = box().isInlineBox();
         auto& startBox = box().layoutBox();
 
         traverseNextBox();
 
-        if (startBox.isInlineBox()) {
+        if (wasInlineBox) {
             while (!atEnd() && isWithinInlineBox(startBox))
                 traverseNextBox();
         }
@@ -260,19 +261,27 @@ public:
     TextDirection direction() const { return bidiLevel() % 2 ? TextDirection::RTL : TextDirection::LTR; }
     bool isFirstLine() const { return !box().lineIndex(); }
 
+    const Vector<SVGTextFragment>& svgTextFragments() const
+    {
+        return m_inlineContent->svgTextFragments(m_boxIndex);
+    }
+
     friend bool operator==(const BoxModernPath&, const BoxModernPath&) = default;
 
     bool atEnd() const { return !m_inlineContent || m_boxIndex == boxes().size(); }
     const InlineDisplay::Box& box() const { return boxes()[m_boxIndex]; }
     auto& inlineContent() const { return *m_inlineContent; }
 
+    size_t boxIndex() const { return m_boxIndex; }
+
 private:
     bool isWithinInlineBox(const Layout::Box& inlineBox)
     {
-        auto* layoutBox = &box().layoutBox().parent();
-        for (; layoutBox->isInlineBox(); layoutBox = &layoutBox->parent()) {
+        for (auto* layoutBox = &box().layoutBox().parent();; layoutBox = &layoutBox->parent()) {
             if (layoutBox == &inlineBox)
                 return true;
+            if (!layoutBox->isInlineBox())
+                return false;
         }
         return false;
     }

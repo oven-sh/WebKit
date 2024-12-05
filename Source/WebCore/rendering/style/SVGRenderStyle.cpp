@@ -132,7 +132,7 @@ void SVGRenderStyle::copyNonInheritedFrom(const SVGRenderStyle& other)
     m_layoutData = other.m_layoutData;
 }
 
-static bool colorChangeRequiresRepaint(const StyleColor& a, const StyleColor& b, bool currentColorDiffers)
+static bool colorChangeRequiresRepaint(const Style::Color& a, const Style::Color& b, bool currentColorDiffers)
 {
     if (a != b)
         return true;

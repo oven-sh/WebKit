@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -72,7 +72,7 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProvisionalPageProxy);
 
-ProvisionalPageProxy::ProvisionalPageProxy(WebPageProxy& page, Ref<FrameProcess>&& frameProcess, BrowsingContextGroup& group, std::unique_ptr<SuspendedPageProxy> suspendedPage, API::Navigation& navigation, bool isServerRedirect, const WebCore::ResourceRequest& request, ProcessSwapRequestedByClient processSwapRequestedByClient, bool isProcessSwappingOnNavigationResponse, API::WebsitePolicies* websitePolicies, WebsiteDataStore* replacedDataStoreForWebArchiveLoad)
+ProvisionalPageProxy::ProvisionalPageProxy(WebPageProxy& page, Ref<FrameProcess>&& frameProcess, BrowsingContextGroup& group, RefPtr<SuspendedPageProxy>&& suspendedPage, API::Navigation& navigation, bool isServerRedirect, const WebCore::ResourceRequest& request, ProcessSwapRequestedByClient processSwapRequestedByClient, bool isProcessSwappingOnNavigationResponse, API::WebsitePolicies* websitePolicies, WebsiteDataStore* replacedDataStoreForWebArchiveLoad)
     : m_page(page)
     , m_webPageID(suspendedPage ? suspendedPage->webPageID() : PageIdentifier::generate())
     , m_frameProcess(WTFMove(frameProcess))
@@ -233,6 +233,7 @@ void ProvisionalPageProxy::cancel()
         SecurityOriginData::fromURLWithoutStrictOpaqueness(m_request.url()),
         { },
         m_mainFrame->frameID(),
+        std::nullopt,
         std::nullopt,
         m_mainFrame->processID(),
         m_mainFrame->isFocused(),

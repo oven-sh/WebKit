@@ -51,6 +51,9 @@ public:
     static Ref<RemoteMediaSessionCoordinatorProxy> create(WebPageProxy&, Ref<MediaSessionCoordinatorProxyPrivate>&&);
     ~RemoteMediaSessionCoordinatorProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     void seekTo(double, CompletionHandler<void(bool)>&&);

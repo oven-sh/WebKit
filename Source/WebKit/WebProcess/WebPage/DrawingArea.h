@@ -77,6 +77,9 @@ class DrawingArea : public RefCounted<DrawingArea>, public IPC::MessageReceiver,
 public:
     static RefPtr<DrawingArea> create(WebPage&, const WebPageCreationParameters&);
     virtual ~DrawingArea();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
     
     DrawingAreaType type() const { return m_type; }
     DrawingAreaIdentifier identifier() const { return m_identifier; }

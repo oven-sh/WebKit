@@ -49,7 +49,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(DownloadProxyMap);
 
 DownloadProxyMap::DownloadProxyMap(NetworkProcessProxy& process)
     : m_process(process)
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) && !HAVE(MODERN_DOWNLOADPROGRESS)
     , m_shouldTakeAssertion(WTF::processHasEntitlement("com.apple.multitasking.systemappassertions"_s))
 #endif
 {

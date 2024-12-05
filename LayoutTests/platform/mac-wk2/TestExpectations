@@ -1346,7 +1346,6 @@ webkit.org/b/241265 [ Debug ] imported/w3c/web-platform-tests/html/rendering/rep
 
 # NOTIFICATION_EVENT is Ventura+
 [ Ventura+ ] http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
-[ Ventura+ ] http/tests/workers/service/shownotification-allowed.html [ Pass ]
 [ Ventura+ ] http/tests/workers/service/shownotification-invalid-data.html [ Pass ]
 [ Ventura+ ] http/wpt/push-api/pushEvent.any.serviceworker.html [ Pass ]
 [ Ventura+ ] imported/w3c/web-platform-tests/notifications/idlharness.https.any.html [ Pass ]
@@ -1600,6 +1599,11 @@ webkit.org/b/263396 css3/color/text.html [ Skip ]
 [ Release arm64 ] http/tests/webgpu/webgpu/api [ Pass Failure Timeout ]
 [ Release arm64 ] http/tests/webgpu/webgpu/shader [ Pass Failure Timeout ]
 [ Release arm64 ] http/tests/webgpu/webgpu/web_platform [ Pass Failure Timeout ]
+
+# timeout on Intel Macs due to difference in handling infinite loops
+[ x86_64 ] fast/webgpu/regression/repro_283595-for.html [ Skip ]
+[ x86_64 ] fast/webgpu/regression/repro_283595-loop.html [ Skip ]
+[ x86_64 ] fast/webgpu/regression/repro_283595-while.html [ Skip ]
 
 # pixel differences on Intel Macs
 [ x86_64 ] fast/webgpu/regression/repro_275345.html [ ImageOnlyFailure ]
@@ -1932,3 +1936,6 @@ webkit.org/b/283210 http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavai
 webkit.org/b/283596 [ Sequoia+ Debug ] ipc/cfnetwork-crashes-with-string-to-string-http-headers.html [ Skip ]
 
 webkit.org/b/283740 [ Debug ] http/wpt/webauthn/public-key-credential-get-success-u2f.https.html [ Skip ]
+
+# webkit.org/b/283999 REGRESSION(286110@main?): [macOS] http/tests/workers/service/shownotification-allowed.html is a constant failure (flaky in EWS) 
+[ Ventura+ ] http/tests/workers/service/shownotification-allowed.html [ Failure ]

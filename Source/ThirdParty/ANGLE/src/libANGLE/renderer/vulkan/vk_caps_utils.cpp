@@ -355,8 +355,10 @@ void Renderer::ensureCapsInitialized() const
     // Vulkan doesn't support ASTC 3D block textures, which are required by
     // GL_OES_texture_compression_astc.
     mNativeExtensions.textureCompressionAstcOES = false;
-    // Vulkan does not support sliced 3D ASTC textures either.
-    mNativeExtensions.textureCompressionAstcSliced3dKHR = false;
+    // Enable KHR_texture_compression_astc_sliced_3d
+    mNativeExtensions.textureCompressionAstcSliced3dKHR =
+        mNativeExtensions.textureCompressionAstcLdrKHR &&
+        getFeatures().supportsAstcSliced3d.enabled;
 
     // Vulkan doesn't guarantee HDR blocks decoding without VK_EXT_texture_compression_astc_hdr.
     mNativeExtensions.textureCompressionAstcHdrKHR = false;
@@ -593,8 +595,7 @@ void Renderer::ensureCapsInitialized() const
 
     mNativeExtensions.blendEquationAdvancedCoherentKHR =
         mFeatures.supportsBlendOperationAdvancedCoherent.enabled ||
-        (mFeatures.emulateAdvancedBlendEquations.enabled &&
-         mFeatures.supportsShaderFramebufferFetch.enabled);
+        (mFeatures.emulateAdvancedBlendEquations.enabled && mIsColorFramebufferFetchCoherent);
 
     // Enable EXT_unpack_subimage
     mNativeExtensions.unpackSubimageEXT = true;
@@ -995,7 +996,7 @@ void Renderer::ensureCapsInitialized() const
     if (getFeatures().supportsShaderFramebufferFetch.enabled)
     {
         mNativeExtensions.shaderFramebufferFetchEXT = true;
-        mNativeExtensions.shaderFramebufferFetchARM = mNativeExtensions.shaderFramebufferFetchEXT;
+        mNativeExtensions.shaderFramebufferFetchARM = true;
         // ANGLE correctly maps gl_LastFragColorARM to input attachment 0 and has no problem with
         // MRT.
         mNativeCaps.fragmentShaderFramebufferFetchMRT = true;
@@ -1294,7 +1295,7 @@ void Renderer::ensureCapsInitialized() const
 
     // GL_ANGLE_shader_pixel_local_storage
     mNativeExtensions.shaderPixelLocalStorageANGLE = true;
-    if (getFeatures().supportsShaderFramebufferFetch.enabled)
+    if (getFeatures().supportsShaderFramebufferFetch.enabled && mIsColorFramebufferFetchCoherent)
     {
         mNativeExtensions.shaderPixelLocalStorageCoherentANGLE = true;
         mNativePLSOptions.type             = ShPixelLocalStorageType::FramebufferFetch;
@@ -1377,6 +1378,9 @@ void Renderer::ensureCapsInitialized() const
     mNativeExtensions.logicOpANGLE = mPhysicalDeviceFeatures.logicOp == VK_TRUE;
 
     mNativeExtensions.YUVTargetEXT = mFeatures.supportsExternalFormatResolve.enabled;
+
+    mNativeExtensions.textureStorageCompressionEXT =
+        mFeatures.supportsImageCompressionControl.enabled;
 
     // Log any missing extensions required for GLES 3.2.
     LogMissingExtensionsForGLES32(mNativeExtensions);

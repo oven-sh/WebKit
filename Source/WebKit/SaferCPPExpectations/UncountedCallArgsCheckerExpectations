@@ -371,11 +371,8 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsEventCocoa.mm
 WebProcess/Extensions/Bindings/Cocoa/JSWebExtensionWrapperCocoa.mm
 WebProcess/FileAPI/BlobRegistryProxy.cpp
 WebProcess/FullScreen/WebFullScreenManager.cpp
-WebProcess/GPU/ShapeDetection/RemoteBarcodeDetectorProxy.cpp
-WebProcess/GPU/ShapeDetection/RemoteTextDetectorProxy.cpp
 WebProcess/GPU/graphics/ImageBufferShareableBitmapBackend.cpp
 WebProcess/GPU/graphics/RemoteNativeImageBackendProxy.cpp
-WebProcess/GPU/graphics/RemoteRenderingBackendProxy.cpp
 WebProcess/GPU/graphics/RemoteResourceCacheProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteComputePassEncoderProxy.cpp
 WebProcess/GPU/graphics/cocoa/ImageBufferShareableMappedIOSurfaceBackend.cpp

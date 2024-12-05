@@ -37,6 +37,7 @@
 #include "NetworkSession.h"
 #include "WebCoreArgumentCoders.h"
 #include "WebErrors.h"
+#include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SharedBuffer.h>
 #include <wtf/NeverDestroyed.h>

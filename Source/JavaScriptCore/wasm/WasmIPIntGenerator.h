@@ -210,6 +210,19 @@ struct TailCallIndirectMetadata {
     CallArgumentBytecode argumentBytecode[0];
 };
 
+struct CallRefMetadata {
+    uint8_t length; // 1B for length
+    uint32_t typeIndex; // 4B for type index
+    CallArgumentBytecode argumentBytecode[0];
+};
+
+struct TailCallRefMetadata {
+    uint8_t length; // 1B for length
+    uint32_t typeIndex; // 4B for type index
+    int32_t callerStackArgSize; // 4B for caller stack size
+    CallArgumentBytecode argumentBytecode[0];
+};
+
 // Metadata structure for returns:
 
 enum class CallResultBytecode : uint8_t { // (mINT)
@@ -245,6 +258,75 @@ enum class UIntBytecode: uint8_t {
     End = 0x11, // 0x0d: end
 
     NumOpcodes // this must be the last element of the enum!
+};
+
+// GC Metadata
+
+struct StructNewMetadata {
+    Wasm::TypeIndex typeIndex;
+    uint16_t params;
+    uint8_t length;
+};
+
+struct StructNewDefaultMetadata {
+    Wasm::TypeIndex typeIndex;
+    uint8_t length;
+};
+
+struct StructGetSetMetadata {
+    uint32_t fieldIndex;
+    uint8_t length;
+};
+
+struct ArrayNewMetadata {
+    Wasm::TypeIndex typeIndex;
+    uint8_t length;
+};
+
+struct ArrayNewFixedMetadata {
+    Wasm::TypeIndex typeIndex;
+    uint32_t arraySize;
+    uint8_t length;
+};
+
+struct ArrayNewDataMetadata {
+    Wasm::TypeIndex typeIndex;
+    uint32_t dataSegmentIndex;
+    uint8_t length;
+};
+
+struct ArrayNewElemMetadata {
+    Wasm::TypeIndex typeIndex;
+    uint32_t elemSegmentIndex;
+    uint8_t length;
+};
+
+struct ArrayGetSetMetadata {
+    Wasm::TypeIndex typeIndex;
+    uint8_t length;
+};
+
+struct ArrayFillMetadata {
+    uint8_t length;
+};
+
+struct ArrayCopyMetadata {
+    uint8_t length;
+};
+
+struct ArrayInitDataMetadata {
+    uint32_t dataSegmentIndex;
+    uint8_t length;
+};
+
+struct ArrayInitElemMetadata {
+    uint32_t elemSegmentIndex;
+    uint8_t length;
+};
+
+struct RefTestCastMetadata {
+    int32_t typeIndex;
+    uint8_t length;
 };
 
 #pragma pack()

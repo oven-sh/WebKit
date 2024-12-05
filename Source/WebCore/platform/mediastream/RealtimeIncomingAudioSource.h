@@ -63,9 +63,7 @@ public:
     void setAudioModule(RefPtr<LibWebRTCAudioModule>&&);
     LibWebRTCAudioModule* audioModule() { return m_audioModule.get(); }
 
-    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeIncomingAudioSource, WTF::DestructionThread::MainRunLoop>::ref(); }
-    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeIncomingAudioSource, WTF::DestructionThread::MainRunLoop>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeIncomingAudioSource, WTF::DestructionThread::MainRunLoop>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
     ~RealtimeIncomingAudioSource();
 protected:
     RealtimeIncomingAudioSource(rtc::scoped_refptr<webrtc::AudioTrackInterface>&&, String&&);

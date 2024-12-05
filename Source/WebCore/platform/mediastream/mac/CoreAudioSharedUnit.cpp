@@ -224,6 +224,7 @@ CoreAudioSharedUnit& CoreAudioSharedUnit::singleton()
 CoreAudioSharedUnit::CoreAudioSharedUnit()
     : m_sampleRateCapabilities(8000, 96000)
     , m_verifyCapturingTimer(*this, &CoreAudioSharedUnit::verifyIsCapturing)
+    , m_updateMutedStateTimer(*this, &CoreAudioSharedUnit::updateMutedStateTimerFired)
 #if PLATFORM(MAC)
     , m_storedVPIOUnitDeallocationTimer(*this, &CoreAudioSharedUnit::deallocateStoredVPIOUnit)
 #endif
@@ -671,14 +672,29 @@ void CoreAudioSharedUnit::isProducingMicrophoneSamplesChanged()
     m_verifyCapturingTimer.startRepeating(m_ioUnit->verifyCaptureInterval(isProducingMicrophoneSamples()));
 }
 
-void CoreAudioSharedUnit::updateMutedState()
+void CoreAudioSharedUnit::updateMutedState(SyncUpdate syncUpdate)
 {
     UInt32 muteUplinkOutput = !isProducingMicrophoneSamples();
+
+    if (syncUpdate == SyncUpdate::No && muteUplinkOutput && !hasClients()) {
+        RELEASE_LOG_INFO(WebRTC, "CoreAudioSharedUnit::updateMutedState(%p) delaying mute in case unit gets stopped soon", this);
+        // We leave some time for playback to stop, but not too long if the user decided to stop capture.
+        static constexpr Seconds mutedStateDelay = 500_ms;
+        m_updateMutedStateTimer.startOneShot(mutedStateDelay);
+        return;
+    }
+    m_updateMutedStateTimer.stop();
+
     if (m_ioUnit) {
         auto error = m_ioUnit->set(kAUVoiceIOProperty_MuteOutput, kAudioUnitScope_Global, outputBus, &muteUplinkOutput, sizeof(muteUplinkOutput));
-        RELEASE_LOG_ERROR_IF(error, WebRTC, "CoreAudioSharedUnit::isProducingMicrophoneSamplesChanged(%p) unable to set kAUVoiceIOProperty_MuteOutput, error %d (%.4s)", this, (int)error, (char*)&error);
+        RELEASE_LOG_ERROR_IF(error, WebRTC, "CoreAudioSharedUnit::updateMutedState(%p) unable to set kAUVoiceIOProperty_MuteOutput, error %d (%.4s)", this, (int)error, (char*)&error);
     }
     setMutedState(muteUplinkOutput);
+}
+
+void CoreAudioSharedUnit::updateMutedStateTimerFired()
+{
+    updateMutedState(SyncUpdate::Yes);
 }
 
 void CoreAudioSharedUnit::validateOutputDevice(uint32_t currentOutputDeviceID)

@@ -78,6 +78,7 @@
 #import <wtf/HashSet.h>
 #import <wtf/ObjectIdentifier.h>
 #import <wtf/OptionSet.h>
+#import <wtf/Scope.h>
 #import <wtf/Vector.h>
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/text/WTFString.h>
@@ -914,6 +915,10 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 
 - (BOOL)_shouldIgnoreTouchEvent:(UIEvent *)event;
 - (void)_touchEventsRecognized;
+
+- (BOOL)_hasEnclosingScrollView:(UIView *)firstView matchingCriteria:(Function<BOOL(UIScrollView *)>&&)matchFunction;
+
+- (ScopeExit<Function<void()>>)makeTextSelectionViewsNonInteractiveForScope;
 
 @property (nonatomic, readonly) BOOL shouldUseAsyncInteractions;
 @property (nonatomic, readonly) BOOL selectionHonorsOverflowScrolling;

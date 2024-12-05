@@ -32,52 +32,43 @@ namespace WebCore {
 namespace CSS {
 
 // <coordinate-pair> = <length-percentage>{2}
-using CoordinatePair = Point<LengthPercentage<>>;
+using CoordinatePair = SpaceSeparatedPoint<LengthPercentage<>>;
 
 // <by-to> = by | to
 // https://drafts.csswg.org/css-shapes-2/#typedef-shape-by-to
 // Indicates if a command is relative or absolute.
-using By              = Constant<CSSValueBy>;
-using To              = Constant<CSSValueTo>;
-using CommandAffinity = std::variant<By, To>;
+using CommandAffinity = std::variant<Keyword::By, Keyword::To>;
 
 // <arc-sweep> = cw | ccw
-using Cw              = Constant<CSSValueCw>;
-using Ccw             = Constant<CSSValueCcw>;
-using ArcSweep        = std::variant<Cw, Ccw>;
+using ArcSweep        = std::variant<Keyword::Cw, Keyword::Ccw>;
 
 // <arc-size> = large | small
-using Large           = Constant<CSSValueLarge>;
-using Small           = Constant<CSSValueSmall>;
-using ArcSize         = std::variant<Large, Small>;
+using ArcSize         = std::variant<Keyword::Large, Keyword::Small>;
 
 // <control-point-anchor> = start | end | origin
-using Start           = Constant<CSSValueStart>;
-using End             = Constant<CSSValueEnd>;
-using Origin          = Constant<CSSValueOrigin>;
-using ControlPointAnchor = std::variant<CSS::Start, CSS::End, CSS::Origin>;
+using ControlPointAnchor = std::variant<Keyword::Start, Keyword::End, Keyword::Origin>;
 
 // <to-position> = to <position>
 struct ToPosition {
-    static constexpr auto affinity = CSS::To { };
+    static constexpr auto affinity = Keyword::To { };
 
     Position offset;
 
     bool operator==(const ToPosition&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(ToPosition, offset);
+DEFINE_TYPE_WRAPPER(ToPosition, offset);
 
 template<> struct Serialize<ToPosition> { void operator()(StringBuilder&, const ToPosition&); };
 
 // <by-coordinate-pair> = by <coordinate-pair>
 struct ByCoordinatePair {
-    static constexpr auto affinity = CSS::By { };
+    static constexpr auto affinity = Keyword::By { };
 
     CoordinatePair offset;
 
     bool operator==(const ByCoordinatePair&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(ByCoordinatePair, offset);
+DEFINE_TYPE_WRAPPER(ByCoordinatePair, offset);
 
 template<> struct Serialize<ByCoordinatePair> { void operator()(StringBuilder&, const ByCoordinatePair&); };
 
@@ -130,7 +121,7 @@ struct MoveCommand {
 
     bool operator==(const MoveCommand&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(MoveCommand, toBy);
+DEFINE_TYPE_WRAPPER(MoveCommand, toBy);
 
 template<> struct Serialize<MoveCommand> { void operator()(StringBuilder&, const MoveCommand&); };
 
@@ -145,7 +136,7 @@ struct LineCommand {
 
     bool operator==(const LineCommand&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(LineCommand, toBy);
+DEFINE_TYPE_WRAPPER(LineCommand, toBy);
 
 template<> struct Serialize<LineCommand> { void operator()(StringBuilder&, const LineCommand&); };
 
@@ -156,14 +147,14 @@ struct HLineCommand {
     static constexpr auto name = CSSValueHline;
 
     struct To {
-        static constexpr auto affinity = CSS::To { };
+        static constexpr auto affinity = Keyword::To { };
 
         TwoComponentPositionHorizontal offset;
 
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr auto affinity = CSS::By { };
+        static constexpr auto affinity = Keyword::By { };
 
         LengthPercentage<> offset;
 
@@ -173,9 +164,9 @@ struct HLineCommand {
 
     bool operator==(const HLineCommand&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(HLineCommand::By, offset);
-DEFINE_CSS_TYPE_WRAPPER(HLineCommand::To, offset);
-DEFINE_CSS_TYPE_WRAPPER(HLineCommand, toBy);
+DEFINE_TYPE_WRAPPER(HLineCommand::By, offset);
+DEFINE_TYPE_WRAPPER(HLineCommand::To, offset);
+DEFINE_TYPE_WRAPPER(HLineCommand, toBy);
 
 template<> struct Serialize<HLineCommand::To> { void operator()(StringBuilder&, const HLineCommand::To&); };
 template<> struct Serialize<HLineCommand::By> { void operator()(StringBuilder&, const HLineCommand::By&); };
@@ -187,14 +178,14 @@ template<> struct Serialize<HLineCommand> { void operator()(StringBuilder&, cons
 struct VLineCommand {
     static constexpr auto name = CSSValueVline;
     struct To {
-        static constexpr auto affinity = CSS::To { };
+        static constexpr auto affinity = Keyword::To { };
 
         TwoComponentPositionVertical offset;
 
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr auto affinity = CSS::By { };
+        static constexpr auto affinity = Keyword::By { };
 
         LengthPercentage<> offset;
 
@@ -204,9 +195,9 @@ struct VLineCommand {
 
     bool operator==(const VLineCommand&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(VLineCommand::By, offset);
-DEFINE_CSS_TYPE_WRAPPER(VLineCommand::To, offset);
-DEFINE_CSS_TYPE_WRAPPER(VLineCommand, toBy);
+DEFINE_TYPE_WRAPPER(VLineCommand::By, offset);
+DEFINE_TYPE_WRAPPER(VLineCommand::To, offset);
+DEFINE_TYPE_WRAPPER(VLineCommand, toBy);
 
 template<> struct Serialize<VLineCommand::To> { void operator()(StringBuilder&, const VLineCommand::To&); };
 template<> struct Serialize<VLineCommand::By> { void operator()(StringBuilder&, const VLineCommand::By&); };
@@ -219,7 +210,7 @@ template<> struct Serialize<VLineCommand> { void operator()(StringBuilder&, cons
 struct CurveCommand {
     static constexpr auto name = CSSValueCurve;
     struct To {
-        static constexpr auto affinity = CSS::To { };
+        static constexpr auto affinity = Keyword::To { };
 
         Position offset;
         AbsoluteControlPoint controlPoint1;
@@ -228,7 +219,7 @@ struct CurveCommand {
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr auto affinity = CSS::By { };
+        static constexpr auto affinity = Keyword::By { };
 
         CoordinatePair offset;
         RelativeControlPoint controlPoint1;
@@ -258,7 +249,7 @@ template<size_t I> const auto& get(const CurveCommand::By& value)
     if constexpr (I == 2)
         return value.controlPoint2;
 }
-DEFINE_CSS_TYPE_WRAPPER(CurveCommand, toBy);
+DEFINE_TYPE_WRAPPER(CurveCommand, toBy);
 
 template<> struct Serialize<CurveCommand::To> { void operator()(StringBuilder&, const CurveCommand::To&); };
 template<> struct Serialize<CurveCommand::By> { void operator()(StringBuilder&, const CurveCommand::By&); };
@@ -271,7 +262,7 @@ template<> struct Serialize<CurveCommand> { void operator()(StringBuilder&, cons
 struct SmoothCommand {
     static constexpr auto name = CSSValueSmooth;
     struct To {
-        static constexpr auto affinity = CSS::To { };
+        static constexpr auto affinity = Keyword::To { };
 
         Position offset;
         std::optional<AbsoluteControlPoint> controlPoint;
@@ -279,7 +270,7 @@ struct SmoothCommand {
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr auto affinity = CSS::By { };
+        static constexpr auto affinity = Keyword::By { };
 
         CoordinatePair offset;
         std::optional<RelativeControlPoint> controlPoint;
@@ -304,7 +295,7 @@ template<size_t I> const auto& get(const SmoothCommand::By& value)
     if constexpr (I == 1)
         return value.controlPoint;
 }
-DEFINE_CSS_TYPE_WRAPPER(SmoothCommand, toBy);
+DEFINE_TYPE_WRAPPER(SmoothCommand, toBy);
 
 template<> struct Serialize<SmoothCommand::To> { void operator()(StringBuilder&, const SmoothCommand::To&); };
 template<> struct Serialize<SmoothCommand::By> { void operator()(StringBuilder&, const SmoothCommand::By&); };
@@ -319,7 +310,7 @@ struct ArcCommand {
     using By = ByCoordinatePair;
     std::variant<To, By> toBy;
 
-    using SizeOfEllipse = Size<LengthPercentage<>>;
+    using SizeOfEllipse = SpaceSeparatedSize<LengthPercentage<>>;
     SizeOfEllipse size;
 
     ArcSweep arcSweep;
@@ -345,7 +336,7 @@ template<> struct Serialize<ArcCommand> { void operator()(StringBuilder&, const 
 
 // <close> = close
 // https://drafts.csswg.org/css-shapes-2/#valdef-shape-close
-using CloseCommand = Constant<CSSValueClose>;
+using CloseCommand = Keyword::Close;
 
 // <shape-command> = <move-command> | <line-command> | <hv-line-command> | <curve-command> | <smooth-command> | <arc-command> | close
 // https://drafts.csswg.org/css-shapes-2/#typedef-shape-command
@@ -380,11 +371,23 @@ template<> struct Serialize<Shape> { void operator()(StringBuilder&, const Shape
 } // namespace CSS
 } // namespace WebCore
 
+CSS_TUPLE_LIKE_CONFORMANCE(ToPosition, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(ByCoordinatePair, 1)
 CSS_TUPLE_LIKE_CONFORMANCE(RelativeControlPoint, 2)
 CSS_TUPLE_LIKE_CONFORMANCE(AbsoluteControlPoint, 2)
+CSS_TUPLE_LIKE_CONFORMANCE(MoveCommand, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(LineCommand, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(HLineCommand::To, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(HLineCommand::By, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(HLineCommand, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(VLineCommand::To, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(VLineCommand::By, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(VLineCommand, 1)
 CSS_TUPLE_LIKE_CONFORMANCE(CurveCommand::To, 3)
 CSS_TUPLE_LIKE_CONFORMANCE(CurveCommand::By, 3)
+CSS_TUPLE_LIKE_CONFORMANCE(CurveCommand, 1)
 CSS_TUPLE_LIKE_CONFORMANCE(SmoothCommand::To, 2)
 CSS_TUPLE_LIKE_CONFORMANCE(SmoothCommand::By, 2)
+CSS_TUPLE_LIKE_CONFORMANCE(SmoothCommand, 1)
 CSS_TUPLE_LIKE_CONFORMANCE(ArcCommand, 5)
 CSS_TUPLE_LIKE_CONFORMANCE(Shape, 3)

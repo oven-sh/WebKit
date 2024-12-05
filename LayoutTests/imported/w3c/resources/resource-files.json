@@ -10869,7 +10869,6 @@
         "web-platform-tests/svg/text/visualtests/text-inline-size-101-visual.svg",
         "web-platform-tests/svg/text/visualtests/text-inline-size-201-visual.svg",
         "web-platform-tests/test_keys_wdspec.html",
-        "web-platform-tests/trusted-types/idlharness.tentative.window.js.html",
         "web-platform-tests/trusted-types/support/HTMLScriptElement-internal-slot-support.html",
         "web-platform-tests/trusted-types/support/frame-without-trusted-types.html",
         "web-platform-tests/trusted-types/support/navigation-report-only-support.html",

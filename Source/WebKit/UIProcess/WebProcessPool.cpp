@@ -1995,10 +1995,10 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
     }
 
     if (!frame.isMainFrame() && siteIsolationEnabled)
-        return completionHandler(WTFMove(process), suspendedPage, reason);
+        return completionHandler(WTFMove(process), suspendedPage.get(), reason);
 
     ASSERT(process->state() != AuxiliaryProcessProxy::State::Terminated);
-    prepareProcessForNavigation(WTFMove(process), page, suspendedPage, reason, site, navigation, lockdownMode, WTFMove(dataStore), WTFMove(completionHandler));
+    prepareProcessForNavigation(WTFMove(process), page, suspendedPage.get(), reason, site, navigation, lockdownMode, WTFMove(dataStore), WTFMove(completionHandler));
 }
 
 void WebProcessPool::prepareProcessForNavigation(Ref<WebProcessProxy>&& process, WebPageProxy& page, SuspendedPageProxy* suspendedPage, ASCIILiteral reason, const Site& site, const API::Navigation& navigation, WebProcessProxy::LockdownMode lockdownMode, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&& completionHandler, unsigned previousAttemptsCount)
@@ -2026,15 +2026,15 @@ void WebProcessPool::prepareProcessForNavigation(Ref<WebProcessProxy>&& process,
         loadedWebArchive = LoadedWebArchive::Yes;
 #endif
 
-    dataStore->protectedNetworkProcess()->addAllowedFirstPartyForCookies(process, site.domain(), loadedWebArchive, [callCompletionHandler = WTFMove(callCompletionHandler), suspendedPage = WeakPtr { suspendedPage }]() mutable {
-        if (suspendedPage)
+    dataStore->protectedNetworkProcess()->addAllowedFirstPartyForCookies(process, site.domain(), loadedWebArchive, [callCompletionHandler = WTFMove(callCompletionHandler), weakSuspendedPage = WeakPtr { suspendedPage }]() mutable {
+        if (RefPtr suspendedPage = weakSuspendedPage.get())
             suspendedPage->waitUntilReadyToUnsuspend(WTFMove(callCompletionHandler));
         else
-            callCompletionHandler(suspendedPage.get());
+            callCompletionHandler(nullptr);
     });
 }
 
-std::tuple<Ref<WebProcessProxy>, SuspendedPageProxy*, ASCIILiteral> WebProcessPool::processForNavigationInternal(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& pageSourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore)
+std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebProcessPool::processForNavigationInternal(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& pageSourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore)
 {
     auto& targetURL = navigation.currentRequest().url();
     auto targetSite = Site { targetURL };

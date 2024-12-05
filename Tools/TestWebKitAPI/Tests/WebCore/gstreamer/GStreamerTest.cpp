@@ -75,11 +75,13 @@ TEST_F(GStreamerTest, gstStructureGetters)
         FAIL() << "emptyIntOpt should be empty, but has value " << *emptyIntOpt;
 
     GUniquePtr<GstStructure> arrays(gst_structure_new_from_string("bar, empty-array=(GstStructure) <>, struct-array=(GstStructure) <[s1, a=2], [s2, b=3]>"_s));
+    GUniquePtr<GstStructure> s1(gst_structure_new_from_string("s1, a=2"_s));
+    GUniquePtr<GstStructure> s2(gst_structure_new_from_string("s2, b=3"_s));
     ASSERT_TRUE(gstStructureGetArray<const GstStructure*>(arrays.get(), "empty-array"_s).isEmpty());
 
     Vector<const GstStructure*> structArray(gstStructureGetArray<const GstStructure*>(arrays.get(), "struct-array"_s));
-    ASSERT_TRUE(gst_structure_is_equal(structArray.at(0), gst_structure_new_from_string("s1, a=2"_s)));
-    ASSERT_TRUE(gst_structure_is_equal(structArray.at(1), gst_structure_new_from_string("s2, b=3"_s)));
+    ASSERT_TRUE(gst_structure_is_equal(structArray.at(0), s1.get()));
+    ASSERT_TRUE(gst_structure_is_equal(structArray.at(1), s2.get()));
     ASSERT_EQ(structArray.size(), 2);
 }
 

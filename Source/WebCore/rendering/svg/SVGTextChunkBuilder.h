@@ -36,9 +36,10 @@ struct SVGTextFragment;
 // Phase three performs all modifications that have to be applied to each individual text chunk (text-anchor & textLength).
 
 class SVGTextChunkBuilder {
-    WTF_MAKE_NONCOPYABLE(SVGTextChunkBuilder);
 public:
     SVGTextChunkBuilder();
+    SVGTextChunkBuilder(SVGTextChunkBuilder&&) = default;
+    SVGTextChunkBuilder(const SVGTextChunkBuilder&) = delete;
 
     const Vector<SVGTextChunk>& textChunks() const { return m_textChunks; }
     unsigned totalCharacters() const;

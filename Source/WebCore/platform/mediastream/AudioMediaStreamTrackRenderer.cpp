@@ -47,10 +47,10 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioMediaStreamTrackRenderer);
 
-std::unique_ptr<AudioMediaStreamTrackRenderer> AudioMediaStreamTrackRenderer::create(Init&& init)
+RefPtr<AudioMediaStreamTrackRenderer> AudioMediaStreamTrackRenderer::create(Init&& init)
 {
 #if PLATFORM(COCOA)
-    return makeUnique<AudioMediaStreamTrackRendererCocoa>(WTFMove(init));
+    return AudioMediaStreamTrackRendererCocoa::create(WTFMove(init));
 #else
     UNUSED_PARAM(init);
     return nullptr;

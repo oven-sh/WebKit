@@ -54,7 +54,7 @@ Ref<WebFakeXRInputController> WebFakeXRInputController::create(PlatformXR::Input
 
 WebFakeXRInputController::WebFakeXRInputController(PlatformXR::InputSourceHandle handle, const FakeXRInputSourceInit& init)
     : m_handle(handle)
-    , m_handeness(init.handedness)
+    , m_handedness(init.handedness)
     , m_targetRayMode(init.targetRayMode)
     , m_profiles(init.profiles)
     , m_primarySelected(init.selectionStarted)
@@ -112,7 +112,7 @@ InputSource WebFakeXRInputController::getFrameData()
 {
     InputSource state;
     state.handle = m_handle;
-    state.handeness = m_handeness;
+    state.handedness = m_handedness;
     state.targetRayMode = m_targetRayMode;
     state.profiles = m_profiles;
     state.pointerOrigin = m_pointerOrigin;

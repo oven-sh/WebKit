@@ -83,7 +83,7 @@
 namespace WebCore {
 
 struct SameSizeAsBorderValue {
-    StyleColor m_color;
+    Style::Color m_color;
     float m_width;
     int m_restBits;
 };
@@ -1810,8 +1810,12 @@ void RenderStyle::conservativelyCollectChangedAnimatableProperties(const RenderS
     };
 
     auto conservativelyCollectChangedAnimatablePropertiesViaNonInheritedRareData = [&](auto& first, auto& second) {
+        if (first.blockStepAlign != second.blockStepAlign)
+            changingProperties.m_properties.set(CSSPropertyBlockStepAlign);
         if (first.blockStepInsert != second.blockStepInsert)
             changingProperties.m_properties.set(CSSPropertyBlockStepInsert);
+        if (first.blockStepRound != second.blockStepRound)
+            changingProperties.m_properties.set(CSSPropertyBlockStepRound);
         if (first.blockStepSize != second.blockStepSize)
             changingProperties.m_properties.set(CSSPropertyBlockStepSize);
         if (first.containIntrinsicWidth != second.containIntrinsicWidth || first.containIntrinsicWidthType != second.containIntrinsicWidthType)
@@ -2755,6 +2759,14 @@ TextAutospace RenderStyle::textAutospace() const
     return fontDescription().textAutospace();
 }
 
+void RenderStyle::setFontCascade(FontCascade&& fontCascade)
+{
+    if (fontCascade == this->fontCascade())
+        return;
+
+    m_inheritedData.access().fontCascade = fontCascade;
+}
+
 bool RenderStyle::setFontDescription(FontCascadeDescription&& description)
 {
     if (fontDescription() == description)
@@ -3000,7 +3012,7 @@ void RenderStyle::getShadowVerticalExtent(const ShadowData* shadow, LayoutUnit &
     }
 }
 
-StyleColor RenderStyle::unresolvedColorForProperty(CSSPropertyID colorProperty, bool visitedLink) const
+Style::Color RenderStyle::unresolvedColorForProperty(CSSPropertyID colorProperty, bool visitedLink) const
 {
     switch (colorProperty) {
     case CSSPropertyAccentColor:
@@ -3078,7 +3090,7 @@ Color RenderStyle::colorResolvingCurrentColor(CSSPropertyID colorProperty, bool 
     return colorResolvingCurrentColor(result, visitedLink);
 }
 
-Color RenderStyle::colorResolvingCurrentColor(const StyleColor& color, bool visitedLink) const
+Color RenderStyle::colorResolvingCurrentColor(const Style::Color& color, bool visitedLink) const
 {
     return color.resolveColor(visitedLink ? visitedLinkColor() : this->color());
 }
@@ -3124,7 +3136,7 @@ Color RenderStyle::colorByApplyingColorFilter(const Color& color) const
     return transformedColor;
 }
 
-Color RenderStyle::colorWithColorFilter(const StyleColor& color) const
+Color RenderStyle::colorWithColorFilter(const Style::Color& color) const
 {
     return colorByApplyingColorFilter(colorResolvingCurrentColor(color));
 }
@@ -3331,7 +3343,7 @@ TextEmphasisMark RenderStyle::textEmphasisMark() const
 
 #if ENABLE(TOUCH_EVENTS)
 
-StyleColor RenderStyle::initialTapHighlightColor()
+Style::Color RenderStyle::initialTapHighlightColor()
 {
     return RenderTheme::tapHighlightColor();
 }

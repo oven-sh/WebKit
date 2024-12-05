@@ -479,7 +479,7 @@ private:
 #if PLATFORM(COCOA)
     void pushVideoFrameMetadata(WebCore::VideoFrameMetadata&&, RemoteVideoFrameProxy::Properties&&);
 #endif
-    RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy() const { return protectedManager()->gpuProcessConnection().videoFrameObjectHeapProxy(); }
+    RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy() const { return protectedManager()->protectedGPUProcessConnection()->videoFrameObjectHeapProxy(); }
 
     Ref<RemoteMediaPlayerManager> protectedManager() const;
 

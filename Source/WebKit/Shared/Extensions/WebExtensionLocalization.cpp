@@ -132,21 +132,27 @@ void WebExtensionLocalization::loadRegionalLocalization(RefPtr<JSON::Object> reg
     return;
 }
 
-void WebExtensionLocalization::localizedJSONforJSON(RefPtr<JSON::Object> json)
+RefPtr<JSON::Object> WebExtensionLocalization::localizedJSONforJSON(RefPtr<JSON::Object> json)
 {
-    if (!json || !json->size())
-        return;
+    if (!json)
+        return nullptr;
+
+    Ref newObject = JSON::Object::create();
 
     for (auto& key : json->keys()) {
         auto valueType = json->getValue(key)->type();
 
         if (valueType == JSON::Value::Type::String)
-            json->setString(key, localizedStringForString(json->getString(key)));
+            newObject->setString(key, localizedStringForString(json->getString(key)));
         else if (valueType == JSON::Value::Type::Array)
-            localizedArrayForArray(json->getArray(key));
+            newObject->setArray(key, *localizedArrayForArray(json->getArray(key)));
         else if (valueType == JSON::Value::Type::Object)
-            localizedJSONforJSON(json->getObject(key));
+            newObject->setObject(key, *localizedJSONforJSON(json->getObject(key)));
+        else
+            newObject->setValue(key, *json->getValue(key));
     }
+
+    return newObject;
 }
 
 String WebExtensionLocalization::localizedStringForKey(String key, Vector<String> placeholders)
@@ -184,21 +190,27 @@ String WebExtensionLocalization::localizedStringForKey(String key, Vector<String
     return localizedString;
 }
 
-void WebExtensionLocalization::localizedArrayForArray(RefPtr<JSON::Array> json)
+RefPtr<JSON::Array> WebExtensionLocalization::localizedArrayForArray(RefPtr<JSON::Array> json)
 {
     if (!json)
-        return;
+        return nullptr;
+
+    Ref newArray = JSON::Array::create();
 
     for (Ref value : *json) {
         auto valueType = value->type();
 
         if (valueType == JSON::Value::Type::String)
-            value->asString() = localizedStringForString(value->asString());
+            newArray->pushString(localizedStringForString(value->asString()));
         else if (valueType == JSON::Value::Type::Array)
-            localizedArrayForArray(value->asArray());
+            newArray->pushArray(*localizedArrayForArray(value->asArray()));
         else if (valueType == JSON::Value::Type::Object)
-            localizedJSONforJSON(value->asObject());
+            newArray->pushObject(*localizedJSONforJSON(value->asObject()));
+        else
+            newArray->pushValue(WTFMove(value));
     }
+
+    return newArray;
 }
 
 String WebExtensionLocalization::localizedStringForString(String sourceString)
@@ -225,24 +237,23 @@ String WebExtensionLocalization::localizedStringForString(String sourceString)
     return localizedString;
 }
 
-RefPtr<JSON::Object> WebExtensionLocalization::localizationJSONForWebExtension(WebExtension& webExtension, const String& withLocale)
+RefPtr<JSON::Object> WebExtensionLocalization::localizationJSONForWebExtension(WebExtension& webExtension, const String& locale)
 {
     StringBuilder pathBuilder;
     pathBuilder.append("_locales/"_s);
-    pathBuilder.append(withLocale);
+    pathBuilder.append(locale);
     pathBuilder.append("/messages.json"_s);
 
     auto path = pathBuilder.toString();
 
     RefPtr<API::Error> error;
-    RefPtr data = webExtension.resourceDataForPath(path, error, WebExtension::CacheResult::No, WebExtension::SuppressNotFoundErrors::Yes);
-    if (!data || error) {
+    auto jsonString = webExtension.resourceStringForPath(path, error, WebExtension::CacheResult::No, WebExtension::SuppressNotFoundErrors::Yes);
+    if (error) {
         webExtension.recordErrorIfNeeded(error);
         return nullptr;
     }
 
-    auto json = JSON::Value::parseJSON(String::fromUTF8(data->span()));
-
+    RefPtr json = JSON::Value::parseJSON(jsonString);
     return json ? json->asObject() : nullptr;
 }
 

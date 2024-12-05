@@ -75,14 +75,14 @@ RemoteImageBuffer::~RemoteImageBuffer()
 
 void RemoteImageBuffer::startListeningForIPC()
 {
-    m_backend->streamConnection().startReceivingMessages(*this, Messages::RemoteImageBuffer::messageReceiverName(), identifier().toUInt64());
+    m_backend->protectedStreamConnection()->startReceivingMessages(*this, Messages::RemoteImageBuffer::messageReceiverName(), identifier().toUInt64());
 }
 
 void RemoteImageBuffer::stopListeningForIPC()
 {
     if (auto backend = std::exchange(m_backend, { })) {
         backend->protectedSharedResourceCache()->didReleaseImageBuffer(m_imageBuffer->renderingPurpose(), m_imageBuffer->renderingMode());
-        backend->streamConnection().stopReceivingMessages(Messages::RemoteImageBuffer::messageReceiverName(), identifier().toUInt64());
+        backend->protectedStreamConnection()->stopReceivingMessages(Messages::RemoteImageBuffer::messageReceiverName(), identifier().toUInt64());
     }
 }
 

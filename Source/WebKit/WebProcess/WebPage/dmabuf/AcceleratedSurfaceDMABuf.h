@@ -71,8 +71,8 @@ public:
     static std::unique_ptr<AcceleratedSurfaceDMABuf> create(ThreadedCompositor&, WebPage&, Function<void()>&& frameCompleteHandler);
     ~AcceleratedSurfaceDMABuf();
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
 private:
     uint64_t window() const override { return 0; }

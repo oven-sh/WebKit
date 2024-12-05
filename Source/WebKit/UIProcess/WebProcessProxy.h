@@ -464,6 +464,7 @@ public:
 #if ENABLE(MEDIA_STREAM)
     static void muteCaptureInPagesExcept(WebCore::PageIdentifier);
     SpeechRecognitionRemoteRealtimeMediaSourceManager& ensureSpeechRecognitionRemoteRealtimeMediaSourceManager();
+    RefPtr<SpeechRecognitionRemoteRealtimeMediaSourceManager> protectedSpeechRecognitionRemoteRealtimeMediaSourceManager();
 #endif
     void pageMutedStateChanged(WebCore::PageIdentifier, WebCore::MediaProducerMutedStateFlags);
     void pageIsBecomingInvisible(WebCore::PageIdentifier);

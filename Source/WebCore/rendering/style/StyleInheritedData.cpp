@@ -102,7 +102,10 @@ void StyleInheritedData::dumpDifferences(TextStream& ts, const StyleInheritedDat
     LOG_IF_DIFFERENT(specifiedLineHeight);
 #endif
 
-    LOG_IF_DIFFERENT(fontCascade);
+    // fontCascade is complex, so gets special dumping.
+    if (fontCascade != other.fontCascade)
+        ts << "fontCascade differs:\n  " << fontCascade << "\n  " << other.fontCascade;
+
     LOG_IF_DIFFERENT(color);
     LOG_IF_DIFFERENT(visitedLinkColor);
 }

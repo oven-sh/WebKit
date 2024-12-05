@@ -64,6 +64,9 @@ public:
     static RefPtr<RemoteGraphicsContextGLProxy> create(const WebCore::GraphicsContextGLAttributes&, WebPage&);
     static RefPtr<RemoteGraphicsContextGLProxy> create(const WebCore::GraphicsContextGLAttributes&, RemoteRenderingBackendProxy&, SerialFunctionDispatcher&);
 
+    void ref() const final { WebCore::GraphicsContextGL::ref(); }
+    void deref() const final { WebCore::GraphicsContextGL::deref(); }
+
     ~RemoteGraphicsContextGLProxy();
 
     // IPC::Connection::Client overrides.

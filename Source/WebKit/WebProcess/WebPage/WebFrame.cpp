@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -268,34 +268,36 @@ WebCore::Frame* WebFrame::coreFrame() const
 FrameInfoData WebFrame::info() const
 {
     RefPtr parent = parentFrame();
+    RefPtr coreFrame = this->coreFrame();
+    RefPtr coreLocalFrame = this->coreLocalFrame();
+    RefPtr document = coreLocalFrame ? coreLocalFrame->document() : nullptr;
 
     WebFrameMetrics metrics;
-    if (m_coreFrame) {
-        if (RefPtr coreView = m_coreFrame->virtualView()) {
+    if (coreFrame) {
+        if (RefPtr coreView = coreFrame->virtualView()) {
             IsScrollable isScrollable = hasHorizontalScrollbar() || hasVerticalScrollbar() ? IsScrollable::Yes : IsScrollable::No;
-            IntSize contentSize = { coreView->contentsWidth(), coreView->contentsHeight() };
+            IntSize contentSize { coreView->contentsWidth(), coreView->contentsHeight() };
             auto visibleContentSize = coreView->visibleContentRectIncludingScrollbars().size();
             auto visibleContentSizeExcludingScrollbars = coreView->visibleContentRect().size();
             metrics = { isScrollable, contentSize, visibleContentSize, visibleContentSizeExcludingScrollbars };
         }
     }
 
-    FrameInfoData info {
+    return {
         isMainFrame(),
-        is<WebCore::LocalFrame>(coreFrame()) ? FrameType::Local : FrameType::Remote,
+        coreLocalFrame ? FrameType::Local : FrameType::Remote,
         // FIXME: This should use the full request.
         ResourceRequest(url()),
-        SecurityOriginData::fromFrame(dynamicDowncast<LocalFrame>(m_coreFrame.get())),
-        m_coreFrame ? m_coreFrame->tree().specifiedName().string() : String(),
+        SecurityOriginData::fromFrame(coreLocalFrame.get()),
+        coreFrame ? coreFrame->tree().specifiedName().string() : String(),
         frameID(),
-        parent ? std::optional<WebCore::FrameIdentifier> { parent->frameID() } : std::nullopt,
+        parent ? std::optional { parent->frameID() } : std::nullopt,
+        document ? std::optional { document->identifier() } : std::nullopt,
         getCurrentProcessID(),
         isFocused(),
-        coreLocalFrame() ? coreLocalFrame()->loader().errorOccurredInLoading() : false,
+        coreLocalFrame ? coreLocalFrame->loader().errorOccurredInLoading() : false,
         WTFMove(metrics)
     };
-
-    return info;
 }
 
 FrameTreeNodeData WebFrame::frameTreeData() const

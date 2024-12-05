@@ -43,11 +43,14 @@ namespace WebKit {
 
 class WebPage;
 
-class RemoteMediaSessionCoordinator final : public WebCore::MediaSessionCoordinatorPrivate , public IPC::MessageReceiver {
+class RemoteMediaSessionCoordinator final : public WebCore::MediaSessionCoordinatorPrivate, public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteMediaSessionCoordinator);
 public:
     static Ref<RemoteMediaSessionCoordinator> create(WebPage&, const String&);
     ~RemoteMediaSessionCoordinator();
+
+    void ref() const final { WebCore::MediaSessionCoordinatorPrivate::ref(); }
+    void deref() const final { WebCore::MediaSessionCoordinatorPrivate::deref(); }
 
 private:
     explicit RemoteMediaSessionCoordinator(WebPage&, const String&);

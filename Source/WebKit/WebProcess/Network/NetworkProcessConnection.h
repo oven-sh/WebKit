@@ -67,6 +67,9 @@ public:
         return adoptRef(*new NetworkProcessConnection(connectionIdentifier, httpCookieAcceptPolicy));
     }
     ~NetworkProcessConnection();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
     
     Ref<IPC::Connection> protectedConnection() { return m_connection; }
     IPC::Connection& connection() { return m_connection.get(); }

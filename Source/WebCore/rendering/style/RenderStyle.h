@@ -85,7 +85,6 @@ class ScaleTransformOperation;
 class ScrollTimeline;
 class ShadowData;
 class ShapeValue;
-class StyleColor;
 class StyleContentAlignmentData;
 class StyleCustomPropertyData;
 class StyleImage;
@@ -117,7 +116,9 @@ enum class AutoRepeatType : uint8_t;
 enum class BackfaceVisibility : uint8_t;
 enum class BlendMode : uint8_t;
 enum class FlowDirection : uint8_t;
+enum class BlockStepAlign : uint8_t;
 enum class BlockStepInsert : uint8_t;
+enum class BlockStepRound : uint8_t;
 enum class BorderCollapse : bool;
 enum class BorderStyle : uint8_t;
 enum class BoxAlignment : uint8_t;
@@ -288,6 +289,7 @@ using LayoutBoxExtent = RectEdges<LayoutUnit>;
 namespace Style {
 class CustomPropertyRegistry;
 class ViewTransitionName;
+struct Color;
 struct ColorScheme;
 struct ScopedName;
 
@@ -1076,13 +1078,13 @@ public:
     Color usedScrollbarThumbColor() const;
     Color usedScrollbarTrackColor() const;
     inline std::optional<ScrollbarColor> scrollbarColor() const;
-    inline const StyleColor& scrollbarThumbColor() const;
-    inline const StyleColor& scrollbarTrackColor() const;
+    inline const Style::Color& scrollbarThumbColor() const;
+    inline const Style::Color& scrollbarTrackColor() const;
     WEBCORE_EXPORT ScrollbarGutter scrollbarGutter() const;
     WEBCORE_EXPORT ScrollbarWidth scrollbarWidth() const;
 
 #if ENABLE(TOUCH_EVENTS)
-    inline StyleColor tapHighlightColor() const;
+    inline Style::Color tapHighlightColor() const;
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -1192,7 +1194,7 @@ public:
     inline void resetBorderBottomLeftRadius();
     inline void resetBorderBottomRightRadius();
 
-    inline void setBackgroundColor(const StyleColor&);
+    inline void setBackgroundColor(const Style::Color&);
     inline void setBackgroundAttachment(FillAttachment);
     inline void setBackgroundClip(FillBox);
     inline void setBackgroundOrigin(FillBox);
@@ -1228,21 +1230,21 @@ public:
 
     inline void setBorderLeftWidth(float);
     inline void setBorderLeftStyle(BorderStyle);
-    inline void setBorderLeftColor(const StyleColor&);
+    inline void setBorderLeftColor(const Style::Color&);
     inline void setBorderRightWidth(float);
     inline void setBorderRightStyle(BorderStyle);
-    inline void setBorderRightColor(const StyleColor&);
+    inline void setBorderRightColor(const Style::Color&);
     inline void setBorderTopWidth(float);
     inline void setBorderTopStyle(BorderStyle);
-    inline void setBorderTopColor(const StyleColor&);
+    inline void setBorderTopColor(const Style::Color&);
     inline void setBorderBottomWidth(float);
     inline void setBorderBottomStyle(BorderStyle);
-    inline void setBorderBottomColor(const StyleColor&);
+    inline void setBorderBottomColor(const Style::Color&);
 
     inline void setOutlineWidth(float);
     void setOutlineStyleIsAuto(OutlineIsAuto);
     inline void setOutlineStyle(BorderStyle);
-    inline void setOutlineColor(const StyleColor&);
+    inline void setOutlineColor(const Style::Color&);
 
     void setOverflowX(Overflow v) { m_nonInheritedFlags.overflowX =  static_cast<unsigned>(v); }
     void setOverflowY(Overflow v) { m_nonInheritedFlags.overflowY = static_cast<unsigned>(v); }
@@ -1266,6 +1268,7 @@ public:
 
     void setFieldSizing(FieldSizing);
 
+    void setFontCascade(FontCascade&&);
     WEBCORE_EXPORT bool setFontDescription(FontCascadeDescription&&);
 
     // Only used for blending font sizes when animating, for MathML anonymous blocks, and for text autosizing.
@@ -1428,12 +1431,12 @@ public:
 
     inline void setOutlineOffset(float);
     void setTextShadow(std::unique_ptr<ShadowData>, bool add = false);
-    inline void setTextStrokeColor(const StyleColor&);
+    inline void setTextStrokeColor(const Style::Color&);
     inline void setTextStrokeWidth(float);
-    inline void setTextFillColor(const StyleColor&);
-    inline void setCaretColor(const StyleColor&);
+    inline void setTextFillColor(const Style::Color&);
+    inline void setCaretColor(const Style::Color&);
     inline void setHasAutoCaretColor();
-    inline void setAccentColor(const StyleColor&);
+    inline void setAccentColor(const Style::Color&);
     inline void setHasAutoAccentColor();
     inline void setOpacity(float);
     inline void setAppearance(StyleAppearance);
@@ -1513,7 +1516,7 @@ public:
     inline void setColumnFill(ColumnFill);
     inline void setColumnGap(GapLength&&);
     inline void setRowGap(GapLength&&);
-    inline void setColumnRuleColor(const StyleColor&);
+    inline void setColumnRuleColor(const Style::Color&);
     inline void setColumnRuleStyle(BorderStyle);
     inline void setColumnRuleWidth(unsigned short);
     inline void resetColumnRule();
@@ -1532,8 +1535,8 @@ public:
 
     inline void setSpeakAs(OptionSet<SpeakAs>);
     inline void setTextCombine(TextCombine);
-    inline void setTextDecorationColor(const StyleColor&);
-    inline void setTextEmphasisColor(const StyleColor&);
+    inline void setTextDecorationColor(const Style::Color&);
+    inline void setTextEmphasisColor(const Style::Color&);
     inline void setTextEmphasisFill(TextEmphasisFill);
     inline void setTextEmphasisMark(TextEmphasisMark);
     inline void setTextEmphasisCustomMark(const AtomString&);
@@ -1620,13 +1623,13 @@ public:
     void setScrollSnapStop(ScrollSnapStop);
 
     inline void setScrollbarColor(const std::optional<ScrollbarColor>&);
-    inline void setScrollbarThumbColor(const StyleColor&);
-    inline void setScrollbarTrackColor(const StyleColor&);
+    inline void setScrollbarThumbColor(const Style::Color&);
+    inline void setScrollbarTrackColor(const Style::Color&);
     void setScrollbarGutter(ScrollbarGutter);
     void setScrollbarWidth(ScrollbarWidth);
 
 #if ENABLE(TOUCH_EVENTS)
-    inline void setTapHighlightColor(const StyleColor&);
+    inline void setTapHighlightColor(const Style::Color&);
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -1678,13 +1681,13 @@ public:
     inline bool hasExplicitlySetStrokeWidth() const;
     bool hasPositiveStrokeWidth() const;
     
-    inline const StyleColor& strokeColor() const;
-    inline void setStrokeColor(const StyleColor&);
-    inline void setVisitedLinkStrokeColor(const StyleColor&);
-    inline const StyleColor& visitedLinkStrokeColor() const;
+    inline const Style::Color& strokeColor() const;
+    inline void setStrokeColor(const Style::Color&);
+    inline void setVisitedLinkStrokeColor(const Style::Color&);
+    inline const Style::Color& visitedLinkStrokeColor() const;
     inline void setHasExplicitlySetStrokeColor(bool);
     inline bool hasExplicitlySetStrokeColor() const;
-    static inline StyleColor initialStrokeColor();
+    static inline Style::Color initialStrokeColor();
     Color computedStrokeColor() const;
     inline CSSPropertyID usedStrokeColorProperty() const;
 
@@ -1697,10 +1700,10 @@ public:
 
     inline SVGPaintType fillPaintType() const;
     inline SVGPaintType visitedFillPaintType() const;
-    inline const StyleColor& fillPaintColor() const;
-    inline const StyleColor& visitedFillPaintColor() const;
-    inline void setFillPaintColor(const StyleColor&);
-    inline void setVisitedFillPaintColor(const StyleColor&);
+    inline const Style::Color& fillPaintColor() const;
+    inline const Style::Color& visitedFillPaintColor() const;
+    inline void setFillPaintColor(const Style::Color&);
+    inline void setVisitedFillPaintColor(const Style::Color&);
     inline void setHasExplicitlySetColor(bool);
     inline bool hasExplicitlySetColor() const;
     inline float fillOpacity() const;
@@ -1708,10 +1711,10 @@ public:
 
     inline SVGPaintType strokePaintType() const;
     inline SVGPaintType visitedStrokePaintType() const;
-    inline const StyleColor& strokePaintColor() const;
-    inline const StyleColor& visitedStrokePaintColor() const;
-    inline void setStrokePaintColor(const StyleColor&);
-    inline void setVisitedStrokePaintColor(const StyleColor&);
+    inline const Style::Color& strokePaintColor() const;
+    inline const Style::Color& visitedStrokePaintColor() const;
+    inline void setStrokePaintColor(const Style::Color&);
+    inline void setVisitedStrokePaintColor(const Style::Color&);
     inline float strokeOpacity() const;
     inline void setStrokeOpacity(float);
     inline Vector<SVGLengthValue> strokeDashArray() const;
@@ -1744,9 +1747,9 @@ public:
     inline float stopOpacity() const;
     inline void setStopOpacity(float);
 
-    inline void setStopColor(const StyleColor&);
-    inline void setFloodColor(const StyleColor&);
-    inline void setLightingColor(const StyleColor&);
+    inline void setStopColor(const Style::Color&);
+    inline void setFloodColor(const Style::Color&);
+    inline void setLightingColor(const Style::Color&);
 
     inline SVGLengthValue baselineShiftValue() const;
     inline void setBaselineShiftValue(SVGLengthValue);
@@ -1854,17 +1857,17 @@ public:
     bool lastChildState() const { return m_nonInheritedFlags.lastChildState; }
     void setLastChildState() { setUnique(); m_nonInheritedFlags.lastChildState = true; }
 
-    StyleColor unresolvedColorForProperty(CSSPropertyID colorProperty, bool visitedLink = false) const;
+    Style::Color unresolvedColorForProperty(CSSPropertyID colorProperty, bool visitedLink = false) const;
     Color colorResolvingCurrentColor(CSSPropertyID colorProperty, bool visitedLink) const;
 
     // Resolves the currentColor keyword, but must not be used for the "color" property which has a different semantic.
-    WEBCORE_EXPORT Color colorResolvingCurrentColor(const StyleColor&, bool visitedLink = false) const;
+    WEBCORE_EXPORT Color colorResolvingCurrentColor(const Style::Color&, bool visitedLink = false) const;
 
     WEBCORE_EXPORT Color visitedDependentColor(CSSPropertyID, OptionSet<PaintBehavior> paintBehavior = { }) const;
     WEBCORE_EXPORT Color visitedDependentColorWithColorFilter(CSSPropertyID, OptionSet<PaintBehavior> paintBehavior = { }) const;
 
     WEBCORE_EXPORT Color colorByApplyingColorFilter(const Color&) const;
-    WEBCORE_EXPORT Color colorWithColorFilter(const StyleColor&) const;
+    WEBCORE_EXPORT Color colorWithColorFilter(const Style::Color&) const;
 
     void setHasExplicitlyInheritedProperties() { m_nonInheritedFlags.hasExplicitlyInheritedProperties = true; }
     bool hasExplicitlyInheritedProperties() const { return m_nonInheritedFlags.hasExplicitlyInheritedProperties; }
@@ -1917,8 +1920,8 @@ public:
     static float initialVerticalBorderSpacing() { return 0; }
     static constexpr CursorType initialCursor();
     static inline Color initialColor();
-    static inline StyleColor initialTextStrokeColor();
-    static inline StyleColor initialTextDecorationColor();
+    static inline Style::Color initialTextStrokeColor();
+    static inline Style::Color initialTextDecorationColor();
     static StyleImage* initialListStyleImage() { return 0; }
     static float initialBorderWidth() { return 3; }
     static unsigned short initialColumnRuleWidth() { return 3; }
@@ -2036,8 +2039,8 @@ public:
     static float initialPerspective() { return -1; }
     static inline Length initialPerspectiveOriginX();
     static inline Length initialPerspectiveOriginY();
-    static inline StyleColor initialBackgroundColor();
-    static inline StyleColor initialTextEmphasisColor();
+    static inline Style::Color initialBackgroundColor();
+    static inline Style::Color initialTextEmphasisColor();
     static constexpr TextEmphasisFill initialTextEmphasisFill();
     static constexpr TextEmphasisMark initialTextEmphasisMark();
     static inline const AtomString& initialTextEmphasisCustomMark();
@@ -2148,7 +2151,7 @@ public:
 #endif
 
 #if ENABLE(TOUCH_EVENTS)
-    static StyleColor initialTapHighlightColor();
+    static Style::Color initialTapHighlightColor();
 #endif
 
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
@@ -2168,18 +2171,18 @@ public:
     static constexpr MathStyle initialMathStyle();
 
     void setVisitedLinkColor(const Color&);
-    inline void setVisitedLinkBackgroundColor(const StyleColor&);
-    inline void setVisitedLinkBorderLeftColor(const StyleColor&);
-    inline void setVisitedLinkBorderRightColor(const StyleColor&);
-    inline void setVisitedLinkBorderBottomColor(const StyleColor&);
-    inline void setVisitedLinkBorderTopColor(const StyleColor&);
-    inline void setVisitedLinkOutlineColor(const StyleColor&);
-    inline void setVisitedLinkColumnRuleColor(const StyleColor&);
-    inline void setVisitedLinkTextDecorationColor(const StyleColor&);
-    inline void setVisitedLinkTextEmphasisColor(const StyleColor&);
-    inline void setVisitedLinkTextFillColor(const StyleColor&);
-    inline void setVisitedLinkTextStrokeColor(const StyleColor&);
-    inline void setVisitedLinkCaretColor(const StyleColor&);
+    inline void setVisitedLinkBackgroundColor(const Style::Color&);
+    inline void setVisitedLinkBorderLeftColor(const Style::Color&);
+    inline void setVisitedLinkBorderRightColor(const Style::Color&);
+    inline void setVisitedLinkBorderBottomColor(const Style::Color&);
+    inline void setVisitedLinkBorderTopColor(const Style::Color&);
+    inline void setVisitedLinkOutlineColor(const Style::Color&);
+    inline void setVisitedLinkColumnRuleColor(const Style::Color&);
+    inline void setVisitedLinkTextDecorationColor(const Style::Color&);
+    inline void setVisitedLinkTextEmphasisColor(const Style::Color&);
+    inline void setVisitedLinkTextFillColor(const Style::Color&);
+    inline void setVisitedLinkTextStrokeColor(const Style::Color&);
+    inline void setVisitedLinkCaretColor(const Style::Color&);
     inline void setHasVisitedLinkAutoCaretColor();
 
     void inheritUnicodeBidiFrom(const RenderStyle* parent) { m_nonInheritedFlags.unicodeBidi = parent->m_nonInheritedFlags.unicodeBidi; }
@@ -2187,42 +2190,42 @@ public:
     inline void getShadowInlineDirectionExtent(const ShadowData*, LayoutUnit& logicalLeft, LayoutUnit& logicalRight) const;
     inline void getShadowBlockDirectionExtent(const ShadowData*, LayoutUnit& logicalTop, LayoutUnit& logicalBottom) const;
 
-    inline const StyleColor& borderLeftColor() const;
-    inline const StyleColor& borderRightColor() const;
-    inline const StyleColor& borderTopColor() const;
-    inline const StyleColor& borderBottomColor() const;
-    inline const StyleColor& backgroundColor() const;
+    inline const Style::Color& borderLeftColor() const;
+    inline const Style::Color& borderRightColor() const;
+    inline const Style::Color& borderTopColor() const;
+    inline const Style::Color& borderBottomColor() const;
+    inline const Style::Color& backgroundColor() const;
     WEBCORE_EXPORT const Color& color() const;
-    inline const StyleColor& columnRuleColor() const;
-    inline const StyleColor& outlineColor() const;
-    inline const StyleColor& textEmphasisColor() const;
-    inline const StyleColor& textFillColor() const;
-    static inline StyleColor initialTextFillColor();
-    inline const StyleColor& textStrokeColor() const;
-    inline const StyleColor& caretColor() const;
+    inline const Style::Color& columnRuleColor() const;
+    inline const Style::Color& outlineColor() const;
+    inline const Style::Color& textEmphasisColor() const;
+    inline const Style::Color& textFillColor() const;
+    static inline Style::Color initialTextFillColor();
+    inline const Style::Color& textStrokeColor() const;
+    inline const Style::Color& caretColor() const;
     inline bool hasAutoCaretColor() const;
     const Color& visitedLinkColor() const;
-    inline const StyleColor& visitedLinkBackgroundColor() const;
-    inline const StyleColor& visitedLinkBorderLeftColor() const;
-    inline const StyleColor& visitedLinkBorderRightColor() const;
-    inline const StyleColor& visitedLinkBorderBottomColor() const;
-    inline const StyleColor& visitedLinkBorderTopColor() const;
-    inline const StyleColor& visitedLinkOutlineColor() const;
-    inline const StyleColor& visitedLinkColumnRuleColor() const;
-    inline const StyleColor& textDecorationColor() const;
-    inline const StyleColor& visitedLinkTextDecorationColor() const;
-    inline const StyleColor& visitedLinkTextEmphasisColor() const;
-    inline const StyleColor& visitedLinkTextFillColor() const;
-    inline const StyleColor& visitedLinkTextStrokeColor() const;
-    inline const StyleColor& visitedLinkCaretColor() const;
+    inline const Style::Color& visitedLinkBackgroundColor() const;
+    inline const Style::Color& visitedLinkBorderLeftColor() const;
+    inline const Style::Color& visitedLinkBorderRightColor() const;
+    inline const Style::Color& visitedLinkBorderBottomColor() const;
+    inline const Style::Color& visitedLinkBorderTopColor() const;
+    inline const Style::Color& visitedLinkOutlineColor() const;
+    inline const Style::Color& visitedLinkColumnRuleColor() const;
+    inline const Style::Color& textDecorationColor() const;
+    inline const Style::Color& visitedLinkTextDecorationColor() const;
+    inline const Style::Color& visitedLinkTextEmphasisColor() const;
+    inline const Style::Color& visitedLinkTextFillColor() const;
+    inline const Style::Color& visitedLinkTextStrokeColor() const;
+    inline const Style::Color& visitedLinkCaretColor() const;
     inline bool hasVisitedLinkAutoCaretColor() const;
 
-    inline const StyleColor& stopColor() const;
-    inline const StyleColor& floodColor() const;
-    inline const StyleColor& lightingColor() const;
+    inline const Style::Color& stopColor() const;
+    inline const Style::Color& floodColor() const;
+    inline const Style::Color& lightingColor() const;
 
     Color usedAccentColor(OptionSet<StyleColorOptions>) const;
-    inline const StyleColor& accentColor() const;
+    inline const Style::Color& accentColor() const;
     inline bool hasAutoAccentColor() const;
 
     inline PathOperation* offsetPath() const;
@@ -2255,9 +2258,18 @@ public:
     inline std::optional<Length> blockStepSize() const;
     inline void setBlockStepSize(std::optional<Length>);
 
+    static constexpr BlockStepAlign initialBlockStepAlign();
+    inline BlockStepAlign blockStepAlign() const;
+    inline void setBlockStepAlign(BlockStepAlign);
+
     static constexpr BlockStepInsert initialBlockStepInsert();
     inline BlockStepInsert blockStepInsert() const;
     inline void setBlockStepInsert(BlockStepInsert);
+
+    static constexpr BlockStepRound initialBlockStepRound();
+    inline BlockStepRound blockStepRound() const;
+    inline void setBlockStepRound(BlockStepRound);
+
     bool scrollAnchoringSuppressionStyleDidChange(const RenderStyle*) const;
     bool outOfFlowPositionStyleDidChange(const RenderStyle*) const;
 

@@ -34,6 +34,7 @@
 #include <wtf/Function.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WTF {
 class MediaTime;
@@ -44,7 +45,7 @@ namespace WebCore {
 class AudioStreamDescription;
 class PlatformAudioData;
 
-class WEBCORE_EXPORT AudioMediaStreamTrackRenderer : public LoggerHelper {
+class WEBCORE_EXPORT AudioMediaStreamTrackRenderer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<AudioMediaStreamTrackRenderer, WTF::DestructionThread::Main>, public LoggerHelper {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(AudioMediaStreamTrackRenderer, WEBCORE_EXPORT);
 public:
     struct Init {
@@ -57,7 +58,7 @@ public:
         uint64_t logIdentifier;
 #endif
     };
-    static std::unique_ptr<AudioMediaStreamTrackRenderer> create(Init&&);
+    static RefPtr<AudioMediaStreamTrackRenderer> create(Init&&);
     virtual ~AudioMediaStreamTrackRenderer() = default;
 
     static String defaultDeviceID();

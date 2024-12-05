@@ -29,8 +29,7 @@
 #include "WebURLSchemeTaskProxy.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
-#include <wtf/RefCounted.h>
-#include <wtf/WeakRef.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 class ResourceError;
@@ -44,7 +43,7 @@ namespace WebKit {
 
 class WebPage;
 
-class WebURLSchemeHandlerProxy : public RefCounted<WebURLSchemeHandlerProxy>, public CanMakeWeakPtr<WebURLSchemeHandlerProxy> {
+class WebURLSchemeHandlerProxy : public RefCountedAndCanMakeWeakPtr<WebURLSchemeHandlerProxy> {
 public:
     static Ref<WebURLSchemeHandlerProxy> create(WebPage& page, WebURLSchemeHandlerIdentifier identifier)
     {

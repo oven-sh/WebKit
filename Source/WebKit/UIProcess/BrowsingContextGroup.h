@@ -26,7 +26,7 @@
 #pragma once
 
 #include <WebCore/Site.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakListHashSet.h>
 
@@ -43,7 +43,7 @@ class WebPageProxy;
 class WebPreferences;
 class WebProcessProxy;
 
-class BrowsingContextGroup : public RefCounted<BrowsingContextGroup>, public CanMakeWeakPtr<BrowsingContextGroup> {
+class BrowsingContextGroup : public RefCountedAndCanMakeWeakPtr<BrowsingContextGroup> {
 public:
     static Ref<BrowsingContextGroup> create() { return adoptRef(*new BrowsingContextGroup()); }
     ~BrowsingContextGroup();

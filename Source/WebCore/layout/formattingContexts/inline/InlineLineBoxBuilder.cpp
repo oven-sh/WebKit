@@ -501,13 +501,17 @@ void LineBoxBuilder::constructInlineLevelBoxes(LineBox& lineBox)
     lineBox.setHasContent(lineHasContent);
 }
 
+struct EnclosingAscentDescent {
+    InlineLayoutUnit ascent { 0.f };
+    InlineLayoutUnit descent { 0.f };
+};
 void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox& lineBox)
 {
     // While line-box-contain normally tells whether a certain type of content should be included when computing the line box height,
     // font and Glyphs values affect the "size" of the associated inline boxes (which then affect the line box height).
     auto lineBoxContain = rootBox().style().lineBoxContain();
     // Collect layout bounds based on the contain property and set them on the inline boxes when they are applicable.
-    UncheckedKeyHashMap<InlineLevelBox*, TextUtil::EnclosingAscentDescent> inlineBoxBoundsMap;
+    UncheckedKeyHashMap<InlineLevelBox*, EnclosingAscentDescent> inlineBoxBoundsMap;
 
     if (lineBoxContain.contains(LineBoxContain::InlineBox)) {
         for (auto& inlineLevelBox : lineBox.nonRootInlineLevelBoxes()) {
@@ -516,7 +520,7 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
             auto& inlineBoxGeometry = formattingContext().geometryForBox(inlineLevelBox.layoutBox());
             auto ascent = inlineLevelBox.ascent() + inlineBoxGeometry.marginBorderAndPaddingBefore();
             auto descent = inlineLevelBox.descent() + inlineBoxGeometry.marginBorderAndPaddingAfter();
-            inlineBoxBoundsMap.set(&inlineLevelBox, TextUtil::EnclosingAscentDescent { ascent, descent });
+            inlineBoxBoundsMap.set(&inlineLevelBox, EnclosingAscentDescent { ascent, descent });
         }
     }
 
@@ -534,7 +538,7 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
                 ascent = std::max(ascent, enclosingAscentAndDescent.ascent);
                 descent = std::max(descent, enclosingAscentAndDescent.descent);
             }
-            inlineBoxBoundsMap.set(&inlineBox, TextUtil::EnclosingAscentDescent { ascent, descent });
+            inlineBoxBoundsMap.set(&inlineBox, EnclosingAscentDescent { ascent, descent });
         };
 
         ensureFontMetricsBasedHeight(lineBox.rootInlineBox());
@@ -554,7 +558,7 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
             auto& textBox = downcast<InlineTextBox>(run.layoutBox());
             auto textContent = run.textContent();
             auto& style = isFirstLine() ? textBox.firstLineStyle() : textBox.style();
-            auto enclosingAscentDescentForRun = TextUtil::enclosingGlyphBoundsForText(StringView(textBox.content()).substring(textContent->start, textContent->length), style);
+            auto enclosingAscentDescentForRun = TextUtil::enclosingGlyphBounds(StringView(textBox.content()).substring(textContent->start, textContent->length), style);
 
             auto& parentInlineBox = lineBox.parentInlineBox(run);
             auto enclosingAscentDescentForInlineBox = inlineBoxBoundsMap.get(&parentInlineBox);
@@ -580,14 +584,14 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
             auto& textBox = downcast<InlineTextBox>(run.layoutBox());
             auto textContent = run.textContent();
             auto& style = isFirstLine() ? textBox.firstLineStyle() : textBox.style();
-            auto ascentAndDescent = TextUtil::enclosingGlyphBoundsForText(StringView(textBox.content()).substring(textContent->start, textContent->length), style);
+            auto ascentAndDescent = TextUtil::enclosingGlyphBounds(StringView(textBox.content()).substring(textContent->start, textContent->length), style);
 
             initialLetterDescent = ascentAndDescent.descent;
             if (lineBox.baselineType() != AlphabeticBaseline)
                 initialLetterAscent = -ascentAndDescent.ascent;
             break;
         }
-        inlineBoxBoundsMap.set(&rootInlineBox, TextUtil::EnclosingAscentDescent { initialLetterAscent, initialLetterDescent });
+        inlineBoxBoundsMap.set(&rootInlineBox, EnclosingAscentDescent { initialLetterAscent, initialLetterDescent });
     }
 
     for (auto entry : inlineBoxBoundsMap) {

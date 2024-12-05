@@ -521,8 +521,8 @@ RefPtr<CSSCustomPropertyValue> CSSPropertyParser::parseTypedCustomPropertyValue(
             return { CSSCustomPropertyValue::NumericSyntaxValue { doubleValue, CSSUnitType::CSS_DPPX } };
         }
         case CSSCustomPropertySyntax::Type::Color: {
-            auto color = builderState.colorFromPrimitiveValue(downcast<CSSPrimitiveValue>(value), Style::ForVisitedLink::No);
-            return { color };
+            auto color = builderState.createStyleColor(value, Style::ForVisitedLink::No);
+            return { WTFMove(color) };
         }
         case CSSCustomPropertySyntax::Type::Image: {
             auto styleImage = builderState.createStyleImage(value);
@@ -954,6 +954,7 @@ static constexpr InitialValue initialValueForLonghand(CSSPropertyID longhand)
     case CSSPropertyAspectRatio:
     case CSSPropertyBackgroundSize:
     case CSSPropertyBlockSize:
+    case CSSPropertyBlockStepAlign:
     case CSSPropertyBottom:
     case CSSPropertyBreakAfter:
     case CSSPropertyBreakBefore:
@@ -1076,6 +1077,7 @@ static constexpr InitialValue initialValueForLonghand(CSSPropertyID longhand)
     case CSSPropertyAppearance:
     case CSSPropertyBackgroundImage:
     case CSSPropertyBlockEllipsis:
+    case CSSPropertyBlockStepSize:
     case CSSPropertyBorderBlockEndStyle:
     case CSSPropertyBorderBlockStartStyle:
     case CSSPropertyBorderBlockStyle:
@@ -1142,6 +1144,10 @@ static constexpr InitialValue initialValueForLonghand(CSSPropertyID longhand)
     case CSSPropertyTranslate:
     case CSSPropertyWidth:
         return CSSValueNone;
+    case CSSPropertyBlockStepInsert:
+        return CSSValueMarginBox;
+    case CSSPropertyBlockStepRound:
+        return CSSValueUp;
     case CSSPropertyAnimationIterationCount:
     case CSSPropertyBorderImageWidth:
     case CSSPropertyFillOpacity:
@@ -2411,6 +2417,48 @@ bool CSSPropertyParser::consumeAlignShorthand(const StylePropertyShorthand& shor
     return true;
 }
 
+bool CSSPropertyParser::consumeBlockStepShorthand(bool important)
+{
+    // https://drafts.csswg.org/css-rhythm/#block-step
+    RefPtr<CSSValue> size;
+    RefPtr<CSSValue> insert;
+    RefPtr<CSSValue> align;
+    RefPtr<CSSValue> round;
+
+    for (unsigned propertiesParsed = 0; propertiesParsed < 4 && !m_range.atEnd(); ++propertiesParsed) {
+        if (!size && (size = CSSPropertyParsing::consumeBlockStepSize(m_range, m_context)))
+            continue;
+        if (!insert && (insert = CSSPropertyParsing::consumeBlockStepInsert(m_range)))
+            continue;
+        if (!align && (align = CSSPropertyParsing::consumeBlockStepAlign(m_range)))
+            continue;
+        if (!round && (round = CSSPropertyParsing::consumeBlockStepRound(m_range)))
+            continue;
+
+        // There has to be at least one valid longhand.
+        return false;
+    }
+
+    if (!m_range.atEnd())
+        return false;
+
+    // Fill in default values if one was missing.
+    if (!size)
+        size = CSSPrimitiveValue::create(CSSValueNone);
+    if (!insert)
+        insert = CSSPrimitiveValue::create(CSSValueMarginBox);
+    if (!align)
+        align = CSSPrimitiveValue::create(CSSValueAuto);
+    if (!round)
+        round = CSSPrimitiveValue::create(CSSValueUp);
+
+    addProperty(CSSPropertyBlockStepSize, CSSPropertyBlockStep, WTFMove(size), important);
+    addProperty(CSSPropertyBlockStepInsert, CSSPropertyBlockStep, WTFMove(insert), important);
+    addProperty(CSSPropertyBlockStepAlign, CSSPropertyBlockStep, WTFMove(align), important);
+    addProperty(CSSPropertyBlockStepRound, CSSPropertyBlockStep, WTFMove(round), important);
+    return true;
+}
+
 bool CSSPropertyParser::consumeOverscrollBehaviorShorthand(bool important)
 {
     ASSERT(shorthandForProperty(CSSPropertyOverscrollBehavior).length() == 2);
@@ -3099,6 +3147,8 @@ bool CSSPropertyParser::parseShorthand(CSSPropertyID property, bool important)
         return consumePerspectiveOrigin(important);
     case CSSPropertyWebkitPerspective:
         return consumePrefixedPerspective(important);
+    case CSSPropertyBlockStep:
+        return consumeBlockStepShorthand(important);
     case CSSPropertyGap:
         return consumeAlignShorthand(shorthandForProperty(property), important);
     case CSSPropertyGridColumn:

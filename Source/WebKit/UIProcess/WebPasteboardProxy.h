@@ -67,8 +67,8 @@ public:
     void removeWebProcessProxy(WebProcessProxy&);
 
     // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
+    void ref() const final { }
+    void deref() const final { }
 
 #if PLATFORM(COCOA)
     void revokeAccess(WebProcessProxy&);

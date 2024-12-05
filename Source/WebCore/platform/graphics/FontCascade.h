@@ -48,6 +48,10 @@
 #undef Complex
 #endif
 
+namespace WTF {
+class TextStream;
+}
+
 namespace WebCore {
 
 class GraphicsContext;
@@ -440,5 +444,7 @@ inline float FontCascade::widthForTextUsingSimplifiedMeasuring(StringView text, 
 
 bool shouldSynthesizeSmallCaps(bool, const Font*, char32_t, std::optional<char32_t>, FontVariantCaps, bool);
 std::optional<char32_t> capitalized(char32_t);
+
+WTF::TextStream& operator<<(WTF::TextStream&, const FontCascade&);
 
 } // namespace WebCore

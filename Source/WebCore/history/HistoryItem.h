@@ -36,7 +36,7 @@
 #include "PolicyContainer.h"
 #include "SerializedScriptValue.h"
 #include <memory>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UUID.h>
 #include <wtf/WeakPtr.h>
@@ -69,7 +69,7 @@ protected:
     HistoryItemClient() = default;
 };
 
-class HistoryItem : public RefCounted<HistoryItem>, public CanMakeWeakPtr<HistoryItem> {
+class HistoryItem : public RefCountedAndCanMakeWeakPtr<HistoryItem> {
 public:
     using Client = HistoryItemClient;
     static Ref<HistoryItem> create(Client& client, const String& urlString = { }, const String& title = { }, const String& alternateTitle = { }, std::optional<BackForwardItemIdentifier> identifier = { })

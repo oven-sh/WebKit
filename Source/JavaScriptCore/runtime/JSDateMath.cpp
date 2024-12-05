@@ -463,9 +463,12 @@ String DateCache::timeZoneDisplayName(bool isDST)
     return m_timeZoneStandardDisplayNameCache;
 }
 
+static Lock timeZoneCacheLock;
+
 #if PLATFORM(COCOA)
 static void timeZoneChangeNotification(CFNotificationCenterRef, void*, CFStringRef, const void*, CFDictionaryRef)
 {
+    Locker locker { timeZoneCacheLock };
     ASSERT(isMainThread());
     ++lastTimeZoneID;
 }
@@ -482,6 +485,40 @@ DateCache::DateCache()
 #endif
 }
 
+static std::tuple<String, Vector<UChar, 32>> retrieveTimeZoneInformation()
+{
+    Locker locker { timeZoneCacheLock };
+    static NeverDestroyed<std::tuple<String, Vector<UChar, 32>, uint64_t>> globalCache;
+
+    bool isCacheStale = true;
+    uint64_t currentID = 0;
+#if PLATFORM(COCOA)
+    currentID = lastTimeZoneID.load();
+    isCacheStale = std::get<2>(globalCache.get()) != currentID;
+#endif
+    if (isCacheStale) {
+        Vector<UChar, 32> timeZoneID;
+        getTimeZoneOverride(timeZoneID);
+        String canonical;
+        UErrorCode status = U_ZERO_ERROR;
+        if (timeZoneID.isEmpty()) {
+            status = callBufferProducingFunction(ucal_getHostTimeZone, timeZoneID);
+            ASSERT_UNUSED(status, U_SUCCESS(status));
+        }
+        if (U_SUCCESS(status)) {
+            Vector<UChar, 32> canonicalBuffer;
+            auto status = callBufferProducingFunction(ucal_getCanonicalTimeZoneID, timeZoneID.data(), timeZoneID.size(), canonicalBuffer, nullptr);
+            if (U_SUCCESS(status))
+                canonical = String(canonicalBuffer);
+        }
+        if (canonical.isNull() || isUTCEquivalent(canonical))
+            canonical = "UTC"_s;
+
+        globalCache.get() = std::tuple { canonical.isolatedCopy(), WTFMove(timeZoneID), currentID };
+    }
+    return std::tuple { std::get<0>(globalCache.get()).isolatedCopy(), std::get<1>(globalCache.get()) };
+}
+
 DateCache::~DateCache() = default;
 
 Ref<DateInstanceData> DateCache::cachedDateInstanceData(double millisecondsFromEpoch)
@@ -492,28 +529,10 @@ Ref<DateInstanceData> DateCache::cachedDateInstanceData(double millisecondsFromE
 void DateCache::timeZoneCacheSlow()
 {
     ASSERT(!m_timeZoneCache);
-
-    Vector<UChar, 32> timeZoneID;
-    getTimeZoneOverride(timeZoneID);
+    auto [canonical, timeZoneID] = retrieveTimeZoneInformation();
     auto* cache = new OpaqueICUTimeZone;
-
-    String canonical;
-    UErrorCode status = U_ZERO_ERROR;
-    if (timeZoneID.isEmpty()) {
-        status = callBufferProducingFunction(ucal_getHostTimeZone, timeZoneID);
-        ASSERT_UNUSED(status, U_SUCCESS(status));
-    }
-    if (U_SUCCESS(status)) {
-        Vector<UChar, 32> canonicalBuffer;
-        auto status = callBufferProducingFunction(ucal_getCanonicalTimeZoneID, timeZoneID.data(), timeZoneID.size(), canonicalBuffer, nullptr);
-        if (U_SUCCESS(status))
-            canonical = String(canonicalBuffer);
-    }
-    if (canonical.isNull() || isUTCEquivalent(canonical))
-        canonical = "UTC"_s;
     cache->m_canonicalTimeZoneID = WTFMove(canonical);
-
-    status = U_ZERO_ERROR;
+    UErrorCode status = U_ZERO_ERROR;
     cache->m_calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(timeZoneID.data(), timeZoneID.size(), "", UCAL_DEFAULT, &status));
     ASSERT_UNUSED(status, U_SUCCESS(status));
     ucal_setGregorianChange(cache->m_calendar.get(), minECMAScriptTime, &status); // Ignore "unsupported" error.

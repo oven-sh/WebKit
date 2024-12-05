@@ -338,6 +338,7 @@ String ShorthandSerializer::serialize()
     case CSSPropertyScrollPaddingBlock:
     case CSSPropertyScrollPaddingInline:
         return serializePair();
+    case CSSPropertyBlockStep:
     case CSSPropertyBorderBlockEnd:
     case CSSPropertyBorderBlockStart:
     case CSSPropertyBorderBottom:

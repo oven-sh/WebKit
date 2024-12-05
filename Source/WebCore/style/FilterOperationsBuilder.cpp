@@ -26,13 +26,13 @@
 #include "config.h"
 #include "FilterOperationsBuilder.h"
 
+#include "CSSColorValue.h"
 #include "CSSFilterFunctionDescriptor.h"
 #include "CSSFunctionValue.h"
 #include "CSSPrimitiveValueMappings.h"
 #include "CSSShadowValue.h"
 #include "CSSToLengthConversionData.h"
 #include "CalculationValue.h"
-#include "ColorFromPrimitiveValue.h"
 #include "Document.h"
 #include "RenderStyle.h"
 
@@ -111,9 +111,17 @@ static Ref<FilterOperation> createFilterFunctionDropShadow(const CSSFunctionValu
     int x = shadow.x->resolveAsLength<int>(conversionData);
     int y = shadow.y->resolveAsLength<int>(conversionData);
     int blur = shadow.blur ? shadow.blur->resolveAsLength<int>(conversionData) : 0;
-    auto color = shadow.color ? colorFromPrimitiveValueWithResolvedCurrentColor(document, style, conversionData, *shadow.color) : style.color();
 
-    return DropShadowFilterOperation::create(IntPoint(x, y), blur, color.isValid() ? color : Color::transparentBlack);
+    auto color = [&] -> WebCore::Color {
+        if (shadow.color) {
+            if (RefPtr color = dynamicDowncast<CSSColorValue>(*shadow.color))
+                return style.colorResolvingCurrentColor(toStyleColorWithResolvedCurrentColor(color->color(), document, style, conversionData, ForVisitedLink::No));
+            return style.colorResolvingCurrentColor(toStyleColorWithResolvedCurrentColor(CSS::Color { CSS::KeywordColor { shadow.color->valueID() } }, document, style, conversionData, ForVisitedLink::No));
+        }
+        return style.color();
+    }();
+
+    return DropShadowFilterOperation::create(IntPoint(x, y), blur, color.isValid() ? color : WebCore::Color::transparentBlack);
 }
 
 static Ref<FilterOperation> createFilterFunctionGrayscale(const CSSFunctionValue& filter, const Document&, RenderStyle&, const CSSToLengthConversionData& conversionData)

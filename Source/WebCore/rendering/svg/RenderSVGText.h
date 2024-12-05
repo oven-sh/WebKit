@@ -29,6 +29,10 @@
 
 namespace WebCore {
 
+namespace InlineIterator {
+class InlineBoxIterator;
+}
+
 class RenderSVGInlineText;
 class SVGRootInlineBox;
 class SVGTextElement;
@@ -97,7 +101,7 @@ private:
     void layout() override;
 
     void computePerCharacterLayoutInformation();
-    void layoutCharactersInTextBoxes(LegacyInlineFlowBox*, SVGTextLayoutEngine&);
+    void layoutCharactersInTextBoxes(const InlineIterator::InlineBoxIterator&, SVGTextLayoutEngine&);
     FloatRect layoutChildBoxes(LegacyInlineFlowBox*, SVGTextFragmentMap&);
     void layoutRootBox(const FloatRect&);
     void reorderValueListsToLogicalOrder();

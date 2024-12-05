@@ -293,8 +293,10 @@ void EventDispatcher::dispatchWheelEvent(PageIdentifier pageID, const WebWheelEv
         return;
 
     bool handled = false;
-    if (webPage->mainFrame())
-        handled = webPage->wheelEvent(webPage->mainFrame()->frameID(), wheelEvent, processingSteps).wasHandled();
+    if (webPage->mainFrame()) {
+        auto [result, _] = webPage->wheelEvent(webPage->mainFrame()->frameID(), wheelEvent, processingSteps);
+        handled = result.wasHandled();
+    }
 
     if (processingSteps.contains(WheelEventProcessingSteps::SynchronousScrolling) && wheelEventOrigin == EventDispatcher::WheelEventOrigin::UIProcess)
         sendDidReceiveEvent(pageID, wheelEvent.type(), handled);

@@ -82,6 +82,9 @@ public:
     WebUserContentControllerProxy();
     ~WebUserContentControllerProxy();
 
+    void ref() const final { API::ObjectImpl<API::Object::Type::UserContentController>::ref(); }
+    void deref() const final { API::ObjectImpl<API::Object::Type::UserContentController>::deref(); }
+
     static WebUserContentControllerProxy* get(UserContentControllerIdentifier);
 
     UserContentControllerParameters parameters() const;

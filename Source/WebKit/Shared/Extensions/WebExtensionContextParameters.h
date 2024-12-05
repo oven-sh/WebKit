@@ -46,7 +46,7 @@ struct WebExtensionContextParameters {
     HashMap<String, WallTime> grantedPermissions;
 
     RefPtr<API::Data> localizationJSON;
-    Ref<API::Data> manifestJSON;
+    RefPtr<API::Data> manifestJSON;
 
     double manifestVersion { 0 };
     bool isSessionStorageAllowedInContentScripts { false };

@@ -100,7 +100,7 @@ LayerContentsType RemoteLayerTreeHost::layerContentsType() const
 bool RemoteLayerTreeHost::replayDynamicContentScalingDisplayListsIntoBackingStore() const
 {
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
-    return m_drawingArea->page().preferences().replayCGDisplayListsIntoBackingStore();
+    return m_drawingArea->page() && m_drawingArea->page()->preferences().replayCGDisplayListsIntoBackingStore();
 #else
     return false;
 #endif

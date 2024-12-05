@@ -34,6 +34,7 @@
 #include "FrameInfoData.h"
 #include "NetworkProcessMessages.h"
 #include "NetworkProcessProxy.h"
+#include "ProcessAssertion.h"
 #include "WebPageProxy.h"
 #include "WebProcessMessages.h"
 #include "WebProtectionSpace.h"
@@ -62,6 +63,9 @@ DownloadProxy::DownloadProxy(DownloadProxyMap& downloadProxyMap, WebsiteDataStor
     , m_request(resourceRequest)
     , m_originatingPage(originatingPage)
     , m_frameInfo(API::FrameInfo::create(FrameInfoData { frameInfoData }, originatingPage))
+#if HAVE(MODERN_DOWNLOADPROGRESS)
+    , m_assertion(ProcessAssertion::create(getCurrentProcessID(), "WebKit DownloadProxy DecideDestination"_s, ProcessAssertionType::FinishTaskInterruptable))
+#endif
 {
 }
 

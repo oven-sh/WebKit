@@ -200,21 +200,21 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
         addTextShadow();
 
         auto addGlyphOverflow = [&] {
-            if (inlineTextBox.canUseSimpleFontCodePath()) {
-                // canUseSimpleFontCodePath maps to CodePath::Simple (and content with potential glyph overflow would says CodePath::SimpleWithGlyphOverflow).
-                return;
-            }
-            auto enclosingAscentAndDescent = TextUtil::enclosingGlyphBoundsForText(StringView(content).substring(text->start, text->length), style);
+            // canUseSimpleFontCodePath maps to CodePath::Simple (and content with potential glyph overflow would says CodePath::SimpleWithGlyphOverflow).
+            // In most cases text runs are not split so we call enclosingGlyphBounds once per line, but if it turns out to be a perf issue, we should limit it to first/last runs.
+            auto enclosingBounds = TextUtil::enclosingGlyphBounds(StringView(content).substring(text->start, text->length), style, inlineTextBox.canUseSimpleFontCodePath());
             // FIXME: Take fallback fonts into account.
             auto& fontMetrics = style.metricsOfPrimaryFont();
-            auto topOverflow = std::max(0.f, ceilf(-enclosingAscentAndDescent.ascent) - fontMetrics.intAscent());
-            auto bottomOverflow = std::max(0.f, ceilf(enclosingAscentAndDescent.descent) - fontMetrics.intDescent());
-            inkOverflow.inflate(topOverflow, { }, bottomOverflow, { });
+            auto topOverflow = std::max(0.f, ceilf(-enclosingBounds.ascent) - fontMetrics.intAscent());
+            auto bottomOverflow = std::max(0.f, ceilf(enclosingBounds.descent) - fontMetrics.intDescent());
+            inkOverflow.inflate(topOverflow, enclosingBounds.right, bottomOverflow, enclosingBounds.left);
         };
         addGlyphOverflow();
 
         return inkOverflow;
-    };
+    }();
+
+    m_contentHasInkOverflow = m_contentHasInkOverflow || inkOverflow != textRunRect;
 
     if (inlineTextBox.isCombined()) {
         static auto objectReplacementCharacterString = NeverDestroyed<String> { span(objectReplacementCharacter) };
@@ -224,7 +224,7 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
             , inlineTextBox
             , lineRun.bidiLevel()
             , textRunRect
-            , inkOverflow()
+            , inkOverflow
             , lineRun.expansion()
             , InlineDisplay::Box::Text { text->start, 1, objectReplacementCharacterString, content }
             , isContentful
@@ -241,7 +241,7 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
         , inlineTextBox
         , lineRun.bidiLevel()
         , textRunRect
-        , inkOverflow()
+        , inkOverflow
         , lineRun.expansion()
         , InlineDisplay::Box::Text { text->start, text->length, content, adjustedContentToRender(), text->needsHyphen }
         , isContentful

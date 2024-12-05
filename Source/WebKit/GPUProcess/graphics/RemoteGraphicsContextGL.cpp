@@ -129,7 +129,8 @@ void RemoteGraphicsContextGL::workQueueInitialize(WebCore::GraphicsContextGLAttr
 {
     assertIsCurrent(workQueue());
     platformWorkQueueInitialize(WTFMove(attributes));
-    m_streamConnection->open(protectedWorkQueue());
+    RefPtr streamConnection = m_streamConnection;
+    streamConnection->open(protectedWorkQueue());
     if (RefPtr context = m_context) {
         context->setClient(this);
         String extensions = context->getString(GraphicsContextGL::EXTENSIONS);
@@ -137,8 +138,8 @@ void RemoteGraphicsContextGL::workQueueInitialize(WebCore::GraphicsContextGLAttr
         auto [externalImageTarget, externalImageBindingQuery] = context->externalImageTextureBindingPoint();
         RemoteGraphicsContextGLInitializationState initializationState { extensions, requestableExtensions, externalImageTarget, externalImageBindingQuery };
 
-        send(Messages::RemoteGraphicsContextGLProxy::WasCreated(workQueue().wakeUpSemaphore(), m_streamConnection->clientWaitSemaphore(), { initializationState }));
-        m_streamConnection->startReceivingMessages(*this, Messages::RemoteGraphicsContextGL::messageReceiverName(), m_graphicsContextGLIdentifier.toUInt64());
+        send(Messages::RemoteGraphicsContextGLProxy::WasCreated(workQueue().wakeUpSemaphore(), streamConnection->clientWaitSemaphore(), { initializationState }));
+        streamConnection->startReceivingMessages(*this, Messages::RemoteGraphicsContextGL::messageReceiverName(), m_graphicsContextGLIdentifier.toUInt64());
     } else
         send(Messages::RemoteGraphicsContextGLProxy::WasCreated({ }, { }, std::nullopt));
 }
@@ -146,12 +147,13 @@ void RemoteGraphicsContextGL::workQueueInitialize(WebCore::GraphicsContextGLAttr
 void RemoteGraphicsContextGL::workQueueUninitialize()
 {
     assertIsCurrent(workQueue());
+    RefPtr streamConnection = m_streamConnection;
     if (m_context) {
         m_context->setClient(nullptr);
         m_context = nullptr;
-        m_streamConnection->stopReceivingMessages(Messages::RemoteGraphicsContextGL::messageReceiverName(), m_graphicsContextGLIdentifier.toUInt64());
+        streamConnection->stopReceivingMessages(Messages::RemoteGraphicsContextGL::messageReceiverName(), m_graphicsContextGLIdentifier.toUInt64());
     }
-    m_streamConnection->invalidate();
+    streamConnection->invalidate();
     m_streamConnection = nullptr;
     m_renderingResourcesRequest = { };
 }
@@ -458,7 +460,7 @@ Ref<RemoteVideoFrameObjectHeap> RemoteGraphicsContextGL::protectedVideoFrameObje
 
 void RemoteGraphicsContextGL::messageCheck(bool assertion)
 {
-    MESSAGE_CHECK(assertion, m_streamConnection);
+    MESSAGE_CHECK(assertion, RefPtr { m_streamConnection });
 }
 
 } // namespace WebKit

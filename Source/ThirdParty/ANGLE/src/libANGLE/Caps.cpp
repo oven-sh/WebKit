@@ -256,12 +256,21 @@ static bool DetermineDepthBufferFloat2Support(const TextureCapsMap &textureCaps)
     return GetFormatSupport(textureCaps, requiredFormats, true, false, true, false, false);
 }
 
+// Checks for GL_ARM_rgba8 support
+static bool DetermineRGBA8TextureSupport(const TextureCapsMap &textureCaps)
+{
+    constexpr GLenum requiredFormats[] = {
+        GL_RGBA8,
+    };
+
+    return GetFormatSupport(textureCaps, requiredFormats, false, false, false, true, false);
+}
+
 // Checks for GL_OES_rgb8_rgba8 support
-static bool DetermineRGB8AndRGBA8TextureSupport(const TextureCapsMap &textureCaps)
+static bool DetermineRGB8TextureSupport(const TextureCapsMap &textureCaps)
 {
     constexpr GLenum requiredFormats[] = {
         GL_RGB8,
-        GL_RGBA8,
     };
 
     return GetFormatSupport(textureCaps, requiredFormats, false, false, false, true, false);
@@ -876,7 +885,8 @@ void Extensions::setTextureExtensionSupport(const TextureCapsMap &textureCaps)
     // colorBufferFloatRgbCHROMIUM, colorBufferFloatRgbaCHROMIUM and colorBufferFloatEXT were
     // verified. Verify the rest.
     packedDepthStencilOES    = DeterminePackedDepthStencilSupport(textureCaps);
-    rgb8Rgba8OES             = DetermineRGB8AndRGBA8TextureSupport(textureCaps);
+    rgba8ARM                 = DetermineRGBA8TextureSupport(textureCaps);
+    rgb8Rgba8OES             = rgba8ARM && DetermineRGB8TextureSupport(textureCaps);
     readDepthNV              = DetermineReadDepthSupport(textureCaps);
     readStencilNV            = DetermineReadStencilSupport(textureCaps);
     depthBufferFloat2NV      = DetermineDepthBufferFloat2Support(textureCaps);
@@ -981,6 +991,11 @@ Caps &Caps::operator=(const Caps &other) = default;
 Caps GenerateMinimumCaps(const Version &clientVersion, const Extensions &extensions)
 {
     Caps caps;
+
+    // EXT_draw_buffers. Set to 1 even if the extension is not present. Framebuffer and blend state
+    // depends on this being > 0.
+    caps.maxDrawBuffers      = 1;
+    caps.maxColorAttachments = 1;
 
     // GLES1 emulation (Minimums taken from Table 6.20 / 6.22 (ES 1.1 spec))
     if (clientVersion < Version(2, 0))
@@ -1133,13 +1148,13 @@ Caps GenerateMinimumCaps(const Version &clientVersion, const Extensions &extensi
         caps.maxShaderAtomicCounters[ShaderType::Fragment]       = 0;
         caps.maxShaderImageUniforms[ShaderType::Fragment]        = 0;
         caps.maxShaderStorageBlocks[ShaderType::Fragment]        = 0;
-        caps.minProgramTextureGatherOffset                       = 0;
-        caps.maxProgramTextureGatherOffset                       = 0;
+        caps.minProgramTextureGatherOffset                       = caps.minProgramTexelOffset;
+        caps.maxProgramTextureGatherOffset                       = caps.maxProgramTexelOffset;
 
         // Table 20.45
         caps.maxComputeWorkGroupCount                        = {{65535, 65535, 65535}};
         caps.maxComputeWorkGroupSize                         = {{128, 128, 64}};
-        caps.maxComputeWorkGroupInvocations                  = 12;
+        caps.maxComputeWorkGroupInvocations                  = 128;
         caps.maxShaderUniformBlocks[ShaderType::Compute]     = limits::kMinimumShaderUniformBlocks;
         caps.maxShaderTextureImageUnits[ShaderType::Compute] = 16;
         caps.maxComputeSharedMemorySize                      = 16384;
@@ -1326,6 +1341,7 @@ std::vector<std::string> DisplayExtensions::getStrings() const
     InsertExtensionString("EGL_ANDROID_framebuffer_target",                      framebufferTargetANDROID,           &extensionStrings);
     InsertExtensionString("EGL_ANDROID_image_native_buffer",                     imageNativeBuffer,                  &extensionStrings);
     InsertExtensionString("EGL_ANDROID_get_frame_timestamps",                    getFrameTimestamps,                 &extensionStrings);
+    InsertExtensionString("EGL_ANDROID_front_buffer_auto_refresh",               frontBufferAutoRefreshANDROID,      &extensionStrings);
     InsertExtensionString("EGL_ANGLE_timestamp_surface_attribute",               timestampSurfaceAttributeANGLE,     &extensionStrings);
     InsertExtensionString("EGL_ANDROID_recordable",                              recordable,                         &extensionStrings);
     InsertExtensionString("EGL_ANGLE_power_preference",                          powerPreference,                    &extensionStrings);

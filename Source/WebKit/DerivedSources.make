@@ -129,6 +129,7 @@ endif
 to-pattern = $(join $(basename $1), $(subst .,%,$(suffix $1)))
 
 MESSAGE_RECEIVERS = \
+	NetworkProcess/Authentication/AuthenticationManager \
 	NetworkProcess/NetworkBroadcastChannelRegistry \
 	NetworkProcess/NetworkConnectionToWebProcess \
 	NetworkProcess/NetworkContentRuleListManager \
@@ -152,7 +153,6 @@ MESSAGE_RECEIVERS = \
 	Shared/AuxiliaryProcess \
 	Shared/API/Cocoa/RemoteObjectRegistry \
 	Shared/ApplePay/WebPaymentCoordinatorProxy \
-	Shared/Authentication/AuthenticationManager \
 	Shared/Notifications/NotificationManagerMessageHandler \
 	Shared/IPCConnectionTester \
 	Shared/IPCStreamTester \

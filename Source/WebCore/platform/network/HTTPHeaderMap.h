@@ -30,8 +30,6 @@
 #include <utility>
 #include <wtf/text/WTFString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // FIXME: Not every header fits into a map. Notably, multiple Set-Cookie header fields are needed to set multiple cookies.
@@ -91,6 +89,7 @@ public:
         const KeyValue& operator*() const { return *get(); }
         const KeyValue* operator->() const { return get(); }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         HTTPHeaderMapConstIterator& operator++()
         {
             if (m_commonHeadersIt != m_table.m_commonHeaders.end()) {
@@ -102,6 +101,7 @@ public:
             updateKeyValue(m_uncommonHeadersIt);
             return *this;
         }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         bool operator==(const HTTPHeaderMapConstIterator& other) const
         {
@@ -217,5 +217,3 @@ private:
 };
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

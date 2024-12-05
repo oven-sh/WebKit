@@ -57,6 +57,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BlobLoader);
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Blob);
 
 class BlobURLRegistry final : public URLRegistry {
@@ -305,6 +306,13 @@ void Blob::arrayBuffer(DOMPromiseDeferred<IDLArrayBuffer>&& promise)
 {
     loadBlob(FileReaderLoader::ReadAsArrayBuffer, [promise = WTFMove(promise)](BlobLoader& blobLoader) mutable {
         promise.settle(arrayBufferFromBlobLoader(blobLoader));
+    });
+}
+
+void Blob::getArrayBuffer(CompletionHandler<void(ExceptionOr<Ref<JSC::ArrayBuffer>>)>&& completionHandler)
+{
+    loadBlob(FileReaderLoader::ReadAsArrayBuffer, [completionHandler = WTFMove(completionHandler)](BlobLoader& blobLoader) mutable {
+        completionHandler(arrayBufferFromBlobLoader(blobLoader));
     });
 }
 

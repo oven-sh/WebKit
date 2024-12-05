@@ -3284,7 +3284,7 @@ class GenerateStyleBuilderGenerated:
 
     def _generate_color_property_initial_value_setter(self, to, property):
         if property.codegen_properties.initial == "currentColor":
-            initial_function = "StyleColor::currentColor"
+            initial_function = "Style::Color::currentColor"
         else:
             initial_function = "RenderStyle::" + property.codegen_properties.initial
         to.write(f"if (builderState.applyPropertyToRegularStyle())")
@@ -3300,9 +3300,9 @@ class GenerateStyleBuilderGenerated:
 
     def _generate_color_property_value_setter(self, to, property, value):
         to.write(f"if (builderState.applyPropertyToRegularStyle())")
-        to.write(f"    builderState.style().{property.codegen_properties.setter}(builderState.colorFromPrimitiveValue({value}, ForVisitedLink::No));")
+        to.write(f"    builderState.style().{property.codegen_properties.setter}(builderState.createStyleColor({value}, ForVisitedLink::No));")
         to.write(f"if (builderState.applyPropertyToVisitedLinkStyle())")
-        to.write(f"    builderState.style().setVisitedLink{property.name_for_methods}(builderState.colorFromPrimitiveValue({value}, ForVisitedLink::Yes));")
+        to.write(f"    builderState.style().setVisitedLink{property.name_for_methods}(builderState.createStyleColor({value}, ForVisitedLink::Yes));")
 
     # Animation property setters.
 
@@ -3515,7 +3515,7 @@ class GenerateStyleBuilderGenerated:
                 elif property.codegen_properties.conditional_converter:
                     return f"WTFMove(convertedValue.value())"
                 elif property.codegen_properties.color_property and not property.codegen_properties.visited_link_color_support:
-                    return f"builderState.colorFromPrimitiveValue(downcast<CSSPrimitiveValue>(value), ForVisitedLink::No)"
+                    return f"builderState.createStyleColor(value, ForVisitedLink::No)"
                 else:
                     return "fromCSSValueDeducingType(builderState, value)"
 

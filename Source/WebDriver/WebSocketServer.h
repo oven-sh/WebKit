@@ -32,6 +32,7 @@
 #include <vector>
 #include <wtf/HashMap.h>
 #include <wtf/JSONValues.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -103,7 +104,7 @@ public:
 private:
 };
 
-class WebSocketServer : public RefCounted<WebSocketServer>, public CanMakeWeakPtr<WebSocketServer> {
+class WebSocketServer : public RefCountedAndCanMakeWeakPtr<WebSocketServer> {
 public:
     explicit WebSocketServer(WebSocketMessageHandler&, WebDriverService&);
     virtual ~WebSocketServer() = default;

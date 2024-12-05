@@ -108,6 +108,10 @@ public:
 
     static Ref<ViewGestureController> create(WebPageProxy&);
     ~ViewGestureController();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void platformTeardown();
 
     void disconnectFromProcess();

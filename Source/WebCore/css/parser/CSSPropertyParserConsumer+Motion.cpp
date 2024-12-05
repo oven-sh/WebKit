@@ -54,11 +54,11 @@ static RefPtr<CSSValue> consumeRayFunction(CSSParserTokenRange& range, const CSS
     // https://drafts.fxtf.org/motion-1/#ray-function
 
     static constexpr std::pair<CSSValueID, CSS::RaySize> sizeMappings[] {
-        { CSSValueClosestSide, CSS::RaySize { CSS::ClosestSide { } } },
-        { CSSValueClosestCorner, CSS::RaySize { CSS::ClosestCorner { } } },
-        { CSSValueFarthestSide, CSS::RaySize { CSS::FarthestSide { } } },
-        { CSSValueFarthestCorner, CSS::RaySize { CSS::FarthestCorner { } } },
-        { CSSValueSides, CSS::RaySize { CSS::Sides { } } },
+        { CSSValueClosestSide, CSS::RaySize { CSS::Keyword::ClosestSide { } } },
+        { CSSValueClosestCorner, CSS::RaySize { CSS::Keyword::ClosestCorner { } } },
+        { CSSValueFarthestSide, CSS::RaySize { CSS::Keyword::FarthestSide { } } },
+        { CSSValueFarthestCorner, CSS::RaySize { CSS::Keyword::FarthestCorner { } } },
+        { CSSValueSides, CSS::RaySize { CSS::Keyword::Sides { } } },
     };
     static constexpr SortedArrayMap sizeMap { sizeMappings };
 
@@ -69,7 +69,7 @@ static RefPtr<CSSValue> consumeRayFunction(CSSParserTokenRange& range, const CSS
 
     std::optional<CSS::Angle<>> angle;
     std::optional<CSS::RaySize> size;
-    std::optional<CSS::Contain> contain;
+    std::optional<CSS::Keyword::Contain> contain;
     std::optional<CSS::Position> position;
 
     auto consumeAngle = [&] -> bool {
@@ -87,7 +87,7 @@ static RefPtr<CSSValue> consumeRayFunction(CSSParserTokenRange& range, const CSS
     auto consumeContain = [&] -> bool {
         if (contain || !consumeIdentRaw<CSSValueContain>(args).has_value())
             return false;
-        contain = CSS::Contain { };
+        contain = CSS::Keyword::Contain { };
         return contain.has_value();
     };
     auto consumeAtPosition = [&] -> bool {
@@ -111,7 +111,7 @@ static RefPtr<CSSValue> consumeRayFunction(CSSParserTokenRange& range, const CSS
         CSS::RayFunction {
             .parameters = CSS::Ray {
                 WTFMove(*angle),
-                size.value_or(CSS::RaySize { CSS::ClosestSide { } }),
+                size.value_or(CSS::RaySize { CSS::Keyword::ClosestSide { } }),
                 WTFMove(contain),
                 WTFMove(position)
             }

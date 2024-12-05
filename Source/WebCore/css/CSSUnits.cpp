@@ -119,10 +119,8 @@ CSSUnitCategory unitCategory(CSSUnitType type)
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CSS_PROPERTY_ID:
     case CSSUnitType::CSS_QUIRKY_EM:
-    case CSSUnitType::CSS_RGBCOLOR:
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_URI:
     case CSSUnitType::CSS_VALUE_ID:
     case CSSUnitType::CustomIdent:
@@ -211,7 +209,6 @@ TextStream& operator<<(TextStream& ts, CSSUnitType unitType)
     case CSSUnitType::CSS_IDENT: ts << "ident"; break;
     case CSSUnitType::CustomIdent: ts << "custom-ident"; break;
     case CSSUnitType::CSS_ATTR: ts << "attr"; break;
-    case CSSUnitType::CSS_RGBCOLOR: ts << "rgbcolor"; break;
     case CSSUnitType::CSS_VW: ts << "vw"; break;
     case CSSUnitType::CSS_VH: ts << "vh"; break;
     case CSSUnitType::CSS_VMIN: ts << "vmin"; break;
@@ -262,7 +259,6 @@ TextStream& operator<<(TextStream& ts, CSSUnitType unitType)
     case CSSUnitType::CSS_CALC: ts << "calc"; break;
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE: ts << "calc_percentage_with_angle"; break;
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH: ts << "calc_percentage_with_length"; break;
-    case CSSUnitType::CSS_UNRESOLVED_COLOR: ts << "unresolved_color"; break;
     case CSSUnitType::CSS_FONT_FAMILY: ts << "font_family"; break;
     case CSSUnitType::CSS_PROPERTY_ID: ts << "property_id"; break;
     case CSSUnitType::CSS_VALUE_ID: ts << "value_id"; break;
@@ -384,10 +380,8 @@ bool conversionToCanonicalUnitRequiresConversionData(CSSUnitType unit)
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CSS_PROPERTY_ID:
     case CSSUnitType::CSS_QUIRKY_EM:
-    case CSSUnitType::CSS_RGBCOLOR:
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_URI:
     case CSSUnitType::CSS_VALUE_ID:
     case CSSUnitType::CustomIdent:

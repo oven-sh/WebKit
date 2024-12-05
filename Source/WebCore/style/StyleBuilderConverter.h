@@ -175,7 +175,7 @@ public:
     static bool convertTouchCallout(const BuilderState&, const CSSValue&);
 #endif
 #if ENABLE(TOUCH_EVENTS)
-    static StyleColor convertTapHighlightColor(const BuilderState&, const CSSValue&);
+    static Color convertTapHighlightColor(const BuilderState&, const CSSValue&);
 #endif
     static OptionSet<TouchAction> convertTouchAction(const BuilderState&, const CSSValue&);
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
@@ -1122,8 +1122,8 @@ inline std::optional<ScrollbarColor> BuilderConverter::convertScrollbarColor(con
     auto& pair = downcast<CSSValuePair>(value);
 
     return ScrollbarColor {
-        builderState.colorFromPrimitiveValue(downcast<CSSPrimitiveValue>(pair.first())),
-        builderState.colorFromPrimitiveValue(downcast<CSSPrimitiveValue>(pair.second()))
+        builderState.createStyleColor(pair.first()),
+        builderState.createStyleColor(pair.second()),
     };
 }
 
@@ -1570,9 +1570,9 @@ inline bool BuilderConverter::convertTouchCallout(const BuilderState&, const CSS
 #endif
 
 #if ENABLE(TOUCH_EVENTS)
-inline StyleColor BuilderConverter::convertTapHighlightColor(const BuilderState& builderState, const CSSValue& value)
+inline Color BuilderConverter::convertTapHighlightColor(const BuilderState& builderState, const CSSValue& value)
 {
-    return builderState.colorFromPrimitiveValue(downcast<CSSPrimitiveValue>(value));
+    return builderState.createStyleColor(value);
 }
 #endif
 

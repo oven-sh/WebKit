@@ -124,10 +124,8 @@ void ComputedStyleDependenciesCollector<CSSUnitType>::operator()(ComputedStyleDe
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CustomIdent:
     case CSSUnitType::CSS_ATTR:
-    case CSSUnitType::CSS_RGBCOLOR:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_PROPERTY_ID:
     case CSSUnitType::CSS_VALUE_ID:
     case CSSUnitType::CSS_CALC:

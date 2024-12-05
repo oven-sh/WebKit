@@ -1,3 +1,4 @@
+//@ slow!
 
 function assert(a, b) {
     if (a === b)

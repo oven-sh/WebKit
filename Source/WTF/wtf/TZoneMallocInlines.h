@@ -46,13 +46,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #define WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED_2X_TEMPLATE(outerOuterType, outerType, innerType) \
     struct WTFTzoneMallocSemicolonifier ## outerOuterType ## outerType ## innerType { }
 
-#define WTF_MAKE_COMPACT_TZONE_ALLOCATED_INLINE(typeName) WTF_MAKE_FAST_COMPACT_ALLOCATED
 #define WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(typeName) struct WTFTzoneMallocSemicolonifier##typeName { }
 #define WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL_NESTED(otherType, innerType) struct WTFTzoneMallocSemicolonifier ## outerType ## innerType { }
 #define WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL_TEMPLATE(typeName) struct WTFTzoneMallocSemicolonifier##typeName { }
 #define WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL_NESTED_TEMPLATE(outerType, innerType) struct WTFTzoneMallocSemicolonifier ## outerType ## innerType { }
 
-#define WTF_MAKE_STRUCT_TZONE_ALLOCATED_INLINE(typeName) WTF_MAKE_STRUCT_FAST_ALLOCATED
 #define WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(typeName) WTF_MAKE_TZONE_ALLOCATED_IMPL(typeName)
 #define WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL_NESTED(outerType, innerType) WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(outerType, innerType)
 
@@ -94,7 +92,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #define WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED_2X_TEMPLATE(outerOuterType, outerType, innerType) \
     MAKE_BTZONE_MALLOCED_IMPL_NESTED_TEMPLATE(outerOuterType ## outerType ## innerType, outerOuterType::outerType::innerType, TZoneHeap)
 
-#define WTF_MAKE_COMPACT_TZONE_ALLOCATED_INLINE(typeName) MAKE_BTZONE_MALLOCED_INLINE(typeName, CompactTZoneHeap)
 #define WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(type) MAKE_BTZONE_MALLOCED_IMPL(type, CompactTZoneHeap)
 #define WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL_NESTED(outerType, innerType) \
     MAKE_BTZONE_MALLOCED_IMPL_NESTED(outerType ## innerType, outerType::innerType, CompactTZoneHeap)
@@ -102,8 +99,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #define WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL_NESTED_TEMPLATE(outerType, innerType) \
     MAKE_BTZONE_MALLOCED_IMPL_NESTED_TEMPLATE(outerType ## innerType, outerType::innerType, CompactTZoneHeap)
 
-#define WTF_MAKE_STRUCT_TZONE_ALLOCATED_INLINE(typeName) MAKE_STRUCT_BTZONE_MALLOCED_INLINE(typeName, TZoneHeap)
-#define WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(typeName) \ MAKE_BTZONE_MALLOCED_IMPL(typeName, TZoneHeap)
+#define WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(typeName) \
+    MAKE_BTZONE_MALLOCED_IMPL(typeName, TZoneHeap)
 #define WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL_NESTED(outerType, innerType) \
     MAKE_BTZONE_MALLOCED_IMPL_NESTED(outerType ## innerType, outerType::innerType, TZoneHeap)
 

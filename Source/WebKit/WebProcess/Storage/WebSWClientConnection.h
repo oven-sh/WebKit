@@ -55,6 +55,9 @@ public:
     static Ref<WebSWClientConnection> create() { return adoptRef(*new WebSWClientConnection); }
     ~WebSWClientConnection();
 
+    void ref() const final { WebCore::SWClientConnection::ref(); }
+    void deref() const final { WebCore::SWClientConnection::deref(); }
+
     WebCore::SWServerConnectionIdentifier serverConnectionIdentifier() const final { return m_identifier; }
 
     void addServiceWorkerRegistrationInServer(WebCore::ServiceWorkerRegistrationIdentifier) final;

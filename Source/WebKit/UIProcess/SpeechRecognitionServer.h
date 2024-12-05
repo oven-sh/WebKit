@@ -63,6 +63,9 @@ public:
 #endif
         );
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     void start(WebCore::SpeechRecognitionConnectionClientIdentifier, String&& lang, bool continuous, bool interimResults, uint64_t maxAlternatives, WebCore::ClientOrigin&&, WebCore::FrameIdentifier);

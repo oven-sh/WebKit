@@ -27,9 +27,7 @@
 #import "NetworkTransportSession.h"
 
 #import "NetworkConnectionToWebProcess.h"
-#import "NetworkTransportBidirectionalStream.h"
-#import "NetworkTransportReceiveStream.h"
-#import "NetworkTransportSendStream.h"
+#import "NetworkTransportStream.h"
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/CompletionHandler.h>
@@ -162,7 +160,7 @@ void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(s
     auto creationCompletionHandler = [
         weakThis = WeakPtr { *this },
         completionHandler = WTFMove(completionHandler)
-    ] (RefPtr<NetworkTransportBidirectionalStream>&& stream) mutable {
+    ] (RefPtr<NetworkTransportStream>&& stream) mutable {
         if (!completionHandler)
             return;
         RefPtr strongThis = weakThis.get();
@@ -174,7 +172,7 @@ void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(s
         completionHandler(identifier);
     };
 
-    Ref stream = NetworkTransportBidirectionalStream::create(*this, connection.get());
+    Ref stream = NetworkTransportStream::create(*this, connection.get(), NetworkTransportStreamType::Bidirectional);
 
     nw_connection_set_state_changed_handler(connection.get(), makeBlockPtr([
         creationCompletionHandler = WTFMove(creationCompletionHandler),
@@ -202,7 +200,7 @@ void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(s
 
 void NetworkTransportSession::createOutgoingUnidirectionalStream(CompletionHandler<void(std::optional<WebTransportStreamIdentifier>)>&& completionHandler)
 {
-    // FIXME: Call nw_connection_group_extract_connection and make a NetworkTransportSendStream and add to m_sendStreams like NetworkTransportSession::createBidirectionalStream.
+    // FIXME: Call nw_connection_group_extract_connection and make a NetworkTransportStream and add to m_sendStreams like NetworkTransportSession::createBidirectionalStream.
     completionHandler(std::nullopt);
 }
 

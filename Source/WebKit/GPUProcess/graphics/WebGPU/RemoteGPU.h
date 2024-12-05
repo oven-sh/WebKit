@@ -113,7 +113,7 @@ private:
     template<typename T>
     IPC::Error send(T&& message) const
     {
-        return m_streamConnection->send(std::forward<T>(message), m_identifier);
+        return Ref { *m_streamConnection }->send(std::forward<T>(message), m_identifier);
     }
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;

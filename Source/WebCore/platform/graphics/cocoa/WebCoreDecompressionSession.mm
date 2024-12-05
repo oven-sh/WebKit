@@ -395,7 +395,8 @@ Ref<WebCoreDecompressionSession::DecodingPromise> WebCoreDecompressionSession::d
         }
         auto decode = [protectedThis = Ref { *this }, this, cmSamples = RetainPtr { sample }, displaying] {
             Locker lock { m_lock };
-            if (!m_videoDecoder)
+            RefPtr videoDecoder = m_videoDecoder;
+            if (!videoDecoder)
                 return DecodingPromise::createAndReject(0);
 
             assertIsCurrent(m_decompressionQueue.get());
@@ -421,7 +422,7 @@ Ref<WebCoreDecompressionSession::DecodingPromise> WebCoreDecompressionSession::d
                 char* data = nullptr;
                 if (auto status = PAL::CMBlockBufferGetDataPointer(buffer.get(), 0, nullptr, nullptr, &data); status != noErr)
                     return DecodingPromise::createAndReject(status);
-                promises.append(m_videoDecoder->decode({ { byteCast<uint8_t>(data), size }, true, presentationTimestamp.toMicroseconds(), 0 }));
+                promises.append(videoDecoder->decode({ { byteCast<uint8_t>(data), size }, true, presentationTimestamp.toMicroseconds(), 0 }));
             }
             DecodingPromise::Producer producer;
             auto promise = producer.promise();
@@ -923,7 +924,7 @@ Ref<MediaPromise> WebCoreDecompressionSession::initializeVideoDecoder(FourCharCo
             return;
         }
         Locker lock { m_lock };
-        m_videoDecoder = result.value().moveToUniquePtr();
+        m_videoDecoder = WTFMove(*result);
         producer.resolve();
     });
 

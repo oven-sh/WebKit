@@ -30,19 +30,15 @@
 #include "AudioMediaStreamTrackRendererInternalUnit.h"
 #include "BaseAudioMediaStreamTrackRendererUnit.h"
 #include "Timer.h"
+#include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 class AudioMediaStreamTrackRendererUnit;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::AudioMediaStreamTrackRendererUnit> : std::true_type { };
 }
 
 namespace WebCore {
@@ -52,6 +48,7 @@ class AudioSampleBufferList;
 class CAAudioStreamDescription;
 
 class AudioMediaStreamTrackRendererUnit : public BaseAudioMediaStreamTrackRendererUnit {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     WEBCORE_EXPORT static AudioMediaStreamTrackRendererUnit& singleton();
 

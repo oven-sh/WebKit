@@ -1519,7 +1519,23 @@ NetworkSessionCocoa::NetworkSessionCocoa(NetworkProcess& networkProcess, const N
 #endif
 }
 
-NetworkSessionCocoa::~NetworkSessionCocoa() = default;
+NetworkSessionCocoa::~NetworkSessionCocoa()
+{
+    notifyAdAttributionKitOfSessionTermination();
+}
+
+void NetworkSessionCocoa::notifyAdAttributionKitOfSessionTermination()
+{
+    // FIXME: Ad attribution stuff should be pulled to a separate object that has the same lifetime as
+    // NetworkSessionCocoa, perhaps owned by NetworkSessionCocoa. It is separate from the network responsibilities.
+#if HAVE(AD_ATTRIBUTION_KIT_PRIVATE_BROWSING)
+    if (m_donatedEphemeralImpressionSessionID) {
+        // FIXME: Remove this respondsToSelector check in 2026 or so.
+        if ([ASDInstallWebAttributionService.sharedInstance respondsToSelector:@selector(removeInstallWebAttributionParamsFromPrivateBrowsingSessionId:completionHandler:)])
+            [ASDInstallWebAttributionService.sharedInstance removeInstallWebAttributionParamsFromPrivateBrowsingSessionId:*m_donatedEphemeralImpressionSessionID completionHandler:^(NSError *) { }];
+    }
+#endif
+}
 
 void NetworkSessionCocoa::initializeNSURLSessionsInSet(SessionSet& sessionSet, NSURLSessionConfiguration *configuration)
 {
@@ -2182,10 +2198,19 @@ void NetworkSessionCocoa::donateToSKAdNetwork(WebCore::PrivateClickMeasurement&&
     config.get().sourceWebRegistrableDomain = pcm.sourceSite().registrableDomain.string();
     config.get().version = @"4.0";
     config.get().attributionContext = AttributionTypeDefault;
+#if HAVE(AD_ATTRIBUTION_KIT_PRIVATE_BROWSING)
+    if (m_sessionID.isEphemeral()) {
+        m_donatedEphemeralImpressionSessionID = WTF::UUID::createVersion4();
+
+        // FIXME: Remove this respondsToSelector check in 2026 or so.
+        if ([config respondsToSelector:@selector(privateBrowsingSessionId)])
+            config.get().privateBrowsingSessionId = *m_donatedEphemeralImpressionSessionID;
+    }
+#endif // HAVE(AD_ATTRIBUTION_KIT_PRIVATE_BROWSING)
 #if HAVE(ASD_INSTALL_WEB_ATTRIBUTION_SERVICE)
     [[ASDInstallWebAttributionService sharedInstance] addInstallWebAttributionParamsWithConfig:config.get() completionHandler:^(NSError *) { }];
-#endif
-#endif
+#endif // HAVE(ASD_INSTALL_WEB_ATTRIBUTION_SERVICE)
+#endif // HAVE(SKADNETWORK_v4)
 
     if (!m_privateClickMeasurementDebugModeEnabled)
         return;

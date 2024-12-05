@@ -28,7 +28,7 @@
 
 #if ENABLE(MEDIA_RECORDER)
 
-#include "AudioSampleBufferCompressor.h"
+#include "AudioSampleBufferConverter.h"
 #include "CARingBuffer.h"
 #include "CMUtilities.h"
 #include "ContentType.h"
@@ -312,20 +312,23 @@ void MediaRecorderPrivateEncoder::audioSamplesDescriptionChanged(const AudioStre
     }
     m_audioFormatDescription = adoptCF(newFormat);
 
-    if (m_audioCompressor) {
-        audioCompressor()->finish();
+    if (m_audioConverter) {
+        audioConverter()->finish();
         m_formatChangedOccurred = true;
     }
 
-    m_audioCompressor = AudioSampleBufferCompressor::create(compressedAudioOutputBufferCallback, this, m_audioCodec, *m_originalOutputDescription);
-    if (!m_audioCompressor) {
-        RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPrivateEncoder::audioSamplesDescriptionChanged: creation of compressor failed");
+    AudioSampleBufferConverter::Options options = {
+        .format = m_audioCodec,
+        .description = m_originalOutputDescription,
+        .outputBitRate = m_audioBitsPerSecond ? std::optional { m_audioBitsPerSecond } : std::nullopt,
+        .generateTimestamp = true
+    };
+    m_audioConverter = AudioSampleBufferConverter::create(compressedAudioOutputBufferCallback, this, options);
+    if (!m_audioConverter) {
+        RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPrivateEncoder::audioSamplesDescriptionChanged: creation of converter failed");
         m_hadError = true;
         return;
     }
-
-    if (m_audioBitsPerSecond)
-        audioCompressor()->setBitsPerSecond(m_audioBitsPerSecond);
 
     updateCurrentRingBufferIfNeeded();
 }
@@ -401,7 +404,7 @@ void MediaRecorderPrivateEncoder::audioSamplesAvailable(const MediaTime& time, s
     }
     RetainPtr sample = adoptCF(sampleBuffer);
 
-    audioCompressor()->addSampleBuffer(sampleBuffer);
+    audioConverter()->addSampleBuffer(sampleBuffer);
 }
 
 void MediaRecorderPrivateEncoder::appendVideoFrame(VideoFrame& frame)
@@ -449,8 +452,8 @@ void MediaRecorderPrivateEncoder::appendVideoFrame(const MediaTime& audioTime, R
         promise->whenSettled(queueSingleton(), [weakThis = ThreadSafeWeakPtr { *this }, this](auto&& result) {
             assertIsCurrent(queueSingleton());
             if (RefPtr protectedThis = weakThis.get(); protectedThis && result) {
-                m_videoEncoder = result.value().moveToUniquePtr();
-                m_videoEncoder->setRates(videoBitRate(), 0);
+                m_videoEncoder = WTFMove(*result);
+                Ref { *m_videoEncoder }->setRates(videoBitRate(), 0);
                 m_videoEncoderCreationPromise = nullptr;
                 return encodePendingVideoFrames();
             }
@@ -533,11 +536,11 @@ void MediaRecorderPrivateEncoder::enqueueCompressedAudioSampleBuffers()
 
     ASSERT(hasAudio());
 
-    if (!audioCompressor() || audioCompressor()->isEmpty())
+    if (!audioConverter() || audioConverter()->isEmpty())
         return;
 
     if (!m_audioCompressedFormatDescription) {
-        m_audioCompressedFormatDescription = PAL::CMSampleBufferGetFormatDescription(audioCompressor()->getOutputSampleBuffer());
+        m_audioCompressedFormatDescription = PAL::CMSampleBufferGetFormatDescription(audioConverter()->getOutputSampleBuffer());
         if (auto result = m_writer->addAudioTrack(m_audioCompressedFormatDescription.get()))
             m_audioTrackIndex = result;
         else {
@@ -552,7 +555,7 @@ void MediaRecorderPrivateEncoder::enqueueCompressedAudioSampleBuffers()
         return;
     }
 
-    while (RetainPtr sampleBlock = audioCompressor()->takeOutputSampleBuffer()) {
+    while (RetainPtr sampleBlock = audioConverter()->takeOutputSampleBuffer()) {
         for (Ref sample : MediaSampleAVFObjC::create(sampleBlock.get(), *m_audioTrackIndex)->divide()) {
             if (m_pendingAudioFramePromise && m_pendingAudioFramePromise->first <= sample->presentationEndTime()) {
                 m_pendingAudioFramePromise->second.resolve();
@@ -605,7 +608,7 @@ Ref<GenericPromise> MediaRecorderPrivateEncoder::encodePendingVideoFrames()
             m_needKeyFrame = false;
         }
         LOG(MediaStream, "encodePendingVideoFrames:encoding video frame:%f (us:%lld) kf:%d", frame.second.toDouble(), frame.second.toMicroseconds(), needVideoKeyframe);
-        return m_videoEncoder->encode({ WTFMove(frame.first), frame.second.toMicroseconds(), { } }, needVideoKeyframe);
+        return Ref { *m_videoEncoder }->encode({ WTFMove(frame.first), frame.second.toMicroseconds(), { } }, needVideoKeyframe);
     } };
     VideoEncoder::EncodePromise::all(WTFMove(promises))->chainTo(WTFMove(producer));
 
@@ -722,7 +725,7 @@ Ref<GenericPromise> MediaRecorderPrivateEncoder::waitForMatchingAudio(const Medi
     if (!m_encodedAudioFrames.isEmpty() && Ref { m_encodedAudioFrames.last() }->presentationEndTime() >= videoFrame->presentationTime())
         return GenericPromise::createAndResolve();
 
-    // The audio frame matching the last video frame is still pending in the compressor and requires more data to be produced.
+    // The audio frame matching the last video frame is still pending in the converter and requires more data to be produced.
     // It will be resolved once we receive the compressed audio sample in enqueueCompressedAudioSampleBuffers().
     m_pendingAudioFramePromise.emplace(videoFrame->presentationTime(), GenericPromise::Producer());
 
@@ -864,15 +867,15 @@ void MediaRecorderPrivateEncoder::stopRecording()
 
         m_isPaused = false;
 
-        // We don't need to wait for the pending audio frame anymore, the imminent call to AudioSampleBufferCompressor::finish() will output all data.
+        // We don't need to wait for the pending audio frame anymore, the imminent call to AudioSampleBufferConverter::finish() will output all data.
         if (m_pendingAudioFramePromise)
             m_pendingAudioFramePromise->second.reject();
         m_pendingAudioFramePromise.reset();
     });
 
     m_currentFlushOperations = Ref { m_currentFlushOperations }->whenSettled(queueSingleton(), [protectedThis = Ref { *this }, this] {
-        if (RefPtr compressor = audioCompressor())
-            compressor->finish();
+        if (RefPtr converter = audioConverter())
+            converter->finish();
 
         {
             Locker locker { m_ringBuffersLock };
@@ -882,12 +885,12 @@ void MediaRecorderPrivateEncoder::stopRecording()
         return flushPendingData(MediaTime::positiveInfiniteTime())->whenSettled(queueSingleton(), [protectedThis, this] {
             assertIsCurrent(queueSingleton());
             if (m_videoEncoder)
-                m_videoEncoder->close();
+                Ref { *m_videoEncoder }->close();
 
             flushAllEncodedQueues();
 
             ASSERT(!m_videoEncoderCreationPromise && m_pendingVideoFrames.isEmpty() && m_encodedVideoFrames.isEmpty());
-            ASSERT(m_encodedAudioFrames.isEmpty() && (!m_audioCompressor || audioCompressor()->isEmpty()));
+            ASSERT(m_encodedAudioFrames.isEmpty() && (!m_audioConverter || audioConverter()->isEmpty()));
 
             m_writerIsClosed = true;
 
@@ -927,12 +930,12 @@ Ref<GenericPromise> MediaRecorderPrivateEncoder::flushPendingData(const MediaTim
     LOG(MediaStream, "MediaRecorderPrivateEncoder::FlushPendingData upTo:%f", currentTime.toDouble());
 
     Vector<Ref<GenericPromise>> promises;
-    promises.reserveInitialCapacity(size_t(!!m_videoEncoder) + size_t(!!m_audioCompressor) + 1);
+    promises.reserveInitialCapacity(size_t(!!m_videoEncoder) + size_t(!!m_audioConverter) + 1);
     promises.append(encodePendingVideoFrames());
     if (m_videoEncoder)
-        promises.append(m_videoEncoder->flush());
-    if (RefPtr compressor = audioCompressor())
-        promises.append(m_isPaused ? compressor->drain() : compressor->flush());
+        promises.append(Ref { *m_videoEncoder }->flush());
+    if (RefPtr converter = audioConverter())
+        promises.append(m_isPaused ? converter->drain() : converter->flush());
 
     ASSERT(!m_pendingFlush, "flush are serialized");
     m_pendingFlush++;
@@ -989,11 +992,11 @@ MediaTime MediaRecorderPrivateEncoder::currentEndTime() const
     return MediaTime::createWithSeconds(MonotonicTime::now() - m_resumeWallTime.value_or(MonotonicTime::now())) + m_currentVideoDuration;
 }
 
-RefPtr<AudioSampleBufferCompressor> MediaRecorderPrivateEncoder::audioCompressor() const
+RefPtr<AudioSampleBufferConverter> MediaRecorderPrivateEncoder::audioConverter() const
 {
     assertIsCurrent(queueSingleton());
 
-    return m_audioCompressor;
+    return m_audioConverter;
 }
 
 Ref<MediaRecorderPrivateWriterListener> MediaRecorderPrivateEncoder::listener()

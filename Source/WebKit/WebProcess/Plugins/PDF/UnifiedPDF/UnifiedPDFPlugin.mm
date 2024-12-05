@@ -3366,8 +3366,8 @@ std::pair<String, RetainPtr<PDFSelection>> UnifiedPDFPlugin::textForImmediateAct
     auto pagePoint = convertDown(CoordinateSpace::PDFDocumentLayout, CoordinateSpace::PDFPage, documentPoint, *pageIndex);
     RetainPtr page = m_documentLayout.pageAtIndex(*pageIndex);
     RetainPtr wordSelection = [page selectionForWordAtPoint:pagePoint];
-    if (!wordSelection)
-        return { { }, nil };
+    if (!wordSelection || [wordSelection isEmpty])
+        return { { }, wordSelection };
 
     RetainPtr annotationsForCurrentPage = [page annotations];
     if (!annotationsForCurrentPage)

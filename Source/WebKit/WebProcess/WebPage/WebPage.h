@@ -248,6 +248,7 @@ enum class DOMPasteAccessCategory : uint8_t;
 enum class DOMPasteAccessResponse : uint8_t;
 enum class DragApplicationFlags : uint8_t;
 enum class DragHandlingMethod : uint8_t;
+enum class EventHandling : uint8_t;
 enum class EventMakesGamepadsVisible : bool;
 enum class ExceptionCode : uint8_t;
 enum class FinalizeRenderingUpdateFlags : uint8_t;
@@ -458,6 +459,9 @@ public:
 
     virtual ~WebPage();
 
+    void ref() const final { API::ObjectImpl<API::Object::Type::BundlePage>::ref(); }
+    void deref() const final { API::ObjectImpl<API::Object::Type::BundlePage>::deref(); }
+
     void reinitializeWebPage(WebPageCreationParameters&&);
 
     void close();
@@ -465,7 +469,7 @@ public:
     static WebPage* fromCorePage(WebCore::Page&);
 
     WebCore::Page* corePage() const { return m_page.get(); }
-    RefPtr<WebCore::Page> protectedCorePage() const { return corePage(); }
+    RefPtr<WebCore::Page> protectedCorePage() const;
     WebCore::PageIdentifier identifier() const { return m_identifier; }
     inline StorageNamespaceIdentifier sessionStorageNamespaceIdentifier() const;
     PAL::SessionID sessionID() const;
@@ -1282,7 +1286,7 @@ public:
 #endif
 
     void handleWheelEvent(WebCore::FrameIdentifier, const WebWheelEvent&, const OptionSet<WebCore::WheelEventProcessingSteps>&, std::optional<bool> willStartSwipe, CompletionHandler<void(std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool handled, std::optional<WebCore::RemoteUserInputEventData>)>&&);
-    WebCore::HandleUserInputEventResult wheelEvent(const WebCore::FrameIdentifier&, const WebWheelEvent&, OptionSet<WebCore::WheelEventProcessingSteps>);
+    std::pair<WebCore::HandleUserInputEventResult, OptionSet<WebCore::EventHandling>> wheelEvent(const WebCore::FrameIdentifier&, const WebWheelEvent&, OptionSet<WebCore::WheelEventProcessingSteps>);
 
     void wheelEventHandlersChanged(bool);
     void recomputeShortCircuitHorizontalWheelEventsState();
@@ -1686,6 +1690,7 @@ public:
     void gpuProcessConnectionDidBecomeAvailable(GPUProcessConnection&);
     void gpuProcessConnectionWasDestroyed();
     RemoteRenderingBackendProxy& ensureRemoteRenderingBackendProxy();
+    Ref<RemoteRenderingBackendProxy> ensureProtectedRemoteRenderingBackendProxy();
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -1815,9 +1820,6 @@ public:
 
     void proofreadingSessionUpdateStateForSuggestionWithID(WebCore::WritingTools::TextSuggestionState, const WebCore::WritingTools::TextSuggestionID&);
 
-    void enableSourceTextAnimationAfterElementWithID(const String&);
-    void enableTextAnimationTypeForElementWithID(const String&);
-
     void addTextAnimationForAnimationID(const WTF::UUID&, const WebCore::TextAnimationData&, const WebCore::TextIndicatorData&, CompletionHandler<void(WebCore::TextAnimationRunMode)>&& = { });
 
     void removeTextAnimationForAnimationID(const WTF::UUID&);
@@ -1865,7 +1867,7 @@ public:
 
     void callAfterPendingSyntheticClick(CompletionHandler<void(WebCore::SyntheticClickResult)>&&);
 
-    void didSwallowClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&);
+    void didDispatchClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&);
 
 private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
@@ -2958,7 +2960,7 @@ inline void WebPage::prepareToRunModalJavaScriptDialog() { }
 #endif
 
 #if !ENABLE(IOS_TOUCH_EVENTS)
-inline void WebPage::didSwallowClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&) { }
+inline void WebPage::didDispatchClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&) { }
 #endif
 
 #if !PLATFORM(MAC)

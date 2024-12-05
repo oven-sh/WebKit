@@ -101,6 +101,9 @@ void MediaStreamTrackProcessor::tryEnqueueingVideoFrame()
     if (!context || !m_videoFrameObserverWrapper || !m_readableStreamSource)
         return;
 
+    if (m_readableStreamSource->isCancelled())
+        return;
+
     // FIXME: If the stream is waiting, we might want to buffer based on
     // https://w3c.github.io/mediacapture-transform/#dom-mediastreamtrackprocessorinit-maxbuffersize.
     if (!m_readableStreamSource->isWaiting())
@@ -212,19 +215,19 @@ void MediaStreamTrackProcessor::Source::trackEnded(MediaStreamTrackPrivate&)
     close();
 }
 
-bool MediaStreamTrackProcessor::Source::isWaiting() const
-{
-    return m_isWaiting;
-}
-
 void MediaStreamTrackProcessor::Source::close()
 {
-    if (!m_isCancelled)
-        controller().close();
+    if (m_isCancelled)
+        return;
+
+    m_isCancelled = true;
+    controller().close();
 }
 
 void MediaStreamTrackProcessor::Source::enqueue(WebCodecsVideoFrame& frame, ScriptExecutionContext& context)
 {
+    ASSERT(!m_isCancelled);
+
     auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context.globalObject());
     if (!globalObject)
         return;
@@ -236,7 +239,7 @@ void MediaStreamTrackProcessor::Source::enqueue(WebCodecsVideoFrame& frame, Scri
 
     Ref protectedThis { *this };
 
-    if (!m_isCancelled && controller().enqueue(toJS(globalObject, globalObject, frame)))
+    if (controller().enqueue(toJS(globalObject, globalObject, frame)))
         pullFinished();
 }
 

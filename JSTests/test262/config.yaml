@@ -21,6 +21,7 @@ skip:
     - regexp-modifiers
     - source-phase-imports
     - json-parse-with-source
+    - import-defer
   paths:
     - test/built-ins/Temporal/Instant/prototype/toZonedDateTimeISO
     - test/built-ins/Temporal/Now/plainDateISO

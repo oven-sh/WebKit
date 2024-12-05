@@ -27,7 +27,7 @@ messages -> AuxiliaryProcess WantsDispatchMessage {
     MainThreadPing() -> ()
 
 #if ENABLE(CFPREFS_DIRECT_MODE)
-    [DeferSendingIfSuspendedWithBatchingKeys=(domain, key)] PreferenceDidUpdate(String domain, String key, std::optional<String> encodedValue)
+    [DeferSendingIfSuspendedWithCoalescingKeys=(domain, key)] PreferenceDidUpdate(String domain, String key, std::optional<String> encodedValue)
 #endif
 
 #if OS(LINUX)

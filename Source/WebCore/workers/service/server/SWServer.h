@@ -47,6 +47,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/ObjectIdentifier.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
@@ -83,7 +84,7 @@ struct ServiceWorkerContextData;
 struct ServiceWorkerRegistrationData;
 struct WorkerFetchResult;
 
-class SWServer : public RefCounted<SWServer>, public CanMakeWeakPtr<SWServer> {
+class SWServer : public RefCountedAndCanMakeWeakPtr<SWServer> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(SWServer, WEBCORE_EXPORT);
 public:
     class Connection : public CanMakeWeakPtr<Connection>, public RefCounted<Connection> {

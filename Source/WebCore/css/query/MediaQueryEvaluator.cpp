@@ -27,6 +27,7 @@
 
 #include "CSSToLengthConversionData.h"
 #include "Document.h"
+#include "FontCascade.h"
 #include "MediaQuery.h"
 #include "MediaQueryFeatures.h"
 #include "RenderView.h"

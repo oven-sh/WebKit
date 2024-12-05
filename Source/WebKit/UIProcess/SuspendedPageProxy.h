@@ -55,16 +55,19 @@ using LayerHostingContextID = uint32_t;
 
 enum class ShouldDelayClosingUntilFirstLayerFlush : bool { No, Yes };
 
-class SuspendedPageProxy final: public IPC::MessageReceiver, public CanMakeCheckedPtr<SuspendedPageProxy> {
+class SuspendedPageProxy final: public IPC::MessageReceiver, public RefCounted<SuspendedPageProxy>, public CanMakeCheckedPtr<SuspendedPageProxy> {
     WTF_MAKE_TZONE_ALLOCATED(SuspendedPageProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SuspendedPageProxy);
 public:
-    SuspendedPageProxy(WebPageProxy&, Ref<WebProcessProxy>&&, Ref<WebFrameProxy>&& mainFrame, Ref<BrowsingContextGroup>&&, ShouldDelayClosingUntilFirstLayerFlush);
+    static Ref<SuspendedPageProxy> create(WebPageProxy&, Ref<WebProcessProxy>&&, Ref<WebFrameProxy>&& mainFrame, Ref<BrowsingContextGroup>&&, ShouldDelayClosingUntilFirstLayerFlush);
     ~SuspendedPageProxy();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     static RefPtr<WebProcessProxy> findReusableSuspendedPageProcess(WebProcessPool&, const WebCore::RegistrableDomain&, WebsiteDataStore&, WebProcessProxy::LockdownMode, const API::PageConfiguration&);
 
-    WebPageProxy& page() const;
+    WebPageProxy* page() const;
     WebCore::PageIdentifier webPageID() const { return m_webPageID; }
     WebProcessProxy& process() const { return m_process.get(); }
     Ref<WebProcessProxy> protectedProcess() const { return process(); }
@@ -93,7 +96,7 @@ public:
 #endif
 
 private:
-    Ref<WebPageProxy> protectedPage() const;
+    SuspendedPageProxy(WebPageProxy&, Ref<WebProcessProxy>&&, Ref<WebFrameProxy>&& mainFrame, Ref<BrowsingContextGroup>&&, ShouldDelayClosingUntilFirstLayerFlush);
 
     enum class SuspensionState : uint8_t { Suspending, FailedToSuspend, Suspended, Resumed };
     void didProcessRequestToSuspend(SuspensionState);
@@ -108,7 +111,7 @@ private:
 
     template<typename T> void sendToAllProcesses(T&&);
 
-    WeakRef<WebPageProxy> m_page;
+    WeakPtr<WebPageProxy> m_page;
     WebCore::PageIdentifier m_webPageID;
     Ref<WebProcessProxy> m_process;
     Ref<WebFrameProxy> m_mainFrame;

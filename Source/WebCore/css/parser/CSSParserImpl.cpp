@@ -937,7 +937,7 @@ RefPtr<StyleRuleFontPaletteValues> CSSParserImpl::consumeFontPaletteValuesRule(C
             if (!pair.key().isInteger())
                 continue;
             auto key = pair.key().resolveAsIntegerDeprecated<unsigned>();
-            auto color = pair.color().absoluteColor();
+            auto color = CSSColorValue::absoluteColor(pair.color());
             // Ignore non absolute color https://drafts.csswg.org/css-fonts/#override-color
             if (!color.isValid())
                 continue;

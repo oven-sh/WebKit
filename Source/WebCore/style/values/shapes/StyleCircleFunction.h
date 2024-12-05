@@ -52,7 +52,7 @@ template<size_t I> const auto& get(const Circle& value)
         return value.position;
 }
 
-DEFINE_CSS_STYLE_MAPPING(CSS::Circle, Circle)
+DEFINE_TYPE_MAPPING(CSS::Circle, Circle)
 
 FloatPoint resolvePosition(const Circle& value, FloatSize boxSize);
 float resolveRadius(const Circle& value, FloatSize boxSize, FloatPoint center);

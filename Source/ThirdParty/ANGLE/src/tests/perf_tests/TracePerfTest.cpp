@@ -116,7 +116,7 @@ class TracePerfTest : public ANGLERenderTest
     void destroyBenchmark() override;
     void drawBenchmark() override;
 
-    // TODO(http://www.anglebug.com/42264418): Add support for creating EGLSurface:
+    // TODO(http://anglebug.com/42264418): Add support for creating EGLSurface:
     // - eglCreatePbufferSurface()
     // - eglCreateWindowSurface()
     EGLContext onEglCreateContext(EGLDisplay display,
@@ -939,6 +939,16 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         }
     }
 
+    if (isIntelLinuxANGLE && traceNameIs("octopath_traveler"))
+    {
+        skipTest("TODO: http://anglebug.com/378666645 Non-deterministic image on Ubuntu 22.04");
+    }
+
+    if (isIntelLinuxANGLE && traceNameIs("dead_by_daylight"))
+    {
+        skipTest("TODO: http://anglebug.com/378666645 Non-deterministic image on Ubuntu 22.04");
+    }
+
     if (isIntelWinANGLE && traceNameIs("black_desert_mobile"))
     {
         skipTest(
@@ -1157,6 +1167,13 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("aztec_ruins"))
     {
+        if (isIntelWinANGLE)
+        {
+            skipTest(
+                "TODO: http://anglebug.com/353690308 Non-deterministic image on UHD770 "
+                "31.0.101.5333");
+        }
+
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
@@ -1262,6 +1279,11 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         if (isIntelLinuxANGLE)
         {
             skipTest("TODO: http://anglebug.com/42264560 Crashes on Linux Intel Vulkan");
+        }
+
+        if (IsQualcomm() && mParams->isVulkan())
+        {
+            skipTest("TODO: http://anglebug.com/378464990 Crashes on Qualcomm (Pixel 4)");
         }
 
         if (!Is64Bit())
@@ -1421,6 +1443,10 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     if (traceNameIs("real_racing3"))
     {
         addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
+        if (isNVIDIALinuxANGLE)
+        {
+            skipTest("http://anglebug.com/377923479 SYNC-HAZARD-WRITE-AFTER-WRITE on 535.183.01");
+        }
     }
 
     if (traceNameIs("blade_and_soul_revolution"))
@@ -1471,6 +1497,13 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("aztec_ruins_high"))
     {
+        if (isIntelWinANGLE)
+        {
+            skipTest(
+                "TODO: http://anglebug.com/353690308 Non-deterministic image on UHD770 "
+                "31.0.101.5333");
+        }
+
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
@@ -1520,6 +1553,12 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         {
             skipTest("https://anglebug.com/342545097 fails on Mesa 23.2.1");
         }
+
+        if (isIntelWinANGLE)
+        {
+            skipTest("https://anglebug.com/379886383 times out on Windows Intel");
+        }
+
         addExtensionPrerequisite("GL_ANDROID_extension_pack_es31a");
     }
 
@@ -1581,6 +1620,11 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("diablo_immortal"))
     {
+        if (IsQualcomm() && mParams->isVulkan())
+        {
+            skipTest("TODO: http://anglebug.com/378464990 Crashes on Qualcomm (Pixel 4)");
+        }
+
         addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
     }
 

@@ -48,10 +48,11 @@ public:
     };
     static void create(Type, const Config&, CreateCallback&&, DescriptionCallback&&, OutputCallback&&);
 
-    LibWebRTCVPXVideoEncoder(Type, OutputCallback&&);
     ~LibWebRTCVPXVideoEncoder();
 
 private:
+    LibWebRTCVPXVideoEncoder(Type, OutputCallback&&);
+
     int initialize(LibWebRTCVPXVideoEncoder::Type, const VideoEncoder::Config&);
     Ref<EncodePromise> encode(RawFrame&&, bool shouldGenerateKeyFrame) final;
     Ref<GenericPromise> flush() final;

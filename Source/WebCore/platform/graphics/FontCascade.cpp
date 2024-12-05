@@ -42,6 +42,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/AtomStringHash.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -146,6 +147,7 @@ bool FontCascade::isCurrent(const FontSelector& fontSelector) const
 
 void FontCascade::updateFonts(Ref<FontCascadeFonts>&& fonts) const
 {
+    // FIXME: Ideally we'd only update m_generation if the fonts changed.
     m_fonts = WTFMove(fonts);
     m_generation = ++lastFontCascadeGeneration;
 }
@@ -1900,6 +1902,17 @@ std::optional<char32_t> capitalized(char32_t baseCharacter)
     return std::nullopt;
 }
 
+TextStream& operator<<(TextStream& ts, const FontCascade& fontCascade)
+{
+    ts << fontCascade.fontDescription();
+
+    ts << ", font selector " << fontCascade.fonts()->fontSelector();
+    ts << ", font selector version " << fontCascade.fonts()->fontSelectorVersion();
+    ts << ", generation " << fontCascade.fonts()->generation();
+
+    return ts;
 }
+
+} // namespace WebCore
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

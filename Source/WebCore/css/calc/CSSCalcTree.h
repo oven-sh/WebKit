@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,7 +33,6 @@
 #include "CalculationTree.h"
 #include <variant>
 #include <wtf/StdLibExtras.h>
-#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
 
@@ -226,7 +226,7 @@ struct Tree {
 };
 
 struct Sum {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Sum);
+    WTF_MAKE_TZONE_ALLOCATED(Sum);
 public:
     using Base = Calculation::Sum;
 
@@ -236,7 +236,7 @@ public:
 };
 
 struct Product {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Product);
+    WTF_MAKE_TZONE_ALLOCATED(Product);
 public:
     using Base = Calculation::Product;
 
@@ -246,7 +246,7 @@ public:
 };
 
 struct Negate {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Negate);
+    WTF_MAKE_TZONE_ALLOCATED(Negate);
 public:
     using Base = Calculation::Negate;
 
@@ -256,7 +256,7 @@ public:
 };
 
 struct Invert {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Invert);
+    WTF_MAKE_TZONE_ALLOCATED(Invert);
 public:
     using Base = Calculation::Invert;
 
@@ -269,7 +269,7 @@ public:
 
 // Comparison Functions - https://drafts.csswg.org/css-values-4/#comp-func
 struct Min {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Min);
+    WTF_MAKE_TZONE_ALLOCATED(Min);
 public:
     using Base = Calculation::Min;
     static constexpr auto id = CSSValueMin;
@@ -287,7 +287,7 @@ public:
 };
 
 struct Max {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Max);
+    WTF_MAKE_TZONE_ALLOCATED(Max);
 public:
     using Base = Calculation::Max;
     static constexpr auto id = CSSValueMax;
@@ -305,7 +305,7 @@ public:
 };
 
 struct Clamp {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Clamp);
+    WTF_MAKE_TZONE_ALLOCATED(Clamp);
 public:
     using Base = Calculation::Clamp;
     static constexpr auto id = CSSValueClamp;
@@ -326,7 +326,7 @@ public:
 
 // Stepped Value Functions - https://drafts.csswg.org/css-values-4/#round-func
 struct RoundNearest {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(RoundNearest);
+    WTF_MAKE_TZONE_ALLOCATED(RoundNearest);
 public:
     using Base = Calculation::RoundNearest;
     static constexpr auto id = CSSValueNearest;
@@ -353,7 +353,7 @@ public:
 };
 
 struct RoundUp {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(RoundUp);
+    WTF_MAKE_TZONE_ALLOCATED(RoundUp);
 public:
     using Base = Calculation::RoundUp;
     static constexpr auto id = CSSValueUp;
@@ -380,7 +380,7 @@ public:
 };
 
 struct RoundDown {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(RoundDown);
+    WTF_MAKE_TZONE_ALLOCATED(RoundDown);
 public:
     using Base = Calculation::RoundDown;
     static constexpr auto id = CSSValueDown;
@@ -407,7 +407,7 @@ public:
 };
 
 struct RoundToZero {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(RoundToZero);
+    WTF_MAKE_TZONE_ALLOCATED(RoundToZero);
 public:
     using Base = Calculation::RoundToZero;
     static constexpr auto id = CSSValueToZero;
@@ -434,7 +434,7 @@ public:
 };
 
 struct Mod {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Mod);
+    WTF_MAKE_TZONE_ALLOCATED(Mod);
 public:
     using Base = Calculation::Mod;
     static constexpr auto id = CSSValueMod;
@@ -454,7 +454,7 @@ public:
 };
 
 struct Rem {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Rem);
+    WTF_MAKE_TZONE_ALLOCATED(Rem);
 public:
     using Base = Calculation::Rem;
     static constexpr auto id = CSSValueRem;
@@ -475,7 +475,7 @@ public:
 
 // Trigonometric Functions - https://drafts.csswg.org/css-values-4/#trig-funcs
 struct Sin {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Sin);
+    WTF_MAKE_TZONE_ALLOCATED(Sin);
 public:
     using Base = Calculation::Sin;
     static constexpr auto id = CSSValueSin;
@@ -492,7 +492,7 @@ public:
 };
 
 struct Cos {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Cos);
+    WTF_MAKE_TZONE_ALLOCATED(Cos);
 public:
     using Base = Calculation::Cos;
     static constexpr auto id = CSSValueCos;
@@ -509,7 +509,7 @@ public:
 };
 
 struct Tan {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Tan);
+    WTF_MAKE_TZONE_ALLOCATED(Tan);
 public:
     using Base = Calculation::Tan;
     static constexpr auto id = CSSValueTan;
@@ -526,7 +526,7 @@ public:
 };
 
 struct Asin {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Asin);
+    WTF_MAKE_TZONE_ALLOCATED(Asin);
 public:
     using Base = Calculation::Asin;
     static constexpr auto id = CSSValueAsin;
@@ -543,7 +543,7 @@ public:
 };
 
 struct Acos {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Acos);
+    WTF_MAKE_TZONE_ALLOCATED(Acos);
 public:
     using Base = Calculation::Acos;
     static constexpr auto id = CSSValueAcos;
@@ -560,7 +560,7 @@ public:
 };
 
 struct Atan {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Atan);
+    WTF_MAKE_TZONE_ALLOCATED(Atan);
 public:
     using Base = Calculation::Atan;
     static constexpr auto id = CSSValueAtan;
@@ -577,7 +577,7 @@ public:
 };
 
 struct Atan2 {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Atan2);
+    WTF_MAKE_TZONE_ALLOCATED(Atan2);
 public:
     using Base = Calculation::Atan2;
     static constexpr auto id = CSSValueAtan2;
@@ -597,7 +597,7 @@ public:
 
 // Exponential Functions - https://drafts.csswg.org/css-values-4/#exponent-funcs
 struct Pow {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Pow);
+    WTF_MAKE_TZONE_ALLOCATED(Pow);
 public:
     using Base = Calculation::Pow;
     static constexpr auto id = CSSValuePow;
@@ -616,7 +616,7 @@ public:
 };
 
 struct Sqrt {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Sqrt);
+    WTF_MAKE_TZONE_ALLOCATED(Sqrt);
 public:
     using Base = Calculation::Sqrt;
     static constexpr auto id = CSSValueSqrt;
@@ -633,7 +633,7 @@ public:
 };
 
 struct Hypot {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Hypot);
+    WTF_MAKE_TZONE_ALLOCATED(Hypot);
 public:
     using Base = Calculation::Hypot;
     static constexpr auto id = CSSValueHypot;
@@ -651,7 +651,7 @@ public:
 };
 
 struct Log {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Log);
+    WTF_MAKE_TZONE_ALLOCATED(Log);
 public:
     using Base = Calculation::Log;
     static constexpr auto id = CSSValueLog;
@@ -670,7 +670,7 @@ public:
 };
 
 struct Exp {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Exp);
+    WTF_MAKE_TZONE_ALLOCATED(Exp);
 public:
     using Base = Calculation::Exp;
     static constexpr auto id = CSSValueExp;
@@ -688,7 +688,7 @@ public:
 
 // Sign-Related Functions - https://drafts.csswg.org/css-values-4/#sign-funcs
 struct Abs {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Abs);
+    WTF_MAKE_TZONE_ALLOCATED(Abs);
 public:
     using Base = Calculation::Abs;
     static constexpr auto id = CSSValueAbs;
@@ -705,7 +705,7 @@ public:
 };
 
 struct Sign {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Sign);
+    WTF_MAKE_TZONE_ALLOCATED(Sign);
 public:
     using Base = Calculation::Sign;
     static constexpr auto id = CSSValueSign;
@@ -723,7 +723,7 @@ public:
 
 // Progress-Related Functions - https://drafts.csswg.org/css-values-5/#progress
 struct Progress {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Progress);
+    WTF_MAKE_TZONE_ALLOCATED(Progress);
 public:
     using Base = Calculation::Progress;
     static constexpr auto id = CSSValueProgress;
@@ -743,7 +743,7 @@ public:
 };
 
 struct Anchor {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(Anchor);
+    WTF_MAKE_TZONE_ALLOCATED(Anchor);
 public:
     static constexpr auto id = CSSValueAnchor;
 
@@ -761,7 +761,7 @@ public:
 };
 
 struct AnchorSize {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(AnchorSize);
+    WTF_MAKE_TZONE_ALLOCATED(AnchorSize);
 public:
     static constexpr auto id = CSSValueAnchorSize;
 

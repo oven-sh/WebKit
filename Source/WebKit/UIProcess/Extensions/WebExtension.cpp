@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 Igalia S.L. All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +29,7 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#include "WebExtensionConstants.h"
 #include "WebExtensionPermission.h"
 #include "WebExtensionUtilities.h"
 #include <WebCore/LocalizedStrings.h>
@@ -36,6 +38,8 @@
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebKit {
+
+static constexpr auto defaultLocaleManifestKey = "default_locale"_s;
 
 static constexpr auto iconsManifestKey = "icons"_s;
 
@@ -125,6 +129,12 @@ static constexpr auto commandsManifestKey = "commands"_s;
 static constexpr auto commandsSuggestedKeyManifestKey = "suggested_key"_s;
 static constexpr auto commandsDescriptionKeyManifestKey = "description"_s;
 
+static constexpr auto declarativeNetRequestManifestKey = "declarative_net_request"_s;
+static constexpr auto declarativeNetRequestRulesManifestKey = "rule_resources"_s;
+static constexpr auto declarativeNetRequestRulesetIDManifestKey = "id"_s;
+static constexpr auto declarativeNetRequestRuleEnabledManifestKey = "enabled"_s;
+static constexpr auto declarativeNetRequestRulePathManifestKey = "path"_s;
+
 #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
 static constexpr auto sidebarActionManifestKey = "sidebar_action"_s;
 static constexpr auto sidePanelManifestKey = "side_panel"_s;
@@ -135,13 +145,78 @@ static constexpr auto sidePanelPathManifestKey = "default_path"_s;
 
 static const size_t maximumNumberOfShortcutCommands = 4;
 
-bool WebExtension::manifestParsedSuccessfully()
+WebExtension::WebExtension(Resources&& resources)
+    : m_manifestJSON(JSON::Value::null())
+    , m_resources(WTFMove(resources))
+{
+}
+
+bool WebExtension::parseManifest(StringView manifestString)
+{
+    RefPtr manifestValue = JSON::Value::parseJSON(manifestString);
+    if (!manifestValue) {
+        recordError(createError(Error::InvalidManifest));
+        return false;
+    }
+
+    RefPtr manifestObject = manifestValue->asObject();
+    if (!manifestObject) {
+        recordError(createError(Error::InvalidManifest));
+        return false;
+    }
+
+    // Set to the unlocalized manifest for now so calls to manifestParsedSuccessfully() during this will be true.
+    // This is needed for WebExtensionLocalization to properly get the defaultLocale() while we are mid-parse.
+    m_manifestJSON = *manifestObject;
+
+    if (auto defaultLocale = manifestObject->getString(defaultLocaleManifestKey); !defaultLocale.isNull()) {
+        auto parsedLocale = parseLocale(manifestObject->getString(defaultLocaleManifestKey));
+        if (!parsedLocale.languageCode.isEmpty()) {
+            if (supportedLocales().contains(defaultLocale))
+                m_defaultLocale = defaultLocale;
+            else
+                recordError(createError(Error::InvalidDefaultLocale, WEB_UI_STRING("Unable to find `default_locale` in “_locales” folder.", "Error description for missing default_locale")));
+        } else
+            recordError(createError(Error::InvalidDefaultLocale));
+    }
+
+    m_localization = WebExtensionLocalization::create(*this);
+
+    RefPtr localizedManifestObject = m_localization->localizedJSONforJSON(manifestObject);
+    if (!localizedManifestObject) {
+        m_manifestJSON = JSON::Value::null();
+        recordError(createError(Error::InvalidManifest));
+        return false;
+    }
+
+    m_manifestJSON = localizedManifestObject.releaseNonNull();
+
+    return true;
+}
+
+RefPtr<const JSON::Object> WebExtension::manifestObject()
 {
     if (m_parsedManifest)
-        return !!m_manifestJSON->asObject();
+        return m_manifestJSON->asObject();
 
-    // If we haven't parsed yet, trigger a parse by calling the getter.
-    return !!manifest() && !!manifestObject();
+    m_parsedManifest = true;
+
+    RefPtr<API::Error> error;
+    auto manifestString = resourceStringForPath("manifest.json"_s, error);
+    if (error) {
+        recordErrorIfNeeded(error);
+        return nullptr;
+    }
+
+    if (!parseManifest(manifestString))
+        return nullptr;
+
+    return m_manifestJSON->asObject();
+}
+
+bool WebExtension::manifestParsedSuccessfully()
+{
+    return !!manifestObject();
 }
 
 double WebExtension::manifestVersion()
@@ -155,6 +230,14 @@ double WebExtension::manifestVersion()
         return *value;
 
     return 0;
+}
+
+RefPtr<API::Data> WebExtension::serializeManifest()
+{
+    if (!m_manifestJSON)
+        return nullptr;
+
+    return API::Data::create(m_manifestJSON->toJSONString().utf8().span());
 }
 
 RefPtr<API::Data> WebExtension::serializeLocalization()
@@ -2142,6 +2225,124 @@ void WebExtension::populateCommandsIfNeeded()
         if (!commandIdentifier.isEmpty())
             m_commands.append({ commandIdentifier, displayActionLabel(), emptyString(), { } });
     }
+}
+
+std::optional<WebExtension::DeclarativeNetRequestRulesetData> WebExtension::parseDeclarativeNetRequestRulesetObject(const JSON::Object& rulesetObject, RefPtr<API::Error>& error)
+{
+    auto rulesetID = rulesetObject.getString(declarativeNetRequestRulesetIDManifestKey);
+    if (rulesetID.isEmpty()) {
+        error = createError(Error::InvalidDeclarativeNetRequest, WEB_UI_STRING("Empty or invalid `id` in `declarative_net_request` manifest entry.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for empty or invalid id in declarative_net_request manifest entry"));
+        return { };
+    }
+
+    auto jsonPath = rulesetObject.getString(declarativeNetRequestRulePathManifestKey);
+    if (jsonPath.isEmpty()) {
+        error = createError(WebExtension::Error::InvalidDeclarativeNetRequest, WEB_UI_STRING("Empty or invalid `path` in `declarative_net_request` manifest entry.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for empty or invalid path in declarative_net_request manifest entry"));
+        return { };
+    }
+
+    auto enabledBool = rulesetObject.getBoolean(declarativeNetRequestRuleEnabledManifestKey);
+    if (!enabledBool) {
+        error = createError(WebExtension::Error::InvalidDeclarativeNetRequest, WEB_UI_STRING("Missing or invalid `enabled` boolean for the `declarative_net_request` manifest entry.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for missing enabled boolean"));
+        return { };
+    }
+
+    DeclarativeNetRequestRulesetData rulesetData = {
+        rulesetID,
+        *enabledBool,
+        jsonPath
+    };
+
+    return std::optional { WTFMove(rulesetData) };
+}
+
+void WebExtension::populateDeclarativeNetRequestPropertiesIfNeeded()
+{
+    if (m_parsedManifestDeclarativeNetRequestRulesets)
+        return;
+
+    m_parsedManifestDeclarativeNetRequestRulesets = true;
+
+    RefPtr manifestObject = this->manifestObject();
+    if (!manifestObject)
+        return;
+
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/manifest.json/declarative_net_request
+
+    if (!supportedPermissions().contains(WebExtensionPermission::declarativeNetRequest()) && !supportedPermissions().contains(WebExtensionPermission::declarativeNetRequestWithHostAccess())) {
+        recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_STRING("Manifest has no `declarativeNetRequest` permission.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for missing declarativeNetRequest permission")));
+        return;
+    }
+
+    RefPtr declarativeNetRequestManifestObject = manifestObject->getObject(declarativeNetRequestManifestKey);
+    if (!declarativeNetRequestManifestObject) {
+        if (manifestObject->getValue(declarativeNetRequestManifestKey))
+            recordError(createError(Error::InvalidDeclarativeNetRequest));
+        return;
+    }
+
+    RefPtr declarativeNetRequestRulesets = declarativeNetRequestManifestObject->getArray(declarativeNetRequestRulesManifestKey);
+    if (!declarativeNetRequestRulesets) {
+        if (manifestObject->getValue(declarativeNetRequestManifestKey))
+            recordError(createError(Error::InvalidDeclarativeNetRequest));
+        return;
+    }
+
+    if (declarativeNetRequestRulesets->length() > webExtensionDeclarativeNetRequestMaximumNumberOfStaticRulesets)
+        recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_STRING("Exceeded maximum number of `declarative_net_request` rulesets. Ignoring extra rulesets.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for too many rulesets")));
+
+    size_t rulesetCount = 0, enabledRulesetCount = 0;
+    bool recordedTooManyRulesetsManifestError = false;
+    HashSet<String> seenRulesetIDs;
+    for (Ref value : *declarativeNetRequestRulesets) {
+        if (rulesetCount >= webExtensionDeclarativeNetRequestMaximumNumberOfStaticRulesets)
+            continue;
+
+        RefPtr object = value->asObject();
+        if (!object)
+            continue;
+
+        RefPtr<API::Error> error;
+        auto optionalRuleset = parseDeclarativeNetRequestRulesetObject(*object, error);
+        if (!optionalRuleset) {
+            if (error)
+                recordError(createError(Error::InvalidDeclarativeNetRequest, { }, error));
+            continue;
+        }
+
+        auto& ruleset = optionalRuleset.value();
+        if (seenRulesetIDs.contains(ruleset.rulesetID)) {
+            recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_FORMAT_STRING("`declarative_net_request` ruleset with id \"%s\" is invalid. Ruleset id must be unique.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for duplicate ruleset id", ruleset.rulesetID.utf8().data())));
+            continue;
+        }
+
+        if (ruleset.enabled && ++enabledRulesetCount > webExtensionDeclarativeNetRequestMaximumNumberOfEnabledRulesets && !recordedTooManyRulesetsManifestError) {
+            recordError(createError(Error::InvalidDeclarativeNetRequest, WEB_UI_FORMAT_STRING("Exceeded maximum number of enabled `declarative_net_request` static rulesets. The first %lu will be applied, the remaining will be ignored.", "WKWebExtensionErrorInvalidDeclarativeNetRequestEntry description for too many enabled static rulesets", webExtensionDeclarativeNetRequestMaximumNumberOfEnabledRulesets)));
+            recordedTooManyRulesetsManifestError = true;
+            continue;
+        }
+
+        seenRulesetIDs.add(ruleset.rulesetID);
+        ++rulesetCount;
+
+        m_declarativeNetRequestRulesets.append(WTFMove(ruleset));
+    }
+}
+
+const WebExtension::DeclarativeNetRequestRulesetVector& WebExtension::declarativeNetRequestRulesets()
+{
+    populateDeclarativeNetRequestPropertiesIfNeeded();
+    return m_declarativeNetRequestRulesets;
+}
+
+std::optional<WebExtension::DeclarativeNetRequestRulesetData> WebExtension::declarativeNetRequestRuleset(const String& identifier)
+{
+    for (auto& ruleset : declarativeNetRequestRulesets()) {
+        if (ruleset.rulesetID == identifier)
+            return ruleset;
+    }
+
+    return std::nullopt;
 }
 
 } // namespace WebKit

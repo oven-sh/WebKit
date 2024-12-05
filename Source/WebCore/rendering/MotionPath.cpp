@@ -178,19 +178,19 @@ static double lengthForRayPath(const Style::Ray& ray, const MotionPathData& data
     auto distances = distanceOfPointToSidesOfRect(boundingBox, data.usedStartingPosition);
 
     return WTF::switchOn(ray.size,
-        [&](Style::ClosestSide) {
+        [&](CSS::Keyword::ClosestSide) {
             return std::min( { distances.top(), distances.bottom(), distances.left(), distances.right() } );
         },
-        [&](Style::FarthestSide) {
+        [&](CSS::Keyword::FarthestSide) {
             return std::max( { distances.top(), distances.bottom(), distances.left(), distances.right() } );
         },
-        [&](Style::FarthestCorner) {
+        [&](CSS::Keyword::FarthestCorner) {
             return std::hypot(std::max(distances.left(), distances.right()), std::max(distances.top(), distances.bottom()));
         },
-        [&](Style::ClosestCorner) {
+        [&](CSS::Keyword::ClosestCorner) {
             return std::hypot(std::min(distances.left(), distances.right()), std::min(distances.top(), distances.bottom()));
         },
-        [&](Style::Sides) {
+        [&](CSS::Keyword::Sides) {
             return lengthOfRayIntersectionWithBoundingBox(boundingBox, std::make_pair(data.usedStartingPosition, ray.angle.value));
         }
     );

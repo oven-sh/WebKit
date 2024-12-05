@@ -1256,6 +1256,43 @@ std::optional<RetainPtr<CFBarRef>> ArgumentCoder<RetainPtr<CFBarRef>>::decode(De
 
 #endif
 
+#if USE(SKIA)
+void ArgumentCoder<SkFooBar>::encode(Encoder& encoder, const SkFooBar& passedInstance)
+{
+    auto instance = CoreIPCSkFooBar(passedInstance);
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.foo())>, int>);
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.bar())>, double>);
+
+    encoder << instance.foo();
+    encoder << instance.bar();
+}
+
+void ArgumentCoder<SkFooBar>::encode(OtherEncoder& encoder, const SkFooBar& passedInstance)
+{
+    auto instance = CoreIPCSkFooBar(passedInstance);
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.foo())>, int>);
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.bar())>, double>);
+
+    encoder << instance.foo();
+    encoder << instance.bar();
+}
+
+std::optional<SkFooBar> ArgumentCoder<SkFooBar>::decode(Decoder& decoder)
+{
+    auto foo = decoder.decode<int>();
+    auto bar = decoder.decode<double>();
+    if (UNLIKELY(!decoder.isValid()))
+        return std::nullopt;
+    return {
+        CoreIPCSkFooBar {
+            WTFMove(*foo),
+            WTFMove(*bar)
+        }
+    };
+}
+
+#endif
+
 void ArgumentCoder<WebKit::RValueWithFunctionCalls>::encode(Encoder& encoder, WebKit::RValueWithFunctionCalls&& instance)
 {
     static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.callFunction())>, SandboxExtensionHandle>);

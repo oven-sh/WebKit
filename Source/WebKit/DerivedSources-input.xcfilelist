@@ -126,6 +126,7 @@ $(PROJECT_DIR)/ModelProcess/ModelProcessModelPlayerProxy.messages.in
 $(PROJECT_DIR)/ModelProcess/cocoa/ModelProcessModelPlayerProxy.messages.in
 $(PROJECT_DIR)/Modules/OSX_Private.modulemap
 $(PROJECT_DIR)/Modules/iOS_Private.modulemap
+$(PROJECT_DIR)/NetworkProcess/Authentication/AuthenticationManager.messages.in
 $(PROJECT_DIR)/NetworkProcess/Classifier/ITPThirdPartyData.serialization.in
 $(PROJECT_DIR)/NetworkProcess/Classifier/ITPThirdPartyDataForSpecificFirstParty.serialization.in
 $(PROJECT_DIR)/NetworkProcess/Classifier/StorageAccessStatus.serialization.in
@@ -223,7 +224,6 @@ $(PROJECT_DIR)/Shared/ApplePay/ApplePayPaymentSetupFeatures.serialization.in
 $(PROJECT_DIR)/Shared/ApplePay/PaymentSetupConfiguration.serialization.in
 $(PROJECT_DIR)/Shared/ApplePay/WebPaymentCoordinatorProxy.messages.in
 $(PROJECT_DIR)/Shared/Authentication/AuthenticationChallengeDisposition.serialization.in
-$(PROJECT_DIR)/Shared/Authentication/AuthenticationManager.messages.in
 $(PROJECT_DIR)/Shared/AuxiliaryProcess.messages.in
 $(PROJECT_DIR)/Shared/AuxiliaryProcessCreationParameters.serialization.in
 $(PROJECT_DIR)/Shared/BackgroundFetchChange.serialization.in

@@ -33,8 +33,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(StreamClientConnection);
 
 // FIXME(http://webkit.org/b/238986): Workaround for not being able to deliver messages from the dedicated connection to the work queue the client uses.
 
-StreamClientConnection::DedicatedConnectionClient::DedicatedConnectionClient(Connection::Client& receiver)
-    : m_receiver(receiver)
+StreamClientConnection::DedicatedConnectionClient::DedicatedConnectionClient(StreamClientConnection& owner, Connection::Client& receiver)
+    : m_owner(owner)
+    , m_receiver(receiver)
 {
 }
 
@@ -112,7 +113,7 @@ void StreamClientConnection::setMaxBatchSize(unsigned size)
 
 void StreamClientConnection::open(Connection::Client& receiver, SerialFunctionDispatcher& dispatcher)
 {
-    m_dedicatedConnectionClient.emplace(receiver);
+    m_dedicatedConnectionClient.emplace(*this, receiver);
     protectedConnection()->open(*m_dedicatedConnectionClient, dispatcher);
 }
 

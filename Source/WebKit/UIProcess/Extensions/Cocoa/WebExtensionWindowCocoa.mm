@@ -143,7 +143,11 @@ bool WebExtensionWindow::matches(const WebExtensionTabQueryParameters& parameter
         return false;
 
     if (parameters.currentWindow || isCurrent(parameters.windowIdentifier)) {
-        auto currentWindow = extensionContext()->getWindow(WebExtensionWindowConstants::CurrentIdentifier, webPageProxyIdentifier);
+        RefPtr extensionContext = this->extensionContext();
+        if (!extensionContext)
+            return false;
+
+        auto currentWindow = extensionContext->getWindow(WebExtensionWindowConstants::CurrentIdentifier, webPageProxyIdentifier);
         if (!currentWindow)
             return false;
 
@@ -165,7 +169,11 @@ WebExtensionWindow::TabVector WebExtensionWindow::tabs(SkipValidation skipValida
     if (!isValid() || !m_respondsToTabs || !m_respondsToActiveTab)
         return { };
 
-    auto *tabs = [m_delegate tabsForWebExtensionContext:m_extensionContext->wrapper()];
+    RefPtr extensionContext = m_extensionContext.get();
+    if (!extensionContext)
+        return { };
+
+    auto *tabs = [m_delegate tabsForWebExtensionContext:extensionContext->wrapper()];
     THROW_UNLESS([tabs isKindOfClass:NSArray.class], @"Object returned by tabsForWebExtensionContext: is not an array");
 
     if (!tabs.count)
@@ -175,7 +183,7 @@ WebExtensionWindow::TabVector WebExtensionWindow::tabs(SkipValidation skipValida
     result.reserveInitialCapacity(tabs.count);
 
     for (id tab in tabs)
-        result.append(m_extensionContext->getOrCreateTab(tab));
+        result.append(extensionContext->getOrCreateTab(tab));
 
     if (skipValidation == SkipValidation::No) {
         // SkipValidation::Yes is needed to avoid reentry, since activeTab() calls tabs().
@@ -195,11 +203,15 @@ RefPtr<WebExtensionTab> WebExtensionWindow::activeTab(SkipValidation skipValidat
     if (!isValid() || !m_respondsToActiveTab || !m_respondsToTabs)
         return nullptr;
 
-    auto activeTab = [m_delegate activeTabForWebExtensionContext:m_extensionContext->wrapper()];
+    RefPtr extensionContext = m_extensionContext.get();
+    if (!extensionContext)
+        return nullptr;
+
+    auto activeTab = [m_delegate activeTabForWebExtensionContext:extensionContext->wrapper()];
     if (!activeTab)
         return nullptr;
 
-    Ref result = m_extensionContext->getOrCreateTab(activeTab);
+    Ref result = extensionContext->getOrCreateTab(activeTab);
 
     if (skipValidation == SkipValidation::No) {
         // SkipValidation::Yes is needed to avoid reentry, since tabs() calls activeTab().
@@ -320,7 +332,11 @@ bool WebExtensionWindow::isFocused() const
     if (!isValid())
         return false;
 
-    return this == m_extensionContext->focusedWindow();
+    RefPtr extensionContext = m_extensionContext.get();
+    if (!extensionContext)
+        return false;
+
+    return this == extensionContext->focusedWindow();
 }
 
 bool WebExtensionWindow::isFrontmost() const
@@ -328,7 +344,11 @@ bool WebExtensionWindow::isFrontmost() const
     if (!isValid())
         return false;
 
-    return this == m_extensionContext->frontmostWindow();
+    RefPtr extensionContext = m_extensionContext.get();
+    if (!extensionContext)
+        return false;
+
+    return this == extensionContext->frontmostWindow();
 }
 
 void WebExtensionWindow::focus(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&& completionHandler)

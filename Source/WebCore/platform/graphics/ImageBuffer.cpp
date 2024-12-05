@@ -163,7 +163,7 @@ private:
 std::unique_ptr<SerializedImageBuffer> ImageBuffer::sinkIntoSerializedImageBuffer()
 {
     ASSERT(hasOneRef());
-    ASSERT(!controlBlock().weakReferenceCount());
+    ASSERT(!controlBlock().weakRefCount());
     return makeUnique<DefaultSerializedImageBuffer>(this);
 }
 
@@ -335,8 +335,21 @@ RefPtr<ImageBuffer> ImageBuffer::sinkIntoImageBufferForCrossThreadTransfer(RefPt
 {
     if (!buffer || buffer->renderingMode() != RenderingMode::Accelerated)
         return buffer;
-    // FIXME: Try avoiding GPU-to-CPU data transfer by creating accelerated clone that would e.g. leverage underlying GL texture.
-    return copyImageBuffer(const_cast<ImageBuffer&>(*buffer), PreserveResolution::Yes, RenderingMode::Unaccelerated);
+    if (buffer->hasOneRef()) {
+        buffer->finishAcceleratedRenderingAndCreateFence();
+        return buffer;
+    }
+    auto bufferCopy = copyImageBuffer(const_cast<ImageBuffer&>(*buffer), PreserveResolution::Yes, RenderingMode::Accelerated);
+    bufferCopy->finishAcceleratedRenderingAndCreateFence();
+    return bufferCopy;
+}
+
+RefPtr<ImageBuffer> ImageBuffer::sinkIntoImageBufferAfterCrossThreadTransfer(RefPtr<ImageBuffer> buffer)
+{
+    if (!buffer || buffer->renderingMode() != RenderingMode::Accelerated)
+        return buffer;
+    buffer->waitForAcceleratedRenderingFenceCompletion();
+    return buffer->copyAcceleratedImageBufferBorrowingBackendRenderTarget();
 }
 #endif
 

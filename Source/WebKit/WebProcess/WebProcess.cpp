@@ -1252,6 +1252,11 @@ NetworkProcessConnection& WebProcess::ensureNetworkProcessConnection()
     return *m_networkProcessConnection;
 }
 
+Ref<NetworkProcessConnection> WebProcess::ensureProtectedNetworkProcessConnection()
+{
+    return ensureNetworkProcessConnection();
+}
+
 void WebProcess::logDiagnosticMessageForNetworkProcessCrash()
 {
     WebCore::Page* page = nullptr;
@@ -1369,6 +1374,11 @@ GPUProcessConnection& WebProcess::ensureGPUProcessConnection()
         }
     }
     return *m_gpuProcessConnection;
+}
+
+Ref<GPUProcessConnection> WebProcess::ensureProtectedGPUProcessConnection()
+{
+    return ensureGPUProcessConnection();
 }
 
 Seconds WebProcess::gpuProcessTimeoutDuration() const

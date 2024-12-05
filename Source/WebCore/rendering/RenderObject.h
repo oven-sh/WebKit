@@ -167,7 +167,6 @@ public:
         Video,
         View,
         ViewTransitionCapture,
-        ViewTransitionRoot,
 #if ENABLE(MATHML)
         MathMLBlock,
         MathMLFenced,
@@ -245,7 +244,6 @@ public:
         IsFragmentedFlow = 1 << 1,
         IsTextControl = 1 << 2,
         IsSVGBlock = 1 << 3,
-        IsViewTransitionContainer = 1 << 4,
     };
 
     enum class LineBreakFlag : uint8_t {
@@ -460,8 +458,7 @@ public:
     bool isRenderModel() const { return type() == Type::Model; }
 #endif
     bool isRenderFragmentContainer() const { return isRenderBlockFlow() && m_typeSpecificFlags.blockFlowFlags().contains(BlockFlowFlag::IsFragmentContainer); }
-    bool isRenderViewTransitionContainer() const { return isRenderBlockFlow() && m_typeSpecificFlags.blockFlowFlags().contains(BlockFlowFlag::IsViewTransitionContainer); }
-    bool isRenderViewTransitionRoot() const { return type() == Type::ViewTransitionRoot; }
+    bool isViewTransitionContainer() const { return style().pseudoElementType() == PseudoId::ViewTransition || style().pseudoElementType() == PseudoId::ViewTransitionGroup || style().pseudoElementType() == PseudoId::ViewTransitionImagePair; }
     bool isRenderReplica() const { return type() == Type::Replica; }
 
     bool isRenderSlider() const { return type() == Type::Slider; }
@@ -502,7 +499,7 @@ public:
 
     bool isTablePart() const { return isRenderTableCell() || isRenderTableCol() || isRenderTableCaption() || isRenderTableRow() || isRenderTableSection(); }
 
-    bool isViewTransitionPseudo() const { return isRenderViewTransitionCapture() || isRenderViewTransitionContainer(); }
+    bool isViewTransitionPseudo() const { return isRenderViewTransitionCapture() || isViewTransitionContainer(); }
 
     inline bool isBeforeContent() const;
     inline bool isAfterContent() const;

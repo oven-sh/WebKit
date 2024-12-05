@@ -153,7 +153,7 @@ private:
     bool detectSignAndGetDigitRange(const String& input, bool& isNegative, unsigned& startIndex, unsigned& endIndex);
     unsigned matchedDecimalSymbolIndex(const String& input, unsigned& position);
 
-    String m_decimalSymbols[DecimalSymbolsSize];
+    std::array<String, DecimalSymbolsSize> m_decimalSymbols;
     String m_positivePrefix;
     String m_positiveSuffix;
     String m_negativePrefix;

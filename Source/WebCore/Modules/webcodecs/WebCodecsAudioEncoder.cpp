@@ -139,7 +139,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebC
         queueControlMessageAndProcess({ *this, [this, config]() mutable {
             m_isMessageQueueBlocked = true;
 
-            protectedScriptExecutionContext()->enqueueTaskWhenSettled(m_internalEncoder->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, config = WTFMove(config)] (auto&&) mutable {
+            protectedScriptExecutionContext()->enqueueTaskWhenSettled(Ref { *m_internalEncoder }->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, config = WTFMove(config)] (auto&&) mutable {
                 RefPtr protectedThis = weakThis.get();
                 if (!protectedThis)
                     return;
@@ -276,7 +276,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::encode(Ref<WebCodecsAudioData>&& frame)
         --m_encodeQueueSize;
         scheduleDequeueEvent();
 
-        protectedScriptExecutionContext()->enqueueTaskWhenSettled(m_internalEncoder->encode({ WTFMove(audioData), timestamp, duration }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
+        protectedScriptExecutionContext()->enqueueTaskWhenSettled(Ref { *m_internalEncoder }->encode({ WTFMove(audioData), timestamp, duration }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis || !!result)
                 return;
@@ -296,14 +296,12 @@ void WebCodecsAudioEncoder::flush(Ref<DeferredPromise>&& promise)
         return;
     }
 
-    m_pendingFlushPromises.append(WTFMove(promise));
-    queueControlMessageAndProcess({ *this, [this, clearFlushPromiseCount = m_clearFlushPromiseCount]() mutable {
-        protectedScriptExecutionContext()->enqueueTaskWhenSettled(m_internalEncoder->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, clearFlushPromiseCount, pendingActivity = makePendingActivity(*this)] (auto&&) {
-            RefPtr protectedThis = weakThis.get();
-            if (!protectedThis || clearFlushPromiseCount != protectedThis->m_clearFlushPromiseCount)
-                return;
-
-            protectedThis->m_pendingFlushPromises.takeFirst()->resolve();
+    m_pendingFlushPromises.append(promise);
+    queueControlMessageAndProcess({ *this, [this, promise = WTFMove(promise)]() mutable {
+        protectedScriptExecutionContext()->enqueueTaskWhenSettled(Ref { *m_internalEncoder }->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this), promise = WTFMove(promise)] (auto&&) {
+            promise->resolve();
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->m_pendingFlushPromises.removeFirstMatching([&](auto& flushPromise) { return promise.ptr() == flushPromise.ptr(); });
         });
     } });
 }
@@ -361,16 +359,17 @@ ExceptionOr<void> WebCodecsAudioEncoder::resetEncoder(const Exception& exception
         return Exception { ExceptionCode::InvalidStateError, "AudioEncoder is closed"_s };
 
     m_state = WebCodecsCodecState::Unconfigured;
-    if (m_internalEncoder)
-        m_internalEncoder->reset();
+    if (RefPtr internalEncoder = std::exchange(m_internalEncoder, { }))
+        internalEncoder->reset();
     m_controlMessageQueue.clear();
     if (m_encodeQueueSize) {
         m_encodeQueueSize = 0;
         scheduleDequeueEvent();
     }
-    ++m_clearFlushPromiseCount;
-    while (!m_pendingFlushPromises.isEmpty())
-        m_pendingFlushPromises.takeFirst()->reject(exception);
+
+    auto promises = std::exchange(m_pendingFlushPromises, { });
+    for (auto& promise : promises)
+        promise->reject(exception);
 
     return { };
 }
@@ -387,9 +386,9 @@ void WebCodecsAudioEncoder::scheduleDequeueEvent()
     });
 }
 
-void WebCodecsAudioEncoder::setInternalEncoder(UniqueRef<AudioEncoder>&& internalEncoder)
+void WebCodecsAudioEncoder::setInternalEncoder(Ref<AudioEncoder>&& internalEncoder)
 {
-    m_internalEncoder = internalEncoder.moveToUniquePtr();
+    m_internalEncoder = WTFMove(internalEncoder);
 }
 
 void WebCodecsAudioEncoder::queueControlMessageAndProcess(WebCodecsControlMessage<WebCodecsAudioEncoder>&& message)

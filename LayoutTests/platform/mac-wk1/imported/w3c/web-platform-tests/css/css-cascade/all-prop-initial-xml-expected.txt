@@ -36,7 +36,9 @@ PASS background-size
 PASS baseline-shift
 PASS block-ellipsis
 PASS block-size
+PASS block-step-align
 PASS block-step-insert
+PASS block-step-round
 PASS block-step-size
 PASS border-block-end-color
 PASS border-block-end-style

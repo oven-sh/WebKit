@@ -1027,6 +1027,8 @@ angle::CallCapture CaptureReleaseTexturesANGLE(const State &glState,
 
 // GL_ARB_sync
 
+// GL_ARM_rgba8
+
 // GL_ARM_shader_framebuffer_fetch
 
 // GL_ARM_shader_framebuffer_fetch_depth_stencil
@@ -1098,6 +1100,8 @@ angle::CallCapture CaptureEGLImageTargetTextureStorageEXT(const State &glState,
                                                           GLuint texture,
                                                           egl::ImageID imagePacked,
                                                           const GLint *attrib_list);
+
+// GL_EXT_EGL_image_storage_compression
 
 // GL_EXT_YUV_target
 
@@ -2080,6 +2084,25 @@ angle::CallCapture CaptureTexStorage3DEXT(const State &glState,
                                           GLsizei height,
                                           GLsizei depth);
 
+// GL_EXT_texture_storage_compression
+angle::CallCapture CaptureTexStorageAttribs2DEXT(const State &glState,
+                                                 bool isCallValid,
+                                                 GLenum target,
+                                                 GLsizei levels,
+                                                 GLenum internalformat,
+                                                 GLsizei width,
+                                                 GLsizei height,
+                                                 const GLint *attrib_list);
+angle::CallCapture CaptureTexStorageAttribs3DEXT(const State &glState,
+                                                 bool isCallValid,
+                                                 GLenum target,
+                                                 GLsizei levels,
+                                                 GLenum internalformat,
+                                                 GLsizei width,
+                                                 GLsizei height,
+                                                 GLsizei depth,
+                                                 const GLint *attrib_list);
+
 // GL_EXT_texture_type_2_10_10_10_REV
 
 // GL_EXT_unpack_subimage
@@ -2296,6 +2319,9 @@ angle::CallCapture CaptureEGLImageTargetTexture2DOES(const State &glState,
 // GL_OES_EGL_image_external
 
 // GL_OES_EGL_image_external_essl3
+
+// GL_OES_blend_subtract
+angle::CallCapture CaptureBlendEquationOES(const State &glState, bool isCallValid, GLenum mode);
 
 // GL_OES_compressed_ETC1_RGB8_texture
 
@@ -2808,6 +2834,8 @@ angle::CallCapture CaptureTexGenxvOES(const State &glState,
 // GL_OES_texture_half_float
 
 // GL_OES_texture_half_float_linear
+
+// GL_OES_texture_mirrored_repeat
 
 // GL_OES_texture_npot
 
@@ -5098,6 +5126,25 @@ void CaptureTexParameterIuivEXT_params(const State &glState,
                                        GLenum pname,
                                        const GLuint *params,
                                        angle::ParamCapture *paramCapture);
+void CaptureTexStorageAttribs2DEXT_attrib_list(const State &glState,
+                                               bool isCallValid,
+                                               GLenum target,
+                                               GLsizei levels,
+                                               GLenum internalformat,
+                                               GLsizei width,
+                                               GLsizei height,
+                                               const GLint *attrib_list,
+                                               angle::ParamCapture *paramCapture);
+void CaptureTexStorageAttribs3DEXT_attrib_list(const State &glState,
+                                               bool isCallValid,
+                                               GLenum target,
+                                               GLsizei levels,
+                                               GLenum internalformat,
+                                               GLsizei width,
+                                               GLsizei height,
+                                               GLsizei depth,
+                                               const GLint *attrib_list,
+                                               angle::ParamCapture *paramCapture);
 void CaptureDebugMessageCallbackKHR_userParam(const State &glState,
                                               bool isCallValid,
                                               GLDEBUGPROCKHR callback,

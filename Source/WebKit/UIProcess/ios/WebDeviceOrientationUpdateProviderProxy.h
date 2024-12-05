@@ -41,6 +41,9 @@ public:
     static Ref<WebDeviceOrientationUpdateProviderProxy> create(WebPageProxy&);
     ~WebDeviceOrientationUpdateProviderProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void startUpdatingDeviceOrientation();
     void stopUpdatingDeviceOrientation();
 

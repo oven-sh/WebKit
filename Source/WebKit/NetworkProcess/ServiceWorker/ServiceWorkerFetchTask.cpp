@@ -138,10 +138,11 @@ ServiceWorkerFetchTask::~ServiceWorkerFetchTask()
 
 template<typename Message> bool ServiceWorkerFetchTask::sendToServiceWorker(Message&& message)
 {
-    if (!m_serviceWorkerConnection)
+    RefPtr serviceWorkerConnection = m_serviceWorkerConnection.get();
+    if (!serviceWorkerConnection)
         return false;
 
-    return m_serviceWorkerConnection->protectedIPCConnection()->send(std::forward<Message>(message), 0) == IPC::Error::NoError;
+    return serviceWorkerConnection->protectedIPCConnection()->send(std::forward<Message>(message), 0) == IPC::Error::NoError;
 }
 
 template<typename Message> bool ServiceWorkerFetchTask::sendToClient(Message&& message)
@@ -462,7 +463,7 @@ void ServiceWorkerFetchTask::softUpdateIfNeeded()
     if (!m_shouldSoftUpdate)
         return;
     Ref loader = *m_loader;
-    RefPtr swConnection = loader->connectionToWebProcess().swConnection();
+    RefPtr swConnection = loader->protectedConnectionToWebProcess()->swConnection();
     if (!swConnection)
         return;
     RefPtr server = swConnection->server();
@@ -572,7 +573,11 @@ bool ServiceWorkerFetchTask::convertToDownload(DownloadManager& manager, Downloa
         return m_preloader->convertToDownload(manager, downloadID, request, response);
 
     CheckedPtr session = this->session();
-    if (!session || !m_serviceWorkerConnection)
+    if (!session)
+        return false;
+
+    RefPtr serviceWorkerConnection = m_serviceWorkerConnection.get();
+    if (!serviceWorkerConnection)
         return false;
 
     m_isDone = true;
@@ -580,7 +585,7 @@ bool ServiceWorkerFetchTask::convertToDownload(DownloadManager& manager, Downloa
     // FIXME: We might want to keep the service worker alive until the download ends.
     RefPtr<ServiceWorkerDownloadTask> serviceWorkerDownloadTask;
     auto serviceWorkerDownloadLoad = NetworkLoad::create(*protectedLoader(), *session, [&](auto& client) {
-        serviceWorkerDownloadTask =  ServiceWorkerDownloadTask::create(*session, client, *m_serviceWorkerConnection, *m_serviceWorkerIdentifier, *m_serverConnectionIdentifier, m_fetchIdentifier, request, response, downloadID);
+        serviceWorkerDownloadTask =  ServiceWorkerDownloadTask::create(*session, client, *serviceWorkerConnection, *m_serviceWorkerIdentifier, *m_serverConnectionIdentifier, m_fetchIdentifier, request, response, downloadID);
         return serviceWorkerDownloadTask.copyRef();
     });
 

@@ -26,7 +26,7 @@
 namespace WebCore {
 
 // Used for text-shadow and box-shadow
-CSSShadowValue::CSSShadowValue(RefPtr<CSSPrimitiveValue>&& x, RefPtr<CSSPrimitiveValue>&& y, RefPtr<CSSPrimitiveValue>&& blur, RefPtr<CSSPrimitiveValue>&& spread, RefPtr<CSSPrimitiveValue>&& style, RefPtr<CSSPrimitiveValue>&& color, bool isWebkitBoxShadow)
+CSSShadowValue::CSSShadowValue(RefPtr<CSSPrimitiveValue>&& x, RefPtr<CSSPrimitiveValue>&& y, RefPtr<CSSPrimitiveValue>&& blur, RefPtr<CSSPrimitiveValue>&& spread, RefPtr<CSSPrimitiveValue>&& style, RefPtr<CSSValue>&& color, bool isWebkitBoxShadow)
     : CSSValue(ClassType::Shadow)
     , x(WTFMove(x))
     , y(WTFMove(y))

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,7 +60,7 @@ namespace WebCore {
 #if ENABLE(DRAG_SUPPORT)
 
 class DragImageLoader final : public CachedImageClient {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(DragImageLoader);
+    WTF_MAKE_TZONE_ALLOCATED(DragImageLoader);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DragImageLoader);
     WTF_MAKE_NONCOPYABLE(DragImageLoader);
 public:
@@ -73,6 +73,8 @@ private:
     void imageChanged(CachedImage*, const IntRect*) override;
     WeakRef<DataTransfer> m_dataTransfer;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DragImageLoader);
 
 #endif
 

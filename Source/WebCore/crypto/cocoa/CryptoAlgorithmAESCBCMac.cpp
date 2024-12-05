@@ -30,8 +30,6 @@
 #include "CryptoKeyAES.h"
 #include <CommonCrypto/CommonCrypto.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 static ExceptionOr<Vector<uint8_t>> transformAESCBC(CCOperation operation, const Vector<uint8_t>& iv, const Vector<uint8_t>& key, const Vector<uint8_t>& data, CryptoAlgorithmAESCBC::Padding padding)
@@ -49,16 +47,15 @@ static ExceptionOr<Vector<uint8_t>> transformAESCBC(CCOperation operation, const
     if (status)
         return Exception { ExceptionCode::OperationError };
 
-    uint8_t* p = result.data() + bytesWritten;
+    auto p = result.mutableSpan().subspan(bytesWritten);
     if (padding == CryptoAlgorithmAESCBC::Padding::Yes) {
-        status = CCCryptorFinal(cryptor, p, result.end() - p, &bytesWritten);
-        p += bytesWritten;
+        status = CCCryptorFinal(cryptor, p.data(), p.size(), &bytesWritten);
+        p = p.subspan(bytesWritten);
         if (status)
             return Exception { ExceptionCode::OperationError };
     }
 
-    ASSERT(p <= result.end());
-    result.shrink(p - result.begin());
+    result.shrink(result.size() - p.size());
 
     CCCryptorRelease(cryptor);
 
@@ -96,5 +93,3 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAESCBC::platformDecrypt(const Crypto
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

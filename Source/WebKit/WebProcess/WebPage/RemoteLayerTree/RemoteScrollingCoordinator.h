@@ -50,6 +50,9 @@ public:
         return adoptRef(*new RemoteScrollingCoordinator(page));
     }
 
+    void ref() const final { WebCore::AsyncScrollingCoordinator::ref(); }
+    void deref() const final { WebCore::AsyncScrollingCoordinator::deref(); }
+
     RemoteScrollingCoordinatorTransaction buildTransaction(WebCore::FrameIdentifier);
 
     void scrollingStateInUIProcessChanged(const RemoteScrollingUIState&);

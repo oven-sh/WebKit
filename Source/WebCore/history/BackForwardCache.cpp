@@ -433,23 +433,6 @@ static void setBackForwardCacheState(Page& page, Document::BackForwardCacheState
     });
 }
 
-// When entering back/forward cache, tear down the render tree before setting the in-cache flag.
-// This maintains the invariant that render trees are never present in the back/forward cache.
-// Note that destruction happens bottom-up so that the main frame's tree dies last.
-static void destroyRenderTree(LocalFrame& mainFrame)
-{
-    for (auto* abstractFrame = mainFrame.tree().traversePrevious(CanWrap::Yes); abstractFrame; abstractFrame = abstractFrame->tree().traversePrevious(CanWrap::No)) {
-        auto* frame = dynamicDowncast<LocalFrame>(abstractFrame);
-        if (!frame)
-            continue;
-        if (!frame->document())
-            continue;
-        Ref document = *frame->document();
-        if (document->hasLivingRenderTree())
-            document->destroyRenderTree();
-    }
-}
-
 static void firePageHideEventRecursively(LocalFrame& frame)
 {
     RefPtr document = frame.document();
@@ -493,7 +476,7 @@ std::unique_ptr<CachedPage> BackForwardCache::trySuspendPage(Page& page, ForceSu
     // Fire the pagehide event in all frames.
     firePageHideEventRecursively(*localMainFrame);
 
-    destroyRenderTree(*localMainFrame);
+    page.destroyRenderTrees();
 
     // Stop all loads again before checking if we can still cache the page after firing the pagehide
     // event, since the page may have started ping loads in its pagehide event handler.

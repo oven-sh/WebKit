@@ -685,6 +685,8 @@ EXPORTS
 
     ; GL_ARB_sync
 
+    ; GL_ARM_rgba8
+
     ; GL_ARM_shader_framebuffer_fetch
 
     ; GL_ARM_shader_framebuffer_fetch_depth_stencil
@@ -710,6 +712,8 @@ EXPORTS
     ; GL_EXT_EGL_image_storage
     glEGLImageTargetTexStorageEXT
     glEGLImageTargetTextureStorageEXT
+
+    ; GL_EXT_EGL_image_storage_compression
 
     ; GL_EXT_YUV_target
 
@@ -1000,6 +1004,10 @@ EXPORTS
     glTexStorage2DEXT
     glTexStorage3DEXT
 
+    ; GL_EXT_texture_storage_compression
+    glTexStorageAttribs2DEXT
+    glTexStorageAttribs3DEXT
+
     ; GL_EXT_texture_type_2_10_10_10_REV
 
     ; GL_EXT_unpack_subimage
@@ -1084,6 +1092,9 @@ EXPORTS
     ; GL_OES_EGL_image_external
 
     ; GL_OES_EGL_image_external_essl3
+
+    ; GL_OES_blend_subtract
+    glBlendEquationOES
 
     ; GL_OES_compressed_ETC1_RGB8_texture
 
@@ -1241,6 +1252,8 @@ EXPORTS
     ; GL_OES_texture_half_float
 
     ; GL_OES_texture_half_float_linear
+
+    ; GL_OES_texture_mirrored_repeat
 
     ; GL_OES_texture_npot
 

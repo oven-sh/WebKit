@@ -61,6 +61,9 @@ public:
 
     ~WebSharedWorkerServerToContextConnection();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<WebCore::ProcessIdentifier> webProcessIdentifier() const;
     const WebCore::RegistrableDomain& registrableDomain() const { return m_site.domain(); }
     const WebCore::Site& site() const { return m_site; }

@@ -43,6 +43,7 @@
     BOOL _showEditMenuAfterNextSelectionChange;
 #endif
     BOOL _shouldRestoreEditMenuAfterOverflowScrolling;
+    Vector<WeakObjCPtr<UIView>> _managedTextSelectionViews;
 }
 
 - (instancetype)initWithView:(WKContentView *)view
@@ -108,6 +109,19 @@
 
 #endif // HAVE(UI_TEXT_SELECTION_DISPLAY_INTERACTION)
 
+- (NSArray<UIView *> *)managedTextSelectionViews
+{
+    RetainPtr views = adoptNS([[NSMutableArray alloc] initWithCapacity:_managedTextSelectionViews.size()]);
+    _managedTextSelectionViews.removeAllMatching([views](auto& weakView) {
+        if (RetainPtr view = weakView.get()) {
+            [views addObject:view.get()];
+            return false;
+        }
+        return true;
+    });
+    return views.autorelease();
+}
+
 - (void)prepareToMoveSelectionContainer:(UIView *)newContainer
 {
 #if HAVE(UI_TEXT_SELECTION_DISPLAY_INTERACTION)
@@ -116,10 +130,21 @@
     if ([highlightView superview] == newContainer)
         return;
 
+    NSMutableSet<UIView *> *viewsBeforeInstallingInteraction = [NSMutableSet set];
+    for (UIView *subview in newContainer.subviews)
+        [viewsBeforeInstallingInteraction addObject:subview];
+
     // Calling these delegate methods tells the display interaction to remove and reparent all internally
     // managed views (e.g. selection highlight views, selection handles) in the new selection container.
     [displayInteraction willMoveToView:_view];
     [displayInteraction didMoveToView:_view];
+
+    _managedTextSelectionViews = { };
+    for (UIView *subview in newContainer.subviews) {
+        if (![viewsBeforeInstallingInteraction containsObject:subview])
+            _managedTextSelectionViews.append(subview);
+    }
+
     if (newContainer == _view)
         return;
 

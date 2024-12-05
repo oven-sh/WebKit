@@ -45,6 +45,9 @@ public:
     static Ref<RemoteLegacyCDMProxy> create(WeakPtr<RemoteLegacyCDMFactoryProxy>, std::optional<WebCore::MediaPlayerIdentifier>, Ref<WebCore::LegacyCDM>&&);
     ~RemoteLegacyCDMProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     RemoteLegacyCDMFactoryProxy* factory() const { return m_factory.get(); }
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 

@@ -48,16 +48,18 @@ constexpr static auto largeBufferSize = 32 * 1024 * 1024;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Queue);
 
-Queue::Queue(id<MTLCommandQueue> commandQueue, Device& device)
+Queue::Queue(id<MTLCommandQueue> commandQueue, Adapter& adapter, Device& device)
     : m_commandQueue(commandQueue)
     , m_device(device)
+    , m_instance(adapter.weakInstance())
 {
     m_createdNotCommittedBuffers = [NSMutableOrderedSet orderedSet];
     m_openCommandEncoders = [NSMapTable strongToStrongObjectsMapTable];
 }
 
-Queue::Queue(Device& device)
+Queue::Queue(Adapter& adapter, Device& device)
     : m_device(device)
+    , m_instance(adapter.weakInstance())
 {
 }
 
@@ -254,9 +256,6 @@ void Queue::commitMTLCommandBuffer(id<MTLCommandBuffer> commandBuffer)
 
     ASSERT(commandBuffer.commandQueue == m_commandQueue);
     [commandBuffer addScheduledHandler:[protectedThis = Ref { *this }](id<MTLCommandBuffer>) {
-        auto device = protectedThis->m_device.get();
-        if (!device || !device->device())
-            return;
         protectedThis->scheduleWork([protectedThis = protectedThis.copyRef()]() {
             ++(protectedThis->m_scheduledCommandBufferCount);
             for (auto& callback : protectedThis->m_onSubmittedWorkScheduledCallbacks.take(protectedThis->m_scheduledCommandBufferCount))
@@ -264,9 +263,6 @@ void Queue::commitMTLCommandBuffer(id<MTLCommandBuffer> commandBuffer)
         });
     }];
     [commandBuffer addCompletedHandler:[protectedThis = Ref { *this }](id<MTLCommandBuffer> mtlCommandBuffer) {
-        auto device = protectedThis->m_device.get();
-        if (!device || !device->device())
-            return;
         MTLCommandBufferStatus status = mtlCommandBuffer.status;
         bool loseTheDevice = false;
         if (NSError *error = mtlCommandBuffer.error; status != MTLCommandBufferStatusCompleted) {
@@ -1029,12 +1025,8 @@ void Queue::setLabel(String&& label)
 
 void Queue::scheduleWork(Instance::WorkItem&& workItem)
 {
-    auto device = m_device.get();
-    if (!device)
-        return;
-
-    if (auto inst = device->instance(); inst.get())
-        inst->scheduleWork(WTFMove(workItem));
+    if (auto instance = m_instance.get())
+        instance->scheduleWork(WTFMove(workItem));
 }
 
 void Queue::clearTextureViewIfNeeded(TextureView& textureView)

@@ -203,8 +203,11 @@ ScreenCaptureKitCaptureSource::~ScreenCaptureKitCaptureSource()
 
     clearSharingSession();
 
-    if (m_whenReadyCallback)
-        std::exchange(m_whenReadyCallback, { })({ "Source no longer needed"_s , MediaAccessDenialReason::InvalidAccess });
+    if (auto callback = std::exchange(m_whenReadyCallback, { })) {
+        callOnMainRunLoop([callback = WTFMove(callback)]() mutable {
+            callback({ "Source no longer needed"_s , MediaAccessDenialReason::InvalidAccess });
+        });
+    }
 }
 
 void ScreenCaptureKitCaptureSource::whenReady(CompletionHandler<void(CaptureSourceError&&)>&& callback)
@@ -221,11 +224,14 @@ void ScreenCaptureKitCaptureSource::whenReady(CompletionHandler<void(CaptureSour
 
     // We start to get the first frame. The frame size allows to finalize initialization of the source settings.
     m_whenReadyCallback = [weakThis = WeakPtr { *this }, callback = WTFMove(callback)] (auto&& result) mutable {
-        if (RefPtr protectedThis = weakThis.get()) {
-            protectedThis->stopInternal([callback = WTFMove(callback), result = WTFMove(result)] () mutable {
-                callback(WTFMove(result));
-            });
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis) {
+            callback(WTFMove(result));
+            return;
         }
+        protectedThis->stopInternal([callback = WTFMove(callback), result = WTFMove(result)] () mutable {
+            callback(WTFMove(result));
+        });
     };
 
     start();

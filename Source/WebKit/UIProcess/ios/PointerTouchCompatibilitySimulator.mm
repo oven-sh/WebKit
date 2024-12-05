@@ -30,7 +30,7 @@
 
 #import "UIKitSPI.h"
 #import "UIKitUtilities.h"
-#import "WKBaseScrollView.h"
+#import "WKScrollView.h"
 #import "WKWebViewInternal.h"
 #import "_WKTouchEventGeneratorInternal.h"
 #import <wtf/TZoneMallocInlines.h>
@@ -40,11 +40,6 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PointerTouchCompatibilitySimulator);
 
-bool PointerTouchCompatibilitySimulator::requiresPointerTouchCompatibility()
-{
-    return WTF::IOSApplication::isFeedly();
-}
-
 PointerTouchCompatibilitySimulator::PointerTouchCompatibilitySimulator(WKWebView *view)
     : m_view { view }
     , m_stateResetWatchdogTimer { RunLoop::main(), this, &PointerTouchCompatibilitySimulator::resetState }
@@ -53,36 +48,42 @@ PointerTouchCompatibilitySimulator::PointerTouchCompatibilitySimulator(WKWebView
 
 #if HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
 
-static constexpr auto predominantAxisDeltaRatio = 10;
-static constexpr auto minimumPredominantAxisDelta = 20;
-static constexpr auto stateResetTimerDelay = 50_ms;
+static constexpr auto predominantAxisDeltaRatio = 5;
+static constexpr auto minimumPredominantAxisDelta = 15;
+static constexpr auto stateResetTimerDelay = 250_ms;
 
-static bool hasPredominantHorizontalAxis(CGPoint delta)
+static bool hasPredominantHorizontalAxis(WebCore::FloatSize delta)
 {
-    auto absoluteDeltaX = std::abs(delta.x);
-    return absoluteDeltaX >= minimumPredominantAxisDelta && absoluteDeltaX > std::abs(delta.y * predominantAxisDeltaRatio);
+    auto absoluteDeltaX = std::abs(delta.width());
+    return absoluteDeltaX >= minimumPredominantAxisDelta && absoluteDeltaX > std::abs(delta.height() * predominantAxisDeltaRatio);
 }
 
-void PointerTouchCompatibilitySimulator::handleScrollUpdate(WKBaseScrollView *scrollView, WKBEScrollViewScrollUpdate *update)
+bool PointerTouchCompatibilitySimulator::handleScrollUpdate(WKBaseScrollView *scrollView, WKBEScrollViewScrollUpdate *update)
 {
+    if (!m_isEnabled)
+        return false;
+
     RetainPtr view = m_view.get();
     RetainPtr window = [view window];
     if (!window) {
         resetState();
-        return;
+        return false;
     }
 
     switch (update.phase) {
     case WKBEScrollViewScrollUpdatePhaseEnded:
     case WKBEScrollViewScrollUpdatePhaseCancelled:
         resetState();
-        return;
+        return false;
+    case WKBEScrollViewScrollUpdatePhaseBegan:
+        m_initialDelta = { };
+        break;
     default:
         break;
     }
 
     if (scrollView._wk_canScrollHorizontallyWithoutBouncing)
-        return;
+        return false;
 
 #if USE(BROWSERENGINEKIT)
     auto translation = [update translationInView:view.get()];
@@ -90,40 +91,57 @@ void PointerTouchCompatibilitySimulator::handleScrollUpdate(WKBaseScrollView *sc
     auto delta = [update _adjustedAcceleratedDeltaInView:view.get()];
     auto translation = CGPointMake(delta.dx, delta.dy);
 #endif
-    if (!hasPredominantHorizontalAxis(translation))
-        return;
+    m_initialDelta.expand(translation.x, translation.y);
 
-    bool isFirstTouch = m_delta.isZero();
-    m_delta.expand(translation.x, 0);
+    if (!isSimulatingTouches() && !hasPredominantHorizontalAxis(m_initialDelta))
+        return false;
+
     m_centroid = [update locationInView:view.get()];
     m_stateResetWatchdogTimer.startOneShot(stateResetTimerDelay);
 
-    if (isFirstTouch)
+    if (!isSimulatingTouches()) {
         [[_WKTouchEventGenerator sharedTouchEventGenerator] touchDown:locationInScreen() window:window.get()];
-    else
-        [[_WKTouchEventGenerator sharedTouchEventGenerator] moveToPoint:locationInScreen() duration:0 window:window.get()];
+        m_touchDelta = { m_initialDelta.width(), 0 };
+        m_initialDelta = { };
+    }
+
+    m_touchDelta.expand(translation.x, 0);
+    [[_WKTouchEventGenerator sharedTouchEventGenerator] moveToPoint:locationInScreen() duration:0 window:window.get()];
+    return true;
 }
 
 #endif // HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
 
 void PointerTouchCompatibilitySimulator::resetState()
 {
-    if (RetainPtr window = this->window(); window && !m_delta.isZero())
-        [[_WKTouchEventGenerator sharedTouchEventGenerator] liftUp:locationInScreen() window:window.get()];
+    if (isSimulatingTouches())
+        [[_WKTouchEventGenerator sharedTouchEventGenerator] liftUp:locationInScreen() window:window().get()];
     m_centroid = { };
-    m_delta = { };
+    m_touchDelta = { };
+    m_initialDelta = { };
     m_stateResetWatchdogTimer.stop();
 }
 
 WebCore::FloatPoint PointerTouchCompatibilitySimulator::locationInScreen() const
 {
-    CGPoint pointInView = m_centroid + m_delta;
+    CGPoint pointInView = m_centroid + m_touchDelta;
     return [view() convertPoint:pointInView toCoordinateSpace:[[[window() windowScene] screen] coordinateSpace]];
 }
 
 RetainPtr<UIWindow> PointerTouchCompatibilitySimulator::window() const
 {
     return [m_view window];
+}
+
+void PointerTouchCompatibilitySimulator::setEnabled(bool enabled)
+{
+    if (m_isEnabled == enabled)
+        return;
+
+    m_isEnabled = enabled;
+
+    if (!enabled)
+        resetState();
 }
 
 } // namespace WebKit

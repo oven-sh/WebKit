@@ -66,6 +66,9 @@ public:
     static Ref<WebSWServerToContextConnection> create(NetworkConnectionToWebProcess&, WebPageProxyIdentifier, WebCore::Site&&, std::optional<WebCore::ScriptExecutionContextIdentifier>, WebCore::SWServer&);
     ~WebSWServerToContextConnection();
 
+    void ref() const final { WebCore::SWServerToContextConnection::ref(); }
+    void deref() const final { WebCore::SWServerToContextConnection::deref(); }
+
     void stop();
 
     RefPtr<IPC::Connection> protectedIPCConnection() const;

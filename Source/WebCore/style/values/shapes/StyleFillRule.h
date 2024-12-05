@@ -29,9 +29,6 @@
 namespace WebCore {
 namespace Style {
 
-using Nonzero = CSS::Nonzero;
-using Evenodd = CSS::Evenodd;
-
 using FillRule = CSS::FillRule;
 
 } // namespace Style

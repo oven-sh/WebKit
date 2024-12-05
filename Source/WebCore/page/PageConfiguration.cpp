@@ -41,6 +41,7 @@
 #include "DiagnosticLoggingClient.h"
 #include "DragClient.h"
 #include "EditorClient.h"
+#include "Frame.h"
 #include "HistoryItem.h"
 #include "InspectorClient.h"
 #include "LocalFrameLoaderClient.h"

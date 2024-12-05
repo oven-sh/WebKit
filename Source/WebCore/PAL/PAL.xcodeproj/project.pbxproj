@@ -319,6 +319,7 @@
 		F4E0875C266ACA53000F814A /* DataDetectorsSoftLink.mm in Sources */ = {isa = PBXBuildFile; fileRef = F4E0875A266ACA53000F814A /* DataDetectorsSoftLink.mm */; };
 		F4EC01B22A85432D00DA295D /* NetworkSPI.h in Headers */ = {isa = PBXBuildFile; fileRef = F4EC01B12A85432D00DA295D /* NetworkSPI.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		F4F0A5502B634D88001A54E5 /* BrowserEngineKitSPI.h in Headers */ = {isa = PBXBuildFile; fileRef = F4F0A54B2B634D88001A54E5 /* BrowserEngineKitSPI.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		FE62AC3D2CFE2E0300740A18 /* PALTZoneImpls.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FE62AC3C2CFE2E0300740A18 /* PALTZoneImpls.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXBuildRule section */
@@ -762,6 +763,7 @@
 		F4E0875A266ACA53000F814A /* DataDetectorsSoftLink.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = DataDetectorsSoftLink.mm; sourceTree = "<group>"; };
 		F4EC01B12A85432D00DA295D /* NetworkSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = NetworkSPI.h; path = pal/spi/cocoa/NetworkSPI.h; sourceTree = SOURCE_ROOT; };
 		F4F0A54B2B634D88001A54E5 /* BrowserEngineKitSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = BrowserEngineKitSPI.h; sourceTree = "<group>"; };
+		FE62AC3C2CFE2E0300740A18 /* PALTZoneImpls.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PALTZoneImpls.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1042,6 +1044,7 @@
 				94C759022B990D31000CC511 /* module.modulemap */,
 				94C759072B990D62000CC511 /* PALSwift.h */,
 				94E8679F2BD18EBC000EF470 /* PALSwiftUtils.h */,
+				FE62AC3C2CFE2E0300740A18 /* PALTZoneImpls.cpp */,
 				A3C66CDA1F462D6A009E6EE9 /* SessionID.cpp */,
 				A3C66CDB1F462D6A009E6EE9 /* SessionID.h */,
 				1C5C57DF27571A25003B540D /* ThreadGlobalData.cpp */,
@@ -1735,6 +1738,7 @@
 				1C77C8CE25D7A4A300635E0C /* OTSVGTable.cpp in Sources */,
 				CD6122CD2559B6AC00FC657A /* OutputContext.mm in Sources */,
 				CD6122D12559B8F200FC657A /* OutputDevice.mm in Sources */,
+				FE62AC3D2CFE2E0300740A18 /* PALTZoneImpls.cpp in Sources */,
 				A1F63CA021A4DBF7006FB43B /* PassKitSoftLink.mm in Sources */,
 				A1175B4F1F6B337300C4B9F0 /* PopupMenu.mm in Sources */,
 				D065131629B69F11008C65C4 /* QuartzCoreSoftLink.mm in Sources */,

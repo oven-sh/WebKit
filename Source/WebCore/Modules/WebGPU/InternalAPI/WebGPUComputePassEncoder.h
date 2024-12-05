@@ -29,7 +29,7 @@
 #include <cstdint>
 #include <optional>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -41,7 +41,7 @@ class Buffer;
 class ComputePipeline;
 class QuerySet;
 
-class ComputePassEncoder : public RefCounted<ComputePassEncoder>, public CanMakeWeakPtr<ComputePassEncoder> {
+class ComputePassEncoder : public RefCountedAndCanMakeWeakPtr<ComputePassEncoder> {
 public:
     virtual ~ComputePassEncoder() = default;
 

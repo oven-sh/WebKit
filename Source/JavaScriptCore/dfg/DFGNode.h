@@ -324,7 +324,9 @@ public:
     enum VarArgTag { VarArg };
     
     Node() { }
-    
+
+    Node(const Node&) = default;
+
     Node(NodeType op, NodeOrigin nodeOrigin, const AdjacencyList& children)
         : origin(nodeOrigin)
         , children(children)
@@ -3627,6 +3629,11 @@ public:
     {
         m_opInfo = OpInfoWrapper();
         m_opInfo2 = OpInfoWrapper();
+    }
+
+    void setOpInfo(OpInfo info)
+    {
+        m_opInfo = info.m_value;
     }
 
     void dumpChildren(PrintStream& out)

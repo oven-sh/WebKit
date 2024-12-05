@@ -569,7 +569,7 @@ public:
         }
     }
 
-    static constexpr bool tierSupportsSIMD = true;
+    static constexpr bool tierSupportsSIMD = false;
 private:
     Checked<uint32_t> m_stackSize { 0 };
     uint32_t m_maxStackSize { 0 };
@@ -829,8 +829,16 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArguments(const TypeDefiniti
     return { };
 }
 
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addLocal(Type, uint32_t count)
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addLocal(Type localType, uint32_t count)
 {
+    // push 0x00 or 0xff (for bit hacks) to the metadata depending on if we have a primitive or a reference
+    if (isRefType(localType)) {
+        for (unsigned i = 0; i < count; ++i)
+            m_metadata->m_argumINTBytecode.append(0xff);
+    } else {
+        for (unsigned i = 0; i < count; ++i)
+            m_metadata->m_argumINTBytecode.append(0);
+    }
     m_metadata->m_numLocals += count;
     return { };
 }
@@ -990,69 +998,205 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::atomicFence(ExtAtomicOpType, ui
 
 // GC
 
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addRefI31(ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addI31GetS(ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addI31GetU(ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNew(uint32_t, ExpressionType, ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewData(uint32_t, uint32_t, ExpressionType, ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewElem(uint32_t, uint32_t, ExpressionType, ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewFixed(uint32_t, ArgumentList&, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewDefault(uint32_t, ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayGet(ExtGCOpType, uint32_t, ExpressionType, ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArraySet(uint32_t, ExpressionType, ExpressionType, ExpressionType) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayLen(ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayFill(uint32_t typeIndex, ExpressionType, ExpressionType, ExpressionType, ExpressionType)
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addRefI31(ExpressionType, ExpressionType&)
 {
-    changeStackSize(-4);
-    m_metadata->addLEB128ConstantInt32AndLength(typeIndex, getCurrentInstructionLength());
     return { };
 }
 
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayCopy(uint32_t dstArrayIndex, ExpressionType, ExpressionType, uint32_t srcArrayIndex, ExpressionType, ExpressionType, ExpressionType)
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addI31GetS(ExpressionType, ExpressionType&)
+{
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addI31GetU(ExpressionType, ExpressionType&)
+{
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNew(uint32_t index, ExpressionType, ExpressionType, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::ArrayNewMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-1);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewData(uint32_t index, uint32_t dataSegmentIndex, ExpressionType, ExpressionType, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::ArrayNewDataMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        dataSegmentIndex,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-1);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewElem(uint32_t index, uint32_t elemSegmentIndex, ExpressionType, ExpressionType, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::ArrayNewElemMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        elemSegmentIndex,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-1);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewFixed(uint32_t index, ArgumentList& args, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::ArrayNewFixedMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        static_cast<uint32_t>(args.size()),
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-args.size() + 1);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayNewDefault(uint32_t index, ExpressionType, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::ArrayNewMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayGet(ExtGCOpType, uint32_t index, ExpressionType, ExpressionType, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::ArrayGetSetMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-1);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArraySet(uint32_t index, ExpressionType, ExpressionType, ExpressionType)
+{
+    m_metadata->appendMetadata<IPInt::ArrayGetSetMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-3);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayLen(ExpressionType, ExpressionType&)
+{
+    // no metadata
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayFill(uint32_t, ExpressionType, ExpressionType, ExpressionType, ExpressionType)
+{
+    changeStackSize(-4);
+    m_metadata->appendMetadata<IPInt::ArrayFillMetadata>({
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayCopy(uint32_t, ExpressionType, ExpressionType, uint32_t, ExpressionType, ExpressionType, ExpressionType)
 {
     changeStackSize(-5);
-    auto size = m_metadata->m_metadata.size();
-    m_metadata->addBlankSpace(9);
-    auto arrayCopyData = m_metadata->m_metadata.data() + size;
-    WRITE_TO_METADATA(arrayCopyData, dstArrayIndex, uint32_t);
-    WRITE_TO_METADATA(arrayCopyData + 4, srcArrayIndex, uint32_t);
-    WRITE_TO_METADATA(arrayCopyData + 8, getCurrentInstructionLength(), uint8_t);
+    m_metadata->appendMetadata<IPInt::ArrayCopyMetadata>({
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
     return { };
 }
 
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayInitElem(uint32_t dstArrayIndex, ExpressionType, ExpressionType, uint32_t srcElementIndex, ExpressionType, ExpressionType)
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayInitElem(uint32_t, ExpressionType, ExpressionType, uint32_t elemSegmentIndex, ExpressionType, ExpressionType)
 {
     changeStackSize(-4);
-    auto size = m_metadata->m_metadata.size();
-    m_metadata->addBlankSpace(9);
-    auto arrayInitElemData = m_metadata->m_metadata.data() + size;
-    WRITE_TO_METADATA(arrayInitElemData, dstArrayIndex, uint32_t);
-    WRITE_TO_METADATA(arrayInitElemData + 4, srcElementIndex, uint32_t);
-    WRITE_TO_METADATA(arrayInitElemData + 8, getCurrentInstructionLength(), uint8_t);
+    m_metadata->appendMetadata<IPInt::ArrayInitDataMetadata>({
+        elemSegmentIndex,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
     return { };
 }
 
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayInitData(uint32_t dstArrayIndex, ExpressionType, ExpressionType, uint32_t srcDataIndex, ExpressionType, ExpressionType)
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addArrayInitData(uint32_t, ExpressionType, ExpressionType, uint32_t dataSegmentIndex, ExpressionType, ExpressionType)
 {
     changeStackSize(-4);
-    auto size = m_metadata->m_metadata.size();
-    m_metadata->addBlankSpace(9);
-    auto arrayInitDataData = m_metadata->m_metadata.data() + size;
-    WRITE_TO_METADATA(arrayInitDataData, dstArrayIndex, uint32_t);
-    WRITE_TO_METADATA(arrayInitDataData + 4, srcDataIndex, uint32_t);
-    WRITE_TO_METADATA(arrayInitDataData + 8, getCurrentInstructionLength(), uint8_t);
+    m_metadata->appendMetadata<IPInt::ArrayInitDataMetadata>({
+        dataSegmentIndex,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
     return { };
 }
 
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructNew(uint32_t, ArgumentList&, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructNewDefault(uint32_t, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructGet(ExtGCOpType, ExpressionType, const StructType&, uint32_t, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructSet(ExpressionType, const StructType&, uint32_t, ExpressionType) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addRefTest(ExpressionType, bool, int32_t, bool, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addRefCast(ExpressionType, bool, int32_t, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addAnyConvertExtern(ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addExternConvertAny(ExpressionType, ExpressionType&) IPINT_UNIMPLEMENTED
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructNew(uint32_t index, ArgumentList&, ExpressionType&)
+{
+    const StructType& type = *m_info.typeSignatures[index]->expand().as<StructType>();
+    m_metadata->appendMetadata<IPInt::StructNewMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        static_cast<uint16_t>(type.fieldCount()),
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-type.fieldCount() + 1);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructNewDefault(uint32_t index, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::StructNewDefaultMetadata>({
+        static_cast<Wasm::TypeIndex>(index),
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(1);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructGet(ExtGCOpType, ExpressionType, const StructType&, uint32_t fieldIndex, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::StructGetSetMetadata>({
+        fieldIndex,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addStructSet(ExpressionType, const StructType&, uint32_t fieldIndex, ExpressionType)
+{
+    m_metadata->appendMetadata<IPInt::StructGetSetMetadata>({
+        fieldIndex,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    changeStackSize(-2);
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addRefTest(ExpressionType, bool, int32_t heapType, bool, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::RefTestCastMetadata>({
+        heapType,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addRefCast(ExpressionType, bool, int32_t heapType, ExpressionType&)
+{
+    m_metadata->appendMetadata<IPInt::RefTestCastMetadata>({
+        heapType,
+        static_cast<uint8_t>(getCurrentInstructionLength())
+    });
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addAnyConvertExtern(ExpressionType, ExpressionType&)
+{
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addExternConvertAny(ExpressionType, ExpressionType&)
+{
+    return { };
+}
 
 // Integer Arithmetic
 
@@ -2227,8 +2371,51 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addBranch(ControlType& block, E
 
     return { };
 }
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addBranchNull(ControlType&, ExpressionType, Stack&, bool, ExpressionType&) IPINT_UNIMPLEMENTED
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addBranchCast(ControlType&, ExpressionType, Stack&, bool, int32_t, bool) IPINT_UNIMPLEMENTED
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addBranchNull(ControlType& block, ExpressionType, Stack&, bool shouldNegate, ExpressionType&)
+{
+    // We don't need shouldNegate in the metadata since it's in the opcode
+
+    IPIntLocation here = { curPC(), curMC() };
+
+    IPInt::BranchMetadata branch {
+        .target = {
+            .block = { .deltaPC = 0xbeef, .deltaMC = 0xbeef },
+            .toPop = safeCast<uint16_t>(m_stackSize - block.stackSize() - block.branchTargetArity()),
+            .toKeep = safeCast<uint16_t>(block.branchTargetArity()),
+        },
+        .instructionLength = { .length = safeCast<uint8_t>(getCurrentInstructionLength()) }
+    };
+    m_metadata->appendMetadata(branch);
+
+    tryToResolveBranchTarget(block, here, m_metadata->m_metadata.data());
+
+    if (shouldNegate)
+        changeStackSize(-1);
+
+    return { };
+}
+
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addBranchCast(ControlType& block, ExpressionType, Stack&, bool, int32_t heapType, bool)
+{
+    m_metadata->appendMetadata<IPInt::RefTestCastMetadata>({
+        heapType,
+        0
+    });
+
+    IPIntLocation here = { curPC(), curMC() };
+
+    m_metadata->appendMetadata<IPInt::BranchMetadata>({
+        .target = {
+            .block = { .deltaPC = 0xbeef, .deltaMC = 0xbeef },
+            .toPop = safeCast<uint16_t>(m_stackSize - block.stackSize() - block.branchTargetArity()),
+            .toKeep = safeCast<uint16_t>(block.branchTargetArity()),
+        },
+        .instructionLength = { .length = safeCast<uint8_t>(getCurrentInstructionLength()) }
+    });
+
+    tryToResolveBranchTarget(block, here, m_metadata->m_metadata.data());
+    return { };
+}
 
 PartialResult WARN_UNUSED_RETURN IPIntGenerator::addSwitch(ExpressionType, const Vector<ControlType*>& jumps, ControlType& defaultJump, const Stack&)
 {
@@ -2462,7 +2649,7 @@ void IPIntGenerator::addTailCallCommonData(const FunctionSignature& signature)
 
 PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCall(FunctionSpaceIndex index, const TypeDefinition& type, ArgumentList&, ResultList& results, CallType callType)
 {
-    const FunctionSignature& signature = *type.as<FunctionSignature>();
+    const FunctionSignature& signature = *type.expand().as<FunctionSignature>();
     if (callType == CallType::TailCall) {
         // on a tail call, we need to:
         // roll back to old SP, shift SP to accommodate arguments
@@ -2503,7 +2690,7 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCall(FunctionSpaceIndex inde
 
 PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallIndirect(unsigned tableIndex, const TypeDefinition& type, ArgumentList&, ResultList& results, CallType callType)
 {
-    const FunctionSignature& signature = *type.as<FunctionSignature>();
+    const FunctionSignature& signature = *type.expand().as<FunctionSignature>();
     if (callType == CallType::TailCall) {
         const unsigned callIndex = 1;
         changeStackSize(-signature.argumentCount() - callIndex);
@@ -2527,7 +2714,6 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallIndirect(unsigned tableI
         m_metadata->appendMetadata(functionIndexMetadata);
         addTailCallCommonData(signature);
     } else {
-        const FunctionSignature& signature = *type.as<FunctionSignature>();
         for (unsigned i = 0; i < signature.returnCount(); i ++)
             results.append(Value { });
         const unsigned callIndex = 1;
@@ -2546,13 +2732,45 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallIndirect(unsigned tableI
     return { };
 }
 
-PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallRef(const TypeDefinition& type, ArgumentList&, ResultList& results, CallType)
+PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallRef(const TypeDefinition& type, ArgumentList&, ResultList& results, CallType callType)
 {
-    const FunctionSignature& signature = *type.as<FunctionSignature>();
-    for (unsigned i = 0; i < signature.returnCount(); i ++)
-        results.append(Value { });
-    const unsigned callRef = 1;
-    changeStackSize(signature.returnCount() - signature.argumentCount() - callRef);
+    const FunctionSignature& signature = *type.expand().as<FunctionSignature>();
+    if (callType == CallType::TailCall) {
+        const unsigned callIndex = 1;
+        changeStackSize(-signature.argumentCount() - callIndex);
+        // on a tail call, we need to:
+        // roll back to old SP, shift SP to accommodate arguments
+        // put arguments into registers / sp (reutilize mINT)
+        // jump to entrypoint
+        const auto& callingConvention = wasmCallingConvention();
+
+        const TypeIndex callerTypeIndex = m_info.internalFunctionTypeIndices[m_functionIndex];
+        const TypeDefinition& callerTypeDefinition = TypeInformation::get(callerTypeIndex).expand();
+        uint32_t callerStackArgs = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), callingConvention.numberOfStackValues(*callerTypeDefinition.as<FunctionSignature>()));
+
+        IPInt::TailCallRefMetadata callMetadata {
+            .length = safeCast<uint8_t>(getCurrentInstructionLength()),
+            .typeIndex = m_metadata->addSignature(type),
+            .callerStackArgSize = static_cast<int32_t>(callerStackArgs * sizeof(Register)),
+            .argumentBytecode = { }
+        };
+        m_metadata->appendMetadata(callMetadata);
+        addTailCallCommonData(signature);
+    } else {
+        for (unsigned i = 0; i < signature.returnCount(); i ++)
+            results.append(Value { });
+        const unsigned callRef = 1;
+        changeStackSize(signature.returnCount() - signature.argumentCount() - callRef);
+
+        IPInt::CallRefMetadata callMetadata {
+            .length = safeCast<uint8_t>(getCurrentInstructionLength()),
+            .typeIndex = m_metadata->addSignature(type),
+            .argumentBytecode = { }
+        };
+        m_metadata->appendMetadata(callMetadata);
+
+        addCallCommonData(signature);
+    }
     return { };
 }
 

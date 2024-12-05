@@ -30,12 +30,11 @@
 #include "CachedScript.h"
 #include "CachedScriptFetcher.h"
 #include <JavaScriptCore/SourceProvider.h>
-#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 class CachedScriptSourceProvider : public JSC::SourceProvider, public CachedResourceClient {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(CachedScriptSourceProvider);
+    WTF_MAKE_TZONE_ALLOCATED(CachedScriptSourceProvider);
 public:
     static Ref<CachedScriptSourceProvider> create(CachedScript* cachedScript, JSC::SourceProviderSourceType sourceType, Ref<CachedScriptFetcher>&& scriptFetcher) { return adoptRef(*new CachedScriptSourceProvider(cachedScript, sourceType, WTFMove(scriptFetcher))); }
 

@@ -83,18 +83,18 @@ public:
 
     RefPtr<StyleImage> listStyleImage;
 
-    StyleColor textStrokeColor;
-    StyleColor textFillColor;
-    StyleColor textEmphasisColor;
+    Style::Color textStrokeColor;
+    Style::Color textFillColor;
+    Style::Color textEmphasisColor;
     
-    StyleColor visitedLinkTextStrokeColor;
-    StyleColor visitedLinkTextFillColor;
-    StyleColor visitedLinkTextEmphasisColor;
+    Style::Color visitedLinkTextStrokeColor;
+    Style::Color visitedLinkTextFillColor;
+    Style::Color visitedLinkTextEmphasisColor;
 
-    StyleColor caretColor;
-    StyleColor visitedLinkCaretColor;
+    Style::Color caretColor;
+    Style::Color visitedLinkCaretColor;
 
-    StyleColor accentColor;
+    Style::Color accentColor;
 
     std::unique_ptr<ShadowData> textShadow;
     
@@ -183,8 +183,8 @@ public:
     OptionSet<EventListenerRegionType> eventListenerRegionTypes;
 
     Length strokeWidth;
-    StyleColor strokeColor;
-    StyleColor visitedLinkStrokeColor;
+    Style::Color strokeColor;
+    Style::Color visitedLinkStrokeColor;
 
     AtomString hyphenationString;
     short hyphenationLimitBefore { -1 };
@@ -207,7 +207,7 @@ public:
 #endif
 
 #if ENABLE(TOUCH_EVENTS)
-    StyleColor tapHighlightColor;
+    Style::Color tapHighlightColor;
 #endif
 
     ListStyleType listStyleType;

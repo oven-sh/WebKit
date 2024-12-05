@@ -31,7 +31,7 @@
 #include <JavaScriptCore/MarkedSpace.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/MonotonicTime.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -54,7 +54,7 @@ private:
     WeakPtr<OpportunisticTaskScheduler> m_scheduler;
 };
 
-class OpportunisticTaskScheduler final : public RefCounted<OpportunisticTaskScheduler>, public CanMakeWeakPtr<OpportunisticTaskScheduler> {
+class OpportunisticTaskScheduler final : public RefCountedAndCanMakeWeakPtr<OpportunisticTaskScheduler> {
 public:
     static Ref<OpportunisticTaskScheduler> create(Page& page)
     {

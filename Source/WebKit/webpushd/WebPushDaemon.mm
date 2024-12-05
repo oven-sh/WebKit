@@ -333,7 +333,7 @@ void WebPushDaemon::connectionEventHandler(xpc_object_t request)
         return;
     }
 
-    auto pushConnection = m_connectionMap.get(xpcConnection.get());
+    RefPtr pushConnection = m_connectionMap.get(xpcConnection.get());
     if (!pushConnection) {
         RELEASE_LOG_ERROR(Push, "WebPushDaemon::connectionEventHandler - Could not find a PushClientConnection mapped to this xpc request");
         tryCloseRequestConnection(request);
@@ -911,9 +911,8 @@ void WebPushDaemon::setPublicTokenForTesting(PushClientConnection& connection, c
 
 PushClientConnection* WebPushDaemon::toPushClientConnection(xpc_connection_t connection)
 {
-    auto clientConnection = m_connectionMap.get(connection);
-    RELEASE_ASSERT(clientConnection);
-    return clientConnection;
+    RELEASE_ASSERT(m_connectionMap.contains(connection));
+    return m_connectionMap.get(connection);
 }
 
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)

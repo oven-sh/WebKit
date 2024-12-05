@@ -37,6 +37,7 @@ set(PAL_PUBLIC_HEADERS
 set(PAL_SOURCES
     FileSizeFormatter.cpp
     Logging.cpp
+    PALTZoneImpls.cpp
     SessionID.cpp
     ThreadGlobalData.cpp
 

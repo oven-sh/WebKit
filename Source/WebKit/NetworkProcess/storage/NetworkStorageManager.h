@@ -29,6 +29,7 @@
 #include "FileSystemStorageError.h"
 #include "FileSystemSyncAccessHandleInfo.h"
 #include "OriginStorageManager.h"
+#include "SharedPreferencesForWebProcess.h"
 #include "StorageAreaIdentifier.h"
 #include "StorageAreaImplIdentifier.h"
 #include "StorageAreaMapIdentifier.h"
@@ -78,6 +79,7 @@ struct IDBIterateCursorData;
 struct IDBKeyRangeData;
 struct RetrieveRecordsOptions;
 struct ServiceWorkerContextData;
+enum class FileSystemWriteCommandType : uint8_t;
 enum class StorageType : uint8_t;
 }
 
@@ -100,8 +102,9 @@ public:
     static bool canHandleTypes(OptionSet<WebsiteDataType>);
     static OptionSet<WebsiteDataType> allManagedTypes();
 
-    void startReceivingMessageFromConnection(IPC::Connection&, const Vector<WebCore::RegistrableDomain>&);
+    void startReceivingMessageFromConnection(IPC::Connection&, const Vector<WebCore::RegistrableDomain>&, const SharedPreferencesForWebProcess&);
     void stopReceivingMessageFromConnection(IPC::Connection&);
+    void updateSharedPreferencesForConnection(IPC::Connection&, const SharedPreferencesForWebProcess&);
 
     PAL::SessionID sessionID() const { return m_sessionID; }
     void close(CompletionHandler<void()>&&);
@@ -121,6 +124,7 @@ public:
     void resume();
     void handleLowMemoryWarning();
     void syncLocalStorage(CompletionHandler<void()>&&);
+    void fetchLocalStorage(CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&&);
     void registerTemporaryBlobFilePaths(IPC::Connection&, const Vector<String>&);
     void requestSpace(const WebCore::ClientOrigin&, uint64_t size, CompletionHandler<void(bool)>&&);
     void resetQuotaForTesting(CompletionHandler<void()>&&);
@@ -146,6 +150,7 @@ private:
     ~NetworkStorageManager();
 
     RefPtr<NetworkProcess> protectedProcess() const;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&) const;
 
     void writeOriginToFileIfNecessary(const WebCore::ClientOrigin&, StorageAreaBase* = nullptr);
     enum class ShouldWriteOriginFile : bool { No, Yes };
@@ -180,6 +185,9 @@ private:
     void createSyncAccessHandle(WebCore::FileSystemHandleIdentifier, CompletionHandler<void(Expected<FileSystemSyncAccessHandleInfo, FileSystemStorageError>)>&&);
     void closeSyncAccessHandle(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemSyncAccessHandleIdentifier, CompletionHandler<void()>&&);
     void requestNewCapacityForSyncAccessHandle(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemSyncAccessHandleIdentifier, uint64_t newCapacity, CompletionHandler<void(std::optional<uint64_t>)>&&);
+    void createWritable(WebCore::FileSystemHandleIdentifier, bool keepExistingData, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
+    void closeWritable(WebCore::FileSystemHandleIdentifier, bool aborted, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
+    void executeCommandForWritable(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemWriteCommandType, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
     void getHandleNames(WebCore::FileSystemHandleIdentifier, CompletionHandler<void(Expected<Vector<String>, FileSystemStorageError>)>&&);
     void getHandle(IPC::Connection&, WebCore::FileSystemHandleIdentifier, String&& name, CompletionHandler<void(Expected<std::optional<std::pair<WebCore::FileSystemHandleIdentifier, bool>>, FileSystemStorageError>)>&&);
     
@@ -307,6 +315,7 @@ private:
     HashMap<WebCore::ClientOrigin, WallTime> m_lastModificationTimes WTF_GUARDED_BY_CAPABILITY(workQueue());
     using ConnectionSitesMap = HashMap<IPC::Connection::UniqueID, HashSet<WebCore::RegistrableDomain>>;
     std::optional<ConnectionSitesMap> m_allowedSitesForConnections WTF_GUARDED_BY_CAPABILITY(workQueue());
+    HashMap<IPC::Connection::UniqueID, SharedPreferencesForWebProcess> m_preferencesForConnections WTF_GUARDED_BY_CAPABILITY(workQueue());
 };
 
 } // namespace WebKit

@@ -61,6 +61,9 @@ public:
     RemoteMediaSourceProxy(RemoteMediaPlayerManagerProxy&, RemoteMediaSourceIdentifier, bool webMParserEnabled, RemoteMediaPlayerProxy&);
     virtual ~RemoteMediaSourceProxy();
 
+    void ref() const final { WebCore::MediaSourcePrivateClient::ref(); }
+    void deref() const final { WebCore::MediaSourcePrivateClient::deref(); }
+
     void setMediaPlayers(RemoteMediaPlayerProxy&, WebCore::MediaPlayerPrivateInterface*);
 
     // MediaSourcePrivateClient overrides

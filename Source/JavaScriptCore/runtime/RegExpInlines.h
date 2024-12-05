@@ -52,7 +52,7 @@ public:
 
     ~RegExpFunctionalTestCollector();
 
-    void outputOneTest(RegExp*, String, int, int*, int);
+    void outputOneTest(RegExp*, StringView, int, int*, int);
     void clearRegExp(RegExp* regExp)
     {
         if (regExp == m_lastRegExp)
@@ -62,7 +62,7 @@ public:
 private:
     RegExpFunctionalTestCollector();
 
-    void outputEscapedString(const String&, bool escapeSlash = false);
+    void outputEscapedString(StringView, bool escapeSlash = false);
 
     static RegExpFunctionalTestCollector* s_instance;
     FILE* m_file;
@@ -106,7 +106,7 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
 }
 
 template<typename VectorType, Yarr::MatchFrom matchFrom>
-ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, const String& s, unsigned startOffset, VectorType& ovector)
+ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, VectorType& ovector)
 {
 #if ENABLE(REGEXP_TRACING)
     m_rtMatchCallCount++;
@@ -135,7 +135,7 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
         if (hasValidAtom()) {
-            size_t found = StringView(s).find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
+            size_t found = s.find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
             if (found == notFound)
                 return -1;
             offsetVector[0] = found;
@@ -231,7 +231,7 @@ ALWAYS_INLINE void RegExp::compileIfNecessaryMatchOnly(VM& vm, Yarr::CharSize ch
 }
 
 template<Yarr::MatchFrom matchFrom>
-ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, const String& s, unsigned startOffset)
+ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
 {
 #if ENABLE(REGEXP_TRACING)
     m_rtMatchOnlyCallCount++;

@@ -1135,6 +1135,11 @@ void PageClientImpl::handleAsynchronousCancelableScrollEvent(WKBaseScrollView *s
 }
 #endif
 
+bool PageClientImpl::isSimulatingCompatibilityPointerTouches() const
+{
+    return [webView() _isSimulatingCompatibilityPointerTouches];
+}
+
 void PageClientImpl::runModalJavaScriptDialog(CompletionHandler<void()>&& callback)
 {
     [contentView() runModalJavaScriptDialog:WTFMove(callback)];

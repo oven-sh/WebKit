@@ -45,7 +45,7 @@ struct GarbageCollectionData {
     Seconds endTime;
 };
 
-class SendGarbageCollectionEventsTask final : public CanMakeCheckedPtr<SendGarbageCollectionEventsTask> {
+class SendGarbageCollectionEventsTask final : public CanMakeThreadSafeCheckedPtr<SendGarbageCollectionEventsTask> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(SendGarbageCollectionEventsTask);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SendGarbageCollectionEventsTask);
 public:

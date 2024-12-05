@@ -205,10 +205,8 @@ public:
 
     void checkForResponsiveness(CompletionHandler<void()>&& = nullptr, UseLazyStop = UseLazyStop::No);
 
-    ResponsivenessTimer& responsivenessTimer() { return m_responsivenessTimer; }
-    const ResponsivenessTimer& responsivenessTimer() const { return m_responsivenessTimer; }
-    CheckedRef<ResponsivenessTimer> checkedResponsivenessTimer() { return m_responsivenessTimer; }
-    CheckedRef<const ResponsivenessTimer> checkedResponsivenessTimer() const { return m_responsivenessTimer; }
+    ResponsivenessTimer& responsivenessTimer() const { return m_responsivenessTimer.get(); }
+    Ref<ResponsivenessTimer> protectedResponsivenessTimer() const { return m_responsivenessTimer; }
 
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
@@ -310,7 +308,7 @@ private:
     // Connection::Client
     void requestRemoteProcessTermination() final;
 
-    ResponsivenessTimer m_responsivenessTimer;
+    const Ref<ResponsivenessTimer> m_responsivenessTimer;
     Vector<PendingMessage> m_pendingMessages;
     RefPtr<ProcessLauncher> m_processLauncher;
     RefPtr<IPC::Connection> m_connection;

@@ -123,6 +123,8 @@ NetworkProcess/NetworkSocketChannel.cpp
 NetworkProcess/PingLoad.cpp
 NetworkProcess/PreconnectTask.cpp
 
+NetworkProcess/Authentication/AuthenticationManager.cpp
+
 NetworkProcess/Classifier/ITPThirdPartyData.cpp
 NetworkProcess/Classifier/ITPThirdPartyDataForSpecificFirstParty.cpp
 NetworkProcess/Classifier/ResourceLoadStatisticsStore.cpp
@@ -205,10 +207,8 @@ NetworkProcess/cache/PrefetchCache.cpp
 NetworkProcess/webrtc/NetworkMDNSRegister.cpp
 NetworkProcess/webrtc/RTCDataChannelRemoteManagerProxy.cpp
 
-NetworkProcess/webtransport/NetworkTransportBidirectionalStream.cpp
-NetworkProcess/webtransport/NetworkTransportSendStream.cpp
 NetworkProcess/webtransport/NetworkTransportSession.cpp
-NetworkProcess/webtransport/NetworkTransportReceiveStream.cpp
+NetworkProcess/webtransport/NetworkTransportStream.cpp
 
 Platform/IPC/DaemonCoders.cpp
 
@@ -299,8 +299,6 @@ Shared/API/c/WKURL.cpp
 Shared/API/c/WKURLRequest.cpp
 Shared/API/c/WKURLResponse.cpp
 Shared/API/c/WKUserContentURLPattern.cpp
-
-Shared/Authentication/AuthenticationManager.cpp
 
 Shared/Databases/IndexedDB/IDBUtilities.cpp
 

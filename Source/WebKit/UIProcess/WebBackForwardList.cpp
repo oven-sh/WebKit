@@ -490,6 +490,7 @@ void WebBackForwardList::restoreFromState(BackForwardListState backForwardListSt
         return WebBackForwardListItem::create(WTFMove(stateCopy), m_page->identifier());
     });
     m_currentIndex = backForwardListState.currentIndex ? std::optional<size_t>(*backForwardListState.currentIndex) : std::nullopt;
+    m_provisionalIndex = std::nullopt;
 
     LOG(BackForward, "(Back/Forward) WebBackForwardList %p restored from state (has %zu entries)", this, m_entries.size());
 }

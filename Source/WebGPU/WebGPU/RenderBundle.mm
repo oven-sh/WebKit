@@ -49,13 +49,14 @@ namespace WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderBundle);
 
-RenderBundle::RenderBundle(NSArray<RenderBundleICBWithResources*> *resources, RefPtr<RenderBundleEncoder> encoder, const WGPURenderBundleEncoderDescriptor& descriptor, uint64_t commandCount, Device& device)
+RenderBundle::RenderBundle(NSArray<RenderBundleICBWithResources*> *resources, RefPtr<RenderBundleEncoder> encoder, const WGPURenderBundleEncoderDescriptor& descriptor, uint64_t commandCount, bool makeSubmitInvalid, Device& device)
     : m_device(device)
     , m_renderBundleEncoder(encoder)
     , m_renderBundlesResources(resources)
     , m_descriptor(descriptor)
     , m_descriptorColorFormats(descriptor.colorFormats ? Vector<WGPUTextureFormat>(std::span { descriptor.colorFormats, descriptor.colorFormatCount }) : Vector<WGPUTextureFormat>())
     , m_commandCount(commandCount)
+    , m_makeSubmitInvalid(makeSubmitInvalid)
 {
     if (m_descriptorColorFormats.size())
         m_descriptor.colorFormats = &m_descriptorColorFormats[0];
@@ -168,6 +169,11 @@ bool RenderBundle::validatePipeline(const RenderPipeline*)
 NSString* RenderBundle::lastError() const
 {
     return m_lastErrorString;
+}
+
+bool RenderBundle::makeSubmitInvalid() const
+{
+    return m_makeSubmitInvalid;
 }
 
 } // namespace WebGPU

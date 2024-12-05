@@ -37,8 +37,6 @@
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <wtf/MainThread.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // OID rsaEncryption: 1.2.840.113549.1.1.1. Per https://tools.ietf.org/html/rfc3279#section-2.3.1
@@ -322,7 +320,8 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importSpki(CryptoAlgorithmIdentifier identifi
     headerSize += bytesUsedToEncodedLength(keyData[headerSize]) + sizeof(InitialOctet);
 
     CCRSACryptorRef ccPublicKey = nullptr;
-    if (CCRSACryptorImport(keyData.data() + headerSize, keyData.size() - headerSize, &ccPublicKey))
+    auto dataAfterHeader = keyData.subspan(headerSize);
+    if (CCRSACryptorImport(dataAfterHeader.data(), dataAfterHeader.size(), &ccPublicKey))
         return nullptr;
 
     // Notice: CryptoAlgorithmIdentifier::SHA_1 is just a placeholder. It should not have any effect if hash is std::nullopt.
@@ -379,7 +378,8 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importPkcs8(CryptoAlgorithmIdentifier identif
     headerSize += bytesUsedToEncodedLength(keyData[headerSize]);
 
     CCRSACryptorRef ccPrivateKey = nullptr;
-    if (CCRSACryptorImport(keyData.data() + headerSize, keyData.size() - headerSize, &ccPrivateKey))
+    auto dataAfterHeader = keyData.subspan(headerSize);
+    if (CCRSACryptorImport(dataAfterHeader.data(), dataAfterHeader.size(), &ccPrivateKey))
         return nullptr;
 
     // Notice: CryptoAlgorithmIdentifier::SHA_1 is just a placeholder. It should not have any effect if hash is std::nullopt.
@@ -421,5 +421,3 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyRSA::exportPkcs8() const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

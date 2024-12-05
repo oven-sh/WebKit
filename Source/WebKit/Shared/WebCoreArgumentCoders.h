@@ -33,14 +33,8 @@
 #include <wtf/EnumTraits.h>
 
 #if USE(SKIA)
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
-#include <skia/core/SkColorSpace.h>
-#include <skia/core/SkData.h>
-WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-#endif
-
-#if PLATFORM(GTK)
-#include "ArgumentCodersGtk.h"
+#include <skia/core/SkFontStyle.h>
+class SkString;
 #endif
 
 namespace WebCore {
@@ -82,18 +76,6 @@ template<> struct ArgumentCoder<SkString> {
 template<> struct ArgumentCoder<SkFontStyle::Slant> {
     static void encode(Encoder&, const SkFontStyle::Slant&);
     static std::optional<SkFontStyle::Slant> decode(Decoder&);
-};
-
-template<> struct ArgumentCoder<sk_sp<SkColorSpace>> {
-    static void encode(Encoder&, const sk_sp<SkColorSpace>&);
-    static void encode(StreamConnectionEncoder&, const sk_sp<SkColorSpace>&);
-    static std::optional<sk_sp<SkColorSpace>> decode(Decoder&);
-};
-
-template<> struct ArgumentCoder<sk_sp<SkData>> {
-    static void encode(Encoder&, const sk_sp<SkData>&);
-    static void encode(StreamConnectionEncoder&, const sk_sp<SkData>&);
-    static std::optional<sk_sp<SkData>> decode(Decoder&);
 };
 #endif
 

@@ -63,7 +63,13 @@ void WebExtensionContext::tabsCreate(std::optional<WebPageProxyIdentifier> webPa
 
     static NSString * const apiName = @"tabs.create()";
 
-    auto delegate = extensionController()->delegate();
+    RefPtr extensionController = this->extensionController();
+    if (!extensionController) {
+        completionHandler(toWebExtensionError(apiName, nil, @"No extensionController"));
+        return;
+    }
+
+    auto delegate = extensionController->delegate();
     if (![delegate respondsToSelector:@selector(webExtensionController:openNewTabUsingConfiguration:forExtensionContext:completionHandler:)]) {
         completionHandler(toWebExtensionError(apiName, nil, @"it is not implemented"));
         return;
@@ -98,7 +104,7 @@ void WebExtensionContext::tabsCreate(std::optional<WebPageProxyIdentifier> webPa
     if (parameters.url)
         configuration.url = parameters.url.value();
 
-    [delegate webExtensionController:extensionController()->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
+    [delegate webExtensionController:extensionController->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
         if (error) {
             RELEASE_LOG_ERROR(Extensions, "Error for open new tab: %{public}@", privacyPreservingDescription(error));
             completionHandler(toWebExtensionError(apiName, nil, error.localizedDescription));

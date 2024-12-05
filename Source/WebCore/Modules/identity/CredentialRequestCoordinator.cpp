@@ -31,6 +31,7 @@
 #include "CredentialRequestCoordinatorClient.h"
 #include "CredentialRequestOptions.h"
 #include "Document.h"
+#include "FrameDestructionObserverInlines.h"
 #include "JSDOMPromiseDeferred.h"
 #include <wtf/Logger.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -38,6 +39,7 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CredentialRequestCoordinator);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CredentialRequestCoordinatorClient);
 
 CredentialRequestCoordinator::CredentialRequestCoordinator(std::unique_ptr<CredentialRequestCoordinatorClient>&& client)
     : m_client(WTFMove(client))

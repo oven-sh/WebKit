@@ -4288,12 +4288,11 @@ std::optional<VideoFrameMetadata> MediaPlayerPrivateGStreamer::videoFrameMetadat
     if (GST_BUFFER_PTS_IS_VALID(buffer)) {
         auto bufferPts = fromGstClockTime(GST_BUFFER_PTS(buffer));
         metadata.mediaTime = (bufferPts - m_estimatedVideoFrameDuration).toDouble();
-
-        // FIXME: presentationTime and expectedDisplayTime might not always have the same value, we should try getting more precise values.
-        const auto currentTime = this->currentTime();
-        metadata.presentationTime = MonotonicTime::now().secondsSinceEpoch().seconds() - (currentTime - bufferPts).toDouble();
-        metadata.expectedDisplayTime = metadata.presentationTime;
     }
+
+    // FIXME: presentationTime and expectedDisplayTime might not always have the same value, we should try getting more precise values.
+    metadata.presentationTime = MonotonicTime::now().secondsSinceEpoch().seconds();
+    metadata.expectedDisplayTime = metadata.presentationTime;
 
     return metadata;
 }

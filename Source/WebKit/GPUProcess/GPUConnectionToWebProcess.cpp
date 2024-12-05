@@ -73,6 +73,7 @@
 
 #if PLATFORM(COCOA)
 #include "RemoteLayerTreeDrawingAreaProxyMessages.h"
+#include <WebCore/AVVideoCaptureSource.h>
 #include <WebCore/MediaSessionManagerCocoa.h>
 #include <WebCore/MediaSessionManagerIOS.h>
 #endif
@@ -239,11 +240,16 @@ private:
 
     void startProducingData(CaptureDevice::DeviceType type) final
     {
+        RefPtr process = m_process.get();
         if (type == CaptureDevice::DeviceType::Microphone)
-            m_process.get()->startCapturingAudio();
+            process->startCapturingAudio();
 #if PLATFORM(IOS)
-        else if (type == CaptureDevice::DeviceType::Camera)
-            m_process.get()->overridePresentingApplicationPIDIfNeeded();
+        else if (type == CaptureDevice::DeviceType::Camera) {
+            process->overridePresentingApplicationPIDIfNeeded();
+#if HAVE(AVCAPTUREDEVICEROTATIONCOORDINATOR)
+            AVVideoCaptureSource::setUseAVCaptureDeviceRotationCoordinatorAPI(process->sharedPreferencesForWebProcess() && process->sharedPreferencesForWebProcess()->useAVCaptureDeviceRotationCoordinatorAPI);
+#endif
+        }
 #endif
     }
 

@@ -70,8 +70,8 @@ template<RawNumeric RawType> struct CSSValueCreation<PrimitiveNumeric<RawType>> 
     }
 };
 
-template<typename T> struct CSSValueCreation<Point<T>> {
-    Ref<CSSValue> operator()(const Size<T>& value)
+template<typename T> struct CSSValueCreation<SpaceSeparatedPoint<T>> {
+    Ref<CSSValue> operator()(const SpaceSeparatedPoint<T>& value)
     {
         return CSSValuePair::create(
             WebCore::CSS::createCSSValue(value.x()),
@@ -80,8 +80,8 @@ template<typename T> struct CSSValueCreation<Point<T>> {
     }
 };
 
-template<typename T> struct CSSValueCreation<Size<T>> {
-    Ref<CSSValue> operator()(const Size<T>& value)
+template<typename T> struct CSSValueCreation<SpaceSeparatedSize<T>> {
+    Ref<CSSValue> operator()(const SpaceSeparatedSize<T>& value)
     {
         return CSSValuePair::create(
             WebCore::CSS::createCSSValue(value.width()),

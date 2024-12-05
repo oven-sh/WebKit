@@ -397,7 +397,7 @@ void RealtimeMediaSource::start()
 
 void RealtimeMediaSource::stop()
 {
-    if (!m_isProducingData)
+    if (!m_isProducingData || m_isEnded)
         return;
 
     ALWAYS_LOG_IF(m_logger, LOGIDENTIFIER);

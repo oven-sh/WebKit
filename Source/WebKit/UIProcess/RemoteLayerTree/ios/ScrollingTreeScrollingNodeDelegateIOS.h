@@ -83,6 +83,7 @@ public:
     void computeActiveTouchActionsForGestureRecognizer(UIGestureRecognizer*);
     void clearActiveTouchActions() { m_activeTouchActions = { }; }
     void cancelPointersForGestureRecognizer(UIGestureRecognizer*);
+    bool shouldAllowPanGestureRecognizerToReceiveTouches() const;
 
     UIScrollView *findActingScrollParent(UIScrollView *);
     WKBaseScrollView *scrollView() const;

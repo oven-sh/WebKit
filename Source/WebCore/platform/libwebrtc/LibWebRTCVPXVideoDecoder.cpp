@@ -101,7 +101,7 @@ private:
 
 void LibWebRTCVPXVideoDecoder::create(Type type, const Config& config, CreateCallback&& callback, OutputCallback&& outputCallback)
 {
-    UniqueRef<VideoDecoder> decoder = makeUniqueRef<LibWebRTCVPXVideoDecoder>(type, config, WTFMove(outputCallback));
+    Ref<VideoDecoder> decoder = adoptRef(*new LibWebRTCVPXVideoDecoder(type, config, WTFMove(outputCallback)));
     callback(WTFMove(decoder));
 }
 

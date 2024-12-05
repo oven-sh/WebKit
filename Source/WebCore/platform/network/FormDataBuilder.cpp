@@ -34,8 +34,6 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/StringView.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 namespace FormDataBuilder {
@@ -130,7 +128,7 @@ Vector<uint8_t> generateUniqueBoundaryString()
     // Note that our algorithm makes it twice as much likely for 'A' or 'B'
     // to appear in the boundary string, because 0x41 and 0x42 are present in
     // the below array twice.
-    static const char alphaNumericEncodingMap[64] = {
+    static constexpr std::array<char, 64> alphaNumericEncodingMap {
         0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
         0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50,
         0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
@@ -221,5 +219,3 @@ void encodeStringAsFormData(Vector<uint8_t>& buffer, const CString& string)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

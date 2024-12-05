@@ -197,6 +197,7 @@ private:
     bool m_requiresCommandReplay { false };
     bool m_finished { false };
     uint32_t m_sampleMask { defaultSampleMask };
+    bool m_makeSubmitInvalid { false };
 };
 
 } // namespace WebGPU

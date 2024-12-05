@@ -1231,6 +1231,8 @@ private:
                     if (Node::shouldSpeculateBoolean(m_node->child1().node(), m_node->child2().node())) {
                         m_node->child1().setUseKind(BooleanUse);
                         m_node->child2().setUseKind(BooleanUse);
+                        if (m_node->op() == SameValue)
+                            m_node->setOpAndDefaultFlags(CompareStrictEq);
                         m_node->clearFlags(NodeMustGenerate);
                         m_changed = true;
                         break;
@@ -1240,6 +1242,8 @@ private:
                 if (Node::shouldSpeculateInt32(m_node->child1().node(), m_node->child2().node())) {
                     m_node->child1().setUseKind(Int32Use);
                     m_node->child2().setUseKind(Int32Use);
+                    if (m_node->op() == SameValue)
+                        m_node->setOpAndDefaultFlags(CompareStrictEq);
                     m_node->clearFlags(NodeMustGenerate);
                     m_changed = true;
                     break;

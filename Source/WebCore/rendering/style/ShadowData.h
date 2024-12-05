@@ -41,9 +41,7 @@ enum class ShadowStyle : uint8_t { Normal, Inset };
 class ShadowData {
     WTF_MAKE_TZONE_ALLOCATED(ShadowData);
 public:
-    ShadowData() = default;
-
-    ShadowData(const LengthPoint& location, Length radius, Length spread, ShadowStyle style, bool isWebkitBoxShadow, const StyleColor& color)
+    ShadowData(const LengthPoint& location, Length radius, Length spread, ShadowStyle style, bool isWebkitBoxShadow, const Style::Color& color)
         : m_location(location.x, location.y)
         , m_spread(spread)
         , m_radius(radius)
@@ -80,8 +78,8 @@ public:
 
     ShadowStyle style() const { return m_style; }
 
-    void setColor(const StyleColor& color) { m_color = color; }
-    const StyleColor& color() const { return m_color; }
+    void setColor(const Style::Color& color) { m_color = color; }
+    const Style::Color& color() const { return m_color; }
 
     bool isWebkitBoxShadow() const { return m_isWebkitBoxShadow; }
 
@@ -103,7 +101,7 @@ private:
     LengthPoint m_location;
     Length m_spread;
     Length m_radius; // This is the "blur radius", or twice the standard deviation of the Gaussian blur.
-    StyleColor m_color;
+    Style::Color m_color;
     ShadowStyle m_style { ShadowStyle::Normal };
     bool m_isWebkitBoxShadow { false };
     std::unique_ptr<ShadowData> m_next;

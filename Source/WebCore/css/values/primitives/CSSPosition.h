@@ -29,30 +29,24 @@
 namespace WebCore {
 namespace CSS {
 
-using Left   = Constant<CSSValueLeft>;
-using Right  = Constant<CSSValueRight>;
-using Top    = Constant<CSSValueTop>;
-using Bottom = Constant<CSSValueBottom>;
-using Center = Constant<CSSValueCenter>;
-
 struct TwoComponentPositionHorizontal {
-    std::variant<Left, Right, Center, LengthPercentage<>> offset;
+    std::variant<Keyword::Left, Keyword::Right, Keyword::Center, LengthPercentage<>> offset;
 
     bool operator==(const TwoComponentPositionHorizontal&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(TwoComponentPositionHorizontal, offset);
+DEFINE_TYPE_WRAPPER(TwoComponentPositionHorizontal, offset);
 
 struct TwoComponentPositionVertical {
-    std::variant<Top, Bottom, Center, LengthPercentage<>> offset;
+    std::variant<Keyword::Top, Keyword::Bottom, Keyword::Center, LengthPercentage<>> offset;
 
     bool operator==(const TwoComponentPositionVertical&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(TwoComponentPositionVertical, offset);
+DEFINE_TYPE_WRAPPER(TwoComponentPositionVertical, offset);
 
 using TwoComponentPosition              = SpaceSeparatedTuple<TwoComponentPositionHorizontal, TwoComponentPositionVertical>;
 
-using FourComponentPositionHorizontal   = SpaceSeparatedTuple<std::variant<Left, Right>, LengthPercentage<>>;
-using FourComponentPositionVertical     = SpaceSeparatedTuple<std::variant<Top, Bottom>, LengthPercentage<>>;
+using FourComponentPositionHorizontal   = SpaceSeparatedTuple<std::variant<Keyword::Left, Keyword::Right>, LengthPercentage<>>;
+using FourComponentPositionVertical     = SpaceSeparatedTuple<std::variant<Keyword::Top, Keyword::Bottom>, LengthPercentage<>>;
 using FourComponentPosition             = SpaceSeparatedTuple<FourComponentPositionHorizontal, FourComponentPositionVertical>;
 
 struct Position {
@@ -85,7 +79,7 @@ struct Position {
 
     std::variant<TwoComponentPosition, FourComponentPosition> value;
 };
-DEFINE_CSS_TYPE_WRAPPER(Position, value);
+DEFINE_TYPE_WRAPPER(Position, value);
 
 bool isCenterPosition(const Position&);
 
@@ -107,3 +101,7 @@ template<class... F> ALWAYS_INLINE auto switchOn(WebCore::CSS::Position&& positi
 }
 
 } // namespace WTF
+
+CSS_TUPLE_LIKE_CONFORMANCE(TwoComponentPositionHorizontal, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(TwoComponentPositionVertical, 1)
+CSS_TUPLE_LIKE_CONFORMANCE(Position, 1)

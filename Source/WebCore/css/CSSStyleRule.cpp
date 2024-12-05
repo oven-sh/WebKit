@@ -1,7 +1,7 @@
 /*
  * (C) 1999-2003 Lars Knoll (knoll@kde.org)
  * (C) 2002-2003 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2002, 2005, 2006, 2008, 2012, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2002-2024 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -35,9 +35,13 @@
 #include "StyleProperties.h"
 #include "StyleRule.h"
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
+
+using CSSStyleRuleLiveCSSRuleList = LiveCSSRuleList<CSSStyleRule>;
+WTF_MAKE_TZONE_ALLOCATED_IMPL_TEMPLATE(CSSStyleRuleLiveCSSRuleList);
 
 typedef UncheckedKeyHashMap<const CSSStyleRule*, String> SelectorTextCache;
 static SelectorTextCache& selectorTextCache()

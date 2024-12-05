@@ -25,7 +25,6 @@
 #pragma once
 
 #include "CSSBorderRadius.h"
-#include "CSSMinimallySerializingRectEdges.h"
 #include "CSSPrimitiveNumericTypes.h"
 
 namespace WebCore {
@@ -34,7 +33,7 @@ namespace CSS {
 // <inset()> = inset( <length-percentage>{1,4} [ round <'border-radius'> ]? )
 // https://drafts.csswg.org/css-shapes-1/#funcdef-basic-shape-inset
 struct Inset {
-    using Insets = MinimallySerializingRectEdges<LengthPercentage<>>;
+    using Insets = MinimallySerializingSpaceSeparatedRectEdges<LengthPercentage<>>;
 
     Insets insets;
     BorderRadius radii;

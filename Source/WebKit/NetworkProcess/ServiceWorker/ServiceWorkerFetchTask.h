@@ -32,8 +32,8 @@
 #include <WebCore/ServiceWorkerTypes.h>
 #include <WebCore/Timer.h>
 #include <pal/SessionID.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 class ResourceError;
@@ -61,7 +61,7 @@ class ServiceWorkerNavigationPreloader;
 class WebSWServerConnection;
 class WebSWServerToContextConnection;
 
-class ServiceWorkerFetchTask : public RefCounted<ServiceWorkerFetchTask>, public CanMakeWeakPtr<ServiceWorkerFetchTask> {
+class ServiceWorkerFetchTask : public RefCountedAndCanMakeWeakPtr<ServiceWorkerFetchTask> {
     WTF_MAKE_TZONE_ALLOCATED(ServiceWorkerFetchTask);
 public:
     static RefPtr<ServiceWorkerFetchTask> fromNavigationPreloader(WebSWServerConnection&, NetworkResourceLoader&, const WebCore::ResourceRequest&, NetworkSession*);

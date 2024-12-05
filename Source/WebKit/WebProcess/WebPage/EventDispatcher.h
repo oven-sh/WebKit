@@ -81,8 +81,8 @@ public:
     explicit EventDispatcher(WebProcess&);
     ~EventDispatcher();
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
     enum class WheelEventOrigin : bool { UIProcess, MomentumEventDispatcher };
 

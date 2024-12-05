@@ -3917,7 +3917,7 @@ private:
         }
 
         case Depend: {
-            RELEASE_ASSERT(isARM64());
+            RELEASE_ASSERT(m_value->type() == Int32); // Should have been lowered to 32-bit Depends.
             appendUnOp<Depend32, Depend64>(m_value->child(0));
             return;
         }

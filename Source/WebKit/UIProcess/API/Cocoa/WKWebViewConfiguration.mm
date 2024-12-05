@@ -567,6 +567,18 @@ static NSString *defaultApplicationNameForUserAgent()
     return static_cast<WebKit::WebURLSchemeHandlerCocoa*>(handler.get())->apiHandler();
 }
 
++ (BOOL)_isValidCustomScheme:(NSString *)urlScheme
+{
+    if ([WKWebView handlesURLScheme:urlScheme])
+        return NO;
+
+    auto canonicalScheme = WTF::URLParser::maybeCanonicalizeScheme(String(urlScheme));
+    if (!canonicalScheme)
+        return NO;
+
+    return YES;
+}
+
 #if PLATFORM(IOS_FAMILY)
 - (BOOL)limitsNavigationsToAppBoundDomains
 {

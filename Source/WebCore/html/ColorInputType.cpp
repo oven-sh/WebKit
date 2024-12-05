@@ -67,8 +67,8 @@ using namespace HTMLNames;
 
 using LazySlowPathColorParsingParameters = std::tuple<
     CSSPropertyParserHelpers::CSSColorParsingOptions,
-    CSSUnresolvedColorResolutionState,
-    std::optional<CSSUnresolvedColorResolutionDelegate>
+    CSS::PlatformColorResolutionState,
+    std::optional<CSS::PlatformColorResolutionDelegate>
 >;
 
 // https://html.spec.whatwg.org/multipage/infrastructure.html#valid-simple-colour
@@ -97,9 +97,9 @@ static LazySlowPathColorParsingParameters colorParsingParameters()
 {
     return {
         CSSPropertyParserHelpers::CSSColorParsingOptions {
-            .allowedColorTypes = { StyleColor::CSSColorType::Absolute, StyleColor::CSSColorType::Current, StyleColor::CSSColorType::System }
+            .allowedColorTypes = { CSS::ColorType::Absolute, CSS::ColorType::Current, CSS::ColorType::System }
         },
-        CSSUnresolvedColorResolutionState {
+        CSS::PlatformColorResolutionState {
             .resolvedCurrentColor = Color::black
         },
         std::nullopt

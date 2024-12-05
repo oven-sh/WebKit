@@ -39,7 +39,7 @@
 #include "Timer.h"
 #include <wtf/ApproximateTime.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/URLHash.h>
 #include <wtf/WeakPtr.h>
@@ -55,7 +55,7 @@ struct ServiceWorkerJobDataIdentifier;
 enum class WorkerThreadMode : bool;
 enum class WorkerType : bool;
 
-class SWServerWorker : public RefCounted<SWServerWorker>, public CanMakeWeakPtr<SWServerWorker> {
+class SWServerWorker : public RefCountedAndCanMakeWeakPtr<SWServerWorker> {
 public:
     template <typename... Args> static Ref<SWServerWorker> create(Args&&... args)
     {

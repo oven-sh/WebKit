@@ -35,9 +35,8 @@ namespace WebCore {
 
 class VideoFrame;
 
-class VideoDecoder {
+class VideoDecoder : public ThreadSafeRefCounted<VideoDecoder> {
 public:
-    WEBCORE_EXPORT VideoDecoder();
     WEBCORE_EXPORT virtual ~VideoDecoder();
 
     enum class HardwareAcceleration : bool { No, Yes };
@@ -69,8 +68,8 @@ public:
     static bool isVPXSupported();
 
     using OutputCallback = Function<void(Expected<DecodedFrame, String>&&)>;
-    using CreateResult = Expected<UniqueRef<VideoDecoder>, String>;
-    using CreatePromise = NativePromise<UniqueRef<VideoDecoder>, String>;
+    using CreateResult = Expected<Ref<VideoDecoder>, String>;
+    using CreatePromise = NativePromise<Ref<VideoDecoder>, String>;
     using CreateCallback = Function<void(CreateResult&&)>;
 
     using CreatorFunction = void(*)(const String&, const Config&, CreateCallback&&, OutputCallback&&);
@@ -89,6 +88,9 @@ public:
     static String fourCCToCodecString(uint32_t fourCC);
 
     static CreatorFunction s_customCreator;
+protected:
+    WEBCORE_EXPORT VideoDecoder();
+
 };
 
 }

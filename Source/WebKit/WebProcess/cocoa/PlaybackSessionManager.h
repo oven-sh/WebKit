@@ -117,6 +117,9 @@ public:
     static Ref<PlaybackSessionManager> create(WebPage&);
     virtual ~PlaybackSessionManager();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void invalidate();
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;

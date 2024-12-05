@@ -29,13 +29,10 @@
 #include "CSSPrimitiveValueMappings.h"
 #include "CSSPropertyNames.h"
 #include "CSSToLengthConversionData.h"
-#include "CSSUnresolvedColor.h"
 #include "CSSValueKeywords.h"
 #include "CSSValuePool.h"
 #include "CalculationCategory.h"
 #include "CalculationValue.h"
-#include "Color.h"
-#include "ColorSerialization.h"
 #include "ComputedStyleDependencies.h"
 #include "ContainerQueryEvaluator.h"
 #include "FontCascade.h"
@@ -130,10 +127,8 @@ static inline bool isValidCSSUnitTypeForDoubleConversion(CSSUnitType unitType)
     case CSSUnitType::CSS_FONT_FAMILY:
     case CSSUnitType::CustomIdent:
     case CSSUnitType::CSS_PROPERTY_ID:
-    case CSSUnitType::CSS_RGBCOLOR:
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_URI:
     case CSSUnitType::CSS_VALUE_ID:
         return false;
@@ -208,7 +203,6 @@ static inline bool isStringType(CSSUnitType type)
     case CSSUnitType::CSS_REM:
     case CSSUnitType::CSS_REX:
     case CSSUnitType::CSS_RIC:
-    case CSSUnitType::CSS_RGBCOLOR:
     case CSSUnitType::CSS_S:
     case CSSUnitType::CSS_SVB:
     case CSSUnitType::CSS_SVH:
@@ -218,7 +212,6 @@ static inline bool isStringType(CSSUnitType type)
     case CSSUnitType::CSS_SVW:
     case CSSUnitType::CSS_TURN:
     case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_VALUE_ID:
     case CSSUnitType::CSS_VB:
     case CSSUnitType::CSS_VH:
@@ -288,40 +281,11 @@ CSSPrimitiveValue::CSSPrimitiveValue(const String& string, CSSUnitType type)
         m_value.string->ref();
 }
 
-CSSPrimitiveValue::CSSPrimitiveValue(Color color)
-    : CSSValue(ClassType::Primitive)
-{
-    setPrimitiveUnitType(CSSUnitType::CSS_RGBCOLOR);
-    static_assert(sizeof(m_value.colorAsInteger) == sizeof(color));
-    new (reinterpret_cast<Color*>(&m_value.colorAsInteger)) Color(WTFMove(color));
-}
-
-Color CSSPrimitiveValue::absoluteColor() const
-{
-    if (isColor())
-        return color();
-
-    // FIXME: there are some cases where we can resolve a dynamic color at parse time, we should support them.
-    if (isUnresolvedColor())
-        return { };
-
-    if (StyleColor::isAbsoluteColorKeyword(valueID()))
-        return StyleColor::colorFromAbsoluteKeyword(valueID());
-
-    return { };
-}
-
 CSSPrimitiveValue::CSSPrimitiveValue(StaticCSSValueTag, CSSValueID valueID)
     : CSSValue(ClassType::Primitive)
 {
     setPrimitiveUnitType(CSSUnitType::CSS_VALUE_ID);
     m_value.valueID = valueID;
-    makeStatic();
-}
-
-CSSPrimitiveValue::CSSPrimitiveValue(StaticCSSValueTag, Color color)
-    : CSSPrimitiveValue(WTFMove(color))
-{
     makeStatic();
 }
 
@@ -342,13 +306,6 @@ CSSPrimitiveValue::CSSPrimitiveValue(Ref<CSSCalcValue> value)
 {
     setPrimitiveUnitType(CSSUnitType::CSS_CALC);
     m_value.calc = &value.leakRef();
-}
-
-CSSPrimitiveValue::CSSPrimitiveValue(CSSUnresolvedColor unresolvedColor)
-    : CSSValue(ClassType::Primitive)
-{
-    setPrimitiveUnitType(CSSUnitType::CSS_UNRESOLVED_COLOR);
-    m_value.unresolvedColor = new CSSUnresolvedColor(WTFMove(unresolvedColor));
 }
 
 CSSPrimitiveValue::CSSPrimitiveValue(Ref<CSSAttrValue> value)
@@ -378,12 +335,6 @@ CSSPrimitiveValue::~CSSPrimitiveValue()
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
         ASSERT_NOT_REACHED();
-        break;
-    case CSSUnitType::CSS_RGBCOLOR:
-        std::destroy_at(reinterpret_cast<Color*>(&m_value.colorAsInteger));
-        break;
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
-        delete m_value.unresolvedColor;
         break;
     case CSSUnitType::CSS_DIMENSION:
     case CSSUnitType::CSS_NUMBER:
@@ -574,11 +525,6 @@ Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(const Length& length, const Ren
 }
 
 Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<CSSCalcValue> value)
-{
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
-}
-
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(CSSUnresolvedColor value)
 {
     return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
@@ -1425,10 +1371,8 @@ ASCIILiteral CSSPrimitiveValue::unitTypeString(CSSUnitType unitType)
     case CSSUnitType::CSS_NUMBER:
     case CSSUnitType::CSS_PROPERTY_ID:
     case CSSUnitType::CSS_QUIRKY_EM:
-    case CSSUnitType::CSS_RGBCOLOR:
     case CSSUnitType::CSS_STRING:
     case CSSUnitType::CSS_UNKNOWN:
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_URI:
     case CSSUnitType::CSS_VALUE_ID:
     case CSSUnitType::CustomIdent:
@@ -1520,12 +1464,8 @@ ALWAYS_INLINE String CSSPrimitiveValue::serializeInternal() const
         return formatIntegerValue(""_s);
     case CSSUnitType::CSS_QUIRKY_EM:
         return formatNumberValue("em"_s);
-    case CSSUnitType::CSS_RGBCOLOR:
-        return serializationForCSS(color());
     case CSSUnitType::CSS_STRING:
         return serializeString(m_value.string);
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
-        return m_value.unresolvedColor->serializationForCSS();
     case CSSUnitType::CSS_URI:
         return serializeURL(m_value.string);
     case CSSUnitType::CustomIdent: {
@@ -1654,12 +1594,8 @@ bool CSSPrimitiveValue::equals(const CSSPrimitiveValue& other) const
         return equal(m_value.string, other.m_value.string);
     case CSSUnitType::CSS_ATTR:
         return m_value.attr->equals(*other.m_value.attr);
-    case CSSUnitType::CSS_RGBCOLOR:
-        return color() == other.color();
     case CSSUnitType::CSS_CALC:
         return m_value.calc->equals(*other.m_value.calc);
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
-        return m_value.unresolvedColor->equals(*other.m_value.unresolvedColor);
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
@@ -1761,14 +1697,9 @@ bool CSSPrimitiveValue::addDerivedHash(Hasher& hasher) const
     case CSSUnitType::CSS_ATTR:
         add(hasher, m_value.attr);
         break;
-    case CSSUnitType::CSS_RGBCOLOR:
-        add(hasher, color());
-        break;
     case CSSUnitType::CSS_CALC:
         add(hasher, m_value.calc);
         break;
-    case CSSUnitType::CSS_UNRESOLVED_COLOR:
-        add(hasher, m_value.unresolvedColor);
         break;
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_ANGLE:

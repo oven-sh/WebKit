@@ -124,6 +124,7 @@ PAS_END_EXTERN_C;
 #define OS_UNFAIR_LOCK_INLINE 1
 #endif
 #include <os/lock_private.h>
+
 #else
 #define PAS_USE_ULOCK_SPI 0
 #include <os/lock.h>

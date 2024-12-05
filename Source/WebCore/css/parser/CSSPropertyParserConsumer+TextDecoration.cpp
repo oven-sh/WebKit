@@ -46,8 +46,7 @@ static RefPtr<CSSValue> consumeSingleTextShadow(CSSParserTokenRange& range, cons
     // <single-text-shadow> = [ <color>? && <length>{2,3} ]
     // https://drafts.csswg.org/css-text-decor-3/#propdef-text-shadow
 
-    RefPtr<CSSPrimitiveValue> color;
-
+    RefPtr<CSSValue> color;
     RefPtr<CSSPrimitiveValue> horizontalOffset;
     RefPtr<CSSPrimitiveValue> verticalOffset;
     RefPtr<CSSPrimitiveValue> blurRadius;

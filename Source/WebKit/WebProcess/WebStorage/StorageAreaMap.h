@@ -60,6 +60,9 @@ public:
 
     ~StorageAreaMap();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     WebCore::StorageType type() const { return m_type; }
 
     unsigned length();

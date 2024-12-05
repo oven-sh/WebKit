@@ -432,6 +432,7 @@ UniqueRef<LineContent> LineBuilder::placeInlineAndFloatContent(const InlineItemR
     if (!layoutPreviouslySuspendedFloats()) {
         // Couldn't even manage to place all suspended floats from previous line(s). -which also means we can't fit any inline content at this vertical position.
         lineContent->range = { needsLayoutRange.start, needsLayoutRange.start };
+        m_candidateContentMaximumHeight = m_lineLogicalRect.height();
         return lineContent;
     }
 
@@ -1274,22 +1275,22 @@ bool LineBuilder::isLastLineWithInlineContent(const LineContent& lineContent, si
     if (lineContent.partialTrailingContentLength)
         return false;
     // FIXME: This needs work with partial layout.
+    auto& formattingContext = this->formattingContext();
     if (lineContent.range.endIndex() == needsLayoutEnd) {
-        auto lineHasNonOutOfFlowRun = [&] {
-            for (auto& lineRun : makeReversedRange(lineRuns)) {
-                if (!lineRun.isOpaque())
-                    return true;
-            }
-            return false;
-        };
-        return lineHasNonOutOfFlowRun();
+        if (!lineContent.range.start) {
+            // This is both the first and the last line.
+            return true;
+        }
+        for (auto& lineRun : makeReversedRange(lineRuns)) {
+            if (Line::Run::isContentfulOrHasDecoration(lineRun, formattingContext))
+                return true;
+        }
+        return false;
     }
     // Look ahead to see if there's more inline type of inline items.
     for (auto i = lineContent.range.endIndex(); i < needsLayoutEnd && i < m_inlineItemList.size(); ++i) {
-        if (isContentfulOrHasDecoration(m_inlineItemList[i], formattingContext())) {
-            // InlineItems beyond this line range won't produce any inline content.
+        if (isContentfulOrHasDecoration(m_inlineItemList[i], formattingContext))
             return false;
-        }
     }
     return true;
 }

@@ -81,6 +81,11 @@ public:
         return downcast<CSSPrimitiveValue>(m_value);
     }
 
+    operator const CSSValue&() const
+    {
+        return m_value;
+    }
+
     operator unsigned short() const
     {
         return numericValue().resolveAsNumber<unsigned short>(m_builderState.cssToLengthConversionData());
@@ -169,6 +174,25 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#define TYPE BlockStepAlign
+#define FOR_EACH(CASE) CASE(Auto) CASE(Center) CASE(Start) CASE(End)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE BlockStepInsert
+#define FOR_EACH(CASE) CASE(MarginBox) CASE(PaddingBox) CASE(ContentBox)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE BlockStepRound
+#define FOR_EACH(CASE) CASE(Up) CASE(Down) CASE(Nearest)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+
 constexpr CSSValueID toCSSValueID(BorderStyle e)
 {
     switch (e) {
@@ -209,15 +233,6 @@ template<> constexpr OutlineIsAuto fromCSSValueID(CSSValueID valueID)
     if (valueID == CSSValueAuto)
         return OutlineIsAuto::On;
     return OutlineIsAuto::Off;
-}
-
-template<> constexpr BlockStepInsert fromCSSValueID(CSSValueID valueID)
-{
-    if (valueID == CSSValueMarginBox)
-        return BlockStepInsert::MarginBox;
-    if (valueID == CSSValuePaddingBox)
-        return BlockStepInsert::PaddingBox;
-    return BlockStepInsert::ContentBox;
 }
 
 constexpr CSSValueID toCSSValueID(CompositeOperator e, CSSPropertyID propertyID)

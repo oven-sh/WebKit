@@ -1924,6 +1924,8 @@ void WebPage::close()
         protectedDrawingArea()->unregisterScrollingTree();
 #endif
 
+    m_page->destroyRenderTrees();
+
     m_drawingArea = nullptr;
     m_webPageTesting = nullptr;
     m_page = nullptr;
@@ -1952,10 +1954,12 @@ void WebPage::close()
 
     stopObservingNowPlayingMetadata();
 
+    String processDisplayName = m_processDisplayName;
+
     // The WebPage can be destroyed by this call.
     WebProcess::singleton().removeWebPage(m_identifier);
 
-    WebProcess::singleton().updateActivePages(m_processDisplayName);
+    WebProcess::singleton().updateActivePages(processDisplayName);
 
     if (isRunningModal)
         RunLoop::main().stop();
@@ -2350,6 +2354,11 @@ WebPage* WebPage::fromCorePage(Page& page)
 {
     auto& client = page.chrome().client();
     return client.isEmptyChromeClient() ? nullptr : &static_cast<WebChromeClient&>(client).page();
+}
+
+RefPtr<WebCore::Page> WebPage::protectedCorePage() const
+{
+    return corePage();
 }
 
 void WebPage::setSize(const WebCore::IntSize& viewSize)
@@ -3637,7 +3646,7 @@ void WebPage::handleWheelEvent(FrameIdentifier frameID, const WebWheelEvent& eve
     UNUSED_PARAM(willStartSwipe);
 #endif
 
-    auto handleWheelEventResult = wheelEvent(frameID, event, processingSteps);
+    auto [handleWheelEventResult, _] = wheelEvent(frameID, event, processingSteps);
 #if ENABLE(ASYNC_SCROLLING)
     if (remoteScrollingCoordinator) {
         auto gestureInfo = remoteScrollingCoordinator->takeCurrentWheelGestureInfo();
@@ -3648,7 +3657,7 @@ void WebPage::handleWheelEvent(FrameIdentifier frameID, const WebWheelEvent& eve
     completionHandler({ }, { }, handleWheelEventResult.wasHandled(), handleWheelEventResult.remoteUserInputEventData());
 }
 
-HandleUserInputEventResult WebPage::wheelEvent(const FrameIdentifier& frameID, const WebWheelEvent& wheelEvent, OptionSet<WheelEventProcessingSteps> processingSteps)
+std::pair<HandleUserInputEventResult, OptionSet<EventHandling>> WebPage::wheelEvent(const FrameIdentifier& frameID, const WebWheelEvent& wheelEvent, OptionSet<WheelEventProcessingSteps> processingSteps)
 {
     m_userActivity.impulse();
 
@@ -3657,15 +3666,15 @@ HandleUserInputEventResult WebPage::wheelEvent(const FrameIdentifier& frameID, c
     auto dispatchWheelEvent = [&](const WebWheelEvent& wheelEvent, OptionSet<WheelEventProcessingSteps> processingSteps) {
         auto* frame = WebProcess::singleton().webFrame(frameID);
         if (!frame || !frame->coreLocalFrame() || !frame->coreLocalFrame()->view())
-            return HandleUserInputEventResult { false };
+            return std::pair { HandleUserInputEventResult { false }, OptionSet<EventHandling> { } };
 
         auto platformWheelEvent = platform(wheelEvent);
         return frame->coreLocalFrame()->eventHandler().handleWheelEvent(platformWheelEvent, processingSteps);
     };
 
-    auto handleWheelEventResult = dispatchWheelEvent(wheelEvent, processingSteps);
-    LOG_WITH_STREAM(WheelEvents, stream << "WebPage::wheelEvent - processing steps " << processingSteps << " handled " << handleWheelEventResult.wasHandled());
-    return handleWheelEventResult;
+    auto [result, handling] = dispatchWheelEvent(wheelEvent, processingSteps);
+    LOG_WITH_STREAM(WheelEvents, stream << "WebPage::wheelEvent - processing steps " << processingSteps << " handled " << result.wasHandled());
+    return { result, handling };
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -3678,9 +3687,9 @@ void WebPage::dispatchWheelEventWithoutScrolling(FrameIdentifier frameID, const 
 #else
     bool isCancelable = true;
 #endif
-    bool handled = this->wheelEvent(frameID, wheelEvent, { isCancelable ? WheelEventProcessingSteps::BlockingDOMEventDispatch : WheelEventProcessingSteps::NonBlockingDOMEventDispatch }).wasHandled();
+    auto [result, handling] = this->wheelEvent(frameID, wheelEvent, { isCancelable ? WheelEventProcessingSteps::BlockingDOMEventDispatch : WheelEventProcessingSteps::NonBlockingDOMEventDispatch });
     // The caller of dispatchWheelEventWithoutScrolling never cares about DidReceiveEvent being sent back.
-    completionHandler(handled);
+    completionHandler(result.wasHandled() && handling.contains(EventHandling::DefaultPrevented));
 }
 #endif
 
@@ -9218,6 +9227,11 @@ RemoteRenderingBackendProxy& WebPage::ensureRemoteRenderingBackendProxy()
     if (!m_remoteRenderingBackendProxy)
         m_remoteRenderingBackendProxy = RemoteRenderingBackendProxy::create(*this);
     return *m_remoteRenderingBackendProxy;
+}
+
+Ref<RemoteRenderingBackendProxy> WebPage::ensureProtectedRemoteRenderingBackendProxy()
+{
+    return ensureRemoteRenderingBackendProxy();
 }
 #endif
 

@@ -42,7 +42,6 @@ css/StyleProperties.h
 css/StyleRuleImport.h
 css/StyleSheetContents.h
 css/StyleSheetList.h
-css/color/CSSUnresolvedStyleColorResolutionState.h
 css/parser/SizesCalcParser.h
 dom/CollectionIndexCache.h
 dom/ElementAncestorIterator.h

@@ -30,8 +30,6 @@
 #include <CommonCrypto/CommonCrypto.h>
 #include <pal/spi/cocoa/CommonCryptoSPI.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 ExceptionOr<Vector<uint8_t>> transformAESCTR(CCOperation operation, const Vector<uint8_t>& counter, size_t counterLength, const Vector<uint8_t>& key, std::span<const uint8_t> data)
@@ -69,14 +67,13 @@ ExceptionOr<Vector<uint8_t>> transformAESCTR(CCOperation operation, const Vector
     if (status)
         return Exception { ExceptionCode::OperationError };
 
-    uint8_t* p = head.data() + bytesWritten;
-    status = CCCryptorFinal(cryptor, p, head.end() - p, &bytesWritten);
-    p += bytesWritten;
+    auto p = head.mutableSpan().subspan(bytesWritten);
+    status = CCCryptorFinal(cryptor, p.data(), p.size(), &bytesWritten);
+    p = p.subspan(bytesWritten);
     if (status)
         return Exception { ExceptionCode::OperationError };
 
-    ASSERT_WITH_SECURITY_IMPLICATION(p <= head.end());
-    head.shrink(p - head.begin());
+    head.shrink(head.size() - p.size());
 
     CCCryptorRelease(cryptor);
 
@@ -93,18 +90,18 @@ ExceptionOr<Vector<uint8_t>> transformAESCTR(CCOperation operation, const Vector
     size_t tailSize = data.size() - headSize;
     Vector<uint8_t> tail(CCCryptorGetOutputLength(cryptor, tailSize, true));
 
-    status = CCCryptorUpdate(cryptor, data.data() + headSize, tailSize, tail.data(), tail.size(), &bytesWritten);
+    auto dataAfterHeader = data.subspan(headSize);
+    status = CCCryptorUpdate(cryptor, dataAfterHeader.data(), dataAfterHeader.size(), tail.data(), tail.size(), &bytesWritten);
     if (status)
         return Exception { ExceptionCode::OperationError };
 
-    p = tail.data() + bytesWritten;
-    status = CCCryptorFinal(cryptor, p, tail.end() - p, &bytesWritten);
-    p += bytesWritten;
+    p = tail.mutableSpan().subspan(bytesWritten);
+    status = CCCryptorFinal(cryptor, p.data(), p.size(), &bytesWritten);
+    p = p.subspan(bytesWritten);
     if (status)
         return Exception { ExceptionCode::OperationError };
 
-    ASSERT_WITH_SECURITY_IMPLICATION(p <= tail.end());
-    tail.shrink(p - tail.begin());
+    tail.shrink(tail.size() - p.size());
 
     CCCryptorRelease(cryptor);
 
@@ -176,5 +173,3 @@ Vector<uint8_t> calculateSHA256Signature(const Vector<uint8_t>& key, std::span<c
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -179,8 +179,8 @@ void injectStyleSheets(const SourcePairs& styleSheetPairs, WKWebView *webView, A
     for (auto& styleSheet : styleSheetPairs) {
         auto userStyleSheet = API::UserStyleSheet::create(WebCore::UserStyleSheet { styleSheet.first, styleSheet.second, Vector<String> { }, Vector<String> { }, injectedFrames, styleLevel, pageID }, executionWorld);
 
-        auto& controller = page.get()->userContentController();
-        controller.addUserStyleSheet(userStyleSheet);
+        Ref controller = page.get()->userContentController();
+        controller->addUserStyleSheet(userStyleSheet);
 
         context.dynamicallyInjectedUserStyleSheets().append(userStyleSheet);
     }
@@ -195,8 +195,8 @@ void removeStyleSheets(const SourcePairs& styleSheetPairs, WKWebView *webView,  
         for (auto& userStyleSheet : dynamicallyInjectedUserStyleSheets) {
             if (userStyleSheetMatchesContent(userStyleSheet, styleSheetContent, injectedFrames)) {
                 styleSheetsToRemove.append(userStyleSheet);
-                auto& controller = webView._page.get()->userContentController();
-                controller.removeUserStyleSheet(userStyleSheet);
+                Ref controller = webView._page.get()->userContentController();
+                controller->removeUserStyleSheet(userStyleSheet);
             }
         }
 
@@ -285,8 +285,8 @@ void WebExtensionRegisteredScript::removeUserScripts(const String& identifier)
     auto allUserContentControllers = m_extensionContext->extensionController()->allUserContentControllers();
 
     for (auto& userScript : userScripts) {
-        for (auto& userContentController : allUserContentControllers)
-            userContentController.removeUserScript(userScript);
+        for (Ref userContentController : allUserContentControllers)
+            userContentController->removeUserScript(userScript);
     }
 }
 
@@ -296,8 +296,8 @@ void WebExtensionRegisteredScript::removeUserStyleSheets(const String& identifie
     auto allUserContentControllers = m_extensionContext->extensionController()->allUserContentControllers();
 
     for (auto& userStyleSheet : userStyleSheets) {
-        for (auto& userContentController : allUserContentControllers)
-            userContentController.removeUserStyleSheet(userStyleSheet);
+        for (Ref userContentController : allUserContentControllers)
+            userContentController->removeUserStyleSheet(userStyleSheet);
     }
 }
 

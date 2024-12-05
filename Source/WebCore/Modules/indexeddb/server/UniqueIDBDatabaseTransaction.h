@@ -31,7 +31,7 @@
 #include "IDBTransactionInfo.h"
 #include <wtf/Deque.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 
@@ -54,7 +54,7 @@ class IDBServer;
 class UniqueIDBDatabase;
 class UniqueIDBDatabaseConnection;
 
-class UniqueIDBDatabaseTransaction : public CanMakeWeakPtr<UniqueIDBDatabaseTransaction>, public RefCounted<UniqueIDBDatabaseTransaction> {
+class UniqueIDBDatabaseTransaction : public RefCountedAndCanMakeWeakPtr<UniqueIDBDatabaseTransaction> {
 public:
     static Ref<UniqueIDBDatabaseTransaction> create(UniqueIDBDatabaseConnection&, const IDBTransactionInfo&);
 

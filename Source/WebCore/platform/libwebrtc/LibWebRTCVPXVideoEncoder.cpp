@@ -94,14 +94,14 @@ private:
 
 void LibWebRTCVPXVideoEncoder::create(Type type, const VideoEncoder::Config& config, CreateCallback&& callback, DescriptionCallback&& descriptionCallback, OutputCallback&& outputCallback)
 {
-    auto encoder = makeUniqueRef<LibWebRTCVPXVideoEncoder>(type, WTFMove(outputCallback));
+    Ref encoder = adoptRef(*new LibWebRTCVPXVideoEncoder(type, WTFMove(outputCallback)));
     auto error = encoder->initialize(type, config);
 
     if (error) {
         callback(makeUnexpected(makeString("VPx encoding initialization failed with error "_s, error)));
         return;
     }
-    callback(UniqueRef<VideoEncoder> { WTFMove(encoder) });
+    callback(Ref<VideoEncoder> { WTFMove(encoder) });
 
     VideoEncoder::ActiveConfiguration configuration;
     configuration.colorSpace = PlatformVideoColorSpace { PlatformVideoColorPrimaries::Bt709, PlatformVideoTransferCharacteristics::Bt709, PlatformVideoMatrixCoefficients::Bt709, false };

@@ -103,7 +103,7 @@ WebExtensionMenuItem::WebExtensionMenuItem(WebExtensionContext& extensionContext
     relaxAdoptionRequirement();
 
     if (parameters.parentIdentifier) {
-        if (RefPtr parentMenuItem = m_extensionContext->menuItem(parameters.parentIdentifier.value()))
+        if (RefPtr parentMenuItem = extensionContext.menuItem(parameters.parentIdentifier.value()))
             parentMenuItem->addSubmenuItem(*this);
     }
 
@@ -163,7 +163,8 @@ WebExtensionMenuItemParameters WebExtensionMenuItem::minimalParameters() const
 
 void WebExtensionMenuItem::update(const WebExtensionMenuItemParameters& parameters)
 {
-    ASSERT(extensionContext());
+    RefPtr extensionContext = this->extensionContext();
+    ASSERT(extensionContext);
 
     if (parameters.type)
         m_type = parameters.type.value();
@@ -172,7 +173,7 @@ void WebExtensionMenuItem::update(const WebExtensionMenuItemParameters& paramete
         m_identifier = parameters.identifier;
 
     if (parameters.parentIdentifier) {
-        RefPtr updatedParentMenuItem = m_extensionContext->menuItem(parameters.parentIdentifier.value());
+        RefPtr updatedParentMenuItem = extensionContext->menuItem(parameters.parentIdentifier.value());
         if (updatedParentMenuItem.get() != m_parentMenuItem) {
             if (RefPtr parentMenuItem = m_parentMenuItem.get())
                 parentMenuItem->removeSubmenuItem(*this);
@@ -186,7 +187,7 @@ void WebExtensionMenuItem::update(const WebExtensionMenuItemParameters& paramete
         m_title = removeAmpersands(parameters.title);
 
     if (!parameters.command.isNull())
-        m_command = extensionContext()->command(parameters.command);
+        m_command = extensionContext->command(parameters.command);
 
     if (!parameters.iconsJSON.isNull()) {
         RefPtr parsedIcons = JSON::Value::parseJSON(parameters.iconsJSON);
@@ -349,7 +350,8 @@ CocoaMenuItem *WebExtensionMenuItem::platformMenuItem(const WebExtensionMenuItem
 
 RefPtr<WebCore::Icon> WebExtensionMenuItem::icon(WebCore::FloatSize idealSize) const
 {
-    ASSERT(extensionContext());
+    RefPtr extensionContext = this->extensionContext();
+    ASSERT(extensionContext);
 
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
     if (!m_iconVariants && !m_icons)
@@ -370,14 +372,14 @@ RefPtr<WebCore::Icon> WebExtensionMenuItem::icon(WebCore::FloatSize idealSize) c
 
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
     if (m_iconVariants) {
-        result = extensionContext()->protectedExtension()->bestIconVariant(m_iconVariants, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
-            extensionContext()->recordError(wrapper(error.get()));
+        result = extensionContext->protectedExtension()->bestIconVariant(m_iconVariants, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
+            extensionContext->recordError(wrapper(error.get()));
         });
     } else
 #endif // ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
     if (m_icons) {
-        result = extensionContext()->protectedExtension()->bestIcon(m_icons, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
-            extensionContext()->recordError(wrapper(error.get()));
+        result = extensionContext->protectedExtension()->bestIcon(m_icons, WebCore::FloatSize(idealSize), [&](Ref<API::Error> error) {
+            extensionContext->recordError(wrapper(error.get()));
         });
     }
 

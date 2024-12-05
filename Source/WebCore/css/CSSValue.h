@@ -36,9 +36,7 @@ namespace WebCore {
 class CSSPrimitiveValue;
 class CSSStyleDeclaration;
 class CSSToLengthConversionData;
-class CSSUnresolvedColor;
 class CachedResource;
-class Color;
 class DeprecatedCSSOMValue;
 class Quad;
 class Rect;
@@ -72,6 +70,7 @@ public:
     bool isBorderImageWidthValue() const { return m_classType == ClassType::BorderImageWidth; }
     bool isCalcValue() const { return m_classType == ClassType::Calculation; }
     bool isCanvasValue() const { return m_classType == ClassType::Canvas; }
+    bool isColor() const { return m_classType == ClassType::Color; }
 #if ENABLE(DARK_MODE_CSS)
     bool isColorScheme() const { return m_classType == ClassType::ColorScheme; }
 #endif
@@ -167,9 +166,6 @@ public:
     static constexpr size_t ValueSeparatorBits = 2;
     enum ValueSeparator : uint8_t { SpaceSeparator, CommaSeparator, SlashSeparator };
 
-    inline bool isColor() const;
-    inline const Color& color() const;
-
     inline bool isCustomIdent() const;
     inline String customIdent() const;
 
@@ -225,6 +221,7 @@ protected:
         BorderImageSlice,
         BorderImageWidth,
         Calculation,
+        Color,
 #if ENABLE(DARK_MODE_CSS)
         ColorScheme,
 #endif

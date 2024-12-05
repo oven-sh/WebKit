@@ -92,7 +92,6 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/crypto/parameters"
     "${WEBCORE_DIR}/css"
     "${WEBCORE_DIR}/css/calc"
-    "${WEBCORE_DIR}/css/color"
     "${WEBCORE_DIR}/css/parser"
     "${WEBCORE_DIR}/css/query"
     "${WEBCORE_DIR}/css/typedom"
@@ -101,6 +100,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/css/typedom/transform"
     "${WEBCORE_DIR}/css/values"
     "${WEBCORE_DIR}/css/values/backgrounds"
+    "${WEBCORE_DIR}/css/values/color"
     "${WEBCORE_DIR}/css/values/color-adjust"
     "${WEBCORE_DIR}/css/values/images"
     "${WEBCORE_DIR}/css/values/motion"
@@ -190,6 +190,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/style"
     "${WEBCORE_DIR}/style/values"
     "${WEBCORE_DIR}/style/values/backgrounds"
+    "${WEBCORE_DIR}/style/values/color"
     "${WEBCORE_DIR}/style/values/color-adjust"
     "${WEBCORE_DIR}/style/values/images"
     "${WEBCORE_DIR}/style/values/motion"
@@ -373,6 +374,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/filesystemaccess/FileSystemFileHandle.idl
     Modules/filesystemaccess/FileSystemHandle.idl
     Modules/filesystemaccess/FileSystemSyncAccessHandle.idl
+    Modules/filesystemaccess/FileSystemWritableFileStream.idl
     Modules/filesystemaccess/StorageManager+FileSystemAccess.idl
 
     Modules/geolocation/Geolocation.idl
@@ -1019,14 +1021,14 @@ set(WebCore_NON_SVG_IDL_FILES
     css/typedom/StylePropertyMap.idl
     css/typedom/StylePropertyMapReadOnly.idl
 
-    css/typedom/color/CSSColor.idl
-    css/typedom/color/CSSColorValue.idl
     css/typedom/color/CSSHSL.idl
     css/typedom/color/CSSHWB.idl
     css/typedom/color/CSSLCH.idl
     css/typedom/color/CSSLab.idl
     css/typedom/color/CSSOKLCH.idl
     css/typedom/color/CSSOKLab.idl
+    css/typedom/color/CSSOMColor.idl
+    css/typedom/color/CSSOMColorValue.idl
     css/typedom/color/CSSRGB.idl
 
     css/typedom/numeric/CSSMathClamp.idl

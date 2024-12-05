@@ -113,10 +113,10 @@ void RemoteRenderingBackendProxy::ensureGPUProcessConnection()
     streamConnection->open(*this, *this);
     m_isResponsive = true;
     callOnMainRunLoopAndWait([&, serverHandle = WTFMove(serverHandle)]() mutable {
-        auto& gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
-        gpuProcessConnection.createRenderingBackend(m_identifier, WTFMove(serverHandle));
-        m_gpuProcessConnection = gpuProcessConnection;
-        m_sharedResourceCache = gpuProcessConnection.sharedResourceCache();
+        Ref gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
+        gpuProcessConnection->createRenderingBackend(m_identifier, WTFMove(serverHandle));
+        m_gpuProcessConnection = gpuProcessConnection.get();
+        m_sharedResourceCache = gpuProcessConnection->sharedResourceCache();
     });
 }
 

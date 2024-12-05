@@ -79,6 +79,9 @@ public:
     static Ref<WebAuthenticatorCoordinatorProxy> create(WebPageProxy&);
     ~WebAuthenticatorCoordinatorProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 #if HAVE(WEB_AUTHN_AS_MODERN)

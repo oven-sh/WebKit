@@ -59,6 +59,9 @@ public:
     static Ref<RemoteWebInspectorUI> create(WebPage&);
     ~RemoteWebInspectorUI();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     // Implemented in generated RemoteWebInspectorUIMessageReceiver.cpp
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 

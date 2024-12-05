@@ -10615,6 +10615,28 @@ void main()
     EXPECT_PIXEL_NEAR(0, 0, 63, 127, 255, 255, 1);
 }
 
+// Test that swizzled vector to bool cast works correctly.
+TEST_P(GLSLTest_ES3, SwizzledToBoolCoercion)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 o;
+uniform vec2 u;
+void main()
+{
+    bvec2 b = bvec2(u.yx);
+    if (b.x&&!b.y)
+        o = vec4(1.0);
+})";
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+    GLint uloc = glGetUniformLocation(program, "u");
+    ASSERT_NE(uloc, -1);
+    glUniform2f(uloc, 0, 1);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::white);
+}
+
 // Test a fragment shader that returns inside if (that being the only branch that actually gets
 // executed). Regression test for http://anglebug.com/42261034
 TEST_P(GLSLTest, IfElseIfAndReturn)
@@ -17789,7 +17811,43 @@ void main() {
     gl_FragColor = sampleConstSampler(samp);
 }
 )";
-    CompileShader(GL_FRAGMENT_SHADER, kFS);
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+    GLTexture texture;
+    GLColor expected = MakeGLColor(32, 64, 96, 255);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, expected.data());
+    GLint u = glGetUniformLocation(program, "samp");
+    EXPECT_NE(u, -1);
+    glUniform1i(u, 0);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, expected);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Make sure const sampler parameters work.
+TEST_P(GLSLTest, ConstInSamplerParameter)
+{
+    constexpr char kFS[] = R"(precision mediump float;
+uniform sampler2D u;
+vec4 sampleConstSampler(const in sampler2D s) {
+    return texture2D(s, vec2(0));
+}
+void main() {
+    gl_FragColor = sampleConstSampler(u);
+}
+)";
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+    GLTexture texture;
+    GLColor expected = MakeGLColor(32, 64, 96, 255);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, expected.data());
+    GLint u = glGetUniformLocation(program, "u");
+    EXPECT_NE(u, -1);
+    glUniform1i(u, 0);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, expected);
     ASSERT_GL_NO_ERROR();
 }
 
@@ -17812,7 +17870,17 @@ void main() {
     gl_FragColor = sampleConstSampler(samp);
 }
 )";
-    CompileShader(GL_FRAGMENT_SHADER, kFS);
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+    GLTexture texture;
+    GLColor expected = MakeGLColor(32, 64, 96, 255);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, expected.data());
+    GLint u = glGetUniformLocation(program, "samp");
+    EXPECT_NE(u, -1);
+    glUniform1i(u, 0);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, expected);
     ASSERT_GL_NO_ERROR();
 }
 

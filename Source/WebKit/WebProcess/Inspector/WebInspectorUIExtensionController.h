@@ -66,6 +66,9 @@ public:
 
     ~WebInspectorUIExtensionController();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     // Implemented in generated WebInspectorUIExtensionControllerMessageReceiver.cpp
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 

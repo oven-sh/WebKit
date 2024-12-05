@@ -40,6 +40,7 @@
 #include "B3Procedure.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3Value.h"
+#include "B3Variable.h"
 #include <wtf/CheckedArithmetic.h>
 
 namespace JSC {
@@ -64,6 +65,13 @@ public:
     {
         const Vector<BasicBlock*> blocksInPreOrder = m_proc.blocksInPreOrder();
 
+        Vector<Variable*> int64Variables;
+        for (Variable* variable : m_proc.variables()) {
+            if (variable->type() == Int64)
+                int64Variables.append(variable);
+        }
+        for (Variable* variable : int64Variables)
+            m_variableMapping.add(variable, std::pair<Variable*, Variable*> { m_proc.addVariable(Int32), m_proc.addVariable(Int32) });
         // Create 2 Int32 Identity Values for every Int64 value, so we always
         // have the replacement of an Int64 available. We can then change what
         // the Identity references in the lowering loop below.
@@ -119,6 +127,8 @@ public:
             m_proc.resetReachability();
             m_proc.invalidateCFG();
         }
+        for (Variable* variable : int64Variables)
+            m_proc.deleteVariable(variable);
         return m_changed;
     }
 private:
@@ -983,6 +993,24 @@ private:
         case Jump:
         case Nop:
             return;
+        case Set: {
+            if (m_value->child(0)->type() != Int64)
+                return;
+            auto input = getMapping(m_value->child(0));
+            auto variables = m_variableMapping.get(m_value->child(1)->as<VariableValue>()->variable());
+            insert<VariableValue>(m_index, Set, m_origin, variables.first, input.first);
+            insert<VariableValue>(m_index, Set, m_origin, variables.second, input.second);
+            valueReplaced();
+            return;
+        }
+        case Get: {
+            if (m_value->type() != Int64)
+                return;
+            auto variables = m_variableMapping.get(m_value->child(0)->as<VariableValue>()->variable());
+            setMapping(m_value, insert<VariableValue>(m_index, Get, m_origin, variables.first), insert<VariableValue>(m_index, Get, m_origin, variables.second));
+            valueReplaced();
+            return;
+        }
         case BitwiseCast: {
             if (m_value->type() == Int64) {
                 setMapping(m_value, valueLo(m_value, m_index + 1), valueHi(m_value, m_index + 1));
@@ -1023,6 +1051,15 @@ private:
                 return;
             auto input = getMapping(m_value->child(0));
             setMapping(m_value, input.first, input.second);
+            valueReplaced();
+            return;
+        }
+        case Opaque:
+        case Depend: {
+            if (m_value->type() != Int64)
+                return;
+            auto input = getMapping(m_value->child(0));
+            setMapping(m_value, insert<Value>(m_index, m_value->kind(), m_origin, input.first), insert<Value>(m_index, m_value->kind(), m_origin, input.second));
             valueReplaced();
             return;
         }
@@ -1249,6 +1286,7 @@ private:
     UncheckedKeyHashMap<Value*, Value*> m_rewrittenTupleResults;
     UncheckedKeyHashMap<Value*, std::pair<Value*, Value*>> m_mapping;
     HashSet<Value*> m_syntheticValues;
+    UncheckedKeyHashMap<Variable*, std::pair<Variable*, Variable*>> m_variableMapping;
 };
 
 } // anonymous namespace

@@ -79,7 +79,7 @@ static Seconds adjustedTimeoutForThermalState(Seconds timeout)
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AuxiliaryProcessProxy);
 
 AuxiliaryProcessProxy::AuxiliaryProcessProxy(ShouldTakeUIBackgroundAssertion shouldTakeUIBackgroundAssertion, AlwaysRunsAtBackgroundPriority alwaysRunsAtBackgroundPriority, Seconds responsivenessTimeout)
-    : m_responsivenessTimer(*this, adjustedTimeoutForThermalState(responsivenessTimeout))
+    : m_responsivenessTimer(ResponsivenessTimer::create(*this, adjustedTimeoutForThermalState(responsivenessTimeout)))
     , m_alwaysRunsAtBackgroundPriority(alwaysRunsAtBackgroundPriority == AlwaysRunsAtBackgroundPriority::Yes)
     , m_throttler(*this, shouldTakeUIBackgroundAssertion == ShouldTakeUIBackgroundAssertion::Yes)
 {
@@ -438,7 +438,7 @@ void AuxiliaryProcessProxy::shutDownProcess()
     ASSERT(connectionToProcessMap().get(connection->uniqueID()) == this);
     connectionToProcessMap().remove(connection->uniqueID());
     m_connection = nullptr;
-    m_responsivenessTimer.invalidate();
+    protectedResponsivenessTimer()->invalidate();
 }
 
 AuxiliaryProcessProxy* AuxiliaryProcessProxy::fromConnection(const IPC::Connection& connection)
@@ -488,7 +488,7 @@ bool AuxiliaryProcessProxy::platformIsBeingDebugged() const
 
 void AuxiliaryProcessProxy::stopResponsivenessTimer()
 {
-    checkedResponsivenessTimer()->stop();
+    protectedResponsivenessTimer()->stop();
 }
 
 void AuxiliaryProcessProxy::beginResponsivenessChecks()
@@ -507,9 +507,9 @@ void AuxiliaryProcessProxy::startResponsivenessTimer(UseLazyStop useLazyStop)
     }
 
     if (useLazyStop == UseLazyStop::Yes)
-        checkedResponsivenessTimer()->startWithLazyStop();
+        protectedResponsivenessTimer()->startWithLazyStop();
     else
-        checkedResponsivenessTimer()->start();
+        protectedResponsivenessTimer()->start();
 }
 
 bool AuxiliaryProcessProxy::mayBecomeUnresponsive()

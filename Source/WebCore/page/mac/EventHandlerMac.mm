@@ -156,7 +156,8 @@ bool EventHandler::wheelEvent(NSEvent *event)
         if (m_frame->settings().wheelEventGesturesBecomeNonBlocking() && m_wheelScrollGestureState.value_or(WheelScrollGestureState::Blocking) == WheelScrollGestureState::NonBlocking)
             processingSteps = { WheelEventProcessingSteps::SynchronousScrolling, WheelEventProcessingSteps::NonBlockingDOMEventDispatch };
     }
-    return handleWheelEvent(wheelEvent, processingSteps).wasHandled();
+    auto [result, _] = handleWheelEvent(wheelEvent, processingSteps);
+    return result.wasHandled();
 }
 
 bool EventHandler::keyEvent(NSEvent *event)
@@ -487,7 +488,8 @@ bool EventHandler::passWheelEventToWidget(const PlatformWheelEvent& wheelEvent, 
         auto* frameView = dynamicDowncast<LocalFrameView>(widget);
         if (!frameView)
             return false;
-        return frameView->frame().eventHandler().handleWheelEvent(wheelEvent, processingSteps).wasHandled();
+        auto [result, _] = frameView->frame().eventHandler().handleWheelEvent(wheelEvent, processingSteps);
+        return result.wasHandled();
     }
 
     if ([currentNSEvent() type] != NSEventTypeScrollWheel || m_sendingEventToSubview)
@@ -745,30 +747,6 @@ PlatformMouseEvent EventHandler::currentPlatformMouseEvent() const
 bool EventHandler::eventActivatedView(const PlatformMouseEvent& event) const
 {
     return m_activationEventNumber == event.eventNumber();
-}
-
-bool EventHandler::tabsToAllFormControls(KeyboardEvent* event) const
-{
-    RefPtr page = m_frame->page();
-    if (!page)
-        return false;
-
-    KeyboardUIMode keyboardUIMode = page->chrome().client().keyboardUIMode();
-    bool handlingOptionTab = event && isKeyboardOptionTab(*event);
-
-    // If tab-to-links is off, option-tab always highlights all controls
-    if ((keyboardUIMode & KeyboardAccessTabsToLinks) == 0 && handlingOptionTab)
-        return true;
-    
-    // If system preferences say to include all controls, we always include all controls
-    if (keyboardUIMode & KeyboardAccessFull)
-        return true;
-    
-    // Otherwise tab-to-links includes all controls, unless the sense is flipped via option-tab.
-    if (keyboardUIMode & KeyboardAccessTabsToLinks)
-        return !handlingOptionTab;
-    
-    return handlingOptionTab;
 }
 
 bool EventHandler::needsKeyboardEventDisambiguationQuirks() const

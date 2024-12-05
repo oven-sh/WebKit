@@ -59,9 +59,7 @@ public:
     void configurationChanged(String&& persistentID, WebCore::RealtimeMediaSourceSettings&&, WebCore::RealtimeMediaSourceCapabilities&&);
 
 #if ENABLE(GPU_PROCESS)
-    void ref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteRealtimeMediaSource, WTF::DestructionThread::MainRunLoop>::ref(); }
-    void deref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteRealtimeMediaSource, WTF::DestructionThread::MainRunLoop>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteRealtimeMediaSource, WTF::DestructionThread::MainRunLoop>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 #endif
 
 protected:
@@ -85,6 +83,7 @@ private:
     // RealtimeMediaSource
     void startProducingData() final { m_proxy.startProducingData(*pageIdentifier()); }
     void stopProducingData() final { m_proxy.stopProducingData(); }
+    void endProducingData() final { m_proxy.endProducingData(); }
     bool isCaptureSource() const final { return true; }
     void applyConstraints(const WebCore::MediaConstraints&, ApplyConstraintsHandler&&) final;
     void didEnd() final;

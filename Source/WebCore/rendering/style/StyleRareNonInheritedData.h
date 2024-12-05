@@ -159,7 +159,7 @@ public:
 
     RefPtr<PathOperation> clipPath;
 
-    StyleColor textDecorationColor;
+    Style::Color textDecorationColor;
 
     DataRef<StyleCustomPropertyData> customProperties;
     HashSet<AtomString> customPaintWatchedProperties;
@@ -213,7 +213,9 @@ public:
     std::optional<Style::ScopedName> positionAnchor;
 
     std::optional<Length> blockStepSize;
+    unsigned blockStepAlign : 2; // BlockStepAlign
     unsigned blockStepInsert : 2; // BlockStepInsert
+    unsigned blockStepRound : 2; // BlockStepRound
 
     unsigned overscrollBehaviorX : 2; // OverscrollBehavior
     unsigned overscrollBehaviorY : 2; // OverscrollBehavior

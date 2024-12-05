@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,7 +45,7 @@ static const Seconds taskDelayInterval { 100_ms };
 #define ALWAYS_LOG_MEDIASESSIONMANAGER logger().logAlways
 
 struct ClientState {
-    WTF_MAKE_STRUCT_TZONE_ALLOCATED_INLINE(ClientState);
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(ClientState);
 
     explicit ClientState(WebMediaSessionManagerClient& client, PlaybackTargetClientContextIdentifier contextId)
         : client(client)
@@ -66,6 +66,8 @@ struct ClientState {
     bool configurationRequired { true };
     bool playedToEnd { false };
 };
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ClientState);
 
 static bool flagsAreSet(MediaProducerMediaStateFlags value, MediaProducerMediaStateFlags flags)
 {
@@ -102,7 +104,7 @@ String mediaProducerStateString(MediaProducerMediaStateFlags flags)
 
 class WebMediaSessionLogger {
     WTF_MAKE_NONCOPYABLE(WebMediaSessionLogger);
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(WebMediaSessionLogger);
+    WTF_MAKE_TZONE_ALLOCATED(WebMediaSessionLogger);
 public:
 
     static std::unique_ptr<WebMediaSessionLogger> create(WebMediaSessionManager& manager)
@@ -139,6 +141,8 @@ private:
     CheckedRef<WebMediaSessionManager> m_manager;
     Ref<Logger> m_logger;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebMediaSessionLogger);
 
 WebMediaSessionLogger& WebMediaSessionManager::logger()
 {

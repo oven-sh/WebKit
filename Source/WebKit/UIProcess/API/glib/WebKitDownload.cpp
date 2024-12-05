@@ -435,8 +435,10 @@ void webkitDownloadFinished(WebKitDownload* download)
 
 void webkitDownloadDecideDestinationWithSuggestedFilename(WebKitDownload* download, CString&& suggestedFilename, CompletionHandler<void(AllowOverwrite, String)>&& completionHandler)
 {
-    if (download->priv->isCancelled)
+    if (download->priv->isCancelled) {
+        completionHandler(AllowOverwrite::No, { });
         return;
+    }
 
     download->priv->decideDestinationCallback = WTFMove(completionHandler);
     gboolean applicationWillDecideDestination = FALSE;

@@ -42,6 +42,9 @@ public:
 
     ~RemotePageDrawingAreaProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     WebProcessProxy& process() { return m_process; }
     Ref<WebProcessProxy> protectedProcess();
 

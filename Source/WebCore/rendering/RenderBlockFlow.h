@@ -236,7 +236,7 @@ public:
     };
 
     bool shouldTrimChildMargin(MarginTrimType, const RenderBox&) const;
-    void distributeExtraBlockStepSizingSpaceToChild(RenderBox& child, LayoutUnit extraSpace) const;
+    void performBlockStepSizing(RenderBox& child, LayoutUnit blockStepSizeForChild) const;
 
     void layoutBlockChild(RenderBox& child, MarginInfo&, LayoutUnit& previousFloatLogicalBottom, LayoutUnit& maxFloatLogicalBottom);
     void adjustPositionedBlock(RenderBox& child, const MarginInfo&);

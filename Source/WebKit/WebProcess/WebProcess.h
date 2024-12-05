@@ -258,6 +258,8 @@ public:
     EventDispatcher& eventDispatcher() { return m_eventDispatcher; }
 
     NetworkProcessConnection& ensureNetworkProcessConnection();
+    Ref<NetworkProcessConnection> ensureProtectedNetworkProcessConnection();
+
     void networkProcessConnectionClosed(NetworkProcessConnection*);
     NetworkProcessConnection* existingNetworkProcessConnection() { return m_networkProcessConnection.get(); }
     WebLoaderStrategy& webLoaderStrategy();
@@ -269,6 +271,7 @@ public:
 
 #if ENABLE(GPU_PROCESS)
     GPUProcessConnection& ensureGPUProcessConnection();
+    Ref<GPUProcessConnection> ensureProtectedGPUProcessConnection();
     GPUProcessConnection* existingGPUProcessConnection() { return m_gpuProcessConnection.get(); }
     // Returns timeout duration for GPU process connections. Thread-safe.
     Seconds gpuProcessTimeoutDuration() const;

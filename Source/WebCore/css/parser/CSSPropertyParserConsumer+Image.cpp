@@ -27,6 +27,7 @@
 
 #include "CSSCalcSymbolTable.h"
 #include "CSSCanvasValue.h"
+#include "CSSColor.h"
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
 #include "CSSFilterImageValue.h"
@@ -63,6 +64,7 @@
 #include "CSSValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
+#include "CSSVariableData.h"
 #include "StyleImage.h"
 #include <wtf/SortedArrayMap.h>
 
@@ -101,11 +103,11 @@ static std::optional<CSS::DeprecatedGradientPosition> consumeDeprecatedGradientP
     return { { WTFMove(*horizontal), WTFMove(*vertical) } };
 }
 
-static RefPtr<CSSPrimitiveValue> consumeDeprecatedGradientStopColor(CSSParserTokenRange& range, const CSSParserContext& context)
+static std::optional<CSS::Color> consumeDeprecatedGradientStopColor(CSSParserTokenRange& range, const CSSParserContext& context)
 {
     if (range.peek().id() == CSSValueCurrentcolor)
-        return nullptr;
-    return consumeColor(range, context);
+        return std::nullopt;
+    return consumeUnresolvedColor(range, context);
 }
 
 static std::optional<CSS::GradientDeprecatedColorStop> consumeDeprecatedGradientColorStop(CSSParserTokenRange& range, const CSSParserContext& context)
@@ -149,7 +151,7 @@ static std::optional<CSS::GradientDeprecatedColorStop> consumeDeprecatedGradient
         return std::nullopt;
 
     return CSS::GradientDeprecatedColorStop {
-        .color = WTFMove(color),
+        .color = WTFMove(*color),
         .position = WTFMove(*position)
     };
 }
@@ -189,7 +191,7 @@ static RefPtr<CSSValue> consumeDeprecatedLinearGradient(CSSParserTokenRange& ran
         return nullptr;
 
     return CSSGradientValue::create(
-        CSS::FunctionNotation<CSSValueWebkitGradient, CSS::DeprecatedLinearGradient> {
+        FunctionNotation<CSSValueWebkitGradient, CSS::DeprecatedLinearGradient> {
             .parameters = {
                 .colorInterpolationMethod = CSS::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Premultiplied),
                 .gradientLine = { WTFMove(*first), WTFMove(*second) },
@@ -234,7 +236,7 @@ static RefPtr<CSSValue> consumeDeprecatedRadialGradient(CSSParserTokenRange& ran
         return nullptr;
 
     return CSSGradientValue::create(
-        CSS::FunctionNotation<CSSValueWebkitGradient, CSS::DeprecatedRadialGradient> {
+        FunctionNotation<CSSValueWebkitGradient, CSS::DeprecatedRadialGradient> {
             .parameters = {
                 .colorInterpolationMethod = CSS::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Premultiplied),
                 .gradientBox = {
@@ -266,6 +268,11 @@ static RefPtr<CSSValue> consumeDeprecatedGradient(CSSParserTokenRange& range, co
 
 enum class SupportsColorHints : bool { No, Yes };
 
+static std::optional<CSS::Color> consumeStopColor(CSSParserTokenRange& range, const CSSParserContext& context)
+{
+    return consumeUnresolvedColor(range, context);
+}
+
 template<SupportsColorHints supportsColorHints, typename Stop, typename Consumer> static std::optional<CSS::GradientColorStopList<Stop>> consumeColorStopList(CSSParserTokenRange& range, const CSSParserContext& context, Consumer&& consumeStopPosition)
 {
     typename CSS::GradientColorStopList<Stop>::Vector stops;
@@ -273,7 +280,7 @@ template<SupportsColorHints supportsColorHints, typename Stop, typename Consumer
     // The first color stop cannot be a color hint.
     bool previousStopWasColorHint = true;
     do {
-        Stop stop { consumeColor(range, context), consumeStopPosition(range) };
+        Stop stop { consumeStopColor(range, context), consumeStopPosition(range) };
         if (!stop.color && !stop.position)
             return std::nullopt;
 
@@ -331,6 +338,16 @@ template<SupportsColorHints supportsColorHints> static std::optional<CSS::Gradie
     });
 }
 
+static bool stopColorIs8Bit(const CSS::Color& color)
+{
+    return color.isKeyword() || color.absoluteColor().tryGetAsSRGBABytes();
+}
+
+static bool stopColorIs8Bit(const Markable<CSS::Color>& color)
+{
+    return !color || stopColorIs8Bit(*color);
+}
+
 template<typename Stop> static CSS::GradientColorInterpolationMethod computeGradientColorInterpolationMethod(std::optional<ColorInterpolationMethod> parsedColorInterpolationMethod, const CSS::GradientColorStopList<Stop>& stops)
 {
     // We detect whether stops use legacy vs. non-legacy CSS color syntax using the following rules:
@@ -342,11 +359,7 @@ template<typename Stop> static CSS::GradientColorInterpolationMethod computeGrad
 
     auto defaultColorInterpolationMethod = CSS::GradientColorInterpolationMethod::Default::SRGB;
     for (auto& stop : stops) {
-        if (!stop.color)
-            continue;
-        if (stop.color->isValueID())
-            continue;
-        if (stop.color->isColor() && stop.color->color().tryGetAsSRGBABytes())
+        if (stopColorIs8Bit(stop.color))
             continue;
 
         defaultColorInterpolationMethod = CSS::GradientColorInterpolationMethod::Default::OKLab;
@@ -385,26 +398,26 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedLinearGradient(
     // see https://www.w3.org/TR/2011/WD-css3-images-20110217/#linear-gradients.
 
     static constexpr std::pair<CSSValueID, CSS::Vertical> verticalMappings[] {
-        { CSSValueTop, CSS::Vertical { CSS::Top { } } },
-        { CSSValueBottom, CSS::Vertical { CSS::Bottom { } } },
+        { CSSValueTop, CSS::Vertical { CSS::Keyword::Top { } } },
+        { CSSValueBottom, CSS::Vertical { CSS::Keyword::Bottom { } } },
     };
     static constexpr SortedArrayMap verticalMap { verticalMappings };
 
     static constexpr std::pair<CSSValueID, CSS::Horizontal> horizontalMappings[] {
-        { CSSValueLeft, CSS::Horizontal { CSS::Left { } } },
-        { CSSValueRight, CSS::Horizontal { CSS::Right { } } },
+        { CSSValueLeft, CSS::Horizontal { CSS::Keyword::Left { } } },
+        { CSSValueRight, CSS::Horizontal { CSS::Keyword::Right { } } },
     };
     static constexpr SortedArrayMap horizontalMap { horizontalMappings };
 
     auto consumeKeywordGradientLineKnownHorizontal = [&](CSSParserTokenRange& range, CSS::Horizontal knownHorizontal) -> CSS::PrefixedLinearGradient::GradientLine {
         if (auto vertical = consumeIdentUsingMapping(range, verticalMap))
-            return CSS::SpaceSeparatedTuple { knownHorizontal, *vertical };
+            return SpaceSeparatedTuple { knownHorizontal, *vertical };
         return knownHorizontal;
     };
 
     auto consumeKeywordGradientLineKnownVertical = [&](CSSParserTokenRange& range, CSS::Vertical knownVertical) -> CSS::PrefixedLinearGradient::GradientLine {
         if (auto horizontal = consumeIdentUsingMapping(range, horizontalMap))
-            return CSS::SpaceSeparatedTuple { *horizontal, knownVertical };
+            return SpaceSeparatedTuple { *horizontal, knownVertical };
         return knownVertical;
     };
 
@@ -412,16 +425,16 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedLinearGradient(
         switch (range.peek().id()) {
         case CSSValueLeft:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Left { } });
+            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Left { } });
         case CSSValueRight:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Right { } });
+            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Right { } });
         case CSSValueTop:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Top { } });
+            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Top { } });
         case CSSValueBottom:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Bottom { } });
+            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Bottom { } });
         default:
             return { };
         }
@@ -450,10 +463,10 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedLinearGradient(
         return nullptr;
 
     return CSSGradientValue::create(
-        CSS::FunctionNotation<Name, CSS::PrefixedLinearGradient> {
+        FunctionNotation<Name, CSS::PrefixedLinearGradient> {
             .parameters = {
                 .colorInterpolationMethod = CSS::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Premultiplied),
-                .gradientLine = gradientLine.value_or(CSS::Vertical { CSS::Top { } }),
+                .gradientLine = gradientLine.value_or(CSS::Vertical { CSS::Keyword::Top { } }),
                 .stops = WTFMove(*stops)
             }
         }
@@ -484,12 +497,12 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedRadialGradient(
     static constexpr SortedArrayMap shapeMap { shapeMappings };
 
     static constexpr std::pair<CSSValueID, CSS::PrefixedRadialGradient::Extent> extentMappings[] {
-        { CSSValueContain, CSS::PrefixedRadialGradient::Extent { CSS::Contain { } } },
-        { CSSValueCover, CSS::PrefixedRadialGradient::Extent { CSS::Cover { } } },
-        { CSSValueClosestSide, CSS::PrefixedRadialGradient::Extent { CSS::ClosestSide { } } },
-        { CSSValueClosestCorner, CSS::PrefixedRadialGradient::Extent { CSS::ClosestCorner { } } },
-        { CSSValueFarthestSide, CSS::PrefixedRadialGradient::Extent { CSS::FarthestSide { } } },
-        { CSSValueFarthestCorner, CSS::PrefixedRadialGradient::Extent { CSS::FarthestCorner { } } },
+        { CSSValueContain, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::Contain { } } },
+        { CSSValueCover, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::Cover { } } },
+        { CSSValueClosestSide, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::ClosestSide { } } },
+        { CSSValueClosestCorner, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::ClosestCorner { } } },
+        { CSSValueFarthestSide, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::FarthestSide { } } },
+        { CSSValueFarthestCorner, CSS::PrefixedRadialGradient::Extent { CSS::Keyword::FarthestCorner { } } },
     };
     static constexpr SortedArrayMap extentMap { extentMappings };
 
@@ -564,7 +577,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedRadialGradient(
             if (!consumeCommaIncludingWhitespace(range))
                 return std::nullopt;
             return CSS::PrefixedRadialGradient::Ellipse {
-                .size = CSS::SpaceSeparatedArray { WTFMove(*length1), WTFMove(*length2) },
+                .size = SpaceSeparatedArray { WTFMove(*length1), WTFMove(*length2) },
                 .position = WTFMove(position),
             };
         }
@@ -585,7 +598,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumePrefixedRadialGradient(
         return nullptr;
 
     return CSSGradientValue::create(
-        CSS::FunctionNotation<Name, CSS::PrefixedRadialGradient> {
+        FunctionNotation<Name, CSS::PrefixedRadialGradient> {
             .parameters = {
                 .colorInterpolationMethod = CSS::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Premultiplied),
                 .gradientBox = WTFMove(*gradientBox),
@@ -609,26 +622,26 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeLinearGradient(CSSParse
     // )
 
     static constexpr std::pair<CSSValueID, CSS::Vertical> verticalMappings[] {
-        { CSSValueTop, CSS::Vertical { CSS::Top { } } },
-        { CSSValueBottom, CSS::Vertical { CSS::Bottom { } } },
+        { CSSValueTop, CSS::Vertical { CSS::Keyword::Top { } } },
+        { CSSValueBottom, CSS::Vertical { CSS::Keyword::Bottom { } } },
     };
     static constexpr SortedArrayMap verticalMap { verticalMappings };
 
     static constexpr std::pair<CSSValueID, CSS::Horizontal> horizontalMappings[] {
-        { CSSValueLeft, CSS::Horizontal { CSS::Left { } } },
-        { CSSValueRight, CSS::Horizontal { CSS::Right { } } },
+        { CSSValueLeft, CSS::Horizontal { CSS::Keyword::Left { } } },
+        { CSSValueRight, CSS::Horizontal { CSS::Keyword::Right { } } },
     };
     static constexpr SortedArrayMap horizontalMap { horizontalMappings };
 
     auto consumeKeywordGradientLineKnownHorizontal = [&](CSSParserTokenRange& range, CSS::Horizontal knownHorizontal) -> CSS::LinearGradient::GradientLine {
         if (auto vertical = consumeIdentUsingMapping(range, verticalMap))
-            return CSS::SpaceSeparatedTuple { knownHorizontal, *vertical };
+            return SpaceSeparatedTuple { knownHorizontal, *vertical };
         return knownHorizontal;
     };
 
     auto consumeKeywordGradientLineKnownVertical = [&](CSSParserTokenRange& range, CSS::Vertical knownVertical) -> CSS::LinearGradient::GradientLine {
         if (auto horizontal = consumeIdentUsingMapping(range, horizontalMap))
-            return CSS::SpaceSeparatedTuple { *horizontal, knownVertical };
+            return SpaceSeparatedTuple { *horizontal, knownVertical };
         return knownVertical;
     };
 
@@ -639,16 +652,16 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeLinearGradient(CSSParse
         switch (range.peek().id()) {
         case CSSValueLeft:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Left { } });
+            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Left { } });
         case CSSValueRight:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Right { } });
+            return consumeKeywordGradientLineKnownHorizontal(range, CSS::Horizontal { CSS::Keyword::Right { } });
         case CSSValueTop:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Top { } });
+            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Top { } });
         case CSSValueBottom:
             range.consumeIncludingWhitespace();
-            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Bottom { } });
+            return consumeKeywordGradientLineKnownVertical(range, CSS::Vertical { CSS::Keyword::Bottom { } });
         default:
             return { };
         }
@@ -697,10 +710,10 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeLinearGradient(CSSParse
     auto computedColorInterpolationMethod = computeGradientColorInterpolationMethod(colorInterpolationMethod, *stops);
 
     return CSSGradientValue::create(
-        CSS::FunctionNotation<Name, CSS::LinearGradient> {
+        FunctionNotation<Name, CSS::LinearGradient> {
             .parameters = {
                 .colorInterpolationMethod = computedColorInterpolationMethod,
-                .gradientLine = gradientLine.value_or(CSS::Vertical { CSS::Bottom { } }),
+                .gradientLine = gradientLine.value_or(CSS::Vertical { CSS::Keyword::Bottom { } }),
                 .stops = WTFMove(*stops)
             }
         }
@@ -724,14 +737,14 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
     static constexpr SortedArrayMap shapeMap { shapeMappings };
 
     static constexpr std::pair<CSSValueID, CSS::RadialGradient::Extent> extentMappings[] {
-        { CSSValueClosestSide, CSS::RadialGradient::Extent { CSS::ClosestSide { } } },
-        { CSSValueClosestCorner, CSS::RadialGradient::Extent { CSS::ClosestCorner { } } },
-        { CSSValueFarthestSide, CSS::RadialGradient::Extent { CSS::FarthestSide { } } },
-        { CSSValueFarthestCorner, CSS::RadialGradient::Extent { CSS::FarthestCorner { } } },
+        { CSSValueClosestSide, CSS::RadialGradient::Extent { CSS::Keyword::ClosestSide { } } },
+        { CSSValueClosestCorner, CSS::RadialGradient::Extent { CSS::Keyword::ClosestCorner { } } },
+        { CSSValueFarthestSide, CSS::RadialGradient::Extent { CSS::Keyword::FarthestSide { } } },
+        { CSSValueFarthestCorner, CSS::RadialGradient::Extent { CSS::Keyword::FarthestCorner { } } },
     };
     static constexpr SortedArrayMap extentMap { extentMappings };
 
-    static constexpr auto defaultExtent = CSS::RadialGradient::Extent { CSS::FarthestCorner { } };
+    static constexpr auto defaultExtent = CSS::RadialGradient::Extent { CSS::Keyword::FarthestCorner { } };
 
     std::optional<ColorInterpolationMethod> colorInterpolationMethod;
 
@@ -743,7 +756,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
 
     std::optional<ShapeKeyword> shape;
 
-    using Size = std::variant<CSS::RadialGradient::Extent, CSS::Length<CSS::Nonnegative>, CSS::SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>>;
+    using Size = std::variant<CSS::RadialGradient::Extent, CSS::Length<CSS::Nonnegative>, SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>>;
     std::optional<Size> size;
 
     // First part of grammar, the size/shape clause:
@@ -781,7 +794,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
             if (size)
                 return nullptr;
             if (auto length2 = MetaConsumer<CSS::LengthPercentage<CSS::Nonnegative>>::consume(rangeCopy, context, { }, options)) {
-                size = CSS::SpaceSeparatedArray { WTFMove(*length1), WTFMove(*length2) };
+                size = SpaceSeparatedArray { WTFMove(*length1), WTFMove(*length2) };
                 range = rangeCopy;
 
                 // Additional increment is necessary since we consumed a second token.
@@ -833,7 +846,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
                         // Ellipses must have two length-percentages specified.
                         return std::nullopt;
                     },
-                    [&](CSS::SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>&& size) -> std::optional<CSS::RadialGradient::GradientBox> {
+                    [&](SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>&& size) -> std::optional<CSS::RadialGradient::GradientBox> {
                         return CSS::RadialGradient::Ellipse {
                             .size = WTFMove(size),
                             .position = WTFMove(position),
@@ -855,7 +868,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
                             .position = WTFMove(position),
                         };
                     },
-                    [&](CSS::SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>&&) -> std::optional<CSS::RadialGradient::GradientBox> {
+                    [&](SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>&&) -> std::optional<CSS::RadialGradient::GradientBox> {
                         // Circles must have a maximum of only one length specified.
                         return std::nullopt;
                     }
@@ -893,7 +906,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
                         .position = WTFMove(position),
                     };
                 },
-                [&](CSS::SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>&& size) -> std::optional<CSS::RadialGradient::GradientBox> {
+                [&](SpaceSeparatedArray<CSS::LengthPercentage<CSS::Nonnegative>, 2>&& size) -> std::optional<CSS::RadialGradient::GradientBox> {
                     return CSS::RadialGradient::Ellipse {
                         .size = WTFMove(size),
                         .position = WTFMove(position),
@@ -916,7 +929,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeRadialGradient(CSSParse
     auto computedColorInterpolationMethod = computeGradientColorInterpolationMethod(colorInterpolationMethod, *stops);
 
     return CSSGradientValue::create(
-        CSS::FunctionNotation<Name, CSS::RadialGradient> {
+        FunctionNotation<Name, CSS::RadialGradient> {
             .parameters = {
                 .colorInterpolationMethod = computedColorInterpolationMethod,
                 .gradientBox = WTFMove(*gradientBox),
@@ -981,7 +994,7 @@ template<CSSValueID Name> static RefPtr<CSSValue> consumeConicGradient(CSSParser
     auto computedColorInterpolationMethod = computeGradientColorInterpolationMethod(colorInterpolationMethod, *stops);
 
     return CSSGradientValue::create(
-        CSS::FunctionNotation<Name, CSS::ConicGradient> {
+        FunctionNotation<Name, CSS::ConicGradient> {
             .parameters = {
                 .colorInterpolationMethod = computedColorInterpolationMethod,
                 .gradientBox = {

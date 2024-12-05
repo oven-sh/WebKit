@@ -1110,7 +1110,8 @@ bool WebProcessProxy::isAllowedToUpdateBackForwardItem(WebBackForwardListItem& i
     if (hasProvisionalPageWithID(item.pageID()))
         return true;
 
-    if (item.suspendedPage() && item.suspendedPage()->page().identifier() == item.pageID() && &item.suspendedPage()->process() == this)
+    RefPtr suspendedPage = item.suspendedPage();
+    if (suspendedPage && suspendedPage->page() && suspendedPage->page()->identifier() == item.pageID() && &suspendedPage->process() == this)
         return true;
 
     return false;
@@ -2253,7 +2254,8 @@ void WebProcessProxy::removeSuspendedPageProxy(SuspendedPageProxy& suspendedPage
     auto suspendedPageCount = this->suspendedPageCount();
     WEBPROCESSPROXY_RELEASE_LOG(Process, "removeSuspendedPageProxy: suspendedPageCount=%u", suspendedPageCount);
     if (!suspendedPageCount) {
-        reportProcessDisassociatedWithPageIfNecessary(suspendedPage.page().identifier());
+        if (RefPtr page = suspendedPage.page())
+            reportProcessDisassociatedWithPageIfNecessary(page->identifier());
         send(Messages::WebProcess::SetHasSuspendedPageProxy(false), 0);
         maybeShutDown();
     }
@@ -2276,8 +2278,8 @@ bool WebProcessProxy::isAssociatedWithPage(WebPageProxyIdentifier pageID) const
         if (provisionalPage->page() && provisionalPage->page()->identifier() == pageID)
             return true;
     }
-    for (auto& suspendedPage : m_suspendedPages) {
-        if (suspendedPage.page().identifier() == pageID)
+    for (Ref suspendedPage : m_suspendedPages) {
+        if (suspendedPage->page() && suspendedPage->page()->identifier() == pageID)
             return true;
     }
     return false;
@@ -2451,10 +2453,15 @@ SpeechRecognitionRemoteRealtimeMediaSourceManager& WebProcessProxy::ensureSpeech
 {
     if (!m_speechRecognitionRemoteRealtimeMediaSourceManager) {
         m_speechRecognitionRemoteRealtimeMediaSourceManager = makeUniqueWithoutRefCountedCheck<SpeechRecognitionRemoteRealtimeMediaSourceManager>(*this);
-        addMessageReceiver(Messages::SpeechRecognitionRemoteRealtimeMediaSourceManager::messageReceiverName(), *m_speechRecognitionRemoteRealtimeMediaSourceManager);
+        addMessageReceiver(Messages::SpeechRecognitionRemoteRealtimeMediaSourceManager::messageReceiverName(), *protectedSpeechRecognitionRemoteRealtimeMediaSourceManager());
     }
 
     return *m_speechRecognitionRemoteRealtimeMediaSourceManager;
+}
+
+RefPtr<SpeechRecognitionRemoteRealtimeMediaSourceManager> WebProcessProxy::protectedSpeechRecognitionRemoteRealtimeMediaSourceManager()
+{
+    return m_speechRecognitionRemoteRealtimeMediaSourceManager.get();
 }
 
 void WebProcessProxy::muteCaptureInPagesExcept(WebCore::PageIdentifier pageID)

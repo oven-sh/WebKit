@@ -99,9 +99,10 @@ void WebBackForwardCache::addEntry(WebBackForwardListItem& item, Ref<WebBackForw
     RELEASE_LOG(BackForwardCache, "WebBackForwardCache::addEntry: item=%s, hasSuspendedPage=%d, size=%u/%u", item.itemID().toString().utf8().data(), !!item.suspendedPage(), size(), capacity());
 }
 
-void WebBackForwardCache::addEntry(WebBackForwardListItem& item, std::unique_ptr<SuspendedPageProxy>&& suspendedPage)
+void WebBackForwardCache::addEntry(WebBackForwardListItem& item, Ref<SuspendedPageProxy>&& suspendedPage)
 {
-    addEntry(item, WebBackForwardCacheEntry::create(*this, item.itemID(), suspendedPage->process().coreProcessIdentifier(), WTFMove(suspendedPage)));
+    auto coreProcessIdentifier = suspendedPage->process().coreProcessIdentifier();
+    addEntry(item, WebBackForwardCacheEntry::create(*this, item.itemID(), coreProcessIdentifier, WTFMove(suspendedPage)));
 }
 
 void WebBackForwardCache::addEntry(WebBackForwardListItem& item, WebCore::ProcessIdentifier processIdentifier)
@@ -124,14 +125,13 @@ void WebBackForwardCache::removeEntry(SuspendedPageProxy& suspendedPage)
     });
 }
 
-std::unique_ptr<SuspendedPageProxy> WebBackForwardCache::takeSuspendedPage(WebBackForwardListItem& item)
+Ref<SuspendedPageProxy> WebBackForwardCache::takeSuspendedPage(WebBackForwardListItem& item)
 {
     RELEASE_LOG(BackForwardCache, "WebBackForwardCache::takeSuspendedPage: item=%s", item.itemID().toString().utf8().data());
 
     ASSERT(m_itemsWithCachedPage.contains(item));
     ASSERT(item.backForwardCacheEntry());
-    auto suspendedPage = item.protectedBackForwardCacheEntry()->takeSuspendedPage();
-    ASSERT(suspendedPage);
+    Ref suspendedPage = item.protectedBackForwardCacheEntry()->takeSuspendedPage();
     removeEntry(item);
     return suspendedPage;
 }

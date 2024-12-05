@@ -27,7 +27,7 @@
 
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
+#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakHashSet.h>
 #import <wtf/WeakPtr.h>
@@ -42,7 +42,7 @@ class Device;
 class Texture;
 
 // https://gpuweb.github.io/gpuweb/#gputextureview
-class TextureView : public WGPUTextureViewImpl, public RefCounted<TextureView>, public CanMakeWeakPtr<TextureView> {
+class TextureView : public RefCountedAndCanMakeWeakPtr<TextureView>, public WGPUTextureViewImpl {
     WTF_MAKE_TZONE_ALLOCATED(TextureView);
 public:
     static Ref<TextureView> create(id<MTLTexture> texture, const WGPUTextureViewDescriptor& descriptor, const std::optional<WGPUExtent3D>& renderExtent, Texture& parentTexture, Device& device)

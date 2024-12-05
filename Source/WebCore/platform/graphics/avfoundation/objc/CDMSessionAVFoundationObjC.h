@@ -26,7 +26,7 @@
 #pragma once
 
 #include "LegacyCDMSession.h"
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -41,7 +41,7 @@ namespace WebCore {
 
 class MediaPlayerPrivateAVFoundationObjC;
 
-class CDMSessionAVFoundationObjC final : public LegacyCDMSession, public CanMakeWeakPtr<CDMSessionAVFoundationObjC>, public RefCounted<CDMSessionAVFoundationObjC> {
+class CDMSessionAVFoundationObjC final : public LegacyCDMSession, public RefCountedAndCanMakeWeakPtr<CDMSessionAVFoundationObjC> {
     WTF_MAKE_TZONE_ALLOCATED(CDMSessionAVFoundationObjC);
 public:
     static Ref<CDMSessionAVFoundationObjC> create(MediaPlayerPrivateAVFoundationObjC* parent, LegacyCDMSessionClient& client)

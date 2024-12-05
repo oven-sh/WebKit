@@ -53,7 +53,6 @@ private:
     const RenderBoxModelObject& parentRenderer() const;
     OptionSet<RenderSVGResourceMode> paintingResourceMode() const { return m_paintingResourceMode; }
 
-    FloatRect selectionRectForTextFragment(const SVGTextFragment&, unsigned startPosition, unsigned endPosition, const RenderStyle&) const;
     void paintDecoration(OptionSet<TextDecorationLine>, const SVGTextFragment&);
     void paintDecorationWithStyle(OptionSet<TextDecorationLine>, const SVGTextFragment&, const RenderBoxModelObject&);
     void paintTextWithShadows(const RenderStyle&, TextRun&, const SVGTextFragment&, unsigned startPosition, unsigned endPosition);
@@ -65,9 +64,6 @@ private:
     bool acquireLegacyPaintingResource(GraphicsContext*&, float scalingFactor, RenderBoxModelObject&, const RenderStyle&);
     void releaseLegacyPaintingResource(GraphicsContext*&, const Path*);
 
-    bool mapStartEndPositionsIntoFragmentCoordinates(const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition) const;
-
-    TextRun constructTextRun(const RenderStyle&, const SVGTextFragment&) const;
     std::pair<unsigned, unsigned> selectionStartEnd() const;
 
     const TextBoxPath m_textBox;
@@ -85,5 +81,14 @@ class LegacySVGTextBoxPainter : public SVGTextBoxPainter<InlineIterator::BoxLega
 public:
     LegacySVGTextBoxPainter(const SVGInlineTextBox&, PaintInfo&, const LayoutPoint& paintOffset);
 };
+
+class ModernSVGTextBoxPainter : public SVGTextBoxPainter<InlineIterator::BoxModernPath> {
+public:
+    ModernSVGTextBoxPainter(const LayoutIntegration::InlineContent&, size_t boxIndex, PaintInfo&, const LayoutPoint& paintOffset);
+};
+
+TextRun constructTextRun(StringView, TextDirection, const RenderStyle&, const SVGTextFragment&);
+FloatRect selectionRectForTextFragment(const RenderSVGInlineText&, TextDirection, const SVGTextFragment&, unsigned startPosition, unsigned endPosition, const RenderStyle&);
+bool mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition);
 
 }

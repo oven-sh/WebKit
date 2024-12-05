@@ -41,8 +41,11 @@
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FetchResponseBodyLoader);
 
 // https://fetch.spec.whatwg.org/#null-body-status
 static inline bool isNullBodyStatus(int status)

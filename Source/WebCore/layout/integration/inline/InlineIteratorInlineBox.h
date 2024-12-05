@@ -51,6 +51,8 @@ public:
     LeafBoxIterator firstLeafBox() const;
     LeafBoxIterator lastLeafBox() const;
     LeafBoxIterator endLeafBox() const;
+
+    IteratorRange<BoxIterator> descendants() const;
 };
 
 class InlineBoxIterator : public BoxIterator {

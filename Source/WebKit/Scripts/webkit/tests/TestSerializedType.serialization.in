@@ -282,6 +282,13 @@ additional_forward_declaration: typedef struct __CFBar * CFBarRef
 }
 #endif
 
+#if USE(SKIA)
+[Wrapper=CoreIPCSkFooBar, AdditionalEncoder=OtherEncoder] class SkFooBar {
+    int foo();
+    double bar();
+}
+#endif
+
 [RValue] class WebKit::RValueWithFunctionCalls {
     SandboxExtensionHandle callFunction()
 }

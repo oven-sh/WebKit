@@ -61,6 +61,9 @@ public:
     static Ref<AcceleratedBackingStoreDMABuf> create(WebPageProxy&, WPEView*);
     ~AcceleratedBackingStoreDMABuf();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void updateSurfaceID(uint64_t);
 
     RendererBufferFormat bufferFormat() const;

@@ -38,13 +38,14 @@
 #include "FetchLoaderClient.h"
 #include "ResourceError.h"
 #include "SharedBuffer.h"
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchBodyOwner);
 
-class FetchBodyOwner : public RefCounted<FetchBodyOwner>, public ActiveDOMObject, public CanMakeWeakPtr<FetchBodyOwner> {
+class FetchBodyOwner : public RefCountedAndCanMakeWeakPtr<FetchBodyOwner>, public ActiveDOMObject {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FetchBodyOwner);
 public:
     void ref() const final { RefCounted::ref(); }

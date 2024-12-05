@@ -184,6 +184,11 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
             return;
         }
         auto group = kvp.value;
+        if (group->makeSubmitInvalid(ShaderStage::Compute)) {
+            protectedParentEncoder()->makeSubmitInvalid();
+            return;
+        }
+
         group->rebindSamplersIfNeeded();
         const Vector<uint32_t>* dynamicOffsets = nullptr;
         if (auto it = m_bindGroupDynamicOffsets.find(bindGroupIndex); it != m_bindGroupDynamicOffsets.end())

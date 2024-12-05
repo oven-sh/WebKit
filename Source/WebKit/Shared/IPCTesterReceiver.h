@@ -41,6 +41,9 @@ public:
     static Ref<IPCTesterReceiver> create();
     ~IPCTesterReceiver() = default;
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 private:

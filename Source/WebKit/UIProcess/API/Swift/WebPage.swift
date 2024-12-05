@@ -31,7 +31,29 @@ public import SwiftUI // FIXME: (283455) Do not import SwiftUI in WebKit proper.
 @MainActor
 @Observable
 public class WebPage_v0 {
+    public init(configuration: Configuration = Configuration()) {
+        self.configuration = configuration
+
+        // FIXME: Consider whether we want to have a single value here or if the getter for `navigations` should return a fresh sequence every time.
+        let (stream, continuation) = AsyncStream.makeStream(of: NavigationEvent.self)
+        navigations = Navigations(source: stream)
+
+        backingNavigationDelegate = WKNavigationDelegateAdapter(navigationProgressContinuation: continuation)
+
+        observations.contents = [
+            createObservation(for: \.url, backedBy: \.url),
+            createObservation(for: \.title, backedBy: \.title),
+            createObservation(for: \.estimatedProgress, backedBy: \.estimatedProgress),
+            createObservation(for: \.isLoading, backedBy: \.isLoading),
+            createObservation(for: \.serverTrust, backedBy: \.serverTrust),
+            createObservation(for: \.hasOnlySecureContent, backedBy: \.hasOnlySecureContent),
+            createObservation(for: \.themeColor, backedBy: \.themeColor),
+        ]
+    }
+
     public let navigations: Navigations
+
+    public let configuration: Configuration
 
     public var url: URL? {
         self.access(keyPath: \.url)
@@ -101,28 +123,10 @@ public class WebPage_v0 {
 
     @ObservationIgnored
     lazy var backingWebView: WKWebView = {
-        let webView = WKWebView(frame: .zero)
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration(configuration))
         webView.navigationDelegate = backingNavigationDelegate
         return webView
     }()
-
-    public init() {
-        // FIXME: Consider whether we want to have a single value here or if the getter for `navigations` should return a fresh sequence every time.
-        let (stream, continuation) = AsyncStream.makeStream(of: NavigationEvent.self)
-        navigations = Navigations(source: stream)
-
-        backingNavigationDelegate = WKNavigationDelegateAdapter(navigationProgressContinuation: continuation)
-
-        observations.contents = [
-            createObservation(for: \.url, backedBy: \.url),
-            createObservation(for: \.title, backedBy: \.title),
-            createObservation(for: \.estimatedProgress, backedBy: \.estimatedProgress),
-            createObservation(for: \.isLoading, backedBy: \.isLoading),
-            createObservation(for: \.serverTrust, backedBy: \.serverTrust),
-            createObservation(for: \.hasOnlySecureContent, backedBy: \.hasOnlySecureContent),
-            createObservation(for: \.themeColor, backedBy: \.themeColor),
-        ]
-    }
 
     @discardableResult
     public func load(_ request: URLRequest) -> NavigationID? {

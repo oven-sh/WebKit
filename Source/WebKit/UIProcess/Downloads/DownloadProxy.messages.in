@@ -32,5 +32,6 @@ messages -> DownloadProxy {
 #if HAVE(MODERN_DOWNLOADPROGRESS)
     DidReceivePlaceholderURL(URL placeholderURL, std::span<const uint8_t> bookmarkData, WebKit::SandboxExtensionHandle handle) -> ()
     DidReceiveFinalURL(URL finalURL, std::span<const uint8_t> bookmarkData, WebKit::SandboxExtensionHandle handle)
+    DidStartUpdatingProgress()
 #endif
 }

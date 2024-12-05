@@ -38,6 +38,7 @@
 #include "CSSCalcValue.h"
 #include "CSSCanvasValue.h"
 #include "CSSColorSchemeValue.h"
+#include "CSSColorValue.h"
 #include "CSSContentDistributionValue.h"
 #include "CSSCounterValue.h"
 #include "CSSCrossfadeValue.h"
@@ -122,6 +123,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCalcValue>(*this));
     case Canvas:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCanvasValue>(*this));
+    case Color:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSColorValue>(*this));
 #if ENABLE(DARK_MODE_CSS)
     case ColorScheme:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSColorSchemeValue>(*this));
@@ -377,6 +380,7 @@ Ref<DeprecatedCSSOMValue> CSSValue::createDeprecatedCSSOMWrapper(CSSStyleDeclara
     case Image:
         return uncheckedDowncast<CSSImageValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
     case Primitive:
+    case Color:
     case Counter:
     case Quad:
     case Rect:

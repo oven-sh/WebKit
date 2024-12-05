@@ -33,6 +33,7 @@
 #include "FaceDetectorInterface.h"
 #include "FileList.h"
 #include "FloatRect.h"
+#include "FrameLoader.h"
 #include "FrameTree.h"
 #include "Geolocation.h"
 #include "HTMLFormElement.h"

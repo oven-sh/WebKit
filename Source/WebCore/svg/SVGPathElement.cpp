@@ -281,7 +281,7 @@ void SVGPathElement::collectDPresentationalHint(MutableStyleProperties& style)
     // the path data to be parsed again and path data can be unwieldy.
     auto property = cssPropertyIdForSVGAttributeName(SVGNames::dAttr, document().protectedSettings());
     // The fill rule value passed here is not relevant for the `d` property.
-    auto cssPathValue = CSSPathValue::create(CSS::PathFunction { CSS::Nonzero { }, CSS::Path::Data { Ref { m_pathSegList }->currentPathByteStream() } });
+    auto cssPathValue = CSSPathValue::create(CSS::PathFunction { CSS::Keyword::Nonzero { }, CSS::Path::Data { Ref { m_pathSegList }->currentPathByteStream() } });
     addPropertyToPresentationalHintStyle(style, property, WTFMove(cssPathValue));
 }
 

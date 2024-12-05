@@ -33,7 +33,7 @@
 #include "WebGPUXRSubImage.h"
 
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 namespace WTF {
@@ -59,7 +59,7 @@ struct XRProjectionLayerInit {
     double scaleFactor { 1.0 };
 };
 
-class XRProjectionLayer : public RefCounted<XRProjectionLayer>, public CanMakeWeakPtr<XRProjectionLayer> {
+class XRProjectionLayer : public RefCountedAndCanMakeWeakPtr<XRProjectionLayer> {
 public:
     virtual ~XRProjectionLayer() = default;
 

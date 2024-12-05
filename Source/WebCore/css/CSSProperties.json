@@ -268,15 +268,37 @@
                 "url": "https://www.w3.org/TR/css-ui-4/#widget-accent"
             }
         },
-        "block-step-size": {
+        "block-step": {
             "codegen-properties": {
-                "settings-flag": "cssRhythmicSizingEnabled",
-                "converter": "BlockStepSize",
-                "parser-grammar": "none | <length [0,inf]>"
+                "longhands": [
+                    "block-step-size",
+                    "block-step-insert",
+                    "block-step-align",
+                    "block-step-round"
+                ],
+                "settings-flag": "cssRhythmicSizingEnabled"
             },
             "specification": {
                 "category": "css-rhythm",
-                "url": "https://drafts.csswg.org/css-rhythm/#block-step-size"
+                "url": "https://drafts.csswg.org/css-rhythm/#block-step"
+            },
+            "status": "in development"
+        },
+        "block-step-align": {
+            "values": [
+                "auto",
+                "center",
+                "start",
+                "end"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssRhythmicSizingEnabled",
+                "parser-grammar": "<<values>>",
+                "parser-exported": true
+            },
+            "specification": {
+                "category": "css-rhythm",
+                "url": "https://drafts.csswg.org/css-rhythm/#block-step-align"
             },
             "status": "in development"
         },
@@ -288,7 +310,38 @@
             ],
             "codegen-properties": {
                 "settings-flag": "cssRhythmicSizingEnabled",
-                "parser-grammar": "<<values>>"
+                "parser-grammar": "<<values>>",
+                "parser-exported": true
+            },
+            "specification": {
+                "category": "css-rhythm",
+                "url": "https://drafts.csswg.org/css-rhythm/#block-step-size"
+            },
+            "status": "in development"
+        },
+        "block-step-round": {
+            "values": [
+                "up",
+                "down",
+                "nearest"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssRhythmicSizingEnabled",
+                "parser-grammar": "<<values>>",
+                "parser-exported": true
+            },
+            "specification": {
+                "category": "css-rhythm",
+                "url": "https://drafts.csswg.org/css-rhythm/#block-step-round"
+            },
+            "status": "in development"
+        },
+        "block-step-size": {
+            "codegen-properties": {
+                "settings-flag": "cssRhythmicSizingEnabled",
+                "converter": "BlockStepSize",
+                "parser-grammar": "none | <length [0,inf]>",
+                "parser-exported": true
             },
             "specification": {
                 "category": "css-rhythm",

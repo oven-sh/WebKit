@@ -28,6 +28,7 @@
 #include "HTMLWBRElement.h"
 #include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorLineBox.h"
+#include "InlineIteratorSVGTextBox.h"
 #include "InlineRunAndOffset.h"
 #include "LineSelection.h"
 #include "LogicalSelectionOffsetCaches.h"
@@ -176,7 +177,7 @@ void RenderLineBreak::collectSelectionGeometries(Vector<SelectionGeometry>& rect
 
     bool isFixed = false;
     auto absoluteQuad = localToAbsoluteQuad(FloatRect(rect), UseTransforms, &isFixed);
-    bool boxIsHorizontal = !is<SVGInlineTextBox>(run->legacyInlineBox()) ? run->isHorizontal() : !writingMode().isVertical();
+    bool boxIsHorizontal = !is<InlineIterator::SVGTextBoxIterator>(run) ? run->isHorizontal() : !writingMode().isVertical();
 
     rects.append(SelectionGeometry(absoluteQuad, HTMLElement::selectionRenderingBehavior(element()), run->direction(), extentsRect.x(), extentsRect.maxX(), extentsRect.maxY(), 0, run->isLineBreak(), isFirstOnLine, isLastOnLine, false, false, boxIsHorizontal, isFixed, view().pageNumberForBlockProgressionOffset(absoluteQuad.enclosingBoundingBox().x())));
 }

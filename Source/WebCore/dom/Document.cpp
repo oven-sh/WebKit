@@ -36,6 +36,7 @@
 #include "CDATASection.h"
 #include "CSSAnimation.h"
 #include "CSSFontSelector.h"
+#include "CSSKeywordColor.h"
 #include "CSSParser.h"
 #include "CSSPropertyNames.h"
 #include "CSSPropertyParserConsumer+ColorAdjust.h"
@@ -270,7 +271,7 @@
 #include "StorageEvent.h"
 #include "StringCallback.h"
 #include "StyleAdjuster.h"
-#include "StyleColor.h"
+#include "StyleColorOptions.h"
 #include "StyleColorScheme.h"
 #include "StyleProperties.h"
 #include "StyleResolveForDocument.h"
@@ -422,11 +423,13 @@ static const Seconds maxIntervalForUserGestureForwardingAfterMediaFinishesPlayin
 
 // Defined here to avoid including GCReachableRef.h in Document.h
 struct Document::PendingScrollEventTargetList {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(PendingScrollEventTargetList);
+    WTF_MAKE_TZONE_ALLOCATED(PendingScrollEventTargetList);
 
 public:
     Vector<GCReachableRef<ContainerNode>> targets;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(Document, PendingScrollEventTargetList);
 
 static const Seconds intersectionObserversInitialUpdateDelay { 2000_ms };
 
@@ -1299,21 +1302,21 @@ Color Document::linkColor(const RenderStyle& style) const
 {
     if (m_linkColor.isValid())
         return m_linkColor;
-    return StyleColor::colorFromKeyword(CSSValueWebkitLink, styleColorOptions(&style));
+    return CSS::colorFromKeyword(CSSValueWebkitLink, styleColorOptions(&style));
 }
 
 Color Document::visitedLinkColor(const RenderStyle& style) const
 {
     if (m_visitedLinkColor.isValid())
         return m_visitedLinkColor;
-    return StyleColor::colorFromKeyword(CSSValueWebkitLink, styleColorOptions(&style) | StyleColorOptions::ForVisitedLink);
+    return CSS::colorFromKeyword(CSSValueWebkitLink, styleColorOptions(&style) | StyleColorOptions::ForVisitedLink);
 }
 
 Color Document::activeLinkColor(const RenderStyle& style) const
 {
     if (m_activeLinkColor.isValid())
         return m_activeLinkColor;
-    return StyleColor::colorFromKeyword(CSSValueWebkitActivelink, styleColorOptions(&style));
+    return CSS::colorFromKeyword(CSSValueWebkitActivelink, styleColorOptions(&style));
 }
 
 void Document::resetLinkColor()

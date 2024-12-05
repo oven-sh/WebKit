@@ -89,7 +89,7 @@ private:
 
     Ref<WebCore::WebGPU::Adapter> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;

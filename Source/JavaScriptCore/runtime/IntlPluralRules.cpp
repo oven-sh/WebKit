@@ -187,13 +187,28 @@ JSObject* IntlPluralRules::resolvedOptions(JSGlobalObject* globalObject) const
     int32_t resultLength;
 
     // Category names are always ASCII, so use char[].
+    HashSet<String> categoriesSet;
     unsigned index = 0;
     while (const char* result = uenum_next(keywords.get(), &resultLength, &status)) {
         ASSERT(U_SUCCESS(status));
-        categories->putDirectIndex(globalObject, index++, jsNontrivialString(vm, String(unsafeMakeSpan(result, static_cast<size_t>(resultLength)))));
-        RETURN_IF_EXCEPTION(scope, { });
+        categoriesSet.add(String(unsafeMakeSpan(result, static_cast<size_t>(resultLength))));
     }
-    options->putDirect(vm, Identifier::fromString(vm, "pluralCategories"_s), categories);
+
+    // 4. Let pluralCategories be a List of Strings containing all possible results of PluralRuleSelect for the selected locale pr.[[Locale]],
+    // sorted according to the following order: "zero", "one", "two", "few", "many", "other".
+    static constexpr std::array<ASCIILiteral, 6> candidates = { {
+        "zero"_s, "one"_s, "two"_s, "few"_s, "many"_s, "other"_s
+    } };
+
+    for (auto candidate : candidates) {
+        auto iter = categoriesSet.find(candidate);
+        if (iter != categoriesSet.end()) {
+            categories->putDirectIndex(globalObject, index++, jsNontrivialString(vm, *iter));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+
+    options->putDirect(vm, vm.propertyNames->pluralCategories, categories);
     options->putDirect(vm, vm.propertyNames->roundingIncrement, jsNumber(m_roundingIncrement));
     options->putDirect(vm, vm.propertyNames->roundingMode, jsNontrivialString(vm, IntlNumberFormat::roundingModeString(m_roundingMode)));
     options->putDirect(vm, vm.propertyNames->roundingPriority, jsNontrivialString(vm, IntlNumberFormat::roundingPriorityString(m_roundingType)));

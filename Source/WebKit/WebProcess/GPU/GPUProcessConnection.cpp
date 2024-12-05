@@ -174,8 +174,8 @@ void GPUProcessConnection::didClose(IPC::Connection&)
         arbitrator->leaveRoutingAbritration();
 #endif
 
-    m_clients.forEach([this] (auto& client) {
-        client.gpuProcessConnectionDidClose(*this);
+    m_clients.forEach([protectedThis = Ref { *this }] (auto& client) {
+        client.gpuProcessConnectionDidClose(protectedThis);
     });
     m_clients.clear();
 }

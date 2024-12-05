@@ -40,12 +40,10 @@ public:
     {
     }
 
-    explicit CoreIPCSkColorSpace(std::span<const uint8_t> data)
-        : m_skColorSpace(SkColorSpace::Deserialize(data.data(), data.size()))
+    static sk_sp<SkColorSpace> create(std::span<const uint8_t> data)
     {
+        return SkColorSpace::Deserialize(data.data(), data.size());
     }
-
-    sk_sp<SkColorSpace> skColorSpace() const { return m_skColorSpace; }
 
     std::span<const uint8_t> dataReference() const
     {

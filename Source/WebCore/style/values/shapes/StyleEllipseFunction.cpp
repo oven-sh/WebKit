@@ -75,16 +75,16 @@ FloatSize resolveRadii(const Ellipse& value, FloatSize boxSize, FloatPoint cente
             },
             [&](const Ellipse::Extent& extent) -> float {
                 return WTF::switchOn(extent,
-                    [&](CSS::ClosestSide) -> float {
+                    [&](CSS::Keyword::ClosestSide) -> float {
                         return std::min(std::abs(centerValue), std::abs(dimensionSize - centerValue));
                     },
-                    [&](CSS::FarthestSide) -> float {
+                    [&](CSS::Keyword::FarthestSide) -> float {
                         return std::max(std::abs(centerValue), std::abs(dimensionSize - centerValue));
                     },
-                    [&](CSS::ClosestCorner) -> float {
+                    [&](CSS::Keyword::ClosestCorner) -> float {
                         return distanceToClosestCorner(center, boxSize);
                     },
-                    [&](CSS::FarthestCorner) -> float {
+                    [&](CSS::Keyword::FarthestCorner) -> float {
                         return distanceToFarthestCorner(center, boxSize);
                     }
                 );

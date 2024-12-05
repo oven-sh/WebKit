@@ -67,6 +67,7 @@
 #include "FrameLoadRequest.h"
 #include "FrameLoader.h"
 #include "FrameTree.h"
+#include "HTMLFrameOwnerElement.h"
 #include "HTTPParsers.h"
 #include "History.h"
 #include "IdleRequestOptions.h"

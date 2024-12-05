@@ -598,12 +598,12 @@ using LengthPercentageNonnegative = LengthPercentage<CSS::Nonnegative>;
 using Percentage0To100 = LengthPercentage<CSS::Range{0,100}>;
 
 // Standard Points
-using LengthPercentagePointAll = Point<LengthPercentageAll>;
-using LengthPercentagePointNonnegative = Point<LengthPercentageNonnegative>;
+using LengthPercentageSpaceSeparatedPointAll = SpaceSeparatedPoint<LengthPercentageAll>;
+using LengthPercentageSpaceSeparatedPointNonnegative = SpaceSeparatedPoint<LengthPercentageNonnegative>;
 
 // Standard Sizes
-using LengthPercentageSizeAll = Size<LengthPercentageAll>;
-using LengthPercentageSizeNonnegative = Size<LengthPercentageNonnegative>;
+using LengthPercentageSpaceSeparatedSizeAll = SpaceSeparatedSize<LengthPercentageAll>;
+using LengthPercentageSpaceSeparatedSizeNonnegative = SpaceSeparatedSize<LengthPercentageNonnegative>;
 
 // MARK: CSS type -> Style type mapping
 

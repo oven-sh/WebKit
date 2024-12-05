@@ -1206,6 +1206,23 @@ static WKDragSessionContext *ensureLocalDragSessionContext(id <UIDragSession> se
     return _page->preferences().selectionHonorsOverflowScrolling();
 }
 
+- (ScopeExit<Function<void()>>)makeTextSelectionViewsNonInteractiveForScope
+{
+    Vector<RetainPtr<UIView>> viewsToRestore;
+    for (UIView *view in [_textInteractionWrapper managedTextSelectionViews]) {
+        if (!view.userInteractionEnabled)
+            continue;
+
+        viewsToRestore.append(view);
+        view.userInteractionEnabled = NO;
+    }
+
+    return makeScopeExit(Function<void()> { [viewsToRestore = WTFMove(viewsToRestore)] {
+        for (RetainPtr view : viewsToRestore)
+            [view setUserInteractionEnabled:YES];
+    } });
+}
+
 - (BOOL)_shouldUseUIContextMenuAsyncConfiguration
 {
 #if USE(BROWSERENGINEKIT)
@@ -3291,7 +3308,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return pointIsInSelectionRect;
 }
 
-- (BOOL)_hasEnclosingScrollView:(UIScrollView *)firstView matchingCriteria:(Function<BOOL(UIScrollView *)>&&)matchFunction
+- (BOOL)_hasEnclosingScrollView:(UIView *)firstView matchingCriteria:(Function<BOOL(UIScrollView *)>&&)matchFunction
 {
     UIView *view = firstView ?: self.webView.scrollView;
     for (; view; view = view.superview) {
@@ -11762,6 +11779,7 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
 
     if ([self _currentPositionInformationIsValidForRequest:interactionInformationRequest]) {
         _lastPointerRegion = [self pointerRegionForPositionInformation:_positionInformation point:request.location];
+        [_webView _setPointerTouchCompatibilitySimulatorEnabled:_positionInformation.needsPointerTouchCompatibilityQuirk];
         _pointerInteractionRegionNeedsUpdate = NO;
         return;
     }
@@ -11788,6 +11806,7 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
 
         strongSelf->_pointerInteractionRegionNeedsUpdate = NO;
         strongSelf->_lastPointerRegion = [strongSelf pointerRegionForPositionInformation:information point:location];
+        [strongSelf->_webView _setPointerTouchCompatibilitySimulatorEnabled:information.needsPointerTouchCompatibilityQuirk];
         [strongSelf->_pointerInteraction invalidate];
     } forRequest:interactionInformationRequest];
 }

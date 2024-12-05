@@ -52,6 +52,9 @@ public:
     static Ref<RemoteLegacyCDMSessionProxy> create(RemoteLegacyCDMFactoryProxy&, uint64_t logIdentifier, RemoteLegacyCDMSessionIdentifier, WebCore::LegacyCDM&);
     ~RemoteLegacyCDMSessionProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void invalidate();
 
     RemoteLegacyCDMFactoryProxy* factory() const { return m_factory.get(); }

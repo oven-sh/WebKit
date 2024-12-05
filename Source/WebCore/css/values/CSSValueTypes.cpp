@@ -25,19 +25,12 @@
 #include "config.h"
 #include "CSSValueTypes.h"
 
-#include <wtf/text/TextStream.h>
-
 namespace WebCore {
 namespace CSS {
 
 void Serialize<CustomIdentifier>::operator()(StringBuilder& builder, const CustomIdentifier& value)
 {
     builder.append(value.value);
-}
-
-WTF::TextStream& operator<<(WTF::TextStream& ts, const CustomIdentifier& value)
-{
-    return ts << value.value;
 }
 
 } // namespace CSS

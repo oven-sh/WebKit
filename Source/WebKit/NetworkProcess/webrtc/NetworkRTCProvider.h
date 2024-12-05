@@ -89,6 +89,9 @@ public:
     }
     ~NetworkRTCProvider();
 
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
     void didReceiveNetworkRTCMonitorMessage(IPC::Connection& connection, IPC::Decoder& decoder) { protectedRTCMonitor()->didReceiveMessage(connection, decoder); }
 
     class Socket {

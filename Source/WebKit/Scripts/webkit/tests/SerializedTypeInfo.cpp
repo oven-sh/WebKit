@@ -441,6 +441,18 @@ Vector<SerializedTypeInfo> allSerializedTypes()
             { "String"_s, "wrapper"_s }
         } },
 #endif // USE(CFSTRING)
+#if USE(SKIA)
+        { "SkFooBar"_s, {
+            {
+                "int"_s,
+                "foo()"_s
+            },
+            {
+                "double"_s,
+                "bar()"_s
+            },
+        } },
+#endif // USE(SKIA)
         { "WebKit::RValueWithFunctionCalls"_s, {
             {
                 "SandboxExtensionHandle"_s,

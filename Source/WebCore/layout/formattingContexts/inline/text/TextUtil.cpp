@@ -191,40 +191,64 @@ TextUtil::FallbackFontList TextUtil::fallbackFontsForText(StringView textContent
 }
 
 template <typename TextIterator>
-static TextUtil::EnclosingAscentDescent enclosingGlyphBoundsForRunWithIterator(const FontCascade& fontCascade, bool isRTL, TextIterator& textIterator)
+static TextUtil::EnclosingGlyphBounds enclosingGlyphBoundsForRunWithIterator(const FontCascade& fontCascade, bool isRTL, TextIterator& textIterator)
 {
     auto enclosingAscent = std::optional<InlineLayoutUnit> { };
     auto enclosingDescent = std::optional<InlineLayoutUnit> { };
+    auto enclosingLeft = std::optional<InlineLayoutUnit> { };
     auto isSmallCaps = fontCascade.isSmallCaps();
     auto& primaryFont = fontCascade.primaryFont();
 
     char32_t currentCharacter = 0;
     unsigned clusterLength = 0;
+    auto glyphData = GlyphData { };
     while (textIterator.consume(currentCharacter, clusterLength)) {
 
-        auto computeTopAndBottomForCharacter = [&](auto character) {
-            if (isSmallCaps)
-                character = u_toupper(character);
+        if (isSmallCaps)
+            currentCharacter = u_toupper(currentCharacter);
 
-            auto glyphData = fontCascade.glyphDataForCharacter(character, isRTL);
-            auto& font = glyphData.font ? *glyphData.font : primaryFont;
-            // FIXME: This may need some adjustment for ComplexTextController. See glyphOrigin.
-            auto bounds = font.boundsForGlyph(glyphData.glyph);
+        glyphData = fontCascade.glyphDataForCharacter(currentCharacter, isRTL);
+        auto& font = glyphData.font ? *glyphData.font : primaryFont;
+        // FIXME: This may need some adjustment for ComplexTextController. See glyphOrigin.
+        auto bounds = font.boundsForGlyph(glyphData.glyph);
 
-            enclosingAscent = std::min(enclosingAscent.value_or(bounds.y()), bounds.y());
-            enclosingDescent = std::max(enclosingDescent.value_or(bounds.maxY()), bounds.maxY());
-        };
-        computeTopAndBottomForCharacter(currentCharacter);
+        enclosingAscent = std::min(enclosingAscent.value_or(bounds.y()), bounds.y());
+        enclosingDescent = std::max(enclosingDescent.value_or(bounds.maxY()), bounds.maxY());
+        if (!enclosingLeft)
+            enclosingLeft = std::max(0.f, -bounds.x());
         textIterator.advance(clusterLength);
     }
-    return { enclosingAscent.value_or(0.f), enclosingDescent.value_or(0.f) };
+
+    // FIXME: Complex codepath may need a more sophisticated left/right.
+    auto& font = glyphData.font ? *glyphData.font : primaryFont;
+    auto enclosingRight = font.boundsForGlyph(glyphData.glyph).maxX() - font.widthForGlyph(glyphData.glyph);
+
+    return { enclosingAscent.value_or(0.f), enclosingDescent.value_or(0.f), enclosingLeft.value_or(0.f), enclosingRight };
 }
 
-TextUtil::EnclosingAscentDescent TextUtil::enclosingGlyphBoundsForText(StringView textContent, const RenderStyle& style)
+TextUtil::EnclosingGlyphBounds TextUtil::enclosingGlyphBounds(StringView textContent, const RenderStyle& style, bool canUseSimpleFontCodePath)
 {
     if (textContent.isEmpty())
         return { };
 
+    if (canUseSimpleFontCodePath) {
+        auto& fontCascade = style.fontCascade();
+        auto& primaryFont = fontCascade.primaryFont();
+        auto isRightToLeftInlineDirection = style.writingMode().isBidiRTL();
+
+        auto firstGlyphData = fontCascade.glyphDataForCharacter(textContent[0], isRightToLeftInlineDirection);
+        auto firstGlyphOverflow = -(firstGlyphData.font ? *firstGlyphData.font : primaryFont).boundsForGlyph(firstGlyphData.glyph).x();
+
+        auto lastGlyphData = fontCascade.glyphDataForCharacter(textContent[textContent.length() - 1], isRightToLeftInlineDirection);
+        auto& fontForLastGlyph = lastGlyphData.font ? *lastGlyphData.font : primaryFont;
+        auto lastGlyphOverflow = fontForLastGlyph.boundsForGlyph(lastGlyphData.glyph).maxX() - fontForLastGlyph.widthForGlyph(lastGlyphData.glyph);
+#if PLATFORM(IOS_FAMILY)
+        // FIXME: Find out why we get false subpixel overflow values on iOS.
+        firstGlyphOverflow -= 0.1f;
+        lastGlyphOverflow -= 0.1f;
+#endif
+        return { InlineLayoutUnit(fontCascade.metricsOfPrimaryFont().intAscent()), InlineLayoutUnit(fontCascade.metricsOfPrimaryFont().intDescent()), std::max(0.f, firstGlyphOverflow), std::max(0.f, lastGlyphOverflow) };
+    }
     if (textContent.is8Bit()) {
         Latin1TextIterator textIterator { textContent.span8(), 0, textContent.length() };
         return enclosingGlyphBoundsForRunWithIterator(style.fontCascade(), style.writingMode().isBidiRTL(), textIterator);

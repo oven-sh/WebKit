@@ -26,6 +26,9 @@
 #pragma once
 
 #import "Instance.h"
+#import "SwiftCXXThunk.h"
+#import "WebGPU.h"
+#import "WebGPUExt.h"
 #import <Metal/Metal.h>
 #import <utility>
 #import <wtf/CompletionHandler.h>
@@ -34,7 +37,7 @@
 #import <wtf/Range.h>
 #import <wtf/RangeSet.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
+#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/RetainReleaseSwift.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakHashSet.h>
@@ -162,16 +165,16 @@ private:
     bool m_mappedAtCreation { false };
 #endif
     bool m_didReadOOB { false };
-} SWIFT_SHARED_REFERENCE(retainBuffer, releaseBuffer);
+} SWIFT_SHARED_REFERENCE(refBuffer, derefBuffer);
 
 } // namespace WebGPU
 
-inline void retainBuffer(WebGPU::Buffer* obj)
+inline void refBuffer(WebGPU::Buffer* obj)
 {
-    WTF::retainThreadSafeRefCounted(obj);
+    WTF::ref(obj);
 }
 
-inline void releaseBuffer(WebGPU::Buffer* obj)
+inline void derefBuffer(WebGPU::Buffer* obj)
 {
-    WTF::releaseThreadSafeRefCounted(obj);
+    WTF::deref(obj);
 }

@@ -3806,6 +3806,55 @@ GLint FramebufferVk::getSamples() const
     return std::max(lastAttachment ? lastAttachment->getSamples() : 1, 1);
 }
 
+angle::Result FramebufferVk::flushDepthStencilDeferredClear(ContextVk *contextVk,
+                                                            VkImageAspectFlagBits aspect)
+{
+    const bool isDepth = aspect == VK_IMAGE_ASPECT_DEPTH_BIT;
+
+    // Pick out the deferred clear for the given aspect, and issue it ahead of the render pass.
+    // This is used when switching this aspect to read-only mode, in which case the clear operation
+    // for the aspect cannot be done as part of the render pass loadOp.
+    ASSERT(!isDepth || hasDeferredDepthClear());
+    ASSERT(isDepth || hasDeferredStencilClear());
+    ASSERT(mState.getDepthOrStencilAttachment() != nullptr);
+
+    RenderTargetVk *renderTarget = getDepthStencilRenderTarget();
+    vk::ImageHelper &image       = renderTarget->getImageForCopy();
+
+    // Depth/stencil attachments cannot be 3D.
+    ASSERT(!renderTarget->is3DImage());
+
+    vk::CommandBufferAccess access;
+    access.onImageTransferWrite(renderTarget->getLevelIndex(), 1, renderTarget->getLayerIndex(), 1,
+                                image.getAspectFlags(), &image);
+    vk::OutsideRenderPassCommandBuffer *commandBuffer;
+    ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
+
+    VkImageSubresourceRange range = {};
+    range.aspectMask              = aspect;
+    range.baseMipLevel            = image.toVkLevel(renderTarget->getLevelIndex()).get();
+    range.levelCount              = 1;
+    range.baseArrayLayer          = renderTarget->getLayerIndex();
+    range.layerCount              = 1;
+
+    VkClearDepthStencilValue clearValue = {};
+
+    if (isDepth)
+    {
+        clearValue.depth = mDeferredClears.getDepthValue();
+        mDeferredClears.reset(vk::kUnpackedDepthIndex);
+    }
+    else
+    {
+        clearValue.stencil = mDeferredClears.getStencilValue();
+        mDeferredClears.reset(vk::kUnpackedStencilIndex);
+    }
+
+    commandBuffer->clearDepthStencilImage(
+        image.getImage(), image.getCurrentLayout(contextVk->getRenderer()), clearValue, 1, &range);
+    return angle::Result::Continue;
+}
+
 angle::Result FramebufferVk::flushDeferredClears(ContextVk *contextVk)
 {
     if (mDeferredClears.empty())

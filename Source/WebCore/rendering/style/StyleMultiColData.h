@@ -60,7 +60,7 @@ public:
     float width { 0 };
     unsigned short count;
     BorderValue rule;
-    StyleColor visitedLinkColumnRuleColor;
+    Style::Color visitedLinkColumnRuleColor;
 
     bool autoWidth : 1;
     bool autoCount : 1;

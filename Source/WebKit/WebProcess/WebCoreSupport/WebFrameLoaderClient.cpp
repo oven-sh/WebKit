@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -96,6 +96,9 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
     if (auto parentFrame = requestingFrame ? requestingFrame->parentFrame() : nullptr)
         parentFrameID = parentFrame->frameID();
 
+    RefPtr coreLocalFrame = m_frame->coreLocalFrame();
+    RefPtr document = coreLocalFrame ? coreLocalFrame->document() : nullptr;
+
     FrameInfoData originatingFrameInfoData {
         navigationAction.initiatedByMainFrame() == InitiatedByMainFrame::Yes,
         FrameType::Local,
@@ -104,6 +107,7 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         { },
         WTFMove(originatingFrameID),
         WTFMove(parentFrameID),
+        document ? std::optional { document->identifier() } : std::nullopt,
         getCurrentProcessID(),
         requestingFrame ? requestingFrame->isFocused() : false
     };

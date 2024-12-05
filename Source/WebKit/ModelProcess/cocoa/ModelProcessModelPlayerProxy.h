@@ -68,6 +68,9 @@ public:
     static Ref<ModelProcessModelPlayerProxy> create(ModelProcessModelPlayerManagerProxy&, WebCore::ModelPlayerIdentifier, Ref<IPC::Connection>&&);
     ~ModelProcessModelPlayerProxy();
 
+    void ref() const final { WebCore::ModelPlayer::ref(); }
+    void deref() const final { WebCore::ModelPlayer::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     static bool transformSupported(const simd_float4x4& transform);

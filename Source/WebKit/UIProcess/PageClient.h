@@ -587,6 +587,8 @@ public:
     virtual void handleAsynchronousCancelableScrollEvent(WKBaseScrollView *, WKBEScrollViewScrollUpdate *, void (^completion)(BOOL handled)) = 0;
 #endif
 
+    virtual bool isSimulatingCompatibilityPointerTouches() const = 0;
+
     virtual WebCore::Color contentViewBackgroundColor() = 0;
     virtual WebCore::Color insertionPointColor() = 0;
     virtual bool isScreenBeingCaptured() = 0;

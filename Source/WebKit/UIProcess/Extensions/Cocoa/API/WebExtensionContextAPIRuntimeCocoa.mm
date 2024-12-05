@@ -63,7 +63,13 @@ void WebExtensionContext::runtimeOpenOptionsPage(CompletionHandler<void(Expected
         return;
     }
 
-    auto delegate = extensionController()->delegate();
+    RefPtr extensionController = this->extensionController();
+    if (!extensionController) {
+        completionHandler(toWebExtensionError(apiName, nil, @"No extensionController"));
+        return;
+    }
+
+    auto delegate = extensionController->delegate();
 
     bool respondsToOpenOptionsPage = [delegate respondsToSelector:@selector(webExtensionController:openOptionsPageForExtensionContext:completionHandler:)];
     bool respondsToOpenNewTab = [delegate respondsToSelector:@selector(webExtensionController:openNewTabUsingConfiguration:forExtensionContext:completionHandler:)];
@@ -73,7 +79,7 @@ void WebExtensionContext::runtimeOpenOptionsPage(CompletionHandler<void(Expected
     }
 
     if (respondsToOpenOptionsPage) {
-        [delegate webExtensionController:extensionController()->wrapper() openOptionsPageForExtensionContext:wrapper() completionHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](NSError *error) mutable {
+        [delegate webExtensionController:extensionController->wrapper() openOptionsPageForExtensionContext:wrapper() completionHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](NSError *error) mutable {
             if (error) {
                 RELEASE_LOG_ERROR(Extensions, "Error opening options page: %{public}@", privacyPreservingDescription(error));
                 completionHandler(toWebExtensionError(apiName, nil, error.localizedDescription));
@@ -97,7 +103,7 @@ void WebExtensionContext::runtimeOpenOptionsPage(CompletionHandler<void(Expected
     configuration.index = frontmostWindow ? frontmostWindow->tabs().size() : 0;
     configuration.url = optionsPageURL();
 
-    [delegate webExtensionController:extensionController()->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
+    [delegate webExtensionController:extensionController->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
         if (error) {
             RELEASE_LOG_ERROR(Extensions, "Error opening options page in new tab: %{public}@", privacyPreservingDescription(error));
             completionHandler(toWebExtensionError(apiName, nil, error.localizedDescription));
@@ -225,7 +231,8 @@ void WebExtensionContext::sendNativeMessage(const String& applicationID, id mess
 {
     static NSString * const apiName = @"runtime.sendNativeMessage()";
 
-    auto delegate = extensionController()->delegate();
+    RefPtr extensionController = this->extensionController();
+    auto delegate = extensionController->delegate();
     if (![delegate respondsToSelector:@selector(webExtensionController:sendMessage:toApplicationWithIdentifier:forExtensionContext:replyHandler:)]) {
         // Fallback to sending the native message via NSExtension. This is only supported for
         // extensions loaded from an app extension bundle.
@@ -319,7 +326,7 @@ void WebExtensionContext::sendNativeMessage(const String& applicationID, id mess
 
     auto *applicationIdentifier = !applicationID.isNull() ? (NSString *)applicationID : nil;
 
-    [delegate webExtensionController:extensionController()->wrapper() sendMessage:message toApplicationWithIdentifier:applicationIdentifier forExtensionContext:wrapper() replyHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](id replyMessage, NSError *error) mutable {
+    [delegate webExtensionController:extensionController->wrapper() sendMessage:message toApplicationWithIdentifier:applicationIdentifier forExtensionContext:wrapper() replyHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](id replyMessage, NSError *error) mutable {
         if (error) {
             completionHandler(toWebExtensionError(apiName, nil, error.localizedDescription));
             return;
@@ -353,12 +360,18 @@ void WebExtensionContext::runtimeConnectNative(const String& applicationID, WebE
     constexpr auto sourceContentWorldType = WebExtensionContentWorldType::Main;
     constexpr auto targetContentWorldType = WebExtensionContentWorldType::Native;
 
+    RefPtr extensionController = this->extensionController();
+    if (!extensionController) {
+        completionHandler({ });
+        return;
+    }
+
     // Add 1 for the starting port here so disconnect will balance with a decrement.
     addPorts(sourceContentWorldType, targetContentWorldType, channelIdentifier, { pageProxyIdentifier });
 
     Ref nativePort = WebExtensionMessagePort::create(*this, applicationID, channelIdentifier);
 
-    auto delegate = extensionController()->delegate();
+    auto delegate = extensionController->delegate();
     if (![delegate respondsToSelector:@selector(webExtensionController:connectUsingMessagePort:forExtensionContext:completionHandler:)]) {
         // Fallback to sending single native messages for each port message.
         // Weak reference the native port to prevent a reference cycle.
@@ -398,7 +411,7 @@ void WebExtensionContext::runtimeConnectNative(const String& applicationID, WebE
         return;
     }
 
-    [delegate webExtensionController:extensionController()->wrapper() connectUsingMessagePort:nativePort->wrapper() forExtensionContext:wrapper() completionHandler:makeBlockPtr([=, this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)] (NSError *error) mutable {
+    [delegate webExtensionController:extensionController->wrapper() connectUsingMessagePort:nativePort->wrapper() forExtensionContext:wrapper() completionHandler:makeBlockPtr([=, this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)] (NSError *error) mutable {
         if (error) {
             completionHandler(toWebExtensionError(apiName, nil, error.localizedDescription));
 
@@ -419,7 +432,13 @@ void WebExtensionContext::runtimeConnectNative(const String& applicationID, WebE
 
 void WebExtensionContext::runtimeWebPageSendMessage(const String& extensionID, const String& messageJSON, const WebExtensionMessageSenderParameters& senderParameters, CompletionHandler<void(Expected<String, WebExtensionError>&&)>&& completionHandler)
 {
-    RefPtr destinationExtension = extensionController()->extensionContext(extensionID);
+    RefPtr extensionController = this->extensionController();
+    if (!extensionController) {
+        completionHandler({ });
+        return;
+    }
+
+    RefPtr destinationExtension = extensionController->extensionContext(extensionID);
     RefPtr tab = getTab(senderParameters.pageProxyIdentifier);
     if (!destinationExtension || !tab) {
         callAfterRandomDelay([completionHandler = WTFMove(completionHandler)]() mutable {
@@ -473,7 +492,13 @@ void WebExtensionContext::runtimeWebPageConnect(const String& extensionID, WebEx
     constexpr auto sourceContentWorldType = WebExtensionContentWorldType::WebPage;
     constexpr auto targetContentWorldType = WebExtensionContentWorldType::Main;
 
-    RefPtr destinationExtension = extensionController()->extensionContext(extensionID);
+    RefPtr extensionController = this->extensionController();
+    if (!extensionController) {
+        completionHandler({ });
+        return;
+    }
+
+    RefPtr destinationExtension = extensionController->extensionContext(extensionID);
     RefPtr tab = getTab(senderParameters.pageProxyIdentifier);
     if (!destinationExtension || !tab) {
         callAfterRandomDelay([=, this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)]() mutable {

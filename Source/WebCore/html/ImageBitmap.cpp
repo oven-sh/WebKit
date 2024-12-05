@@ -194,6 +194,11 @@ void ImageBitmap::prepareForCrossThreadTransfer()
 {
     m_bitmap = ImageBuffer::sinkIntoImageBufferForCrossThreadTransfer(WTFMove(m_bitmap));
 }
+
+void ImageBitmap::finalizeCrossThreadTransfer()
+{
+    m_bitmap = ImageBuffer::sinkIntoImageBufferAfterCrossThreadTransfer(WTFMove(m_bitmap));
+}
 #endif
 
 void ImageBitmap::createPromise(ScriptExecutionContext& scriptExecutionContext, ImageBitmap::Source&& source, ImageBitmapOptions&& options, int sx, int sy, int sw, int sh, ImageBitmap::Promise&& promise)

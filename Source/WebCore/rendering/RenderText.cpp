@@ -172,6 +172,16 @@ static inline size_t capitalizeCharacter(String textContent, unsigned startChara
     }
 
     auto capitalize = [&](const UChar* contentToCapitalize, size_t length) -> size_t {
+        if (length == 1) {
+            if ((*contentToCapitalize >= 'A' && *contentToCapitalize <= 'Z') || *contentToCapitalize == ' ')
+                return 0;
+            if (*contentToCapitalize <= 'z') {
+                char32_t lastCharacter = u_totitle(*contentToCapitalize);
+                output.append(lastCharacter);
+                return 1;
+            }
+        }
+
         UChar capitalizedCharacter;
         UErrorCode status = U_ZERO_ERROR;
         auto realLength = u_strToTitle(&capitalizedCharacter, 1, contentToCapitalize, length, nullptr, "", &status);
@@ -258,8 +268,8 @@ String capitalize(const String& string, Vector<UChar> previousCharacter)
 
 static LayoutRect selectionRectForTextBox(const InlineIterator::TextBox& textBox, unsigned rangeStart, unsigned rangeEnd)
 {
-    if (auto* svgInlineTextBox = dynamicDowncast<SVGInlineTextBox>(textBox.legacyInlineBox()))
-        return svgInlineTextBox->localSelectionRect(rangeStart, rangeEnd);
+    if (auto* svgTextBox = dynamicDowncast<InlineIterator::SVGTextBox>(textBox))
+        return svgTextBox->localSelectionRect(rangeStart, rangeEnd);
 
     bool isCaretCase = rangeStart == rangeEnd;
 
@@ -442,6 +452,9 @@ void RenderText::styleDidChange(StyleDifference diff, const RenderStyle* oldStyl
     auto needsLayoutBoxStyleUpdate = layoutBox() && (diff >= StyleDifference::Repaint || (&style() != &firstLineStyle()));
     if (needsLayoutBoxStyleUpdate)
         LayoutIntegration::LineLayout::updateStyle(*this);
+
+    if (CheckedPtr cache = document().existingAXObjectCache())
+        cache->onStyleChange(*this, diff, oldStyle, newStyle);
 }
 
 void RenderText::removeAndDestroyLegacyTextBoxes()
@@ -542,7 +555,7 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
 
         bool isFixed = false;
         auto absoluteQuad = localToAbsoluteQuad(FloatRect(rect), UseTransforms, &isFixed);
-        bool boxIsHorizontal = !is<SVGInlineTextBox>(textBox->legacyInlineBox()) ? textBox->isHorizontal() : !writingMode().isVertical();
+        bool boxIsHorizontal = !is<InlineIterator::SVGTextBoxIterator>(textBox) ? textBox->isHorizontal() : !writingMode().isVertical();
 
         rects.append(SelectionGeometry(absoluteQuad, HTMLElement::selectionRenderingBehavior(textNode()), textBox->direction(), extentsRect.x(), extentsRect.maxX(), extentsRect.maxY(), 0, textBox->isLineBreak(), isFirstOnLine, isLastOnLine, containsStart, containsEnd, boxIsHorizontal, isFixed, view().pageNumberForBlockProgressionOffset(absoluteQuad.enclosingBoundingBox().x())));
     }
@@ -630,7 +643,7 @@ static Vector<LayoutRect> characterRects(const InlineIterator::TextBox& run, uns
     if (clampedStart >= clampedEnd)
         return { };
 
-    if (auto* svgTextBox = dynamicDowncast<SVGInlineTextBox>(run.legacyInlineBox())) {
+    if (auto* svgTextBox = dynamicDowncast<InlineIterator::SVGTextBox>(run)) {
         return Vector<LayoutRect>(clampedEnd - clampedStart, [&, clampedStart = clampedStart](size_t i) {
             size_t index = clampedStart + i;
             return svgTextBox->localSelectionRect(index, index + 1);

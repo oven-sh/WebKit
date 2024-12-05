@@ -147,7 +147,6 @@ CMSampleBufferRef H264BufferToCMSampleBuffer(const uint8_t* buffer, size_t buffe
 - (NSInteger)decodeData:(const uint8_t *)data
         size:(size_t)size
         timeStamp:(int64_t)timeStamp {
-
   if (_error != noErr) {
     RTC_LOG(LS_WARNING) << "Last frame decode failed.";
     _error = noErr;
@@ -395,10 +394,14 @@ CMSampleBufferRef H264BufferToCMSampleBuffer(const uint8_t* buffer, size_t buffe
   bool hasCalledCallback = false;
   if (!_reorderQueue.isEmpty() || reorderSize) {
     _reorderQueue.append(decodedFrame, reorderSize);
-    while (auto *frame = _reorderQueue.takeIfAvailable()) {
+
+    bool moreFramesAvailable;
+    while (auto *frame = _reorderQueue.takeIfAvailable(moreFramesAvailable)) {
       hasCalledCallback = true;
-      _callback(frame, frame != decodedFrame);
+      _callback(frame, moreFramesAvailable);
     }
+    RTC_DCHECK(!moreFramesAvailable);
+
     if (!hasCalledCallback) {
       _callback(nil, true);
     }

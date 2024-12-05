@@ -176,13 +176,26 @@ ExceptionOr<String> canonicalizePort(StringView portValue, const std::optional<S
 // https://urlpattern.spec.whatwg.org/#canonicalize-an-opaque-pathname
 ExceptionOr<String> canonicalizeOpaquePathname(StringView value)
 {
+    if (value.isEmpty())
+        return value.toString();
+
+    bool hasLeadingSlash = value[0] == '/';
+    // Prepend slash to disable URL parser from prepending slash.
+    // Prepend dash to avoid inadvertantly collapsing a leading dot due to the fake leading slash.
+    String maybeAddSlashPrefix = hasLeadingSlash ? value.toString() : makeString("/-"_s, value);
+
+    // FIXME: Set state override to State::OpaquePath after URLParser supports state override.
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setPath(value);
+    dummyURL.setPath(maybeAddSlashPrefix);
 
     if (!dummyURL.isValid())
         return Exception { ExceptionCode::TypeError, "Invalid input to canonicalize a URL opaque path string."_s };
 
-    return dummyURL.path().toString();
+    auto result = dummyURL.path();
+    if (!hasLeadingSlash)
+        result = result.substring(2);
+
+    return result.toString();
 }
 
 // https://urlpattern.spec.whatwg.org/#canonicalize-a-pathname
@@ -192,8 +205,9 @@ ExceptionOr<String> canonicalizePathname(StringView pathnameValue)
         return pathnameValue.toString();
 
     bool hasLeadingSlash = pathnameValue[0] == '/';
-    auto maybeAddSlashPrefix = hasLeadingSlash ? pathnameValue : makeString("/-"_s, pathnameValue);
+    String maybeAddSlashPrefix = hasLeadingSlash ? pathnameValue.toString() : makeString("/-"_s, pathnameValue);
 
+    // FIXME: Set state override to State::PathStart after URLParser supports state override.
     URL dummyURL(dummyURLCharacters);
     dummyURL.setPath(maybeAddSlashPrefix);
 

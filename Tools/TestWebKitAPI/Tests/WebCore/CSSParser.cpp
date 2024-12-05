@@ -26,6 +26,7 @@
 
 #include "config.h"
 
+#include <WebCore/CSSColorValue.h>
 #include <WebCore/CSSCustomPropertyValue.h>
 #include <WebCore/CSSGridIntegerRepeatValue.h>
 #include <WebCore/CSSParser.h>
@@ -50,7 +51,7 @@ TEST(CSSParser, ParseColorInput)
     Color valueColor(Color::red);
 
     EXPECT_TRUE(value->isColor());
-    EXPECT_EQ(valueColor, value->color());
+    EXPECT_EQ(valueColor, CSSColorValue::absoluteColor(*value));
 }
 
 TEST(CSSParser, ParseColorWithNewlineAndWhitespacesInput)
@@ -65,7 +66,7 @@ TEST(CSSParser, ParseColorWithNewlineAndWhitespacesInput)
     Color valueColor(Color::red);
 
     EXPECT_TRUE(value->isColor());
-    EXPECT_EQ(valueColor, value->color());
+    EXPECT_EQ(valueColor, CSSColorValue::absoluteColor(*value));
 }
 
 TEST(CSSParser, ParseCustomPropertyWithNewlineInput)
@@ -126,7 +127,7 @@ TEST(CSSParser, ParseColorPropertyWithNewlineBetweenIdentInput)
     Color valueColor(Color::red);
 
     EXPECT_TRUE(value->isColor());
-    EXPECT_EQ(valueColor, value->color());
+    EXPECT_EQ(valueColor, CSSColorValue::absoluteColor(*value));
 }
 
 TEST(CSSParser, ParseTextTransformPropertyWithNewlineBetweenTwoIdentInput)

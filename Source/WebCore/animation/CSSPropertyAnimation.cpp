@@ -1756,7 +1756,7 @@ private:
 class PropertyWrapperStyleColor : public AnimationPropertyWrapperBase {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Animation);
 public:
-    PropertyWrapperStyleColor(CSSPropertyID property, const StyleColor& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const StyleColor&))
+    PropertyWrapperStyleColor(CSSPropertyID property, const Style::Color& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const Style::Color&))
         : AnimationPropertyWrapperBase(property)
         , m_getter(getter)
         , m_setter(setter)
@@ -1774,8 +1774,8 @@ public:
         if (fromStyleColor.isCurrentColor() && toStyleColor.isCurrentColor())
             return true;
         
-        if (fromStyleColor.isAbsoluteColor() && toStyleColor.isAbsoluteColor())
-            return fromStyleColor.absoluteColor() == toStyleColor.absoluteColor();
+        if (fromStyleColor.isResolvedColor() && toStyleColor.isResolvedColor())
+            return fromStyleColor.resolvedColor() == toStyleColor.resolvedColor();
 
         return a.colorResolvingCurrentColor(fromStyleColor) == b.colorResolvingCurrentColor(toStyleColor);
     }
@@ -1805,13 +1805,13 @@ public:
     }
 #endif
 private:
-    const StyleColor& value(const RenderStyle& style) const
+    const Style::Color& value(const RenderStyle& style) const
     {
         return (style.*m_getter)();
     }
 
-    const StyleColor& (RenderStyle::*m_getter)() const;
-    void (RenderStyle::*m_setter)(const StyleColor&);
+    const Style::Color& (RenderStyle::*m_getter)() const;
+    void (RenderStyle::*m_setter)(const Style::Color&);
 };
 
 
@@ -1919,7 +1919,7 @@ private:
 class PropertyWrapperVisitedAffectedStyleColor : public AnimationPropertyWrapperBase {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Animation);
 public:
-    PropertyWrapperVisitedAffectedStyleColor(CSSPropertyID property, const StyleColor& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const StyleColor&), const StyleColor& (RenderStyle::*visitedGetter)() const, void (RenderStyle::*visitedSetter)(const StyleColor&))
+    PropertyWrapperVisitedAffectedStyleColor(CSSPropertyID property, const Style::Color& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const Style::Color&), const Style::Color& (RenderStyle::*visitedGetter)() const, void (RenderStyle::*visitedSetter)(const Style::Color&))
         : AnimationPropertyWrapperBase(property)
         , m_wrapper(makeUnique<PropertyWrapperStyleColor>(property, getter, setter))
         , m_visitedWrapper(makeUnique<PropertyWrapperStyleColor>(property, visitedGetter, visitedSetter))
@@ -2584,7 +2584,7 @@ private:
 class PropertyWrapperSVGPaint final : public AnimationPropertyWrapperBase {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Animation);
 public:
-    PropertyWrapperSVGPaint(CSSPropertyID property, SVGPaintType (RenderStyle::*paintTypeGetter)() const, const StyleColor& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const StyleColor&))
+    PropertyWrapperSVGPaint(CSSPropertyID property, SVGPaintType (RenderStyle::*paintTypeGetter)() const, const Style::Color& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const Style::Color&))
         : AnimationPropertyWrapperBase(property)
         , m_paintTypeGetter(paintTypeGetter)
         , m_getter(getter)
@@ -2648,8 +2648,8 @@ public:
 
 private:
     SVGPaintType (RenderStyle::*m_paintTypeGetter)() const;
-    const StyleColor& (RenderStyle::*m_getter)() const;
-    void (RenderStyle::*m_setter)(const StyleColor&);
+    const Style::Color& (RenderStyle::*m_getter)() const;
+    void (RenderStyle::*m_setter)(const Style::Color&);
 };
 
 
@@ -2657,7 +2657,7 @@ private:
 class PropertyWrapperVisitedAffectedSVGPaint : public AnimationPropertyWrapperBase {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Animation);
 public:
-    PropertyWrapperVisitedAffectedSVGPaint(CSSPropertyID property, SVGPaintType (RenderStyle::*paintTypeGetter)() const, const StyleColor& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const StyleColor&), SVGPaintType (RenderStyle::*visitedPaintTypeGetter)() const, const StyleColor& (RenderStyle::*visitedGetter)() const, void (RenderStyle::*visitedSetter)(const StyleColor&))
+    PropertyWrapperVisitedAffectedSVGPaint(CSSPropertyID property, SVGPaintType (RenderStyle::*paintTypeGetter)() const, const Style::Color& (RenderStyle::*getter)() const, void (RenderStyle::*setter)(const Style::Color&), SVGPaintType (RenderStyle::*visitedPaintTypeGetter)() const, const Style::Color& (RenderStyle::*visitedGetter)() const, void (RenderStyle::*visitedSetter)(const Style::Color&))
         : AnimationPropertyWrapperBase(property)
         , m_wrapper(makeUnique<PropertyWrapperSVGPaint>(property, paintTypeGetter, getter, setter))
         , m_visitedWrapper(makeUnique<PropertyWrapperSVGPaint>(property, visitedPaintTypeGetter, visitedGetter, visitedSetter))
@@ -3939,7 +3939,9 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
 
         new TabSizePropertyWrapper,
 
+        new DiscretePropertyWrapper<BlockStepAlign>(CSSPropertyBlockStepAlign, &RenderStyle::blockStepAlign, &RenderStyle::setBlockStepAlign),
         new DiscretePropertyWrapper<BlockStepInsert>(CSSPropertyBlockStepInsert, &RenderStyle::blockStepInsert, &RenderStyle::setBlockStepInsert),
+        new DiscretePropertyWrapper<BlockStepRound>(CSSPropertyBlockStepRound, &RenderStyle::blockStepRound, &RenderStyle::setBlockStepRound),
         new OptionalLengthPropertyWrapper(CSSPropertyBlockStepSize, &RenderStyle::blockStepSize, &RenderStyle::setBlockStepSize, { OptionalLengthPropertyWrapper::Flags::NegativeLengthsAreInvalid }),
 
         new ContainIntrinsicLengthPropertyWrapper(CSSPropertyContainIntrinsicWidth, &RenderStyle::containIntrinsicWidth, &RenderStyle::setContainIntrinsicWidth, &RenderStyle::containIntrinsicWidthType, &RenderStyle::setContainIntrinsicWidthType),
@@ -4131,6 +4133,7 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
         CSSPropertyBorder,
         CSSPropertyBorderImage,
         CSSPropertyBorderSpacing,
+        CSSPropertyBlockStep,
         CSSPropertyColumns,
         CSSPropertyFlex,
         CSSPropertyFlexFlow,
@@ -4421,9 +4424,9 @@ static std::optional<CSSCustomPropertyValue::SyntaxValue> blendSyntaxValues(cons
     if (std::holds_alternative<Length>(from) && std::holds_alternative<Length>(to))
         return blendFunc(std::get<Length>(from), std::get<Length>(to), blendingContext);
 
-    if (std::holds_alternative<StyleColor>(from) && std::holds_alternative<StyleColor>(to)) {
-        auto& fromStyleColor = std::get<StyleColor>(from);
-        auto& toStyleColor = std::get<StyleColor>(to);
+    if (std::holds_alternative<Style::Color>(from) && std::holds_alternative<Style::Color>(to)) {
+        auto& fromStyleColor = std::get<Style::Color>(from);
+        auto& toStyleColor = std::get<Style::Color>(to);
         if (!fromStyleColor.isCurrentColor() || !toStyleColor.isCurrentColor())
             return blendFunc(fromStyle.colorResolvingCurrentColor(fromStyleColor), toStyle.colorResolvingCurrentColor(toStyleColor), blendingContext);
     }
@@ -4585,7 +4588,7 @@ static bool syntaxValuesRequireBlendingForAccumulativeIteration(const CSSCustomP
         return !isList && lengthsRequireBlendingForAccumulativeIteration(aLength, std::get<Length>(b));
     }, [] (const RefPtr<TransformOperation>&) {
         return true;
-    }, [] (const StyleColor&) {
+    }, [] (const Style::Color&) {
         return true;
     }, [] (auto&) {
         return false;
@@ -4660,7 +4663,7 @@ static bool typeOfSyntaxValueCanBeInterpolated(const CSSCustomPropertyValue::Syn
         [] (const Length&) {
             return true;
         },
-        [] (const StyleColor&) {
+        [] (const Style::Color&) {
             return true;
         },
         [] (CSSCustomPropertyValue::NumericSyntaxValue) {

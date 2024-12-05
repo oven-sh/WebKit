@@ -135,4 +135,5 @@ inline bool is(const UniqueRef<ArgType>& source)
 using WTF::UniqueRef;
 using WTF::makeUniqueRef;
 using WTF::makeUniqueRefWithoutFastMallocCheck;
+using WTF::makeUniqueRefWithoutRefCountedCheck;
 using WTF::makeUniqueRefFromNonNullUniquePtr;

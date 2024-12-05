@@ -56,6 +56,9 @@ public:
     static Ref<DigitalCredentialsCoordinatorProxy> create(WebPageProxy&);
     ~DigitalCredentialsCoordinatorProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 private:

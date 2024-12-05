@@ -1211,6 +1211,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         [tempArray addObject:NSAccessibilityRequiredAttribute];
         [tempArray addObject:NSAccessibilityInvalidAttribute];
         [tempArray addObject:NSAccessibilityPlaceholderValueAttribute];
+        [tempArray addObject:NSAccessibilitySelectedTextRangeAttribute];
         return tempArray;
     }();
     static NeverDestroyed tabListAttrs = [] {
@@ -3608,8 +3609,17 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         });
     }
 
-    if ([attribute isEqualToString:AXAttributedStringForTextMarkerRangeAttribute])
+    if ([attribute isEqualToString:AXAttributedStringForTextMarkerRangeAttribute]) {
+        if (!textMarkerRange)
+            return nil;
+#if ENABLE(AX_THREAD_TEXT_APIS)
+        // FIXME: Expand this beyond static text (i.e. ranges that span multiple objects).
+        if (AXObjectCache::useAXThreadTextApis() && backingObject->isStaticText())
+            return AXTextMarkerRange { textMarkerRange }.toAttributedString().autorelease();
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
+
         return attributedStringForTextMarkerRange(*backingObject, textMarkerRange, AXCoreObject::SpellCheck::Yes);
+    }
 
     if ([attribute isEqualToString:AXAttributedStringForTextMarkerRangeWithOptionsAttribute]) {
         if (textMarkerRange)

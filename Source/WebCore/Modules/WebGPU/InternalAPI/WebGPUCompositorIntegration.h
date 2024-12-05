@@ -31,7 +31,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Function.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -52,7 +52,7 @@ class Device;
 
 enum class TextureFormat : uint8_t;
 
-class CompositorIntegration : public RefCounted<CompositorIntegration>, public CanMakeWeakPtr<CompositorIntegration> {
+class CompositorIntegration : public RefCountedAndCanMakeWeakPtr<CompositorIntegration> {
 public:
     virtual ~CompositorIntegration() = default;
 

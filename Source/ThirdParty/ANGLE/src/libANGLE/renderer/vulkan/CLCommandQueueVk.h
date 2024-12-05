@@ -268,6 +268,11 @@ class CLCommandQueueVk : public CLCommandQueueImpl
                                         size_t bufferOffset,
                                         ImageBufferCopyDirection writeToBuffer);
 
+    bool hasUserEventDependency() const;
+
+    angle::Result insertBarrier();
+    angle::Result addMemoryDependencies(cl::Memory *clMem);
+
     CLContextVk *mContext;
     const CLDeviceVk *mDevice;
     cl::Memory *mPrintfBuffer;

@@ -69,8 +69,8 @@ public:
     WallTime arbitrationUpdateTime() const { return m_arbitrationUpdateTime; }
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
 protected:
     Logger& logger();

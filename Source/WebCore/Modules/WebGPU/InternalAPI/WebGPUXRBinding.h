@@ -30,7 +30,7 @@
 #include "WebGPUXRSubImage.h"
 
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -44,7 +44,7 @@ class XRGPUSubImage;
 class XRProjectionLayer;
 class XRView;
 
-class XRBinding : public RefCounted<XRBinding>, public CanMakeWeakPtr<XRBinding> {
+class XRBinding : public RefCountedAndCanMakeWeakPtr<XRBinding> {
 public:
     virtual ~XRBinding() = default;
 

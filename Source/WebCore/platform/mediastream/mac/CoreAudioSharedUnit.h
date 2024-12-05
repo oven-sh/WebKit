@@ -174,12 +174,15 @@ private:
     void unduck();
 
     void verifyIsCapturing();
+    void updateMutedStateTimerFired();
 
     void updateVoiceActivityDetection(bool shouldDisableVoiceActivityDetection = false);
     bool shouldEnableVoiceActivityDetection() const;
     RetainPtr<WebCoreAudioInputMuteChangeListener> createAudioInputMuteChangeListener();
     void setMutedState(bool isMuted);
-    void updateMutedState();
+
+    enum class SyncUpdate : bool { No, Yes };
+    void updateMutedState(SyncUpdate = SyncUpdate::No);
 
     CreationCallback m_creationCallback;
     GetSampleRateCallback m_getSampleRateCallback;
@@ -213,6 +216,8 @@ private:
     uint64_t m_microphoneProcsCalled { 0 };
     uint64_t m_microphoneProcsCalledLastTime { 0 };
     Timer m_verifyCapturingTimer;
+
+    Timer m_updateMutedStateTimer;
 
     std::optional<size_t> m_minimumMicrophoneSampleFrames;
     bool m_isReconfiguring { false };

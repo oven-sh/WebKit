@@ -26,7 +26,12 @@
 
 namespace WebCore {
 
+namespace Style {
+struct Color;
+}
+
 class Animation;
+class CSSColorValue;
 class CSSFunctionValue;
 class CSSPrimitiveValue;
 class CSSValue;
@@ -38,7 +43,6 @@ class Node;
 class RenderElement;
 class RenderStyle;
 class ShadowData;
-class StyleColor;
 class StylePropertyShorthand;
 class TransformOperation;
 class TransformationMatrix;
@@ -82,7 +86,7 @@ public:
     enum class AdjustPixelValuesForComputedStyle : bool { No, Yes };
     static Ref<CSSValue> valueForFilter(const RenderStyle&, const FilterOperations&, AdjustPixelValuesForComputedStyle = AdjustPixelValuesForComputedStyle::Yes);
 
-    static Ref<CSSPrimitiveValue> currentColorOrValidColor(const RenderStyle&, const StyleColor&);
+    static Ref<CSSColorValue> currentColorOrValidColor(const RenderStyle&, const Style::Color&);
     static Ref<CSSFunctionValue> matrixTransformValue(const TransformationMatrix&, const RenderStyle&);
     static Ref<CSSPrimitiveValue> zoomAdjustedPixelValueForLength(const Length&, const RenderStyle&);
 
@@ -93,7 +97,7 @@ private:
     RenderElement* styledRenderer() const;
 
     RefPtr<CSSValue> svgPropertyValue(CSSPropertyID) const;
-    Ref<CSSValue> adjustSVGPaint(SVGPaintType, const String& url, Ref<CSSPrimitiveValue> color) const;
+    Ref<CSSValue> adjustSVGPaint(SVGPaintType, const String& url, Ref<CSSValue> color) const;
     static Ref<CSSValue> valueForShadow(const ShadowData*, CSSPropertyID, const RenderStyle&, AdjustPixelValuesForComputedStyle = AdjustPixelValuesForComputedStyle::Yes);
 
     Ref<CSSValueList> getCSSPropertyValuesForShorthandProperties(const StylePropertyShorthand&) const;

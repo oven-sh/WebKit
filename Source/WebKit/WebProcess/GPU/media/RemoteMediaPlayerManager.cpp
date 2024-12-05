@@ -281,6 +281,11 @@ GPUProcessConnection& RemoteMediaPlayerManager::gpuProcessConnection()
     return *gpuProcessConnection;
 }
 
+Ref<GPUProcessConnection> RemoteMediaPlayerManager::protectedGPUProcessConnection()
+{
+    return gpuProcessConnection();
+}
+
 void RemoteMediaPlayerManager::gpuProcessConnectionDidClose(GPUProcessConnection& connection)
 {
     ASSERT(m_gpuProcessConnection.get() == &connection);

@@ -53,8 +53,6 @@
 #include <wtf/WorkQueue.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BlobRegistryImpl);
@@ -96,24 +94,26 @@ void BlobRegistryImpl::appendStorageItems(BlobData* blobData, const BlobDataItem
 {
     ASSERT(length != BlobDataItem::toEndOfFile);
 
-    BlobDataItemList::const_iterator iter = items.begin();
+    size_t itemsIndex = 0;
     if (offset) {
-        for (; iter != items.end(); ++iter) {
-            if (offset >= iter->length())
-                offset -= iter->length();
+        for (; itemsIndex < items.size(); ++itemsIndex) {
+            auto& item = items[itemsIndex];
+            if (offset >= item.length())
+                offset -= item.length();
             else
                 break;
         }
     }
 
-    for (; iter != items.end() && length > 0; ++iter) {
-        long long currentLength = iter->length() - offset;
+    for (; itemsIndex < items.size() && length > 0; ++itemsIndex) {
+        auto& item = items[itemsIndex];
+        long long currentLength = item.length() - offset;
         long long newLength = currentLength > length ? length : currentLength;
-        if (iter->type() == BlobDataItem::Type::Data)
-            blobData->appendData(*iter->data(), iter->offset() + offset, newLength);
+        if (item.type() == BlobDataItem::Type::Data)
+            blobData->appendData(*item.data(), item.offset() + offset, newLength);
         else {
-            ASSERT(iter->type() == BlobDataItem::Type::File);
-            blobData->appendFile(iter->file(), iter->offset() + offset, newLength);
+            ASSERT(item.type() == BlobDataItem::Type::File);
+            blobData->appendFile(item.file(), item.offset() + offset, newLength);
         }
         length -= newLength;
         offset = 0;
@@ -470,5 +470,3 @@ void BlobRegistryImpl::unregisterBlobURLHandle(const URL& url, const std::option
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -26,7 +26,6 @@
 
 #include "CSSInsetFunction.h"
 #include "StyleBorderRadius.h"
-#include "StyleMinimallySerializingRectEdges.h"
 #include "StylePathComputation.h"
 #include "StylePrimitiveNumericTypes.h"
 
@@ -37,7 +36,7 @@ class Path;
 namespace Style {
 
 struct Inset {
-    using Insets = MinimallySerializingRectEdges<LengthPercentage<>>;
+    using Insets = MinimallySerializingSpaceSeparatedRectEdges<LengthPercentage<>>;
 
     Insets insets;
     BorderRadius radii;
@@ -54,7 +53,7 @@ template<size_t I> const auto& get(const Inset& value)
         return value.radii;
 }
 
-DEFINE_CSS_STYLE_MAPPING(CSS::Inset, Inset)
+DEFINE_TYPE_MAPPING(CSS::Inset, Inset)
 
 template<> struct PathComputation<Inset> { WebCore::Path operator()(const Inset&, const FloatRect&); };
 

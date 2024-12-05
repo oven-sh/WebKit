@@ -29,17 +29,19 @@ namespace WebCore {
 
 struct WEBCORE_EXPORT QuirksData {
     std::optional<bool> isAmazon;
+    std::optional<bool> isCBSSports;
     std::optional<bool> isESPN;
+    std::optional<bool> isGoogleDocs;
     std::optional<bool> isGoogleMaps;
     std::optional<bool> isNetflix;
     std::optional<bool> isSoundCloud;
+    std::optional<bool> isSpotify;
     std::optional<bool> isVimeo;
     std::optional<bool> isYouTube;
     std::optional<bool> isZoom;
 
     std::optional<bool> implicitMuteWhenVolumeSetToZero;
     std::optional<bool> needsBingGestureEventQuirk;
-    std::optional<bool> needsBodyScrollbarWidthNoneDisabledQuirk;
     std::optional<bool> needsCanPlayAfterSeekedQuirk;
     std::optional<bool> needsChromeMediaControlsPseudoElementQuirk;
     std::optional<bool> needsDisableDOMPasteAccessQuirk;
@@ -69,7 +71,6 @@ struct WEBCORE_EXPORT QuirksData {
 
 #if PLATFORM(IOS_FAMILY)
     std::optional<bool> mayNeedToIgnoreContentObservation;
-    std::optional<bool> needsDeferKeyDownAndKeyPressTimersUntilNextEditingCommandQuirk;
     std::optional<bool> needsFullscreenDisplayNoneQuirk;
     std::optional<bool> needsFullscreenObjectFitQuirk;
     std::optional<bool> needsGMailOverflowScrollQuirk;
@@ -81,8 +82,6 @@ struct WEBCORE_EXPORT QuirksData {
     std::optional<bool> shouldEnableApplicationCacheQuirk;
     std::optional<bool> shouldIgnoreAriaForFastPathContentObservationCheckQuirk;
     std::optional<bool> shouldNavigatorPluginsBeEmpty;
-    std::optional<bool> shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk;
-    std::optional<bool> shouldSynthesizeTouchEventsAfterNonSyntheticClickQuirk;
 #endif
 
 #if PLATFORM(IOS) || PLATFORM(VISION)
@@ -97,7 +96,6 @@ struct WEBCORE_EXPORT QuirksData {
 
 #if PLATFORM(MAC)
     std::optional<bool> isNeverRichlyEditableForTouchBarQuirk;
-    std::optional<bool> isTouchBarUpdateSuppressedForHiddenContentEditableQuirk;
     std::optional<bool> needsFormControlToBeMouseFocusableQuirk;
     std::optional<bool> needsPrimeVideoUserSelectNoneQuirk;
 #endif

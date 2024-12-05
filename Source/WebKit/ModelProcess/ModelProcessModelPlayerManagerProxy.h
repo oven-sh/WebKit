@@ -51,6 +51,9 @@ public:
 
     ~ModelProcessModelPlayerManagerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     ModelConnectionToWebProcess* modelConnectionToWebProcess() { return m_modelConnectionToWebProcess.get(); }

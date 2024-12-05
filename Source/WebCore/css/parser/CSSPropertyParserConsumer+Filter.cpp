@@ -139,7 +139,7 @@ static RefPtr<CSSValue> consumeDropShadow(CSSParserTokenRange& range, const CSSP
 {
     // <drop-shadow> = [ <color>? && <length>{2,3} ]
 
-    RefPtr<CSSPrimitiveValue> color;
+    RefPtr<CSSValue> color;
     RefPtr<CSSPrimitiveValue> horizontalOffset;
     RefPtr<CSSPrimitiveValue> verticalOffset;
     RefPtr<CSSPrimitiveValue> standardDeviation;

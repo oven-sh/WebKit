@@ -18,6 +18,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/DOMParser-parseFromString.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/DOMWindowTimers-setTimeout-setInterval.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Document-execCommand.html
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/Document-write-appending-line-feed.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Document-write-exception-order.xhtml
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Document-write.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-insertAdjacentHTML.html
@@ -50,9 +51,9 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-createPolicy-cspTests-none.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-createPolicy-cspTests-wildcard.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-createPolicy-cspTests.html
-/LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-createPolicy-nameTests.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-createPolicy-unenforced.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-defaultPolicy.html
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-getAttributeType-event-handler-content-attributes.tentative.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-getAttributeType-namespace.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-getAttributeType-svg.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-getPropertyType.tentative.html
@@ -74,6 +75,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/block-string-assignment-to-Element-setHTMLUnsafe.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/block-string-assignment-to-HTMLElement-generic.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/block-string-assignment-to-Range-createContextualFragment.html
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/block-string-assignment-to-ShadowRoot-innerHTML.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/block-string-assignment-to-ShadowRoot-setHTMLUnsafe.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/block-string-assignment-to-attribute-via-attribute-node.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/block-text-node-insertion-into-script-element.html
@@ -92,11 +94,13 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-csp-tt-default-policy-mutate.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-csp-tt-default-policy.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-csp-tt-no-default-policy.html
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-function-constructor-untrusted-arguments-and-applying-default-policy.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-function-constructor.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-no-csp-no-tt-default-policy.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-no-csp-no-tt.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-with-permissive-csp.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/idlharness.window.js
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/legacy-trusted-script-urls.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/modify-attributes-in-callback.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/no-require-trusted-types-for-report-only.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/no-require-trusted-types-for-report-only.html.headers

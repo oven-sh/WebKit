@@ -463,6 +463,10 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
         else
             skeletonBuilder.append('0');
 
+        // 9. Perform ! CreateDataPropertyOrThrow(nfOpts, "useGrouping", false).
+        if (style == IntlDurationFormat::UnitStyle::TwoDigit || style ==  IntlDurationFormat::UnitStyle::Numeric)
+            skeletonBuilder.append(" group-off"_s);
+
         // 3.l. If value is not 0 or display is not "auto", then
         value = purifyNaN(value);
         if (value || unitData.display() != IntlDurationFormat::Display::Auto || style == IntlDurationFormat::UnitStyle::TwoDigit || style ==  IntlDurationFormat::UnitStyle::Numeric) {

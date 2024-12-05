@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2024 Apple Inc. All Rights Reserved.
  * Copyright (C) 2012 Google Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -104,7 +104,7 @@ static UncheckedKeyHashMap<ScriptExecutionContextIdentifier, ScriptExecutionCont
 }
 
 struct ScriptExecutionContext::PendingException {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(PendingException);
+    WTF_MAKE_TZONE_ALLOCATED(PendingException);
 public:
     PendingException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, RefPtr<ScriptCallStack>&& callStack)
         : m_errorMessage(errorMessage)
@@ -120,6 +120,9 @@ public:
     String m_sourceURL;
     RefPtr<ScriptCallStack> m_callStack;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(ScriptExecutionContext, PendingException);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(ScriptExecutionContext, Task);
 
 ScriptExecutionContext::ScriptExecutionContext(Type type, std::optional<ScriptExecutionContextIdentifier> contextIdentifier)
     : m_identifier(contextIdentifier ? *contextIdentifier : ScriptExecutionContextIdentifier::generate())

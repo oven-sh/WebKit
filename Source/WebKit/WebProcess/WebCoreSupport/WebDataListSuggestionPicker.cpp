@@ -33,6 +33,7 @@
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
 #include <WebCore/DataListSuggestionsClient.h>
+#include <WebCore/LocalFrameView.h>
 
 namespace WebKit {
 

@@ -25,6 +25,7 @@
 #include "config.h"
 #include "RenderBlockFlow.h"
 
+#include "BlockStepSizing.h"
 #include "Editor.h"
 #include "ElementInlines.h"
 #include "FloatingObjects.h"
@@ -908,21 +909,25 @@ void RenderBlockFlow::layoutInlineChildren(bool relayoutChildren, LayoutUnit& re
     m_previousInlineLayoutContentTopAndBottomIncludingInkOverflow = { };
 }
 
-static LayoutUnit computeExtraSpaceForBlockStepSizing(LayoutUnit stepSize, LayoutUnit boxOuterSize)
+void RenderBlockFlow::performBlockStepSizing(RenderBox& child, LayoutUnit blockStepSizeForChild) const
 {
-    if (!stepSize)
-        return { };
+    ASSERT(BlockStepSizing::childHasSupportedStyle(child.style()));
 
-    if (auto remainder = intMod(boxOuterSize, stepSize))
-        return stepSize - remainder;
-    return { };
-}
+    auto extraSpace = BlockStepSizing::computeExtraSpace(blockStepSizeForChild, logicalMarginBoxHeightForChild(child));
+    if (!extraSpace)
+        return;
 
-void RenderBlockFlow::distributeExtraBlockStepSizingSpaceToChild(RenderBox& child, LayoutUnit extraSpace) const
-{
-    auto halfExtraSpace = extraSpace / 2;
-    setMarginBeforeForChild(child, marginBeforeForChild(child) + halfExtraSpace);
-    setMarginAfterForChild(child, marginAfterForChild(child) + halfExtraSpace);
+    switch (child.style().blockStepInsert()) {
+    case BlockStepInsert::MarginBox:
+        BlockStepSizing::distributeExtraSpaceToChildMargins(child, extraSpace, writingMode());
+        break;
+    case BlockStepInsert::ContentBox:
+        BlockStepSizing::distributeExtraSpaceToChildContentArea(child, extraSpace, writingMode());
+        break;
+    case BlockStepInsert::PaddingBox:
+        BlockStepSizing::distributeExtraSpaceToChildPadding(child, extraSpace, writingMode());
+        break;
+    }
 }
 
 void RenderBlockFlow::layoutBlockChild(RenderBox& child, MarginInfo& marginInfo, LayoutUnit& previousFloatLogicalBottom, LayoutUnit& maxFloatLogicalBottom)
@@ -982,11 +987,9 @@ void RenderBlockFlow::layoutBlockChild(RenderBox& child, MarginInfo& marginInfo,
     if (childNeededLayout)
         child.layout();
 
-    if (auto blockStepSizeForChild = child.style().blockStepSize()) {
-        auto extraSpace = computeExtraSpaceForBlockStepSizing(LayoutUnit(blockStepSizeForChild->value()), logicalMarginBoxHeightForChild(child));
-        if (extraSpace)
-            distributeExtraBlockStepSizingSpaceToChild(child, extraSpace);
-    }
+    auto& childStyle = child.style();
+    if (auto blockStepSizeForChild = childStyle.blockStepSize(); blockStepSizeForChild && BlockStepSizing::childHasSupportedStyle(childStyle))
+        performBlockStepSizing(child, LayoutUnit(blockStepSizeForChild->value()));
 
     // Cache if we are at the top of the block right now.
     bool atBeforeSideOfBlock = marginInfo.atBeforeSideOfBlock();

@@ -78,6 +78,11 @@ void DownloadProxy::didReceiveFinalURL(const URL& finalURL, std::span<const uint
     m_client->didReceiveFinalURL(*this, finalURL, bookmarkData);
 }
 
+void DownloadProxy::didStartUpdatingProgress()
+{
+    m_assertion = nullptr;
+}
+
 Vector<uint8_t> DownloadProxy::bookmarkDataForURL(const URL& url)
 {
     RetainPtr localURL = adoptNS([[NSURL alloc] initFileURLWithPath:url.fileSystemPath() relativeToURL:nil]);

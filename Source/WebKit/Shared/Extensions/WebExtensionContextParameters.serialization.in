@@ -32,7 +32,7 @@ struct WebKit::WebExtensionContextParameters {
     HashMap<String, WallTime> grantedPermissions;
 
     RefPtr<API::Data> localizationJSON;
-    Ref<API::Data> manifestJSON;
+    RefPtr<API::Data> manifestJSON;
 
     double manifestVersion;
     bool isSessionStorageAllowedInContentScripts;

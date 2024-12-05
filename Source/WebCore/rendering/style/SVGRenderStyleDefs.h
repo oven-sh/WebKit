@@ -156,8 +156,8 @@ public:
 #endif
 
     float opacity;
-    StyleColor paintColor;
-    StyleColor visitedLinkPaintColor;
+    Style::Color paintColor;
+    Style::Color visitedLinkPaintColor;
     String paintUri;
     String visitedLinkPaintUri;
     SVGPaintType paintType;
@@ -183,8 +183,8 @@ public:
 
     float opacity;
 
-    StyleColor paintColor;
-    StyleColor visitedLinkPaintColor;
+    Style::Color paintColor;
+    Style::Color visitedLinkPaintColor;
 
     String paintUri;
     String visitedLinkPaintUri;
@@ -214,7 +214,7 @@ public:
 #endif
 
     float opacity;
-    StyleColor color;
+    Style::Color color;
 
 private:
     StyleStopData();
@@ -236,8 +236,8 @@ public:
 #endif
 
     float floodOpacity;
-    StyleColor floodColor;
-    StyleColor lightingColor;
+    Style::Color floodColor;
+    Style::Color lightingColor;
 
     SVGLengthValue baselineShiftValue;
 

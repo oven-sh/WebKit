@@ -74,7 +74,7 @@ CSSValuePool& CSSValuePool::singleton()
     return pool;
 }
 
-Ref<CSSPrimitiveValue> CSSValuePool::createColorValue(const Color& color)
+Ref<CSSColorValue> CSSValuePool::createColorValue(const Color& color)
 {
     // These are the empty and deleted values of the hash table.
     if (color == Color::transparentBlack)
@@ -92,7 +92,7 @@ Ref<CSSPrimitiveValue> CSSValuePool::createColorValue(const Color& color)
         m_colorValueCache.remove(m_colorValueCache.random());
 
     return m_colorValueCache.ensure(color, [&color] {
-        return adoptRef(*new CSSPrimitiveValue(color));
+        return CSSColorValue::create(color);
     }).iterator->value;
 }
 

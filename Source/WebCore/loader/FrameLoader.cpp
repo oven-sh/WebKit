@@ -1291,7 +1291,7 @@ void FrameLoader::loadInSameDocument(URL url, RefPtr<SerializedScriptValue> stat
 
     auto navigationType = determineNavigationType(m_loadType, historyHandling);
     if (document->settings().navigationAPIEnabled() && document->domWindow() && m_frame->checkedHistory()->currentItem())
-        document->protectedWindow()->navigation().updateForNavigation(*m_frame->checkedHistory()->currentItem(), navigationType);
+        document->protectedWindow()->navigation().updateForNavigation(*m_frame->checkedHistory()->currentItem(), navigationType, ShouldCopyStateObjectFromCurrentEntry::Yes);
 
     // If we were in the autoscroll/panScroll mode we want to stop it before following the link to the anchor
     if (hashChange)
@@ -3927,7 +3927,7 @@ void FrameLoader::executeJavaScriptURL(const URL& url, const NavigationAction& a
         if (RefPtr document = m_frame->document())
             document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Blocked script execution in '"_s, action.requester()->url.stringCenterEllipsizedToLength(), "' because the document's frame is sandboxed and the 'allow-scripts' permission is not set."_s));
     } else
-        protectedFrame()->checkedScript()->executeJavaScriptURL(url, action.requester() ? action.requester()->securityOrigin.ptr() : nullptr, action.shouldReplaceDocumentIfJavaScriptURL(), didReplaceDocument);
+        protectedFrame()->checkedScript()->executeJavaScriptURL(url, action, didReplaceDocument);
 
     // We need to communicate that a load happened, even if the JavaScript URL execution didn't end up replacing the document.
     if (RefPtr document = m_frame->document(); isFirstNavigationInFrame && !didReplaceDocument)

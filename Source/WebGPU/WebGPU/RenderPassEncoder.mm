@@ -560,6 +560,10 @@ bool RenderPassEncoder::executePreDrawCommands(uint32_t firstInstance, uint32_t 
             makeInvalid(error);
             return false;
         }
+        if (group->makeSubmitInvalid(ShaderStage::Vertex) || group->makeSubmitInvalid(ShaderStage::Fragment)) {
+            protectedParentEncoder()->makeSubmitInvalid();
+            return false;
+        }
         [commandEncoder setVertexBuffer:group->vertexArgumentBuffer() offset:0 atIndex:m_device->vertexBufferIndexForBindGroup(groupIndex)];
         [commandEncoder setFragmentBuffer:group->fragmentArgumentBuffer() offset:0 atIndex:groupIndex];
     }
@@ -1035,6 +1039,11 @@ void RenderPassEncoder::executeBundles(Vector<Ref<RenderBundle>>&& bundles)
     for (auto bundle : bundles) {
         if (!isValidToUseWith(bundle, *this)) {
             makeInvalid([NSString stringWithFormat:@"executeBundles: render bundle is not valid, reason = %@", bundle->lastError()]);
+            return;
+        }
+
+        if (bundle->makeSubmitInvalid()) {
+            protectedParentEncoder()->makeSubmitInvalid();
             return;
         }
 

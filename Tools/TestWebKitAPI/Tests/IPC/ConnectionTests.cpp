@@ -88,13 +88,19 @@ struct MockTestSyncMessageWithDataReply {
 namespace {
 class SimpleConnectionTest : public testing::Test {
 public:
+    SimpleConnectionTest()
+        : m_mockServerClient(MockConnectionClient::create())
+        , m_mockClientClient(MockConnectionClient::create())
+    {
+    }
+
     void SetUp() override
     {
         WTF::initializeMainThread();
     }
 protected:
-    MockConnectionClient m_mockServerClient;
-    MockConnectionClient m_mockClientClient;
+    Ref<MockConnectionClient> m_mockServerClient;
+    Ref<MockConnectionClient> m_mockClientClient;
 };
 }
 
@@ -141,7 +147,7 @@ TEST_F(SimpleConnectionTest, ClearOutgoingMessages)
     auto secondIdentifiers = IPC::Connection::createConnectionIdentifierPair();
     ASSERT_NE(secondIdentifiers, std::nullopt);
     Ref<IPC::Connection> secondServerConnection = IPC::Connection::createServerConnection(WTFMove(secondIdentifiers->server));
-    MockConnectionClient mockSecondServerClient;
+    Ref mockSecondServerClient = MockConnectionClient::create();
     secondServerConnection->open(mockSecondServerClient);
 
     firstServerConnection->send(MockTestMessageWithConnection { WTFMove(secondIdentifiers->client) }, 0);
@@ -355,7 +361,7 @@ TEST_P(ConnectionTestABBA, ReceiveAlreadyInvalidatedClientNoAssert)
     HashSet<uint64_t> done;
     struct {
         RefPtr<IPC::Connection> clientConnection;
-        MockConnectionClient mockClientClient;
+        Ref<MockConnectionClient> mockClientClient { MockConnectionClient::create() };
     } connections[iterations];
 
     bClient().setAsyncMessageHandler([&] (IPC::Decoder& decoder) -> bool {
@@ -367,7 +373,7 @@ TEST_P(ConnectionTestABBA, ReceiveAlreadyInvalidatedClientNoAssert)
         clientConnection->open(connections[i].mockClientClient);
         connections[i].clientConnection = WTFMove(clientConnection);
         // The connection starts as not closed in order for the system to deliver didClose().
-        EXPECT_FALSE(connections[i].mockClientClient.gotDidClose()) << i;
+        EXPECT_FALSE(connections[i].mockClientClient->gotDidClose()) << i;
         done.add(i);
         return true;
     });
@@ -375,7 +381,7 @@ TEST_P(ConnectionTestABBA, ReceiveAlreadyInvalidatedClientNoAssert)
         auto identifiers = IPC::Connection::createConnectionIdentifierPair();
         ASSERT_NE(identifiers, std::nullopt);
         Ref<IPC::Connection> serverConnection = IPC::Connection::createServerConnection(WTFMove(identifiers->server));
-        MockConnectionClient mockServerClient;
+        Ref mockServerClient = MockConnectionClient::create();
         serverConnection->open(mockServerClient);
         a()->send(MockTestMessageWithConnection { WTFMove(identifiers->client) }, i);
         serverConnection->invalidate();
@@ -385,7 +391,7 @@ TEST_P(ConnectionTestABBA, ReceiveAlreadyInvalidatedClientNoAssert)
 
     for (uint64_t i = 1; i < iterations; ++i) {
         auto& connection = connections[i];
-        EXPECT_TRUE(connection.mockClientClient.gotDidClose() || connection.mockClientClient.waitForDidClose(kDefaultWaitForTimeout)) << i;
+        EXPECT_TRUE(connection.mockClientClient->gotDidClose() || connection.mockClientClient->waitForDidClose(kDefaultWaitForTimeout)) << i;
         connection.clientConnection->invalidate();
     }
 }

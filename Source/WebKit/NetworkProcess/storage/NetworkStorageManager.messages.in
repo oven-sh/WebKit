@@ -23,6 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
  
+ [SharedPreferencesNeedsConnection]
  messages -> NetworkStorageManager {
     Persisted(struct WebCore::ClientOrigin origin) -> (bool persisted)
     Persist(struct WebCore::ClientOrigin origin) -> (bool persisted)
@@ -39,6 +40,9 @@
     CreateSyncAccessHandle(WebCore::FileSystemHandleIdentifier identifier) -> (Expected<WebKit::FileSystemSyncAccessHandleInfo, WebKit::FileSystemStorageError> result)
     CloseSyncAccessHandle(WebCore::FileSystemHandleIdentifier identifier, WebCore::FileSystemSyncAccessHandleIdentifier accessHandleIdentifier) -> ()
     RequestNewCapacityForSyncAccessHandle(WebCore::FileSystemHandleIdentifier identifier, WebCore::FileSystemSyncAccessHandleIdentifier accessHandleIdentifier, uint64_t newCapacity) -> (std::optional<uint64_t> result)
+    [EnabledBy=FileSystemWritableStreamEnabled] CreateWritable(WebCore::FileSystemHandleIdentifier identifier, bool keepExistingData) -> (std::optional<WebKit::FileSystemStorageError> result)
+    [EnabledBy=FileSystemWritableStreamEnabled] CloseWritable(WebCore::FileSystemHandleIdentifier identifier, bool aborted) -> (std::optional<WebKit::FileSystemStorageError> result)
+    [EnabledBy=FileSystemWritableStreamEnabled] ExecuteCommandForWritable(WebCore::FileSystemHandleIdentifier identifier, WebCore::FileSystemWritableFileStream::WriteCommandType type, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError) ->  (std::optional<WebKit::FileSystemStorageError> result)
     GetHandleNames(WebCore::FileSystemHandleIdentifier identifier) -> (Expected<Vector<String>, WebKit::FileSystemStorageError> result)
     GetHandle(WebCore::FileSystemHandleIdentifier identifier, String name) -> (Expected<std::optional<std::pair<WebCore::FileSystemHandleIdentifier, bool>>, WebKit::FileSystemStorageError> result)
 

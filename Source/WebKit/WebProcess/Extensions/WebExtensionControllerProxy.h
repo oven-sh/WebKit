@@ -53,6 +53,9 @@ public:
 
     ~WebExtensionControllerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     using WebExtensionContextProxySet = HashSet<Ref<WebExtensionContextProxy>>;
     using WebExtensionContextProxyBaseURLMap = HashMap<String, Ref<WebExtensionContextProxy>>;
 

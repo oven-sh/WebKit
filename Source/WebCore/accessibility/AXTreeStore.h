@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,7 +31,6 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
-#include <wtf/TZoneMallocInlines.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
@@ -59,7 +58,9 @@ WEBCORE_EXPORT AXTreePtr findAXTree(Function<bool(AXTreePtr)>&&);
 
 template<typename T>
 class AXTreeStore {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(AXTreeStore);
+    // For now, we just disable direct instantiations of this class because it is not
+    // needed. Subclasses are expected to declare their own WTF_MAKE_TZONE_ALLOCATED.
+    WTF_MAKE_TZONE_NONALLOCATABLE(AXTreeStore);
     WTF_MAKE_NONCOPYABLE(AXTreeStore);
     friend WEBCORE_EXPORT AXTreePtr findAXTree(Function<bool(AXTreePtr)>&&);
 public:

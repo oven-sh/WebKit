@@ -100,7 +100,12 @@ void WebExtensionContext::windowsCreate(const WebExtensionWindowParameters& crea
     configuration.tabURLs = [urls copy];
     configuration.tabs = [tabs copy];
 
-    [extensionController()->delegate() webExtensionController:extensionController()->wrapper() openNewWindowUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)](id<WKWebExtensionWindow> newWindow, NSError *error) mutable {
+    RefPtr extensionController = this->extensionController();
+    if (!extensionController) {
+        completionHandler(toWebExtensionError(apiName, nil, @"No extensionController"));
+        return;
+    }
+    [extensionController->delegate() webExtensionController:extensionController->wrapper() openNewWindowUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)](id<WKWebExtensionWindow> newWindow, NSError *error) mutable {
         if (error) {
             RELEASE_LOG_ERROR(Extensions, "Error for open new window: %{public}@", privacyPreservingDescription(error));
             completionHandler(toWebExtensionError(apiName, nil, error.localizedDescription));

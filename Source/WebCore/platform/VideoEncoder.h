@@ -36,7 +36,7 @@
 
 namespace WebCore {
 
-class VideoEncoder {
+class VideoEncoder : public ThreadSafeRefCounted<VideoEncoder> {
 public:
     virtual ~VideoEncoder() = default;
 
@@ -64,8 +64,8 @@ public:
         int64_t timestamp { 0 };
         std::optional<uint64_t> duration;
     };
-    using CreateResult = Expected<UniqueRef<VideoEncoder>, String>;
-    using CreatePromise = NativePromise<UniqueRef<VideoEncoder>, String>;
+    using CreateResult = Expected<Ref<VideoEncoder>, String>;
+    using CreatePromise = NativePromise<Ref<VideoEncoder>, String>;
 
     using DescriptionCallback = Function<void(ActiveConfiguration&&)>;
     using OutputCallback = Function<void(EncodedFrame&&)>;

@@ -197,10 +197,18 @@ protected:
     std::atomic<bool> m_closed { false };
 };
 
-class MockMessageReceiver : public IPC::Connection::Client, public WaitForMessageMixin {
+class MockMessageReceiver : public IPC::Connection::Client, public WaitForMessageMixin, public RefCounted<MockMessageReceiver> {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MockMessageReceiver);
 public:
+    static Ref<MockMessageReceiver> create()
+    {
+        return adoptRef(*new MockMessageReceiver);
+    }
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     // IPC::Connection::MessageReceiver overrides.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder& decoder) override
     {
@@ -218,6 +226,9 @@ public:
     }
 
     void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, int32_t indexOfDecodingFailure) final { ASSERT_NOT_REACHED(); }
+
+private:
+    MockMessageReceiver() = default;
 };
 
 class MockStreamMessageReceiver : public IPC::StreamMessageReceiver, public WaitForMessageMixin {
@@ -307,14 +318,14 @@ TEST_F(StreamConnectionTest, OpenConnections)
     auto [clientConnection, serverConnectionHandle] = WTFMove(*connectionPair);
     auto serverConnection = IPC::StreamServerConnection::tryCreate(WTFMove(serverConnectionHandle), { }).releaseNonNull();
     auto cleanup = localReferenceBarrier();
-    MockMessageReceiver mockClientReceiver;
+    Ref mockClientReceiver = MockMessageReceiver::create();
     clientConnection->open(mockClientReceiver);
     serverQueue().dispatch([this, serverConnection] {
         assertIsCurrent(serverQueue());
         serverConnection->open(serverQueue());
         serverConnection->invalidate();
     });
-    mockClientReceiver.waitUntilClosed();
+    mockClientReceiver->waitUntilClosed();
     clientConnection->invalidate();
 }
 
@@ -334,6 +345,11 @@ TEST_F(StreamConnectionTest, InvalidateUnopened)
 
 class StreamMessageTest : public ::testing::TestWithParam<std::tuple<unsigned>>, public StreamConnectionTestBase {
 public:
+    StreamMessageTest()
+        : m_mockClientReceiver(MockMessageReceiver::create())
+    {
+    }
+
     unsigned bufferSizeLog2() const
     {
         return std::get<0>(GetParam());
@@ -389,7 +405,7 @@ protected:
         return ObjectIdentifier<TestObjectIdentifierTag>(77);
     }
 
-    MockMessageReceiver m_mockClientReceiver;
+    Ref<MockMessageReceiver> m_mockClientReceiver;
     RefPtr<IPC::StreamClientConnection> m_clientConnection;
     RefPtr<IPC::StreamConnectionWorkQueue> m_serverQueue;
     RefPtr<IPC::StreamServerConnection> m_serverConnection WTF_GUARDED_BY_CAPABILITY(serverQueue());
@@ -411,7 +427,7 @@ TEST_P(StreamMessageTest, Send)
         }
     });
     for (uint64_t i = 100u; i < 160u; ++i) {
-        auto message = m_mockClientReceiver.waitForMessage();
+        auto message = m_mockClientReceiver->waitForMessage();
         EXPECT_EQ(message.messageName, MockTestMessage1::name());
         EXPECT_EQ(message.destinationID, i);
     }

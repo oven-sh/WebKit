@@ -26,11 +26,11 @@
 import Foundation
 
 final class WKNavigationDelegateAdapter: NSObject, WKNavigationDelegate {
-    private let navigationProgressContinuation: AsyncStream<WebPage_v0.NavigationEvent>.Continuation
-
     init(navigationProgressContinuation: AsyncStream<WebPage_v0.NavigationEvent>.Continuation) {
         self.navigationProgressContinuation = navigationProgressContinuation
     }
+
+    private let navigationProgressContinuation: AsyncStream<WebPage_v0.NavigationEvent>.Continuation
 
     // MARK: Navigation progress reporting
 

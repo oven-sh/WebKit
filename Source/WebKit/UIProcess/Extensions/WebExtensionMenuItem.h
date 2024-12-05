@@ -32,8 +32,8 @@
 #include "WebExtensionMenuItemContextType.h"
 #include "WebExtensionMenuItemType.h"
 #include <wtf/Forward.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 OBJC_CLASS NSArray;
@@ -65,7 +65,7 @@ class WebExtensionContext;
 struct WebExtensionMenuItemContextParameters;
 struct WebExtensionMenuItemParameters;
 
-class WebExtensionMenuItem : public RefCounted<WebExtensionMenuItem>, public CanMakeWeakPtr<WebExtensionMenuItem> {
+class WebExtensionMenuItem : public RefCountedAndCanMakeWeakPtr<WebExtensionMenuItem> {
     WTF_MAKE_NONCOPYABLE(WebExtensionMenuItem);
     WTF_MAKE_TZONE_ALLOCATED(WebExtensionMenuItem);
 

@@ -53,7 +53,7 @@ public:
     bool isEquivalentForPainting(const StyleBackgroundData&, bool currentColorDiffers) const;
 
     DataRef<FillLayer> background;
-    StyleColor color;
+    Style::Color color;
     OutlineValue outline;
 
     void dump(TextStream&, DumpStyleValues = DumpStyleValues::All) const;

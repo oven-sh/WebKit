@@ -282,7 +282,7 @@ RefPtr<CSSValue> consumePositionY(CSSParserTokenRange& range, const CSSParserCon
 
 // MARK: Unresolved Position
 
-using PositionUnresolvedComponent = std::variant<CSS::Left, CSS::Right, CSS::Top, CSS::Bottom, CSS::Center, CSS::LengthPercentage<>>;
+using PositionUnresolvedComponent = std::variant<CSS::Keyword::Left, CSS::Keyword::Right, CSS::Keyword::Top, CSS::Keyword::Bottom, CSS::Keyword::Center, CSS::LengthPercentage<>>;
 
 static std::optional<PositionUnresolvedComponent> consumePositionUnresolvedComponent(CSSParserTokenRange& range, const CSSParserContext& context)
 {
@@ -290,19 +290,19 @@ static std::optional<PositionUnresolvedComponent> consumePositionUnresolvedCompo
         switch (range.peek().id()) {
         case CSSValueLeft:
             range.consumeIncludingWhitespace();
-            return PositionUnresolvedComponent { CSS::Left { } };
+            return PositionUnresolvedComponent { CSS::Keyword::Left { } };
         case CSSValueRight:
             range.consumeIncludingWhitespace();
-            return PositionUnresolvedComponent { CSS::Right { } };
+            return PositionUnresolvedComponent { CSS::Keyword::Right { } };
         case CSSValueBottom:
             range.consumeIncludingWhitespace();
-            return PositionUnresolvedComponent { CSS::Bottom { } };
+            return PositionUnresolvedComponent { CSS::Keyword::Bottom { } };
         case CSSValueTop:
             range.consumeIncludingWhitespace();
-            return PositionUnresolvedComponent { CSS::Top { } };
+            return PositionUnresolvedComponent { CSS::Keyword::Top { } };
         case CSSValueCenter:
             range.consumeIncludingWhitespace();
-            return PositionUnresolvedComponent { CSS::Center { } };
+            return PositionUnresolvedComponent { CSS::Keyword::Center { } };
         default:
             return std::nullopt;
         }
@@ -323,13 +323,13 @@ std::optional<CSS::TwoComponentPositionHorizontal> consumeTwoComponentPositionHo
         switch (range.peek().id()) {
         case CSSValueLeft:
             range.consumeIncludingWhitespace();
-            return CSS::TwoComponentPositionHorizontal { CSS::Left { } };
+            return CSS::TwoComponentPositionHorizontal { CSS::Keyword::Left { } };
         case CSSValueRight:
             range.consumeIncludingWhitespace();
-            return CSS::TwoComponentPositionHorizontal { CSS::Right { } };
+            return CSS::TwoComponentPositionHorizontal { CSS::Keyword::Right { } };
         case CSSValueCenter:
             range.consumeIncludingWhitespace();
-            return CSS::TwoComponentPositionHorizontal { CSS::Center { } };
+            return CSS::TwoComponentPositionHorizontal { CSS::Keyword::Center { } };
         default:
             return std::nullopt;
         }
@@ -350,13 +350,13 @@ std::optional<CSS::TwoComponentPositionVertical> consumeTwoComponentPositionVert
         switch (range.peek().id()) {
         case CSSValueBottom:
             range.consumeIncludingWhitespace();
-            return CSS::TwoComponentPositionVertical { CSS::Bottom { } };
+            return CSS::TwoComponentPositionVertical { CSS::Keyword::Bottom { } };
         case CSSValueTop:
             range.consumeIncludingWhitespace();
-            return CSS::TwoComponentPositionVertical { CSS::Top { } };
+            return CSS::TwoComponentPositionVertical { CSS::Keyword::Top { } };
         case CSSValueCenter:
             range.consumeIncludingWhitespace();
-            return CSS::TwoComponentPositionVertical { CSS::Center { } };
+            return CSS::TwoComponentPositionVertical { CSS::Keyword::Center { } };
         default:
             return std::nullopt;
         }
@@ -373,34 +373,34 @@ std::optional<CSS::TwoComponentPositionVertical> consumeTwoComponentPositionVert
 
 static bool isHorizontalPositionKeywordOnly(const PositionUnresolvedComponent& component)
 {
-    return std::holds_alternative<CSS::Left>(component) || std::holds_alternative<CSS::Right>(component);
+    return std::holds_alternative<CSS::Keyword::Left>(component) || std::holds_alternative<CSS::Keyword::Right>(component);
 }
 
 static bool isVerticalPositionKeywordOnly(const PositionUnresolvedComponent& component)
 {
-    return std::holds_alternative<CSS::Top>(component) || std::holds_alternative<CSS::Bottom>(component);
+    return std::holds_alternative<CSS::Keyword::Top>(component) || std::holds_alternative<CSS::Keyword::Bottom>(component);
 }
 
 static CSS::Position positionUnresolvedFromOneComponent(PositionUnresolvedComponent&& component)
 {
     return WTF::switchOn(WTFMove(component),
-        [](CSS::Left&& component) {
-            return CSS::TwoComponentPosition { { WTFMove(component) }, { CSS::Center { } } };
+        [](CSS::Keyword::Left&& component) {
+            return CSS::TwoComponentPosition { { WTFMove(component) }, { CSS::Keyword::Center { } } };
         },
-        [](CSS::Right&& component) {
-            return CSS::TwoComponentPosition { { WTFMove(component) }, { CSS::Center { } } };
+        [](CSS::Keyword::Right&& component) {
+            return CSS::TwoComponentPosition { { WTFMove(component) }, { CSS::Keyword::Center { } } };
         },
-        [](CSS::Top&& component) {
-            return CSS::TwoComponentPosition { { CSS::Center { } }, { WTFMove(component) } };
+        [](CSS::Keyword::Top&& component) {
+            return CSS::TwoComponentPosition { { CSS::Keyword::Center { } }, { WTFMove(component) } };
         },
-        [](CSS::Bottom&& component) {
-            return CSS::TwoComponentPosition { { CSS::Center { } }, { WTFMove(component) } };
+        [](CSS::Keyword::Bottom&& component) {
+            return CSS::TwoComponentPosition { { CSS::Keyword::Center { } }, { WTFMove(component) } };
         },
-        [](CSS::Center&&) {
-            return CSS::TwoComponentPosition { { CSS::Center { } }, { CSS::Center { } } };
+        [](CSS::Keyword::Center&&) {
+            return CSS::TwoComponentPosition { { CSS::Keyword::Center { } }, { CSS::Keyword::Center { } } };
         },
         [](CSS::LengthPercentage<>&& component) {
-            return CSS::TwoComponentPosition { { WTFMove(component) }, { CSS::Center { } } };
+            return CSS::TwoComponentPosition { { WTFMove(component) }, { CSS::Keyword::Center { } } };
         }
     );
 }
@@ -408,13 +408,13 @@ static CSS::Position positionUnresolvedFromOneComponent(PositionUnresolvedCompon
 static CSS::TwoComponentPositionHorizontal toTwoComponentPositionHorizontal(PositionUnresolvedComponent&& component)
 {
     return WTF::switchOn(WTFMove(component),
-        [](CSS::Top&&) {
+        [](CSS::Keyword::Top&&) {
             ASSERT_NOT_REACHED();
-            return CSS::TwoComponentPositionHorizontal { CSS::Center { } };
+            return CSS::TwoComponentPositionHorizontal { CSS::Keyword::Center { } };
         },
-        [](CSS::Bottom&&) {
+        [](CSS::Keyword::Bottom&&) {
             ASSERT_NOT_REACHED();
-            return CSS::TwoComponentPositionHorizontal { CSS::Center { } };
+            return CSS::TwoComponentPositionHorizontal { CSS::Keyword::Center { } };
         },
         [](auto&& component) {
             return CSS::TwoComponentPositionHorizontal { WTFMove(component) };
@@ -425,13 +425,13 @@ static CSS::TwoComponentPositionHorizontal toTwoComponentPositionHorizontal(Posi
 static CSS::TwoComponentPositionVertical toTwoComponentPositionVertical(PositionUnresolvedComponent&& component)
 {
     return WTF::switchOn(WTFMove(component),
-        [](CSS::Left&&) {
+        [](CSS::Keyword::Left&&) {
             ASSERT_NOT_REACHED();
-            return CSS::TwoComponentPositionVertical { CSS::Center { } };
+            return CSS::TwoComponentPositionVertical { CSS::Keyword::Center { } };
         },
-        [](CSS::Right&&) {
+        [](CSS::Keyword::Right&&) {
             ASSERT_NOT_REACHED();
-            return CSS::TwoComponentPositionVertical { CSS::Center { } };
+            return CSS::TwoComponentPositionVertical { CSS::Keyword::Center { } };
         },
         [](auto&& component) {
             return CSS::TwoComponentPositionVertical { WTFMove(component) };
@@ -456,27 +456,27 @@ static std::optional<CSS::Position> positionUnresolvedFromFourComponents(Positio
     std::optional<CSS::FourComponentPositionVertical> vertical;
 
     WTF::switchOn(WTFMove(component1),
-        [&](CSS::Left&& component) {
+        [&](CSS::Keyword::Left&& component) {
             if (!std::holds_alternative<CSS::LengthPercentage<>>(component2))
                 return;
             horizontal = CSS::FourComponentPositionHorizontal { component, std::get<CSS::LengthPercentage<>>(component2) };
         },
-        [&](CSS::Right&& component) {
+        [&](CSS::Keyword::Right&& component) {
             if (!std::holds_alternative<CSS::LengthPercentage<>>(component2))
                 return;
             horizontal = CSS::FourComponentPositionHorizontal { component, std::get<CSS::LengthPercentage<>>(component2) };
         },
-        [&](CSS::Top&& component) {
+        [&](CSS::Keyword::Top&& component) {
             if (!std::holds_alternative<CSS::LengthPercentage<>>(component2))
                 return;
             vertical = CSS::FourComponentPositionVertical { component, std::get<CSS::LengthPercentage<>>(component2) };
         },
-        [&](CSS::Bottom&& component) {
+        [&](CSS::Keyword::Bottom&& component) {
             if (!std::holds_alternative<CSS::LengthPercentage<>>(component2))
                 return;
             vertical = CSS::FourComponentPositionVertical { component, std::get<CSS::LengthPercentage<>>(component2) };
         },
-        [&](CSS::Center&&) { },
+        [&](CSS::Keyword::Center&&) { },
         [&](CSS::LengthPercentage<>&&) { }
     );
 
@@ -484,27 +484,27 @@ static std::optional<CSS::Position> positionUnresolvedFromFourComponents(Positio
         return std::nullopt;
 
     WTF::switchOn(WTFMove(component3),
-        [&](CSS::Left&& component) {
+        [&](CSS::Keyword::Left&& component) {
             if (horizontal || !std::holds_alternative<CSS::LengthPercentage<>>(component4))
                 return;
             horizontal = CSS::FourComponentPositionHorizontal { component, std::get<CSS::LengthPercentage<>>(component4) };
         },
-        [&](CSS::Right&& component) {
+        [&](CSS::Keyword::Right&& component) {
             if (horizontal || !std::holds_alternative<CSS::LengthPercentage<>>(component4))
                 return;
             horizontal = CSS::FourComponentPositionHorizontal { component, std::get<CSS::LengthPercentage<>>(component4) };
         },
-        [&](CSS::Top&& component) {
+        [&](CSS::Keyword::Top&& component) {
             if (vertical || !std::holds_alternative<CSS::LengthPercentage<>>(component4))
                 return;
             vertical = CSS::FourComponentPositionVertical { component, std::get<CSS::LengthPercentage<>>(component4) };
         },
-        [&](CSS::Bottom&& component) {
+        [&](CSS::Keyword::Bottom&& component) {
             if (vertical || !std::holds_alternative<CSS::LengthPercentage<>>(component4))
                 return;
             vertical = CSS::FourComponentPositionVertical { component, std::get<CSS::LengthPercentage<>>(component4) };
         },
-        [&](CSS::Center&&) { },
+        [&](CSS::Keyword::Center&&) { },
         [&](CSS::LengthPercentage<>&&) { }
     );
 

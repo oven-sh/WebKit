@@ -233,7 +233,11 @@ end
 macro argumINTEnd()
     # zero out remaining locals
     bqeq argumINTDst, argumINTEnd, .ipint_entry_finish_zero
-    storeq 0, [argumINTDst]
+    loadb [MC], argumINTTmp
+    addq 1, MC
+    sxb2q argumINTTmp, argumINTTmp
+    andq ValueNull, argumINTTmp
+    storeq argumINTTmp, [argumINTDst]
     addq 8, argumINTDst
 end
 
@@ -413,14 +417,14 @@ instructionLabel(_br)
     #
     # [sp + k + numToPop] = [sp + k] for k in numToKeep-1 -> 0
     move t0, t2
-    lshiftq 4, t2
+    lshiftq StackValueShift, t2
     leap [sp, t2], t2
 
 .ipint_br_poploop:
     bqeq t1, 0, .ipint_br_popend
     subq 1, t1
     move t1, t3
-    lshiftq 4, t3
+    lshiftq StackValueShift, t3
     loadq [sp, t3], t0
     storeq t0, [t2, t3]
     loadq 8[sp, t3], t0
@@ -428,7 +432,7 @@ instructionLabel(_br)
     jmp .ipint_br_poploop
 .ipint_br_popend:
     loadh IPInt::BranchTargetMetadata::toPop[MC], t0
-    lshiftq 4, t0
+    lshiftq StackValueShift, t0
     leap [sp, t0], sp
 
 if ARM64 or ARM64E
@@ -568,8 +572,44 @@ instructionLabel(_return_call_indirect)
     advanceMC(IPInt::TailCallIndirectMetadata::argumentBytecode)
     jmp .ipint_tail_call_common
 
-reservedOpcode(0x14)
-reservedOpcode(0x15)
+instructionLabel(_call_ref)
+    move cfr, a1
+    loadi IPInt::CallRefMetadata::typeIndex[MC], a2
+    move sp, a3
+
+    operationCall(macro() cCall4(_ipint_extern_prepare_call_ref) end)
+    btpz r1, .ipint_call_ref_throw
+
+    loadb IPInt::CallRefMetadata::length[MC], t2
+    advancePCByReg(t2)
+    advanceMC(constexpr (sizeof(IPInt::CallRefMetadata)))
+    popQuad(sc1, t2)
+
+    jmp .ipint_call_common
+
+.ipint_call_ref_throw:
+    jmp _wasm_throw_from_slow_path_trampoline
+
+instructionLabel(_return_call_ref)
+    loadp Wasm::IPIntCallee::m_bytecode[ws0], t0
+    move PC, t1
+    subq t0, t1
+    storei t1, CallSiteIndex[cfr]
+
+    move cfr, a1
+    loadi IPInt::TailCallRefMetadata::typeIndex[MC], a2
+    move sp, a3
+    operationCall(macro() cCall4(_ipint_extern_prepare_call_ref) end)
+    btpz r1, .ipint_call_ref_throw
+
+    loadb IPInt::TailCallRefMetadata::length[MC], t2
+    advancePCByReg(t2)
+    popQuad(sc1, t2)
+
+    loadi IPInt::TailCallRefMetadata::callerStackArgSize[MC], t2
+    advanceMC(IPInt::TailCallRefMetadata::argumentBytecode)
+    jmp .ipint_tail_call_common
+
 reservedOpcode(0x16)
 reservedOpcode(0x17)
 
@@ -2793,7 +2833,7 @@ reservedOpcode(0xce)
 reservedOpcode(0xcf)
 
     #####################
-    # 0xd0 - 0xd2: refs #
+    # 0xd0 - 0xd6: refs #
     #####################
 
 instructionLabel(_ref_null_t)
@@ -2821,10 +2861,44 @@ instructionLabel(_ref_func)
     advanceMC(constexpr (sizeof(IPInt::Const32Metadata)))
     nextIPIntInstruction()
 
-reservedOpcode(0xd3)
-reservedOpcode(0xd4)
-reservedOpcode(0xd5)
-reservedOpcode(0xd6)
+instructionLabel(_ref_eq)
+    popQuad(t0, t2)
+    popQuad(t1, t2)
+    cqeq t0, t1, t0
+    pushInt32(t0)
+    advancePC(1)
+    nextIPIntInstruction()
+
+instructionLabel(_ref_as_non_null)
+    loadq [sp], t0
+    bqeq t0, ValueNull, .ref_as_non_null_nullRef
+    advancePC(1)
+    nextIPIntInstruction()
+.ref_as_non_null_nullRef:
+    throwException(NullRefAsNonNull)
+
+instructionLabel(_br_on_null)
+    loadq [sp], t0
+    bqneq t0, ValueNull, .br_on_null_not_null
+
+    # pop the null
+    addq StackValueSize, sp
+    jmp _ipint_br
+.br_on_null_not_null:
+    loadb IPInt::BranchMetadata::instructionLength[MC], t0
+    advanceMC(constexpr (sizeof(IPInt::BranchMetadata)))
+    advancePCByReg(t0)
+    nextIPIntInstruction()
+
+instructionLabel(_br_on_non_null)
+    loadq [sp], t0
+    bqneq t0, ValueNull, _ipint_br
+    addq StackValueSize, sp
+    loadb IPInt::BranchMetadata::instructionLength[MC], t0
+    advanceMC(constexpr (sizeof(IPInt::BranchMetadata)))
+    advancePCByReg(t0)
+    nextIPIntInstruction()
+
 reservedOpcode(0xd7)
 reservedOpcode(0xd8)
 reservedOpcode(0xd9)
@@ -2861,11 +2935,29 @@ reservedOpcode(0xf7)
 reservedOpcode(0xf8)
 reservedOpcode(0xf9)
 reservedOpcode(0xfa)
-reservedOpcode(0xfb)
+
+instructionLabel(_fb_block)
+    decodeLEBVarUInt32(1, t0, t1, t2, t3, ws1)
+    # Security guarantee: always less than 30 (0x00 -> 0x1e)
+    biaeq t0, 0x1f, .ipint_fb_nonexistent
+    if ARM64 or ARM64E
+        pcrtoaddr _ipint_struct_new, t1
+        emit "add x0, x1, x0, lsl 8"
+        emit "br x0"
+    elsif X86_64
+        lshifti 4, t0
+        leap (_ipint_struct_new), t1
+        addq t1, t0
+        emit "jmp *(%eax)"
+    end
+
+.ipint_fb_nonexistent:
+    break
+
 instructionLabel(_fc_block)
     decodeLEBVarUInt32(1, t0, t1, t2, t3, ws1)
     # Security guarantee: always less than 18 (0x00 -> 0x11)
-    biaeq t0, 18, .ipint_fc_nonexistent
+    biaeq t0, 0x12, .ipint_fc_nonexistent
     if ARM64 or ARM64E
         pcrtoaddr _ipint_i32_trunc_sat_f32_s, t1
         emit "add x0, x1, x0, lsl 8"
@@ -2914,6 +3006,382 @@ instructionLabel(_atomic)
     break
 
 reservedOpcode(0xff)
+    break
+
+    #######################
+    ## 0xFB instructions ##
+    #######################
+
+instructionLabel(_struct_new)
+    loadp IPInt::StructNewMetadata::typeIndex[MC], a1  # type index
+    move sp, a2
+    operationCallMayThrow(macro() cCall3(_ipint_extern_struct_new) end)
+    loadh IPInt::StructNewMetadata::params[MC], t0  # number of parameters popped
+    mulq StackValueSize, t0
+    addq t0, sp
+    pushQuad(r1)
+    loadb IPInt::StructNewMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::StructNewMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_struct_new_default)
+    loadp IPInt::StructNewDefaultMetadata::typeIndex[MC], a1  # type index
+    operationCallMayThrow(macro() cCall2(_ipint_extern_struct_new_default) end)
+    pushQuad(r1)
+    loadb IPInt::StructNewDefaultMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::StructNewDefaultMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_struct_get)
+    popQuad(a1, t0)  # object
+    loadi IPInt::StructGetSetMetadata::fieldIndex[MC], a2  # field index
+    operationCallMayThrow(macro() cCall3(_ipint_extern_struct_get) end)
+    pushQuad(r1)
+
+    loadb IPInt::StructGetSetMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::StructGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_struct_get_s)
+    popQuad(a1, t0)  # object
+    loadi IPInt::StructGetSetMetadata::fieldIndex[MC], a2  # field index
+    operationCallMayThrow(macro() cCall3(_ipint_extern_struct_get_s) end)
+    pushQuad(r1)
+
+    loadb IPInt::StructGetSetMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::StructGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_struct_get_u)
+    popQuad(a1, t0)  # object
+    loadi IPInt::StructGetSetMetadata::fieldIndex[MC], a2  # field index
+    operationCallMayThrow(macro() cCall3(_ipint_extern_struct_get) end)
+    pushQuad(r1)
+
+    loadb IPInt::StructGetSetMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::StructGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_struct_set)
+    loadp StackValueSize[sp], a1  # object
+    loadi IPInt::StructGetSetMetadata::fieldIndex[MC], a2  # field index
+    move sp, a3
+    operationCallMayThrow(macro() cCall4(_ipint_extern_struct_set) end)
+
+    loadb IPInt::StructGetSetMetadata::length[MC], t0
+    addp StackValueSize, sp
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::StructGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_new)
+    loadi IPInt::ArrayNewMetadata::typeIndex[MC], a1  # type index
+    popInt32(a3, t0)  # length
+    popQuad(a2, t0)  # default value
+    operationCallMayThrow(macro() cCall4(_ipint_extern_array_new) end)
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayNewMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayNewMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_new_default)
+    loadi IPInt::ArrayNewMetadata::typeIndex[MC], a1  # type index
+    popInt32(a2, t0)  # length
+    operationCallMayThrow(macro() cCall3(_ipint_extern_array_new_default) end)
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayNewMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayNewMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_new_fixed)
+    loadi IPInt::ArrayNewFixedMetadata::typeIndex[MC], a1  # type index
+    loadi IPInt::ArrayNewFixedMetadata::arraySize[MC], a2  # array length
+    move sp, a3  # arguments
+    operationCallMayThrow(macro() cCall4(_ipint_extern_array_new_fixed) end)
+
+    # pop all the arguments
+    loadi IPInt::ArrayNewFixedMetadata::arraySize[MC], a2  # array length
+    lshifti StackValueShift, a2
+    addp a2, sp
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayNewFixedMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayNewFixedMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_new_data)
+    move MC, a1  # metadata
+    popInt32(a3, t0)  # size
+    popInt32(a2, t0)  # offset
+    operationCallMayThrow(macro() cCall4(_ipint_extern_array_new_data) end)
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayNewDataMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayNewDataMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_new_elem)
+    move MC, a1  # metadata
+    popInt32(a3, t0)  # size
+    popInt32(a2, t0)  # offset
+    operationCallMayThrow(macro() cCall4(_ipint_extern_array_new_elem) end)
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayNewElemMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayNewElemMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_get)
+    loadi IPInt::ArrayGetSetMetadata::typeIndex[MC], a1  # type index
+    popInt32(a3, a0)  # index
+    popQuad(a2, a0)  # array
+    operationCallMayThrow(macro() cCall4(_ipint_extern_array_get) end)
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayGetSetMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_get_s)
+    loadi IPInt::ArrayGetSetMetadata::typeIndex[MC], a1  # type index
+    popInt32(a3, a0)  # index
+    popQuad(a2, a0)  # array
+    operationCallMayThrow(macro() cCall4(_ipint_extern_array_get_s) end)
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayGetSetMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_get_u)
+    loadi IPInt::ArrayGetSetMetadata::typeIndex[MC], a1  # type index
+    popInt32(a3, a0)  # index
+    popQuad(a2, a0)  # array
+    operationCallMayThrow(macro() cCall4(_ipint_extern_array_get) end)
+
+    pushQuad(r1)
+
+    loadb IPInt::ArrayGetSetMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_set)
+    loadi IPInt::ArrayGetSetMetadata::typeIndex[MC], a1  # type index
+    move sp, a2  # stack pointer with all the arguments
+    operationCallMayThrow(macro() cCall3(_ipint_extern_array_set) end)
+
+    addq StackValueSize*3, sp
+    pushQuad(r1)
+
+    loadb IPInt::ArrayGetSetMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayGetSetMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_len)
+    popQuad(t0, t1)  # array into t0
+    bqeq t0, ValueNull, .nullArray
+    loadi JSWebAssemblyArray::m_size[t0], t0
+    pushInt32(t0)
+    advancePC(2)
+    nextIPIntInstruction()
+
+.nullArray:
+    throwException(NullArrayLen)
+
+instructionLabel(_array_fill)
+    move sp, a1
+    operationCallMayThrow(macro() cCall2(_ipint_extern_array_fill) end)
+
+    addp 4*StackValueSize, sp
+
+    loadb IPInt::ArrayFillMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayFillMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_copy)
+    move sp, a1
+    operationCallMayThrow(macro() cCall2(_ipint_extern_array_copy) end)
+
+    addp 5*StackValueSize, sp
+
+    loadb IPInt::ArrayFillMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayCopyMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_init_data)
+    loadi IPInt::ArrayInitDataMetadata::dataSegmentIndex[MC], a1
+    move sp, a2
+    operationCallMayThrow(macro() cCall3(_ipint_extern_array_init_data) end)
+
+    addp 4*StackValueSize, sp
+
+    loadb IPInt::ArrayInitDataMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayInitDataMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_array_init_elem)
+    loadi IPInt::ArrayInitElemMetadata::elemSegmentIndex[MC], a1
+    move sp, a2
+    operationCallMayThrow(macro() cCall3(_ipint_extern_array_init_elem) end)
+
+    addp 4*StackValueSize, sp
+
+    loadb IPInt::ArrayInitElemMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::ArrayInitElemMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_ref_test)
+    loadi IPInt::RefTestCastMetadata::typeIndex[MC], a1
+    move 0, a2  # allowNull
+    popQuad(a3, t0)
+    operationCall(macro() cCall3(_ipint_extern_ref_test) end)
+
+    pushInt32(r1)
+
+    loadb IPInt::RefTestCastMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::RefTestCastMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_ref_test_nullable)
+    loadi IPInt::RefTestCastMetadata::typeIndex[MC], a1
+    move 1, a2  # allowNull
+    popQuad(a3, t0)
+    operationCall(macro() cCall3(_ipint_extern_ref_test) end)
+
+    pushInt32(r1)
+
+    loadb IPInt::RefTestCastMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::RefTestCastMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_ref_cast)
+    loadi IPInt::RefTestCastMetadata::typeIndex[MC], a1
+    move 0, a2  # allowNull
+    popQuad(a3, t0)
+    operationCallMayThrow(macro() cCall3(_ipint_extern_ref_cast) end)
+
+    pushInt32(r1)
+
+    loadb IPInt::RefTestCastMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::RefTestCastMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_ref_cast_nullable)
+    loadi IPInt::RefTestCastMetadata::typeIndex[MC], a1
+    move 1, a2  # allowNull
+    popQuad(a3, t0)
+    operationCallMayThrow(macro() cCall3(_ipint_extern_ref_cast) end)
+
+    pushInt32(r1)
+
+    loadb IPInt::RefTestCastMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMC(constexpr (sizeof(IPInt::RefTestCastMetadata)))
+    nextIPIntInstruction()
+
+instructionLabel(_br_on_cast)
+    loadi IPInt::RefTestCastMetadata::typeIndex[MC], a1
+    # fb 18 FLAGS
+    loadb 2[PC], a2
+    rshifti 1, a2  # bit 1 = null2
+    loadq [sp], a3
+    operationCall(macro() cCall3(_ipint_extern_ref_test) end)
+
+    advanceMC(constexpr (sizeof(IPInt::RefTestCastMetadata)))
+    
+    bineq r1, 0, _ipint_br
+    loadb IPInt::BranchMetadata::instructionLength[MC], t0
+    advanceMC(constexpr (sizeof(IPInt::BranchMetadata)))
+    advancePCByReg(t0)
+    nextIPIntInstruction()
+
+instructionLabel(_br_on_cast_fail)
+    loadi IPInt::RefTestCastMetadata::typeIndex[MC], a1
+    loadb 2[PC], a2
+    # fb 19 FLAGS
+    rshifti 1, a2  # bit 1 = null2
+    loadq [sp], a3
+    operationCall(macro() cCall3(_ipint_extern_ref_test) end)
+
+    advanceMC(constexpr (sizeof(IPInt::RefTestCastMetadata)))
+    
+    bieq r1, 0, _ipint_br
+    loadb IPInt::BranchMetadata::instructionLength[MC], t0
+    advanceMC(constexpr (sizeof(IPInt::BranchMetadata)))
+    advancePCByReg(t0)
+    nextIPIntInstruction()
+
+instructionLabel(_any_convert_extern)
+    popQuad(a1, t0)
+    operationCall(macro() cCall2(_ipint_extern_any_convert_extern) end)
+    pushQuad(r1)
+    advancePC(2)
+    nextIPIntInstruction()
+
+instructionLabel(_extern_convert_any)
+    # do nothing
+    advancePC(2)
+    nextIPIntInstruction()
+
+instructionLabel(_ref_i31)
+    popInt32(t0, t1)
+    andq 0x7fffffff, t0
+    lshifti 0x1, t0
+    rshifti 0x1, t0
+    orq TagNumber, t0
+    pushInt32(t0)
+
+    advancePC(2)
+    nextIPIntInstruction()
+
+instructionLabel(_i31_get_s)
+    popQuad(t0, t1)
+    bqeq t0, ValueNull, .i31_get_throw
+    pushInt32(t0)
+
+    advancePC(2)
+    nextIPIntInstruction()
+
+instructionLabel(_i31_get_u)
+    popQuad(t0, t1)
+    bqeq t0, ValueNull, .i31_get_throw
+    andq 0x7fffffff, t0
+    pushInt32(t0)
+
+    advancePC(2)
+    nextIPIntInstruction()
+.i31_get_throw:
+    throwException(NullI31Get)
 
     #######################
     ## 0xFC instructions ##
@@ -5380,7 +5848,7 @@ _wasm_ipint_call_return_location_wide32:
 
     # Pop all the arguments from the stack
     loadh 2[MC], sc0
-    lshiftq 4, sc0
+    lshiftq StackValueShift, sc0
     addq sc0, sp
     advanceMCByReg(4)
 

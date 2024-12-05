@@ -26,6 +26,7 @@
 #pragma once
 
 #include "PlatformAudioData.h"
+#include <CoreAudio/CoreAudioTypes.h>
 #include <wtf/IteratorRange.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
@@ -59,6 +60,18 @@ public:
     uint32_t bufferCount() const;
     uint32_t channelCount() const { return m_channelCount; }
     AudioBuffer* buffer(uint32_t index) const;
+
+    template <typename T = uint8_t>
+    std::span<T> bufferAsSpan(uint32_t index) const
+    {
+        ASSERT(index < m_list->mNumberBuffers);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        if (index < m_list->mNumberBuffers)
+            return unsafeMakeSpan(static_cast<T*>(m_list->mBuffers[index].mData), m_list->mBuffers[index].mDataByteSize / sizeof(T));
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        return { };
+    }
+
     IteratorRange<AudioBuffer*> buffers() const;
 
     WEBCORE_EXPORT static bool isSupportedDescription(const CAAudioStreamDescription&, size_t sampleCount);

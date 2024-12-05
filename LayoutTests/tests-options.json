@@ -5822,7 +5822,7 @@
     "imported/w3c/web-platform-tests/svg/animations/svglengthlist-animation-3.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-metadata.html": [
+    "imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-getAttributeType-event-handler-content-attributes.tentative.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-metadata.tentative.html": [

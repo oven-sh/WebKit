@@ -44,6 +44,9 @@ public:
     static Ref<WebInspector> create(WebPage&);
     ~WebInspector();
 
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
     WebPage* page() const;
 
     void updateDockingAvailability();

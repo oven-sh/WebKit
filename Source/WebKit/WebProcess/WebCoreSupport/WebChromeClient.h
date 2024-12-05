@@ -548,7 +548,7 @@ private:
 
     void callAfterPendingSyntheticClick(CompletionHandler<void(WebCore::SyntheticClickResult)>&&) final;
 
-    void didSwallowClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&) final;
+    void didDispatchClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&) final;
 
     mutable bool m_cachedMainFrameHasHorizontalScrollbar { false };
     mutable bool m_cachedMainFrameHasVerticalScrollbar { false };

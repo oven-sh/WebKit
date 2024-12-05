@@ -1415,7 +1415,7 @@ WebsiteDataStore* NetworkProcessProxy::websiteDataStoreFromSessionID(PAL::Sessio
 #if ENABLE(CONTENT_EXTENSIONS)
 void NetworkProcessProxy::contentExtensionRules(UserContentControllerIdentifier identifier)
 {
-    if (auto* webUserContentControllerProxy = WebUserContentControllerProxy::get(identifier)) {
+    if (RefPtr webUserContentControllerProxy = WebUserContentControllerProxy::get(identifier)) {
         m_webUserContentControllerProxies.add(*webUserContentControllerProxy);
         webUserContentControllerProxy->addNetworkProcess(*this);
 
@@ -2000,6 +2000,15 @@ void NetworkProcessProxy::setEmulatedConditions(PAL::SessionID sessionID, std::o
 }
 
 #endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
+void NetworkProcessProxy::fetchLocalStorage(PAL::SessionID sessionID, CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&& completionHandler)
+{
+    if (!canSendMessage()) {
+        completionHandler({ });
+    }
+
+    sendWithAsyncReply(Messages::NetworkProcess::FetchLocalStorage(sessionID), WTFMove(completionHandler));
+}
 
 } // namespace WebKit
 

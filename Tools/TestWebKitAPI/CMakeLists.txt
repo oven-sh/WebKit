@@ -189,6 +189,7 @@ if (ENABLE_WEBCORE)
         Utilities.cpp
 
         Tests/WebCore/AffineTransform.cpp
+        Tests/WebCore/AudioSampleFormat.cpp
         Tests/WebCore/CSSParser.cpp
         Tests/WebCore/CSSTokenizerTests.cpp
         Tests/WebCore/ColorTests.cpp

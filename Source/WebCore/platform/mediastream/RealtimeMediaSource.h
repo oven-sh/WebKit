@@ -47,7 +47,7 @@
 #include "RealtimeMediaSourceFactory.h"
 #include "RealtimeMediaSourceIdentifier.h"
 #include "VideoFrameTimeMetadata.h"
-#include <wtf/AbstractRefCounted.h>
+#include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
@@ -113,7 +113,7 @@ public:
     virtual void hasStartedProducingData() { }
 };
 
-class WEBCORE_EXPORT RealtimeMediaSource : public AbstractRefCounted
+class WEBCORE_EXPORT RealtimeMediaSource : public AbstractThreadSafeRefCountedAndCanMakeWeakPtr
 #if !RELEASE_LOG_DISABLED
     , public LoggerHelper
 #endif
@@ -226,7 +226,6 @@ public:
 
     virtual const RealtimeMediaSourceCapabilities& capabilities() = 0;
     virtual const RealtimeMediaSourceSettings& settings() = 0;
-    virtual ThreadSafeWeakPtrControlBlock& controlBlock() const = 0;
 
     using TakePhotoNativePromise = NativePromise<std::pair<Vector<uint8_t>, String>, String>;
     virtual Ref<TakePhotoNativePromise> takePhoto(PhotoSettings&&);

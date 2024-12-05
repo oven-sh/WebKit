@@ -46,8 +46,8 @@ public:
 
     void didReceiveMessageFromWebProcess(IPC::Connection& connection, IPC::Decoder& decoder) { didReceiveMessage(connection, decoder); }
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
 private:
     friend class GPUProcessConnection;

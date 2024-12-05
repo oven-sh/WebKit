@@ -32,6 +32,7 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakPtr.h>
@@ -53,7 +54,7 @@ struct ExtensionCapabilityGranterClient : public AbstractRefCountedAndCanMakeWea
     virtual RefPtr<WebProcessProxy> webProcessForCapabilityGranter(const ExtensionCapabilityGranter&, const String& environmentIdentifier) = 0;
 };
 
-class ExtensionCapabilityGranter : public CanMakeWeakPtr<ExtensionCapabilityGranter>, public RefCounted<ExtensionCapabilityGranter> {
+class ExtensionCapabilityGranter : public RefCountedAndCanMakeWeakPtr<ExtensionCapabilityGranter> {
     WTF_MAKE_TZONE_ALLOCATED(ExtensionCapabilityGranter);
     WTF_MAKE_NONCOPYABLE(ExtensionCapabilityGranter);
 public:

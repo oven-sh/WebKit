@@ -51,7 +51,7 @@ void WebMockContentFilterManager::startObservingSettings()
 
 void WebMockContentFilterManager::mockContentFilterSettingsChanged(WebCore::MockContentFilterSettings& settings)
 {
-    if (auto connection = WebProcess::singleton().existingNetworkProcessConnection())
+    if (RefPtr connection = WebProcess::singleton().existingNetworkProcessConnection())
         connection->connection().send(Messages::NetworkConnectionToWebProcess::InstallMockContentFilter(settings), 0);
 }
 

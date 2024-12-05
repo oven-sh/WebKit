@@ -48,8 +48,8 @@ public:
     ViewUpdateDispatcher(WebProcess&);
     ~ViewUpdateDispatcher();
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
     void initializeConnection(IPC::Connection&);
 

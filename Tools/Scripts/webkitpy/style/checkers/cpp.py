@@ -2908,9 +2908,29 @@ def check_lock_guard(clean_lines, line_number, file_state, error):
     error(line_number, 'runtime/lock_guard', 4, "Use 'Locker locker { lock }' instead of 'std::lock_guard<>'.")
 
 
+def check_log(clean_lines, line_number, file_state, error):
+    """Looks for use of always log which should never happen'.
+
+    Args:
+      clean_lines: A CleansedLines instance containing the file.
+      line_number: The number of the line to check.
+      file_state: A _FileState instance which maintains information about
+                  the state of things in the file.
+      error: The function to call with any errors found.
+    """
+
+    line = clean_lines.elided[line_number]  # Get rid of comments and strings.
+
+    using_always_log = search(r'\b(WTF_ALWAYS_LOG|ALWAYS_LOG_WITH_STREAM|WTFLogAlways)\s*\(', line)
+    if not using_always_log:
+        return
+
+    error(line_number, 'runtime/log', 4, "Use a channel to log with 'LOG...(MyChannel,...)'.")
+
+
 def check_ctype_functions(clean_lines, line_number, file_state, error):
     """Looks for use of the standard functions in ctype.h and suggest they be replaced
-       by use of equivilent ones in <wtf/ASCIICType.h>?.
+       by use of equivalent ones in <wtf/ASCIICType.h>?.
 
     Args:
       clean_lines: A CleansedLines instance containing the file.
@@ -3521,6 +3541,7 @@ def check_style(clean_lines, line_number, file_extension, class_state, file_stat
     check_wtf_make_unique(clean_lines, line_number, file_state, error)
     check_wtf_never_destroyed(clean_lines, line_number, file_state, error)
     check_lock_guard(clean_lines, line_number, file_state, error)
+    check_log(clean_lines, line_number, file_state, error)
     check_ctype_functions(clean_lines, line_number, file_state, error)
     check_switch_indentation(clean_lines, line_number, error)
     check_braces(clean_lines, line_number, file_state, error)
@@ -4771,6 +4792,7 @@ class CppChecker(object):
         'runtime/ismainthread',
         'runtime/leaky_pattern',
         'runtime/lock_guard',
+        'runtime/log',
         'runtime/max_min_macros',
         'runtime/memset',
         'runtime/once_flag',

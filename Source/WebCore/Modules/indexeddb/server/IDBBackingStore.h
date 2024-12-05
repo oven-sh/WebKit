@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,7 +60,7 @@ enum class IndexRecordType : bool;
 namespace IDBServer {
 
 class IDBBackingStore : public CanMakeThreadSafeCheckedPtr<IDBBackingStore> {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(IDBBackingStore);
+    WTF_MAKE_TZONE_ALLOCATED(IDBBackingStore);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(IDBBackingStore);
 public:
     virtual ~IDBBackingStore() { RELEASE_ASSERT(!isMainThread()); }

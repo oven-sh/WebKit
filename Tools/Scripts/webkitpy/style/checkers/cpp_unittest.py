@@ -6187,6 +6187,34 @@ class WebKitStyleTest(CppStyleTestBase):
             "  [runtime/lock_guard] [4]",
             'foo.mm')
 
+    def test_log(self):
+        error_string = "Use a channel to log with 'LOG...(MyChannel,...)'.  [runtime/log] [4]"
+
+        self.assert_lint(
+            'LOG_WITH_STREAM(Channel, stream << 2);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'CUSTOM_MACRO_WTF_ALWAYS_LOG(2);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            '// WTF_ALWAYS_LOG(2);',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'WTFLogAlways("foo");',
+            error_string,
+            'foo.cpp')
+
+        self.assert_lint(
+            'WTF_ALWAYS_LOG(34);',
+            error_string,
+            'foo.cpp')
+
     def test_once_flag(self):
         self.assert_lint(
             'static std::once_flag onceKey;',

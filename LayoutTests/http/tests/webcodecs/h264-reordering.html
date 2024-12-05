@@ -48,11 +48,11 @@ promise_test(async () => {
 
     for (let i = 0; i < chunks.length; ++i) {
         decoder.decode(chunks[i]);
-        if (window.internals && i === 2) {
+        if (window.internals && (i === 2 || i === 4 || i === 8)) {
              let counter = 0;
              while (++counter < 100 && internals.hasPendingActivity(decoder))
                  await new Promise(resolve => setTimeout(resolve, 50));
-             assert_less_than(counter, 100);
+             assert_less_than(counter, 100, "test for " + i);
         }
     }
 

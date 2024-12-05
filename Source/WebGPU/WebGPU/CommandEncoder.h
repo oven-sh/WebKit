@@ -27,9 +27,12 @@
 
 #import "CommandBuffer.h"
 #import "CommandsMixin.h"
+#import "SwiftCXXThunk.h"
+#import "WebGPU.h"
+#import "WebGPUExt.h"
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
+#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/RetainReleaseSwift.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/Vector.h>
@@ -57,7 +60,7 @@ class RenderPassEncoder;
 class Texture;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandencoder
-class CommandEncoder : public WGPUCommandEncoderImpl, public RefCounted<CommandEncoder>, public CommandsMixin, public CanMakeWeakPtr<CommandEncoder> {
+class CommandEncoder : public RefCountedAndCanMakeWeakPtr<CommandEncoder>, public CommandsMixin, public WGPUCommandEncoderImpl {
     WTF_MAKE_TZONE_ALLOCATED(CommandEncoder);
 public:
     static Ref<CommandEncoder> create(id<MTLCommandBuffer> commandBuffer, Device& device)
@@ -74,8 +77,8 @@ public:
     Ref<ComputePassEncoder> beginComputePass(const WGPUComputePassDescriptor&);
     Ref<RenderPassEncoder> beginRenderPass(const WGPURenderPassDescriptor&);
     void copyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, Buffer& destination, uint64_t destinationOffset, uint64_t size);
-    void copyBufferToTexture(const WGPUImageCopyBuffer& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize);
-    void copyTextureToBuffer(const WGPUImageCopyTexture& source, const WGPUImageCopyBuffer& destination, const WGPUExtent3D& copySize);
+    void copyBufferToTexture(const WGPUImageCopyBuffer& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize) HAS_SWIFTCXX_THUNK;
+    void copyTextureToBuffer(const WGPUImageCopyTexture& source, const WGPUImageCopyBuffer& destination, const WGPUExtent3D& copySize) HAS_SWIFTCXX_THUNK;
     void copyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize);
     void clearBuffer(Buffer&, uint64_t offset, uint64_t size);
     Ref<CommandBuffer> finish(const WGPUCommandBufferDescriptor&);
@@ -127,11 +130,14 @@ private:
     bool validatePopDebugGroup() const;
     NSString* errorValidatingComputePassDescriptor(const WGPUComputePassDescriptor&) const;
     NSString* errorValidatingRenderPassDescriptor(const WGPURenderPassDescriptor&) const;
-
+private PUBLIC_IN_WEBGPU_SWIFT:
     void clearTextureIfNeeded(const WGPUImageCopyTexture&, NSUInteger);
+private:
     NSString* errorValidatingImageCopyBuffer(const WGPUImageCopyBuffer&) const;
+private PUBLIC_IN_WEBGPU_SWIFT:
     NSString* errorValidatingCopyBufferToTexture(const WGPUImageCopyBuffer&, const WGPUImageCopyTexture&, const WGPUExtent3D&) const;
     NSString* errorValidatingCopyTextureToBuffer(const WGPUImageCopyTexture&, const WGPUImageCopyBuffer&, const WGPUExtent3D&) const;
+private:
     void discardCommandBuffer();
 
     RefPtr<CommandBuffer> protectedCachedCommandBuffer() const { return m_cachedCommandBuffer.get(); }
@@ -153,17 +159,19 @@ private:
 #endif
     id<MTLSharedEvent> m_sharedEvent { nil };
     uint64_t m_sharedEventSignalValue { 0 };
+private PUBLIC_IN_WEBGPU_SWIFT:
     const Ref<Device> m_device;
-} SWIFT_SHARED_REFERENCE(retainCommandEncoder, releaseCommandEncoder);
+private:
+} SWIFT_SHARED_REFERENCE(refCommandEncoder, derefCommandEncoder);
 
 } // namespace WebGPU
 
-inline void retainCommandEncoder(WebGPU::CommandEncoder* obj)
+inline void refCommandEncoder(WebGPU::CommandEncoder* obj)
 {
-    WTF::retainRefCounted(obj);
+    WTF::ref(obj);
 }
 
-inline void releaseCommandEncoder(WebGPU::CommandEncoder* obj)
+inline void derefCommandEncoder(WebGPU::CommandEncoder* obj)
 {
-    WTF::releaseRefCounted(obj);
+    WTF::deref(obj);
 }

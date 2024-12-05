@@ -30,6 +30,7 @@
 #include "GraphicsContext.h"
 #include "LayoutRect.h"
 #include "Logging.h"
+#include "RenderStyle.h"
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <wtf/MathExtras.h>
 #include <wtf/RuntimeApplicationChecks.h>

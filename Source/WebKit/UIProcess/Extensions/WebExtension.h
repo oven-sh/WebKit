@@ -41,6 +41,8 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
+
+#if PLATFORM(COCOA)
 #include <wtf/spi/cocoa/SecuritySPI.h>
 
 OBJC_CLASS NSBundle;
@@ -49,11 +51,7 @@ OBJC_CLASS NSDictionary;
 OBJC_CLASS NSError;
 OBJC_CLASS NSURL;
 OBJC_CLASS WKWebExtension;
-OBJC_CLASS _WKWebExtensionLocalization;
-
-namespace API {
-class Data;
-}
+#endif // PLATFORM(COCOA)
 
 namespace WebKit {
 
@@ -71,8 +69,11 @@ public:
         return adoptRef(*new WebExtension(std::forward<Args>(args)...));
     }
 
+#if PLATFORM(COCOA)
     explicit WebExtension(NSBundle *appExtensionBundle, NSURL *resourceURL, RefPtr<API::Error>&);
     explicit WebExtension(NSDictionary *manifest, Resources&& = { });
+#endif
+
     explicit WebExtension(Resources&& = { });
 
     ~WebExtension() { }
@@ -213,18 +214,23 @@ public:
     bool operator==(const WebExtension& other) const { return (this == &other); }
 
     bool manifestParsedSuccessfully();
-    NSDictionary *manifest();
-    RefPtr<const JSON::Object> manifestObject() { return manifestParsedSuccessfully() ? m_manifestJSON->asObject() : nullptr; }
-    Ref<API::Data> serializeManifest();
+    RefPtr<const JSON::Object> manifestObject();
+    RefPtr<API::Data> serializeManifest();
+
+#if PLATFORM(COCOA)
+    NSDictionary *manifestDictionary();
+#endif
 
     double manifestVersion();
     bool supportsManifestVersion(double version) { ASSERT(version > 2); return manifestVersion() >= version; }
 
     RefPtr<API::Data> serializeLocalization();
 
+#if PLATFORM(COCOA)
     NSBundle *bundle() const { return m_bundle.get(); }
     SecStaticCodeRef bundleStaticCode() const;
     NSData *bundleHash() const;
+#endif
 
 #if PLATFORM(MAC)
     bool validateResourceData(NSURL *, NSData *, NSError **);
@@ -341,12 +347,12 @@ public:
 
     Vector<Ref<API::Error>> errors();
 
-#ifdef __OBJC__
+#if PLATFORM(COCOA) && defined(__OBJC__)
     WKWebExtension *wrapper() const { return (WKWebExtension *)API::ObjectImpl<API::Object::Type::WebExtension>::wrapper(); }
 #endif
 
 private:
-    bool parseManifest(NSData *);
+    bool parseManifest(StringView);
 
     void parseWebAccessibleResourcesVersion3();
     void parseWebAccessibleResourcesVersion2();
@@ -371,7 +377,7 @@ private:
 
     URL resourceFileURLForPath(const String&);
 
-    std::optional<WebExtension::DeclarativeNetRequestRulesetData> parseDeclarativeNetRequestRulesetDictionary(NSDictionary *, RefPtr<API::Error>&);
+    std::optional<WebExtension::DeclarativeNetRequestRulesetData> parseDeclarativeNetRequestRulesetObject(const JSON::Object&, RefPtr<API::Error>&);
 
     InjectedContentVector m_staticInjectedContents;
     WebAccessibleResourcesVector m_webAccessibleResources;
@@ -386,10 +392,12 @@ private:
 
     MatchPatternSet m_externallyConnectableMatchPatterns;
 
+#if PLATFORM(COCOA)
     RetainPtr<NSBundle> m_bundle;
     mutable RetainPtr<SecStaticCodeRef> m_bundleStaticCode;
+#endif
+
     URL m_resourceBaseURL;
-    RetainPtr<NSDictionary> m_manifest;
     Ref<const JSON::Value> m_manifestJSON;
     Resources m_resources;
 

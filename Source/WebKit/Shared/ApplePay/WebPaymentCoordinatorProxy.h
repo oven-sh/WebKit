@@ -119,6 +119,9 @@ public:
     friend class NetworkConnectionToWebProcess;
     ~WebPaymentCoordinatorProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void webProcessExited();
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const
     {

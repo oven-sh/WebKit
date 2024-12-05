@@ -30,7 +30,7 @@
 #include "MessageWithMessagePorts.h"
 #include "ProcessIdentifier.h"
 #include <wtf/HashSet.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
@@ -41,7 +41,7 @@ namespace WebCore {
 
 class MessagePortChannelRegistry;
 
-class MessagePortChannel : public RefCounted<MessagePortChannel>, public CanMakeWeakPtr<MessagePortChannel> {
+class MessagePortChannel : public RefCountedAndCanMakeWeakPtr<MessagePortChannel> {
 public:
     static Ref<MessagePortChannel> create(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 

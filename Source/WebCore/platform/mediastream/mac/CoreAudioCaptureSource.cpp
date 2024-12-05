@@ -247,6 +247,14 @@ void CoreAudioCaptureSource::stopProducingData()
     CoreAudioSharedUnit::singleton().stopProducingData();
 }
 
+void CoreAudioCaptureSource::endProducingData()
+{
+    ALWAYS_LOG_IF(loggerPtr(), LOGIDENTIFIER);
+    CoreAudioSharedUnit::singleton().removeClient(*this);
+    if (isProducingData())
+        CoreAudioSharedUnit::singleton().stopProducingData();
+}
+
 const RealtimeMediaSourceCapabilities& CoreAudioCaptureSource::capabilities()
 {
     if (!m_capabilities) {

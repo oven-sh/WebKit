@@ -150,7 +150,7 @@ ALWAYS_INLINE auto RemoteImageBufferSetProxy::sendSync(T&& message)
 
 ALWAYS_INLINE RefPtr<IPC::StreamClientConnection> RemoteImageBufferSetProxy::connection() const
 {
-    auto* backend = m_remoteRenderingBackendProxy.get();
+    RefPtr backend = m_remoteRenderingBackendProxy.get();
     if (UNLIKELY(!backend))
         return nullptr;
     return backend->connection();
@@ -158,7 +158,7 @@ ALWAYS_INLINE RefPtr<IPC::StreamClientConnection> RemoteImageBufferSetProxy::con
 
 void RemoteImageBufferSetProxy::didBecomeUnresponsive() const
 {
-    auto* backend = m_remoteRenderingBackendProxy.get();
+    RefPtr backend = m_remoteRenderingBackendProxy.get();
     if (UNLIKELY(!backend))
         return;
     backend->didBecomeUnresponsive();
@@ -235,8 +235,8 @@ void RemoteImageBufferSetProxy::close()
         streamConnection->removeWorkQueueMessageReceiver(Messages::RemoteImageBufferSetProxy::messageReceiverName(), identifier().toUInt64());
         m_streamConnection = nullptr;
     }
-    if (m_remoteRenderingBackendProxy)
-        m_remoteRenderingBackendProxy->releaseRemoteImageBufferSet(*this);
+    if (RefPtr remoteRenderingBackendProxy = m_remoteRenderingBackendProxy.get())
+        remoteRenderingBackendProxy->releaseRemoteImageBufferSet(*this);
 }
 
 void RemoteImageBufferSetProxy::setConfiguration(WebCore::FloatSize size, float scale, const WebCore::DestinationColorSpace& colorSpace, WebCore::ImageBufferPixelFormat pixelFormat, WebCore::RenderingMode renderingMode, WebCore::RenderingPurpose renderingPurpose)
@@ -273,13 +273,13 @@ void RemoteImageBufferSetProxy::willPrepareForDisplay()
         return;
 
     if (m_remoteNeedsConfigurationUpdate) {
-        send(Messages::RemoteImageBufferSet::UpdateConfiguration(m_size, m_renderingMode, m_scale, m_colorSpace, m_pixelFormat));
+        send(Messages::RemoteImageBufferSet::UpdateConfiguration(m_size, m_renderingMode, m_renderingPurpose, m_scale, m_colorSpace, m_pixelFormat));
 
         OptionSet<WebCore::ImageBufferOptions> options;
         if (m_renderingMode == RenderingMode::Accelerated)
             options.add(WebCore::ImageBufferOptions::Accelerated);
 
-        m_displayListRecorder = m_remoteRenderingBackendProxy->createDisplayListRecorder(m_displayListIdentifier, m_size, m_renderingPurpose, m_scale, m_colorSpace, m_pixelFormat, options);
+        m_displayListRecorder = Ref { *m_remoteRenderingBackendProxy }->createDisplayListRecorder(m_displayListIdentifier, m_size, m_renderingPurpose, m_scale, m_colorSpace, m_pixelFormat, options);
     }
     m_remoteNeedsConfigurationUpdate = false;
 

@@ -224,6 +224,8 @@ void Download::startUpdatingProgress()
     auto *progress = (WKModernDownloadProgress *)m_progress;
     [progress startUpdatingDownloadProgress];
 
+    send(Messages::DownloadProxy::DidStartUpdatingProgress());
+
     // If we have a download task, progress is updated by observing this task. See startUpdatingDownloadProgress method.
     if (m_downloadTask)
         return;

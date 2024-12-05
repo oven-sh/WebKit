@@ -520,6 +520,20 @@ void RenderElement::initializeStyle()
         setCapturedInViewTransition(styleable->capturedInViewTransition());
 }
 
+#if !LOG_DISABLED
+static void logStyleDifference(const RenderElement& renderer, const RenderStyle& style1, const RenderStyle& style2, StyleDifference diff, OptionSet<StyleDifferenceContextSensitiveProperty> contextSensitiveProperties)
+{
+    if (LogStyle.state != WTFLogChannelState::On)
+        return;
+
+    TextStream diffStream(TextStream::LineMode::MultipleLine, TextStream::Formatting::NumberRespectingIntegers);
+    diffStream.increaseIndent(2);
+    style1.dumpDifferences(diffStream, style2);
+    if (!diffStream.isEmpty())
+        LOG_WITH_STREAM(Style, stream << renderer << " style diff " << diff << " (context sensitive changes " << contextSensitiveProperties << "):\n" << diffStream.release());
+}
+#endif
+
 void RenderElement::setStyle(RenderStyle&& style, StyleDifference minimalStyleDifference)
 {
     // FIXME: Should change RenderView so it can use initializeStyle too.
@@ -527,19 +541,12 @@ void RenderElement::setStyle(RenderStyle&& style, StyleDifference minimalStyleDi
     // and remove the check of m_hasInitializedStyle below too.
     ASSERT(m_hasInitializedStyle || isRenderView());
 
-    StyleDifference diff = StyleDifference::Equal;
+    auto diff = StyleDifference::Equal;
     OptionSet<StyleDifferenceContextSensitiveProperty> contextSensitiveProperties;
     if (m_hasInitializedStyle) {
         diff = m_style.diff(style, contextSensitiveProperties);
-
 #if !LOG_DISABLED
-        if (LogStyle.state == WTFLogChannelState::On) {
-            TextStream diffStream(TextStream::LineMode::MultipleLine, TextStream::Formatting::NumberRespectingIntegers);
-            diffStream.increaseIndent(2);
-            m_style.dumpDifferences(diffStream, style);
-            if (!diffStream.isEmpty())
-                LOG_WITH_STREAM(Style, stream << *this << " style diff " << diff << " (context sensitive changes " << contextSensitiveProperties << "):\n" << diffStream.release());
-        }
+        logStyleDifference(*this, m_style, style, diff, contextSensitiveProperties);
 #endif
     }
 

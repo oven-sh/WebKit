@@ -286,7 +286,9 @@ static void printLegacyFlexReasons()
 
 bool canUseForLineLayout(const RenderBlockFlow& rootContainer)
 {
-    return !is<RenderSVGBlock>(rootContainer) || rootContainer.isRenderOrLegacyRenderSVGForeignObject();
+    if (is<RenderSVGBlock>(rootContainer) && !rootContainer.isRenderOrLegacyRenderSVGForeignObject())
+        return rootContainer.document().settings().useIFCForSVGText();
+    return true;
 }
 
 bool canUseForPreferredWidthComputation(const RenderBlockFlow& blockContainer)

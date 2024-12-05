@@ -504,6 +504,13 @@ Inspector::Protocol::ErrorStringOr<std::tuple<RefPtr<JSON::ArrayOf<Inspector::Pr
                 if (pseudoId == PseudoId::Backdrop && !element->isInTopLayer())
                     continue;
 
+                if (pseudoId == PseudoId::ViewTransition && (!element->document().activeViewTransition() || element != element->document().documentElement()))
+                    continue;
+
+                // FIXME: Add named view transition pseudo-element support to Web Inspector. (webkit.org/b/283951)
+                if (isNamedViewTransitionPseudoElement(Style::PseudoElementIdentifier { pseudoId }))
+                    continue;
+
                 if (auto protocolPseudoId = protocolValueForPseudoId(pseudoId)) {
                     auto matchedRules = styleResolver.pseudoStyleRulesForElement(element, pseudoId, Style::Resolver::AllCSSRules);
                     if (!matchedRules.isEmpty()) {

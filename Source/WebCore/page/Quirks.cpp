@@ -34,10 +34,12 @@
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
 #include "DocumentStorageAccess.h"
+#include "ElementAncestorIteratorInlines.h"
 #include "ElementInlines.h"
 #include "ElementTargetingTypes.h"
 #include "EventNames.h"
 #include "FrameLoader.h"
+#include "HTMLArticleElement.h"
 #include "HTMLBodyElement.h"
 #include "HTMLCollection.h"
 #include "HTMLDivElement.h"
@@ -51,6 +53,7 @@
 #include "MouseEvent.h"
 #include "NamedNodeMap.h"
 #include "NetworkStorageSession.h"
+#include "NodeRenderStyle.h"
 #include "OrganizationStorageAccessPromptQuirk.h"
 #include "PlatformMouseEvent.h"
 #include "RegistrableDomain.h"
@@ -63,6 +66,7 @@
 #include "Settings.h"
 #include "SpaceSplitString.h"
 #include "TrustedFonts.h"
+#include "TypedElementDescendantIteratorInlines.h"
 #include "UserAgent.h"
 #include "UserContentTypes.h"
 #include "UserScript.h"
@@ -248,13 +252,7 @@ bool Quirks::hasBrokenEncryptedMediaAPISupportQuirk() const
 bool Quirks::isTouchBarUpdateSuppressedForHiddenContentEditable() const
 {
 #if PLATFORM(MAC)
-    if (!needsQuirks())
-        return false;
-
-    if (!m_quirksData.isTouchBarUpdateSuppressedForHiddenContentEditableQuirk)
-        m_quirksData.isTouchBarUpdateSuppressedForHiddenContentEditableQuirk = topDocumentURL().host() == "docs.google.com"_s;
-
-    return *m_quirksData.isTouchBarUpdateSuppressedForHiddenContentEditableQuirk;
+    return needsQuirks() && isGoogleDocs();
 #else
     return false;
 #endif
@@ -302,15 +300,7 @@ bool Quirks::isNeverRichlyEditableForTouchBar() const
 bool Quirks::shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreas() const
 {
 #if PLATFORM(IOS_FAMILY)
-    if (!needsQuirks())
-        return false;
-
-    if (!m_quirksData.shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk) {
-        auto host = topDocumentURL().host();
-        m_quirksData.shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk = host == "docs.google.com"_s;
-    }
-
-    return *m_quirksData.shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk;
+    return needsQuirks() && isGoogleDocs();
 #else
     return false;
 #endif
@@ -405,7 +395,7 @@ bool Quirks::shouldDisableElementFullscreenQuirk() const
     // (Ref: rdar://116531089)
     // Instagram.com stories flow under the notch and status bar
     // (Ref: rdar://121014613)
-    // Twitter.com video embeds have controls that are too tiny and
+    // x.com (Twitter) video embeds have controls that are too tiny and
     // show page behind fullscreen.
     // (Ref: rdar://121473410)
     // YouTube.com does not provide AirPlay controls in fullscreen
@@ -415,7 +405,7 @@ bool Quirks::shouldDisableElementFullscreenQuirk() const
             || isDomain("instagram.com"_s)
             || (PAL::currentUserInterfaceIdiomIsSmallScreen() && isDomain("digitaltrends.com"_s))
             || (PAL::currentUserInterfaceIdiomIsSmallScreen() && isDomain("as.com"_s))
-            || isEmbedDomain("twitter.com"_s)
+            || isEmbedDomain("x.com"_s)
             || (PAL::currentUserInterfaceIdiomIsSmallScreen() && (isYouTube() || isYoutubeEmbedDomain()));
     }
 
@@ -433,6 +423,21 @@ bool Quirks::isAmazon() const
     return *m_quirksData.isAmazon;
 }
 
+bool Quirks::isCBSSports() const
+{
+    if (!m_quirksData.isCBSSports)
+        m_quirksData.isCBSSports = isDomain("cbssports.com"_s);
+
+    return *m_quirksData.isCBSSports;
+}
+
+bool Quirks::isGoogleDocs() const
+{
+    if (!m_quirksData.isGoogleDocs)
+        m_quirksData.isGoogleDocs = topDocumentURL().host() == "docs.google.com"_s;
+
+    return *m_quirksData.isGoogleDocs;
+}
 
 bool Quirks::isESPN() const
 {
@@ -440,6 +445,13 @@ bool Quirks::isESPN() const
         m_quirksData.isESPN = isDomain("espn.com"_s);
 
     return *m_quirksData.isESPN;
+}
+
+bool Quirks::isSpotifyPlayer() const
+{
+    if (!m_quirksData.isSpotify)
+        m_quirksData.isSpotify = topDocumentURL().host() == "open.spotify.com"_s;
+    return *m_quirksData.isSpotify;
 }
 
 bool Quirks::isGoogleMaps() const
@@ -673,15 +685,7 @@ bool Quirks::needsDeferKeyDownAndKeyPressTimersUntilNextEditingCommand() const
     if (m_document->settings().needsDeferKeyDownAndKeyPressTimersUntilNextEditingCommandQuirk())
         return true;
 
-    if (!needsQuirks())
-        return false;
-
-    if (!m_quirksData.needsDeferKeyDownAndKeyPressTimersUntilNextEditingCommandQuirk) {
-        auto url = topDocumentURL();
-        m_quirksData.needsDeferKeyDownAndKeyPressTimersUntilNextEditingCommandQuirk = url.host() == "docs.google.com"_s && startsWithLettersIgnoringASCIICase(url.path(), "/spreadsheets/"_s);
-    }
-
-    return *m_quirksData.needsDeferKeyDownAndKeyPressTimersUntilNextEditingCommandQuirk;
+    return needsQuirks() && isGoogleDocs();
 #else
     return false;
 #endif
@@ -763,13 +767,7 @@ bool Quirks::needsScrollbarWidthThinDisabledQuirk() const
 // spotify.com rdar://138918575
 bool Quirks::needsBodyScrollbarWidthNoneDisabledQuirk() const
 {
-    if (!needsQuirks())
-        return false;
-
-    if (!m_quirksData.needsBodyScrollbarWidthNoneDisabledQuirk)
-        m_quirksData.needsBodyScrollbarWidthNoneDisabledQuirk = m_document->url().host() == "open.spotify.com"_s;
-
-    return *m_quirksData.needsBodyScrollbarWidthNoneDisabledQuirk;
+    return needsQuirks() && isSpotifyPlayer();
 }
 
 // gizmodo.com rdar://102227302
@@ -862,14 +860,14 @@ bool Quirks::shouldSilenceWindowResizeEvents() const
         return false;
 
     // We silence window resize events during the 'homing out' snapshot sequence when on nytimes.com
-    // to address <rdar://problem/59763843>, and on twitter.com to address <rdar://problem/58804852> &
+    // to address <rdar://problem/59763843>, and on x.com (twitter) to address <rdar://problem/58804852> &
     // <rdar://problem/61731801>.
     auto* page = m_document->page();
     if (!page || !page->isTakingSnapshotsForApplicationSuspension())
         return false;
 
     if (!m_quirksData.shouldSilenceWindowResizeEvents)
-        m_quirksData.shouldSilenceWindowResizeEvents = isDomain("nytimes.com"_s) || isDomain("twitter.com"_s) || isDomain("zillow.com"_s) || isDomain("365scores.com"_s);
+        m_quirksData.shouldSilenceWindowResizeEvents = isDomain("nytimes.com"_s) || isDomain("x.com"_s) || isDomain("zillow.com"_s) || isDomain("365scores.com"_s);
 
     return *m_quirksData.shouldSilenceWindowResizeEvents;
 #else
@@ -883,14 +881,14 @@ bool Quirks::shouldSilenceMediaQueryListChangeEvents() const
     if (!needsQuirks())
         return false;
 
-    // We silence MediaQueryList's change events during the 'homing out' snapshot sequence when on twitter.com
+    // We silence MediaQueryList's change events during the 'homing out' snapshot sequence when on x.com (twitter)
     // to address <rdar://problem/58804852> & <rdar://problem/61731801>.
     auto* page = m_document->page();
     if (!page || !page->isTakingSnapshotsForApplicationSuspension())
         return false;
 
     if (!m_quirksData.shouldSilenceMediaQueryListChangeEvents)
-        m_quirksData.shouldSilenceMediaQueryListChangeEvents = isDomain("twitter.com"_s);
+        m_quirksData.shouldSilenceMediaQueryListChangeEvents = isDomain("x.com"_s);
 
     return *m_quirksData.shouldSilenceMediaQueryListChangeEvents;
 #else
@@ -1400,7 +1398,7 @@ bool Quirks::needsVP9FullRangeFlagQuirk() const
 bool Quirks::requiresUserGestureToPauseInPictureInPicture() const
 {
 #if ENABLE(VIDEO_PRESENTATION_MODE)
-    // Facebook, Twitter, and Reddit will naively pause a <video> element that has scrolled out of the viewport,
+    // Facebook, X (twitter), and Reddit will naively pause a <video> element that has scrolled out of the viewport,
     // regardless of whether that element is currently in PiP mode.
     // We should remove the quirk once <rdar://problem/67273166>, <rdar://problem/73369869>, and <rdar://problem/80645747> have been fixed.
     if (!needsQuirks())
@@ -1408,7 +1406,7 @@ bool Quirks::requiresUserGestureToPauseInPictureInPicture() const
 
     if (!m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk) {
         auto domain = RegistrableDomain(topDocumentURL()).string();
-        m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk = isDomain("facebook.com"_s) || isDomain("twitter.com"_s) || isDomain("reddit.com"_s) || isDomain("forbes.com"_s);
+        m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk = isDomain("facebook.com"_s) || isDomain("x.com"_s) || isDomain("reddit.com"_s) || isDomain("forbes.com"_s);
     }
 
     return *m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk;
@@ -1431,14 +1429,14 @@ bool Quirks::returnNullPictureInPictureElementDuringFullscreenChange() const
 bool Quirks::requiresUserGestureToLoadInPictureInPicture() const
 {
 #if ENABLE(VIDEO_PRESENTATION_MODE)
-    // Twitter will remove the "src" attribute of a <video> element that has scrolled out of the viewport and
+    // X (Twitter) will remove the "src" attribute of a <video> element that has scrolled out of the viewport and
     // load the <video> element with an empty "src" regardless of whether that element is currently in PiP mode.
     // We should remove the quirk once <rdar://problem/73369869> has been fixed.
     if (!needsQuirks())
         return false;
 
     if (!m_quirksData.requiresUserGestureToLoadInPictureInPictureQuirk)
-        m_quirksData.requiresUserGestureToLoadInPictureInPictureQuirk = isDomain("twitter.com"_s);
+        m_quirksData.requiresUserGestureToLoadInPictureInPictureQuirk = isDomain("x.com"_s);
 
     return *m_quirksData.requiresUserGestureToLoadInPictureInPictureQuirk;
 #else
@@ -2085,19 +2083,28 @@ bool Quirks::needsChromeMediaControlsPseudoElement() const
 }
 
 #if PLATFORM(IOS_FAMILY)
-// Remove this once rdar://139478801 is resolved.
-bool Quirks::shouldSynthesizeTouchEventsAfterNonSyntheticClick(const Node& target) const
+// cbssports.com <rdar://139478801>.
+// docs.google.com <rdar://59402637>.
+bool Quirks::shouldSynthesizeTouchEventsAfterNonSyntheticClick(const Element& target) const
 {
     if (!needsQuirks())
         return false;
 
-    if (!m_quirksData.shouldSynthesizeTouchEventsAfterNonSyntheticClickQuirk)
-        m_quirksData.shouldSynthesizeTouchEventsAfterNonSyntheticClickQuirk = isDomain("cbssports.com"_s);
+    if (isCBSSports())
+        return target.nodeName() == "AVIA-BUTTON"_s;
 
-    if (!m_quirksData.shouldSynthesizeTouchEventsAfterNonSyntheticClickQuirk.value())
-        return false;
+    if (isGoogleDocs()) {
+        unsigned numberOfAncestorsToCheck = 3;
+        for (Ref ancestor : lineageOfType<HTMLElement>(target)) {
+            if (ancestor->hasClassName("docs-ml-promotion-action-container"_s))
+                return true;
 
-    return target.nodeName() == "AVIA-BUTTON"_s;
+            if (!--numberOfAncestorsToCheck)
+                break;
+        }
+    }
+
+    return false;
 }
 
 bool Quirks::shouldIgnoreContentObservationForClick(const Node& targetNode) const
@@ -2160,6 +2167,56 @@ bool Quirks::needsBingGestureEventQuirk(EventTarget* target) const
 
     return false;
 }
+
+// spotify.com rdar://140707449
+bool Quirks::shouldAvoidStartingSelectionOnMouseDown(const Node& target) const
+{
+#if PLATFORM(MAC)
+    if (!needsQuirks())
+        return false;
+
+    if (isSpotifyPlayer()) {
+        if (CheckedPtr style = target.renderStyle()) {
+            if (style->usedTouchActions().contains(TouchAction::None) && style->cursor() == CursorType::Pointer)
+                return true;
+        }
+    }
+#else
+    UNUSED_PARAM(target);
+#endif
+    return false;
+}
+
+#if PLATFORM(IOS_FAMILY)
+
+bool Quirks::needsPointerTouchCompatibility(const Element& target) const
+{
+    if (!needsQuirks())
+        return false;
+
+    if (WTF::IOSApplication::isFeedly()) {
+        RefPtr pageContainer = [&target] -> const HTMLElement* {
+            for (Ref ancestor : lineageOfType<HTMLElement>(target)) {
+                if (ancestor->hasClassName("PageContainer"_s))
+                    return ancestor.ptr();
+            }
+            return nullptr;
+        }();
+        if (pageContainer) {
+            if (RefPtr article = descendantsOfType<HTMLArticleElement>(*pageContainer).first())
+                return article->hasClassName("MobileFullEntry"_s);
+        }
+    } else if (WTF::IOSApplication::isAmazon()) {
+        for (Ref ancestor : lineageOfType<HTMLElement>(target)) {
+            if (ancestor->hasClassName("a-gesture-horizontal"_s))
+                return true;
+        }
+    }
+
+    return false;
+}
+
+#endif
 
 #if PLATFORM(IOS)
 // forbes.com rdar://117093458

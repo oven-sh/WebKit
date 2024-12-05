@@ -26,7 +26,7 @@
 #pragma once
 
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore::WebGPU {
@@ -34,7 +34,7 @@ namespace WebCore::WebGPU {
 class Device;
 class Texture;
 
-class XRSubImage : public RefCounted<XRSubImage>, public CanMakeWeakPtr<XRSubImage> {
+class XRSubImage : public RefCountedAndCanMakeWeakPtr<XRSubImage> {
 public:
     virtual ~XRSubImage() = default;
 

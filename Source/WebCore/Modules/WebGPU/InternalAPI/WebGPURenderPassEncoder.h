@@ -32,7 +32,7 @@
 #include <functional>
 #include <optional>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -45,7 +45,7 @@ class QuerySet;
 class RenderBundle;
 class RenderPipeline;
 
-class RenderPassEncoder : public RefCounted<RenderPassEncoder>, public CanMakeWeakPtr<RenderPassEncoder> {
+class RenderPassEncoder : public RefCountedAndCanMakeWeakPtr<RenderPassEncoder> {
 public:
     virtual ~RenderPassEncoder() = default;
 

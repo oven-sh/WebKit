@@ -74,7 +74,7 @@ IPC::ArrayReferenceTuple<Types...> toArrayReferenceTuple(const GCGLSpanTuple<Spa
 
 RefPtr<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::create(const WebCore::GraphicsContextGLAttributes& attributes, WebPage& page)
 {
-    return RemoteGraphicsContextGLProxy::create(attributes, page.ensureRemoteRenderingBackendProxy(), RunLoop::protectedMain().get());
+    return RemoteGraphicsContextGLProxy::create(attributes, page.ensureProtectedRemoteRenderingBackendProxy(), RunLoop::protectedMain().get());
 }
 
 RefPtr<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::create(const WebCore::GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend, SerialFunctionDispatcher& dispatcher)
@@ -112,11 +112,11 @@ void RemoteGraphicsContextGLProxy::initializeIPC(Ref<IPC::StreamClientConnection
     m_streamConnection = streamConnection.ptr();
     streamConnection->open(*this, dispatcher);
     callOnMainRunLoopAndWait([&]() {
-        auto& gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
-        gpuProcessConnection.createGraphicsContextGL(m_identifier, contextAttributes(), renderingBackend, WTFMove(serverHandle));
-        m_gpuProcessConnection = gpuProcessConnection;
+        Ref gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
+        gpuProcessConnection->createGraphicsContextGL(m_identifier, contextAttributes(), renderingBackend, WTFMove(serverHandle));
+        m_gpuProcessConnection = gpuProcessConnection.get();
 #if ENABLE(VIDEO)
-        m_videoFrameObjectHeapProxy = &gpuProcessConnection.videoFrameObjectHeapProxy();
+        m_videoFrameObjectHeapProxy = &gpuProcessConnection->videoFrameObjectHeapProxy();
 #endif
     });
 
@@ -202,7 +202,7 @@ RefPtr<WebCore::VideoFrame> RemoteGraphicsContextGLProxy::surfaceBufferToVideoFr
     auto [result] = sendResult.takeReply();
     if (!result)
         return nullptr;
-    return RemoteVideoFrameProxy::create(WebProcess::singleton().ensureGPUProcessConnection().protectedConnection(), WebProcess::singleton().ensureGPUProcessConnection().protectedVideoFrameObjectHeapProxy(), WTFMove(*result));
+    return RemoteVideoFrameProxy::create(WebProcess::singleton().ensureGPUProcessConnection().protectedConnection(), WebProcess::singleton().ensureProtectedGPUProcessConnection()->protectedVideoFrameObjectHeapProxy(), WTFMove(*result));
 }
 #endif
 

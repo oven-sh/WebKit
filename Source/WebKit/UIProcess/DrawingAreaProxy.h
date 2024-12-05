@@ -66,7 +66,7 @@ class WebProcessProxy;
 struct UpdateInfo;
 #endif
 
-class DrawingAreaProxy : public IPC::MessageReceiver, public IPC::MessageSender, public Identified<DrawingAreaIdentifier>, public AbstractRefCounted, public CanMakeCheckedPtr<DrawingAreaProxy> {
+class DrawingAreaProxy : public IPC::MessageReceiver, public IPC::MessageSender, public Identified<DrawingAreaIdentifier>, public CanMakeCheckedPtr<DrawingAreaProxy> {
     WTF_MAKE_TZONE_ALLOCATED(DrawingAreaProxy);
     WTF_MAKE_NONCOPYABLE(DrawingAreaProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DrawingAreaProxy);

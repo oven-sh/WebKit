@@ -167,6 +167,9 @@ public:
     static Ref<VideoPresentationManagerProxy> create(WebPageProxy&, PlaybackSessionManagerProxy&);
     virtual ~VideoPresentationManagerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void invalidate();
 
     void requestHideAndExitFullscreen();

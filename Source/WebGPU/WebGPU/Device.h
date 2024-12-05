@@ -29,9 +29,12 @@
 #import "Adapter.h"
 #import "HardwareCapabilities.h"
 #import "Queue.h"
+#import "WebGPU.h"
+#import "WebGPUExt.h"
 #import <CoreVideo/CVMetalTextureCache.h>
 #import <CoreVideo/CoreVideo.h>
 #import <IOSurface/IOSurfaceRef.h>
+#import <Metal/Metal.h>
 #import <simd/matrix_types.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
@@ -127,6 +130,7 @@ public:
     bool isValid() const { return m_device; }
     bool isLost() const { return m_isLost; }
     const WGPULimits& limits() const { return m_capabilities.limits; }
+    const WGPULimits limitsCopy() const { return m_capabilities.limits; }
     const Vector<WGPUFeatureName>& features() const { return m_capabilities.features; }
     const HardwareCapabilities::BaseCapabilities& baseCapabilities() const { return m_capabilities.baseCapabilities; }
 
@@ -137,7 +141,11 @@ public:
     void generateAnInternalError(String&& message);
 
     RefPtr<Instance> instance() const { return m_instance.get(); }
+#if CPU(X86_64)
+    bool hasUnifiedMemory() const { return false; }
+#else
     bool hasUnifiedMemory() const { return m_device.hasUnifiedMemory; }
+#endif
 
     uint32_t maxBuffersPlusVertexBuffersForVertexStage() const
     {
@@ -273,16 +281,16 @@ private:
     NSMapTable<id<MTLCommandBuffer>, NSMutableArray<id<MTLBuffer>>*>* m_resolvedSampleCounterBuffers;
     id<MTLSharedEvent> m_resolveTimestampsSharedEvent { nil };
     bool m_supressAllErrors { false };
-} SWIFT_SHARED_REFERENCE(retainDevice, releaseDevice);
+} SWIFT_SHARED_REFERENCE(refDevice, derefDevice);
 
 } // namespace WebGPU
 
-inline void retainDevice(WebGPU::Device* obj)
+inline void refDevice(WebGPU::Device* obj)
 {
-    WTF::retainThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr(obj);
+    WTF::ref(obj);
 }
 
-inline void releaseDevice(WebGPU::Device* obj)
+inline void derefDevice(WebGPU::Device* obj)
 {
-    WTF::releaseThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr(obj);
+    WTF::deref(obj);
 }

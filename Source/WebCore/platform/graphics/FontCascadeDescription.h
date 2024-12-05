@@ -35,6 +35,10 @@
 #include "FontFamilySpecificationNull.h"
 #endif
 
+namespace WTF {
+class TextStream;
+}
+
 namespace WebCore {
 
 #if PLATFORM(COCOA)
@@ -173,5 +177,7 @@ inline bool FontCascadeDescription::operator==(const FontCascadeDescription& oth
         && m_fontSmoothing == other.m_fontSmoothing
         && m_isSpecifiedFont == other.m_isSpecifiedFont;
 }
+
+WTF::TextStream& operator<<(WTF::TextStream&, const FontCascadeDescription&);
 
 }

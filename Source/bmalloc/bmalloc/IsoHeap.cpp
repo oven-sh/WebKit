@@ -30,6 +30,7 @@
 #if BUSE(LIBPAS)
 
 #include "bmalloc_heap_inlines.h"
+#include "bmalloc_heap_internal.h"
 #include "pas_allocation_mode.h"
 
 #include "IsoMallocFallback.h"

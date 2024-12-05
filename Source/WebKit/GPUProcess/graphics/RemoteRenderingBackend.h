@@ -106,8 +106,10 @@ public:
     void dispatch(Function<void()>&&);
 
     IPC::StreamServerConnection& streamConnection() const { return m_streamConnection.get(); }
+    Ref<IPC::StreamServerConnection> protectedStreamConnection() const { return m_streamConnection; }
 
     GPUConnectionToWebProcess& gpuConnectionToWebProcess() { return m_gpuConnectionToWebProcess.get(); }
+    Ref<GPUConnectionToWebProcess> protectedGPUConnectionToWebProcess();
 
     void setSharedMemoryForGetPixelBuffer(RefPtr<WebCore::SharedMemory> memory) { m_getPixelBufferSharedMemory = WTFMove(memory); }
     RefPtr<WebCore::SharedMemory> sharedMemoryForGetPixelBuffer() const { return m_getPixelBufferSharedMemory; }
@@ -190,9 +192,9 @@ private:
 
     void getImageBufferResourceLimitsForTesting(CompletionHandler<void(WebCore::ImageBufferResourceLimits)>&&);
 
-    Ref<IPC::StreamConnectionWorkQueue> m_workQueue;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
-    Ref<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
+    const Ref<IPC::StreamConnectionWorkQueue> m_workQueue;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     Ref<RemoteSharedResourceCache> m_sharedResourceCache;
     RemoteResourceCache m_remoteResourceCache;
     WebCore::ProcessIdentity m_resourceOwner;

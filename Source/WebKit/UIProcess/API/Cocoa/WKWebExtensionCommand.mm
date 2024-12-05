@@ -77,7 +77,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtensionCommand, WebExtensionCommand
 
 - (WKWebExtensionContext *)webExtensionContext
 {
-    if (auto *context = self._protectedWebExtensionCommand->extensionContext())
+    if (RefPtr context = self._protectedWebExtensionCommand->extensionContext())
         return context->wrapper();
     return nil;
 }

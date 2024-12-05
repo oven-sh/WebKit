@@ -30,9 +30,9 @@
 #include "CryptoAlgorithmAesKeyParams.h"
 #include "CryptoKeyAES.h"
 #include "ScriptExecutionContext.h"
+#include <algorithm>
+#include <ranges>
 #include <wtf/CrossThreadCopier.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -43,7 +43,7 @@ static constexpr auto ALG256 = "A256GCM"_s;
 #if CPU(ADDRESS64)
 static const uint64_t PlainTextMaxLength = 549755813632ULL; // 2^39 - 256
 #endif
-static const uint8_t ValidTagLengths[] = { 32, 64, 96, 104, 112, 120, 128 };
+static constexpr std::array<uint8_t, 7> validTagLengths { 32, 64, 96, 104, 112, 120, 128 };
 }
 
 static inline bool usagesAreInvalidForCryptoAlgorithmAESGCM(CryptoKeyUsageBitmap usages)
@@ -54,11 +54,7 @@ static inline bool usagesAreInvalidForCryptoAlgorithmAESGCM(CryptoKeyUsageBitmap
 static inline bool tagLengthIsValid(uint8_t tagLength)
 {
     using namespace CryptoAlgorithmAESGCMInternal;
-    for (size_t i = 0; i < sizeof(ValidTagLengths); i++) {
-        if (tagLength == ValidTagLengths[i])
-            return true;
-    }
-    return false;
+    return std::ranges::find(validTagLengths, tagLength) != std::ranges::end(validTagLengths);
 }
 
 Ref<CryptoAlgorithm> CryptoAlgorithmAESGCM::create()
@@ -243,5 +239,3 @@ ExceptionOr<std::optional<size_t>> CryptoAlgorithmAESGCM::getKeyLength(const Cry
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

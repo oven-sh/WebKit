@@ -49,7 +49,7 @@ namespace CSSPropertyParserHelpers {
 
 template<CSSValueID Name, typename T> CSS::BasicShape toBasicShape(T&& parameters)
 {
-    return CSS::BasicShape { CSS::FunctionNotation<Name, T> { WTFMove(parameters) } };
+    return CSS::BasicShape { FunctionNotation<Name, T> { WTFMove(parameters) } };
 }
 
 template<CSSValueID Name, typename T> std::optional<CSS::BasicShape> toBasicShape(std::optional<T>&& parameters)
@@ -65,8 +65,8 @@ static std::optional<CSS::FillRule> peekFillRule(CSSParserTokenRange& range)
     // https://svgwg.org/svg2-draft/painting.html#FillRuleProperty
 
     static constexpr std::pair<CSSValueID, CSS::FillRule> fillRuleMappings[] {
-        { CSSValueNonzero, CSS::FillRule { CSS::Nonzero { } } },
-        { CSSValueEvenodd, CSS::FillRule { CSS::Evenodd { } } },
+        { CSSValueNonzero, CSS::FillRule { CSS::Keyword::Nonzero { } } },
+        { CSSValueEvenodd, CSS::FillRule { CSS::Keyword::Evenodd { } } },
     };
     static constexpr SortedArrayMap fillRuleMap { fillRuleMappings };
 
@@ -117,9 +117,9 @@ static std::optional<CSS::RelativeControlPoint> consumeRelativeControlPoint(CSSP
     using Anchor = CSS::RelativeControlPoint::Anchor;
 
     static constexpr std::pair<CSSValueID, Anchor> anchorMappings[] {
-        { CSSValueStart, Anchor { CSS::Start { } } },
-        { CSSValueEnd, Anchor { CSS::End { } } },
-        { CSSValueOrigin, Anchor { CSS::Origin { } } },
+        { CSSValueStart, Anchor { CSS::Keyword::Start { } } },
+        { CSSValueEnd, Anchor { CSS::Keyword::End { } } },
+        { CSSValueOrigin, Anchor { CSS::Keyword::Origin { } } },
     };
     static constexpr SortedArrayMap anchorMap { anchorMappings };
 
@@ -186,17 +186,17 @@ static CSS::Circle::RadialSize consumeCircleRadialSize(CSSParserTokenRange& rang
     // Default to `closest-side` if no radial-size is provided.
 
     static constexpr std::pair<CSSValueID, CSS::Circle::Extent> extentMappings[] {
-        { CSSValueClosestSide, CSS::Circle::Extent { CSS::ClosestSide { } } },
-        { CSSValueClosestCorner, CSS::Circle::Extent { CSS::ClosestCorner { } } },
-        { CSSValueFarthestSide, CSS::Circle::Extent { CSS::FarthestSide { } } },
-        { CSSValueFarthestCorner, CSS::Circle::Extent { CSS::FarthestCorner { } } },
+        { CSSValueClosestSide, CSS::Circle::Extent { CSS::Keyword::ClosestSide { } } },
+        { CSSValueClosestCorner, CSS::Circle::Extent { CSS::Keyword::ClosestCorner { } } },
+        { CSSValueFarthestSide, CSS::Circle::Extent { CSS::Keyword::FarthestSide { } } },
+        { CSSValueFarthestCorner, CSS::Circle::Extent { CSS::Keyword::FarthestCorner { } } },
     };
     static constexpr SortedArrayMap extentMap { extentMappings };
 
     // Default to `closest-side` if no radial-size is provided.
     // FIXME: The spec says that `farthest-corner` should be the default, but this does not match the tests.
     auto defaultValue = [] {
-        return CSS::Circle::RadialSize { CSS::Circle::Extent { CSS::ClosestSide { } } };
+        return CSS::Circle::RadialSize { CSS::Circle::Extent { CSS::Keyword::ClosestSide { } } };
     };
 
     if (range.peek().type() == IdentToken) {
@@ -249,10 +249,10 @@ static std::optional<CSS::Ellipse::RadialSize> consumeEllipseRadialSize(CSSParse
     // Default to `closest-side` if no radial-size is provided.
 
     static constexpr std::pair<CSSValueID, CSS::Ellipse::Extent> extentMappings[] {
-        { CSSValueClosestSide, CSS::Ellipse::Extent { CSS::ClosestSide { } } },
-        { CSSValueClosestCorner, CSS::Ellipse::Extent { CSS::ClosestCorner { } } },
-        { CSSValueFarthestSide, CSS::Ellipse::Extent { CSS::FarthestSide { } } },
-        { CSSValueFarthestCorner, CSS::Ellipse::Extent { CSS::FarthestCorner { } } },
+        { CSSValueClosestSide, CSS::Ellipse::Extent { CSS::Keyword::ClosestSide { } } },
+        { CSSValueClosestCorner, CSS::Ellipse::Extent { CSS::Keyword::ClosestCorner { } } },
+        { CSSValueFarthestSide, CSS::Ellipse::Extent { CSS::Keyword::FarthestSide { } } },
+        { CSSValueFarthestCorner, CSS::Ellipse::Extent { CSS::Keyword::FarthestCorner { } } },
     };
     static constexpr SortedArrayMap extentMap { extentMappings };
 
@@ -288,17 +288,17 @@ static std::optional<CSS::Ellipse> consumeBasicShapeEllipseFunctionParameters(CS
     // <radial-extent>  = closest-corner | closest-side | farthest-corner | farthest-side
     // Default to `closest-side closest-side` if no radial-size is provided.
 
-    auto consumeRadialSizePair = [&] -> std::optional<CSS::SpaceSeparatedPair<CSS::Ellipse::RadialSize>> {
+    auto consumeRadialSizePair = [&] -> std::optional<SpaceSeparatedPair<CSS::Ellipse::RadialSize>> {
         if (auto radiusX = consumeEllipseRadialSize(args, context)) {
             auto radiusY = consumeEllipseRadialSize(args, context);
             if (!radiusY)
                 return std::nullopt;
-            return CSS::SpaceSeparatedPair<CSS::Ellipse::RadialSize> { WTFMove(*radiusX), WTFMove(*radiusY) };
+            return SpaceSeparatedPair<CSS::Ellipse::RadialSize> { WTFMove(*radiusX), WTFMove(*radiusY) };
         }
 
-        return CSS::SpaceSeparatedPair<CSS::Ellipse::RadialSize> {
-            CSS::Ellipse::RadialSize { CSS::Ellipse::Extent { CSS::ClosestSide { } } },
-            CSS::Ellipse::RadialSize { CSS::Ellipse::Extent { CSS::ClosestSide { } } }
+        return SpaceSeparatedPair<CSS::Ellipse::RadialSize> {
+            CSS::Ellipse::RadialSize { CSS::Ellipse::Extent { CSS::Keyword::ClosestSide { } } },
+            CSS::Ellipse::RadialSize { CSS::Ellipse::Extent { CSS::Keyword::ClosestSide { } } }
         };
     };
     auto radii = consumeRadialSizePair();
@@ -390,8 +390,8 @@ static std::optional<CSS::CommandAffinity> consumeShapeCommandAffinity(CSSParser
     // https://drafts.csswg.org/css-shapes-2/#typedef-shape-by-to
 
     static constexpr std::pair<CSSValueID, CSS::CommandAffinity> affinityMappings[] {
-        { CSSValueTo, CSS::CommandAffinity { CSS::To { } } },
-        { CSSValueBy, CSS::CommandAffinity { CSS::By { } } },
+        { CSSValueTo, CSS::CommandAffinity { CSS::Keyword::To { } } },
+        { CSSValueBy, CSS::CommandAffinity { CSS::Keyword::By { } } },
     };
     static constexpr SortedArrayMap affinityMap { affinityMappings };
 
@@ -409,7 +409,7 @@ static std::optional<CSS::MoveCommand> consumeShapeMoveCommand(CSSParserTokenRan
         return { };
 
     return WTF::switchOn(*affinity,
-        [&](CSS::To) -> std::optional<CSS::MoveCommand> {
+        [&](CSS::Keyword::To) -> std::optional<CSS::MoveCommand> {
             auto position = consumePositionUnresolved(range, context);
             if (!position)
                 return std::nullopt;
@@ -417,7 +417,7 @@ static std::optional<CSS::MoveCommand> consumeShapeMoveCommand(CSSParserTokenRan
                 .toBy = CSS::MoveCommand::To { .offset = WTFMove(*position) }
             };
         },
-        [&](CSS::By) -> std::optional<CSS::MoveCommand> {
+        [&](CSS::Keyword::By) -> std::optional<CSS::MoveCommand> {
             auto coordinatePair = consumeCoordinatePair(range, context);
             if (!coordinatePair)
                 return std::nullopt;
@@ -439,7 +439,7 @@ static std::optional<CSS::LineCommand> consumeShapeLineCommand(CSSParserTokenRan
         return { };
 
     return WTF::switchOn(*affinity,
-        [&](CSS::To) -> std::optional<CSS::LineCommand> {
+        [&](CSS::Keyword::To) -> std::optional<CSS::LineCommand> {
             auto position = consumePositionUnresolved(range, context);
             if (!position)
                 return { };
@@ -447,7 +447,7 @@ static std::optional<CSS::LineCommand> consumeShapeLineCommand(CSSParserTokenRan
                 .toBy = CSS::LineCommand::To { .offset = WTFMove(*position) }
             };
         },
-        [&](CSS::By) -> std::optional<CSS::LineCommand> {
+        [&](CSS::Keyword::By) -> std::optional<CSS::LineCommand> {
             auto coordinatePair = consumeCoordinatePair(range, context);
             if (!coordinatePair)
                 return { };
@@ -468,7 +468,7 @@ static std::optional<CSS::HLineCommand> consumeShapeHLineCommand(CSSParserTokenR
         return { };
 
     return WTF::switchOn(*affinity,
-        [&](CSS::To) -> std::optional<CSS::HLineCommand> {
+        [&](CSS::Keyword::To) -> std::optional<CSS::HLineCommand> {
             auto offset = consumeTwoComponentPositionHorizontalUnresolved(range, context);
             if (!offset)
                 return { };
@@ -476,7 +476,7 @@ static std::optional<CSS::HLineCommand> consumeShapeHLineCommand(CSSParserTokenR
                 .toBy = CSS::HLineCommand::To { .offset = WTFMove(*offset) }
             };
         },
-        [&](CSS::By) -> std::optional<CSS::HLineCommand> {
+        [&](CSS::Keyword::By) -> std::optional<CSS::HLineCommand> {
             const auto options = CSSPropertyParserOptions {
                 .parserMode = context.mode,
                 .unitlessZero = UnitlessZeroQuirk::Allow
@@ -501,7 +501,7 @@ static std::optional<CSS::VLineCommand> consumeShapeVLineCommand(CSSParserTokenR
         return { };
 
     return WTF::switchOn(*affinity,
-        [&](CSS::To) -> std::optional<CSS::VLineCommand> {
+        [&](CSS::Keyword::To) -> std::optional<CSS::VLineCommand> {
             auto offset = consumeTwoComponentPositionVerticalUnresolved(range, context);
             if (!offset)
                 return { };
@@ -509,7 +509,7 @@ static std::optional<CSS::VLineCommand> consumeShapeVLineCommand(CSSParserTokenR
                 .toBy = CSS::VLineCommand::To { .offset = WTFMove(*offset) }
             };
         },
-        [&](CSS::By) -> std::optional<CSS::VLineCommand> {
+        [&](CSS::Keyword::By) -> std::optional<CSS::VLineCommand> {
             const auto options = CSSPropertyParserOptions {
                 .parserMode = context.mode,
                 .unitlessZero = UnitlessZeroQuirk::Allow
@@ -536,7 +536,7 @@ static std::optional<CSS::CurveCommand> consumeShapeCurveCommand(CSSParserTokenR
         return { };
 
     return WTF::switchOn(*affinity,
-        [&](CSS::To) -> std::optional<CSS::CurveCommand> {
+        [&](CSS::Keyword::To) -> std::optional<CSS::CurveCommand> {
             auto position = consumePositionUnresolved(range, context);
             if (!position)
                 return { };
@@ -570,7 +570,7 @@ static std::optional<CSS::CurveCommand> consumeShapeCurveCommand(CSSParserTokenR
                 };
             }
         },
-        [&](CSS::By) -> std::optional<CSS::CurveCommand> {
+        [&](CSS::Keyword::By) -> std::optional<CSS::CurveCommand> {
             auto coordinatePair = consumeCoordinatePair(range, context);
             if (!coordinatePair)
                 return { };
@@ -619,7 +619,7 @@ static std::optional<CSS::SmoothCommand> consumeShapeSmoothCommand(CSSParserToke
         return { };
 
     return WTF::switchOn(*affinity,
-        [&](CSS::To) -> std::optional<CSS::SmoothCommand> {
+        [&](CSS::Keyword::To) -> std::optional<CSS::SmoothCommand> {
             auto position = consumePositionUnresolved(range, context);
             if (!position)
                 return { };
@@ -644,7 +644,7 @@ static std::optional<CSS::SmoothCommand> consumeShapeSmoothCommand(CSSParserToke
                 };
             }
         },
-        [&](CSS::By) -> std::optional<CSS::SmoothCommand> {
+        [&](CSS::Keyword::By) -> std::optional<CSS::SmoothCommand> {
             auto coordinatePair = consumeCoordinatePair(range, context);
             if (!coordinatePair)
                 return { };
@@ -684,13 +684,13 @@ static std::optional<CSS::ArcCommand> consumeShapeArcCommand(CSSParserTokenRange
 
     using ToBy = std::variant<CSS::ArcCommand::To, CSS::ArcCommand::By>;
     auto toBy = WTF::switchOn(*affinity,
-        [&](CSS::To) -> std::optional<ToBy> {
+        [&](CSS::Keyword::To) -> std::optional<ToBy> {
             auto position = consumePositionUnresolved(range, context);
             if (!position)
                 return { };
             return ToBy { CSS::ArcCommand::To { WTFMove(*position) } };
         },
-        [&](CSS::By) -> std::optional<ToBy> {
+        [&](CSS::Keyword::By) -> std::optional<ToBy> {
             auto coordinatePair = consumeCoordinatePair(range, context);
             if (!coordinatePair)
                 return { };
@@ -731,24 +731,24 @@ static std::optional<CSS::ArcCommand> consumeShapeArcCommand(CSSParserTokenRange
         case CSSValueCw:
             if (arcSweep)
                 return { };
-            arcSweep = CSS::Cw { };
+            arcSweep = CSS::Keyword::Cw { };
             break;
         case CSSValueCcw:
             if (arcSweep)
                 return { };
-            arcSweep = CSS::Ccw { };
+            arcSweep = CSS::Keyword::Ccw { };
             break;
 
         case CSSValueLarge:
             if (arcSize)
                 return { };
-            arcSize = CSS::Large { };
+            arcSize = CSS::Keyword::Large { };
             break;
 
         case CSSValueSmall:
             if (arcSize)
                 return { };
-            arcSize = CSS::Small { };
+            arcSize = CSS::Keyword::Small { };
             break;
 
         case CSSValueRotate:
@@ -768,8 +768,8 @@ static std::optional<CSS::ArcCommand> consumeShapeArcCommand(CSSParserTokenRange
     return CSS::ArcCommand {
         .toBy = WTFMove(*toBy),
         .size = { WTFMove(*length1), WTFMove(*length2) },
-        .arcSweep = arcSweep.value_or(CSS::ArcSweep { CSS::Ccw { } }),
-        .arcSize = arcSize.value_or(CSS::ArcSize { CSS::Small { } }),
+        .arcSweep = arcSweep.value_or(CSS::ArcSweep { CSS::Keyword::Ccw { } }),
+        .arcSize = arcSize.value_or(CSS::ArcSize { CSS::Keyword::Small { } }),
         .rotation = angle.value_or(CSS::Angle<> { CSS::AngleRaw<> { CSSUnitType::CSS_DEG, 0 } })
     };
 }
@@ -872,7 +872,7 @@ static std::optional<CSS::Rect::Edge> consumeBasicShapeRectEdge(CSSParserTokenRa
     if (args.peek().type() == IdentToken) {
         if (args.peek().id() == CSSValueAuto) {
             args.consumeIncludingWhitespace();
-            return { CSS::Auto { } };
+            return { CSS::Keyword::Auto { } };
         }
         return { };
     }
@@ -887,7 +887,7 @@ static std::optional<CSS::Rect::Edge> consumeBasicShapeRectEdge(CSSParserTokenRa
     return { };
 }
 
-static std::optional<RectEdges<CSS::Rect::Edge>> consumeBasicShapeRectEdges(CSSParserTokenRange& args, const CSSParserContext& context)
+static std::optional<SpaceSeparatedRectEdges<CSS::Rect::Edge>> consumeBasicShapeRectEdges(CSSParserTokenRange& args, const CSSParserContext& context)
 {
     // <rect-edges> = <rect-edge>{4}
 
@@ -903,7 +903,7 @@ static std::optional<RectEdges<CSS::Rect::Edge>> consumeBasicShapeRectEdges(CSSP
     auto left = consumeBasicShapeRectEdge(args, context);
     if (!left)
         return { };
-    return RectEdges<CSS::Rect::Edge> { WTFMove(*top), WTFMove(*right), WTFMove(*bottom), WTFMove(*left) };
+    return SpaceSeparatedRectEdges<CSS::Rect::Edge> { WTFMove(*top), WTFMove(*right), WTFMove(*bottom), WTFMove(*left) };
 }
 
 static std::optional<CSS::Rect> consumeBasicShapeRectFunctionParameters(CSSParserTokenRange& args, const CSSParserContext& context)

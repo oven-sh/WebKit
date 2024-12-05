@@ -8,8 +8,6 @@
       <dep package="icu"/>
       <dep package="harfbuzz"/>
       <dep package="libxml2"/>
-      <dep package="atk"/>
-      <dep package="at-spi2-atk"/>
       <dep package="glib"/>
       <dep package="glib-networking"/>
       <dep package="libavif"/>
@@ -17,9 +15,6 @@
       <dep package="libjxl"/>
       <dep package="libsoup"/>
       <dep package="libvpx"/>
-      <dep package="manette"/>
-      <dep package="wayland"/>
-      <dep package="wayland-protocols"/>
       <dep package="wpebackend-fdo"/>
     </dependencies>
   </metamodule>
@@ -29,8 +24,6 @@
       <dep package="icu"/>
       <dep package="harfbuzz"/>
       <dep package="libxml2"/>
-      <dep package="atk"/>
-      <dep package="at-spi2-atk"/>
       <dep package="glib"/>
       <dep package="glib-networking"/>
       <dep package="libavif"/>
@@ -38,9 +31,6 @@
       <dep package="libjxl"/>
       <dep package="libsoup"/>
       <dep package="libvpx"/>
-      <dep package="openxr"/>
-      <dep package="wayland"/>
-      <dep package="wayland-protocols"/>
       <dep package="wpebackend-fdo"/>
     </dependencies>
   </metamodule>
@@ -53,8 +43,6 @@
       href="https://chromium.googlesource.com"/>
   <repository type="git" name="git.freedesktop.org"
       href="https://gitlab.freedesktop.org"/>
-  <repository type="git" name="gitlab.gnome.org"
-      href="https://gitlab.gnome.org"/>
   <repository type="git" name="github.com"
       href="https://github.com"/>
   <!-- Tarball repositories. -->
@@ -223,26 +211,6 @@
             checkoutdir="libpsl-${version}"/>
   </autotools>
 
-  <!-- libmanette >= 0.2.4 required for GamePad support -->
-  <meson id="manette" mesonargs="-Dintrospection=false -Dvapi=false">
-    <pkg-config>manette-0.2.pc</pkg-config>
-    <branch repo="ftp.gnome.org"
-            module="/pub/gnome/sources/libmanette/0.2/libmanette-0.2.4.tar.xz"
-            version="0.2.4"
-            hash="sha256:4fe0a4bed6b4c3ae7249d341031c27b32f8d9e0ffb5337d71cbcec7160362cf7"/>
-  </meson>
-
-  <!-- OpenXR required for WebXR support -->
-  <cmake id="openxr">
-    <pkg-config>openxr.pc</pkg-config>
-    <branch module="KhronosGroup/OpenXR-SDK/archive/release-${version}.tar.gz" version="1.0.20"
-            checkoutdir="openxr-${version}"
-            repo="github-tarball"
-            hash="sha256:b32703d30b4f40f5cb1a16e7242e3587ad5b3b47893c90dce884b162c5ca0e02">
-      <patch file="openxr-skip-experimental-filesystem-detection.patch" strip="1"/>
-    </branch>
-  </cmake>
-
   <!-- libvpx needed for libwebrtc -->
   <autotools id="libvpx" autogen-template="%(srcdir)s/configure --prefix=%(prefix)s --extra-cflags=-fPIC --extra-cxxflags=-fPIC">
     <pkg-config>vpx.pc</pkg-config>
@@ -271,47 +239,6 @@
             tag="2.70.0"
             version="2.70.0"
             checkoutdir="glib-networking-${version}"/>
-  </meson>
-
-  <!-- atk needed to build with A11y support -->
-  <meson id="atk" mesonargs="-Dintrospection=false">
-    <pkg-config>atk.pc</pkg-config>
-    <branch module="Archive/atk.git"
-            repo="gitlab.gnome.org"
-            tag="2.38.0"
-            version="2.38.0"
-            checkoutdir="atk-${version}"/>
-    <dependencies>
-      <dep package="glib"/>
-    </dependencies>
-  </meson>
-
-  <!-- at-spi2-core needed to build with A11y support -->
-  <meson id="at-spi2-core" mesonargs="-Dintrospection=no -Dx11=no">
-    <pkg-config>atspi-2.pc</pkg-config>
-    <branch module="GNOME/at-spi2-core"
-            repo="github.com"
-            tag="AT_SPI2_CORE_2_44_1"
-            version="2.44.1"
-            checkoutdir="at-spi2-core-${version}"/>
-    <dependencies>
-      <dep package="glib"/>
-    </dependencies>
-  </meson>
-
-  <!-- at-spi2-atk needed to build with A11y support -->
-  <meson id="at-spi2-atk" mesonargs="">
-    <pkg-config>atk-bridge-2.0.pc</pkg-config>
-    <branch module="Archive/at-spi2-atk.git"
-            repo="gitlab.gnome.org"
-            tag="AT_SPI2_ATK_2_38_0"
-            version="2.38.0"
-            checkoutdir="at-spi2-atk-${version}"/>
-    <dependencies>
-      <dep package="glib"/>
-      <dep package="atk"/>
-      <dep package="at-spi2-core"/>
-    </dependencies>
   </meson>
 
   <!-- libjxl required for JPEGXL support -->
@@ -343,23 +270,5 @@
       <patch file="libjxl-add-cmake-flag-provision-dependencies.patch" strip="1"/>
     </branch>
   </cmake>
-
-  <meson id="wayland" mesonargs="-Ddocumentation=false -Ddtd_validation=false -Dtests=false">
-    <pkg-config>wayland-server.pc</pkg-config>
-    <branch module="wayland/wayland"
-            version="1.20.0"
-            tag="1.20.0"
-            checkoutdir="wayland"
-            repo="git.freedesktop.org" />
-  </meson>
-
-  <meson id="wayland-protocols">
-    <pkg-config>wayland-protocols.pc</pkg-config>
-    <branch module="wayland/wayland-protocols"
-            version="1.24"
-            tag="1.24"
-            checkoutdir="wayland-protocols"
-            repo="git.freedesktop.org" />
-  </meson>
 
 </moduleset>

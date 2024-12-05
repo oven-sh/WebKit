@@ -36,6 +36,7 @@
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DeviceMotionClient);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DeviceMotionController);
 
 DeviceMotionController::DeviceMotionController(DeviceMotionClient& client)

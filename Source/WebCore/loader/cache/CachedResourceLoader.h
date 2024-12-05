@@ -37,6 +37,7 @@
 #include <wtf/CheckedPtr.h>
 #include <wtf/Expected.h>
 #include <wtf/HashMap.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/WeakListHashSet.h>
 #include <wtf/text/StringHash.h>
@@ -79,7 +80,7 @@ const String& convertEnumerationToString(FetchMetadataSite);
 // RefPtr<CachedResourceLoader> for their lifetime (and will create one if they
 // are initialized without a Frame), so a Document can keep a CachedResourceLoader
 // alive past detach if scripts still reference the Document.
-class CachedResourceLoader : public RefCounted<CachedResourceLoader>, public CanMakeWeakPtr<CachedResourceLoader> {
+class CachedResourceLoader : public RefCountedAndCanMakeWeakPtr<CachedResourceLoader> {
     WTF_MAKE_NONCOPYABLE(CachedResourceLoader); WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
 friend class ImageLoader;
 friend class ResourceCacheValidationSuppressor;

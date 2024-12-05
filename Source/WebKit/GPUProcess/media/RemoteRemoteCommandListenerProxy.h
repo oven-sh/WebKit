@@ -54,6 +54,9 @@ public:
 
     virtual ~RemoteRemoteCommandListenerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     bool supportsSeeking() const { return m_supportsSeeking; }
     const WebCore::RemoteCommandListener::RemoteCommandsSet& supportedCommands() const { return m_supportedCommands; }
 

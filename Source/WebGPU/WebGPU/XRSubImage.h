@@ -29,8 +29,8 @@
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
 #import <wtf/WeakPtr.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 struct WGPUXRSubImageImpl {
 };
@@ -41,7 +41,7 @@ class CommandEncoder;
 class Device;
 class Texture;
 
-class XRSubImage : public WGPUXRSubImageImpl, public RefCounted<XRSubImage>, public CanMakeWeakPtr<XRSubImage> {
+class XRSubImage : public RefCountedAndCanMakeWeakPtr<XRSubImage>, public WGPUXRSubImageImpl {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     static Ref<XRSubImage> create(Device& device)

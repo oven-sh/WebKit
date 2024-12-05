@@ -72,7 +72,7 @@ WebCore::Path PathComputation<Polygon>::operator()(const Polygon& value, const F
 
 WebCore::WindRule WindRuleComputation<Polygon>::operator()(const Polygon& value)
 {
-    return (!value.fillRule || std::holds_alternative<Nonzero>(*value.fillRule)) ? WindRule::NonZero : WindRule::EvenOdd;
+    return (!value.fillRule || std::holds_alternative<CSS::Keyword::Nonzero>(*value.fillRule)) ? WindRule::NonZero : WindRule::EvenOdd;
 }
 
 // MARK: - Blending

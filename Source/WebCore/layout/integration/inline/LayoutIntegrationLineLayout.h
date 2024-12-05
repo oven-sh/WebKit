@@ -37,6 +37,7 @@
 #include "LayoutPoint.h"
 #include "LayoutState.h"
 #include "RenderObjectEnums.h"
+#include "SVGTextChunk.h"
 #include <wtf/CheckedPtr.h>
 
 namespace WebCore {
@@ -137,6 +138,8 @@ public:
 #ifndef NDEBUG
     bool hasDetachedContent() const { return m_lineDamage && m_lineDamage->hasDetachedContent(); }
 #endif
+
+    void applySVGTextFragments(SVGTextFragmentMap&&);
 
 private:
     void preparePlacedFloats();

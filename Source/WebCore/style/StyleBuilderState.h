@@ -31,6 +31,7 @@
 #include "PropertyCascade.h"
 #include "RuleSet.h"
 #include "SelectorChecker.h"
+#include "StyleForVisitedLink.h"
 #include <wtf/BitSet.h>
 
 namespace WebCore {
@@ -38,7 +39,6 @@ namespace WebCore {
 class FilterOperations;
 class FontCascadeDescription;
 class RenderStyle;
-class StyleColor;
 class StyleImage;
 class StyleResolver;
 
@@ -46,10 +46,10 @@ namespace Style {
 
 class Builder;
 class BuilderState;
+struct Color;
 
 void maybeUpdateFontForLetterSpacing(BuilderState&, CSSValue&);
 
-enum class ForVisitedLink : bool { No, Yes };
 enum class ApplyValueType : uint8_t { Value, Initial, Inherit };
 
 struct BuilderContext {
@@ -96,9 +96,7 @@ public:
 
     RefPtr<StyleImage> createStyleImage(const CSSValue&) const;
     FilterOperations createFilterOperations(const CSSValue&) const;
-
-    static bool isColorFromPrimitiveValueDerivedFromElement(const CSSPrimitiveValue&);
-    StyleColor colorFromPrimitiveValue(const CSSPrimitiveValue&, ForVisitedLink = ForVisitedLink::No) const;
+    Color createStyleColor(const CSSValue&, ForVisitedLink = ForVisitedLink::No) const;
 
     const Vector<AtomString>& registeredContentAttributes() const { return m_registeredContentAttributes; }
     void registerContentAttribute(const AtomString& attributeLocalName);

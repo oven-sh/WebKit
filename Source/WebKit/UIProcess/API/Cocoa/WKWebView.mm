@@ -452,8 +452,7 @@ static uint32_t convertSystemLayoutDirection(NSUserInterfaceLayoutDirection dire
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-    if (WebKit::PointerTouchCompatibilitySimulator::requiresPointerTouchCompatibility())
-        _pointerTouchCompatibilitySimulator = WTF::makeUnique<WebKit::PointerTouchCompatibilitySimulator>(self);
+    _pointerTouchCompatibilitySimulator = WTF::makeUnique<WebKit::PointerTouchCompatibilitySimulator>(self);
 #endif
 }
 
@@ -5153,66 +5152,6 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
     });
 }
 #endif
-
-- (NSUUID *)_enableSourceTextAnimationAfterElementWithID:(NSString *)elementID
-{
-#if ENABLE(WRITING_TOOLS)
-    RetainPtr nsUUID = [NSUUID UUID];
-
-    auto uuid = WTF::UUID::fromNSUUID(nsUUID.get());
-    if (!uuid)
-        return nil;
-
-    _page->enableSourceTextAnimationAfterElementWithID(elementID);
-
-#if PLATFORM(IOS_FAMILY)
-    [_contentView addTextAnimationForAnimationID:nsUUID.get() withData:{ WebCore::TextAnimationType::Initial, WebCore::TextAnimationRunMode::RunAnimation }];
-#else
-    _impl->addTextAnimationForAnimationID(*uuid, { WebCore::TextAnimationType::Initial, WebCore::TextAnimationRunMode::RunAnimation });
-#endif
-
-    return nsUUID.get();
-#else
-    return nil;
-#endif
-}
-
-- (NSUUID *)_enableFinalTextAnimationForElementWithID:(NSString *)elementID
-{
-#if ENABLE(WRITING_TOOLS)
-    RetainPtr nsUUID = [NSUUID UUID];
-
-    auto uuid = WTF::UUID::fromNSUUID(nsUUID.get());
-    if (!uuid)
-        return nil;
-
-    _page->enableTextAnimationTypeForElementWithID(elementID);
-
-#if PLATFORM(IOS_FAMILY)
-    [_contentView addTextAnimationForAnimationID:nsUUID.get() withData:{ WebCore::TextAnimationType::Final, WebCore::TextAnimationRunMode::RunAnimation }];
-#else
-    _impl->addTextAnimationForAnimationID(*uuid, { WebCore::TextAnimationType::Final, WebCore::TextAnimationRunMode::RunAnimation });
-#endif
-
-    return nsUUID.get();
-#else
-    return nil;
-#endif
-}
-
-- (void)_disableTextAnimationWithUUID:(NSUUID *)nsUUID
-{
-#if ENABLE(WRITING_TOOLS)
-#if PLATFORM(IOS_FAMILY)
-    [_contentView removeTextAnimationForAnimationID:nsUUID];
-#else
-    auto uuid = WTF::UUID::fromNSUUID(nsUUID);
-    if (!uuid)
-        return;
-    _impl->removeTextAnimationForAnimationID(*uuid);
-#endif // PLATFORM(IOS_FAMILY)
-#endif // ENABLE(WRITING_TOOLS)
-}
 
 - (_WKWebProcessState)_webProcessState
 {

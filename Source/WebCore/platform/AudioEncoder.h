@@ -39,7 +39,7 @@
 
 namespace WebCore {
 
-class AudioEncoder {
+class AudioEncoder : public ThreadSafeRefCounted<AudioEncoder> {
 public:
     virtual ~AudioEncoder() = default;
 
@@ -77,8 +77,8 @@ public:
         int64_t timestamp { 0 };
         std::optional<uint64_t> duration;
     };
-    using CreateResult = Expected<UniqueRef<AudioEncoder>, String>;
-    using CreatePromise = NativePromise<UniqueRef<AudioEncoder>, String>;
+    using CreateResult = Expected<Ref<AudioEncoder>, String>;
+    using CreatePromise = NativePromise<Ref<AudioEncoder>, String>;
 
     using DescriptionCallback = Function<void(ActiveConfiguration&&)>;
     using OutputCallback = Function<void(EncodedFrame&&)>;

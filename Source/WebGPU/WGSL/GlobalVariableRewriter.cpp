@@ -1977,7 +1977,7 @@ Result<Vector<unsigned>> RewriteGlobalVariables::insertStructs(PipelineLayout& l
                     if (bindingIt != bindings.end()) {
                         variable = bindingIt->value->declaration;
                         serializedVariables.add(variable, &entry);
-                        entries.append({ entry.binding, &createArgumentBufferEntry(*argumentBufferIndex, *variable) });
+                        entries.append({ *argumentBufferIndex, &createArgumentBufferEntry(*argumentBufferIndex, *variable) });
                     }
                 }
             }
@@ -2086,7 +2086,7 @@ Result<Vector<unsigned>> RewriteGlobalVariables::insertStructs(PipelineLayout& l
                     });
 
                 entries.append({
-                    entry.binding,
+                    *argumentBufferIndex,
                     &createArgumentBufferEntry(*argumentBufferIndex, SourceSpan::empty(), makeString("__ArgumentBufferPlaceholder_"_s, entry.binding), type)
                 });
             }

@@ -1044,7 +1044,6 @@ platform/graphics/transforms/RotateTransformOperation.cpp
 platform/mac/ScrollAnimatorMac.mm
 platform/mac/ScrollbarsControllerMac.mm
 platform/mac/WidgetMac.mm
-platform/mediastream/cocoa/AudioMediaStreamTrackRendererCocoa.cpp
 platform/mediastream/mac/CoreAudioCaptureSource.cpp
 platform/mediastream/mac/RealtimeIncomingVideoSourceCocoa.mm
 platform/mock/MockRealtimeMediaSourceCenter.cpp

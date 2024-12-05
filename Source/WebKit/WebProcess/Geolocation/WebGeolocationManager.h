@@ -53,8 +53,8 @@ public:
     explicit WebGeolocationManager(WebProcess&);
     ~WebGeolocationManager();
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
     static ASCIILiteral supplementName();
 

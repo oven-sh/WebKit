@@ -130,6 +130,7 @@
     macro(exitKind) \
     macro(exports) \
     macro(fallback) \
+    macro(fill) \
     macro(flags) \
     macro(firstDayOfWeek) \
     macro(forEach) \
@@ -237,6 +238,7 @@
     macro(parse) \
     macro(parseInt) \
     macro(parseFloat) \
+    macro(pluralCategories) \
     macro(profiledBytecodes) \
     macro(propertyIsEnumerable) \
     macro(prototype) \

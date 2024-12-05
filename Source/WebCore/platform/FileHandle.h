@@ -46,6 +46,7 @@ public:
     explicit FileHandle(FileSystem::PlatformFileHandle);
 
     explicit operator bool() const;
+    String path() const;
 
     bool open(const String& path, FileSystem::FileOpenMode);
     bool open();

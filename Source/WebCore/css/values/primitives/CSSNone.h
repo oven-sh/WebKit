@@ -49,5 +49,8 @@ template<> struct Serialize<None> { void operator()(StringBuilder&, const None&)
 template<> struct ComputedStyleDependenciesCollector<NoneRaw> { constexpr void operator()(ComputedStyleDependencies&, const NoneRaw&) { } };
 template<> struct ComputedStyleDependenciesCollector<None> { constexpr void operator()(ComputedStyleDependencies&, const None&) { } };
 
+template<> struct CSSValueChildrenVisitor<NoneRaw> { constexpr IterationStatus operator()(const Function<IterationStatus(CSSValue&)>&, const NoneRaw&) { return IterationStatus::Continue; } };
+template<> struct CSSValueChildrenVisitor<None> { constexpr IterationStatus operator()(const Function<IterationStatus(CSSValue&)>&, const None&) { return IterationStatus::Continue; } };
+
 } // namespace CSS
 } // namespace WebCore

@@ -234,6 +234,9 @@ public:
     static Ref<PlaybackSessionManagerProxy> create(WebPageProxy&);
     virtual ~PlaybackSessionManagerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void invalidate();
 
     bool canEnterVideoFullscreen() const { return !!m_controlsManagerContextId && m_controlsManagerContextIsVideo; }

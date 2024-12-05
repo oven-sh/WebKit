@@ -62,9 +62,7 @@ public:
 
     void handleNewCurrentMicrophoneDevice(const CaptureDevice&);
 
-    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<CoreAudioCaptureSource, WTF::DestructionThread::MainRunLoop>::ref(); }
-    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<CoreAudioCaptureSource, WTF::DestructionThread::MainRunLoop>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<CoreAudioCaptureSource, WTF::DestructionThread::MainRunLoop>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
     virtual ~CoreAudioCaptureSource();
 
 protected:
@@ -81,6 +79,7 @@ private:
     bool isCaptureSource() const final { return true; }
     void startProducingData() final;
     void stopProducingData() final;
+    void endProducingData() final;
 
     void delaySamples(Seconds) final;
 #if PLATFORM(IOS_FAMILY)

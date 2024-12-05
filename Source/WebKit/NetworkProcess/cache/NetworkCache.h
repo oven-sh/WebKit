@@ -38,6 +38,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Hasher.h>
 #include <wtf/OptionSet.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
@@ -152,7 +153,7 @@ enum class CacheOption : uint8_t {
 #endif
 };
 
-class Cache : public RefCounted<Cache>, public CanMakeWeakPtr<Cache> {
+class Cache : public RefCountedAndCanMakeWeakPtr<Cache> {
 public:
     ~Cache();
     static RefPtr<Cache> open(NetworkProcess&, const String& cachePath, OptionSet<CacheOption>, PAL::SessionID);

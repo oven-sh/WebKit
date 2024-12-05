@@ -25,12 +25,15 @@
 
 #pragma once
 
+#include "IntSize.h"
+
 #include <wtf/Forward.h>
 #include <wtf/WorkQueue.h>
 
 namespace WebCore {
 
 class ShareableBitmap;
+class SharedBuffer;
 
 WEBCORE_EXPORT WorkQueue& sharedImageTranscodingQueue();
 

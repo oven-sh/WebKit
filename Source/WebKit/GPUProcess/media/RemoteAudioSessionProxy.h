@@ -55,6 +55,9 @@ public:
         return adoptRef(*new RemoteAudioSessionProxy(gpuConnection));
     }
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     virtual ~RemoteAudioSessionProxy();
 
     WebCore::ProcessIdentifier processIdentifier();

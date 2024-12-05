@@ -273,6 +273,8 @@ static void clipAudioBufferList(AudioBufferList& list, AudioStreamDescription::P
         for (size_t index = 0; index < list.mNumberBuffers ; ++index)
             clipAudioBuffer(static_cast<double*>(list.mBuffers[index].mData), list.mBuffers[index].mDataByteSize / sizeof(double));
         break;
+    case AudioStreamDescription::Uint8:
+    case AudioStreamDescription::Int24:
     case AudioStreamDescription::None:
         ASSERT_NOT_REACHED();
         break;

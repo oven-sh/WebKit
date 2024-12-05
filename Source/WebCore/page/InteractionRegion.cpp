@@ -26,6 +26,7 @@
 #include "config.h"
 #include "InteractionRegion.h"
 
+#include "AccessibilityObject.h"
 #include "BorderShape.h"
 #include "Document.h"
 #include "ElementAncestorIteratorInlines.h"

@@ -52,10 +52,10 @@ public:
         WTF::initializeMainThread();
     }
 
-    // CAAudioStreamDescription(double sampleRate, UInt32 numChannels, PCMFormat format, bool isInterleaved, size_t capacity)
+    // CAAudioStreamDescription(double sampleRate, UInt32 numChannels, PCMFormat format, IsInterleaved isInterleaved, size_t capacity)
     void setup(double sampleRate, UInt32 numChannels, CAAudioStreamDescription::PCMFormat format, bool isInterleaved, size_t capacity)
     {
-        m_description = CAAudioStreamDescription(sampleRate, numChannels, format, isInterleaved);
+        m_description = CAAudioStreamDescription(sampleRate, numChannels, format, isInterleaved ? CAAudioStreamDescription::IsInterleaved::Yes : CAAudioStreamDescription::IsInterleaved::No);
         m_capacity = capacity;
         size_t listSize = offsetof(AudioBufferList, mBuffers) + (sizeof(AudioBuffer) * std::max<uint32_t>(1, m_description->numberOfChannelStreams()));
         m_bufferList = std::unique_ptr<AudioBufferList>(static_cast<AudioBufferList*>(::operator new (listSize)));

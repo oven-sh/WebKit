@@ -39,7 +39,11 @@ GST_DEBUG_CATEGORY(webkit_video_decoder_debug);
 
 static WorkQueue& gstDecoderWorkQueue()
 {
-    static NeverDestroyed<Ref<WorkQueue>> queue(WorkQueue::create("GStreamer VideoDecoder Queue"_s));
+    static std::once_flag onceKey;
+    static LazyNeverDestroyed<Ref<WorkQueue>> queue;
+    std::call_once(onceKey, [] {
+        queue.construct(WorkQueue::create("GStreamer VideoDecoder queue"_s));
+    });
     return queue.get();
 }
 
@@ -103,8 +107,8 @@ void GStreamerVideoDecoder::create(const String& codecName, const Config& config
     }
 
     GRefPtr<GstElement> element = gst_element_factory_create(lookupResult.factory.get(), nullptr);
-    auto decoder = makeUniqueRef<GStreamerVideoDecoder>(codecName, config, WTFMove(outputCallback), WTFMove(element));
-    auto internalDecoder = decoder->m_internalDecoder;
+    Ref decoder = adoptRef(*new GStreamerVideoDecoder(codecName, config, WTFMove(outputCallback), WTFMove(element)));
+    Ref internalDecoder = decoder->m_internalDecoder;
     if (!internalDecoder->isConfigured()) {
         GST_WARNING("Internal video decoder failed to configure for codec %s", codecName.utf8().data());
         callback(makeUnexpected(makeString("Internal video decoder failed to configure for codec "_s, codecName)));
@@ -114,7 +118,7 @@ void GStreamerVideoDecoder::create(const String& codecName, const Config& config
     gstDecoderWorkQueue().dispatch([callback = WTFMove(callback), decoder = WTFMove(decoder)]() mutable {
         auto internalDecoder = decoder->m_internalDecoder;
         GST_DEBUG_OBJECT(decoder->m_internalDecoder->harnessedElement(), "Video decoder created");
-        callback(UniqueRef<VideoDecoder> { WTFMove(decoder) });
+        callback(Ref<VideoDecoder> { WTFMove(decoder) });
     });
 }
 

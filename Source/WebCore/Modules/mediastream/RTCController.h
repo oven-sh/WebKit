@@ -26,7 +26,7 @@
 
 #include "EventTarget.h"
 #include "SecurityOrigin.h"
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakHashSet.h>
 
@@ -48,7 +48,7 @@ class LibWebRTCLogSink;
 class GStreamerWebRTCLogSink;
 #endif
 
-class RTCController : public RefCounted<RTCController>, public CanMakeWeakPtr<RTCController> {
+class RTCController : public RefCountedAndCanMakeWeakPtr<RTCController> {
 public:
     static Ref<RTCController> create() { return adoptRef(*new RTCController); }
 

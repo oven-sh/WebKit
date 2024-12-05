@@ -247,4 +247,22 @@ FAIL Missing JWK 'crv' parameter: importKey(jwk(private), {name: Ed448}, true, [
 FAIL Missing JWK 'crv' parameter: importKey(jwk(private), {name: Ed448}, false, [sign, sign]) assert_equals: Missing JWK 'crv' parameter not supported. expected "DataError" but got "NotSupportedError"
 FAIL Invalid key pair: importKey(jwk(private), {name: Ed448}, true, [sign]) assert_equals: Invalid key pair not supported. expected "DataError" but got "NotSupportedError"
 FAIL Invalid key pair: importKey(jwk(private), {name: Ed448}, true, [sign, sign]) assert_equals: Invalid key pair not supported. expected "DataError" but got "NotSupportedError"
+PASS Missing algorithm name: importKey(spki, {}, true, verify)
+PASS Missing algorithm name: importKey(spki, {}, false, verify)
+PASS Missing algorithm name: importKey(pkcs8, {}, true, sign)
+PASS Missing algorithm name: importKey(pkcs8, {}, false, sign)
+PASS Missing algorithm name: importKey(raw, {}, true, verify)
+PASS Missing algorithm name: importKey(raw, {}, false, verify)
+PASS Missing algorithm name: importKey(jwk(private), {}, true, sign)
+PASS Missing algorithm name: importKey(jwk(private), {}, false, sign)
+PASS Missing algorithm name: importKey(jwk (public) , {}, true, verify)
+PASS Missing algorithm name: importKey(jwk (public) , {}, false, verify)
+FAIL Invalid 'kty' field: importKey(jwk(private), {name: Ed448}, true, [sign]) assert_equals: Invalid 'kty' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'kty' field: importKey(jwk (public) , {name: Ed448}, true, [verify]) assert_equals: Invalid 'kty' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Import from a non-extractable: importKey(jwk(private), {name: Ed448}, true, [sign]) assert_equals: Import from a non-extractable not supported. expected "DataError" but got "NotSupportedError"
+FAIL Import from a non-extractable: importKey(jwk (public) , {name: Ed448}, true, [verify]) assert_equals: Import from a non-extractable not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'use' field: importKey(jwk(private), {name: Ed448}, true, [sign]) assert_equals: Invalid 'use' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'use' field: importKey(jwk (public) , {name: Ed448}, true, [verify]) assert_equals: Invalid 'use' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'crv' field: importKey(jwk(private), {name: Ed448}, true, [sign]) assert_equals: Invalid 'crv' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'crv' field: importKey(jwk (public) , {name: Ed448}, true, [verify]) assert_equals: Invalid 'crv' field not supported. expected "DataError" but got "NotSupportedError"
 

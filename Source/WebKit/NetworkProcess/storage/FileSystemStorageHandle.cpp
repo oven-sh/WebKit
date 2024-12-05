@@ -29,6 +29,7 @@
 #include "FileSystemStorageError.h"
 #include "FileSystemStorageManager.h"
 #include "SharedFileHandle.h"
+#include <WebCore/FileSystemWriteCommandType.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -103,7 +104,7 @@ bool FileSystemStorageHandle::isSameEntry(WebCore::FileSystemHandleIdentifier id
 
 static bool isValidFileName(const String& directory, const String& name)
 {
-    // https://wicg.github.io/file-system-access/#valid-file-name
+    // https://fs.spec.whatwg.org/#valid-file-name
     if (name.isEmpty() || (name == "."_s) || (name == ".."_s) || name.contains(pathSeparator))
         return false;
 
@@ -228,6 +229,112 @@ std::optional<FileSystemStorageError> FileSystemStorageHandle::closeSyncAccessHa
     m_activeSyncAccessHandle = std::nullopt;
 
     return std::nullopt;
+}
+
+std::optional<FileSystemStorageError> FileSystemStorageHandle::createWritable(bool keepExistingData)
+{
+    RefPtr manager = m_manager.get();
+    if (!manager)
+        return FileSystemStorageError::Unknown;
+
+    bool acquired = manager->acquireLockForFile(m_path, identifier());
+    if (!acquired)
+        return FileSystemStorageError::InvalidState;
+
+    auto path = FileSystem::createTemporaryFile("FileSystemWritableStream"_s);
+    if (keepExistingData)
+        FileSystem::copyFile(path, m_path);
+
+    ASSERT(!m_activeWritableFile);
+    m_activeWritableFile.open(path, FileSystem::FileOpenMode::ReadWrite);
+    if (!m_activeWritableFile)
+        return FileSystemStorageError::Unknown;
+
+    return std::nullopt;
+}
+
+std::optional<FileSystemStorageError> FileSystemStorageHandle::closeWritable(bool aborted)
+{
+    if (!m_activeWritableFile)
+        return FileSystemStorageError::InvalidState;
+
+    auto activeWritableFile = std::exchange(m_activeWritableFile, { });
+    RefPtr manager = m_manager.get();
+    if (!manager)
+        return FileSystemStorageError::Unknown;
+
+    manager->releaseLockForFile(m_path, identifier());
+
+    if (aborted) {
+        m_activeWritableFile.close();
+        FileSystem::deleteFile(m_activeWritableFile.path());
+        return std::nullopt;
+    }
+
+    ASSERT(!activeWritableFile.path().isEmpty());
+    if (FileSystem::copyFile(m_path, activeWritableFile.path()))
+        return std::nullopt;
+
+    return FileSystemStorageError::Unknown;
+}
+
+std::optional<FileSystemStorageError> FileSystemStorageHandle::executeCommandForWritableInternal(WebCore::FileSystemWriteCommandType type, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError)
+{
+    if (!m_activeWritableFile)
+        return FileSystemStorageError::InvalidState;
+
+    if (hasDataError)
+        return FileSystemStorageError::InvalidDataType;
+
+    switch (type) {
+    case WebCore::FileSystemWriteCommandType::Write: {
+        if (position) {
+            auto result = FileSystem::seekFile(m_activeWritableFile.handle(), *position, FileSystem::FileSeekOrigin::Beginning);
+            if (result == -1)
+                return FileSystemStorageError::Unknown;
+        }
+
+        // FIXME: Add quota check.
+        int result = FileSystem::writeToFile(m_activeWritableFile.handle(), dataBytes);
+        if (result == -1)
+            return FileSystemStorageError::Unknown;
+
+        return std::nullopt;
+    }
+    case WebCore::FileSystemWriteCommandType::Seek: {
+        if (!position)
+            return FileSystemStorageError::MissingArgument;
+
+        auto result = FileSystem::seekFile(m_activeWritableFile.handle(), *position, FileSystem::FileSeekOrigin::Beginning);
+        if (result == -1)
+            return FileSystemStorageError::Unknown;
+
+        return std::nullopt;
+    }
+    case WebCore::FileSystemWriteCommandType::Truncate: {
+        if (!size)
+            return FileSystemStorageError::MissingArgument;
+
+        bool truncated = FileSystem::truncateFile(m_activeWritableFile.handle(), *size);
+        if (!truncated)
+            return FileSystemStorageError::Unknown;
+
+        FileSystem::seekFile(m_activeWritableFile.handle(), *size, FileSystem::FileSeekOrigin::Beginning);
+        return std::nullopt;
+    }
+    }
+
+    ASSERT_NOT_REACHED();
+    return FileSystemStorageError::Unknown;
+}
+
+std::optional<FileSystemStorageError> FileSystemStorageHandle::executeCommandForWritable(WebCore::FileSystemWriteCommandType type, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError)
+{
+    auto error = executeCommandForWritableInternal(type, position, size, dataBytes, hasDataError);
+    if (error)
+        closeWritable(true);
+
+    return error;
 }
 
 Expected<Vector<String>, FileSystemStorageError> FileSystemStorageHandle::getHandleNames()

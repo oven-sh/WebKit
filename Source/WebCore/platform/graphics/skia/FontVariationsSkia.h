@@ -26,7 +26,9 @@
 #pragma once
 
 #include "FontDescription.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib / Win port
 #include <skia/core/SkTypeface.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 

@@ -45,6 +45,10 @@ class WebScreenOrientationManagerProxy final : public IPC::MessageReceiver, publ
 public:
     static Ref<WebScreenOrientationManagerProxy> create(WebPageProxy&, WebCore::ScreenOrientationType);
     ~WebScreenOrientationManagerProxy();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     // IPC::MessageReceiver

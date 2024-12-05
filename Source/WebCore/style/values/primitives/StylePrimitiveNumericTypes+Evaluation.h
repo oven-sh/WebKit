@@ -90,9 +90,9 @@ template<StyleDimensionPercentage T> double evaluate(const T& value, double refe
     return WTF::switchOn(value, [&referenceValue](const auto& value) -> double { return evaluate(value, referenceValue); });
 }
 
-// MARK: - Point
+// MARK: - SpaceSeparatedPoint
 
-template<typename T> FloatPoint evaluate(const Point<T>& value, FloatSize referenceBox)
+template<typename T> FloatPoint evaluate(const SpaceSeparatedPoint<T>& value, FloatSize referenceBox)
 {
     return {
         evaluate(value.x(), referenceBox.width()),
@@ -100,9 +100,9 @@ template<typename T> FloatPoint evaluate(const Point<T>& value, FloatSize refere
     };
 }
 
-// MARK: - Size
+// MARK: - SpaceSeparatedSize
 
-template<typename T> FloatSize evaluate(const Size<T>& value, FloatSize referenceBox)
+template<typename T> FloatSize evaluate(const SpaceSeparatedSize<T>& value, FloatSize referenceBox)
 {
     return {
         evaluate(value.width(), referenceBox.width()),

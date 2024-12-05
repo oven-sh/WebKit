@@ -739,6 +739,16 @@ bool hardLinkOrCopyFile(const String& targetPath, const String& linkPath)
     return !ec;
 }
 
+bool copyFile(const String& targetPath, const String& sourcePath)
+{
+    auto fsTargetPath = toStdFileSystemPath(targetPath);
+    auto fsSourcePath = toStdFileSystemPath(sourcePath);
+
+    std::error_code ec;
+    std::filesystem::copy_file(fsSourcePath, fsTargetPath, std::filesystem::copy_options::overwrite_existing, ec);
+    return !ec;
+}
+
 std::optional<uint64_t> hardLinkCount(const String& path)
 {
     std::error_code ec;

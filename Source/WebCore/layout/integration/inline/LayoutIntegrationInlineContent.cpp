@@ -29,6 +29,7 @@
 #include "InlineIteratorBox.h"
 #include "LayoutIntegrationLineLayout.h"
 #include "RenderStyleInlines.h"
+#include "SVGTextFragment.h"
 #include "TextPainter.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -167,6 +168,12 @@ const Vector<size_t>& InlineContent::nonRootInlineBoxIndexesForLayoutBox(const L
     }
 
     return it->value;
+}
+
+const Vector<SVGTextFragment>& InlineContent::svgTextFragments(size_t index) const
+{
+    RELEASE_ASSERT(m_svgTextFragmentsForBoxes.size() > index);
+    return m_svgTextFragmentsForBoxes[index];
 }
 
 void InlineContent::releaseCaches()

@@ -199,6 +199,24 @@ struct CompactTZoneHeap : public TZoneHeapBase<Type> {
 };
 #endif // BUSE(LIBPAS) -> so end of !BUSE(LIBPAS)
 
+#define MAKE_BTZONE_MALLOCED_ABSTRACT(isoType, heapType) \
+public: \
+    void* operator new(size_t, void* p) = delete; \
+    void* operator new[](size_t, void* p) = delete; \
+    \
+    void* operator new(size_t size) = delete; \
+    void operator delete(void* p) = delete; \
+    \
+    void* operator new[](size_t size) = delete; \
+    void operator delete[](void* p) = delete; \
+    \
+    void* operator new(size_t, NotNullTag, void* location) = delete; \
+static void freeAfterDestruction(void*) = delete; \
+    \
+    using WTFIsFastAllocated = int; \
+private: \
+    using __makeTZoneMallocedMacroSemicolonifier BUNUSED_TYPE_ALIAS = int
+
 #define MAKE_BTZONE_MALLOCED_COMMON(isoType, heapType, exportMacro) \
     static exportMacro ::bmalloc::api::heapType<isoType>& btzoneHeap(); \
     \

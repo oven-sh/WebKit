@@ -52,6 +52,9 @@ public:
     static Ref<WebSocketChannel> create(WebPageProxyIdentifier, WebCore::Document&, WebCore::WebSocketChannelClient&);
     ~WebSocketChannel();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
     void networkProcessCrashed();

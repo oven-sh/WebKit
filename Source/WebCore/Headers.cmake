@@ -381,6 +381,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/filesystemaccess/FileSystemStorageConnection.h
     Modules/filesystemaccess/FileSystemSyncAccessHandle.h
     Modules/filesystemaccess/FileSystemSyncAccessHandleIdentifier.h
+    Modules/filesystemaccess/FileSystemWritableFileStream.h
+    Modules/filesystemaccess/FileSystemWritableFileStreamSink.h
+    Modules/filesystemaccess/FileSystemWriteCommandType.h
     Modules/filesystemaccess/StorageManagerFileSystemAccess.h
     Modules/filesystemaccess/WorkerFileSystemStorageConnection.h
     Modules/filesystemaccess/WorkerFileSystemStorageConnectionCallbackIdentifier.h
@@ -593,6 +596,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     Modules/streams/ReadableStreamSink.h
     Modules/streams/ReadableStreamSource.h
+    Modules/streams/WritableStream.h
     Modules/streams/WritableStreamSink.h
 
     Modules/system-preview/ARKitBadgeSystemImage.h
@@ -851,6 +855,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     crypto/WrappedCryptoKey.h
 
     css/CSSAttrValue.h
+    css/CSSColorValue.h
     css/CSSConditionRule.h
     css/CSSCounterStyle.h
     css/CSSCounterStyleDescriptors.h
@@ -919,11 +924,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/calc/CSSCalcType.h
     css/calc/CSSCalcValue.h
 
-    css/color/CSSColorDescriptors.h
-    css/color/StyleAbsoluteColor.h
-    css/color/StyleColor.h
-    css/color/StyleCurrentColor.h
-
     css/parser/CSSParser.h
     css/parser/CSSParserContext.h
     css/parser/CSSParserEnum.h
@@ -947,8 +947,17 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/typedom/numeric/CSSNumericBaseType.h
     css/typedom/numeric/CSSNumericType.h
 
+    css/values/CSSValueAggregates.h
+    css/values/CSSValueTypes.h
+
     css/values/backgrounds/CSSBorderRadius.h
-    css/values/backgrounds/CSSMinimallySerializingRectEdges.h
+
+    css/values/color/CSSColor.h
+    css/values/color/CSSColorDescriptors.h
+    css/values/color/CSSColorType.h
+    css/values/color/CSSHexColor.h
+    css/values/color/CSSKeywordColor.h
+    css/values/color/CSSResolvedColor.h
 
     css/values/color-adjust/CSSColorScheme.h
 
@@ -974,8 +983,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/values/shapes/CSSRectFunction.h
     css/values/shapes/CSSShapeFunction.h
     css/values/shapes/CSSXywhFunction.h
-
-    css/values/CSSValueTypes.h
 
     cssjit/CompiledSelector.h
 
@@ -2002,6 +2009,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/DisplayRefreshMonitorManager.h
     platform/graphics/DisplayUpdate.h
     platform/graphics/DrawGlyphsRecorder.h
+    platform/graphics/Float16ArrayPixelBuffer.h
     platform/graphics/FloatLine.h
     platform/graphics/FloatPoint.h
     platform/graphics/FloatPoint3D.h
@@ -2582,6 +2590,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/svg/legacy/LegacyRenderSVGModelObject.h
     rendering/svg/RenderSVGModelObject.h
     rendering/svg/SVGBoundingBoxComputation.h
+    rendering/svg/SVGInlineTextBox.h
     rendering/svg/SVGRenderSupport.h
 
     storage/Storage.h
@@ -2604,7 +2613,11 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/Styleable.h
 
     style/values/backgrounds/StyleBorderRadius.h
-    style/values/backgrounds/StyleMinimallySerializingRectEdges.h
+
+    style/values/color/StyleColor.h
+    style/values/color/StyleColorOptions.h
+    style/values/color/StyleCurrentColor.h
+    style/values/color/StyleResolvedColor.h
 
     style/values/color-adjust/StyleColorScheme.h
 

@@ -50,7 +50,6 @@
 #include "RenderListMarker.h"
 #include "RenderStyleInlines.h"
 #include "RenderView.h"
-#include "RenderViewTransitionRoot.h"
 #include "StyleCustomPropertyData.h"
 #include "StyleOriginatedAnimation.h"
 #include "StylePropertyShorthand.h"
@@ -133,22 +132,18 @@ RenderElement* Styleable::renderer() const
         }
         break;
     case PseudoId::ViewTransition:
-        if (element.renderer())
+        if (element.renderer() && element.renderer()->isDocumentElementRenderer())
             return element.renderer()->view().viewTransitionRoot().get();
         break;
     case PseudoId::ViewTransitionGroup:
     case PseudoId::ViewTransitionImagePair:
     case PseudoId::ViewTransitionNew:
     case PseudoId::ViewTransitionOld: {
-        if (!element.renderer())
-            return nullptr;
-
-        WeakPtr viewTransitionRoot = element.renderer()->view().viewTransitionRoot();
-        if (!viewTransitionRoot)
+        if (!element.renderer() || !element.renderer()->isDocumentElementRenderer())
             return nullptr;
 
         // Find the right ::view-transition-group().
-        CheckedPtr correctGroup = viewTransitionRoot->childGroupForName(pseudoElementIdentifier->nameArgument);
+        CheckedPtr correctGroup = element.renderer()->view().viewTransitionGroupForName(pseudoElementIdentifier->nameArgument);
         if (!correctGroup)
             return nullptr;
 

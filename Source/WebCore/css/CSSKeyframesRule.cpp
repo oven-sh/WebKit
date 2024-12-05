@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,9 +31,13 @@
 #include "CSSRuleList.h"
 #include "CSSStyleSheet.h"
 #include "Document.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
+
+using CSSKeyframesRuleLiveCSSRuleList = LiveCSSRuleList<CSSKeyframesRule>;
+WTF_MAKE_TZONE_ALLOCATED_IMPL_TEMPLATE(CSSKeyframesRuleLiveCSSRuleList);
 
 StyleRuleKeyframes::StyleRuleKeyframes(const AtomString& name)
     : StyleRuleBase(StyleRuleType::Keyframes)

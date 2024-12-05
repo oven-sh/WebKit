@@ -71,7 +71,7 @@ private:
 // The rule owns the live list.
 template <class Rule>
 class LiveCSSRuleList final : public CSSRuleList {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(LiveCSSRuleList);
+    WTF_MAKE_TZONE_ALLOCATED(LiveCSSRuleList);
 public:
     LiveCSSRuleList(Rule& rule)
         : m_rule(rule)

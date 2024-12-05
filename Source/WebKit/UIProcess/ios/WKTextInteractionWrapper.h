@@ -62,6 +62,7 @@
 @property (nonatomic, strong, readonly) UIContextMenuInteraction *contextMenuInteraction;
 #endif
 
+@property (nonatomic, readonly) NSArray<UIView *> *managedTextSelectionViews;
 @property (nonatomic, readonly) UIWKTextInteractionAssistant *textInteractionAssistant;
 
 @end

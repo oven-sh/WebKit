@@ -91,6 +91,7 @@ gles_requestable_extensions = [
     "GL_ANGLE_texture_usage",
     "GL_APPLE_clip_distance",
     "GL_ARB_sync",
+    "GL_ARM_rgba8",
     "GL_ARM_shader_framebuffer_fetch",
     "GL_ARM_shader_framebuffer_fetch_depth_stencil",
     "GL_EXT_base_instance",
@@ -113,6 +114,7 @@ gles_requestable_extensions = [
     "GL_EXT_EGL_image_array",
     "GL_EXT_EGL_image_external_wrap_modes",
     "GL_EXT_EGL_image_storage",
+    "GL_EXT_EGL_image_storage_compression",
     "GL_EXT_external_buffer",
     "GL_EXT_float_blend",
     "GL_EXT_frag_depth",
@@ -164,6 +166,7 @@ gles_requestable_extensions = [
     "GL_EXT_texture_sRGB_R8",
     "GL_EXT_texture_sRGB_RG8",
     "GL_EXT_texture_storage",
+    "GL_EXT_texture_storage_compression",
     "GL_EXT_texture_type_2_10_10_10_REV",
     "GL_EXT_unpack_subimage",
     "GL_EXT_YUV_target",
@@ -295,6 +298,7 @@ gles_es_only_extensions = [
 
 # ES1 (Possibly the min set of extensions needed by Android)
 gles1_extensions = [
+    "GL_OES_blend_subtract",
     "GL_OES_draw_texture",
     "GL_OES_framebuffer_object",
     "GL_OES_matrix_palette",
@@ -302,6 +306,7 @@ gles1_extensions = [
     "GL_OES_point_sprite",
     "GL_OES_query_matrix",
     "GL_OES_texture_cube_map",
+    "GL_OES_texture_mirrored_repeat",
 ]
 
 

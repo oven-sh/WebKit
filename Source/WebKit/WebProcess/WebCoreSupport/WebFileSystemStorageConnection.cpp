@@ -214,6 +214,42 @@ void WebFileSystemStorageConnection::invalidateAccessHandle(WebCore::FileSystemS
     }
 }
 
+void WebFileSystemStorageConnection::createWritable(WebCore::FileSystemHandleIdentifier identifier, bool keepExistingData, WebCore::FileSystemStorageConnection::VoidCallback&& completionHandler)
+{
+    if (RefPtr connection = m_connection) {
+        connection->sendWithAsyncReply(Messages::NetworkStorageManager::CreateWritable(identifier, keepExistingData), [completionHandler = WTFMove(completionHandler)](auto error) mutable {
+            completionHandler(convertToExceptionOr(error));
+        });
+        return;
+    }
+
+    completionHandler(WebCore::Exception { WebCore::ExceptionCode::UnknownError, "Connection is lost"_s });
+}
+
+void WebFileSystemStorageConnection::closeWritable(WebCore::FileSystemHandleIdentifier identifier, bool aborted, WebCore::FileSystemStorageConnection::VoidCallback&& completionHandler)
+{
+    if (RefPtr connection = m_connection) {
+        connection->sendWithAsyncReply(Messages::NetworkStorageManager::CloseWritable(identifier, aborted), [completionHandler = WTFMove(completionHandler)](auto error) mutable {
+            completionHandler(convertToExceptionOr(error));
+        });
+        return;
+    }
+
+    completionHandler(WebCore::Exception { WebCore::ExceptionCode::UnknownError, "Connection is lost"_s });
+}
+
+void WebFileSystemStorageConnection::executeCommandForWritable(WebCore::FileSystemHandleIdentifier identifier, WebCore::FileSystemWriteCommandType type, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError, WebCore::FileSystemStorageConnection::VoidCallback&& completionHandler)
+{
+    if (RefPtr connection = m_connection) {
+        connection->sendWithAsyncReply(Messages::NetworkStorageManager::ExecuteCommandForWritable(identifier, type, position, size, dataBytes, hasDataError), [completionHandler = WTFMove(completionHandler)](auto error) mutable {
+            completionHandler(convertToExceptionOr(error));
+        });
+        return;
+    }
+
+    completionHandler(WebCore::Exception { WebCore::ExceptionCode::UnknownError, "Connection is lost"_s });
+}
+
 void WebFileSystemStorageConnection::requestNewCapacityForSyncAccessHandle(WebCore::FileSystemHandleIdentifier identifier, WebCore::FileSystemSyncAccessHandleIdentifier accessHandleIdentifier, uint64_t newCapacity, RequestCapacityCallback&& completionHandler)
 {
     if (!m_connection)

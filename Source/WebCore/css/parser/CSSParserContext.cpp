@@ -57,7 +57,7 @@ CSSParserContext::CSSParserContext(CSSParserMode mode, const URL& baseURL)
     if (isUASheetBehavior(mode)) {
         cssAppearanceBaseEnabled = true;
         cssTextUnderlinePositionLeftRightEnabled = true;
-        lightDarkEnabled = true;
+        lightDarkColorEnabled = true;
         popoverAttributeEnabled = true;
         propertySettings.cssInputSecurityEnabled = true;
         propertySettings.cssCounterStyleAtRulesEnabled = true;
@@ -104,7 +104,7 @@ CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBas
     , imageControlsEnabled { document.settings().imageControlsEnabled() }
 #endif
     , colorLayersEnabled { document.settings().cssColorLayersEnabled() }
-    , lightDarkEnabled { document.settings().cssLightDarkEnabled() }
+    , lightDarkColorEnabled { document.settings().cssLightDarkEnabled() }
     , contrastColorEnabled { document.settings().cssContrastColorEnabled() }
     , targetTextPseudoElementEnabled { document.settings().targetTextPseudoElementEnabled() }
     , viewTransitionTypesEnabled { document.settings().viewTransitionsEnabled() && document.settings().viewTransitionTypesEnabled() }
@@ -140,7 +140,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         | context.imageControlsEnabled                      << 19
 #endif
         | context.colorLayersEnabled                        << 20
-        | context.lightDarkEnabled                          << 21
+        | context.lightDarkColorEnabled                     << 21
         | context.contrastColorEnabled                      << 22
         | context.targetTextPseudoElementEnabled            << 23
         | context.viewTransitionTypesEnabled                << 24

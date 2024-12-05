@@ -190,6 +190,7 @@ WTF_EXPORT_PRIVATE bool hardLink(const String& targetPath, const String& linkPat
 // Hard links a file if possible, copies it if not.
 WTF_EXPORT_PRIVATE bool hardLinkOrCopyFile(const String& targetPath, const String& linkPath);
 WTF_EXPORT_PRIVATE std::optional<uint64_t> hardLinkCount(const String& path);
+WTF_EXPORT_PRIVATE bool copyFile(const String& targetPath, const String& sourcePath);
 
 #if USE(FILE_LOCK)
 WTF_EXPORT_PRIVATE bool lockFile(PlatformFileHandle, OptionSet<FileLockMode>);

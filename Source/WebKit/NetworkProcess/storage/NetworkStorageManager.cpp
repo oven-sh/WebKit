@@ -39,6 +39,7 @@
 #include "IDBStorageRegistry.h"
 #include "LocalStorageManager.h"
 #include "Logging.h"
+#include "NetworkConnectionToWebProcess.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
 #include "NetworkStorageManagerMessages.h"
@@ -287,13 +288,21 @@ void NetworkStorageManager::close(CompletionHandler<void()>&& completionHandler)
     });
 }
 
-void NetworkStorageManager::startReceivingMessageFromConnection(IPC::Connection& connection, const Vector<WebCore::RegistrableDomain>& allowedSites)
+void NetworkStorageManager::startReceivingMessageFromConnection(IPC::Connection& connection, const Vector<WebCore::RegistrableDomain>& allowedSites, const SharedPreferencesForWebProcess& preferences)
 {
     ASSERT(RunLoop::isMain());
 
     connection.addWorkQueueMessageReceiver(Messages::NetworkStorageManager::messageReceiverName(), m_queue.get(), *this);
     m_connections.add(connection);
     addAllowedSitesForConnection(connection.uniqueID(), allowedSites);
+
+    protectedWorkQueue()->dispatch([this, protectedThis = Ref { *this }, connection = connection.uniqueID(), preferences]() mutable {
+        assertIsCurrent(workQueue());
+        ASSERT(!m_preferencesForConnections.contains(connection));
+        m_preferencesForConnections.add(connection, preferences);
+
+        RunLoop::protectedMain()->dispatch([protectedThis = WTFMove(protectedThis)] { });
+    });
 }
 
 void NetworkStorageManager::stopReceivingMessageFromConnection(IPC::Connection& connection)
@@ -320,6 +329,22 @@ void NetworkStorageManager::stopReceivingMessageFromConnection(IPC::Connection& 
         m_temporaryBlobPathsByConnection.remove(connection);
         if (m_allowedSitesForConnections)
             m_allowedSitesForConnections->remove(connection);
+
+        ASSERT(m_preferencesForConnections.contains(connection));
+        m_preferencesForConnections.remove(connection);
+
+        RunLoop::protectedMain()->dispatch([protectedThis = WTFMove(protectedThis)] { });
+    });
+}
+
+void NetworkStorageManager::updateSharedPreferencesForConnection(IPC::Connection& connection, const SharedPreferencesForWebProcess& preferences)
+{
+    ASSERT(RunLoop::isMain());
+
+    protectedWorkQueue()->dispatch([this, protectedThis = Ref { *this }, connection = connection.uniqueID(), preferences]() mutable {
+        assertIsCurrent(workQueue());
+        if (auto iter = m_preferencesForConnections.find(connection); iter != m_preferencesForConnections.end())
+            iter->value = preferences;
 
         RunLoop::protectedMain()->dispatch([protectedThis = WTFMove(protectedThis)] { });
     });
@@ -945,6 +970,39 @@ void NetworkStorageManager::requestNewCapacityForSyncAccessHandle(WebCore::FileS
     handle->requestNewCapacityForSyncAccessHandle(accessHandleIdentifier, newCapacity, WTFMove(completionHandler));
 }
 
+void NetworkStorageManager::createWritable(WebCore::FileSystemHandleIdentifier identifier, bool keepExistingData, CompletionHandler<void(std::optional<FileSystemStorageError>)>&& completionHandler)
+{
+    ASSERT(!RunLoop::isMain());
+
+    RefPtr handle = m_fileSystemStorageHandleRegistry->getHandle(identifier);
+    if (!handle)
+        return completionHandler(FileSystemStorageError::Unknown);
+
+    completionHandler(handle->createWritable(keepExistingData));
+}
+
+void NetworkStorageManager::closeWritable(WebCore::FileSystemHandleIdentifier identifier, bool aborted, CompletionHandler<void(std::optional<FileSystemStorageError>)>&& completionHandler)
+{
+    ASSERT(!RunLoop::isMain());
+
+    RefPtr handle = m_fileSystemStorageHandleRegistry->getHandle(identifier);
+    if (!handle)
+        return completionHandler(FileSystemStorageError::Unknown);
+
+    completionHandler(handle->closeWritable(aborted));
+}
+
+void NetworkStorageManager::executeCommandForWritable(WebCore::FileSystemHandleIdentifier identifier, WebCore::FileSystemWriteCommandType type, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError, CompletionHandler<void(std::optional<FileSystemStorageError>)>&& completionHandler)
+{
+    ASSERT(!RunLoop::isMain());
+
+    RefPtr handle = m_fileSystemStorageHandleRegistry->getHandle(identifier);
+    if (!handle)
+        return completionHandler(FileSystemStorageError::Unknown);
+
+    completionHandler(handle->executeCommandForWritable(type, position, size, dataBytes, hasDataError));
+}
+
 void NetworkStorageManager::getHandleNames(WebCore::FileSystemHandleIdentifier identifier, CompletionHandler<void(Expected<Vector<String>, FileSystemStorageError>)>&& completionHandler)
 {
     ASSERT(!RunLoop::isMain());
@@ -1256,6 +1314,30 @@ void NetworkStorageManager::syncLocalStorage(CompletionHandler<void()>&& complet
         }
 
         RunLoop::protectedMain()->dispatch(WTFMove(completionHandler));
+    });
+}
+
+void NetworkStorageManager::fetchLocalStorage(CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&& completionHandler)
+{
+    ASSERT(RunLoop::isMain());
+    ASSERT(!m_closed);
+
+    protectedWorkQueue()->dispatch([this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)]() mutable {
+        assertIsCurrent(workQueue());
+
+        HashMap<WebCore::ClientOrigin, HashMap<String, String>> localStorageMap;
+
+        for (auto& origin : getAllOrigins()) {
+            auto& localStorageManager = originStorageManager(origin, ShouldWriteOriginFile::No).localStorageManager(*m_storageAreaRegistry);
+            auto storageMap = localStorageManager.fetchStorageMap();
+
+            if (!storageMap.isEmpty())
+                localStorageMap.add(origin, storageMap);
+        }
+
+        RunLoop::protectedMain()->dispatch([completionHandler = WTFMove(completionHandler), localStorageMap = crossThreadCopy(WTFMove(localStorageMap))] mutable {
+            completionHandler(WTFMove(localStorageMap));
+        });
     });
 }
 
@@ -2060,6 +2142,17 @@ bool NetworkStorageManager::shouldManageServiceWorkerRegistrationsByOrigin()
 RefPtr<CacheStorageRegistry> NetworkStorageManager::protectedCacheStorageRegistry()
 {
     return m_cacheStorageRegistry.get();
+}
+
+std::optional<SharedPreferencesForWebProcess> NetworkStorageManager::sharedPreferencesForWebProcess(IPC::Connection& connection) const
+{
+    assertIsCurrent(workQueue());
+
+    auto iter = m_preferencesForConnections.find(connection.uniqueID());
+    if (iter == m_preferencesForConnections.end())
+        return std::nullopt;
+
+    return iter->value;
 }
 
 } // namespace WebKit

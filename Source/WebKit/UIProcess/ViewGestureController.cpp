@@ -186,7 +186,8 @@ bool ViewGestureController::canSwipeInDirection(SwipeDirection direction) const
         return false;
 
 #if ENABLE(FULLSCREEN_API)
-    if (page->fullScreenManager() && page->fullScreenManager()->isFullScreen())
+    RefPtr fullScreenManager = page->fullScreenManager();
+    if (fullScreenManager && fullScreenManager->isFullScreen())
         return false;
 #endif
 

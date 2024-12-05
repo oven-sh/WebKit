@@ -117,6 +117,9 @@ public:
     static Ref<RemoteMediaPlayerProxy> create(RemoteMediaPlayerManagerProxy&, WebCore::MediaPlayerIdentifier, WebCore::MediaPlayerClientIdentifier, Ref<IPC::Connection>&&, WebCore::MediaPlayerEnums::MediaEngineIdentifier, RemoteMediaPlayerProxyConfiguration&&, RemoteVideoFrameObjectHeap&, const WebCore::ProcessIdentity&);
     ~RemoteMediaPlayerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     WebCore::MediaPlayerIdentifier identifier() const { return m_id; }
     void invalidate();
 

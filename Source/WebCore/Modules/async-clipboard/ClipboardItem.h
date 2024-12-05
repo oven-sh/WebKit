@@ -28,7 +28,7 @@
 #include "ExceptionOr.h"
 #include <wtf/KeyValuePair.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -46,7 +46,7 @@ class PasteboardCustomData;
 class ScriptExecutionContext;
 struct PasteboardItemInfo;
 
-class ClipboardItem : public RefCounted<ClipboardItem>, public CanMakeWeakPtr<ClipboardItem> {
+class ClipboardItem : public RefCountedAndCanMakeWeakPtr<ClipboardItem> {
 public:
     ~ClipboardItem();
 

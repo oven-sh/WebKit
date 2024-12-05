@@ -52,8 +52,8 @@ public:
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
 private:
     RefPtr<WebPageProxy> mostReasonableWebPageProxy(const WebCore::SecurityOriginData&, WebCore::PermissionQuerySource) const;

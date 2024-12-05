@@ -27,8 +27,7 @@
 
 #include <WebCore/Site.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
-#include <wtf/WeakPtr.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebKit {
 
@@ -38,7 +37,7 @@ class WebProcessProxy;
 
 // Note: This object should only be referenced by WebFrameProxy because its destructor is an
 // important part of managing the lifetime of a frame and the process used by the frame.
-class FrameProcess : public RefCounted<FrameProcess>, public CanMakeWeakPtr<FrameProcess> {
+class FrameProcess : public RefCountedAndCanMakeWeakPtr<FrameProcess> {
 public:
     ~FrameProcess();
 

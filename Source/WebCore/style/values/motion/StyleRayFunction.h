@@ -34,15 +34,7 @@
 namespace WebCore {
 namespace Style {
 
-using Contain        = CSS::Contain;
-
-using ClosestCorner  = CSS::ClosestCorner;
-using ClosestSide    = CSS::ClosestSide;
-using FarthestCorner = CSS::FarthestCorner;
-using FarthestSide   = CSS::FarthestSide;
-using Sides          = CSS::Sides;
-
-using RaySize        = std::variant<ClosestCorner, ClosestSide, FarthestCorner, FarthestSide, Sides>;
+using RaySize = CSS::RaySize;
 
 // ray() = ray( <angle> && <ray-size>? && contain? && [at <position>]? )
 // <ray-size> = closest-side | closest-corner | farthest-side | farthest-corner | sides
@@ -50,7 +42,7 @@ using RaySize        = std::variant<ClosestCorner, ClosestSide, FarthestCorner, 
 struct Ray {
     Angle<> angle;
     RaySize size;
-    std::optional<Contain> contain;
+    std::optional<CSS::Keyword::Contain> contain;
     std::optional<Position> position;
 
     bool operator==(const Ray&) const = default;
@@ -69,7 +61,7 @@ template<size_t I> const auto& get(const Ray& value)
         return value.position;
 }
 
-DEFINE_CSS_STYLE_MAPPING(CSS::Ray, Ray)
+DEFINE_TYPE_MAPPING(CSS::Ray, Ray)
 
 } // namespace Style
 } // namespace WebCore

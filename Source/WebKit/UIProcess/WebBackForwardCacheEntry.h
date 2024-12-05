@@ -42,25 +42,25 @@ class WebProcessProxy;
 class WebBackForwardCacheEntry : public RefCounted<WebBackForwardCacheEntry> {
     WTF_MAKE_TZONE_ALLOCATED(WebBackForwardCacheEntry);
 public:
-    static Ref<WebBackForwardCacheEntry> create(WebBackForwardCache&, WebCore::BackForwardItemIdentifier, WebCore::ProcessIdentifier, std::unique_ptr<SuspendedPageProxy>&&);
+    static Ref<WebBackForwardCacheEntry> create(WebBackForwardCache&, WebCore::BackForwardItemIdentifier, WebCore::ProcessIdentifier, RefPtr<SuspendedPageProxy>&&);
     ~WebBackForwardCacheEntry();
 
     WebBackForwardCache* backForwardCache() const;
 
     SuspendedPageProxy* suspendedPage() const { return m_suspendedPage.get(); }
-    std::unique_ptr<SuspendedPageProxy> takeSuspendedPage();
+    Ref<SuspendedPageProxy> takeSuspendedPage();
     WebCore::ProcessIdentifier processIdentifier() const { return m_processIdentifier; }
     RefPtr<WebProcessProxy> process() const;
 
 private:
-    WebBackForwardCacheEntry(WebBackForwardCache&, WebCore::BackForwardItemIdentifier, WebCore::ProcessIdentifier, std::unique_ptr<SuspendedPageProxy>&&);
+    WebBackForwardCacheEntry(WebBackForwardCache&, WebCore::BackForwardItemIdentifier, WebCore::ProcessIdentifier, RefPtr<SuspendedPageProxy>&&);
 
     void expirationTimerFired();
 
     WeakPtr<WebBackForwardCache> m_backForwardCache;
     WebCore::ProcessIdentifier m_processIdentifier;
     Markable<WebCore::BackForwardItemIdentifier> m_backForwardItemID;
-    std::unique_ptr<SuspendedPageProxy> m_suspendedPage;
+    RefPtr<SuspendedPageProxy> m_suspendedPage;
     RunLoop::Timer m_expirationTimer;
 };
 

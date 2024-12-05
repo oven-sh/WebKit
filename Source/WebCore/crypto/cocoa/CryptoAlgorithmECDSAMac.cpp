@@ -31,11 +31,11 @@
 #include "CryptoAlgorithmEcdsaParams.h"
 #include "CryptoDigestAlgorithm.h"
 #include "CryptoKeyEC.h"
+#include <wtf/StdLibExtras.h>
+
 #if HAVE(SWIFT_CPP_INTEROP)
 #include <pal/PALSwiftUtils.h>
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 #if HAVE(SWIFT_CPP_INTEROP)
@@ -107,7 +107,7 @@ static ExceptionOr<Vector<uint8_t>> signECDSA(CryptoAlgorithmIdentifier hash, co
     if (signature[offset] < keyLengthInBytes) {
         size_t pos = newSignature.size();
         newSignature.resize(pos + keyLengthInBytes - signature[offset]);
-        memset(newSignature.data() + pos, InitialOctet, keyLengthInBytes - signature[offset]);
+        memsetSpan(newSignature.mutableSpan().subspan(pos), InitialOctet);
         bytesToCopy = signature[offset];
     } else if (signature[offset] > keyLengthInBytes) // Otherwise skip the leading 0s of s.
         offset += signature[offset] - keyLengthInBytes;
@@ -198,5 +198,3 @@ ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcds
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

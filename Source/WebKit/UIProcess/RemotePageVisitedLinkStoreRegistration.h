@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "VisitedLinkStore.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -38,12 +39,12 @@ public:
         : m_page(page)
         , m_process(process)
     {
-        protectedProcess()->addVisitedLinkStoreUser(page.visitedLinkStore(), page.identifier());
+        protectedProcess()->addVisitedLinkStoreUser(page.protectedVisitedLinkStore(), page.identifier());
     }
     ~RemotePageVisitedLinkStoreRegistration()
     {
         if (RefPtr page = m_page.get())
-            protectedProcess()->removeVisitedLinkStoreUser(page->visitedLinkStore(), page->identifier());
+            protectedProcess()->removeVisitedLinkStoreUser(page->protectedVisitedLinkStore(), page->identifier());
     }
 
 private:

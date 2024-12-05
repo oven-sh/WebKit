@@ -108,7 +108,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         // https://datatracker.ietf.org/doc/html/rfc7748#section-6.1
         constexpr auto expectedOutputSize = 32;
         constexpr std::array<uint8_t, expectedOutputSize> zeros { };
-        if (derivedKey->size() != expectedOutputSize || !constantTimeMemcmp(derivedKey->data(), zeros.data(), expectedOutputSize)) {
+        if (derivedKey->size() != expectedOutputSize || !constantTimeMemcmp(derivedKey->span(), zeros)) {
             exceptionCallback(ExceptionCode::OperationError);
             return;
         }

@@ -85,6 +85,9 @@ public:
 
     ~RemoteWebInspectorUIProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void setClient(RemoteWebInspectorUIProxyClient* client) { m_client = client; }
 
     bool isUnderTest() const { return false; }

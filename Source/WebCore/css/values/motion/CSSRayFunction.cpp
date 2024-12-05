@@ -28,8 +28,6 @@
 #include "CSSPrimitiveNumericTypes+CSSValueVisitation.h"
 #include "CSSPrimitiveNumericTypes+ComputedStyleDependencies.h"
 #include "CSSPrimitiveNumericTypes+Serialization.h"
-#include "CSSValueKeywords.h"
-#include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
 namespace CSS {
@@ -41,7 +39,7 @@ void Serialize<Ray>::operator()(StringBuilder& builder, const Ray& value)
 
     serializationForCSS(builder, value.angle);
 
-    if (!std::holds_alternative<ClosestSide>(value.size)) {
+    if (!std::holds_alternative<Keyword::ClosestSide>(value.size)) {
         builder.append(' ');
         serializationForCSS(builder, value.size);
     }

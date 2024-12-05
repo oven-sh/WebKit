@@ -57,6 +57,9 @@ public:
     }
     ~ServiceWorkerDownloadTask();
 
+    void ref() const final { NetworkDataTask::ref(); }
+    void deref() const final { NetworkDataTask::deref(); }
+
     WebCore::FetchIdentifier fetchIdentifier() const { return m_fetchIdentifier; }
     void contextClosed() { cancel(); }
     void start();

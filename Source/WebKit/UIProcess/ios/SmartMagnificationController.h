@@ -46,6 +46,9 @@ public:
     static Ref<SmartMagnificationController> create(WKContentView *);
     ~SmartMagnificationController();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void handleSmartMagnificationGesture(WebCore::FloatPoint origin);
     void handleResetMagnificationGesture(WebCore::FloatPoint origin);
 

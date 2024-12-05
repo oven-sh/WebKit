@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007, 2008, 2009, 2013 Apple Inc.
+ * Copyright (C) 2007-2024 Apple Inc.
  * Copyright (C) 2010, 2011 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,6 +28,7 @@
 #include "EditingStyle.h"
 
 #include "ApplyStyleCommand.h"
+#include "CSSColorValue.h"
 #include "CSSComputedStyleDeclaration.h"
 #include "CSSFontStyleWithAngleValue.h"
 #include "CSSParser.h"
@@ -57,6 +58,7 @@
 #include "RenderElement.h"
 #include "RenderStyle.h"
 #include "SimpleRange.h"
+#include "StyleColor.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
@@ -182,7 +184,7 @@ static bool hasTransparentBackgroundColor(StyleProperties*);
 static RefPtr<CSSValue> backgroundColorInEffect(Node*);
 
 class HTMLElementEquivalent {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(HTMLElementEquivalent);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLElementEquivalent);
 public:
     HTMLElementEquivalent(CSSPropertyID, CSSValueID primitiveValue, const QualifiedName& tagName);
     virtual ~HTMLElementEquivalent() = default;
@@ -200,6 +202,8 @@ protected:
     const RefPtr<CSSPrimitiveValue> m_primitiveValue;
     const QualifiedName* m_tagName { nullptr }; // We can store a pointer because HTML tag names are const global.
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLElementEquivalent);
 
 HTMLElementEquivalent::HTMLElementEquivalent(CSSPropertyID id)
     : m_propertyID(id)
@@ -472,15 +476,15 @@ EditingStyle::EditingStyle(CSSPropertyID propertyID, CSSValueID value)
 
 EditingStyle::~EditingStyle() = default;
 
-static Color cssValueToColor(CSSValue* colorValue)
+static Color cssValueToColor(CSSValue* value)
 {
-    if (!is<CSSPrimitiveValue>(colorValue))
+    if (!value)
         return Color::transparentBlack;
-    
-    if (colorValue->isColor())
-        return colorValue->color();
-    
-    return CSSParser::parseColorWithoutContext(colorValue->cssText());
+
+    auto color = CSSColorValue::absoluteColor(*value);
+    if (!color.isValid())
+        return Color::transparentBlack;
+    return color;
 }
 
 template<typename T>
@@ -1994,7 +1998,9 @@ static bool isTransparentColorValue(CSSValue* value)
 {
     if (!value)
         return true;
-    return value->isColor() ? !value->color().isVisible() : value->valueID() == CSSValueTransparent;
+    if (value->valueID() == CSSValueTransparent)
+        return true;
+    return !cssValueToColor(value).isVisible();
 }
 
 bool hasTransparentBackgroundColor(StyleProperties* style)

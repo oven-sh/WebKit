@@ -38,12 +38,10 @@ public:
     {
     }
 
-    CoreIPCSkData(std::span<const uint8_t> data)
-        : m_skData(SkData::MakeWithCopy(data.data(), data.size()))
+    static sk_sp<SkData> create(std::span<const uint8_t> data)
     {
+        return SkData::MakeWithCopy(data.data(), data.size());
     }
-
-    sk_sp<SkData> skData() const { return m_skData; }
 
     std::span<const uint8_t> dataReference() const
     {

@@ -74,6 +74,9 @@ public:
     static Ref<ModelConnectionToWebProcess> create(ModelProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&);
     virtual ~ModelConnectionToWebProcess();
 
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
     USING_CAN_MAKE_WEAKPTR(CanMakeWeakPtr<ModelConnectionToWebProcess>);
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }

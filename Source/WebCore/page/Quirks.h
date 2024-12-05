@@ -225,12 +225,15 @@ public:
 
 #if PLATFORM(IOS_FAMILY)
     WEBCORE_EXPORT bool shouldIgnoreContentObservationForClick(const Node&) const;
-    WEBCORE_EXPORT bool shouldSynthesizeTouchEventsAfterNonSyntheticClick(const Node&) const;
+    WEBCORE_EXPORT bool shouldSynthesizeTouchEventsAfterNonSyntheticClick(const Element&) const;
+    WEBCORE_EXPORT bool needsPointerTouchCompatibility(const Element&) const;
 #endif
 
     bool needsMozillaFileTypeForDataTransfer() const;
 
     bool needsBingGestureEventQuirk(EventTarget*) const;
+
+    bool shouldAvoidStartingSelectionOnMouseDown(const Node&) const;
 
 #if PLATFORM(IOS)
     bool hideForbesVolumeSlider() const;
@@ -244,10 +247,13 @@ private:
     bool isEmbedDomain(const String&) const;
     bool isYoutubeEmbedDomain() const;
     bool isYahooMail() const;
+    bool isSpotifyPlayer() const;
 
     bool isAmazon() const;
+    bool isCBSSports() const;
     bool isESPN() const;
     bool isGoogleMaps() const;
+    bool isGoogleDocs() const;
     bool isNetflix() const;
     bool isSoundCloud() const;
     bool isVimeo() const;

@@ -25,7 +25,7 @@
 #include <wtf/CheckedRef.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
@@ -47,7 +47,7 @@ class StyleRuleNamespace;
 
 enum class CachePolicy : uint8_t;
 
-class StyleSheetContents final : public RefCounted<StyleSheetContents>, public CanMakeWeakPtr<StyleSheetContents> {
+class StyleSheetContents final : public RefCountedAndCanMakeWeakPtr<StyleSheetContents> {
 public:
     static Ref<StyleSheetContents> create(const CSSParserContext& context = CSSParserContext(HTMLStandardMode))
     {

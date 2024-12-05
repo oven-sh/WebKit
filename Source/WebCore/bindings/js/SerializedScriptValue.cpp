@@ -1580,14 +1580,17 @@ private:
 
     void dumpImageBitmap(JSObject* obj, SerializationReturnCode& code)
     {
+        auto& imageBitmap = jsCast<JSImageBitmap*>(obj)->wrapped();
         auto index = m_transferredImageBitmaps.find(obj);
         if (index != m_transferredImageBitmaps.end()) {
+#if USE(SKIA)
+            imageBitmap.prepareForCrossThreadTransfer();
+#endif
             write(ImageBitmapTransferTag);
             write(index->value);
             return;
         }
 
-        auto& imageBitmap = jsCast<JSImageBitmap*>(obj)->wrapped();
         if (!imageBitmap.originClean()) {
             code = SerializationReturnCode::DataCloneError;
             return;
@@ -4457,6 +4460,9 @@ private:
             m_imageBitmaps[index] = ImageBitmap::create(*executionContext(m_lexicalGlobalObject), WTFMove(*m_detachedImageBitmaps.at(index)));
 
         auto bitmap = m_imageBitmaps[index].get();
+#if USE(SKIA)
+        bitmap->finalizeCrossThreadTransfer();
+#endif
         return getJSValue(bitmap);
     }
 

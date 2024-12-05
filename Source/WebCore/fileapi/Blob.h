@@ -124,6 +124,7 @@ public:
 
     void text(Ref<DeferredPromise>&&);
     void arrayBuffer(DOMPromiseDeferred<IDLArrayBuffer>&&);
+    void getArrayBuffer(CompletionHandler<void(ExceptionOr<Ref<JSC::ArrayBuffer>>)>&&);
     void bytes(Ref<DeferredPromise>&&);
     ExceptionOr<Ref<ReadableStream>> stream();
 

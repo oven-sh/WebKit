@@ -31,6 +31,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 #include <wtf/RuntimeApplicationChecks.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -44,8 +45,6 @@
 #if OS(QNX)
 #include <sys/socket.h>
 #endif
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -148,17 +147,17 @@ IPAddress IPAddress::isolatedCopy() const
 
 unsigned IPAddress::matchingNetMaskLength(const IPAddress& other) const
 {
-    const unsigned char* addressData = nullptr;
-    const unsigned char* otherAddressData = nullptr;
+    std::span<const uint8_t> addressData;
+    std::span<const uint8_t> otherAddressData;
     size_t addressLengthInBytes = 0;
     if (isIPv4() && other.isIPv4()) {
         addressLengthInBytes = sizeof(struct in_addr);
-        addressData = reinterpret_cast<const unsigned char*>(&ipv4Address());
-        otherAddressData = reinterpret_cast<const unsigned char*>(&other.ipv4Address());
+        addressData = asByteSpan(ipv4Address());
+        otherAddressData = asByteSpan(other.ipv4Address());
     } else if (isIPv6() && other.isIPv6()) {
         addressLengthInBytes = sizeof(struct in6_addr);
-        addressData = reinterpret_cast<const unsigned char*>(&ipv6Address());
-        otherAddressData = reinterpret_cast<const unsigned char*>(&other.ipv6Address());
+        addressData = asByteSpan(ipv6Address());
+        otherAddressData = asByteSpan(other.ipv6Address());
     } else
         return 0;
 
@@ -182,5 +181,3 @@ unsigned IPAddress::matchingNetMaskLength(const IPAddress& other) const
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

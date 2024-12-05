@@ -47,9 +47,6 @@ class RemoteObjectRegistry : public IPC::MessageReceiver {
 public:
     virtual ~RemoteObjectRegistry();
 
-    virtual void ref() const = 0;
-    virtual void deref() const = 0;
-
     virtual void sendInvocation(const RemoteObjectInvocation&);
     void sendReplyBlock(uint64_t replyID, const UserData& blockInvocation);
     void sendUnusedReply(uint64_t replyID);

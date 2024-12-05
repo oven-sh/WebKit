@@ -4817,6 +4817,8 @@ void GL_APIENTRY GL_ReleaseTexturesANGLE(GLuint numTextures,
 
 // WaitSync is already defined.
 
+// GL_ARM_rgba8
+
 // GL_ARM_shader_framebuffer_fetch
 
 // GL_ARM_shader_framebuffer_fetch_depth_stencil
@@ -5137,6 +5139,8 @@ void GL_APIENTRY GL_EGLImageTargetTextureStorageEXT(GLuint texture,
     }
     ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
 }
+
+// GL_EXT_EGL_image_storage_compression
 
 // GL_EXT_YUV_target
 
@@ -10078,6 +10082,90 @@ void GL_APIENTRY GL_TexStorage3DEXT(GLenum target,
     ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
 }
 
+// GL_EXT_texture_storage_compression
+void GL_APIENTRY GL_TexStorageAttribs2DEXT(GLenum target,
+                                           GLsizei levels,
+                                           GLenum internalformat,
+                                           GLsizei width,
+                                           GLsizei height,
+                                           const GLint *attrib_list)
+{
+    Context *context = GetValidGlobalContext();
+    EVENT(context, GLTexStorageAttribs2DEXT,
+          "context = %d, target = %s, levels = %d, internalformat = %s, width = %d, height = %d, "
+          "attrib_list = 0x%016" PRIxPTR "",
+          CID(context), GLenumToString(GLESEnum::TextureTarget, target), levels,
+          GLenumToString(GLESEnum::SizedInternalFormat, internalformat), width, height,
+          (uintptr_t)attrib_list);
+
+    if (context)
+    {
+        SCOPED_SHARE_CONTEXT_LOCK(context);
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexStorageAttribs2DEXT) &&
+              ValidateTexStorageAttribs2DEXT(context, angle::EntryPoint::GLTexStorageAttribs2DEXT,
+                                             target, levels, internalformat, width, height,
+                                             attrib_list)));
+        if (isCallValid)
+        {
+            context->texStorageAttribs2D(target, levels, internalformat, width, height,
+                                         attrib_list);
+        }
+        ANGLE_CAPTURE_GL(TexStorageAttribs2DEXT, isCallValid, context, target, levels,
+                         internalformat, width, height, attrib_list);
+    }
+    else
+    {
+        GenerateContextLostErrorOnCurrentGlobalContext();
+    }
+    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+}
+
+void GL_APIENTRY GL_TexStorageAttribs3DEXT(GLenum target,
+                                           GLsizei levels,
+                                           GLenum internalformat,
+                                           GLsizei width,
+                                           GLsizei height,
+                                           GLsizei depth,
+                                           const GLint *attrib_list)
+{
+    Context *context = GetValidGlobalContext();
+    EVENT(context, GLTexStorageAttribs3DEXT,
+          "context = %d, target = %s, levels = %d, internalformat = %s, width = %d, height = %d, "
+          "depth = %d, attrib_list = 0x%016" PRIxPTR "",
+          CID(context), GLenumToString(GLESEnum::TextureTarget, target), levels,
+          GLenumToString(GLESEnum::SizedInternalFormat, internalformat), width, height, depth,
+          (uintptr_t)attrib_list);
+
+    if (context)
+    {
+        SCOPED_SHARE_CONTEXT_LOCK(context);
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexStorageAttribs3DEXT) &&
+              ValidateTexStorageAttribs3DEXT(context, angle::EntryPoint::GLTexStorageAttribs3DEXT,
+                                             target, levels, internalformat, width, height, depth,
+                                             attrib_list)));
+        if (isCallValid)
+        {
+            context->texStorageAttribs3D(target, levels, internalformat, width, height, depth,
+                                         attrib_list);
+        }
+        ANGLE_CAPTURE_GL(TexStorageAttribs3DEXT, isCallValid, context, target, levels,
+                         internalformat, width, height, depth, attrib_list);
+    }
+    else
+    {
+        GenerateContextLostErrorOnCurrentGlobalContext();
+    }
+    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+}
+
 // GL_EXT_texture_type_2_10_10_10_REV
 
 // GL_EXT_unpack_subimage
@@ -11099,6 +11187,33 @@ void GL_APIENTRY GL_EGLImageTargetTexture2DOES(GLenum target, GLeglImageOES imag
 // GL_OES_EGL_image_external
 
 // GL_OES_EGL_image_external_essl3
+
+// GL_OES_blend_subtract
+void GL_APIENTRY GL_BlendEquationOES(GLenum mode)
+{
+    Context *context = GetValidGlobalContext();
+    EVENT(context, GLBlendEquationOES, "context = %d, mode = %s", CID(context),
+          GLenumToString(GLESEnum::BlendEquationModeEXT, mode));
+
+    if (context)
+    {
+        bool isCallValid = (context->skipValidation() ||
+                            ValidateBlendEquationOES(context->getPrivateState(),
+                                                     context->getMutableErrorSetForValidation(),
+                                                     angle::EntryPoint::GLBlendEquationOES, mode));
+        if (isCallValid)
+        {
+            ContextPrivateBlendEquation(context->getMutablePrivateState(),
+                                        context->getMutablePrivateStateCache(), mode);
+        }
+        ANGLE_CAPTURE_GL(BlendEquationOES, isCallValid, context, mode);
+    }
+    else
+    {
+        GenerateContextLostErrorOnCurrentGlobalContext();
+    }
+    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+}
 
 // GL_OES_compressed_ETC1_RGB8_texture
 
@@ -13523,6 +13638,8 @@ void GL_APIENTRY GL_TexGenxvOES(GLenum coord, GLenum pname, const GLfixed *param
 // GL_OES_texture_half_float
 
 // GL_OES_texture_half_float_linear
+
+// GL_OES_texture_mirrored_repeat
 
 // GL_OES_texture_npot
 

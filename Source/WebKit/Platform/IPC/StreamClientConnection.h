@@ -32,6 +32,7 @@
 #include "MessageNames.h"
 #include "StreamClientConnectionBuffer.h"
 #include "StreamServerConnection.h"
+#include <wtf/CheckedPtr.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Scope.h>
 #include <wtf/SystemTracing.h>
@@ -56,9 +57,10 @@ namespace IPC {
 // The whole IPC::Connection message order is not preserved.
 //
 // The StreamClientConnection trusts the StreamServerConnection.
-class StreamClientConnection final : public ThreadSafeRefCounted<StreamClientConnection> {
+class StreamClientConnection final : public ThreadSafeRefCounted<StreamClientConnection>, public CanMakeThreadSafeCheckedPtr<StreamClientConnection> {
     WTF_MAKE_TZONE_ALLOCATED(StreamClientConnection);
     WTF_MAKE_NONCOPYABLE(StreamClientConnection);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(StreamClientConnection);
 public:
     struct StreamConnectionPair {
         Ref<StreamClientConnection> streamConnection;
@@ -123,13 +125,18 @@ private:
     class DedicatedConnectionClient final : public Connection::Client {
         WTF_MAKE_NONCOPYABLE(DedicatedConnectionClient);
     public:
-        DedicatedConnectionClient(Connection::Client&);
+        DedicatedConnectionClient(StreamClientConnection&, Connection::Client&);
+
+        void ref() const final { m_owner->ref(); }
+        void deref() const final { m_owner->deref(); }
+
         // Connection::Client overrides.
         void didReceiveMessage(Connection&, Decoder&) final;
         bool didReceiveSyncMessage(Connection&, Decoder&, UniqueRef<Encoder>&) final;
         void didClose(Connection&) final;
         void didReceiveInvalidMessage(Connection&, MessageName, int32_t indexOfObjectFailingDecoding) final;
     private:
+        CheckedRef<StreamClientConnection> m_owner;
         Connection::Client& m_receiver;
     };
     std::optional<DedicatedConnectionClient> m_dedicatedConnectionClient;

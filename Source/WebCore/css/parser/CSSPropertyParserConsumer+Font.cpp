@@ -1458,7 +1458,7 @@ RefPtr<CSSValue> consumeFontPaletteValuesOverrideColors(CSSParserTokenRange& ran
         auto key = consumeNonNegativeInteger(range, context);
         if (!key)
             return nullptr;
-        auto color = consumeColor(range, context, { .allowedColorTypes = StyleColor::CSSColorType::Absolute });
+        auto color = consumeColor(range, context, { .allowedColorTypes = CSS::ColorType::Absolute });
         if (!color)
             return nullptr;
         return CSSFontPaletteValuesOverrideColorsValue::create(key.releaseNonNull(), color.releaseNonNull());

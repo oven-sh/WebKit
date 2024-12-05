@@ -124,7 +124,6 @@ webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_r
 webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_touch-action-auto-css_touch.html [ Skip ]
 webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_touch-action-inherit_highest-parent-none_touch.html [ Skip ]
 webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_touch-action-pan-x-pan-y_touch.html [ Skip ]
-webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_pointerout_pen.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/capturing_boundary_event_handler_at_ua_shadowdom.html?touch [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/coalesced_events_attributes.https.html?touch [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/coalesced_events_attributes_under_load.https.optional.html?touch [ Skip ]
@@ -241,9 +240,6 @@ webkit.org/b/212083 loader/navigation-policy/should-open-external-urls/user-gest
 webkit.org/b/212083 loader/navigation-policy/should-open-external-urls/user-gesture-window-open-without-flag-from-subframe.html
 webkit.org/b/212083 loader/navigation-policy/should-open-external-urls/user-gesture-window-open-without-flag.html
 
-webkit.org/b/212145 http/tests/navigation/no-referrer-reset.html [ Skip ] # Timeout.
-webkit.org/b/212145 http/tests/navigation/no-referrer-target-blank.html [ Skip ] # Timeout.
-
 # Mediastream
 webkit.org/b/213202 fast/mediastream/getUserMedia-grant-persistency3.html [ Failure ]
 http/wpt/mediastream/mediastreamtrackprocessor-videoframe-timestamp.html [ Pass Slow Failure ]
@@ -287,9 +283,7 @@ http/wpt/webxr/xrHand.html [ Failure ]
 http/wpt/webxr/xrHandInput_gc.html [ Failure ]
 
 # Pending to create bug.
-fast/canvas/webgl/context-lost-restored-p3.html [ Failure ]
 [ Release ] fast/events/prevent-default-prevents-interaction-with-scrollbars.html [ Failure Pass ]
-http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavailable.html [ Failure ]
 media/no-fullscreen-when-hidden.html [ Failure ]
 media/video-background-tab-playback.html [ Failure ]
 media/video-muted-holds-sleep-assertion.html [ Failure ]
@@ -507,10 +501,6 @@ fast/events/ondrop-text-html.html
 fast/events/wheel/wheelevent-direction-inverted-from-device.html
 css3/scroll-snap/resnap-after-layout.html [ Skip ]
 
-# These are failures that will be enabled once the relevant parts of implementation land.
-webkit.org/b/133122 crypto/workers/subtle/aes-indexeddb.html [ Skip ]
-webkit.org/b/133122 crypto/workers/subtle/ec-postMessage-worker.html [ Skip ]
-
 # User-installed font infrastructure is ony present on certain OSes.
 webkit.org/b/180062 fast/text/user-installed-fonts/ [ Skip ]
 
@@ -611,8 +601,6 @@ webkit.org/b/214300 imported/w3c/web-platform-tests/css/css-fonts/font-language-
 webkit.org/b/217370 fast/events/setDragImage-element-non-nullable.html [ Failure ]
 Bug(WPE) fast/events/selectstart-by-drag.html [ Failure ]
 
-webkit.org/b/256310 imported/w3c/web-platform-tests/css/css-fonts/parsing/font-face-src-tech.html [ Skip ]
-
 # @font-face: missing integration between size-adjust and optical-size
 webkit.org/b/256457 imported/w3c/web-platform-tests/css/css-fonts/variations/variable-opsz-size-adjust.html [ ImageOnlyFailure ]
 
@@ -656,7 +644,6 @@ webkit.org/b/224596 fast/scrolling/rtl-scrollbars-overflow-padding.html [ ImageO
 webkit.org/b/224596 fast/scrolling/rtl-scrollbars-listbox-scroll.html [ Skip ] # Timeout
 webkit.org/b/224596 imported/w3c/web-platform-tests/css/css-grid/grid-model/grid-container-scrollbar-vertical-lr-001.html [ ImageOnlyFailure ]
 webkit.org/b/224596 imported/w3c/web-platform-tests/css/css-grid/grid-model/grid-container-scrollbar-vertical-rl-001.html [ ImageOnlyFailure ]
-webkit.org/b/224596 imported/w3c/web-platform-tests/css/css-position/hypothetical-box-scroll-parent.html [ ImageOnlyFailure ]
 webkit.org/b/227061 imported/w3c/web-platform-tests/css/css-ui/outline-negative-offset-composited-scroll.html [ ImageOnlyFailure ]
 
 # These tests are passing most of the times since r275515.
@@ -697,13 +684,6 @@ http/tests/security [ Skip ]
 Bug(WPE) fast/dom/DeviceMotion [ Skip ]
 Bug(WPE) fast/dom/DeviceOrientation [ Skip ]
 Bug(WPE) fast/dom/Geolocation [ Skip ]
-
-Bug(WPE) js/navigator-set-geolocation.html [ Skip ]
-Bug(WPE) fast/history/page-cache-geolocation-active-oneshot.html [ Skip ]
-Bug(WPE) fast/history/page-cache-geolocation-active-watcher.html [ Skip ]
-Bug(WPE) fast/history/page-cache-geolocation.html [ Skip ]
-
-Bug(WPE) fast/history/page-cache-notification-suspendable.html [ Skip ]
 
 Bug(WPE) fast/dom/HTMLAnchorElement [ Skip ]
 
@@ -760,7 +740,7 @@ webkit.org/b/200304 svg/as-image/svg-image-with-data-uri-background.html [ Image
 
 webkit.org/b/207711 [ Debug ] imported/w3c/web-platform-tests/web-animations/timing-model/animations/sync-start-times.html [ Pass ImageOnlyFailure ]
 
-webkit.org/b/206639 http/tests/contentextensions/block-cookies-send.html [ Failure Pass ]
+webkit.org/b/206639 http/tests/contentextensions/block-cookies-send.https.html [ Failure Pass ]
 
 webkit.org/b/212082 imported/w3c/web-platform-tests/mathml/presentation-markup/operators/mo-form-minus-plus.html [ ImageOnlyFailure ]
 
@@ -1153,7 +1133,6 @@ webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/WorkerGlobalSc
 webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/WorkerGlobalScope-importScripts.html [ Failure ]
 
 # The GPU process should not be used in layout tests yet
-webkit.org/b/280604 fast/mediastream/video-background-with-canvas.html [ Skip ]
 webkit.org/b/280604 webgl/webgl-worker.html [ Skip ]
 webkit.org/b/280604 webgl/webgl-fail-platform-context-creation-no-crash.html [ Skip ]
 
@@ -1306,7 +1285,6 @@ Bug(WPE) media/video-canvas-createPattern.html [ Failure ]
 webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/backface-visibility-hidden-006.html [ ImageOnlyFailure ]
 webkit.org/b/262893 imported/w3c/web-platform-tests/css/css-transforms/backface-visibility-hidden-005.html [ ImageOnlyFailure ]
 webkit.org/b/279023 imported/w3c/web-platform-tests/css/css-transforms/composited-under-rotateY-180deg-perspective.html [ ImageOnlyFailure ]
-webkit.org/b/279023 imported/w3c/web-platform-tests/css/css-transforms/composited-under-rotateY-180deg-preserve-3d.html [ ImageOnlyFailure ]
 
 webkit.org/b/244474 fast/canvas/webgl/oes-texture-float-linear.html [ Failure ]
 webkit.org/b/244476 fast/canvas/webgl/webgl-compressed-texture-size-limit.html [ Failure ]
@@ -1407,12 +1385,8 @@ imported/w3c/web-platform-tests/pointerevents/touch-action-with-swipe-dir-change
 imported/w3c/web-platform-tests/css/css-masking/clip/clip-rect-scroll.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-position/position-fixed-scroll-nested-fixed.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text-decor/text-combine-emphasis.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-transforms/3d-rendering-context-and-abspos.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-transforms/3d-rendering-context-and-fixpos.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-transforms/animation/transform-interpolation-rotate.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-transforms/group/svg-transform-nested-009.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-transforms/individual-transform/animation/individual-transform-combine.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-transforms/transform3d-sorting-004.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-transforms/ttwf-css-3d-polygon-cycle.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-writing-modes/text-shadow-orientation-upright-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/drawing-images-to-the-canvas/image-orientation/drawImage-with-src-rect.tentative.html [ ImageOnlyFailure ]
@@ -1563,12 +1537,9 @@ webkit.org/b/266577 webgl/2.0.0/conformance2/textures/video/tex-3d-rgba8-rgba-un
 
 webkit.org/b/266671 http/wpt/webcodecs/videoFrame-rect.html [ Failure ]
 
-fast/dom/no-scroll-when-command-click-fragment-URL.html [ Failure ]
-
 # [WPE] Missing implementation of TestController::setHidden()
 webkit.org/b/268470 fast/mediastream/device-change-event-2.html [ Timeout ]
 
-[ Debug ] fast/media/mq-resolution.html [ Crash ]
 
 webrtc/captureCanvas-webrtc-with-video-scaling-adaptation.html [ Failure Timeout ]
 
@@ -1683,3 +1654,5 @@ http/tests/cookies/same-site/fetch-in-cross-origin-service-worker.html [ Failure
 http/tests/cookies/same-site/popup-cross-site-post.html [ Failure ]
 
 webkit.org/b/282970 imported/w3c/web-platform-tests/scroll-to-text-fragment/drag-selection-over-target-text.html [ Failure ]
+
+fast/text/hyphenate-avoid-orphaned-word.html [ Failure ]

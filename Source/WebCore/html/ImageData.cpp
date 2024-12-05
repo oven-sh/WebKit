@@ -72,10 +72,10 @@ RefPtr<ImageData> ImageData::create(const IntSize& size, PredefinedColorSpace co
     return adoptRef(*new ImageData(size, byteArray.releaseNonNull(), colorSpace));
 }
 
-RefPtr<ImageData> ImageData::create(const IntSize& size, Ref<Uint8ClampedArray>&& byteArray, PredefinedColorSpace colorSpace)
+RefPtr<ImageData> ImageData::create(const IntSize& size, ImageDataArray&& byteArray, PredefinedColorSpace colorSpace)
 {
     auto dataSize = computeDataSize(size);
-    if (dataSize.hasOverflowed() || dataSize != byteArray->length())
+    if (dataSize.hasOverflowed() || dataSize != byteArray.length())
         return nullptr;
 
     return adoptRef(*new ImageData(size, WTFMove(byteArray), colorSpace));
@@ -119,9 +119,9 @@ ExceptionOr<Ref<ImageData>> ImageData::create(unsigned sw, unsigned sh, std::opt
     return adoptRef(*new ImageData(size, byteArray.releaseNonNull(), colorSpace));
 }
 
-ExceptionOr<Ref<ImageData>> ImageData::create(Ref<Uint8ClampedArray>&& byteArray, unsigned sw, std::optional<unsigned> sh, std::optional<ImageDataSettings> settings)
+ExceptionOr<Ref<ImageData>> ImageData::create(ImageDataArray&& byteArray, unsigned sw, std::optional<unsigned> sh, std::optional<ImageDataSettings> settings)
 {
-    unsigned length = byteArray->length();
+    unsigned length = byteArray.length();
     if (!length || length % 4)
         return Exception { ExceptionCode::InvalidStateError, "Length is not a non-zero multiple of 4"_s };
 
@@ -135,14 +135,14 @@ ExceptionOr<Ref<ImageData>> ImageData::create(Ref<Uint8ClampedArray>&& byteArray
 
     IntSize size(sw, height);
     auto dataSize = computeDataSize(size);
-    if (dataSize.hasOverflowed() || dataSize != byteArray->length())
+    if (dataSize.hasOverflowed() || dataSize != byteArray.length())
         return Exception { ExceptionCode::RangeError };
 
     auto colorSpace = computeColorSpace(settings);
     return adoptRef(*new ImageData(size, WTFMove(byteArray), colorSpace));
 }
 
-ImageData::ImageData(const IntSize& size, Ref<JSC::Uint8ClampedArray>&& data, PredefinedColorSpace colorSpace)
+ImageData::ImageData(const IntSize& size, ImageDataArray&& data, PredefinedColorSpace colorSpace)
     : m_size(size)
     , m_data(WTFMove(data))
     , m_colorSpace(colorSpace)
@@ -159,7 +159,7 @@ Ref<ByteArrayPixelBuffer> ImageData::pixelBuffer() const
 
 RefPtr<ImageData> ImageData::clone() const
 {
-    return ImageData::create(m_size, Uint8ClampedArray::create(m_data->data(), m_data->length()), m_colorSpace);
+    return ImageData::create(m_size, Uint8ClampedArray::create(m_data.data(), m_data.length()), m_colorSpace);
 }
 
 TextStream& operator<<(TextStream& ts, const ImageData& imageData)

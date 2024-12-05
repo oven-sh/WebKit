@@ -30,7 +30,7 @@
 #import <wtf/HashMap.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
+#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakPtr.h>
 
@@ -45,7 +45,7 @@ class PipelineLayout;
 class TextureView;
 
 // https://gpuweb.github.io/gpuweb/#gpurenderpipeline
-class RenderPipeline : public WGPURenderPipelineImpl, public RefCounted<RenderPipeline>, public CanMakeWeakPtr<RenderPipeline> {
+class RenderPipeline : public RefCountedAndCanMakeWeakPtr<RenderPipeline>, public WGPURenderPipelineImpl {
     WTF_MAKE_TZONE_ALLOCATED(RenderPipeline);
 public:
     struct BufferData {

@@ -8,4 +8,10 @@ PASS indirect eval of string fails.
 PASS eval of !TrustedScript and !string works.
 PASS Function constructor of TrustedScript works.
 FAIL Function constructor of string fails. assert_throws_js: function "_ => new Function('return 1+1')()" did not throw
+PASS Function constructor of all TrustedScripts works.
+FAIL Function constructor of all strings fails. assert_throws_js: function "_ => new Function('val', 'return val+1')(1)" did not throw
+FAIL Function constructor of string and TrustedScript fails. assert_throws_js: function "_ => new Function('val', p.createScript('return val+1'))(1)" did not throw
+FAIL AsyncFunction constructor of string fails. assert_throws_js: function "_ => new AsyncFunction('return 1+1')()" did not throw
+FAIL GeneratorFunction constructor of string fails. assert_throws_js: function "_ => new GeneratorFunction('return 1+1')()" did not throw
+FAIL AsyncGeneratorFunction constructor of string fails. assert_throws_js: function "_ => new AsyncGeneratorFunction('return 1+1')()" did not throw
 

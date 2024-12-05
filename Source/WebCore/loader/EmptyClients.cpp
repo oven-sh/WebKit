@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2006 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2008-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2024 Apple Inc. All rights reserved.
  * Copyright (C) Research In Motion Limited 2011. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -107,6 +107,7 @@
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DummyStorageProvider);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EmptyChromeClient);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EmptyCryptoClient);
 

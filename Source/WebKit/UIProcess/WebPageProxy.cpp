@@ -1349,11 +1349,11 @@ bool WebPageProxy::suspendCurrentPageIfPossible(API::Navigation& navigation, Ref
     mainFrame->frameLoadState().didSuspend();
     mainFrame->frameLoadState().removeObserver(internals().pageLoadTimingFrameLoadStateObserver);
 
-    auto suspendedPage = makeUnique<SuspendedPageProxy>(*this, protectedLegacyMainFrameProcess(), mainFrame.releaseNonNull(), std::exchange(m_browsingContextGroup, BrowsingContextGroup::create()), shouldDelayClosingUntilFirstLayerFlush);
+    Ref suspendedPage = SuspendedPageProxy::create(*this, protectedLegacyMainFrameProcess(), mainFrame.releaseNonNull(), std::exchange(m_browsingContextGroup, BrowsingContextGroup::create()), shouldDelayClosingUntilFirstLayerFlush);
 
     LOG(ProcessSwapping, "WebPageProxy %" PRIu64 " created suspended page %s for process pid %i, back/forward item %s" PRIu64, identifier().toUInt64(), suspendedPage->loggingString().utf8().data(), m_legacyMainFrameProcess->processID(), fromItem ? fromItem->itemID().toString().utf8().data() : "0"_s);
 
-    m_lastSuspendedPage = *suspendedPage;
+    m_lastSuspendedPage = suspendedPage.get();
 
     if (fromItem && shouldUseBackForwardCache())
         backForwardCache().addEntry(*fromItem, WTFMove(suspendedPage));
@@ -3841,7 +3841,7 @@ void WebPageProxy::processNextQueuedMouseEvent()
 #if ENABLE(CONTEXT_MENUS)
     if (m_waitingForContextMenuToShow) {
         WEBPAGEPROXY_RELEASE_LOG(MouseHandling, "processNextQueuedMouseEvent: Waiting for context menu to show.");
-        mouseEventHandlingCompleted(nullptr, event.type(), false, std::nullopt);
+        mouseEventHandlingCompleted(event.type(), false, std::nullopt);
         return;
     }
 #endif
@@ -4308,7 +4308,7 @@ void WebPageProxy::sendPreventableTouchEvent(WebCore::FrameIdentifier frameID, c
         if (event.type() == WebEventType::TouchEnd && m_handlingPreventableTouchEndCount)
             didFinishDeferringTouchEnd = !--m_handlingPreventableTouchEndCount;
 
-        didReceiveEvent(protectedThis->legacyMainFrameProcess().connection(), event.type(), handled, std::nullopt);
+        didReceiveEvent(event.type(), handled, std::nullopt);
 
         RefPtr pageClient = this->pageClient();
         if (!pageClient)
@@ -4375,7 +4375,7 @@ void WebPageProxy::handlePreventableTouchEvent(NativeWebTouchEvent& event)
         // We can use asynchronous dispatch and pretend to the client that the page does nothing with the events.
         event.setCanPreventNativeGestures(false);
         handleUnpreventableTouchEvent(event);
-        didReceiveEvent(m_legacyMainFrameProcess->connection(), event.type(), false, std::nullopt);
+        didReceiveEvent(event.type(), false, std::nullopt);
         if (pageClient) {
             if (isTouchStart)
                 pageClient->doneDeferringTouchStart(false);
@@ -4482,7 +4482,7 @@ void WebPageProxy::handleTouchEvent(const NativeWebTouchEvent& event)
                 touchEventHandlingCompleted(eventType, handled);
                 return;
             }
-            didReceiveEvent(protectedThis->legacyMainFrameProcess().connection(), *eventType, handled, std::nullopt);
+            didReceiveEvent(*eventType, handled, std::nullopt);
         });
     } else {
         if (internals().touchEventQueue.isEmpty()) {
@@ -4749,7 +4749,7 @@ void WebPageProxy::receivedNavigationActionPolicyDecision(WebProcessProxy& proce
             auto preventNavigationProcessShutdown = processNavigatingTo->shutdownPreventingScope();
 
             ASSERT(!destinationSuspendedPage || navigation->targetItem());
-            auto suspendedPage = destinationSuspendedPage ? backForwardCache().takeSuspendedPage(*navigation->targetItem()) : nullptr;
+            RefPtr suspendedPage = destinationSuspendedPage ? RefPtr { backForwardCache().takeSuspendedPage(*navigation->targetItem()) } : nullptr;
 
             // It is difficult to get history right if we have several WebPage objects inside a single WebProcess for the same WebPageProxy. As a result, if we make sure to
             // clear any SuspendedPageProxy for the current page that are backed by the destination process before we proceed with the navigation. This makes sure the WebPage
@@ -4929,7 +4929,7 @@ void WebPageProxy::destroyProvisionalPage()
     m_provisionalPage = nullptr;
 }
 
-void WebPageProxy::continueNavigationInNewProcess(API::Navigation& navigation, WebFrameProxy& frame, std::unique_ptr<SuspendedPageProxy>&& suspendedPage, Ref<WebProcessProxy>&& newProcess, ProcessSwapRequestedByClient processSwapRequestedByClient, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive loadedWebArchive, IsPerformingHTTPFallback isPerformingHTTPFallback, WebsiteDataStore* replacedDataStoreForWebArchiveLoad)
+void WebPageProxy::continueNavigationInNewProcess(API::Navigation& navigation, WebFrameProxy& frame, RefPtr<SuspendedPageProxy>&& suspendedPage, Ref<WebProcessProxy>&& newProcess, ProcessSwapRequestedByClient processSwapRequestedByClient, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive loadedWebArchive, IsPerformingHTTPFallback isPerformingHTTPFallback, WebsiteDataStore* replacedDataStoreForWebArchiveLoad)
 {
     WEBPAGEPROXY_RELEASE_LOG(Loading, "continueNavigationInNewProcess: newProcessPID=%i, hasSuspendedPage=%i", newProcess->processID(), !!suspendedPage);
     LOG(Loading, "Continuing navigation %" PRIu64 " '%s' in a new web process", navigation.navigationID().toUInt64(), navigation.loggingString().utf8().data());
@@ -10201,7 +10201,7 @@ void WebPageProxy::setCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
         pageClient->setCursorHiddenUntilMouseMoves(hiddenUntilMouseMoves);
 }
 
-void WebPageProxy::mouseEventHandlingCompleted(IPC::Connection* connection, std::optional<WebEventType> eventType, bool handled, std::optional<RemoteUserInputEventData> remoteUserInputEventData)
+void WebPageProxy::mouseEventHandlingCompleted(std::optional<WebEventType> eventType, bool handled, std::optional<RemoteUserInputEventData> remoteUserInputEventData)
 {
     if (remoteUserInputEventData) {
         auto& event = internals().mouseEventQueue.first();
@@ -10212,12 +10212,10 @@ void WebPageProxy::mouseEventHandlingCompleted(IPC::Connection* connection, std:
     }
 
     // Retire the last sent event now that WebProcess is done handling it.
-    if (connection)
-        MESSAGE_CHECK_BASE(!internals().mouseEventQueue.isEmpty(), *connection);
+    MESSAGE_CHECK(m_legacyMainFrameProcess, !internals().mouseEventQueue.isEmpty());
     auto event = internals().mouseEventQueue.takeFirst();
     if (eventType) {
-        if (connection)
-            MESSAGE_CHECK_BASE(*eventType == event.type(), *connection);
+        MESSAGE_CHECK(m_legacyMainFrameProcess, *eventType == event.type());
 #if ENABLE(CONTEXT_MENU_EVENT)
         if (event.button() == WebMouseEventButton::Right) {
             if (event.type() == WebEventType::MouseDown) {
@@ -10241,11 +10239,11 @@ void WebPageProxy::mouseEventHandlingCompleted(IPC::Connection* connection, std:
     }
 }
 
-void WebPageProxy::keyEventHandlingCompleted(IPC::Connection& connection, std::optional<WebEventType> eventType, bool handled)
+void WebPageProxy::keyEventHandlingCompleted(std::optional<WebEventType> eventType, bool handled)
 {
-    MESSAGE_CHECK_BASE(!internals().keyEventQueue.isEmpty(), connection);
+    MESSAGE_CHECK(m_legacyMainFrameProcess, !internals().keyEventQueue.isEmpty());
     auto event = internals().keyEventQueue.takeFirst();
-    MESSAGE_CHECK_BASE(!eventType || *eventType == event.type(), connection);
+    MESSAGE_CHECK(m_legacyMainFrameProcess, !eventType || *eventType == event.type());
 
 #if PLATFORM(WIN)
     if (!handled && eventType && *eventType == WebEventType::RawKeyDown)
@@ -10275,9 +10273,10 @@ void WebPageProxy::keyEventHandlingCompleted(IPC::Connection& connection, std::o
     }
 }
 
-void WebPageProxy::didReceiveEvent(IPC::Connection& connection, WebEventType eventType, bool handled, std::optional<RemoteUserInputEventData> remoteUserInputEventData)
+void WebPageProxy::didReceiveEvent(WebEventType eventType, bool handled, std::optional<RemoteUserInputEventData> remoteUserInputEventData)
 {
-    MESSAGE_CHECK_BASE(!remoteUserInputEventData || m_preferences->siteIsolationEnabled(), connection);
+    if (m_legacyMainFrameProcess->hasConnection())
+        MESSAGE_CHECK(m_legacyMainFrameProcess, !remoteUserInputEventData || m_preferences->siteIsolationEnabled());
     switch (eventType) {
     case WebEventType::MouseMove:
     case WebEventType::Wheel:
@@ -10315,7 +10314,7 @@ void WebPageProxy::didReceiveEvent(IPC::Connection& connection, WebEventType eve
     case WebEventType::MouseDown:
     case WebEventType::MouseUp: {
         LOG_WITH_STREAM(MouseHandling, stream << "WebPageProxy::didReceiveEvent: " << eventType << " (queue size " << internals().mouseEventQueue.size() << ")");
-        mouseEventHandlingCompleted(&connection, eventType, handled, remoteUserInputEventData);
+        mouseEventHandlingCompleted(eventType, handled, remoteUserInputEventData);
         break;
     }
 
@@ -10323,7 +10322,7 @@ void WebPageProxy::didReceiveEvent(IPC::Connection& connection, WebEventType eve
 #if ENABLE(ASYNC_SCROLLING) && PLATFORM(COCOA)
         ASSERT(!scrollingCoordinatorProxy());
 #endif
-        MESSAGE_CHECK_BASE(wheelEventCoalescer().hasEventsBeingProcessed(), connection);
+        MESSAGE_CHECK(m_legacyMainFrameProcess, wheelEventCoalescer().hasEventsBeingProcessed());
         wheelEventHandlingCompleted(handled);
         break;
 
@@ -10332,7 +10331,7 @@ void WebPageProxy::didReceiveEvent(IPC::Connection& connection, WebEventType eve
     case WebEventType::RawKeyDown:
     case WebEventType::Char: {
         LOG_WITH_STREAM(KeyHandling, stream << "WebPageProxy::didReceiveEvent: " << eventType << " (queue empty " << internals().keyEventQueue.isEmpty() << ")");
-        keyEventHandlingCompleted(connection, eventType, handled);
+        keyEventHandlingCompleted(eventType, handled);
         break;
     }
 #if ENABLE(MAC_GESTURE_EVENTS)
@@ -10344,9 +10343,9 @@ void WebPageProxy::didReceiveEvent(IPC::Connection& connection, WebEventType eve
             return;
         }
 
-        MESSAGE_CHECK_BASE(!internals().gestureEventQueue.isEmpty(), connection);
+        MESSAGE_CHECK(m_legacyMainFrameProcess, !internals().gestureEventQueue.isEmpty());
         auto event = internals().gestureEventQueue.takeFirst();
-        MESSAGE_CHECK_BASE(eventType == event.type(), connection);
+        MESSAGE_CHECK(m_legacyMainFrameProcess, eventType == event.type());
 
         if (RefPtr pageClient = this->pageClient(); !handled && pageClient)
             pageClient->gestureEventWasNotHandledByWebCore(event);

@@ -89,6 +89,9 @@ public:
     static Ref<WebFullScreenManagerProxy> create(WebPageProxy&, WebFullScreenManagerProxyClient&);
     virtual ~WebFullScreenManagerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     bool isFullScreen();

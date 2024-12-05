@@ -86,6 +86,9 @@ public:
     static Ref<UserMediaCaptureManagerProxy> create(UniqueRef<ConnectionProxy>&&);
     ~UserMediaCaptureManagerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void close();
     void clear();
 

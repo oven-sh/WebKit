@@ -36,8 +36,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringView.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 // SQLite 3.6.16 makes sqlite3_prepare_v2 automatically retry preparing the statement
 // once if the database scheme has changed. We rely on this behavior.
 #if SQLITE_VERSION_NUMBER < 3006016
@@ -113,13 +111,13 @@ int SQLiteStatement::bindBlob(int index, const String& text)
     // treats as a null, so we supply a non-null pointer for that case.
     auto upconvertedCharacters = StringView(text).upconvertedCharacters();
     UChar anyCharacter = 0;
-    const UChar* characters;
+    std::span<const UChar> characters;
     if (text.isEmpty() && !text.isNull())
-        characters = &anyCharacter;
+        characters = unsafeMakeSpan(&anyCharacter, 0);
     else
-        characters = upconvertedCharacters;
+        characters = upconvertedCharacters.span();
 
-    return bindBlob(index, std::span(reinterpret_cast<const uint8_t*>(characters), text.length() * sizeof(UChar)));
+    return bindBlob(index, spanReinterpretCast<const uint8_t>(characters));
 }
 
 int SQLiteStatement::bindText(int index, StringView text)
@@ -220,7 +218,7 @@ SQLValue SQLiteStatement::columnValue(int col)
         return sqlite3_value_double(value);
     case SQLITE_BLOB: // SQLValue and JS don't represent blobs, so use TEXT -case
     case SQLITE_TEXT:
-        return String::fromUTF8(std::span(sqlite3_value_text(value), sqlite3_value_bytes(value)));
+        return String::fromUTF8(unsafeMakeSpan(sqlite3_value_text(value), sqlite3_value_bytes(value)));
     case SQLITE_NULL:
         return nullptr;
     default:
@@ -238,7 +236,7 @@ String SQLiteStatement::columnText(int col)
         return String();
     if (columnCount() <= col)
         return String();
-    return String::fromUTF8(std::span(sqlite3_column_text(m_statement, col), sqlite3_column_bytes(m_statement, col)));
+    return String::fromUTF8(unsafeMakeSpan(sqlite3_column_text(m_statement, col), sqlite3_column_bytes(m_statement, col)));
 }
     
 double SQLiteStatement::columnDouble(int col)
@@ -281,7 +279,7 @@ String SQLiteStatement::columnBlobAsString(int col)
     if (columnCount() <= col)
         return String();
 
-    const void* blob = sqlite3_column_blob(m_statement, col);
+    auto* blob = static_cast<const UChar*>(sqlite3_column_blob(m_statement, col));
     if (!blob)
         return emptyString();
 
@@ -290,7 +288,7 @@ String SQLiteStatement::columnBlobAsString(int col)
         return String();
 
     ASSERT(!(size % sizeof(UChar)));
-    return StringImpl::create8BitIfPossible({ static_cast<const UChar*>(blob), size / sizeof(UChar) });
+    return StringImpl::create8BitIfPossible(unsafeMakeSpan(blob, size / sizeof(UChar)));
 }
 
 Vector<uint8_t> SQLiteStatement::columnBlob(int col)
@@ -308,7 +306,7 @@ std::span<const uint8_t> SQLiteStatement::columnBlobAsSpan(int col)
     if (columnCount() <= col)
         return { };
 
-    const void* blob = sqlite3_column_blob(m_statement, col);
+    auto* blob = static_cast<const uint8_t*>(sqlite3_column_blob(m_statement, col));
     if (!blob)
         return { };
 
@@ -316,7 +314,7 @@ std::span<const uint8_t> SQLiteStatement::columnBlobAsSpan(int col)
     if (blobSize <= 0)
         return { };
 
-    return { static_cast<const uint8_t*>(blob), static_cast<size_t>(blobSize) };
+    return unsafeMakeSpan(blob, blobSize);
 }
 
 bool SQLiteStatement::hasStartedStepping()
@@ -330,5 +328,3 @@ bool SQLiteStatement::isReadOnly()
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

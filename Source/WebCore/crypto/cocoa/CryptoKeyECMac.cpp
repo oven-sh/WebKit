@@ -33,8 +33,6 @@
 #endif
 #include <wtf/text/Base64.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 static const unsigned char InitialOctetEC = 0x04; // Per Section 2.3.3 of http://www.secg.org/sec1-v2.pdf
@@ -327,7 +325,8 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
 #else
     ++index;
     CCECCryptorRef ccPublicKey = nullptr;
-    if (CCECCryptorImportKey(kCCImportKeyCompact, keyData.data() + index, keyData.size() - index, ccECKeyPublic, &ccPublicKey))
+    auto dataAfterIndex = keyData.subspan(index);
+    if (CCECCryptorImportKey(kCCImportKeyCompact, dataAfterIndex.data(), dataAfterIndex.size(), ccECKeyPublic, &ccPublicKey))
         return nullptr;
     return create(identifier, curve, CryptoKeyType::Public, PlatformECKeyContainer(ccPublicKey), extractable, usages);
 #endif
@@ -503,5 +502,3 @@ Vector<uint8_t> CryptoKeyEC::platformExportPkcs8() const
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

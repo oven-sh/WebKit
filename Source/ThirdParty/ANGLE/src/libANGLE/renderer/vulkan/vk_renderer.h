@@ -371,6 +371,12 @@ class Renderer : angle::NonCopyable
         return mSkippedSyncvalMessages;
     }
 
+    bool isCoherentColorFramebufferFetchEmulated() const
+    {
+        return mFeatures.supportsShaderFramebufferFetch.enabled &&
+               !mIsColorFramebufferFetchCoherent;
+    }
+
     void onColorFramebufferFetchUse() { mIsColorFramebufferFetchUsed = true; }
     bool isColorFramebufferFetchUsed() const { return mIsColorFramebufferFetchUsed; }
 
@@ -469,6 +475,8 @@ class Renderer : angle::NonCopyable
                                                             uint64_t timeout,
                                                             VkResult *result);
     angle::Result checkCompletedCommands(vk::Context *context);
+
+    angle::Result checkCompletedCommandsAndCleanup(vk::Context *context);
     angle::Result retireFinishedCommands(vk::Context *context);
 
     angle::Result flushWaitSemaphores(vk::ProtectionType protectionType,
@@ -709,9 +717,10 @@ class Renderer : angle::NonCopyable
 
     std::thread::id getCommandProcessorThreadId() const { return mCommandProcessor.getThreadId(); }
 
-    vk::RefCountedDescriptorSetLayout *getDescriptorLayoutForEmptyDesc()
+    const vk::DescriptorSetLayoutPtr &getEmptyDescriptorLayout() const
     {
-        ASSERT(mPlaceHolderDescriptorSetLayout && mPlaceHolderDescriptorSetLayout->get().valid());
+        ASSERT(mPlaceHolderDescriptorSetLayout);
+        ASSERT(mPlaceHolderDescriptorSetLayout->valid());
         return mPlaceHolderDescriptorSetLayout;
     }
 
@@ -899,6 +908,7 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceHostImageCopyPropertiesEXT mHostImageCopyProperties;
     std::vector<VkImageLayout> mHostImageCopySrcLayoutsStorage;
     std::vector<VkImageLayout> mHostImageCopyDstLayoutsStorage;
+    VkPhysicalDeviceImageCompressionControlFeaturesEXT mImageCompressionControlFeatures;
 #if defined(ANGLE_PLATFORM_ANDROID)
     VkPhysicalDeviceExternalFormatResolveFeaturesANDROID mExternalFormatResolveFeatures;
     VkPhysicalDeviceExternalFormatResolvePropertiesANDROID mExternalFormatResolveProperties;
@@ -982,6 +992,21 @@ class Renderer : angle::NonCopyable
     // certain extensions.
     std::vector<vk::SkippedSyncvalMessage> mSkippedSyncvalMessages;
 
+    // Whether framebuffer fetch is internally coherent.  If framebuffer fetch is not coherent,
+    // technically ANGLE could simply not expose EXT_shader_framebuffer_fetch and instead only
+    // expose EXT_shader_framebuffer_fetch_non_coherent.  In practice, too many Android apps assume
+    // EXT_shader_framebuffer_fetch is available and break without it.  Others use string matching
+    // to detect when EXT_shader_framebuffer_fetch is available, and accidentally match
+    // EXT_shader_framebuffer_fetch_non_coherent and believe coherent framebuffer fetch is
+    // available.
+    //
+    // For these reasons, ANGLE always exposes EXT_shader_framebuffer_fetch.  To ensure coherence
+    // between draw calls, it automatically inserts barriers between draw calls when the program
+    // uses framebuffer fetch.  ANGLE does not attempt to guarantee coherence for self-overlapping
+    // geometry, which makes this emulation incorrect per spec, but practically harmless.
+    //
+    // This emulation can also be used to implement coherent advanced blend similarly if needed.
+    bool mIsColorFramebufferFetchCoherent;
     // Whether framebuffer fetch has been used, for the purposes of more accurate syncval error
     // filtering.
     bool mIsColorFramebufferFetchUsed;
@@ -1065,7 +1090,7 @@ class Renderer : angle::NonCopyable
     std::string mPipelineCacheGraphDumpPath;
 
     // A placeholder descriptor set layout handle for layouts with no bindings.
-    vk::RefCountedDescriptorSetLayout *mPlaceHolderDescriptorSetLayout;
+    vk::DescriptorSetLayoutPtr mPlaceHolderDescriptorSetLayout;
 };
 
 ANGLE_INLINE Serial Renderer::generateQueueSerial(SerialIndex index)
@@ -1143,6 +1168,11 @@ ANGLE_INLINE void Renderer::requestAsyncCommandsAndGarbageCleanup(vk::Context *c
 }
 
 ANGLE_INLINE angle::Result Renderer::checkCompletedCommands(vk::Context *context)
+{
+    return mCommandQueue.checkCompletedCommands(context);
+}
+
+ANGLE_INLINE angle::Result Renderer::checkCompletedCommandsAndCleanup(vk::Context *context)
 {
     return mCommandQueue.checkAndCleanupCompletedCommands(context);
 }

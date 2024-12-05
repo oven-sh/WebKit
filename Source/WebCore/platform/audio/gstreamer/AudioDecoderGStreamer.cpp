@@ -28,7 +28,6 @@
 #include "PlatformRawAudioDataGStreamer.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/UniqueRef.h>
 #include <wtf/WorkQueue.h>
 #include <wtf/text/MakeString.h>
 
@@ -41,7 +40,11 @@ GST_DEBUG_CATEGORY(webkit_audio_decoder_debug);
 
 static WorkQueue& gstDecoderWorkQueue()
 {
-    static NeverDestroyed<Ref<WorkQueue>> queue(WorkQueue::create("GStreamer AudioDecoder Queue"_s));
+    static std::once_flag onceKey;
+    static LazyNeverDestroyed<Ref<WorkQueue>> queue;
+    std::call_once(onceKey, [] {
+        queue.construct(WorkQueue::create("GStreamer AudioDecoder queue"_s));
+    });
     return queue.get();
 }
 
@@ -99,8 +102,8 @@ void GStreamerAudioDecoder::create(const String& codecName, const Config& config
         element = gst_element_factory_create(lookupResult.factory.get(), nullptr);
     }
 
-    auto decoder = makeUniqueRef<GStreamerAudioDecoder>(codecName, config, WTFMove(outputCallback), WTFMove(element));
-    auto internalDecoder = decoder->m_internalDecoder;
+    Ref decoder = adoptRef(*new GStreamerAudioDecoder(codecName, config, WTFMove(outputCallback), WTFMove(element)));
+    Ref internalDecoder = decoder->m_internalDecoder;
     if (!internalDecoder->isConfigured()) {
         GST_WARNING("Internal audio decoder failed to configure for codec %s", codecName.utf8().data());
         callback(makeUnexpected(makeString("Internal audio decoder failed to configure for codec "_s, codecName)));
@@ -110,7 +113,7 @@ void GStreamerAudioDecoder::create(const String& codecName, const Config& config
     gstDecoderWorkQueue().dispatch([callback = WTFMove(callback), decoder = WTFMove(decoder)]() mutable {
         auto internalDecoder = decoder->m_internalDecoder;
         GST_DEBUG_OBJECT(decoder->m_internalDecoder->harnessedElement(), "Audio decoder created");
-        callback(UniqueRef<AudioDecoder> { WTFMove(decoder) });
+        callback(Ref<AudioDecoder> { WTFMove(decoder) });
     });
 }
 

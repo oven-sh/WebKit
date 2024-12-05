@@ -2567,7 +2567,7 @@ bool CodeBlock::checkIfOptimizationThresholdReached()
 {
 #if ENABLE(DFG_JIT)
     if (JITWorklist* worklist = JITWorklist::existingGlobalWorklistOrNull()) {
-        if (worklist->compilationState(JITCompilationKey(this, JITCompilationMode::DFG)) == JITWorklist::Compiled) {
+        if (worklist->compilationState(*m_vm, JITCompilationKey(this, JITCompilationMode::DFG)) == JITWorklist::Compiled) {
             optimizeNextInvocation();
             return true;
         }

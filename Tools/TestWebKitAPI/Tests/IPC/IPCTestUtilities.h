@@ -68,13 +68,19 @@ struct MockTestMessageWithAsyncReply1 {
     using Promise = WTF::NativePromise<uint64_t, IPC::Error>;
 };
 
-class MockConnectionClient final : public IPC::Connection::Client {
+class MockConnectionClient final : public IPC::Connection::Client, public RefCounted<MockConnectionClient> {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MockConnectionClient);
 public:
-    ~MockConnectionClient()
+    static Ref<MockConnectionClient> create()
     {
+        return adoptRef(*new MockConnectionClient);
     }
+
+    ~MockConnectionClient() = default;
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     Vector<MessageInfo> takeMessages()
     {
@@ -146,6 +152,8 @@ public:
     }
 
 private:
+    MockConnectionClient() = default;
+
     bool m_didClose { false };
     std::optional<IPC::MessageName> m_didReceiveInvalidMessage;
     Deque<MessageInfo> m_messages;
@@ -228,7 +236,7 @@ protected:
 
     struct {
         RefPtr<IPC::Connection> connection;
-        MockConnectionClient client;
+        Ref<MockConnectionClient> client = MockConnectionClient::create();
     } m_connections[2];
 };
 

@@ -35,7 +35,7 @@ public:
         RefPtr<CSSPrimitiveValue>&& blur,
         RefPtr<CSSPrimitiveValue>&& spread,
         RefPtr<CSSPrimitiveValue>&& style,
-        RefPtr<CSSPrimitiveValue>&& color,
+        RefPtr<CSSValue>&& color,
         bool isWebkitBoxShadow = false)
     {
         return adoptRef(*new CSSShadowValue(WTFMove(x), WTFMove(y), WTFMove(blur), WTFMove(spread), WTFMove(style), WTFMove(color), isWebkitBoxShadow));
@@ -79,7 +79,7 @@ public:
     RefPtr<CSSPrimitiveValue> blur;
     RefPtr<CSSPrimitiveValue> spread;
     RefPtr<CSSPrimitiveValue> style;
-    RefPtr<CSSPrimitiveValue> color;
+    RefPtr<CSSValue> color;
     bool isWebkitBoxShadow { false };
 
 private:
@@ -88,7 +88,7 @@ private:
         RefPtr<CSSPrimitiveValue>&& blur,
         RefPtr<CSSPrimitiveValue>&& spread,
         RefPtr<CSSPrimitiveValue>&& style,
-        RefPtr<CSSPrimitiveValue>&& color,
+        RefPtr<CSSValue>&& color,
         bool isWebkitBoxShadow);
 };
 

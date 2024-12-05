@@ -81,6 +81,17 @@ LeafBoxIterator InlineBox::endLeafBox() const
     return { };
 }
 
+IteratorRange<BoxIterator> InlineBox::descendants() const
+{
+    BoxIterator begin(*this);
+    begin.traverseNextOnLine();
+
+    BoxIterator end(*this);
+    end.traverseNextOnLineSkippingChildren();
+
+    return { begin, end };
+}
+
 InlineBoxIterator::InlineBoxIterator(Box::PathVariant&& pathVariant)
     : BoxIterator(WTFMove(pathVariant))
 {

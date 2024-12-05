@@ -292,7 +292,7 @@ bool NetworkConnectionToWebProcess::dispatchMessage(IPC::Connection& connection,
 
     if (decoder.messageReceiverName() == Messages::NetworkTransportSession::messageReceiverName()) {
         MESSAGE_CHECK_WITH_RETURN_VALUE(WebTransportSessionIdentifier::isValidIdentifier(decoder.destinationID()), false);
-        if (auto* networkTransportSession = m_networkTransportSessions.get(WebTransportSessionIdentifier(decoder.destinationID())))
+        if (RefPtr networkTransportSession = m_networkTransportSessions.get(WebTransportSessionIdentifier(decoder.destinationID())))
             networkTransportSession->didReceiveMessage(connection, decoder);
         return true;
     }
@@ -1671,6 +1671,13 @@ void NetworkConnectionToWebProcess::clearFrameLoadRecordsForStorageAccess(WebCor
 bool NetworkConnectionToWebProcess::isAlwaysOnLoggingAllowed() const
 {
     return m_sessionID.isAlwaysOnLoggingAllowed() || m_sharedPreferencesForWebProcess.allowPrivacySensitiveOperationsInNonPersistentDataStores;
+}
+
+void NetworkConnectionToWebProcess::updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess&& sharedPreferencesForWebProcess)
+{
+    m_sharedPreferencesForWebProcess = WTFMove(sharedPreferencesForWebProcess);
+    if (CheckedPtr session = networkSession())
+        session->protectedStorageManager()->updateSharedPreferencesForConnection(connection(), m_sharedPreferencesForWebProcess);
 }
 
 } // namespace WebKit

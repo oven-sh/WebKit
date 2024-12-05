@@ -24,7 +24,7 @@ function sameValue(actual, expected) {
   };
 
   const df = new Intl.DurationFormat('en', { style: "digital" });
-  sameValue(df.format(duration), "0:00:10,000,000.000000001");
+  sameValue(df.format(duration), "0:00:10000000.000000001");
 }
 
 {
@@ -37,5 +37,5 @@ function sameValue(actual, expected) {
   };
 
   const df = new Intl.DurationFormat('en', { style: 'digital' });
-  sameValue(df.format(duration), '0:00:9,007,199,254,740,991.975424');
+  sameValue(df.format(duration), '0:00:9007199254740991.975424');
 }

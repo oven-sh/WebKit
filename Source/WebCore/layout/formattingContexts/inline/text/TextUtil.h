@@ -61,11 +61,13 @@ public:
     enum class IncludeHyphen : bool { No, Yes };
     static FallbackFontList fallbackFontsForText(StringView, const RenderStyle&, IncludeHyphen);
 
-    struct EnclosingAscentDescent {
+    struct EnclosingGlyphBounds {
         InlineLayoutUnit ascent { 0.f };
         InlineLayoutUnit descent { 0.f };
+        InlineLayoutUnit left { 0.f };
+        InlineLayoutUnit right { 0.f };
     };
-    static EnclosingAscentDescent enclosingGlyphBoundsForText(StringView, const RenderStyle&);
+    static EnclosingGlyphBounds enclosingGlyphBounds(StringView, const RenderStyle&, bool canUseSimpleFontCodePath = false);
 
     struct WordBreakLeft {
         size_t length { 0 };

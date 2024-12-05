@@ -29,7 +29,6 @@
 #pragma once
 
 #include <wtf/Forward.h>
-#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
@@ -37,7 +36,7 @@ class ResourceError;
 class ResourceResponse;
 
 class FetchLoaderClient : public CanMakeCheckedPtr<FetchLoaderClient> {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(FetchLoaderClient);
+    WTF_MAKE_TZONE_ALLOCATED(FetchLoaderClient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FetchLoaderClient);
 public:
     virtual ~FetchLoaderClient() = default;

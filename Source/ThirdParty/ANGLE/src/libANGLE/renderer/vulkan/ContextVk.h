@@ -477,9 +477,10 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     angle::Result onIndexBufferChange(const vk::BufferHelper *currentIndexBuffer);
 
-    angle::Result flushImpl(const vk::Semaphore *semaphore,
-                            const vk::SharedExternalFence *externalFence,
-                            RenderPassClosureReason renderPassClosureReason);
+    angle::Result flushAndSubmitCommands(const vk::Semaphore *semaphore,
+                                         const vk::SharedExternalFence *externalFence,
+                                         RenderPassClosureReason renderPassClosureReason);
+
     angle::Result finishImpl(RenderPassClosureReason renderPassClosureReason);
 
     void addWaitSemaphore(VkSemaphore semaphore, VkPipelineStageFlags stageMask);
@@ -780,7 +781,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                          uint32_t memoryTypeIndex,
                                          BufferUsageType usageType)
     {
-        return mShareGroupVk->getDefaultBufferPool(mRenderer, size, memoryTypeIndex, usageType);
+        return mShareGroupVk->getDefaultBufferPool(size, memoryTypeIndex, usageType);
     }
 
     angle::Result allocateStreamedVertexBuffer(size_t attribIndex,
@@ -900,6 +901,10 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     void addToPendingImageGarbage(vk::ResourceUse use, VkDeviceSize size);
 
     bool hasExcessPendingGarbage() const;
+
+    angle::Result onFramebufferBoundary(const gl::Context *contextGL);
+
+    uint32_t getCurrentFrameCount() const { return mShareGroupVk->getCurrentFrameCount(); }
 
   private:
     // Dirty bits.
@@ -1346,6 +1351,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result submitCommands(const vk::Semaphore *signalSemaphore,
                                  const vk::SharedExternalFence *externalFence,
                                  Submit submission);
+    angle::Result flushImpl(const gl::Context *context);
 
     angle::Result synchronizeCpuGpuTime();
     angle::Result traceGpuEventImpl(vk::OutsideRenderPassCommandBuffer *commandBuffer,
@@ -1526,6 +1532,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     DirtyBits mNewGraphicsCommandBufferDirtyBits;
     DirtyBits mNewComputeCommandBufferDirtyBits;
     DirtyBits mDynamicStateDirtyBits;
+    DirtyBits mPersistentGraphicsDirtyBits;
     static constexpr DirtyBits kColorAccessChangeDirtyBits{DIRTY_BIT_COLOR_ACCESS};
     static constexpr DirtyBits kDepthStencilAccessChangeDirtyBits{
         DIRTY_BIT_READ_ONLY_DEPTH_FEEDBACK_LOOP_MODE, DIRTY_BIT_DEPTH_STENCIL_ACCESS};

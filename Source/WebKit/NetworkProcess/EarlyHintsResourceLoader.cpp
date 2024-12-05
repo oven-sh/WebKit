@@ -129,7 +129,7 @@ void EarlyHintsResourceLoader::startPreconnectTask(const URL& baseURL, const Lin
     if (!contentSecurityPolicy.allowConnectToSource(url, ContentSecurityPolicy::RedirectResponseReceived::No, originalRequest.url()))
         return;
 
-    auto* networkSession = m_loader->connectionToWebProcess().networkSession();
+    auto* networkSession = m_loader->protectedConnectionToWebProcess()->networkSession();
     if (!networkSession)
         return;
 

@@ -762,6 +762,8 @@ ANGLE_EXPORT void GL_APIENTRY GL_ReleaseTexturesANGLE(GLuint numTextures,
 
 // GL_ARB_sync
 
+// GL_ARM_rgba8
+
 // GL_ARM_shader_framebuffer_fetch
 
 // GL_ARM_shader_framebuffer_fetch_depth_stencil
@@ -815,6 +817,8 @@ ANGLE_EXPORT void GL_APIENTRY GL_EGLImageTargetTexStorageEXT(GLenum target,
 ANGLE_EXPORT void GL_APIENTRY GL_EGLImageTargetTextureStorageEXT(GLuint texture,
                                                                  GLeglImageOES image,
                                                                  const GLint *attrib_list);
+
+// GL_EXT_EGL_image_storage_compression
 
 // GL_EXT_YUV_target
 
@@ -1434,6 +1438,21 @@ ANGLE_EXPORT void GL_APIENTRY GL_TexStorage3DEXT(GLenum target,
                                                  GLsizei height,
                                                  GLsizei depth);
 
+// GL_EXT_texture_storage_compression
+ANGLE_EXPORT void GL_APIENTRY GL_TexStorageAttribs2DEXT(GLenum target,
+                                                        GLsizei levels,
+                                                        GLenum internalformat,
+                                                        GLsizei width,
+                                                        GLsizei height,
+                                                        const GLint *attrib_list);
+ANGLE_EXPORT void GL_APIENTRY GL_TexStorageAttribs3DEXT(GLenum target,
+                                                        GLsizei levels,
+                                                        GLenum internalformat,
+                                                        GLsizei width,
+                                                        GLsizei height,
+                                                        GLsizei depth,
+                                                        const GLint *attrib_list);
+
 // GL_EXT_texture_type_2_10_10_10_REV
 
 // GL_EXT_unpack_subimage
@@ -1581,6 +1600,9 @@ ANGLE_EXPORT void GL_APIENTRY GL_EGLImageTargetTexture2DOES(GLenum target, GLegl
 // GL_OES_EGL_image_external
 
 // GL_OES_EGL_image_external_essl3
+
+// GL_OES_blend_subtract
+ANGLE_EXPORT void GL_APIENTRY GL_BlendEquationOES(GLenum mode);
 
 // GL_OES_compressed_ETC1_RGB8_texture
 
@@ -1885,6 +1907,8 @@ ANGLE_EXPORT void GL_APIENTRY GL_TexGenxvOES(GLenum coord, GLenum pname, const G
 // GL_OES_texture_half_float
 
 // GL_OES_texture_half_float_linear
+
+// GL_OES_texture_mirrored_repeat
 
 // GL_OES_texture_npot
 

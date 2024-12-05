@@ -120,6 +120,9 @@ class WithoutNamespaceWithAttributes;
 struct SoftLinkedMember;
 struct RequestEncodedWithBody;
 struct RequestEncodedWithBodyRValue;
+#if USE(SKIA)
+class SkFooBar;
+#endif
 
 #if USE(CFBAR)
 typedef struct __CFBar * CFBarRef;
@@ -363,6 +366,14 @@ template<> struct ArgumentCoder<RetainPtr<CFStringRef>> {
         ArgumentCoder<CFStringRef>::encode(encoder, retainPtr.get());
     }
     static std::optional<RetainPtr<CFStringRef>> decode(Decoder&);
+};
+#endif
+
+#if USE(SKIA)
+template<> struct ArgumentCoder<SkFooBar> {
+    static void encode(Encoder&, const SkFooBar&);
+    static void encode(OtherEncoder&, const SkFooBar&);
+    static std::optional<SkFooBar> decode(Decoder&);
 };
 #endif
 

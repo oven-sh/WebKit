@@ -82,7 +82,7 @@ private:
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
 
-    static std::unique_ptr<AudioMediaStreamTrackRenderer> createRenderer(AudioTrackPrivateMediaStream&);
+    static RefPtr<AudioMediaStreamTrackRenderer> createRenderer(AudioTrackPrivateMediaStream&);
 
     // AudioTrackPrivate
     Kind kind() const final { return Kind::Main; }
@@ -111,12 +111,12 @@ private:
     bool m_muted { false };
     bool m_isCleared { false };
 
-    Ref<MediaStreamTrackPrivate> m_streamTrack;
-    Ref<RealtimeMediaSource> m_audioSource;
+    const Ref<MediaStreamTrackPrivate> m_streamTrack;
+    const Ref<RealtimeMediaSource> m_audioSource;
     int m_index { 0 };
 
     // Audio thread members
-    std::unique_ptr<AudioMediaStreamTrackRenderer> m_renderer;
+    RefPtr<AudioMediaStreamTrackRenderer> m_renderer;
 };
 
 }

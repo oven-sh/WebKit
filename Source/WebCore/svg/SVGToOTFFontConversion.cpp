@@ -166,10 +166,10 @@ private:
 
     void append32BitCode(ASCIILiteral code)
     {
-        m_result.append(code[0]);
-        m_result.append(code[1]);
-        m_result.append(code[2]);
-        m_result.append(code[3]);
+        m_result.append(code[0uz]);
+        m_result.append(code[1uz]);
+        m_result.append(code[2uz]);
+        m_result.append(code[3uz]);
     }
 
     void append16(uint16_t value)
@@ -1505,10 +1505,10 @@ void SVGToOTFFontConverter::appendTable(ASCIILiteral identifier, FontAppendingFu
         m_result.append(0);
     ASSERT(isFourByteAligned(m_result.size()));
     size_t directoryEntryOffset = headerSize + m_tablesAppendedCount * directoryEntrySize;
-    m_result[directoryEntryOffset] = identifier[0];
-    m_result[directoryEntryOffset + 1] = identifier[1];
-    m_result[directoryEntryOffset + 2] = identifier[2];
-    m_result[directoryEntryOffset + 3] = identifier[3];
+    m_result[directoryEntryOffset] = identifier[0uz];
+    m_result[directoryEntryOffset + 1] = identifier[1uz];
+    m_result[directoryEntryOffset + 2] = identifier[2uz];
+    m_result[directoryEntryOffset + 3] = identifier[3uz];
     overwrite32(directoryEntryOffset + 4, calculateChecksum(offset, m_result.size()));
     overwrite32(directoryEntryOffset + 8, offset);
     overwrite32(directoryEntryOffset + 12, unpaddedSize);

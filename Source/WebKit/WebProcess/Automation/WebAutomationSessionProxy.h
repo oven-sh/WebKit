@@ -54,6 +54,9 @@ public:
     static Ref<WebAutomationSessionProxy> create(const String& sessionIdentifier);
     ~WebAutomationSessionProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     String sessionIdentifier() const { return m_sessionIdentifier; }
 
     void didClearWindowObjectForFrame(WebFrame&);

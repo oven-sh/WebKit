@@ -28,9 +28,7 @@
 
 #include "MessageSenderInlines.h"
 #include "NetworkConnectionToWebProcess.h"
-#include "NetworkTransportBidirectionalStream.h"
-#include "NetworkTransportReceiveStream.h"
-#include "NetworkTransportSendStream.h"
+#include "NetworkTransportStream.h"
 #include "WebTransportSessionMessages.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -66,7 +64,7 @@ void NetworkTransportSession::sendDatagram(std::span<const uint8_t>, CompletionH
 
 void NetworkTransportSession::sendStreamSendBytes(WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin, CompletionHandler<void()>&& completionHandler)
 {
-    if (auto* stream = m_sendStreams.get(identifier))
+    if (RefPtr stream = m_sendStreams.get(identifier))
         stream->sendBytes(bytes, withFin);
     completionHandler();
 }
@@ -75,7 +73,7 @@ void NetworkTransportSession::streamSendBytes(WebTransportStreamIdentifier ident
 {
     if (RefPtr stream = m_bidirectionalStreams.get(identifier))
         stream->sendBytes(bytes, withFin);
-    else if (auto* stream = m_sendStreams.get(identifier))
+    else if (RefPtr stream = m_sendStreams.get(identifier))
         stream->sendBytes(bytes, withFin);
     completionHandler();
 }

@@ -590,28 +590,28 @@ void WebExtensionController::addItemsToContextMenu(WebPageProxy& page, const Con
 
 // MARK: webNavigation
 
-void WebExtensionController::didStartProvisionalLoadForFrame(WebPageProxyIdentifier pageID, WebExtensionFrameIdentifier frameID, WebExtensionFrameIdentifier parentFrameID, const URL& targetURL, WallTime timestamp)
+void WebExtensionController::didStartProvisionalLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
 {
     for (Ref context : m_extensionContexts)
-        context->didStartProvisionalLoadForFrame(pageID, frameID, parentFrameID, targetURL, timestamp);
+        context->didStartProvisionalLoadForFrame(pageID, frameParameters, timestamp);
 }
 
-void WebExtensionController::didCommitLoadForFrame(WebPageProxyIdentifier pageID, WebExtensionFrameIdentifier frameID, WebExtensionFrameIdentifier parentFrameID, const URL& frameURL, WallTime timestamp)
+void WebExtensionController::didCommitLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
 {
     for (Ref context : m_extensionContexts)
-        context->didCommitLoadForFrame(pageID, frameID, parentFrameID, frameURL, timestamp);
+        context->didCommitLoadForFrame(pageID, frameParameters, timestamp);
 }
 
-void WebExtensionController::didFinishLoadForFrame(WebPageProxyIdentifier pageID, WebExtensionFrameIdentifier frameID, WebExtensionFrameIdentifier parentFrameID, const URL& frameURL, WallTime timestamp)
+void WebExtensionController::didFinishLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
 {
     for (Ref context : m_extensionContexts)
-        context->didFinishLoadForFrame(pageID, frameID, parentFrameID, frameURL, timestamp);
+        context->didFinishLoadForFrame(pageID, frameParameters, timestamp);
 }
 
-void WebExtensionController::didFailLoadForFrame(WebPageProxyIdentifier pageID, WebExtensionFrameIdentifier frameID, WebExtensionFrameIdentifier parentFrameID, const URL& frameURL, WallTime timestamp)
+void WebExtensionController::didFailLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
 {
     for (Ref context : m_extensionContexts)
-        context->didFailLoadForFrame(pageID, frameID, parentFrameID, frameURL, timestamp);
+        context->didFailLoadForFrame(pageID, frameParameters, timestamp);
 }
 
 // MARK: declarativeNetRequest

@@ -40,6 +40,7 @@
 #include "SVGLayerTransformComputation.h"
 #include "SVGRenderingContext.h"
 #include "SVGRootInlineBox.h"
+#include "SVGTextBoxPainter.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleResolver.h"
 #include "VisiblePosition.h"
@@ -158,6 +159,24 @@ bool RenderSVGInlineText::characterStartsNewTextChunk(int position) const
     return !SVGTextLayoutAttributes::isEmptyValue(it->value.x) || !SVGTextLayoutAttributes::isEmptyValue(it->value.y);
 }
 
+static int offsetForPositionInFragment(const InlineIterator::SVGTextBox& textBox, const SVGTextFragment& fragment, float position)
+{
+    float scalingFactor = textBox.renderer().scalingFactor();
+    ASSERT(scalingFactor);
+
+    TextRun textRun = constructTextRun(textBox.renderer().text(), textBox.direction(), textBox.style(), fragment);
+
+    // Eventually handle lengthAdjust="spacingAndGlyphs".
+    // FIXME: Handle vertical text.
+    AffineTransform fragmentTransform;
+    fragment.buildFragmentTransform(fragmentTransform);
+    if (!fragmentTransform.isIdentity())
+        textRun.setHorizontalGlyphStretch(narrowPrecisionToFloat(fragmentTransform.xScale()));
+
+    const bool includePartialGlyphs = true;
+    return fragment.characterOffset - textBox.start() + textBox.renderer().scaledFont().offsetForPosition(textRun, position * scalingFactor, includePartialGlyphs);
+}
+
 VisiblePosition RenderSVGInlineText::positionForPoint(const LayoutPoint& point, HitTestSource, const RenderFragmentContainer*)
 {
     if (!InlineIterator::firstTextBoxFor(*this) || text().isEmpty())
@@ -175,7 +194,7 @@ VisiblePosition RenderSVGInlineText::positionForPoint(const LayoutPoint& point, 
     float closestDistance = std::numeric_limits<float>::max();
     float closestDistancePosition = 0;
     const SVGTextFragment* closestDistanceFragment = nullptr;
-    const SVGInlineTextBox* closestDistanceBox = nullptr;
+    InlineIterator::SVGTextBoxIterator closestDistanceBox;
 
     AffineTransform fragmentTransform;
     for (auto& box : InlineIterator::svgTextBoxesFor(*this)) {
@@ -194,7 +213,7 @@ VisiblePosition RenderSVGInlineText::positionForPoint(const LayoutPoint& point, 
 
             if (distance < closestDistance) {
                 closestDistance = distance;
-                closestDistanceBox = downcast<SVGInlineTextBox>(box.legacyInlineBox());
+                closestDistanceBox = box;
                 closestDistanceFragment = &fragment;
                 closestDistancePosition = fragmentRect.x();
             }
@@ -204,7 +223,7 @@ VisiblePosition RenderSVGInlineText::positionForPoint(const LayoutPoint& point, 
     if (!closestDistanceFragment)
         return createVisiblePosition(0, Affinity::Downstream);
 
-    int offset = closestDistanceBox->offsetForPositionInFragment(*closestDistanceFragment, absolutePoint.x() - closestDistancePosition);
+    int offset = offsetForPositionInFragment(*closestDistanceBox, *closestDistanceFragment, absolutePoint.x() - closestDistancePosition);
     return createVisiblePosition(offset + closestDistanceBox->start(), offset > 0 ? Affinity::Upstream : Affinity::Downstream);
 }
 

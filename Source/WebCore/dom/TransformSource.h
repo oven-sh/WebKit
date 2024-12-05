@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2009 Jakub Wieczorek <faw217@gmail.com>
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -24,7 +25,6 @@
 #include <libxml/tree.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -32,7 +32,7 @@ namespace WebCore {
 typedef xmlDocPtr PlatformTransformSource;
 
 class TransformSource {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(TransformSource);
+    WTF_MAKE_TZONE_ALLOCATED(TransformSource);
     WTF_MAKE_NONCOPYABLE(TransformSource);
 public:
     explicit TransformSource(const PlatformTransformSource&);

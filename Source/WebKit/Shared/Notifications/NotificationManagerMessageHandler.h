@@ -40,7 +40,7 @@ struct NotificationData;
 
 namespace WebKit {
 
-class NotificationManagerMessageHandler : public IPC::MessageReceiver, public AbstractRefCounted {
+class NotificationManagerMessageHandler : public IPC::MessageReceiver {
 public:
     virtual ~NotificationManagerMessageHandler() = default;
 

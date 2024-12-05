@@ -54,13 +54,14 @@ class PointerTouchCompatibilitySimulator {
     WTF_MAKE_NONCOPYABLE(PointerTouchCompatibilitySimulator);
     WTF_MAKE_TZONE_ALLOCATED(PointerTouchCompatibilitySimulator);
 public:
-    static bool requiresPointerTouchCompatibility();
-
     PointerTouchCompatibilitySimulator(WKWebView *);
 
 #if HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
-    void handleScrollUpdate(WKBaseScrollView *, WKBEScrollViewScrollUpdate *);
+    bool handleScrollUpdate(WKBaseScrollView *, WKBEScrollViewScrollUpdate *);
 #endif
+
+    bool isSimulatingTouches() const { return !m_touchDelta.isZero(); }
+    void setEnabled(bool);
 
     RetainPtr<WKWebView> view() const { return m_view.get(); }
     RetainPtr<UIWindow> window() const;
@@ -72,7 +73,9 @@ private:
     const WeakObjCPtr<WKWebView> m_view;
     RunLoop::Timer m_stateResetWatchdogTimer;
     WebCore::FloatPoint m_centroid;
-    WebCore::FloatSize m_delta;
+    WebCore::FloatSize m_touchDelta;
+    WebCore::FloatSize m_initialDelta;
+    bool m_isEnabled { false };
 };
 
 } // namespace WebKit

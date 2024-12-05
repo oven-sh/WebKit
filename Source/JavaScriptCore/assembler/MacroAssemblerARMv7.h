@@ -758,7 +758,12 @@ public:
         else
             xor32(imm, dest, dest);
     }
-    
+
+    void depend32(RegisterID src, RegisterID dest)
+    {
+        xor32(src, src, dest);
+    }
+
     void not32(RegisterID srcDest)
     {
         m_assembler.mvn(srcDest, srcDest);

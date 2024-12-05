@@ -74,7 +74,7 @@ void RemoteLayerBackingStoreCollection::prepareBackingStoresForDisplay(RemoteLay
     Vector<WeakPtr<RemoteLayerWithRemoteRenderingBackingStore>> backingStoreList;
     backingStoreList.reserveInitialCapacity(m_backingStoresNeedingDisplay.computeSize());
 
-    auto& remoteRenderingBackend = layerTreeContext().ensureRemoteRenderingBackendProxy();
+    Ref remoteRenderingBackend = layerTreeContext().ensureRemoteRenderingBackendProxy();
 
     for (CheckedRef backingStore : m_backingStoresNeedingDisplay) {
         backingStore->layer().properties().notePropertiesChanged(LayerChange::BackingStoreChanged);
@@ -106,7 +106,7 @@ void RemoteLayerBackingStoreCollection::prepareBackingStoresForDisplay(RemoteLay
     }
 
     if (prepareBuffersData.size()) {
-        auto swapResult = remoteRenderingBackend.prepareImageBufferSetsForDisplay(WTFMove(prepareBuffersData));
+        auto swapResult = remoteRenderingBackend->prepareImageBufferSetsForDisplay(WTFMove(prepareBuffersData));
         RELEASE_ASSERT(swapResult.size() == backingStoreList.size() || swapResult.isEmpty());
         for (unsigned i = 0; i < swapResult.size(); ++i) {
             auto& backingStoreSwapResult = swapResult[i];
@@ -483,9 +483,9 @@ bool RemoteLayerBackingStoreCollection::collectAllRemoteRenderingBufferIdentifie
 
 void RemoteLayerBackingStoreCollection::sendMarkBuffersVolatile(Vector<std::pair<Ref<RemoteImageBufferSetProxy>, OptionSet<BufferInSetType>>>&& identifiers, CompletionHandler<void(bool)>&& completionHandler, bool forcePurge)
 {
-    auto& remoteRenderingBackend = m_layerTreeContext->ensureRemoteRenderingBackendProxy();
+    Ref remoteRenderingBackend = m_layerTreeContext->ensureRemoteRenderingBackendProxy();
 
-    remoteRenderingBackend.markSurfacesVolatile(WTFMove(identifiers), [completionHandler = WTFMove(completionHandler)](bool markedAllVolatile) mutable {
+    remoteRenderingBackend->markSurfacesVolatile(WTFMove(identifiers), [completionHandler = WTFMove(completionHandler)](bool markedAllVolatile) mutable {
         LOG_WITH_STREAM(RemoteLayerBuffers, stream << "RemoteLayerBackingStoreCollection::sendMarkBuffersVolatile: marked all volatile " << markedAllVolatile);
         completionHandler(markedAllVolatile);
     }, forcePurge);

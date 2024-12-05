@@ -582,6 +582,12 @@ bool IOSApplication::isHoYoLAB()
     return isHoYoLAB;
 }
 
+bool IOSApplication::isAmazon()
+{
+    static bool isAmazon = applicationBundleIsEqualTo("com.amazon.Amazon"_s);
+    return isAmazon;
+}
+
 bool IOSApplication::isAppleApplication()
 {
     static bool isAppleApplication = applicationBundleStartsWith("com.apple."_s);

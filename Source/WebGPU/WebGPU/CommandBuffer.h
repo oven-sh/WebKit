@@ -27,7 +27,7 @@
 
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
+#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakPtr.h>
 #import <wtf/threads/BinarySemaphore.h>
@@ -40,7 +40,7 @@ namespace WebGPU {
 class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandbuffer
-class CommandBuffer : public WGPUCommandBufferImpl, public RefCounted<CommandBuffer>, public CanMakeWeakPtr<CommandBuffer> {
+class CommandBuffer : public RefCountedAndCanMakeWeakPtr<CommandBuffer>, public WGPUCommandBufferImpl {
     WTF_MAKE_TZONE_ALLOCATED(CommandBuffer);
 public:
     static Ref<CommandBuffer> create(id<MTLCommandBuffer> commandBuffer, Device& device, id<MTLSharedEvent> sharedEvent, uint64_t sharedEventSignalValue)

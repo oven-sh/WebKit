@@ -214,7 +214,7 @@ GRefPtr<GstElement> GStreamerIncomingTrackProcessor::incomingTrackProcessor()
         configureVideoRTPDepayloader(element);
         auto self = reinterpret_cast<GStreamerIncomingTrackProcessor*>(userData);
         auto pad = adoptGRef(gst_element_get_static_pad(element, "sink"));
-        self->installRtpBufferPadProbe(WTFMove(pad));
+        self->installRtpBufferPadProbe(pad);
     }), this);
 
     g_signal_connect(decodebin.get(), "element-added", G_CALLBACK(+[](GstBin*, GstElement* element, gpointer userData) {
@@ -263,7 +263,7 @@ GRefPtr<GstElement> GStreamerIncomingTrackProcessor::createParser()
         configureVideoRTPDepayloader(element);
         auto self = reinterpret_cast<GStreamerIncomingTrackProcessor*>(userData);
         auto pad = adoptGRef(gst_element_get_static_pad(element, "sink"));
-        self->installRtpBufferPadProbe(WTFMove(pad));
+        self->installRtpBufferPadProbe(pad);
     }), this);
 
     auto& quirksManager = GStreamerQuirksManager::singleton();
@@ -291,7 +291,7 @@ GRefPtr<GstElement> GStreamerIncomingTrackProcessor::createParser()
     return parsebin;
 }
 
-void GStreamerIncomingTrackProcessor::installRtpBufferPadProbe(GRefPtr<GstPad>&& pad)
+void GStreamerIncomingTrackProcessor::installRtpBufferPadProbe(const GRefPtr<GstPad>& pad)
 {
     if (m_data.type == RealtimeMediaSource::Type::Audio)
         return;
@@ -303,12 +303,20 @@ void GStreamerIncomingTrackProcessor::installRtpBufferPadProbe(GRefPtr<GstPad>&&
         auto buffer = GST_PAD_PROBE_INFO_BUFFER(info);
         {
             GstMappedRtpBuffer rtpBuffer(buffer, GST_MAP_READ);
-            if (rtpBuffer)
-                videoFrameTimeMetadata.rtpTimestamp = gst_rtp_buffer_get_timestamp(rtpBuffer.mappedData());
+            if (UNLIKELY(!rtpBuffer))
+                return GST_PAD_PROBE_OK;
+
+            // Do not process further if this packet doesn't mark the end of a frame.
+            if (!gst_rtp_buffer_get_marker(rtpBuffer.mappedData()))
+                return GST_PAD_PROBE_OK;
+
+            videoFrameTimeMetadata.rtpTimestamp = gst_rtp_buffer_get_timestamp(rtpBuffer.mappedData());
         }
 
-        if (auto referenceTimestampMeta = gst_buffer_get_reference_timestamp_meta(buffer, GST_CAPS_CAST(userData)))
-            videoFrameTimeMetadata.captureTime = Seconds::fromNanoseconds(static_cast<double>(referenceTimestampMeta->timestamp));
+        if (auto referenceTimestampMeta = gst_buffer_get_reference_timestamp_meta(buffer, GST_CAPS_CAST(userData))) {
+            auto ntpTimestamp = referenceTimestampMeta->timestamp;
+            videoFrameTimeMetadata.captureTime = Seconds::fromNanoseconds(gst_rtcp_ntp_to_unix(ntpTimestamp));
+        }
 
         buffer = webkitGstBufferSetVideoFrameTimeMetadata(buffer, WTFMove(videoFrameTimeMetadata));
         GST_PAD_PROBE_INFO_DATA(info) = buffer;

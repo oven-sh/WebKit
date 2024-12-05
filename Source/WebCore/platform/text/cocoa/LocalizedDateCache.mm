@@ -31,11 +31,13 @@
 #import <CoreFoundation/CFNotificationCenter.h>
 #import <WebCore/LocalizedStrings.h>
 #import <math.h>
+#import <ranges>
 #import <wtf/Assertions.h>
+#import <wtf/IndexedRange.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/StdLibExtras.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#import <wtf/text/MakeString.h>
+#import <wtf/text/StringConcatenateNumbers.h>
 
 namespace WebCore {
 
@@ -133,13 +135,16 @@ RetainPtr<NSDateFormatter> LocalizedDateCache::createFormatterForType(DateCompon
 
 static float calculateMaximumWidthForWeek(const MeasureTextClient& measurer)
 {
-    std::array<float, 10> numLengths = { };
-    for (int i = 0; i < 10; i++)
-        numLengths[i] = measurer.measureText([NSString stringWithFormat:@"%d", i]);
+    std::array<float, 10> numLengths;
+    for (auto [i, numLength] : indexedRange(numLengths)) {
+        numLength = measurer.measureText(makeString(i));
+        ASSERT(numLengths[i] == numLength);
+    }
 
-    int widestNum = std::distance(numLengths.data(), std::max_element(numLengths.data(), numLengths.data() + 10));
-    int widestNumOneThroughFour = std::distance(numLengths.data(), std::max_element(numLengths.data() + 1, numLengths.data() + 5));
-    int widestNumNonZero = std::distance(numLengths.data(), std::max_element(numLengths.data() + 1, numLengths.data() + 10));
+    std::span numLengthsSpan { numLengths };
+    int widestNum = std::distance(numLengthsSpan.begin(), std::ranges::max_element(numLengthsSpan));
+    int widestNumOneThroughFour = std::distance(numLengthsSpan.begin(), std::ranges::max_element(numLengthsSpan.subspan(1, 4)));
+    int widestNumNonZero = std::distance(numLengthsSpan.begin(), std::ranges::max_element(numLengthsSpan.subspan(1)));
 
     RetainPtr<NSString> weekString;
     // W50 is an edge case here; without this check, a suboptimal choice would be made when 5 and 0 are both large and all other numbers are narrow.
@@ -205,5 +210,3 @@ float LocalizedDateCache::calculateMaximumWidth(DateComponentsType type, const M
 }
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -37,13 +37,13 @@ namespace Style {
 auto ToStyle<CSS::TwoComponentPositionHorizontal>::operator()(const CSS::TwoComponentPositionHorizontal& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> TwoComponentPositionHorizontal
 {
     return WTF::switchOn(value.offset,
-        [&](CSS::Left) {
+        [&](CSS::Keyword::Left) {
             return TwoComponentPositionHorizontal { .offset = LengthPercentage<> { Percentage<> { 0 } } };
         },
-        [&](CSS::Right)  {
+        [&](CSS::Keyword::Right)  {
             return TwoComponentPositionHorizontal { .offset = LengthPercentage<> { Percentage<> { 100 } } };
         },
-        [&](CSS::Center)  {
+        [&](CSS::Keyword::Center)  {
             return TwoComponentPositionHorizontal { .offset = LengthPercentage<> { Percentage<> { 50 } } };
         },
         [&](const CSS::LengthPercentage<>& value) {
@@ -55,13 +55,13 @@ auto ToStyle<CSS::TwoComponentPositionHorizontal>::operator()(const CSS::TwoComp
 auto ToStyle<CSS::TwoComponentPositionVertical>::operator()(const CSS::TwoComponentPositionVertical& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> TwoComponentPositionVertical
 {
     return WTF::switchOn(value.offset,
-        [&](CSS::Top) {
+        [&](CSS::Keyword::Top) {
             return TwoComponentPositionVertical { .offset = LengthPercentage<> { Percentage<> { 0 } } };
         },
-        [&](CSS::Bottom) {
+        [&](CSS::Keyword::Bottom) {
             return TwoComponentPositionVertical { .offset = LengthPercentage<> { Percentage<> { 100 } } };
         },
-        [&](CSS::Center) {
+        [&](CSS::Keyword::Center) {
             return TwoComponentPositionVertical { .offset = LengthPercentage<> { Percentage<> { 50 } } };
         },
         [&](const CSS::LengthPercentage<>& value) {
@@ -86,18 +86,18 @@ auto ToStyle<CSS::Position>::operator()(const CSS::Position& position, const Bui
         },
         [&](const CSS::FourComponentPosition& fourComponent) {
             auto horizontal = WTF::switchOn(get<0>(get<0>(fourComponent)),
-                [&](CSS::Left) {
+                [&](CSS::Keyword::Left) {
                     return toStyle(get<1>(get<0>(fourComponent)), state, symbolTable);
                 },
-                [&](CSS::Right) {
+                [&](CSS::Keyword::Right) {
                     return reflect(toStyle(get<1>(get<0>(fourComponent)), state, symbolTable));
                 }
             );
             auto vertical = WTF::switchOn(get<0>(get<1>(fourComponent)),
-                [&](CSS::Top) {
+                [&](CSS::Keyword::Top) {
                     return toStyle(get<1>(get<1>(fourComponent)), state, symbolTable);
                 },
-                [&](CSS::Bottom) {
+                [&](CSS::Keyword::Bottom) {
                     return reflect(toStyle(get<1>(get<1>(fourComponent)), state, symbolTable));
                 }
             );

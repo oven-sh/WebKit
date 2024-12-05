@@ -45,6 +45,7 @@ OBJC_CLASS NSURLCredentialStorage;
 #include <WebCore/NetworkLoadMetrics.h>
 #include <WebCore/RegistrableDomain.h>
 #include <wtf/HashMap.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -82,7 +83,7 @@ public:
     WallTime lastUsed;
 };
 
-struct SessionSet : public RefCounted<SessionSet>, public CanMakeWeakPtr<SessionSet> {
+struct SessionSet : public RefCountedAndCanMakeWeakPtr<SessionSet> {
 public:
     static Ref<SessionSet> create()
     {
@@ -181,6 +182,7 @@ private:
 #endif
 
     void donateToSKAdNetwork(WebCore::PrivateClickMeasurement&&) final;
+    void notifyAdAttributionKitOfSessionTermination() final;
 
     Vector<WebCore::SecurityOriginData> hostNamesWithAlternativeServices() const override;
     void deleteAlternativeServicesForHostNames(const Vector<String>&) override;
@@ -222,6 +224,9 @@ private:
     bool m_fastServerTrustEvaluationEnabled { false };
     String m_dataConnectionServiceType;
     bool m_preventsSystemHTTPProxyAuthentication { false };
+#if HAVE(AD_ATTRIBUTION_KIT_PRIVATE_BROWSING)
+    Markable<WTF::UUID> m_donatedEphemeralImpressionSessionID;
+#endif
 
     class BlobDataTaskClient;
     HashMap<DataTaskIdentifier, Ref<BlobDataTaskClient>> m_blobDataTasksForAPI;

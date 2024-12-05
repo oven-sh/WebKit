@@ -68,9 +68,7 @@ HistoryItem::HistoryItem(Client& client, const String& urlString, const String& 
 HistoryItem::~HistoryItem() = default;
 
 HistoryItem::HistoryItem(const HistoryItem& item)
-    : RefCounted<HistoryItem>()
-    , CanMakeWeakPtr<HistoryItem>()
-    , m_urlString(item.m_urlString)
+    : m_urlString(item.m_urlString)
     , m_originalURLString(item.m_originalURLString)
     , m_referrer(item.m_referrer)
     , m_target(item.m_target)

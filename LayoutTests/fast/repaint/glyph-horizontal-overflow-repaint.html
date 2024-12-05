@@ -1,0 +1,15 @@
+<style>
+div {
+  font-size: 280px;
+  font-family: 'Times';
+}
+</style>
+PASS if 'f' is all green.
+<div id=color_this><span>f</span></div>
+<script src="resources/text-based-repaint.js" type="text/javascript"></script>
+<script>
+  repaintTest = function() {
+    color_this.style.color = "green";
+  };
+runRepaintTest();
+</script>

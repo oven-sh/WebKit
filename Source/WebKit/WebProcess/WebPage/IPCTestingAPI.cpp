@@ -63,6 +63,7 @@
 #include <WebCore/ScriptController.h>
 #include <WebCore/SharedMemory.h>
 #include <wtf/PageBlock.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -159,6 +160,9 @@ public:
         return adoptRef(*new JSIPCConnection(WTFMove(connection)));
     }
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     JSObjectRef createJSWrapper(JSContextRef);
     static JSIPCConnection* toWrapped(JSContextRef, JSValueRef);
 
@@ -193,7 +197,7 @@ private:
     Ref<IPC::Connection> m_testedConnection;
 };
 
-class JSIPCStreamClientConnection : public RefCounted<JSIPCStreamClientConnection>, public CanMakeWeakPtr<JSIPCStreamClientConnection> {
+class JSIPCStreamClientConnection : public RefCountedAndCanMakeWeakPtr<JSIPCStreamClientConnection> {
 public:
     static Ref<JSIPCStreamClientConnection> create(JSIPC& jsIPC, RefPtr<IPC::StreamClientConnection> connection)
     {
@@ -245,12 +249,22 @@ private:
         WTF_MAKE_FAST_ALLOCATED;
         WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MessageReceiver);
     public:
+        MessageReceiver(JSIPCStreamClientConnection& connection)
+            : m_connection(connection)
+        { }
+
+        void ref() const { m_connection->ref(); }
+        void deref() const { m_connection->deref(); }
+
         // IPC::MessageReceiver overrides.
         void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final { ASSERT_NOT_REACHED(); }
         bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final { ASSERT_NOT_REACHED(); return false; }
         void didClose(IPC::Connection&) final { }
         void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, int32_t indexOfObjectFailingDecoding) final { ASSERT_NOT_REACHED(); }
-    } m_dummyMessageReceiver;
+
+    private:
+        WeakRef<JSIPCStreamClientConnection> m_connection;
+    } m_dummyMessageReceiver { *this };
 };
 
 class JSIPCStreamServerConnectionHandle : public RefCounted<JSIPCStreamServerConnectionHandle> {
@@ -378,7 +392,7 @@ private:
     JSObjectRef m_callback;
 };
 
-class JSIPC : public RefCounted<JSIPC>, public CanMakeWeakPtr<JSIPC> {
+class JSIPC : public RefCountedAndCanMakeWeakPtr<JSIPC> {
 public:
     static Ref<JSIPC> create(WebPage& webPage, WebFrame& webFrame)
     {

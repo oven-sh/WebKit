@@ -63,8 +63,8 @@ public:
     void didFailWithError(LegacyCustomProtocolID, const WebCore::ResourceError&);
     void didFinishLoading(LegacyCustomProtocolID);
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
 private:
     Ref<NetworkProcessProxy> protectedProcess();

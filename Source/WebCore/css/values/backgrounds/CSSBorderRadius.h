@@ -24,7 +24,6 @@
 
 #pragma once
 
-#include "CSSMinimallySerializingRectEdges.h"
 #include "CSSPrimitiveNumericTypes.h"
 
 namespace WebCore {
@@ -34,7 +33,7 @@ namespace CSS {
 // https://drafts.csswg.org/css-backgrounds-3/#propdef-border-radius
 struct BorderRadius {
     using Axis = SpaceSeparatedArray<LengthPercentage<Nonnegative>, 4>;
-    using Corner = Size<LengthPercentage<Nonnegative>>;
+    using Corner = SpaceSeparatedSize<LengthPercentage<Nonnegative>>;
 
     static BorderRadius defaultValue();
 

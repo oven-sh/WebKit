@@ -1310,7 +1310,7 @@ void UIDelegate::UIClient::callDisplayCapturePermissionDelegate(WebPageProxy& pa
     std::optional<WebCore::FrameIdentifier> mainFrameID;
     if (auto* mainFrame = frame.page() ? frame.page()->mainFrame() : nullptr)
         mainFrameID = mainFrame->frameID();
-    FrameInfoData frameInfo { frame.isMainFrame(), FrameType::Local, { }, userMediaOrigin.securityOrigin(), { }, frame.frameID(), mainFrameID, frame.process().processID(), frame.isFocused() };
+    FrameInfoData frameInfo { frame.isMainFrame(), FrameType::Local, { }, userMediaOrigin.securityOrigin(), { }, frame.frameID(), mainFrameID, std::nullopt, frame.process().processID(), frame.isFocused() };
     RetainPtr<WKFrameInfo> frameInfoWrapper = wrapper(API::FrameInfo::create(WTFMove(frameInfo), frame.page()));
 
     BOOL requestSystemAudio = !!request.requiresDisplayCaptureWithAudio();
@@ -1382,7 +1382,7 @@ void UIDelegate::UIClient::decidePolicyForUserMediaPermissionRequest(WebPageProx
         std::optional<WebCore::FrameIdentifier> mainFrameID;
         if (auto* mainFrame = frame.page() ? frame.page()->mainFrame() : nullptr)
             mainFrameID = mainFrame->frameID();
-        FrameInfoData frameInfo { frame.isMainFrame(), FrameType::Local, { }, userMediaOrigin.securityOrigin(), { }, frame.frameID(), mainFrameID, frame.process().processID(), frame.isFocused() };
+        FrameInfoData frameInfo { frame.isMainFrame(), FrameType::Local, { }, userMediaOrigin.securityOrigin(), { }, frame.frameID(), mainFrameID, std::nullopt, frame.process().processID(), frame.isFocused() };
         RetainPtr<WKFrameInfo> frameInfoWrapper = wrapper(API::FrameInfo::create(WTFMove(frameInfo), frame.page()));
 
         WKMediaCaptureType type = WKMediaCaptureTypeCamera;
@@ -1459,7 +1459,7 @@ void UIDelegate::UIClient::decidePolicyForScreenCaptureUnmuting(WebPageProxy& pa
     std::optional<WebCore::FrameIdentifier> mainFrameID;
     if (auto* mainFrame = frame.page() ? frame.page()->mainFrame() : nullptr)
         mainFrameID = mainFrame->frameID();
-    FrameInfoData frameInfo { frame.isMainFrame(), FrameType::Local, { }, userMediaOrigin.securityOrigin(), { }, frame.frameID(), mainFrameID, frame.process().processID(), frame.isFocused() };
+    FrameInfoData frameInfo { frame.isMainFrame(), FrameType::Local, { }, userMediaOrigin.securityOrigin(), { }, frame.frameID(), mainFrameID, std::nullopt, frame.process().processID(), frame.isFocused() };
     RetainPtr<WKFrameInfo> frameInfoWrapper = wrapper(API::FrameInfo::create(WTFMove(frameInfo), frame.page()));
 
     [delegate _webView:uiDelegate->m_webView.get().get() decidePolicyForScreenCaptureUnmutingForOrigin:wrapper(topLevelOrigin) initiatedByFrame:frameInfoWrapper.get() decisionHandler:decisionHandler.get()];

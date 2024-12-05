@@ -29,10 +29,7 @@
 namespace WebCore {
 namespace CSS {
 
-using Nonzero = Constant<CSSValueNonzero>;
-using Evenodd = Constant<CSSValueEvenodd>;
-
-using FillRule = std::variant<Nonzero, Evenodd>;
+using FillRule = std::variant<Keyword::Nonzero, Keyword::Evenodd>;
 
 } // namespace CSS
 } // namespace WebCore

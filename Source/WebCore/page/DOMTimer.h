@@ -31,7 +31,7 @@
 #include "UserGestureIndicator.h"
 #include <memory>
 #include <wtf/MonotonicTime.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -43,7 +43,7 @@ class Document;
 class ImminentlyScheduledWorkScope;
 class ScheduledAction;
 
-class DOMTimer final : public RefCounted<DOMTimer>, public ActiveDOMObject, public CanMakeWeakPtr<DOMTimer> {
+class DOMTimer final : public RefCountedAndCanMakeWeakPtr<DOMTimer>, public ActiveDOMObject {
     WTF_MAKE_NONCOPYABLE(DOMTimer);
     WTF_MAKE_TZONE_ALLOCATED(DOMTimer);
 public:

@@ -78,6 +78,9 @@ public:
     WebSWServerConnection(const WebSWServerConnection&) = delete;
     ~WebSWServerConnection() final;
 
+    void ref() const final { WebCore::SWServer::Connection::ref(); }
+    void deref() const final { WebCore::SWServer::Connection::deref(); }
+
     USING_CAN_MAKE_WEAKPTR(WebCore::SWServer::Connection);
 
     IPC::Connection& ipcConnection() const { return m_contentConnection.get(); }

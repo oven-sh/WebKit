@@ -377,10 +377,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSAnimation.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSAnimation.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSAnimationEvent.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSAnimationEvent.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSColor.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSColor.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSColorValue.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSColorValue.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSConditionRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSConditionRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSContainerRule.cpp
@@ -455,6 +451,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOKLCH.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOKLCH.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOKLab.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOKLab.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOMColor.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOMColor.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOMColorValue.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOMColorValue.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOMVariableReferenceValue.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSOMVariableReferenceValue.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPageRule.cpp
@@ -1095,6 +1095,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFileSystemHandle.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFileSystemHandle.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFileSystemSyncAccessHandle.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFileSystemSyncAccessHandle.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFileSystemWritableFileStream.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFileSystemWritableFileStream.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFillLightMode.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFillLightMode.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFillMode.cpp

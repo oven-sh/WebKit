@@ -29,7 +29,7 @@
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
+#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/WeakPtr.h>
 
 struct WGPUXRProjectionLayerImpl {
@@ -40,7 +40,7 @@ namespace WebGPU {
 class CommandEncoder;
 class Device;
 
-class XRProjectionLayer : public WGPUXRProjectionLayerImpl, public RefCounted<XRProjectionLayer>, public CanMakeWeakPtr<XRProjectionLayer> {
+class XRProjectionLayer : public RefCountedAndCanMakeWeakPtr<XRProjectionLayer>, public WGPUXRProjectionLayerImpl {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     static Ref<XRProjectionLayer> create(Device& device)

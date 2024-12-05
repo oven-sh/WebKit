@@ -34,6 +34,7 @@
 #import <WebCore/RegistrableDomain.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/ProcessPrivilege.h>
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/text/MakeString.h>
 

@@ -28,6 +28,8 @@
 #include "ArrayBuffer.h"
 #include "ArrayBufferView.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 template<typename Adaptor>
@@ -121,3 +123,5 @@ private:
 };
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

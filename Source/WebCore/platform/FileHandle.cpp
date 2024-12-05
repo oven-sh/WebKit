@@ -153,6 +153,11 @@ FileSystem::PlatformFileHandle FileHandle::handle() const
     return m_fileHandle;
 }
 
+String FileHandle::path() const
+{
+    return m_path;
+}
+
 } // namespace WebCore
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

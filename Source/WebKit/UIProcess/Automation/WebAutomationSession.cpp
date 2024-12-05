@@ -677,7 +677,8 @@ void WebAutomationSession::exitFullscreenWindowForPage(WebPageProxy& page, WTF::
 {
 #if ENABLE(FULLSCREEN_API)
     ASSERT(!m_windowStateTransitionCallback);
-    if (!page.fullScreenManager() || !page.fullScreenManager()->isFullScreen()) {
+    RefPtr fullScreenManager = page.fullScreenManager();
+    if (!fullScreenManager || !fullScreenManager->isFullScreen()) {
         completionHandler();
         return;
     }
@@ -692,7 +693,7 @@ void WebAutomationSession::exitFullscreenWindowForPage(WebPageProxy& page, WTF::
         completionHandler();
     } };
     
-    page.fullScreenManager()->requestExitFullScreen();
+    fullScreenManager->requestExitFullScreen();
 #else
     completionHandler();
 #endif

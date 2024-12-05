@@ -289,6 +289,6 @@ shouldBe(new Intl.PluralRules('en', {minimumSignificantDigits: 2}).select(1), 'o
 
 // Plural categories are correctly determined
 shouldBe(new Intl.PluralRules('en').resolvedOptions().pluralCategories instanceof Array, true);
-shouldBe(new Intl.PluralRules('ar').resolvedOptions().pluralCategories.join(), 'few,many,one,two,zero,other');
+shouldBe(new Intl.PluralRules('ar').resolvedOptions().pluralCategories.join(), 'zero,one,two,few,many,other');
 shouldBe(new Intl.PluralRules('en').resolvedOptions().pluralCategories.join(), 'one,other');
-shouldBe(new Intl.PluralRules('en', {type: 'ordinal'}).resolvedOptions().pluralCategories.join(), 'few,one,two,other');
+shouldBe(new Intl.PluralRules('en', {type: 'ordinal'}).resolvedOptions().pluralCategories.join(), 'one,two,few,other');

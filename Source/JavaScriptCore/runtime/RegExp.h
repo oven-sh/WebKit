@@ -76,20 +76,20 @@ public:
         m_constructionErrorCode = Yarr::ErrorCode::NoError;
     }
 
-    JS_EXPORT_PRIVATE int match(JSGlobalObject*, const String&, unsigned startOffset, Vector<int>& ovector);
+    JS_EXPORT_PRIVATE int match(JSGlobalObject*, StringView, unsigned startOffset, Vector<int>& ovector);
 
     // Returns false if we couldn't run the regular expression for any reason.
-    bool matchConcurrently(VM&, const String&, unsigned startOffset, int& position, Vector<int>& ovector);
+    bool matchConcurrently(VM&, StringView, unsigned startOffset, int& position, Vector<int>& ovector);
     
-    JS_EXPORT_PRIVATE MatchResult match(JSGlobalObject*, const String&, unsigned startOffset);
+    JS_EXPORT_PRIVATE MatchResult match(JSGlobalObject*, StringView, unsigned startOffset);
 
-    bool matchConcurrently(VM&, const String&, unsigned startOffset, MatchResult&);
+    bool matchConcurrently(VM&, StringView, unsigned startOffset, MatchResult&);
 
     // Call these versions of the match functions if you're desperate for performance.
     template<typename VectorType, Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
-    int matchInline(JSGlobalObject* nullOrGlobalObject, VM&, const String&, unsigned startOffset, VectorType& ovector);
+    int matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, VectorType& ovector);
     template<Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
-    MatchResult matchInline(JSGlobalObject* nullOrGlobalObject, VM&, const String&, unsigned startOffset);
+    MatchResult matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
     
     unsigned numSubpatterns() const { return m_numSubpatterns; }
 
@@ -195,7 +195,7 @@ private:
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
 #if ENABLE(YARR_JIT_DEBUG)
-    void matchCompareWithInterpreter(const String&, int startOffset, int* offsetVector, int jitResult);
+    void matchCompareWithInterpreter(StringView, int startOffset, int* offsetVector, int jitResult);
 #endif
 
 #if ENABLE(YARR_JIT)

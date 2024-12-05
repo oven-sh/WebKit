@@ -26,8 +26,8 @@
 
 #pragma once
 
+#include "CSSColor.h"
 #include "CSSPosition.h"
-#include "CSSPrimitiveValue.h"
 #include "CSSValueTypes.h"
 #include "ColorInterpolationMethod.h"
 
@@ -38,18 +38,11 @@ namespace CSS {
 
 using DeprecatedGradientPosition = SpaceSeparatedArray<NumberOrPercentage<>, 2>;
 
-using Horizontal     = std::variant<Left, Right>;
-using Vertical       = std::variant<Top, Bottom>;
+using Horizontal = std::variant<Keyword::Left, Keyword::Right>;
+using Vertical   = std::variant<Keyword::Top, Keyword::Bottom>;
 
-using ClosestCorner  = Constant<CSSValueClosestCorner>;
-using ClosestSide    = Constant<CSSValueClosestSide>;
-using FarthestCorner = Constant<CSSValueFarthestCorner>;
-using FarthestSide   = Constant<CSSValueFarthestSide>;
-using Contain        = Constant<CSSValueContain>;
-using Cover          = Constant<CSSValueCover>;
-
-using RadialGradientExtent         = std::variant<ClosestCorner, ClosestSide, FarthestCorner, FarthestSide>;
-using PrefixedRadialGradientExtent = std::variant<ClosestCorner, ClosestSide, FarthestCorner, FarthestSide, Contain, Cover>;
+using RadialGradientExtent         = std::variant<Keyword::ClosestCorner, Keyword::ClosestSide, Keyword::FarthestCorner, Keyword::FarthestSide>;
+using PrefixedRadialGradientExtent = std::variant<Keyword::ClosestCorner, Keyword::ClosestSide, Keyword::FarthestCorner, Keyword::FarthestSide, Keyword::Contain, Keyword::Cover>;
 
 // MARK: - Gradient Color Interpolation Definitions.
 
@@ -74,46 +67,43 @@ template<> struct CSSValueChildrenVisitor<GradientColorInterpolationMethod> { co
 
 template<typename Stop> using GradientColorStopList = CommaSeparatedVector<Stop, 2>;
 
-template<typename T> struct GradientColorStop {
-    using Position = T;
-    using List = GradientColorStopList<GradientColorStop<T>>;
+template<typename C, typename P> struct GradientColorStop {
+    using Color = C;
+    using Position = P;
+    using List = GradientColorStopList<GradientColorStop<C, P>>;
 
-    RefPtr<CSSPrimitiveValue> color;
+    Color color;
     Position position;
 
-    RefPtr<CSSPrimitiveValue> protectedColor() const { return color; }
-
-    bool operator==(const GradientColorStop<T>&) const;
+    bool operator==(const GradientColorStop<C, P>&) const = default;
 };
 
-template<typename T> inline bool GradientColorStop<T>::operator==(const GradientColorStop<Position>& other) const
+template<size_t I, typename C, typename P> const auto& get(const GradientColorStop<C, P>& stop)
 {
-    return compareCSSValuePtr(color, other.color) && position == other.position;
+    if constexpr (!I)
+        return stop.color;
+    else if constexpr (I == 1)
+        return stop.position;
 }
 
+using GradientAngularColorStopColor = Markable<Color>;
 using GradientAngularColorStopPosition = std::optional<AnglePercentage<>>;
-using GradientAngularColorStop = GradientColorStop<GradientAngularColorStopPosition>;
+using GradientAngularColorStop = GradientColorStop<GradientAngularColorStopColor, GradientAngularColorStopPosition>;
 using GradientAngularColorStopList = GradientColorStopList<GradientAngularColorStop>;
 
+using GradientLinearColorStopColor = Markable<Color>;
 using GradientLinearColorStopPosition = std::optional<LengthPercentage<>>;
-using GradientLinearColorStop = GradientColorStop<GradientLinearColorStopPosition>;
+using GradientLinearColorStop = GradientColorStop<GradientLinearColorStopColor, GradientLinearColorStopPosition>;
 using GradientLinearColorStopList = GradientColorStopList<GradientLinearColorStop>;
 
+using GradientDeprecatedColorStopColor = Color;
 using GradientDeprecatedColorStopPosition = NumberOrPercentageResolvedToNumber<>;
-using GradientDeprecatedColorStop = GradientColorStop<GradientDeprecatedColorStopPosition>;
+using GradientDeprecatedColorStop = GradientColorStop<GradientDeprecatedColorStopColor, GradientDeprecatedColorStopPosition>;
 using GradientDeprecatedColorStopList = GradientColorStopList<GradientDeprecatedColorStop>;
 
 template<> struct Serialize<GradientAngularColorStop> { void operator()(StringBuilder&, const GradientAngularColorStop&); };
 template<> struct Serialize<GradientLinearColorStop> { void operator()(StringBuilder&, const GradientLinearColorStop&); };
 template<> struct Serialize<GradientDeprecatedColorStop> { void operator()(StringBuilder&, const GradientDeprecatedColorStop&); };
-
-template<> struct ComputedStyleDependenciesCollector<GradientAngularColorStop> { void operator()(ComputedStyleDependencies&, const GradientAngularColorStop&); };
-template<> struct ComputedStyleDependenciesCollector<GradientLinearColorStop> { void operator()(ComputedStyleDependencies&, const GradientLinearColorStop&); };
-template<> struct ComputedStyleDependenciesCollector<GradientDeprecatedColorStop> { void operator()(ComputedStyleDependencies&, const GradientDeprecatedColorStop&); };
-
-template<> struct CSSValueChildrenVisitor<GradientAngularColorStop> { IterationStatus operator()(const Function<IterationStatus(CSSValue&)>&, const GradientAngularColorStop&); };
-template<> struct CSSValueChildrenVisitor<GradientLinearColorStop> { IterationStatus operator()(const Function<IterationStatus(CSSValue&)>&, const GradientLinearColorStop&); };
-template<> struct CSSValueChildrenVisitor<GradientDeprecatedColorStop> { IterationStatus operator()(const Function<IterationStatus(CSSValue&)>&, const GradientDeprecatedColorStop&); };
 
 // MARK: - LinearGradient
 
@@ -416,3 +406,15 @@ CSS_TUPLE_LIKE_CONFORMANCE(DeprecatedRadialGradient::GradientBox, 4)
 CSS_TUPLE_LIKE_CONFORMANCE(DeprecatedRadialGradient, 3)
 CSS_TUPLE_LIKE_CONFORMANCE(ConicGradient::GradientBox, 2)
 CSS_TUPLE_LIKE_CONFORMANCE(ConicGradient, 3)
+
+template<typename C, typename P> inline constexpr bool WebCore::TreatAsTupleLike<WebCore::CSS::GradientColorStop<C, P>> = true;
+
+namespace std {
+
+template<typename C, typename P> class tuple_size<WebCore::CSS::GradientColorStop<C, P>> : public std::integral_constant<size_t, 2> { };
+template<size_t I, typename C, typename P> class tuple_element<I, WebCore::CSS::GradientColorStop<C, P>> {
+public:
+    using type = decltype(WebCore::CSS::get<I>(std::declval<WebCore::CSS::GradientColorStop<C, P>>()));
+};
+
+} // namespace std

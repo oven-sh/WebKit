@@ -77,6 +77,9 @@ public:
     static Ref<RemotePageProxy> create(WebPageProxy&, WebProcessProxy&, const WebCore::Site&, WebPageProxyMessageReceiverRegistration* = nullptr);
     ~RemotePageProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     WebPageProxy* page() const;
     RefPtr<WebPageProxy> protectedPage() const;
 

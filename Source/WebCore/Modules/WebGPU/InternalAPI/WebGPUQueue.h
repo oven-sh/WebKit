@@ -37,7 +37,7 @@
 #include <optional>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -46,7 +46,7 @@ namespace WebCore::WebGPU {
 
 class Buffer;
 
-class Queue : public RefCounted<Queue>, public CanMakeWeakPtr<Queue> {
+class Queue : public RefCountedAndCanMakeWeakPtr<Queue> {
 public:
     virtual ~Queue() = default;
 

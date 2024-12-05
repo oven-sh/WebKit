@@ -469,12 +469,12 @@ static RefPtr<CSSValue> consumeSingleShadow(CSSParserTokenRange& range, const CS
     // <shadow> = <color>? && [<length>{2} <length [0,∞]>? <length>?] && inset?
     // https://drafts.csswg.org/css-backgrounds/#propdef-box-shadow
 
-    RefPtr<CSSPrimitiveValue> style;
-    RefPtr<CSSPrimitiveValue> color;
+    RefPtr<CSSValue> color;
     RefPtr<CSSPrimitiveValue> horizontalOffset;
     RefPtr<CSSPrimitiveValue> verticalOffset;
     RefPtr<CSSPrimitiveValue> blurRadius;
     RefPtr<CSSPrimitiveValue> spreadDistance;
+    RefPtr<CSSPrimitiveValue> style;
 
     for (size_t i = 0; i < 3; i++) {
         if (range.atEnd())

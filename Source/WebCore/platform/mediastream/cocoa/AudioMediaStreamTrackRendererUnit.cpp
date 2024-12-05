@@ -36,10 +36,11 @@ namespace WebCore {
 AudioMediaStreamTrackRendererUnit& AudioMediaStreamTrackRendererUnit::singleton()
 {
     static LazyNeverDestroyed<std::unique_ptr<AudioMediaStreamTrackRendererUnit>> sharedUnit;
-    auto& unit = sharedUnit.get();
-    if (!unit)
-        unit = std::unique_ptr<AudioMediaStreamTrackRendererUnit>(new AudioMediaStreamTrackRendererUnit);
-    return *unit;
+    static std::once_flag onceKey;
+    std::call_once(onceKey, [&] {
+        sharedUnit.construct(std::unique_ptr<AudioMediaStreamTrackRendererUnit>(new AudioMediaStreamTrackRendererUnit()));
+    });
+    return *sharedUnit.get();
 }
 
 AudioMediaStreamTrackRendererUnit::AudioMediaStreamTrackRendererUnit()

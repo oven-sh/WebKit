@@ -101,6 +101,8 @@ inline CARingBuffer::FetchMode CARingBuffer::fetchModeForMixing(AudioStreamDescr
 {
     switch (format) {
     case AudioStreamDescription::None:
+    case AudioStreamDescription::Uint8:
+    case AudioStreamDescription::Int24:
         ASSERT_NOT_REACHED();
         return MixInt32;
     case AudioStreamDescription::Int16:

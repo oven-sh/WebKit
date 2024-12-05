@@ -144,9 +144,6 @@
     },
     "TestWebKitWebContext": {
         "subtests": {
-            "/webkit/WebKitWebContext/memory-pressure": {
-                "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/274345"}}
-            },
             "/webkit/WebKitWebContext/uri-scheme": {
                 "expected": {"gtk": {"status": ["PASS", "TIMEOUT"], "bug": "webkit.org/b/279204"}}
             },
@@ -389,9 +386,6 @@
         "subtests": {
             "/webkit/Downloads/remote-file-error": {
                 "expected": {"gtk": {"status": ["TIMEOUT", "PASS"], "bug": "webkit.org/b/254002"}}
-            },
-            "/webkit/Downloads/policy-decision-download-cancel": {
-                "expected": {"wpe": {"status": ["CRASH", "PASS"], "bug": "webkit.org/b/281811"}}
             },
             "/webkit/Downloads/local-file-error": {
                 "expected": {"wpe": {"status": ["CRASH", "PASS"], "bug": "webkit.org/b/281813"}}

@@ -16,6 +16,8 @@ PASS animation-fill-mode
 PASS animation-iteration-count
 PASS animation-name
 PASS animation-play-state
+PASS animation-range-end
+PASS animation-range-start
 PASS animation-timeline
 PASS animation-timing-function
 PASS appearance
@@ -33,8 +35,11 @@ PASS background-position-y
 PASS background-repeat
 PASS background-size
 PASS baseline-shift
+PASS block-ellipsis
 PASS block-size
+PASS block-step-align
 PASS block-step-insert
+PASS block-step-round
 PASS block-step-size
 PASS border-block-end-color
 PASS border-block-end-style
@@ -108,6 +113,7 @@ PASS container-name
 PASS container-type
 PASS content
 PASS content-visibility
+PASS continue
 PASS counter-increment
 PASS counter-reset
 PASS counter-set
@@ -219,6 +225,7 @@ PASS math-style
 PASS max-block-size
 PASS max-height
 PASS max-inline-size
+PASS max-lines
 PASS max-width
 PASS min-block-size
 PASS min-height
@@ -270,6 +277,7 @@ PASS right
 PASS rotate
 PASS row-gap
 PASS ruby-align
+PASS ruby-overhang
 PASS ruby-position
 PASS rx
 PASS ry
@@ -345,6 +353,7 @@ PASS text-underline-offset
 PASS text-underline-position
 PASS text-wrap-mode
 PASS text-wrap-style
+PASS timeline-scope
 PASS top
 PASS touch-action
 PASS transform

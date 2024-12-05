@@ -33,7 +33,7 @@
 #include "MemoryObjectStoreCursor.h"
 #include "ThreadSafeDataBuffer.h"
 #include <wtf/HashMap.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 
@@ -56,7 +56,7 @@ class MemoryBackingStoreTransaction;
 
 typedef HashMap<IDBKeyData, ThreadSafeDataBuffer, IDBKeyDataHash, IDBKeyDataHashTraits> KeyValueMap;
 
-class MemoryObjectStore : public RefCounted<MemoryObjectStore>, public CanMakeWeakPtr<MemoryObjectStore> {
+class MemoryObjectStore : public RefCountedAndCanMakeWeakPtr<MemoryObjectStore> {
 public:
     static Ref<MemoryObjectStore> create(const IDBObjectStoreInfo&);
 

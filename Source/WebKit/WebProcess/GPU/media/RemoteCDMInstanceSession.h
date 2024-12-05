@@ -44,6 +44,9 @@ public:
     static Ref<RemoteCDMInstanceSession> create(WeakPtr<RemoteCDMFactory>&&, RemoteCDMInstanceSessionIdentifier&&);
     virtual ~RemoteCDMInstanceSession();
 
+    void ref() const final { WebCore::CDMInstanceSession::ref(); }
+    void deref() const final { WebCore::CDMInstanceSession::deref(); }
+
     RemoteCDMInstanceSessionIdentifier identifier() const { return m_identifier; }
 
 private:

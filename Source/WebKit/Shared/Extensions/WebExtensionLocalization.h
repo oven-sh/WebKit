@@ -54,7 +54,7 @@ public:
     const String& uniqueIdentifier() { return m_uniqueIdentifier; };
     RefPtr<JSON::Object> localizationJSON() { return m_localizationJSON; };
 
-    void localizedJSONforJSON(RefPtr<JSON::Object>);
+    RefPtr<JSON::Object> localizedJSONforJSON(RefPtr<JSON::Object>);
     String localizedStringForKey(String key, Vector<String> placeholders = { });
     String localizedStringForString(String);
 
@@ -62,7 +62,7 @@ private:
     void loadRegionalLocalization(RefPtr<JSON::Object> regionalLocalization, RefPtr<JSON::Object> languageLocalization, RefPtr<JSON::Object> defaultLocalization, const String& withBestLocale = { }, const String& uniqueIdentifier = { });
 
     RefPtr<JSON::Object> localizationJSONForWebExtension(WebKit::WebExtension&, const String& withLocale);
-    void localizedArrayForArray(RefPtr<JSON::Array>);
+    RefPtr<JSON::Array> localizedArrayForArray(RefPtr<JSON::Array>);
     Ref<JSON::Object> predefinedMessages();
 
     String stringByReplacingNamedPlaceholdersInString(String sourceString, RefPtr<JSON::Object> placeholders);

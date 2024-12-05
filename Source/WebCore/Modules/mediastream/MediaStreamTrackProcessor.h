@@ -67,7 +67,8 @@ public:
         Source(Ref<MediaStreamTrack>&&, MediaStreamTrackProcessor&);
         ~Source();
 
-        bool isWaiting() const;
+        bool isWaiting() const { return m_isWaiting; }
+        bool isCancelled() const { return m_isCancelled; }
         void close();
         void enqueue(WebCodecsVideoFrame&, ScriptExecutionContext&);
 

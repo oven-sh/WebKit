@@ -2991,6 +2991,22 @@ FileSystemAccessEnabled:
       default: false
   disableInLockdownMode: true
 
+FileSystemWritableStreamEnabled:
+  type: bool
+  status: testable
+  category: dom
+  humanReadableName: "File System WritableStream"
+  humanReadableDescription: "Enable File System WritableStream API"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+  disableInLockdownMode: true
+  sharedPreferenceForWebProcess: true
+
 FilterLinkDecorationByDefaultEnabled:
   type: bool
   status: stable
@@ -4941,6 +4957,22 @@ MediaSessionPlaylistEnabled:
     WebCore:
       default: true
 
+MediaSourceCanFallbackToDecompressionSession:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "MediaSource automatically falls back to DecompressionSession"
+  humanReadableDescription: "MediaSource automatically falls back to DecompressionSession"
+  condition: ENABLE(MEDIA_SOURCE) && USE(AVFOUNDATION)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+  sharedPreferenceForWebProcess: true
+
 MediaSourceEnabled:
   type: bool
   status: embedder
@@ -4976,6 +5008,22 @@ MediaSourceInWorkerEnabled:
       default: true
     WebCore:
       default: true
+
+MediaSourcePrefersDecompressionSession:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "MediaSource prefers DecompressionSession"
+  humanReadableDescription: "MediaSource prefers DecompressionSession"
+  condition: ENABLE(MEDIA_SOURCE) && USE(AVFOUNDATION)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+  sharedPreferenceForWebProcess: true
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely (though we should still set the default value to false when initializing settings).
 # FIXME: Seems to be unused. Remove once verified.
@@ -7626,6 +7674,7 @@ UseAVCaptureDeviceRotationCoordinatorAPI:
   defaultValue:
     WebKit:
       default: true
+  sharedPreferenceForWebProcess: true
 
 UseAsyncUIKitInteractions:
   type: bool
@@ -7738,6 +7787,19 @@ UseGiantTiles:
     WebKit:
       default: false
     WebCore:
+      default: false
+
+UseIFCForSVGText:
+  type: bool
+  status: internal
+  humanReadableName: "Use IFC for SVG text"
+  humanReadableDescription: "Use IFC for SVG text rendering"
+  defaultValue:
+    WebCore:
+      default: false
+    WebKitLegacy:
+      default: false
+    WebKit:
       default: false
 
 UseImageDocumentForSubframePDF:
@@ -8460,7 +8522,7 @@ WebGPUEnabled:
 
 WebGPUHDREnabled:
   type: bool
-  status: testable
+  status: Webgpuhdr_feature_status
   category: dom
   humanReadableName: "WebGPU support for HDR"
   humanReadableDescription: "WebGPU High Dynamic Range through canvas configuration tone mapping mode"

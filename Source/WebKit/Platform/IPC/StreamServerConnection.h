@@ -79,6 +79,9 @@ public:
     static RefPtr<StreamServerConnection> tryCreate(Handle&&, const StreamServerConnectionParameters&);
     ~StreamServerConnection() final;
 
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
     void startReceivingMessages(StreamMessageReceiver&, ReceiverName, uint64_t destinationID);
     // Stops the message receipt. Note: already received messages might still be delivered.
     void stopReceivingMessages(ReceiverName, uint64_t destinationID);

@@ -96,8 +96,9 @@ void RemotePageProxy::injectPageIntoNewProcess()
                 URL(page->pageLoadState().url()),
                 page->mainFrame()->frameTreeCreationParameters(),
                 page->mainFrameWebsitePoliciesData() ? std::make_optional(*page->mainFrameWebsitePoliciesData()) : std::nullopt
-            })),
-        0);
+            })
+        ), 0
+    );
 }
 
 void RemotePageProxy::processDidTerminate(WebProcessProxy& process, ProcessTerminationReason reason)

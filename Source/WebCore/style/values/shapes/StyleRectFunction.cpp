@@ -43,23 +43,23 @@ auto ToStyle<CSS::Rect>::operator()(const CSS::Rect& value, const BuilderState& 
     // Conversion applies reflection to the trailing (right/bottom) edges to convert from rect()
     // form to inset() form. This means that all the `auto` values are converted to 0%.
 
-    auto convertLeadingEdge = [&](const std::variant<CSS::LengthPercentage<>, CSS::Auto>& edge) -> LengthPercentage<> {
+    auto convertLeadingEdge = [&](const std::variant<CSS::LengthPercentage<>, CSS::Keyword::Auto>& edge) -> LengthPercentage<> {
         return WTF::switchOn(edge,
             [&](const CSS::LengthPercentage<>& value) -> LengthPercentage<> {
                 return toStyle(value, state, symbolTable);
             },
-            [&](const CSS::Auto&) -> LengthPercentage<> {
+            [&](const CSS::Keyword::Auto&) -> LengthPercentage<> {
                 return { Percentage<> { 0 } };
             }
         );
     };
 
-    auto convertTrailingEdge = [&](const std::variant<CSS::LengthPercentage<>, CSS::Auto>& edge) -> LengthPercentage<> {
+    auto convertTrailingEdge = [&](const std::variant<CSS::LengthPercentage<>, CSS::Keyword::Auto>& edge) -> LengthPercentage<> {
         return WTF::switchOn(edge,
             [&](const CSS::LengthPercentage<>& value) -> LengthPercentage<> {
                 return reflect(toStyle(value, state, symbolTable));
             },
-            [&](const CSS::Auto&) -> LengthPercentage<> {
+            [&](const CSS::Keyword::Auto&) -> LengthPercentage<> {
                 return { Percentage<> { 0 } };
             }
         );

@@ -16,6 +16,9 @@ fast/forms/switch/pointer-tracking.html [ Pass Timeout ] # appears to be timing 
 # Week input control is only available starting in iOS 18
 fast/forms/ios/date-picker-value-crash.html [ Skip ]
 
+# Fails with SameSite=None cookies by default
+http/tests/resourceLoadStatistics/set-all-cookies-to-same-site-strict.html [ Failure ]
+
 # -- The below regressed on iOS 18 but are passing on iOS 17 --
 
 # rdar://130594018 (REGRESSION (278344@main?): [ iOS 18 Release ] 2 http/tests/xmlhttprequest/* layout tests are constantly failing.)
@@ -98,8 +101,7 @@ imported/w3c/web-platform-tests/css/css-text/text-transform/text-transform-fullw
 imported/w3c/web-platform-tests/css/css-text/text-transform/text-transform-fullwidth-005.xht [ Pass ]
 fast/text/text-underline-position-under.html [ Pass ]
 
-# Fails with SameSite=None cookies by default
-http/tests/resourceLoadStatistics/set-all-cookies-to-same-site-strict.html [ Failure ]
+webkit.org/b/284096 imported/w3c/web-platform-tests/scroll-animations/css/scroll-timeline-responsiveness-from-endpoint.html [ Pass ]
 
 ###
 ### NOTICE: Unless you know that the issue for which you're setting expectations specifically only occurs on iOS 17, 

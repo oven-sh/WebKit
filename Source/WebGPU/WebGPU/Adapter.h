@@ -26,6 +26,7 @@
 #pragma once
 
 #import "HardwareCapabilities.h"
+#import <Metal/Metal.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>

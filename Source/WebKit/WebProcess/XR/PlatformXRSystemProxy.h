@@ -56,8 +56,8 @@ public:
     std::optional<PlatformXR::LayerHandle> createLayerProjection(uint32_t, uint32_t, bool);
     void submitFrame();
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
 private:
     RefPtr<XRDeviceProxy> deviceByIdentifier(XRDeviceIdentifier);

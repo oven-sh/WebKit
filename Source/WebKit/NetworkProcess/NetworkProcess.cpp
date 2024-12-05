@@ -246,6 +246,7 @@ void NetworkProcess::didClose(IPC::Connection&)
     forEachNetworkSession([&](auto& session) {
         platformFlushCookies(session.sessionID(), [callbackAggregator] { });
         session.protectedStorageManager()->syncLocalStorage([callbackAggregator] { });
+        session.notifyAdAttributionKitOfSessionTermination();
     });
 
 #if PLATFORM(COCOA)
@@ -393,7 +394,7 @@ void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier ident
             for (auto& site : iter->value.second)
                 allowedSites.append(site);
         }
-        session->protectedStorageManager()->startReceivingMessageFromConnection(connection->protectedConnection(), allowedSites);
+        session->protectedStorageManager()->startReceivingMessageFromConnection(connection->protectedConnection(), allowedSites, connection->sharedPreferencesForWebProcessValue());
     }
 }
 
@@ -3043,7 +3044,7 @@ void NetworkProcess::countNonDefaultSessionSets(PAL::SessionID sessionID, Comple
 
 void NetworkProcess::allowFilesAccessFromWebProcess(WebCore::ProcessIdentifier processID, const Vector<String>& paths, CompletionHandler<void()>&& completionHandler)
 {
-    if (auto* connection = webProcessConnection(processID)) {
+    if (RefPtr connection = webProcessConnection(processID)) {
         for (auto& path : paths)
             connection->allowAccessToFile(path);
     }
@@ -3052,7 +3053,7 @@ void NetworkProcess::allowFilesAccessFromWebProcess(WebCore::ProcessIdentifier p
 
 void NetworkProcess::allowFileAccessFromWebProcess(WebCore::ProcessIdentifier processID, const String& path, CompletionHandler<void()>&& completionHandler)
 {
-    if (auto* connection = webProcessConnection(processID))
+    if (RefPtr connection = webProcessConnection(processID))
         connection->allowAccessToFile(path);
     completionHandler();
 }
@@ -3100,6 +3101,17 @@ void NetworkProcess::setPersistedDomains(PAL::SessionID sessionID, HashSet<Regis
 {
     if (auto* session = networkSession(sessionID))
         session->setPersistedDomains(WTFMove(domains));
+}
+
+void NetworkProcess::fetchLocalStorage(PAL::SessionID sessionID, CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&& completionHandler)
+{
+    CheckedPtr session = networkSession(sessionID);
+    if (!session) {
+        completionHandler({ });
+        return;
+    }
+
+    session->protectedStorageManager()->fetchLocalStorage(WTFMove(completionHandler));
 }
 
 } // namespace WebKit

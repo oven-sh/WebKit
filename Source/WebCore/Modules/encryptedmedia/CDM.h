@@ -35,7 +35,7 @@
 #include "MediaKeysRestrictions.h"
 #include <wtf/Function.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -54,7 +54,7 @@ class Document;
 class ScriptExecutionContext;
 class SharedBuffer;
 
-class CDM : public RefCounted<CDM>, public CanMakeWeakPtr<CDM>, public CDMPrivateClient, private ContextDestructionObserver {
+class CDM : public RefCountedAndCanMakeWeakPtr<CDM>, public CDMPrivateClient, private ContextDestructionObserver {
 public:
     static bool supportsKeySystem(const String&);
     static bool isPersistentType(MediaKeySessionType);

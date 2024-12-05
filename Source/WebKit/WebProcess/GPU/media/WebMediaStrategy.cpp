@@ -74,7 +74,7 @@ std::unique_ptr<WebCore::NowPlayingManager> WebMediaStrategy::createNowPlayingMa
         class NowPlayingInfoForGPUManager : public WebCore::NowPlayingManager {
             void clearNowPlayingInfoPrivate() final
             {
-                if (auto* connection = WebProcess::singleton().existingGPUProcessConnection())
+                if (RefPtr connection = WebProcess::singleton().existingGPUProcessConnection())
                     connection->connection().send(Messages::GPUConnectionToWebProcess::ClearNowPlayingInfo { }, 0);
             }
 

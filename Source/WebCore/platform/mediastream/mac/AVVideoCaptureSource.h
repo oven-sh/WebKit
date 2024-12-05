@@ -65,6 +65,7 @@ public:
     static NSMutableArray* cameraCaptureDeviceTypes();
 
     WEBCORE_EXPORT static VideoCaptureFactory& factory();
+    WEBCORE_EXPORT static void setUseAVCaptureDeviceRotationCoordinatorAPI(bool);
 
     void captureSessionBeginInterruption(RetainPtr<NSNotification>);
     void captureSessionEndInterruption(RetainPtr<NSNotification>);

@@ -62,8 +62,8 @@ public:
     RemoteAudioDestinationManager(GPUConnectionToWebProcess&);
     ~RemoteAudioDestinationManager();
 
-    void ref() const;
-    void deref() const;
+    void ref() const final;
+    void deref() const final;
 
     void didReceiveMessageFromWebProcess(IPC::Connection& connection, IPC::Decoder& decoder) { didReceiveMessage(connection, decoder); }
 

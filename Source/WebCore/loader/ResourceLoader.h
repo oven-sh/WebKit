@@ -39,6 +39,7 @@
 #include "ResourceResponse.h"
 #include "SharedBuffer.h"
 #include <wtf/Forward.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -60,7 +61,7 @@ class LocalFrame;
 class NetworkLoadMetrics;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceLoader);
-class ResourceLoader : public CanMakeWeakPtr<ResourceLoader>, public RefCounted<ResourceLoader>, protected ResourceHandleClient {
+class ResourceLoader : public RefCountedAndCanMakeWeakPtr<ResourceLoader>, protected ResourceHandleClient {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceLoader);
 public:
     virtual ~ResourceLoader() = 0;

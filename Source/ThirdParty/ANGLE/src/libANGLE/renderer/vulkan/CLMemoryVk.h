@@ -8,6 +8,7 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_CLMEMORYVK_H_
 #define LIBANGLE_RENDERER_VULKAN_CLMEMORYVK_H_
 
+#include "common/PackedCLEnums_autogen.h"
 #include "common/SimpleMutex.h"
 
 #include "libANGLE/renderer/vulkan/cl_types.h"
@@ -15,7 +16,11 @@
 
 #include "libANGLE/renderer/CLMemoryImpl.h"
 
+#include "libANGLE/CLBuffer.h"
+#include "libANGLE/CLImage.h"
 #include "libANGLE/CLMemory.h"
+
+#include "libANGLE/renderer/vulkan/vk_wrapper.h"
 #include "vulkan/vulkan_core.h"
 
 namespace rx
@@ -51,6 +56,8 @@ class CLMemoryVk : public CLMemoryImpl
     VkMemoryPropertyFlags getVkMemPropertyFlags();
     virtual size_t getSize() const = 0;
     size_t getOffset() const { return mMemory.getOffset(); }
+    cl::MemFlags getFlags() const { return mMemory.getFlags(); }
+    cl::MemObjectType getType() const { return mMemory.getType(); }
 
     angle::Result copyTo(void *ptr, size_t offset, size_t size);
     angle::Result copyTo(CLMemoryVk *dst, size_t srcOffset, size_t dstOffset, size_t size);
@@ -89,6 +96,7 @@ class CLBufferVk : public CLMemoryVk
 
     vk::BufferHelper &getBuffer();
     CLBufferVk *getParent() { return static_cast<CLBufferVk *>(mParent); }
+    const cl::Buffer &getFrontendObject() { return reinterpret_cast<const cl::Buffer &>(mMemory); }
 
     angle::Result create(void *hostPtr);
     angle::Result createStagingBuffer(size_t size);
@@ -125,8 +133,24 @@ class CLImageVk : public CLMemoryVk
 
     vk::ImageHelper &getImage() { return mImage; }
     vk::BufferHelper &getStagingBuffer() { return mStagingBuffer; }
+    const cl::Image &getFrontendObject() const
+    {
+        return reinterpret_cast<const cl::Image &>(mMemory);
+    }
+    cl_image_format getFormat() const { return getFrontendObject().getFormat(); }
+    cl::ImageDescriptor getDescriptor() const { return getFrontendObject().getDescriptor(); }
+    size_t getElementSize() const { return getFrontendObject().getElementSize(); }
+    size_t getArraySize() const { return getFrontendObject().getArraySize(); }
+    size_t getSize() const override { return mMemory.getSize(); }
+    size_t getRowPitch() const;
+    size_t getSlicePitch() const;
+
+    cl::MemObjectType getParentType() const;
+    template <typename T>
+    T *getParent() const;
 
     angle::Result create(void *hostPtr);
+    angle::Result createFromBuffer();
 
     bool isCurrentlyInUse() const override;
     bool containsHostMemExtension();
@@ -141,15 +165,10 @@ class CLImageVk : public CLMemoryVk
                                              StagingBufferCopyDirection copyStagingTo);
     VkImageUsageFlags getVkImageUsageFlags();
     VkImageType getVkImageType(const cl::ImageDescriptor &desc);
-    size_t getSize() const override { return mImageSize; }
-    size_t getElementSize() { return mElementSize; }
-    size_t getArraySize() const { return mArrayLayers; }
     bool isStagingBufferInitialized() { return mStagingBufferInitialized; }
     VkExtent3D getImageExtent() { return mExtent; }
     uint8_t *getMappedPtr() { return mMappedMemory; }
     vk::ImageView &getImageView() { return mImageView; }
-    cl_image_format getImageFormat() { return mImageFormat; }
-    cl::ImageDescriptor getDesc() { return mDesc; }
     void packPixels(const void *fillColor, PixelColor *packedColor);
     void fillImageWithColor(const cl::MemOffsets &origin,
                             const cl::Coordinate &region,
@@ -161,10 +180,12 @@ class CLImageVk : public CLMemoryVk
                                                          const cl::Coordinate &region,
                                                          cl::MemObjectType copyToType,
                                                          ImageCopyWith imageCopy);
-    size_t getRowPitch();
-    size_t getSlicePitch(size_t imageRowPitch);
+
+    angle::Result getBufferView(const vk::BufferView **viewOut);
 
   private:
+    angle::Result initImageViewImpl();
+
     angle::Result mapImpl() override;
     void unmapImpl() override;
     angle::Result setDataImpl(const uint8_t *data, size_t size, size_t offset);
@@ -174,15 +195,14 @@ class CLImageVk : public CLMemoryVk
     vk::ImageHelper mImage;
     vk::BufferHelper mStagingBuffer;
     VkExtent3D mExtent;
-    angle::FormatID mFormat;
-    uint32_t mArrayLayers;
-    size_t mImageSize;
-    size_t mElementSize;
-    cl_image_format mImageFormat;
-    cl::ImageDescriptor mDesc;
+    angle::FormatID mAngleFormat;
     bool mStagingBufferInitialized;
     vk::ImageView mImageView;
     VkImageViewType mImageViewType;
+
+    // Images created from buffer create texel buffer views. BufferViewHelper contain the view
+    // corresponding to the attached buffer.
+    vk::BufferViewHelper mBufferViews;
 };
 
 }  // namespace rx

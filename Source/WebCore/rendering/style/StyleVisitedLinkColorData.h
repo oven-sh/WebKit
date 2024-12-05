@@ -43,13 +43,13 @@ public:
     void dumpDifferences(TextStream&, const StyleVisitedLinkColorData&) const;
 #endif
 
-    StyleColor background;
-    StyleColor borderLeft;
-    StyleColor borderRight;
-    StyleColor borderTop;
-    StyleColor borderBottom;
-    StyleColor textDecoration;
-    StyleColor outline;
+    Style::Color background;
+    Style::Color borderLeft;
+    Style::Color borderRight;
+    Style::Color borderTop;
+    Style::Color borderBottom;
+    Style::Color textDecoration;
+    Style::Color outline;
 
 private:
     StyleVisitedLinkColorData();

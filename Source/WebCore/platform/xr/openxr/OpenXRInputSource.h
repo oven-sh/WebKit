@@ -67,7 +67,7 @@ private:
 
     XrInstance m_instance { XR_NULL_HANDLE };
     XrSession m_session { XR_NULL_HANDLE };
-    XRHandedness m_handeness { XRHandedness::Left };
+    XRHandedness m_handedness { XRHandedness::Left };
     InputSourceHandle m_handle { 0 };
     String m_subactionPathName;
     XrPath m_subactionPath { XR_NULL_PATH };

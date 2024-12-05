@@ -47,8 +47,8 @@ public:
     explicit WebLockRegistryProxy(WebProcessProxy&);
     ~WebLockRegistryProxy();
 
-    void ref() const { m_process->ref(); }
-    void deref() const { m_process->deref(); }
+    void ref() const final { m_process->ref(); }
+    void deref() const final { m_process->deref(); }
 
     // FIXME: Remove SUPPRESS_UNCOUNTED_ARG once https://github.com/llvm/llvm-project/pull/111198 lands.
     SUPPRESS_UNCOUNTED_ARG std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() { return m_process->sharedPreferencesForWebProcess(); }

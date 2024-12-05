@@ -30,25 +30,19 @@
 namespace WebCore {
 namespace Style {
 
-using Left   = CSS::Left;
-using Right  = CSS::Right;
-using Top    = CSS::Top;
-using Bottom = CSS::Bottom;
-using Center = CSS::Center;
-
 struct TwoComponentPositionHorizontal {
     LengthPercentage<> offset;
 
     bool operator==(const TwoComponentPositionHorizontal&) const = default;
 };
-DEFINE_STYLE_TYPE_WRAPPER(TwoComponentPositionHorizontal, offset);
+DEFINE_TYPE_WRAPPER(TwoComponentPositionHorizontal, offset);
 
 struct TwoComponentPositionVertical {
     LengthPercentage<> offset;
 
     bool operator==(const TwoComponentPositionVertical&) const = default;
 };
-DEFINE_STYLE_TYPE_WRAPPER(TwoComponentPositionVertical, offset);
+DEFINE_TYPE_WRAPPER(TwoComponentPositionVertical, offset);
 
 struct Position  {
     Position(TwoComponentPositionHorizontal&& x, TwoComponentPositionVertical&& y)
@@ -61,7 +55,7 @@ struct Position  {
     {
     }
 
-    Position(Point<LengthPercentage<>>&& point)
+    Position(SpaceSeparatedPoint<LengthPercentage<>>&& point)
         : value { WTFMove(point) }
     {
     }
@@ -76,7 +70,7 @@ struct Position  {
     LengthPercentage<> x() const { return value.x(); }
     LengthPercentage<> y() const { return value.y(); }
 
-    Point<LengthPercentage<>> value;
+    SpaceSeparatedPoint<LengthPercentage<>> value;
 };
 
 template<size_t I> const auto& get(const Position& position)
@@ -105,4 +99,6 @@ float evaluate(const TwoComponentPositionVertical&, float referenceHeight);
 } // namespace Style
 } // namespace WebCore
 
+STYLE_TUPLE_LIKE_CONFORMANCE(TwoComponentPositionHorizontal, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(TwoComponentPositionVertical, 1)
 STYLE_TUPLE_LIKE_CONFORMANCE(Position, 2)

@@ -33,11 +33,11 @@ fileprivate typealias PlatformView = NSView
 
 @_spi(Private)
 public struct WebView_v0: View {
-    fileprivate let page: WebPage_v0
-
     public init(_ page: WebPage_v0) {
         self.page = page
     }
+
+    fileprivate let page: WebPage_v0
 
     public var body: some View {
         WebViewRepresentable(owner: self)

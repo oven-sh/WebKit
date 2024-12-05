@@ -73,16 +73,16 @@ float resolveRadius(const Circle& value, FloatSize boxSize, FloatPoint center)
         },
         [&](const Circle::Extent& extent) -> float {
             return WTF::switchOn(extent,
-                [&](CSS::ClosestSide) -> float {
+                [&](CSS::Keyword::ClosestSide) -> float {
                     return distanceToClosestSide(center, boxSize);
                 },
-                [&](CSS::FarthestSide) -> float {
+                [&](CSS::Keyword::FarthestSide) -> float {
                     return distanceToFarthestSide(center, boxSize);
                 },
-                [&](CSS::ClosestCorner) -> float {
+                [&](CSS::Keyword::ClosestCorner) -> float {
                     return distanceToClosestCorner(center, boxSize);
                 },
-                [&](CSS::FarthestCorner) -> float {
+                [&](CSS::Keyword::FarthestCorner) -> float {
                     return distanceToFarthestCorner(center, boxSize);
                 }
             );

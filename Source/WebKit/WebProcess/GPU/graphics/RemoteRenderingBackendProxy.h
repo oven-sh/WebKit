@@ -84,10 +84,10 @@ public:
     static Ref<RemoteRenderingBackendProxy> create(WebPage&);
     static Ref<RemoteRenderingBackendProxy> create(SerialFunctionDispatcher&);
 
-    ~RemoteRenderingBackendProxy();
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
-    using RefCounted::ref;
-    using RefCounted::deref;
+    ~RemoteRenderingBackendProxy();
 
     static bool canMapRemoteImageBufferBackendBackingStore();
 

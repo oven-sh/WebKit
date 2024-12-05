@@ -28,8 +28,10 @@
 
 #include "FloatRect.h"
 #include "GraphicsContext.h"
+#include "ImageDecoderCG.h"
 #include "Logging.h"
 #include "MIMETypeRegistry.h"
+#include "UTIRegistry.h"
 #include "UTIUtilities.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <ImageIO/ImageIO.h>

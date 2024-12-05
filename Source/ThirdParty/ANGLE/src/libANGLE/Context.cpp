@@ -3688,8 +3688,10 @@ Extensions Context::generateSupportedExtensions() const
     if (getClientVersion() < ES_2_0)
     {
         // Default extensions for GLES1
+        supportedExtensions.blendSubtractOES         = true;
         supportedExtensions.pointSizeArrayOES        = true;
         supportedExtensions.textureCubeMapOES        = true;
+        supportedExtensions.textureMirroredRepeatOES = true;
         supportedExtensions.pointSpriteOES           = true;
         supportedExtensions.drawTextureOES           = true;
         supportedExtensions.framebufferObjectOES     = true;
@@ -8056,8 +8058,14 @@ void Context::getInternalformativ(GLenum target,
                                   GLsizei bufSize,
                                   GLint *params)
 {
+    Texture *texture    = nullptr;
+    TextureType textype = FromGLenum<TextureType>(target);
+    if (textype != TextureType::InvalidEnum)
+    {
+        texture = getTextureByType(textype);
+    }
     const TextureCaps &formatCaps = mState.getTextureCap(internalformat);
-    QueryInternalFormativ(formatCaps, pname, bufSize, params);
+    QueryInternalFormativ(this, texture, internalformat, formatCaps, pname, bufSize, params);
 }
 
 void Context::getInternalformativRobust(GLenum target,
@@ -9164,99 +9172,7 @@ bool Context::getIndexedQueryParameterInfo(GLenum target,
                                            GLenum *type,
                                            unsigned int *numParams) const
 {
-    if (getClientVersion() < Version(3, 0))
-    {
-        return false;
-    }
-
-    switch (target)
-    {
-        case GL_TRANSFORM_FEEDBACK_BUFFER_BINDING:
-        case GL_UNIFORM_BUFFER_BINDING:
-        {
-            *type      = GL_INT;
-            *numParams = 1;
-            return true;
-        }
-        case GL_TRANSFORM_FEEDBACK_BUFFER_START:
-        case GL_TRANSFORM_FEEDBACK_BUFFER_SIZE:
-        case GL_UNIFORM_BUFFER_START:
-        case GL_UNIFORM_BUFFER_SIZE:
-        {
-            *type      = GL_INT_64_ANGLEX;
-            *numParams = 1;
-            return true;
-        }
-    }
-
-    if (mSupportedExtensions.drawBuffersIndexedAny())
-    {
-        switch (target)
-        {
-            case GL_BLEND_SRC_RGB:
-            case GL_BLEND_SRC_ALPHA:
-            case GL_BLEND_DST_RGB:
-            case GL_BLEND_DST_ALPHA:
-            case GL_BLEND_EQUATION_RGB:
-            case GL_BLEND_EQUATION_ALPHA:
-            {
-                *type      = GL_INT;
-                *numParams = 1;
-                return true;
-            }
-            case GL_COLOR_WRITEMASK:
-            {
-                *type      = GL_BOOL;
-                *numParams = 4;
-                return true;
-            }
-        }
-    }
-
-    if (getClientVersion() < Version(3, 1))
-    {
-        return false;
-    }
-
-    switch (target)
-    {
-        case GL_IMAGE_BINDING_LAYERED:
-        {
-            *type      = GL_BOOL;
-            *numParams = 1;
-            return true;
-        }
-        case GL_MAX_COMPUTE_WORK_GROUP_COUNT:
-        case GL_MAX_COMPUTE_WORK_GROUP_SIZE:
-        case GL_ATOMIC_COUNTER_BUFFER_BINDING:
-        case GL_SHADER_STORAGE_BUFFER_BINDING:
-        case GL_VERTEX_BINDING_BUFFER:
-        case GL_VERTEX_BINDING_DIVISOR:
-        case GL_VERTEX_BINDING_OFFSET:
-        case GL_VERTEX_BINDING_STRIDE:
-        case GL_SAMPLE_MASK_VALUE:
-        case GL_IMAGE_BINDING_NAME:
-        case GL_IMAGE_BINDING_LEVEL:
-        case GL_IMAGE_BINDING_LAYER:
-        case GL_IMAGE_BINDING_ACCESS:
-        case GL_IMAGE_BINDING_FORMAT:
-        {
-            *type      = GL_INT;
-            *numParams = 1;
-            return true;
-        }
-        case GL_ATOMIC_COUNTER_BUFFER_START:
-        case GL_ATOMIC_COUNTER_BUFFER_SIZE:
-        case GL_SHADER_STORAGE_BUFFER_START:
-        case GL_SHADER_STORAGE_BUFFER_SIZE:
-        {
-            *type      = GL_INT_64_ANGLEX;
-            *numParams = 1;
-            return true;
-        }
-    }
-
-    return false;
+    return GetIndexedQueryParameterInfo(mState, target, type, numParams);
 }
 
 Program *Context::getProgramNoResolveLink(ShaderProgramID handle) const
@@ -10095,6 +10011,35 @@ void Context::bindMetalRasterizationRateMap(GLuint renderbufferHandle, GLMTLRast
     rx::RenderbufferImpl *renderbufferImpl = renderbuffer ? renderbuffer->getImplementation() : nullptr;
     ANGLE_CONTEXT_TRY(mImplementation->bindMetalRasterizationRateMap(this, renderbufferImpl, map));
     getMutablePrivateState()->setVariableRasterizationRateMap(map);
+}
+
+void Context::texStorageAttribs2D(GLenum target,
+                                  GLsizei levels,
+                                  GLenum internalFormat,
+                                  GLsizei width,
+                                  GLsizei height,
+                                  const GLint *attribList)
+{
+    Extents size(width, height, 1);
+    TextureType textype = FromGLenum<TextureType>(target);
+    Texture *texture    = getTextureByType(textype);
+    ANGLE_CONTEXT_TRY(
+        texture->setStorageAttribs(this, textype, levels, internalFormat, size, attribList));
+}
+
+void Context::texStorageAttribs3D(GLenum target,
+                                  GLsizei levels,
+                                  GLenum internalFormat,
+                                  GLsizei width,
+                                  GLsizei height,
+                                  GLsizei depth,
+                                  const GLint *attribList)
+{
+    Extents size(width, height, depth);
+    TextureType textype = FromGLenum<TextureType>(target);
+    Texture *texture    = getTextureByType(textype);
+    ANGLE_CONTEXT_TRY(
+        texture->setStorageAttribs(this, textype, levels, internalFormat, size, attribList));
 }
 
 // ErrorSet implementation.

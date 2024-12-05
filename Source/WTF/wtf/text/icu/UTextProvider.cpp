@@ -29,10 +29,9 @@
 #include <algorithm>
 #include <string.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WTF {
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // Relocate pointer from source into destination as required.
 static inline void fixPointer(const UText* source, UText* destination, const void*& pointer)
 {
@@ -44,6 +43,7 @@ static inline void fixPointer(const UText* source, UText* destination, const voi
         pointer = reinterpret_cast<char*>(destination) + (static_cast<const char*>(pointer) - reinterpret_cast<const char*>(source));
     }
 }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 UText* uTextCloneImpl(UText* destination, const UText* source, UBool deep, UErrorCode* status)
 {
@@ -72,5 +72,3 @@ UText* uTextCloneImpl(UText* destination, const UText* source, UBool deep, UErro
 }
 
 } // namespace WTF
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

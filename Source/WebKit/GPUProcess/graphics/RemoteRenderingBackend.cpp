@@ -523,7 +523,7 @@ void RemoteRenderingBackend::createRemoteBarcodeDetector(ShapeDetectionIdentifie
     auto inner = WebCore::ShapeDetection::BarcodeDetectorImpl::create(barcodeDetectorOptions);
     auto remoteBarcodeDetector = RemoteBarcodeDetector::create(WTFMove(inner), m_shapeDetectionObjectHeap, *this, identifier, gpuConnectionToWebProcess().webProcessIdentifier());
     protectedShapeDetectionObjectHeap()->addObject(identifier, remoteBarcodeDetector);
-    streamConnection().startReceivingMessages(remoteBarcodeDetector, Messages::RemoteBarcodeDetector::messageReceiverName(), identifier.toUInt64());
+    protectedStreamConnection()->startReceivingMessages(remoteBarcodeDetector, Messages::RemoteBarcodeDetector::messageReceiverName(), identifier.toUInt64());
 #else
     UNUSED_PARAM(identifier);
     UNUSED_PARAM(barcodeDetectorOptions);
@@ -532,7 +532,7 @@ void RemoteRenderingBackend::createRemoteBarcodeDetector(ShapeDetectionIdentifie
 
 void RemoteRenderingBackend::releaseRemoteBarcodeDetector(ShapeDetectionIdentifier identifier)
 {
-    streamConnection().stopReceivingMessages(Messages::RemoteBarcodeDetector::messageReceiverName(), identifier.toUInt64());
+    protectedStreamConnection()->stopReceivingMessages(Messages::RemoteBarcodeDetector::messageReceiverName(), identifier.toUInt64());
     protectedShapeDetectionObjectHeap()->removeObject(identifier);
 }
 
@@ -551,7 +551,7 @@ void RemoteRenderingBackend::createRemoteFaceDetector(ShapeDetectionIdentifier i
     auto inner = WebCore::ShapeDetection::FaceDetectorImpl::create(faceDetectorOptions);
     auto remoteFaceDetector = RemoteFaceDetector::create(WTFMove(inner), m_shapeDetectionObjectHeap, *this, identifier, gpuConnectionToWebProcess().webProcessIdentifier());
     protectedShapeDetectionObjectHeap()->addObject(identifier, remoteFaceDetector);
-    streamConnection().startReceivingMessages(remoteFaceDetector, Messages::RemoteFaceDetector::messageReceiverName(), identifier.toUInt64());
+    protectedStreamConnection()->startReceivingMessages(remoteFaceDetector, Messages::RemoteFaceDetector::messageReceiverName(), identifier.toUInt64());
 #else
     UNUSED_PARAM(identifier);
     UNUSED_PARAM(faceDetectorOptions);
@@ -560,7 +560,7 @@ void RemoteRenderingBackend::createRemoteFaceDetector(ShapeDetectionIdentifier i
 
 void RemoteRenderingBackend::releaseRemoteFaceDetector(ShapeDetectionIdentifier identifier)
 {
-    streamConnection().stopReceivingMessages(Messages::RemoteFaceDetector::messageReceiverName(), identifier.toUInt64());
+    protectedStreamConnection()->stopReceivingMessages(Messages::RemoteFaceDetector::messageReceiverName(), identifier.toUInt64());
     protectedShapeDetectionObjectHeap()->removeObject(identifier);
 }
 
@@ -570,7 +570,7 @@ void RemoteRenderingBackend::createRemoteTextDetector(ShapeDetectionIdentifier i
     auto inner = WebCore::ShapeDetection::TextDetectorImpl::create();
     auto remoteTextDetector = RemoteTextDetector::create(WTFMove(inner), m_shapeDetectionObjectHeap, *this, identifier, gpuConnectionToWebProcess().webProcessIdentifier());
     protectedShapeDetectionObjectHeap()->addObject(identifier, remoteTextDetector);
-    streamConnection().startReceivingMessages(remoteTextDetector, Messages::RemoteTextDetector::messageReceiverName(), identifier.toUInt64());
+    protectedStreamConnection()->startReceivingMessages(remoteTextDetector, Messages::RemoteTextDetector::messageReceiverName(), identifier.toUInt64());
 #else
     UNUSED_PARAM(identifier);
 #endif
@@ -578,7 +578,7 @@ void RemoteRenderingBackend::createRemoteTextDetector(ShapeDetectionIdentifier i
 
 void RemoteRenderingBackend::releaseRemoteTextDetector(ShapeDetectionIdentifier identifier)
 {
-    streamConnection().stopReceivingMessages(Messages::RemoteTextDetector::messageReceiverName(), identifier.toUInt64());
+    protectedStreamConnection()->stopReceivingMessages(Messages::RemoteTextDetector::messageReceiverName(), identifier.toUInt64());
     protectedShapeDetectionObjectHeap()->removeObject(identifier);
 }
 
@@ -605,14 +605,15 @@ RefPtr<ImageBuffer> RemoteRenderingBackend::takeImageBuffer(RenderingResourceIde
 
 void RemoteRenderingBackend::terminateWebProcess(ASCIILiteral message)
 {
+    Ref gpuConnectionToWebProcess = m_gpuConnectionToWebProcess;
 #if ENABLE(IPC_TESTING_API)
-    bool shouldTerminate = !m_gpuConnectionToWebProcess->connection().ignoreInvalidMessageForTesting();
+    bool shouldTerminate = !gpuConnectionToWebProcess->connection().ignoreInvalidMessageForTesting();
 #else
     bool shouldTerminate = true;
 #endif
     if (shouldTerminate) {
         RELEASE_LOG_FAULT(IPC, "Requesting termination of web process %" PRIu64 " for reason: %" PUBLIC_LOG_STRING, m_gpuConnectionToWebProcess->webProcessIdentifier().toUInt64(), message.characters());
-        m_gpuConnectionToWebProcess->terminateWebProcess();
+        gpuConnectionToWebProcess->terminateWebProcess();
     }
 }
 
@@ -636,6 +637,11 @@ void RemoteRenderingBackend::getImageBufferResourceLimitsForTesting(CompletionHa
 Ref<ShapeDetection::ObjectHeap> RemoteRenderingBackend::protectedShapeDetectionObjectHeap() const
 {
     return m_shapeDetectionObjectHeap;
+}
+
+Ref<GPUConnectionToWebProcess> RemoteRenderingBackend::protectedGPUConnectionToWebProcess()
+{
+    return m_gpuConnectionToWebProcess.get();
 }
 
 } // namespace WebKit

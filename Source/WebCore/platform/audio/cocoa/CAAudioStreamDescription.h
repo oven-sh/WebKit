@@ -37,7 +37,11 @@ class WEBCORE_EXPORT CAAudioStreamDescription final : public AudioStreamDescript
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(CAAudioStreamDescription, WEBCORE_EXPORT);
 public:
     CAAudioStreamDescription(const AudioStreamBasicDescription&);
-    CAAudioStreamDescription(double, uint32_t, PCMFormat, bool);
+    enum class IsInterleaved : bool {
+        No,
+        Yes
+    };
+    CAAudioStreamDescription(double sampleRate, uint32_t channels, PCMFormat, IsInterleaved);
     ~CAAudioStreamDescription();
 
     const PlatformDescription& platformDescription() const final;

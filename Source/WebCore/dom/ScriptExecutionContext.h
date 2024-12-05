@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2017 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2024 Apple Inc. All Rights Reserved.
  * Copyright (C) 2012 Google Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,7 +46,6 @@
 #include <wtf/NativePromise.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/OptionSet.h>
-#include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -217,7 +216,7 @@ public:
     WEBCORE_EXPORT bool requiresScriptExecutionTelemetry(ScriptTelemetryCategory);
 
     class Task {
-        WTF_MAKE_TZONE_ALLOCATED_INLINE(Task);
+        WTF_MAKE_TZONE_ALLOCATED(Task);
     public:
         enum CleanupTaskTag { CleanupTask };
 

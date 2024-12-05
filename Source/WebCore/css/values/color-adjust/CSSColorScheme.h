@@ -35,13 +35,11 @@
 namespace WebCore {
 namespace CSS {
 
-using Only = Constant<CSSValueOnly>;
-
 // <'color-scheme'> = normal | [ light | dark | <custom-ident> ]+ && only?
 // https://drafts.csswg.org/css-color-adjust/#propdef-color-scheme
 struct ColorScheme {
     SpaceSeparatedVector<CustomIdentifier> schemes;
-    std::optional<Only> only;
+    std::optional<Keyword::Only> only;
 
     // As an optimization, if `schemes` is empty, that indicates the
     // entire value should be considered `normal`.

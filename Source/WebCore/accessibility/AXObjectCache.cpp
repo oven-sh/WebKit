@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -131,6 +131,7 @@
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SetForScope.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/MakeString.h>
 
@@ -140,8 +141,10 @@
 #endif
 
 namespace WebCore {
+
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AXComputedObjectAttributeCache);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AXObjectCache);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AXObjectCache);
 
 using namespace HTMLNames;
 
@@ -1965,7 +1968,7 @@ void AXObjectCache::onSelectedChanged(Element& element)
     handleTabPanelSelected(nullptr, &element);
 }
 
-void AXObjectCache::onStyleChange(Element& element, Style::Change change, const RenderStyle* newStyle, const RenderStyle* oldStyle)
+void AXObjectCache::onStyleChange(Element& element, Style::Change change, const RenderStyle* oldStyle, const RenderStyle* newStyle)
 {
     if (change == Style::Change::None)
         return;
@@ -1975,6 +1978,53 @@ void AXObjectCache::onStyleChange(Element& element, Style::Change change, const 
         // children-changed event through the render tree.
         childrenChanged(&element);
     }
+}
+
+void AXObjectCache::onStyleChange(RenderText& renderText, StyleDifference difference, const RenderStyle* oldStyle, const RenderStyle& newStyle)
+{
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE) && ENABLE(AX_THREAD_TEXT_APIS)
+    if (difference == StyleDifference::Equal || !oldStyle)
+        return;
+
+    RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID);
+    if (!tree)
+        return;
+
+    RefPtr object = get(renderText);
+    if (!object)
+        return;
+
+    if (oldStyle->fontCascade() != newStyle.fontCascade())
+        tree->queueNodeUpdate(object->objectID(), { AXPropertyName::Font });
+
+    if (oldStyle->visitedDependentColor(CSSPropertyColor) != newStyle.visitedDependentColor(CSSPropertyColor))
+        tree->queueNodeUpdate(object->objectID(), { AXPropertyName::TextColor });
+
+    if (oldStyle->visitedDependentColor(CSSPropertyBackgroundColor) != newStyle.visitedDependentColor(CSSPropertyBackgroundColor))
+        tree->queueNodeUpdate(object->objectID(), { AXPropertyName::BackgroundColor });
+
+    if (oldStyle->verticalAlign() != newStyle.verticalAlign())
+        tree->queueNodeUpdate(object->objectID(), { { AXPropertyName::IsSuperscript, AXPropertyName::IsSubscript } });
+
+    if (!!oldStyle->textShadow() != !!newStyle.textShadow())
+        tree->queueNodeUpdate(object->objectID(), { AXPropertyName::HasTextShadow });
+
+    auto oldDecor = oldStyle->textDecorationsInEffect();
+    auto newDecor = newStyle.textDecorationsInEffect();
+    if ((oldDecor & TextDecorationLine::Underline) != (newDecor & TextDecorationLine::Underline))
+        tree->queueNodeUpdate(object->objectID(), { AXPropertyName::HasUnderline });
+
+    if ((oldDecor & TextDecorationLine::LineThrough) != (newDecor & TextDecorationLine::LineThrough))
+        tree->queueNodeUpdate(object->objectID(), { AXPropertyName::HasLinethrough });
+
+    if (oldStyle->textDecorationColor() != newStyle.textDecorationColor())
+        tree->queueNodeUpdate(object->objectID(), { { AXPropertyName::LinethroughColor, AXPropertyName::UnderlineColor } });
+#else
+    UNUSED_PARAM(renderText);
+    UNUSED_PARAM(difference);
+    UNUSED_PARAM(oldStyle);
+    UNUSED_PARAM(newStyle);
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 }
 
 void AXObjectCache::onTextSecurityChanged(HTMLInputElement& inputElement)
@@ -5350,19 +5400,19 @@ AXTextChange AXObjectCache::textChangeForEditType(AXTextEditType type)
     switch (type) {
     case AXTextEditTypeCut:
     case AXTextEditTypeDelete:
-        return AXTextDeleted;
+        return AXTextChange::Deleted;
     case AXTextEditTypeInsert:
     case AXTextEditTypeDictation:
     case AXTextEditTypeTyping:
     case AXTextEditTypePaste:
-        return AXTextInserted;
+        return AXTextChange::Inserted;
     case AXTextEditTypeAttributesChange:
-        return AXTextAttributesChanged;
+        return AXTextChange::AttributesChanged;
     case AXTextEditTypeUnknown:
         break;
     }
     ASSERT_NOT_REACHED();
-    return AXTextInserted;
+    return AXTextChange::Inserted;
 }
 #endif
 

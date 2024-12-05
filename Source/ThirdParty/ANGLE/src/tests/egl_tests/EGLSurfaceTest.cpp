@@ -912,9 +912,13 @@ TEST_P(EGLSurfaceTest, SwapWithoutAnyDraw)
     initializeMainContext();
     ASSERT_NE(mWindowSurface, EGL_NO_SURFACE);
 
+    eglMakeCurrent(mDisplay, mWindowSurface, mWindowSurface, mContext);
+    ASSERT_EGL_SUCCESS();
+
     for (int i = 0; i < 10; ++i)
     {
         eglSwapBuffers(mDisplay, mWindowSurface);
+        ASSERT_EGL_SUCCESS();
     }
 }
 
@@ -1270,7 +1274,7 @@ TEST_P(EGLSurfaceTest3, MakeCurrentDifferentSurfaces)
     // Use the same surface for both draw and read
     EXPECT_EGL_TRUE(eglMakeCurrent(mDisplay, firstPbufferSurface, firstPbufferSurface, mContext));
 
-    // TODO(http://www.anglebug.com/42264803): Failing with OpenGL ES backend on Android.
+    // TODO(http://anglebug.com/42264803): Failing with OpenGL ES backend on Android.
     // Must be after the eglMakeCurrent() so the renderer string is initialized.
     ANGLE_SKIP_TEST_IF(IsOpenGLES() && IsAndroid());
 
@@ -1776,7 +1780,7 @@ TEST_P(EGLSurfaceTest3, BlitBetweenSurfaces)
     // Clear surface1.
     EXPECT_EGL_TRUE(eglMakeCurrent(mDisplay, surface1, surface1, mContext));
 
-    // TODO(http://www.anglebug.com/42264803): Failing with OpenGL ES backend on Android and
+    // TODO(http://anglebug.com/42264803): Failing with OpenGL ES backend on Android and
     // Windows. Must be after the eglMakeCurrent() so the renderer string is initialized.
     ANGLE_SKIP_TEST_IF(IsOpenGLES() && (IsAndroid() || IsWindows()));
 
@@ -1827,7 +1831,7 @@ TEST_P(EGLSurfaceTest3, BlitBetweenSurfacesWithDeferredClear)
     // Clear surface1.
     EXPECT_EGL_TRUE(eglMakeCurrent(mDisplay, surface1, surface1, mContext));
 
-    // TODO(http://www.anglebug.com/42264803): Failing with OpenGL ES backend on Android and
+    // TODO(http://anglebug.com/42264803): Failing with OpenGL ES backend on Android and
     // Windows. Must be after the eglMakeCurrent() so the renderer string is initialized.
     ANGLE_SKIP_TEST_IF(IsOpenGLES() && (IsAndroid() || IsWindows()));
 
@@ -2649,6 +2653,8 @@ TEST_P(EGLSingleBufferTest, AcquireImageFromSwapImpl)
 // EGL_FRONT_BUFFER_AUTO_REFRESH_ANDROID does not disable auto refresh
 TEST_P(EGLAndroidAutoRefreshTest, Basic)
 {
+    ANGLE_SKIP_TEST_IF(
+        !IsEGLDisplayExtensionEnabled(mDisplay, "EGL_ANDROID_front_buffer_auto_refresh"));
     ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(mDisplay, "EGL_KHR_mutable_render_buffer"));
     ANGLE_SKIP_TEST_IF(!IsAndroid());
 

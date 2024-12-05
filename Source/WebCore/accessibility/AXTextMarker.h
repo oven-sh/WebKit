@@ -25,7 +25,6 @@
 #pragma once
 
 #include "AccessibilityObject.h"
-#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
@@ -244,7 +243,7 @@ private:
 };
 
 class AXTextMarkerRange {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(AXTextMarkerRange);
+    WTF_MAKE_TZONE_ALLOCATED(AXTextMarkerRange);
     friend bool operator==(const AXTextMarkerRange&, const AXTextMarkerRange&);
     friend bool operator<(const AXTextMarkerRange&, const AXTextMarkerRange&);
     friend bool operator>(const AXTextMarkerRange&, const AXTextMarkerRange&);
@@ -290,7 +289,10 @@ public:
 #if ENABLE(AX_THREAD_TEXT_APIS)
     // Traverses from m_start to m_end, collecting all text along the way.
     String toString() const;
-#endif
+#if PLATFORM(COCOA)
+    RetainPtr<NSAttributedString> toAttributedString() const;
+#endif // PLATFORM(COCOA)
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
 
     String debugDescription() const;
 private:

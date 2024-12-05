@@ -618,7 +618,7 @@ void Navigation::notifyCommittedToEntry(NavigationAPIMethodTracker* apiMethodTra
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#update-the-navigation-api-entries-for-a-same-document-navigation
-void Navigation::updateForNavigation(Ref<HistoryItem>&& item, NavigationNavigationType navigationType)
+void Navigation::updateForNavigation(Ref<HistoryItem>&& item, NavigationNavigationType navigationType, ShouldCopyStateObjectFromCurrentEntry shouldCopyStateObjectFromCurrentEntry)
 {
     if (hasEntriesAndEventsDisabled())
         return;
@@ -641,8 +641,11 @@ void Navigation::updateForNavigation(Ref<HistoryItem>&& item, NavigationNavigati
     } else if (navigationType == NavigationNavigationType::Replace)
         disposedEntries.append(*oldCurrentEntry);
 
-    if (navigationType == NavigationNavigationType::Push || navigationType == NavigationNavigationType::Replace)
+    if (navigationType == NavigationNavigationType::Push || navigationType == NavigationNavigationType::Replace) {
         m_entries[*m_currentEntryIndex] = NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), WTFMove(item));
+        if (shouldCopyStateObjectFromCurrentEntry == ShouldCopyStateObjectFromCurrentEntry::Yes)
+            m_entries[*m_currentEntryIndex]->setState(oldCurrentEntry->state());
+    }
 
     if (m_ongoingAPIMethodTracker)
         notifyCommittedToEntry(m_ongoingAPIMethodTracker.get(), currentEntry(), navigationType);

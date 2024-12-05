@@ -107,6 +107,9 @@ public:
     explicit WebInspectorUIProxy(WebPageProxy&);
     virtual ~WebInspectorUIProxy();
 
+    void ref() const final { API::ObjectImpl<API::Object::Type::Inspector>::ref(); }
+    void deref() const final { API::ObjectImpl<API::Object::Type::Inspector>::deref(); }
+
     void invalidate();
 
     API::InspectorClient& inspectorClient() { return *m_inspectorClient; }

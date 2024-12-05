@@ -43,6 +43,7 @@
 #include "SVGRenderingContext.h"
 #include "SVGResourcesCache.h"
 #include "SVGRootInlineBox.h"
+#include "SVGTextFragment.h"
 #include "TextBoxSelectableRange.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -50,17 +51,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SVGInlineTextBox);
 
-struct ExpectedSVGInlineTextBoxSize : public LegacyInlineTextBox {
-    float float1;
-    uint32_t bitfields : 1;
-    Vector<SVGTextFragment> vector;
-};
-
-static_assert(sizeof(SVGInlineTextBox) == sizeof(ExpectedSVGInlineTextBoxSize), "SVGInlineTextBox is not of expected size");
-
 SVGInlineTextBox::SVGInlineTextBox(RenderSVGInlineText& renderer)
     : LegacyInlineTextBox(renderer)
-    , m_startsNewTextChunk(false)
 {
 }
 
@@ -79,98 +71,6 @@ void SVGInlineTextBox::dirtyLineBoxes()
     // depend may now no longer exist, or glyph positions may be wrong
     for (auto* nextBox = nextTextBox(); nextBox; nextBox = nextBox->nextTextBox())
         nextBox->dirtyOwnLineBoxes();
-}
-
-int SVGInlineTextBox::offsetForPositionInFragment(const SVGTextFragment& fragment, float position) const
-{
-    float scalingFactor = renderer().scalingFactor();
-    ASSERT(scalingFactor);
-
-    TextRun textRun = constructTextRun(renderer().style(), fragment);
-
-    // Eventually handle lengthAdjust="spacingAndGlyphs".
-    // FIXME: Handle vertical text.
-    AffineTransform fragmentTransform;
-    fragment.buildFragmentTransform(fragmentTransform);
-    if (!fragmentTransform.isIdentity())
-        textRun.setHorizontalGlyphStretch(narrowPrecisionToFloat(fragmentTransform.xScale()));
-
-    const bool includePartialGlyphs = true;
-    return fragment.characterOffset - start() + renderer().scaledFont().offsetForPosition(textRun, position * scalingFactor, includePartialGlyphs);
-}
-
-FloatRect SVGInlineTextBox::selectionRectForTextFragment(const SVGTextFragment& fragment, unsigned startPosition, unsigned endPosition, const RenderStyle& style) const
-{
-    ASSERT_WITH_SECURITY_IMPLICATION(startPosition < endPosition);
-
-    float scalingFactor = renderer().scalingFactor();
-    ASSERT(scalingFactor);
-
-    const FontCascade& scaledFont = renderer().scaledFont();
-    const FontMetrics& scaledFontMetrics = scaledFont.metricsOfPrimaryFont();
-    FloatPoint textOrigin(fragment.x, fragment.y);
-    if (scalingFactor != 1)
-        textOrigin.scale(scalingFactor);
-
-    textOrigin.move(0, -scaledFontMetrics.ascent());
-
-    LayoutRect selectionRect { textOrigin, LayoutSize(0, LayoutUnit(fragment.height * scalingFactor)) };
-    TextRun run = constructTextRun(style, fragment);
-    scaledFont.adjustSelectionRectForText(renderer().canUseSimplifiedTextMeasuring().value_or(false), run, selectionRect, startPosition, endPosition);
-    FloatRect snappedSelectionRect = snapRectToDevicePixelsWithWritingDirection(selectionRect, renderer().document().deviceScaleFactor(), run.ltr());
-    if (scalingFactor == 1)
-        return snappedSelectionRect;
-
-    snappedSelectionRect.scale(1 / scalingFactor);
-    return snappedSelectionRect;
-}
-
-LayoutRect SVGInlineTextBox::localSelectionRect(unsigned start, unsigned end) const
-{
-    auto [clampedStart, clampedEnd] = selectableRange().clamp(start, end);
-
-    if (clampedStart >= clampedEnd)
-        return LayoutRect();
-
-    auto& style = renderer().style();
-
-    AffineTransform fragmentTransform;
-    FloatRect selectionRect;
-    unsigned fragmentStartPosition = 0;
-    unsigned fragmentEndPosition = 0;
-
-    unsigned textFragmentsSize = m_textFragments.size();
-    for (unsigned i = 0; i < textFragmentsSize; ++i) {
-        const SVGTextFragment& fragment = m_textFragments.at(i);
-
-        fragmentStartPosition = clampedStart;
-        fragmentEndPosition = clampedEnd;
-        if (!mapStartEndPositionsIntoFragmentCoordinates(fragment, fragmentStartPosition, fragmentEndPosition))
-            continue;
-
-        FloatRect fragmentRect = selectionRectForTextFragment(fragment, fragmentStartPosition, fragmentEndPosition, style);
-        fragment.buildFragmentTransform(fragmentTransform);
-        if (!fragmentTransform.isIdentity())
-            fragmentRect = fragmentTransform.mapRect(fragmentRect);
-
-        selectionRect.unite(fragmentRect);
-    }
-
-    return enclosingIntRect(selectionRect);
-}
-
-TextRun SVGInlineTextBox::constructTextRun(const RenderStyle& style, const SVGTextFragment& fragment) const
-{
-    TextRun run(StringView(renderer().text()).substring(fragment.characterOffset, fragment.length),
-        0, /* xPos, only relevant with allowTabs=true */
-        0, /* padding, only relevant for justified text, not relevant for SVG */
-        ExpansionBehavior::allowRightOnly(),
-        direction(),
-        style.rtlOrdering() == Order::Visual /* directionalOverride */);
-
-    // We handle letter & word spacing ourselves.
-    run.disableSpacing();
-    return run;
 }
 
 bool SVGInlineTextBox::mapStartEndPositionsIntoFragmentCoordinates(const SVGTextFragment& fragment, unsigned& startPosition, unsigned& endPosition) const
@@ -213,6 +113,11 @@ FloatRect SVGInlineTextBox::calculateBoundaries() const
     }
 
     return textRect;
+}
+
+void SVGInlineTextBox::setTextFragments(Vector<SVGTextFragment>&& fragments)
+{
+    m_textFragments = WTFMove(fragments);
 }
 
 } // namespace WebCore

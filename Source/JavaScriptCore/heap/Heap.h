@@ -712,7 +712,7 @@ private:
     Ticket requestCollection(GCRequest);
     void waitForCollection(Ticket);
     
-    void suspendCompilerThreads();
+    bool suspendCompilerThreads();
     void willStartCollection();
     void prepareForMarking();
     
@@ -947,6 +947,7 @@ private:
     bool m_mutatorDidRun { true };
     bool m_didDeferGCWork { false };
     bool m_shouldStopCollectingContinuously { false };
+    bool m_isCompilerThreadsSuspended { false };
 
     uint64_t m_mutatorExecutionVersion { 0 };
     uint64_t m_phaseVersion { 0 };

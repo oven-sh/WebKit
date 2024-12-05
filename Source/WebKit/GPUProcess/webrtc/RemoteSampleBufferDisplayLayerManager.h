@@ -62,6 +62,9 @@ public:
     }
     ~RemoteSampleBufferDisplayLayerManager();
 
+    void ref() const final { IPC::WorkQueueMessageReceiver::ref(); }
+    void deref() const final { IPC::WorkQueueMessageReceiver::deref(); }
+
     void close();
 
     bool allowsExitUnderMemoryPressure() const;

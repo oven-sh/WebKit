@@ -16,6 +16,7 @@ set(WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/GPUProcess/webrtc"
     "${WEBKIT_DIR}/ModelProcess"
     "${WEBKIT_DIR}/NetworkProcess"
+    "${WEBKIT_DIR}/NetworkProcess/Authentication"
     "${WEBKIT_DIR}/NetworkProcess/Classifier"
     "${WEBKIT_DIR}/NetworkProcess/Cookies"
     "${WEBKIT_DIR}/NetworkProcess/CustomProtocols"
@@ -202,6 +203,8 @@ set(WebKit_MESSAGES_IN_FILES
     ModelProcess/ModelProcess
     ModelProcess/ModelProcessModelPlayerManagerProxy
 
+    NetworkProcess/Authentication/AuthenticationManager
+
     NetworkProcess/Cookies/WebCookieManager
 
     NetworkProcess/NetworkBroadcastChannelRegistry
@@ -234,8 +237,6 @@ set(WebKit_MESSAGES_IN_FILES
     Shared/IPCStreamTesterProxy
     Shared/IPCTester
     Shared/IPCTesterReceiver
-
-    Shared/Authentication/AuthenticationManager
 
     Shared/Notifications/NotificationManagerMessageHandler
 

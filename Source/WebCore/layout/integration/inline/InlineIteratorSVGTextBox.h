@@ -41,6 +41,7 @@ public:
     SVGTextBox(PathVariant&&);
 
     FloatRect calculateBoundariesIncludingSVGTransform() const;
+    LayoutRect localSelectionRect(unsigned start, unsigned end) const;
     const Vector<SVGTextFragment>& textFragments() const;
 
     const RenderSVGInlineText& renderer() const { return downcast<RenderSVGInlineText>(TextBox::renderer()); }
@@ -68,6 +69,7 @@ private:
 SVGTextBoxIterator firstSVGTextBoxFor(const RenderSVGInlineText&);
 BoxRange<SVGTextBoxIterator> svgTextBoxesFor(const RenderSVGInlineText&);
 SVGTextBoxIterator svgTextBoxFor(const SVGInlineTextBox*);
+SVGTextBoxIterator svgTextBoxFor(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
 BoxRange<BoxIterator> boxesFor(const RenderSVGText&);
 

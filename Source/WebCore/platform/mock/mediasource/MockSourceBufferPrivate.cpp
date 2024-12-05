@@ -41,8 +41,6 @@
 #include <wtf/NativePromise.h>
 #include <wtf/StringPrintStream.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 class MockMediaSample final : public MediaSample {
@@ -176,8 +174,7 @@ void MockSourceBufferPrivate::didReceiveInitializationSegment(const MockInitiali
     SourceBufferPrivateClient::InitializationSegment segment;
     segment.duration = initBox.duration();
 
-    for (auto it = initBox.tracks().begin(); it != initBox.tracks().end(); ++it) {
-        const MockTrackBox& trackBox = *it;
+    for (auto& trackBox : initBox.tracks()) {
         if (trackBox.kind() == MockTrackBox::Video) {
             SourceBufferPrivateClient::InitializationSegment::VideoTrackInformation info;
             info.track = MockVideoTrackPrivate::create(trackBox);
@@ -279,8 +276,6 @@ WTFLogChannel& MockSourceBufferPrivate::logChannel() const
 #endif
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif
 

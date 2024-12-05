@@ -48,6 +48,9 @@ public:
     virtual ~RemoteCDMInstanceSessionProxy();
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
 private:
     friend class RemoteCDMFactoryProxy;
     RemoteCDMInstanceSessionProxy(WeakPtr<RemoteCDMProxy>&&, Ref<WebCore::CDMInstanceSession>&&, uint64_t logIdentifier, RemoteCDMInstanceSessionIdentifier);

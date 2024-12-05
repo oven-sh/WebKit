@@ -28,6 +28,7 @@
 #include "CSSCounterStyleDescriptors.h"
 #include "WritingMode.h"
 #include <wtf/Forward.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 
@@ -35,7 +36,7 @@ namespace WebCore {
 
 class StyleRuleCounterStyle;
 
-class CSSCounterStyle : public RefCounted<CSSCounterStyle>, public CanMakeWeakPtr<CSSCounterStyle> {
+class CSSCounterStyle : public RefCountedAndCanMakeWeakPtr<CSSCounterStyle> {
 public:
     static Ref<CSSCounterStyle> create(const CSSCounterStyleDescriptors&, bool isPredefinedCounterStyle);
 

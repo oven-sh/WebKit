@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -99,6 +99,7 @@
 #undef new
 #undef delete
 #include <wtf/FastMalloc.h>
+#include <wtf/TZoneMalloc.h>
 #endif
 
 #include <wtf/DisallowCType.h>

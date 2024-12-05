@@ -30,6 +30,7 @@
 #import "Test.h"
 #import "TestNavigationDelegate.h"
 #import "TestUIDelegate.h"
+#import "TestWKWebView.h"
 #import <WebKit/WKBackForwardListItemPrivate.h>
 #import <WebKit/WKBackForwardListPrivate.h>
 #import <WebKit/WKNavigationDelegatePrivate.h>
@@ -888,4 +889,19 @@ TEST(WKBackForwardList, SessionStateTitleTruncation)
     _WKSessionState *sessionState = webView.get()._sessionState;
     NSData *stateData = sessionState.data;
     EXPECT_LT(stateData.length, 2000u);
+}
+
+TEST(WKBackForwardList, RestoreSessionStateResetProvisionalItem)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] init]);
+    [webView synchronouslyLoadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:loadableURL1]]];
+    [webView synchronouslyLoadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:loadableURL2]]];
+    [webView synchronouslyGoBack];
+    [webView synchronouslyGoForward];
+
+    RetainPtr sessionState = [webView _sessionStateWithFilter:^BOOL(WKBackForwardListItem *item) {
+        return [item.URL isEqual:[NSURL URLWithString:loadableURL1]];
+    }];
+    [webView _restoreSessionState:sessionState.get() andNavigate:NO];
+    [[webView backForwardList] currentItem];
 }

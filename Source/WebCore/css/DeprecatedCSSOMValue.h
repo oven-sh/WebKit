@@ -28,12 +28,13 @@
 #include "CSSStyleDeclaration.h"
 #include "CSSValue.h"
 #include "ExceptionOr.h"
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
-class DeprecatedCSSOMValue : public RefCounted<DeprecatedCSSOMValue>, public CanMakeWeakPtr<DeprecatedCSSOMValue> {
+class DeprecatedCSSOMValue : public RefCountedAndCanMakeWeakPtr<DeprecatedCSSOMValue> {
 public:
     // Exactly match the IDL. No reason to add anything if it's not in the IDL.
     enum Type : unsigned short {

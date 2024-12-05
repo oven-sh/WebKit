@@ -38,6 +38,7 @@
 #import "UnifiedPDFTestHelpers.h"
 #import "WKPrinting.h"
 #import "WKWebViewConfigurationExtras.h"
+#import "WKWebViewForTestingImmediateActions.h"
 #import <WebCore/ColorSerialization.h>
 #import <WebKit/WKNavigationDelegatePrivate.h>
 #import <WebKit/WKPreferencesPrivate.h>
@@ -153,6 +154,14 @@ TEST_P(PrintWithJSExecutionOptionTests, PDFWithWindowPrintEmbeddedJS)
 }
 
 INSTANTIATE_TEST_SUITE_P(UnifiedPDF, PrintWithJSExecutionOptionTests, testing::Bool(), &PrintWithJSExecutionOptionTests::testNameGenerator);
+
+UNIFIED_PDF_TEST(DictionaryLookupDoesNotAssertOnEmptyRange)
+{
+    RetainPtr webView = adoptNS([[WKWebViewForTestingImmediateActions alloc] initWithFrame:CGRectMake(0, 0, 600, 600) configuration:configurationForWebViewTestingUnifiedPDF().get()]);
+    [webView synchronouslyLoadHTMLString:@"<embed src='metalSpecTOC.pdf' width='600' height='600'>"];
+    [webView waitForNextPresentationUpdate];
+    [webView simulateImmediateAction:NSMakePoint(200, 200)];
+}
 
 #endif // PLATFORM(MAC)
 

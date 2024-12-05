@@ -3280,6 +3280,7 @@ static void boundsPositionInformation(RenderObject& renderer, InteractionInforma
 
 static void elementPositionInformation(WebPage& page, Element& element, const InteractionInformationRequest& request, const Node* innerNonSharedNode, InteractionInformationAtPosition& info)
 {
+    Ref document = element.document();
     Element* linkElement = nullptr;
     if (element.renderer() && element.renderer()->isRenderImage())
         linkElement = containingLinkAnchorElement(element);
@@ -3298,7 +3299,7 @@ static void elementPositionInformation(WebPage& page, Element& element, const In
 
     if (linkElement && !info.isImageOverlayText) {
         info.isLink = true;
-        info.url = page.applyLinkDecorationFiltering(linkElement->document().completeURL(linkElement->getAttribute(HTMLNames::hrefAttr)), LinkDecorationFilteringTrigger::Unspecified);
+        info.url = page.applyLinkDecorationFiltering(document->completeURL(linkElement->getAttribute(HTMLNames::hrefAttr)), LinkDecorationFilteringTrigger::Unspecified);
 
         linkIndicatorPositionInformation(page, *linkElement, request, info);
 #if ENABLE(DATA_DETECTION)
@@ -3314,6 +3315,8 @@ static void elementPositionInformation(WebPage& page, Element& element, const In
 #endif
     }
 
+    info.needsPointerTouchCompatibilityQuirk = document->quirks().needsPointerTouchCompatibility(element);
+
     if (auto* renderer = element.renderer()) {
         bool shouldCollectImagePositionInformation = renderer->isRenderImage();
         if (shouldCollectImagePositionInformation && info.isImageOverlayText) {
@@ -3321,7 +3324,7 @@ static void elementPositionInformation(WebPage& page, Element& element, const In
             if (request.includeImageData) {
                 if (auto rendererAndImage = imageRendererAndImage(element)) {
                     auto& [renderImage, image] = *rendererAndImage;
-                    info.imageURL = page.applyLinkDecorationFiltering(element.document().completeURL(renderImage.cachedImage()->url().string()), LinkDecorationFilteringTrigger::Unspecified);
+                    info.imageURL = page.applyLinkDecorationFiltering(document->completeURL(renderImage.cachedImage()->url().string()), LinkDecorationFilteringTrigger::Unspecified);
                     info.imageMIMEType = image.mimeType();
                     info.image = createShareableBitmap(renderImage, { screenSize() * page.corePage()->deviceScaleFactor(), AllowAnimatedImages::Yes, UseSnapshotForTransparentImages::Yes });
                 }
@@ -5783,7 +5786,7 @@ void WebPage::callAfterPendingSyntheticClick(CompletionHandler<void(SyntheticCli
 
 #if ENABLE(IOS_TOUCH_EVENTS)
 
-void WebPage::didSwallowClickEvent(const PlatformMouseEvent& event, Node& node)
+void WebPage::didDispatchClickEvent(const PlatformMouseEvent& event, Node& node)
 {
     if (!m_userIsInteracting)
         return;
@@ -5794,16 +5797,16 @@ void WebPage::didSwallowClickEvent(const PlatformMouseEvent& event, Node& node)
     if (event.syntheticClickType() != SyntheticClickType::NoTap)
         return;
 
-    RefPtr element = dynamicDowncast<Element>(node);
+    RefPtr element = dynamicDowncast<Element>(node) ?: node.parentElementInComposedTree();
     if (!element)
         return;
 
     Ref document = node.document();
-    if (!document->quirks().shouldSynthesizeTouchEventsAfterNonSyntheticClick(node))
+    if (!document->quirks().shouldSynthesizeTouchEventsAfterNonSyntheticClick(*element))
         return;
 
     bool isReplaced = false;
-    auto bounds = node.absoluteBoundingRect(&isReplaced);
+    auto bounds = element->absoluteBoundingRect(&isReplaced);
     if (bounds.isEmpty())
         return;
 

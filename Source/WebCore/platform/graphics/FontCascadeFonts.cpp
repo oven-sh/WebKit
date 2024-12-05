@@ -572,6 +572,12 @@ void FontCascadeFonts::pruneSystemFallbacks()
     m_systemFallbackFontSet.clear();
 }
 
+TextStream& operator<<(TextStream& ts, const FontCascadeFonts& fontCascadeFonts)
+{
+    ts << "FontCascadeFonts " << &fontCascadeFonts << " " << ValueOrNull(fontCascadeFonts.fontSelector()) << " generation " << fontCascadeFonts.generation();
+    return ts;
+}
+
 } // namespace WebCore
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

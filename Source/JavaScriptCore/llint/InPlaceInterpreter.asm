@@ -152,6 +152,7 @@ const SlotSize = constexpr (sizeof(Register))
 # amount of memory a local takes up on the stack (16 bytes for a v128)
 const LocalSize = 16
 const StackValueSize = 16
+const StackValueShift = 4
 
 const wasmInstance = csr0
 if X86_64 or ARM64 or ARM64E or RISCV64
@@ -891,10 +892,10 @@ reservedOpcode(0xcf)
 unimplementedInstruction(_ref_null_t)
 unimplementedInstruction(_ref_is_null)
 unimplementedInstruction(_ref_func)
-reservedOpcode(0xd3)
-reservedOpcode(0xd4)
-reservedOpcode(0xd5)
-reservedOpcode(0xd6)
+unimplementedInstruction(_ref_eq)
+unimplementedInstruction(_ref_as_non_null)
+unimplementedInstruction(_br_on_null)
+unimplementedInstruction(_br_on_non_null)
 reservedOpcode(0xd7)
 reservedOpcode(0xd8)
 reservedOpcode(0xd9)
@@ -931,7 +932,7 @@ reservedOpcode(0xf7)
 reservedOpcode(0xf8)
 reservedOpcode(0xf9)
 reservedOpcode(0xfa)
-reservedOpcode(0xfb)
+unimplementedInstruction(_fb_block)
 unimplementedInstruction(_fc_block)
 unimplementedInstruction(_simd)
 unimplementedInstruction(_atomic)

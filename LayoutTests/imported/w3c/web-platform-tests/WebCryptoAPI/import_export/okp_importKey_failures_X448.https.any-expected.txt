@@ -215,4 +215,19 @@ FAIL Invalid key pair: importKey(jwk(private), {name: X448}, true, [deriveKey]) 
 FAIL Invalid key pair: importKey(jwk(private), {name: X448}, true, [deriveBits, deriveKey]) assert_equals: Invalid key pair not supported. expected "DataError" but got "NotSupportedError"
 FAIL Invalid key pair: importKey(jwk(private), {name: X448}, true, [deriveBits]) assert_equals: Invalid key pair not supported. expected "DataError" but got "NotSupportedError"
 FAIL Invalid key pair: importKey(jwk(private), {name: X448}, true, [deriveKey, deriveBits, deriveKey, deriveBits]) assert_equals: Invalid key pair not supported. expected "DataError" but got "NotSupportedError"
+PASS Missing algorithm name: importKey(pkcs8, {}, true, deriveKey)
+PASS Missing algorithm name: importKey(pkcs8, {}, false, deriveKey)
+PASS Missing algorithm name: importKey(pkcs8, {}, true, deriveBits)
+PASS Missing algorithm name: importKey(pkcs8, {}, false, deriveBits)
+PASS Missing algorithm name: importKey(jwk(private), {}, true, deriveKey)
+PASS Missing algorithm name: importKey(jwk(private), {}, false, deriveKey)
+PASS Missing algorithm name: importKey(jwk(private), {}, true, deriveBits)
+PASS Missing algorithm name: importKey(jwk(private), {}, false, deriveBits)
+FAIL Invalid 'kty' field: importKey(jwk(private), {name: X448}, true, [deriveKey, deriveBits]) assert_equals: Invalid 'kty' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'kty' field: importKey(jwk (public) , {name: X448}, true, []) assert_equals: Invalid 'kty' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Import from a non-extractable: importKey(jwk(private), {name: X448}, true, [deriveKey, deriveBits]) assert_equals: Import from a non-extractable not supported. expected "DataError" but got "NotSupportedError"
+FAIL Import from a non-extractable: importKey(jwk (public) , {name: X448}, true, []) assert_equals: Import from a non-extractable not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'use' field: importKey(jwk(private), {name: X448}, true, [deriveKey, deriveBits]) assert_equals: Invalid 'use' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'crv' field: importKey(jwk(private), {name: X448}, true, [deriveKey, deriveBits]) assert_equals: Invalid 'crv' field not supported. expected "DataError" but got "NotSupportedError"
+FAIL Invalid 'crv' field: importKey(jwk (public) , {name: X448}, true, []) assert_equals: Invalid 'crv' field not supported. expected "DataError" but got "NotSupportedError"
 

@@ -224,16 +224,15 @@ JSValue collectMatches(VM& vm, JSGlobalObject* globalObject, JSString* string, c
 }
 
 template<typename Char>
-ALWAYS_INLINE void oneCharMatches(std::span<const Char> input, Char pattern, size_t& numberOfMatches, size_t& startIndex)
+ALWAYS_INLINE size_t countMatchedCharacters(std::span<const Char> input, Char pattern)
 {
-    for (size_t i = startIndex; i < input.size(); ++i) {
-        if (input[i] != pattern)
+    size_t numberOfMatches = 0;
+    for (auto character : input) {
+        if (character != pattern)
             continue;
         numberOfMatches++;
-        startIndex = i + 1;
-        if (numberOfMatches > MAX_STORAGE_VECTOR_LENGTH)
-            return;
     }
+    return numberOfMatches;
 }
 
 template<typename SubjectChar, typename PatternChar>
@@ -248,8 +247,6 @@ ALWAYS_INLINE void genericMatches(VM& vm, std::span<const SubjectChar> input, st
         startIndex = found + pattern.size();
         numberOfMatches++;
         found = search.search(input, startIndex);
-        if (numberOfMatches > MAX_STORAGE_VECTOR_LENGTH)
-            return;
     }
 }
 
@@ -259,7 +256,6 @@ ALWAYS_INLINE JSValue collectGlobalAtomMatches(JSGlobalObject* globalObject, JSS
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     size_t numberOfMatches = 0;
-    size_t startIndex = 0;
     auto input = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -269,30 +265,38 @@ ALWAYS_INLINE JSValue collectGlobalAtomMatches(JSGlobalObject* globalObject, JSS
     if (pattern.is8Bit()) {
         if (input->is8Bit()) {
             if (pattern.length() == 1)
-                oneCharMatches(input->span8(), pattern.span8()[0], numberOfMatches, startIndex);
-            else
+                numberOfMatches = countMatchedCharacters(input->span8(), pattern.span8()[0]);
+            else {
+                size_t startIndex = 0;
                 genericMatches(vm, input->span8(), pattern.span8(), numberOfMatches, startIndex);
+            }
         } else {
             if (pattern.length() == 1)
-                oneCharMatches(input->span16(), pattern.characterAt(0), numberOfMatches, startIndex);
-            else
+                numberOfMatches = countMatchedCharacters(input->span16(), pattern.characterAt(0));
+            else {
+                size_t startIndex = 0;
                 genericMatches(vm, input->span16(), pattern.span8(), numberOfMatches, startIndex);
+            }
         }
     } else {
-        if (input->is8Bit())
+        if (input->is8Bit()) {
+            size_t startIndex = 0;
             genericMatches(vm, input->span8(), pattern.span16(), numberOfMatches, startIndex);
-        else {
+        } else {
             if (pattern.length() == 1)
-                oneCharMatches(input->span16(), pattern.characterAt(0), numberOfMatches, startIndex);
-            else
+                numberOfMatches = countMatchedCharacters(input->span16(), pattern.characterAt(0));
+            else {
+                size_t startIndex = 0;
                 genericMatches(vm, input->span16(), pattern.span16(), numberOfMatches, startIndex);
+            }
         }
     }
 
-    if (numberOfMatches > MAX_STORAGE_VECTOR_LENGTH) {
+    if (UNLIKELY(numberOfMatches > MAX_STORAGE_VECTOR_LENGTH)) {
         throwOutOfMemoryError(globalObject, scope);
         return jsUndefined();
     }
+
     if (!numberOfMatches)
         return jsNull();
 

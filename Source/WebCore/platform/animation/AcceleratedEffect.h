@@ -34,7 +34,7 @@
 #include "TimingFunction.h"
 #include "WebAnimationTypes.h"
 #include <wtf/OptionSet.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
@@ -44,7 +44,7 @@ class FloatRect;
 class IntRect;
 class KeyframeEffect;
 
-class AcceleratedEffect : public RefCounted<AcceleratedEffect>, public CanMakeWeakPtr<AcceleratedEffect>, public KeyframeInterpolation {
+class AcceleratedEffect : public RefCountedAndCanMakeWeakPtr<AcceleratedEffect>, public KeyframeInterpolation {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(AcceleratedEffect);
 public:
 

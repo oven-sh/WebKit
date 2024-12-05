@@ -245,7 +245,7 @@ Ref<Device> Device::create(id<MTLDevice> device, String&& deviceLabel, HardwareC
 
 Device::Device(id<MTLDevice> device, id<MTLCommandQueue> defaultQueue, HardwareCapabilities&& capabilities, Adapter& adapter)
     : m_device(device)
-    , m_defaultQueue(Queue::create(defaultQueue, *this))
+    , m_defaultQueue(Queue::create(defaultQueue, adapter, *this))
     , m_xrSubImage(XRSubImage::create(*this))
     , m_capabilities(WTFMove(capabilities))
     , m_adapter(adapter)
@@ -309,7 +309,7 @@ Device::Device(id<MTLDevice> device, id<MTLCommandQueue> defaultQueue, HardwareC
 }
 
 Device::Device(Adapter& adapter)
-    : m_defaultQueue(Queue::createInvalid(*this))
+    : m_defaultQueue(Queue::createInvalid(adapter, *this))
     , m_adapter(adapter)
     , m_instance(adapter.weakInstance())
 {

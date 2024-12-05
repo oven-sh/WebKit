@@ -34,6 +34,7 @@
 #include "WebPageProxyIdentifier.h"
 #include <wtf/Forward.h>
 #include <wtf/Identified.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakObjCPtr.h>
 
@@ -56,7 +57,7 @@ enum class WebExtensionTabImageFormat : uint8_t {
     JPEG,
 };
 
-class WebExtensionTab : public RefCounted<WebExtensionTab>, public CanMakeWeakPtr<WebExtensionTab>, public Identified<WebExtensionTabIdentifier> {
+class WebExtensionTab : public RefCountedAndCanMakeWeakPtr<WebExtensionTab>, public Identified<WebExtensionTabIdentifier> {
     WTF_MAKE_NONCOPYABLE(WebExtensionTab);
     WTF_MAKE_TZONE_ALLOCATED(WebExtensionTab);
 

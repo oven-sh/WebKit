@@ -61,6 +61,9 @@ public:
 
     ~WebSharedWorkerServerConnection();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     WebSharedWorkerServer* server();
     const WebSharedWorkerServer* server() const;
 

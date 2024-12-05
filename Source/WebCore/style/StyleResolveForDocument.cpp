@@ -100,7 +100,9 @@ RenderStyle resolveForDocument(const Document& document)
 
     documentStyle.setFontDescription(WTFMove(fontDescription));
 
-    documentStyle.fontCascade().update(&const_cast<Document&>(document).fontSelector());
+    auto fontCascade = documentStyle.fontCascade();
+    fontCascade.update(&const_cast<Document&>(document).fontSelector());
+    documentStyle.setFontCascade(WTFMove(fontCascade));
 
     return documentStyle;
 }

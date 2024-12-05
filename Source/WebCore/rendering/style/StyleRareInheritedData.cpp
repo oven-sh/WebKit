@@ -37,8 +37,8 @@ namespace WebCore {
 struct GreaterThanOrSameSizeAsStyleRareInheritedData : public RefCounted<GreaterThanOrSameSizeAsStyleRareInheritedData> {
     float firstFloat;
     void* styleImage;
-    StyleColor firstColor;
-    StyleColor colors[10];
+    Style::Color firstColor;
+    Style::Color colors[10];
     void* ownPtrs[1];
     AtomString atomStrings[5];
     void* refPtrs[3];
@@ -58,7 +58,7 @@ struct GreaterThanOrSameSizeAsStyleRareInheritedData : public RefCounted<Greater
 #endif
 
 #if ENABLE(TOUCH_EVENTS)
-    StyleColor tapHighlightColor;
+    Style::Color tapHighlightColor;
 #endif
 
 #if ENABLE(DARK_MODE_CSS)
@@ -82,9 +82,9 @@ StyleRareInheritedData::StyleRareInheritedData()
     , visitedLinkTextStrokeColor(RenderStyle::initialTextStrokeColor())
     , visitedLinkTextFillColor(RenderStyle::initialTextFillColor())
     , visitedLinkTextEmphasisColor(RenderStyle::initialTextEmphasisColor())
-    , caretColor(StyleColor::currentColor())
-    , visitedLinkCaretColor(StyleColor::currentColor())
-    , accentColor(StyleColor::currentColor())
+    , caretColor(Style::Color::currentColor())
+    , visitedLinkCaretColor(Style::Color::currentColor())
+    , accentColor(Style::Color::currentColor())
     , indent(RenderStyle::initialTextIndent())
     , usedZoom(RenderStyle::initialZoom())
     , textUnderlineOffset(RenderStyle::initialTextUnderlineOffset())

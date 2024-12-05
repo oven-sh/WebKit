@@ -34,7 +34,7 @@ PASS Can wrap and unwrap X25519 private key keys using pkcs8 and RSA-OAEP
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using pkcs8 and RSA-OAEP
 PASS Can wrap and unwrap X25519 private key keys using jwk and RSA-OAEP
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using jwk and RSA-OAEP
-FAIL Can unwrap X25519 private key non-extractable keys using jwk and RSA-OAEP assert_unreached: Unwrapping a non-extractable JWK as extractable should fail Reached unreachable code
+PASS Can unwrap X25519 private key non-extractable keys using jwk and RSA-OAEP
 PASS Can wrap and unwrap AES-CTR keys using raw and RSA-OAEP
 PASS Can wrap and unwrap AES-CTR keys as non-extractable using raw and RSA-OAEP
 PASS Can wrap and unwrap AES-CTR keys using jwk and RSA-OAEP
@@ -108,7 +108,7 @@ PASS Can wrap and unwrap X25519 private key keys using pkcs8 and AES-CTR
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using pkcs8 and AES-CTR
 PASS Can wrap and unwrap X25519 private key keys using jwk and AES-CTR
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using jwk and AES-CTR
-FAIL Can unwrap X25519 private key non-extractable keys using jwk and AES-CTR assert_unreached: Unwrapping a non-extractable JWK as extractable should fail Reached unreachable code
+PASS Can unwrap X25519 private key non-extractable keys using jwk and AES-CTR
 PASS Can wrap and unwrap AES-CTR keys using raw and AES-CTR
 PASS Can wrap and unwrap AES-CTR keys as non-extractable using raw and AES-CTR
 PASS Can wrap and unwrap AES-CTR keys using jwk and AES-CTR
@@ -182,7 +182,7 @@ PASS Can wrap and unwrap X25519 private key keys using pkcs8 and AES-CBC
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using pkcs8 and AES-CBC
 PASS Can wrap and unwrap X25519 private key keys using jwk and AES-CBC
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using jwk and AES-CBC
-FAIL Can unwrap X25519 private key non-extractable keys using jwk and AES-CBC assert_unreached: Unwrapping a non-extractable JWK as extractable should fail Reached unreachable code
+PASS Can unwrap X25519 private key non-extractable keys using jwk and AES-CBC
 PASS Can wrap and unwrap AES-CTR keys using raw and AES-CBC
 PASS Can wrap and unwrap AES-CTR keys as non-extractable using raw and AES-CBC
 PASS Can wrap and unwrap AES-CTR keys using jwk and AES-CBC
@@ -256,7 +256,7 @@ PASS Can wrap and unwrap X25519 private key keys using pkcs8 and AES-GCM
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using pkcs8 and AES-GCM
 PASS Can wrap and unwrap X25519 private key keys using jwk and AES-GCM
 PASS Can wrap and unwrap X25519 private key keys as non-extractable using jwk and AES-GCM
-FAIL Can unwrap X25519 private key non-extractable keys using jwk and AES-GCM assert_unreached: Unwrapping a non-extractable JWK as extractable should fail Reached unreachable code
+PASS Can unwrap X25519 private key non-extractable keys using jwk and AES-GCM
 PASS Can wrap and unwrap AES-CTR keys using raw and AES-GCM
 PASS Can wrap and unwrap AES-CTR keys as non-extractable using raw and AES-GCM
 PASS Can wrap and unwrap AES-CTR keys using jwk and AES-GCM

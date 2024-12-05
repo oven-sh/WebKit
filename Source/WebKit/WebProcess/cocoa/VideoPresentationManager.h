@@ -138,6 +138,9 @@ public:
     static Ref<VideoPresentationManager> create(WebPage&, PlaybackSessionManager&);
     virtual ~VideoPresentationManager();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void invalidate();
 
     bool hasVideoPlayingInPictureInPicture() const;

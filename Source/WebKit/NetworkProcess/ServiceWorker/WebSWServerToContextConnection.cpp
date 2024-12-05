@@ -204,7 +204,7 @@ void WebSWServerToContextConnection::fireNotificationEvent(ServiceWorkerIdentifi
         if (!protectedThis || !protectedThis->m_connection)
             return callback(wasProcessed);
 
-        CheckedPtr session = protectedThis->m_connection->networkSession();
+        CheckedPtr session = protectedThis->protectedConnection()->networkSession();
         if (auto* resourceLoadStatistics = session ? session->resourceLoadStatistics() : nullptr; resourceLoadStatistics && wasProcessed && eventType == NotificationEventType::Click) {
             return resourceLoadStatistics->setMostRecentWebPushInteractionTime(RegistrableDomain(protectedThis->registrableDomain()), [callback = WTFMove(callback), wasProcessed] () mutable {
                 callback(wasProcessed);

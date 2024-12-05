@@ -36,9 +36,12 @@
 #include "VisibleUnits.h"
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AXTextMarker);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AXTextMarkerRange);
 
 static std::optional<AXID> nodeID(AXObjectCache& cache, Node* node)
 {

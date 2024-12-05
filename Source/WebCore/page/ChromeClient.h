@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include "AXObjectCache.h"
 #include "AutoplayEvent.h"
 #include "ContactInfo.h"
 #include "DatabaseDetails.h"
@@ -59,6 +58,7 @@ class WAKResponder;
 #else
 @class WAKResponder;
 #endif
+OBJC_CLASS NSData;
 #endif
 
 #if ENABLE(MEDIA_USAGE)
@@ -137,11 +137,17 @@ struct TextRecognitionOptions;
 struct ViewportArguments;
 struct WindowFeatures;
 
+enum class ActivityStateForCPUSampling : uint8_t;
+enum class AXLoadingEvent : uint8_t;
+enum class AXNotification;
+enum class AXTextChange : uint8_t;
 enum class CookieConsentDecisionResult : uint8_t;
 enum class DidFilterLinkDecoration : bool { No, Yes };
 enum class IsLoggedIn : uint8_t;
+enum class LinkDecorationFilteringTrigger : uint8_t;
 enum class ModalContainerControlType : uint8_t;
 enum class ModalContainerDecision : uint8_t;
+enum class PlatformEventModifier : uint8_t;
 enum class PluginUnavailabilityReason : uint8_t;
 enum class RouteSharingPolicy : uint8_t;
 enum class TextAnimationRunMode : uint8_t;
@@ -709,7 +715,7 @@ public:
 
     virtual void callAfterPendingSyntheticClick(CompletionHandler<void(SyntheticClickResult)>&& completion) { completion(SyntheticClickResult::Failed); }
 
-    virtual void didSwallowClickEvent(const PlatformMouseEvent&, Node&) { }
+    virtual void didDispatchClickEvent(const PlatformMouseEvent&, Node&) { }
 
     WEBCORE_EXPORT virtual ~ChromeClient();
 

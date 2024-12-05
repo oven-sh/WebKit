@@ -3473,6 +3473,8 @@ auto OMGIRGenerator::addStructNewDefault(uint32_t typeIndex, ExpressionType& res
         Value* initValue;
         if (Wasm::isRefType(structType.field(i).type))
             initValue = m_currentBlock->appendNew<Const64Value>(m_proc, origin(), JSValue::encode(jsNull()));
+        else if (typeSizeInBytes(structType.field(i).type) <= 4)
+            initValue = m_currentBlock->appendNew<Const32Value>(m_proc, origin(), 0);
         else
             initValue = m_currentBlock->appendNew<Const64Value>(m_proc, origin(), 0);
         emitStructSet(structValue, i, structType, initValue);

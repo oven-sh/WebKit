@@ -36,7 +36,6 @@ namespace WebCore {
 
 class CSSCalcValue;
 class CSSToLengthConversionData;
-class Color;
 class FontCascade;
 class RenderStyle;
 class RenderView;
@@ -132,17 +131,6 @@ public:
 
     bool isString() const { return primitiveUnitType() == CSSUnitType::CSS_STRING; }
     static Ref<CSSPrimitiveValue> create(String);
-
-    static Ref<CSSPrimitiveValue> create(CSSUnresolvedColor);
-    bool isUnresolvedColor() const { return primitiveUnitType() == CSSUnitType::CSS_UNRESOLVED_COLOR; }
-    const CSSUnresolvedColor& unresolvedColor() const { ASSERT(isUnresolvedColor()); return *m_value.unresolvedColor; }
-
-    bool isColor() const { return primitiveUnitType() == CSSUnitType::CSS_RGBCOLOR; }
-    const Color& color() const { ASSERT(isColor()); return *reinterpret_cast<const Color*>(&m_value.colorAsInteger); }
-
-    // Return an absolute color if possible, otherwise an invalid color.
-    // https://drafts.csswg.org/css-color-5/#absolute-color
-    Color absoluteColor() const;
 
     static Ref<CSSPrimitiveValue> createCustomIdent(String);
     bool isCustomIdent() const { return primitiveUnitType() == CSSUnitType::CustomIdent; }
@@ -248,17 +236,14 @@ private:
     friend bool CSSValue::addHash(Hasher&) const;
 
     explicit CSSPrimitiveValue(CSSPropertyID);
-    explicit CSSPrimitiveValue(Color);
     explicit CSSPrimitiveValue(const Length&);
     CSSPrimitiveValue(const Length&, const RenderStyle&);
     CSSPrimitiveValue(const String&, CSSUnitType);
     CSSPrimitiveValue(double, CSSUnitType);
     explicit CSSPrimitiveValue(Ref<CSSCalcValue>);
-    explicit CSSPrimitiveValue(CSSUnresolvedColor);
     explicit CSSPrimitiveValue(Ref<CSSAttrValue>);
 
     CSSPrimitiveValue(StaticCSSValueTag, CSSValueID);
-    CSSPrimitiveValue(StaticCSSValueTag, Color);
     CSSPrimitiveValue(StaticCSSValueTag, double, CSSUnitType);
     enum ImplicitInitialValueTag { ImplicitInitialValue };
     CSSPrimitiveValue(StaticCSSValueTag, ImplicitInitialValueTag);
@@ -306,8 +291,6 @@ private:
         CSSValueID valueID;
         double number;
         StringImpl* string;
-        uint64_t colorAsInteger;
-        const CSSUnresolvedColor* unresolvedColor;
         const CSSCalcValue* calc;
         const CSSAttrValue* attr;
     } m_value;
@@ -800,17 +783,6 @@ inline CSSValueID CSSValue::valueID() const
 {
     auto* value = dynamicDowncast<CSSPrimitiveValue>(*this);
     return value ? value->valueID() : CSSValueInvalid;
-}
-
-inline bool CSSValue::isColor() const
-{
-    auto* value = dynamicDowncast<CSSPrimitiveValue>(*this);
-    return value && value->isColor();
-}
-
-inline const Color& CSSValue::color() const
-{
-    return downcast<CSSPrimitiveValue>(*this).color();
 }
 
 inline bool CSSValue::isCustomIdent() const

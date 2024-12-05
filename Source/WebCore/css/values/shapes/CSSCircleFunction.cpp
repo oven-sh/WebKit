@@ -36,7 +36,7 @@ static bool hasDefaultValueForCircleRadius(Circle::RadialSize radius)
     return WTF::switchOn(radius,
         [](Circle::Extent extent) {
             // FIXME: The spec says that `farthest-corner` should be the default, but this does not match the tests.
-            return std::holds_alternative<ClosestSide>(extent);
+            return std::holds_alternative<Keyword::ClosestSide>(extent);
         },
         [](const auto&) {
             return false;

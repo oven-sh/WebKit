@@ -233,7 +233,15 @@ static void RunTest(id self, SEL _cmd)
 
             SEL selector = sel_registerName([methodName UTF8String]);
             BOOL added = class_addMethod(testClass, selector, (IMP)RunTest, "v@:");
-            NSAssert1(added, @"Failed to add Goole Test method \"%@\", this method may already exist in the class.", methodName);
+
+            // FIXME: (283036) PrintWithJSExecutionOptionTests API tests are duplicated in the testing system
+            NSSet<NSString *> *testsExcludedFromAssertion = [NSSet setWithArray:@[
+                @"UnifiedPDF/PrintWithJSExecutionOptionTests",
+                @"Printing/PrintWithJSExecutionOptionTests",
+            ]];
+
+            NSAssert([testsExcludedFromAssertion containsObject:testCaseName] || added, @"Failed to add Google Test method \"%@\", this method may already exist in the class.", methodName);
+
             hasMethods = YES;
         }
 

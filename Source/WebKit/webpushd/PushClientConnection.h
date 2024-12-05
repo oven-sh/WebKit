@@ -76,6 +76,9 @@ class PushClientConnection : public RefCounted<PushClientConnection>, public Ide
 public:
     static RefPtr<PushClientConnection> create(xpc_connection_t, IPC::Decoder&);
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     std::optional<WebCore::PushSubscriptionSetIdentifier> subscriptionSetIdentifierForOrigin(const WebCore::SecurityOriginData&) const;
     const String& hostAppCodeSigningIdentifier() const { return m_hostAppCodeSigningIdentifier; }
     bool hostAppHasPushInjectEntitlement() const { return m_hostAppHasPushInjectEntitlement; };

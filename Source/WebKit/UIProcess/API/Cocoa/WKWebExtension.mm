@@ -171,7 +171,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
 
 - (NSDictionary<NSString *, id> *)manifest
 {
-    return self._protectedWebExtension->manifest();
+    return self._protectedWebExtension->manifestDictionary();
 }
 
 - (double)manifestVersion

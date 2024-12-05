@@ -85,24 +85,24 @@ template<typename ControlPoint> static FloatPoint resolveControlPoint(CommandAff
 {
     auto controlPointOffset = evaluateControlPointOffset(controlPoint, boxSize);
 
-    auto defaultAnchor = (std::holds_alternative<By>(affinity)) ? RelativeControlPoint::defaultAnchor : AbsoluteControlPoint::defaultAnchor;
+    auto defaultAnchor = (std::holds_alternative<CSS::Keyword::By>(affinity)) ? RelativeControlPoint::defaultAnchor : AbsoluteControlPoint::defaultAnchor;
     auto controlPointAnchoring = evaluateControlPointAnchoring(controlPoint, defaultAnchor);
 
     auto absoluteControlPoint = WTF::switchOn(controlPointAnchoring,
-        [&](Style::Start) {
+        [&](CSS::Keyword::Start) {
             auto absoluteStartPoint = currentPosition;
             return absoluteStartPoint + controlPointOffset;
         },
-        [&](Style::End) {
-            auto absoluteEndPoint = (std::holds_alternative<By>(affinity)) ? currentPosition + toFloatSize(segmentOffset) : segmentOffset;
+        [&](CSS::Keyword::End) {
+            auto absoluteEndPoint = (std::holds_alternative<CSS::Keyword::By>(affinity)) ? currentPosition + toFloatSize(segmentOffset) : segmentOffset;
             return absoluteEndPoint + controlPointOffset;
         },
-        [&](Style::Origin) {
+        [&](CSS::Keyword::Origin) {
             return controlPointOffset;
         }
     );
 
-    if (std::holds_alternative<By>(affinity))
+    if (std::holds_alternative<CSS::Keyword::By>(affinity))
         return absoluteControlPoint - toFloatSize(currentPosition);
     return absoluteControlPoint;
 }
@@ -241,8 +241,8 @@ private:
             .rx = radius.width(),
             .ry = radius.height(),
             .angle = narrowPrecisionToFloat(arcCommand.rotation.value),
-            .largeArc = std::holds_alternative<Large>(arcCommand.arcSize),
-            .sweep = std::holds_alternative<Cw>(arcCommand.arcSweep),
+            .largeArc = std::holds_alternative<CSS::Keyword::Large>(arcCommand.arcSize),
+            .sweep = std::holds_alternative<CSS::Keyword::Cw>(arcCommand.arcSweep),
             .targetPoint = evaluate(arcCommand.toBy, m_boxSize)
         };
     }
@@ -269,8 +269,8 @@ private:
                 return WTF::switchOn(command.toBy,
                     [](const auto& value) {
                         if (value.controlPoint2)
-                            return std::holds_alternative<To>(value.affinity) ? SVGPathSegType::CurveToCubicAbs : SVGPathSegType::CurveToCubicRel;
-                        return std::holds_alternative<To>(value.affinity) ? SVGPathSegType::CurveToQuadraticAbs : SVGPathSegType::CurveToQuadraticRel;
+                            return std::holds_alternative<CSS::Keyword::To>(value.affinity) ? SVGPathSegType::CurveToCubicAbs : SVGPathSegType::CurveToCubicRel;
+                        return std::holds_alternative<CSS::Keyword::To>(value.affinity) ? SVGPathSegType::CurveToQuadraticAbs : SVGPathSegType::CurveToQuadraticRel;
                     }
                 );
             },
@@ -278,8 +278,8 @@ private:
                 return WTF::switchOn(command.toBy,
                     [](const auto& value) {
                         if (value.controlPoint)
-                            return std::holds_alternative<To>(value.affinity) ? SVGPathSegType::CurveToCubicSmoothAbs : SVGPathSegType::CurveToCubicSmoothRel;
-                        return std::holds_alternative<To>(value.affinity) ? SVGPathSegType::CurveToQuadraticSmoothAbs : SVGPathSegType::CurveToQuadraticSmoothRel;
+                            return std::holds_alternative<CSS::Keyword::To>(value.affinity) ? SVGPathSegType::CurveToCubicSmoothAbs : SVGPathSegType::CurveToCubicSmoothRel;
+                        return std::holds_alternative<CSS::Keyword::To>(value.affinity) ? SVGPathSegType::CurveToQuadraticSmoothAbs : SVGPathSegType::CurveToQuadraticSmoothRel;
                     }
                 );
             },
@@ -535,8 +535,8 @@ private:
             ArcCommand {
                 .toBy = fromOffsetPoint(offsetPoint, mode),
                 .size = { Length<> { r1 }, Length<> { r2 } },
-                .arcSweep = sweepFlag ? ArcSweep { Cw { } } : ArcSweep { Ccw { } },
-                .arcSize = largeArcFlag ? ArcSize { Large { } } : ArcSize { Small { } },
+                .arcSweep = sweepFlag ? ArcSweep { CSS::Keyword::Cw { } } : ArcSweep { CSS::Keyword::Ccw { } },
+                .arcSize = largeArcFlag ? ArcSize { CSS::Keyword::Large { } } : ArcSize { CSS::Keyword::Small { } },
                 .rotation = { angle },
             }
         );
@@ -609,8 +609,8 @@ auto Blending<ArcCommand>::blend(const ArcCommand& a, const ArcCommand& b, const
     return {
         .toBy = WebCore::Style::blend(a.toBy, b.toBy, context),
         .size = WebCore::Style::blend(a.size, b.size, context),
-        .arcSweep = blendWithPreferredValue(a.arcSweep, b.arcSweep, ArcSweep { Cw { } }, context),
-        .arcSize = blendWithPreferredValue(a.arcSize, b.arcSize, ArcSize { Large { } }, context),
+        .arcSweep = blendWithPreferredValue(a.arcSweep, b.arcSweep, ArcSweep { CSS::Keyword::Cw { } }, context),
+        .arcSize = blendWithPreferredValue(a.arcSize, b.arcSize, ArcSize { CSS::Keyword::Large { } }, context),
         .rotation = WebCore::Style::blend(a.rotation, b.rotation, context),
     };
 }
@@ -635,7 +635,7 @@ WebCore::Path PathComputation<Shape>::operator()(const Shape& value, const Float
 
 WebCore::WindRule WindRuleComputation<Shape>::operator()(const Shape& value)
 {
-    return (!value.fillRule || std::holds_alternative<Nonzero>(*value.fillRule)) ? WindRule::NonZero : WindRule::EvenOdd;
+    return (!value.fillRule || std::holds_alternative<CSS::Keyword::Nonzero>(*value.fillRule)) ? WindRule::NonZero : WindRule::EvenOdd;
 }
 
 // MARK: - Shape (blending)

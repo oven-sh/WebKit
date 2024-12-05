@@ -44,6 +44,9 @@ public:
     static Ref<ModelProcessModelPlayer> create(WebCore::ModelPlayerIdentifier, WebPage&, WebCore::ModelPlayerClient&);
     virtual ~ModelProcessModelPlayer();
 
+    void ref() const final { WebCore::ModelPlayer::ref(); }
+    void deref() const final { WebCore::ModelPlayer::deref(); }
+
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
     std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier() { return m_layerHostingContextIdentifier; };

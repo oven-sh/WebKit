@@ -3582,4 +3582,27 @@ TEST(SiteIsolation, IframeOpener)
     verifyThatOpenerIsParent(true);
 }
 
+TEST(SiteIsolation, ProcessReuse)
+{
+    HTTPServer server({
+        { "/example"_s, { "<iframe src='https://webkit.org/iframe' id='onlyiframe'></iframe>"_s } },
+        { "/iframe"_s, { "hi"_s } },
+        { "/iframe_with_alert"_s, { "<script>alert('loaded')</script>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr processPoolConfiguration = adoptNS([[_WKProcessPoolConfiguration alloc] init]);
+    processPoolConfiguration.get().usesWebProcessCache = YES;
+    RetainPtr processPool = adoptNS([[WKProcessPool alloc] _initWithConfiguration:processPoolConfiguration.get()]);
+    RetainPtr webViewConfiguration = server.httpsProxyConfiguration();
+    [webViewConfiguration setProcessPool:processPool.get()];
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(webViewConfiguration.get());
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/example"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    [webView objectByEvaluatingJavaScript:@"var frame = document.getElementById('onlyiframe'); frame.parentNode.removeChild(frame);1"];
+    [webView evaluateJavaScript:@"var iframe = document.createElement('iframe');iframe.src = 'https://webkit.org/iframe_with_alert';document.body.appendChild(iframe)" completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "loaded");
+}
+
 }

@@ -37,53 +37,42 @@ namespace Style {
 struct Path;
 
 // <coordinate-pair> = <length-percentage>{2}
-using CoordinatePair  = Point<LengthPercentage<>>;
+using CoordinatePair  = SpaceSeparatedPoint<LengthPercentage<>>;
 
-using By              = CSS::By;
-using To              = CSS::To;
 using CommandAffinity = CSS::CommandAffinity;
-
-using Cw              = CSS::Cw;
-using Ccw             = CSS::Ccw;
 using ArcSweep        = CSS::ArcSweep;
-
-using Large           = CSS::Large;
-using Small           = CSS::Small;
 using ArcSize         = CSS::ArcSize;
 
 // <control-point-anchor> = start | end | origin
-using Start           = CSS::Start;
-using End             = CSS::End;
-using Origin          = CSS::Origin;
 using ControlPointAnchor = CSS::ControlPointAnchor;
 
 // <to-position> = to <position>
 struct ToPosition {
-    static constexpr CommandAffinity affinity = Style::To { };
+    static constexpr CommandAffinity affinity = CSS::Keyword::To { };
 
     Position offset;
 
     bool operator==(const ToPosition&) const = default;
 };
-DEFINE_STYLE_TYPE_WRAPPER(ToPosition, offset);
-DEFINE_CSS_STYLE_MAPPING(CSS::ToPosition, ToPosition)
+DEFINE_TYPE_WRAPPER(ToPosition, offset);
+DEFINE_TYPE_MAPPING(CSS::ToPosition, ToPosition)
 
 // <by-coordinate-pair> = by <coordinate-pair>
 struct ByCoordinatePair {
-    static constexpr CommandAffinity affinity = Style::By { };
+    static constexpr CommandAffinity affinity = CSS::Keyword::By { };
 
     CoordinatePair offset;
 
     bool operator==(const ByCoordinatePair&) const = default;
 };
-DEFINE_STYLE_TYPE_WRAPPER(ByCoordinatePair, offset);
-DEFINE_CSS_STYLE_MAPPING(CSS::ByCoordinatePair, ByCoordinatePair)
+DEFINE_TYPE_WRAPPER(ByCoordinatePair, offset);
+DEFINE_TYPE_MAPPING(CSS::ByCoordinatePair, ByCoordinatePair)
 
 // <relative-control-point> = [<coordinate-pair> [from [start | end | origin]]?]
 // Specified https://github.com/w3c/csswg-drafts/issues/10649#issuecomment-2412816773
 struct RelativeControlPoint {
     using Anchor = ControlPointAnchor;
-    static constexpr auto defaultAnchor = Anchor { Start { } };
+    static constexpr auto defaultAnchor = Anchor { CSS::Keyword::Start { } };
 
     CoordinatePair offset;
     std::optional<Anchor> anchor;
@@ -97,7 +86,7 @@ template<size_t I> const auto& get(const RelativeControlPoint& value)
     if constexpr (I == 1)
         return value.anchor;
 }
-DEFINE_CSS_STYLE_MAPPING(CSS::RelativeControlPoint, RelativeControlPoint)
+DEFINE_TYPE_MAPPING(CSS::RelativeControlPoint, RelativeControlPoint)
 
 template<> struct Blending<RelativeControlPoint> {
     auto canBlend(const RelativeControlPoint&, const RelativeControlPoint&) -> bool;
@@ -108,7 +97,7 @@ template<> struct Blending<RelativeControlPoint> {
 // Specified https://github.com/w3c/csswg-drafts/issues/10649#issuecomment-2412816773
 struct AbsoluteControlPoint {
     using Anchor = ControlPointAnchor;
-    static constexpr auto defaultAnchor = Anchor { Origin { } };
+    static constexpr auto defaultAnchor = Anchor { CSS::Keyword::Origin { } };
 
     Position offset;
     std::optional<Anchor> anchor;
@@ -122,7 +111,7 @@ template<size_t I> const auto& get(const AbsoluteControlPoint& value)
     if constexpr (I == 1)
         return value.anchor;
 }
-DEFINE_CSS_STYLE_MAPPING(CSS::AbsoluteControlPoint, AbsoluteControlPoint)
+DEFINE_TYPE_MAPPING(CSS::AbsoluteControlPoint, AbsoluteControlPoint)
 
 template<> struct Blending<AbsoluteControlPoint> {
     auto canBlend(const AbsoluteControlPoint&, const AbsoluteControlPoint&) -> bool;
@@ -142,8 +131,8 @@ struct MoveCommand {
 
     bool operator==(const MoveCommand&) const = default;
 };
-DEFINE_STYLE_TYPE_WRAPPER(MoveCommand, toBy);
-DEFINE_CSS_STYLE_MAPPING(CSS::MoveCommand, MoveCommand)
+DEFINE_TYPE_WRAPPER(MoveCommand, toBy);
+DEFINE_TYPE_MAPPING(CSS::MoveCommand, MoveCommand)
 
 // MARK: - Line Command
 
@@ -158,8 +147,8 @@ struct LineCommand {
 
     bool operator==(const LineCommand&) const = default;
 };
-DEFINE_STYLE_TYPE_WRAPPER(LineCommand, toBy);
-DEFINE_CSS_STYLE_MAPPING(CSS::LineCommand, LineCommand)
+DEFINE_TYPE_WRAPPER(LineCommand, toBy);
+DEFINE_TYPE_MAPPING(CSS::LineCommand, LineCommand)
 
 // MARK: - HLine Command
 
@@ -169,14 +158,14 @@ DEFINE_CSS_STYLE_MAPPING(CSS::LineCommand, LineCommand)
 struct HLineCommand {
     static constexpr auto name = CSSValueHline;
     struct To {
-        static constexpr CommandAffinity affinity = Style::To { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::To { };
 
         TwoComponentPositionHorizontal offset;
 
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr CommandAffinity affinity = Style::By { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::By { };
 
         LengthPercentage<> offset;
 
@@ -186,12 +175,12 @@ struct HLineCommand {
 
     bool operator==(const HLineCommand&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(HLineCommand::By, offset);
-DEFINE_CSS_TYPE_WRAPPER(HLineCommand::To, offset);
-DEFINE_CSS_TYPE_WRAPPER(HLineCommand, toBy);
-DEFINE_CSS_STYLE_MAPPING(CSS::HLineCommand::To, HLineCommand::To)
-DEFINE_CSS_STYLE_MAPPING(CSS::HLineCommand::By, HLineCommand::By)
-DEFINE_CSS_STYLE_MAPPING(CSS::HLineCommand, HLineCommand)
+DEFINE_TYPE_WRAPPER(HLineCommand::By, offset);
+DEFINE_TYPE_WRAPPER(HLineCommand::To, offset);
+DEFINE_TYPE_WRAPPER(HLineCommand, toBy);
+DEFINE_TYPE_MAPPING(CSS::HLineCommand::To, HLineCommand::To)
+DEFINE_TYPE_MAPPING(CSS::HLineCommand::By, HLineCommand::By)
+DEFINE_TYPE_MAPPING(CSS::HLineCommand, HLineCommand)
 
 // MARK: - VLine Command
 
@@ -201,14 +190,14 @@ DEFINE_CSS_STYLE_MAPPING(CSS::HLineCommand, HLineCommand)
 struct VLineCommand {
     static constexpr auto name = CSSValueVline;
     struct To {
-        static constexpr CommandAffinity affinity = Style::To { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::To { };
 
         TwoComponentPositionVertical offset;
 
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr CommandAffinity affinity = Style::By { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::By { };
 
         LengthPercentage<> offset;
 
@@ -218,12 +207,12 @@ struct VLineCommand {
 
     bool operator==(const VLineCommand&) const = default;
 };
-DEFINE_CSS_TYPE_WRAPPER(VLineCommand::By, offset);
-DEFINE_CSS_TYPE_WRAPPER(VLineCommand::To, offset);
-DEFINE_CSS_TYPE_WRAPPER(VLineCommand, toBy);
-DEFINE_CSS_STYLE_MAPPING(CSS::VLineCommand::To, VLineCommand::To)
-DEFINE_CSS_STYLE_MAPPING(CSS::VLineCommand::By, VLineCommand::By)
-DEFINE_CSS_STYLE_MAPPING(CSS::VLineCommand, VLineCommand)
+DEFINE_TYPE_WRAPPER(VLineCommand::By, offset);
+DEFINE_TYPE_WRAPPER(VLineCommand::To, offset);
+DEFINE_TYPE_WRAPPER(VLineCommand, toBy);
+DEFINE_TYPE_MAPPING(CSS::VLineCommand::To, VLineCommand::To)
+DEFINE_TYPE_MAPPING(CSS::VLineCommand::By, VLineCommand::By)
+DEFINE_TYPE_MAPPING(CSS::VLineCommand, VLineCommand)
 
 // MARK: - Curve Command
 
@@ -234,7 +223,7 @@ DEFINE_CSS_STYLE_MAPPING(CSS::VLineCommand, VLineCommand)
 struct CurveCommand {
     static constexpr auto name = CSSValueCurve;
     struct To {
-        static constexpr CommandAffinity affinity = Style::To { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::To { };
 
         Position offset;
         AbsoluteControlPoint controlPoint1;
@@ -243,7 +232,7 @@ struct CurveCommand {
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr CommandAffinity affinity = Style::By { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::By { };
 
         CoordinatePair offset;
         RelativeControlPoint controlPoint1;
@@ -273,11 +262,11 @@ template<size_t I> const auto& get(const CurveCommand::By& value)
     if constexpr (I == 2)
         return value.controlPoint2;
 }
-DEFINE_CSS_TYPE_WRAPPER(CurveCommand, toBy);
+DEFINE_TYPE_WRAPPER(CurveCommand, toBy);
 
-DEFINE_CSS_STYLE_MAPPING(CSS::CurveCommand, CurveCommand)
-DEFINE_CSS_STYLE_MAPPING(CSS::CurveCommand::To, CurveCommand::To)
-DEFINE_CSS_STYLE_MAPPING(CSS::CurveCommand::By, CurveCommand::By)
+DEFINE_TYPE_MAPPING(CSS::CurveCommand, CurveCommand)
+DEFINE_TYPE_MAPPING(CSS::CurveCommand::To, CurveCommand::To)
+DEFINE_TYPE_MAPPING(CSS::CurveCommand::By, CurveCommand::By)
 
 // MARK: - Smooth Command
 
@@ -288,7 +277,7 @@ DEFINE_CSS_STYLE_MAPPING(CSS::CurveCommand::By, CurveCommand::By)
 struct SmoothCommand {
     static constexpr auto name = CSSValueSmooth;
     struct To {
-        static constexpr CommandAffinity affinity = Style::To { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::To { };
 
         Position offset;
         std::optional<AbsoluteControlPoint> controlPoint;
@@ -296,7 +285,7 @@ struct SmoothCommand {
         bool operator==(const To&) const = default;
     };
     struct By {
-        static constexpr CommandAffinity affinity = Style::By { };
+        static constexpr CommandAffinity affinity = CSS::Keyword::By { };
 
         CoordinatePair offset;
         std::optional<RelativeControlPoint> controlPoint;
@@ -321,11 +310,11 @@ template<size_t I> const auto& get(const SmoothCommand::By& value)
     if constexpr (I == 1)
         return value.controlPoint;
 }
-DEFINE_CSS_TYPE_WRAPPER(SmoothCommand, toBy);
+DEFINE_TYPE_WRAPPER(SmoothCommand, toBy);
 
-DEFINE_CSS_STYLE_MAPPING(CSS::SmoothCommand, SmoothCommand)
-DEFINE_CSS_STYLE_MAPPING(CSS::SmoothCommand::To, SmoothCommand::To)
-DEFINE_CSS_STYLE_MAPPING(CSS::SmoothCommand::By, SmoothCommand::By)
+DEFINE_TYPE_MAPPING(CSS::SmoothCommand, SmoothCommand)
+DEFINE_TYPE_MAPPING(CSS::SmoothCommand::To, SmoothCommand::To)
+DEFINE_TYPE_MAPPING(CSS::SmoothCommand::By, SmoothCommand::By)
 
 // MARK: - Arc Command
 
@@ -338,7 +327,7 @@ struct ArcCommand {
     using By = ByCoordinatePair;
     std::variant<To, By> toBy;
 
-    using SizeOfEllipse = Size<LengthPercentage<>>;
+    using SizeOfEllipse = SpaceSeparatedSize<LengthPercentage<>>;
     SizeOfEllipse size;
 
     ArcSweep arcSweep;
@@ -361,7 +350,7 @@ template<size_t I> const auto& get(const ArcCommand& value)
         return value.rotation;
 }
 
-DEFINE_CSS_STYLE_MAPPING(CSS::ArcCommand, ArcCommand)
+DEFINE_TYPE_MAPPING(CSS::ArcCommand, ArcCommand)
 
 template<> struct Blending<ArcCommand> {
     auto canBlend(const ArcCommand&, const ArcCommand&) -> bool;
@@ -372,7 +361,7 @@ template<> struct Blending<ArcCommand> {
 
 // <close> = close
 // https://drafts.csswg.org/css-shapes-2/#valdef-shape-close
-using CloseCommand = Constant<CSSValueClose>;
+using CloseCommand = CSS::Keyword::Close;
 
 // MARK: - Shape Command (variant)
 
@@ -406,7 +395,7 @@ template<size_t I> const auto& get(const Shape& value)
         return value.commands;
 }
 
-DEFINE_CSS_STYLE_MAPPING(CSS::Shape, Shape)
+DEFINE_TYPE_MAPPING(CSS::Shape, Shape)
 
 template<> struct PathComputation<Shape> { WebCore::Path operator()(const Shape&, const FloatRect&); };
 template<> struct WindRuleComputation<Shape> { WebCore::WindRule operator()(const Shape&); };
@@ -426,11 +415,23 @@ std::optional<Shape> makeShapeFromPath(const Path&);
 } // namespace Style
 } // namespace WebCore
 
+STYLE_TUPLE_LIKE_CONFORMANCE(ToPosition, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(ByCoordinatePair, 1)
 STYLE_TUPLE_LIKE_CONFORMANCE(RelativeControlPoint, 2)
 STYLE_TUPLE_LIKE_CONFORMANCE(AbsoluteControlPoint, 2)
+STYLE_TUPLE_LIKE_CONFORMANCE(MoveCommand, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(LineCommand, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(HLineCommand::To, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(HLineCommand::By, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(HLineCommand, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(VLineCommand::To, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(VLineCommand::By, 1)
+STYLE_TUPLE_LIKE_CONFORMANCE(VLineCommand, 1)
 STYLE_TUPLE_LIKE_CONFORMANCE(CurveCommand::To, 3)
 STYLE_TUPLE_LIKE_CONFORMANCE(CurveCommand::By, 3)
+STYLE_TUPLE_LIKE_CONFORMANCE(CurveCommand, 1)
 STYLE_TUPLE_LIKE_CONFORMANCE(SmoothCommand::To, 2)
 STYLE_TUPLE_LIKE_CONFORMANCE(SmoothCommand::By, 2)
+STYLE_TUPLE_LIKE_CONFORMANCE(SmoothCommand, 1)
 STYLE_TUPLE_LIKE_CONFORMANCE(ArcCommand, 5)
 STYLE_TUPLE_LIKE_CONFORMANCE(Shape, 3)

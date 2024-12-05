@@ -43,8 +43,8 @@ public:
     void initializeConnection(IPC::Connection&);
 
     // Do nothing since this is a singleton.
-    void ref() const { }
-    void deref() const { }
+    void ref() const final { }
+    void deref() const final { }
 
 private:
     SecItemShimProxy();

@@ -56,9 +56,6 @@ imported/w3c/web-platform-tests/css/css-multicol/multicol-width-ch-001.xht [ Pas
 
 fast/events/keyboardevent-modifier.html [ Pass ]
 
-# FAIL results are platform dependent
-imported/w3c/web-platform-tests/css/css-anchor-position/anchor-invalid-fallback.html [ Failure ]
-
 # PointerEvents not enabled globally, but enabled for GTK (EXPERIMENTAL_FEATURES)
 pointerevents/mouse [ Pass ]
 imported/w3c/web-platform-tests/pointerevents [ Pass ]
@@ -236,9 +233,6 @@ webkit.org/b/218367 inspector/page/setScreenSizeOverride.html [ Failure Pass Tim
 webkit.org/b/254733 inspector/canvas/recording-offscreen-bitmaprenderer-frameCount.html [ Failure Pass ]
 webkit.org/b/254733 inspector/canvas/recording-offscreen-bitmaprenderer-full.html [ Failure Pass ]
 webkit.org/b/254733 inspector/canvas/recording-offscreen-bitmaprenderer-memoryLimit.html [ Failure Pass ]
-webkit.org/b/254733 inspector/canvas/recording-offscreen-canvas-2d-frameCount.html [ Failure ]
-webkit.org/b/254733 inspector/canvas/recording-offscreen-canvas-2d-full.html [ Failure ]
-webkit.org/b/254733 inspector/canvas/recording-offscreen-canvas-2d-memoryLimit.html [ Failure ]
 webkit.org/b/254733 inspector/canvas/recording-offscreen-webgl2-frameCount.html [ Failure Pass ]
 webkit.org/b/254733 inspector/canvas/recording-offscreen-webgl2-full.html [ Failure ]
 webkit.org/b/254733 inspector/canvas/recording-offscreen-webgl2-memoryLimit.html [ Failure Pass ]
@@ -1019,10 +1013,6 @@ webkit.org/b/143985 editing/pasteboard/drop-text-events.html [ Failure ]
 
 webkit.org/b/144864 fast/events/clear-drag-state.html [ Failure ]
 
-# Probably failing because resizing is asynchronous.
-
-webkit.org/b/153771 animations/resume-after-page-cache.html [ Failure ]
-
 webkit.org/b/218320 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-destinationnode-interface/destination.html [ Failure ]
 
 webkit.org/b/156436 fast/harness/sample-fail-mismatch-reftest.html [ ImageOnlyFailure ]
@@ -1327,8 +1317,6 @@ webkit.org/b/144690 editing/spelling/spelling-with-punctuation-selection.html [ 
 webkit.org/b/144690 editing/spelling/delete-into-misspelled-word.html [ Timeout ]
 
 webkit.org/b/163779 http/tests/xmlhttprequest/on-network-timeout-error-during-preflight.html [ Timeout ]
-
-webkit.org/b/172284 svg/animations/animated-svg-image-outside-viewport-paused.html [ Timeout ]
 
 webkit.org/b/179261 editing/selection/drag-to-contenteditable-iframe.html [ Timeout ]
 
@@ -1723,12 +1711,8 @@ webkit.org/b/224076 imported/w3c/web-platform-tests/css/css-text/white-space/whi
 
 imported/w3c/web-platform-tests/css/css-transforms/ttwf-css-3d-polygon-cycle.html [ ImageOnlyFailure ]
 
-webkit.org/b/241699 imported/w3c/web-platform-tests/css/css-transforms/3d-rendering-context-and-abspos.html [ ImageOnlyFailure ]
-webkit.org/b/241699 imported/w3c/web-platform-tests/css/css-transforms/3d-rendering-context-and-fixpos.html [ ImageOnlyFailure ]
-webkit.org/b/241699 imported/w3c/web-platform-tests/css/css-transforms/transform3d-sorting-004.html [ ImageOnlyFailure ]
 webkit.org/b/279023 imported/w3c/web-platform-tests/css/css-transforms/backface-visibility-hidden-animated-002.html [ ImageOnlyFailure ]
 webkit.org/b/279023 imported/w3c/web-platform-tests/css/css-transforms/composited-under-rotateY-180deg-perspective.html [ ImageOnlyFailure ]
-webkit.org/b/279023 imported/w3c/web-platform-tests/css/css-transforms/composited-under-rotateY-180deg-preserve-3d.html [ ImageOnlyFailure ]
 
 webkit.org/b/234782 imported/w3c/web-platform-tests/css/css-writing-modes/text-shadow-orientation-upright-001.html [ ImageOnlyFailure ]
 
@@ -1876,7 +1860,6 @@ webkit.org/b/261024 webgl/2.0.0/conformance2/query/occlusion-query.html [ Pass T
 webkit.org/b/261024 webgl/2.0.y/conformance2/textures/canvas/tex-3d-r8-red-unsigned_byte.html [ Pass Timeout ]
 webkit.org/b/261024 webrtc/utf8-sdp.html [ Pass Timeout ]
 
-webkit.org/b/264598 transforms/3d/general/cssmatrix-3d-zoom.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter.html [ ImageOnlyFailure ]
 
@@ -1895,7 +1878,11 @@ webkit.org/b/264680 imported/w3c/web-platform-tests/html/semantics/embedded-cont
 webkit.org/b/264680 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/autoplay-disabled-by-feature-policy.https.sub.html [ Crash Failure Pass ]
 webkit.org/b/264680 imported/w3c/web-platform-tests/media-source/mediasource-seek-during-pending-seek.html [ Crash Failure Pass Timeout ]
 webkit.org/b/264680 inspector/heap/getPreview.html [ Failure Pass ]
-webkit.org/b/264680 media/video-seek-past-end-playing.html [ Pass Timeout ]
+webkit.org/b/264680 media/no-fullscreen-when-hidden.html [ Timeout Pass ]
+webkit.org/b/264680 media/video-background-tab-playback.html [ Timeout Pass ]
+webkit.org/b/264680 media/video-muted-holds-sleep-assertion.html [ Timeout Pass ]
+webkit.org/b/264680 media/video-seek-past-end-playing.html [ Timeout Pass ]
+webkit.org/b/264680 media/video-unmuted-after-play-holds-sleep-assertion.html [ Timeout Pass ]
 webkit.org/b/264680 scrollbars/scrollbar-selectors.html [ Pass Timeout ]
 webkit.org/b/264680 webrtc/peer-connection-audio-mute2.html [ Failure Pass Timeout ]
 
@@ -1956,3 +1943,5 @@ editing/spelling/spelling-marker-includes-hyphen.html [ ImageOnlyFailure ]
 http/tests/cookies/same-site/fetch-after-navigating-iframe-in-cross-origin-page.html [ Failure ]
 http/tests/cookies/same-site/fetch-in-cross-origin-service-worker.html [ Failure ]
 http/tests/cookies/same-site/popup-cross-site-post.html [ Failure ]
+
+imported/w3c/web-platform-tests/css/css-view-transitions/element-is-grouping-during-animation.html [ ImageOnlyFailure Pass ]

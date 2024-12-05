@@ -53,9 +53,7 @@ public:
     explicit RemoteRemoteCommandListener(WebCore::RemoteCommandListenerClient&);
     ~RemoteRemoteCommandListener();
 
-    void ref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteRemoteCommandListener>::ref(); }
-    void deref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteRemoteCommandListener>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteRemoteCommandListener>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
 private:
     // IPC::MessageReceiver

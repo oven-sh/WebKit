@@ -37,6 +37,7 @@
 #include "MediaSessionReadyState.h"
 #include <wtf/Logger.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakHashSet.h>
@@ -76,7 +77,7 @@ public:
 #endif
 };
 
-class MediaSession : public RefCounted<MediaSession>, public ActiveDOMObject, public CanMakeWeakPtr<MediaSession> {
+class MediaSession : public RefCountedAndCanMakeWeakPtr<MediaSession>, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(MediaSession);
 public:
     void ref() const final { RefCounted::ref(); }

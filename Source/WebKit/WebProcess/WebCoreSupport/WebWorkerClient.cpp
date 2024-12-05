@@ -63,6 +63,7 @@ public:
 #endif
 private:
     RemoteRenderingBackendProxy& ensureRenderingBackend() const;
+    Ref<RemoteRenderingBackendProxy> ensureProtectedRenderingBackend() const { return ensureRenderingBackend(); }
 
     mutable RefPtr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
 };
@@ -91,7 +92,7 @@ RefPtr<ImageBuffer> GPUProcessWebWorkerClient::sinkIntoImageBuffer(std::unique_p
         return nullptr;
     if (is<RemoteSerializedImageBufferProxy>(imageBuffer)) {
         auto remote = std::unique_ptr<RemoteSerializedImageBufferProxy>(static_cast<RemoteSerializedImageBufferProxy*>(imageBuffer.release()));
-        return RemoteSerializedImageBufferProxy::sinkIntoImageBuffer(WTFMove(remote), ensureRenderingBackend());
+        return RemoteSerializedImageBufferProxy::sinkIntoImageBuffer(WTFMove(remote), ensureProtectedRenderingBackend());
     }
     return WebWorkerClient::sinkIntoImageBuffer(WTFMove(imageBuffer));
 }
@@ -101,7 +102,7 @@ RefPtr<ImageBuffer> GPUProcessWebWorkerClient::createImageBuffer(const FloatSize
     if (RefPtr dispatcher = this->dispatcher())
         assertIsCurrent(*dispatcher);
     if (WebProcess::singleton().shouldUseRemoteRenderingFor(purpose))
-        return ensureRenderingBackend().createImageBuffer(size, purpose, resolutionScale, colorSpace, pixelFormat, options);
+        return ensureProtectedRenderingBackend()->createImageBuffer(size, purpose, resolutionScale, colorSpace, pixelFormat, options);
     return nullptr;
 }
 
@@ -112,7 +113,7 @@ RefPtr<GraphicsContextGL> GPUProcessWebWorkerClient::createGraphicsContextGL(con
         return nullptr;
     assertIsCurrent(*dispatcher);
     if (WebProcess::singleton().shouldUseRemoteRenderingForWebGL())
-        return RemoteGraphicsContextGLProxy::create(attributes, ensureRenderingBackend(), *dispatcher);
+        return RemoteGraphicsContextGLProxy::create(attributes, ensureProtectedRenderingBackend(), *dispatcher);
     return WebWorkerClient::createGraphicsContextGL(attributes);
 }
 
@@ -123,7 +124,7 @@ RefPtr<WebCore::WebGPU::GPU> GPUProcessWebWorkerClient::createGPUForWebGPU() con
     if (!dispatcher)
         return nullptr;
     assertIsCurrent(*dispatcher);
-    return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), ensureRenderingBackend(), *dispatcher);
+    return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), ensureProtectedRenderingBackend(), *dispatcher);
 }
 #endif
 
