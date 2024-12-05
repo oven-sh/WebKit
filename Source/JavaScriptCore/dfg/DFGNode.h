@@ -2940,11 +2940,6 @@ public:
         //
         return enableInt52() && isInt32OrInt52Speculation(prediction());
     }
-
-    bool shouldSpeculateNotInt52()
-    {
-        return isNotInt32OrInt52Speculation(prediction());
-    }
     
     bool shouldSpeculateDouble()
     {
@@ -3102,30 +3097,15 @@ public:
     {
         return isInt8ArraySpeculation(prediction());
     }
-
-    bool shouldSpeculateNotInt8Array()
-    {
-        return isNotInt8ArraySpeculation(prediction());
-    }
     
     bool shouldSpeculateInt16Array()
     {
         return isInt16ArraySpeculation(prediction());
     }
-
-    bool shouldSpeculateNotInt16Array()
-    {
-        return isNotInt16ArraySpeculation(prediction());
-    }
     
     bool shouldSpeculateInt32Array()
     {
         return isInt32ArraySpeculation(prediction());
-    }
-
-    bool shouldSpeculateNotInt32Array()
-    {
-        return isNotInt32ArraySpeculation(prediction());
     }
     
     bool shouldSpeculateUint8Array()
@@ -3133,47 +3113,22 @@ public:
         return isUint8ArraySpeculation(prediction());
     }
 
-    bool shouldSpeculateNotUint8Array()
-    {
-        return isNotUint8ArraySpeculation(prediction());
-    }
-
     bool shouldSpeculateUint8ClampedArray()
     {
         return isUint8ClampedArraySpeculation(prediction());
-    }
-
-    bool shouldSpeculateNotUint8ClampedArray()
-    {
-        return isNotUint8ClampedArraySpeculation(prediction());
     }
     
     bool shouldSpeculateUint16Array()
     {
         return isUint16ArraySpeculation(prediction());
     }
-
-    bool shouldSpeculateNotUint16Array()
-    {
-        return isNotUint16ArraySpeculation(prediction());
-    }
     
     bool shouldSpeculateUint32Array()
     {
         return isUint32ArraySpeculation(prediction());
     }
-
-    bool shouldSpeculateNotUint32Array()
-    {
-        return isNotUint32ArraySpeculation(prediction());
-    }
     
     bool shouldSpeculateFloat16Array()
-    {
-        return isFloat16ArraySpeculation(prediction());
-    }
-
-    bool shouldSpeculateNotFloat16Array()
     {
         return isFloat16ArraySpeculation(prediction());
     }
@@ -3182,20 +3137,10 @@ public:
     {
         return isFloat32ArraySpeculation(prediction());
     }
-
-    bool shouldSpeculateNotFloat32Array()
-    {
-        return isNotFloat32ArraySpeculation(prediction());
-    }
     
     bool shouldSpeculateFloat64Array()
     {
         return isFloat64ArraySpeculation(prediction());
-    }
-
-    bool shouldSpeculateNotFloat64Array()
-    {
-        return isNotFloat64ArraySpeculation(prediction());
     }
     
     bool shouldSpeculateArrayOrOther()
