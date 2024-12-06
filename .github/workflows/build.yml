@@ -121,37 +121,43 @@ jobs:
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Debug"
+            RELEASE_FLAGS: "-O2 -DNDEBUG=1"
           - lto_flag: ""
             label: bun-webkit-linux-arm64-debug
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Debug"
+            RELEASE_FLAGS: "-O2 -DNDEBUG=1"
           - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-arm64-lto
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
+            RELEASE_FLAGS: "-O2 -DNDEBUG=1"
           - lto_flag: ""
             label: bun-webkit-linux-arm64
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
+            RELEASE_FLAGS: "-O2 -DNDEBUG=1"
           - lto_flag: "-flto=full  -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-lto
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
+            RELEASE_FLAGS: "-O2 -DNDEBUG=1"
           - lto_flag: "-flto=full  -fwhole-program-vtables -fforce-emit-vtables -Os"
             label: bun-webkit-linux-amd64-smol
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
+            RELEASE_FLAGS: "-Os -DNDEBUG=1"
           - lto_flag: ""
             label: bun-webkit-linux-amd64
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
-
+            RELEASE_FLAGS: "-O2 -DNDEBUG=1"
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -166,6 +172,8 @@ jobs:
         with:
           install: true
       - name: Run
+        env:
+          RELEASE_FLAGS: ${{matrix.RELEASE_FLAGS}}
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
           WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} bash release.sh

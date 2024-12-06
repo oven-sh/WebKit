@@ -2,6 +2,7 @@ ARG MARCH_FLAG=""
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG CPU=native
 ARG LTO_FLAG="-flto=full -fwhole-program-vtables -fforce-emit-vtables "
+ARG RELEASE_FLAGS="-O2 -DNDEBUG=1"
 ARG LLVM_VERSION="18"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG DEBIAN_VERSION="bookworm"
@@ -15,6 +16,7 @@ ARG CPU
 ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
+ARG RELEASE_FLAGS
 ARG DEBIAN_VERSION
 ARG GLIBC_VERSION
 
@@ -121,7 +123,7 @@ WORKDIR /webkit
 
 ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
-
+ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export CFLAGS="$CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
@@ -144,6 +146,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_RANLIB=$(which llvm-ranlib) \
     -DCMAKE_C_FLAGS="$CFLAGS" \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+    -DCMAKE_C_FLAGS_RELEASE="$RELEASE_FLAGS" \
+    -DCMAKE_CXX_FLAGS_RELEASE="$RELEASE_FLAGS" \
     -DICU_ROOT=/icu \
     -G Ninja \
     /webkit && \

@@ -49,6 +49,17 @@ rm -rf $temp/bun-webkit
 
 echo "Building $CONTAINER_NAME to $temp/bun-webkit"
 
-docker buildx build -f Dockerfile -t $CONTAINER_NAME --build-arg LTO_FLAG="$LTO_FLAG" --build-arg WEBKIT_RELEASE_TYPE=$WEBKIT_RELEASE_TYPE  --progress=plain --platform=linux/$BUILDKIT_ARCH --target=artifact --output type=local,dest=$temp/bun-webkit .
+docker buildx build \
+  -f Dockerfile \
+  -t $CONTAINER_NAME \
+  --build-arg LTO_FLAG="$LTO_FLAG" \
+  --build-arg RELEASE_FLAGS="$RELEASE_FLAGS" \
+  --build-arg WEBKIT_RELEASE_TYPE=$WEBKIT_RELEASE_TYPE \
+  --build-arg RELEASE_FLAGS="${RELEASE_FLAGS:-"-O2 -DNDEBUG=1"}" \
+  --progress=plain \
+  --platform=linux/$BUILDKIT_ARCH \
+  --target=artifact \
+  --output type=local,dest=$temp/bun-webkit \
+  .
 
 echo "Successfully built $CONTAINER_NAME to $temp/bun-webkit"
