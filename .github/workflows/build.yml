@@ -141,6 +141,11 @@ jobs:
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
+          - lto_flag: "-flto=full  -fwhole-program-vtables -fforce-emit-vtables -Os"
+            label: bun-webkit-linux-amd64-smol
+            os: big-ubuntu
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
           - lto_flag: ""
             label: bun-webkit-linux-amd64
             os: big-ubuntu
@@ -376,6 +381,10 @@ jobs:
         with:
           name: bun-webkit-linux-arm64-musl-lto
           path: ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto
+      - uses: actions/download-artifact@v3
+        with:
+          name: bun-webkit-linux-amd64-smol
+          path: ${{runner.temp}}/bun-webkit-linux-amd64-smol
 
       - name: Rename files
         run: |
@@ -397,7 +406,7 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-windows-amd64-debug.tar.gz
-
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-smol/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64-smol.tar.gz
       - name: Release
         uses: softprops/action-gh-release@v1
         id: release
@@ -423,3 +432,4 @@ jobs:
             ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto.tar.gz
             ${{runner.temp}}/bun-webkit-windows-amd64.tar.gz
             ${{runner.temp}}/bun-webkit-windows-amd64-debug.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-amd64-smol.tar.gz
