@@ -58,19 +58,50 @@ RUN add-apt-repository ppa:ubuntu-toolchain-r/test \
         libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Ensure GCC 13 is the default
-RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
-    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
-    --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \
-    --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
-    --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
+# Configure architecture-specific paths
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        export ARCH_PATH="aarch64-linux-gnu"; \
+    else \
+        export ARCH_PATH="x86_64-linux-gnu"; \
+    fi \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
+        --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
+        --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \
+        --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
+        --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Configure library paths
-RUN mkdir -p /usr/lib/gcc/x86_64-linux-gnu/13 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/gcc/x86_64-linux-gnu/13/ && \
-    echo "/usr/lib/gcc/x86_64-linux-gnu/13" > /etc/ld.so.conf.d/gcc-13.conf && \
-    echo "/usr/lib/x86_64-linux-gnu" >> /etc/ld.so.conf.d/gcc-13.conf && \
-    ldconfig
+# Install LLVM 18 with architecture-specific handling
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        echo "deb http://apt.llvm.org/bionic/ llvm-toolchain-bionic-18 main" > /etc/apt/sources.list.d/llvm.list \
+        && wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends \
+            clang-18 \
+            lld-18 \
+            lldb-18 \
+            llvm-18 \
+            llvm-18-dev \
+            llvm-18-tools \
+            libomp-18-dev \
+            libclang-18-dev \
+            libclang-cpp18-dev \
+            libunwind-18-dev; \
+    else \
+        wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 18 all && rm llvm.sh; \
+    fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up architecture-specific library paths
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        export ARCH_PATH="aarch64-linux-gnu"; \
+    else \
+        export ARCH_PATH="x86_64-linux-gnu"; \
+    fi \
+    && mkdir -p /usr/lib/gcc/${ARCH_PATH}/13 \
+    && ln -sf /usr/lib/${ARCH_PATH}/libstdc++.so.6 /usr/lib/gcc/${ARCH_PATH}/13/ \
+    && echo "/usr/lib/gcc/${ARCH_PATH}/13" > /etc/ld.so.conf.d/gcc-13.conf \
+    && echo "/usr/lib/${ARCH_PATH}" >> /etc/ld.so.conf.d/gcc-13.conf \
+    && ldconfig
 
 # Install LLVM 18
 RUN wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 18 all \
