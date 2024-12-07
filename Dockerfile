@@ -54,9 +54,7 @@ RUN add-apt-repository ppa:ubuntu-toolchain-r/test \
         libatomic1 \
         libtsan0 \
         liblsan0 \
-        libquadmath0 \
         libgfortran5 \
-        lib32gcc-13-dev \
         libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
