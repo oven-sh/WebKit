@@ -6,7 +6,10 @@ ARG RELEASE_FLAGS="-O2 -DNDEBUG=1"
 ARG LLVM_VERSION="18"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 
-FROM ubuntu:18.04
+# Use different base images for ARM64 vs x86_64
+FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
+FROM --platform=$BUILDPLATFORM ubuntu:18.04 as base-amd64
+FROM base-$TARGETARCH as base
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
@@ -15,6 +18,7 @@ ARG LTO_FLAG
 ARG RELEASE_FLAGS
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
+ARG TARGETARCH
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -34,9 +38,9 @@ RUN apt-get update && apt-get install -y \
     lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
-# Install modern CMake
+# Install modern CMake for Ubuntu
 RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null \
-    && apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' \
+    && apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" \
     && apt-get update \
     && apt-get install -y cmake \
     && rm -rf /var/lib/apt/lists/*
@@ -58,38 +62,44 @@ RUN add-apt-repository ppa:ubuntu-toolchain-r/test \
         libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure architecture-specific paths
-RUN if [ "$(uname -m)" = "aarch64" ]; then \
+# Ensure GCC 13 is the default
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
+    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
+    --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \
+    --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
+    --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
+
+# Install LLVM 18
+RUN wget https://apt.llvm.org/llvm.sh \
+    && chmod +x llvm.sh \
+    && ./llvm.sh 18 all \
+    && rm llvm.sh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure library paths
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
         export ARCH_PATH="aarch64-linux-gnu"; \
     else \
         export ARCH_PATH="x86_64-linux-gnu"; \
     fi \
-    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
-        --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
-        --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \
-        --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
-        --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
+    && mkdir -p /usr/lib/gcc/${ARCH_PATH}/13 \
+    && ln -sf /usr/lib/${ARCH_PATH}/libstdc++.so.6 /usr/lib/gcc/${ARCH_PATH}/13/ \
+    && echo "/usr/lib/gcc/${ARCH_PATH}/13" > /etc/ld.so.conf.d/gcc-13.conf \
+    && echo "/usr/lib/${ARCH_PATH}" >> /etc/ld.so.conf.d/gcc-13.conf \
+    && ldconfig
 
-# Install LLVM 18 with architecture-specific handling
-RUN if [ "$(uname -m)" = "aarch64" ]; then \
-        echo "deb http://apt.llvm.org/bionic/ llvm-toolchain-bionic-18 main" > /etc/apt/sources.list.d/llvm.list \
-        && wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
-        && apt-get update \
-        && apt-get install -y --no-install-recommends \
-            clang-18 \
-            lld-18 \
-            lldb-18 \
-            llvm-18 \
-            llvm-18-dev \
-            llvm-18-tools \
-            libomp-18-dev \
-            libclang-18-dev \
-            libclang-cpp18-dev \
-            libunwind-18-dev; \
-    else \
-        wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 18 all && rm llvm.sh; \
-    fi \
-    && rm -rf /var/lib/apt/lists/*
+# Set up LLVM toolchain symlinks
+RUN for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
+    && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
+    && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
+    && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
+    && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
+    && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
+    && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
+    && ln -sf /usr/bin/ld.lld /usr/bin/ld \
+    && ln -sf /usr/bin/clang /usr/bin/cc \
+    && ln -sf /usr/bin/clang++ /usr/bin/c++
+
 
 # Set up architecture-specific library paths
 RUN if [ "$(uname -m)" = "aarch64" ]; then \
@@ -103,10 +113,6 @@ RUN if [ "$(uname -m)" = "aarch64" ]; then \
     && echo "/usr/lib/${ARCH_PATH}" >> /etc/ld.so.conf.d/gcc-13.conf \
     && ldconfig
 
-# Install LLVM 18
-RUN wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 18 all \
-    && rm llvm.sh \
-    && rm -rf /var/lib/apt/lists/*
 
 # Install additional WebKit build dependencies
 RUN apt-get update && apt-get install -y \
@@ -221,4 +227,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore
 
 FROM scratch as artifact
-COPY --from=0 /output /
+ARG TARGETARCH
+
+COPY --from=base /output /
