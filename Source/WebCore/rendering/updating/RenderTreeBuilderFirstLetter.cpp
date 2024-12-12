@@ -73,7 +73,6 @@ static std::optional<RenderStyle> styleForFirstLetter(const RenderElement& first
         newFontDescription.setSpecifiedSize(startingFontSize);
         newFontDescription.setComputedSize(startingFontSize);
         firstLetterStyle.setFontDescription(WTFMove(newFontDescription));
-        firstLetterStyle.fontCascade().update(firstLetterStyle.fontCascade().fontSelector());
 
         int desiredCapHeight = (firstLetterStyle.initialLetterHeight() - 1) * lineHeight + paragraph->style().metricsOfPrimaryFont().intCapHeight();
         int actualCapHeight = firstLetterStyle.metricsOfPrimaryFont().intCapHeight();
@@ -82,7 +81,6 @@ static std::optional<RenderStyle> styleForFirstLetter(const RenderElement& first
             newFontDescription.setSpecifiedSize(newFontDescription.specifiedSize() - 1);
             newFontDescription.setComputedSize(newFontDescription.computedSize() -1);
             firstLetterStyle.setFontDescription(WTFMove(newFontDescription));
-            firstLetterStyle.fontCascade().update(firstLetterStyle.fontCascade().fontSelector());
             actualCapHeight = firstLetterStyle.metricsOfPrimaryFont().intCapHeight();
         }
     }

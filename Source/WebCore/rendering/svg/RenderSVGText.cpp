@@ -471,13 +471,8 @@ void RenderSVGText::computePerCharacterLayoutInformation()
     }
 
     if (inlineLayout()) {
-        inlineLayout()->applySVGTextFragments(WTFMove(fragmentMap));
-
-        FloatRect childRect;
-        for (auto& box : InlineIterator::boxesFor(*this))
-            childRect.unite(box.visualRectIgnoringBlockDirection());
-
-        updatePositionAndOverflow(childRect);
+        auto boundaries = inlineLayout()->applySVGTextFragments(WTFMove(fragmentMap));
+        updatePositionAndOverflow(boundaries);
     }
 }
 
@@ -787,16 +782,30 @@ void RenderSVGText::applyTransform(TransformationMatrix& transform, const Render
 
 VisiblePosition RenderSVGText::positionForPoint(const LayoutPoint& pointInContents, HitTestSource source, const RenderFragmentContainer* fragment)
 {
-    auto* rootBox = legacyRootBox();
-    if (!rootBox)
-        return createVisiblePosition(0, Affinity::Downstream);
+    InlineIterator::BoxIterator closestBox;
+    InlineIterator::BoxIterator lastBox;
+    for (auto& box : InlineIterator::boxesFor(*this)) {
+        auto* textBox = dynamicDowncast<InlineIterator::SVGTextBox>(box);
+        if (!textBox)
+            continue;
+        lastBox = *textBox;
+        auto rect = textBox->visualRectIgnoringBlockDirection();
+        if (pointInContents.y() < rect.y())
+            continue;
+        if (pointInContents.y() > rect.maxY())
+            continue;
+        closestBox = *textBox;
+        if (pointInContents.x() < rect.maxX())
+            break;
+    }
 
-    ASSERT(childrenInline());
-    LegacyInlineBox* closestBox = rootBox->closestLeafChildForPosition(pointInContents);
+    if (!closestBox)
+        closestBox = lastBox;
+
     if (!closestBox)
         return createVisiblePosition(0, Affinity::Downstream);
 
-    return closestBox->renderer().positionForPoint({ pointInContents.x(), LayoutUnit(closestBox->y()) }, source, fragment);
+    return const_cast<RenderObject&>(closestBox->renderer()).positionForPoint({ pointInContents.x(), LayoutUnit(closestBox->visualRectIgnoringBlockDirection().y()) }, source, fragment);
 }
 
 void RenderSVGText::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)

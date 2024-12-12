@@ -1,0 +1,5 @@
+
+PASS First defined rule persists in case of conflict
+PASS First defined rule persists in case of conflict - prefixed bare specifiers
+FAIL First defined rule persists in case of conflict - non-prefix bare specifier promise_test: Unhandled rejection with value: object "TypeError: Module name, 'module-b' does not resolve to a valid URL."
+

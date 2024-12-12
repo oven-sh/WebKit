@@ -286,11 +286,15 @@ private:
     void ensureVideoRenderer();
     void destroyVideoRenderer();
 
+    bool isUsingRenderlessMediaSampleRenderer() const;
+    void ensureRenderlessVideoMediaSampleRenderer();
+    MediaPlayerEnums::NeedsRenderingModeChanged destroyRenderlessVideoMediaSampleRenderer();
+
     bool shouldEnsureLayerOrVideoRenderer() const;
     void ensureLayerOrVideoRenderer(MediaPlayerEnums::NeedsRenderingModeChanged);
-    void destroyLayerOrVideoRendererAndCreateRenderlessVideoMediaSampleRenderer();
-    void configureLayerOrVideoRenderer(WebSampleBufferVideoRendering *);
+    void destroyLayerOrVideoRenderer();
     Ref<VideoMediaSampleRenderer> createVideoMediaSampleRendererForRendererer(WebSampleBufferVideoRendering *);
+    void configureLayerOrVideoRenderer(WebSampleBufferVideoRendering *);
 
     bool shouldBePlaying() const;
     void setSynchronizerRate(double, std::optional<MonotonicTime>&& = std::nullopt);
@@ -355,10 +359,8 @@ private:
     WeakPtrFactory<MediaPlayerPrivateMediaSourceAVFObjC> m_sizeChangeObserverWeakPtrFactory;
     RefPtr<MediaSourcePrivateAVFObjC> m_mediaSourcePrivate;
     RetainPtr<AVAsset> m_asset;
-    RetainPtr<AVSampleBufferDisplayLayer> m_sampleBufferDisplayLayer;
-    RefPtr<VideoMediaSampleRenderer> m_videoDisplayLayerRenderer;
-    RetainPtr<AVSampleBufferVideoRenderer> m_sampleBufferVideoRenderer;
-    RefPtr<VideoMediaSampleRenderer> m_videoRenderer;
+    RefPtr<VideoMediaSampleRenderer> m_sampleBufferDisplayLayer;
+    RefPtr<VideoMediaSampleRenderer> m_sampleBufferVideoRenderer;
 
     struct AudioRendererProperties {
         bool hasAudibleSample { false };

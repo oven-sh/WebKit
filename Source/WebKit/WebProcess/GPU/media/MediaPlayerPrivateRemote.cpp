@@ -41,7 +41,6 @@
 #include "TextTrackPrivateRemoteConfiguration.h"
 #include "VideoLayerRemote.h"
 #include "VideoTrackPrivateRemoteConfiguration.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <WebCore/DeprecatedGlobalSettings.h>

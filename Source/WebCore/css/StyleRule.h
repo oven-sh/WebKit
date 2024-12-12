@@ -56,7 +56,7 @@ class StyleRuleBase : public RefCounted<StyleRuleBase> {
     WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(StyleRuleBase);
 public:
     StyleRuleType type() const { return static_cast<StyleRuleType>(m_type); }
-    
+
     bool isCharsetRule() const { return type() == StyleRuleType::Charset; }
     bool isCounterStyleRule() const { return type() == StyleRuleType::CounterStyle; }
     bool isFontFaceRule() const { return type() == StyleRuleType::FontFace; }
@@ -80,6 +80,7 @@ public:
     bool isScopeRule() const { return type() == StyleRuleType::Scope; }
     bool isStartingStyleRule() const { return type() == StyleRuleType::StartingStyle; }
     bool isViewTransitionRule() const { return type() == StyleRuleType::ViewTransition; }
+    bool isPositionTryRule() const { return type() == StyleRuleType::PositionTry; }
 
     Ref<StyleRuleBase> copy() const;
 

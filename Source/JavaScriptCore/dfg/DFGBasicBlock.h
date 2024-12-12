@@ -163,7 +163,7 @@ struct BasicBlock : RefCounted<BasicBlock> {
     void removePredecessor(BasicBlock* block);
     void replacePredecessor(BasicBlock* from, BasicBlock* to);
 
-    Node* cloneAndAppend(Graph&, const Node*);
+    inline Node* cloneAndAppend(Graph&, const Node*);
 
     template<typename... Params>
     Node* appendNode(Graph&, SpeculatedType, Params...);

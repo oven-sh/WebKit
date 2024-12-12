@@ -32,29 +32,21 @@
 #include <WebKit/WKRetainPtr.h>
 #include <string>
 #include <wtf/Noncopyable.h>
+#include <wtf/RefCounted.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Seconds.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WTR {
-class TestInvocation;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedTimerSmartPointerException;
-template<> struct IsDeprecatedTimerSmartPointerException<WTR::TestInvocation> : std::true_type { };
-}
-
-namespace WTR {
-
-class TestInvocation final : public UIScriptContextDelegate {
+class TestInvocation final : public RefCounted<TestInvocation>, public UIScriptContextDelegate {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(TestInvocation);
 public:
-    explicit TestInvocation(WKURLRef, const TestOptions&);
+    static Ref<TestInvocation> create(WKURLRef, const TestOptions&);
     ~TestInvocation();
 
-    WKURLRef url() const;
+    WKURLRef url() const { return m_url.get(); }
     bool urlContains(StringView) const;
     
     const TestOptions& options() const { return m_options; }
@@ -94,6 +86,8 @@ public:
     void dumpResourceLoadStatisticsIfNecessary();
 
 private:
+    TestInvocation(WKURLRef, const TestOptions&);
+
     WKRetainPtr<WKMutableDictionaryRef> createTestSettingsDictionary();
 
     void waitToDumpWatchdogTimerFired();

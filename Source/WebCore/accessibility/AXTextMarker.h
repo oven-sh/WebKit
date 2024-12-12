@@ -25,6 +25,7 @@
 #pragma once
 
 #include "AccessibilityObject.h"
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore {
 
@@ -80,7 +81,7 @@ struct TextMarkerData {
     // For an example of such byte-comparison, see the TestRunner WTR::AccessibilityTextMarker::isEqual.
     TextMarkerData()
     {
-        memset(static_cast<void*>(this), 0, sizeof(*this));
+        memsetSpan(asMutableByteSpan(*this), 0);
     }
 
     TextMarkerData(std::optional<AXID> axTreeID, std::optional<AXID> axObjectID,
@@ -89,7 +90,7 @@ struct TextMarkerData {
         Affinity affinityParam = Affinity::Downstream,
         unsigned charStart = 0, unsigned charOffset = 0, bool ignoredParam = false)
     {
-        memset(static_cast<void*>(this), 0, sizeof(*this));
+        memsetSpan(asMutableByteSpan(*this), 0);
         treeID = axTreeID ? axTreeID->toUInt64() : 0;
         objectID = axObjectID ? axObjectID->toUInt64() : 0;
         offset = offsetParam;

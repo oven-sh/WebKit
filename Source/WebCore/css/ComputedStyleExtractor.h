@@ -83,8 +83,8 @@ public:
     bool propertyMatches(CSSPropertyID, const CSSValue*) const;
     bool propertyMatches(CSSPropertyID, CSSValueID) const;
 
-    enum class AdjustPixelValuesForComputedStyle : bool { No, Yes };
-    static Ref<CSSValue> valueForFilter(const RenderStyle&, const FilterOperations&, AdjustPixelValuesForComputedStyle = AdjustPixelValuesForComputedStyle::Yes);
+    static Ref<CSSValue> cssValueForFilter(const RenderStyle&, const FilterOperations&);
+    static Ref<CSSValue> cssValueForAppleColorFilter(const RenderStyle&, const FilterOperations&);
 
     static Ref<CSSColorValue> currentColorOrValidColor(const RenderStyle&, const Style::Color&);
     static Ref<CSSFunctionValue> matrixTransformValue(const TransformationMatrix&, const RenderStyle&);
@@ -98,7 +98,6 @@ private:
 
     RefPtr<CSSValue> svgPropertyValue(CSSPropertyID) const;
     Ref<CSSValue> adjustSVGPaint(SVGPaintType, const String& url, Ref<CSSValue> color) const;
-    static Ref<CSSValue> valueForShadow(const ShadowData*, CSSPropertyID, const RenderStyle&, AdjustPixelValuesForComputedStyle = AdjustPixelValuesForComputedStyle::Yes);
 
     Ref<CSSValueList> getCSSPropertyValuesForShorthandProperties(const StylePropertyShorthand&) const;
     RefPtr<CSSValueList> getCSSPropertyValuesFor2SidesShorthand(const StylePropertyShorthand&) const;

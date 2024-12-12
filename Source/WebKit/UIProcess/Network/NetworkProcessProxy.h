@@ -342,6 +342,7 @@ public:
     void notifyMediaStreamingActivity(bool);
 
     void fetchLocalStorage(PAL::SessionID, CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&&);
+    void restoreLocalStorage(PAL::SessionID, HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&, CompletionHandler<void(bool)>&&);
 
 private:
     explicit NetworkProcessProxy();
@@ -407,7 +408,7 @@ private:
     WebsiteDataStore* websiteDataStoreFromSessionID(PAL::SessionID);
 
     // ProcessLauncher::Client
-    void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier) override;
+    void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier&&) override;
 #if PLATFORM(COCOA)
     RefPtr<XPCEventHandler> xpcEventHandler() const override;
 #endif

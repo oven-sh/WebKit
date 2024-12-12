@@ -27,6 +27,7 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
+#include "CompiledContentExtension.h"
 #include "ContentExtension.h"
 #include "ContentExtensionRule.h"
 #include <wtf/HashMap.h>
@@ -43,7 +44,6 @@ struct ContentRuleListResults;
 
 namespace ContentExtensions {
 
-class CompiledContentExtension;
 struct ResourceLoadInfo;
 
 // The ContentExtensionsBackend is the internal model of all the content extensions.
@@ -76,6 +76,7 @@ public:
 
     ContentRuleListResults processContentRuleListsForLoad(Page&, const URL&, OptionSet<ResourceType>, DocumentLoader& initiatingDocumentLoader, const URL& redirectFrom, const RuleListFilter&);
     WEBCORE_EXPORT ContentRuleListResults processContentRuleListsForPingLoad(const URL&, const URL& mainDocumentURL, const URL& frameURL);
+    bool processContentRuleListsForResourceMonitoring(const URL&, const URL& mainDocumentURL, const URL& frameURL, OptionSet<ResourceType>);
 
     static const String& displayNoneCSSRule();
 

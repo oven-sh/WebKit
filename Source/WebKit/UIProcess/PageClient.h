@@ -809,6 +809,10 @@ public:
     virtual void hasActiveNowPlayingSessionChanged(bool) { }
 
     virtual void scheduleVisibleContentRectUpdate() { }
+
+#if ENABLE(SCREEN_TIME)
+    virtual void installScreenTimeWebpageController() { }
+#endif
 };
 
 } // namespace WebKit

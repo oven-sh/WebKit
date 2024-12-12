@@ -117,6 +117,9 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
 
 LayerTreeHost::~LayerTreeHost()
 {
+    if (m_forceRepaintAsync.callback)
+        m_forceRepaintAsync.callback();
+
     cancelPendingLayerFlush();
 
     m_nicosia.sceneIntegration->invalidate();

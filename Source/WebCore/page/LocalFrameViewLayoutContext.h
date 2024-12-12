@@ -112,6 +112,13 @@ public:
     bool needsFullRepaint() const { return m_needsFullRepaint; }
 
     void flushPostLayoutTasks();
+    void didLayout(bool didRunSimplifiedLayout, bool canDeferUpdateLayerPositions);
+
+    void flushUpdateLayerPositions();
+
+    void updateCompositingLayersAfterLayout();
+    // Returns true if a pending compositing layer update was done.
+    bool updateCompositingLayersAfterLayoutIfNeeded();
 
     RenderLayoutState* layoutState() const PURE_FUNCTION;
     // Returns true if layoutState should be used for its cached offset and clip.
@@ -138,6 +145,12 @@ public:
 
     RenderElement::LayoutIdentifier layoutIdentifier() const { return m_layoutIdentifier; }
 
+    void startTrackingLayoutUpdates() { m_layoutUpdateCount = 0; }
+    unsigned layoutUpdateCount() const { return m_layoutUpdateCount; }
+
+    void startTrackingRenderLayerPositionUpdates() { m_renderLayerPositionUpdateCount = 0; }
+    unsigned renderLayerPositionUpdateCount() const { return m_renderLayerPositionUpdateCount; }
+
 private:
     friend class LayoutScope;
     friend class LayoutStateMaintainer;
@@ -149,6 +162,8 @@ private:
     void performLayout(bool canDeferUpdateLayerPositions);
     bool canPerformLayout() const;
     bool isLayoutSchedulingEnabled() const { return m_layoutSchedulingIsEnabled; }
+
+    bool hasPendingUpdateLayerPositions() const { return !!m_pendingUpdateLayerPositions; }
 
     void layoutTimerFired();
     void runPostLayoutTasks();
@@ -198,16 +213,41 @@ private:
     bool m_inAsynchronousTasks { false };
     bool m_setNeedsLayoutWasDeferred { false };
     bool m_needsSkippedContentLayout { false };
+    bool m_updateCompositingLayersIsPending { false };
     LayoutPhase m_layoutPhase { LayoutPhase::OutsideLayout };
     enum class LayoutNestedState : uint8_t  { NotInLayout, NotNested, Nested };
     LayoutNestedState m_layoutNestedState { LayoutNestedState::NotInLayout };
     unsigned m_disableSetNeedsLayoutCount { 0 };
     unsigned m_paintOffsetCacheDisableCount { 0 };
+    unsigned m_layoutUpdateCount { 0 };
+    unsigned m_renderLayerPositionUpdateCount { 0 };
     LayoutStateStack m_layoutStateStack;
     std::unique_ptr<Layout::LayoutTree> m_layoutTree;
     std::unique_ptr<Layout::LayoutState> m_layoutState;
     std::unique_ptr<UpdateScrollInfoAfterLayoutTransaction> m_updateScrollInfoAfterLayoutTransaction;
     SingleThreadWeakHashMap<RenderBlock, Vector<SingleThreadWeakPtr<RenderBox>>> m_containersWithDescendantsNeedingTransformUpdate;
+
+    struct UpdateLayerPositions {
+        void merge(const UpdateLayerPositions& other)
+        {
+            needsFullRepaint |= other.needsFullRepaint;
+            if (!other.didRunSimplifiedLayout)
+                didRunSimplifiedLayout = false;
+        }
+
+        RenderElement::LayoutIdentifier layoutIdentifier : 12 { 0 };
+        bool needsFullRepaint { false };
+        bool didRunSimplifiedLayout { true };
+    };
+    std::optional<UpdateLayerPositions> m_pendingUpdateLayerPositions;
+
+    struct RepaintRectEnvironment {
+        float m_deviceScaleFactor { 0 };
+        bool m_printing { false };
+
+        bool operator==(const RepaintRectEnvironment&) const = default;
+    };
+    RepaintRectEnvironment m_lastRepaintRectEnvironment;
 };
 
 } // namespace WebCore

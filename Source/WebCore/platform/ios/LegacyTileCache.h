@@ -35,6 +35,7 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 
 OBJC_CLASS CALayer;
 OBJC_CLASS LegacyTileCacheTombstone;
@@ -42,24 +43,18 @@ OBJC_CLASS LegacyTileLayer;
 OBJC_CLASS WAKWindow;
 
 namespace WebCore {
-class LegacyTileCache;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedTimerSmartPointerException;
-template<> struct IsDeprecatedTimerSmartPointerException<WebCore::LegacyTileCache> : std::true_type { };
-}
-
-namespace WebCore {
 
 class Color;
 class LegacyTileGrid;
 
-class LegacyTileCache {
+class LegacyTileCache : public CanMakeWeakPtr<LegacyTileCache> {
     WTF_MAKE_NONCOPYABLE(LegacyTileCache);
 public:
     LegacyTileCache(WAKWindow *);
     ~LegacyTileCache();
+
+    void ref() const;
+    void deref() const;
 
     CGFloat screenScale() const;
 
@@ -97,7 +92,7 @@ public:
     void setCurrentScale(float);
     float currentScale() const;
     
-    bool tilesOpaque() const;
+    bool tilesOpaque() const { return m_tilesOpaque; }
     void setTilesOpaque(bool);
     
     enum TilingMode {
@@ -117,8 +112,8 @@ public:
         TilingDirectionLeft,
         TilingDirectionRight,
     };
-    void setTilingDirection(TilingDirection);
-    TilingDirection tilingDirection() const;
+    void setTilingDirection(TilingDirection tilingDirection) { m_tilingDirection = tilingDirection; }
+    TilingDirection tilingDirection() const { return m_tilingDirection; }
 
     void hostLayerSizeChanged();
 

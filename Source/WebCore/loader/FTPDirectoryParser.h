@@ -70,6 +70,7 @@
 
 #pragma once
 
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/WTFString.h>
 
 #include <time.h>
@@ -97,7 +98,7 @@ struct ListState {
         , carryBufferLength(0)
         , numLines(0)
     { 
-        memset(&nowFTPTime, 0, sizeof(FTPTime));
+        memsetSpan(asMutableByteSpan(nowFTPTime), 0);
     }
     
     double      now;               /* needed for year determination */
@@ -134,7 +135,7 @@ struct ListResult
         linknameLength = 0;
         fileSize = { };
         caseSensitive = false;
-        memset(&modifiedTime, 0, sizeof(FTPTime));
+        memsetSpan(asMutableByteSpan(modifiedTime), 0);
     }
 
     std::span<const char> filenameSpan() const { return { filename, filenameLength }; }

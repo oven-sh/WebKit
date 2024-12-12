@@ -138,6 +138,7 @@ enum class AXPropertyName : uint16_t {
     HasHighlighting,
     HasItalicFont,
     HasLinethrough,
+    HasMarkTag,
     HasPlainText,
     HasRemoteFrameChild,
     IsSubscript,

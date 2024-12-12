@@ -74,6 +74,10 @@ class CodeOrigin
     def to_s
         "#{@sourceFile.basename}:#{lineNumber}"
     end
+
+    def labelStringExtension
+        "#{@sourceFile.basename.sub(/\./, "_")}_#{lineNumber}"
+    end
 end
 
 class IncludeFile

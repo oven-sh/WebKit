@@ -32,6 +32,7 @@
 #endif
 #include <wtf/Forward.h>
 #include <wtf/RetainPtr.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 

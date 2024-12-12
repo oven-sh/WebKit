@@ -668,16 +668,41 @@ void LineLayout::updateRenderTreePositions(const Vector<LineAdjustment>& lineAdj
     }
 }
 
-void LineLayout::applySVGTextFragments(SVGTextFragmentMap&& fragmentMap)
+FloatRect LineLayout::applySVGTextFragments(SVGTextFragmentMap&& fragmentMap)
 {
     auto& boxes = m_inlineContent->displayContent().boxes;
+    auto& lines = m_inlineContent->displayContent().lines;
     auto& fragments = m_inlineContent->svgTextFragmentsForBoxes();
     fragments.resize(m_inlineContent->displayContent().boxes.size());
 
+    FloatRect fullBoundaries;
+
+    struct Parent {
+        size_t index;
+        FloatRect boundaries;
+    };
+    Vector<Parent, 8> parentStack;
+
+    auto popParent = [&](const Layout::Box* parent) {
+        while (!parentStack.isEmpty() && &boxes[parentStack.last().index].layoutBox() != parent) {
+            auto boundaries = parentStack.last().boundaries;
+            boxes[parentStack.last().index].setRect(boundaries, boundaries);
+            parentStack.removeLast();
+            if (!parentStack.isEmpty())
+                parentStack.last().boundaries.unite(boundaries);
+            else
+                fullBoundaries = boundaries;
+        }
+    };
+
     for (size_t i = 0; i < boxes.size(); ++i) {
+        popParent(&boxes[i].layoutBox().parent());
+
         auto textBox = InlineIterator::svgTextBoxFor(*m_inlineContent, i);
-        if (!textBox)
+        if (!textBox) {
+            parentStack.append({ i, { } });
             continue;
+        }
 
         auto it = fragmentMap.find(makeKey(*textBox));
         if (it != fragmentMap.end())
@@ -685,7 +710,21 @@ void LineLayout::applySVGTextFragments(SVGTextFragmentMap&& fragmentMap)
 
         auto boundaries = textBox->calculateBoundariesIncludingSVGTransform();
         boxes[i].setRect(boundaries, boundaries);
+        parentStack.last().boundaries.unite(boundaries);
     }
+
+    popParent(nullptr);
+
+    // Move so the top-left text box is at (0, 0).
+    for (auto& box : boxes) {
+        box.moveHorizontally(-fullBoundaries.x());
+        box.moveVertically(-fullBoundaries.y());
+    }
+
+    if (lines.size())
+        lines[0].setLineBoxRectForSVGText(FloatRect { { }, fullBoundaries.size() });
+
+    return fullBoundaries;
 }
 
 void LineLayout::preparePlacedFloats()
@@ -759,6 +798,22 @@ bool LineLayout::isPaginated() const
     return m_inlineContent && m_inlineContent->isPaginated;
 }
 
+bool LineLayout::hasEllipsisInBlockDirectionOnLastFormattedLine() const
+{
+    if (!m_inlineContent)
+        return false;
+
+    for (auto& line : makeReversedRange(m_inlineContent->displayContent().lines)) {
+        if (line.boxCount() == 1) {
+            // Out-of-flow content could initiate a line with no inline content.
+            continue;
+        }
+        auto lastFormattedLineEllipsis = line.ellipsis();
+        return lastFormattedLineEllipsis && lastFormattedLineEllipsis->type == InlineDisplay::Line::Ellipsis::Type::Block;
+    }
+    return false;
+}
+
 std::optional<LayoutUnit> LineLayout::clampedContentLogicalHeight() const
 {
     if (!m_inlineContent)
@@ -812,7 +867,11 @@ size_t LineLayout::lineCount() const
     if (!m_inlineContent->hasContent())
         return 0;
 
-    return m_inlineContent->displayContent().lines.size();
+    auto& lines = m_inlineContent->displayContent().lines;
+    if (lines.isEmpty())
+        return 0;
+    // In some cases (trailing out-of-flow, non-contentful content after <br>) we produce last line with no content but root inline box only.
+    return lines.last().boxCount() > 1 ? lines.size() : lines.size() - 1;
 }
 
 bool LineLayout::hasVisualOverflow() const

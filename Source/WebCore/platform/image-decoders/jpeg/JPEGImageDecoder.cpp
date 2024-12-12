@@ -40,11 +40,12 @@
 #include "config.h"
 #include "JPEGImageDecoder.h"
 
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/StdLibExtras.h>
+
 #if USE(LCMS)
 #include "LCMSUniquePtr.h"
 #endif
-
-#include <wtf/TZoneMallocInlines.h>
 
 extern "C" {
 #include <setjmp.h>
@@ -259,7 +260,7 @@ public:
         , m_state(JPEG_HEADER)
         , m_samples(0)
     {
-        memset(&m_info, 0, sizeof(jpeg_decompress_struct));
+        memsetSpan(asMutableByteSpan(m_info), 0);
 
         // We set up the normal JPEG error routines, then override error_exit.
         m_info.err = jpeg_std_error(&m_err.pub);

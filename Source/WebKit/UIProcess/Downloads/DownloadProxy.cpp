@@ -84,6 +84,7 @@ static RefPtr<API::Data> createData(std::span<const uint8_t> data)
 
 void DownloadProxy::cancel(CompletionHandler<void(API::Data*)>&& completionHandler)
 {
+    m_downloadIsCancelled = true;
     if (m_dataStore) {
         protectedDataStore()->protectedNetworkProcess()->sendWithAsyncReply(Messages::NetworkProcess::CancelDownload(m_downloadID), [weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)] (std::span<const uint8_t> resumeData) mutable {
             RefPtr protectedThis = weakThis.get();
@@ -224,6 +225,8 @@ void DownloadProxy::didFinish()
     updateQuarantinePropertiesIfPossible();
 #endif
     m_client->didFinish(*this);
+    if (m_downloadIsCancelled)
+        return;
 
     // This can cause the DownloadProxy object to be deleted.
     if (RefPtr downloadProxyMap = m_downloadProxyMap.get())
@@ -232,6 +235,9 @@ void DownloadProxy::didFinish()
 
 void DownloadProxy::didFail(const ResourceError& error, std::span<const uint8_t> resumeData)
 {
+    if (m_downloadIsCancelled)
+        return;
+
     m_legacyResumeData = createData(resumeData);
 
     m_client->didFail(*this, error, m_legacyResumeData.get());

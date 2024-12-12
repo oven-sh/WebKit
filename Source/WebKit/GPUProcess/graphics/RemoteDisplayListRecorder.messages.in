@@ -103,9 +103,9 @@ messages -> RemoteDisplayListRecorder Stream {
     ApplyDeviceScaleFactor(float scaleFactor)
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
-    DrawVideoFrame(struct WebKit::SharedVideoFrame frame, WebCore::FloatRect rect, struct WebCore::ImageOrientation orientation, bool shouldDiscardAlpha) NotStreamEncodable
-    SetSharedVideoFrameSemaphore(IPC::Semaphore semaphore) NotStreamEncodable
-    SetSharedVideoFrameMemory(WebCore::SharedMemory::Handle storageHandle) NotStreamEncodable
+    [EnabledBy=MediaPlaybackEnabled] DrawVideoFrame(struct WebKit::SharedVideoFrame frame, WebCore::FloatRect rect, struct WebCore::ImageOrientation orientation, bool shouldDiscardAlpha) NotStreamEncodable
+    [EnabledBy=MediaPlaybackEnabled] SetSharedVideoFrameSemaphore(IPC::Semaphore semaphore) NotStreamEncodable
+    [EnabledBy=MediaPlaybackEnabled] SetSharedVideoFrameMemory(WebCore::SharedMemory::Handle storageHandle) NotStreamEncodable
 #endif
 }
 

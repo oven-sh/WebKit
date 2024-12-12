@@ -172,14 +172,6 @@ void Subscriber::visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor)
     observerConcurrently()->visitAdditionalChildren(visitor);
 }
 
-void Subscriber::visitAdditionalChildren(JSC::SlotVisitor& visitor)
-{
-    for (auto* teardown : teardownCallbacksConcurrently())
-        teardown->visitJSFunction(visitor);
-
-    observerConcurrently()->visitAdditionalChildren(visitor);
-}
-
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Subscriber);
 
 } // namespace WebCore

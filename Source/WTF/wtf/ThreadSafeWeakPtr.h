@@ -70,22 +70,35 @@ public:
     template<typename T, DestructionThread destructionThread>
     void strongDeref() const
     {
-        bool shouldDeleteControlBlock { false };
         T* object;
-
         {
             Locker locker { m_lock };
             ASSERT_WITH_SECURITY_IMPLICATION(m_object);
             if (LIKELY(--m_strongReferenceCount))
                 return;
             object = static_cast<T*>(std::exchange(m_object, nullptr));
-            if (!m_weakReferenceCount)
-                shouldDeleteControlBlock = true;
+            // We need to take a weak ref so `this` survives until the `delete object` below.
+            // This comes up when destructors try to eagerly remove themselves from WeakHashSets.
+            // e.g.
+            // ~MyObject() { m_weakSet.remove(this); }
+            // if m_weakSet has the last reference to the ControlBlock then we could end up doing
+            // an amortized clean up, which removes the ControlBlock and destroys it. Then when we
+            // check m_weakSet's backing table after the cleanup we UAF the ControlBlock.
+            m_weakReferenceCount++;
         }
 
-        auto deleteObject = [this, object, shouldDeleteControlBlock] {
+        auto deleteObject = [this, object] {
             delete static_cast<const T*>(object);
-            if (shouldDeleteControlBlock)
+
+            bool hasOtherWeakRefs;
+            {
+                // We retained ourselves above.
+                Locker locker { m_lock };
+                hasOtherWeakRefs = --m_weakReferenceCount;
+                // release the lock here so we don't do it in Locker's destuctor after we've already called delete.
+            }
+
+            if (!hasOtherWeakRefs)
                 delete this;
         };
         switch (destructionThread) {

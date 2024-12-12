@@ -41,7 +41,9 @@ async function run() {
     renderBundleEncoder.drawIndexed(1);
     renderBundleEncoder.setIndexBuffer(buffer, 'uint32', 3_668);
     renderBundleEncoder.setPipeline(renderPipeline2);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().then(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

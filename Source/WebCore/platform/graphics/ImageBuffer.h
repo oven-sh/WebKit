@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2006 Nikolas Zimmermann <zimmermann@kde.org>
- * Copyright (C) 2007-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2024 Apple Inc. All rights reserved.
  * Copyright (C) 2010 Torch Mobile (Beijing) Co. Ltd. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -67,11 +67,6 @@ class IOSurfacePool;
 #endif
 class ScriptExecutionContext;
 
-enum class ImageBufferOptions : uint8_t {
-    Accelerated     = 1 << 0,
-    AvoidBackendSizeCheckForTesting = 1 << 1,
-};
-
 class SerializedImageBuffer;
 
 struct ImageBufferCreationContext {
@@ -99,7 +94,7 @@ class ImageBuffer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<Image
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ImageBuffer, WEBCORE_EXPORT);
 public:
     using Parameters = ImageBufferParameters;
-    WEBCORE_EXPORT static RefPtr<ImageBuffer> create(const FloatSize&, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, ImageBufferPixelFormat, OptionSet<ImageBufferOptions> = { }, GraphicsClient* graphicsClient = nullptr);
+    WEBCORE_EXPORT static RefPtr<ImageBuffer> create(const FloatSize&, RenderingMode, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, ImageBufferPixelFormat, GraphicsClient* = nullptr);
 
     template<typename BackendType, typename ImageBufferType = ImageBuffer, typename... Arguments>
     static RefPtr<ImageBufferType> create(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat, RenderingPurpose purpose, const ImageBufferCreationContext& creationContext, Arguments&&... arguments)
@@ -238,6 +233,8 @@ public:
     WEBCORE_EXPORT virtual RefPtr<PixelBuffer> getPixelBuffer(const PixelBufferFormat& outputFormat, const IntRect& srcRect, const ImageBufferAllocator& = ImageBufferAllocator()) const;
     WEBCORE_EXPORT virtual void putPixelBuffer(const PixelBuffer&, const IntRect& srcRect, const IntPoint& destPoint = { }, AlphaPremultiplication destFormat = AlphaPremultiplication::Premultiplied);
 
+    WEBCORE_EXPORT virtual RefPtr<SharedBuffer> sinkToPDFDocument();
+
     WEBCORE_EXPORT bool isInUse() const;
     WEBCORE_EXPORT virtual void releaseGraphicsContext();
     WEBCORE_EXPORT bool setVolatile();
@@ -290,13 +287,6 @@ public:
 protected:
     virtual RefPtr<ImageBuffer> sinkIntoImageBuffer() = 0;
 };
-
-inline OptionSet<ImageBufferOptions> bufferOptionsForRendingMode(RenderingMode renderingMode)
-{
-    if (renderingMode == RenderingMode::Accelerated)
-        return { ImageBufferOptions::Accelerated };
-    return { };
-}
 
 WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ImageBuffer&);
 

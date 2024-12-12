@@ -64,8 +64,10 @@ public:
     bool isDetached() const final;
     bool isTable() const final { return boolAttributeValue(AXPropertyName::IsTable); }
     bool isExposable() const final { return boolAttributeValue(AXPropertyName::IsExposable); }
-    bool hasBodyTag() const final { return boolAttributeValue(AXPropertyName::HasBodyTag); }
     bool hasClickHandler() const final { return boolAttributeValue(AXPropertyName::HasClickHandler); }
+
+    bool hasBodyTag() const final { return boolAttributeValue(AXPropertyName::HasBodyTag); }
+    bool hasMarkTag() const final { return boolAttributeValue(AXPropertyName::HasMarkTag); }
 
     const AccessibilityChildrenVector& children(bool updateChildrenIfNeeded = true) final;
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
@@ -76,7 +78,7 @@ public:
     AXIsolatedObject* parentObjectUnignored() const final { return tree()->objectForID(parent()).get(); }
 #endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     AXIsolatedObject* clickableSelfOrAncestor(ClickHandlerFilter filter = ClickHandlerFilter::ExcludeBody) const final { return Accessibility::clickableSelfOrAncestor(*this, filter); };
-    AXIsolatedObject* editableAncestor() final { return Accessibility::editableAncestor(*this); };
+    AXIsolatedObject* editableAncestor() const final { return Accessibility::editableAncestor(*this); };
     bool canSetFocusAttribute() const final { return boolAttributeValue(AXPropertyName::CanSetFocusAttribute); }
 
 #if ENABLE(AX_THREAD_TEXT_APIS)

@@ -15,7 +15,9 @@ async function run() {
         depthStencilAttachment: { view: textureView }
     });
     renderPassEncoder.end();
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

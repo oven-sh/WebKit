@@ -22,6 +22,10 @@
 
 #if ENABLE(WEB_RTC)
 
+[
+    DispatchedFrom=Networking,
+    DispatchedTo=WebContent
+]
 messages -> RTCDataChannelRemoteManager {
     // To source
     SendData(struct WebCore::RTCDataChannelIdentifier source, bool isRaw, std::span<const uint8_t> text);

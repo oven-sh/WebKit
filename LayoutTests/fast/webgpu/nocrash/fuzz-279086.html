@@ -46,8 +46,10 @@ async function run() {
     });
     renderPassEncoder.setPipeline(renderPipeline);
     renderPassEncoder.draw(3, 1, 4_294_967_295);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

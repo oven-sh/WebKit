@@ -162,8 +162,8 @@ static void applyBoxShadowForBackground(GraphicsContext& context, const RenderSt
     while (boxShadow->style() != ShadowStyle::Normal)
         boxShadow = boxShadow->next();
 
-    FloatSize shadowOffset(boxShadow->x().value(), boxShadow->y().value());
-    context.setDropShadow({ shadowOffset, boxShadow->radius().value(), style.colorWithColorFilter(boxShadow->color()), boxShadow->isWebkitBoxShadow() ? ShadowRadiusMode::Legacy : ShadowRadiusMode::Default });
+    FloatSize shadowOffset(boxShadow->x().value, boxShadow->y().value);
+    context.setDropShadow({ shadowOffset, boxShadow->radius().value, style.colorWithColorFilter(boxShadow->color()), boxShadow->isWebkitBoxShadow() ? ShadowRadiusMode::Legacy : ShadowRadiusMode::Default });
 }
 
 void BackgroundPainter::paintFillLayer(const Color& color, const FillLayer& bgLayer, const LayoutRect& rect,
@@ -811,10 +811,10 @@ void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Render
         if (shadow->style() != shadowStyle)
             continue;
 
-        LayoutSize shadowOffset(shadow->x().value(), shadow->y().value());
+        LayoutSize shadowOffset(shadow->x().value, shadow->y().value);
         LayoutUnit shadowPaintingExtent = shadow->paintingExtent();
-        LayoutUnit shadowSpread = LayoutUnit(shadow->spread().value());
-        auto shadowRadius = shadow->radius().value();
+        LayoutUnit shadowSpread = LayoutUnit(shadow->spread().value);
+        auto shadowRadius = shadow->radius().value;
 
         if (shadowOffset.isZero() && !shadowRadius && !shadowSpread)
             continue;

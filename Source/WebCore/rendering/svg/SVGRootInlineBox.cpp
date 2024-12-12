@@ -45,28 +45,4 @@ RenderSVGText& SVGRootInlineBox::renderSVGText() const
     return downcast<RenderSVGText>(blockFlow());
 }
 
-LegacyInlineBox* SVGRootInlineBox::closestLeafChildForPosition(const LayoutPoint& point)
-{
-    LegacyInlineBox* firstLeaf = firstLeafDescendant();
-    LegacyInlineBox* lastLeaf = lastLeafDescendant();
-    if (firstLeaf == lastLeaf)
-        return firstLeaf;
-
-    // FIXME: Check for vertical text!
-    LegacyInlineBox* closestLeaf = nullptr;
-    for (auto* leaf = firstLeaf; leaf; leaf = leaf->nextLeafOnLine()) {
-        if (!leaf->isSVGInlineTextBox())
-            continue;
-        if (point.y() < leaf->y())
-            continue;
-        if (point.y() > leaf->y() + leaf->virtualLogicalHeight())
-            continue;
-        closestLeaf = leaf;
-        if (point.x() < leaf->left() + leaf->logicalWidth())
-            return leaf;
-    }
-
-    return closestLeaf ? closestLeaf : lastLeaf;
-}
-
 } // namespace WebCore

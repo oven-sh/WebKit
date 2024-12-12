@@ -364,7 +364,25 @@ instructionLabel(_rethrow)
     operationCall(macro() cCall4(_ipint_extern_rethrow_exception) end)
     jumpToException()
 
-reservedOpcode(0xa)
+instructionLabel(_throw_ref)
+    popQuad(a2, t1)
+    bieq a2, ValueNull, .throw_null_ref
+
+    loadp Wasm::IPIntCallee::m_bytecode[ws0], t0
+    move PC, t1
+    subq t0, t1
+    storei t1, CallSiteIndex[cfr]
+
+    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t0
+    loadp VM::topEntryFrame[t0], t0
+    copyCalleeSavesToEntryFrameCalleeSavesBuffer(t0)
+
+    move cfr, a1
+    operationCall(macro() cCall3(_ipint_extern_throw_ref) end)
+    jumpToException()
+
+.throw_null_ref:
+    throwException(NullExnReference)
 
 macro uintDispatch()
 if ARM64 or ARM64E
@@ -678,7 +696,18 @@ instructionLabel(_select_t)
 
 reservedOpcode(0x1d)
 reservedOpcode(0x1e)
-reservedOpcode(0x1f)
+
+instructionLabel(_try_table)
+    # advance MC/PC
+if ARM64 or ARM64E
+    loadpairi IPInt::BlockMetadata::deltaPC[MC], t0, t1
+else
+    loadi IPInt::BlockMetadata::deltaPC[MC], t0
+    loadi IPInt::BlockMetadata::deltaMC[MC], t1
+end
+    advancePCByReg(t0)
+    advanceMCByReg(t1)
+    nextIPIntInstruction()
 
     ###################################
     # 0x20 - 0x26: get and set values #
@@ -5806,7 +5835,7 @@ mintAlign(_call)
 
     # Save stack pointer, if we tail call someone who changes the frame above's stack argument size
     move sp, sc0
-    storep sc0, ArgumentCountIncludingThis[cfr]
+    storep sc0, ThisArgumentOffset[cfr]
 
     # Set up callee slot
     storeq wasmInstance, Callee - CallerFrameAndPCSize[sp]
@@ -5836,7 +5865,7 @@ _wasm_ipint_call_return_location:
 _wasm_ipint_call_return_location_wide16:
 _wasm_ipint_call_return_location_wide32:
     # Restore the stack pointer
-    loadp ArgumentCountIncludingThis[cfr], sc0
+    loadp ThisArgumentOffset[cfr], sc0
     move sc0, sp
     addp FirstArgumentOffset - CallerFrameAndPCSize, sp
     loadh [MC], sc0  # number of stack args

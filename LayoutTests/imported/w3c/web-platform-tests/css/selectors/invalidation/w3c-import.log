@@ -45,6 +45,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/invalidation/has-invalidation-for-wiping-an-element.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/invalidation/has-pseudo-element-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/invalidation/has-pseudo-element.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/invalidation/has-pseudoclass-only.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/invalidation/has-sibling-insertion-removal.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/invalidation/has-sibling.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/invalidation/has-side-effect.html

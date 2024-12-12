@@ -181,7 +181,7 @@ private:
     void paintSelfAndChildrenWithReplica(TextureMapperPaintOptions&);
     void paintBackdrop(TextureMapperPaintOptions&);
     void applyMask(TextureMapperPaintOptions&);
-    void collect3DSceneLayers(Vector<TextureMapperLayer*>&);
+    void collect3DRenderingContextLayers(Vector<TextureMapperLayer*>&);
 
 #if ENABLE(DAMAGE_TRACKING)
     void collectDamageRecursive(TextureMapperPaintOptions&, Damage&);

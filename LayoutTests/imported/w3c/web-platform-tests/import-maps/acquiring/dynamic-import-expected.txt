@@ -1,5 +1,4 @@
 
-PASS After dynamic imports, import maps should fire error events
 PASS A dynamic import succeeds
-PASS After a dynamic import(), import maps are not effective
+FAIL After a dynamic import(), import maps work fine assert_array_equals: expected property 0 to be "log:B" but got "log:A" (expected array ["log:B"] got ["log:A"])
 

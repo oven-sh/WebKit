@@ -475,11 +475,11 @@ std::optional<WebAnimationTime> WebAnimation::currentTime(RespectHoldTime respec
     //     2. the associated timeline is inactive, or
     //     3. the animation's start time is unresolved.
     // The current time is an unresolved time value.
-    if (!m_timeline || !m_timeline->currentTime(m_timelineRange) || !m_startTime)
+    if (!m_timeline || !m_timeline->currentTime() || !m_startTime)
         return std::nullopt;
 
     // Otherwise, current time = (timeline time - start time) * playback rate
-    return (*m_timeline->currentTime(m_timelineRange) - startTime.value_or(*m_startTime)) * m_playbackRate;
+    return (*m_timeline->currentTime() - startTime.value_or(*m_startTime)) * m_playbackRate;
 }
 
 ExceptionOr<void> WebAnimation::silentlySetCurrentTime(std::optional<WebAnimationTime> seekTime)
@@ -575,8 +575,8 @@ double WebAnimation::effectivePlaybackRate() const
 
 void WebAnimation::setPlaybackRate(double newPlaybackRate)
 {
-    // 3.4.17.1. Updating the playback rate of an animation
-    // https://drafts.csswg.org/web-animations-1/#updating-the-playback-rate-of-an-animation
+    // Setting the playback rate of an animation
+    // https://drafts.csswg.org/web-animations-1/#setting-the-playback-rate-of-an-animation
 
     // 1. Clear any pending playback rate on animation.
     m_pendingPlaybackRate = std::nullopt;
@@ -584,12 +584,26 @@ void WebAnimation::setPlaybackRate(double newPlaybackRate)
     // 2. Let previous time be the value of the current time of animation before changing the playback rate.
     auto previousTime = currentTime();
 
-    // 3. Set the playback rate to new playback rate.
+    // 3. Let previous playback rate be the current effective playback rate of animation.
+    auto previousPlaybackRate = effectivePlaybackRate();
+
+    // 4. Set the playback rate to new playback rate.
     m_playbackRate = newPlaybackRate;
 
-    // 4. If previous time is resolved, set the current time of animation to previous time.
-    if (previousTime)
+    // 5. Perform the steps corresponding to the first matching condition from the following, if any:
+    if (m_timeline && m_timeline->isMonotonic() && previousTime) {
+        // If animation is associated with a monotonically increasing timeline and the previous time is resolved,
+        // Set the current time of animation to previous time.
         setCurrentTime(previousTime);
+    } else if (m_timeline && !m_timeline->isMonotonic() && m_startTime && !effectEndTime().isInfinity()
+        && ((previousPlaybackRate < 0 && m_playbackRate >= 0) || (previousPlaybackRate >= 0 && m_playbackRate < 0))) {
+        // If animation is associated with a non-null timeline that is not monotonically increasing,
+        // the start time of animation is resolved, associated effect end is not infinity, and either:
+        // - the previous playback rate < 0 and the new playback rate ≥ 0, or
+        // - the previous playback rate ≥ 0 and the new playback rate < 0,
+        // Set animation's start time to the result of evaluating associated effect end − start time for animation.
+        m_startTime = effectEndTime() - *m_startTime;
+    }
 
     if (m_effect) {
         m_effect->animationDidChangeTimingProperties();
@@ -1457,19 +1471,19 @@ void WebAnimation::autoAlignStartTime()
     if (playState == PlayState::Paused && m_holdTime)
         return;
 
+    RefPtr scrollTimeline = dynamicDowncast<ScrollTimeline>(m_timeline);
+    ASSERT(scrollTimeline);
+    auto interval = scrollTimeline->intervalForAttachmentRange(m_timelineRange);
+
     // 5. Let start offset be the resolved timeline time corresponding to the start of the animation
     // attachment range. In the case of view timelines, it requires a calculation based on the proportion
     // of the cover range.
-    // FIXME: this is a placeholder implementation.
-    auto startOffset = WebAnimationTime::fromPercentage(0);
+    auto startOffset = interval.first;
 
     // 6. Let end offset be the resolved timeline time corresponding to the end of the animation attachment
     // range. In the case of view timelines, it requires a calculation based on the proportion of the cover
     // range.
-    // FIXME: this is a placeholder implementation.
-    ASSERT(m_timeline->duration());
-    ASSERT(m_timeline->duration()->percentage());
-    auto endOffset = *m_timeline->duration();
+    auto endOffset = interval.second;
 
     // 7. Set start time to start offset if effective playback rate ≥ 0, and end offset otherwise.
     m_startTime = effectivePlaybackRate() >= 0 ? startOffset : endOffset;
@@ -1477,8 +1491,7 @@ void WebAnimation::autoAlignStartTime()
     // 8. Clear hold time.
     m_holdTime = std::nullopt;
 
-    // https://github.com/w3c/csswg-drafts/issues/11018
-    m_autoAlignStartTime = false;
+    progressBasedTimelineSourceDidChangeMetrics();
 }
 
 bool WebAnimation::needsTick() const
@@ -1864,17 +1877,52 @@ std::optional<double> WebAnimation::overallProgress() const
     return std::min(std::max(*currentTime / endTime, 0.0), 1.0);
 }
 
-void WebAnimation::setBindingsRangeStart(TimelineRangeValue&& rangeStart)
+void WebAnimation::setBindingsRangeStart(TimelineRangeValue&& rangeStartValue)
 {
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect.get()))
-        m_timelineRange.start = SingleTimelineRange::parse(WTFMove(rangeStart), keyframeEffect->target(), SingleTimelineRange::Type::Start);
+    RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect);
+    if (!keyframeEffect)
+        return;
+
+    auto rangeStart = SingleTimelineRange::parse(WTFMove(rangeStartValue), keyframeEffect->target(), SingleTimelineRange::Type::Start);
+    if (rangeStart == m_timelineRange.start)
+        return;
+
+    m_timelineRange.start = rangeStart;
+    if (RefPtr effect = this->effect())
+        effect->animationRangeDidChange();
 }
 
-void WebAnimation::setBindingsRangeEnd(TimelineRangeValue&& rangeEnd)
+void WebAnimation::setBindingsRangeEnd(TimelineRangeValue&& rangeEndValue)
 {
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect.get()))
-        m_timelineRange.end = SingleTimelineRange::parse(WTFMove(rangeEnd), keyframeEffect->target(), SingleTimelineRange::Type::End);
+    RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect);
+    if (!keyframeEffect)
+        return;
+
+    auto rangeEnd = SingleTimelineRange::parse(WTFMove(rangeEndValue), keyframeEffect->target(), SingleTimelineRange::Type::End);
+    if (rangeEnd == m_timelineRange.end)
+        return;
+
+    m_timelineRange.end = rangeEnd;
+    if (RefPtr effect = this->effect())
+        effect->animationRangeDidChange();
 }
 
+void WebAnimation::setRange(TimelineRange range)
+{
+    if (m_timelineRange == range)
+        return;
+
+    m_timelineRange = range;
+    if (RefPtr effect = this->effect())
+        effect->animationRangeDidChange();
+}
+
+void WebAnimation::progressBasedTimelineSourceDidChangeMetrics()
+{
+    ASSERT(m_timeline && m_timeline->isProgressBased());
+    RefPtr effect = m_effect;
+    if (effect && !m_timelineRange.isDefault())
+        effect->animationProgressBasedTimelineSourceDidChangeMetrics();
+}
 
 } // namespace WebCore

@@ -591,15 +591,15 @@ std::pair<InlineLayoutUnit, InlineLayoutUnit> InlineFormattingUtils::textEmphasi
     return { hasAboveTextEmphasis ? annotationSize : 0.f, hasAboveTextEmphasis ? 0.f : annotationSize };
 }
 
-LineEndingTruncationPolicy InlineFormattingUtils::lineEndingTruncationPolicy(const RenderStyle& rootStyle, size_t numberOfLinesWithInlineContent, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineHasInlineContent)
+LineEndingTruncationPolicy InlineFormattingUtils::lineEndingTruncationPolicy(const RenderStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful)
 {
     if (numberOfVisibleLinesAllowed) {
         // text-overflow: ellipsis should not apply inside clamping content.
-        if (!currentLineHasInlineContent) {
+        if (!currentLineIsContentful) {
             // Content with no inline should never ever receive ellipsis.
             return LineEndingTruncationPolicy::NoTruncation;
         }
-        return *numberOfVisibleLinesAllowed == numberOfLinesWithInlineContent ? LineEndingTruncationPolicy::WhenContentOverflowsInBlockDirection : LineEndingTruncationPolicy::NoTruncation;
+        return *numberOfVisibleLinesAllowed == numberOfContentfulLines ? LineEndingTruncationPolicy::WhenContentOverflowsInBlockDirection : LineEndingTruncationPolicy::NoTruncation;
     }
 
     // Truncation is in effect when the block container has overflow other than visible.

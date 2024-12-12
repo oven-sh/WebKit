@@ -128,7 +128,7 @@
 
 #endif
 
-#if !COMPILER(CLANG) && !COMPILER(MSVC)
+#if !COMPILER(CLANG)
 #define WTF_COMPILER_QUIRK_CONSIDERS_UNREACHABLE_CODE 1
 #endif
 
@@ -601,11 +601,7 @@
 
 /* UNREACHABLE */
 
-#if COMPILER(MSVC)
-#define WTF_UNREACHABLE(...) __assume(0)
-#else
 #define WTF_UNREACHABLE(...) __builtin_unreachable();
-#endif
 
 /* WTF_ALLOW_UNSAFE_BUFFER_USAGE */
 

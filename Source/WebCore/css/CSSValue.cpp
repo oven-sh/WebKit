@@ -29,12 +29,14 @@
 #include "config.h"
 #include "CSSValue.h"
 
+#include "CSSAppleColorFilterPropertyValue.h"
 #include "CSSAspectRatioValue.h"
 #include "CSSAttrValue.h"
 #include "CSSBackgroundRepeatValue.h"
 #include "CSSBasicShapeValue.h"
 #include "CSSBorderImageSliceValue.h"
 #include "CSSBorderImageWidthValue.h"
+#include "CSSBoxShadowPropertyValue.h"
 #include "CSSCalcValue.h"
 #include "CSSCanvasValue.h"
 #include "CSSColorSchemeValue.h"
@@ -45,6 +47,7 @@
 #include "CSSCursorImageValue.h"
 #include "CSSCustomPropertyValue.h"
 #include "CSSFilterImageValue.h"
+#include "CSSFilterPropertyValue.h"
 #include "CSSFontFaceSrcValue.h"
 #include "CSSFontFeatureValue.h"
 #include "CSSFontPaletteValuesOverrideColorsValue.h"
@@ -76,8 +79,8 @@
 #include "CSSRectValue.h"
 #include "CSSReflectValue.h"
 #include "CSSScrollValue.h"
-#include "CSSShadowValue.h"
 #include "CSSSubgridValue.h"
+#include "CSSTextShadowPropertyValue.h"
 #include "CSSTimingFunctionValue.h"
 #include "CSSToLengthConversionData.h"
 #include "CSSTransformListValue.h"
@@ -107,6 +110,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
 {
     using enum CSSValue::ClassType;
     switch (m_classType) {
+    case AppleColorFilterProperty:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSAppleColorFilterPropertyValue>(*this));
     case Attr:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSAttrValue>(*this));
     case AspectRatio:
@@ -119,6 +124,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBorderImageSliceValue>(*this));
     case BorderImageWidth:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBorderImageWidthValue>(*this));
+    case BoxShadowProperty:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBoxShadowPropertyValue>(*this));
     case Calculation:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCalcValue>(*this));
     case Canvas:
@@ -143,6 +150,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCustomPropertyValue>(*this));
     case FilterImage:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFilterImageValue>(*this));
+    case FilterProperty:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFilterPropertyValue>(*this));
     case Font:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontValue>(*this));
     case FontFaceSrcLocal:
@@ -205,14 +214,14 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSReflectValue>(*this));
     case Scroll:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSScrollValue>(*this));
-    case Shadow:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSShadowValue>(*this));
     case Subgrid:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSSubgridValue>(*this));
     case StepsTimingFunction:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSStepsTimingFunctionValue>(*this));
     case SpringTimingFunction:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSSpringTimingFunctionValue>(*this));
+    case TextShadowProperty:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSTextShadowPropertyValue>(*this));
     case TransformList:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSTransformListValue>(*this));
     case UnicodeRange:
@@ -393,6 +402,18 @@ Ref<DeprecatedCSSOMValue> CSSValue::createDeprecatedCSSOMWrapper(CSSStyleDeclara
     case Subgrid: // FIXME: Likely this class should not be exposed and serialized as a CSSValueList. Confirm and remove this case.
     case TransformList:
         return DeprecatedCSSOMValueList::create(downcast<CSSValueContainingVector>(*this), styleDeclaration);
+
+    // To maintain existing behavior, properties that used to be CSSValueLists that now have strong value representations
+    // need custom wrapper code to create a `DeprecatedCSSOMValueList`.
+    case AppleColorFilterProperty:
+        return uncheckedDowncast<CSSAppleColorFilterPropertyValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
+    case BoxShadowProperty:
+        return uncheckedDowncast<CSSBoxShadowPropertyValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
+    case FilterProperty:
+        return uncheckedDowncast<CSSFilterPropertyValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
+    case TextShadowProperty:
+        return uncheckedDowncast<CSSTextShadowPropertyValue>(*this).createDeprecatedCSSOMWrapper(styleDeclaration);
+
     default:
         return DeprecatedCSSOMComplexValue::create(*this, styleDeclaration);
     }

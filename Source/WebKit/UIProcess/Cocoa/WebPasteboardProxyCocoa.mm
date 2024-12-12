@@ -32,7 +32,6 @@
 #import "PasteboardAccessIntent.h"
 #import "RemotePageProxy.h"
 #import "SandboxExtension.h"
-#import "WebCoreArgumentCoders.h"
 #import "WebPageProxy.h"
 #import "WebPreferences.h"
 #import "WebProcessMessages.h"

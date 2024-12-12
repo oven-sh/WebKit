@@ -210,18 +210,4 @@ template<typename... F> decltype(auto) Color::switchOn(F&&... f) const
 } // namespace Style
 } // namespace WebCore
 
-namespace WTF {
-
-// Overload WTF::switchOn to make it so Style::Color can be used directly.
-
-template<class... F> ALWAYS_INLINE auto switchOn(const WebCore::Style::Color& value, F&&... f) -> decltype(value.switchOn(std::forward<F>(f)...))
-{
-    return value.switchOn(std::forward<F>(f)...);
-}
-
-template<class... F> ALWAYS_INLINE auto switchOn(WebCore::Style::Color&& value, F&&... f) -> decltype(value.switchOn(std::forward<F>(f)...))
-{
-    return value.switchOn(std::forward<F>(f)...);
-}
-
-} // namespace WTF
+template<> inline constexpr auto WebCore::TreatAsVariantLike<WebCore::Style::Color> = true;

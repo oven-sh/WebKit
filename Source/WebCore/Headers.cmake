@@ -681,6 +681,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/webtransport/WebTransportSession.h
     Modules/webtransport/WebTransportSessionClient.h
 
+    Scripts/generate-log-declarations.py
+
     accessibility/AXCoreObject.h
     accessibility/AXGeometryManager.h
     accessibility/AXLogger.h
@@ -2564,6 +2566,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/style/StyleDeprecatedFlexibleBoxData.h
     rendering/style/StyleFilterData.h
     rendering/style/StyleFlexibleBoxData.h
+    rendering/style/StyleFontData.h
     rendering/style/StyleGridData.h
     rendering/style/StyleGridItemData.h
     rendering/style/StyleImage.h
@@ -2771,6 +2774,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/CSSSelectorInlines.h
     ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.h
     ${WebCore_DERIVED_SOURCES_DIR}/CommandLineAPIModuleSourceBuiltins.h
+    ${WebCore_DERIVED_SOURCES_DIR}/DocumentSyncData.h
     ${WebCore_DERIVED_SOURCES_DIR}/EventInterfaces.h
     ${WebCore_DERIVED_SOURCES_DIR}/EventNames.h
     ${WebCore_DERIVED_SOURCES_DIR}/EventTargetInterfaces.h

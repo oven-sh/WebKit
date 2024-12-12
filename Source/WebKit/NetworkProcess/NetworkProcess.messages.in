@@ -161,7 +161,9 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 
     SetBlobRegistryTopOriginPartitioningEnabled(PAL::SessionID sessionID, bool enabled)
     SetShouldSendPrivateTokenIPCForTesting(PAL::SessionID sessionID, bool enabled)
+#if HAVE(ALLOW_ONLY_PARTITIONED_COOKIES)
     SetOptInCookiePartitioningEnabled(PAL::SessionID sessionID, bool enabled)
+#endif
 
     SetSessionIsControlledByAutomation(PAL::SessionID sessionID, bool controlled);
 
@@ -259,4 +261,5 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     GetAppBadgeForTesting(PAL::SessionID sessionID) -> (std::optional<uint64_t> badge)
 
     FetchLocalStorage(PAL::SessionID sessionID) -> (HashMap<WebCore::ClientOrigin, HashMap<String, String>> localStorageMap)
+    RestoreLocalStorage(PAL::SessionID sessionID, HashMap<WebCore::ClientOrigin, HashMap<String, String>> localStorageMap) -> (bool succeeded)
 }

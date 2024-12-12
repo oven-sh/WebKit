@@ -29,7 +29,6 @@
 #import "ArgumentCoders.h"
 #import "LayerProperties.h"
 #import "PlatformCALayerRemote.h"
-#import "WebCoreArgumentCoders.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebCore/EventRegion.h>
 #import <WebCore/LengthFunctions.h>

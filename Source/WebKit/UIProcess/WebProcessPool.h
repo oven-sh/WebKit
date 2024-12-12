@@ -947,7 +947,7 @@ private:
     bool m_webProcessStateUpdatesForPageClientEnabled { false };
 
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
-    ApproximateTime m_lastCriticalMemoryPressureStatusTime;
+    ApproximateTime m_lastMemoryPressureStatusTime;
     RunLoop::Timer m_checkMemoryPressureStatusTimer;
 #endif
 

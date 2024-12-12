@@ -33,6 +33,7 @@
 #import "LegacyDownloadClient.h"
 #import "Logging.h"
 #import "NetworkProcessProxy.h"
+#import "ProcessTerminationReason.h"
 #import "SandboxUtilities.h"
 #import "UIGamepadProvider.h"
 #import "WKAPICast.h"

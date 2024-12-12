@@ -83,7 +83,11 @@ void GStreamerRTPPacketizer::configureExtensions()
         g_signal_emit_by_name(m_payloader.get(), "add-extension", m_midExtension.get());
     }
 
+    // Invalidate rid and re-cache it from encoding parameters.
+    m_rid = emptyString();
     auto rid = rtpStreamId();
+    m_rid = rid;
+
     if (!m_ridExtension) {
         m_ridExtension = adoptGRef(gst_rtp_header_extension_create_from_uri(GST_RTP_HDREXT_BASE "sdes:rtp-stream-id"));
         gst_rtp_header_extension_set_id(m_ridExtension.get(), m_lastExtensionId);
@@ -103,6 +107,7 @@ void GStreamerRTPPacketizer::configureExtensions()
 
 void GStreamerRTPPacketizer::ensureMidExtension(const String& mid)
 {
+    m_mid = mid;
     if (m_midExtension) {
         g_object_set(m_midExtension.get(), "mid", mid.utf8().data(), nullptr);
         GST_DEBUG_OBJECT(m_bin.get(), "Existing mid extension %" GST_PTR_FORMAT " updated with mid %s", m_midExtension.get(), mid.utf8().data());
@@ -148,6 +153,9 @@ GUniquePtr<GstStructure> GStreamerRTPPacketizer::rtpParameters() const
 
 String GStreamerRTPPacketizer::rtpStreamId() const
 {
+    if (!m_rid.isEmpty())
+        return m_rid;
+
     if (!m_encodingParameters)
         return emptyString();
 
@@ -238,18 +246,15 @@ void GStreamerRTPPacketizer::startUpdatingStats()
 
 void GStreamerRTPPacketizer::updateStatsFromRTPExtensions()
 {
-    if (m_midExtension) {
-        GUniqueOutPtr<char> mid;
-        g_object_get(m_midExtension.get(), "mid", &mid.outPtr(), nullptr);
-        gst_structure_set(m_stats.get(), "mid", G_TYPE_STRING, mid.get(), nullptr);
-    } else if (gst_structure_has_field(m_stats.get(), "mid"))
+
+    if (!m_mid.isEmpty())
+        gst_structure_set(m_stats.get(), "mid", G_TYPE_STRING, m_mid.ascii().data(), nullptr);
+    else if (gst_structure_has_field(m_stats.get(), "mid"))
         gst_structure_remove_field(m_stats.get(), "mid");
 
-    if (m_ridExtension) {
-        GUniqueOutPtr<char> rid;
-        g_object_get(m_ridExtension.get(), "rid", &rid.outPtr(), nullptr);
-        gst_structure_set(m_stats.get(), "rid", G_TYPE_STRING, rid.get(), nullptr);
-    } else if (gst_structure_has_field(m_stats.get(), "rid"))
+    if (!m_rid.isEmpty())
+        gst_structure_set(m_stats.get(), "rid", G_TYPE_STRING, m_rid.ascii().data(), nullptr);
+    else if (gst_structure_has_field(m_stats.get(), "rid"))
         gst_structure_remove_field(m_stats.get(), "rid");
 }
 

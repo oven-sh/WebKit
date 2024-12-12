@@ -31,7 +31,6 @@
 #include "ServiceWorkerDownloadTaskMessages.h"
 #include "ServiceWorkerFetchTaskMessages.h"
 #include "SharedBufferReference.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebErrors.h"
 #include <WebCore/FetchEvent.h>
 #include <WebCore/ResourceError.h>

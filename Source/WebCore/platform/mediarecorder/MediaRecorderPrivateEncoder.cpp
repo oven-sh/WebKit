@@ -377,15 +377,15 @@ void MediaRecorderPrivateEncoder::audioSamplesAvailable(const MediaTime& time, s
     if (m_hadError)
         return;
 
-    auto* absd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(m_audioFormatDescription.get());
-    ASSERT(absd);
-    if (!absd) {
+    auto* asbd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(m_audioFormatDescription.get());
+    ASSERT(asbd);
+    if (!asbd) {
         RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPrivateEncoder::audioSamplesAvailable: inconsistent running state");
         m_hadError = true;
         return;
     }
 
-    auto result = WebAudioBufferList::createWebAudioBufferListWithBlockBuffer(*absd, sampleCount);
+    auto result = WebAudioBufferList::createWebAudioBufferListWithBlockBuffer(*asbd, sampleCount);
     if (!result) {
         RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPrivateEncoder::audioSamplesAvailable: failed to create block buffer");
         m_hadError = true;

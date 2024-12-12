@@ -336,6 +336,11 @@ String Locale::convertFromLocalizedNumber(const String& localized)
     return converted;
 }
 
+Locale::WritingDirection Locale::defaultWritingDirection() const
+{
+    return WritingDirection::Default;
+}
+
 #if ENABLE(DATE_AND_TIME_INPUT_TYPES)
 String Locale::formatDateTime(const DateComponents& date, FormatType formatType)
 {

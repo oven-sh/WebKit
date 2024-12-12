@@ -52,6 +52,11 @@ public func CommandEncoder_copyTextureToBuffer_thunk(commandEncoder: WebGPU.Comm
     commandEncoder.copyTextureToBuffer(source: source, destination: destination, copySize: copySize)
 }
 
+@_expose(Cxx)
+public func CommandEncoder_copyTextureToTexture_thunk(commandEncoder: WebGPU.CommandEncoder, source: WGPUImageCopyTexture, destination: WGPUImageCopyTexture, copySize: WGPUExtent3D) {
+    commandEncoder.copyTextureToTexture(source: source, destination: destination, copySize: copySize)
+}
+
 extension WebGPU.CommandEncoder {
     static func hasValidDimensions(dimension: WGPUTextureDimension, width: UInt, height: UInt, depth: UInt) -> Bool {
         switch (dimension.rawValue) {
@@ -742,5 +747,187 @@ extension WebGPU.CommandEncoder {
             return false
         }
         return true
+    }
+
+    public func copyTextureToTexture(source: WGPUImageCopyTexture, destination: WGPUImageCopyTexture, copySize: WGPUExtent3D) {
+        guard source.nextInChain == nil, destination.nextInChain == nil else {
+            return
+        }
+
+        // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-copytexturetotexture
+
+        guard self.prepareTheEncoderState() else {
+            self.generateInvalidEncoderStateError()
+            return
+        }
+        let error = self.errorValidatingCopyTextureToTexture(source, destination, copySize)
+        guard error == nil else {
+            self.makeInvalid(error)
+            return
+        }
+
+        let sourceTexture = WebGPU.fromAPI(source.texture)
+        let destinationTexture = WebGPU.fromAPI(destination.texture)
+        sourceTexture.setCommandEncoder(self)
+        destinationTexture.setCommandEncoder(self)
+
+        guard !sourceTexture.isDestroyed(), !destinationTexture.isDestroyed() else {
+            return
+        }
+
+        guard let blitCommandEncoder = ensureBlitCommandEncoder() else {
+            return
+        }
+
+        let destinationTextureDimension = destinationTexture.dimension()
+        let sliceCount: UInt32 = destinationTextureDimension == WGPUTextureDimension_3D ? 1 : copySize.depthOrArrayLayers
+        let destinationLogicalSize = destinationTexture.logicalMiplevelSpecificTextureExtent(destination.mipLevel)
+        var didOverflow: Bool
+        for layer in 0..<sliceCount {
+
+            var sourceOriginPlusLayer = UInt(source.origin.z)
+            (sourceOriginPlusLayer, didOverflow) = sourceOriginPlusLayer.addingReportingOverflow(UInt(layer))
+            guard !didOverflow else {
+                return
+            }
+            let sourceSlice: UInt = sourceTexture.dimension() == WGPUTextureDimension_3D ? 0 : sourceOriginPlusLayer
+            self.clearTextureIfNeeded(source, sourceSlice)
+            var destinationOriginPlusLayer = UInt(destination.origin.z)
+            (destinationOriginPlusLayer, didOverflow) = destinationOriginPlusLayer.addingReportingOverflow(UInt(layer))
+            guard !didOverflow else {
+                return
+            }
+            let destinationSlice: UInt = destinationTexture.dimension() == WGPUTextureDimension_3D ? 0 : destinationOriginPlusLayer
+            if WebGPU.Queue.writeWillCompletelyClear(destinationTextureDimension, copySize.width, destinationLogicalSize.width, copySize.height, destinationLogicalSize.height, copySize.depthOrArrayLayers, destinationLogicalSize.depthOrArrayLayers) {
+                guard let destinationSliceUInt32 = UInt32(exactly: destinationSlice) else {
+                    return
+                }
+                destinationTexture.setPreviouslyCleared(destination.mipLevel, destinationSliceUInt32, true)
+            } else {
+                self.clearTextureIfNeeded(destination, destinationSlice)
+            }
+        }
+        guard let mtlDestinationTexture = destinationTexture.texture(), let mtlSourceTexture = sourceTexture.texture() else {
+            return
+        }
+
+        // FIXME(PERFORMANCE): Is it actually faster to use the -[MTLBlitCommandEncoder copyFromTexture:...toTexture:...levelCount:]
+        // variant, where possible, rather than calling the other variant in a loop?
+        switch (sourceTexture.dimension()) {
+        case WGPUTextureDimension_1D:
+            // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400756-copyfromtexture?language=objc
+            // "When you copy to a 1D texture, height and depth must be 1."
+            let sourceSize = MTLSizeMake(Int(copySize.width), 1, 1)
+            guard sourceSize.width != 0 else {
+                return
+            }
+
+            let sourceOrigin = MTLOriginMake(Int(source.origin.x), 0, 0)
+            let destinationOrigin = MTLOriginMake(Int(destination.origin.x), 0, 0)
+            for layer in 0..<copySize.depthOrArrayLayers {
+                var sourceSlice = UInt(source.origin.z)
+                (sourceSlice, didOverflow) = sourceSlice.addingReportingOverflow(UInt(layer))
+                guard !didOverflow else {
+                    return
+                }
+                var destinationSlice = UInt(destination.origin.z)
+                (destinationSlice, didOverflow) = destinationSlice.addingReportingOverflow(UInt(layer))
+                guard !didOverflow else {
+                    return
+                }
+                if destinationSlice >= mtlDestinationTexture.arrayLength || sourceSlice >= mtlSourceTexture.arrayLength {
+                    continue
+                }
+                blitCommandEncoder.copy(
+                    from: mtlSourceTexture,
+                    sourceSlice: Int(sourceSlice),
+                    sourceLevel: Int(source.mipLevel),
+                    sourceOrigin: sourceOrigin,
+                    sourceSize: (sourceSize),
+                    to: mtlDestinationTexture,
+                    destinationSlice: Int(destinationSlice),
+                    destinationLevel: Int(destination.mipLevel),
+                    destinationOrigin: destinationOrigin
+                )
+            }
+        case WGPUTextureDimension_2D:
+            // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400756-copyfromtexture?language=objc
+            // "When you copy to a 2D texture, depth must be 1."
+            let sourceSize = MTLSizeMake(Int(copySize.width), Int(copySize.height), 1)
+            guard sourceSize.width != 0, sourceSize.height != 0 else {
+                return
+            }
+
+            let sourceOrigin = MTLOriginMake(Int(source.origin.x), Int(source.origin.y), 0)
+            let destinationOrigin = MTLOriginMake(Int(destination.origin.x), Int(destination.origin.y), 0)
+
+            for layer in 0..<copySize.depthOrArrayLayers {
+                var sourceSlice = UInt(source.origin.z)
+                (sourceSlice, didOverflow) = sourceSlice.addingReportingOverflow(UInt(layer))
+                guard !didOverflow else {
+                    return
+                }
+                var destinationSlice = UInt(destination.origin.z)
+                (destinationSlice, didOverflow) = destinationSlice.addingReportingOverflow(UInt(layer))
+                guard !didOverflow else {
+                    return
+                }
+                if destinationSlice >= mtlDestinationTexture.arrayLength || sourceSlice >= mtlSourceTexture.arrayLength {
+                    continue
+                }
+                blitCommandEncoder.copy(
+                    from: mtlSourceTexture,
+                    sourceSlice: Int(sourceSlice),
+                    sourceLevel: Int(source.mipLevel),
+                    sourceOrigin: sourceOrigin,
+                    sourceSize: (sourceSize),
+                    to: mtlDestinationTexture,
+                    destinationSlice: Int(destinationSlice),
+                    destinationLevel: Int(destination.mipLevel),
+                    destinationOrigin: destinationOrigin
+                )
+
+            }
+        case WGPUTextureDimension_3D:
+            let sourceSize = MTLSizeMake(Int(copySize.width), Int(copySize.height), Int(copySize.depthOrArrayLayers))
+            guard sourceSize.width != 0, sourceSize.height != 0, sourceSize.depth != 0 else {
+                return
+            }
+            var originPlusSourceSize = UInt32(destination.origin.z)
+            guard let sourceSizeDepthUInt32 = UInt32(exactly: sourceSize.depth) else {
+                return
+            }
+            (originPlusSourceSize, didOverflow) = originPlusSourceSize.addingReportingOverflow(sourceSizeDepthUInt32)
+            guard !didOverflow else {
+                return
+            }
+            guard let mtlDestinationTextureDepthUInt32 = UInt32(exactly: mtlDestinationTexture.depth) else {
+                return
+            }
+            guard originPlusSourceSize <= min(destinationLogicalSize.depthOrArrayLayers, mtlDestinationTextureDepthUInt32) else {
+                self.makeInvalid("GPUCommandEncoder.copyTextureToTexture: destination.origin.z + sourceSize.depth > destinationLogicalSize.depthOrArrayLayers")
+                return
+            }
+
+            let sourceOrigin = MTLOriginMake(Int(source.origin.x), Int(source.origin.y), Int(source.origin.z))
+            let destinationOrigin = MTLOriginMake(Int(destination.origin.x), Int(destination.origin.y), Int(destination.origin.z))
+            blitCommandEncoder.copy(
+                from: mtlSourceTexture,
+                sourceSlice: 0,
+                sourceLevel: Int(source.mipLevel),
+                sourceOrigin: sourceOrigin,
+                sourceSize: (sourceSize),
+                to: mtlDestinationTexture,
+                destinationSlice: 0,
+                destinationLevel: Int(destination.mipLevel),
+                destinationOrigin: destinationOrigin
+            )
+        case WGPUTextureDimension_Force32:
+            assertionFailure()
+            return
+        default:
+            assertionFailure()
+            return
+        }
     }
 }

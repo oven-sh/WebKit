@@ -167,32 +167,19 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSync(VM& vm, int64_t* p
 
 void WaiterListManager::timeoutAsyncWaiter(void* ptr, Ref<Waiter>&& waiter)
 {
+    dataLogLnIf(WaiterListsManagerInternal::verbose, "<WaiterListManager> <Thread:", Thread::current(), "> timeoutAsyncWaiter ", waiter.get(), ") for ptr ", RawPointer(ptr));
     if (RefPtr<WaiterList> list = findList(ptr)) {
-        // All cases:
-        // 1. Find a list for ptr.
         Locker listLocker { list->lock };
-        if (waiter->ticket(listLocker)) {
-            if (waiter->isOnList()) {
-                // 1.1. The list contains the waiter which must be in the list and hasn't been notified.
-                //      It should have a ticket, then notify it with timeout.
-                bool didGetDequeued = list->findAndRemove(listLocker, waiter);
-                ASSERT_UNUSED(didGetDequeued, didGetDequeued);
-            }
-            // 1.2. The list doesn't contain the waiter.
-            //      1.2.1 It's a new list, then the waiter must be removed from a list which is destructed.
-            //            Then, the waiter may (notify it if it does) or may not have a ticket.
-            notifyWaiterImpl(listLocker,  WTFMove(waiter), ResolveResult::Timeout);
-            return;
+        if (waiter->isOnList()) {
+            bool didGetDequeued = list->findAndRemove(listLocker, waiter);
+            ASSERT_UNUSED(didGetDequeued, didGetDequeued);
         }
-        // 1.2.2 It's the list the waiter used to belong. Then it must be notified by other thread and ignore it.
+        notifyWaiterImpl(listLocker,  WTFMove(waiter), ResolveResult::Timeout);
+        return;
     }
 
-    // 2. Doesn't find a list for ptr, then the waiter must be removed from the list.
-    //      2.1. The waiter has a ticket, then notify it.
-    //      2.2. The waiter doesn't has a ticket, then it's notified and ignore it.
     ASSERT(!waiter->isOnList());
-    if (waiter->ticket(NoLockingNecessary))
-        notifyWaiterImpl(NoLockingNecessary, WTFMove(waiter), ResolveResult::Timeout);
+    notifyWaiterImpl(NoLockingNecessary, WTFMove(waiter), ResolveResult::Timeout);
 }
 
 unsigned WaiterListManager::notifyWaiter(void* ptr, unsigned count)

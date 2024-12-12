@@ -148,11 +148,20 @@ public:
 
     WEBCORE_EXPORT ExceptionOr<Ref<ElementInternals>> attachInternals();
 
+    struct ShowPopoverOptions {
+        RefPtr<HTMLElement> source;
+    };
+
+    struct TogglePopoverOptions : public ShowPopoverOptions {
+        std::optional<bool> force;
+    };
+
     void queuePopoverToggleEventTask(ToggleState oldState, ToggleState newState);
-    ExceptionOr<void> showPopover(const HTMLFormControlElement* = nullptr);
+    ExceptionOr<void> showPopover(const ShowPopoverOptions&);
+    ExceptionOr<void> showPopoverInternal(const HTMLElement* = nullptr);
     ExceptionOr<void> hidePopover();
     ExceptionOr<void> hidePopoverInternal(FocusPreviousElement, FireEvents);
-    ExceptionOr<bool> togglePopover(std::optional<bool> force);
+    ExceptionOr<bool> togglePopover(std::optional<std::variant<WebCore::HTMLElement::TogglePopoverOptions, bool>>);
 
     PopoverState popoverState() const;
     const AtomString& popover() const;

@@ -659,7 +659,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)_didExitStableState
 {
-    _needsDeferredEndScrollingSelectionUpdate = self.shouldHideSelectionWhenScrolling;
+    _needsDeferredEndScrollingSelectionUpdate = self.shouldHideSelectionInFixedPositionWhenScrolling;
     if (!_needsDeferredEndScrollingSelectionUpdate)
         return;
 

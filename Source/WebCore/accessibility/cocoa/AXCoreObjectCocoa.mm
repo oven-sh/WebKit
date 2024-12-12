@@ -26,6 +26,7 @@
 #import "config.h"
 #import "AXCoreObject.h"
 
+#import "AXObjectCache.h"
 #import "ColorCocoa.h"
 #import "WebAccessibilityObjectWrapperBase.h"
 
@@ -48,6 +49,10 @@ SOFT_LINK_CONSTANT(AXRuntime, UIAccessibilityTokenAttachment, NSString *);
 #define AccessibilityTokenAttachment getUIAccessibilityTokenAttachment()
 
 #endif // PLATFORM(IOS_FAMILY)
+
+#if PLATFORM(MAC)
+#import "WebAccessibilityObjectWrapperMac.h"
+#endif // PLATFORM(MAC)
 
 #if PLATFORM(COCOA)
 
@@ -105,20 +110,64 @@ void attributedStringSetFont(NSMutableAttributedString *attributedString, CTFont
 }
 
 #if PLATFORM(MAC)
-void attributedStringSetColor(NSMutableAttributedString *attrString, NSString *attribute, NSColor *color, const NSRange& range)
+void attributedStringSetColor(NSMutableAttributedString *string, NSString *attribute, NSColor *color, const NSRange& range)
 {
+    if (!attributedStringContainsRange(string, range))
+        return;
+
     if (color) {
         // Use the CGColor instead of the passed NSColor because that's what the AX system framework expects. Using the NSColor causes that the AX client gets nil instead of a valid NSAttributedString.
-        [attrString addAttribute:attribute value:(__bridge id)color.CGColor range:range];
+        [string addAttribute:attribute value:(__bridge id)color.CGColor range:range];
     }
 }
-#endif // PLATFORM(MAC)
+
+void attributedStringSetExpandedText(NSMutableAttributedString *string, const AXCoreObject& object, const NSRange& range)
+{
+    if (!attributedStringContainsRange(string, range))
+        return;
+
+    if (object.supportsExpandedTextValue())
+        [string addAttribute:NSAccessibilityExpandedTextValueAttribute value:object.expandedTextValue() range:range];
+}
+
+void attributedStringSetBlockquoteLevel(NSMutableAttributedString *string, const AXCoreObject& object, const NSRange& range)
+{
+    if (!attributedStringContainsRange(string, range))
+        return;
+
+    if (unsigned level = object.blockquoteLevel())
+        [string addAttribute:NSAccessibilityBlockQuoteLevelAttribute value:@(level) range:range];
+}
+
+void attributedStringSetNeedsSpellCheck(NSMutableAttributedString *string, const AXCoreObject& object)
+{
+    // If this object is not inside editable content, it's not eligible for spell-checking.
+    if (!object.editableAncestor())
+        return;
+
+    // Inform the AT that we want it to spell-check for us by setting AXDidSpellCheck to @NO.
+    attributedStringSetNumber(string, AXDidSpellCheckAttribute, @NO, NSMakeRange(0, string.length));
+}
+
+void attributedStringSetElement(NSMutableAttributedString *string, NSString *attribute, const AXCoreObject& object, const NSRange& range)
+{
+    if (!attributedStringContainsRange(string, range))
+        return;
+
+    id wrapper = object.wrapper();
+    if ([attribute isEqualToString:NSAccessibilityAttachmentTextAttribute] && object.isAttachment()) {
+        if (id attachmentView = [wrapper attachmentView])
+            wrapper = [wrapper attachmentView];
+    }
+
+    if (RetainPtr axElement = adoptCF(NSAccessibilityCreateAXUIElementRef(wrapper)))
+        [string addAttribute:attribute value:(__bridge id)axElement.get() range:range];
+}
 
 static void attributedStringSetStyle(NSMutableAttributedString *attributedString, AttributedStringStyle&& style, const NSRange& range)
 {
     attributedStringSetFont(attributedString, style.font.get(), range);
 
-#if PLATFORM(MAC)
     attributedStringSetColor(attributedString, NSAccessibilityForegroundColorTextAttribute, cocoaColor(style.textColor).get(), range);
     attributedStringSetColor(attributedString, NSAccessibilityBackgroundColorTextAttribute, cocoaColor(style.backgroundColor).get(), range);
 
@@ -142,53 +191,79 @@ static void attributedStringSetStyle(NSMutableAttributedString *attributedString
         attributedStringSetNumber(attributedString, NSAccessibilityStrikethroughTextAttribute, @YES, range);
         attributedStringSetColor(attributedString, NSAccessibilityStrikethroughColorTextAttribute, cocoaColor(style.linethroughColor()).get(), range);
     }
-#endif // PLATFORM(MAC)
-
-    // FIXME: Implement this.
-//    // Indicate background highlighting.
-//    for (Node* node = renderer->node(); node; node = node->parentNode()) {
-//        if (node->hasTagName(HTMLNames::markTag))
-//            attributedStringSetNumber(attributedString, @"AXHighlight", @YES, range);
-//        if (auto* element = dynamicDowncast<Element>(*node)) {
-//            auto& roleValue = element->attributeWithoutSynchronization(HTMLNames::roleAttr);
-//            if (equalLettersIgnoringASCIICase(roleValue, "insertion"_s))
-//                attributedStringSetNumber(attributedString, @"AXIsSuggestedInsertion", @YES, range);
-//            else if (equalLettersIgnoringASCIICase(roleValue, "deletion"_s))
-//                attributedStringSetNumber(attributedString, @"AXIsSuggestedDeletion", @YES, range);
-//            else if (equalLettersIgnoringASCIICase(roleValue, "suggestion"_s))
-//                attributedStringSetNumber(attributedString, @"AXIsSuggestion", @YES, range);
-//            else if (equalLettersIgnoringASCIICase(roleValue, "mark"_s))
-//                attributedStringSetNumber(attributedString, @"AXHighlight", @YES, range);
-//        }
-//    }
 }
 
-// This is intended to replace the static attributedStringCreate() methods once we have ported all functionality.
-RetainPtr<NSAttributedString> AXCoreObject::createAttributedString(String&& text) const
+// FIXME: This function should eventually be adapted to also work for PLATFORM(IOS), or be moved to a currently non-existent AXCoreObjectMac file.
+RetainPtr<NSMutableAttributedString> AXCoreObject::createAttributedString(StringView text, SpellCheck spellCheck) const
 {
     if (text.isEmpty())
         return nil;
 
-    auto result = adoptNS([[NSMutableAttributedString alloc] initWithString:WTFMove(text)]);
-    NSRange range = NSMakeRange(0, [result length]);
-    attributedStringSetStyle(result.get(), stylesForAttributedString(), range);
+    auto string = adoptNS([[NSMutableAttributedString alloc] initWithString:text.createNSStringWithoutCopying().get()]);
+    NSRange range = NSMakeRange(0, [string length]);
+    attributedStringSetStyle(string.get(), stylesForAttributedString(), range);
 
-    // FIXME: Implement the rest of these.
-//    attributedStringSetHeadingLevel(result.get(), renderer.get(), range);
-//    attributedStringSetBlockquoteLevel(result.get(), renderer.get(), range);
-//    attributedStringSetExpandedText(result.get(), renderer.get(), range);
-//    attributedStringSetElement(result.get(), NSAccessibilityLinkTextAttribute, AccessibilityObject::anchorElementForNode(node), range);
-//    attributedStringSetCompositionAttributes(result.get(), node, textRange);
-//    // Do spelling last because it tends to break up the range.
-//    if (spellCheck == AXCoreObject::SpellCheck::Yes) {
-//        if (AXObjectCache::shouldSpellCheck())
-//            attributedStringSetSpelling(result.get(), node, text, range);
-//        else
-//            attributedStringSetNeedsSpellCheck(result.get(), node);
-//    }
-//
-    return result;
+    // Set attributes determined by `this`, or an ancestor of `this`.
+    bool didSetHeadingLevel = false;
+    for (RefPtr ancestor = this; ancestor; ancestor = ancestor->parentObject()) {
+        if (ancestor->hasMarkTag())
+            attributedStringSetNumber(string.get(), @"AXHighlight", @YES, range);
+
+        switch (ancestor->roleValue()) {
+        case AccessibilityRole::Insertion:
+            attributedStringSetNumber(string.get(), @"AXIsSuggestedInsertion", @YES, range);
+            break;
+        case AccessibilityRole::Deletion:
+            attributedStringSetNumber(string.get(), @"AXIsSuggestedDeletion", @YES, range);
+            break;
+        case AccessibilityRole::Suggestion:
+            attributedStringSetNumber(string.get(), @"AXIsSuggestion", @YES, range);
+            break;
+        case AccessibilityRole::Mark:
+            attributedStringSetNumber(string.get(), @"AXHighlight", @YES, range);
+            break;
+        default:
+            break;
+        }
+
+        if (ancestor->isLink())
+            attributedStringSetElement(string.get(), NSAccessibilityLinkTextAttribute, *ancestor, range);
+
+        if (!didSetHeadingLevel) {
+            if (unsigned level = ancestor->headingLevel()) {
+                didSetHeadingLevel = true;
+                [string.get() addAttribute:@"AXHeadingLevel" value:@(level) range:range];
+            }
+        }
+    }
+
+    // FIXME: Computing block-quote level is an ancestry walk, so ideally we would just combine that with the
+    // ancestry walk we do above, but we currently cache this as its own property (AXPropertyName::BlockquoteLevel)
+    // so just use that for now.
+    attributedStringSetBlockquoteLevel(string.get(), *this, range);
+    attributedStringSetExpandedText(string.get(), *this, range);
+
+    // FIXME: We need to implement this, but there are several issues with it:
+    //  1. It requires a Node and SimpleRange, which an AXIsolatedObject will never have.
+    //  2. The implementation of this function requires accessing some Editor state, which AXIsolatedObjects cannot do.
+    //  3. The current implementation doesn't work well from a user experience perspective, which may require tweaking
+    //     ATs and also how WebKit represents this information. So we should probably do that work in tandem with fixing this.
+    // attributedStringSetCompositionAttributes(string.get(), node, textRange);
+
+    if (spellCheck == AXCoreObject::SpellCheck::Yes) {
+        RefPtr node = this->node();
+        if (AXObjectCache::shouldSpellCheck() && node) {
+            // FIXME: This eagerly resolves misspellings, and since it requires a node, we will
+            // never do this if `this` is an AXIsolatedObject`. We might need to figure out how
+            // to spellcheck off the main-thread.
+            attributedStringSetSpelling(string.get(), *node, text, range);
+        } else
+            attributedStringSetNeedsSpellCheck(string.get(), *this);
+    }
+
+    return string;
 }
+#endif // PLATFORM(MAC)
 
 } // namespace WebCore
 

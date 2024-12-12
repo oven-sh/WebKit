@@ -36,7 +36,9 @@ async function run() {
     renderPassEncoder8.setPipeline(pipeline2)
     renderPassEncoder8.setBindGroup(0, bindGroup17);
     renderPassEncoder8.draw(54, 42, 4_294_967_295)
+    await device0.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => setTimeout(() => globalThis.testRunner?.notifyDone(), 1000));
+run();
 </script>

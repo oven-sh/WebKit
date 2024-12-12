@@ -405,19 +405,19 @@
     _processPoolConfiguration->setMemoryFootprintNotificationThresholds(WTFMove(sizes));
 }
 
-- (BOOL)suspendsWebProcessesAggressivelyOnCriticalMemoryPressure
+- (BOOL)suspendsWebProcessesAggressivelyOnMemoryPressure
 {
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
-    return _processPoolConfiguration->suspendsWebProcessesAggressivelyOnCriticalMemoryPressure();
+    return _processPoolConfiguration->suspendsWebProcessesAggressivelyOnMemoryPressure();
 #else
     return NO;
 #endif
 }
 
-- (void)setSuspendsWebProcessesAggressivelyOnCriticalMemoryPressure:(BOOL)enabled
+- (void)setSuspendsWebProcessesAggressivelyOnMemoryPressure:(BOOL)enabled
 {
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
-    _processPoolConfiguration->setSuspendsWebProcessesAggressivelyOnCriticalMemoryPressure(enabled);
+    _processPoolConfiguration->setSuspendsWebProcessesAggressivelyOnMemoryPressure(enabled);
 #endif
 }
 

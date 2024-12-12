@@ -45,7 +45,9 @@ async function run() {
     });
     renderPassEncoder.setBindGroup(0, bindGroup, [0]);
     renderPassEncoder.drawIndexed(0);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

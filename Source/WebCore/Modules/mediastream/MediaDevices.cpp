@@ -358,8 +358,13 @@ void MediaDevices::exposeDevices(Vector<CaptureDeviceWithCapabilities>&& newDevi
                 m_audioOutputDeviceIdToPersistentId.add(deviceId, newDevice.persistentId());
                 devices.append(RefPtr<MediaDeviceInfo> { MediaDeviceInfo::create(newDevice.label(), WTFMove(deviceId), WTFMove(groupId), toMediaDeviceInfoKind(newDevice.type())) });
             }
-        } else
+        } else {
+            if (newDevice.type() == CaptureDevice::DeviceType::Camera && !newDevice.label().isEmpty())
+                m_hasRestrictedCameraDevices = false;
+            if (newDevice.type() == CaptureDevice::DeviceType::Microphone && !newDevice.label().isEmpty())
+                m_hasRestrictedMicrophoneDevices = false;
             devices.append(RefPtr<InputDeviceInfo> { InputDeviceInfo::create(WTFMove(newDeviceWithCapabilities), WTFMove(deviceId), WTFMove(groupId)) });
+        }
     }
     promise.resolve(WTFMove(devices));
 }
@@ -444,6 +449,23 @@ bool MediaDevices::addEventListener(const AtomString& eventType, Ref<EventListen
         listenForDeviceChanges();
 
     return EventTarget::addEventListener(eventType, WTFMove(listener), options);
+}
+
+void MediaDevices::willStartMediaCapture(bool microphone, bool camera)
+{
+    bool shouldFireDeviceChangeEvent = false;
+    if (camera && m_hasRestrictedCameraDevices) {
+        m_hasRestrictedCameraDevices = false;
+        shouldFireDeviceChangeEvent = true;
+    }
+    if (microphone && m_hasRestrictedMicrophoneDevices) {
+        m_hasRestrictedMicrophoneDevices = false;
+        shouldFireDeviceChangeEvent = true;
+    }
+    if (!shouldFireDeviceChangeEvent || !m_listeningForDeviceChanges)
+        return;
+
+    queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().devicechangeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 } // namespace WebCore

@@ -5,5 +5,5 @@ PASS animation-timeline: scroll(self)
 PASS animation-timeline: scroll(self), on non-scroller
 PASS animation-timeline: scroll(inline)
 PASS animation-timeline: scroll(x)
-FAIL animation-timeline: scroll(y) assert_equals: expected "100px" but got "none"
+PASS animation-timeline: scroll(y)
 

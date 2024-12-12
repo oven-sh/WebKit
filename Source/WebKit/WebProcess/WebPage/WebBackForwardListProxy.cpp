@@ -30,7 +30,6 @@
 #include "MessageSenderInlines.h"
 #include "SessionState.h"
 #include "SessionStateConversion.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebHistoryItemClient.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"

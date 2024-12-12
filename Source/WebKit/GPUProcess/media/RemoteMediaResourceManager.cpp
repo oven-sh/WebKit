@@ -34,7 +34,6 @@
 #include "RemoteMediaResourceLoader.h"
 #include "RemoteMediaResourceManagerMessages.h"
 #include "SharedBufferReference.h"
-#include "WebCoreArgumentCoders.h"
 #include <WebCore/PlatformMediaResourceLoader.h>
 #include <WebCore/ResourceRequest.h>
 #include <wtf/Scope.h>

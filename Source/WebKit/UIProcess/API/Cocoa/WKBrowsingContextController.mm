@@ -61,6 +61,7 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/CheckedPtr.h>
 #import <wtf/NeverDestroyed.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/cf/CFURLExtras.h>
 #import <wtf/cocoa/SpanCocoa.h>
@@ -438,7 +439,7 @@ static void setUpPageLoaderClient(WKBrowsingContextController *browsingContext, 
 ALLOW_DEPRECATED_DECLARATIONS_END
 {
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    memsetSpan(asMutableByteSpan(loaderClient), 0);
 
     loaderClient.base.version = 0;
     loaderClient.base.clientInfo = (__bridge void*)browsingContext;
@@ -477,7 +478,7 @@ static void setUpPagePolicyClient(WKBrowsingContextController *browsingContext, 
 ALLOW_DEPRECATED_DECLARATIONS_END
 {
     WKPagePolicyClientInternal policyClient;
-    memset(&policyClient, 0, sizeof(policyClient));
+    memsetSpan(asMutableByteSpan(policyClient), 0);
 
     policyClient.base.version = 2;
     policyClient.base.clientInfo = (__bridge void*)browsingContext;

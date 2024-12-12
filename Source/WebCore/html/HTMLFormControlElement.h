@@ -130,7 +130,7 @@ protected:
 
     void dispatchBlurEvent(RefPtr<Element>&& newFocusedElement) override;
 
-    void handlePopoverTargetAction() const;
+    void handlePopoverTargetAction(const EventTarget*) const;
 
     CommandType commandType() const;
     void handleCommand();

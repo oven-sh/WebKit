@@ -35,6 +35,7 @@
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/WebKit.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/StdLibExtras.h>
 
 static bool loadedOrCrashed = false;
 static bool loaded = false;
@@ -69,7 +70,7 @@ TEST(WebKit, NetworkProcessCrashWithPendingConnection)
 
     // FIXME: Adopt the new API once it's added in webkit.org/b/174061.
     WKContextClientV0 client;
-    memset(&client, 0, sizeof(client));
+    memsetSpan(asMutableByteSpan(client), 0);
     client.networkProcessDidCrash = [](WKContextRef context, const void* clientInfo) {
         networkProcessCrashed = true;
     };
@@ -136,7 +137,7 @@ TEST(WebKit, NetworkProcessRelaunchOnLaunchFailure)
     networkProcessCrashed = false;
 
     WKContextClientV0 client;
-    memset(&client, 0, sizeof(client));
+    memsetSpan(asMutableByteSpan(client), 0);
     client.networkProcessDidCrash = [](WKContextRef context, const void* clientInfo) {
         networkProcessCrashed = true;
     };

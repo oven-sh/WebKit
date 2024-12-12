@@ -26,7 +26,6 @@
 #include "config.h"
 #include "WebPrintOperationGtk.h"
 
-#include "WebCoreArgumentCoders.h"
 #include "WebErrors.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"

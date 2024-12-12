@@ -38,7 +38,6 @@
 #include "HandleMessage.h" // NOLINT
 #include "Plugin.h" // NOLINT
 #include "TestWithLegacyReceiverMessages.h" // NOLINT
-#include "WebCoreArgumentCoders.h" // NOLINT
 #include "WebPreferencesStore.h" // NOLINT
 #if (ENABLE(TOUCH_EVENTS) && (NESTED_MESSAGE_CONDITION && SOME_OTHER_MESSAGE_CONDITION)) || (ENABLE(TOUCH_EVENTS) && (NESTED_MESSAGE_CONDITION || SOME_OTHER_MESSAGE_CONDITION))
 #include "WebTouchEvent.h" // NOLINT

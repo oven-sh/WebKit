@@ -85,7 +85,7 @@ Ref<ProcessPoolConfiguration> ProcessPoolConfiguration::copy()
     copy->m_memoryFootprintPollIntervalForTesting = this->m_memoryFootprintPollIntervalForTesting;
     copy->m_memoryFootprintNotificationThresholds = this->m_memoryFootprintNotificationThresholds;
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
-    copy->m_suspendsWebProcessesAggressivelyOnCriticalMemoryPressure = this->m_suspendsWebProcessesAggressivelyOnCriticalMemoryPressure;
+    copy->m_suspendsWebProcessesAggressivelyOnMemoryPressure = this->m_suspendsWebProcessesAggressivelyOnMemoryPressure;
 #endif
     return copy;
 }

@@ -26,7 +26,6 @@
 #import "config.h"
 #import "InteractionInformationRequest.h"
 
-#import "WebCoreArgumentCoders.h"
 
 namespace WebKit {
 

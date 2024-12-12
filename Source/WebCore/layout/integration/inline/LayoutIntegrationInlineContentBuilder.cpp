@@ -308,7 +308,7 @@ void InlineContentBuilder::adjustDisplayLines(InlineContent& inlineContent, size
         line.setScrollableOverflow(scrollableOverflowRect);
         line.setInkOverflow(inkOverflowRect);
         line.setFirstBoxIndex(firstBoxIndex);
-        line.setBoxCount(boxIndex - firstBoxIndex);
+        ASSERT(line.boxCount() == boxIndex - firstBoxIndex);
 
         if (lineIndex) {
             auto& lastInkOverflow = lines[lineIndex - 1].inkOverflow();

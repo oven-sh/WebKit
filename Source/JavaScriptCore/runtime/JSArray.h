@@ -120,6 +120,8 @@ public:
 
     bool fastFill(VM&, unsigned startIndex, unsigned endIndex, JSValue);
 
+    JSArray* fastToReversed(JSGlobalObject*, uint64_t length);
+
     ALWAYS_INLINE bool definitelyNegativeOneMiss() const;
 
     enum ShiftCountMode {
@@ -409,6 +411,11 @@ ALWAYS_INLINE uint64_t toLength(JSGlobalObject*, JSObject*);
 
 template<ArrayFillMode fillMode>
 JSArray* tryCloneArrayFromFast(JSGlobalObject*, JSValue arrayValue);
+
+ALWAYS_INLINE bool isHole(double value);
+ALWAYS_INLINE bool isHole(const WriteBarrier<Unknown>& value);
+template<typename T>
+ALWAYS_INLINE bool containsHole(const T* data, unsigned length);
 
 } // namespace JSC
 

@@ -25,11 +25,14 @@
 #include "config.h"
 #include "ComputedStyleExtractor.h"
 
+#include "CSSAppleColorFilterPropertyValue.h"
 #include "CSSBasicShapeValue.h"
 #include "CSSBorderImage.h"
 #include "CSSBorderImageSliceValue.h"
+#include "CSSBoxShadowPropertyValue.h"
 #include "CSSColorSchemeValue.h"
 #include "CSSCounterValue.h"
+#include "CSSFilterPropertyValue.h"
 #include "CSSFontFeatureValue.h"
 #include "CSSFontStyleWithAngleValue.h"
 #include "CSSFontValue.h"
@@ -50,7 +53,7 @@
 #include "CSSReflectValue.h"
 #include "CSSRegisteredCustomProperty.h"
 #include "CSSScrollValue.h"
-#include "CSSShadowValue.h"
+#include "CSSTextShadowPropertyValue.h"
 #include "CSSTimingFunctionValue.h"
 #include "CSSTransformListValue.h"
 #include "CSSValueList.h"
@@ -82,7 +85,10 @@
 #include "ScaleTransformOperation.h"
 #include "ScrollTimeline.h"
 #include "SkewTransformOperation.h"
+#include "StyleAppleColorFilterProperty.h"
+#include "StyleBoxShadow.h"
 #include "StyleColorScheme.h"
+#include "StyleFilterProperty.h"
 #include "StylePathData.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePropertyShorthand.h"
@@ -90,6 +96,7 @@
 #include "StyleReflection.h"
 #include "StyleResolver.h"
 #include "StyleScope.h"
+#include "StyleTextShadow.h"
 #include "Styleable.h"
 #include "TimelineRange.h"
 #include "TransformOperationData.h"
@@ -101,6 +108,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ComputedStyleExtractor);
+
+enum class AdjustPixelValuesForComputedStyle : bool { No, Yes };
 
 template<typename ConvertibleType> Ref<CSSPrimitiveValue> createConvertingToCSSValueID(const ConvertibleType& value)
 {
@@ -1062,101 +1071,44 @@ static Ref<CSSValue> computedRotate(RenderObject* renderer, const RenderStyle& s
         CSSPrimitiveValue::create(rotate->y()), CSSPrimitiveValue::create(rotate->z()), WTFMove(angle));
 }
 
-static inline Ref<CSSPrimitiveValue> adjustLengthForZoom(const Length& length, const RenderStyle& style, ComputedStyleExtractor::AdjustPixelValuesForComputedStyle adjust)
-{
-    return adjust == ComputedStyleExtractor::AdjustPixelValuesForComputedStyle::Yes ? zoomAdjustedPixelValue(length.value(), style) : CSSPrimitiveValue::create(length);
-}
-
-Ref<CSSValue> ComputedStyleExtractor::valueForShadow(const ShadowData* shadow, CSSPropertyID propertyID, const RenderStyle& style, AdjustPixelValuesForComputedStyle adjust)
+static Ref<CSSValue> valueForBoxShadow(const ShadowData* shadow, const RenderStyle& style)
 {
     if (!shadow)
         return CSSPrimitiveValue::create(CSSValueNone);
-    auto& cssValuePool = CSSValuePool::singleton();
-    CSSValueListBuilder list;
-    for (const ShadowData* currShadowData = shadow; currShadowData; currShadowData = currShadowData->next()) {
-        auto x = adjustLengthForZoom(currShadowData->x(), style, adjust);
-        auto y = adjustLengthForZoom(currShadowData->y(), style, adjust);
-        auto blur = adjustLengthForZoom(currShadowData->radius(), style, adjust);
-        auto spread = propertyID == CSSPropertyTextShadow ? RefPtr<CSSPrimitiveValue>() : adjustLengthForZoom(currShadowData->spread(), style, adjust);
-        auto shadowStyle = propertyID == CSSPropertyTextShadow || currShadowData->style() == ShadowStyle::Normal ? RefPtr<CSSPrimitiveValue>() : CSSPrimitiveValue::create(CSSValueInset);
-        auto color = cssValuePool.createColorValue(style.colorResolvingCurrentColor(currShadowData->color()));
-        list.append(CSSShadowValue::create(WTFMove(x), WTFMove(y), WTFMove(blur), WTFMove(spread), WTFMove(shadowStyle), WTFMove(color), currShadowData->isWebkitBoxShadow()));
-    }
-    list.reverse();
-    return CSSValueList::createCommaSeparated(WTFMove(list));
+
+    CSS::BoxShadowProperty::List list;
+
+    for (const auto* currentShadowData = shadow; currentShadowData; currentShadowData = currentShadowData->next())
+        list.value.append(Style::toCSS(currentShadowData->asBoxShadow(), style));
+
+    list.value.reverse();
+
+    return CSSBoxShadowPropertyValue::create(CSS::BoxShadowProperty { WTFMove(list) });
 }
 
-Ref<CSSValue> ComputedStyleExtractor::valueForFilter(const RenderStyle& style, const FilterOperations& filterOperations, AdjustPixelValuesForComputedStyle adjust)
+static Ref<CSSValue> valueForTextShadow(const ShadowData* shadow, const RenderStyle& style)
 {
-    if (filterOperations.isEmpty())
+    if (!shadow)
         return CSSPrimitiveValue::create(CSSValueNone);
 
-    CSSValueListBuilder list;
+    CSS::TextShadowProperty::List list;
 
-    for (auto& filterOperationRef : filterOperations) {
-        auto& filterOperation = filterOperationRef.get();
+    for (const auto* currentShadowData = shadow; currentShadowData; currentShadowData = currentShadowData->next())
+        list.value.append(Style::toCSS(currentShadowData->asTextShadow(), style));
 
-        if (auto* referenceOperation = dynamicDowncast<ReferenceFilterOperation>(filterOperation))
-            list.append(CSSPrimitiveValue::createURI(referenceOperation->url()));
-        else {
-            RefPtr<CSSFunctionValue> filterValue;
-            switch (filterOperation.type()) {
-            case FilterOperation::Type::Grayscale:
-                filterValue = CSSFunctionValue::create(CSSValueGrayscale,
-                    CSSPrimitiveValue::create(downcast<BasicColorMatrixFilterOperation>(filterOperation).amount()));
-                break;
-            case FilterOperation::Type::Sepia:
-                filterValue = CSSFunctionValue::create(CSSValueSepia,
-                    CSSPrimitiveValue::create(downcast<BasicColorMatrixFilterOperation>(filterOperation).amount()));
-                break;
-            case FilterOperation::Type::Saturate:
-                filterValue = CSSFunctionValue::create(CSSValueSaturate,
-                    CSSPrimitiveValue::create(downcast<BasicColorMatrixFilterOperation>(filterOperation).amount()));
-                break;
-            case FilterOperation::Type::HueRotate:
-                filterValue = CSSFunctionValue::create(CSSValueHueRotate,
-                    CSSPrimitiveValue::create(downcast<BasicColorMatrixFilterOperation>(filterOperation).amount(), CSSUnitType::CSS_DEG));
-                break;
-            case FilterOperation::Type::Invert:
-                filterValue = CSSFunctionValue::create(CSSValueInvert,
-                    CSSPrimitiveValue::create(downcast<BasicComponentTransferFilterOperation>(filterOperation).amount()));
-                break;
-            case FilterOperation::Type::AppleInvertLightness:
-                filterValue = CSSFunctionValue::create(CSSValueAppleInvertLightness);
-                break;
-            case FilterOperation::Type::Opacity:
-                filterValue = CSSFunctionValue::create(CSSValueOpacity,
-                    CSSPrimitiveValue::create(downcast<BasicComponentTransferFilterOperation>(filterOperation).amount()));
-                break;
-            case FilterOperation::Type::Brightness:
-                filterValue = CSSFunctionValue::create(CSSValueBrightness,
-                    CSSPrimitiveValue::create(downcast<BasicComponentTransferFilterOperation>(filterOperation).amount()));
-                break;
-            case FilterOperation::Type::Contrast:
-                filterValue = CSSFunctionValue::create(CSSValueContrast,
-                    CSSPrimitiveValue::create(downcast<BasicComponentTransferFilterOperation>(filterOperation).amount()));
-                break;
-            case FilterOperation::Type::Blur:
-                filterValue = CSSFunctionValue::create(CSSValueBlur,
-                    adjustLengthForZoom(uncheckedDowncast<BlurFilterOperation>(filterOperation).stdDeviation(), style, adjust));
-                break;
-            case FilterOperation::Type::DropShadow: {
-                // We want our computed style to look like that of a text shadow (has neither spread nor inset style).
-                auto& dropShadowOperation = uncheckedDowncast<DropShadowFilterOperation>(filterOperation);
-                ShadowData shadowData({ Length(dropShadowOperation.location().x(), LengthType::Fixed), Length(dropShadowOperation.location().y(), LengthType::Fixed) }, Length(dropShadowOperation.stdDeviation(), LengthType::Fixed), Length(0, LengthType::Fixed), ShadowStyle::Normal, false, dropShadowOperation.color());
-                filterValue = CSSFunctionValue::create(CSSValueDropShadow,
-                    valueForShadow(&shadowData, CSSPropertyTextShadow, style, adjust));
-                break;
-            }
-            default:
-                ASSERT_NOT_REACHED();
-                filterValue = CSSFunctionValue::create(CSSValueInvalid);
-                break;
-            }
-            list.append(filterValue.releaseNonNull());
-        }
-    }
-    return CSSValueList::createSpaceSeparated(WTFMove(list));
+    list.value.reverse();
+
+    return CSSTextShadowPropertyValue::create(CSS::TextShadowProperty { WTFMove(list) });
+}
+
+Ref<CSSValue> ComputedStyleExtractor::cssValueForFilter(const RenderStyle& style, const FilterOperations& filterOperations)
+{
+    return CSSFilterPropertyValue::create(Style::toCSSFilterProperty(filterOperations, style));
+}
+
+Ref<CSSValue> ComputedStyleExtractor::cssValueForAppleColorFilter(const RenderStyle& style, const FilterOperations& filterOperations)
+{
+    return CSSAppleColorFilterPropertyValue::create(Style::toCSSAppleColorFilterProperty(filterOperations, style));
 }
 
 static Ref<CSSValue> specifiedValueForGridTrackBreadth(const GridLength& trackBreadth, const RenderStyle& style)
@@ -3682,7 +3634,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return valueForReflection(style.boxReflect(), style);
     case CSSPropertyBoxShadow:
     case CSSPropertyWebkitBoxShadow:
-        return valueForShadow(style.boxShadow(), propertyID, style);
+        return valueForBoxShadow(style.boxShadow(), style);
     case CSSPropertyCaptionSide:
         return createConvertingToCSSValueID(style.captionSide());
     case CSSPropertyCaretColor:
@@ -4234,7 +4186,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return textIndent;
     }
     case CSSPropertyTextShadow:
-        return valueForShadow(style.textShadow(), propertyID, style);
+        return valueForTextShadow(style.textShadow(), style);
     case CSSPropertyTextSpacingTrim:
         return textSpacingTrimFromStyle(style);
     case CSSPropertyTextAutospace:
@@ -4656,12 +4608,12 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     case CSSPropertyShapeOutside:
         return shapePropertyValue(style, style.shapeOutside());
     case CSSPropertyFilter:
-        return valueForFilter(style, style.filter());
+        return cssValueForFilter(style, style.filter());
     case CSSPropertyAppleColorFilter:
-        return valueForFilter(style, style.appleColorFilter());
+        return cssValueForAppleColorFilter(style, style.appleColorFilter());
     case CSSPropertyWebkitBackdropFilter:
     case CSSPropertyBackdropFilter:
-        return valueForFilter(style, style.backdropFilter());
+        return cssValueForFilter(style, style.backdropFilter());
     case CSSPropertyMathStyle:
         return createConvertingToCSSValueID(style.mathStyle());
     case CSSPropertyMixBlendMode:

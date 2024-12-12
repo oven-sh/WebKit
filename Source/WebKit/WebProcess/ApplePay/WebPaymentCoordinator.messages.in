@@ -24,6 +24,10 @@
 
 #if ENABLE(APPLE_PAY)
 
+[
+    DispatchedFrom=UI,
+    DispatchedTo=WebContent
+]
 messages -> WebPaymentCoordinator {
 
     ValidateMerchant(String validationURLString)

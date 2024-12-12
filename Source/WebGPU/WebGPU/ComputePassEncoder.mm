@@ -184,7 +184,7 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
             return;
         }
         auto group = kvp.value;
-        if (group->makeSubmitInvalid(ShaderStage::Compute)) {
+        if (group->makeSubmitInvalid(ShaderStage::Compute, pipelineLayout->optionalBindGroupLayout(bindGroupIndex))) {
             protectedParentEncoder()->makeSubmitInvalid();
             return;
         }
@@ -269,21 +269,21 @@ id<MTLBuffer> ComputePassEncoder::runPredispatchIndirectCallValidation(const Buf
 {
     static id<MTLFunction> function = nil;
     id<MTLDevice> mtlDevice = m_device->device();
-    if (!function) {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
         auto dimensionMax = m_device->limits().maxComputeWorkgroupsPerDimension;
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
         ALLOW_DEPRECATED_DECLARATIONS_END
         NSError *error = nil;
-        id<MTLLibrary> library = [mtlDevice newLibraryWithSource:[NSString stringWithFormat:@"[[kernel]] void cs(device const uint* indirectBuffer, device uint* dispatchCallBuffer, uint index [[thread_position_in_grid]]) { dispatchCallBuffer[index] = metal::select(indirectBuffer[index], 0u, indirectBuffer[index] > %u); }", dimensionMax] options:options error:&error];
+        id<MTLLibrary> library = [mtlDevice newLibraryWithSource:[NSString stringWithFormat:@"[[kernel]] void csDispatchClamp(device const uint* indirectBuffer, device uint* dispatchCallBuffer, uint index [[thread_position_in_grid]]) { dispatchCallBuffer[index] = metal::select(indirectBuffer[index], 0u, indirectBuffer[index] > %u); }", dimensionMax] options:options error:&error];
         if (error)
-            return nil;
+            WTFLogAlways("%@", error); // NOLINT
 
-        function = [library newFunctionWithName:@"cs"];
-        if (error)
-            return nil;
-    }
+        function = [library newFunctionWithName:@"csDispatchClamp"];
+    });
+    RELEASE_ASSERT(function);
 
     auto device = m_device;
     id<MTLComputePipelineState> computePipelineState = device->dispatchCallPipelineState(function);

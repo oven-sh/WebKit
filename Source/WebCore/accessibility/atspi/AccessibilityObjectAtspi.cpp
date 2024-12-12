@@ -793,7 +793,7 @@ OptionSet<Atspi::State> AccessibilityObjectAtspi::states() const
     if (m_coreObject->isExpanded())
         states.add(Atspi::State::Expanded);
 
-    if (m_coreObject->hasPopup())
+    if (m_coreObject->selfOrAncestorLinkHasPopup())
         states.add(Atspi::State::HasPopup);
 
     if (shouldIncludeOrientationState(*m_coreObject)) {
@@ -919,7 +919,7 @@ UncheckedKeyHashMap<String, String> AccessibilityObjectAtspi::attributes() const
 
     // The Core AAM states that an explicitly-set value should be exposed, including "none".
     if (static_cast<AccessibilityObject*>(m_coreObject.get())->hasAttribute(HTMLNames::aria_sortAttr)) {
-        switch (m_coreObject->sortDirection()) {
+        switch (m_coreObject->sortDirectionIncludingAncestors()) {
         case AccessibilitySortDirection::Invalid:
             break;
         case AccessibilitySortDirection::Ascending:

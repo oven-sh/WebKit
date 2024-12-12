@@ -334,6 +334,7 @@ private:
             break;
         }
             
+        case StringAt:
         case StringCharAt:
         case StringCharCodeAt:
         case StringCodePointAt: {

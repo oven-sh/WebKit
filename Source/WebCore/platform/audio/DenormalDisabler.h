@@ -27,6 +27,7 @@
 
 #include <cinttypes>
 #include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -103,7 +104,7 @@ private:
         } __attribute__ ((aligned (16)));
 
         fxsaveResult registerData;
-        memset(&registerData, 0, sizeof(fxsaveResult));
+        memsetSpan(asMutableByteSpan(registerData), 0);
         asm volatile("fxsave %0" : "=m" (registerData));
         s_isSupported = registerData.CSRMask & 0x0040;
         s_isInited = true;

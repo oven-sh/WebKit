@@ -56,7 +56,7 @@ static RefPtr<WebCore::ImageBuffer> createReferenceTarget()
     auto pixelFormat = WebCore::ImageBufferPixelFormat::BGRA8;
     WebCore::FloatSize logicalSize { testContextWidth, testContextHeight };
     float scale = 1;
-    return WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
+    return WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingMode::Unaccelerated, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
 }
 
 static WebCore::Path createTestPath()
@@ -74,7 +74,7 @@ static Ref<WebCore::ImageBuffer> createTestImageBuffer()
     auto pixelFormat = WebCore::ImageBufferPixelFormat::BGRA8;
     WebCore::FloatSize logicalSize { 3, 7 };
     float scale = 1;
-    auto result = WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
+    auto result = WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingMode::Unaccelerated, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
     RELEASE_ASSERT(result);
     return result.releaseNonNull();
 }

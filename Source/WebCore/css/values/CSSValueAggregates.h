@@ -37,6 +37,11 @@
 
 namespace WebCore {
 
+// Types can specialize this and set the value to true to be treated as "empty-like"
+// for CSS value type algorithms.
+// Requirements: None.
+template<typename> inline constexpr auto TreatAsEmptyLike = false;
+
 // Types can specialize this and set the value to true to be treated as "optional-like"
 // for CSS value type algorithms.
 // Requirements: Types be comparable to bool and have a operator* function.
@@ -66,7 +71,6 @@ template<typename> inline constexpr ASCIILiteral SerializationSeparator = ""_s;
 #define DEFINE_TYPE_WRAPPER(t, name) \
     template<size_t> const auto& get(const t& value) { return value.name; }
 
-
 // MARK: - Conforming Existing Types
 
 // - Optional-like
@@ -78,6 +82,13 @@ template<typename... Ts> inline constexpr auto TreatAsTupleLike<std::tuple<Ts...
 
 // - Variant-like
 template<typename... Ts> inline constexpr auto TreatAsVariantLike<std::variant<Ts...>> = true;
+
+
+// MARK: Utility Concepts
+
+template<typename T> concept HasIsZero = requires(T t) {
+    { t.isZero() } -> std::convertible_to<bool>;
+};
 
 
 // MARK: - Standard Leaf Types
@@ -123,6 +134,8 @@ template<typename T, size_t inlineCapacity = 0> struct SpaceSeparatedVector {
     using const_reverse_iterator = typename Vector::const_reverse_iterator;
     using value_type = typename Vector::value_type;
 
+    SpaceSeparatedVector() = default;
+
     SpaceSeparatedVector(std::initializer_list<T> initializerList)
         : value { initializerList }
     {
@@ -159,6 +172,8 @@ template<typename T, size_t inlineCapacity = 0> struct CommaSeparatedVector {
     using const_reverse_iterator = typename Vector::const_reverse_iterator;
     using value_type = typename Vector::value_type;
 
+    CommaSeparatedVector() = default;
+
     CommaSeparatedVector(std::initializer_list<T> initializerList)
         : value { initializerList }
     {
@@ -187,6 +202,43 @@ template<typename T, size_t inlineCapacity = 0> struct CommaSeparatedVector {
 
 template<typename T, size_t N> inline constexpr auto TreatAsRangeLike<CommaSeparatedVector<T, N>> = true;
 template<typename T, size_t N> inline constexpr auto SerializationSeparator<CommaSeparatedVector<T, N>> = ", "_s;
+
+// Wraps a list and enforces the invariant that it is either created with a non-empty value or `CSS::Keyword::None`.
+template<typename T> struct ListOrNone {
+    using List = T;
+
+    explicit ListOrNone(List&& list)
+        : value { WTFMove(list) }
+    {
+        RELEASE_ASSERT(!value.isEmpty());
+    }
+
+    explicit ListOrNone(CSS::Keyword::None)
+        : value { }
+    {
+    }
+
+    bool operator==(const ListOrNone&) const = default;
+
+    bool isNone() const { return value.isEmpty(); }
+    bool isList() const { return !value.isEmpty(); }
+
+    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    {
+        auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
+
+        if (isNone())
+            return visitor(CSS::Keyword::None { });
+        return visitor(value);
+    }
+
+private:
+    // An empty list indicates the value `none`. This invariant is ensured
+    // with a release assert in the constructor.
+    List value;
+};
+
+template<typename T> inline constexpr auto TreatAsVariantLike<ListOrNone<T>> = true;
 
 // Wraps a fixed size list of elements of a single type, semantically marking them as serializing as "space separated".
 template<typename T, size_t N> struct SpaceSeparatedArray {
@@ -347,6 +399,12 @@ template<typename T> struct SpaceSeparatedPoint {
     const T& x() const { return get<0>(value); }
     const T& y() const { return get<1>(value); }
 
+    bool isZero() const
+        requires HasIsZero<T>
+    {
+        return x().isZero() && y().isZero();
+    }
+
     SpaceSeparatedPair<T> value;
 };
 
@@ -377,6 +435,18 @@ template<typename T> struct SpaceSeparatedSize {
 
     const T& width() const { return get<0>(value); }
     const T& height() const { return get<1>(value); }
+
+    bool isZero() const
+        requires HasIsZero<T>
+    {
+        return width().isZero() && height().isZero();
+    }
+
+    bool isEmpty() const
+        requires HasIsZero<T>
+    {
+        return width().isZero() || height().isZero();
+    }
 
     SpaceSeparatedPair<T> value;
 };

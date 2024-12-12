@@ -20,7 +20,11 @@ Copyright (C) 2010-2024 Apple Inc. All rights reserved.
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-[SharedPreferencesNeedsConnection]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=UI,
+    SharedPreferencesNeedsConnection
+]
 messages -> WebPageProxy {
     # UI messages
     CreateNewPage(struct WebCore::WindowFeatures windowFeatures, struct WebKit::NavigationActionData navigationActionData) -> (std::optional<WebCore::PageIdentifier> newPageID, std::optional<WebKit::WebPageCreationParameters> newPageParameters) Synchronous
@@ -119,6 +123,7 @@ messages -> WebPageProxy {
 
     # Frame lifetime messages
     DidCreateSubframe(WebCore::FrameIdentifier parent, WebCore::FrameIdentifier newFrameID, String frameName, WebCore::SandboxFlags sandboxFlags, enum:uint8_t WebCore::ScrollbarMode scrollingMode) CanDispatchOutOfOrder
+    DidDestroyFrame(WebCore::FrameIdentifier frameID)
 
     # Frame load messages
     DidStartProvisionalLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, URL url, URL unreachableURL, WebKit::UserData userData, WallTime timestamp)
@@ -146,6 +151,7 @@ messages -> WebPageProxy {
     UpdateOpener(WebCore::FrameIdentifier frameID, WebCore::FrameIdentifier newOpener)
     [EnabledBy=SiteIsolationEnabled] UpdateScrollingMode(WebCore::FrameIdentifier frameID, enum:uint8_t WebCore::ScrollbarMode scrollingMode)
     [EnabledBy=SiteIsolationEnabled] UpdateRemoteFrameSize(WebCore::FrameIdentifier frameID, WebCore::IntSize size)
+    ResolveAccessibilityHitTestForTesting(WebCore::FrameIdentifier frameID, WebCore::IntPoint point) -> (String result)
 
     MainFramePluginHandlesPageScaleGestureDidChange(bool mainFramePluginHandlesPageScaleGesture, double minScale, double maxScale)
 
@@ -288,11 +294,11 @@ messages -> WebPageProxy {
 
 #if ENABLE(MEDIA_STREAM)
     # MediaSteam messages
-    RequestUserMediaPermissionForFrame(WebCore::UserMediaRequestIdentifier userMediaID, WebCore::FrameIdentifier frameID, WebCore::SecurityOriginData userMediaDocumentOriginIdentifier, WebCore::SecurityOriginData topLevelDocumentOriginIdentifier, struct WebCore::MediaStreamRequest request)
-    EnumerateMediaDevicesForFrame(WebCore::FrameIdentifier frameID, WebCore::SecurityOriginData userMediaDocumentOriginIdentifier, WebCore::SecurityOriginData topLevelDocumentOriginIdentifier) -> (Vector<WebCore::CaptureDeviceWithCapabilities> devices, struct WebCore::MediaDeviceHashSalts mediaDeviceIdentifierHashSalts)
-    BeginMonitoringCaptureDevices()
-    ValidateCaptureStateUpdate(WebCore::UserMediaRequestIdentifier userMediaID, struct WebCore::ClientOrigin clientOrigin, WebCore::FrameIdentifier frameID, bool isActive, enum:uint8_t WebCore::MediaProducerMediaCaptureKind kind) -> (std::optional<WebCore::Exception> result)
-    SetShouldListenToVoiceActivity(bool shouldListen);
+    [EnabledBy=MediaPlaybackEnabled] RequestUserMediaPermissionForFrame(WebCore::UserMediaRequestIdentifier userMediaID, WebCore::FrameIdentifier frameID, WebCore::SecurityOriginData userMediaDocumentOriginIdentifier, WebCore::SecurityOriginData topLevelDocumentOriginIdentifier, struct WebCore::MediaStreamRequest request)
+    [EnabledBy=MediaPlaybackEnabled] EnumerateMediaDevicesForFrame(WebCore::FrameIdentifier frameID, WebCore::SecurityOriginData userMediaDocumentOriginIdentifier, WebCore::SecurityOriginData topLevelDocumentOriginIdentifier) -> (Vector<WebCore::CaptureDeviceWithCapabilities> devices, struct WebCore::MediaDeviceHashSalts mediaDeviceIdentifierHashSalts)
+    [EnabledBy=MediaPlaybackEnabled] BeginMonitoringCaptureDevices()
+    [EnabledBy=MediaPlaybackEnabled] ValidateCaptureStateUpdate(WebCore::UserMediaRequestIdentifier userMediaID, struct WebCore::ClientOrigin clientOrigin, WebCore::FrameIdentifier frameID, bool isActive, enum:uint8_t WebCore::MediaProducerMediaCaptureKind kind) -> (std::optional<WebCore::Exception> result)
+    [EnabledBy=MediaPlaybackEnabled] SetShouldListenToVoiceActivity(bool shouldListen);
 #endif
 
 #if ENABLE(ENCRYPTED_MEDIA)

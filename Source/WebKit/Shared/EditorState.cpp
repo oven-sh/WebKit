@@ -26,7 +26,6 @@
 #include "config.h"
 #include "EditorState.h"
 
-#include "WebCoreArgumentCoders.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebKit {

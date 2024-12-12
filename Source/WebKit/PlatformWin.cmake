@@ -18,7 +18,6 @@ list(APPEND WebKit_SOURCES
 
     NetworkProcess/Classifier/WebResourceLoadStatisticsStore.cpp
 
-    Platform/IPC/win/ArgumentCodersWin.cpp
     Platform/IPC/win/ConnectionWin.cpp
     Platform/IPC/win/IPCSemaphoreWin.cpp
 
@@ -32,7 +31,6 @@ list(APPEND WebKit_SOURCES
     Shared/win/NativeWebMouseEventWin.cpp
     Shared/win/NativeWebTouchEventWin.cpp
     Shared/win/NativeWebWheelEventWin.cpp
-    Shared/win/WebCoreArgumentCodersWin.cpp
     Shared/win/WebEventFactory.cpp
 
     UIProcess/API/C/WKViewportAttributes.cpp
@@ -84,6 +82,10 @@ list(APPEND WebKit_SOURCES
     WebProcess/win/WebProcessWin.cpp
 
     win/WebKitDLL.cpp
+)
+
+list(APPEND WebKit_SERIALIZATION_IN_FILES
+    Shared/win/WTFArgumentCodersWin.serialization.in
 )
 
 list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
@@ -152,20 +154,8 @@ if (ENABLE_REMOTE_INSPECTOR)
 endif ()
 
 if (USE_CAIRO)
-    list(APPEND WebKit_SOURCES
-        Shared/API/c/cairo/WKImageCairo.cpp
-
-        UIProcess/Automation/cairo/WebAutomationSessionCairo.cpp
-    )
-    list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
-        "${WEBKIT_DIR}/UIProcess/API/C/cairo"
-    )
-    list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS
-        Shared/API/c/cairo/WKImageCairo.h
-    )
-endif ()
-
-if (USE_SKIA)
+    include(Platform/Cairo.cmake)
+elseif (USE_SKIA)
     include(Platform/Skia.cmake)
 
     list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS

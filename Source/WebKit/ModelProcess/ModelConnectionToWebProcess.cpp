@@ -42,7 +42,6 @@
 #include "ModelProcessModelPlayerProxy.h"
 #include "ModelProcessModelPlayerProxyMessages.h"
 #include "ModelProcessProxyMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebErrors.h"
 #include "WebProcessMessages.h"
 #include <WebCore/LogInitialization.h>

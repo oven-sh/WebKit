@@ -33,7 +33,6 @@
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
 #include "RemoteWorkerType.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebSWServerConnection.h"
 #include "WebSharedWorker.h"
 #include "WebSharedWorkerContextManagerConnectionMessages.h"

@@ -26,7 +26,6 @@
 #include "config.h"
 #include "WebInspectorUI.h"
 
-#include "WebCoreArgumentCoders.h"
 #include "WebInspectorMessages.h"
 #include "WebInspectorUIProxyMessages.h"
 #include "WebPage.h"
@@ -94,7 +93,7 @@ void WebInspectorUI::updateConnection()
     if (!connectionIdentifiers)
         return;
 
-    m_backendConnection = IPC::Connection::createServerConnection(connectionIdentifiers->server);
+    m_backendConnection = IPC::Connection::createServerConnection(WTFMove(connectionIdentifiers->server));
     m_backendConnection->open(*this);
 
     sendToParentProcess(Messages::WebInspectorUIProxy::SetFrontendConnection(WTFMove(connectionIdentifiers->client)));

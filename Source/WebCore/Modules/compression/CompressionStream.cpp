@@ -25,12 +25,14 @@
 #include "config.h"
 #include "CompressionStream.h"
 
+#include <wtf/StdLibExtras.h>
+
 namespace WebCore {
 
 CompressionStream::CompressionStream()
 {
 #if PLATFORM(COCOA)
-    std::memset(&m_stream, 0, sizeof(m_stream));
+    memsetSpan(asMutableByteSpan(m_stream), 0);
 #endif
 }
 

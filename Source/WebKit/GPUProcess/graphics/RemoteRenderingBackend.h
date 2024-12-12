@@ -62,7 +62,8 @@ class DestinationColorSpace;
 class FloatSize;
 class MediaPlayer;
 class NativeImage;
-enum class RenderingMode : bool;
+enum class RenderingMode : uint8_t;
+struct FontCustomPlatformSerializedData;
 
 namespace ShapeDetection {
 struct BarcodeDetectorOptions;
@@ -147,11 +148,7 @@ private:
     void cacheGradient(Ref<WebCore::Gradient>&&);
     void cacheFilter(Ref<WebCore::Filter>&&);
     void cacheFont(const WebCore::Font::Attributes&, WebCore::FontPlatformDataAttributes, std::optional<WebCore::RenderingResourceIdentifier>);
-#if PLATFORM(COCOA) || USE(SKIA)
     void cacheFontCustomPlatformData(WebCore::FontCustomPlatformSerializedData&&);
-#else
-    void cacheFontCustomPlatformData(Ref<WebCore::FontCustomPlatformData>&&);
-#endif
     void releaseAllDrawingResources();
     void releaseAllImageResources();
     void releaseRenderingResource(WebCore::RenderingResourceIdentifier);
@@ -186,9 +183,7 @@ private:
 
     Ref<ShapeDetection::ObjectHeap> protectedShapeDetectionObjectHeap() const;
 
-#if PLATFORM(COCOA) || USE(SKIA)
     bool shouldUseLockdownFontParser() const;
-#endif
 
     void getImageBufferResourceLimitsForTesting(CompletionHandler<void(WebCore::ImageBufferResourceLimits)>&&);
 

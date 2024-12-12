@@ -157,6 +157,7 @@
 #include <WebCore/WebSocketIdentifier.h>
 #include "TestWithCVPixelBufferMessages.h" // NOLINT
 #include "TestWithDeferSendingOptionMessages.h" // NOLINT
+#include "TestWithDispatchedFromAndToMessages.h" // NOLINT
 #include "TestWithEnabledByMessages.h" // NOLINT
 #include "TestWithEnabledByAndConjunctionMessages.h" // NOLINT
 #include "TestWithEnabledByOrConjunctionMessages.h" // NOLINT
@@ -165,6 +166,7 @@
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
 #include "TestWithLegacyReceiverMessages.h" // NOLINT
 #endif
+#include "TestWithMultiLineExtendedAttributesMessages.h" // NOLINT
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
 #include "TestWithoutAttributesMessages.h" // NOLINT
 #endif
@@ -203,6 +205,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithDeferSendingOption_OneIndex>(globalObject, decoder);
     case MessageName::TestWithDeferSendingOption_MultipleIndices:
         return jsValueForDecodedMessage<MessageName::TestWithDeferSendingOption_MultipleIndices>(globalObject, decoder);
+    case MessageName::TestWithDispatchedFromAndTo_AlwaysEnabled:
+        return jsValueForDecodedMessage<MessageName::TestWithDispatchedFromAndTo_AlwaysEnabled>(globalObject, decoder);
     case MessageName::TestWithEnabledBy_AlwaysEnabled:
         return jsValueForDecodedMessage<MessageName::TestWithEnabledBy_AlwaysEnabled>(globalObject, decoder);
     case MessageName::TestWithEnabledBy_ConditionallyEnabled:
@@ -287,6 +291,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_ExperimentalOperation>(globalObject, decoder);
 #endif
 #endif
+    case MessageName::TestWithMultiLineExtendedAttributes_AlwaysEnabled:
+        return jsValueForDecodedMessage<MessageName::TestWithMultiLineExtendedAttributes_AlwaysEnabled>(globalObject, decoder);
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
     case MessageName::TestWithoutAttributes_LoadURL:
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_LoadURL>(globalObject, decoder);
@@ -852,6 +858,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
             { "bar"_s, "int"_s, ASCIILiteral(), false },
             { "baz"_s, "int"_s, ASCIILiteral(), false },
         };
+    case MessageName::TestWithDispatchedFromAndTo_AlwaysEnabled:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s, ASCIILiteral(), false },
+        };
     case MessageName::TestWithEnabledBy_AlwaysEnabled:
         return Vector<ArgumentDescription> {
             { "url"_s, "String"_s, ASCIILiteral(), false },
@@ -1000,6 +1010,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         };
 #endif
 #endif
+    case MessageName::TestWithMultiLineExtendedAttributes_AlwaysEnabled:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s, ASCIILiteral(), false },
+        };
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
     case MessageName::TestWithoutAttributes_LoadURL:
         return Vector<ArgumentDescription> {

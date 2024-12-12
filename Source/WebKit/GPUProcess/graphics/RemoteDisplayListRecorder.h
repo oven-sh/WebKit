@@ -48,6 +48,7 @@ namespace WebKit {
 class RemoteRenderingBackend;
 class RemoteResourceCache;
 class SharedVideoFrameReader;
+struct SharedPreferencesForWebProcess;
 
 class RemoteDisplayListRecorder : public IPC::StreamMessageReceiver, public CanMakeWeakPtr<RemoteDisplayListRecorder> {
 public:
@@ -142,6 +143,7 @@ public:
     void applyFillPattern();
 #endif
     void applyDeviceScaleFactor(float);
+    std::optional<WebKit::SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 private:
     RemoteDisplayListRecorder(WebCore::ImageBuffer&, WebCore::RenderingResourceIdentifier, RemoteRenderingBackend&);

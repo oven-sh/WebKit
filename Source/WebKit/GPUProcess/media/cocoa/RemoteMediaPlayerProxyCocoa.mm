@@ -30,7 +30,6 @@
 
 #import "LayerHostingContext.h"
 #import "MediaPlayerPrivateRemoteMessages.h"
-#import "WebCoreArgumentCoders.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebCore/FloatSize.h>
 #import <WebCore/IOSurface.h>

@@ -94,7 +94,7 @@ FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription&
 
     auto size = description.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
     auto features = FontCache::computeFeatures(description, fontCreationContext);
-    FontPlatformData platformData(WTFMove(typeface), size, bold, italic, description.orientation(), description.widthVariant(), description.textRenderingMode(), WTFMove(features));
+    FontPlatformData platformData(WTFMove(typeface), size, bold, italic, description.orientation(), description.widthVariant(), description.textRenderingMode(), WTFMove(features), this);
     platformData.updateSizeWithFontSizeAdjust(description.fontSizeAdjust(), description.computedSize());
     return platformData;
 }
@@ -142,8 +142,7 @@ bool FontCustomPlatformData::supportsTechnology(const FontTechnology&)
 
 std::optional<Ref<FontCustomPlatformData>> FontCustomPlatformData::tryMakeFromSerializationData(FontCustomPlatformSerializedData&& data, bool)
 {
-    auto buffer = SharedBuffer::create(WTFMove(data.fontFaceData));
-    RefPtr fontCustomPlatformData = FontCustomPlatformData::create(buffer, data.itemInCollection);
+    RefPtr fontCustomPlatformData = FontCustomPlatformData::create(WTFMove(data.fontFaceData), data.itemInCollection);
     if (!fontCustomPlatformData)
         return std::nullopt;
     fontCustomPlatformData->m_renderingResourceIdentifier = data.renderingResourceIdentifier;
@@ -152,7 +151,7 @@ std::optional<Ref<FontCustomPlatformData>> FontCustomPlatformData::tryMakeFromSe
 
 FontCustomPlatformSerializedData FontCustomPlatformData::serializedData() const
 {
-    return FontCustomPlatformSerializedData { { creationData.fontFaceData->span() }, creationData.itemInCollection, m_renderingResourceIdentifier };
+    return FontCustomPlatformSerializedData { creationData.fontFaceData, creationData.itemInCollection, m_renderingResourceIdentifier };
 }
 
 }

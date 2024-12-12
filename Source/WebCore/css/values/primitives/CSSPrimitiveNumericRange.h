@@ -30,6 +30,28 @@
 namespace WebCore {
 namespace CSS {
 
+// Options to indicate how the range should be interpreted.
+enum class RangeOptions {
+    // `Default` indicates that at parse time, out of range values invalidate the parse.
+    // Out of range values at style building always clamp.
+    Default,
+
+    // `ClampLower` indicates that parse time, an out of range lower value should clamp
+    // instead of invalidating the parse. An out of range upper value will still invalidate
+    // the parse. Out of range values at style building always clamp.
+    ClampLower,
+
+    // `ClampUpper` indicates that parse time, an out of range upper value should clamp
+    // instead of invalidating the parse. An out of range lower value will still invalidate
+    // the parse. Out of range values at style building always clamp.
+    ClampUpper,
+
+    // `ClampBoth` indicates that parse time, an out of range lower or upper value should
+    // clamp instead of invalidating the parse. Out of range values at style building
+    // always clamp.
+    ClampBoth
+};
+
 // Representation for `CSS bracketed range notation`. Represents a closed range between (and including) `min` and `max`.
 // https://drafts.csswg.org/css-values-4/#numeric-ranges
 struct Range {
@@ -38,15 +60,35 @@ struct Range {
 
     double min { -infinity };
     double max {  infinity };
+    RangeOptions options { RangeOptions::Default };
+
+    constexpr Range(double min, double max, RangeOptions options = RangeOptions::Default)
+        : min { min }
+        , max { max }
+        , options { options }
+    {
+    }
 
     constexpr bool operator==(const Range&) const = default;
 };
 
 // Constant value for `[−∞,∞]`.
-inline constexpr auto All = Range { -Range::infinity, Range::infinity };
+inline constexpr auto All = Range { -Range::infinity, Range::infinity, RangeOptions::Default };
 
 // Constant value for `[0,∞]`.
-inline constexpr auto Nonnegative = Range { 0, Range::infinity };
+inline constexpr auto Nonnegative = Range { 0, Range::infinity, RangeOptions::Default };
+
+// Constant value for `[0,1]`.
+inline constexpr auto ClosedUnitRange = Range { 0, 1 };
+
+// Constant value for `[0,1(clamp upper)]`.
+inline constexpr auto ClosedUnitRangeClampUpper = Range { 0, 1, RangeOptions::ClampUpper };
+
+// Constant value for `[0,100]`.
+inline constexpr auto ClosedPercentageRange = Range { 0, 100 };
+
+// Constant value for `[0,100(clamp upper)]`.
+inline constexpr auto ClosedPercentageRangeClampUpper = Range { 0, 100, RangeOptions::ClampUpper };
 
 // Clamps a floating point value to within `range`.
 template<Range range, std::floating_point T> constexpr T clampToRange(T value)

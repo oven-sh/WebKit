@@ -30,7 +30,6 @@
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
 #include "NetworkStorageManagerMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebIDBResult.h"
 #include "WebProcess.h"
 #include <WebCore/IDBConnectionToServer.h>

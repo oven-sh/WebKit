@@ -27,6 +27,7 @@
 #include "FileSystemWritableFileStreamSink.h"
 
 #include "FileSystemFileHandle.h"
+#include "FileSystemWritableFileStream.h"
 #include "JSBlob.h"
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSArrayBuffer.h>

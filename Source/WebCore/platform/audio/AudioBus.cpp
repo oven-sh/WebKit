@@ -449,12 +449,12 @@ void AudioBus::copyWithGainFrom(const AudioBus& sourceBus, float gain)
         return;
 
     AudioBus& sourceBusSafe = const_cast<AudioBus&>(sourceBus);
-    const float* sources[MaxBusChannels];
-    float* destinations[MaxBusChannels];
+    std::array<std::span<const float>, MaxBusChannels> sources;
+    std::array<std::span<float>, MaxBusChannels> destinations;
 
     for (unsigned i = 0; i < numberOfChannels; ++i) {
-        sources[i] = sourceBusSafe.channel(i)->data();
-        destinations[i] = channel(i)->mutableData();
+        sources[i] = sourceBusSafe.channel(i)->span();
+        destinations[i] = channel(i)->mutableSpan();
     }
 
     unsigned framesToProcess = length();
@@ -462,13 +462,13 @@ void AudioBus::copyWithGainFrom(const AudioBus& sourceBus, float gain)
     // Handle gains of 0 and 1 (exactly) specially.
     if (gain == 1) {
         for (unsigned channelIndex = 0; channelIndex < numberOfChannels; ++channelIndex)
-            memcpy(destinations[channelIndex], sources[channelIndex], framesToProcess * sizeof(*destinations[channelIndex]));
+            memcpySpan(destinations[channelIndex], sources[channelIndex].first(framesToProcess));
     } else if (!gain) {
         for (unsigned channelIndex = 0; channelIndex < numberOfChannels; ++channelIndex)
-            memset(destinations[channelIndex], 0, framesToProcess * sizeof(*destinations[channelIndex]));
+            memsetSpan(destinations[channelIndex].first(framesToProcess), 0);
     } else {
         for (unsigned channelIndex = 0; channelIndex < numberOfChannels; ++channelIndex)
-            VectorMath::multiplyByScalar(sources[channelIndex], gain, destinations[channelIndex], framesToProcess);
+            VectorMath::multiplyByScalar(sources[channelIndex].data(), gain, destinations[channelIndex].data(), framesToProcess);
     }
 }
 

@@ -16,8 +16,10 @@ async function run() {
         { texture: texture, origin: {}, aspect: 'all' },
         { width: 0, height: 0, depthOrArrayLayers: 0 }
     );
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

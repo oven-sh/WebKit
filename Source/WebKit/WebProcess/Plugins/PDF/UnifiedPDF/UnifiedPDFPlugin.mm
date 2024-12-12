@@ -1755,7 +1755,7 @@ static TextStream& operator<<(TextStream& ts, UnifiedPDFPlugin::PDFElementType e
 
 static BOOL annotationIsExternalLink(PDFAnnotation *annotation)
 {
-    if (![annotation isKindOfClass:getPDFAnnotationLinkClass()])
+    if (!annotationIsOfType(annotation, AnnotationType::Link))
         return NO;
 
     return !![annotation URL];
@@ -1763,7 +1763,7 @@ static BOOL annotationIsExternalLink(PDFAnnotation *annotation)
 
 static BOOL annotationIsLinkWithDestination(PDFAnnotation *annotation)
 {
-    if (![annotation isKindOfClass:getPDFAnnotationLinkClass()])
+    if (!annotationIsOfType(annotation, AnnotationType::Link))
         return NO;
 
     return [annotation URL] || [annotation destination];
@@ -1820,10 +1820,10 @@ auto UnifiedPDFPlugin::pdfElementTypesForPluginPoint(const IntPoint& point) cons
         if (annotationIsLinkWithDestination(annotation))
             pdfElementTypes.add(PDFElementType::Link);
 
-        if ([annotation isKindOfClass:getPDFAnnotationPopupClass()])
+        if (annotationIsOfType(annotation, AnnotationType::Popup))
             pdfElementTypes.add(PDFElementType::Popup);
 
-        if ([annotation isKindOfClass:getPDFAnnotationTextClass()])
+        if (annotationIsOfType(annotation, AnnotationType::Text))
             pdfElementTypes.add(PDFElementType::Icon);
 
         if (![annotation isReadOnly]) {
@@ -2084,19 +2084,19 @@ RepaintRequirements UnifiedPDFPlugin::repaintRequirementsForAnnotation(PDFAnnota
     if (annotationIsWidgetOfType(annotation, WidgetType::Button))
         return RepaintRequirement::PDFContent;
 
-    if ([annotation isKindOfClass:getPDFAnnotationPopupClass()])
+    if (annotationIsOfType(annotation, AnnotationType::Popup))
         return RepaintRequirement::PDFContent;
 
     if (annotationIsWidgetOfType(annotation, WidgetType::Choice))
         return RepaintRequirement::PDFContent;
 
-    if ([annotation isKindOfClass:getPDFAnnotationTextClass()])
+    if (annotationIsOfType(annotation, AnnotationType::Text))
         return RepaintRequirement::PDFContent;
 
     if (annotationIsWidgetOfType(annotation, WidgetType::Text))
         return isAnnotationCommit == IsAnnotationCommit::Yes ? RepaintRequirement::PDFContent : RepaintRequirement::HoverOverlay;
 
-    // No visual feedback for getPDFAnnotationLinkClass at this time.
+    // No visual feedback for PDFAnnotationSubtypeLink at this time.
 
     return { };
 }
@@ -3266,7 +3266,7 @@ RefPtr<TextIndicator> UnifiedPDFPlugin::textIndicatorForSelection(PDFSelection *
 
     float deviceScaleFactor = this->deviceScaleFactor();
 
-    auto buffer = ImageBuffer::create(rectInRootViewCoordinates.size(), RenderingPurpose::ShareableSnapshot, deviceScaleFactor, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8, { }, nullptr);
+    auto buffer = ImageBuffer::create(rectInRootViewCoordinates.size(), RenderingMode::Unaccelerated, RenderingPurpose::ShareableSnapshot, deviceScaleFactor, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
     if (!buffer)
         return nullptr;
 

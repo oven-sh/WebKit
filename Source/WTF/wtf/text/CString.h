@@ -85,6 +85,7 @@ public:
     std::span<const char> spanIncludingNullTerminator() const;
 
     WTF_EXPORT_PRIVATE char* mutableData();
+    WTF_EXPORT_PRIVATE std::span<char> mutableSpan();
     size_t length() const;
 
     bool isNull() const { return !m_buffer; }

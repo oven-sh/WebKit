@@ -341,7 +341,7 @@ HashMap<String, String> SQLiteStorageArea::allItems()
     return items;
 }
 
-Expected<void, StorageError> SQLiteStorageArea::setItem(IPC::Connection::UniqueID connection, StorageAreaImplIdentifier storageAreaImplID, String&& key, String&& value, const String& urlString)
+Expected<void, StorageError> SQLiteStorageArea::setItem(std::optional<IPC::Connection::UniqueID> connection, std::optional<StorageAreaImplIdentifier> storageAreaImplID, String&& key, String&& value, const String& urlString)
 {
     ASSERT(!isMainRunLoop());
 
@@ -379,7 +379,8 @@ Expected<void, StorageError> SQLiteStorageArea::setItem(IPC::Connection::UniqueI
         return makeUnexpected(StorageError::Database);
     }
 
-    dispatchEvents(connection, storageAreaImplID, key, oldValue, value, urlString);
+    if (connection && storageAreaImplID)
+        dispatchEvents(*connection, *storageAreaImplID, key, oldValue, value, urlString);
     updateCacheIfNeeded(key, value);
 
     return { };

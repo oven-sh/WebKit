@@ -65,7 +65,7 @@ class SVGImageElement;
 #if ENABLE(WEB_CODECS)
 class WebCodecsVideoFrame;
 #endif
-enum class RenderingMode : bool;
+enum class RenderingMode : uint8_t;
 
 struct ImageBitmapOptions;
 

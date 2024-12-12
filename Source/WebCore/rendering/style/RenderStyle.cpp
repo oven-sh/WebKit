@@ -557,7 +557,7 @@ unsigned RenderStyle::hashForTextAutosizing() const
     hash ^= m_rareInheritedData->nbspMode;
     hash ^= m_rareInheritedData->lineBreak;
     hash ^= WTF::FloatHash<float>::hash(m_inheritedData->specifiedLineHeight.value());
-    hash ^= computeFontHash(m_inheritedData->fontCascade);
+    hash ^= computeFontHash(m_inheritedData->fontData->fontCascade);
     hash ^= WTF::FloatHash<float>::hash(m_inheritedData->horizontalBorderSpacing);
     hash ^= WTF::FloatHash<float>::hash(m_inheritedData->verticalBorderSpacing);
     hash ^= m_inheritedFlags.boxDirection;
@@ -579,7 +579,7 @@ bool RenderStyle::equalForTextAutosizing(const RenderStyle& other) const
         && m_rareInheritedData->lineBreak == other.m_rareInheritedData->lineBreak
         && m_rareInheritedData->textSecurity == other.m_rareInheritedData->textSecurity
         && m_inheritedData->specifiedLineHeight == other.m_inheritedData->specifiedLineHeight
-        && m_inheritedData->fontCascade.equalForTextAutoSizing(other.m_inheritedData->fontCascade)
+        && m_inheritedData->fontData->fontCascade.equalForTextAutoSizing(other.m_inheritedData->fontData->fontCascade)
         && m_inheritedData->horizontalBorderSpacing == other.m_inheritedData->horizontalBorderSpacing
         && m_inheritedData->verticalBorderSpacing == other.m_inheritedData->verticalBorderSpacing
         && m_inheritedFlags.boxDirection == other.m_inheritedFlags.boxDirection
@@ -1025,9 +1025,11 @@ bool RenderStyle::changeRequiresLayout(const RenderStyle& other, OptionSet<Style
 #if ENABLE(TEXT_AUTOSIZING)
             || m_inheritedData->specifiedLineHeight != other.m_inheritedData->specifiedLineHeight
 #endif
-            || m_inheritedData->fontCascade != other.m_inheritedData->fontCascade
             || m_inheritedData->horizontalBorderSpacing != other.m_inheritedData->horizontalBorderSpacing
             || m_inheritedData->verticalBorderSpacing != other.m_inheritedData->verticalBorderSpacing)
+            return true;
+
+        if (m_inheritedData->fontData != other.m_inheritedData->fontData)
             return true;
     }
 
@@ -1982,7 +1984,7 @@ void RenderStyle::conservativelyCollectChangedAnimatableProperties(const RenderS
             changingProperties.m_properties.set(CSSPropertyLineHeight);
 #endif
 
-        if (first.fontCascade != second.fontCascade) {
+        if (first.fontData != second.fontData) {
             changingProperties.m_properties.set(CSSPropertyWordSpacing);
             changingProperties.m_properties.set(CSSPropertyLetterSpacing);
             changingProperties.m_properties.set(CSSPropertyTextRendering);
@@ -2716,17 +2718,17 @@ AnimationList& RenderStyle::ensureTransitions()
 
 const FontCascade& RenderStyle::fontCascade() const
 {
-    return m_inheritedData->fontCascade;
+    return m_inheritedData->fontData->fontCascade;
 }
 
 const FontMetrics& RenderStyle::metricsOfPrimaryFont() const
 {
-    return m_inheritedData->fontCascade.metricsOfPrimaryFont();
+    return m_inheritedData->fontData->fontCascade.metricsOfPrimaryFont();
 }
 
 const FontCascadeDescription& RenderStyle::fontDescription() const
 {
-    return m_inheritedData->fontCascade.fontDescription();
+    return m_inheritedData->fontData->fontCascade.fontDescription();
 }
 
 float RenderStyle::specifiedFontSize() const
@@ -2764,14 +2766,28 @@ void RenderStyle::setFontCascade(FontCascade&& fontCascade)
     if (fontCascade == this->fontCascade())
         return;
 
-    m_inheritedData.access().fontCascade = fontCascade;
+    m_inheritedData.access().fontData.access().fontCascade = fontCascade;
 }
 
-bool RenderStyle::setFontDescription(FontCascadeDescription&& description)
+void RenderStyle::setFontDescription(FontCascadeDescription&& description)
+{
+    if (fontDescription() == description)
+        return;
+
+    auto existingFontCascade = this->fontCascade();
+    RefPtr fontSelector = existingFontCascade.fontSelector();
+
+    auto newCascade = FontCascade { WTFMove(description), existingFontCascade };
+    newCascade.update(WTFMove(fontSelector));
+    setFontCascade(WTFMove(newCascade));
+}
+
+bool RenderStyle::setFontDescriptionWithoutUpdate(FontCascadeDescription&& description)
 {
     if (fontDescription() == description)
         return false;
-    auto& cascade = m_inheritedData.access().fontCascade;
+
+    auto& cascade = m_inheritedData.access().fontData.access().fontCascade;
     cascade = { WTFMove(description), cascade };
     return true;
 }
@@ -2850,16 +2866,14 @@ void RenderStyle::setLetterSpacing(Length&& spacing)
         return;
 
     bool oldShouldDisableLigatures = fontDescription().shouldDisableLigaturesForSpacing();
-    m_inheritedData.access().fontCascade.setLetterSpacing(WTFMove(spacing));
+    m_inheritedData.access().fontData.access().fontCascade.setLetterSpacing(WTFMove(spacing));
 
     // Switching letter-spacing between zero and non-zero requires updating fonts (to enable/disable ligatures)
     bool shouldDisableLigatures = fontCascade().letterSpacing();
     if (oldShouldDisableLigatures != shouldDisableLigatures) {
-        auto* selector = fontCascade().fontSelector();
         auto description = fontDescription();
         description.setShouldDisableLigaturesForSpacing(fontCascade().letterSpacing());
         setFontDescription(WTFMove(description));
-        fontCascade().update(selector);
     }
 }
 
@@ -2869,27 +2883,21 @@ void RenderStyle::setWordSpacing(Length&& spacing)
     if (fontCascade().computedWordSpacing() == spacing)
         return;
 
-    m_inheritedData.access().fontCascade.setWordSpacing(WTFMove(spacing));
+    m_inheritedData.access().fontData.access().fontCascade.setWordSpacing(WTFMove(spacing));
 }
 
 void RenderStyle::setTextSpacingTrim(TextSpacingTrim value)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setTextSpacingTrim(value);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setTextAutospace(TextAutospace value)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setTextAutospace(value);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontSize(float size)
@@ -2903,86 +2911,62 @@ void RenderStyle::setFontSize(float size)
     else
         size = std::min(maximumAllowedFontSize, size);
 
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setSpecifiedSize(size);
     description.setComputedSize(size);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontSizeAdjust(FontSizeAdjust sizeAdjust)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setFontSizeAdjust(sizeAdjust);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontOpticalSizing(FontOpticalSizing opticalSizing)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setOpticalSizing(opticalSizing);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontVariationSettings(FontVariationSettings settings)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setVariationSettings(WTFMove(settings));
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontWeight(FontSelectionValue value)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setWeight(value);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontStretch(FontSelectionValue value)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setStretch(value);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontItalic(std::optional<FontSelectionValue> value)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setItalic(value);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
 void RenderStyle::setFontPalette(const FontPalette& value)
 {
-    auto selector = fontCascade().fontSelector();
     auto description = fontDescription();
     description.setFontPalette(value);
-
     setFontDescription(WTFMove(description));
-    fontCascade().update(selector);
 }
 
-void RenderStyle::getShadowHorizontalExtent(const ShadowData* shadow, LayoutUnit &left, LayoutUnit &right)
+void RenderStyle::getShadowHorizontalExtent(const ShadowData* shadow, LayoutUnit& left, LayoutUnit& right)
 {
     left = 0;
     right = 0;
@@ -2991,13 +2975,13 @@ void RenderStyle::getShadowHorizontalExtent(const ShadowData* shadow, LayoutUnit
         if (shadow->style() == ShadowStyle::Inset)
             continue;
 
-        auto extentAndSpread = shadow->paintingExtent() + LayoutUnit(shadow->spread().value());
-        left = std::min<LayoutUnit>(left, LayoutUnit(shadow->x().value()) - extentAndSpread);
-        right = std::max<LayoutUnit>(right, LayoutUnit(shadow->x().value()) + extentAndSpread);
+        auto extentAndSpread = shadow->paintingExtent() + LayoutUnit(shadow->spread().value);
+        left = std::min<LayoutUnit>(left, LayoutUnit(shadow->x().value) - extentAndSpread);
+        right = std::max<LayoutUnit>(right, LayoutUnit(shadow->x().value) + extentAndSpread);
     }
 }
 
-void RenderStyle::getShadowVerticalExtent(const ShadowData* shadow, LayoutUnit &top, LayoutUnit &bottom)
+void RenderStyle::getShadowVerticalExtent(const ShadowData* shadow, LayoutUnit& top, LayoutUnit& bottom)
 {
     top = 0;
     bottom = 0;
@@ -3006,9 +2990,9 @@ void RenderStyle::getShadowVerticalExtent(const ShadowData* shadow, LayoutUnit &
         if (shadow->style() == ShadowStyle::Inset)
             continue;
 
-        auto extentAndSpread = shadow->paintingExtent() + LayoutUnit(shadow->spread().value());
-        top = std::min<LayoutUnit>(top, LayoutUnit(shadow->y().intValue()) - extentAndSpread);
-        bottom = std::max<LayoutUnit>(bottom, LayoutUnit(shadow->y().intValue()) + extentAndSpread);
+        auto extentAndSpread = shadow->paintingExtent() + LayoutUnit(shadow->spread().value);
+        top = std::min<LayoutUnit>(top, LayoutUnit(static_cast<int>(shadow->y().value)) - extentAndSpread);
+        bottom = std::max<LayoutUnit>(bottom, LayoutUnit(static_cast<int>(shadow->y().value)) + extentAndSpread);
     }
 }
 

@@ -21,6 +21,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=UI
+]
 messages -> PlaybackSessionManagerProxy {
     CurrentTimeChanged(WebKit::PlaybackSessionContextIdentifier contextId, double currentTime, double hostTime)
     BufferedTimeChanged(WebKit::PlaybackSessionContextIdentifier contextId, double bufferedTime)

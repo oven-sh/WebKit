@@ -175,7 +175,7 @@ unimplementedInstruction(_try)
 unimplementedInstruction(_catch)
 unimplementedInstruction(_throw)
 unimplementedInstruction(_rethrow)
-reservedOpcode(0xa)
+unimplementedInstruction(_throw_ref)
 
 
 macro uintDispatch()
@@ -221,7 +221,7 @@ unimplementedInstruction(_select)
 unimplementedInstruction(_select_t)
 reservedOpcode(0x1d)
 reservedOpcode(0x1e)
-reservedOpcode(0x1f)
+unimplementedInstruction(_try_table)
 
     ###################################
     # 0x20 - 0x26: get and set values #

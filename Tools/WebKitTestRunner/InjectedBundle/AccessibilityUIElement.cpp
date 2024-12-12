@@ -134,6 +134,10 @@ unsigned AccessibilityUIElement::numberOfCharacters() const { return 0; }
 JSValueRef AccessibilityUIElement::columns(JSContextRef) { return { }; }
 JSRetainPtr<JSStringRef> AccessibilityUIElement::dateValue() { return nullptr; }
 RefPtr<AccessibilityTextMarkerRange> AccessibilityUIElement::textMarkerRangeForLine(long) { return nullptr; }
+RefPtr<AccessibilityUIElement> AccessibilityUIElement::elementAtPointWithRemoteElement(int x, int y) { return nullptr; }
+void AccessibilityUIElement::elementAtPointResolvingRemoteFrame(JSContextRef context, int x, int y, JSValueRef jsCallback) { }
+bool AccessibilityUIElement::isRemoteFrame() const { return false; }
+RefPtr<AccessibilityUIElement> AccessibilityUIElement::childAtIndexWithRemoteElement(unsigned) { return nullptr; }
 #endif // !PLATFORM(MAC)
 
 #if !PLATFORM(COCOA)

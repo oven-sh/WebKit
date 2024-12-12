@@ -43,7 +43,7 @@ public:
     explicit ReverbAccumulationBuffer(size_t length);
 
     // This will read from, then clear-out numberOfFrames
-    void readAndClear(float* destination, size_t numberOfFrames);
+    void readAndClear(std::span<float> destination, size_t numberOfFrames);
 
     // Each ReverbConvolverStage will accumulate its output at the appropriate delay from the read position.
     // We need to pass in and update readIndex here, since each ReverbConvolverStage may be running in

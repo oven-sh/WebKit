@@ -129,6 +129,7 @@ enum class SDKAlignedBehavior {
     UseCFNetworkNetworkLoader,
     BlockCrossOriginRedirectDownloads,
     BlobFileAccessEnforcement,
+    DevolvableWidgets,
 
     NumberOfBehaviors
 };

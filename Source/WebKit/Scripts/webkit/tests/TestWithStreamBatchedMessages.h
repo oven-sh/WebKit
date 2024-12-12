@@ -28,6 +28,7 @@
 #include "Connection.h"
 #include "MessageNames.h"
 #include <wtf/Forward.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
 

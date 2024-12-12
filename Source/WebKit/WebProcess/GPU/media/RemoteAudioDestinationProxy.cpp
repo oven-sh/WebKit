@@ -31,7 +31,6 @@
 #include "GPUConnectionToWebProcess.h"
 #include "Logging.h"
 #include "RemoteAudioDestinationManagerMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <WebCore/AudioBus.h>
 #include <WebCore/AudioUtilities.h>

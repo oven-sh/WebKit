@@ -60,7 +60,7 @@ public:
     ~PacketDurationParser();
 
     bool isValid() const { return m_isValid; }
-    size_t framesInPacket(SharedBuffer&);
+    size_t framesInPacket(std::span<const uint8_t>);
     void reset();
 
 private:

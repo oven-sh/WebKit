@@ -166,6 +166,7 @@ $(PROJECT_DIR)/Platform/IPC/ObjectIdentifierReference.serialization.in
 $(PROJECT_DIR)/Platform/IPC/SharedBufferReference.serialization.in
 $(PROJECT_DIR)/Platform/IPC/SharedFileHandle.serialization.in
 $(PROJECT_DIR)/Platform/IPC/StreamServerConnection.serialization.in
+$(PROJECT_DIR)/Platform/LogMessages.in
 $(PROJECT_DIR)/Platform/SharedMemory.serialization.in
 $(PROJECT_DIR)/Platform/cocoa/MediaPlaybackTargetContextSerialized.serialization.in
 $(PROJECT_DIR)/PluginProcess/PluginControllerProxy.messages.in
@@ -320,7 +321,6 @@ $(PROJECT_DIR)/Shared/InspectorExtensionTypes.serialization.in
 $(PROJECT_DIR)/Shared/JavaScriptCore.serialization.in
 $(PROJECT_DIR)/Shared/LayerTreeContext.serialization.in
 $(PROJECT_DIR)/Shared/LoadParameters.serialization.in
-$(PROJECT_DIR)/Shared/LogStream.messages.in
 $(PROJECT_DIR)/Shared/MediaPlaybackState.serialization.in
 $(PROJECT_DIR)/Shared/Model.serialization.in
 $(PROJECT_DIR)/Shared/ModelProcessConnectionParameters.serialization.in
@@ -699,6 +699,7 @@ $(WEBCORE_PRIVATE_HEADERS_DIR)/IDLParser.pm
 $(WEBCORE_PRIVATE_HEADERS_DIR)/InbandTextTrackPrivate.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/IndexedDB.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/LayoutMilestones.serialization.in
+$(WEBCORE_PRIVATE_HEADERS_DIR)/LogMessages.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/MDNSRegisterError.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/MediaProducer.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/PlatformEvent.serialization.in

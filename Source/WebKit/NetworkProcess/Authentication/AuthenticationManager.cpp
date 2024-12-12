@@ -34,7 +34,6 @@
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
 #include "PendingDownload.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebFrame.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"

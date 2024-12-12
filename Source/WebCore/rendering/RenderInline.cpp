@@ -501,6 +501,16 @@ IntRect RenderInline::linesBoundingBox() const
             ASSERT(needsLayout());
             return { };
         }
+        if (isRenderSVGInline()) {
+            // FIXME: Always build the bounding box like this. LineLayouyt::enclosingBorderBoxRectFor does not include
+            // any post-layout box adjustments.
+            FloatRect result;
+            for (auto box = InlineIterator::firstInlineBoxFor(*this); box; box.traverseNextInlineBox()) {
+                auto rect = box->visualRectIgnoringBlockDirection();
+                result.unite(rect);
+            }
+            return enclosingIntRect(result);
+        }
         return enclosingIntRect(layout->enclosingBorderBoxRectFor(*this));
     }
 

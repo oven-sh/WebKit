@@ -68,8 +68,6 @@
 #import <pal/mac/DataDetectorsSoftLink.h>
 #import <pal/spi/ios/DataDetectorsUISoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 #if PLATFORM(MAC)
 template<> struct WTF::CFTypeTrait<DDResultRef> {
     static inline CFTypeID typeID(void) { return DDResultGetCFTypeID(); }
@@ -386,31 +384,31 @@ static void buildQuery(DDScanQueryRef scanQuery, const SimpleRange& contextRange
         }
         // Test for white space nodes, we're coalescing them.
         auto currentTextUpconvertedCharactersWithSize = currentText.upconvertedCharacters();
-        auto currentCharPtr = currentTextUpconvertedCharactersWithSize.get();
+        auto upconvertedCharacters = currentTextUpconvertedCharactersWithSize.span();
         
         bool containsOnlyWhiteSpace = true;
         bool hasTab = false;
         bool hasNewline = false;
         int nbspCount = 0;
         for (NSUInteger i = 0; i < currentTextLength; i++) {
-            if (!CFCharacterSetIsCharacterMember(whiteSpacesSet, *currentCharPtr)) {
+            if (!CFCharacterSetIsCharacterMember(whiteSpacesSet, upconvertedCharacters.front())) {
                 containsOnlyWhiteSpace = false;
                 break;
             }
             
-            if (CFCharacterSetIsCharacterMember(newLinesSet, *currentCharPtr))
+            if (CFCharacterSetIsCharacterMember(newLinesSet, upconvertedCharacters.front()))
                 hasNewline = true;
-            else if (*currentCharPtr == '\t')
+            else if (upconvertedCharacters.front() == '\t')
                 hasTab = true;
             
             // Multiple consecutive non breakable spaces are most likely simulated tabs.
-            if (*currentCharPtr == 0xa0) {
+            if (upconvertedCharacters.front() == 0xa0) {
                 if (++nbspCount > 2)
                     hasTab = true;
             } else
                 nbspCount = 0;
 
-            currentCharPtr++;
+            upconvertedCharacters = upconvertedCharacters.subspan(1);
         }
         if (containsOnlyWhiteSpace) {
             if (hasNewline) {
@@ -861,7 +859,5 @@ Ref<HTMLDivElement> DataDetection::createElementForImageOverlay(Document& docume
 #endif // ENABLE(IMAGE_ANALYSIS)
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif

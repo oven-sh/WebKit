@@ -38,7 +38,6 @@
 #include "RemoteWorkerType.h"
 #include "SharedBufferReference.h"
 #include "SharedPreferencesForWebProcess.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include "WebProcessMessages.h"
 #include "WebResourceLoaderMessages.h"

@@ -48,10 +48,9 @@
 #include "TextIterator.h"
 #include "VisibleSelection.h"
 #include <unicode/ubrk.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextBreakIterator.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 
@@ -424,7 +423,7 @@ static void prepend(Vector<UChar, 1024>& buffer, StringView string)
     unsigned oldSize = buffer.size();
     unsigned length = string.length();
     buffer.grow(oldSize + length);
-    memmove(buffer.data() + length, buffer.data(), oldSize * sizeof(UChar));
+    memmoveSpan(buffer.mutableSpan().subspan(length), buffer.span().first(oldSize));
     for (unsigned i = 0; i < length; ++i)
         buffer[i] = string[i];
 }
@@ -433,7 +432,7 @@ static void prependRepeatedCharacter(Vector<UChar, 1024>& buffer, UChar characte
 {
     unsigned oldSize = buffer.size();
     buffer.grow(oldSize + count);
-    memmove(buffer.data() + count, buffer.data(), oldSize * sizeof(UChar));
+    memmoveSpan(buffer.mutableSpan().subspan(count), buffer.span().first(oldSize));
     for (unsigned i = 0; i < count; ++i)
         buffer[i] = character;
 }
@@ -1838,7 +1837,7 @@ std::ptrdiff_t distanceBetweenPositions(const VisiblePosition& a, const VisibleP
 void charactersAroundPosition(const VisiblePosition& position, char32_t& oneAfter, char32_t& oneBefore, char32_t& twoBefore)
 {
     const int maxCharacters = 3;
-    char32_t characters[maxCharacters] = { 0 };
+    std::array<char32_t, maxCharacters> characters = { };
 
     if (position.isNull() || isStartOfDocument(position))
         return;
@@ -1997,5 +1996,3 @@ std::pair<VisiblePosition, WithinWordBoundary> wordBoundaryForPositionWithoutCro
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

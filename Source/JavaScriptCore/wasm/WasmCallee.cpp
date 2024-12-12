@@ -244,7 +244,28 @@ IPIntCallee::IPIntCallee(FunctionIPIntMetadataGenerator& generator, FunctionSpac
         for (size_t i = 0; i < count; i++) {
             const UnlinkedHandlerInfo& unlinkedHandler = generator.m_exceptionHandlers[i];
             HandlerInfo& handler = m_exceptionHandlers[i];
-            void* ptr = reinterpret_cast<void*>(unlinkedHandler.m_type == HandlerType::Catch ? ipint_catch_entry : ipint_catch_all_entry);
+            void* ptr = nullptr;
+            switch (unlinkedHandler.m_type) {
+            case HandlerType::Catch:
+                ptr = reinterpret_cast<void*>(ipint_catch_entry);
+                break;
+            case HandlerType::CatchAll:
+            case HandlerType::Delegate:
+                ptr = reinterpret_cast<void*>(ipint_catch_all_entry);
+                break;
+            case HandlerType::TryTableCatch:
+                ptr = reinterpret_cast<void*>(ipint_table_catch_entry);
+                break;
+            case HandlerType::TryTableCatchRef:
+                ptr = reinterpret_cast<void*>(ipint_table_catch_ref_entry);
+                break;
+            case HandlerType::TryTableCatchAll:
+                ptr = reinterpret_cast<void*>(ipint_table_catch_all_entry);
+                break;
+            case HandlerType::TryTableCatchAllRef:
+                ptr = reinterpret_cast<void*>(ipint_table_catch_allref_entry);
+                break;
+            }
             void* untagged = CodePtr<CFunctionPtrTag>::fromTaggedPtr(ptr).untaggedPtr();
             void* retagged = nullptr;
 #if ENABLE(JIT_CAGE)
@@ -461,7 +482,10 @@ JSEntrypointCallee::JSEntrypointCallee(TypeIndex typeIndex, bool usesSIMD)
     if (false) {
 #endif
         if (Options::useWasmIPInt())
-            m_wasmFunctionPrologue = LLInt::inPlaceInterpreterEntryThunk().code().retagged<WasmEntryPtrTag>();
+            if (usesSIMD)
+                m_wasmFunctionPrologue = LLInt::inPlaceInterpreterSIMDEntryThunk().code().retagged<WasmEntryPtrTag>();
+            else
+                m_wasmFunctionPrologue = LLInt::inPlaceInterpreterEntryThunk().code().retagged<WasmEntryPtrTag>();
         else {
             if (usesSIMD)
                 m_wasmFunctionPrologue = LLInt::wasmFunctionEntryThunkSIMD().code().retagged<WasmEntryPtrTag>();

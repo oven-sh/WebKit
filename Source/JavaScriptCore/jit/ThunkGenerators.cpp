@@ -321,7 +321,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> polymorphicThunkFor(VM&, ClosureMod
 
 
 #if USE(JSVALUE32_64)
-    slowCase.append(jit.branchIfNotCell(GPRInfo::regT0, DoNotHaveTagRegisters));
+    slowCase.append(jit.branchIfNotCell(GPRInfo::regT1, DoNotHaveTagRegisters));
 #endif
 
     GPRReg comparisonValueGPR;

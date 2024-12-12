@@ -34,15 +34,8 @@
 #include <wtf/UniqueRef.h>
 
 namespace WebKit {
-class CtapHidDriverWorker;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::CtapHidDriverWorker> : std::true_type { };
-}
-
-namespace WebKit {
+class CtapHidDriver;
 
 // Worker is the helper that maintains the transaction.
 // https://fidoalliance.org/specs/fido-v2.0-ps-20170927/fido-client-to-authenticator-protocol-v2.0-ps-20170927.html#arbitration
@@ -59,11 +52,14 @@ public:
         Read
     };
 
-    explicit CtapHidDriverWorker(Ref<HidConnection>&&);
+    CtapHidDriverWorker(CtapHidDriver&, Ref<HidConnection>&&);
     ~CtapHidDriverWorker();
 
     void transact(fido::FidoHidMessage&&, MessageCallback&&);
     void cancel(fido::FidoHidMessage&&);
+
+    void ref() const;
+    void deref() const;
 
 private:
     void write(HidConnection::DataSent);
@@ -73,6 +69,7 @@ private:
 
     Ref<HidConnection> protectedConnection() { return m_connection; }
 
+    WeakRef<CtapHidDriver> m_driver;
     Ref<HidConnection> m_connection;
     State m_state { State::Idle };
     std::optional<fido::FidoHidMessage> m_requestMessage;
@@ -106,7 +103,9 @@ private:
     void returnResponse(Vector<uint8_t>&&);
     void reset();
 
-    UniqueRef<CtapHidDriverWorker> m_worker;
+    Ref<CtapHidDriverWorker> protectedWorker() const { return m_worker.get(); }
+
+    const UniqueRef<CtapHidDriverWorker> m_worker;
     State m_state { State::Idle };
     uint32_t m_channelId { fido::kHidBroadcastChannel };
     // One request at a time.
@@ -114,6 +113,16 @@ private:
     ResponseCallback m_responseCallback;
     Vector<uint8_t> m_nonce;
 };
+
+inline void CtapHidDriverWorker::ref() const
+{
+    m_driver->ref();
+}
+
+inline void CtapHidDriverWorker::deref() const
+{
+    m_driver->deref();
+}
 
 } // namespace WebKit
 

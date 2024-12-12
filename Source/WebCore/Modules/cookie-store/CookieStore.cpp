@@ -624,7 +624,7 @@ void CookieStore::eventListenersDidChange()
     Ref cookieJar = page->cookieJar();
     auto host = document->url().host().toString();
     if (m_hasChangeEventListener)
-        cookieJar->addChangeListener(host, *this);
+        cookieJar->addChangeListener(*document, *this);
     else
         cookieJar->removeChangeListener(host, *this);
 #endif

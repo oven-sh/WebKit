@@ -66,6 +66,7 @@
 #import "WebScreenOrientationManagerProxy.h"
 #import "WebsiteDataStore.h"
 #import <Foundation/NSURLRequest.h>
+#import <WebCore/AppHighlight.h>
 #import <WebCore/ApplePayAMSUIRequest.h>
 #import <WebCore/DragItem.h>
 #import <WebCore/GeometryUtilities.h>

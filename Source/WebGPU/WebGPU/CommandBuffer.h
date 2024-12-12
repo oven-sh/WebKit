@@ -37,15 +37,16 @@ struct WGPUCommandBufferImpl {
 
 namespace WebGPU {
 
+class CommandEncoder;
 class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandbuffer
 class CommandBuffer : public RefCountedAndCanMakeWeakPtr<CommandBuffer>, public WGPUCommandBufferImpl {
     WTF_MAKE_TZONE_ALLOCATED(CommandBuffer);
 public:
-    static Ref<CommandBuffer> create(id<MTLCommandBuffer> commandBuffer, Device& device, id<MTLSharedEvent> sharedEvent, uint64_t sharedEventSignalValue)
+    static Ref<CommandBuffer> create(id<MTLCommandBuffer> commandBuffer, Device& device, id<MTLSharedEvent> sharedEvent, uint64_t sharedEventSignalValue, CommandEncoder& commandEncoder)
     {
-        return adoptRef(*new CommandBuffer(commandBuffer, device, sharedEvent, sharedEventSignalValue));
+        return adoptRef(*new CommandBuffer(commandBuffer, device, sharedEvent, sharedEventSignalValue, commandEncoder));
     }
     static Ref<CommandBuffer> createInvalid(Device& device)
     {
@@ -70,7 +71,7 @@ public:
     bool waitForCompletion();
 
 private:
-    CommandBuffer(id<MTLCommandBuffer>, Device&, id<MTLSharedEvent>, uint64_t sharedEventSignalValue);
+    CommandBuffer(id<MTLCommandBuffer>, Device&, id<MTLSharedEvent>, uint64_t sharedEventSignalValue, CommandEncoder&);
     CommandBuffer(Device&);
 
     id<MTLCommandBuffer> m_commandBuffer { nil };
@@ -83,6 +84,7 @@ private:
     const uint64_t m_sharedEventSignalValue { 0 };
     // FIXME: we should not need this semaphore - https://bugs.webkit.org/show_bug.cgi?id=272353
     BinarySemaphore m_commandBufferComplete;
+    RefPtr<CommandEncoder> m_commandEncoder;
 };
 
 } // namespace WebGPU

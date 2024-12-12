@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "CSSBoxShadowPropertyValue.h"
 #include "CSSCalcSymbolTable.h"
 #include "CSSCounterStyleRegistry.h"
 #include "CSSCounterStyleRule.h"
@@ -38,7 +39,7 @@
 #include "CSSPropertyParserConsumer+Font.h"
 #include "CSSRectValue.h"
 #include "CSSRegisteredCustomProperty.h"
-#include "CSSShadowValue.h"
+#include "CSSTextShadowPropertyValue.h"
 #include "CounterContent.h"
 #include "CursorList.h"
 #include "ElementAncestorIteratorInlines.h"
@@ -46,6 +47,8 @@
 #include "HTMLElement.h"
 #include "LocalFrame.h"
 #include "SVGElement.h"
+#include "ShadowData.h"
+#include "StyleBoxShadow.h"
 #include "StyleBuilderConverter.h"
 #include "StyleBuilderStateInlines.h"
 #include "StyleCachedImage.h"
@@ -56,6 +59,7 @@
 #include "StyleImageSet.h"
 #include "StyleResolver.h"
 #include "StyleScope.h"
+#include "StyleTextShadow.h"
 #include "TextSizeAdjustment.h"
 
 namespace WebCore {
@@ -161,9 +165,6 @@ public:
 
 private:
     static void resetUsedZoom(BuilderState&);
-
-    template <CSSPropertyID id>
-    static void applyTextOrBoxShadowValue(BuilderState&, CSSValue&);
 
     enum CounterBehavior { Increment, Reset, Set };
     template <CounterBehavior counterBehavior>
@@ -667,40 +668,6 @@ inline void BuilderCustom::applyValueColorScheme(BuilderState& builderState, CSS
 }
 #endif
 
-template<CSSPropertyID property>
-inline void BuilderCustom::applyTextOrBoxShadowValue(BuilderState& builderState, CSSValue& value)
-{
-    if (value.valueID() == CSSValueNone) {
-        if constexpr (property == CSSPropertyTextShadow)
-            builderState.style().setTextShadow(nullptr);
-        else
-            builderState.style().setBoxShadow(nullptr);
-        return;
-    }
-
-    bool isFirstEntry = true;
-    for (auto& item : downcast<CSSValueList>(value)) {
-        auto& shadowValue = downcast<CSSShadowValue>(item);
-        auto& conversionData = builderState.cssToLengthConversionData();
-        auto x = shadowValue.x->resolveAsLength<WebCore::Length>(conversionData);
-        auto y = shadowValue.y->resolveAsLength<WebCore::Length>(conversionData);
-        auto blur = shadowValue.blur ? shadowValue.blur->resolveAsLength<WebCore::Length>(conversionData) : WebCore::Length(0, LengthType::Fixed);
-        auto spread = shadowValue.spread ? shadowValue.spread->resolveAsLength<WebCore::Length>(conversionData) : WebCore::Length(0, LengthType::Fixed);
-        ShadowStyle shadowStyle = shadowValue.style && shadowValue.style->valueID() == CSSValueInset ? ShadowStyle::Inset : ShadowStyle::Normal;
-        // If no color value is specified, the color is currentColor
-        auto color = Color::currentColor();
-        if (shadowValue.color)
-            color = builderState.createStyleColor(*shadowValue.color);
-
-        auto shadowData = makeUnique<ShadowData>(LengthPoint(x, y), blur, spread, shadowStyle, shadowValue.isWebkitBoxShadow, color);
-        if (property == CSSPropertyTextShadow)
-            builderState.style().setTextShadow(WTFMove(shadowData), !isFirstEntry); // add to the list if this is not the first entry
-        else
-            builderState.style().setBoxShadow(WTFMove(shadowData), !isFirstEntry); // add to the list if this is not the first entry
-        isFirstEntry = false;
-    }
-}
-
 inline void BuilderCustom::applyInitialTextShadow(BuilderState& builderState)
 {
     builderState.style().setTextShadow(nullptr);
@@ -713,7 +680,26 @@ inline void BuilderCustom::applyInheritTextShadow(BuilderState& builderState)
 
 inline void BuilderCustom::applyValueTextShadow(BuilderState& builderState, CSSValue& value)
 {
-    applyTextOrBoxShadowValue<CSSPropertyTextShadow>(builderState, value);
+    if (RefPtr primitive = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        ASSERT(primitive->valueID() == CSSValueNone);
+        builderState.style().setTextShadow(nullptr);
+        return;
+    }
+
+    Ref shadow = downcast<CSSTextShadowPropertyValue>(value);
+
+    WTF::switchOn(shadow->shadow(),
+        [&](CSS::Keyword::None) {
+            builderState.style().setTextShadow(nullptr);
+        },
+        [&](const auto& list) {
+            bool isFirstEntry = true;
+            for (const auto& shadow : list) {
+                builderState.style().setTextShadow(makeUnique<ShadowData>(Style::toStyle(shadow, builderState)), !isFirstEntry); // add to the list if this is not the first entry
+                isFirstEntry = false;
+            }
+        }
+    );
 }
 
 inline void BuilderCustom::applyInitialBoxShadow(BuilderState& builderState)
@@ -728,7 +714,26 @@ inline void BuilderCustom::applyInheritBoxShadow(BuilderState& builderState)
 
 inline void BuilderCustom::applyValueBoxShadow(BuilderState& builderState, CSSValue& value)
 {
-    applyTextOrBoxShadowValue<CSSPropertyBoxShadow>(builderState, value);
+    if (RefPtr primitive = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        ASSERT(primitive->valueID() == CSSValueNone);
+        builderState.style().setBoxShadow(nullptr);
+        return;
+    }
+
+    Ref shadow = downcast<CSSBoxShadowPropertyValue>(value);
+
+    WTF::switchOn(shadow->shadow(),
+        [&](CSS::Keyword::None) {
+            builderState.style().setBoxShadow(nullptr);
+        },
+        [&](const auto& list) {
+            bool isFirstEntry = true;
+            for (const auto& shadow : list) {
+                builderState.style().setBoxShadow(makeUnique<ShadowData>(Style::toStyle(shadow, builderState)), !isFirstEntry); // add to the list if this is not the first entry
+                isFirstEntry = false;
+            }
+        }
+    );
 }
 
 inline void BuilderCustom::applyInitialFontFamily(BuilderState& builderState)

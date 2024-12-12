@@ -94,8 +94,13 @@ template<typename> struct ToStyle;
 template<typename CSSType> struct ToPrimaryCSSTypeMapping { using type = CSSType; };
 template<typename CSSType> using PrimaryCSSType = typename ToPrimaryCSSTypeMapping<CSSType>::type;
 
+// MARK: Utility Concepts
 
-// MARK: - Non-converting types
+template<typename T> concept HasIsZero = requires(T t) {
+    { t.isZero() } -> std::convertible_to<bool>;
+};
+
+// MARK: Common Types.
 
 // Specialize `TreatAsNonConverting` for `Constant<C>`, to indicate that its type does not change from the CSS representation.
 template<CSSValueID C> inline constexpr bool TreatAsNonConverting<Constant<C>> = true;
@@ -392,6 +397,13 @@ template<typename CSSType, size_t inlineCapacity> struct ToStyle<CommaSeparatedV
 //        bool canBlend(const StyleType&, const StyleType&);
 //        StyleType blend(const StyleType&, const StyleType&, const BlendingContext&);
 //    };
+//
+// or, if a RenderStyle is needed for blending:
+//
+//    template<> struct WebCore::Style::Blending<StyleType> {
+//        bool canBlend(const StyleType&, const StyleType&, const RenderStyle&, const RenderStyle&);
+//        StyleType blend(const StyleType&, const StyleType&, const RenderStyle&, const RenderStyle&, const BlendingContext&);
+//    };
 
 template<typename> struct Blending;
 
@@ -401,10 +413,20 @@ template<typename StyleType> auto canBlend(const StyleType& a, const StyleType& 
     return Blending<StyleType>{}.canBlend(a, b);
 }
 
+template<typename StyleType> auto canBlend(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+{
+    return Blending<StyleType>{}.canBlend(a, b, aStyle, bStyle);
+}
+
 // `Blend` Invoker
 template<typename StyleType> auto blend(const StyleType& a, const StyleType& b, const BlendingContext& context) -> StyleType
 {
     return Blending<StyleType>{}.blend(a, b, context);
+}
+
+template<typename StyleType> auto blend(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> StyleType
+{
+    return Blending<StyleType>{}.blend(a, b, aStyle, bStyle, context);
 }
 
 // Utilities for blending
@@ -416,10 +438,24 @@ template<typename StyleType> auto canBlendOnOptionalLike(const StyleType& a, con
     return !a && !b;
 }
 
+template<typename StyleType> auto canBlendOnOptionalLike(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+{
+    if (a && b)
+        return WebCore::Style::canBlend(*a, *b, aStyle, bStyle);
+    return !a && !b;
+}
+
 template<typename StyleType> auto blendOnOptionalLike(const StyleType& a, const StyleType& b, const BlendingContext& context) -> StyleType
 {
     if (a && b)
         return WebCore::Style::blend(*a, *b, context);
+    return std::nullopt;
+}
+
+template<typename StyleType> auto blendOnOptionalLike(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> StyleType
+{
+    if (a && b)
+        return WebCore::Style::blend(*a, *b, aStyle, bStyle, context);
     return std::nullopt;
 }
 
@@ -430,10 +466,24 @@ template<typename StyleType> auto canBlendOnTupleLike(const StyleType& a, const 
     }, WTF::tuple_zip(a, b));
 }
 
+template<typename StyleType> auto canBlendOnTupleLike(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+{
+    return WTF::apply([&](const auto& ...pair) {
+        return (WebCore::Style::canBlend(std::get<0>(pair), std::get<1>(pair), aStyle, bStyle) && ...);
+    }, WTF::tuple_zip(a, b));
+}
+
 template<typename StyleType> auto blendOnTupleLike(const StyleType& a, const StyleType& b, const BlendingContext& context) -> StyleType
 {
     return WTF::apply([&](const auto& ...pair) {
         return StyleType { WebCore::Style::blend(std::get<0>(pair), std::get<1>(pair), context)... };
+    }, WTF::tuple_zip(a, b));
+}
+
+template<typename StyleType> auto blendOnTupleLike(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> StyleType
+{
+    return WTF::apply([&](const auto& ...pair) {
+        return StyleType { WebCore::Style::blend(std::get<0>(pair), std::get<1>(pair), aStyle, bStyle, context)... };
     }, WTF::tuple_zip(a, b));
 }
 
@@ -443,9 +493,17 @@ template<typename StyleType> requires (TreatAsOptionalLike<StyleType>) struct Bl
     {
         return canBlendOnOptionalLike(a, b);
     }
+    constexpr auto canBlend(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+    {
+        return canBlendOnOptionalLike(a, b, aStyle, bStyle);
+    }
     auto blend(const StyleType& a, const StyleType& b, const BlendingContext& context) -> StyleType
     {
         return blendOnOptionalLike(a, b, context);
+    }
+    auto blend(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> StyleType
+    {
+        return blendOnOptionalLike(a, b, aStyle, bStyle, context);
     }
 };
 
@@ -455,9 +513,17 @@ template<typename StyleType> requires (TreatAsTupleLike<StyleType>) struct Blend
     {
         return canBlendOnTupleLike(a, b);
     }
+    constexpr auto canBlend(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+    {
+        return canBlendOnTupleLike(a, b, aStyle, bStyle);
+    }
     auto blend(const StyleType& a, const StyleType& b, const BlendingContext& context) -> StyleType
     {
         return blendOnTupleLike(a, b, context);
+    }
+    auto blend(const StyleType& a, const StyleType& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> StyleType
+    {
+        return blendOnTupleLike(a, b, aStyle, bStyle, context);
     }
 };
 
@@ -467,7 +533,15 @@ template<CSSValueID C> struct Blending<Constant<C>> {
     {
         return true;
     }
+    constexpr auto canBlend(const Constant<C>&, const Constant<C>&, const RenderStyle&, const RenderStyle&) -> bool
+    {
+        return true;
+    }
     auto blend(const Constant<C>&, const Constant<C>&, const BlendingContext&) -> Constant<C>
+    {
+        return { };
+    }
+    auto blend(const Constant<C>&, const Constant<C>&, const RenderStyle&, const RenderStyle&, const BlendingContext&) -> Constant<C>
     {
         return { };
     }
@@ -486,11 +560,33 @@ template<typename... StyleTypes> struct Blending<std::variant<StyleTypes...>> {
             }
         ), a, b);
     }
+    auto canBlend(const std::variant<StyleTypes...>& a, const std::variant<StyleTypes...>& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+    {
+        return std::visit(WTF::makeVisitor(
+            [&]<typename T>(const T& a, const T& b) -> bool {
+                return WebCore::Style::canBlend(a, b, aStyle, bStyle);
+            },
+            [](const auto&, const auto&) -> bool {
+                return false;
+            }
+        ), a, b);
+    }
     auto blend(const std::variant<StyleTypes...>& a, const std::variant<StyleTypes...>& b, const BlendingContext& context) -> std::variant<StyleTypes...>
     {
         return std::visit(WTF::makeVisitor(
             [&]<typename T>(const T& a, const T& b) -> std::variant<StyleTypes...> {
                 return WebCore::Style::blend(a, b, context);
+            },
+            [](const auto&, const auto&) -> std::variant<StyleTypes...> {
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        ), a, b);
+    }
+    auto blend(const std::variant<StyleTypes...>& a, const std::variant<StyleTypes...>& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> std::variant<StyleTypes...>
+    {
+        return std::visit(WTF::makeVisitor(
+            [&]<typename T>(const T& a, const T& b) -> std::variant<StyleTypes...> {
+                return WebCore::Style::blend(a, b, aStyle, bStyle, context);
             },
             [](const auto&, const auto&) -> std::variant<StyleTypes...> {
                 RELEASE_ASSERT_NOT_REACHED();
@@ -511,6 +607,16 @@ template<typename StyleType, size_t inlineCapacity> struct Blending<SpaceSeparat
         }
         return true;
     }
+    auto canBlend(const SpaceSeparatedVector<StyleType, inlineCapacity>& a, const SpaceSeparatedVector<StyleType, inlineCapacity>& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (!WebCore::Style::canBlend(a[i], b[i], aStyle, bStyle))
+                return false;
+        }
+        return true;
+    }
     auto blend(const SpaceSeparatedVector<StyleType, inlineCapacity>& a, const SpaceSeparatedVector<StyleType, inlineCapacity>& b, const BlendingContext& context) -> SpaceSeparatedVector<StyleType, inlineCapacity>
     {
         auto size = a.size();
@@ -518,6 +624,15 @@ template<typename StyleType, size_t inlineCapacity> struct Blending<SpaceSeparat
         result.reserveInitialCapacity(size);
         for (size_t i = 0; i < size; ++i)
             result.append(WebCore::Style::blend(a[i], b[i], context));
+        return { WTFMove(result) };
+    }
+    auto blend(const SpaceSeparatedVector<StyleType, inlineCapacity>& a, const SpaceSeparatedVector<StyleType, inlineCapacity>& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> SpaceSeparatedVector<StyleType, inlineCapacity>
+    {
+        auto size = a.size();
+        typename SpaceSeparatedVector<StyleType, inlineCapacity>::Vector result;
+        result.reserveInitialCapacity(size);
+        for (size_t i = 0; i < size; ++i)
+            result.append(WebCore::Style::blend(a[i], b[i], aStyle, bStyle, context));
         return { WTFMove(result) };
     }
 };
@@ -534,6 +649,16 @@ template<typename StyleType, size_t inlineCapacity> struct Blending<CommaSeparat
         }
         return true;
     }
+    auto canBlend(const CommaSeparatedVector<StyleType, inlineCapacity>& a, const CommaSeparatedVector<StyleType, inlineCapacity>& b, const RenderStyle& aStyle, const RenderStyle& bStyle) -> bool
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (!WebCore::Style::canBlend(a[i], b[i], aStyle, bStyle))
+                return false;
+        }
+        return true;
+    }
     auto blend(const CommaSeparatedVector<StyleType, inlineCapacity>& a, const CommaSeparatedVector<StyleType, inlineCapacity>& b, const BlendingContext& context) -> CommaSeparatedVector<StyleType, inlineCapacity>
     {
         auto size = a.size();
@@ -541,6 +666,15 @@ template<typename StyleType, size_t inlineCapacity> struct Blending<CommaSeparat
         result.reserveInitialCapacity(size);
         for (size_t i = 0; i < size; ++i)
             result.append(WebCore::Style::blend(a[i], b[i], context));
+        return { WTFMove(result) };
+    }
+    auto blend(const CommaSeparatedVector<StyleType, inlineCapacity>& a, const CommaSeparatedVector<StyleType, inlineCapacity>& b, const RenderStyle& aStyle, const RenderStyle& bStyle, const BlendingContext& context) -> CommaSeparatedVector<StyleType, inlineCapacity>
+    {
+        auto size = a.size();
+        typename CommaSeparatedVector<StyleType, inlineCapacity>::Vector result;
+        result.reserveInitialCapacity(size);
+        for (size_t i = 0; i < size; ++i)
+            result.append(WebCore::Style::blend(a[i], b[i], aStyle, bStyle, context));
         return { WTFMove(result) };
     }
 };

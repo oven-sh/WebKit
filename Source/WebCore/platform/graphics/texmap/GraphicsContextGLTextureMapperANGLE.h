@@ -72,7 +72,7 @@ private:
 
     void swapCompositorTexture();
 
-#if USE(NICOSIA)
+#if USE(COORDINATED_GRAPHICS) && USE(LIBEPOXY)
     GCGLuint setupCurrentTexture();
 #endif
 
@@ -88,7 +88,7 @@ private:
     std::unique_ptr<GLFence> m_frameFence;
 #endif
 
-#if USE(NICOSIA)
+#if USE(COORDINATED_GRAPHICS) && USE(LIBEPOXY)
     GCGLuint m_textureID { 0 };
     GCGLuint m_compositorTextureID { 0 };
 #endif

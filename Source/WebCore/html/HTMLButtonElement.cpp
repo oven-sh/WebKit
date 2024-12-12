@@ -172,7 +172,7 @@ void HTMLButtonElement::defaultEventHandler(Event& event)
         }
 
         if (!(protectedForm && m_type == SUBMIT))
-            handlePopoverTargetAction();
+            handlePopoverTargetAction(event.target());
 
     }
 

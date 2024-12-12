@@ -344,8 +344,8 @@ public:
 
     String nodeName() const override;
 
-    Ref<Element> cloneElementWithChildren(Document&);
-    Ref<Element> cloneElementWithoutChildren(Document&);
+    Ref<Element> cloneElementWithChildren(TreeScope&);
+    Ref<Element> cloneElementWithoutChildren(TreeScope&);
 
     void normalizeAttributes();
 
@@ -603,6 +603,8 @@ public:
     virtual bool isSliderContainerElement() const { return false; }
     virtual bool isSliderThumbElement() const { return false; }
     virtual bool isHTMLTablePartElement() const { return false; }
+
+    virtual bool isDevolvableWidget() const { return false; }
 
     bool canContainRangeEndPoint() const override;
 
@@ -921,9 +923,9 @@ private:
     void disconnectFromResizeObserversSlow(ResizeObserverData&);
 
     // The cloneNode function is private so that non-virtual cloneElementWith/WithoutChildren are used instead.
-    Ref<Node> cloneNodeInternal(Document&, CloningOperation) override;
+    Ref<Node> cloneNodeInternal(TreeScope&, CloningOperation) override;
     void cloneShadowTreeIfPossible(Element& newHost);
-    virtual Ref<Element> cloneElementWithoutAttributesAndChildren(Document&);
+    virtual Ref<Element> cloneElementWithoutAttributesAndChildren(TreeScope&);
 
     inline void removeShadowRoot(); // Defined in ElementRareData.h.
     void removeShadowRootSlow(ShadowRoot&);

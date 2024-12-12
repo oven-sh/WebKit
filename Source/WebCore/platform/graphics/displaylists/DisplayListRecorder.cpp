@@ -146,6 +146,12 @@ void Recorder::didUpdateState(GraphicsContextState& state)
     state.didApplyChanges();
 }
 
+void Recorder::didUpdateSingleState(GraphicsContextState& state, GraphicsContextState::ChangeIndex changeIndex)
+{
+    ASSERT(state.changes() - changeIndex.toChange() == GraphicsContextState::ChangeFlags { });
+    currentState().state.mergeSingleChange(state, changeIndex, currentState().lastDrawingState);
+    state.didApplyChanges();
+}
 
 void Recorder::drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect& sourceImageRect, Filter& filter, FilterResults& results)
 {

@@ -37,6 +37,7 @@
 #include "GPUProcessSessionParameters.h"
 #include "Logging.h"
 #include "OverrideLanguages.h"
+#include "ProcessTerminationReason.h"
 #include "ProvisionalPageProxy.h"
 #include "WebPageGroup.h"
 #include "WebPageMessages.h"
@@ -274,6 +275,7 @@ static const ASCIILiteral appleCameraUserClientIOKitClientClass { "H11ANEInDirec
 static const ASCIILiteral appleCameraUserClientIOKitServiceClass { "H11ANEIn"_s };
 #endif
 
+#if PLATFORM(COCOA)
 static inline bool addCameraSandboxExtensions(Vector<SandboxExtension::Handle>& extensions)
 {
     auto sandboxExtensionHandle = SandboxExtension::createHandleForGenericExtension("com.apple.webkit.camera"_s);
@@ -338,6 +340,7 @@ static inline bool addMicrophoneSandboxExtension(Vector<SandboxExtension::Handle
     extensions.append(WTFMove(*sandboxExtensionHandle));
     return true;
 }
+#endif // PLATFORM(COCOA)
 
 #if HAVE(SCREEN_CAPTURE_KIT)
 static inline bool addDisplayCaptureSandboxExtension(std::optional<audit_token_t> auditToken, Vector<SandboxExtension::Handle>& extensions)
@@ -569,6 +572,7 @@ void GPUProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
     case ProcessTerminationReason::RequestedByModelProcess:
     case ProcessTerminationReason::GPUProcessCrashedTooManyTimes:
     case ProcessTerminationReason::ModelProcessCrashedTooManyTimes:
+    case ProcessTerminationReason::NonMainFrameWebContentProcessCrash:
         ASSERT_NOT_REACHED();
         break;
     }
@@ -634,13 +638,15 @@ void GPUProcessProxy::didReceiveInvalidMessage(IPC::Connection& connection, IPC:
     didClose(connection);
 }
 
-void GPUProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connection::Identifier connectionIdentifier)
+void GPUProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connection::Identifier&& connectionIdentifier)
 {
     RELEASE_LOG(Process, "%p - GPUProcessProxy::didFinishLaunching:", this);
 
-    AuxiliaryProcessProxy::didFinishLaunching(launcher, connectionIdentifier);
+    bool didTerminate = !connectionIdentifier;
 
-    if (!connectionIdentifier) {
+    AuxiliaryProcessProxy::didFinishLaunching(launcher, WTFMove(connectionIdentifier));
+
+    if (didTerminate) {
         gpuProcessExited(ProcessTerminationReason::Crash);
         return;
     }

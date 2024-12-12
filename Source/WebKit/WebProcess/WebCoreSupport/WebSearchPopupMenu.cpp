@@ -23,7 +23,6 @@
 #include "config.h"
 #include "WebSearchPopupMenu.h"
 
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"

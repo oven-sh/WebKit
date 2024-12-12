@@ -46,8 +46,10 @@ async function run() {
     });
     renderPassEncoder.setPipeline(renderPipeline);
     renderPassEncoder.drawIndexedIndirect(buffer, 2_468);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => setTimeout(() => globalThis.testRunner?.notifyDone(), 250));
+run();
 </script>

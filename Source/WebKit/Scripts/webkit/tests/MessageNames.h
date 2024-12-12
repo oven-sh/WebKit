@@ -33,29 +33,31 @@ namespace IPC {
 enum class ReceiverName : uint8_t {
     TestWithCVPixelBuffer = 1
     , TestWithDeferSendingOption = 2
-    , TestWithEnabledBy = 3
-    , TestWithEnabledByAndConjunction = 4
-    , TestWithEnabledByOrConjunction = 5
-    , TestWithIfMessage = 6
-    , TestWithImageData = 7
-    , TestWithLegacyReceiver = 8
-    , TestWithSemaphore = 9
-    , TestWithStream = 10
-    , TestWithStreamBatched = 11
-    , TestWithStreamBuffer = 12
-    , TestWithStreamServerConnectionHandle = 13
-    , TestWithSuperclass = 14
-    , TestWithSuperclassAndWantsAsyncDispatch = 15
-    , TestWithSuperclassAndWantsDispatch = 16
-    , TestWithValidator = 17
-    , TestWithWantsAsyncDispatch = 18
-    , TestWithWantsDispatch = 19
-    , TestWithWantsDispatchNoSyncMessages = 20
-    , TestWithoutAttributes = 21
-    , TestWithoutUsingIPCConnection = 22
-    , IPC = 23
-    , AsyncReply = 24
-    , Invalid = 25
+    , TestWithDispatchedFromAndTo = 3
+    , TestWithEnabledBy = 4
+    , TestWithEnabledByAndConjunction = 5
+    , TestWithEnabledByOrConjunction = 6
+    , TestWithIfMessage = 7
+    , TestWithImageData = 8
+    , TestWithLegacyReceiver = 9
+    , TestWithMultiLineExtendedAttributes = 10
+    , TestWithSemaphore = 11
+    , TestWithStream = 12
+    , TestWithStreamBatched = 13
+    , TestWithStreamBuffer = 14
+    , TestWithStreamServerConnectionHandle = 15
+    , TestWithSuperclass = 16
+    , TestWithSuperclassAndWantsAsyncDispatch = 17
+    , TestWithSuperclassAndWantsDispatch = 18
+    , TestWithValidator = 19
+    , TestWithWantsAsyncDispatch = 20
+    , TestWithWantsDispatch = 21
+    , TestWithWantsDispatchNoSyncMessages = 22
+    , TestWithoutAttributes = 23
+    , TestWithoutUsingIPCConnection = 24
+    , IPC = 25
+    , AsyncReply = 26
+    , Invalid = 27
 };
 
 enum class MessageName : uint16_t {
@@ -67,6 +69,7 @@ enum class MessageName : uint16_t {
     TestWithDeferSendingOption_NoIndices,
     TestWithDeferSendingOption_NoOptions,
     TestWithDeferSendingOption_OneIndex,
+    TestWithDispatchedFromAndTo_AlwaysEnabled,
     TestWithEnabledByAndConjunction_AlwaysEnabled,
     TestWithEnabledByOrConjunction_AlwaysEnabled,
     TestWithEnabledBy_AlwaysEnabled,
@@ -112,6 +115,7 @@ enum class MessageName : uint16_t {
 #if (ENABLE(TOUCH_EVENTS) && (NESTED_MESSAGE_CONDITION || SOME_OTHER_MESSAGE_CONDITION))
     TestWithLegacyReceiver_TouchEvent,
 #endif
+    TestWithMultiLineExtendedAttributes_AlwaysEnabled,
     TestWithSemaphore_ReceiveSemaphore,
     TestWithSemaphore_SendSemaphore,
     TestWithStreamBatched_SendString,
@@ -284,7 +288,7 @@ constexpr bool messageIsSync(MessageName name)
 
 namespace WTF {
 
-template<> constexpr bool isValidEnum<IPC::MessageName, void>(std::underlying_type_t<IPC::MessageName> messageName)
+template<> constexpr bool isValidEnum<IPC::MessageName>(std::underlying_type_t<IPC::MessageName> messageName)
 {
     return messageName <= WTF::enumToUnderlyingType(IPC::MessageName::Last);
 }

@@ -31,6 +31,7 @@
 #include <gst/audio/audio-converter.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/StringCommon.h>
 
 GST_DEBUG_CATEGORY(webkit_audio_data_debug);
 #define GST_CAT_DEFAULT webkit_audio_data_debug
@@ -232,7 +233,7 @@ void PlatformRawAudioData::copyTo(std::span<uint8_t> destination, AudioSampleFor
 
     GUniquePtr<GstAudioInfo> sourceInfo(gst_audio_info_copy(self.info()));
     GUniquePtr<char> key(gst_info_strdup_printf("%" GST_PTR_FORMAT ";%" GST_PTR_FORMAT, gst_sample_get_caps(self.sample()), outputCaps.get()));
-    auto converter = getAudioConvertedForFormat(StringView { std::span { key.get(), strlen(key.get()) } }, *sourceInfo.get(), destinationInfo);
+    auto converter = getAudioConvertedForFormat(StringView { span(key.get()) }, *sourceInfo.get(), destinationInfo);
 
     auto inFrames = gst_buffer_get_size(gst_sample_get_buffer(self.sample())) / GST_AUDIO_INFO_BPF(sourceInfo.get());
     auto outFrames = gst_audio_converter_get_out_frames(converter, inFrames);

@@ -63,6 +63,8 @@
 #include "PictureInPictureObserver.h"
 #endif
 
+#define HTMLVIDEOELEMENT_RELEASE_LOG(fmt, ...) RELEASE_LOG_FORWARDABLE(Media, fmt, identifier().toUInt64(), ##__VA_ARGS__)
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLVideoElement);
@@ -130,7 +132,7 @@ bool HTMLVideoElement::supportsAcceleratedRendering() const
 
 void HTMLVideoElement::mediaPlayerRenderingModeChanged()
 {
-    ALWAYS_LOG(LOGIDENTIFIER);
+    HTMLVIDEOELEMENT_RELEASE_LOG(HTMLVIDEOELEMENT_MEDIAPLAYERRENDERINGMODECHANGED);
 
     // Kick off a fake recalcStyle that will update the compositing tree.
     computeAcceleratedRenderingStateAndUpdateMediaPlayer();
@@ -343,7 +345,7 @@ std::optional<DestinationColorSpace> HTMLVideoElement::colorSpace() const
 RefPtr<ImageBuffer> HTMLVideoElement::createBufferForPainting(const FloatSize& size, RenderingMode renderingMode, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat) const
 {
     auto* hostWindow = document().view() && document().view()->root() ? document().view()->root()->hostWindow() : nullptr;
-    return ImageBuffer::create(size, RenderingPurpose::MediaPainting, 1, colorSpace, pixelFormat, bufferOptionsForRendingMode(renderingMode), hostWindow);
+    return ImageBuffer::create(size, renderingMode, RenderingPurpose::MediaPainting, 1, colorSpace, pixelFormat, hostWindow);
 }
 
 void HTMLVideoElement::paint(GraphicsContext& context, const FloatRect& destRect)

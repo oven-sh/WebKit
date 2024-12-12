@@ -12,7 +12,9 @@ async function run() {
         depthStencilAttachment: { view: textureView, depthClearValue: 0.6744484791866846, depthLoadOp: 'clear', depthStoreOp: 'store', stencilClearValue: 40696, stencilReadOnly: true },
     });
     renderPassEncoder.end()
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

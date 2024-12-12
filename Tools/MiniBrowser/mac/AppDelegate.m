@@ -376,11 +376,6 @@ static NSNumber *_currentBadge;
     [controller loadHTMLString:@"<html><body></body></html>"];
 }
 
-- (IBAction)newSwiftUIWindow:(id)sender
-{
-    [self createSwiftUIWindow:sender];
-}
-
 - (void)didCreateBrowserWindowController:(BrowserWindowController *)controller
 {
     [_browserWindowControllers addObject:controller];

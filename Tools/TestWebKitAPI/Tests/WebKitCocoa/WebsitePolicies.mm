@@ -1748,6 +1748,7 @@ TEST(WebpagePreferences, UserExplicitlyPrefersColorSchemeLight)
     configuration.get().defaultWebpagePreferences._colorSchemePreference = _WKWebsiteColorSchemePreferenceLight;
 
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    [webView forceDarkMode];
 
     [webView loadTestPageNamed:@"color-scheme"];
     [webView waitForMessage:@"light-detected"];

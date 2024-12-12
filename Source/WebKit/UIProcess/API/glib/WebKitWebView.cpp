@@ -30,6 +30,7 @@
 #include "ImageOptions.h"
 #include "NotificationService.h"
 #include "PageLoadState.h"
+#include "ProcessTerminationReason.h"
 #include "ProvisionalPageProxy.h"
 #include "SystemSettingsManagerProxy.h"
 #include "WebContextMenuItem.h"

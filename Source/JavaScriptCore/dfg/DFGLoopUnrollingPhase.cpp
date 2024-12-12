@@ -29,7 +29,7 @@
 #if ENABLE(DFG_JIT)
 
 #include "CodeOrigin.h"
-#include "DFGBasicBlock.h"
+#include "DFGBasicBlockInlines.h"
 #include "DFGBlockInsertionSet.h"
 #include "DFGCFAPhase.h"
 #include "DFGGraph.h"
@@ -44,10 +44,6 @@ namespace DFG {
 
 class LoopUnrollingPhase : public Phase {
 public:
-    static constexpr uint32_t maxUnrolledLoopCount = 2;
-    static constexpr uint32_t maxIterationCount = 4;
-    static constexpr uint32_t maxLoopNodeSize = 100;
-
     using NaturalLoop = CPSNaturalLoop;
 
     using ComparisonFunction = bool (*)(CheckedInt32, CheckedInt32);
@@ -93,7 +89,7 @@ public:
         uint32_t unrolledCount = 0;
         while (true) {
             const NaturalLoop* loop = selectDeepestNestedLoop();
-            if (!loop || unrolledCount >= maxUnrolledLoopCount)
+            if (!loop || unrolledCount >= Options::maxLoopUnrollingCount())
                 break;
             if (!tryUnroll(loop))
                 break;
@@ -360,8 +356,8 @@ public:
             auto compare = comparisonFunction(condition);
             auto update = updateFunction(data.update);
             for (CheckedInt32 i = data.initialValue; compare(i, data.operand);) {
-                if (iterationCount > maxIterationCount) {
-                    dataLogLnIf(Options::verboseLoopUnrolling(), "Skipping loop with header ", *data.header(), " since MaxIterationCount=", maxIterationCount);
+                if (iterationCount > Options::maxLoopUnrollingIterationCount()) {
+                    dataLogLnIf(Options::verboseLoopUnrolling(), "Skipping loop with header ", *data.header(), " since maxLoopUnrollingIterationCount =", Options::maxLoopUnrollingIterationCount());
                     return false;
                 }
                 i = update(i, data.updateValue);
@@ -391,8 +387,8 @@ public:
             // ignore the loop, avoiding unnecessary cloneability checks for nodes in invalid blocks.
 
             totalNodeCount += body->size();
-            if (totalNodeCount > maxLoopNodeSize) {
-                dataLogLnIf(Options::verboseLoopUnrolling(), "Skipping loop with header ", *data.header(), " and loop node count=", totalNodeCount, " since MaxLoopNodeSize=", maxLoopNodeSize);
+            if (totalNodeCount > Options::maxLoopUnrollingBodyNodeSize()) {
+                dataLogLnIf(Options::verboseLoopUnrolling(), "Skipping loop with header ", *data.header(), " and loop node count=", totalNodeCount, " since maxLoopUnrollingBodyNodeSize =", Options::maxLoopUnrollingBodyNodeSize());
                 return false;
             }
         }
@@ -589,6 +585,8 @@ bool LoopUnrollingPhase::isNodeCloneable(HashSet<Node*>& cloneableCache, Node* n
     switch (node->op()) {
     case Phi:
         break;
+    case ValueRep:
+    case DoubleRep:
     case JSConstant:
     case LoopHint:
     case PhantomLocal:
@@ -710,6 +708,8 @@ Node* LoopUnrollingPhase::cloneNodeImpl(UncheckedKeyHashMap<Node*, Node*>& nodeC
         }
         FALLTHROUGH;
     }
+    case ValueRep:
+    case DoubleRep:
     case ExitOK:
     case LoopHint:
     case GetButterfly:

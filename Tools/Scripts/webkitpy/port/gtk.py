@@ -201,4 +201,3 @@ class GtkPort(GLibPort):
 
         except (webkitpy.common.system.executive.ScriptError, IOError, OSError):
             return False
-        return False

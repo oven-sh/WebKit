@@ -46,9 +46,6 @@
 #if USE(GLIB)
 #include "ArgumentCodersGlib.h"
 #endif
-#if OS(WINDOWS)
-#include "ArgumentCodersWin.h"
-#endif
 #if USE(UNIX_DOMAIN_SOCKETS)
 #include "ArgumentCodersUnix.h"
 #endif

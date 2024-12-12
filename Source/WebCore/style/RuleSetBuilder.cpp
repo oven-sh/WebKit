@@ -33,6 +33,7 @@
 #include "CSSCounterStyleRule.h"
 #include "CSSFontSelector.h"
 #include "CSSKeyframesRule.h"
+#include "CSSPositionTryRule.h"
 #include "CSSSelectorParser.h"
 #include "CSSViewTransitionRule.h"
 #include "CustomPropertyRegistry.h"
@@ -217,6 +218,7 @@ void RuleSetBuilder::addChildRule(Ref<StyleRuleBase> rule)
     case StyleRuleType::Keyframes:
     case StyleRuleType::Property:
     case StyleRuleType::ViewTransition:
+    case StyleRuleType::PositionTry:
         disallowDynamicMediaQueryEvaluationIfNeeded();
         if (m_resolver)
             m_collectedResolverMutatingRules.append({ rule, m_currentCascadeLayerIdentifier });

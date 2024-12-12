@@ -57,13 +57,11 @@ enum class FontTechnology : uint8_t;
 template <typename T> class FontTaggedSettings;
 typedef FontTaggedSettings<int> FontFeatureSettings;
 
-#if USE(CORE_TEXT) || USE(SKIA)
 struct FontCustomPlatformSerializedData {
-    Vector<uint8_t> fontFaceData;
+    Ref<SharedBuffer> fontFaceData;
     String itemInCollection;
     RenderingResourceIdentifier renderingResourceIdentifier;
 };
-#endif
 
 struct FontCustomPlatformData : public RefCounted<FontCustomPlatformData> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(FontCustomPlatformData);
@@ -90,10 +88,9 @@ public:
 
     FontPlatformData fontPlatformData(const FontDescription&, bool bold, bool italic, const FontCreationContext&);
 
-#if USE(CORE_TEXT) || USE(SKIA)
     WEBCORE_EXPORT FontCustomPlatformSerializedData serializedData() const;
     WEBCORE_EXPORT static std::optional<Ref<FontCustomPlatformData>> tryMakeFromSerializationData(FontCustomPlatformSerializedData&&, bool);
-#endif
+
     static bool supportsFormat(const String&);
     static bool supportsTechnology(const FontTechnology&);
 

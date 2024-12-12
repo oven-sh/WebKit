@@ -93,6 +93,7 @@ class Page;
 class RenderLayer;
 class RenderView;
 class RenderWidget;
+class ResourceMonitor;
 class ScriptController;
 class SecurityOrigin;
 class VisiblePosition;
@@ -332,6 +333,10 @@ public:
     WEBCORE_EXPORT void updateScrollingMode() final;
     WEBCORE_EXPORT void setScrollingMode(ScrollbarMode);
 
+#if ENABLE(CONTENT_EXTENSIONS)
+    void networkUsageDidExceedThreshold();
+#endif
+
 protected:
     void frameWasDisconnectedFromOwner() const final;
 
@@ -353,6 +358,10 @@ private:
     void reinitializeDocumentSecurityContext() final;
     FrameLoaderClient& loaderClient() final;
     void documentURLForConsoleLog(CompletionHandler<void(const URL&)>&&) final;
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    void showResourceMonitoringError(String&& htmlContent);
+#endif
 
     WeakHashSet<FrameDestructionObserver> m_destructionObservers;
 

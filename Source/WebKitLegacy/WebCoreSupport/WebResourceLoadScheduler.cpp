@@ -401,7 +401,7 @@ bool WebResourceLoadScheduler::HostInformation::limitRequests(ResourceLoadPriori
 void WebResourceLoadScheduler::startPingLoad(LocalFrame& frame, ResourceRequest& request, const HTTPHeaderMap&, const FetchOptions& options, ContentSecurityPolicyImposition, PingLoadCompletionHandler&& completionHandler)
 {
     // PingHandle manages its own lifetime, deleting itself when its purpose has been fulfilled.
-    new PingHandle(frame.loader().networkingContext(), request, options.credentials != FetchOptions::Credentials::Omit, options.redirect == FetchOptions::Redirect::Follow, WTFMove(completionHandler));
+    PingHandle::start(frame.loader().networkingContext(), request, options.credentials != FetchOptions::Credentials::Omit, options.redirect == FetchOptions::Redirect::Follow, WTFMove(completionHandler));
 }
 
 bool WebResourceLoadScheduler::isOnLine() const

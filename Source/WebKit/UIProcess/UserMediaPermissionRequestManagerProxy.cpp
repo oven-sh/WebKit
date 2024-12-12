@@ -290,7 +290,10 @@ void UserMediaPermissionRequestManagerProxy::grantRequest(UserMediaPermissionReq
             callback(true);
         });
         m_grantedRequests.append(request);
-        m_grantedFrames.add(request.frameID());
+        if (request.requiresAudioCapture())
+            m_grantedAudioFrames.add(request.frameID());
+        if (request.requiresVideoCapture())
+            m_grantedVideoFrames.add(request.frameID());
         return;
     }
 
@@ -339,11 +342,6 @@ void UserMediaPermissionRequestManagerProxy::finishGrantingRequest(UserMediaPerm
         if (!page)
             return;
 
-        // FIXME: m_hasFilteredDeviceList will trigger ondevicechange events for various documents from different origins.
-        if (m_hasFilteredDeviceList)
-            captureDevicesChanged(PermissionInfo::Granted);
-        m_hasFilteredDeviceList = false;
-
         ++m_hasPendingCapture;
 
         Vector<SandboxExtension::Handle> handles;
@@ -389,16 +387,17 @@ void UserMediaPermissionRequestManagerProxy::resetAccess(WebFrameProxy* frame)
         m_grantedRequests.removeAllMatching([frame](const auto& grantedRequest) {
             return grantedRequest->mainFrameID() == frame->frameID() && !grantedRequest->userMediaDocumentSecurityOrigin().isSameOriginAs(SecurityOrigin::create(frame->url()).get());
         });
-        m_grantedFrames.remove(frame->frameID());
+        m_grantedAudioFrames.remove(frame->frameID());
+        m_grantedVideoFrames.remove(frame->frameID());
         m_frameEphemeralHashSalts.remove(frame->frameID());
     } else {
         m_grantedRequests.clear();
-        m_grantedFrames.clear();
+        m_grantedAudioFrames.clear();
+        m_grantedVideoFrames.clear();
         m_frameEphemeralHashSalts.clear();
     }
     m_pregrantedRequests.clear();
     m_deniedRequests.clear();
-    m_hasFilteredDeviceList = false;
 }
 
 const UserMediaPermissionRequestProxy* UserMediaPermissionRequestManagerProxy::searchForGrantedRequest(std::optional<FrameIdentifier> frameID, const SecurityOrigin& userMediaDocumentOrigin, const SecurityOrigin& topLevelDocumentOrigin, bool needsAudio, bool needsVideo) const
@@ -468,7 +467,10 @@ void UserMediaPermissionRequestManagerProxy::updateStoredRequests(UserMediaPermi
 {
     if (request.requestType() == MediaStreamRequest::Type::UserMedia) {
         m_grantedRequests.append(request);
-        m_grantedFrames.add(request.frameID());
+        if (request.requiresAudioCapture())
+            m_grantedAudioFrames.add(request.frameID());
+        if (request.requiresVideoCapture())
+            m_grantedVideoFrames.add(request.frameID());
     }
 
     m_deniedRequests.removeAllMatching([&request](auto& deniedRequest) {
@@ -891,7 +893,17 @@ void UserMediaPermissionRequestManagerProxy::getUserMediaPermissionInfo(FrameIde
 
 bool UserMediaPermissionRequestManagerProxy::wasGrantedVideoOrAudioAccess(FrameIdentifier frameID)
 {
-    return m_grantedFrames.contains(frameID);
+    return wasGrantedAudioAccess(frameID) || wasGrantedVideoAccess(frameID);
+}
+
+bool UserMediaPermissionRequestManagerProxy::wasGrantedAudioAccess(FrameIdentifier frameID)
+{
+    return m_grantedAudioFrames.contains(frameID);
+}
+
+bool UserMediaPermissionRequestManagerProxy::wasGrantedVideoAccess(FrameIdentifier frameID)
+{
+    return m_grantedVideoFrames.contains(frameID);
 }
 
 #if !USE(GLIB)
@@ -918,12 +930,12 @@ void UserMediaPermissionRequestManagerProxy::platformGetMediaStreamDevices(bool 
 }
 #endif
 
-void UserMediaPermissionRequestManagerProxy::computeFilteredDeviceList(bool revealIdsAndLabels, CompletionHandler<void(Vector<CaptureDeviceWithCapabilities>&&)>&& completion)
+void UserMediaPermissionRequestManagerProxy::computeFilteredDeviceList(FrameIdentifier frameID, bool revealIdsAndLabels, CompletionHandler<void(Vector<CaptureDeviceWithCapabilities>&&)>&& completion)
 {
     static const unsigned defaultMaximumCameraCount = 1;
     static const unsigned defaultMaximumMicrophoneCount = 1;
 
-    platformGetMediaStreamDevices(revealIdsAndLabels, [logIdentifier = LOGIDENTIFIER, this, weakThis = WeakPtr { *this }, revealIdsAndLabels, completion = WTFMove(completion)](auto&& devicesWithCapabilities) mutable {
+    platformGetMediaStreamDevices(revealIdsAndLabels || wasGrantedVideoAccess(frameID) || wasGrantedAudioAccess(frameID), [frameID, logIdentifier = LOGIDENTIFIER, this, weakThis = WeakPtr { *this }, revealIdsAndLabels, completion = WTFMove(completion)](auto&& devicesWithCapabilities) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis) {
             completion({ });
@@ -932,34 +944,47 @@ void UserMediaPermissionRequestManagerProxy::computeFilteredDeviceList(bool reve
 
         unsigned cameraCount = 0;
         unsigned microphoneCount = 0;
+        unsigned speakerCount = 0;
 
-        bool hasCamera = false;
-        bool hasMicrophone = false;
+        bool shouldRestrictCamera = !revealIdsAndLabels && !wasGrantedVideoAccess(frameID);
+        bool shouldRestrictMicrophone = !revealIdsAndLabels && !wasGrantedAudioAccess(frameID);
+        bool shouldRestrictSpeaker = !wasGrantedAudioAccess(frameID);
 
         Vector<CaptureDeviceWithCapabilities> filteredDevices;
         for (auto& deviceWithCapabilities : devicesWithCapabilities) {
             auto& device = deviceWithCapabilities.device;
-            if (!device.enabled() || (device.type() != WebCore::CaptureDevice::DeviceType::Camera && device.type() != WebCore::CaptureDevice::DeviceType::Microphone && device.type() != WebCore::CaptureDevice::DeviceType::Speaker))
+            if (!device.enabled())
                 continue;
-            hasCamera |= device.type() == WebCore::CaptureDevice::DeviceType::Camera;
-            hasMicrophone |= device.type() == WebCore::CaptureDevice::DeviceType::Microphone;
-            if (!revealIdsAndLabels) {
-                if (device.type() == WebCore::CaptureDevice::DeviceType::Camera && ++cameraCount > defaultMaximumCameraCount)
-                    continue;
-                if (device.type() == WebCore::CaptureDevice::DeviceType::Microphone && ++microphoneCount > defaultMaximumMicrophoneCount)
-                    continue;
-                if (device.type() != WebCore::CaptureDevice::DeviceType::Camera && device.type() != WebCore::CaptureDevice::DeviceType::Microphone)
-                    continue;
-            }
 
-            if (revealIdsAndLabels)
+            switch (device.type()) {
+            case WebCore::CaptureDevice::DeviceType::Camera:
+                if (shouldRestrictCamera) {
+                    if (device.type() == WebCore::CaptureDevice::DeviceType::Camera && cameraCount++ < defaultMaximumCameraCount)
+                        filteredDevices.append({ { { }, WebCore::CaptureDevice::DeviceType::Camera, { }, { } }, { } });
+                    break;
+                }
                 filteredDevices.append(deviceWithCapabilities);
-            else
-                filteredDevices.append({ { { }, device.type(), { }, { } }, { } });
+                break;
+            case WebCore::CaptureDevice::DeviceType::Microphone:
+                if (shouldRestrictMicrophone) {
+                    if (device.type() == WebCore::CaptureDevice::DeviceType::Microphone && microphoneCount++ < defaultMaximumMicrophoneCount)
+                        filteredDevices.append({ { { }, WebCore::CaptureDevice::DeviceType::Microphone, { }, { } }, { } });
+                    break;
+                }
+                filteredDevices.append(deviceWithCapabilities);
+                break;
+            case WebCore::CaptureDevice::DeviceType::Speaker:
+                if (shouldRestrictSpeaker)
+                    break;
+                speakerCount++;
+                filteredDevices.append(deviceWithCapabilities);
+                break;
+            default:
+                break;
+            }
         }
 
-        m_hasFilteredDeviceList = !revealIdsAndLabels;
-        ALWAYS_LOG(logIdentifier, filteredDevices.size(), " devices revealed, has filtering = ", !revealIdsAndLabels, " has camera = ", hasCamera, ", has microphone = ", hasMicrophone, " ");
+        ALWAYS_LOG(logIdentifier, "exposing ", cameraCount, " camera(s) filtering = ", shouldRestrictCamera, ", ", microphoneCount, " microphone(s) filtering = ", shouldRestrictMicrophone, ", ", speakerCount, " speaker(s) filtering = ", shouldRestrictSpeaker);
 
         completion(WTFMove(filteredDevices));
     });
@@ -1012,10 +1037,10 @@ void UserMediaPermissionRequestManagerProxy::enumerateMediaDevicesForFrame(Frame
             syncWithWebCorePrefs();
 
             MediaDeviceHashSalts hashSaltsForRequest = { deviceIDHashSalt, ephemeralDeviceHashSaltForFrame(frameID) };
-            bool revealIdsAndLabels = originHasPersistentAccess || wasGrantedVideoOrAudioAccess(frameID);
+            bool revealIdsAndLabels = originHasPersistentAccess;
 
             callCompletionHandler.release();
-            computeFilteredDeviceList(revealIdsAndLabels, [completionHandler = WTFMove(completionHandler), hashSaltsForRequest = WTFMove(hashSaltsForRequest)] (auto&& devices) mutable {
+            computeFilteredDeviceList(frameID, revealIdsAndLabels, [completionHandler = WTFMove(completionHandler), hashSaltsForRequest = WTFMove(hashSaltsForRequest)] (auto&& devices) mutable {
                 completionHandler(devices, WTFMove(hashSaltsForRequest));
             });
         });
@@ -1130,7 +1155,6 @@ void UserMediaPermissionRequestManagerProxy::watchdogTimerFired()
     m_grantedRequests.clear();
     m_pregrantedRequests.clear();
     m_currentWatchdogInterval = 0_s;
-    m_hasFilteredDeviceList = false;
 }
 
 #if !RELEASE_LOG_DISABLED

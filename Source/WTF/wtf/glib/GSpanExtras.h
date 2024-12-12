@@ -64,6 +64,7 @@ GMallocSpan<T, Malloc> adoptGMallocSpan(std::span<T> span)
     return adoptMallocSpan<T, Malloc>(span);
 }
 
+WTF_EXPORT_PRIVATE GMallocSpan<char> gFileGetContents(const char* path, GUniqueOutPtr<GError>&);
 WTF_EXPORT_PRIVATE GMallocSpan<char*, GMallocStrv> gKeyFileGetKeys(GKeyFile*, const char* groupName, GUniqueOutPtr<GError>&);
 WTF_EXPORT_PRIVATE GMallocSpan<GParamSpec*> gObjectClassGetProperties(GObjectClass*);
 WTF_EXPORT_PRIVATE GMallocSpan<const char*> gVariantGetStrv(const GRefPtr<GVariant>&);
@@ -125,6 +126,9 @@ inline std::span<T> span(GRefPtr<GPtrArray>& array)
 
 } // namespace WTF
 
+using WTF::GMallocSpan;
+using WTF::gFileGetContents;
 using WTF::gKeyFileGetKeys;
 using WTF::gObjectClassGetProperties;
+using WTF::gVariantGetStrv;
 using WTF::span;

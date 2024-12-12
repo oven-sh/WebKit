@@ -66,12 +66,14 @@ public:
     void disconnectFromStorageArea(IPC::Connection::UniqueID, StorageAreaIdentifier);
 
     HashMap<String, String> fetchStorageMap() const;
+    bool populateStorageArea(WebCore::ClientOrigin, HashMap<String, String>&&, Ref<WorkQueue>&&);
 
 private:
     void connectionClosedForLocalStorageArea(IPC::Connection::UniqueID);
     void connectionClosedForTransientStorageArea(IPC::Connection::UniqueID);
 
-    RefPtr<StorageAreaBase> protectedLocalStorageArea() const;
+    StorageAreaBase& ensureLocalStorageArea(const WebCore::ClientOrigin&, Ref<WorkQueue>&&);
+    MemoryStorageArea& ensureTransientLocalStorageArea(const WebCore::ClientOrigin&);
 
     String m_path;
     CheckedRef<StorageAreaRegistry> m_registry;

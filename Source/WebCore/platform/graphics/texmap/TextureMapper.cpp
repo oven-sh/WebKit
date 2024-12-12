@@ -25,6 +25,7 @@
 #if USE(TEXTURE_MAPPER)
 
 #include "BitmapTexture.h"
+#include "ClipPath.h"
 #include "FilterOperations.h"
 #include "FloatPolygon.h"
 #include "FloatQuad.h"
@@ -54,6 +55,15 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextureMapper);
 
+static size_t nextPowerOf2(size_t n)
+{
+    if (!n)
+        return 1;
+
+    const int totalBits = static_cast<int>(sizeof(size_t) * CHAR_BIT);
+    return static_cast<size_t>(1) << (totalBits - std::countl_zero(n - 1));
+}
+
 class TextureMapperGLData {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(TextureMapperGLData);
 public:
@@ -63,6 +73,7 @@ public:
     void initializeStencil();
     GLuint getStaticVBO(GLenum target, GLsizeiptr, const void* data);
     Ref<TextureMapperShaderProgram> getShaderProgram(TextureMapperShaderProgram::Options);
+    Ref<TextureMapperGPUBuffer> getBufferFromPool(size_t, TextureMapperGPUBuffer::Type);
 
     TransformationMatrix projectionMatrix;
     TextureMapper::FlipY flipY { TextureMapper::FlipY::No };
@@ -119,6 +130,7 @@ private:
 
     Ref<SharedGLData> m_sharedGLData;
     UncheckedKeyHashMap<const void*, GLuint> m_vbos;
+    UncheckedKeyHashMap<uint64_t, Vector<Ref<TextureMapperGPUBuffer>>> m_buffers;
 };
 
 TextureMapperGLData::TextureMapperGLData(void* platformContext)
@@ -130,6 +142,9 @@ TextureMapperGLData::~TextureMapperGLData()
 {
     for (auto& entry : m_vbos)
         glDeleteBuffers(1, &entry.value);
+
+    for (auto& entry : m_buffers)
+        entry.value.clear();
 }
 
 void TextureMapperGLData::initializeStencil()
@@ -141,7 +156,6 @@ void TextureMapperGLData::initializeStencil()
 
     if (didModifyStencil)
         return;
-
     glClearStencil(0);
     glClear(GL_STENCIL_BUFFER_BIT);
     didModifyStencil = true;
@@ -167,6 +181,29 @@ Ref<TextureMapperShaderProgram> TextureMapperGLData::getShaderProgram(TextureMap
         return TextureMapperShaderProgram::create(options);
     });
     return *addResult.iterator->value;
+}
+
+Ref<TextureMapperGPUBuffer> TextureMapperGLData::getBufferFromPool(size_t size, TextureMapperGPUBuffer::Type type)
+{
+    if (!size) {
+        // Use static zero buffer
+        static auto zeroBuffer = TextureMapperGPUBuffer::create(size, type, TextureMapperGPUBuffer::Usage::Dynamic);
+        return zeroBuffer;
+    }
+
+    RELEASE_ASSERT(size < std::numeric_limits<uint32_t>::max());
+    uint64_t key = (static_cast<uint64_t>(type) << 32) | static_cast<uint32_t>(size);
+    auto& buffers = m_buffers.ensure(key, [] {
+        return Vector<Ref<TextureMapperGPUBuffer>> { };
+    }).iterator->value;
+
+    for (auto& buffer : buffers) {
+        if (buffer->refCount() == 1)
+            return buffer;
+    }
+
+    buffers.append(TextureMapperGPUBuffer::create(size, type, TextureMapperGPUBuffer::Usage::Dynamic));
+    return buffers.last();
 }
 
 std::unique_ptr<TextureMapper> TextureMapper::create()
@@ -1319,7 +1356,7 @@ void TextureMapper::beginClip(const TransformationMatrix& modelViewMatrix, const
     clipStack().applyIfNeeded();
 }
 
-void TextureMapper::beginClip(const TransformationMatrix& modelViewMatrix, const FloatPolygon& polygon)
+void TextureMapper::beginClip(const TransformationMatrix& modelViewMatrix, const ClipPath& clipPath)
 {
     clipStack().push();
     data().initializeStencil();
@@ -1329,14 +1366,14 @@ void TextureMapper::beginClip(const TransformationMatrix& modelViewMatrix, const
     glUseProgram(program->programID());
     glEnableVertexAttribArray(program->vertexLocation());
 
-    unsigned numberOfVertices = polygon.numberOfVertices();
-    Vector<GLfloat> polygonVertices;
-    polygonVertices.reserveCapacity(numberOfVertices * 2);
-    for (unsigned i = 0; i < numberOfVertices; i++) {
-        auto v = polygon.vertexAt(i);
-        polygonVertices.append(v.x());
-        polygonVertices.append(v.y());
-    }
+    // Compute the scissor rectangle from the clip path bounding box.
+    IntRect scissorRect = modelViewMatrix.mapQuad(clipPath.bounds()).enclosingBoundingBox();
+    IntRect viewport(data().viewport[0], data().viewport[1], data().viewport[2], data().viewport[3]);
+    scissorRect.intersect(viewport);
+
+    // Set up the scissor rectangle to limit stencil operations to the clip bounds.
+    glScissor(scissorRect.x(), (data().flipY == FlipY::Yes) ? scissorRect.y() : viewport.height() - scissorRect.maxY(),
+        scissorRect.width(), scissorRect.height());
 
     int stencilIndex = clipStack().getStencilIndex();
 
@@ -1348,9 +1385,9 @@ void TextureMapper::beginClip(const TransformationMatrix& modelViewMatrix, const
     // Operate only on the stencilIndex and above.
     glStencilMask(0xff & ~(stencilIndex - 1));
 
-    // First clear the entire buffer at the current index.
+    // Clear the stencil buffer at the current index.
     static const TransformationMatrix fullProjectionMatrix = TransformationMatrix::rectToRect(FloatRect(0, 0, 1, 1), FloatRect(-1, -1, 2, 2));
-    const GLfloat unitRect[] = { 0, 0, 1, 0, 1, 1, 0, 1 };
+    static const GLfloat unitRect[] = { 0, 0, 1, 0, 1, 1, 0, 1 };
     GLuint vbo = data().getStaticVBO(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, unitRect);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glVertexAttribPointer(program->vertexLocation(), 2, GL_FLOAT, false, 0, 0);
@@ -1360,21 +1397,20 @@ void TextureMapper::beginClip(const TransformationMatrix& modelViewMatrix, const
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
     // Now apply the current index to the new polygon.
-    GLuint polygonVBO;
-    glGenBuffers(1, &polygonVBO);
-    glBindBuffer(GL_ARRAY_BUFFER, polygonVBO);
-    glBufferData(GL_ARRAY_BUFFER, polygonVertices.size() * sizeof(GLfloat), polygonVertices.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(program->vertexLocation(), 2, GL_FLOAT, false, 0, 0);
-    glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE);
+    glBindBuffer(GL_ARRAY_BUFFER, clipPath.bufferID());
+    glVertexAttribPointer(program->vertexLocation(), 2, GL_FLOAT, false, 0, clipPath.bufferDataOffsetAsPtr());
     program->setMatrix(program->projectionMatrixLocation(), data().projectionMatrix);
     program->setMatrix(program->modelViewMatrixLocation(), modelViewMatrix);
-    glDrawArrays(GL_TRIANGLE_FAN, 0, polygonVertices.size() / 2);
-    glDeleteBuffers(1, &polygonVBO);
+    glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, clipPath.numberOfVertices());
 
     // Clear the state.
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glDisableVertexAttribArray(program->vertexLocation());
     glStencilMask(0);
+
+    // Store the scissor box in the clip stack to prevent it from being reset.
+    clipStack().intersect(scissorRect);
 
     // Increase stencilIndex and apply stencil testing.
     clipStack().setStencilIndex(stencilIndex * 2);
@@ -1417,6 +1453,7 @@ void TextureMapper::updateProjectionMatrix()
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         flipY = data().flipY == FlipY::Yes;
     }
+
     data().projectionMatrix = createProjectionMatrix(size, flipY, data().zNear, data().zFar);
 }
 
@@ -1425,6 +1462,16 @@ void TextureMapper::drawTextureExternalOES(GLuint texture, OptionSet<TextureMapp
     flags.add(TextureMapperFlags::ShouldUseExternalOESTextureRect);
     Ref<TextureMapperShaderProgram> program = data().getShaderProgram(TextureMapperShaderProgram::Option::TextureExternalOES);
     drawTexturedQuadWithProgram(program.get(), { { texture, program->externalOESTextureLocation() } }, flags, targetRect, modelViewMatrix, opacity);
+}
+
+Ref<TextureMapperGPUBuffer> TextureMapper::acquireBufferFromPool(size_t size, TextureMapperGPUBuffer::Type type)
+{
+    size_t ceil = nextPowerOf2(size);
+    size_t floor = ceil >> 1; // half of ceil
+    size_t mid = floor + (floor >> 1); // (1.5 times floor)
+    size_t requestSize = (size <= mid) ? mid : ceil;
+
+    return data().getBufferFromPool(requestSize, type);
 }
 
 } // namespace WebCore

@@ -40,26 +40,30 @@ class JSWebAssemblyInstance;
 namespace IPInt {
 
 #define WASM_IPINT_EXTERN_CPP_DECL(name, ...) \
-    extern "C" UGPRPair ipint_extern_##name(JSWebAssemblyInstance* instance, __VA_ARGS__)
+    extern "C" UGPRPair SYSV_ABI ipint_extern_##name(JSWebAssemblyInstance* instance, __VA_ARGS__)
 
 #define WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(name, ...) \
     WASM_IPINT_EXTERN_CPP_DECL(name, __VA_ARGS__) REFERENCED_FROM_ASM WTF_INTERNAL
 
 #define WASM_IPINT_EXTERN_CPP_DECL_1P(name) \
-    extern "C" UGPRPair ipint_extern_##name(JSWebAssemblyInstance* instance)
+    extern "C" UGPRPair SYSV_ABI ipint_extern_##name(JSWebAssemblyInstance* instance)
 
 #define WASM_IPINT_EXTERN_CPP_HIDDEN_DECL_1P(name) \
     WASM_IPINT_EXTERN_CPP_DECL_1P(name) REFERENCED_FROM_ASM WTF_INTERNAL
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
+WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(simd_go_straight_to_bbq, CallFrame* cfr);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(prologue_osr, CallFrame* callFrame);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(loop_osr, CallFrame* callFrame, uint8_t* pc, IPIntLocal* pl);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(epilogue_osr, CallFrame* callFrame);
 #endif
 
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(retrieve_and_clear_exception, CallFrame*, IPIntStackEntry* stack, IPIntLocal* pl);
+WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(retrieve_clear_and_push_exception, CallFrame*, IPIntStackEntry* stack, IPIntLocal* pl);
+WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(retrieve_clear_and_push_exception_and_arguments, CallFrame*, IPIntStackEntry* stack, IPIntLocal* pl);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(throw_exception, CallFrame*, IPIntStackEntry* arguments, unsigned exceptionIndex);
-WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(rethrow_exception, CallFrame*, uint64_t* pl, unsigned tryDepth);
+WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(rethrow_exception, CallFrame*, IPIntStackEntry* pl, unsigned tryDepth);
+WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(throw_ref, CallFrame* callFrame, EncodedJSValue exnref);
 
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(ref_func, unsigned index);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_get, unsigned, unsigned);

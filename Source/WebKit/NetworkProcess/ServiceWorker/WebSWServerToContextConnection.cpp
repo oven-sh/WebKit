@@ -35,7 +35,6 @@
 #include "NetworkSession.h"
 #include "ServiceWorkerFetchTask.h"
 #include "ServiceWorkerFetchTaskMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebSWContextManagerConnectionMessages.h"
 #include "WebSWServerConnection.h"
 #include <WebCore/NotificationData.h>
@@ -353,6 +352,8 @@ void WebSWServerToContextConnection::startFetch(ServiceWorkerFetchTask& task)
 
 void WebSWServerToContextConnection::didReceiveFetchTaskMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
+    MESSAGE_CHECK(ObjectIdentifier<FetchIdentifierType>::isValidIdentifier(decoder.destinationID()));
+
     RefPtr fetch = m_ongoingFetches.get(ObjectIdentifier<FetchIdentifierType>(decoder.destinationID())).get();
     if (!fetch)
         return;

@@ -54,5 +54,7 @@ template<> struct Blending<None> {
     constexpr auto blend(const None&, const None&, const BlendingContext&) -> None { return { }; }
 };
 
+WTF::TextStream& operator<<(WTF::TextStream&, const None&);
+
 } // namespace Style
 } // namespace WebCore

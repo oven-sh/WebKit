@@ -53,7 +53,9 @@ async function run() {
     renderBundleEncoder.setPipeline(pipeline);
     renderBundleEncoder.setBindGroup(0, bindGroup);
     renderBundleEncoder.setPipeline(pipeline2);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

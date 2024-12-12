@@ -59,21 +59,5 @@ template<auto R> struct ComputedStyleDependenciesCollector<LengthPercentageRaw<R
 
 };
 
-// All primitives that can contain calc() may have dependencies, as calc() can contain relative lengths even in non-length contexts.
-template<RawNumeric RawType> struct ComputedStyleDependenciesCollector<PrimitiveNumeric<RawType>> {
-    void operator()(ComputedStyleDependencies& dependencies, const PrimitiveNumeric<RawType>& value)
-    {
-        WTF::switchOn(value, [&](const auto& value) { collectComputedStyleDependencies(dependencies, value); });
-    }
-};
-
-// NumberOrPercentageResolvedToNumber trivially forwards to its inner variant.
-template<auto R> struct ComputedStyleDependenciesCollector<NumberOrPercentageResolvedToNumber<R>> {
-    void operator()(ComputedStyleDependencies& dependencies, const NumberOrPercentageResolvedToNumber<R>& value)
-    {
-        collectComputedStyleDependencies(dependencies, value.value);
-    }
-};
-
 } // namespace CSS
 } // namespace WebCore

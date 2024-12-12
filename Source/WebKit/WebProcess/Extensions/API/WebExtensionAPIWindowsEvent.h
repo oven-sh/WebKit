@@ -45,7 +45,9 @@ public:
     using FilterAndCallbackPair = std::pair<RefPtr<WebExtensionCallbackHandler>, OptionSet<WindowTypeFilter>>;
     using ListenerVector = Vector<FilterAndCallbackPair>;
 
+#if PLATFORM(COCOA)
     void invokeListenersWithArgument(id argument, OptionSet<WindowTypeFilter>);
+#endif
 
     const ListenerVector& listeners() const { return m_listeners; }
 

@@ -96,13 +96,12 @@ std::unique_ptr<ImageBufferCGBitmapBackend> ImageBufferCGBitmapBackend::create(c
 }
 
 ImageBufferCGBitmapBackend::ImageBufferCGBitmapBackend(const Parameters& parameters, uint8_t* data, RetainPtr<CGDataProviderRef>&& dataProvider, std::unique_ptr<GraphicsContextCG>&& context)
-    : ImageBufferCGBackend(parameters)
+    : ImageBufferCGBackend(parameters, WTFMove(context))
     , m_data(data)
     , m_dataProvider(WTFMove(dataProvider))
 {
     ASSERT(m_data);
     ASSERT(m_dataProvider);
-    m_context = WTFMove(context);
     ASSERT(m_context);
     applyBaseTransform(*m_context);
 }

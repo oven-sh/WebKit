@@ -244,8 +244,10 @@ private:
         {
             // FIXME: <https://webkit.org/b/267514> Add support for changeInfo.
 
+#if PLATFORM(COCOA)
             if (RefPtr extensionController = m_extensionController.get())
                 extensionController->cookiesDidChange(cookieStore);
+#endif
         }
 
         WeakPtr<WebExtensionController> m_extensionController;
@@ -253,7 +255,9 @@ private:
 
     Ref<WebExtensionControllerConfiguration> m_configuration;
 
+#if PLATFORM(COCOA)
     RetainPtr<_WKWebExtensionControllerHelper> m_webExtensionControllerHelper;
+#endif
     WebExtensionContextSet m_extensionContexts;
     WebExtensionContextBaseURLMap m_extensionContextBaseURLMap;
     WebPageProxySet m_pages;

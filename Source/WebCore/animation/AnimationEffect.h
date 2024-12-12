@@ -69,6 +69,8 @@ public:
     virtual void animationTimelineDidChange(const AnimationTimeline*);
     virtual void animationDidFinish() { };
     void animationPlaybackRateDidChange();
+    void animationProgressBasedTimelineSourceDidChangeMetrics();
+    void animationRangeDidChange();
 
     AnimationEffectTiming timing() const { return m_timing; }
 

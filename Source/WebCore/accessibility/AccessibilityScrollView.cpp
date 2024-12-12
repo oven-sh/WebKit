@@ -214,6 +214,10 @@ void AccessibilityScrollView::clearChildren()
 
 bool AccessibilityScrollView::computeIsIgnored() const
 {
+    // Scroll view's that host remote frames won't have web area objects, but shouldn't be ignored so that they are also available in the isolated tree.
+    if (m_remoteFrame)
+        return false;
+
     AccessibilityObject* webArea = webAreaObject();
     if (!webArea)
         return true;
@@ -239,6 +243,7 @@ void AccessibilityScrollView::addRemoteFrameChild()
 #if PLATFORM(MAC)
         // Generate a new token and pass it back to the other remote frame so it can bind these objects together.
         Ref remoteFrame = remoteFrameView->frame();
+        m_remoteFrame->setFrameID(remoteFrame->frameID());
         remoteFrame->bindRemoteAccessibilityFrames(getpid(), { m_remoteFrame->generateRemoteToken() }, [this, &remoteFrame, protectedAccessbilityRemoteFrame = RefPtr { m_remoteFrame }] (Vector<uint8_t> token, int processIdentifier) mutable {
             protectedAccessbilityRemoteFrame->initializePlatformElementWithRemoteToken(token.span(), processIdentifier);
 

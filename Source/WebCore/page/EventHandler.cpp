@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
  * Copyright (C) 2013 Google Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov (ap@webkit.org)
  * Copyright (C) 2012 Digia Plc. and/or its subsidiary(-ies)
@@ -379,6 +379,20 @@ bool EventHandler::eventLoopHandleMouseDragged(const MouseEventWithHitTestResult
 #endif
 
 #endif
+
+// Refetch the event target node if it is removed or currently is the shadow node inside an <input> element.
+// If a mouse event handler changes the input element type to one that has a widget associated,
+// we'd like to EventHandler::handleMousePressEvent to pass the event to the widget and thus the
+// event target node can't still be the shadow node.
+static inline bool shouldRefetchEventTarget(const MouseEventWithHitTestResults& mouseEvent)
+{
+    RefPtr targetNode = mouseEvent.targetNode();
+    ASSERT(targetNode);
+    if (!targetNode->parentNode())
+        return true;
+    RefPtr shadowRoot = dynamicDowncast<ShadowRoot>(*targetNode);
+    return shadowRoot && is<HTMLInputElement>(shadowRoot->host());
+}
 
 EventHandler::EventHandler(LocalFrame& frame)
     : m_frame(frame)
@@ -1970,11 +1984,7 @@ HandleUserInputEventResult EventHandler::handleMousePressEvent(const PlatformMou
     }
 
     if (!swallowEvent) {
-        // Refetch the event target node if it currently is the shadow node inside an <input> element.
-        // If a mouse event handler changes the input element type to one that has a widget associated,
-        // we'd like to EventHandler::handleMousePressEvent to pass the event to the widget and thus the
-        // event target node can't still be the shadow node.
-        if (RefPtr shadowRoot = dynamicDowncast<ShadowRoot>(*mouseEvent.targetNode()); shadowRoot && is<HTMLInputElement>(shadowRoot->host()))
+        if (shouldRefetchEventTarget(mouseEvent))
             mouseEvent = frame->protectedDocument()->prepareMouseEvent(HitTestRequest(), documentPoint, platformMouseEvent);
     }
 

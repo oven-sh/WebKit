@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <wtf/MathExtras.h>
 #include <wtf/Scope.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -117,7 +118,7 @@ void AudioScheduledSourceNode::updateSchedulingInfo(size_t quantumFrameSize, Aud
     // Zero any initial frames representing silence leading up to a rendering start time in the middle of the quantum.
     if (quantumFrameOffset) {
         for (unsigned i = 0; i < outputBus.numberOfChannels(); ++i)
-            memset(outputBus.channel(i)->mutableData(), 0, sizeof(float) * quantumFrameOffset);
+            memsetSpan(outputBus.channel(i)->mutableSpan().first(quantumFrameOffset), 0);
     }
 
     // Handle silence after we're done playing.
@@ -139,7 +140,7 @@ void AudioScheduledSourceNode::updateSchedulingInfo(size_t quantumFrameSize, Aud
                 nonSilentFramesToProcess -= framesToZero;
 
             for (unsigned i = 0; i < outputBus.numberOfChannels(); ++i)
-                memset(outputBus.channel(i)->mutableData() + zeroStartFrame, 0, sizeof(float) * framesToZero);
+                memsetSpan(outputBus.channel(i)->mutableSpan().subspan(zeroStartFrame, framesToZero), 0);
         }
 
         finish();

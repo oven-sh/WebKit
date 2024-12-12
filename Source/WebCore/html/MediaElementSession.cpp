@@ -79,8 +79,6 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaElementSession);
@@ -1402,7 +1400,7 @@ void MediaElementSession::updateMediaUsageIfChanged()
 
 String convertEnumerationToString(const MediaPlaybackDenialReason enumerationValue)
 {
-    static const NeverDestroyed<String> values[] = {
+    static const std::array<NeverDestroyed<String>, 4> values {
         MAKE_STATIC_STRING_IMPL("UserGestureRequired"),
         MAKE_STATIC_STRING_IMPL("FullscreenRequired"),
         MAKE_STATIC_STRING_IMPL("PageConsentRequired"),
@@ -1507,7 +1505,5 @@ String MediaElementSession::description() const
 #endif
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(VIDEO)

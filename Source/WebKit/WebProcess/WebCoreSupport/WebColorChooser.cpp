@@ -30,7 +30,6 @@
 #if ENABLE(INPUT_TYPE_COLOR)
 
 #include "ColorControlSupportsAlpha.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"

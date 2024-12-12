@@ -466,6 +466,7 @@ private:
     void paintDebugBoxShadowIfApplicable(GraphicsContext&, const LayoutRect&) const;
 
     bool contentBoxLogicalWidthChanged(const RenderStyle&, const RenderStyle&);
+    bool paddingBoxLogicaHeightChanged(const RenderStyle& oldStyle, const RenderStyle& newStyle);
     bool scrollbarWidthDidChange(const RenderStyle&, const RenderStyle&, ScrollbarOrientation);
 
 protected:

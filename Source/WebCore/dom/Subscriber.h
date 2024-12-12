@@ -62,7 +62,6 @@ public:
     Vector<VoidCallback*> teardownCallbacksConcurrently();
     InternalObserver* observerConcurrently();
     void visitAdditionalChildren(JSC::AbstractSlotVisitor&);
-    void visitAdditionalChildren(JSC::SlotVisitor&);
 
 private:
     explicit Subscriber(ScriptExecutionContext&, Ref<InternalObserver>&&, const SubscribeOptions&);

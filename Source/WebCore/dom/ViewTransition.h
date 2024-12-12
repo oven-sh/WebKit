@@ -43,6 +43,10 @@ namespace JSC {
 class JSValue;
 }
 
+namespace WTF {
+class TextStream;
+}
+
 namespace WebCore {
 
 class DOMPromise;
@@ -246,4 +250,6 @@ private:
     Ref<ViewTransitionTypeSet> m_types;
 };
 
-}
+WTF::TextStream& operator<<(WTF::TextStream&, ViewTransitionPhase);
+
+} // namespace WebCore

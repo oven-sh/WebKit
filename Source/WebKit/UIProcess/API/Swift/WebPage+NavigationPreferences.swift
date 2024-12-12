@@ -36,12 +36,21 @@ extension WebPage_v0 {
             case desktop
         }
 
+        public enum UpgradeToHTTPSPolicy: Sendable {
+            case keepAsRequested
+            case automaticFallbackToHTTP
+            case userMediatedFallbackToHTTP
+            case errorOnFailure
+        }
+
         public init() {
         }
 
         public var preferredContentMode: ContentMode = .recommended
 
         public var allowsContentJavaScript: Bool = true
+
+        public var preferredHTTPSNavigationPolicy: UpgradeToHTTPSPolicy = .keepAsRequested
 
         fileprivate var _isLockdownModeEnabled: Bool? = nil
         public var isLockdownModeEnabled: Bool {
@@ -53,19 +62,6 @@ extension WebPage_v0 {
 
 // MARK: Adapters
 
-extension WKWebpagePreferences {
-    convenience init(_ wrapped: WebPage_v0.NavigationPreferences) {
-        self.init()
-
-        self.preferredContentMode = .init(wrapped.preferredContentMode)
-        self.allowsContentJavaScript = wrapped.allowsContentJavaScript
-
-        if let isLockdownModeEnabled = wrapped._isLockdownModeEnabled {
-            self.isLockdownModeEnabled = isLockdownModeEnabled
-        }
-    }
-}
-
 extension WKWebpagePreferences.ContentMode {
     init(_ wrapped: WebPage_v0.NavigationPreferences.ContentMode) {
         self = switch wrapped {
@@ -73,6 +69,68 @@ extension WKWebpagePreferences.ContentMode {
         case .mobile: .mobile
         case .desktop: .desktop
         }
+    }
+}
+
+extension WKWebpagePreferences.UpgradeToHTTPSPolicy {
+    init(_ wrapped: WebPage_v0.NavigationPreferences.UpgradeToHTTPSPolicy) {
+        self = switch wrapped {
+        case .keepAsRequested: .keepAsRequested
+        case .automaticFallbackToHTTP: .automaticFallbackToHTTP
+        case .userMediatedFallbackToHTTP: .userMediatedFallbackToHTTP
+        case .errorOnFailure: .errorOnFailure
+        }
+    }
+}
+
+extension WKWebpagePreferences {
+    convenience init(_ wrapped: WebPage_v0.NavigationPreferences) {
+        self.init()
+
+        self.preferredContentMode = .init(wrapped.preferredContentMode)
+        self.preferredHTTPSNavigationPolicy = .init(wrapped.preferredHTTPSNavigationPolicy)
+        self.allowsContentJavaScript = wrapped.allowsContentJavaScript
+
+        if let isLockdownModeEnabled = wrapped._isLockdownModeEnabled, self.isLockdownModeEnabled != isLockdownModeEnabled {
+            self.isLockdownModeEnabled = isLockdownModeEnabled
+        }
+    }
+}
+
+extension WebPage_v0.NavigationPreferences.ContentMode {
+    init(_ wrapped: WKWebpagePreferences.ContentMode) {
+        self = switch wrapped {
+        case .recommended: .recommended
+        case .mobile: .mobile
+        case .desktop: .desktop
+        @unknown default:
+            fatalError()
+        }
+    }
+}
+
+extension WebPage_v0.NavigationPreferences.UpgradeToHTTPSPolicy {
+    init(_ wrapped: WKWebpagePreferences.UpgradeToHTTPSPolicy) {
+        self = switch wrapped {
+        case .keepAsRequested: .keepAsRequested
+        case .automaticFallbackToHTTP: .automaticFallbackToHTTP
+        case .userMediatedFallbackToHTTP: .userMediatedFallbackToHTTP
+        case .errorOnFailure: .errorOnFailure
+        @unknown default:
+            fatalError()
+        }
+    }
+}
+
+extension WebPage_v0.NavigationPreferences {
+    init(_ wrapped: WKWebpagePreferences) {
+        self.init()
+
+        self.preferredContentMode = .init(wrapped.preferredContentMode)
+        self.preferredHTTPSNavigationPolicy = .init(wrapped.preferredHTTPSNavigationPolicy)
+
+        self.allowsContentJavaScript = wrapped.allowsContentJavaScript
+        self.isLockdownModeEnabled = wrapped.isLockdownModeEnabled
     }
 }
 

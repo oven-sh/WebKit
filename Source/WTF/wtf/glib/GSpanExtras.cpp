@@ -24,6 +24,16 @@
 
 namespace WTF {
 
+GMallocSpan<char> gFileGetContents(const char* path, GUniqueOutPtr<GError>& error)
+{
+    char* contents;
+    gsize length;
+    if (!g_file_get_contents(path, &contents, &length, &error.outPtr()))
+        return { };
+
+    return adoptGMallocSpan(unsafeMakeSpan(contents, length));
+}
+
 GMallocSpan<char*, GMallocStrv> gKeyFileGetKeys(GKeyFile* keyFile, const char* groupName, GUniqueOutPtr<GError>& error)
 {
     ASSERT(keyFile);

@@ -55,8 +55,6 @@
 #include <wtf/RuntimeApplicationChecks.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLObjectElement);
@@ -312,10 +310,10 @@ static inline bool preventsParentObjectFromExposure(const Element& child)
 {
     static NeverDestroyed mostKnownTags = [] {
         MemoryCompactLookupOnlyRobinHoodHashSet<QualifiedName> set;
-        auto* tags = HTMLNames::getHTMLTags();
-        set.reserveInitialCapacity(HTMLNames::HTMLTagsCount);
-        for (size_t i = 0; i < HTMLNames::HTMLTagsCount; i++) {
-            auto& tag = *tags[i];
+        auto tags = HTMLNames::getHTMLTags();
+        set.reserveInitialCapacity(tags.size());
+        for (auto* tagPtr : tags) {
+            auto& tag = *tagPtr;
             // Only the param element was explicitly mentioned in the HTML specification rule
             // we were trying to implement, but these are other known HTML elements that we
             // have decided, over the years, to treat as children that do not prevent object
@@ -326,8 +324,9 @@ static inline bool preventsParentObjectFromExposure(const Element& child)
                 || tag == figureTag
                 || tag == paramTag
                 || tag == summaryTag
-                || tag == trackTag)
+                || tag == trackTag) {
                 continue;
+            }
             set.add(tag);
         }
         return set;
@@ -407,5 +406,3 @@ bool HTMLObjectElement::canContainRangeEndPoint() const
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

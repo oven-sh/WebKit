@@ -42,6 +42,11 @@ class RenderStyle;
 class StyleImage;
 class StyleResolver;
 
+namespace CSS {
+struct AppleColorFilterProperty;
+struct FilterProperty;
+}
+
 namespace Style {
 
 class Builder;
@@ -95,7 +100,10 @@ public:
     ScopeOrdinal styleScopeOrdinal() const { return m_currentProperty->styleScopeOrdinal; }
 
     RefPtr<StyleImage> createStyleImage(const CSSValue&) const;
+    FilterOperations createFilterOperations(const CSS::FilterProperty&) const;
     FilterOperations createFilterOperations(const CSSValue&) const;
+    FilterOperations createAppleColorFilterOperations(const CSS::AppleColorFilterProperty&) const;
+    FilterOperations createAppleColorFilterOperations(const CSSValue&) const;
     Color createStyleColor(const CSSValue&, ForVisitedLink = ForVisitedLink::No) const;
 
     const Vector<AtomString>& registeredContentAttributes() const { return m_registeredContentAttributes; }

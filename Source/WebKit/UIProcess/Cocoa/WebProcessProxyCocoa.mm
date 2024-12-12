@@ -262,7 +262,9 @@ bool WebProcessProxy::shouldDisableJITCage() const
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 void WebProcessProxy::setupLogStream(uint32_t pid, IPC::StreamServerConnectionHandle&& serverConnection, LogStreamIdentifier logStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&& completionHandler)
 {
-    m_logStream.setup(pid, WTFMove(serverConnection), logStreamIdentifier, WTFMove(completionHandler));
+    Ref logStream = LogStream::create(processID());
+    logStream->setup(WTFMove(serverConnection), logStreamIdentifier, WTFMove(completionHandler));
+    m_logStream = WTFMove(logStream);
 }
 #endif // ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 

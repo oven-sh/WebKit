@@ -185,7 +185,7 @@ void LocalStorageManager::connectionClosedForTransientStorageArea(IPC::Connectio
     m_transientStorageArea = nullptr;
 }
 
-StorageAreaIdentifier LocalStorageManager::connectToLocalStorageArea(IPC::Connection::UniqueID connection, StorageAreaMapIdentifier sourceIdentifier, const WebCore::ClientOrigin& origin, Ref<WorkQueue>&& workQueue)
+StorageAreaBase& LocalStorageManager::ensureLocalStorageArea(const WebCore::ClientOrigin& origin, Ref<WorkQueue>&& workQueue)
 {
     if (!m_localStorageArea) {
         RefPtr<StorageAreaBase> storage;
@@ -198,17 +198,18 @@ StorageAreaIdentifier LocalStorageManager::connectToLocalStorageArea(IPC::Connec
         m_registry->registerStorageArea(storage->identifier(), *storage);
     }
 
-    ASSERT(m_path.isEmpty() || is<SQLiteStorageArea>(*m_localStorageArea));
-    protectedLocalStorageArea()->addListener(connection, sourceIdentifier);
-    return m_localStorageArea->identifier();
+    return *m_localStorageArea;
 }
 
-RefPtr<StorageAreaBase> LocalStorageManager::protectedLocalStorageArea() const
+StorageAreaIdentifier LocalStorageManager::connectToLocalStorageArea(IPC::Connection::UniqueID connection, StorageAreaMapIdentifier sourceIdentifier, const WebCore::ClientOrigin& origin, Ref<WorkQueue>&& workQueue)
 {
-    return m_localStorageArea;
+    Ref localStorageArea = ensureLocalStorageArea(origin, WTFMove(workQueue));
+    ASSERT(m_path.isEmpty() || is<SQLiteStorageArea>(localStorageArea));
+    localStorageArea->addListener(connection, sourceIdentifier);
+    return localStorageArea->identifier();
 }
 
-StorageAreaIdentifier LocalStorageManager::connectToTransientLocalStorageArea(IPC::Connection::UniqueID connection, StorageAreaMapIdentifier sourceIdentifier, const WebCore::ClientOrigin& origin)
+MemoryStorageArea& LocalStorageManager::ensureTransientLocalStorageArea(const WebCore::ClientOrigin& origin)
 {
     RefPtr transientStorageArea = m_transientStorageArea;
     if (!transientStorageArea) {
@@ -217,7 +218,13 @@ StorageAreaIdentifier LocalStorageManager::connectToTransientLocalStorageArea(IP
         m_registry->registerStorageArea(transientStorageArea->identifier(), *transientStorageArea);
     }
 
-    ASSERT(is<MemoryStorageArea>(*transientStorageArea));
+    return *m_transientStorageArea;
+}
+
+StorageAreaIdentifier LocalStorageManager::connectToTransientLocalStorageArea(IPC::Connection::UniqueID connection, StorageAreaMapIdentifier sourceIdentifier, const WebCore::ClientOrigin& origin)
+{
+    Ref transientStorageArea = ensureTransientLocalStorageArea(origin);
+    ASSERT(is<MemoryStorageArea>(transientStorageArea));
     transientStorageArea->addListener(connection, sourceIdentifier);
     return transientStorageArea->identifier();
 }
@@ -252,6 +259,27 @@ HashMap<String, String> LocalStorageManager::fetchStorageMap() const
         return transientStorageArea->allItems();
 
     return { };
+}
+
+bool LocalStorageManager::populateStorageArea(WebCore::ClientOrigin clientOrigin, HashMap<String, String>&& storageMap, Ref<WorkQueue>&& workQueue)
+{
+    bool succeeded = true;
+
+    if (clientOrigin.topOrigin == clientOrigin.clientOrigin) {
+        Ref localStorageArea = ensureLocalStorageArea(clientOrigin, WTFMove(workQueue));
+        for (auto& [key, value] : storageMap) {
+            if (!localStorageArea->setItem({ }, { }, WTFMove(key), WTFMove(value), { }))
+                succeeded = false;
+        }
+    } else {
+        Ref transientStorageArea = ensureTransientLocalStorageArea(clientOrigin);
+        for (auto& [key, value] : storageMap) {
+            if (!transientStorageArea->setItem({ }, { }, WTFMove(key), WTFMove(value), { }))
+                succeeded = false;
+        }
+    }
+
+    return succeeded;
 }
 
 } // namespace WebKit

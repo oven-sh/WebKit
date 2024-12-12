@@ -28,7 +28,6 @@
 
 #if ENABLE(DATALIST_ELEMENT)
 
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"

@@ -828,8 +828,6 @@ $(PROJECT_DIR)/Modules/push-api/PushEvent.idl
 $(PROJECT_DIR)/Modules/push-api/PushEventInit.idl
 $(PROJECT_DIR)/Modules/push-api/PushManager.idl
 $(PROJECT_DIR)/Modules/push-api/PushMessageData.idl
-$(PROJECT_DIR)/Modules/push-api/PushNotificationEvent.idl
-$(PROJECT_DIR)/Modules/push-api/PushNotificationEventInit.idl
 $(PROJECT_DIR)/Modules/push-api/PushPermissionState.idl
 $(PROJECT_DIR)/Modules/push-api/PushSubscription.idl
 $(PROJECT_DIR)/Modules/push-api/PushSubscriptionChangeEvent.idl
@@ -1273,6 +1271,7 @@ $(PROJECT_DIR)/css/CSSNestedDeclarations.idl
 $(PROJECT_DIR)/css/CSSPageRule.idl
 $(PROJECT_DIR)/css/CSSPaintCallback.idl
 $(PROJECT_DIR)/css/CSSPaintSize.idl
+$(PROJECT_DIR)/css/CSSPositionTryRule.idl
 $(PROJECT_DIR)/css/CSSProperties.json
 $(PROJECT_DIR)/css/CSSPropertyRule.idl
 $(PROJECT_DIR)/css/CSSPseudoSelectors.json
@@ -1421,8 +1420,8 @@ $(PROJECT_DIR)/dom/DeviceMotionEvent.idl
 $(PROJECT_DIR)/dom/DeviceOrientationEvent.idl
 $(PROJECT_DIR)/dom/DeviceOrientationOrMotionEvent.idl
 $(PROJECT_DIR)/dom/DeviceOrientationOrMotionPermissionState.idl
-$(PROJECT_DIR)/dom/Document+CaretPositionFromPoint.idl
 $(PROJECT_DIR)/dom/Document+CSSOMView.idl
+$(PROJECT_DIR)/dom/Document+CaretPositionFromPoint.idl
 $(PROJECT_DIR)/dom/Document+Fullscreen.idl
 $(PROJECT_DIR)/dom/Document+HTML.idl
 $(PROJECT_DIR)/dom/Document+HTMLObsolete.idl
@@ -1494,6 +1493,8 @@ $(PROJECT_DIR)/dom/NodeList.idl
 $(PROJECT_DIR)/dom/NonDocumentTypeChildNode.idl
 $(PROJECT_DIR)/dom/NonElementParentNode.idl
 $(PROJECT_DIR)/dom/Observable.idl
+$(PROJECT_DIR)/dom/ObservableInspector.idl
+$(PROJECT_DIR)/dom/ObservableInspectorAbortCallback.idl
 $(PROJECT_DIR)/dom/PageRevealEvent.idl
 $(PROJECT_DIR)/dom/PageSwapEvent.idl
 $(PROJECT_DIR)/dom/PageTransitionEvent.idl
@@ -1508,6 +1509,7 @@ $(PROJECT_DIR)/dom/PromiseRejectionEvent.idl
 $(PROJECT_DIR)/dom/Range+CSSOMView.idl
 $(PROJECT_DIR)/dom/Range+DOMParsing.idl
 $(PROJECT_DIR)/dom/Range.idl
+$(PROJECT_DIR)/dom/ReducerCallback.idl
 $(PROJECT_DIR)/dom/RequestAnimationFrameCallback.idl
 $(PROJECT_DIR)/dom/SecurityPolicyViolationEvent.idl
 $(PROJECT_DIR)/dom/SecurityPolicyViolationEventDisposition.idl
@@ -1928,6 +1930,7 @@ $(PROJECT_DIR)/page/WindowSessionStorage.idl
 $(PROJECT_DIR)/page/WorkerNavigator.idl
 $(PROJECT_DIR)/page/csp/CSPViolationReportBody.idl
 $(PROJECT_DIR)/platform/ColorData.gperf
+$(PROJECT_DIR)/platform/LogMessages.in
 $(PROJECT_DIR)/platform/network/HTTPHeaderNames.in
 $(PROJECT_DIR)/platform/network/create-http-header-name-table
 $(PROJECT_DIR)/plugins/DOMMimeType.idl

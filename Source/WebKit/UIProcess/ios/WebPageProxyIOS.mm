@@ -59,7 +59,6 @@
 #import "WKBrowsingContextControllerInternal.h"
 #import "WebAutocorrectionContext.h"
 #import "WebAutocorrectionData.h"
-#import "WebCoreArgumentCoders.h"
 #import "WebPage.h"
 #import "WebPageMessages.h"
 #import "WebPageProxyInternals.h"
@@ -476,9 +475,9 @@ void WebPageProxy::updateSelectionWithExtentPoint(const WebCore::IntPoint point,
     legacyMainFrameProcess().sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithExtentPoint(point, isInteractingWithFocusedElement, respectSelectionAnchor), WTFMove(callback), webPageIDInMainFrameProcess());
 }
 
-void WebPageProxy::updateSelectionWithExtentPointAndBoundary(const WebCore::IntPoint point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, CompletionHandler<void(bool)>&& callback)
+void WebPageProxy::updateSelectionWithExtentPointAndBoundary(const WebCore::IntPoint point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, TextInteractionSource source, CompletionHandler<void(bool)>&& callback)
 {
-    legacyMainFrameProcess().sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithExtentPointAndBoundary(point, granularity, isInteractingWithFocusedElement), WTFMove(callback), webPageIDInMainFrameProcess());
+    legacyMainFrameProcess().sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithExtentPointAndBoundary(point, granularity, isInteractingWithFocusedElement, source), WTFMove(callback), webPageIDInMainFrameProcess());
 }
 
 #if ENABLE(REVEAL)
@@ -977,6 +976,8 @@ void WebPageProxy::focusedElementDidChangeInputMode(WebCore::InputMode mode)
 
 void WebPageProxy::didReleaseAllTouchPoints()
 {
+    legacyMainFrameProcess().send(Messages::WebPage::DidReleaseAllTouchPoints(), webPageIDInMainFrameProcess());
+
     if (!m_pendingInputModeChange)
         return;
 

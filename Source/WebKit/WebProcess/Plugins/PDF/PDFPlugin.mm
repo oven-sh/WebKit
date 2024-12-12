@@ -42,7 +42,6 @@
 #import "PluginView.h"
 #import "WKAccessibilityWebPageObjectMac.h"
 #import "WKPageFindMatchesClient.h"
-#import "WebCoreArgumentCoders.h"
 #import "WebEventConversion.h"
 #import "WebFindOptions.h"
 #import "WebFrame.h"
@@ -1531,17 +1530,14 @@ std::pair<String, RetainPtr<PDFSelection>> PDFPlugin::textForImmediateActionHitT
     NSPoint pointInPageSpace = [[m_pdfLayerController layout] convertPoint:pointInLayoutSpace toPage:currentPage forScaleFactor:1.0];
 
     for (PDFAnnotation *annotation in currentPage.annotations) {
-        if (![annotation isKindOfClass:getPDFAnnotationLinkClass()])
+        if (!annotationIsOfType(annotation, AnnotationType::Link))
             continue;
 
         NSRect bounds = annotation.bounds;
         if (!NSPointInRect(pointInPageSpace, bounds))
             continue;
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        PDFAnnotationLink *linkAnnotation = (PDFAnnotationLink *)annotation;
-ALLOW_DEPRECATED_DECLARATIONS_END
-        NSURL *url = linkAnnotation.URL;
+        NSURL *url = annotation.URL;
         if (!url)
             continue;
 

@@ -24,7 +24,11 @@
 
 #if ENABLE(WEB_AUTHN)
 
-[EnabledBy=WebAuthenticationEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=UI,
+    EnabledBy=WebAuthenticationEnabled
+]
 messages -> WebAuthenticatorCoordinatorProxy {
 
     MakeCredential(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, struct WebCore::PublicKeyCredentialCreationOptions options, enum:uint8_t WebCore::MediationRequirement mediation) -> (struct WebCore::AuthenticatorResponseData data, enum:uint8_t WebCore::AuthenticatorAttachment attachment, struct WebCore::ExceptionData exception)

@@ -310,17 +310,18 @@ RefPtr<ImageBuffer> CanvasBase::allocateImageBuffer() const
     }
 
     auto* context = renderingContext();
-    auto colorSpace = context ? context->colorSpace() : DestinationColorSpace::SRGB();
-    auto pixelFormat = context ? context->pixelFormat() : ImageBufferPixelFormat::BGRA8;
     bool willReadFrequently = context ? context->willReadFrequently() : false;
 
-    OptionSet<ImageBufferOptions> bufferOptions;
-    if (!willReadFrequently && shouldAccelerate(area))
-        bufferOptions.add(ImageBufferOptions::Accelerated);
-    if (context)
-        bufferOptions = context->adjustImageBufferOptionsForTesting(bufferOptions);
+    RenderingMode renderingMode;
+    if (auto renderingModeForTesting = context ? context->renderingModeForTesting() : std::nullopt)
+        renderingMode = *renderingModeForTesting;
+    else
+        renderingMode = !willReadFrequently && shouldAccelerate(area) ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
 
-    return ImageBuffer::create(size(), RenderingPurpose::Canvas, 1, colorSpace, pixelFormat, bufferOptions, scriptExecutionContext()->graphicsClient());
+    auto colorSpace = context ? context->colorSpace() : DestinationColorSpace::SRGB();
+    auto pixelFormat = context ? context->pixelFormat() : ImageBufferPixelFormat::BGRA8;
+
+    return ImageBuffer::create(size(), renderingMode, RenderingPurpose::Canvas, 1, colorSpace, pixelFormat, scriptExecutionContext()->graphicsClient());
 }
 
 bool CanvasBase::shouldInjectNoiseBeforeReadback() const
@@ -374,7 +375,7 @@ RefPtr<ImageBuffer> CanvasBase::createImageForNoiseInjection() const
         return { };
 
     auto seed = static_cast<unsigned>(context->noiseInjectionHashSalt().value_or(0));
-    auto buffer = ImageBuffer::create(size(), RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
+    auto buffer = ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
     if (!buffer)
         return { };
 

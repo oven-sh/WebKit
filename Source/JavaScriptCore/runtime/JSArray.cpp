@@ -555,6 +555,87 @@ bool JSArray::fastFill(VM& vm, unsigned startIndex, unsigned endIndex, JSValue v
     return true;
 }
 
+JSArray* JSArray::fastToReversed(JSGlobalObject* globalObject, uint64_t length)
+{
+    ASSERT(length <= std::numeric_limits<uint32_t>::max());
+
+    VM& vm = globalObject->vm();
+
+    auto type = indexingType();
+    switch (type) {
+    case ArrayWithInt32:
+    case ArrayWithContiguous:
+    case ArrayWithDouble: {
+        if (length > this->butterfly()->vectorLength())
+            return nullptr;
+        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(type);
+        IndexingType indexingType = resultStructure->indexingType();
+        if (UNLIKELY(hasAnyArrayStorage(indexingType)))
+            return nullptr;
+        ASSERT(!globalObject->isHavingABadTime());
+
+        auto srcData = this->butterfly()->contiguous().data();
+
+        if (hasDouble(indexingType)) {
+            if (holesMustForwardToPrototype() && containsHole(this->butterfly()->contiguousDouble().data(), static_cast<uint32_t>(length)))
+                return nullptr;
+        } else if (holesMustForwardToPrototype() && containsHole(srcData, static_cast<uint32_t>(length)))
+            return nullptr;
+
+        auto vectorLength = Butterfly::optimalContiguousVectorLength(resultStructure, length);
+        void* memory = vm.auxiliarySpace().allocate(
+            vm,
+            Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)),
+            nullptr, AllocationFailureMode::ReturnNull);
+        if (UNLIKELY(!memory))
+            return nullptr;
+        auto* butterfly = Butterfly::fromBase(memory, 0, 0);
+        butterfly->setVectorLength(vectorLength);
+        butterfly->setPublicLength(length);
+
+        auto resultData = butterfly->contiguous().data();
+        memcpy(resultData, srcData, sizeof(JSValue) * length);
+
+        if (hasDouble(indexingType)) {
+            auto data = butterfly->contiguousDouble().data();
+            std::reverse(data, data + length);
+        } else
+            std::reverse(resultData, resultData + length);
+
+        return createWithButterfly(vm, nullptr, resultStructure, butterfly);
+    }
+    case ArrayWithArrayStorage: {
+        auto& storage = *this->butterfly()->arrayStorage();
+        if (storage.m_sparseMap.get())
+            return nullptr;
+        if (length > storage.vectorLength())
+            return nullptr;
+        if (storage.hasHoles() && holesMustForwardToPrototype())
+            return nullptr;
+
+        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+        if (UNLIKELY(hasAnyArrayStorage(resultStructure->indexingType())))
+            return nullptr;
+
+        ASSERT(!globalObject->isHavingABadTime());
+        ObjectInitializationScope scope(vm);
+        JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(scope, resultStructure, length);
+        if (UNLIKELY(!resultArray))
+            return nullptr;
+        gcSafeMemcpy(resultArray->butterfly()->contiguous().data(), this->butterfly()->arrayStorage()->m_vector, sizeof(JSValue) * static_cast<uint32_t>(length));
+        ASSERT(resultArray->butterfly()->publicLength() == length);
+
+        auto data = resultArray->butterfly()->contiguous().data();
+        std::reverse(data, data + length);
+        vm.writeBarrier(resultArray);
+
+        return resultArray;
+    }
+    default:
+        return nullptr;
+    }
+}
+
 bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startIndex, IndexingType otherType, std::span<const EncodedJSValue> values)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

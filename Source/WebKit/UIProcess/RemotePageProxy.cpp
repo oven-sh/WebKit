@@ -101,6 +101,15 @@ void RemotePageProxy::injectPageIntoNewProcess()
     );
 }
 
+void RemotePageProxy::removePageFromProcess()
+{
+    if (!m_drawingArea)
+        return;
+    m_drawingArea = nullptr;
+    m_visitedLinkStoreRegistration = nullptr;
+    m_process->send(Messages::WebPage::Close(), m_webPageID);
+}
+
 void RemotePageProxy::processDidTerminate(WebProcessProxy& process, ProcessTerminationReason reason)
 {
     if (!m_page)

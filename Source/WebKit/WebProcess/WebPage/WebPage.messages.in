@@ -20,6 +20,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// Currently DispatchedFrom both the Networking and UI process
+[
+    DispatchedTo=WebContent
+]
 messages -> WebPage WantsAsyncDispatchMessage {
     SetInitialFocus(bool forward, bool isKeyboardEventValid, std::optional<WebKit::WebKeyboardEvent> event) -> ()
     SetActivityState(OptionSet<WebCore::ActivityState> activityState, WebKit::ActivityStateChangeID activityStateChangeID) -> ()
@@ -87,7 +91,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     SelectPositionAtPoint(WebCore::IntPoint point, bool isInteractingWithFocusedElement) -> ()
     BeginSelectionInDirection(enum:uint8_t WebCore::SelectionDirection direction) -> (bool endIsMoving)
     UpdateSelectionWithExtentPoint(WebCore::IntPoint point, bool isInteractingWithFocusedElement, enum:bool WebKit::RespectSelectionAnchor respectSelectionAnchor) -> (bool endIsMoving)
-    UpdateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point, enum:uint8_t WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement) -> (bool endIsMoving)
+    UpdateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point, enum:uint8_t WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, enum:uint8_t WebKit::TextInteractionSource sources) -> (bool endIsMoving)
+    DidReleaseAllTouchPoints()
     ClearSelectionAfterTappingSelectionHighlightIfNeeded(WebCore::FloatPoint location)
 #if ENABLE(REVEAL)
     RequestRVItemInCurrentSelectedRange() -> (WebKit::RevealItem item)
@@ -133,7 +138,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     SetIsShowingInputViewForFocusedElement(bool showingInputView)
     UpdateSelectionWithDelta(int64_t locationDelta, int64_t lengthDelta) -> ()
     RequestDocumentEditingContext(struct WebKit::DocumentEditingContextRequest request) -> (struct WebKit::DocumentEditingContext response)
-GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType command)
+    GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType command)
     SetShouldRevealCurrentSelectionAfterInsertion(bool shouldRevealCurrentSelectionAfterInsertion)
     TextInputContextsInRect(WebCore::FloatRect rect) -> (Vector<WebCore::ElementContext> contexts)
     FocusTextInputContextAndPlaceCaret(struct WebCore::ElementContext context, WebCore::IntPoint point) -> (bool success)
@@ -153,7 +158,7 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
 #endif
 
 #if ENABLE(IOS_TOUCH_EVENTS)
-    ResetPotentialTapSecurityOrigin()
+    DidBeginTouchPoint(WebCore::FloatPoint locationInRootView)
 #endif
 #if !ENABLE(IOS_TOUCH_EVENTS) && ENABLE(TOUCH_EVENTS)
     TouchEvent(WebKit::WebTouchEvent event) -> (std::optional<WebKit::WebEventType> eventType, bool handled)
@@ -495,6 +500,7 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
 
     BindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier frameID, Vector<uint8_t> dataToken) -> (Vector<uint8_t> token, int processIdentifier) Synchronous
     UpdateRemotePageAccessibilityOffset(WebCore::FrameIdentifier frameID, WebCore::IntPoint offset);
+    ResolveAccessibilityHitTestForTesting(WebCore::IntPoint point) -> (String result)
 
 #if PLATFORM(COCOA)
     WindowAndViewFramesChanged(struct WebKit::ViewWindowCoordinates coordinates)

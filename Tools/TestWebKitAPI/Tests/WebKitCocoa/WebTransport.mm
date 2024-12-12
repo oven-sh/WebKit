@@ -35,6 +35,7 @@
 
 namespace TestWebKitAPI {
 
+#if HAVE(WEB_TRANSPORT)
 static void enableWebTransport(WKWebViewConfiguration *configuration)
 {
     auto preferences = [configuration preferences];
@@ -46,7 +47,8 @@ static void enableWebTransport(WKWebViewConfiguration *configuration)
     }
 }
 
-TEST(WebTransport, Basic)
+// FIXME: Re-enable these tests once rdar://141009498 is available in OS builds.
+TEST(WebTransport, DISABLED_ClientBidirectional)
 {
     WebTransportServer echoServer([] (Connection connection) -> Task {
         while (1) {
@@ -78,4 +80,36 @@ TEST(WebTransport, Basic)
     EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
 }
 
+TEST(WebTransport, DISABLED_Datagram)
+{
+    WebTransportServer echoServer([] (Connection connection) -> Task {
+        while (1) {
+            auto request = co_await connection.awaitableReceiveBytes();
+            co_await connection.awaitableSend(WTFMove(request));
+        }
+    });
+
+    auto configuration = adoptNS([WKWebViewConfiguration new]);
+    enableWebTransport(configuration.get());
+    auto webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+
+    NSString *html = [NSString stringWithFormat:@""
+        "<script>async function test() {"
+        "  try {"
+        "    let t = new WebTransport('https://127.0.0.1:%d/');"
+        "    await t.ready;"
+        "    let w = t.datagrams.writable.getWriter();"
+        "    await w.write(new TextEncoder().encode('abc'));"
+        "    let r = t.datagrams.readable.getReader();"
+        "    const { value, done } = await r.read();"
+        "    alert('successfully read ' + new TextDecoder().decode(value));"
+        "  } catch (e) { alert('caught ' + e); }"
+        "}; test();"
+        "</script>",
+        echoServer.port()];
+    [webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
+}
+
+#endif // HAVE(WEB_TRANSPORT)
 } // namespace TestWebKitAPI

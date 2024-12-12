@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include "FloatConversion.h"
 #include "FloatPoint.h"
 #include "FloatSize.h"
 #include "StylePrimitiveNumericTypes+Calculation.h"
@@ -88,6 +89,16 @@ template<StyleDimensionPercentage T> float evaluate(const T& value, float refere
 template<StyleDimensionPercentage T> double evaluate(const T& value, double referenceValue)
 {
     return WTF::switchOn(value, [&referenceValue](const auto& value) -> double { return evaluate(value, referenceValue); });
+}
+
+// MARK: - NumberOrPercentage
+
+template<auto nR, auto pR> double evaluate(const NumberOrPercentage<nR, pR>& value)
+{
+    return WTF::switchOn(value,
+        [](Number<nR> number) -> double { return number.value; },
+        [](Percentage<pR> percentage) -> double { return percentage.value / 100.0; }
+    );
 }
 
 // MARK: - SpaceSeparatedPoint

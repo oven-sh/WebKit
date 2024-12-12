@@ -138,7 +138,7 @@ public:
     void frameClearedScheduledNavigation(Frame&);
     void accessibilitySettingsDidChange();
     void defaultUserPreferencesDidChange();
-#if ENABLE(DARK_MODE_CSS) || HAVE(OS_DARK_MODE_SUPPORT)
+#if ENABLE(DARK_MODE_CSS)
     void defaultAppearanceDidChange();
 #endif
     void applyUserAgentOverride(String&);

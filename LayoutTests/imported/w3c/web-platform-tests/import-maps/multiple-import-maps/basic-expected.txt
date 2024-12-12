@@ -1,3 +1,3 @@
 
-PASS Second import map should be rejected
+FAIL Second import map should be used for resolution assert_array_equals: lengths differ, expected array ["log:B1", "log:B2", "log:C3"] length 3, got ["onerror 2", "log:B1", "log:B2", "log:A3"] length 4
 

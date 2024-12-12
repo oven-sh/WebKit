@@ -1096,6 +1096,7 @@ public:
 #endif
 
     inline bool useSmoothScrolling() const;
+    inline bool nativeAppearanceDisabled() const;
 
 #if ENABLE(TEXT_AUTOSIZING)
     inline TextSizeAdjustment textSizeAdjust() const;
@@ -1269,7 +1270,8 @@ public:
     void setFieldSizing(FieldSizing);
 
     void setFontCascade(FontCascade&&);
-    WEBCORE_EXPORT bool setFontDescription(FontCascadeDescription&&);
+    WEBCORE_EXPORT void setFontDescription(FontCascadeDescription&&);
+    bool setFontDescriptionWithoutUpdate(FontCascadeDescription&&);
 
     // Only used for blending font sizes when animating, for MathML anonymous blocks, and for text autosizing.
     void setFontSize(float);
@@ -1641,6 +1643,7 @@ public:
 #endif
 
     inline void setUseSmoothScrolling(bool);
+    inline void setNativeAppearanceDisabled(bool);
 
 #if ENABLE(TEXT_AUTOSIZING)
     inline void setTextSizeAdjust(TextSizeAdjustment);
@@ -2159,6 +2162,8 @@ public:
 #endif
 
     static bool initialUseSmoothScrolling() { return false; }
+
+    static bool initialNativeAppearanceDisabled() { return false; }
 
     static inline FilterOperations initialFilter();
     static inline FilterOperations initialAppleColorFilter();

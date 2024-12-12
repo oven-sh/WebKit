@@ -31,7 +31,6 @@
 #include "GPUConnectionToWebProcess.h"
 #include "RemoteCDMFactoryProxy.h"
 #include "RemoteCDMInstanceSessionMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include <WebCore/SharedBuffer.h>
 
 namespace WebKit {

@@ -33,6 +33,7 @@
 #include <memory>
 #include <span>
 #include <wtf/Noncopyable.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -104,11 +105,10 @@ public:
             return;
 
         m_silent = true;
-
-        if (m_memBuffer.get())
+        if (m_memBuffer)
             m_memBuffer->zero();
         else
-            memset(m_rawPointer, 0, sizeof(float) * m_length);
+            memsetSpan(mutableSpan(), 0);
     }
 
     // Clears the silent flag.

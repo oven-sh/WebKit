@@ -77,7 +77,7 @@ bool WebProcessCache::canCacheProcess(WebProcessProxy& process) const
         return false;
     }
 
-    if (process.registrableDomain().isEmpty()) {
+    if (!process.site() || process.site()->domain().isEmpty()) {
         WEBPROCESSCACHE_RELEASE_LOG("canCacheProcess: Not caching process because it does not have an associated registrable domain", process.processID());
         return false;
     }
@@ -136,9 +136,9 @@ bool WebProcessCache::addProcess(Ref<CachedProcess>&& cachedProcess)
     if (!canCacheProcess(process))
         return false;
 
-    RELEASE_ASSERT(process->optionalSite());
-    RELEASE_ASSERT(!process->optionalSite()->isEmpty());
-    auto site = *process->optionalSite();
+    RELEASE_ASSERT(process->site());
+    RELEASE_ASSERT(!process->site()->isEmpty());
+    auto site = *process->site();
 
     if (auto previousProcess = m_processesPerSite.take(site))
         WEBPROCESSCACHE_RELEASE_LOG("addProcess: Evicting process from WebProcess cache because a new process was added for the same domain", previousProcess->process().processID());
@@ -271,11 +271,11 @@ void WebProcessCache::setApplicationIsActive(bool isActive)
 
 void WebProcessCache::removeProcess(WebProcessProxy& process, ShouldShutDownProcess shouldShutDownProcess)
 {
-    RELEASE_ASSERT(process.optionalSite());
+    RELEASE_ASSERT(process.site());
     WEBPROCESSCACHE_RELEASE_LOG("removeProcess: Evicting process from WebProcess cache because it expired", process.processID());
 
     RefPtr<CachedProcess> cachedProcess;
-    auto it = m_processesPerSite.find(*process.optionalSite());
+    auto it = m_processesPerSite.find(*process.site());
     if (it != m_processesPerSite.end() && &it->value->process() == &process) {
         cachedProcess = WTFMove(it->value);
         m_processesPerSite.remove(it);

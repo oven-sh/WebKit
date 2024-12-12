@@ -67,13 +67,11 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 // Editing style properties must be preserved during editing operation.
 // e.g. when a user inserts a new paragraph, all properties listed here must be copied to the new paragraph.
-static constexpr CSSPropertyID editingProperties[] = {
+static constexpr std::array editingProperties {
     CSSPropertyCaretColor,
     CSSPropertyColor,
     CSSPropertyFontFamily,
@@ -115,7 +113,7 @@ static Ref<MutableStyleProperties> copyEditingProperties(StyleDeclarationType* s
 {
     if (type == AllEditingProperties)
         return style->copyProperties(editingProperties);
-    return style->copyProperties({ editingProperties, numInheritableEditingProperties });
+    return style->copyProperties(std::span { editingProperties }.first(numInheritableEditingProperties));
 }
 
 static inline bool isEditingProperty(int id)
@@ -2019,5 +2017,3 @@ RefPtr<CSSValue> backgroundColorInEffect(Node* node)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

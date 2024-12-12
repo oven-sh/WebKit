@@ -86,6 +86,7 @@
 #include "ProgressTracker.h"
 #include "Quirks.h"
 #include "ResourceLoadObserver.h"
+#include "ResourceMonitor.h"
 #include "SWClientConnection.h"
 #include "ScriptableDocumentParser.h"
 #include "SecurityPolicy.h"
@@ -136,6 +137,7 @@
 #define FRAME_ID (m_frame ? m_frame->frameID().object().toUInt64() : 0)
 #define IS_MAIN_FRAME (m_frame ? m_frame->isMainFrame() : false)
 #define DOCUMENTLOADER_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "%p - [pageID=%" PRIu64 ", frameID=%" PRIu64 ", isMainFrame=%d] DocumentLoader::" fmt, this, PAGE_ID, FRAME_ID, IS_MAIN_FRAME, ##__VA_ARGS__)
+#define DOCUMENTLOADER_RELEASE_LOG_FORWARDABLE(fmt, ...) RELEASE_LOG_FORWARDABLE(Network, fmt, PAGE_ID, FRAME_ID, IS_MAIN_FRAME, ##__VA_ARGS__)
 
 namespace WebCore {
 
@@ -325,7 +327,7 @@ void DocumentLoader::frameDestroyed()
 // but not loads initiated by child frames' data sources -- that's the WebFrame's job.
 void DocumentLoader::stopLoading()
 {
-    DOCUMENTLOADER_RELEASE_LOG("DocumentLoader::stopLoading: m_frame=%p", m_frame.get());
+    DOCUMENTLOADER_RELEASE_LOG_FORWARDABLE(DOCUMENTLOADER_STOPLOADING);
 
     ASSERT(m_frame);
     if (!m_frame)
@@ -1254,6 +1256,16 @@ static inline bool shouldUseActiveServiceWorkerFromParent(const Document& docume
     return !document.url().protocolIsInHTTPFamily() && !document.securityOrigin().isOpaque() && parent.protectedSecurityOrigin()->isSameOriginDomain(document.securityOrigin());
 }
 
+#if ENABLE(CONTENT_EXTENSIONS)
+static inline bool shouldEnableResourceMonitor(const Frame& frame)
+{
+    if (frame.isMainFrame())
+        return false;
+
+    return frame.settings().iFrameResourceMonitoringEnabled();
+}
+#endif
+
 void DocumentLoader::commitData(const SharedBuffer& data)
 {
     if (!m_gotFirstByte) {
@@ -1264,7 +1276,8 @@ void DocumentLoader::commitData(const SharedBuffer& data)
 
         m_writer.setDocumentWasLoadedAsPartOfNavigation();
 
-        RefPtr documentOrNull = m_frame ? m_frame->document() : nullptr;
+        RefPtr frame = m_frame.get();
+        RefPtr documentOrNull = frame ? frame->document() : nullptr;
 
         auto scope = makeScopeExit([&] {
             if (auto createdCallback = std::exchange(m_whenDocumentIsCreatedCallback, { }))
@@ -1274,6 +1287,12 @@ void DocumentLoader::commitData(const SharedBuffer& data)
         if (!documentOrNull)
             return;
         auto& document = *documentOrNull;
+        ASSERT(frame);
+
+#if ENABLE(CONTENT_EXTENSIONS)
+        if (shouldEnableResourceMonitor(*frame))
+            document.setResourceMonitor(ResourceMonitor::create(*frame, documentURL()));
+#endif
 
         if (SecurityPolicy::allowSubstituteDataAccessToLocal() && m_originalSubstituteDataWasValid) {
             // If this document was loaded with substituteData, then the document can
@@ -1495,12 +1514,12 @@ void DocumentLoader::attachToFrame(LocalFrame& frame)
 void DocumentLoader::attachToFrame()
 {
     ASSERT(m_frame);
-    DOCUMENTLOADER_RELEASE_LOG("DocumentLoader::attachToFrame: m_frame=%p", m_frame.get());
+    DOCUMENTLOADER_RELEASE_LOG_FORWARDABLE(DOCUMENTLOADER_ATTACHTOFRAME);
 }
 
 void DocumentLoader::detachFromFrame(LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
 {
-    DOCUMENTLOADER_RELEASE_LOG("DocumentLoader::detachFromFrame: m_frame=%p", m_frame.get());
+    DOCUMENTLOADER_RELEASE_LOG_FORWARDABLE(DOCUMENTLOADER_DETACHFROMFRAME);
 
 #if ASSERT_ENABLED
     if (m_hasEverBeenAttached)
@@ -2128,7 +2147,7 @@ void DocumentLoader::startLoadingMainResource()
     }
 
     if (maybeLoadEmpty()) {
-        DOCUMENTLOADER_RELEASE_LOG("startLoadingMainResource: Returning empty document");
+        DOCUMENTLOADER_RELEASE_LOG_FORWARDABLE(DOCUMENTLOADER_STARTLOADINGMAINRESOURCE_EMTPY_DOCUMENT);
         return;
     }
 
@@ -2170,7 +2189,7 @@ void DocumentLoader::startLoadingMainResource()
         // If this is a reload the cache layer might have made the previous request conditional. DocumentLoader can't handle 304 responses itself.
         request.makeUnconditional();
 
-        DOCUMENTLOADER_RELEASE_LOG("startLoadingMainResource: Starting load");
+        DOCUMENTLOADER_RELEASE_LOG_FORWARDABLE(DOCUMENTLOADER_STARTLOADINGMAINRESOURCE_STARTING_LOAD);
 
         if (m_applicationCacheHost->canLoadMainResource(request) || m_substituteData.isValid()) {
             auto url = request.url();

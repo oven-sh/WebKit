@@ -105,6 +105,9 @@ static RuleFlatteningStrategy flatteningStrategyForStyleRuleType(StyleRuleType s
     // https://bugs.webkit.org/show_bug.cgi?id=264496
     case StyleRuleType::Scope:
 
+    // FIXME (webkit.org/b/284176): support @position-try in Web Inspector.
+    case StyleRuleType::PositionTry:
+
     case StyleRuleType::Unknown:
     case StyleRuleType::Charset:
     case StyleRuleType::Import:

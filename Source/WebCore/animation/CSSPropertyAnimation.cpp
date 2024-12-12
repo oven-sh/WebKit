@@ -63,6 +63,7 @@
 #include "ScopedName.h"
 #include "ScrollbarGutter.h"
 #include "Settings.h"
+#include "StyleBoxShadow.h"
 #include "StyleCachedImage.h"
 #include "StyleCrossfadeImage.h"
 #include "StyleFilterImage.h"
@@ -157,28 +158,14 @@ static inline LengthPoint blendFunc(const LengthPoint& from, const LengthPoint& 
     return blend(from, to, context);
 }
 
-static inline ShadowStyle blendFunc(ShadowStyle from, ShadowStyle to, const CSSPropertyBlendingContext& context)
-{
-    if (from == to)
-        return to;
-
-    double fromVal = from == ShadowStyle::Normal ? 1 : 0;
-    double toVal = to == ShadowStyle::Normal ? 1 : 0;
-    double result = blendFunc(fromVal, toVal, context);
-    return result > 0 ? ShadowStyle::Normal : ShadowStyle::Inset;
-}
-
 static inline std::unique_ptr<ShadowData> blendFunc(const ShadowData* from, const ShadowData* to, const RenderStyle& fromStyle, const RenderStyle& toStyle, const CSSPropertyBlendingContext& context)
 {
     ASSERT(from && to);
     ASSERT(from->style() == to->style());
 
-    return makeUnique<ShadowData>(blend(from->location(), to->location(), context),
-        blend(from->radius(), to->radius(), context, ValueRange::NonNegative),
-        blend(from->spread(), to->spread(), context),
-        blendFunc(from->style(), to->style(), context),
-        from->isWebkitBoxShadow(),
-        blend(fromStyle.colorResolvingCurrentColor(from->color()), toStyle.colorResolvingCurrentColor(to->color()), context));
+    return makeUnique<ShadowData>(
+        Style::blend(from->asBoxShadow(), to->asBoxShadow(), fromStyle, toStyle, context)
+    );
 }
 
 static inline TransformOperations blendFunc(const TransformOperations& from, const TransformOperations& to, const CSSPropertyBlendingContext& context)
@@ -1552,10 +1539,46 @@ static inline size_t shadowListLength(const ShadowData* shadow)
 
 static inline const ShadowData* shadowForBlending(const ShadowData* srcShadow, const ShadowData* otherShadow)
 {
-    static NeverDestroyed<ShadowData> defaultShadowData(LengthPoint(Length(LengthType::Fixed), Length(LengthType::Fixed)), Length(LengthType::Fixed), Length(LengthType::Fixed), ShadowStyle::Normal, false, Color::transparentBlack);
-    static NeverDestroyed<ShadowData> defaultInsetShadowData(LengthPoint(Length(LengthType::Fixed), Length(LengthType::Fixed)), Length(LengthType::Fixed), Length(LengthType::Fixed), ShadowStyle::Inset, false, Color::transparentBlack);
-    static NeverDestroyed<ShadowData> defaultWebKitBoxShadowData(LengthPoint(Length(LengthType::Fixed), Length(LengthType::Fixed)), Length(LengthType::Fixed), Length(LengthType::Fixed), ShadowStyle::Normal, true, Color::transparentBlack);
-    static NeverDestroyed<ShadowData> defaultInsetWebKitBoxShadowData(LengthPoint(Length(LengthType::Fixed), Length(LengthType::Fixed)), Length(LengthType::Fixed), Length(LengthType::Fixed), ShadowStyle::Inset, true, Color::transparentBlack);
+    static NeverDestroyed<ShadowData> defaultShadowData {
+        Style::BoxShadow {
+            .color = { Color::transparentBlack },
+            .location = { { 0 }, { 0 } },
+            .blur = { 0 },
+            .spread = { 0 },
+            .inset = std::nullopt,
+            .isWebkitBoxShadow = false
+        }
+    };
+    static NeverDestroyed<ShadowData> defaultInsetShadowData {
+        Style::BoxShadow {
+            .color = { Color::transparentBlack },
+            .location = { { 0 }, { 0 } },
+            .blur = { 0 },
+            .spread = { 0 },
+            .inset = CSS::Keyword::Inset { },
+            .isWebkitBoxShadow = false
+        }
+    };
+    static NeverDestroyed<ShadowData> defaultWebKitBoxShadowData {
+        Style::BoxShadow {
+            .color = { Color::transparentBlack },
+            .location = { { 0 }, { 0 } },
+            .blur = { 0 },
+            .spread = { 0 },
+            .inset = std::nullopt,
+            .isWebkitBoxShadow = true
+        }
+    };
+    static NeverDestroyed<ShadowData> defaultInsetWebKitBoxShadowData {
+        Style::BoxShadow {
+            .color = { Color::transparentBlack },
+            .location = { { 0 }, { 0 } },
+            .blur = { 0 },
+            .spread = { 0 },
+            .inset = CSS::Keyword::Inset { },
+            .isWebkitBoxShadow = true
+        }
+    };
 
     if (srcShadow)
         return srcShadow;
@@ -2735,12 +2758,10 @@ private:
         if (!context.isDiscrete)
             blendedFontItalic = blendFunc(fromFontItalic, toFontItalic, context);
 
-        auto* currentFontSelector = destination.fontCascade().fontSelector();
         auto description = destination.fontDescription();
         description.setItalic(blendedFontItalic);
         description.setFontStyleAxis(blendedStyleAxis);
         destination.setFontDescription(WTFMove(description));
-        destination.fontCascade().update(currentFontSelector);
     }
 };
 
@@ -3281,12 +3302,10 @@ private:
     void blend(RenderStyle& destination, const RenderStyle& from, const RenderStyle& to, const CSSPropertyBlendingContext& context) const override
     {
         ASSERT(!context.progress || context.progress == 1.0);
-        FontSelector* currentFontSelector = destination.fontCascade().fontSelector();
         auto destinationDescription = destination.fontDescription();
         auto& sourceDescription = (context.progress ? to : from).fontDescription();
         setPropertiesInFontDescription(sourceDescription, destinationDescription);
         destination.setFontDescription(WTFMove(destinationDescription));
-        destination.fontCascade().update(currentFontSelector);
     }
 
 #if !LOG_DISABLED

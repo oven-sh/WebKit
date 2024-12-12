@@ -35,8 +35,10 @@ async function run() {
     renderBundleEncoder.drawIndexedIndirect(buffer2, 0);
     let renderBundle = renderBundleEncoder.finish();
     renderPassEncoder.executeBundles([renderBundle]);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => setTimeout(() => globalThis.testRunner?.notifyDone(), 1000));
+run();
 </script>

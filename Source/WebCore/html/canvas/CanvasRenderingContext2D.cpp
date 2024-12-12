@@ -99,7 +99,7 @@ std::optional<FilterOperations> CanvasRenderingContext2D::setFilterStringWithout
         return std::nullopt;
 
     auto parserContext = CSSParserContext(strictToCSSParserMode(!usesCSSCompatibilityParseMode()));
-    return CSSPropertyParserHelpers::parseFilterValueListOrNoneRaw(filterString, parserContext, CSSPropertyParserHelpers::AllowedFilterFunctions::PixelFilters, document, const_cast<RenderStyle&>(*style));
+    return CSSPropertyParserHelpers::parseFilterValueListOrNoneRaw(filterString, parserContext, document, const_cast<RenderStyle&>(*style));
 }
 
 RefPtr<Filter> CanvasRenderingContext2D::createFilter(const FloatRect& bounds) const
@@ -214,6 +214,12 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     modifiableState().font.initialize(document.fontSelector(), *fontCascade);
     ASSERT(state().font.realized());
     ASSERT(state().font.isPopulated());
+
+    // Recompute the word and the letter spacing for the new font.
+    String letterSpacing;
+    setLetterSpacing(std::exchange(modifiableState().letterSpacing, letterSpacing));
+    String wordSpacing;
+    setWordSpacing(std::exchange(modifiableState().wordSpacing, wordSpacing));
 }
 
 inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction direction, const RenderStyle** computedStyle) const

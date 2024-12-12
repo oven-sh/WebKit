@@ -52,6 +52,29 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/text/MakeString.h>
 
+@interface NavigationDelegateAllowingAllTLS : NSObject<WKNavigationDelegate>
+- (void)waitForDidFinishNavigation;
+@end
+
+@implementation NavigationDelegateAllowingAllTLS {
+    bool _finishedNavigation;
+}
+- (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler
+{
+    EXPECT_WK_STREQ(challenge.protectionSpace.authenticationMethod, NSURLAuthenticationMethodServerTrust);
+    completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+}
+- (void)waitForDidFinishNavigation
+{
+    _finishedNavigation = false;
+    TestWebKitAPI::Util::run(&_finishedNavigation);
+}
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
+{
+    _finishedNavigation = true;
+}
+@end
+
 @interface TestObserver : NSObject
 
 @property (nonatomic, copy) void (^observeValueForKeyPath)(NSString *, id);
@@ -1320,6 +1343,38 @@ TEST(SiteIsolation, RemoveFrames)
 
     checkFrameTreesInProcesses(webView.get(), {
         { "https://webkit.org"_s }
+    });
+}
+
+TEST(SiteIsolation, RemoveFrameFromRemoteFrame)
+{
+    HTTPServer server({
+        { "/main"_s, { "<iframe src='https://webkit.org/child'></iframe>"_s } },
+        { "/child"_s, { "<iframe src='https://example.com/grandchild' id=grandchildframe></iframe>"_s } },
+        { "/grandchild"_s, { "hi"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    checkFrameTreesInProcesses(webView.get(), {
+        { "https://example.com"_s,
+            { { RemoteFrame, { { "https://example.com"_s } } } }
+        }, { RemoteFrame,
+            { { "https://webkit.org"_s, { { RemoteFrame } } } }
+        }
+    });
+
+    [webView objectByEvaluatingJavaScript:@"grandchildframe.parentNode.removeChild(grandchildframe);1" inFrame:[webView firstChildFrame]];
+
+    checkFrameTreesInProcesses(webView.get(), {
+        { "https://example.com"_s,
+            { { RemoteFrame } }
+        }, { RemoteFrame,
+            { { "https://webkit.org"_s } }
+        }
     });
 }
 
@@ -3603,6 +3658,32 @@ TEST(SiteIsolation, ProcessReuse)
     [webView objectByEvaluatingJavaScript:@"var frame = document.getElementById('onlyiframe'); frame.parentNode.removeChild(frame);1"];
     [webView evaluateJavaScript:@"var iframe = document.createElement('iframe');iframe.src = 'https://webkit.org/iframe_with_alert';document.body.appendChild(iframe)" completionHandler:nil];
     EXPECT_WK_STREQ([webView _test_waitForAlert], "loaded");
+}
+
+TEST(SiteIsolation, ProcessTerminationReason)
+{
+    HTTPServer server({
+        { "/example"_s, { "<iframe src='https://webkit.org/iframe'></iframe>"_s } },
+        { "/iframe"_s, { "hi"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    RetainPtr navigationDelegate = adoptNS([NavigationDelegateAllowingAllTLS new]);
+    enableSiteIsolation(configuration.get());
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/example"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_EQ(server.totalRequests(), 2u);
+
+    kill([webView firstChildFrame]._processIdentifier, 9);
+    Util::runFor(0.1_s);
+    EXPECT_EQ(server.totalRequests(), 2u);
+
+    kill([webView mainFrame].info._processIdentifier, 9);
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_EQ(server.totalRequests(), 4u);
 }
 
 }

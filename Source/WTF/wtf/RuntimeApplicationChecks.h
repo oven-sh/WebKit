@@ -63,11 +63,21 @@ inline bool isInGPUProcess()
 #endif
 }
 
+inline bool isInModelProcess()
+{
+#if ENABLE(MODEL_PROCESS)
+    return checkAuxiliaryProcessType(AuxiliaryProcessType::Model);
+#else
+    return false;
+#endif
+}
+
 } // namespace WTF
 
 using WTF::checkAuxiliaryProcessType;
 using WTF::isInAuxiliaryProcess;
 using WTF::isInGPUProcess;
+using WTF::isInModelProcess;
 using WTF::isInNetworkProcess;
 using WTF::isInWebProcess;
 using WTF::presentingApplicationPID;

@@ -28,7 +28,6 @@
 
 #include "RemoteWebInspectorUIMessages.h"
 #include "RemoteWebInspectorUIProxyMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebInspectorUI.h"
 #include "WebPage.h"
 #include "WebProcess.h"

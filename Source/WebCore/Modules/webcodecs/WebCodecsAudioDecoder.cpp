@@ -70,8 +70,8 @@ static bool isValidDecoderConfig(const WebCodecsAudioDecoderConfig& config)
     if (StringView(config.codec).trim(isASCIIWhitespace<UChar>).isEmpty())
         return false;
 
-    // FIXME: We might need to check numberOfChannels and sampleRate here. See
-    // https://github.com/w3c/webcodecs/issues/714.
+    if (!config.numberOfChannels || !config.sampleRate)
+        return false;
 
     return true;
 }

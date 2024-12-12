@@ -514,7 +514,8 @@ bool RenderPassEncoder::executePreDrawCommands(uint32_t firstInstance, uint32_t 
         return false;
 
     auto pipeline = m_pipeline;
-    if (NSString* error = pipeline->protectedPipelineLayout()->errorValidatingBindGroupCompatibility(m_bindGroups)) {
+    Ref pipelineLayout = pipeline->protectedPipelineLayout();
+    if (NSString* error = pipelineLayout->errorValidatingBindGroupCompatibility(m_bindGroups)) {
         makeInvalid(error);
         return false;
     }
@@ -560,7 +561,7 @@ bool RenderPassEncoder::executePreDrawCommands(uint32_t firstInstance, uint32_t 
             makeInvalid(error);
             return false;
         }
-        if (group->makeSubmitInvalid(ShaderStage::Vertex) || group->makeSubmitInvalid(ShaderStage::Fragment)) {
+        if (group->makeSubmitInvalid(ShaderStage::Vertex, pipelineLayout->optionalBindGroupLayout(groupIndex)) || group->makeSubmitInvalid(ShaderStage::Fragment, pipelineLayout->optionalBindGroupLayout(groupIndex))) {
             protectedParentEncoder()->makeSubmitInvalid();
             return false;
         }
@@ -581,7 +582,6 @@ bool RenderPassEncoder::executePreDrawCommands(uint32_t firstInstance, uint32_t 
     m_queryBufferIndicesToClear.remove(m_visibilityResultBufferOffset);
 
     for (auto& kvp : m_bindGroupDynamicOffsets) {
-        Ref pipelineLayout = m_pipeline->pipelineLayout();
         auto bindGroupIndex = kvp.key;
 
         auto* pvertexOffsets = pipelineLayout->vertexOffsets(bindGroupIndex, kvp.value);
@@ -718,7 +718,7 @@ RenderPassEncoder::IndexCall RenderPassEncoder::clampIndexBufferToValidValues(ui
 
     [renderCommandEncoder memoryBarrierWithScope:MTLBarrierScopeBuffers afterStages:MTLRenderStageVertex beforeStages:MTLRenderStageVertex];
 
-    [encoder.parentEncoder().commandBuffer() addCompletedHandler:[protectedDevice = Ref { device }, firstIndex, indexCount, baseVertex, minVertexCount, indexType, refIndexBuffer = Ref { *apiIndexBuffer }, indexedIndirectBuffer](id<MTLCommandBuffer>) {
+    [encoder.protectedParentEncoder()->commandBuffer() addCompletedHandler:[protectedDevice = Ref { device }, firstIndex, indexCount, baseVertex, minVertexCount, indexType, refIndexBuffer = Ref { *apiIndexBuffer }, indexedIndirectBuffer](id<MTLCommandBuffer>) {
         protectedDevice->protectedQueue()->scheduleWork([firstIndex, indexCount, baseVertex, minVertexCount, indexType, refIndexBuffer = WTFMove(refIndexBuffer), indexedIndirectBuffer]() mutable {
             if (indexedIndirectBuffer.length != sizeof(MTLDrawIndexedPrimitivesIndirectArguments) + sizeof(uint32_t))
                 return;
@@ -1075,9 +1075,11 @@ void RenderPassEncoder::executeBundles(Vector<Ref<RenderBundle>>&& bundles)
                     [commandEncoder setVertexBytes:&data.indexData length:sizeof(data.indexData) atIndex:0];
                     [commandEncoder setVertexBuffer:indirectCommandBufferContainer offset:0 atIndex:1];
                     [commandEncoder useResource:indexBuffer->buffer() usage:MTLResourceUsageRead stages:MTLRenderStageVertex];
+                    [commandEncoder useResource:icb.indirectCommandBuffer usage:MTLResourceUsageRead | MTLResourceUsageWrite stages:MTLRenderStageVertex];
+                    [commandEncoder useResource:icb.outOfBoundsReadFlag usage:MTLResourceUsageWrite stages:MTLRenderStageVertex];
                     [commandEncoder drawPrimitives:MTLPrimitiveTypePoint vertexStart:0 vertexCount:data.indexData.indexCount];
 
-                    [m_parentEncoder->commandBuffer() addCompletedHandler:[protectedDevice = Ref { m_device }, firstIndex, indexCount, baseVertex, minVertexCount, indexType, refIndexBuffer = Ref { *indexBuffer }, icb](id<MTLCommandBuffer>) {
+                    [protectedParentEncoder()->commandBuffer() addCompletedHandler:[protectedDevice = Ref { m_device }, firstIndex, indexCount, baseVertex, minVertexCount, indexType, refIndexBuffer = Ref { *indexBuffer }, icb](id<MTLCommandBuffer>) {
                         protectedDevice->protectedQueue()->scheduleWork([icb, firstIndex, indexCount, baseVertex, minVertexCount, indexType, refIndexBuffer = WTFMove(refIndexBuffer)]() mutable {
                             id<MTLBuffer> indirectCommandBufferContainer = icb.indirectCommandBufferContainer;
                             refIndexBuffer->didReadOOB(*static_cast<uint32_t*>(indirectCommandBufferContainer.contents));
@@ -1276,10 +1278,9 @@ void RenderPassEncoder::setIndexBuffer(Buffer& buffer, WGPUIndexFormat format, u
     }
 
     m_indexBuffer = &buffer;
-    m_indexBufferSize = size;
+    m_indexBufferSize = size == WGPU_WHOLE_SIZE ? buffer.initialSize() : size;
     m_indexType = format == WGPUIndexFormat_Uint32 ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
     m_indexBufferOffset = offset;
-    UNUSED_PARAM(size);
     addResourceToActiveResources(&buffer, buffer.buffer(), BindGroupEntryUsage::Input);
 }
 
@@ -1369,6 +1370,8 @@ void RenderPassEncoder::setVertexBuffer(uint32_t slot, const Buffer* optionalBuf
     m_maxVertexBufferSlot = std::max(slot, m_maxVertexBufferSlot);
     id<MTLBuffer> mtlBuffer = buffer.buffer();
     auto bufferLength = mtlBuffer.length;
+    if (size == WGPU_WHOLE_SIZE)
+        size = buffer.initialSize();
     m_vertexBuffers.set(slot, BufferAndOffset { .buffer = mtlBuffer, .offset = offset, .size = size });
     if (offset == bufferLength && !size)
         return;

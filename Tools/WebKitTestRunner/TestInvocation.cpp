@@ -76,6 +76,11 @@ static void postPageMessage(const char* name)
     postPageMessage(name, WKRetainPtr<WKTypeRef> { });
 }
 
+Ref<TestInvocation> TestInvocation::create(WKURLRef url, const TestOptions& options)
+{
+    return adoptRef(*new TestInvocation(url, options));
+}
+
 TestInvocation::TestInvocation(WKURLRef url, const TestOptions& options)
     : m_options(options)
     , m_url(url)
@@ -92,11 +97,6 @@ TestInvocation::~TestInvocation()
 {
     if (m_pendingUIScriptInvocationData)
         m_pendingUIScriptInvocationData->testInvocation = nullptr;
-}
-
-WKURLRef TestInvocation::url() const
-{
-    return m_url.get();
 }
 
 bool TestInvocation::urlContains(StringView searchString) const
@@ -885,8 +885,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         return nullptr;
     }
 
-    if (WKStringIsEqualToUTF8CString(messageName, "SetMockCameraOrientation")) {
-        TestController::singleton().setMockCameraOrientation(uint64Value(messageBody));
+    if (WKStringIsEqualToUTF8CString(messageName, "SetMockCameraRotation")) {
+        auto messageBodyDictionary = dictionaryValue(messageBody);
+        auto rotation = uint64Value(messageBodyDictionary, "Rotation");
+        auto persistentID = stringValue(messageBodyDictionary, "PersistentID");
+        TestController::singleton().setMockCameraOrientation(rotation, persistentID);
         return nullptr;
     }
 

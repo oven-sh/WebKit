@@ -455,28 +455,6 @@ function at(index)
     return (k >= 0 && k < length) ? array[k] : @undefined;
 }
 
-function toReversed()
-{
-    "use strict";
-
-    // Step 1.
-    var array = @toObject(this, "Array.prototype.toReversed requires that |this| not be null or undefined");
-
-    // Step 2.
-    var length = @toLength(array.length);
-
-    // Step 3.
-    var result = @newArrayWithSize(length);
-
-    // Step 4-5.
-    for (var k = 0; k < length; k++) {
-        var fromValue = array[length - k - 1];
-        @putByValDirect(result, k, fromValue);
-    }
-
-    return result;
-}
-
 function toSorted(comparator)
 {
     "use strict";

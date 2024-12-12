@@ -30,6 +30,7 @@
 #include "TestClassName.h"
 #include <optional>
 #include <wtf/Forward.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
 

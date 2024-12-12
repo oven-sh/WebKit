@@ -41,11 +41,15 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteSampleBufferDisplayLayerManager);
 
-RemoteSampleBufferDisplayLayerManager::RemoteSampleBufferDisplayLayerManager(GPUConnectionToWebProcess& gpuConnectionToWebProcess)
+RemoteSampleBufferDisplayLayerManager::RemoteSampleBufferDisplayLayerManager(GPUConnectionToWebProcess& gpuConnectionToWebProcess, SharedPreferencesForWebProcess& sharedPreferencesForWebProcess)
     : m_connectionToWebProcess(gpuConnectionToWebProcess)
     , m_connection(gpuConnectionToWebProcess.connection())
+    , m_sharedPreferencesForWebProcess(sharedPreferencesForWebProcess)
     , m_queue(gpuConnectionToWebProcess.protectedGPUProcess()->videoMediaStreamTrackRendererQueue())
 {
+    protectedQueue()->dispatch([this, protectedThis = Ref { *this }, sharedPreferencesForWebProcess] {
+        m_sharedPreferencesForWebProcess = sharedPreferencesForWebProcess;
+    });
 }
 
 void RemoteSampleBufferDisplayLayerManager::startListeningForIPC()
@@ -92,7 +96,7 @@ void RemoteSampleBufferDisplayLayerManager::createLayer(SampleBufferDisplayLayer
         auto connection = m_connectionToWebProcess.get();
         if (!connection)
             return callback({ });
-        auto layer = RemoteSampleBufferDisplayLayer::create(*connection, identifier, m_connection.copyRef());
+        auto layer = RemoteSampleBufferDisplayLayer::create(*connection, identifier, m_connection.copyRef(), protectedThis);
         if (!layer) {
             callback({ });
             return;
@@ -130,6 +134,13 @@ void RemoteSampleBufferDisplayLayerManager::updateSampleBufferDisplayLayerBounds
     Locker lock(m_layersLock);
     if (RefPtr layer = m_layers.get(identifier))
         layer->updateBoundsAndPosition(bounds, WTFMove(sendRight));
+}
+
+void RemoteSampleBufferDisplayLayerManager::updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess sharedPreferencesForWebProcess)
+{
+    protectedQueue()->dispatch([this, protectedThis = Ref { *this }, sharedPreferencesForWebProcess = WTFMove(sharedPreferencesForWebProcess)] {
+        m_sharedPreferencesForWebProcess = sharedPreferencesForWebProcess;
+    });
 }
 
 }

@@ -2249,11 +2249,8 @@ LayoutUnit RenderBox::shrinkLogicalWidthToAvoidFloats(LayoutUnit childMarginStar
     }
 
     LayoutUnit logicalHeight = cb.logicalHeightForChild(*this);
-    LayoutUnit availableLogicalWidthAtLogicalTopPosition = cb.availableLogicalWidthForLineInFragment(logicalTopPosition, containingBlockFragment, logicalHeight);
-    if (availableLogicalWidthAtLogicalTopPosition == cb.availableLogicalWidth()) {
-        // No float to avoid at this logical top position either becasue float's margin box is shrunk to 0 (non-zero border box with large enough margins) or no float at all.
-        return availableLogicalWidthAtLogicalTopPosition - childMarginStart - childMarginEnd;
-    }
+    LayoutUnit result = cb.availableLogicalWidthForLineInFragment(logicalTopPosition, containingBlockFragment, logicalHeight) - childMarginStart - childMarginEnd;
+
     // We need to see if margins on either the start side or the end side can contain the floats in question. If they can,
     // then just using the line width is inaccurate. In the case where a float completely fits, we don't need to use the line
     // offset at all, but can instead push all the way to the content edge of the containing block. In the case where the float
@@ -2263,23 +2260,23 @@ LayoutUnit RenderBox::shrinkLogicalWidthToAvoidFloats(LayoutUnit childMarginStar
         LayoutUnit startContentSide = cb.startOffsetForContent(containingBlockFragment);
         LayoutUnit startContentSideWithMargin = startContentSide + childMarginStart;
         LayoutUnit startOffset = cb.startOffsetForLineInFragment(logicalTopPosition, containingBlockFragment, logicalHeight);
-        if (startOffset <= startContentSideWithMargin) {
-            availableLogicalWidthAtLogicalTopPosition -= childMarginStart;
-            availableLogicalWidthAtLogicalTopPosition += startOffset - startContentSide;
-        }
+        if (startOffset > startContentSideWithMargin)
+            result += childMarginStart;
+        else
+            result += startOffset - startContentSide;
     }
     
     if (childMarginEnd > 0) {
         LayoutUnit endContentSide = cb.endOffsetForContent(containingBlockFragment);
         LayoutUnit endContentSideWithMargin = endContentSide + childMarginEnd;
         LayoutUnit endOffset = cb.endOffsetForLineInFragment(logicalTopPosition, containingBlockFragment, logicalHeight);
-        if (endOffset <= endContentSideWithMargin) {
-            availableLogicalWidthAtLogicalTopPosition -= childMarginEnd;
-            availableLogicalWidthAtLogicalTopPosition += endOffset - endContentSide;
-        }
+        if (endOffset > endContentSideWithMargin)
+            result += childMarginEnd;
+        else
+            result += endOffset - endContentSide;
     }
 
-    return availableLogicalWidthAtLogicalTopPosition;
+    return result;
 }
 
 LayoutUnit RenderBox::containingBlockLogicalWidthForContent() const

@@ -127,7 +127,7 @@ void DownloadManager::cancelDownload(DownloadID downloadID, CompletionHandler<vo
         pendingDownload->cancel(WTFMove(completionHandler));
         return;
     }
-    ASSERT_NOT_REACHED();
+    // If there is no active or pending download, then the download finished in a short race window after cancellation was requested.
     completionHandler({ });
 }
 

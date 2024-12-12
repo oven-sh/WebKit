@@ -214,6 +214,7 @@ public:
     Ref<RemoteLegacyCDMFactoryProxy> protectedLegacyCdmFactoryProxy();
 #endif
     RemoteMediaEngineConfigurationFactoryProxy& mediaEngineConfigurationFactoryProxy();
+    Ref<RemoteMediaEngineConfigurationFactoryProxy> protectedMediaEngineConfigurationFactoryProxy();
 #if ENABLE(VIDEO)
     RemoteMediaPlayerManagerProxy& remoteMediaPlayerManagerProxy() { return m_remoteMediaPlayerManagerProxy.get(); }
     Ref<RemoteMediaPlayerManagerProxy> protectedRemoteMediaPlayerManagerProxy();
@@ -224,6 +225,7 @@ public:
 
 #if HAVE(AVASSETREADER)
     RemoteImageDecoderAVFProxy& imageDecoderAVFProxy();
+    Ref<RemoteImageDecoderAVFProxy> protectedImageDecoderAVFProxy();
 #endif
 
     void updateSupportedRemoteCommands();
@@ -246,6 +248,9 @@ public:
 
 #if HAVE(AUDIT_TOKEN)
     const std::optional<audit_token_t>& presentingApplicationAuditToken() const { return m_presentingApplicationAuditToken; }
+#endif
+#if PLATFORM(COCOA)
+    const String& applicationBundleIdentifier() const { return m_applicationBundleIdentifier; }
 #endif
 
 #if ENABLE(VIDEO)
@@ -280,6 +285,7 @@ private:
     UserMediaCaptureManagerProxy& userMediaCaptureManagerProxy();
     Ref<UserMediaCaptureManagerProxy> protectedUserMediaCaptureManagerProxy();
     RemoteAudioMediaStreamTrackRendererInternalUnitManager& audioMediaStreamTrackRendererInternalUnitManager();
+    Ref<RemoteAudioMediaStreamTrackRendererInternalUnitManager> protectedAudioMediaStreamTrackRendererInternalUnitManager();
 #endif
 
     void createRenderingBackend(RenderingBackendIdentifier, IPC::StreamServerConnection::Handle&&);
@@ -389,6 +395,9 @@ private:
 #endif
 #if HAVE(AUDIT_TOKEN)
     const std::optional<audit_token_t> m_presentingApplicationAuditToken;
+#endif
+#if PLATFORM(COCOA)
+    const String m_applicationBundleIdentifier;
 #endif
 
     RemoteRenderingBackendMap m_remoteRenderingBackendMap;

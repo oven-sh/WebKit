@@ -245,7 +245,7 @@ public:
 
     WebFrame* webFrame(std::optional<WebCore::FrameIdentifier>) const;
     void addWebFrame(WebCore::FrameIdentifier, WebFrame*);
-    void removeWebFrame(WebCore::FrameIdentifier, std::optional<WebPageProxyIdentifier>);
+    void removeWebFrame(WebCore::FrameIdentifier, WebPage*);
 
     WebPageGroupProxy* webPageGroup(const WebPageGroupData&);
 
@@ -885,10 +885,6 @@ private:
     HashMap<WebTransportSessionIdentifier, WeakPtr<WebTransportSession>> m_webTransportSessions;
     HashSet<WebCore::RegistrableDomain> m_domainsWithStorageAccessQuirks;
     std::unique_ptr<ScriptTelemetryFilter> m_scriptTelemetryFilter;
-#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
-    RefPtr<IPC::StreamClientConnection> m_logStreamConnection;
-    LogStreamIdentifier m_logStreamIdentifier { LogStreamIdentifier::generate() };
-#endif
 };
 
 } // namespace WebKit

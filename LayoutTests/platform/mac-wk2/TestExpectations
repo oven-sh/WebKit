@@ -821,6 +821,9 @@ http/tests/storageAccess/ [ Pass ]
 #http/tests/storageAccess/request-and-grant-access-then-navigate-cross-site-should-not-have-access.html [ Pass Timeout ]
 http/tests/storageAccess/deny-with-prompt-does-not-preserve-gesture.html [ Skip ]
 
+# Enable on appropriate platforms: rdar://140222322
+http/tests/storageAccess/grant-with-prompt-under-general-third-party-cookie-blocking-with-partitioned-cookies.https.html [ Skip ]
+
 # Enable again when fixing https://bugs.webkit.org/show_bug.cgi?id=208400.
 http/tests/storageAccess/has-storage-access-true-if-third-party-has-cookies-ephemeral.https.html [ Skip ]
 
@@ -1344,19 +1347,19 @@ webkit.org/b/240821 webgl/max-active-contexts-webglcontextlost-prevent-default.h
 
 webkit.org/b/241265 [ Debug ] imported/w3c/web-platform-tests/html/rendering/replaced-elements/svg-embedded-sizing/svg-in-object-percentage.html [ Pass Crash ]
 
-# NOTIFICATION_EVENT is Ventura+
-[ Ventura+ ] http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
-[ Ventura+ ] http/tests/workers/service/shownotification-invalid-data.html [ Pass ]
-[ Ventura+ ] http/wpt/push-api/pushEvent.any.serviceworker.html [ Pass ]
-[ Ventura+ ] imported/w3c/web-platform-tests/notifications/idlharness.https.any.html [ Pass ]
-[ Ventura+ ] imported/w3c/web-platform-tests/notifications/idlharness.https.any.serviceworker.html [ Pass ]
-[ Ventura+ ] imported/w3c/web-platform-tests/notifications/idlharness.https.any.worker.html [ Pass ]
-[ Ventura+ ] http/tests/workers/service/getnotifications-stop.html [ Pass ]
-[ Ventura+ ] http/tests/workers/service/getnotifications.html [ Pass ]
-[ Ventura+ ] http/wpt/service-workers/push-console-messages-no-showNotification.https.html [ Pass ]
-[ Ventura+ ] http/wpt/service-workers/push-console-messages-showNotification-async.https.html [ Pass ]
-[ Ventura+ ] http/wpt/service-workers/push-console-messages-showNotification-late.https.html [ Pass ]
-[ Ventura+ ] http/wpt/service-workers/push-console-messages-showNotification-sync.https.html [ Pass ]
+http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
+http/tests/workers/service/shownotification-allowed.html [ Pass ]
+http/tests/workers/service/shownotification-invalid-data.html [ Pass ]
+http/wpt/push-api/pushEvent.any.serviceworker.html [ Pass ]
+imported/w3c/web-platform-tests/notifications/idlharness.https.any.html [ Pass ]
+imported/w3c/web-platform-tests/notifications/idlharness.https.any.serviceworker.html [ Pass ]
+imported/w3c/web-platform-tests/notifications/idlharness.https.any.worker.html [ Pass ]
+http/tests/workers/service/getnotifications-stop.html [ Pass ]
+http/tests/workers/service/getnotifications.html [ Pass ]
+http/wpt/service-workers/push-console-messages-no-showNotification.https.html [ Pass ]
+http/wpt/service-workers/push-console-messages-showNotification-async.https.html [ Pass ]
+http/wpt/service-workers/push-console-messages-showNotification-late.https.html [ Pass ]
+http/wpt/service-workers/push-console-messages-showNotification-sync.https.html [ Pass ]
 
 webkit.org/b/242164 imported/w3c/web-platform-tests/service-workers/service-worker/navigation-timing.https.html [ Failure ]
 
@@ -1592,9 +1595,25 @@ webkit.org/b/261356 [ Debug ] fast/mediastream/device-change-event-2.html [ Pass
 webkit.org/b/263396 css3/color/text.html [ Skip ]
 
 # WebGPU
+[ Release ] http/tests/webgpu/webgpu/api/validation/encoding/cmds/copyTextureToTexture.html
 
 # skipped outside of macOS Sequoia due to crash in failed allocation
 [ Ventura Sonoma ] fast/webgpu/nocrash/fuzz-279086.html [ Skip ]
+
+# skipped on non-AS due to requiring features unavailable on Intel
+[ x86_64 ] fast/webgpu/nocrash/fuzz-273021.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-274171.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-276279.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-278474.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-281271.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-281555.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-282499.html [ Skip ]
+
+# skipped on Intel due to intermittently timing out due to the workload
+[ x86_64 ] fast/webgpu/nocrash/fuzz-282052.html [ Skip ]
+
+# skipped due to failing when run in stress test mode
+[ Ventura Sonoma ] fast/webgpu/nocrash/RenderBundle_WRITE.html [ Skip ]
 
 [ Release arm64 ] http/tests/webgpu/webgpu/api [ Pass Failure Timeout ]
 [ Release arm64 ] http/tests/webgpu/webgpu/shader [ Pass Failure Timeout ]
@@ -1935,7 +1954,21 @@ webkit.org/b/283210 http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavai
 
 webkit.org/b/283596 [ Sequoia+ Debug ] ipc/cfnetwork-crashes-with-string-to-string-http-headers.html [ Skip ]
 
-webkit.org/b/283740 [ Debug ] http/wpt/webauthn/public-key-credential-get-success-u2f.https.html [ Skip ]
+# webkit.org/b/284113 REGRESSION(287390@main?): [macOS Release] 4x imported/w3c/web-platform-tests/fs tests are flaky (Failure in EWS)
+[ Release ] imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-Error.https.window.html [ Pass Failure ]
+[ Release ] imported/w3c/web-platform-tests/fs/FileSystemFileHandle-getFile.https.any.worker.html [ Pass Failure ]
+[ Release ] imported/w3c/web-platform-tests/fs/FileSystemWritableFileStream-piped.https.any.worker.html [ Pass Failure ]
+[ Release ] imported/w3c/web-platform-tests/fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html [ Pass Failure ]
 
-# webkit.org/b/283999 REGRESSION(286110@main?): [macOS] http/tests/workers/service/shownotification-allowed.html is a constant failure (flaky in EWS) 
-[ Ventura+ ] http/tests/workers/service/shownotification-allowed.html [ Failure ]
+webkit.org/b/284190 [ Sequoia+ ] http/tests/privateClickMeasurement/send-attribution-conversion-request.https.html [ Failure ]
+
+# webkit.org/b/284186 [macOS Debug] media/media-vp8-hiddenframes.html is timing out (flaky in EWS)
+[ Debug ] media/media-vp8-hiddenframes.html [ Pass Timeout ]
+
+# webkit.org/b/284391 [macOS Debug]: ASSERTION FAILED: Unsafe to ref/deref from different threads m_isOwnedByMainThread == isMainThread() result of crash in (flaky in EWS)
+[ Sonoma+ Debug ] imported/w3c/web-platform-tests/dom/observable/tentative/observable-map.any.worker.html [ Pass Crash ]
+
+webkit.org/b/284492 [ Sequoia+ ] imported/w3c/web-platform-tests/fetch/api/cors/cors-cookies-redirect.any.html [ Failure ]
+webkit.org/b/284492 [ Sequoia+ ] imported/w3c/web-platform-tests/fetch/api/cors/cors-cookies-redirect.any.worker.html [ Failure ]
+
+webkit.org/b/284493 [ Debug ] imported/blink/fast/hidpi/border-background-align.html [ Crash ]

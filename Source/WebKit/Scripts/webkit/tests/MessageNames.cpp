@@ -36,6 +36,7 @@ const MessageDescriptionsArray messageDescriptions {
     MessageDescription { "TestWithDeferSendingOption_NoIndices"_s, ReceiverName::TestWithDeferSendingOption, false, false },
     MessageDescription { "TestWithDeferSendingOption_NoOptions"_s, ReceiverName::TestWithDeferSendingOption, false, false },
     MessageDescription { "TestWithDeferSendingOption_OneIndex"_s, ReceiverName::TestWithDeferSendingOption, false, false },
+    MessageDescription { "TestWithDispatchedFromAndTo_AlwaysEnabled"_s, ReceiverName::TestWithDispatchedFromAndTo, false, false },
     MessageDescription { "TestWithEnabledByAndConjunction_AlwaysEnabled"_s, ReceiverName::TestWithEnabledByAndConjunction, false, false },
     MessageDescription { "TestWithEnabledByOrConjunction_AlwaysEnabled"_s, ReceiverName::TestWithEnabledByOrConjunction, false, false },
     MessageDescription { "TestWithEnabledBy_AlwaysEnabled"_s, ReceiverName::TestWithEnabledBy, false, false },
@@ -81,6 +82,7 @@ const MessageDescriptionsArray messageDescriptions {
 #if (ENABLE(TOUCH_EVENTS) && (NESTED_MESSAGE_CONDITION || SOME_OTHER_MESSAGE_CONDITION))
     MessageDescription { "TestWithLegacyReceiver_TouchEvent"_s, ReceiverName::TestWithLegacyReceiver, false, false },
 #endif
+    MessageDescription { "TestWithMultiLineExtendedAttributes_AlwaysEnabled"_s, ReceiverName::TestWithMultiLineExtendedAttributes, false, false },
     MessageDescription { "TestWithSemaphore_ReceiveSemaphore"_s, ReceiverName::TestWithSemaphore, false, false },
     MessageDescription { "TestWithSemaphore_SendSemaphore"_s, ReceiverName::TestWithSemaphore, false, false },
     MessageDescription { "TestWithStreamBatched_SendString"_s, ReceiverName::TestWithStreamBatched, true, false },

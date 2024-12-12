@@ -40,6 +40,8 @@ public:
     std::span<const uint8_t> generateRemoteToken() const;
     RetainPtr<id> remoteFramePlatformElement() const final { return m_remoteFramePlatformElement; }
     pid_t processIdentifier() const { return m_processIdentifier; }
+    std::optional<FrameIdentifier> frameID() const { return m_frameID; }
+    void setFrameID(FrameIdentifier frameID) { m_frameID = frameID; }
 #endif
 
 private:
@@ -54,6 +56,7 @@ private:
 #if PLATFORM(COCOA)
     RetainPtr<id> m_remoteFramePlatformElement;
     pid_t m_processIdentifier { 0 };
+    std::optional<FrameIdentifier> m_frameID { };
 #endif
 };
 

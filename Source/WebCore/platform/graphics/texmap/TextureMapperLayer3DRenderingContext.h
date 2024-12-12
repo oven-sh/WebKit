@@ -27,21 +27,21 @@
 
 #pragma once
 
-#include "FloatPlane3D.h"
-#include "FloatPolygon.h"
 #include "FloatPolygon3D.h"
-#include "TextureMapperLayer.h"
-#include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
+class ClipPath;
+class FloatPlane3D;
+class TextureMapper;
 class TextureMapperLayer;
 
 class TextureMapperLayer3DRenderingContext final {
     WTF_MAKE_TZONE_ALLOCATED(TextureMapperLayerPreserves3DContext);
 public:
-    void paint(const Vector<TextureMapperLayer*>&, const std::function<void(TextureMapperLayer*, const FloatPolygon&)>&);
+    void paint(TextureMapper&, const Vector<TextureMapperLayer*>&,
+        const std::function<void(TextureMapperLayer*, const ClipPath&)>&);
 
 private:
     enum class PolygonPosition {
@@ -52,25 +52,10 @@ private:
     };
 
     struct TextureMapperLayerPolygon final {
-        FloatPolygon layerClipArea() const
-        {
-            unsigned numVertices = geometry.numberOfVertices();
-            Vector<FloatPoint> vertices;
-            vertices.reserveCapacity(numVertices);
-            auto toLayerTransform = layer->toSurfaceTransform().inverse();
-            if (isSplitted && toLayerTransform) {
-                for (unsigned i = 0; i < numVertices; i++) {
-                    auto v = toLayerTransform->mapPoint(geometry.vertexAt(i));
-                    vertices.append(FloatPoint(v.x(), v.y()));
-                }
-            }
-
-            return { WTFMove(vertices), WindRule::NonZero };
-        }
-
         FloatPolygon3D geometry;
         TextureMapperLayer* layer = { nullptr };
         bool isSplitted = { false };
+        unsigned clipVertexBufferOffset { 0 };
     };
 
     struct TextureMapperLayerNode final {
@@ -89,7 +74,7 @@ private:
     };
 
     void buildTree(TextureMapperLayerNode&, Deque<TextureMapperLayerPolygon>&);
-    void traverseTreeAndPaint(TextureMapperLayerNode&, const std::function<void(TextureMapperLayer*, const FloatPolygon&)>&);
+    void traverseTree(TextureMapperLayerNode&, const std::function<void(TextureMapperLayerNode&)>&);
     static PolygonPosition classifyPolygon(const TextureMapperLayerPolygon&, const FloatPlane3D&);
 };
 

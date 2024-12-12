@@ -40,19 +40,25 @@ namespace WebKit {
 
 class LogStream : public IPC::StreamMessageReceiver {
 public:
-    LogStream() = default;
+    static Ref<LogStream> create(int32_t pid) { return adoptRef(*new LogStream(pid)); }
     ~LogStream();
 
-    void setup(uint64_t pid, IPC::StreamServerConnectionHandle&&, LogStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&&);
+    void setup(IPC::StreamServerConnectionHandle&&, LogStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&&);
+    void stopListeningForIPC();
 
 private:
+    LogStream(int32_t pid);
+
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
     void logOnBehalfOfWebContent(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, uint8_t logType);
 
+#if __has_include("LogMessagesDeclarations.h")
+#include "LogMessagesDeclarations.h"
+#endif
+
     RefPtr<IPC::StreamServerConnection> m_logStreamConnection;
-    RefPtr<IPC::StreamConnectionWorkQueue> m_logWorkQueue;
-    uint64_t m_pid { 0 };
+    int32_t m_pid { 0 };
     Markable<LogStreamIdentifier> m_logStreamIdentifier;
 };
 

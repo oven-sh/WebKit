@@ -572,6 +572,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpDFGJITSizeStatistics, false, Normal, nullptr) \
     v(Bool, useLoopUnrolling, true, Normal, nullptr) \
     v(Bool, verboseLoopUnrolling, false, Normal, nullptr) \
+    v(Unsigned, maxLoopUnrollingCount, 2, Normal, nullptr) \
+    v(Unsigned, maxLoopUnrollingBodyNodeSize, 200, Normal, nullptr) \
+    v(Unsigned, maxLoopUnrollingIterationCount, 4, Normal, nullptr) \
     v(Bool, printEachUnrolledLoop, false, Normal, nullptr) \
     v(Bool, verboseExecutablePoolAllocation, false, Normal, nullptr) \
     v(Bool, useHandlerIC, canUseHandlerIC(), Normal, nullptr) \
@@ -597,8 +600,9 @@ bool hasCapacityToUseLargeGigacage();
     /* Feature Flags */\
     \
     v(Bool, useAtomicsPause, true, Normal, "Expose Atomics.pause."_s) \
-    v(Bool, useErrorIsError, false, Normal, "Expose Error.isError feature."_s) \
+    v(Bool, useErrorIsError, true, Normal, "Expose Error.isError feature."_s) \
     v(Bool, useFloat16Array, true, Normal, "Expose Float16Array."_s) \
+    v(Bool, useImportDefer, false, Normal, "Enable deferred module import."_s) \
     v(Bool, useIteratorChunking, false, Normal, "Expose the Iterator.prototype.chunks and Iterator.prototype.windows methods."_s) \
     v(Bool, useIteratorHelpers, true, Normal, "Expose the Iterator Helpers."_s) \
     v(Bool, useIteratorSequencing, false, Normal, "Expose the Iterator.concat method."_s) \

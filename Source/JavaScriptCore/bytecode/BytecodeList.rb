@@ -1497,6 +1497,8 @@ op :wasm_to_wasm_wrapper_entry
 op :wasm_to_js_wrapper_entry
 op :ipint_trampoline
 op :ipint_entry
+op :ipint_function_prologue_simd_trampoline
+op :ipint_function_prologue_simd
 
 op :js_trampoline_op_call
 op :js_trampoline_op_call_ignore_result

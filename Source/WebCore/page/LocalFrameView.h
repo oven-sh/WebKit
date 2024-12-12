@@ -129,9 +129,6 @@ public:
     CheckedRef<const LocalFrameViewLayoutContext> checkedLayoutContext() const;
     CheckedRef<LocalFrameViewLayoutContext> checkedLayoutContext();
 
-    bool hasPendingUpdateLayerPositions() const;
-    void flushUpdateLayerPositions();
-
     WEBCORE_EXPORT bool didFirstLayout() const;
 
     WEBCORE_EXPORT bool needsLayout() const;
@@ -164,9 +161,6 @@ public:
     void styleAndRenderTreeDidChange() override;
     bool updateCompositingLayersAfterStyleChange();
     void updateCompositingLayersAfterLayout();
-
-    // Returns true if a pending compositing layer update was done.
-    bool updateCompositingLayersAfterLayoutIfNeeded();
 
     // Called when changes to the GraphicsLayer hierarchy have to be synchronized with
     // content rendered via the normal painting path.
@@ -1011,8 +1005,6 @@ private:
     unsigned m_visuallyNonEmptyCharacterCount { 0 };
     unsigned m_visuallyNonEmptyPixelCount { 0 };
     unsigned m_textRendererCountForVisuallyNonEmptyCharacters { 0 };
-    unsigned m_layoutUpdateCount { 0 };
-    unsigned m_renderLayerPositionUpdateCount { 0 };
     int m_headerHeight { 0 };
     int m_footerHeight { 0 };
 
@@ -1037,20 +1029,6 @@ private:
     std::unique_ptr<ScrollableAreaSet> m_scrollableAreas;
     std::unique_ptr<ScrollableAreaSet> m_scrollableAreasForAnimatedScroll;
     std::unique_ptr<SingleThreadWeakHashSet<RenderLayerModelObject>> m_viewportConstrainedObjects;
-
-    struct UpdateLayerPositions {
-        void merge(const UpdateLayerPositions& other)
-        {
-            needsFullRepaint |= other.needsFullRepaint;
-            if (!other.didRunSimplifiedLayout)
-                didRunSimplifiedLayout = false;
-        }
-
-        RenderElement::LayoutIdentifier layoutIdentifier : 12 { 0 };
-        bool needsFullRepaint { false };
-        bool didRunSimplifiedLayout { true };
-    };
-    std::optional<UpdateLayerPositions> m_pendingUpdateLayerPositions;
 
     OptionSet<LayoutMilestone> m_milestonesPendingPaint;
 
@@ -1106,7 +1084,6 @@ private:
     bool m_didRunAutosize { false };
     bool m_inUpdateEmbeddedObjects { false };
     bool m_scheduledToScrollToAnchor { false };
-    bool m_updateCompositingLayersIsPending { false };
 #if ASSERT_ENABLED
     bool m_layerAccessPrevented { false };
 #endif

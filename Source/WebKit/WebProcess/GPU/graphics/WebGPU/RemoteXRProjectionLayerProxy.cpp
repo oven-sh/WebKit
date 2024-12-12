@@ -30,7 +30,6 @@
 
 #include "RemoteGPUProxy.h"
 #include "RemoteXRProjectionLayerMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebGPUConvertToBackingContext.h"
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/PlatformXR.h>

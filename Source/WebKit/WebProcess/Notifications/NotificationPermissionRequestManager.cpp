@@ -28,7 +28,6 @@
 
 #include "MessageSenderInlines.h"
 #include "NotificationManagerMessageHandlerMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"

@@ -928,13 +928,17 @@ Result<AST::Expression::Ref> Parser<Lexer>::parseArrayType()
             //
             // The WGSL grammar doesn't specify expression operator precedence so
             // until then just parse AdditiveExpression.
-            PARSE(elementCountLHS, UnaryExpression);
-            PARSE(elementCount, AdditiveExpressionPostUnary, WTFMove(elementCountLHS));
-            maybeElementCount = &elementCount.get();
+            if (current().type != TokenType::TemplateArgsRight) {
+                PARSE(elementCountLHS, UnaryExpression);
+                PARSE(elementCount, AdditiveExpressionPostUnary, WTFMove(elementCountLHS));
+                maybeElementCount = &elementCount.get();
+
+                if (current().type == TokenType::Comma)
+                    consume();
+            }
         }
         CONSUME_TYPE(TemplateArgsRight);
     }
-
     RETURN_ARENA_NODE(ArrayTypeExpression, maybeElementType, maybeElementCount);
 }
 

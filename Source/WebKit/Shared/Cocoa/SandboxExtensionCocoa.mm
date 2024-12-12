@@ -29,7 +29,6 @@
 #if ENABLE(SANDBOX_EXTENSIONS)
 
 #import "Logging.h"
-#import "WebCoreArgumentCoders.h"
 #import <string.h>
 #import <wtf/FileSystem.h>
 #import <wtf/spi/darwin/SandboxSPI.h>

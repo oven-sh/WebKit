@@ -1332,11 +1332,35 @@ void NetworkStorageManager::fetchLocalStorage(CompletionHandler<void(HashMap<Web
             auto storageMap = localStorageManager.fetchStorageMap();
 
             if (!storageMap.isEmpty())
-                localStorageMap.add(origin, storageMap);
+                localStorageMap.add(origin, WTFMove(storageMap));
         }
 
-        RunLoop::protectedMain()->dispatch([completionHandler = WTFMove(completionHandler), localStorageMap = crossThreadCopy(WTFMove(localStorageMap))] mutable {
+        RunLoop::protectedMain()->dispatch([protectedThis = WTFMove(protectedThis), completionHandler = WTFMove(completionHandler), localStorageMap = crossThreadCopy(WTFMove(localStorageMap))] mutable {
             completionHandler(WTFMove(localStorageMap));
+        });
+    });
+}
+
+void NetworkStorageManager::restoreLocalStorage(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&& localStorageMap, CompletionHandler<void(bool)>&& completionHandler)
+{
+    ASSERT(RunLoop::isMain());
+    ASSERT(!m_closed);
+
+    protectedWorkQueue()->dispatch([this, protectedThis = Ref { *this }, localStorageMap = crossThreadCopy(WTFMove(localStorageMap)), completionHandler = WTFMove(completionHandler)]() mutable {
+        assertIsCurrent(workQueue());
+
+        bool succeeded = true;
+
+        for (auto& [clientOrigin, storageMap] : localStorageMap) {
+            auto& localStorageManager = originStorageManager(clientOrigin, ShouldWriteOriginFile::Yes).localStorageManager(*m_storageAreaRegistry);
+            auto result = localStorageManager.populateStorageArea(clientOrigin, WTFMove(storageMap), protectedWorkQueue());
+
+            if (!result)
+                succeeded = false;
+        }
+
+        RunLoop::protectedMain()->dispatch([protectedThis = WTFMove(protectedThis), completionHandler = WTFMove(completionHandler), succeeded] mutable {
+            completionHandler(succeeded);
         });
     });
 }

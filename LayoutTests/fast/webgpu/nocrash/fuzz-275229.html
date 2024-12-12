@@ -6,7 +6,9 @@ async function run() {
     let textureView = texture.createView();
     texture.destroy();
     device.createCommandEncoder().beginRenderPass({ colorAttachments: [], depthStencilAttachment: { view: textureView } });
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

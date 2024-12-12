@@ -156,7 +156,7 @@ inline static WARN_UNUSED_RETURN size_t decodeHexImpl(std::span<CharacterType> s
     if (span.size() >= stride) {
         auto doStridedDecode = [&]() ALWAYS_INLINE_LAMBDA {
             if constexpr (sizeof(CharacterType) == 1) {
-                for (; cursor + (stride - 1) < end; cursor += stride, output += halfStride) {
+                for (; cursor + stride <= end; cursor += stride, output += halfStride) {
                     if (!vectorDecode8(SIMD::load(std::bit_cast<const uint8_t*>(cursor)), output))
                         return false;
                 }
@@ -172,7 +172,7 @@ inline static WARN_UNUSED_RETURN size_t decodeHexImpl(std::span<CharacterType> s
                     return vectorDecode8(input.val[0], output);
                 };
 
-                for (; cursor + (stride - 1) < end; cursor += stride, output += halfStride) {
+                for (; cursor + stride <= end; cursor += stride, output += halfStride) {
                     if (!vectorDecode16(simde_vld2q_u8(std::bit_cast<const uint8_t*>(cursor)), output))
                         return false;
                 }

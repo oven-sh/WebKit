@@ -77,8 +77,7 @@ public:
         RefPtr<JSON::Value> jsonData;
         std::optional<bool> silent;
 #if ENABLE(DECLARATIVE_WEB_PUSH)
-        String defaultAction;
-        URL defaultActionURL;
+        String navigate;
 #endif
     };
     // For JS constructor only.
@@ -94,7 +93,7 @@ public:
     void close();
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
-    const URL& defaultAction() const { return m_defaultActionURL; }
+    const URL& navigate() const { return m_navigate; }
 #endif
     const String& title() const { return m_title; }
     Direction dir() const { return m_direction; }
@@ -153,7 +152,7 @@ private:
     WTF::UUID m_identifier;
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
-    URL m_defaultActionURL;
+    URL m_navigate;
 #endif
     String m_title;
     Direction m_direction;

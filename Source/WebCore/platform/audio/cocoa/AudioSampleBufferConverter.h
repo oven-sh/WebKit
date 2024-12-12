@@ -26,6 +26,7 @@
 
 #if USE(AVFOUNDATION)
 
+#include "BitrateMode.h"
 #include <CoreMedia/CoreMedia.h>
 #include <wtf/Forward.h>
 #include <wtf/ThreadSafeWeakPtr.h>
@@ -41,11 +42,28 @@ class WebAudioBufferList;
 
 class AudioSampleBufferConverter : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<AudioSampleBufferConverter> {
 public:
+
+#if ENABLE(WEB_CODECS)
+    using BitrateMode = BitrateMode;
+#else
+    enum class BitrateMode {
+        Constant,
+        Variable
+    };
+#endif
+
     struct Options {
         AudioFormatID format { kAudioFormatMPEG4AAC };
-        std::optional<AudioStreamBasicDescription> description;
-        std::optional<unsigned> outputBitRate;
+        std::optional<AudioStreamBasicDescription> description { };
+        std::optional<unsigned> outputBitRate { };
         bool generateTimestamp { true };
+        std::optional<unsigned> preSkip { };
+        std::optional<BitrateMode> bitrateMode { };
+        std::optional<unsigned> packetSize { };
+        std::optional<unsigned> complexity { };
+        std::optional<unsigned> packetlossperc { };
+        std::optional<bool> useinbandfec { };
+        std::optional<bool> usedtx { };
     };
     static RefPtr<AudioSampleBufferConverter> create(CMBufferQueueTriggerCallback, void* callbackObject, const Options&);
     ~AudioSampleBufferConverter();
@@ -59,6 +77,7 @@ public:
     RetainPtr<CMSampleBufferRef> takeOutputSampleBuffer();
 
     unsigned bitRate() const;
+    unsigned preSkip() const { return m_preSkip; }
 
 private:
     AudioSampleBufferConverter(const Options&);
@@ -68,7 +87,7 @@ private:
     static OSStatus audioConverterComplexInputDataProc(AudioConverterRef, UInt32*, AudioBufferList*, AudioStreamPacketDescription**, void*);
 
     void processSampleBuffer(CMSampleBufferRef);
-    bool initAudioConverterForSourceFormatDescription(CMFormatDescriptionRef, AudioFormatID);
+    OSStatus initAudioConverterForSourceFormatDescription(CMFormatDescriptionRef, AudioFormatID);
     void attachPrimingTrimsIfNeeded(CMSampleBufferRef);
     RetainPtr<NSNumber> gradualDecoderRefreshCount();
     Expected<RetainPtr<CMSampleBufferRef>, OSStatus> sampleBuffer(const WebAudioBufferList&, uint32_t numSamples);
@@ -106,8 +125,9 @@ private:
     Vector<AudioStreamPacketDescription> m_packetDescriptions WTF_GUARDED_BY_CAPABILITY(queue().get());
     OSStatus m_lastError WTF_GUARDED_BY_CAPABILITY(queue().get()) { 0 };
     const AudioFormatID m_outputCodecType;
-    const std::optional<unsigned> m_outputBitRate;
-    const bool m_generateTimestamp { true };
+    const Options m_options;
+    std::atomic<unsigned> m_defaultBitRate { 0 };
+    std::atomic<unsigned> m_preSkip { 0 };
 };
 
 }

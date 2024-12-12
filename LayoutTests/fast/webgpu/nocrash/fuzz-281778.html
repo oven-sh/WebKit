@@ -3,9 +3,9 @@ async function run() {
     let adapter = await navigator.gpu.requestAdapter();
     let device = await adapter.requestDevice();
     let bindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX, externalTexture: {} }
-      ]
+        entries: [
+            { binding: 0, visibility: GPUShaderStage.VERTEX, externalTexture: {} }
+        ]
     });
     let pipelineLayout = device.createPipelineLayout({ bindGroupLayouts : [bindGroupLayout] })
     let shaderModule = device.createShaderModule({ code: ` 
@@ -36,7 +36,9 @@ async function run() {
     renderPass.end()
     let commandBuffer = commandEncoder.finish();
     device.queue.submit([commandBuffer]);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().then(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

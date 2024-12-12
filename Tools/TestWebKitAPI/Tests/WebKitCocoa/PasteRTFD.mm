@@ -177,7 +177,7 @@ TEST(PasteRTFD, ImageElementUsesBlobURLInHTML)
     EXPECT_WK_STREQ("blob:", [webView stringByEvaluatingJavaScript:@"new URL(imageElement.src).protocol"]);
 }
 
-#if ENABLE(DARK_MODE_CSS) && HAVE(OS_DARK_MODE_SUPPORT)
+#if ENABLE(DARK_MODE_CSS)
 
 TEST(PasteRTFD, TransformColorsOfDarkContent)
 {
@@ -239,6 +239,6 @@ TEST(PasteRTFD, DoesNotTransformColorsOfLightContent)
 #endif
 }
 
-#endif // ENABLE(DARK_MODE_CSS) && HAVE(OS_DARK_MODE_SUPPORT)
+#endif // ENABLE(DARK_MODE_CSS)
 
 #endif // PLATFORM(COCOA)

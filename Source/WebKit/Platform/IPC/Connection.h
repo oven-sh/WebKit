@@ -43,6 +43,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NativePromise.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RunLoop.h>
@@ -243,7 +244,12 @@ public:
     using Handle = ConnectionHandle;
 
     struct Identifier {
+        WTF_MAKE_NONCOPYABLE(Identifier);
+
         Identifier() = default;
+        Identifier(Identifier&&) = default;
+        Identifier& operator=(Identifier&&) = default;
+
 #if USE(UNIX_DOMAIN_SOCKETS)
         explicit Identifier(Handle&& handle)
             : Identifier(handle.release())
@@ -280,7 +286,7 @@ public:
             , xpcConnection(WTFMove(xpcConnection))
         {
         }
-        explicit operator bool() const { return MACH_PORT_VALID(port); }
+        operator bool() const { return MACH_PORT_VALID(port); }
         mach_port_t port { MACH_PORT_NULL };
         OSObjectPtr<xpc_connection_t> xpcConnection;
 #endif
@@ -292,8 +298,8 @@ public:
     pid_t remoteProcessID() const;
 #endif
 
-    static Ref<Connection> createServerConnection(Identifier, Thread::QOS = Thread::QOS::Default);
-    static Ref<Connection> createClientConnection(Identifier);
+    static Ref<Connection> createServerConnection(Identifier&&, Thread::QOS = Thread::QOS::Default);
+    static Ref<Connection> createClientConnection(Identifier&&);
 
     struct ConnectionIdentifierPair {
         IPC::Connection::Identifier server;
@@ -442,7 +448,9 @@ public:
     bool inSendSync() const { return m_inSendSyncCount; }
     unsigned inDispatchSyncMessageCount() const { return m_inDispatchSyncMessageCount; }
 
+#if PLATFORM(COCOA)
     Identifier identifier() const;
+#endif
 
 #if PLATFORM(COCOA) && !USE(EXTENSIONKIT_PROCESS_TERMINATION)
     bool kill();
@@ -489,8 +497,8 @@ public:
 #endif
 
 private:
-    Connection(Identifier, bool isServer, Thread::QOS = Thread::QOS::Default);
-    void platformInitialize(Identifier);
+    Connection(Identifier&&, bool isServer, Thread::QOS = Thread::QOS::Default);
+    void platformInitialize(Identifier&&);
     bool platformPrepareForOpen();
     void platformOpen();
     void platformInvalidate();

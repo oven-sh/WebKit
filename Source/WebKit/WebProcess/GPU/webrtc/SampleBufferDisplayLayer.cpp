@@ -36,7 +36,6 @@
 #include "RemoteSampleBufferDisplayLayerMessages.h"
 #include "RemoteVideoFrameProxy.h"
 #include "SampleBufferDisplayLayerManager.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 
 namespace WebKit {

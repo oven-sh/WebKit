@@ -223,18 +223,6 @@ JSValue collectMatches(VM& vm, JSGlobalObject* globalObject, JSString* string, c
     return array;
 }
 
-template<typename Char>
-ALWAYS_INLINE size_t countMatchedCharacters(std::span<const Char> input, Char pattern)
-{
-    size_t numberOfMatches = 0;
-    for (auto character : input) {
-        if (character != pattern)
-            continue;
-        numberOfMatches++;
-    }
-    return numberOfMatches;
-}
-
 template<typename SubjectChar, typename PatternChar>
 ALWAYS_INLINE void genericMatches(VM& vm, std::span<const SubjectChar> input, std::span<const PatternChar> pattern, size_t& numberOfMatches, size_t& startIndex)
 {
@@ -265,14 +253,14 @@ ALWAYS_INLINE JSValue collectGlobalAtomMatches(JSGlobalObject* globalObject, JSS
     if (pattern.is8Bit()) {
         if (input->is8Bit()) {
             if (pattern.length() == 1)
-                numberOfMatches = countMatchedCharacters(input->span8(), pattern.span8()[0]);
+                numberOfMatches = WTF::countMatchedCharacters(input->span8(), pattern.span8()[0]);
             else {
                 size_t startIndex = 0;
                 genericMatches(vm, input->span8(), pattern.span8(), numberOfMatches, startIndex);
             }
         } else {
             if (pattern.length() == 1)
-                numberOfMatches = countMatchedCharacters(input->span16(), pattern.characterAt(0));
+                numberOfMatches = WTF::countMatchedCharacters(input->span16(), pattern.characterAt(0));
             else {
                 size_t startIndex = 0;
                 genericMatches(vm, input->span16(), pattern.span8(), numberOfMatches, startIndex);
@@ -284,7 +272,7 @@ ALWAYS_INLINE JSValue collectGlobalAtomMatches(JSGlobalObject* globalObject, JSS
             genericMatches(vm, input->span8(), pattern.span16(), numberOfMatches, startIndex);
         } else {
             if (pattern.length() == 1)
-                numberOfMatches = countMatchedCharacters(input->span16(), pattern.characterAt(0));
+                numberOfMatches = WTF::countMatchedCharacters(input->span16(), pattern.characterAt(0));
             else {
                 size_t startIndex = 0;
                 genericMatches(vm, input->span16(), pattern.span16(), numberOfMatches, startIndex);

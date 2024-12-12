@@ -857,16 +857,18 @@ static NSString *description(nw_dns_failure_reason_t reason)
 
 static NSDictionary<NSString *, id> *extractResolutionReport(NSError *error)
 {
-    auto reportValue = (__bridge CFTypeRef)error.userInfo[@"_NSURLErrorNWResolutionReportKey"];
+    RetainPtr reportValue = (__bridge CFTypeRef)error.userInfo[@"_NSURLErrorNWResolutionReportKey"];
     if (!reportValue)
         return nil;
 
-    auto pathValue = (__bridge CFTypeRef)error.userInfo[@"_NSURLErrorNWPathKey"];
+    RetainPtr pathValue = (__bridge CFTypeRef)error.userInfo[@"_NSURLErrorNWPathKey"];
     if (!pathValue)
         return nil;
 
     auto interfaces = adoptNS([[NSMutableArray alloc] initWithCapacity:1]);
-    nw_path_enumerate_interfaces(static_cast<nw_path_t>(pathValue), ^bool(nw_interface_t interface) {
+    if (!interfaces.get())
+        return nil;
+    nw_path_enumerate_interfaces(static_cast<nw_path_t>(pathValue.get()), ^bool(nw_interface_t interface) {
         [interfaces addObject:@{
             @"type" : description(nw_interface_get_type(interface)),
             @"name" : @(nw_interface_get_name(interface) ?: "")
@@ -874,7 +876,7 @@ static NSDictionary<NSString *, id> *extractResolutionReport(NSError *error)
         return true;
     });
 
-    auto report = static_cast<nw_resolution_report_t>(reportValue);
+    auto report = static_cast<nw_resolution_report_t>(reportValue.get());
     return @{
         @"provider" : @(nw_resolution_report_get_provider_name(report) ?: ""),
         @"dnsFailureReason" : description(nw_resolution_report_get_dns_failure_reason(report)),
@@ -1920,6 +1922,15 @@ std::unique_ptr<WebSocketTask> NetworkSessionCocoa::createWebSocketTask(WebPageP
         if ([NSMutableURLRequest instancesRespondToSelector:@selector(_setPrivacyProxyFailClosedForUnreachableNonMainHosts:)])
             ensureMutableRequest()._privacyProxyFailClosedForUnreachableNonMainHosts = YES;
     }
+
+#if HAVE(ALLOW_ONLY_PARTITIONED_COOKIES)
+    if ([mutableRequest respondsToSelector:@selector(_setAllowOnlyPartitionedCookies:)]) {
+        if (CheckedPtr storageSession = networkStorageSession(); storageSession && storageSession->isOptInCookiePartitioningEnabled()) {
+            bool shouldAllowOnlyPartitioned = storageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID, pageID, shouldRelaxThirdPartyCookieBlocking) == WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned;
+            [mutableRequest _setAllowOnlyPartitionedCookies:shouldAllowOnlyPartitioned];
+        }
+    }
+#endif
 
     enableAdvancedPrivacyProtections(ensureMutableRequest(), advancedPrivacyProtections);
 

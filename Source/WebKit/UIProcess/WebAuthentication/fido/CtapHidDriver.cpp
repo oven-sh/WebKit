@@ -43,8 +43,9 @@ using namespace fido;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CtapHidDriverWorker);
 
-CtapHidDriverWorker::CtapHidDriverWorker(Ref<HidConnection>&& connection)
-    : m_connection(WTFMove(connection))
+CtapHidDriverWorker::CtapHidDriverWorker(CtapHidDriver& driver, Ref<HidConnection>&& connection)
+    : m_driver(driver)
+    , m_connection(WTFMove(connection))
 {
     protectedConnection()->initialize();
 }
@@ -171,7 +172,7 @@ Ref<CtapHidDriver> CtapHidDriver::create(Ref<HidConnection>&& connection)
 
 CtapHidDriver::CtapHidDriver(Ref<HidConnection>&& connection)
     : CtapDriver(WebCore::AuthenticatorTransport::Usb)
-    , m_worker(makeUniqueRef<CtapHidDriverWorker>(WTFMove(connection)))
+    , m_worker(makeUniqueRefWithoutRefCountedCheck<CtapHidDriverWorker>(*this, WTFMove(connection)))
     , m_nonce(kHidInitNonceLength)
 {
 }
@@ -198,7 +199,7 @@ void CtapHidDriver::transact(Vector<uint8_t>&& data, ResponseCallback&& callback
 
     auto initCommand = FidoHidMessage::create(m_channelId, FidoHidDeviceCommand::kInit, m_nonce);
     ASSERT(initCommand);
-    m_worker->transact(WTFMove(*initCommand), [weakThis = WeakPtr { *this }](std::optional<FidoHidMessage>&& response) mutable {
+    protectedWorker()->transact(WTFMove(*initCommand), [weakThis = WeakPtr { *this }](std::optional<FidoHidMessage>&& response) mutable {
         ASSERT(RunLoop::isMain());
         if (!weakThis)
             return;
@@ -238,7 +239,7 @@ void CtapHidDriver::continueAfterChannelAllocated(std::optional<FidoHidMessage>&
     // FIXME(191534): Check the rest of the payload.
     auto cmd = FidoHidMessage::create(m_channelId, protocol() == ProtocolVersion::kCtap ? FidoHidDeviceCommand::kCbor : FidoHidDeviceCommand::kMsg, m_requestData);
     ASSERT(cmd);
-    m_worker->transact(WTFMove(*cmd), [weakThis = WeakPtr { *this }](std::optional<FidoHidMessage>&& response) mutable {
+    protectedWorker()->transact(WTFMove(*cmd), [weakThis = WeakPtr { *this }](std::optional<FidoHidMessage>&& response) mutable {
         ASSERT(RunLoop::isMain());
         if (!weakThis)
             return;
@@ -276,7 +277,7 @@ void CtapHidDriver::cancel()
     // Cancel any outstanding requests.
     if (m_state == State::Ready) {
         auto cancelCommand = FidoHidMessage::create(m_channelId, FidoHidDeviceCommand::kCancel, { });
-        m_worker->cancel(WTFMove(*cancelCommand));
+        protectedWorker()->cancel(WTFMove(*cancelCommand));
     }
     reset();
 }

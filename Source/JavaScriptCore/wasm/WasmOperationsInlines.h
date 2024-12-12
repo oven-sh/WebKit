@@ -308,11 +308,12 @@ inline EncodedJSValue arrayNewElem(JSWebAssemblyInstance* instance, uint32_t typ
     if (UNLIKELY(calculatedArrayEnd.hasOverflowed() || calculatedArrayEnd > segmentLength))
         return JSValue::encode(jsNull());
 
-    size_t elementTypeSize = typeSizeInBytes(StorageType(element->elementType));
-    auto newArraySizeInBytes = CheckedSize { elementTypeSize } * arraySize;
-    if (UNLIKELY(newArraySizeInBytes.hasOverflowed() || newArraySizeInBytes > maxArraySizeInBytes))
-        return JSValue::encode(jsNull());
-
+    if (segmentLength) {
+        size_t elementTypeSize = typeSizeInBytes(StorageType(element->elementType));
+        auto newArraySizeInBytes = CheckedSize { elementTypeSize } * arraySize;
+        if (UNLIKELY(newArraySizeInBytes.hasOverflowed() || newArraySizeInBytes > maxArraySizeInBytes))
+            return JSValue::encode(jsNull());
+    }
     FixedVector<uint64_t> values(arraySize);
     return createArrayFromElementSegment(instance, arraySize, elemSegmentIndex, offset, WTFMove(values), arrayRTT);
 }

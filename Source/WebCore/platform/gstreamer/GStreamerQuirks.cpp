@@ -37,6 +37,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OptionSet.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/StringCommon.h>
 #include <wtf/text/StringView.h>
 
 namespace WebCore {
@@ -76,7 +77,7 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
     const char* quirksList = g_getenv("WEBKIT_GST_QUIRKS");
     GST_DEBUG("Attempting to parse requested quirks: %s", GST_STR_NULL(quirksList));
     if (quirksList) {
-        StringView quirks { std::span { quirksList, strlen(quirksList) } };
+        StringView quirks { span(quirksList) };
         if (WTF::equalLettersIgnoringASCIICase(quirks, "help"_s)) {
             WTFLogAlways("Supported quirks for WEBKIT_GST_QUIRKS are: amlogic, broadcom, bcmnexus, realtek, westeros");
             return;
@@ -114,7 +115,7 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
     if (!holePunchQuirk)
         return;
 
-    StringView identifier { std::span { holePunchQuirk, strlen(holePunchQuirk) } };
+    StringView identifier { span(holePunchQuirk) };
     if (WTF::equalLettersIgnoringASCIICase(identifier, "help"_s)) {
         WTFLogAlways("Supported quirks for WEBKIT_GST_HOLE_PUNCH_QUIRK are: fake, westeros, bcmnexus");
         return;

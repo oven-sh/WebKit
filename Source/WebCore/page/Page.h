@@ -214,6 +214,7 @@ struct CharacterRange;
 struct ProcessSyncData;
 struct SimpleRange;
 struct TextRecognitionResult;
+struct DocumentSyncData;
 struct WindowFeatures;
 
 using PlatformDisplayID = uint32_t;
@@ -378,7 +379,13 @@ public:
     WEBCORE_EXPORT void setMainFrame(Ref<Frame>&&);
     const URL& mainFrameURL() const { return m_mainFrameURL; }
     SecurityOrigin& mainFrameOrigin() const;
+
     WEBCORE_EXPORT void setMainFrameURL(const URL&);
+#if ENABLE(DOM_AUDIO_SESSION)
+    void setAudioSessionType(DOMAudioSessionType);
+    DOMAudioSessionType audioSessionType() const;
+#endif
+
     WEBCORE_EXPORT void updateProcessSyncData(const ProcessSyncData&);
     WEBCORE_EXPORT void setMainFrameURLFragment(String&&);
     String mainFrameURLFragment() const { return m_mainFrameURLFragment; }
@@ -1681,6 +1688,8 @@ private:
 
     bool m_shouldDeferResizeEvents { false };
     bool m_shouldDeferScrollEvents { false };
+
+    UniqueRef<DocumentSyncData> m_documentSyncData;
 }; // class Page
 
 inline Page* Frame::page() const

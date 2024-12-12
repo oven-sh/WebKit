@@ -35,7 +35,6 @@
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
 #include "NetworkSession.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebErrors.h"
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/ResourceRequest.h>

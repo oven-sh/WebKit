@@ -31,7 +31,6 @@
 #include "FrameInfoData.h"
 #include "PDFPlugin.h"
 #include "UnifiedPDFPlugin.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebFrame.h"
 #include "WebKeyboardEvent.h"
 #include "WebLoaderStrategy.h"

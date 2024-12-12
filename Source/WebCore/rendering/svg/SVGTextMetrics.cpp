@@ -25,7 +25,7 @@
 
 namespace WebCore {
 
-SVGTextMetrics::SVGTextMetrics(RenderSVGInlineText& textRenderer, const TextRun& run)
+SVGTextMetrics::SVGTextMetrics(const RenderSVGInlineText& textRenderer, const TextRun& run)
 {
     float scalingFactor = textRenderer.scalingFactor();
     ASSERT(scalingFactor);
@@ -43,7 +43,7 @@ SVGTextMetrics::SVGTextMetrics(RenderSVGInlineText& textRenderer, const TextRun&
     m_length = static_cast<unsigned>(run.length());
 }
 
-TextRun SVGTextMetrics::constructTextRun(RenderSVGInlineText& text, unsigned position, unsigned length)
+TextRun SVGTextMetrics::constructTextRun(const RenderSVGInlineText& text, unsigned position, unsigned length)
 {
     const RenderStyle& style = text.style();
 
@@ -59,12 +59,12 @@ TextRun SVGTextMetrics::constructTextRun(RenderSVGInlineText& text, unsigned pos
     return run;
 }
 
-SVGTextMetrics SVGTextMetrics::measureCharacterRange(RenderSVGInlineText& text, unsigned position, unsigned length)
+SVGTextMetrics SVGTextMetrics::measureCharacterRange(const RenderSVGInlineText& text, unsigned position, unsigned length)
 {
     return SVGTextMetrics(text, constructTextRun(text, position, length));
 }
 
-SVGTextMetrics::SVGTextMetrics(RenderSVGInlineText& text, unsigned length, float width)
+SVGTextMetrics::SVGTextMetrics(const RenderSVGInlineText& text, unsigned length, float width)
 {
     float scalingFactor = text.scalingFactor();
     ASSERT(scalingFactor);

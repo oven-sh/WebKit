@@ -103,6 +103,16 @@ fast/text/text-underline-position-under.html [ Pass ]
 
 webkit.org/b/284096 imported/w3c/web-platform-tests/scroll-animations/css/scroll-timeline-responsiveness-from-endpoint.html [ Pass ]
 
+# webkit.org/b/284381 (REGRESSION (iOS 18): 8 fast/events/ios layout tests are constantly timing out.)
+fast/events/ios/key-events-comprehensive/key-events-meta-control.html [ Pass ]
+fast/events/ios/key-events-comprehensive/key-events-meta-option.html [ Pass ]
+fast/events/ios/key-events-comprehensive/key-events-meta-shift.html [ Pass ]
+fast/events/ios/key-events-comprehensive/key-events-option-shift.html [ Pass ]
+fast/events/ios/keydown-keyup-arrow-keys-in-non-editable-element.html [ Pass ]
+fast/events/ios/keydown-keyup-in-non-editable-content.html [ Pass ]
+fast/events/ios/keydown-keyup-special-keys-in-non-editable-element.html [ Pass ]
+fast/events/ios/tab-cycle.html [ Pass ]
+
 ###
 ### NOTICE: Unless you know that the issue for which you're setting expectations specifically only occurs on iOS 17, 
 ### you should probably use the platform/ios/TestExpectations file, NOT this one.

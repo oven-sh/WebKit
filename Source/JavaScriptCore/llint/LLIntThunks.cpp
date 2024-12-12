@@ -240,6 +240,16 @@ MacroAssemblerCodeRef<JITThunkPtrTag> inPlaceInterpreterEntryThunk()
     });
     return codeRef;
 }
+
+MacroAssemblerCodeRef<JITThunkPtrTag> inPlaceInterpreterSIMDEntryThunk()
+{
+    static LazyNeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> codeRef;
+    static std::once_flag onceKey;
+    std::call_once(onceKey, [&] {
+        codeRef.construct(generateThunkWithJumpToPrologue<JITThunkPtrTag>(ipint_function_prologue_simd, "function for IPInt SIMD call"));
+    });
+    return codeRef;
+}
 #endif // ENABLE(WEBASSEMBLY)
 
 MacroAssemblerCodeRef<JSEntryPtrTag> defaultCallThunk()

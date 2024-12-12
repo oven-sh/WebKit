@@ -59,7 +59,7 @@ HashMap<String, String> MemoryStorageArea::allItems()
     return m_map.items();
 }
 
-Expected<void, StorageError> MemoryStorageArea::setItem(IPC::Connection::UniqueID connection, StorageAreaImplIdentifier storageAreaImplID, String&& key, String&& value, const String& urlString)
+Expected<void, StorageError> MemoryStorageArea::setItem(std::optional<IPC::Connection::UniqueID> connection, std::optional<StorageAreaImplIdentifier> storageAreaImplID, String&& key, String&& value, const String& urlString)
 {
     String oldValue;
     bool hasQuotaError = false;
@@ -67,7 +67,8 @@ Expected<void, StorageError> MemoryStorageArea::setItem(IPC::Connection::UniqueI
     if (hasQuotaError)
         return makeUnexpected(StorageError::QuotaExceeded);
 
-    dispatchEvents(connection, storageAreaImplID, key, oldValue, value, urlString);
+    if (connection && storageAreaImplID)
+        dispatchEvents(*connection, *storageAreaImplID, key, oldValue, value, urlString);
 
     return { };
 }

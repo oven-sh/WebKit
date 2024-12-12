@@ -422,7 +422,10 @@ FontVariationSettings fontVariationSettingsFromCSSValue(const CSSValue& value, c
     }
 
     FontVariationSettings settings;
-    for (Ref item : downcast<CSSValueList>(value)) {
+    auto list = dynamicDowncast<CSSValueList>(value);
+    if (!list)
+        return { };
+    for (Ref item : *list) {
         auto& feature = downcast<CSSFontVariationValue>(item.get());
         settings.insert({ feature.tag(), feature.value().resolveAsNumber<float>(conversionData) });
     }

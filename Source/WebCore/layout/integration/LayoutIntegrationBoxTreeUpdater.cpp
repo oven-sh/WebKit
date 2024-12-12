@@ -42,6 +42,7 @@
 #include "RenderListItem.h"
 #include "RenderListMarker.h"
 #include "RenderMenuList.h"
+#include "RenderSVGInline.h"
 #include "RenderSlider.h"
 #include "RenderStyleSetters.h"
 #include "RenderTable.h"
@@ -177,7 +178,16 @@ void BoxTreeUpdater::adjustStyleIfNeeded(const RenderElement& renderer, RenderSt
                 styleToAdjust.resetBorderRight();
                 styleToAdjust.setPaddingRight(RenderStyle::initialPadding());
             }
-            if ((styleToAdjust.display() == DisplayType::RubyBase || styleToAdjust.display() == DisplayType::RubyAnnotation) && renderInline->parent()->style().display() != DisplayType::Ruby)
+
+            auto isSupportedInlineDisplay = [&] {
+                auto display = styleToAdjust.display();
+                if (display == DisplayType::RubyBase || display == DisplayType::RubyAnnotation)
+                    return renderInline->parent()->style().display() == DisplayType::Ruby;
+                if (is<RenderSVGInline>(*renderInline))
+                    return display == DisplayType::Inline;
+                return styleToAdjust.isDisplayInlineType();
+            };
+            if (!isSupportedInlineDisplay())
                 styleToAdjust.setDisplay(DisplayType::Inline);
             return;
         }

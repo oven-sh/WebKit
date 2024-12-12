@@ -20,9 +20,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#if USE(CORE_TEXT) || USE(SKIA)
 using WebCore::FontPlatformData::IPCData = std::variant<WebCore::FontPlatformSerializedData, WebCore::FontPlatformSerializedCreationData>;
-#endif
 
 [RefCounted] class WebCore::Font {
     WebCore::FontInternalAttributes attributes();
@@ -47,6 +45,9 @@ header: <WebCore/FontPlatformData.h>
     WebCore::TextRenderingMode m_textRenderingMode;
     bool m_syntheticBold;
     bool m_syntheticOblique;
+#if PLATFORM(WIN) && USE(CAIRO)
+    LOGFONT m_font;
+#endif
 #if USE(CORE_TEXT)
     RetainPtr<CFDictionaryRef> m_attributes;
     CTFontDescriptorOptions m_options;
@@ -58,4 +59,11 @@ header: <WebCore/FontPlatformData.h>
     SkFontStyle m_style;
     Vector<hb_feature_t> m_features;
 #endif
+};
+
+header: <WebCore/FontCustomPlatformData.h>
+[CustomHeader] struct WebCore::FontCustomPlatformSerializedData {
+    Ref<WebCore::SharedBuffer> fontFaceData;
+    String itemInCollection;
+    WebCore::RenderingResourceIdentifier renderingResourceIdentifier;
 };

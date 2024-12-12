@@ -216,6 +216,7 @@ class RenderView;
 class ReportingScope;
 class RequestAnimationFrameCallback;
 class ResizeObserver;
+class ResourceMonitor;
 class SVGDocumentExtensions;
 class SVGElement;
 class SVGSVGElement;
@@ -303,7 +304,9 @@ enum CSSPropertyID : uint16_t;
 
 enum class CompositeOperator : uint8_t;
 enum class ContentRelevancy : uint8_t;
+#if ENABLE(DOM_AUDIO_SESSION)
 enum class DOMAudioSessionType : uint8_t;
+#endif
 enum class DisabledAdaptations : uint8_t;
 enum class FireEvents : bool;
 enum class FocusDirection : uint8_t;
@@ -521,10 +524,9 @@ public:
     WEBCORE_EXPORT ExceptionOr<Ref<ProcessingInstruction>> createProcessingInstruction(String&& target, String&& data);
     WEBCORE_EXPORT ExceptionOr<Ref<Attr>> createAttribute(const AtomString& name);
     WEBCORE_EXPORT ExceptionOr<Ref<Attr>> createAttributeNS(const AtomString& namespaceURI, const AtomString& qualifiedName, bool shouldIgnoreNamespaceChecks = false);
-    WEBCORE_EXPORT ExceptionOr<Ref<Node>> importNode(Node& nodeToImport, bool deep);
 
     static CustomElementNameValidationStatus validateCustomElementName(const AtomString&);
-    void setActiveCustomElementRegistry(CustomElementRegistry&);
+    void setActiveCustomElementRegistry(CustomElementRegistry*);
     CustomElementRegistry* activeCustomElementRegistry() { return m_activeCustomElementRegistry.get(); }
 
     WEBCORE_EXPORT RefPtr<Range> caretRangeFromPoint(int x, int y, HitTestSource = HitTestSource::Script);
@@ -1962,11 +1964,6 @@ public:
     void sendReportToEndpoints(const URL& baseURL, const Vector<String>& endpointURIs, const Vector<String>& endpointTokens, Ref<FormData>&& report, ViolationReportType) final;
     String httpUserAgent() const final;
 
-#if ENABLE(DOM_AUDIO_SESSION)
-    void setAudioSessionType(DOMAudioSessionType type) { m_audioSessionType = type; }
-    DOMAudioSessionType audioSessionType() const { return m_audioSessionType; }
-#endif
-
     virtual void didChangeViewSize() { }
     bool isNavigationBlockedByThirdPartyIFrameRedirectBlocking(Frame& targetFrame, const URL& destinationURL);
 
@@ -1983,6 +1980,12 @@ public:
     PermissionsPolicy permissionsPolicy() const;
 
     unsigned unloadCounter() const { return m_unloadCounter; }
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    ResourceMonitor* resourceMonitor();
+    void setResourceMonitor(RefPtr<ResourceMonitor>&&);
+    ResourceMonitor* parentResourceMonitor();
+#endif
 
 protected:
     enum class ConstructionFlag : uint8_t {
@@ -2047,7 +2050,7 @@ private:
 
     String nodeName() const final;
     bool childTypeAllowed(NodeType) const final;
-    Ref<Node> cloneNodeInternal(Document&, CloningOperation) final;
+    Ref<Node> cloneNodeInternal(TreeScope&, CloningOperation) final;
     void cloneDataFromDocument(const Document&);
 
     Seconds minimumDOMTimerInterval() const final;
@@ -2689,6 +2692,10 @@ private:
 
     mutable std::unique_ptr<CSSParserContext> m_cachedCSSParserContext;
     mutable std::unique_ptr<PermissionsPolicy> m_permissionsPolicy;
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    RefPtr<ResourceMonitor> m_resourceMonitor;
+#endif
 };
 
 Element* eventTargetElementForDocument(Document*);

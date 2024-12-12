@@ -2435,7 +2435,7 @@ DeclarativeShadowRootsSerializerAPIsEnabled:
 
 DeclarativeWebPush:
   type: bool
-  status: unstable
+  status: stable
   category: dom
   defaultsOverridable: true
   condition: ENABLE(DECLARATIVE_WEB_PUSH)
@@ -2445,7 +2445,7 @@ DeclarativeWebPush:
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: true
     WebCore:
       default: false
 
@@ -2601,6 +2601,20 @@ DeviceWidth:
       default: 0
     WebCore:
       default: 0
+      
+DevolvableWidgetsEnabled:
+  type: bool
+  status: stable
+  category: css
+  humanReadableName: "CSS Devolvable Widgets"
+  humanReadableDescription: "Enable support for devolvable widgets"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
 
 DiagnosticLoggingEnabled:
   type: bool
@@ -2843,26 +2857,28 @@ ExperimentalSandboxEnabled:
 
 ExposeSpeakersEnabled:
   type: bool
-  status: testable
+  status: internal
   category: media
   humanReadableName: "Allow speaker device selection"
   humanReadableDescription: "Allow speaker device selection"
   condition: ENABLE(MEDIA_STREAM)
   defaultValue:
     WebKit:
+      "PLATFORM(MAC)": true
       default: false
     WebCore:
       default: false
 
 ExposeSpeakersWithoutMicrophoneEnabled:
   type: bool
-  status: testable
+  status: internal
   category: media
   humanReadableName: "Allow selection of speaker device without related microphone"
   humanReadableDescription: "Allow selection of speaker device without related microphone"
   condition: ENABLE(MEDIA_STREAM)
   defaultValue:
     WebKit:
+      "PLATFORM(MAC)": true
       default: false
     WebCore:
       default: false
@@ -3440,6 +3456,22 @@ ICECandidateFilteringEnabled:
       default: true
     WebCore:
       default: true
+
+IFrameResourceMonitoringEnabled:
+  type: bool
+  status: unstable
+  category: networking
+  condition: ENABLE(CONTENT_EXTENSIONS)
+  defaultsOverridable: true
+  humanReadableName: "Frame Resource Monitoring Support"
+  humanReadableDescription: "Enable Usage Monitoring of Frame Resource Support"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
 
 IPAddressAndLocalhostMixedContentUpgradeTestingEnabled:
   type: bool
@@ -4882,7 +4914,7 @@ MediaRecorderEnabled:
 
 MediaRecorderEnabledWebM:
   type: bool
-  status: preview
+  status: stable
   category: media
   humanReadableName: "MediaRecorder WebM"
   humanReadableDescription: "Enable WebM support with MediaRecorder"
@@ -4891,6 +4923,7 @@ MediaRecorderEnabledWebM:
     WebKitLegacy:
       default: false
     WebKit:
+      "PLATFORM(COCOA)": true
       default: false
     WebCore:
       default: false
@@ -5459,6 +5492,7 @@ OptInPartitionedCookiesEnabled:
   category: dom
   humanReadableName: "Opt-in partitioned cookies (CHIPS)"
   humanReadableDescription: "Enable opt-in partitioned cookies"
+  condition: HAVE(ALLOW_ONLY_PARTITIONED_COOKIES)
   defaultValue:
     WebKitLegacy:
       default: false
@@ -5673,13 +5707,14 @@ PeerConnectionVideoScalingAdaptationDisabled:
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 PerElementSpeakerSelectionEnabled:
   type: bool
-  status: testable
+  status: internal
   category: media
   humanReadableName: "Allow per media element speaker device selection"
   humanReadableDescription: "Allow per media element speaker device selection"
   condition: ENABLE(MEDIA_STREAM)
   defaultValue:
     WebKit:
+      "PLATFORM(MAC)": true
       default: false
     WebCore:
       default: false
@@ -6319,6 +6354,20 @@ ScreenOrientationLockingAPIEnabled:
   category: dom
   humanReadableName: "Screen Orientation API (Locking / Unlocking)"
   humanReadableDescription: "Enable Screen Orientation API (Locking / Unlocking)"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+ScreenTimeEnabled:
+  type: bool
+  status: unstable
+  condition: ENABLE(SCREEN_TIME)
+  humanReadableName: "Screen Time"
+  humanReadableDescription: "Enable Screen Time"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -8901,6 +8950,7 @@ WebTransportEnabled:
     WebCore:
       default: false
   sharedPreferenceForWebProcess: true
+  disableInLockdownMode: true
 
 WebXRAugmentedRealityModuleEnabled:
   type: bool

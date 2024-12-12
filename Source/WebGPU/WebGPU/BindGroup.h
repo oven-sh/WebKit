@@ -96,12 +96,13 @@ public:
     static uint64_t makeEntryMapKey(uint32_t baseMipLevel, uint32_t baseArrayLayer, WGPUTextureAspect);
 
     const BindGroupLayout* bindGroupLayout() const { return m_bindGroupLayout.get(); }
+    RefPtr<const BindGroupLayout> protectedBindGroupLayout() const { return m_bindGroupLayout; }
 
     const BufferAndType* dynamicBuffer(uint32_t) const;
     uint32_t dynamicOffset(uint32_t bindingIndex, const Vector<uint32_t>*) const;
     void rebindSamplersIfNeeded() const;
     bool updateExternalTextures(const ExternalTexture&);
-    bool makeSubmitInvalid(ShaderStage) const;
+    bool makeSubmitInvalid(ShaderStage, const BindGroupLayout*) const;
 
 private:
     BindGroup(id<MTLBuffer> vertexArgumentBuffer, id<MTLBuffer> fragmentArgumentBuffer, id<MTLBuffer> computeArgumentBuffer, Vector<BindableResources>&&, const BindGroupLayout&, DynamicBuffersContainer&&, SamplersContainer&&, ShaderStageArray<ExternalTextureIndices>&&, Device&);

@@ -86,7 +86,7 @@ list(APPEND WebCore_SOURCES
     platform/network/win/NetworkStateNotifierWin.cpp
 
     platform/text/Hyphenation.cpp
-    platform/text/win/LocaleWin.cpp
+    platform/text/LocaleICU.cpp
 
     platform/win/BString.cpp
     platform/win/BitmapInfo.cpp

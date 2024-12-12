@@ -25,6 +25,10 @@
 
 #if ENABLE(WEBXR)
 
+[
+    DispatchedFrom=UI,
+    DispatchedTo=WebContent
+]
 messages -> PlatformXRSystemProxy {
     SessionDidEnd(WebKit::XRDeviceIdentifier deviceIdentifier)
     SessionDidUpdateVisibilityState(WebKit::XRDeviceIdentifier deviceIdentifier, PlatformXR::VisibilityState visibilityState)

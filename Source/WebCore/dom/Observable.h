@@ -38,8 +38,10 @@ class InternalObserver;
 class JSSubscriptionObserverCallback;
 class MapperCallback;
 class PredicateCallback;
+class ReducerCallback;
 class ScriptExecutionContext;
 class VisitorCallback;
+struct ObservableInspector;
 struct SubscribeOptions;
 struct SubscriptionObserver;
 
@@ -48,6 +50,7 @@ class Observable final : public ScriptWrappable, public RefCounted<Observable> {
 
 public:
     using ObserverUnion = std::variant<RefPtr<JSSubscriptionObserverCallback>, SubscriptionObserver>;
+    using InspectorUnion = std::variant<RefPtr<JSSubscriptionObserverCallback>, ObservableInspector>;
 
     static Ref<Observable> create(Ref<SubscriberCallback>);
 
@@ -57,12 +60,10 @@ public:
     void subscribeInternal(ScriptExecutionContext&, Ref<InternalObserver>&&, const SubscribeOptions&);
 
     Ref<Observable> map(ScriptExecutionContext&, MapperCallback&);
-
     Ref<Observable> filter(ScriptExecutionContext&, PredicateCallback&);
-
     Ref<Observable> take(ScriptExecutionContext&, uint64_t);
-
     Ref<Observable> drop(ScriptExecutionContext&, uint64_t);
+    Ref<Observable> inspect(ScriptExecutionContext&, std::optional<InspectorUnion>&&);
 
     // Promise-returning operators.
 
@@ -72,6 +73,7 @@ public:
     void find(ScriptExecutionContext&, Ref<PredicateCallback>&&, const SubscribeOptions&, Ref<DeferredPromise>&&);
     void every(ScriptExecutionContext&, Ref<PredicateCallback>&&, const SubscribeOptions&, Ref<DeferredPromise>&&);
     void some(ScriptExecutionContext&, Ref<PredicateCallback>&&, const SubscribeOptions&, Ref<DeferredPromise>&&);
+    void reduce(ScriptExecutionContext&, Ref<ReducerCallback>&&, JSC::JSValue, const SubscribeOptions&, Ref<DeferredPromise>&&);
 
 private:
     Ref<SubscriberCallback> m_subscriberCallback;

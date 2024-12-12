@@ -35,6 +35,7 @@
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKRetainPtr.h>
 #import <WebKit/_WKDownload.h>
+#import <wtf/StdLibExtras.h>
 
 namespace TestWebKitAPI {
 
@@ -80,7 +81,7 @@ static WKStringRef decideDestinationWithSuggestedFilename(WKDownloadRef download
 static void contextMenuDidCreateDownload(WKPageRef page, WKDownloadRef download, const void* clientInfo)
 {
     WKDownloadClientV0 client;
-    memset(&client, 0, sizeof(client));
+    memsetSpan(asMutableByteSpan(client), 0);
     client.base.version = 0;
     client.decideDestinationWithResponse = decideDestinationWithSuggestedFilename;
     WKDownloadSetClient(download, &client.base);
@@ -132,7 +133,7 @@ static WKStringRef decideDestinationWithSuggestedFilenameContainingSlashes(WKDow
 static void contextMenuDidCreateDownloadWithSuggestedFilenameContainingSlashes(WKPageRef page, WKDownloadRef download, const void* clientInfo)
 {
     WKDownloadClientV0 client;
-    memset(&client, 0, sizeof(client));
+    memsetSpan(asMutableByteSpan(client), 0);
     client.base.version = 0;
     client.decideDestinationWithResponse = decideDestinationWithSuggestedFilenameContainingSlashes;
     WKDownloadSetClient(download, &client.base);

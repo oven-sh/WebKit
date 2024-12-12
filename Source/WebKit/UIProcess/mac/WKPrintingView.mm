@@ -490,17 +490,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     }
 
     for (PDFAnnotation *annotation in [pdfPage annotations]) {
-        if (![annotation isKindOfClass:WebKit::getPDFAnnotationLinkClass()])
+        if (![[annotation valueForAnnotationKey:WebKit::get_PDFKit_PDFAnnotationKeySubtype()] isEqualToString:WebKit::get_PDFKit_PDFAnnotationSubtypeLink()])
             continue;
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        PDFAnnotationLink *linkAnnotation = (PDFAnnotationLink *)annotation;
-ALLOW_DEPRECATED_DECLARATIONS_END
-        NSURL *url = [linkAnnotation URL];
-        CGRect transformedRect = CGRectApplyAffineTransform(NSRectToCGRect([linkAnnotation bounds]), transform);
+        NSURL *url = annotation.URL;
+        CGRect transformedRect = CGRectApplyAffineTransform(NSRectToCGRect(annotation.bounds), transform);
 
         if (!url) {
-            PDFDestination *destination = [linkAnnotation destination];
+            PDFDestination *destination = annotation.destination;
             if (!destination)
                 continue;
             CGPDFContextSetDestinationForRect(context, (__bridge CFStringRef)linkDestinationName(pdfDocument, destination), transformedRect);
@@ -596,16 +593,13 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         for (unsigned i = 0; i < pageCount; i++) {
             PDFPage *page = [_printedPagesPDFDocument pageAtIndex:i];
             for (PDFAnnotation *annotation in page.annotations) {
-                if (![annotation isKindOfClass:WebKit::getPDFAnnotationLinkClass()])
+                if (![[annotation valueForAnnotationKey:WebKit::get_PDFKit_PDFAnnotationKeySubtype()] isEqualToString:WebKit::get_PDFKit_PDFAnnotationSubtypeLink()])
                     continue;
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-                PDFAnnotationLink *linkAnnotation = (PDFAnnotationLink *)annotation;
-ALLOW_DEPRECATED_DECLARATIONS_END
-                if (linkAnnotation.URL)
+                if (annotation.URL)
                     continue;
 
-                PDFDestination *destination = linkAnnotation.destination;
+                PDFDestination *destination = annotation.destination;
                 if (!destination)
                     continue;
 

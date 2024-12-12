@@ -83,6 +83,14 @@ char* CString::mutableData()
     return m_buffer->mutableData();
 }
 
+std::span<char> CString::mutableSpan()
+{
+    copyBufferIfNeeded();
+    if (!m_buffer)
+        return { };
+    return m_buffer->mutableSpan();
+}
+
 CString CString::newUninitialized(size_t length, std::span<char>& characterBuffer)
 {
     CString result;

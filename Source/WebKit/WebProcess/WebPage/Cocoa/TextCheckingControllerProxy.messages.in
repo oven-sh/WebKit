@@ -22,6 +22,10 @@
 
 #if ENABLE(PLATFORM_DRIVEN_TEXT_CHECKING)
 
+[
+    DispatchedFrom=UI,
+    DispatchedTo=WebContent
+]
 messages -> TextCheckingControllerProxy {
     ReplaceRelativeToSelection(struct WebCore::AttributedString annotatedString, int64_t selectionOffset, uint64_t length, uint64_t relativeReplacementLocation, uint64_t relativeReplacementLength)
 

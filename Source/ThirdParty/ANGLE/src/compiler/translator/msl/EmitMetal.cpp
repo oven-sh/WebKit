@@ -335,16 +335,12 @@ static const char *GetOperatorString(TOperator op,
             return "++";
         case TOperator::EOpPreDecrement:
             return "--";
-        case TOperator::EOpVectorTimesScalarAssign:
-            return "*=";
         case TOperator::EOpVectorTimesMatrixAssign:
             return "*=";
         case TOperator::EOpMatrixTimesScalarAssign:
             return "*=";
         case TOperator::EOpMatrixTimesMatrixAssign:
             return "*=";
-        case TOperator::EOpVectorTimesScalar:
-            return "*";
         case TOperator::EOpVectorTimesMatrix:
             return "*";
         case TOperator::EOpMatrixTimesVector:
@@ -366,27 +362,29 @@ static const char *GetOperatorString(TOperator op,
         case TOperator::EOpBitShiftLeft:
         case TOperator::EOpBitShiftLeftAssign:
             // TODO: Check logical vs arithmetic shifting.
-            return resultType.isSignedIntegerValue() ? "ANGLE_ilshift" : "ANGLE_ulshift";
+            return resultType.isSignedInt() ? "ANGLE_ilshift" : "ANGLE_ulshift";
 
         case TOperator::EOpAddAssign:
         case TOperator::EOpAdd:
-            return resultType.isSignedIntegerValue() ? "ANGLE_iadd" : "+";
+            return resultType.isSignedInt() ? "ANGLE_iadd" : "+";
 
         case TOperator::EOpSubAssign:
         case TOperator::EOpSub:
-            return resultType.isSignedIntegerValue() ? "ANGLE_isub" : "-";
+            return resultType.isSignedInt() ? "ANGLE_isub" : "-";
 
         case TOperator::EOpMulAssign:
         case TOperator::EOpMul:
-            return resultType.isSignedIntegerValue() ? "ANGLE_imul" : "*";
+        case TOperator::EOpVectorTimesScalarAssign:
+        case TOperator::EOpVectorTimesScalar:
+            return resultType.isSignedInt() ? "ANGLE_imul" : "*";
 
         case TOperator::EOpDiv:
         case TOperator::EOpDivAssign:
-            return resultType.isSignedIntegerValue() ? "ANGLE_div" : "/";
+            return resultType.isSignedInt() ? "ANGLE_div" : "/";
 
         case TOperator::EOpIMod:
         case TOperator::EOpIModAssign:
-            return resultType.isSignedIntegerValue() ? "ANGLE_imod" : "%";
+            return resultType.isSignedInt() ? "ANGLE_imod" : "%";
 
         case TOperator::EOpEqual:
             if ((argType0->getStruct() && argType1->getStruct()) &&
@@ -1822,6 +1820,7 @@ bool GenMetalTraverser::visitBinary(Visit, TIntermBinary *binaryNode)
         case TOperator::EOpAddAssign:
         case TOperator::EOpSubAssign:
         case TOperator::EOpMulAssign:
+        case TOperator::EOpVectorTimesScalarAssign:
             leftNode.traverse(this);
             mOut << " = ";
             [[fallthrough]];

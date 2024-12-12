@@ -564,134 +564,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 // NSAttributedString support.
 
-static void attributedStringSetStyle(NSMutableAttributedString *attrString, RenderObject* renderer, const NSRange& range)
-{
-    if (!renderer || !attributedStringContainsRange(attrString, range))
-        return;
-
-    const auto& style = renderer->style();
-
-    // set basic font info
-    attributedStringSetFont(attrString, style.fontCascade().primaryFont().getCTFont(), range);
-
-    // Set basic colors.
-    attributedStringSetColor(attrString, NSAccessibilityForegroundColorTextAttribute, cocoaColor(style.visitedDependentColor(CSSPropertyColor)).get(), range);
-    attributedStringSetColor(attrString, NSAccessibilityBackgroundColorTextAttribute, cocoaColor(style.visitedDependentColor(CSSPropertyBackgroundColor)).get(), range);
-
-    // Set super/sub scripting.
-    auto alignment = style.verticalAlign();
-    if (alignment == VerticalAlign::Sub)
-        attributedStringSetNumber(attrString, NSAccessibilitySuperscriptTextAttribute, @(-1), range);
-    else if (alignment == VerticalAlign::Super)
-        attributedStringSetNumber(attrString, NSAccessibilitySuperscriptTextAttribute, @(1), range);
-
-    // Set shadow.
-    if (style.textShadow())
-        attributedStringSetNumber(attrString, NSAccessibilityShadowTextAttribute, @YES, range);
-
-    // Set underline and strikethrough.
-    auto decor = style.textDecorationsInEffect();
-    if (decor & TextDecorationLine::Underline || decor & TextDecorationLine::LineThrough) {
-        // FIXME: Should the underline style be reported here?
-        auto decorationStyles = TextDecorationPainter::stylesForRenderer(*renderer, decor);
-
-        if (decor & TextDecorationLine::Underline) {
-            attributedStringSetNumber(attrString, NSAccessibilityUnderlineTextAttribute, @YES, range);
-            attributedStringSetColor(attrString, NSAccessibilityUnderlineColorTextAttribute, cocoaColor(decorationStyles.underline.color).get(), range);
-        }
-
-        if (decor & TextDecorationLine::LineThrough) {
-            attributedStringSetNumber(attrString, NSAccessibilityStrikethroughTextAttribute, @YES, range);
-            attributedStringSetColor(attrString, NSAccessibilityStrikethroughColorTextAttribute, cocoaColor(decorationStyles.linethrough.color).get(), range);
-        }
-    }
-
-    // FIXME: This traversal should be replaced by a flag in AccessibilityObject::m_ancestorFlags (e.g., AXAncestorFlag::HasHTMLMarkAncestor)
-    // Indicate background highlighting.
-    for (Node* node = renderer->node(); node; node = node->parentNode()) {
-        if (node->hasTagName(HTMLNames::markTag))
-            attributedStringSetNumber(attrString, @"AXHighlight", @YES, range);
-        if (auto* element = dynamicDowncast<Element>(*node)) {
-            auto& roleValue = element->attributeWithoutSynchronization(HTMLNames::roleAttr);
-            if (equalLettersIgnoringASCIICase(roleValue, "insertion"_s))
-                attributedStringSetNumber(attrString, @"AXIsSuggestedInsertion", @YES, range);
-            else if (equalLettersIgnoringASCIICase(roleValue, "deletion"_s))
-                attributedStringSetNumber(attrString, @"AXIsSuggestedDeletion", @YES, range);
-            else if (equalLettersIgnoringASCIICase(roleValue, "suggestion"_s))
-                attributedStringSetNumber(attrString, @"AXIsSuggestion", @YES, range);
-            else if (equalLettersIgnoringASCIICase(roleValue, "mark"_s))
-                attributedStringSetNumber(attrString, @"AXHighlight", @YES, range);
-        }
-    }
-}
-
-static void attributedStringSetHeadingLevel(NSMutableAttributedString *attrString, RenderObject* renderer, const NSRange& range)
-{
-    if (!renderer || !attributedStringContainsRange(attrString, range))
-        return;
-
-    // Sometimes there are objects between the text and the heading.
-    // In those cases the parent hierarchy should be queried to see if there is a heading ancestor.
-    auto* cache = renderer->document().axObjectCache();
-    RefPtr ancestor = cache ? cache->getOrCreate(renderer->parent()) : nullptr;
-    for (; ancestor; ancestor = ancestor->parentObject()) {
-        if (unsigned level = ancestor->headingLevel()) {
-            [attrString addAttribute:@"AXHeadingLevel" value:@(level) range:range];
-            return;
-        }
-    }
-}
-
-static void attributedStringSetBlockquoteLevel(NSMutableAttributedString *attrString, RenderObject* renderer, const NSRange& range)
-{
-    if (!renderer || !attributedStringContainsRange(attrString, range))
-        return;
-
-    auto* cache = renderer->document().axObjectCache();
-    RefPtr object = cache ? cache->getOrCreate(*renderer) : nullptr;
-    if (!object)
-        return;
-
-    unsigned level = object->blockquoteLevel();
-    if (level)
-        [attrString addAttribute:NSAccessibilityBlockQuoteLevelAttribute value:@(level) range:range];
-}
-
-static void attributedStringSetExpandedText(NSMutableAttributedString *attrString, RenderObject* renderer, const NSRange& range)
-{
-    if (!renderer || !attributedStringContainsRange(attrString, range))
-        return;
-
-    auto* cache = renderer->document().axObjectCache();
-    RefPtr object = cache ? cache->getOrCreate(*renderer) : nullptr;
-    if (object && object->supportsExpandedTextValue())
-        [attrString addAttribute:NSAccessibilityExpandedTextValueAttribute value:object->expandedTextValue() range:range];
-}
-
-static void attributedStringSetElement(NSMutableAttributedString *attrString, NSString *attribute, AccessibilityObject* object, const NSRange& range)
-{
-    if (!attributedStringContainsRange(attrString, range))
-        return;
-
-    auto* renderObject = dynamicDowncast<AccessibilityRenderObject>(object);
-    if (!renderObject)
-        return;
-
-    // Make a serializable AX object.
-    auto* renderer = renderObject->renderer();
-    if (!renderer)
-        return;
-
-    id wrapper = object->wrapper();
-    if ([attribute isEqualToString:NSAccessibilityAttachmentTextAttribute] && object->isAttachment()) {
-        if (id attachmentView = [wrapper attachmentView])
-            wrapper = [wrapper attachmentView];
-    }
-
-    if (auto axElement = adoptCF(NSAccessibilityCreateAXUIElementRef(wrapper)))
-        [attrString addAttribute:attribute value:(__bridge id)axElement.get() range:range];
-}
-
 static void attributedStringSetCompositionAttributes(NSMutableAttributedString *attrString, Node& node, const SimpleRange& textSimpleRange)
 {
 #if HAVE(INLINE_PREDICTIONS)
@@ -724,15 +596,6 @@ static bool shouldHaveAnySpellCheckAttribute(Node& node)
     // If this node is not inside editable content, do not run the spell checker on the text.
     auto* cache = node.document().axObjectCache();
     return cache && cache->rootAXEditableElement(&node);
-}
-
-void attributedStringSetNeedsSpellCheck(NSMutableAttributedString *attributedString, Node& node)
-{
-    if (!shouldHaveAnySpellCheckAttribute(node))
-        return;
-
-    // Inform the AT that we want it to spell-check for us by setting AXDidSpellCheck to @NO.
-    attributedStringSetNumber(attributedString, AXDidSpellCheckAttribute, @NO, NSMakeRange(0, attributedString.length));
 }
 
 void attributedStringSetSpelling(NSMutableAttributedString *attrString, Node& node, StringView text, const NSRange& range)
@@ -780,25 +643,16 @@ RetainPtr<NSAttributedString> attributedStringCreate(Node& node, StringView text
     if (!renderer)
         return nil;
 
-    auto result = adoptNS([[NSMutableAttributedString alloc] initWithString:text.createNSStringWithoutCopying().get()]);
-    NSRange range = NSMakeRange(0, [result length]);
+    auto* cache = renderer->document().axObjectCache();
+    RefPtr object = cache ? cache->getOrCreate(*renderer) : nullptr;
+    if (!object)
+        return nil;
 
-    // Set attributes.
-    attributedStringSetStyle(result.get(), renderer.get(), range);
-    attributedStringSetHeadingLevel(result.get(), renderer.get(), range);
-    attributedStringSetBlockquoteLevel(result.get(), renderer.get(), range);
-    attributedStringSetExpandedText(result.get(), renderer.get(), range);
-    attributedStringSetElement(result.get(), NSAccessibilityLinkTextAttribute, AccessibilityObject::anchorElementForNode(node), range);
-    attributedStringSetCompositionAttributes(result.get(), node, textRange);
-    // Do spelling last because it tends to break up the range.
-    if (spellCheck == AXCoreObject::SpellCheck::Yes) {
-        if (AXObjectCache::shouldSpellCheck())
-            attributedStringSetSpelling(result.get(), node, text, range);
-        else
-            attributedStringSetNeedsSpellCheck(result.get(), node);
-    }
-
-    return result;
+    RetainPtr string = object->createAttributedString(text, spellCheck);
+    // Ideally this would happen in `createAttributedString`, but that doesn't work for `AXIsolatedObject`s at the moment.
+    // See the FIXME comment in that function.
+    attributedStringSetCompositionAttributes(string.get(), node, textRange);
+    return string;
 }
 
 std::span<const uint8_t> AXRemoteFrame::generateRemoteToken() const

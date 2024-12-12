@@ -61,6 +61,7 @@
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
 #include "DocumentMarkerController.h"
+#include "DocumentSyncData.h"
 #include "DragController.h"
 #include "Editing.h"
 #include "Editor.h"
@@ -438,6 +439,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_writingToolsController(makeUniqueRef<WritingToolsController>(*this))
 #endif
     , m_activeNowPlayingSessionUpdateTimer(*this, &Page::activeNowPlayingSessionUpdateTimerFired)
+    , m_documentSyncData(makeUniqueRef<DocumentSyncData>())
 {
     updateTimerThrottlingState();
 
@@ -793,9 +795,27 @@ void Page::setMainFrame(Ref<Frame>&& frame)
 
 void Page::setMainFrameURL(const URL& url)
 {
+    if (url == m_mainFrameURL)
+        return;
+
     m_mainFrameURL = url;
     m_mainFrameOrigin = SecurityOrigin::create(url);
+
+    processSyncClient().broadcastMainFrameURLChangeToOtherProcesses(url);
 }
+
+#if ENABLE(DOM_AUDIO_SESSION)
+void Page::setAudioSessionType(DOMAudioSessionType audioSessionType)
+{
+    m_documentSyncData->audioSessionType = audioSessionType;
+    processSyncClient().broadcastAudioSessionTypeToOtherProcesses(audioSessionType);
+}
+
+DOMAudioSessionType Page::audioSessionType() const
+{
+    return m_documentSyncData->audioSessionType;
+}
+#endif
 
 void Page::updateProcessSyncData(const ProcessSyncData& data)
 {
@@ -803,6 +823,11 @@ void Page::updateProcessSyncData(const ProcessSyncData& data)
     case ProcessSyncDataType::MainFrameURLChange:
         setMainFrameURL(std::get<URL>(data.value));
         break;
+#if ENABLE(DOM_AUDIO_SESSION)
+    case ProcessSyncDataType::AudioSessionType:
+        m_documentSyncData->update(data);
+        break;
+#endif
     }
 }
 
@@ -1497,7 +1522,7 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
 
         if (mainFrameView && mainFrameView->scrollPosition() != origin && !delegatesScaling() && mainDocument->renderView() && mainDocument->renderView()->needsLayout() && mainFrameView->didFirstLayout()) {
             mainFrameView->layoutContext().layout();
-            mainFrameView->updateCompositingLayersAfterLayoutIfNeeded();
+            mainFrameView->layoutContext().updateCompositingLayersAfterLayoutIfNeeded();
         }
     }
 
@@ -3994,8 +4019,9 @@ bool Page::useDarkAppearance() const
         return m_useDarkAppearanceOverride.value();
 
     if (RefPtr documentLoader = localMainFrame->loader().documentLoader()) {
-        if (documentLoader->colorSchemePreference() == ColorSchemePreference::Dark)
-            return true;
+        auto colorSchemePreference = documentLoader->colorSchemePreference();
+        if (colorSchemePreference != ColorSchemePreference::NoPreference)
+            return colorSchemePreference == ColorSchemePreference::Dark;
     }
 
     return m_useDarkAppearance;
@@ -4006,16 +4032,12 @@ bool Page::useDarkAppearance() const
 
 void Page::setUseDarkAppearanceOverride(std::optional<bool> valueOverride)
 {
-#if HAVE(OS_DARK_MODE_SUPPORT)
     if (valueOverride == m_useDarkAppearanceOverride)
         return;
 
     m_useDarkAppearanceOverride = valueOverride;
 
     appearanceDidChange();
-#else
-    UNUSED_PARAM(valueOverride);
-#endif
 }
 
 void Page::setFullscreenInsets(const FloatBoxExtent& insets)
@@ -4447,7 +4469,7 @@ void Page::recomputeTextAutoSizingInAllFrames()
                 if (RefPtr element = renderer.element()) {
                     if (auto adjustment = Style::Adjuster::adjustmentForTextAutosizing(renderer.style(), *element)) {
                         auto newStyle = RenderStyle::clone(renderer.style());
-                        Style::Adjuster::adjustForTextAutosizing(newStyle, *element, adjustment);
+                        Style::Adjuster::adjustForTextAutosizing(newStyle, adjustment);
                         renderer.setStyle(WTFMove(newStyle));
                     }
                 }

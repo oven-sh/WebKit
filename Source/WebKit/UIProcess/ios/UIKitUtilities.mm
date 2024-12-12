@@ -228,6 +228,15 @@ static UIAxis axesForDelta(WebCore::FloatSize delta)
     return nil;
 }
 
+- (BOOL)_wk_isAncestorOf:(UIView *)view
+{
+    for (RetainPtr parent = [view superview]; parent; parent = [parent superview]) {
+        if (parent == self)
+            return YES;
+    }
+    return NO;
+}
+
 - (UIViewController *)_wk_viewControllerForFullScreenPresentation
 {
     auto controller = self.window.rootViewController;

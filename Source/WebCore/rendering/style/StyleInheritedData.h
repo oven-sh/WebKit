@@ -27,6 +27,8 @@
 #include "FontCascade.h"
 #include "Length.h"
 #include "StyleColor.h"
+#include "StyleFontData.h"
+#include <wtf/DataRef.h>
 
 namespace WTF {
 class TextStream;
@@ -59,7 +61,7 @@ public:
     Length specifiedLineHeight;
 #endif
 
-    FontCascade fontCascade;
+    DataRef<StyleFontData> fontData;
     Color color;
     Color visitedLinkColor;
 

@@ -275,11 +275,7 @@ void RemoteImageBufferSetProxy::willPrepareForDisplay()
     if (m_remoteNeedsConfigurationUpdate) {
         send(Messages::RemoteImageBufferSet::UpdateConfiguration(m_size, m_renderingMode, m_renderingPurpose, m_scale, m_colorSpace, m_pixelFormat));
 
-        OptionSet<WebCore::ImageBufferOptions> options;
-        if (m_renderingMode == RenderingMode::Accelerated)
-            options.add(WebCore::ImageBufferOptions::Accelerated);
-
-        m_displayListRecorder = Ref { *m_remoteRenderingBackendProxy }->createDisplayListRecorder(m_displayListIdentifier, m_size, m_renderingPurpose, m_scale, m_colorSpace, m_pixelFormat, options);
+        m_displayListRecorder = Ref { *m_remoteRenderingBackendProxy }->createDisplayListRecorder(m_displayListIdentifier, m_size, m_renderingMode, m_renderingPurpose, m_scale, m_colorSpace, m_pixelFormat);
     }
     m_remoteNeedsConfigurationUpdate = false;
 

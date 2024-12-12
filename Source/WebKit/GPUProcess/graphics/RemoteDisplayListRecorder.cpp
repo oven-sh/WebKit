@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "RemoteDisplayListRecorder.h"
+#include "SharedPreferencesForWebProcess.h"
 
 #if ENABLE(GPU_PROCESS)
 
@@ -631,6 +632,15 @@ void RemoteDisplayListRecorder::applyFillPattern()
 void RemoteDisplayListRecorder::applyDeviceScaleFactor(float scaleFactor)
 {
     handleItem(DisplayList::ApplyDeviceScaleFactor(scaleFactor));
+}
+
+std::optional<SharedPreferencesForWebProcess> RemoteDisplayListRecorder::sharedPreferencesForWebProcess() const
+{
+    RefPtr renderingBackend = m_renderingBackend;
+    if (renderingBackend)
+        return renderingBackend->sharedPreferencesForWebProcess();
+
+    return std::nullopt;
 }
 
 } // namespace WebKit

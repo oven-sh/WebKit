@@ -366,7 +366,7 @@ static Expected<MappedData, std::error_code> compiledToFile(WTF::String&& json, 
     }
     
     std::array<uint8_t, CurrentVersionFileHeaderSize> invalidHeader;
-    memset(invalidHeader.data(), 0xFF, invalidHeader.size());
+    invalidHeader.fill(0xFF);
     // This header will be rewritten in CompilationClient::finalize.
     if (writeToFile(temporaryFileHandle, invalidHeader) == -1) {
         WTFLogAlways("Content Rule List compiling failed: Writing header to file failed.");

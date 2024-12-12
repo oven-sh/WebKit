@@ -32,6 +32,10 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+#if USE(GSTREAMER)
+#include "GStreamerCommon.h"
+#endif
+
 namespace WebCore {
 
 class AudioBus;
@@ -63,6 +67,10 @@ private:
     std::unique_ptr<PlatformAudioData> m_audioBuffer;
 #if USE(AVFOUNDATION) || USE(GSTREAMER)
     size_t m_numberOfFrames { 0 };
+#endif
+#if USE(GSTREAMER)
+    GstAudioInfo m_info;
+    GRefPtr<GstCaps> m_caps;
 #endif
 };
 

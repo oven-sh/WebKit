@@ -232,6 +232,10 @@ public:
     bool isFocused() const;
 
     String frameTextForTesting(bool);
+
+    void markAsRemovedInAnotherProcess() { m_wasRemovedInAnotherProcess = true; }
+    bool wasRemovedInAnotherProcess() const { return m_wasRemovedInAnotherProcess; }
+
 private:
     WebFrame(WebPage&, WebCore::FrameIdentifier);
 
@@ -252,6 +256,7 @@ private:
     std::optional<DownloadID> m_policyDownloadID;
 
     const WebCore::FrameIdentifier m_frameID;
+    bool m_wasRemovedInAnotherProcess { false };
 
 #if PLATFORM(IOS_FAMILY)
     TransactionID m_firstLayerTreeTransactionIDAfterDidCommitLoad;

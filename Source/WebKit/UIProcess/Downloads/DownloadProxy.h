@@ -157,6 +157,7 @@ private:
     WeakPtr<WebPageProxy> m_originatingPage;
     Vector<URL> m_redirectChain;
     bool m_wasUserInitiated { true };
+    bool m_downloadIsCancelled { false };
     Ref<API::FrameInfo> m_frameInfo;
     CompletionHandler<void(DownloadProxy*)> m_didStartCallback;
 #if PLATFORM(COCOA)

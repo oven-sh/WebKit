@@ -516,7 +516,7 @@ public:
 
     void updateLayerPositionsAfterStyleChange();
     enum class CanUseSimplifiedRepaintPass : uint8_t { No, Yes };
-    void updateLayerPositionsAfterLayout(RenderElement::LayoutIdentifier, bool didFullRepaint, CanUseSimplifiedRepaintPass);
+    void updateLayerPositionsAfterLayout(RenderElement::LayoutIdentifier, bool didFullRepaint, bool environmentChanged, CanUseSimplifiedRepaintPass);
     void updateLayerPositionsAfterOverflowScroll();
     void updateLayerPositionsAfterDocumentScroll();
 
@@ -1032,6 +1032,7 @@ private:
         Seen3DTransformedLayer              = 1 << 7,
         SeenCompositedScrollingLayer        = 1 << 8,
         SubtreeNeedsUpdate                  = 1 << 9,
+        EnvironmentChanged                  = 1 << 10,
     };
     static OptionSet<UpdateLayerPositionsFlag> flagsForUpdateLayerPositions(RenderLayer& startingLayer);
 
@@ -1042,6 +1043,7 @@ private:
             UpdateLayerPositionsFlag::NeedsFullRepaintInBacking,
             UpdateLayerPositionsFlag::ContainingClippingLayerChangedSize,
             UpdateLayerPositionsFlag::SubtreeNeedsUpdate,
+            UpdateLayerPositionsFlag::EnvironmentChanged,
         };
     }
 
@@ -1343,7 +1345,7 @@ private:
     bool m_hasNotIsolatedCompositedBlendingDescendants : 1;
     bool m_hasNotIsolatedBlendingDescendants : 1;
     bool m_hasNotIsolatedBlendingDescendantsStatusDirty : 1;
-    bool m_repaintRectsValid : 1;
+    bool m_repaintRectsValid : 1 { false };
 
     bool m_intrinsicallyComposited : 1 { false };
     bool m_alwaysIncludedInZOrderLists : 1 { false };

@@ -65,7 +65,6 @@ public:
 
     bool inTestingMode() { return m_testingMode; }
 
-#if PLATFORM(COCOA)
     void globalObjectIsAvailableForFrame(WebPage&, WebFrame&, WebCore::DOMWrapperWorld&);
     void serviceWorkerGlobalObjectIsAvailableForFrame(WebPage&, WebFrame&, WebCore::DOMWrapperWorld&);
     void addBindingsToWebPageFrameIfNecessary(WebFrame&, WebCore::DOMWrapperWorld&);
@@ -82,7 +81,6 @@ public:
 
     bool hasLoadedContexts() const { return !m_extensionContexts.isEmpty(); }
     const WebExtensionContextProxySet& extensionContexts() const { return m_extensionContexts; }
-#endif
 
 private:
     explicit WebExtensionControllerProxy(const WebExtensionControllerParameters&);
@@ -90,18 +88,14 @@ private:
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-#if PLATFORM(COCOA)
     void load(const WebExtensionContextParameters&);
     void unload(WebExtensionContextIdentifier);
-#endif
 
     WebExtensionControllerIdentifier m_identifier;
     bool m_testingMode { false };
 
-#if PLATFORM(COCOA)
     WebExtensionContextProxySet m_extensionContexts;
     WebExtensionContextProxyBaseURLMap m_extensionContextBaseURLMap;
-#endif
 };
 
 } // namespace WebKit

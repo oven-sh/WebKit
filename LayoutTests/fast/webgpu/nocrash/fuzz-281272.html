@@ -35,8 +35,10 @@ async function run() {
         ]
     });
     renderPassEncoder.executeBundles([renderBundleEncoder.finish()])
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

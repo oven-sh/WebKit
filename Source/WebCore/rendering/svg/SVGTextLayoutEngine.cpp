@@ -462,6 +462,8 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
         float y = data.y;
         auto previousBoxOnLine = textBox->previousOnLine();
 
+        bool hasXOrY = !SVGTextLayoutAttributes::isEmptyValue(x) || !SVGTextLayoutAttributes::isEmptyValue(y);
+
         // If we start a new chunk following an chunk that had a textLength set, use that
         // textLength to determine the chunk start position, instead of glyph advance values.
         auto moveToExpectedChunkStartPositionIfNeeded = [&]() {
@@ -613,7 +615,7 @@ void SVGTextLayoutEngine::layoutTextOnLineOrPath(InlineIterator::SVGTextBoxItera
         }
 
         // Determine whether we have to start a new fragment.
-        bool shouldStartNewFragment = m_dx || m_dy || m_isVerticalText || m_inPathLayout || angle || angle != lastAngle
+        bool shouldStartNewFragment = hasXOrY || m_dx || m_dy || m_isVerticalText || m_inPathLayout || angle || angle != lastAngle
             || orientationAngle || applySpacingToNextCharacter || definesTextLength;
 
         // If we already started a fragment, close it now.

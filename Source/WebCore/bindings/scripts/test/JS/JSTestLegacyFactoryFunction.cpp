@@ -114,10 +114,10 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTestLegacyFactoryFunctionLe
     ASSERT(castedThis);
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    auto* context = castedThis->scriptExecutionContext();
+    RefPtr context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "TestLegacyFactoryFunction"_s);
-    auto& document = downcast<Document>(*context);
+    Ref document = downcast<Document>(*context);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto str1ConversionResult = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     if (UNLIKELY(str1ConversionResult.hasException(throwScope)))
@@ -130,7 +130,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTestLegacyFactoryFunctionLe
     auto str3ConversionResult = convertOptionalWithDefault<IDLDOMString>(*lexicalGlobalObject, argument2.value(), [&]() -> ConversionResult<IDLDOMString> { return typename Converter<IDLDOMString>::ReturnType { String() }; });
     if (UNLIKELY(str3ConversionResult.hasException(throwScope)))
        return encodedJSValue();
-    auto object = TestLegacyFactoryFunction::createForLegacyFactoryFunction(document, str1ConversionResult.releaseReturnValue(), str2ConversionResult.releaseReturnValue(), str3ConversionResult.releaseReturnValue());
+    auto object = TestLegacyFactoryFunction::createForLegacyFactoryFunction(document.get(), str1ConversionResult.releaseReturnValue(), str2ConversionResult.releaseReturnValue(), str3ConversionResult.releaseReturnValue());
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, { });
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);

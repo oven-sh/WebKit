@@ -29,7 +29,6 @@
 #include "Logging.h"
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebProcess.h"
 #include <WebCore/FrameDestructionObserverInlines.h>

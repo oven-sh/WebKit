@@ -59,8 +59,6 @@
 #include <wtf/URL.h>
 #include <wtf/unicode/CharacterNames.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 using namespace HTMLNames;
@@ -70,16 +68,16 @@ struct EntityDescription {
     std::optional<EntityMask> mask;
 };
 
-constexpr EntityDescription entitySubstitutionList[] = {
-    { ""_s, std::nullopt },
-    { "&amp;"_s, EntityMask::Amp },
-    { "&lt;"_s, EntityMask::Lt },
-    { "&gt;"_s, EntityMask::Gt },
-    { "&quot;"_s, EntityMask::Quot },
-    { "&nbsp;"_s, EntityMask::Nbsp },
-    { "&#9;"_s, EntityMask::Tab },
-    { "&#10;"_s, EntityMask::LineFeed },
-    { "&#13;"_s, EntityMask::CarriageReturn },
+constexpr std::array entitySubstitutionList {
+    EntityDescription { ""_s, std::nullopt },
+    EntityDescription { "&amp;"_s, EntityMask::Amp },
+    EntityDescription { "&lt;"_s, EntityMask::Lt },
+    EntityDescription { "&gt;"_s, EntityMask::Gt },
+    EntityDescription { "&quot;"_s, EntityMask::Quot },
+    EntityDescription { "&nbsp;"_s, EntityMask::Nbsp },
+    EntityDescription { "&#9;"_s, EntityMask::Tab },
+    EntityDescription { "&#10;"_s, EntityMask::LineFeed },
+    EntityDescription { "&#13;"_s, EntityMask::CarriageReturn },
 };
 
 namespace EntitySubstitutionIndex {
@@ -94,8 +92,8 @@ constexpr uint8_t LineFeed = 7;
 constexpr uint8_t CarriageReturn = 8;
 };
 
-static const unsigned maximumEscapedentityCharacter = noBreakSpace;
-static const uint8_t entityMap[maximumEscapedentityCharacter + 1] = {
+static constexpr unsigned maximumEscapedentityCharacter = noBreakSpace;
+static constexpr std::array<uint8_t, maximumEscapedentityCharacter + 1> entityMap {
     0, 0, 0, 0, 0, 0, 0, 0, 0,
     EntitySubstitutionIndex::Tab, // '\t'.
     EntitySubstitutionIndex::LineFeed, // '\n'.
@@ -884,5 +882,3 @@ bool MarkupAccumulator::shouldExcludeElement(const Element& element)
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -262,16 +262,16 @@ static NSArray *convertMathPairsToNSArray(const AccessibilityObject::Accessibili
     }).autorelease();
 }
 
-NSArray *makeNSArray(const WebCore::AXCoreObject::AccessibilityChildrenVector& children)
+NSArray *makeNSArray(const WebCore::AXCoreObject::AccessibilityChildrenVector& children, BOOL returnPlatformElements)
 {
-    return createNSArray(children, [] (const auto& child) -> id {
+    return createNSArray(children, [returnPlatformElements] (const auto& child) -> id {
         auto wrapper = child->wrapper();
         // We want to return the attachment view instead of the object representing the attachment,
         // otherwise, we get palindrome errors in the AX hierarchy.
         if (child->isAttachment()) {
             if (id attachmentView = wrapper.attachmentView)
                 return attachmentView;
-        } else if (child->isRemoteFrame())
+        } else if (child->isRemoteFrame() && returnPlatformElements)
             return child->remoteFramePlatformElement().get();
 
         return wrapper;

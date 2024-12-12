@@ -251,6 +251,9 @@ bool CSSPropertyParser::parseValue(CSSPropertyID propertyID, bool important, con
     case StyleRuleType::ViewTransition:
         parseSuccess = parser.parseViewTransitionDescriptor(propertyID);
         break;
+    case StyleRuleType::PositionTry:
+        parseSuccess = parser.parsePositionTryDescriptor(propertyID, important);
+        break;
     default:
         parseSuccess = parser.parseValueStart(propertyID, important);
         break;
@@ -595,6 +598,33 @@ bool CSSPropertyParser::parseViewTransitionDescriptor(CSSPropertyID property)
 
     addProperty(property, CSSPropertyInvalid, WTFMove(parsedValue), false);
     return true;
+}
+
+// Checks whether a CSS property is allowed in @position-try.
+static bool propertyAllowedInPositionTryRule(CSSPropertyID property)
+{
+    return CSSProperty::isInsetProperty(property)
+        || CSSProperty::isMarginProperty(property)
+        || CSSProperty::isSizingProperty(property)
+        || property == CSSPropertyAlignSelf
+        || property == CSSPropertyJustifySelf
+        || property == CSSPropertyPlaceSelf
+        || property == CSSPropertyPositionAnchor;
+    // FIXME (webkit.org/b/281289): allow position-area when it's implemented
+}
+
+bool CSSPropertyParser::parsePositionTryDescriptor(CSSPropertyID property, bool important)
+{
+    ASSERT(m_context.propertySettings.cssAnchorPositioningEnabled);
+
+    // Per spec, !important is not allowed and makes the whole declaration invalid.
+    if (important)
+        return false;
+
+    if (!propertyAllowedInPositionTryRule(property))
+        return false;
+
+    return parseValueStart(property, important);
 }
 
 bool CSSPropertyParser::parseFontFaceDescriptor(CSSPropertyID property)
@@ -2015,6 +2045,7 @@ bool CSSPropertyParser::consumeBackgroundShorthand(const StylePropertyShorthand&
     do {
         bool parsedLonghand[10] = { false };
         bool lastParsedWasPosition = false;
+        bool clipIsBorderArea = false;
         RefPtr<CSSValue> originValue;
         do {
             bool foundProperty = false;
@@ -2057,6 +2088,8 @@ bool CSSPropertyParser::consumeBackgroundShorthand(const StylePropertyShorthand&
                 if (value) {
                     if (property == CSSPropertyBackgroundOrigin || property == CSSPropertyMaskOrigin)
                         originValue = value;
+                    else if (property == CSSPropertyBackgroundClip)
+                        clipIsBorderArea = value->valueID() == CSSValueBorderArea;
                     parsedLonghand[i] = true;
                     foundProperty = true;
                     longhands[i].append(value.releaseNonNull());
@@ -2080,6 +2113,10 @@ bool CSSPropertyParser::consumeBackgroundShorthand(const StylePropertyShorthand&
             }
             if ((property == CSSPropertyBackgroundClip || property == CSSPropertyMaskClip || property == CSSPropertyWebkitMaskClip) && !parsedLonghand[i] && originValue) {
                 longhands[i].append(originValue.releaseNonNull());
+                continue;
+            }
+            if (clipIsBorderArea && (property == CSSPropertyBackgroundOrigin) && !parsedLonghand[i]) {
+                longhands[i].append(CSSPrimitiveValue::create(CSSValueBorderBox));
                 continue;
             }
             if (!parsedLonghand[i])

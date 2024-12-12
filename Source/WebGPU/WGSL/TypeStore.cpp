@@ -55,16 +55,17 @@ struct ArrayKey {
     TypeCache::EncodedKey encode() const
     {
         auto encodedSize = WTF::switchOn(size,
-            [&](unsigned size) -> unsigned {
-                return size;
+            [&](unsigned size) -> std::tuple<uint16_t, unsigned> {
+                return { 0, size };
             },
-            [&](std::monostate) -> unsigned {
-                return 0;
+            [&](std::monostate) -> std::tuple<uint16_t, unsigned> {
+                return { 0, 0 };
             },
-            [&](AST::Expression*) -> unsigned {
-                RELEASE_ASSERT_NOT_REACHED();
+            [&](AST::Expression* expression) -> std::tuple<uint16_t, unsigned> {
+                auto address = static_cast<uint64_t>(std::bit_cast<uintptr_t>(expression));
+                return { address >> 32, address };
             });
-        return std::tuple(TypeCache::Array, 0, 0, encodedSize, std::bit_cast<uintptr_t>(elementType));
+        return std::tuple(TypeCache::Array, 0, std::get<0>(encodedSize), std::get<1>(encodedSize), std::bit_cast<uintptr_t>(elementType));
     }
 };
 
@@ -156,10 +157,6 @@ const Type* TypeStore::structType(AST::Structure& structure, HashMap<String, con
 
 const Type* TypeStore::arrayType(const Type* elementType, Types::Array::Size size)
 {
-    // don't cache override-sized arrays as they are only used once
-    if (std::holds_alternative<AST::Expression*>(size))
-        return allocateType<Array>(elementType, size);
-
     ArrayKey key { elementType, size };
     const Type* type = m_cache.find(key);
     if (type)

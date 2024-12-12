@@ -62,31 +62,37 @@ template<typename CSSType> void serializationForCSS(StringBuilder& builder, cons
     Serialize<CSSType>{}(builder, value);
 }
 
-template<typename CSSType> String serializationForCSS(const CSSType& value)
+template<typename CSSType> [[nodiscard]] String serializationForCSS(const CSSType& value)
 {
     StringBuilder builder;
     serializationForCSS(builder, value);
     return builder.toString();
 }
 
-template<typename CSSType> auto serializationForCSSOnOptionalLike(StringBuilder& builder, const CSSType& value) requires (TreatAsOptionalLike<CSSType>)
+template<typename CSSType> void serializationForCSSOnOptionalLike(StringBuilder& builder, const CSSType& value) requires (TreatAsOptionalLike<CSSType>)
 {
     if (!value)
         return;
     serializationForCSS(builder, *value);
 }
 
-template<typename CSSType> auto serializationForCSSOnTupleLike(StringBuilder& builder, const CSSType& value, ASCIILiteral separator) requires (TreatAsTupleLike<CSSType>)
+template<typename CSSType> void serializationForCSSOnTupleLike(StringBuilder& builder, const CSSType& value, ASCIILiteral separator) requires (TreatAsTupleLike<CSSType>)
 {
     auto swappedSeparator = ""_s;
     auto caller = WTF::makeVisitor(
-        [&]<typename T>(std::optional<T>& element) {
+        [&]<typename T>(const std::optional<T>& element) {
             if (!element)
                 return;
             builder.append(std::exchange(swappedSeparator, separator));
             serializationForCSS(builder, *element);
         },
-        [&](auto& element) {
+        [&]<typename T>(const Markable<T>& element) {
+            if (!element)
+                return;
+            builder.append(std::exchange(swappedSeparator, separator));
+            serializationForCSS(builder, *element);
+        },
+        [&](const auto& element) {
             builder.append(std::exchange(swappedSeparator, separator));
             serializationForCSS(builder, element);
         }
@@ -95,7 +101,7 @@ template<typename CSSType> auto serializationForCSSOnTupleLike(StringBuilder& bu
     WTF::apply([&](const auto& ...x) { (..., caller(x)); }, value);
 }
 
-template<typename CSSType> auto serializationForCSSOnRangeLike(StringBuilder& builder, const CSSType& value, ASCIILiteral separator) requires (TreatAsRangeLike<CSSType>)
+template<typename CSSType> void serializationForCSSOnRangeLike(StringBuilder& builder, const CSSType& value, ASCIILiteral separator) requires (TreatAsRangeLike<CSSType>)
 {
     auto swappedSeparator = ""_s;
     for (const auto& element : value) {
@@ -104,10 +110,17 @@ template<typename CSSType> auto serializationForCSSOnRangeLike(StringBuilder& bu
     }
 }
 
-template<typename CSSType> auto serializationForCSSOnVariantLike(StringBuilder& builder, const CSSType& value) requires (TreatAsVariantLike<CSSType>)
+template<typename CSSType> void serializationForCSSOnVariantLike(StringBuilder& builder, const CSSType& value) requires (TreatAsVariantLike<CSSType>)
 {
-    WTF::switchOn(value, [&](auto& alternative) { serializationForCSS(builder, alternative); });
+    WTF::switchOn(value, [&](const auto& alternative) { serializationForCSS(builder, alternative); });
 }
+
+// Constrained for `TreatAsEmptyLike`.
+template<typename CSSType> requires (TreatAsEmptyLike<CSSType>) struct Serialize<CSSType> {
+    void operator()(StringBuilder&, const CSSType&)
+    {
+    }
+};
 
 // Constrained for `TreatAsOptionalLike`.
 template<typename CSSType> requires (TreatAsOptionalLike<CSSType>) struct Serialize<CSSType> {
@@ -204,7 +217,7 @@ template<typename CSSType> void collectComputedStyleDependencies(ComputedStyleDe
     ComputedStyleDependenciesCollector<CSSType>{}(dependencies, value);
 }
 
-template<typename CSSType> ComputedStyleDependencies collectComputedStyleDependencies(const CSSType& value)
+template<typename CSSType> [[nodiscard]] ComputedStyleDependencies collectComputedStyleDependencies(const CSSType& value)
 {
     ComputedStyleDependencies dependencies;
     collectComputedStyleDependencies(dependencies, value);
@@ -225,14 +238,21 @@ template<typename CSSType> auto collectComputedStyleDependenciesOnTupleLike(Comp
 
 template<typename CSSType> auto collectComputedStyleDependenciesOnRangeLike(ComputedStyleDependencies& dependencies, const CSSType& value) requires (TreatAsRangeLike<CSSType>)
 {
-    for (auto& element : value)
+    for (const auto& element : value)
         collectComputedStyleDependencies(dependencies, element);
 }
 
 template<typename CSSType> auto collectComputedStyleDependenciesOnVariantLike(ComputedStyleDependencies& dependencies, const CSSType& value) requires (TreatAsVariantLike<CSSType>)
 {
-    WTF::switchOn(value, [&](auto& alternative) { collectComputedStyleDependencies(dependencies, alternative); });
+    WTF::switchOn(value, [&](const auto& alternative) { collectComputedStyleDependencies(dependencies, alternative); });
 }
+
+// Constrained for `TreatAsEmptyLike`.
+template<typename CSSType> requires (TreatAsEmptyLike<CSSType>) struct ComputedStyleDependenciesCollector<CSSType> {
+    void operator()(ComputedStyleDependencies&, const CSSType&)
+    {
+    }
+};
 
 // Constrained for `TreatAsOptionalLike`.
 template<typename CSSType> requires (TreatAsOptionalLike<CSSType>) struct ComputedStyleDependenciesCollector<CSSType> {
@@ -332,6 +352,14 @@ template<typename CSSType> IterationStatus visitCSSValueChildrenOnVariantLike(co
 {
     return WTF::switchOn(value, [&](const auto& alternative) { return visitCSSValueChildren(func, alternative); });
 }
+
+// Constrained for `TreatAsEmptyLike`.
+template<typename CSSType> requires (TreatAsEmptyLike<CSSType>) struct CSSValueChildrenVisitor<CSSType> {
+    IterationStatus operator()(const Function<IterationStatus(CSSValue&)>&, const CSSType&)
+    {
+        return IterationStatus::Continue;
+    }
+};
 
 // Constrained for `TreatAsOptionalLike`.
 template<typename CSSType> requires (TreatAsOptionalLike<CSSType>) struct CSSValueChildrenVisitor<CSSType> {

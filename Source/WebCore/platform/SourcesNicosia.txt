@@ -34,5 +34,3 @@ page/scrolling/nicosia/ScrollingTreeStickyNodeNicosia.cpp
 
 platform/graphics/nicosia/NicosiaScene.cpp
 platform/graphics/nicosia/NicosiaSceneIntegration.cpp
-
-platform/graphics/texmap/GraphicsContextGLTextureMapperANGLENicosia.cpp

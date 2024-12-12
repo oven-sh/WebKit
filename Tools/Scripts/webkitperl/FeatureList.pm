@@ -156,6 +156,7 @@ my (
     $webAudioSupport,
     $webAuthNSupport,
     $webCodecsSupport,
+    $wkWebExtensionsSupport,
     $webRTCSupport,
     $webdriverKeyboardInteractionsSupport,
     $webdriverMouseInteractionsSupport,
@@ -467,6 +468,9 @@ my @features = (
 
     { option => "wireless-playback-target", desc => "Toggle wireless playback target support",
       define => "ENABLE_WIRELESS_PLAYBACK_TARGET", value => \$wirelessPlaybackTargetSupport },
+    
+    { option => "wk-web-extensions", desc => "Toggle WebExtensions support",
+      define => "ENABLE_WK_WEB_EXTENSIONS", value => \$wkWebExtensionsSupport },
 
     { option => "xslt", desc => "Toggle XSLT support",
       define => "ENABLE_XSLT", value => \$xsltSupport },

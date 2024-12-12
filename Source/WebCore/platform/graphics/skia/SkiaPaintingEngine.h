@@ -37,7 +37,7 @@ class CoordinatedGraphicsLayer;
 class CoordinatedTileBuffer;
 class GraphicsContext;
 class IntRect;
-enum class RenderingMode : bool;
+enum class RenderingMode : uint8_t;
 
 namespace DisplayList {
 class DisplayList;

@@ -760,26 +760,6 @@ bool LocalFrameView::updateCompositingLayersAfterStyleChange()
     return renderView->compositor().didRecalcStyleWithNoPendingLayout();
 }
 
-void LocalFrameView::updateCompositingLayersAfterLayout()
-{
-    RenderView* renderView = this->renderView();
-    if (!renderView)
-        return;
-
-    renderView->compositor().updateCompositingLayers(CompositingUpdateType::AfterLayout);
-    m_updateCompositingLayersIsPending = false;
-}
-
-bool LocalFrameView::updateCompositingLayersAfterLayoutIfNeeded()
-{
-    if (m_updateCompositingLayersIsPending) {
-        updateCompositingLayersAfterLayout();
-        return true;
-    }
-
-    return false;
-}
-
 void LocalFrameView::invalidateScrollbarsForAllScrollableAreas()
 {
     if (!m_scrollableAreas)
@@ -1271,39 +1251,11 @@ void LocalFrameView::willDoLayout(SingleThreadWeakPtr<RenderElement> layoutRoot)
     forceLayoutParentViewIfNeeded();
 }
 
-bool LocalFrameView::hasPendingUpdateLayerPositions() const
-{
-    return !!m_pendingUpdateLayerPositions;
-}
-
-void LocalFrameView::flushUpdateLayerPositions()
-{
-    if (!m_pendingUpdateLayerPositions)
-        return;
-
-    UpdateLayerPositions updateLayerPositions = *std::exchange(m_pendingUpdateLayerPositions, std::nullopt);
-
-    if (CheckedPtr view = renderView()) {
-        view->layer()->updateLayerPositionsAfterLayout(updateLayerPositions.layoutIdentifier, updateLayerPositions.needsFullRepaint, updateLayerPositions.didRunSimplifiedLayout ? RenderLayer::CanUseSimplifiedRepaintPass::Yes : RenderLayer::CanUseSimplifiedRepaintPass::No);
-        m_renderLayerPositionUpdateCount++;
-    }
-}
-
 void LocalFrameView::didLayout(SingleThreadWeakPtr<RenderElement> layoutRoot, bool didRunSimplifiedLayout, bool canDeferUpdateLayerPositions)
 {
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
-    m_layoutUpdateCount++;
 
-    UpdateLayerPositions updateLayerPositions { layoutContext().layoutIdentifier(), layoutContext().needsFullRepaint(), didRunSimplifiedLayout };
-    if (m_pendingUpdateLayerPositions)
-        m_pendingUpdateLayerPositions->merge(updateLayerPositions);
-    else
-        m_pendingUpdateLayerPositions = updateLayerPositions;
-
-    if (!canDeferUpdateLayerPositions)
-        flushUpdateLayerPositions();
-
-    m_updateCompositingLayersIsPending = true;
+    layoutContext().didLayout(didRunSimplifiedLayout, canDeferUpdateLayerPositions);
 
     Ref document = *m_frame->document();
 
@@ -2922,7 +2874,7 @@ void LocalFrameView::updateLayerPositionsAfterScrolling()
     if (!layoutContext().isLayoutNested() && hasViewportConstrainedObjects()) {
         if (auto* renderView = this->renderView()) {
             updateWidgetPositions();
-            flushUpdateLayerPositions();
+            layoutContext().flushUpdateLayerPositions();
             renderView->layer()->updateLayerPositionsAfterDocumentScroll();
         }
     }
@@ -2930,7 +2882,7 @@ void LocalFrameView::updateLayerPositionsAfterScrolling()
 
 void LocalFrameView::updateLayerPositionsAfterOverflowScroll(RenderLayer& layer)
 {
-    flushUpdateLayerPositions();
+    layoutContext().flushUpdateLayerPositions();
     layer.updateLayerPositionsAfterOverflowScroll();
     scheduleUpdateWidgetPositions();
 }
@@ -3430,15 +3382,12 @@ void LocalFrameView::updateBaseBackgroundColorIfNecessary()
 void LocalFrameView::updateBackgroundRecursively(const std::optional<Color>& backgroundColor)
 {
     auto intrinsicBaseBackgroundColor = [](LocalFrameView& view) -> Color {
-#if HAVE(OS_DARK_MODE_SUPPORT)
 #if PLATFORM(COCOA)
         static const auto cssValueControlBackground = CSSValueAppleSystemControlBackground;
 #else
         static const auto cssValueControlBackground = CSSValueWindow;
 #endif
         return RenderTheme::singleton().systemColor(cssValueControlBackground, view.styleColorOptions());
-#endif
-        return Color::white;
     };
 
     for (Frame* frame = m_frame.ptr(); frame; frame = frame->tree().traverseNext(m_frame.ptr())) {
@@ -5353,22 +5302,22 @@ String LocalFrameView::trackedRepaintRectsAsText() const
 
 void LocalFrameView::startTrackingLayoutUpdates()
 {
-    m_layoutUpdateCount = 0;
+    layoutContext().startTrackingLayoutUpdates();
 }
 
 unsigned LocalFrameView::layoutUpdateCount()
 {
-    return m_layoutUpdateCount;
+    return layoutContext().layoutUpdateCount();
 }
 
 void LocalFrameView::startTrackingRenderLayerPositionUpdates()
 {
-    m_renderLayerPositionUpdateCount = 0;
+    layoutContext().startTrackingRenderLayerPositionUpdates();
 }
 
 unsigned LocalFrameView::renderLayerPositionUpdateCount()
 {
-    return m_renderLayerPositionUpdateCount;
+    return layoutContext().renderLayerPositionUpdateCount();
 }
 
 void LocalFrameView::addScrollableAreaForAnimatedScroll(ScrollableArea* scrollableArea)

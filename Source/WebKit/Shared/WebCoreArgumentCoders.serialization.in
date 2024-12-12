@@ -1478,7 +1478,7 @@ struct WebCore::HTMLModelElementCamera {
 };
 
 struct WebCore::NotificationData {
-    URL defaultActionURL;
+    URL navigateURL;
     String title;
     String body;
     String iconURL;
@@ -1791,7 +1791,12 @@ struct WebCore::NavigationPreloadState {
     String headerValue;
 };
 
-enum class WebCore::RenderingMode : bool
+enum class WebCore::RenderingMode : uint8_t {
+    Unaccelerated,
+    Accelerated,
+    PDFDocument,
+    DisplayList,
+};
 
 enum class WebCore::RenderingPurpose : uint8_t {
     Unspecified,
@@ -2436,7 +2441,7 @@ header: <WebCore/ScreenProperties.h>
     WebCore::DestinationColorSpace colorSpace;
     int screenDepth;
     int screenDepthPerComponent;
-    WebCore::ContentsFormat screenContentsFormat;
+    bool screenSupportsExtendedColor;
     bool screenHasInvertedColors;
     bool screenSupportsHighDynamicRange;
 #if PLATFORM(MAC)
@@ -2496,10 +2501,6 @@ enum class WebCore::PublicKeyCredentialType : bool
 
 #if PLATFORM(IOS_FAMILY)
 enum class WebCore::SelectionRenderingBehavior : bool;
-#endif
-
-#if PLATFORM(IOS_FAMILY)
-enum class WebCore::TextDirection : bool;
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -2616,9 +2617,6 @@ headers: <wtf/unix/UnixFileDescriptor.h> "ArgumentCodersUnix.h"
 #endif
 #if OS(DARWIN)
 header: <wtf/MachSendRight.h>
-#endif
-#if OS(WINDOWS)
-headers: <wtf/win/Win32Handle.h> "ArgumentCodersWin.h"
 #endif
 
 [CustomHeader, RValue] class WebCore::SharedMemoryHandle {
@@ -4099,8 +4097,6 @@ header: <WebCore/SVGFilterExpression.h>
     WebCore::SVGPreserveAspectRatioValue::SVGPreserveAspectRatioType m_align;
     WebCore::SVGPreserveAspectRatioValue::SVGMeetOrSliceType m_meetOrSlice;
 };
-
-enum class WebCore::HasInsecureContent : bool
 
 header: <WebCore/ModalContainerTypes.h>
 [CustomHeader] enum class WebCore::ModalContainerDecision : uint8_t {
@@ -7448,9 +7444,7 @@ header: <WebCore/GraphicsContextState.h>
     ShouldSubpixelQuantizeFonts,
     ShadowsIgnoreTransforms,
     DrawLuminanceMask,
-#if HAVE(OS_DARK_MODE_SUPPORT)
     UseDarkAppearance,
-#endif
 };
 
 header: <WebCore/GraphicsContextState.h>
@@ -7478,10 +7472,7 @@ header: <WebCore/GraphicsContextState.h>
     bool m_shouldSubpixelQuantizeFonts;
     bool m_shadowsIgnoreTransforms;
     bool m_drawLuminanceMask;
-#if HAVE(OS_DARK_MODE_SUPPORT)
     bool m_useDarkAppearance;
-#endif
-
     WebCore::GraphicsContextState::Purpose m_purpose;
 };
 
@@ -8731,3 +8722,17 @@ enum class WebCore::FileSystemWriteCommandType : uint8_t {
     Seek,
     Truncate
 };
+
+[Nested] enum class WebCore::ResourceError::IsSanitized : bool
+
+#if ENABLE(DOM_AUDIO_SESSION)
+header: <WebCore/DOMAudioSession.h>
+enum class WebCore::DOMAudioSessionType : uint8_t {
+    Auto,
+    Playback,
+    Transient,
+    TransientSolo,
+    Ambient,
+    PlayAndRecord
+};
+#endif

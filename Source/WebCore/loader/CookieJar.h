@@ -71,7 +71,7 @@ public:
     virtual void setCookieAsync(Document&, const URL&, const Cookie&, CompletionHandler<void(bool)>&&) const;
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
-    virtual void addChangeListener(const String& host, const CookieChangeListener&);
+    virtual void addChangeListener(const WebCore::Document&, const CookieChangeListener&);
     virtual void removeChangeListener(const String& host, const CookieChangeListener&);
 #endif
 

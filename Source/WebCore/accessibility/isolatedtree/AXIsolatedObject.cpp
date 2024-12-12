@@ -104,8 +104,14 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     auto& object = axObject.get();
 
     // These properties are cached for all objects, ignored and unignored.
-    setProperty(AXPropertyName::HasBodyTag, object.hasBodyTag());
     setProperty(AXPropertyName::HasClickHandler, object.hasClickHandler());
+    auto tag = object.tagName();
+    if (tag == bodyTag)
+        setProperty(AXPropertyName::HasBodyTag, true);
+#if ENABLE(AX_THREAD_TEXT_APIS)
+    else if (tag == markTag)
+        setProperty(AXPropertyName::HasMarkTag, true);
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     if (object.includeIgnoredInCoreTree()) {

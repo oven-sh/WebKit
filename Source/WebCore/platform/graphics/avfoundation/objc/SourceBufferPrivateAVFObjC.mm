@@ -671,10 +671,12 @@ void SourceBufferPrivateAVFObjC::setCDMInstance(CDMInstance* instance)
 
     ALWAYS_LOG(LOGIDENTIFIER);
 
+    RetainPtr layer =  m_videoRenderer ? m_videoRenderer->as<AVSampleBufferDisplayLayer>() : nil;
+
     if (m_cdmInstance) {
         if (shouldAddContentKeyRecipients()) {
-            if (RetainPtr renderer = m_videoRenderer ? dynamic_objc_cast<AVSampleBufferDisplayLayer>(m_videoRenderer->renderer()) : nullptr)
-                [m_cdmInstance->contentKeySession() removeContentKeyRecipient:renderer.get()];
+            if (layer)
+                [m_cdmInstance->contentKeySession() removeContentKeyRecipient:layer.get()];
 
             for (auto& pair : m_audioRenderers)
                 [m_cdmInstance->contentKeySession() removeContentKeyRecipient:pair.second.get()];
@@ -686,8 +688,8 @@ void SourceBufferPrivateAVFObjC::setCDMInstance(CDMInstance* instance)
 
     if (m_cdmInstance) {
         if (shouldAddContentKeyRecipients()) {
-            if (RetainPtr renderer = m_videoRenderer ? dynamic_objc_cast<AVSampleBufferDisplayLayer>(m_videoRenderer->renderer()) : nullptr)
-                [m_cdmInstance->contentKeySession() addContentKeyRecipient:renderer.get()];
+            if (layer)
+                [m_cdmInstance->contentKeySession() addContentKeyRecipient:layer.get()];
 
             for (auto& pair : m_audioRenderers)
                 [m_cdmInstance->contentKeySession() addContentKeyRecipient:pair.second.get()];
@@ -1093,9 +1095,8 @@ void SourceBufferPrivateAVFObjC::enqueueSampleBuffer(MediaSampleAVFObjC& sample)
             return;
 
         renderer = m_videoRenderer->renderer();
-
 #if HAVE(AVSAMPLEBUFFERDISPLAYLAYER_READYFORDISPLAY)
-        if (RetainPtr displayLayer = dynamic_objc_cast<AVSampleBufferDisplayLayer>(renderer)) {
+        if (RetainPtr displayLayer = m_videoRenderer->as<AVSampleBufferDisplayLayer>()) {
             // FIXME (117934497): Remove staging code once -[AVSampleBufferDisplayLayer isReadyForDisplay] is available in SDKs used by WebKit builders
             if ([displayLayer.get() respondsToSelector:@selector(isReadyForDisplay)])
                 return;
@@ -1261,36 +1262,32 @@ bool SourceBufferPrivateAVFObjC::isSeeking() const
 void SourceBufferPrivateAVFObjC::configureVideoRenderer(VideoMediaSampleRenderer& videoRenderer)
 {
     videoRenderer.setResourceOwner(m_resourceOwner);
-    RetainPtr displayLayer = dynamic_objc_cast<AVSampleBufferDisplayLayer>(videoRenderer.renderer());
 #if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
-    if (m_cdmInstance && shouldAddContentKeyRecipients() && displayLayer)
-        [m_cdmInstance->contentKeySession() addContentKeyRecipient:displayLayer.get()];
+    if (m_cdmInstance && shouldAddContentKeyRecipients() && videoRenderer.as<AVSampleBufferDisplayLayer>())
+        [m_cdmInstance->contentKeySession() addContentKeyRecipient:videoRenderer.as<AVSampleBufferDisplayLayer>()];
 #endif
     videoRenderer.requestMediaDataWhenReady([weakThis = ThreadSafeWeakPtr { *this }] {
         if (RefPtr protectedThis = weakThis.get(); protectedThis && protectedThis->m_enabledVideoTrackID)
             protectedThis->didBecomeReadyForMoreSamples(*protectedThis->m_enabledVideoTrackID);
     });
-    if (displayLayer)
-        m_listener->beginObservingVideoRenderer(displayLayer.get());
+    m_listener->beginObservingVideoRenderer(videoRenderer.renderer());
 }
 
 void SourceBufferPrivateAVFObjC::invalidateVideoRenderer(VideoMediaSampleRenderer& videoRenderer)
 {
     videoRenderer.flush();
     videoRenderer.stopRequestingMediaData();
-    if (RetainPtr renderer = videoRenderer.renderer())
-        m_listener->stopObservingVideoRenderer(renderer.get());
+    m_listener->stopObservingVideoRenderer(videoRenderer.renderer());
 
 #if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
-    RetainPtr displayLayer = dynamic_objc_cast<AVSampleBufferDisplayLayer>(videoRenderer.renderer());
-    if (displayLayer && m_cdmInstance && shouldAddContentKeyRecipients())
-        [m_cdmInstance->contentKeySession() removeContentKeyRecipient:displayLayer.get()];
+    if (m_cdmInstance && shouldAddContentKeyRecipients() && videoRenderer.as<AVSampleBufferDisplayLayer>())
+        [m_cdmInstance->contentKeySession() removeContentKeyRecipient:videoRenderer.as<AVSampleBufferDisplayLayer>()];
 #endif
 }
 
 void SourceBufferPrivateAVFObjC::setVideoRenderer(VideoMediaSampleRenderer* renderer)
 {
-    if (renderer == m_videoRenderer) {
+    if (m_videoRenderer && m_videoRenderer == renderer) {
         if (RefPtr expiringVideoRenderer = std::exchange(m_expiringVideoRenderer, nullptr))
             invalidateVideoRenderer(*expiringVideoRenderer);
         return;
@@ -1305,7 +1302,6 @@ void SourceBufferPrivateAVFObjC::setVideoRenderer(VideoMediaSampleRenderer* rend
         return;
 
     m_videoRenderer = renderer;
-
     configureVideoRenderer(*m_videoRenderer);
     if (m_enabledVideoTrackID)
         reenqueSamples(*m_enabledVideoTrackID);
@@ -1313,7 +1309,8 @@ void SourceBufferPrivateAVFObjC::setVideoRenderer(VideoMediaSampleRenderer* rend
 
 void SourceBufferPrivateAVFObjC::stageVideoRenderer(VideoMediaSampleRenderer* renderer)
 {
-    if (renderer == m_videoRenderer)
+    ASSERT(renderer);
+    if (m_videoRenderer == renderer)
         return;
 
     ALWAYS_LOG(LOGIDENTIFIER, "!!renderer = ", !!renderer);
@@ -1321,7 +1318,7 @@ void SourceBufferPrivateAVFObjC::stageVideoRenderer(VideoMediaSampleRenderer* re
     if (m_expiringVideoRenderer)
         invalidateVideoRenderer(*std::exchange(m_expiringVideoRenderer, nullptr));
 
-    m_expiringVideoRenderer = WTFMove(m_videoRenderer);
+    m_expiringVideoRenderer = std::exchange(m_videoRenderer, renderer);
     configureVideoRenderer(*m_videoRenderer);
     if (m_enabledVideoTrackID)
         reenqueSamples(*m_enabledVideoTrackID, NeedsFlush::No);

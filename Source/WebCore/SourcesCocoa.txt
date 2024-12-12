@@ -264,6 +264,7 @@ page/writing-tools/WritingToolsController.mm
 platform/VideoFrame.mm
 platform/animation/AcceleratedEffectStack.mm @no-unify
 platform/audio/AudioSession.cpp
+platform/audio/cocoa/AudioDecoderCocoa.cpp
 platform/audio/cocoa/AudioDestinationCocoa.cpp
 platform/audio/cocoa/AudioFileReaderCocoa.cpp
 platform/audio/cocoa/AudioOutputUnitAdaptor.cpp
@@ -327,6 +328,7 @@ platform/cocoa/ThemeCocoa.mm
 platform/cocoa/ThermalMitigationNotifier.mm
 platform/cocoa/UserAgentCocoa.mm
 platform/cocoa/VideoPresentationModelVideoElement.mm
+platform/cocoa/VideoPresentationLayerProvider.mm
 platform/cocoa/VideoToolboxSoftLink.cpp
 platform/cocoa/WebCoreAdditions.mm @no-unify
 platform/cocoa/WebCoreNSErrorExtras.mm
@@ -415,6 +417,7 @@ platform/graphics/cg/IOSurfacePool.cpp
 platform/graphics/cg/ImageBackingStoreCG.cpp
 platform/graphics/cg/ImageBufferCGBackend.cpp
 platform/graphics/cg/ImageBufferCGBitmapBackend.cpp
+platform/graphics/cg/ImageBufferCGPDFDocumentBackend.cpp
 platform/graphics/cg/ImageBufferIOSurfaceBackend.cpp
 platform/graphics/cg/ImageBufferUtilitiesCG.cpp
 platform/graphics/cg/ImageDecoderCG.cpp

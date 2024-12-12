@@ -85,6 +85,8 @@ void WebTransportSession::receiveDatagram(std::span<const uint8_t> datagram)
     ASSERT(RunLoop::isMain());
     if (auto strongClient = m_client.get())
         strongClient->receiveDatagram(datagram);
+    else
+        ASSERT_NOT_REACHED();
 }
 
 void WebTransportSession::receiveIncomingUnidirectionalStream(WebTransportStreamIdentifier)

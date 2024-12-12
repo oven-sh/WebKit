@@ -1064,15 +1064,15 @@ static RefPtr<CSSValue> consumeFilterImage(CSSParserTokenRange& args, const CSSP
     //
     //  https://drafts.fxtf.org/filter-effects/#funcdef-filter
     //
-    // Importantly, `none` is not a valid value for the first parameter.
+    // Importantly, `none` is not a valid value for either parameter.
 
     auto imageValueOrNone = consumeImageOrNone(args, context);
     if (!imageValueOrNone || !consumeCommaIncludingWhitespace(args))
         return nullptr;
-    auto filterValue = consumeFilterValueListOrNone(args, context, AllowedFilterFunctions::PixelFilters);
-    if (!filterValue)
+    auto filter = consumeUnresolvedFilter(args, context);
+    if (!filter)
         return nullptr;
-    return CSSFilterImageValue::create(imageValueOrNone.releaseNonNull(), filterValue.releaseNonNull());
+    return CSSFilterImageValue::create(imageValueOrNone.releaseNonNull(), WTFMove(*filter));
 }
 
 // MARK: <paint()>

@@ -75,12 +75,12 @@ public:
     static CSSValuePool& singleton();
     void drain();
 
-    Ref<CSSColorValue> createColorValue(const Color&);
+    Ref<CSSColorValue> createColorValue(const WebCore::Color&);
     RefPtr<CSSValueList> createFontFaceValue(const AtomString&);
     Ref<CSSPrimitiveValue> createFontFamilyValue(const AtomString&);
 
 private:
-    UncheckedKeyHashMap<Color, Ref<CSSColorValue>> m_colorValueCache;
+    UncheckedKeyHashMap<WebCore::Color, Ref<CSSColorValue>> m_colorValueCache;
     UncheckedKeyHashMap<AtomString, RefPtr<CSSValueList>> m_fontFaceValueCache;
     UncheckedKeyHashMap<AtomString, Ref<CSSPrimitiveValue>> m_fontFamilyValueCache;
 };

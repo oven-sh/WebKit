@@ -1055,7 +1055,7 @@ class Instruction
             emitARM64Branch("fcmp", operands, :double, "b.eq")
         when "bdneq"
             emitARM64Unflipped("fcmp", operands[0..1], :double)
-            isUnordered = LocalLabel.unique("bdneq")
+            isUnordered = LocalLabel.unique(codeOrigin, "bdneq")
             $asm.puts "b.vs #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
             $asm.puts "b.ne #{operands[2].asmLabel}"
             isUnordered.lower($activeBackend)
@@ -1520,14 +1520,14 @@ class Instruction
         when "cfneq"
             $asm.puts "move $0, #{operands[2].arm64Operand(:word)}"
             emitARM64Unflipped("fcmp", operands[0..1], :float)
-            isUnordered = LocalLabel.unique("cdneq")
+            isUnordered = LocalLabel.unique(codeOrigin, "cdneq")
             $asm.puts "b.vs #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
             $asm.puts "cset #{operands[2].arm64Operand(:word)}, ne"
             isUnordered.lower($activeBackend)
         when "cdneq"
             $asm.puts "move $0, #{operands[2].arm64Operand(:word)}"
             emitARM64Unflipped("fcmp", operands[0..1], :double)
-            isUnordered = LocalLabel.unique("cdneq")
+            isUnordered = LocalLabel.unique(codeOrigin, "cdneq")
             $asm.puts "b.vs #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
             $asm.puts "cset #{operands[2].arm64Operand(:word)}, ne"
             isUnordered.lower($activeBackend)

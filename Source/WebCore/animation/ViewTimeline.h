@@ -72,7 +72,8 @@ public:
     TimelineRange defaultRange() const final;
 
 private:
-    ScrollTimeline::Data computeTimelineData(const TimelineRange&) const final;
+    ScrollTimeline::Data computeTimelineData() const final;
+    std::pair<WebAnimationTime, WebAnimationTime> intervalForAttachmentRange(const TimelineRange&) const final;
 
     explicit ViewTimeline(ViewTimelineOptions&& = { });
     explicit ViewTimeline(const AtomString&, ScrollAxis, ViewTimelineInsets&&);
@@ -86,8 +87,8 @@ private:
         float scrollContainerSize { 0 };
         float subjectOffset { 0 };
         float subjectSize { 0 };
-        Length insetStart { };
-        Length insetEnd { };
+        float insetStart { 0 };
+        float insetEnd { 0 };
     };
 
     void cacheCurrentTime();

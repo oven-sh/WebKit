@@ -159,6 +159,8 @@ struct EditorState {
         WebCore::IntRect markedTextCaretRectAtEnd;
         std::optional<WebCore::PlatformLayerIdentifier> enclosingLayerID;
         std::optional<WebCore::ScrollingNodeID> enclosingScrollingNodeID;
+        std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtStart;
+        std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtEnd;
         WebCore::ScrollPosition enclosingScrollPosition;
 #endif // PLATFORM(IOS_FAMILY)
     };

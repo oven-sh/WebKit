@@ -466,17 +466,31 @@ bool AXCoreObject::supportsRequiredAttribute() const
 
 bool AXCoreObject::hasPopup() const
 {
-    if (!equalLettersIgnoringASCIICase(popupValue(), "false"_s))
+    return !equalLettersIgnoringASCIICase(popupValue(), "false"_s);
+}
+
+bool AXCoreObject::selfOrAncestorLinkHasPopup() const
+{
+    if (hasPopup())
         return true;
 
     for (RefPtr ancestor = parentObject(); ancestor; ancestor = ancestor->parentObject()) {
-        if (!ancestor->isLink())
-            continue;
-
-        if (!equalLettersIgnoringASCIICase(ancestor->popupValue(), "false"_s))
+        // If this logic gets updated (e.g. we no longer check isLink()), make sure to also update
+        // -[WebAccessibilityObjectWrapperMac accessibilityAttributeNames].
+        if (ancestor->isLink() && ancestor->hasPopup())
             return true;
     }
     return false;
+}
+
+AccessibilitySortDirection AXCoreObject::sortDirectionIncludingAncestors() const
+{
+    for (RefPtr ancestor = this; ancestor; ancestor = ancestor->parentObject()) {
+        auto direction = ancestor->sortDirection();
+        if (direction != AccessibilitySortDirection::Invalid)
+            return direction;
+    }
+    return AccessibilitySortDirection::Invalid;
 }
 
 unsigned AXCoreObject::tableLevel() const
@@ -929,6 +943,11 @@ String LineDecorationStyle::debugDescription() const
         ", linethroughColor: "_s, linethroughColor.debugDescription(),
         "}"_s
     );
+}
+
+String AXCoreObject::infoStringForTesting() const
+{
+    return makeString("Role: "_s, rolePlatformString(), ", Value: "_s, stringValue());
 }
 
 namespace Accessibility {

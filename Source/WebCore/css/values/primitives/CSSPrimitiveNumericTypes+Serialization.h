@@ -41,23 +41,16 @@ template<RawNumeric RawType> struct Serialize<RawType> {
     }
 };
 
-template<RawNumeric RawType> struct Serialize<PrimitiveNumeric<RawType>> {
-    void operator()(StringBuilder& builder, const PrimitiveNumeric<RawType>& value)
+template<auto nR, auto pR> struct Serialize<NumberOrPercentageResolvedToNumber<nR, pR>> {
+    void operator()(StringBuilder& builder, const NumberOrPercentageResolvedToNumber<nR, pR>& value)
     {
-        WTF::switchOn(value, [&](const auto& value) { serializationForCSS(builder, value); });
-    }
-};
-
-template<auto R> struct Serialize<NumberOrPercentageResolvedToNumber<R>> {
-    void operator()(StringBuilder& builder, const NumberOrPercentageResolvedToNumber<R>& value)
-    {
-        WTF::switchOn(value.value,
-            [&](const Number<R>& number) {
+        WTF::switchOn(value,
+            [&](const Number<nR>& number) {
                 serializationForCSS(builder, number);
             },
-            [&](const Percentage<R>& percentage) {
+            [&](const Percentage<pR>& percentage) {
                 if (auto raw = percentage.raw())
-                    serializationForCSS(builder, NumberRaw<R> { raw->value / 100.0 });
+                    serializationForCSS(builder, NumberRaw<nR> { raw->value / 100.0 });
                 else
                     serializationForCSS(builder, percentage);
             }

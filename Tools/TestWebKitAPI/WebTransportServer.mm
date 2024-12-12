@@ -23,12 +23,13 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if HAVE(WEB_TRANSPORT)
 #import "config.h"
 #import "WebTransportServer.h"
 
 #import "HTTPServer.h"
 #import "Utilities.h"
-#import <pal/spi/cf/CFNetworkSPI.h>
+#import <pal/spi/cocoa/NetworkSPI.h>
 #import <wtf/BlockPtr.h>
 
 namespace TestWebKitAPI {
@@ -40,7 +41,7 @@ struct WebTransportServer::Data : public RefCounted<WebTransportServer::Data> {
 
     Function<Task(Connection)> connectionHandler;
     RetainPtr<nw_listener_t> listener;
-    Vector<RetainPtr<nw_connection_group_t>> connectionGroups;
+    RetainPtr<nw_connection_group_t> connectionGroup;
     Vector<RetainPtr<nw_connection_t>> connections;
     Vector<CoroutineHandle<Task::promise_type>> coroutineHandles;
 };
@@ -48,34 +49,59 @@ struct WebTransportServer::Data : public RefCounted<WebTransportServer::Data> {
 WebTransportServer::WebTransportServer(Function<Task(Connection)>&& connectionHandler)
     : m_data(Data::create(WTFMove(connectionHandler)))
 {
-    auto configureTLS = [](nw_protocol_options_t options) {
-        RetainPtr securityOptions = adoptNS(nw_quic_connection_copy_sec_protocol_options(options));
-        sec_protocol_options_set_local_identity(securityOptions.get(), adoptNS(sec_identity_create(testIdentity().get())).get());
-        sec_protocol_options_add_tls_application_protocol(securityOptions.get(), "h3");
+    auto configureWebTransport = [](nw_protocol_options_t options) {
+        nw_webtransport_options_set_is_datagram(options, true);
+        nw_webtransport_options_set_is_unidirectional(options, false);
+        nw_webtransport_options_set_connection_max_sessions(options, 1);
     };
 
-    RetainPtr parameters = adoptNS(nw_parameters_create_quic_stream(NW_PARAMETERS_DEFAULT_CONFIGURATION, configureTLS));
+    auto configureTLS = [](nw_protocol_options_t options) {
+        RetainPtr securityOptions = adoptNS(nw_tls_copy_sec_protocol_options(options));
+        sec_protocol_options_set_local_identity(securityOptions.get(), adoptNS(sec_identity_create(testIdentity().get())).get());
+    };
+
+    auto configureQUIC = [](nw_protocol_options_t options) {
+        nw_quic_set_initial_max_streams_bidirectional(options, std::numeric_limits<uint32_t>::max());
+        nw_quic_set_initial_max_streams_unidirectional(options, std::numeric_limits<uint32_t>::max());
+        nw_quic_set_max_datagram_frame_size(options, std::numeric_limits<uint16_t>::max());
+    };
+
+    RetainPtr parameters = adoptNS(nw_parameters_create_webtransport_http(configureWebTransport, configureTLS, configureQUIC, NW_PARAMETERS_DEFAULT_CONFIGURATION));
+    ASSERT(parameters);
+    nw_parameters_set_server_mode(parameters.get(), true);
+
+    RetainPtr webtransportOptions = adoptNS(nw_webtransport_create_options());
+    ASSERT(webtransportOptions);
+    nw_webtransport_options_set_is_unidirectional(webtransportOptions.get(), false);
+    nw_webtransport_options_set_is_datagram(webtransportOptions.get(), true);
 
     RetainPtr listener = adoptNS(nw_listener_create(parameters.get()));
 
-    nw_listener_set_new_connection_group_handler(listener.get(), [data = m_data] (nw_connection_group_t connectionGroup) {
-        constexpr uint32_t maximumMessageSize { std::numeric_limits<uint32_t>::max() };
-        constexpr bool rejectOversizedMessages { false };
-        nw_connection_group_set_receive_handler(connectionGroup, maximumMessageSize, rejectOversizedMessages, ^(dispatch_data_t, nw_content_context_t, bool) {
-            // FIXME: Implement and test datagrams with WebTransport.
+    nw_listener_set_new_connection_group_handler(listener.get(), [data = m_data, webtransportOptions = webtransportOptions] (nw_connection_group_t connectionGroup) {
+        ASSERT(!data->connectionGroup);
+        data->connectionGroup = connectionGroup;
+
+        nw_connection_group_set_state_changed_handler(connectionGroup, [data = data, webtransportOptions = webtransportOptions](nw_connection_group_state_t state, nw_error_t error) {
+            if (state == nw_connection_group_state_ready) {
+                // We need to peel off the datagram connection.
+                nw_connection_t datagramConnection = nw_connection_group_extract_connection(data->connectionGroup.get(), nil, webtransportOptions.get());
+                data->connections.append(datagramConnection);
+                data->coroutineHandles.append(data->connectionHandler(datagramConnection).handle);
+                nw_connection_set_queue(datagramConnection, dispatch_get_main_queue());
+                nw_connection_start(datagramConnection);
+            }
         });
 
-        nw_connection_group_set_new_connection_handler(connectionGroup, [data] (nw_connection_t connection) {
+        nw_connection_group_set_new_connection_handler(connectionGroup, [data = data] (nw_connection_t connection) {
             data->connections.append(connection);
+            data->coroutineHandles.append(data->connectionHandler(connection).handle);
             nw_connection_set_queue(connection, dispatch_get_main_queue());
             nw_connection_start(connection);
-            data->coroutineHandles.append(data->connectionHandler(connection).handle);
         });
-
         nw_connection_group_set_queue(connectionGroup, dispatch_get_main_queue());
         nw_connection_group_start(connectionGroup);
-        data->connectionGroups.append(connectionGroup);
     });
+
     nw_listener_set_queue(listener.get(), dispatch_get_main_queue());
 
     __block bool ready = false;
@@ -98,3 +124,5 @@ uint16_t WebTransportServer::port() const
 }
 
 } // namespace TestWebKitAPI
+
+#endif // HAVE(WEB_TRANSPORT)

@@ -591,8 +591,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/push-api/PushEventInit.idl \
     $(WebCore)/Modules/push-api/PushManager.idl \
     $(WebCore)/Modules/push-api/PushMessageData.idl \
-    $(WebCore)/Modules/push-api/PushNotificationEvent.idl \
-    $(WebCore)/Modules/push-api/PushNotificationEventInit.idl \
     $(WebCore)/Modules/push-api/PushPermissionState.idl \
     $(WebCore)/Modules/push-api/PushSubscription.idl \
     $(WebCore)/Modules/push-api/PushSubscriptionChangeEvent.idl \
@@ -994,6 +992,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/css/CSSPageRule.idl \
     $(WebCore)/css/CSSPaintCallback.idl \
     $(WebCore)/css/CSSPaintSize.idl \
+    $(WebCore)/css/CSSPositionTryRule.idl \
     $(WebCore)/css/CSSPropertyRule.idl \
     $(WebCore)/css/CSSRule.idl \
     $(WebCore)/css/CSSRuleList.idl \
@@ -1187,6 +1186,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/NonDocumentTypeChildNode.idl \
     $(WebCore)/dom/NonElementParentNode.idl \
     $(WebCore)/dom/Observable.idl \
+    $(WebCore)/dom/ObservableInspector.idl \
+    $(WebCore)/dom/ObservableInspectorAbortCallback.idl \
     $(WebCore)/dom/PageRevealEvent.idl \
     $(WebCore)/dom/PageSwapEvent.idl \
     $(WebCore)/dom/PageTransitionEvent.idl \
@@ -1201,6 +1202,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/Range+CSSOMView.idl \
     $(WebCore)/dom/Range+DOMParsing.idl \
     $(WebCore)/dom/Range.idl \
+    $(WebCore)/dom/ReducerCallback.idl \
     $(WebCore)/dom/RequestAnimationFrameCallback.idl \
     $(WebCore)/dom/SecurityPolicyViolationEvent.idl \
     $(WebCore)/dom/SecurityPolicyViolationEventDisposition.idl \
@@ -2685,6 +2687,8 @@ PROCESS_SYNC_DATA_INPUT_FILES = \
     $(WebCore)/page/ProcessSyncData.in \
 
 GENERATED_PROCESS_SYNC_CLIENT_OUTPUT_FILES = \
+	DocumentSyncData.cpp \
+	DocumentSyncData.h \
 	ProcessSyncClient.cpp \
 	ProcessSyncClient.h \
 	ProcessSyncData.h \
@@ -2698,3 +2702,15 @@ $(GENERATED_PROCESS_SYNC_CLIENT_OUTPUT_PATTERNS) : $(WebCore)/Scripts/generate-p
 	$(PYTHON) $(WebCore)/Scripts/generate-process-sync-data.py $(PROCESS_SYNC_DATA_INPUT_FILES)
 
 # ------------------------
+
+# Log messages
+
+all : WebCoreLogDefinitions.h
+
+WEBCORE_LOG_DECLARATIONS_FILES = \
+    WebCoreLogDefinitions.h \
+    WebCoreVirtualLogFunctions.h \
+
+$(WEBCORE_LOG_DECLARATIONS_FILES) : $(WebCore)/platform/LogMessages.in
+	@echo Creating WebCore log definitions $@
+	$(PYTHON) $(WebCore)/Scripts/generate-log-declarations.py $< $(WEBCORE_LOG_DECLARATIONS_FILES)

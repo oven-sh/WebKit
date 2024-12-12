@@ -54,7 +54,7 @@ TextMarkerData::TextMarkerData(AXObjectCache& cache, const VisiblePosition& visi
 {
     ASSERT(isMainThread());
 
-    memset(static_cast<void*>(this), 0, sizeof(*this));
+    memsetSpan(asMutableByteSpan(*this), 0);
     treeID = cache.treeID().toUInt64();
     auto position = visiblePosition.deepEquivalent();
     auto optionalObjectID = nodeID(cache, position.anchorNode());
@@ -71,7 +71,7 @@ TextMarkerData::TextMarkerData(AXObjectCache& cache, const CharacterOffset& char
 {
     ASSERT(isMainThread());
 
-    memset(static_cast<void*>(this), 0, sizeof(*this));
+    memsetSpan(asMutableByteSpan(*this), 0);
     treeID = cache.treeID().toUInt64();
     auto optionalObjectID = nodeID(cache, characterOffsetParam.node.get());
     objectID = optionalObjectID ? optionalObjectID->toUInt64() : 0;
@@ -459,7 +459,7 @@ static AXIsolatedObject* findObjectWithRuns(AXIsolatedObject& start, AXDirection
                 return nullptr;
 
             if (searchObject->hasTextRuns())
-                return dynamicDowncast<AXIsolatedObject>(searchObject);
+                return dynamicDowncast<AXIsolatedObject>(searchObject).get();
 
             appendChildren(searchObject, isForward, nullptr, searchStack);
         }

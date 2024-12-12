@@ -41,14 +41,20 @@
 
 namespace WebKit {
 
+LogStream::LogStream(int32_t pid)
+    : m_pid(pid)
+{
+}
+
 LogStream::~LogStream()
 {
-    if (RefPtr logStreamConnection = m_logStreamConnection) {
+}
+
+void LogStream::stopListeningForIPC()
+{
+    assertIsMainRunLoop();
+    if (RefPtr logStreamConnection = m_logStreamConnection)
         logStreamConnection->stopReceivingMessages(Messages::LogStream::messageReceiverName(), m_logStreamIdentifier->toUInt64());
-        logStreamConnection->invalidate();
-    }
-    if (RefPtr logWorkQueue = m_logWorkQueue)
-        logWorkQueue->stopAndWaitForCompletion();
 }
 
 void LogStream::logOnBehalfOfWebContent(std::span<const uint8_t> logSubsystem, std::span<const uint8_t> logCategory, std::span<const uint8_t> nullTerminatedLogString, uint8_t logType)
@@ -79,21 +85,26 @@ void LogStream::logOnBehalfOfWebContent(std::span<const uint8_t> logSubsystem, s
 
     // Use '%{public}s' in the format string for the preprocessed string from the WebContent process.
     // This should not reveal any redacted information in the string, since it has already been composed in the WebContent process.
-    os_log_with_type(osLogPointer, static_cast<os_log_type_t>(logType), "WP[%llu] %{public}s", m_pid, byteCast<char>(nullTerminatedLogString).data());
+    os_log_with_type(osLogPointer, static_cast<os_log_type_t>(logType), "WP[%d] %{public}s", m_pid, byteCast<char>(nullTerminatedLogString).data());
 }
 
-void LogStream::setup(uint64_t pid, IPC::StreamServerConnectionHandle&& serverConnection, LogStreamIdentifier logStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&& completionHandler)
+void LogStream::setup(IPC::StreamServerConnectionHandle&& serverConnection, LogStreamIdentifier logStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&& completionHandler)
 {
-    m_pid = pid;
     m_logStreamIdentifier = logStreamIdentifier;
     m_logStreamConnection = IPC::StreamServerConnection::tryCreate(WTFMove(serverConnection), { });
-    m_logWorkQueue = IPC::StreamConnectionWorkQueue::create("Log work queue"_s);
+
+    static NeverDestroyed<Ref<IPC::StreamConnectionWorkQueue>> logQueue = IPC::StreamConnectionWorkQueue::create("Log work queue"_s);
+
     if (RefPtr logStreamConnection = m_logStreamConnection) {
-        logStreamConnection->open(*m_logWorkQueue);
+        logStreamConnection->open(logQueue.get());
         logStreamConnection->startReceivingMessages(*this, Messages::LogStream::messageReceiverName(), m_logStreamIdentifier->toUInt64());
+        completionHandler(logQueue.get()->wakeUpSemaphore(), logStreamConnection->clientWaitSemaphore());
     }
-    completionHandler(m_logWorkQueue->wakeUpSemaphore(), m_logStreamConnection->clientWaitSemaphore());
 }
+
+#if __has_include("LogMessagesImplementations.h")
+#include "LogMessagesImplementations.h"
+#endif
 
 }
 

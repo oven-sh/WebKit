@@ -41,5 +41,5 @@ float adjustForZoom(float value, const RenderStyle& style)
     return adjustFloatForAbsoluteZoom(value, style);
 }
 
-} // namespace CSS
+} // namespace Style
 } // namespace WebCore

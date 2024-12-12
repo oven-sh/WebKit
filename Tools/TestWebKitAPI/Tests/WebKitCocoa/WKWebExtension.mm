@@ -2041,13 +2041,36 @@ TEST(WKWebExtension, LoadFromDirectory)
     [manager run];
 }
 
-TEST(WKWebExtension, LoadFromZipArchive)
+TEST(WKWebExtension, LoadFromZipArchiveWithoutParentDirectory)
 {
     TestWebKitAPI::HTTPServer server({
         { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } }
     }, TestWebKitAPI::HTTPServer::Protocol::Http);
 
-    auto *extensionURL = [NSBundle.test_resourcesBundle URLForResource:@"web-extension" withExtension:@"zip"];
+    auto *extensionURL = [NSBundle.test_resourcesBundle URLForResource:@"web-extension-without-parent-directory" withExtension:@"zip"];
+    EXPECT_NOT_NULL(extensionURL);
+
+    auto extension = adoptNS([[WKWebExtension alloc] _initWithResourceBaseURL:extensionURL error:nullptr]);
+    auto manager = adoptNS([[TestWebExtensionManager alloc] initForExtension:extension.get()]);
+
+    [manager loadAndRun];
+
+    EXPECT_NS_EQUAL(manager.get().yieldMessage, @"Load Tab");
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtension, LoadFromZipArchiveWithParentDirectory)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *extensionURL = [NSBundle.test_resourcesBundle URLForResource:@"web-extension-with-parent-directory" withExtension:@"zip"];
     EXPECT_NOT_NULL(extensionURL);
 
     auto extension = adoptNS([[WKWebExtension alloc] _initWithResourceBaseURL:extensionURL error:nullptr]);

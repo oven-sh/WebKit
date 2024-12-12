@@ -28,6 +28,7 @@
 
 #include "CAAudioStreamDescription.h"
 #include <wtf/CheckedArithmetic.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #include <pal/cf/CoreMediaSoftLink.h>
@@ -151,7 +152,7 @@ RetainPtr<CMBlockBufferRef> WebAudioBufferList::setSampleCountWithBlockBuffer(si
 
 void WebAudioBufferList::initializeList(std::span<uint8_t> buffer, size_t channelLength)
 {
-    memset(buffer.data(), 0, buffer.size());
+    memsetSpan(buffer, 0);
 
     for (uint32_t index = 0; index < m_canonicalList->mNumberBuffers; ++index) {
         m_canonicalList->mBuffers[index].mData = buffer.data() + channelLength * index;
@@ -201,7 +202,7 @@ AudioBuffer* WebAudioBufferList::buffer(uint32_t index) const
 
 void WebAudioBufferList::zeroFlatBuffer()
 {
-    memset(m_flatBuffer.data(), 0, m_flatBuffer.size());
+    m_flatBuffer.fill(0);
 }
 
 }

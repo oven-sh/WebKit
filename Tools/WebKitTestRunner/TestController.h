@@ -206,6 +206,7 @@ public:
 
     bool isCurrentInvocation(TestInvocation* invocation) const { return invocation == m_currentInvocation.get(); }
     TestInvocation* currentInvocation() { return m_currentInvocation.get(); }
+    RefPtr<TestInvocation> protectedCurrentInvocation();
 
     void setShouldDecideNavigationPolicyAfterDelay(bool value) { m_shouldDecideNavigationPolicyAfterDelay = value; }
     void setShouldDecideResponsePolicyAfterDelay(bool value) { m_shouldDecideResponsePolicyAfterDelay = value; }
@@ -340,7 +341,7 @@ public:
     void removeMockMediaDevice(WKStringRef persistentID);
     void setMockMediaDeviceIsEphemeral(WKStringRef, bool);
     void resetMockMediaDevices();
-    void setMockCameraOrientation(uint64_t);
+    void setMockCameraOrientation(uint64_t, WKStringRef);
     bool isMockRealtimeMediaSourceCenterEnabled() const;
     void setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted);
     void triggerMockCaptureConfigurationChange(bool forMicrophone, bool forDisplay);
@@ -631,7 +632,7 @@ private:
     void setTracksRepaints(bool);
 
     WKRetainPtr<WKURLRef> m_mainResourceURL;
-    std::unique_ptr<TestInvocation> m_currentInvocation;
+    RefPtr<TestInvocation> m_currentInvocation;
 #if PLATFORM(COCOA)
     std::unique_ptr<ClassMethodSwizzler> m_calendarSwizzler;
     std::pair<RetainPtr<NSString>, RetainPtr<NSString>> m_overriddenCalendarAndLocaleIdentifiers;

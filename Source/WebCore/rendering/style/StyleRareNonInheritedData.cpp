@@ -132,6 +132,7 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , hasClip(false)
     , positionTryOrder(static_cast<unsigned>(RenderStyle::initialPositionTryOrder()))
     , fieldSizing(RenderStyle::initialFieldSizing())
+    , nativeAppearanceDisabled(static_cast<unsigned>(RenderStyle::initialNativeAppearanceDisabled()))
 {
 }
 
@@ -231,6 +232,7 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , hasClip(o.hasClip)
     , positionTryOrder(o.positionTryOrder)
     , fieldSizing(o.fieldSizing)
+    , nativeAppearanceDisabled(o.nativeAppearanceDisabled)
 {
 }
 
@@ -336,7 +338,8 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && viewTransitionName == o.viewTransitionName
         && hasClip == o.hasClip
         && positionTryOrder == o.positionTryOrder
-        && fieldSizing == o.fieldSizing;
+        && fieldSizing == o.fieldSizing
+        && nativeAppearanceDisabled == o.nativeAppearanceDisabled;
 }
 
 OptionSet<Containment> StyleRareNonInheritedData::usedContain() const

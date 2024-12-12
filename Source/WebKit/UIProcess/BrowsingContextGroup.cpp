@@ -114,7 +114,10 @@ void BrowsingContextGroup::removeFrameProcess(FrameProcess& process)
     m_remotePages.removeIf([&] (auto& pair) {
         auto& set = pair.value;
         set.removeIf([&] (auto& remotePage) {
-            return remotePage->process().coreProcessIdentifier() == process.process().coreProcessIdentifier();
+            if (remotePage->process().coreProcessIdentifier() != process.process().coreProcessIdentifier())
+                return false;
+            remotePage->removePageFromProcess();
+            return true;
         });
         return set.isEmpty();
     });
@@ -154,7 +157,8 @@ void BrowsingContextGroup::removePage(WebPageProxy& page)
 {
     m_pages.remove(page);
 
-    m_remotePages.take(page);
+    for (auto& remotePage : m_remotePages.take(page))
+        remotePage->removePageFromProcess();
 }
 
 void BrowsingContextGroup::forEachRemotePage(const WebPageProxy& page, Function<void(RemotePageProxy&)>&& function)

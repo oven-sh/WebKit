@@ -252,6 +252,7 @@ void NetworkTaskCocoa::updateTaskWithFirstPartyForSameSiteCookies(NSURLSessionTa
 #endif
 }
 
+#if HAVE(ALLOW_ONLY_PARTITIONED_COOKIES)
 void NetworkTaskCocoa::updateTaskWithStoragePartitionIdentifier(const WebCore::ResourceRequest& request)
 {
     CheckedPtr networkStorageSession = m_networkSession->networkStorageSession();
@@ -265,6 +266,7 @@ void NetworkTaskCocoa::updateTaskWithStoragePartitionIdentifier(const WebCore::R
     if ([task() respondsToSelector:@selector(set_storagePartitionIdentifier:)])
         task()._storagePartitionIdentifier = networkStorageSession->cookiePartitionIdentifier(request);
 }
+#endif
 
 void NetworkTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&& redirectResponse, WebCore::ResourceRequest&& request, RedirectCompletionHandler&& completionHandler)
 {
@@ -287,7 +289,9 @@ void NetworkTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&& re
 #endif
 
     updateTaskWithFirstPartyForSameSiteCookies(task(), request);
+#if HAVE(ALLOW_ONLY_PARTITIONED_COOKIES)
     updateTaskWithStoragePartitionIdentifier(request);
+#endif
     completionHandler(WTFMove(request));
 }
 

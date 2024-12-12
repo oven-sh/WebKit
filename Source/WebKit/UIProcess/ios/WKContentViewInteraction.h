@@ -651,7 +651,7 @@ struct ImageAnalysisContextMenuActionData {
 
 @property (nonatomic, readonly) CGPoint lastInteractionLocation;
 @property (nonatomic, readonly) BOOL isEditable;
-@property (nonatomic, readonly) BOOL shouldHideSelectionWhenScrolling;
+@property (nonatomic, readonly) BOOL shouldHideSelectionInFixedPositionWhenScrolling;
 @property (nonatomic, readonly) BOOL shouldIgnoreKeyboardWillHideNotification;
 @property (nonatomic, readonly) const WebKit::InteractionInformationAtPosition& positionInformation;
 @property (nonatomic, readonly) const WebKit::WKAutoCorrectionData& autocorrectionData;
@@ -920,8 +920,9 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 
 - (ScopeExit<Function<void()>>)makeTextSelectionViewsNonInteractiveForScope;
 
+- (BOOL)_shouldHideSelectionDuringOverflowScroll:(UIScrollView *)scrollView;
+
 @property (nonatomic, readonly) BOOL shouldUseAsyncInteractions;
-@property (nonatomic, readonly) BOOL selectionHonorsOverflowScrolling;
 
 @end
 

@@ -25,6 +25,7 @@
 
 #include "FontCascade.h"
 #include "InlineIteratorLineBox.h"
+#include "LayoutIntegrationLineLayout.h"
 #include "LayoutRepainter.h"
 #include "LineClampValue.h"
 #include "RenderBoxInlines.h"
@@ -962,6 +963,20 @@ static size_t lineCountFor(const RenderBlockFlow& blockFlow)
     return count;
 }
 
+static RenderBlockFlow* blockContainerForLastFormattedLine(const RenderBlock& enclosingBlockContainer)
+{
+    for (auto* child = enclosingBlockContainer.lastChild(); child; child = child->previousSibling()) {
+        CheckedPtr blockContainer = dynamicDowncast<RenderBlockFlow>(*child);
+        if (!blockContainer)
+            continue;
+        if (auto* descendantRoot = blockContainerForLastFormattedLine(*blockContainer))
+            return descendantRoot;
+        if (blockContainer->hasLines())
+            return blockContainer.get();
+    }
+    return { };
+}
+
 RenderDeprecatedFlexibleBox::ClampedContent RenderDeprecatedFlexibleBox::applyLineClamp(FlexBoxIterator& iterator, bool relayoutChildren)
 {
     auto initialize = [&] {
@@ -1014,6 +1029,18 @@ RenderDeprecatedFlexibleBox::ClampedContent RenderDeprecatedFlexibleBox::applyLi
 
         child->markForPaginationRelayoutIfNeeded();
         child->layoutIfNeeded();
+    }
+    if (auto* lastRoot = blockContainerForLastFormattedLine(*this)) {
+        if (auto* inlineLayout = lastRoot->inlineLayout(); inlineLayout && inlineLayout->hasEllipsisInBlockDirectionOnLastFormattedLine()) {
+            auto currentLineClamp = layoutState.legacyLineClamp();
+
+            // Let line-clamp logic run but make sure no clamping happens (it's needed to make sure certain features are disabled like ellipsis in inline direction).
+            layoutState.setLegacyLineClamp(RenderLayoutState::LegacyLineClamp { inlineLayout->lineCount() + 1, { }, { }, { } });
+            lastRoot->setChildNeedsLayout(MarkOnlyThis);
+            lastRoot->layoutIfNeeded();
+
+            layoutState.setLegacyLineClamp(currentLineClamp);
+        }
     }
 
     auto lineClamp = *layoutState.legacyLineClamp();

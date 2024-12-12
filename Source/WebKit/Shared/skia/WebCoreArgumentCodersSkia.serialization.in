@@ -33,11 +33,4 @@ header: <WebCore/FontPlatformData.h>
     sk_sp<SkData> typefaceData;
 };
 
-header: <WebCore/FontCustomPlatformData.h>
-[CustomHeader] struct WebCore::FontCustomPlatformSerializedData {
-    Vector<uint8_t> fontFaceData;
-    String itemInCollection;
-    WebCore::RenderingResourceIdentifier renderingResourceIdentifier;
-};
-
 #endif

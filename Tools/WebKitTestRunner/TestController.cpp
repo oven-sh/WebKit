@@ -448,10 +448,11 @@ WKPageRef TestController::createOtherPage(PlatformWebView* parentView, WKPageCon
 
 PlatformWebView* TestController::createOtherPlatformWebView(PlatformWebView* parentView, WKPageConfigurationRef configuration, WKNavigationActionRef, WKWindowFeaturesRef)
 {
-    m_currentInvocation->willCreateNewPage();
+    RefPtr currentInvocation = m_currentInvocation;
+    currentInvocation->willCreateNewPage();
 
     // The test called testRunner.preventPopupWindows() to prevent opening new windows.
-    if (!m_currentInvocation->canOpenWindows())
+    if (!currentInvocation->canOpenWindows())
         return nullptr;
 
     m_createdOtherPage = true;
@@ -576,7 +577,7 @@ PlatformWebView* TestController::createOtherPlatformWebView(PlatformWebView* par
 
     view->didInitializeClients();
 
-    TestController::singleton().updateWindowScaleForTest(view.ptr(), *TestController::singleton().m_currentInvocation);
+    TestController::singleton().updateWindowScaleForTest(view.ptr(), *TestController::singleton().protectedCurrentInvocation());
 
     PlatformWebView* viewToReturn = view.ptr();
     m_auxiliaryWebViews.append(WTFMove(view));
@@ -1166,7 +1167,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     WKContextSetUseSeparateServiceWorkerProcess(TestController::singleton().context(), false);
     WKContextClearMockGamepadsForTesting(TestController::singleton().context());
 
-    WKPageSetMockCameraOrientation(m_mainWebView->page(), 0);
+    WKPageSetMockCameraOrientationForTesting(m_mainWebView->page(), 0, nullptr);
     resetMockMediaDevices();
     WKPageSetMediaCaptureReportingDelayForTesting(m_mainWebView->page(), 0);
 
@@ -1288,7 +1289,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     auto loadAboutBlank = [this] {
         m_doneResetting = false;
         WKPageLoadURL(m_mainWebView->page(), blankURL());
-        runUntil(m_doneResetting, m_currentInvocation->shortTimeout());
+        runUntil(m_doneResetting, protectedCurrentInvocation()->shortTimeout());
         return m_doneResetting;
     };
 
@@ -1705,22 +1706,23 @@ bool TestController::runTest(const char* inputLine)
     if (!m_mainResourceURL)
         return false;
 
-    m_currentInvocation = makeUnique<TestInvocation>(m_mainResourceURL.get(), options);
+    Ref currentInvocation = TestInvocation::create(m_mainResourceURL.get(), options);
+    m_currentInvocation = currentInvocation.copyRef();
 
     if (command.shouldDumpPixels || m_shouldDumpPixelsForAllTests)
-        m_currentInvocation->setIsPixelTest(command.expectedPixelHash);
+        currentInvocation->setIsPixelTest(command.expectedPixelHash);
 
     if (command.forceDumpPixels)
-        m_currentInvocation->setForceDumpPixels(true);
+        currentInvocation->setForceDumpPixels(true);
 
     if (command.timeout > 0_s)
-        m_currentInvocation->setCustomTimeout(command.timeout);
+        currentInvocation->setCustomTimeout(command.timeout);
 
-    m_currentInvocation->setDumpJSConsoleLogInStdErr(command.dumpJSConsoleLogInStdErr || options.dumpJSConsoleLogInStdErr());
+    currentInvocation->setDumpJSConsoleLogInStdErr(command.dumpJSConsoleLogInStdErr || options.dumpJSConsoleLogInStdErr());
 
-    platformWillRunTest(*m_currentInvocation);
+    platformWillRunTest(currentInvocation);
 
-    m_currentInvocation->invoke();
+    currentInvocation->invoke();
     m_currentInvocation = nullptr;
     m_mainResourceURL = nullptr;
 
@@ -1959,10 +1961,13 @@ void TestController::didReceiveMessageFromInjectedBundle(WKStringRef messageName
         ASSERT_NOT_REACHED();
     }
 
-    if (!m_currentInvocation)
-        return;
+    if (RefPtr currentInvocation = m_currentInvocation)
+        currentInvocation->didReceiveMessageFromInjectedBundle(messageName, messageBody);
+}
 
-    m_currentInvocation->didReceiveMessageFromInjectedBundle(messageName, messageBody);
+RefPtr<TestInvocation> TestController::protectedCurrentInvocation()
+{
+    return m_currentInvocation;
 }
 
 static void adoptAndCallCompletionHandler(void* context)
@@ -2126,7 +2131,7 @@ void TestController::didReceiveAsyncMessageFromInjectedBundle(WKStringRef messag
         return statisticsUpdateCookieBlocking(WTFMove(completionHandler));
 
     if (WKStringIsEqualToUTF8CString(messageName, "StatisticsResetToConsistentState")) {
-        m_currentInvocation->dumpResourceLoadStatisticsIfNecessary();
+        protectedCurrentInvocation()->dumpResourceLoadStatisticsIfNecessary();
         statisticsResetToConsistentState();
         return completionHandler(nullptr);
     }
@@ -2422,7 +2427,7 @@ void TestController::didReceiveSynchronousMessageFromInjectedBundle(WKStringRef 
         return setHTTPCookieAcceptPolicy(policy, WTFMove(completionHandler));
     }
 
-    completionHandler(m_currentInvocation->didReceiveSynchronousMessageFromInjectedBundle(messageName, messageBody).get());
+    completionHandler(protectedCurrentInvocation()->didReceiveSynchronousMessageFromInjectedBundle(messageName, messageBody).get());
 }
 
 WKRetainPtr<WKTypeRef> TestController::getInjectedBundleInitializationUserData()
@@ -2644,7 +2649,7 @@ static ASCIILiteral toString(WKProtectionSpaceAuthenticationScheme scheme)
 bool TestController::canAuthenticateAgainstProtectionSpace(WKPageRef page, WKProtectionSpaceRef protectionSpace)
 {
     if (m_shouldLogCanAuthenticateAgainstProtectionSpace)
-        m_currentInvocation->outputText("canAuthenticateAgainstProtectionSpace\n"_s);
+        protectedCurrentInvocation()->outputText("canAuthenticateAgainstProtectionSpace\n"_s);
     auto scheme = WKProtectionSpaceGetAuthenticationScheme(protectionSpace);
     if (scheme == kWKProtectionSpaceAuthenticationSchemeServerTrustEvaluationRequested) {
         auto host = toSTD(adoptWK(WKProtectionSpaceCopyHost(protectionSpace)));
@@ -2704,7 +2709,7 @@ void TestController::didReceiveAuthenticationChallenge(WKPageRef page, WKAuthent
     }
 
     if (m_rejectsProtectionSpaceAndContinueForAuthenticationChallenges) {
-        m_currentInvocation->outputText("Simulating reject protection space and continue for authentication challenge\n"_s);
+        protectedCurrentInvocation()->outputText("Simulating reject protection space and continue for authentication challenge\n"_s);
         WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(decisionListener);
         return;
     }
@@ -2717,7 +2722,7 @@ void TestController::didReceiveAuthenticationChallenge(WKPageRef page, WKAuthent
         message.append("Simulating cancelled authentication sheet\n"_s);
     else
         message.append("Responding with "_s, m_authenticationUsername, ':', m_authenticationPassword, '\n');
-    m_currentInvocation->outputText(message.toString());
+    protectedCurrentInvocation()->outputText(message.toString());
 
     if (!m_handlesAuthenticationChallenges) {
         WKAuthenticationDecisionListenerUseCredential(decisionListener, 0);
@@ -2753,7 +2758,7 @@ bool TestController::downloadDidReceiveServerRedirectToURL(WKDownloadRef downloa
 void TestController::downloadDidStart(WKDownloadRef download)
 {
     if (m_shouldLogDownloadCallbacks)
-        m_currentInvocation->outputText("Download started.\n"_s);
+        protectedCurrentInvocation()->outputText("Download started.\n"_s);
 }
 
 WKStringRef TestController::decideDestinationWithSuggestedFilename(WKDownloadRef download, WKStringRef filename)
@@ -2761,7 +2766,7 @@ WKStringRef TestController::decideDestinationWithSuggestedFilename(WKDownloadRef
     auto suggestedFilename = toWTFString(filename);
 
     if (m_shouldLogDownloadCallbacks)
-        m_currentInvocation->outputText(makeString("Downloading URL with suggested filename \""_s, suggestedFilename, "\"\n"_s));
+        protectedCurrentInvocation()->outputText(makeString("Downloading URL with suggested filename \""_s, suggestedFilename, "\"\n"_s));
 
     const char* dumpRenderTreeTemp = libraryPathForTesting();
     if (!dumpRenderTreeTemp)
@@ -2782,40 +2787,42 @@ WKStringRef TestController::decideDestinationWithSuggestedFilename(WKDownloadRef
 
 void TestController::downloadDidFinish(WKDownloadRef)
 {
+    RefPtr currentInvocation = m_currentInvocation;
     if (m_shouldLogDownloadSize)
-        m_currentInvocation->outputText(makeString("Download size: "_s, m_downloadTotalBytesWritten.value_or(0), ".\n"_s));
+        currentInvocation->outputText(makeString("Download size: "_s, m_downloadTotalBytesWritten.value_or(0), ".\n"_s));
     if (m_shouldLogDownloadExpectedSize)
-        m_currentInvocation->outputText(makeString("Download expected size: "_s, m_downloadTotalBytesExpectedToWrite.value_or(0), ".\n"_s));
+        currentInvocation->outputText(makeString("Download expected size: "_s, m_downloadTotalBytesExpectedToWrite.value_or(0), ".\n"_s));
     if (m_shouldLogDownloadCallbacks)
-        m_currentInvocation->outputText("Download completed.\n"_s);
-    m_currentInvocation->notifyDownloadDone();
+        currentInvocation->outputText("Download completed.\n"_s);
+    currentInvocation->notifyDownloadDone();
 }
 
 bool TestController::downloadDidReceiveServerRedirectToURL(WKDownloadRef, WKURLRequestRef request)
 {
     auto url = adoptWK(WKURLRequestCopyURL(request));
     if (m_shouldLogDownloadCallbacks)
-        m_currentInvocation->outputText(makeString("Download was redirected to \""_s, toWTFString(adoptWK(WKURLCopyString(url.get()))), "\".\n"_s));
+        protectedCurrentInvocation()->outputText(makeString("Download was redirected to \""_s, toWTFString(adoptWK(WKURLCopyString(url.get()))), "\".\n"_s));
     return true;
 }
 
 void TestController::downloadDidFail(WKDownloadRef, WKErrorRef error)
 {
+    RefPtr currentInvocation = m_currentInvocation;
     if (m_shouldLogDownloadCallbacks) {
-        m_currentInvocation->outputText("Download failed.\n"_s);
+        currentInvocation->outputText("Download failed.\n"_s);
 
         auto domain = toWTFString(adoptWK(WKErrorCopyDomain(error)));
         auto description = toWTFString(adoptWK(WKErrorCopyLocalizedDescription(error)));
         int code = WKErrorGetErrorCode(error);
 
-        m_currentInvocation->outputText(makeString("Failed: "_s, domain, ", code="_s, code, ", description="_s, description, '\n'));
+        currentInvocation->outputText(makeString("Failed: "_s, domain, ", code="_s, code, ", description="_s, description, '\n'));
     }
-    m_currentInvocation->notifyDownloadDone();
+    currentInvocation->notifyDownloadDone();
 }
 
 void TestController::receivedServiceWorkerConsoleMessage(const String& message)
 {
-    m_currentInvocation->outputText(makeString("Received ServiceWorker Console Message: "_s, message, '\n'));
+    protectedCurrentInvocation()->outputText(makeString("Received ServiceWorker Console Message: "_s, message, '\n'));
 }
 
 void TestController::downloadDidReceiveAuthenticationChallenge(WKDownloadRef, WKAuthenticationChallengeRef authenticationChallenge, const void *clientInfo)
@@ -2838,7 +2845,7 @@ void TestController::downloadDidWriteData(WKDownloadRef download, long long byte
 
 void TestController::webProcessDidTerminate(WKProcessTerminationReason reason)
 {
-    if (m_currentInvocation->options().shouldIgnoreWebProcessTermination())
+    if (protectedCurrentInvocation()->options().shouldIgnoreWebProcessTermination())
         return;
 
     // This function can be called multiple times when crash logs are being saved on Windows, so
@@ -2862,22 +2869,22 @@ void TestController::webProcessDidTerminate(WKProcessTerminationReason reason)
 
 void TestController::didBeginNavigationGesture(WKPageRef)
 {
-    m_currentInvocation->didBeginSwipe();
+    protectedCurrentInvocation()->didBeginSwipe();
 }
 
 void TestController::willEndNavigationGesture(WKPageRef, WKBackForwardListItemRef)
 {
-    m_currentInvocation->willEndSwipe();
+    protectedCurrentInvocation()->willEndSwipe();
 }
 
 void TestController::didEndNavigationGesture(WKPageRef, WKBackForwardListItemRef)
 {
-    m_currentInvocation->didEndSwipe();
+    protectedCurrentInvocation()->didEndSwipe();
 }
 
 void TestController::didRemoveNavigationGestureSnapshot(WKPageRef)
 {
-    m_currentInvocation->didRemoveSwipeSnapshot();
+    protectedCurrentInvocation()->didRemoveSwipeSnapshot();
 }
 
 void TestController::simulateWebNotificationClick(WKDataRef notificationID)
@@ -3064,7 +3071,7 @@ void TestController::handleCheckOfUserMediaPermissionForOrigin(WKFrameRef frame,
 bool TestController::handleDeviceOrientationAndMotionAccessRequest(WKSecurityOriginRef origin, WKFrameInfoRef frame)
 {
     auto frameOrigin = adoptWK(WKFrameInfoCopySecurityOrigin(frame));
-    m_currentInvocation->outputText(makeString("Received device orientation & motion access request for top level origin \""_s, originUserVisibleName(origin), "\", with frame origin \""_s, originUserVisibleName(frameOrigin.get()), "\".\n"_s));
+    protectedCurrentInvocation()->outputText(makeString("Received device orientation & motion access request for top level origin \""_s, originUserVisibleName(origin), "\", with frame origin \""_s, originUserVisibleName(frameOrigin.get()), "\".\n"_s));
     return m_shouldAllowDeviceOrientationAndMotionAccess;
 }
 
@@ -3287,7 +3294,7 @@ void TestController::decidePolicyForNavigationAction(WKPageRef page, WKNavigatio
 
     auto request = adoptWK(WKNavigationActionCopyRequest(navigationAction));
     if (auto targetFrame = adoptWK(WKNavigationActionCopyTargetFrameInfo(navigationAction)); targetFrame && m_dumpPolicyDelegateCallbacks) {
-        m_currentInvocation->outputText(makeString(" - decidePolicyForNavigationAction\n"_s, string(request.get(), page),
+        protectedCurrentInvocation()->outputText(makeString(" - decidePolicyForNavigationAction\n"_s, string(request.get(), page),
             " is main frame - "_s, targetFrame && WKFrameInfoGetIsMainFrame(targetFrame.get()) ? "yes"_s : "no"_s,
             " should open URLs externally - "_s, WKNavigationActionGetShouldOpenExternalSchemes(navigationAction) ? "yes"_s : "no"_s, '\n'));
     }
@@ -3304,7 +3311,7 @@ void TestController::decidePolicyForNavigationAction(WKPageRef page, WKNavigatio
             stringBuilder.append(toWTFString(adoptWK(WKURLCopyString(url.get())).get()));
         stringBuilder.append(" with navigation type \'"_s, navigationTypeToString(WKNavigationActionGetNavigationType(navigationAction)), '\'');
         stringBuilder.append('\n');
-        m_currentInvocation->outputText(stringBuilder.toString());
+        protectedCurrentInvocation()->outputText(stringBuilder.toString());
         if (!m_skipPolicyDelegateNotifyDone)
             WKPagePostMessageToInjectedBundle(mainWebView()->page(), toWK("NotifyDone").get(), nullptr);
     }
@@ -3349,7 +3356,7 @@ void TestController::decidePolicyForNavigationResponse(WKNavigationResponseRef n
 
     if (m_policyDelegateEnabled) {
         if (responseIsAttachment)
-            m_currentInvocation->outputText(makeString("Policy delegate: resource is an attachment, suggested file name \'"_s, toWTFString(adoptWK(WKURLResponseCopySuggestedFilename(response.get())).get()), "'\n"_s));
+            protectedCurrentInvocation()->outputText(makeString("Policy delegate: resource is an attachment, suggested file name \'"_s, toWTFString(adoptWK(WKURLResponseCopySuggestedFilename(response.get())).get()), "'\n"_s));
     }
 
     if (m_shouldDecideResponsePolicyAfterDelay)
@@ -3378,7 +3385,7 @@ void TestController::didNavigateWithNavigationData(WKNavigationDataRef navigatio
     auto method = toWTFString(adoptWK(WKURLRequestCopyHTTPMethod(request.get())));
 
     // FIXME: Determine whether the navigation was successful / a client redirect rather than hard-coding the message here.
-    m_currentInvocation->outputText(makeString("WebView navigated to url \""_s, urlString, "\" with title \""_s, title, "\" with HTTP equivalent method \""_s, method,
+    protectedCurrentInvocation()->outputText(makeString("WebView navigated to url \""_s, urlString, "\" with title \""_s, title, "\" with HTTP equivalent method \""_s, method,
         "\".  The navigation was successful and was not a client redirect.\n"_s));
 }
 
@@ -3398,7 +3405,7 @@ void TestController::didPerformClientRedirect(WKURLRef sourceURL, WKURLRef desti
     auto source = toWTFString(adoptWK(WKURLCopyString(sourceURL)));
     auto destination = toWTFString(adoptWK(WKURLCopyString(destinationURL)));
 
-    m_currentInvocation->outputText(makeString("WebView performed a client redirect from \""_s, source, "\" to \""_s, destination, "\".\n"_s));
+    protectedCurrentInvocation()->outputText(makeString("WebView performed a client redirect from \""_s, source, "\" to \""_s, destination, "\".\n"_s));
 }
 
 void TestController::didPerformServerRedirect(WKContextRef, WKPageRef, WKURLRef sourceURL, WKURLRef destinationURL, WKFrameRef frame, const void* clientInfo)
@@ -3417,7 +3424,7 @@ void TestController::didPerformServerRedirect(WKURLRef sourceURL, WKURLRef desti
     auto source = toWTFString(adoptWK(WKURLCopyString(sourceURL)));
     auto destination = toWTFString(adoptWK(WKURLCopyString(destinationURL)));
 
-    m_currentInvocation->outputText(makeString("WebView performed a server redirect from \""_s, source, "\" to \""_s, destination, "\".\n"_s));
+    protectedCurrentInvocation()->outputText(makeString("WebView performed a server redirect from \""_s, source, "\" to \""_s, destination, "\".\n"_s));
 }
 
 void TestController::didUpdateHistoryTitle(WKContextRef, WKPageRef, WKStringRef title, WKURLRef URL, WKFrameRef frame, const void* clientInfo)
@@ -3434,7 +3441,7 @@ void TestController::didUpdateHistoryTitle(WKStringRef title, WKURLRef URL, WKFr
         return;
 
     auto urlString = toWTFString(adoptWK(WKURLCopyString(URL)));
-    m_currentInvocation->outputText(makeString("WebView updated the title for history URL \""_s, urlString, "\" to \""_s, toWTFString(title), "\".\n"_s));
+    protectedCurrentInvocation()->outputText(makeString("WebView updated the title for history URL \""_s, urlString, "\" to \""_s, toWTFString(title), "\".\n"_s));
 }
 
 void TestController::setNavigationGesturesEnabled(bool value)
@@ -4166,9 +4173,9 @@ void TestController::resetMockMediaDevices()
     WKResetMockMediaDevices(platformContext());
 }
 
-void TestController::setMockCameraOrientation(uint64_t orientation)
+void TestController::setMockCameraOrientation(uint64_t rotation, WKStringRef persistentId)
 {
-    WKPageSetMockCameraOrientation(m_mainWebView->page(), orientation);
+    WKPageSetMockCameraOrientationForTesting(m_mainWebView->page(), rotation, persistentId);
 }
 
 bool TestController::isMockRealtimeMediaSourceCenterEnabled() const

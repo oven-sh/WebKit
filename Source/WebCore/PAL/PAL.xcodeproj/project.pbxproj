@@ -71,6 +71,8 @@
 		5C7C787423AC3E770065F47E /* ManagedConfigurationSoftLink.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5C7C787223AC3E770065F47E /* ManagedConfigurationSoftLink.mm */; };
 		5CB898B2286274FA00CA3485 /* QuarantineSPI.h in Headers */ = {isa = PBXBuildFile; fileRef = 5CB898B1286274FA00CA3485 /* QuarantineSPI.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		5CF869ED29D266AE0045F0D2 /* NSKeyedUnarchiverSPI.h in Headers */ = {isa = PBXBuildFile; fileRef = 5CF869EC29D266AE0045F0D2 /* NSKeyedUnarchiverSPI.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		6D45AA352D026F760002871B /* ScreenTimeSoftLink.h in Headers */ = {isa = PBXBuildFile; fileRef = 6D45AA312D026F6F0002871B /* ScreenTimeSoftLink.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		6D45AA372D026F8F0002871B /* ScreenTimeSoftLink.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6D45AA362D026F8C0002871B /* ScreenTimeSoftLink.mm */; };
 		7A46A8112A3265C8007BDD04 /* LockdownModeSoftLink.h in Headers */ = {isa = PBXBuildFile; fileRef = 7A46A80F2A3265C8007BDD04 /* LockdownModeSoftLink.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7A46A8122A3265E2007BDD04 /* LockdownModeSoftLink.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7A46A80E2A3265C7007BDD04 /* LockdownModeSoftLink.mm */; };
 		7AA1E2CE29EF5921002D4455 /* DataDetectorsUISoftLink.h in Headers */ = {isa = PBXBuildFile; fileRef = 7AA1E2CD29EF5921002D4455 /* DataDetectorsUISoftLink.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -641,6 +643,8 @@
 		5CB898B1286274FA00CA3485 /* QuarantineSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = QuarantineSPI.h; sourceTree = "<group>"; };
 		5CF869EC29D266AE0045F0D2 /* NSKeyedUnarchiverSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NSKeyedUnarchiverSPI.h; sourceTree = "<group>"; };
 		63E369F921AFA83F001C14BC /* NSProgressSPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSProgressSPI.h; sourceTree = "<group>"; };
+		6D45AA312D026F6F0002871B /* ScreenTimeSoftLink.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ScreenTimeSoftLink.h; sourceTree = "<group>"; };
+		6D45AA362D026F8C0002871B /* ScreenTimeSoftLink.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ScreenTimeSoftLink.mm; sourceTree = "<group>"; };
 		71B1141F26823ACD004D6701 /* SystemPreviewSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SystemPreviewSPI.h; sourceTree = "<group>"; };
 		726FBD4C2C5D9CF800B3F5FF /* dav1d.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = dav1d.xcodeproj; path = dav1d/dav1d.xcodeproj; sourceTree = "<group>"; };
 		72BA2A872951462500678507 /* NSTextFieldCellSPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSTextFieldCellSPI.h; sourceTree = "<group>"; };
@@ -1128,6 +1132,8 @@
 				D065131429B69F11008C65C4 /* QuartzCoreSoftLink.mm */,
 				F4974EA1265EEA2200B49B8C /* RevealSoftLink.h */,
 				F4974EA2265EEA2200B49B8C /* RevealSoftLink.mm */,
+				6D45AA312D026F6F0002871B /* ScreenTimeSoftLink.h */,
+				6D45AA362D026F8C0002871B /* ScreenTimeSoftLink.mm */,
 				93B38EBD25821CB600198E63 /* SpeechSoftLink.h */,
 				93B38EBF25821CD700198E63 /* SpeechSoftLink.mm */,
 				F44C007929A06B1C00211F33 /* TranslationUIServicesSoftLink.h */,
@@ -1536,6 +1542,7 @@
 				DD20DE0727BC90D80093D175 /* SceneKitSPI.h in Headers */,
 				DD20DDC827BC90D70093D175 /* ScreenCaptureKitSoftLink.h in Headers */,
 				DD20DE4027BC90D80093D175 /* ScreenCaptureKitSPI.h in Headers */,
+				6D45AA352D026F760002871B /* ScreenTimeSoftLink.h in Headers */,
 				DD20DE0827BC90D80093D175 /* SecKeyProxySPI.h in Headers */,
 				DD20DE0927BC90D80093D175 /* ServersSPI.h in Headers */,
 				DD20DE6327BC90D80093D175 /* SessionID.h in Headers */,
@@ -1747,6 +1754,7 @@
 				071C00372707EDF000D027C7 /* ReplayKitSoftLink.mm in Sources */,
 				F4974EA4265EEA2200B49B8C /* RevealSoftLink.mm in Sources */,
 				07789181273B14FF00E408D1 /* ScreenCaptureKitSoftLink.mm in Sources */,
+				6D45AA372D026F8F0002871B /* ScreenTimeSoftLink.mm in Sources */,
 				A3C66CDC1F462D6A009E6EE9 /* SessionID.cpp in Sources */,
 				A3AB6E521F3D1DC5009C14B1 /* SleepDisabler.cpp in Sources */,
 				A3AB6E601F3D1E39009C14B1 /* SleepDisablerCocoa.cpp in Sources */,

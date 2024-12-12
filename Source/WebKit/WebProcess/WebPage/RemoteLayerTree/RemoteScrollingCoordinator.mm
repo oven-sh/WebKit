@@ -35,7 +35,6 @@
 #import "RemoteScrollingCoordinatorMessages.h"
 #import "RemoteScrollingCoordinatorTransaction.h"
 #import "RemoteScrollingUIState.h"
-#import "WebCoreArgumentCoders.h"
 #import "WebPage.h"
 #import "WebProcess.h"
 #import <WebCore/GraphicsLayer.h>

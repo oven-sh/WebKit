@@ -446,7 +446,7 @@ WebVTTParser::ParseState WebVTTParser::collectTimingsAndSettings(const String& l
     input.skipWhile<isASCIIWhitespace<UChar>>();
 
     // Steps 6 - 9 - If the next three characters are not "-->", abort and return failure.
-    if (!input.scan("-->"))
+    if (!input.scan("-->"_span))
         return BadCue;
     
     input.skipWhile<isASCIIWhitespace<UChar>>();

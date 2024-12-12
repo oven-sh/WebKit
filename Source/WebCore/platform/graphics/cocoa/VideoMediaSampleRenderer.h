@@ -79,6 +79,10 @@ public:
 
     WebSampleBufferVideoRendering *renderer() const;
 
+    template <typename T> T* as() const;
+    template <> AVSampleBufferVideoRenderer* as() const;
+    template <> AVSampleBufferDisplayLayer* as() const { return m_displayLayer.get(); }
+
     struct DisplayedPixelBufferEntry {
         RetainPtr<CVPixelBufferRef> pixelBuffer;
         MediaTime presentationTimeStamp;

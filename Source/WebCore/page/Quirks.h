@@ -45,6 +45,7 @@ class LocalFrame;
 class Node;
 class PlatformMouseEvent;
 class RegistrableDomain;
+class RenderStyle;
 class SecurityOriginData;
 class WeakPtrImplWithEventTargetData;
 
@@ -201,7 +202,6 @@ public:
 
     bool needsResettingTransitionCancelsRunningTransitionQuirk() const;
 
-    bool shouldStarBePermissionsPolicyDefaultValue() const;
     bool shouldDisableDataURLPaddingValidation() const;
 
     bool needsDisableDOMPasteAccessQuirk() const;
@@ -240,6 +240,8 @@ public:
     bool hideIGNVolumeSlider() const;
 #endif
 
+    bool needsFacebookStoriesCreationFormQuirk(const Element&, const RenderStyle&) const;
+
 private:
     bool needsQuirks() const;
     bool isDomain(const String&) const;
@@ -252,6 +254,7 @@ private:
     bool isAmazon() const;
     bool isCBSSports() const;
     bool isESPN() const;
+    bool isFacebook() const;
     bool isGoogleMaps() const;
     bool isGoogleDocs() const;
     bool isNetflix() const;
@@ -265,6 +268,7 @@ private:
     URL topDocumentURL() const;
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
+    mutable WeakPtr<const Element, WeakPtrImplWithEventTargetData> m_facebookStoriesCreationFormContainer;
 
     mutable QuirksData m_quirksData;
 

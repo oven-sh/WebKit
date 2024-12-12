@@ -51,7 +51,7 @@ private:
     void consumePartialSequenceByte();
 
     int m_partialSequenceSize { 0 };
-    uint8_t m_partialSequence[U8_MAX_LENGTH];
+    std::array<uint8_t, U8_MAX_LENGTH> m_partialSequence;
     bool m_shouldStripByteOrderMark { false };
 };
 

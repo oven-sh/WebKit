@@ -25,6 +25,10 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=UI
+]
 messages -> WebExtensionController {
     [Validator=hasLoadedContexts] DidStartProvisionalLoadForFrame(WebKit::WebPageProxyIdentifier pageID, struct WebKit::WebExtensionFrameParameters frameParameters, WallTime timestamp)
     [Validator=hasLoadedContexts] DidCommitLoadForFrame(WebKit::WebPageProxyIdentifier pageID, struct WebKit::WebExtensionFrameParameters frameParameters, WallTime timestamp)

@@ -78,20 +78,24 @@ ContentsFormat screenContentsFormat(Widget* widget, PlatformCALayerClient* clien
 #if HAVE(HDR_SUPPORT)
     if (client && client->hdrForImagesEnabled() && screenSupportsHighDynamicRange(widget))
         return ContentsFormat::RGBA16F;
-#else
-    UNUSED_PARAM(widget);
-    UNUSED_PARAM(client);
 #endif
 
-    if (auto data = screenData(primaryScreenDisplayID()))
-        return data->screenContentsFormat;
-
 #if HAVE(IOSURFACE_RGB10)
-    if (MGGetBoolAnswer(kMGQHasExtendedColorDisplay))
+    if (screenSupportsExtendedColor(widget))
         return ContentsFormat::RGBA10;
 #endif
 
+    UNUSED_PARAM(widget);
+    UNUSED_PARAM(client);
     return ContentsFormat::RGBA8;
+}
+
+bool screenSupportsExtendedColor(Widget*)
+{
+    if (auto data = screenData(primaryScreenDisplayID()))
+        return data->screenSupportsExtendedColor;
+
+    return MGGetBoolAnswer(kMGQHasExtendedColorDisplay);
 }
 
 bool screenSupportsHighDynamicRange(Widget*)
@@ -232,7 +236,7 @@ ScreenProperties collectScreenProperties()
         screenData.colorSpace = { screenColorSpace(nullptr) };
         screenData.screenDepth = WebCore::screenDepth(nullptr);
         screenData.screenDepthPerComponent = WebCore::screenDepthPerComponent(nullptr);
-        screenData.screenContentsFormat = screenContentsFormat(nullptr);
+        screenData.screenSupportsExtendedColor = WebCore::screenSupportsExtendedColor(nullptr);
         screenData.screenHasInvertedColors = WebCore::screenHasInvertedColors();
         screenData.screenSupportsHighDynamicRange = WebCore::screenSupportsHighDynamicRange(nullptr);
         screenData.scaleFactor = WebCore::screenPPIFactor();

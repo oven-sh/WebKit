@@ -70,7 +70,9 @@ async function run() {
         colorAttachments: [, { view: textureView, depthSlice: 0, loadOp: 'clear', storeOp: 'discard' }]
     });
     renderPassEncoder.executeBundles([renderBundle]);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().then(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

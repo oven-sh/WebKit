@@ -1423,7 +1423,6 @@ fast/forms/formmove.html [ Skip ] # Failure
 fast/forms/formmove2.html [ Skip ] # Failure
 fast/forms/formmove3.html [ Skip ] # Failure
 fast/forms/hidden-listbox.html [ Skip ] # Failure
-fast/forms/hidpi-textfield-background-bleeding.html [ Skip ] # ImageOnlyFailure
 fast/forms/image-border.html [ Skip ] # Failure
 fast/forms/indeterminate.html [ Skip ] # Failure
 fast/forms/input-align-image.html [ Skip ] # Failure

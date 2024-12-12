@@ -28,7 +28,6 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "APIObject.h"
-#include "CocoaImage.h"
 #include "WebExtensionTab.h"
 #include "WebExtensionWindow.h"
 #include <WebCore/FloatSize.h>
@@ -133,8 +132,10 @@ public:
     void setPopupPopoverAppearance(Appearance);
 #endif
 
+#if PLATFORM(COCOA)
     WKWebView *popupWebView();
     bool hasPopupWebView() const { return !!m_popupWebView; }
+#endif
 
     bool presentsPopupWhenReady() const { return m_presentsPopupWhenReady; }
     bool popupPresented() const { return m_popupPresented; }
@@ -173,8 +174,10 @@ private:
     Appearance m_popoverAppearance { Appearance::Default };
 #endif
 
+#if PLATFORM(COCOA)
     RetainPtr<_WKWebExtensionActionWebView> m_popupWebView;
     RetainPtr<_WKWebExtensionActionWebViewDelegate> m_popupWebViewDelegate;
+#endif
     String m_customPopupPath;
     String m_popupWebViewInspectionName;
 

@@ -328,7 +328,6 @@ Modules/push-api/PushDatabase.cpp
 Modules/push-api/PushEvent.cpp
 Modules/push-api/PushMessageCrypto.cpp
 Modules/push-api/PushMessageData.cpp
-Modules/push-api/PushNotificationEvent.cpp
 Modules/push-api/PushSubscription.cpp
 Modules/push-api/PushSubscriptionChangeEvent.cpp
 Modules/push-api/PushSubscriptionData.cpp
@@ -853,6 +852,7 @@ crypto/keys/CryptoKeyOKP.cpp
 crypto/keys/CryptoKeyRSA.cpp
 crypto/keys/CryptoKeyRSAComponents.cpp
 crypto/keys/CryptoKeyRaw.cpp
+css/CSSAppleColorFilterPropertyValue.cpp
 css/CSSAspectRatioValue.cpp
 css/CSSAttrValue.cpp
 css/CSSBackgroundRepeatValue.cpp
@@ -860,6 +860,7 @@ css/CSSBasicShapeValue.cpp
 css/CSSBorderImage.cpp
 css/CSSBorderImageSliceValue.cpp
 css/CSSBorderImageWidthValue.cpp
+css/CSSBoxShadowPropertyValue.cpp
 css/CSSCanvasValue.cpp
 css/CSSColorSchemeValue.cpp
 css/CSSColorValue.cpp
@@ -876,6 +877,7 @@ css/CSSCrossfadeValue.cpp
 css/CSSCursorImageValue.cpp
 css/CSSCustomPropertyValue.cpp
 css/CSSFilterImageValue.cpp
+css/CSSFilterPropertyValue.cpp
 css/CSSFontFace.cpp
 css/CSSFontFaceRule.cpp
 css/CSSFontFaceSet.cpp
@@ -918,6 +920,7 @@ css/CSSPageRule.cpp
 css/CSSPaintImageValue.cpp
 css/CSSPathValue.cpp
 css/CSSPendingSubstitutionValue.cpp
+css/CSSPositionTryRule.cpp
 css/CSSPrimitiveValue.cpp
 css/CSSProperty.cpp
 css/CSSPropertyRule.cpp
@@ -934,7 +937,6 @@ css/CSSScrollValue.cpp
 css/CSSSegmentedFontFace.cpp
 css/CSSSelector.cpp
 css/CSSSelectorList.cpp
-css/CSSShadowValue.cpp
 css/CSSStartingStyleRule.cpp
 css/CSSStyleDeclaration.cpp
 css/CSSStyleRule.cpp
@@ -942,6 +944,7 @@ css/CSSStyleSheet.cpp
 css/CSSStyleSheetObservableArray.cpp
 css/CSSSubgridValue.cpp
 css/CSSSupportsRule.cpp
+css/CSSTextShadowPropertyValue.cpp
 css/CSSTimingFunctionValue.cpp
 css/CSSToLengthConversionData.cpp
 css/CSSToStyleMap.cpp
@@ -963,7 +966,10 @@ css/DOMCSSPaintWorklet.cpp
 css/DOMCSSRegisterCustomProperty.cpp
 css/DOMMatrix.cpp
 css/DOMMatrixReadOnly.cpp
+css/DeprecatedCSSOMBoxShadowValue.cpp
+css/DeprecatedCSSOMFilterFunctionValue.cpp
 css/DeprecatedCSSOMPrimitiveValue.cpp
+css/DeprecatedCSSOMTextShadowValue.cpp
 css/DeprecatedCSSOMValue.cpp
 css/DeprecatedCSSOMValueList.cpp
 css/FontFace.cpp
@@ -1153,6 +1159,7 @@ css/values/color/CSSKeywordColor.cpp
 css/values/color/CSSLightDarkColor.cpp
 css/values/color/CSSPlatformColorResolutionState.cpp
 css/values/color/CSSResolvedColor.cpp
+css/values/filter-effects/CSSFilterReference.cpp
 css/values/images/CSSGradient.cpp
 css/values/motion/CSSRayFunction.cpp
 css/values/primitives/CSSNone.cpp
@@ -1278,8 +1285,10 @@ dom/InternalObserverFind.cpp
 dom/InternalObserverFirst.cpp
 dom/InternalObserverForEach.cpp
 dom/InternalObserverFromScript.cpp
+dom/InternalObserverInspect.cpp
 dom/InternalObserverLast.cpp
 dom/InternalObserverMap.cpp
+dom/InternalObserverReduce.cpp
 dom/InternalObserverSome.cpp
 dom/InternalObserverTake.cpp
 dom/KeyboardEvent.cpp
@@ -2009,6 +2018,8 @@ loader/ResourceLoadNotifier.cpp
 loader/ResourceLoadObserver.cpp
 loader/ResourceLoadStatistics.cpp
 loader/ResourceLoader.cpp
+loader/ResourceMonitor.cpp
+loader/ResourceMonitorChecker.cpp
 loader/ResourceTiming.cpp
 loader/ResourceTimingInformation.cpp
 loader/ServerTiming.cpp
@@ -2946,6 +2957,7 @@ rendering/style/StyleDeprecatedFlexibleBoxData.cpp
 rendering/style/StyleFilterData.cpp
 rendering/style/StyleFilterImage.cpp
 rendering/style/StyleFlexibleBoxData.cpp
+rendering/style/StyleFontData.cpp
 rendering/style/StyleGeneratedImage.cpp
 rendering/style/StyleGradientImage.cpp
 rendering/style/StyleGridData.cpp
@@ -3078,7 +3090,6 @@ style/ClassChangeInvalidation.cpp
 style/ContainerQueryEvaluator.cpp
 style/CustomPropertyRegistry.cpp
 style/ElementRuleCollector.cpp
-style/FilterOperationsBuilder.cpp
 style/HasSelectorFilter.cpp
 style/IdChangeInvalidation.cpp
 style/InlineTextBoxStyle.cpp
@@ -3113,6 +3124,7 @@ style/Styleable.cpp
 style/TransformOperationsBuilder.cpp
 style/UserAgentStyle.cpp
 style/values/backgrounds/StyleBorderRadius.cpp
+style/values/backgrounds/StyleBoxShadow.cpp
 style/values/color-adjust/StyleColorScheme.cpp
 style/values/color/StyleColor.cpp
 style/values/color/StyleColorLayers.cpp
@@ -3124,9 +3136,24 @@ style/values/color/StyleHexColor.cpp
 style/values/color/StyleKeywordColor.cpp
 style/values/color/StyleLightDarkColor.cpp
 style/values/color/StyleResolvedColor.cpp
+style/values/filter-effects/StyleAppleColorFilterProperty.cpp
+style/values/filter-effects/StyleAppleInvertLightnessFunction.cpp
+style/values/filter-effects/StyleBlurFunction.cpp
+style/values/filter-effects/StyleBrightnessFunction.cpp
+style/values/filter-effects/StyleContrastFunction.cpp
+style/values/filter-effects/StyleDropShadowFunction.cpp
+style/values/filter-effects/StyleFilterProperty.cpp
+style/values/filter-effects/StyleGrayscaleFunction.cpp
+style/values/filter-effects/StyleHueRotateFunction.cpp
+style/values/filter-effects/StyleInvertFunction.cpp
+style/values/filter-effects/StyleOpacityFunction.cpp
+style/values/filter-effects/StyleSaturateFunction.cpp
+style/values/filter-effects/StyleSepiaFunction.cpp
 style/values/images/StyleGradient.cpp
+style/values/primitives/StyleNone.cpp
 style/values/primitives/StylePosition.cpp
 style/values/primitives/StylePrimitiveNumericTypes+Conversions.cpp
+style/values/primitives/StylePrimitiveNumericTypes+Logging.cpp
 style/values/shapes/StyleBasicShape.cpp
 style/values/shapes/StyleCircleFunction.cpp
 style/values/shapes/StyleEllipseFunction.cpp
@@ -3136,6 +3163,7 @@ style/values/shapes/StylePolygonFunction.cpp
 style/values/shapes/StyleRectFunction.cpp
 style/values/shapes/StyleShapeFunction.cpp
 style/values/shapes/StyleXywhFunction.cpp
+style/values/text-decoration/StyleTextShadow.cpp
 svg/DocumentSVG.cpp
 svg/SVGAElement.cpp
 svg/SVGAltGlyphDefElement.cpp
@@ -3393,6 +3421,7 @@ xml/parser/XMLDocumentParserScope.cpp
 CSSPropertyParsing.cpp
 CSSValueKeywords.cpp
 ColorData.cpp
+DocumentSyncData.cpp
 EventFactory.cpp
 EventNames.cpp
 EventTargetFactory.cpp
@@ -3532,6 +3561,7 @@ JSCSSNestedDeclarations.cpp
 JSCSSPageRule.cpp
 JSCSSPaintCallback.cpp
 JSCSSPaintSize.cpp
+JSCSSPositionTryRule.cpp
 JSCSSPropertyRule.cpp
 JSCSSRule.cpp
 JSCSSRuleList.cpp
@@ -4211,6 +4241,8 @@ JSOESTextureHalfFloat.cpp
 JSOESTextureHalfFloatLinear.cpp
 JSOESVertexArrayObject.cpp
 JSObservable.cpp
+JSObservableInspector.cpp
+JSObservableInspectorAbortCallback.cpp
 JSOfflineAudioCompletionEvent.cpp
 JSOfflineAudioCompletionEventInit.cpp
 JSOfflineAudioContext.cpp
@@ -4316,8 +4348,6 @@ JSPushEvent.cpp
 JSPushEventInit.cpp
 JSPushManager.cpp
 JSPushMessageData.cpp
-JSPushNotificationEvent.cpp
-JSPushNotificationEventInit.cpp
 JSPushPermissionState.cpp
 JSPushSubscription.cpp
 JSPushSubscriptionChangeEvent.cpp
@@ -4326,6 +4356,7 @@ JSPushSubscriptionJSON.cpp
 JSPushSubscriptionOptions.cpp
 JSPushSubscriptionOptionsInit.cpp
 JSRedEyeReduction.cpp
+JSReducerCallback.cpp
 JSRTCAnswerOptions.cpp
 JSRTCLogsCallback.cpp
 JSRTCCertificate.cpp

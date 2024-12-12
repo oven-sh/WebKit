@@ -15,7 +15,9 @@ async function run() {
     for (let i = 0; i < 100; i++) {
         commandBuffers.push(device.createCommandEncoder());
     }
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

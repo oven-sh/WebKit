@@ -614,48 +614,50 @@ self.addEventListener("message", (event) => {
     }
 });
 
-self.addEventListener("pushnotification", async (event) => {
-    // If the tag is empty, do nothing
-    if (!event.proposedNotification.tag)
-        return;
-
-    var optionsFromTag = event.proposedNotification.tag.split(" ");
-    var newTitle;
-    var newBadge;
-    var newActionURL;
-    if (optionsFromTag[0] == "titleandbadge") {
-        newTitle = optionsFromTag[1];
-        newBadge = optionsFromTag[2];
-    } else if (optionsFromTag[0] == "title")
-        newTitle = optionsFromTag[1];
-    else if (optionsFromTag[0] == "badge")
-        newBadge = optionsFromTag[1];
-    else if (optionsFromTag[0] == "datatotitle")
-        newTitle = event.proposedNotification.data;
-    else if (optionsFromTag[0] == "defaultactionurl")
-        newActionURL = optionsFromTag[1];
-    else if (optionsFromTag[0] == "emptydefaultactionurl") {
-        self.registration.showNotification("Missing default action").then((value) => {
-            globalPort.postMessage("showNotification succeeded");
-        }, (exception) => {
-            globalPort.postMessage("showNotification failed: " + exception);
-        });
-    }
-
-    if (newTitle || newActionURL) {
-        if (!newTitle)
-            newTitle = event.proposedNotification.title;
-        if (!newActionURL)
-            newActionURL = event.proposedNotification.defaultAction;
-
-        self.registration.showNotification(newTitle, { "defaultAction": newActionURL });
-    }
-
-    if (newBadge)
-        navigator.setAppBadge(newBadge);
-});
-
 self.addEventListener("push", async (event) => {
+    if (event.notification) {
+        // If the tag is empty, do nothing
+        if (!event.notification.tag)
+            return;
+
+        var optionsFromTag = event.notification.tag.split(" ");
+        var newTitle;
+        var newBadge;
+        var newActionURL;
+        if (optionsFromTag[0] == "titleandbadge") {
+            newTitle = optionsFromTag[1];
+            newBadge = optionsFromTag[2];
+        } else if (optionsFromTag[0] == "title")
+            newTitle = optionsFromTag[1];
+        else if (optionsFromTag[0] == "badge")
+            newBadge = optionsFromTag[1];
+        else if (optionsFromTag[0] == "datatotitle")
+            newTitle = event.notification.data;
+        else if (optionsFromTag[0] == "defaultactionurl")
+            newActionURL = optionsFromTag[1];
+        else if (optionsFromTag[0] == "emptydefaultactionurl") {
+            self.registration.showNotification("Missing default action").then((value) => {
+                globalPort.postMessage("showNotification succeeded");
+            }, (exception) => {
+                globalPort.postMessage("showNotification failed: " + exception);
+            });
+        }
+
+        if (newTitle || newActionURL) {
+            if (!newTitle)
+                newTitle = event.notification.title;
+            if (!newActionURL)
+                newActionURL = event.notification.navigate;
+
+            self.registration.showNotification(newTitle, { "navigate": newActionURL });
+        }
+
+        if (newBadge)
+            navigator.setAppBadge(newBadge);
+
+        return;
+    }
+
     try {
         if (showNotifications) {
             await self.registration.showNotification("notification");
@@ -940,11 +942,11 @@ public:
 
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
-    void injectDeclarativePushMessage(ASCIILiteral json, ASCIILiteral url = "https://example.com"_s)
+    void injectDeclarativePushMessage(ASCIILiteral json)
     {
         WebKit::WebPushD::PushMessageForTesting message;
         message.targetAppCodeSigningIdentifier = "com.apple.WebKit.TestWebKitAPI"_s;
-        message.registrationURL = URL(url);
+        message.registrationURL = URL("https://example.com"_s);
         message.disposition = WebKit::WebPushD::PushMessageDisposition::Notification;
         message.payload = json;
 
@@ -1902,321 +1904,442 @@ TEST_F(WebPushDTest, NotificationClickExtendsITPCleanupTimerBy30Days)
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
 
-static constexpr ASCIILiteral json0 = ""_s;
-static constexpr ASCIILiteral json1 = "not really a string"_s;
-static constexpr ASCIILiteral json2 = "\"a string\""_s;
-static constexpr ASCIILiteral json3 = "4"_s;
-static constexpr ASCIILiteral json4 = "{ }"_s;
 static constexpr ASCIILiteral json5 = R"JSONRESOURCE(
 {
-    "default_action_url": "foo"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "foo"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json6 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json7 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": ""
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": ""
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json8 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": 4
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": 4
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json9 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "app_badge": ""
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "app_badge": ""
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json10 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "app_badge": -1
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "app_badge": -1
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json11 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "app_badge": { }
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "app_badge": { }
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json12 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "app_badge": 10
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "app_badge": 10
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json13 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "options": 0
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "options": 0
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json14 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "options": { }
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "options": { }
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json15 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "dir": 0
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "dir": 0
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json16 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "dir": "auto"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "dir": "auto"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json17 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "dir": "ltr"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "dir": "ltr"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json18 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "dir": "rtl"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "dir": "rtl"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json19 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "dir": "nonsense"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "dir": "nonsense"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json20 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "lang": { }
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "lang": { }
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json21 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "lang": "language"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "lang": "language"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json22 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "body": { }
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "body": { }
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json23 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "body": "world"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "body": "world"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json24 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "tag": { }
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "tag": { }
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json25 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "tag": "world"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "tag": "world"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json26 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "icon": 0
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "icon": 0
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json27 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "icon": "world"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "icon": "world"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json28 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "icon": "https://example.com/icon.png"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "icon": "https://example.com/icon.png"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json29 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "silent": 0
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "silent": 0
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json30 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "silent": true
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "silent": true
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json31 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "silent": false
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "silent": false
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json32 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "app_badge": "20"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "app_badge": "20"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json33 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "app_badge": "18446744073709551615"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "app_badge": "8031"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json34 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "app_badge": "18446744073709551616"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "app_badge": "18446744073709551616"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json35 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": 39
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": 39
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json36 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": { }
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": { }
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json37 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": "true"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": "true"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json38 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": true
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": true
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json39 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": true,
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": true,
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json40 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": true,
-    "tag": "title Gotcha!",
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": true,
+        "tag": "title Gotcha!",
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json41 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": true,
-    "tag": "badge 1024",
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": true,
+        "tag": "badge 1024",
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json42 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Hello world!",
-    "mutable": true,
-    "tag": "titleandbadge ThisRules 4096",
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Hello world!",
+        "mutable": true,
+        "tag": "titleandbadge ThisRules 4096",
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json43 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Test the data object",
-    "mutable": true,
-    "tag": "datatotitle",
-    "data": "Raw string",
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Test the data object",
+        "mutable": true,
+        "tag": "datatotitle",
+        "data": "Raw string",
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json44 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Test the data object",
-    "mutable": true,
-    "tag": "datatotitle",
-    "data": { "key": "value" },
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Test the data object",
+        "mutable": true,
+        "tag": "datatotitle",
+        "data": { "key": "value" },
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json45 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Test a default action URL override",
-    "mutable": true,
-    "tag": "defaultactionurl https://webkit.org/",
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Test a default action URL override",
+        "mutable": true,
+        "tag": "defaultactionurl https://webkit.org/",
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 static constexpr ASCIILiteral json46 = R"JSONRESOURCE(
 {
-    "default_action_url": "https://example.com/",
-    "title": "Test a missing default action URL override",
-    "mutable": true,
-    "tag": "emptydefaultactionurl",
-    "app_badge": "12"
+    "web_push": 8030,
+    "notification": {
+        "navigate": "https://example.com/",
+        "title": "Test a missing default action URL override",
+        "mutable": true,
+        "tag": "emptydefaultactionurl",
+        "app_badge": "12"
+    }
 }
 )JSONRESOURCE"_s;
 
 static constexpr ASCIILiteral errors[] = {
     "does not contain valid JSON"_s,
     "top level JSON value is not an object"_s,
-    "'default_action_url' member is specified but does not represent a valid URL"_s,
+    "'navigate' member is specified but does not represent a valid URL"_s,
     "'title' member is missing or is an empty string"_s,
     "'title' member is specified but is not a string"_s,
     "'app_badge' member is specified as a string that did not parse to to an unsigned long long"_s,
@@ -2236,11 +2359,6 @@ static constexpr ASCIILiteral errors[] = {
 };
 
 static std::pair<ASCIILiteral, ASCIILiteral> jsonAndErrors[] = {
-    { json0, errors[0] },
-    { json1, errors[0] },
-    { json2, errors[1] },
-    { json3, errors[1] },
-    { json4, errors[2] },
     { json5, errors[2] },
     { json6, errors[3] },
     { json7, errors[3] },
@@ -2356,8 +2474,6 @@ TEST(WebPushD, DeclarativeWebPushHandling)
 {
     setUpTestWebPushD();
 
-    auto utilityConnection = createAndConfigureConnectionToService("org.webkit.webpushtestdaemon.service");
-
     auto dataStoreConfiguration = adoptNS([_WKWebsiteDataStoreConfiguration new]);
     dataStoreConfiguration.get().webPushMachServiceName = @"org.webkit.webpushtestdaemon.service";
     dataStoreConfiguration.get().isDeclarativeWebPushEnabled = YES;
@@ -2367,10 +2483,12 @@ TEST(WebPushD, DeclarativeWebPushHandling)
     auto delegate = adoptNS([[PushNotificationDelegate alloc] init]);
     dataStore.get()._delegate = delegate.get();
 
+    auto utilityConnection = createAndConfigureConnectionToService("org.webkit.webpushtestdaemon.service");
     auto sender = WebPushXPCConnectionMessageSender { utilityConnection.get() };
     static bool done = false;
 
     WebKit::WebPushD::PushMessageForTesting message;
+    message.pushPartitionString = "TestWebKitAPI"_s;
     message.targetAppCodeSigningIdentifier = "com.apple.WebKit.TestWebKitAPI"_s;
     message.registrationURL = URL("https://example.com"_s);
     message.disposition = WebKit::WebPushD::PushMessageDisposition::Notification;
@@ -2381,29 +2499,35 @@ TEST(WebPushD, DeclarativeWebPushHandling)
     });
     TestWebKitAPI::Util::run(&done);
 
+    // Verify that even after having sent a push message to the daemon, there are no pending messages, as it was already handled.
     done = false;
     [dataStore _getPendingPushMessages:^(NSArray<NSDictionary *> *messages) {
-        EXPECT_EQ(messages.count, 1u);
-
-        [dataStore _processPushMessage:messages.firstObject completionHandler:^(bool handled) {
-            EXPECT_TRUE(handled);
-            EXPECT_TRUE([delegate.get().mostRecentNotification.get().userInfo[@"WebNotificationDefaultActionURLKey"] isEqualToString:@"https://example.com/"]);
-            EXPECT_EQ(delegate.get().mostRecentAppBadge, 18446744073709551615ULL);
-            done = true;
-        }];
-    }];
-    TestWebKitAPI::Util::run(&done);
-
-
-    // Verify that processing the most recent notification results in its action URL being sent to the data store delegate
-    done = false;
-    [dataStore _processPersistentNotificationClick:delegate.get().mostRecentNotification.get().userInfo completionHandler:^(bool handled) {
-        EXPECT_TRUE(handled);
-        EXPECT_TRUE([delegate.get().mostRecentActionURL.get().absoluteString isEqualToString:@"https://example.com/"]);
-
+        EXPECT_EQ(messages.count, 0u);
         done = true;
     }];
     TestWebKitAPI::Util::run(&done);
+
+#if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
+    RetainPtr configuration = adoptNS([[_WKWebPushDaemonConnectionConfiguration alloc] init]);
+    configuration.get().machServiceName = @"org.webkit.webpushtestdaemon.service";
+    configuration.get().bundleIdentifierOverrideForTesting = @"com.apple.WebKit.TestWebKitAPI";
+    configuration.get().hostApplicationAuditToken = getSelfAuditToken();
+    configuration.get().partition = @"TestWebKitAPI";
+    RetainPtr connection = adoptNS([[_WKWebPushDaemonConnection alloc] initWithConfiguration:configuration.get()]);
+
+    done = false;
+
+    [connection getNotifications:(NSURL *)message.registrationURL tag:@"" completionHandler:^(NSArray<_WKNotificationData *> *notifications, NSError *error) {
+        EXPECT_NULL(error);
+        EXPECT_NOT_NULL(notifications);
+        EXPECT_EQ(notifications.count, 1u);
+        EXPECT_TRUE([notifications[0].title isEqualToString:@"Hello world!"]);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+#endif // HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
+
+    // FIXME: Figure out how to activate the notification programtically to verify the appropriate delegate callbacks are made
 }
 
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
@@ -2679,7 +2803,6 @@ public:
 
         if (![recentTitle isEqualToString:title])
             NSLog(@"Most recent title: %@\nExpected title: %@", recentTitle, title);
-
     }
 
     void checkLastNotificationDefaultActionURL(NSString *actionURL)

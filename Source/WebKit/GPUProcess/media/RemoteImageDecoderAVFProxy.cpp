@@ -33,7 +33,6 @@
 #include "RemoteImageDecoderAVFManagerMessages.h"
 #include "RemoteImageDecoderAVFProxyMessages.h"
 #include "SharedBufferReference.h"
-#include "WebCoreArgumentCoders.h"
 #include <CoreGraphics/CGImage.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/ImageDecoderAVFObjC.h>
@@ -73,9 +72,9 @@ void RemoteImageDecoderAVFProxy::createDecoder(const IPC::SharedBufferReference&
     auto identifier = ImageDecoderIdentifier::generate();
     m_imageDecoders.add(identifier, imageDecoder.copyRef());
 
-    imageDecoder->setEncodedDataStatusChangeCallback([proxy = WeakPtr<MessageReceiver> { *this },  identifier](auto) mutable {
-        if (proxy)
-            static_cast<RemoteImageDecoderAVFProxy*>(proxy.get())->encodedDataStatusChanged(identifier);
+    imageDecoder->setEncodedDataStatusChangeCallback([proxy = WeakPtr { *this },  identifier](auto) mutable {
+        if (RefPtr protectedProxy = proxy.get())
+            protectedProxy->encodedDataStatusChanged(identifier);
     });
 
     imageDecoderIdentifier = identifier;

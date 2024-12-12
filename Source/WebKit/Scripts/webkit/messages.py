@@ -267,10 +267,11 @@ def message_to_struct_declaration(receiver, message):
             else:
                 result.append('    using Promise = WTF::NativePromise<std::tuple<%s>, IPC::Error>;\n' % ', '.join([parameter.type for parameter in message.reply_parameters]))
 
-    if len(function_parameters):
+    if len(function_parameters) or receiver.receiver_dispatched_from:
         result.append('    %s%s(%s)' % (len(function_parameters) == 1 and 'explicit ' or '', message.name, ', '.join([' '.join(x) for x in function_parameters])))
         result.append('\n        : m_arguments(%s)\n' % ', '.join(arguments_constructor_parameters))
         result.append('    {\n')
+        result += generate_dispatched_for_x(receiver.receiver_dispatched_from, spacing='        ')
         result.append('    }\n\n')
 
     if message.coalescing_key_indices is not None:
@@ -583,6 +584,7 @@ def forward_declarations_and_headers(receiver):
         '"Connection.h"',
         '"MessageNames.h"',
         '<wtf/Forward.h>',
+        '<wtf/RuntimeApplicationChecks.h>',
         '<wtf/ThreadSafeRefCounted.h>',
     ])
 
@@ -656,6 +658,16 @@ def generate_messages_header(receiver):
     result.append('\n')
     result.append('static inline IPC::ReceiverName messageReceiverName()\n')
     result.append('{\n')
+    if (receiver.receiver_dispatched_to):
+        result.append('#if ASSERT_ENABLED\n')
+        result.append('    static std::once_flag onceFlag;\n')
+        result.append('    std::call_once(\n')
+        result.append('        onceFlag,\n')
+        result.append('        [&] {\n')
+        result += generate_dispatched_for_x(receiver.receiver_dispatched_to, spacing='            ')
+        result.append('        }\n')
+        result.append('    );\n')
+        result.append('#endif\n')
     result.append('    return IPC::ReceiverName::%s;\n' % receiver.name)
     result.append('}\n')
     result.append('\n')
@@ -815,13 +827,6 @@ def argument_coder_headers_for_type(type):
     for type in header_infos_and_types['types']:
         if type in special_cases:
             headers.append(special_cases[type])
-            continue
-
-        split = type.split('::')
-        if len(split) < 2:
-            continue
-        if split[0] == 'WebCore':
-            headers.append('"WebCoreArgumentCoders.h"')
 
     return headers
 
@@ -1171,6 +1176,7 @@ def headers_for_type(type):
         'WebKit::SelectionTouch': ['"GestureTypes.h"'],
         'WebKit::TapIdentifier': ['"IdentifierTypes.h"'],
         'WebKit::TextCheckerRequestID': ['"IdentifierTypes.h"'],
+        'WebKit::TextInteractionSource': ['"GestureTypes.h"'],
         'WebKit::WebEventType': ['"WebEvent.h"'],
         'WebKit::WebExtensionContextInstallReason': ['"WebExtensionContext.h"'],
         'WebKit::WebExtensionCookieFilterParameters': ['"WebExtensionCookieParameters.h"'],
@@ -1345,6 +1351,20 @@ def generate_header_includes_from_conditions(header_conditions):
     return result
 
 
+def generate_dispatched_for_x(dispatched_x, spacing='    '):
+    if dispatched_x == "WebContent":
+        return ['%sASSERT(isInWebProcess());\n' % spacing]
+    elif dispatched_x == "Networking":
+        return ['%sASSERT(isInNetworkProcess());\n' % spacing]
+    elif dispatched_x == "GPU":
+        return ['%sASSERT(isInGPUProcess());\n' % spacing]
+    elif dispatched_x == "UI":
+        return ['%sASSERT(!isInAuxiliaryProcess());\n' % spacing]
+    elif dispatched_x == "Model":
+        return ['%sASSERT(isInModelProcess());\n' % spacing]
+    return []
+
+
 def generate_enabled_by_for_receiver(receiver, messages, return_value=None):
     enabled_by = receiver.receiver_enabled_by
     enabled_by_conjunction = receiver.receiver_enabled_by_conjunction
@@ -1470,6 +1490,7 @@ def generate_message_handler(receiver):
         result.append('\n')
         result.append('bool %s::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)\n' % (receiver.name))
         result.append('{\n')
+        result += generate_dispatched_for_x(receiver.receiver_dispatched_to)
         result += generate_enabled_by_for_receiver(receiver, sync_messages, 'false')
         result.append('    Ref protectedThis { *this };\n')
         result += sync_message_statements
@@ -1596,7 +1617,7 @@ def generate_message_names_header(receivers):
     result.append('\n')
     result.append('namespace WTF {\n')
     result.append('\n')
-    result.append('template<> constexpr bool isValidEnum<IPC::MessageName, void>(std::underlying_type_t<IPC::MessageName> messageName)\n')
+    result.append('template<> constexpr bool isValidEnum<IPC::MessageName>(std::underlying_type_t<IPC::MessageName> messageName)\n')
     result.append('{\n')
     result.append('    return messageName <= WTF::enumToUnderlyingType(IPC::MessageName::Last);\n')
     result.append('}\n')

@@ -1026,12 +1026,10 @@ static InputSessionChangeCount nextInputSessionChangeCount()
 
 - (void)forceDarkMode
 {
-#if HAVE(OS_DARK_MODE_SUPPORT)
 #if USE(APPKIT)
     [self setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]];
 #else
     [self setOverrideUserInterfaceStyle:UIUserInterfaceStyleDark];
-#endif
 #endif
 }
 

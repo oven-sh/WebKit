@@ -27,20 +27,10 @@
 
 #include "Test.h"
 #include "Utilities.h"
+#include <wtf/CheckedPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Threading.h>
 #include <wtf/threads/BinarySemaphore.h>
-
-namespace TestWebKitAPI {
-class DerivedOneShotTimer;
-class DerivedRepeatingTimer;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedTimerSmartPointerException;
-template<> struct IsDeprecatedTimerSmartPointerException<TestWebKitAPI::DerivedOneShotTimer> : std::true_type { };
-template<> struct IsDeprecatedTimerSmartPointerException<TestWebKitAPI::DerivedRepeatingTimer> : std::true_type { };
-}
 
 namespace TestWebKitAPI {
 
@@ -130,7 +120,9 @@ TEST(WTF_RunLoop, CallOnMainCrossThreadWhileNested)
     Util::run(&done);
 }
 
-class DerivedOneShotTimer : public RunLoop::Timer {
+class DerivedOneShotTimer : public RunLoop::Timer, public CanMakeCheckedPtr<DerivedOneShotTimer> {
+    WTF_MAKE_FAST_ALLOCATED;
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DerivedOneShotTimer);
 public:
     DerivedOneShotTimer(bool& testFinished)
         : RunLoop::Timer(RunLoop::current(), this, &DerivedOneShotTimer::fired)
@@ -162,7 +154,9 @@ TEST(WTF_RunLoop, OneShotTimer)
     Util::run(&testFinished);
 }
 
-class DerivedRepeatingTimer : public RunLoop::Timer {
+class DerivedRepeatingTimer : public RunLoop::Timer, public CanMakeCheckedPtr<DerivedRepeatingTimer> {
+    WTF_MAKE_FAST_ALLOCATED;
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DerivedRepeatingTimer);
 public:
     DerivedRepeatingTimer(bool& testFinished)
         : RunLoop::Timer(RunLoop::current(), this, &DerivedRepeatingTimer::fired)

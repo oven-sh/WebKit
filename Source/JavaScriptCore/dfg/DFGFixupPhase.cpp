@@ -1076,11 +1076,15 @@ private:
                 fixEdge<UntypedUse>(node->child1());
             break;
 
+        case StringAt:
         case StringCharAt:
         case StringCharCodeAt:
         case StringCodePointAt: {
             // Currently we have no good way of refining these.
-            ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read));
+            if (op == StringAt)
+                ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::OutOfBounds) || node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::InBounds));
+            else
+                ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read));
             blessArrayOperation(node->child1(), node->child2(), node->child1()); // Rewrite child1 with ResolveRope.
             fixEdge<KnownStringUse>(node->child1());
             fixEdge<Int32Use>(node->child2());
@@ -1523,12 +1527,16 @@ private:
             }
             break;
         }
-            
-        case AtomicsIsLockFree:
-            if (m_graph.child(node, 0)->shouldSpeculateInt32())
-                fixIntOrBooleanEdge(m_graph.child(node, 0));
+
+        case AtomicsIsLockFree: {
+            Edge child1 = m_graph.child(node, 0);
+            if (child1->shouldSpeculateInt32()) {
+                fixIntOrBooleanEdge(child1);
+                node->clearFlags(NodeMustGenerate);
+            }
             break;
-            
+        }
+
         case ArrayPush: {
             // May need to refine the array mode in case the value prediction contravenes
             // the array prediction. For example, we may have evidence showing that the

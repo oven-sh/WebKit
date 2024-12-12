@@ -39,6 +39,7 @@
 namespace WebCore {
 
 class CalculationValue : public RefCounted<CalculationValue> {
+    WTF_MAKE_FAST_COMPACT_ALLOCATED;
 public:
     WEBCORE_EXPORT static Ref<CalculationValue> create(Calculation::Tree&&);
     WEBCORE_EXPORT ~CalculationValue();

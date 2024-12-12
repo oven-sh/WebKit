@@ -39,6 +39,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/Scope.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WorkQueue.h>
 
@@ -228,7 +229,7 @@ static bool connectToRemoteAddress(int socket, bool useIPv4)
     const int publicPort = 53;
 
     sockaddr_storage remoteAddressStorage;
-    memset(&remoteAddressStorage, 0, sizeof(sockaddr_storage));
+    memsetSpan(asMutableByteSpan(remoteAddressStorage), 0);
     size_t remoteAddressStorageLength = 0;
     if (useIPv4) {
         auto& remoteAddress = *reinterpret_cast<sockaddr_in*>(&remoteAddressStorage);
@@ -266,7 +267,7 @@ static bool connectToRemoteAddress(int socket, bool useIPv4)
 static std::optional<RTCNetwork::IPAddress> getSocketLocalAddress(int socket, bool useIPv4)
 {
     sockaddr_storage localAddressStorage;
-    memset(&localAddressStorage, 0, sizeof(sockaddr_storage));
+    memsetSpan(asMutableByteSpan(localAddressStorage), 0);
     socklen_t localAddressStorageLength = sizeof(sockaddr_storage);
     if (::getsockname(socket, reinterpret_cast<sockaddr*>(&localAddressStorage), &localAddressStorageLength) < 0) {
         RELEASE_LOG_ERROR(WebRTC, "getDefaultIPAddress getsockname failed, useIPv4=%d", useIPv4);

@@ -106,6 +106,7 @@ public:
 
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
     void showNotification(PushClientConnection&, const WebCore::NotificationData&, RefPtr<WebCore::NotificationResources>, CompletionHandler<void()>&&);
+    void showNotification(const WebCore::PushSubscriptionSetIdentifier&, const WebCore::NotificationData&, RefPtr<WebCore::NotificationResources>, std::optional<unsigned long long> appBadge, CompletionHandler<void()>&&);
     void getNotifications(PushClientConnection&, const URL& registrationURL, const String& tag, CompletionHandler<void(Expected<Vector<WebCore::NotificationData>, WebCore::ExceptionData>&&)>&&);
     void cancelNotification(PushClientConnection&, WebCore::SecurityOriginData&&, const WTF::UUID& notificationID);
 

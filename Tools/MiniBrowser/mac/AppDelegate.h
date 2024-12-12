@@ -65,9 +65,3 @@
 - (BrowserAppDelegate *)browserAppDelegate;
 
 @end
-
-@interface BrowserAppDelegate (Swift_Implementation)
-
-- (void)createSwiftUIWindow:(id)sender;
-
-@end

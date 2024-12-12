@@ -260,7 +260,7 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayPrototypeToHex, (JSGlobalObject* globalObject
 
         const auto* cursor = data;
         auto* output = buffer.data();
-        for (; cursor + (stride - 1) < end; cursor += stride, output += stride * 2)
+        for (; cursor + stride <= end; cursor += stride, output += stride * 2)
             simde_vst1q_u8(output, encodeVector(simde_vld1_u8(cursor)));
         if (cursor < end)
             simde_vst1q_u8(bufferEnd - stride * 2, encodeVector(simde_vld1_u8(end - stride)));

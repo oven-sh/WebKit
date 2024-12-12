@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2024 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Eric Seidel <eric@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -196,6 +196,8 @@ static RenderingMode renderingModeForCGContext(CGContextRef cgContext, GraphicsC
     auto type = CGContextGetType(cgContext);
     if (type == kCGContextTypeIOSurface || (source == GraphicsContextCG::CGContextFromCALayer && type == kCGContextTypeUnknown))
         return RenderingMode::Accelerated;
+    if (type == kCGContextTypePDF)
+        return RenderingMode::PDFDocument;
     return RenderingMode::Unaccelerated;
 }
 
@@ -1516,6 +1518,37 @@ void GraphicsContextCG::strokeEllipse(const FloatRect& ellipse)
 
     CGContextRef context = platformContext();
     CGContextStrokeEllipseInRect(context, ellipse);
+}
+
+void GraphicsContextCG::beginPage(const IntSize& pageSize)
+{
+    CGContextRef context = platformContext();
+
+    if (CGContextGetType(context) != kCGContextTypePDF) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    auto mediaBox = CGRectMake(0, 0, pageSize.width(), pageSize.height());
+    auto mediaBoxData = adoptCF(CFDataCreate(nullptr, (const UInt8 *)&mediaBox, sizeof(CGRect)));
+
+    const void* key = kCGPDFContextMediaBox;
+    const void* value = mediaBoxData.get();
+    auto pageInfo = adoptCF(CFDictionaryCreate(kCFAllocatorDefault, &key, &value, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+
+    CGPDFContextBeginPage(context, pageInfo.get());
+}
+
+void GraphicsContextCG::endPage()
+{
+    CGContextRef context = platformContext();
+
+    if (CGContextGetType(context) != kCGContextTypePDF) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    CGPDFContextEndPage(context);
 }
 
 bool GraphicsContextCG::supportsInternalLinks() const

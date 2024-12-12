@@ -497,7 +497,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     if (![self _prepareAccessibilityCall])
         return NO;
     
-    return self.axBackingObject->hasPopup();
+    return self.axBackingObject->selfOrAncestorLinkHasPopup();
 }
 
 - (NSString *)accessibilityPopupValue
@@ -2962,7 +2962,7 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    switch (self.axBackingObject->sortDirection()) {
+    switch (self.axBackingObject->sortDirectionIncludingAncestors()) {
     case AccessibilitySortDirection::Ascending:
         return @"AXAscendingSortDirection";
     case AccessibilitySortDirection::Descending:

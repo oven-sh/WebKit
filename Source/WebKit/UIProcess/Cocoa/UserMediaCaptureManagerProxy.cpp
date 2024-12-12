@@ -35,7 +35,6 @@
 #include "SharedCARingBuffer.h"
 #include "UserMediaCaptureManagerMessages.h"
 #include "UserMediaCaptureManagerProxyMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcessProxy.h"
 #include <WebCore/AudioSession.h>
 #include <WebCore/AudioUtilities.h>
@@ -816,6 +815,12 @@ void UserMediaCaptureManagerProxy::rotationAngleForCaptureDeviceChanged(const St
 bool UserMediaCaptureManagerProxy::hasSourceProxies() const
 {
     return !m_proxies.isEmpty();
+}
+
+std::optional<SharedPreferencesForWebProcess> UserMediaCaptureManagerProxy::sharedPreferencesForWebProcess() const
+{
+    auto& connectionProxy = m_connectionProxy;
+    return connectionProxy->sharedPreferencesForWebProcess();
 }
 
 }

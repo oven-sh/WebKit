@@ -173,6 +173,14 @@ BindGroupLayout& PipelineLayout::bindGroupLayout(size_t i) const
     return (*m_bindGroupLayouts)[i];
 }
 
+BindGroupLayout* PipelineLayout::optionalBindGroupLayout(size_t i) const
+{
+    if (m_bindGroupLayouts.has_value() && i < m_bindGroupLayouts->size())
+        return (*m_bindGroupLayouts)[i].ptr();
+
+    return nullptr;
+}
+
 void PipelineLayout::makeInvalid()
 {
     m_isValid = false;

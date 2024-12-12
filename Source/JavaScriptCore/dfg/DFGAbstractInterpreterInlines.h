@@ -2440,6 +2440,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         setForNode(node, m_vm.stringStructure.get());
         break;
 
+    case StringAt: {
+        if (node->arrayMode().isOutOfBounds())
+            setTypeForNode(node, SpecString | SpecOther);
+        else
+            setForNode(node, m_vm.stringStructure.get());
+        break;
+    }
+
     case StringLocaleCompare:
         setNonCellTypeForNode(node, SpecInt32Only);
         break;

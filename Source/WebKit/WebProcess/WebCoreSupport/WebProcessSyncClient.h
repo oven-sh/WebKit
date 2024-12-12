@@ -46,7 +46,7 @@ private:
 
     Ref<WebPage> protectedPage() const;
 
-    WeakRef<WebPage> m_page;
+    const WeakRef<WebPage> m_page;
 };
 
 } // namespace WebKit

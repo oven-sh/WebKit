@@ -1,3 +1,4 @@
+JSPushEvent.cpp
 Modules/cookie-store/CookieStore.cpp
 Modules/mediarecorder/MediaRecorder.cpp
 Modules/websockets/WorkerThreadableWebSocketChannel.cpp

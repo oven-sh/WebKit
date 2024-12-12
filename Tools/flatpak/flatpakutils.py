@@ -16,7 +16,6 @@
 # Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
 # Boston, MA 02110-1301, USA.
 import argparse
-import atexit
 import logging
 try:
     import configparser
@@ -1150,8 +1149,6 @@ class WebkitFlatpak:
         except KeyboardInterrupt:
             return 0
 
-        return 0
-
     def main(self):
         if self.check_available:
             return 0
@@ -1248,7 +1245,6 @@ class WebkitFlatpak:
             Console.error_message("The following command returned a non-zero exit status: %s\n"
                                   "Output: %s", ' '.join(error.cmd), error.output)
             return error.returncode
-        return 0
 
     def has_environment(self):
         return os.path.exists(self.flatpak_build_path)

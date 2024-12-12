@@ -575,6 +575,7 @@ public:
     int getIntegralAttribute(const QualifiedName&) const;
     bool hasTagName(const QualifiedName&) const;
     bool hasBodyTag() const final { return hasTagName(HTMLNames::bodyTag); }
+    bool hasMarkTag() const final { return hasTagName(HTMLNames::markTag); }
     AtomString tagName() const;
     bool hasDisplayContents() const;
 
@@ -769,7 +770,7 @@ public:
     bool hasClickHandler() const override { return false; }
     AccessibilityObject* clickableSelfOrAncestor(ClickHandlerFilter filter = ClickHandlerFilter::ExcludeBody) const final { return Accessibility::clickableSelfOrAncestor(*this, filter); };
     AccessibilityObject* focusableAncestor() final { return Accessibility::focusableAncestor(*this); }
-    AccessibilityObject* editableAncestor() final { return Accessibility::editableAncestor(*this); };
+    AccessibilityObject* editableAncestor() const final { return Accessibility::editableAncestor(*this); };
     AccessibilityObject* highestEditableAncestor() final { return Accessibility::highestEditableAncestor(*this); }
     AccessibilityObject* exposedTableAncestor(bool includeSelf = false) const final { return Accessibility::exposedTableAncestor(*this, includeSelf); }
 

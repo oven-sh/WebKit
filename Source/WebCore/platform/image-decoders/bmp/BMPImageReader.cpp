@@ -30,6 +30,8 @@
 
 #include "config.h"
 #include "BMPImageReader.h"
+
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -52,7 +54,7 @@ BMPImageReader::BMPImageReader(ScalableImageDecoder* parent, size_t decodedAndHe
     , m_andMaskState(usesAndMask ? NotYetDecoded : None)
 {
     // Clue-in decodeBMP() that we need to detect the correct info header size.
-    memset(&m_infoHeader, 0, sizeof(m_infoHeader));
+    memsetSpan(asMutableByteSpan(m_infoHeader), 0);
 }
 
 bool BMPImageReader::decodeBMP(bool onlySize)

@@ -756,6 +756,13 @@ bool ScriptExecutionContext::postTaskForModeToWorkerOrWorklet(ScriptExecutionCon
     return true;
 }
 
+bool ScriptExecutionContext::isContextThread(ScriptExecutionContextIdentifier identifier)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(identifier);
+    return context && context->isContextThread();
+}
+
 bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Task&& task)
 {
     ScriptExecutionContext* context = nullptr;

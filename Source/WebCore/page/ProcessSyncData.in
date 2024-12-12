@@ -50,9 +50,11 @@
 #
 # (Since it defaults to unhandled, the build will fail pointing you exactly where to go)
 #
-# If <Data type> needs a header for its definition, add its header to the space delimited `headers: ` list
+# Each entry can have a number of options in a [bracket enclosed, space delimited list]
+# These options currently include:
+#   - A compile time condition for inclusion of the data type
+#   - A header required to declare/define the type
+#   - Opting in to automatic inclusion in the "DocumentSyncData" struct
 
-
-headers: <wtf/URL.h>
-
-MainFrameURLChange : URL
+MainFrameURLChange : URL [Header=<wtf/URL.h>]
+AudioSessionType : WebCore::DOMAudioSessionType [DocumentSyncData Conditional=ENABLE(DOM_AUDIO_SESSION) Header="DOMAudioSession.h"]

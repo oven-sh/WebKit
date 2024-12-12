@@ -680,6 +680,13 @@ public:
         m_assembler.sllInsn(dest, src, shiftAmount);
     }
 
+    void lshift64(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        auto temp = temps<Data>();
+        move(imm, temp.data());
+        lshift64(temp.data(), shiftAmount, dest);
+    }
+
     void lshift64(TrustedImm32 shiftAmount, RegisterID dest)
     {
         lshift64(dest, shiftAmount, dest);

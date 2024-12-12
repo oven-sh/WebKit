@@ -36,8 +36,6 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLFontElement);
@@ -62,20 +60,16 @@ static bool parseFontSize(std::span<const CharacterType> characters, int& size)
 
     // Step 1
     // Step 2
-    const CharacterType* position = characters.data();
-    const CharacterType* end = characters.data() + characters.size();
-
     // Step 3
-    while (position < end) {
-        if (!isASCIIWhitespace(*position))
+    while (!characters.empty()) {
+        if (!isASCIIWhitespace(characters.front()))
             break;
-        ++position;
+        characters = characters.subspan(1);
     }
 
     // Step 4
-    if (position == end)
+    if (characters.empty())
         return false;
-    ASSERT_WITH_SECURITY_IMPLICATION(position < end);
 
     // Step 5
     enum {
@@ -84,14 +78,14 @@ static bool parseFontSize(std::span<const CharacterType> characters, int& size)
         Absolute
     } mode;
 
-    switch (*position) {
+    switch (characters.front()) {
     case '+':
         mode = RelativePlus;
-        ++position;
+        characters = characters.subspan(1);
         break;
     case '-':
         mode = RelativeMinus;
-        ++position;
+        characters = characters.subspan(1);
         break;
     default:
         mode = Absolute;
@@ -101,10 +95,11 @@ static bool parseFontSize(std::span<const CharacterType> characters, int& size)
     // Step 6
     StringBuilder digits;
     digits.reserveCapacity(16);
-    while (position < end) {
-        if (!isASCIIDigit(*position))
+    while (!characters.empty()) {
+        if (!isASCIIDigit(characters.front()))
             break;
-        digits.append(*position++);
+        digits.append(characters.front());
+        characters = characters.subspan(1);
     }
 
     // Step 7
@@ -216,5 +211,3 @@ void HTMLFontElement::collectPresentationalHintsForAttribute(const QualifiedName
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

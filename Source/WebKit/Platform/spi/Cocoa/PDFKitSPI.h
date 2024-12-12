@@ -92,7 +92,6 @@
 - (void)drawForPage:(PDFPage *)page withBox:(CGPDFBox)box active:(BOOL)active inContext:(CGContextRef)context;
 - (PDFPoint)firstCharCenter;
 - (/*nullable*/ NSString *)html;
-- (NSAttributedString *)attributedStringScaled:(CGFloat)scale;
 - (BOOL)isEmpty;
 @end
 

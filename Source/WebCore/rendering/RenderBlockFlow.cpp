@@ -4044,10 +4044,8 @@ void RenderBlockFlow::setStaticPositionsForSimpleOutOfFlowContent()
         layer.setStaticInlinePosition(staticPosition.x());
         layer.setStaticBlockPosition(staticPosition.y());
 
-        if (!delta.isZero() && hasStaticInlinePositioning) {
+        if (!delta.isZero() && hasStaticInlinePositioning)
             renderer.setChildNeedsLayout(MarkOnlyThis);
-            renderer.layoutIfNeeded();
-        }
     }
 }
 

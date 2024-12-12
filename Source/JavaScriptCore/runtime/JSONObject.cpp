@@ -1071,7 +1071,7 @@ static ALWAYS_INLINE bool stringCopySameType(std::span<const CharType> span, Cha
         const auto* end = ptr + span.size();
         auto* cursorEnd = cursor + span.size();
         BulkType accumulated { };
-        for (; ptr + (stride - 1) < end; ptr += stride, cursor += stride) {
+        for (; ptr + stride <= end; ptr += stride, cursor += stride) {
             auto input = SIMD::load(std::bit_cast<const UnsignedType*>(ptr));
             SIMD::store(input, std::bit_cast<UnsignedType*>(cursor));
             auto quotes = SIMD::equal(input, quoteMask);
@@ -1127,7 +1127,7 @@ static ALWAYS_INLINE bool stringCopyUpconvert(std::span<const LChar> span, UChar
         const auto* end = ptr + span.size();
         auto* cursorEnd = cursor + span.size();
         BulkType accumulated { };
-        for (; ptr + (stride - 1) < end; ptr += stride, cursor += stride) {
+        for (; ptr + stride <= end; ptr += stride, cursor += stride) {
             auto input = SIMD::load(std::bit_cast<const UnsignedType*>(ptr));
             simde_vst2q_u8(std::bit_cast<UnsignedType*>(cursor), (simde_uint8x16x2_t { input, zeros }));
             auto quotes = SIMD::equal(input, quoteMask);

@@ -32,7 +32,6 @@
 #include "GPUConnectionToWebProcess.h"
 #include "MediaPlaybackTargetContextSerialized.h"
 #include "RemoteMediaSessionHelperMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {

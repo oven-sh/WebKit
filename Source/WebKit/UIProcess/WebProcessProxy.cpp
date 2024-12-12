@@ -43,6 +43,7 @@
 #include "NotificationManagerMessageHandlerMessages.h"
 #include "PageLoadState.h"
 #include "PlatformXRSystem.h"
+#include "ProcessTerminationReason.h"
 #include "ProvisionalFrameProxy.h"
 #include "ProvisionalPageProxy.h"
 #include "RemotePageProxy.h"
@@ -310,6 +311,11 @@ private:
         // FIXME: should obtain WebContent process identity from WebContent.
         static NeverDestroyed<WebCore::ProcessIdentity> dummy;
         return dummy.get();
+    }
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const
+    {
+        return m_process->sharedPreferencesForWebProcess();
     }
 
     Ref<WebProcessProxy> protectedProcess() const { return m_process.get(); }
@@ -1265,6 +1271,19 @@ bool WebProcessProxy::dispatchSyncMessage(IPC::Connection& connection, IPC::Deco
     return true;
 }
 
+ProcessTerminationReason WebProcessProxy::terminationReason() const
+{
+    if (!m_sharedPreferencesForWebProcess.siteIsolationEnabled)
+        return ProcessTerminationReason::Crash;
+
+    for (auto& page : m_pageMap.values()) {
+        if (this == &page->siteIsolatedProcess())
+            return ProcessTerminationReason::Crash;
+    }
+
+    return ProcessTerminationReason::NonMainFrameWebContentProcessCrash;
+}
+
 void WebProcessProxy::didClose(IPC::Connection& connection)
 {
 #if OS(DARWIN)
@@ -1273,7 +1292,7 @@ void WebProcessProxy::didClose(IPC::Connection& connection)
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "didClose (web process crash)");
 #endif
 
-    processDidTerminateOrFailedToLaunch(ProcessTerminationReason::Crash);
+    processDidTerminateOrFailedToLaunch(terminationReason());
 }
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
@@ -1417,17 +1436,18 @@ void WebProcessProxy::setIgnoreInvalidMessageForTesting()
 }
 #endif
 
-void WebProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connection::Identifier connectionIdentifier)
+void WebProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connection::Identifier&& connectionIdentifier)
 {
     WEBPROCESSPROXY_RELEASE_LOG(Process, "didFinishLaunching:");
     RELEASE_ASSERT(isMainThreadOrCheckDisabled());
 
     Ref protectedThis { *this };
-    AuxiliaryProcessProxy::didFinishLaunching(launcher, connectionIdentifier);
+    bool didTerminate = !connectionIdentifier;
+    AuxiliaryProcessProxy::didFinishLaunching(launcher, WTFMove(connectionIdentifier));
 
-    if (!connectionIdentifier) {
+    if (didTerminate) {
         WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "didFinishLaunching: Invalid connection identifier (web process failed to launch)");
-        processDidTerminateOrFailedToLaunch(ProcessTerminationReason::Crash);
+        processDidTerminateOrFailedToLaunch(terminationReason());
         return;
     }
 
@@ -1463,12 +1483,6 @@ void WebProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connect
 #endif
 
     beginResponsivenessChecks();
-}
-
-void WebProcessProxy::didDestroyFrame(IPC::Connection& connection, FrameIdentifier frameID, WebPageProxyIdentifier pageID)
-{
-    if (RefPtr page = m_pageMap.get(pageID))
-        page->didDestroyFrame(connection, frameID);
 }
 
 auto WebProcessProxy::visiblePageToken() const -> VisibleWebPageToken
@@ -1586,12 +1600,6 @@ bool WebProcessProxy::canBeAddedToWebProcessCache() const
 
     if (m_crossOriginMode == CrossOriginMode::Isolated) {
         WEBPROCESSPROXY_RELEASE_LOG(Process, "canBeAddedToWebProcessCache: Not adding to process cache because the process is cross-origin isolated");
-        return false;
-    }
-
-    if (m_usedForSiteIsolation) {
-        // FIXME: The WebProcessCache is organized by RegistrableDomain not Site, and it is only set when the main frame loads a URL with that domain,
-        // so processes used for iframes are not correctly reused. Implement this in a way that doesn't break PLT.
         return false;
     }
 
@@ -2234,8 +2242,18 @@ void WebProcessProxy::didStartProvisionalLoadForMainFrame(const URL& url)
         return;
     }
 
-    // Associate the process with this site.
-    m_site = WTFMove(site);
+    if (m_sharedPreferencesForWebProcess.siteIsolationEnabled)
+        ASSERT(m_site == site);
+    else {
+        // Associate the process with this site.
+        m_site = WTFMove(site);
+    }
+}
+
+void WebProcessProxy::didStartUsingProcessForSiteIsolation(const WebCore::Site& site)
+{
+    ASSERT(!m_site || m_site == site);
+    m_site = site;
 }
 
 void WebProcessProxy::addSuspendedPageProxy(SuspendedPageProxy& suspendedPage)
@@ -3028,3 +3046,4 @@ const WebCore::ProcessIdentity& WebProcessProxy::processIdentity()
 #undef MESSAGE_CHECK_COMPLETION
 #undef WEBPROCESSPROXY_RELEASE_LOG
 #undef WEBPROCESSPROXY_RELEASE_LOG_ERROR
+

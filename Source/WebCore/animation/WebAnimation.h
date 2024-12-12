@@ -144,7 +144,8 @@ public:
     TimelineRangeValue bindingsRangeEnd() const { return m_timelineRange.end.serialize(); }
     virtual void setBindingsRangeStart(TimelineRangeValue&&);
     virtual void setBindingsRangeEnd(TimelineRangeValue&&);
-    void setRange(TimelineRange range) { m_timelineRange = range; }
+    void setRange(TimelineRange);
+    const TimelineRange& range() const { return m_timelineRange; }
 
     bool needsTick() const;
     virtual void tick();
@@ -172,6 +173,8 @@ public:
     virtual bool canHaveGlobalPosition() { return true; }
 
     std::optional<Seconds> convertAnimationTimeToTimelineTime(Seconds) const;
+
+    void progressBasedTimelineSourceDidChangeMetrics();
 
     // ContextDestructionObserver.
     ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }

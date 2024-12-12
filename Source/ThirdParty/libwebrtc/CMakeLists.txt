@@ -5,6 +5,8 @@ file(MAKE_DIRECTORY ${libwebrtc_DERIVED_SOURCES_DIR})
 
 enable_language(ASM)
 
+add_definitions(-DLIBYUV_DISABLE_SVE)
+
 if (NOT APPLE)
     find_package(LibVpx 1.10.0)
     if (NOT LIBVPX_FOUND)
@@ -169,14 +171,14 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/asn1/a_mbstr.c
     Source/third_party/boringssl/src/crypto/asn1/a_object.c
     Source/third_party/boringssl/src/crypto/asn1/a_octet.c
-    Source/third_party/boringssl/src/crypto/asn1/asn1_lib.c
-    Source/third_party/boringssl/src/crypto/asn1/asn1_par.c
-    Source/third_party/boringssl/src/crypto/asn1/asn_pack.c
     Source/third_party/boringssl/src/crypto/asn1/a_strex.c
     Source/third_party/boringssl/src/crypto/asn1/a_strnid.c
     Source/third_party/boringssl/src/crypto/asn1/a_time.c
     Source/third_party/boringssl/src/crypto/asn1/a_type.c
     Source/third_party/boringssl/src/crypto/asn1/a_utctm.c
+    Source/third_party/boringssl/src/crypto/asn1/asn1_lib.c
+    Source/third_party/boringssl/src/crypto/asn1/asn1_par.c
+    Source/third_party/boringssl/src/crypto/asn1/asn_pack.c
     Source/third_party/boringssl/src/crypto/asn1/f_int.c
     Source/third_party/boringssl/src/crypto/asn1/f_string.c
     Source/third_party/boringssl/src/crypto/asn1/posix_time.c
@@ -190,6 +192,7 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/bio/bio.c
     Source/third_party/boringssl/src/crypto/bio/bio_mem.c
     Source/third_party/boringssl/src/crypto/bio/connect.c
+    Source/third_party/boringssl/src/crypto/bio/errno.c
     Source/third_party/boringssl/src/crypto/bio/fd.c
     Source/third_party/boringssl/src/crypto/bio/file.c
     Source/third_party/boringssl/src/crypto/bio/hexdump.c
@@ -219,10 +222,13 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/cipher_extra/e_tls.c
     Source/third_party/boringssl/src/crypto/cipher_extra/tls_cbc.c
     Source/third_party/boringssl/src/crypto/conf/conf.c
+    Source/third_party/boringssl/src/crypto/cpu_aarch64_apple.c
     Source/third_party/boringssl/src/crypto/cpu_aarch64_fuchsia.c
     Source/third_party/boringssl/src/crypto/cpu_aarch64_linux.c
+    Source/third_party/boringssl/src/crypto/cpu_aarch64_openbsd.c
+    Source/third_party/boringssl/src/crypto/cpu_aarch64_sysreg.c
     Source/third_party/boringssl/src/crypto/cpu_aarch64_win.c
-    Source/third_party/boringssl/src/crypto/rand_extra/trusty.c
+    Source/third_party/boringssl/src/crypto/cpu_arm_freebsd.c
     Source/third_party/boringssl/src/crypto/cpu_arm_linux.c
     Source/third_party/boringssl/src/crypto/cpu_intel.c
     Source/third_party/boringssl/src/crypto/crypto.c
@@ -233,117 +239,48 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/dh_extra/dh_asn1.c
     Source/third_party/boringssl/src/crypto/dh_extra/params.c
     Source/third_party/boringssl/src/crypto/digest_extra/digest_extra.c
-    Source/third_party/boringssl/src/crypto/dsa/dsa_asn1.c
+    Source/third_party/boringssl/src/crypto/dilithium/dilithium.c
     Source/third_party/boringssl/src/crypto/dsa/dsa.c
-    Source/third_party/boringssl/src/crypto/ecdh_extra/ecdh_extra.c
-    Source/third_party/boringssl/src/crypto/ecdsa_extra/ecdsa_asn1.c
+    Source/third_party/boringssl/src/crypto/dsa/dsa_asn1.c
     Source/third_party/boringssl/src/crypto/ec_extra/ec_asn1.c
     Source/third_party/boringssl/src/crypto/ec_extra/ec_derive.c
     Source/third_party/boringssl/src/crypto/ec_extra/hash_to_curve.c
+    Source/third_party/boringssl/src/crypto/ecdh_extra/ecdh_extra.c
+    Source/third_party/boringssl/src/crypto/ecdsa_extra/ecdsa_asn1.c
     Source/third_party/boringssl/src/crypto/engine/engine.c
     Source/third_party/boringssl/src/crypto/err/err.c
-    Source/third_party/boringssl/src/crypto/evp/evp_asn1.c
     Source/third_party/boringssl/src/crypto/evp/evp.c
+    Source/third_party/boringssl/src/crypto/evp/evp_asn1.c
     Source/third_party/boringssl/src/crypto/evp/evp_ctx.c
-    Source/third_party/boringssl/src/crypto/evp/pbkdf.c
+    Source/third_party/boringssl/src/crypto/evp/p_dh.c
+    Source/third_party/boringssl/src/crypto/evp/p_dh_asn1.c
     Source/third_party/boringssl/src/crypto/evp/p_dsa_asn1.c
-    Source/third_party/boringssl/src/crypto/evp/p_ec_asn1.c
     Source/third_party/boringssl/src/crypto/evp/p_ec.c
-    Source/third_party/boringssl/src/crypto/evp/p_ed25519_asn1.c
+    Source/third_party/boringssl/src/crypto/evp/p_ec_asn1.c
     Source/third_party/boringssl/src/crypto/evp/p_ed25519.c
+    Source/third_party/boringssl/src/crypto/evp/p_ed25519_asn1.c
     Source/third_party/boringssl/src/crypto/evp/p_hkdf.c
-    Source/third_party/boringssl/src/crypto/evp/print.c
-    Source/third_party/boringssl/src/crypto/evp/p_rsa_asn1.c
     Source/third_party/boringssl/src/crypto/evp/p_rsa.c
-    Source/third_party/boringssl/src/crypto/evp/p_x25519_asn1.c
+    Source/third_party/boringssl/src/crypto/evp/p_rsa_asn1.c
     Source/third_party/boringssl/src/crypto/evp/p_x25519.c
+    Source/third_party/boringssl/src/crypto/evp/p_x25519_asn1.c
+    Source/third_party/boringssl/src/crypto/evp/pbkdf.c
+    Source/third_party/boringssl/src/crypto/evp/print.c
     Source/third_party/boringssl/src/crypto/evp/scrypt.c
     Source/third_party/boringssl/src/crypto/evp/sign.c
     Source/third_party/boringssl/src/crypto/ex_data.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/aes/aes.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/aes/aes_nohw.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/aes/key_wrap.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/aes/mode_wrappers.c
     Source/third_party/boringssl/src/crypto/fipsmodule/bcm.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/add.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/asm/x86_64-gcc.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/bn.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/bytes.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/cmp.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/ctx.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/div.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/div_extra.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/exponentiation.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/gcd.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/gcd_extra.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/generic.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/jacobi.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/montgomery.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/montgomery_inv.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/mul.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/prime.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/random.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/rsaz_exp.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/shift.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/bn/sqrt.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/cipher/aead.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/cipher/cipher.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/cipher/e_aes.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/cipher/e_aesccm.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/cmac/cmac.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/dh/check.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/dh/dh.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/digest/digest.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/digest/digests.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/digestsign/digestsign.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ecdh/ecdh.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ecdsa/ecdsa.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/ec.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/ec_key.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/ec_montgomery.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/felem.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/oct.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/p224-64.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/p256.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/p256-nistz.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/scalar.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/simple.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/simple_mul.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/util.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/ec/wnaf.c
     Source/third_party/boringssl/src/crypto/fipsmodule/fips_shared_support.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/hkdf/hkdf.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/hmac/hmac.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/md4/md4.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/md5/md5.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/modes/cbc.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/modes/cfb.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/modes/ctr.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/modes/gcm.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/modes/gcm_nohw.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/modes/ofb.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/modes/polyval.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rand/ctrdrbg.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rand/fork_detect.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rand/rand.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rand/urandom.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rsa/blinding.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rsa/padding.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rsa/rsa.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/rsa/rsa_impl.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/self_check/fips.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/self_check/self_check.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/service_indicator/service_indicator.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/sha/sha1.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/sha/sha256.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/sha/sha512.c
-    Source/third_party/boringssl/src/crypto/fipsmodule/tls/kdf.c
     Source/third_party/boringssl/src/crypto/hpke/hpke.c
     Source/third_party/boringssl/src/crypto/hrss/hrss.c
     Source/third_party/boringssl/src/crypto/keccak/keccak.c
     Source/third_party/boringssl/src/crypto/kyber/kyber.c
     Source/third_party/boringssl/src/crypto/lhash/lhash.c
+    Source/third_party/boringssl/src/crypto/md4/md4.c
+    Source/third_party/boringssl/src/crypto/md5/md5.c
     Source/third_party/boringssl/src/crypto/mem.c
+    Source/third_party/boringssl/src/crypto/mldsa/mldsa.cc
+    Source/third_party/boringssl/src/crypto/mlkem/mlkem.cc
     Source/third_party/boringssl/src/crypto/obj/obj.c
     Source/third_party/boringssl/src/crypto/obj/obj_xref.c
     Source/third_party/boringssl/src/crypto/pem/pem_all.c
@@ -359,21 +296,42 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/pkcs8/p5_pbev2.c
     Source/third_party/boringssl/src/crypto/pkcs8/pkcs8.c
     Source/third_party/boringssl/src/crypto/pkcs8/pkcs8_x509.c
-    Source/third_party/boringssl/src/crypto/poly1305/poly1305_arm.c
     Source/third_party/boringssl/src/crypto/poly1305/poly1305.c
+    Source/third_party/boringssl/src/crypto/poly1305/poly1305_arm.c
     Source/third_party/boringssl/src/crypto/poly1305/poly1305_vec.c
     Source/third_party/boringssl/src/crypto/pool/pool.c
     Source/third_party/boringssl/src/crypto/rand_extra/deterministic.c
+    Source/third_party/boringssl/src/crypto/rand_extra/fork_detect.c
     Source/third_party/boringssl/src/crypto/rand_extra/forkunsafe.c
+    Source/third_party/boringssl/src/crypto/rand_extra/getentropy.c
+    Source/third_party/boringssl/src/crypto/rand_extra/ios.c
     Source/third_party/boringssl/src/crypto/rand_extra/passive.c
     Source/third_party/boringssl/src/crypto/rand_extra/rand_extra.c
+    Source/third_party/boringssl/src/crypto/rand_extra/trusty.c
+    Source/third_party/boringssl/src/crypto/rand_extra/urandom.c
     Source/third_party/boringssl/src/crypto/rand_extra/windows.c
     Source/third_party/boringssl/src/crypto/rc4/rc4.c
     Source/third_party/boringssl/src/crypto/refcount.c
     Source/third_party/boringssl/src/crypto/rsa_extra/rsa_asn1.c
     Source/third_party/boringssl/src/crypto/rsa_extra/rsa_crypt.c
+    Source/third_party/boringssl/src/crypto/rsa_extra/rsa_extra.c
     Source/third_party/boringssl/src/crypto/rsa_extra/rsa_print.c
+    Source/third_party/boringssl/src/crypto/sha/sha1.c
+    Source/third_party/boringssl/src/crypto/sha/sha256.c
+    Source/third_party/boringssl/src/crypto/sha/sha512.c
     Source/third_party/boringssl/src/crypto/siphash/siphash.c
+    Source/third_party/boringssl/src/crypto/slhdsa/fors.c
+    Source/third_party/boringssl/src/crypto/slhdsa/merkle.c
+    Source/third_party/boringssl/src/crypto/slhdsa/slhdsa.c
+    Source/third_party/boringssl/src/crypto/slhdsa/thash.c
+    Source/third_party/boringssl/src/crypto/slhdsa/wots.c
+    Source/third_party/boringssl/src/crypto/spx/spx.c
+    Source/third_party/boringssl/src/crypto/spx/spx_address.c
+    Source/third_party/boringssl/src/crypto/spx/spx_fors.c
+    Source/third_party/boringssl/src/crypto/spx/spx_merkle.c
+    Source/third_party/boringssl/src/crypto/spx/spx_thash.c
+    Source/third_party/boringssl/src/crypto/spx/spx_util.c
+    Source/third_party/boringssl/src/crypto/spx/spx_wots.c
     Source/third_party/boringssl/src/crypto/stack/stack.c
     Source/third_party/boringssl/src/crypto/thread.c
     Source/third_party/boringssl/src/crypto/thread_none.c
@@ -383,10 +341,10 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/trust_token/trust_token.c
     Source/third_party/boringssl/src/crypto/trust_token/voprf.c
     Source/third_party/boringssl/src/crypto/x509/a_digest.c
-    Source/third_party/boringssl/src/crypto/x509/algorithm.c
     Source/third_party/boringssl/src/crypto/x509/a_sign.c
-    Source/third_party/boringssl/src/crypto/x509/asn1_gen.c
     Source/third_party/boringssl/src/crypto/x509/a_verify.c
+    Source/third_party/boringssl/src/crypto/x509/algorithm.c
+    Source/third_party/boringssl/src/crypto/x509/asn1_gen.c
     Source/third_party/boringssl/src/crypto/x509/by_dir.c
     Source/third_party/boringssl/src/crypto/x509/by_file.c
     Source/third_party/boringssl/src/crypto/x509/i2d_pr.c
@@ -395,10 +353,10 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/x509/rsa_pss.c
     Source/third_party/boringssl/src/crypto/x509/t_crl.c
     Source/third_party/boringssl/src/crypto/x509/t_req.c
-    Source/third_party/boringssl/src/crypto/x509/t_x509a.c
     Source/third_party/boringssl/src/crypto/x509/t_x509.c
-    Source/third_party/boringssl/src/crypto/x509/v3_akeya.c
+    Source/third_party/boringssl/src/crypto/x509/t_x509a.c
     Source/third_party/boringssl/src/crypto/x509/v3_akey.c
+    Source/third_party/boringssl/src/crypto/x509/v3_akeya.c
     Source/third_party/boringssl/src/crypto/x509/v3_alt.c
     Source/third_party/boringssl/src/crypto/x509/v3_bcons.c
     Source/third_party/boringssl/src/crypto/x509/v3_bitst.c
@@ -420,39 +378,38 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/crypto/x509/v3_purp.c
     Source/third_party/boringssl/src/crypto/x509/v3_skey.c
     Source/third_party/boringssl/src/crypto/x509/v3_utl.c
-    Source/third_party/boringssl/src/crypto/x509/x509_att.c
     Source/third_party/boringssl/src/crypto/x509/x509.c
+    Source/third_party/boringssl/src/crypto/x509/x509_att.c
     Source/third_party/boringssl/src/crypto/x509/x509_cmp.c
-    Source/third_party/boringssl/src/crypto/x509/x509cset.c
     Source/third_party/boringssl/src/crypto/x509/x509_d2.c
     Source/third_party/boringssl/src/crypto/x509/x509_def.c
     Source/third_party/boringssl/src/crypto/x509/x509_ext.c
     Source/third_party/boringssl/src/crypto/x509/x509_lu.c
-    Source/third_party/boringssl/src/crypto/x509/x509name.c
     Source/third_party/boringssl/src/crypto/x509/x509_obj.c
     Source/third_party/boringssl/src/crypto/x509/x509_req.c
-    Source/third_party/boringssl/src/crypto/x509/x509rset.c
     Source/third_party/boringssl/src/crypto/x509/x509_set.c
-    Source/third_party/boringssl/src/crypto/x509/x509spki.c
     Source/third_party/boringssl/src/crypto/x509/x509_trs.c
     Source/third_party/boringssl/src/crypto/x509/x509_txt.c
     Source/third_party/boringssl/src/crypto/x509/x509_v3.c
     Source/third_party/boringssl/src/crypto/x509/x509_vfy.c
     Source/third_party/boringssl/src/crypto/x509/x509_vpm.c
+    Source/third_party/boringssl/src/crypto/x509/x509cset.c
+    Source/third_party/boringssl/src/crypto/x509/x509name.c
+    Source/third_party/boringssl/src/crypto/x509/x509rset.c
+    Source/third_party/boringssl/src/crypto/x509/x509spki.c
     Source/third_party/boringssl/src/crypto/x509/x_algor.c
     Source/third_party/boringssl/src/crypto/x509/x_all.c
     Source/third_party/boringssl/src/crypto/x509/x_attrib.c
     Source/third_party/boringssl/src/crypto/x509/x_crl.c
     Source/third_party/boringssl/src/crypto/x509/x_exten.c
-    Source/third_party/boringssl/src/crypto/bio/errno.c
     Source/third_party/boringssl/src/crypto/x509/x_name.c
     Source/third_party/boringssl/src/crypto/x509/x_pubkey.c
     Source/third_party/boringssl/src/crypto/x509/x_req.c
     Source/third_party/boringssl/src/crypto/x509/x_sig.c
     Source/third_party/boringssl/src/crypto/x509/x_spki.c
     Source/third_party/boringssl/src/crypto/x509/x_val.c
-    Source/third_party/boringssl/src/crypto/x509/x_x509a.c
     Source/third_party/boringssl/src/crypto/x509/x_x509.c
+    Source/third_party/boringssl/src/crypto/x509/x_x509a.c
     Source/third_party/boringssl/src/decrepit/bio/base64_bio.c
     Source/third_party/boringssl/src/decrepit/blowfish/blowfish.c
     Source/third_party/boringssl/src/decrepit/cast/cast.c
@@ -470,6 +427,43 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/decrepit/ssl/ssl_decrepit.c
     Source/third_party/boringssl/src/decrepit/x509/x509_decrepit.c
     Source/third_party/boringssl/src/decrepit/xts/xts.c
+    Source/third_party/boringssl/src/gen/crypto/err_data.c
+    Source/third_party/boringssl/src/pki/cert_error_id.cc
+    Source/third_party/boringssl/src/pki/cert_error_params.cc
+    Source/third_party/boringssl/src/pki/cert_errors.cc
+    Source/third_party/boringssl/src/pki/cert_issuer_source_static.cc
+    Source/third_party/boringssl/src/pki/certificate.cc
+    Source/third_party/boringssl/src/pki/certificate_policies.cc
+    Source/third_party/boringssl/src/pki/common_cert_errors.cc
+    Source/third_party/boringssl/src/pki/crl.cc
+    Source/third_party/boringssl/src/pki/encode_values.cc
+    Source/third_party/boringssl/src/pki/extended_key_usage.cc
+    Source/third_party/boringssl/src/pki/general_names.cc
+    Source/third_party/boringssl/src/pki/input.cc
+    Source/third_party/boringssl/src/pki/ip_util.cc
+    Source/third_party/boringssl/src/pki/mock_signature_verify_cache.cc
+    Source/third_party/boringssl/src/pki/name_constraints.cc
+    Source/third_party/boringssl/src/pki/ocsp.cc
+    Source/third_party/boringssl/src/pki/ocsp_verify_result.cc
+    Source/third_party/boringssl/src/pki/parse_certificate.cc
+    Source/third_party/boringssl/src/pki/parse_name.cc
+    Source/third_party/boringssl/src/pki/parse_values.cc
+    Source/third_party/boringssl/src/pki/parsed_certificate.cc
+    Source/third_party/boringssl/src/pki/parser.cc
+    Source/third_party/boringssl/src/pki/path_builder.cc
+    Source/third_party/boringssl/src/pki/pem.cc
+    Source/third_party/boringssl/src/pki/revocation_util.cc
+    Source/third_party/boringssl/src/pki/signature_algorithm.cc
+    Source/third_party/boringssl/src/pki/simple_path_builder_delegate.cc
+    Source/third_party/boringssl/src/pki/string_util.cc
+    Source/third_party/boringssl/src/pki/trust_store.cc
+    Source/third_party/boringssl/src/pki/trust_store_collection.cc
+    Source/third_party/boringssl/src/pki/trust_store_in_memory.cc
+    Source/third_party/boringssl/src/pki/verify.cc
+    Source/third_party/boringssl/src/pki/verify_certificate_chain.cc
+    Source/third_party/boringssl/src/pki/verify_error.cc
+    Source/third_party/boringssl/src/pki/verify_name_match.cc
+    Source/third_party/boringssl/src/pki/verify_signed_data.cc
     Source/third_party/boringssl/src/rust/bssl-sys/rust_wrapper.c
     Source/third_party/boringssl/src/ssl/bio_ssl.cc
     Source/third_party/boringssl/src/ssl/d1_both.cc
@@ -490,6 +484,7 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/ssl/ssl_aead_ctx.cc
     Source/third_party/boringssl/src/ssl/ssl_asn1.cc
     Source/third_party/boringssl/src/ssl/ssl_buffer.cc
+    Source/third_party/boringssl/src/ssl/ssl_c_test.c
     Source/third_party/boringssl/src/ssl/ssl_cert.cc
     Source/third_party/boringssl/src/ssl/ssl_cipher.cc
     Source/third_party/boringssl/src/ssl/ssl_credential.cc
@@ -526,8 +521,12 @@ set(webrtc_SOURCES
     Source/third_party/boringssl/src/tool/speed.cc
     Source/third_party/boringssl/src/tool/tool.cc
     Source/third_party/boringssl/src/tool/transport_common.cc
+    Source/third_party/boringssl/src/util/ar/testdata/sample/bar.cc
+    Source/third_party/boringssl/src/util/ar/testdata/sample/foo.c
+    Source/third_party/boringssl/src/util/bazel-example/example.cc
     Source/third_party/boringssl/src/util/fipstools/acvp/modulewrapper/main.cc
     Source/third_party/boringssl/src/util/fipstools/acvp/modulewrapper/modulewrapper.cc
+    Source/third_party/boringssl/src/util/fipstools/test_fips.c
     Source/third_party/crc32c/src/src/crc32c_arm64.cc
     Source/third_party/crc32c/src/src/crc32c.cc
     Source/third_party/crc32c/src/src/crc32c_portable.cc
@@ -1951,7 +1950,7 @@ perlasm(BCM_SOURCES x86 bn-586 ${FIPS_PATH}/bn/asm/bn-586.pl)
 perlasm(BCM_SOURCES x86 co-586 ${FIPS_PATH}/bn/asm/co-586.pl)
 perlasm(BCM_SOURCES x86 ghash-ssse3-x86 ${FIPS_PATH}/modes/asm/ghash-ssse3-x86.pl)
 perlasm(BCM_SOURCES x86 ghash-x86 ${FIPS_PATH}/modes/asm/ghash-x86.pl)
-perlasm(BCM_SOURCES x86 md5-586 ${FIPS_PATH}/md5/asm/md5-586.pl)
+perlasm(BCM_SOURCES x86 md5-586 Source/third_party/boringssl/src/crypto/md5/asm/md5-586.pl)
 perlasm(BCM_SOURCES x86 sha1-586 ${FIPS_PATH}/sha/asm/sha1-586.pl)
 perlasm(BCM_SOURCES x86 sha256-586 ${FIPS_PATH}/sha/asm/sha256-586.pl)
 perlasm(BCM_SOURCES x86 sha512-586 ${FIPS_PATH}/sha/asm/sha512-586.pl)
@@ -1961,7 +1960,7 @@ perlasm(BCM_SOURCES x86_64 aesni-gcm-x86_64 ${FIPS_PATH}/modes/asm/aesni-gcm-x86
 perlasm(BCM_SOURCES x86_64 aesni-x86_64 ${FIPS_PATH}/aes/asm/aesni-x86_64.pl)
 perlasm(BCM_SOURCES x86_64 ghash-ssse3-x86_64 ${FIPS_PATH}/modes/asm/ghash-ssse3-x86_64.pl)
 perlasm(BCM_SOURCES x86_64 ghash-x86_64 ${FIPS_PATH}/modes/asm/ghash-x86_64.pl)
-perlasm(BCM_SOURCES x86_64 md5-x86_64 ${FIPS_PATH}/md5/asm/md5-x86_64.pl)
+perlasm(BCM_SOURCES x86_64 md5-x86_64 Source/third_party/boringssl/src/crypto/md5/asm/md5-x86_64.pl)
 perlasm(BCM_SOURCES x86_64 p256_beeu-x86_64-asm ${FIPS_PATH}/ec/asm/p256_beeu-x86_64-asm.pl)
 perlasm(BCM_SOURCES x86_64 p256-x86_64-asm ${FIPS_PATH}/ec/asm/p256-x86_64-asm.pl)
 perlasm(BCM_SOURCES x86_64 rdrand-x86_64 ${FIPS_PATH}/rand/asm/rdrand-x86_64.pl)

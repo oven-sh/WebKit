@@ -61,6 +61,7 @@ public:
 
     // WHATWG Fullscreen API
     WEBCORE_EXPORT Element* fullscreenElement() const;
+    RefPtr<Element> protectedFullscreenElement() const { return fullscreenElement(); }
     WEBCORE_EXPORT bool isFullscreenEnabled() const;
     WEBCORE_EXPORT void exitFullscreen(RefPtr<DeferredPromise>&&);
 
@@ -68,6 +69,7 @@ public:
     bool isFullscreen() const { return m_fullscreenElement.get(); }
     bool isFullscreenKeyboardInputAllowed() const { return m_fullscreenElement.get() && m_areKeysEnabledInFullscreen; }
     Element* currentFullscreenElement() const { return m_fullscreenElement.get(); }
+    RefPtr<Element> protectedCurrentFullscreenElement() const { return currentFullscreenElement(); }
     WEBCORE_EXPORT void cancelFullscreen();
 
     enum FullscreenCheckType {

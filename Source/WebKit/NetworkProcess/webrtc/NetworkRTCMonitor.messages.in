@@ -22,6 +22,10 @@
 
 #if USE(LIBWEBRTC)
 
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=Networking
+]
 messages -> NetworkRTCMonitor {
     void StartUpdatingIfNeeded()
     void StopUpdating()

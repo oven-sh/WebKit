@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AXRemoteFrame.h"
 #include "AccessibilityObject.h"
 #include "ScrollView.h"
 
@@ -45,6 +46,8 @@ public:
 
     AccessibilityObject* webAreaObject() const final;
     void setNeedsToUpdateChildren() final { m_childrenDirty = true; }
+
+    RefPtr<AXRemoteFrame> remoteFrame() const { return m_remoteFrame; }
 
 private:
     explicit AccessibilityScrollView(AXID, ScrollView&);

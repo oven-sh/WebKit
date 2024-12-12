@@ -23,7 +23,8 @@
 
 #if ENABLE_SWIFTUI && compiler(>=6.0)
 
-public import SwiftUI
+internal import WebKit_Internal
+public import SwiftUI // FIXME: (283455) Do not import SwiftUI in WebKit proper.
 
 #if canImport(UIKit)
 fileprivate typealias PlatformView = UIView
@@ -103,7 +104,17 @@ fileprivate struct WebViewRepresentable {
     }
 
     func updatePlatformView(_ platformView: WebViewWrapper, context: Context) {
-        platformView.webView = owner.page.backingWebView
+        let webView = owner.page.backingWebView
+        let environment = context.environment
+
+        platformView.webView = webView
+
+        webView.allowsBackForwardNavigationGestures = environment.webViewAllowsBackForwardNavigationGestures
+        webView.allowsLinkPreview = environment.webViewAllowsLinkPreview
+
+        webView.configuration.preferences.isTextInteractionEnabled = environment.webViewAllowsTextInteraction
+        webView.configuration.preferences.tabFocusesLinks = environment.webViewAllowsTabFocusingLinks
+        webView.configuration.preferences.isElementFullscreenEnabled = environment.webViewAllowsElementFullscreen
     }
 }
 

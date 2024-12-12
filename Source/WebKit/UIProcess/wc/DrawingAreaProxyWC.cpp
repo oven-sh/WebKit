@@ -34,7 +34,6 @@
 #include "DrawingAreaMessages.h"
 #include "MessageSenderInlines.h"
 #include "UpdateInfo.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPageProxy.h"
 #include <WebCore/Region.h>
 

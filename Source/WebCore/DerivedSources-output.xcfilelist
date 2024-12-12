@@ -30,6 +30,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/DOMWindowConstructors.idl
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/DecompressionStreamBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/DecompressionStreamBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/DedicatedWorkerGlobalScopeConstructors.idl
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/DocumentSyncData.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/DocumentSyncData.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ElementName.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ElementName.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/EventFactory.cpp
@@ -465,6 +467,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPaintSize.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPaintSize.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPerspective.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPerspective.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPositionTryRule.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPositionTryRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPropertyRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSPropertyRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSRGB.cpp
@@ -2102,6 +2106,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSOESVertexArrayObject.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSOESVertexArrayObject.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSObservable.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSObservable.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSObservableInspector.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSObservableInspector.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSObservableInspectorAbortCallback.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSObservableInspectorAbortCallback.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSObserver.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSOfflineAudioCompletionEvent.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSOfflineAudioCompletionEvent.h
@@ -2323,10 +2331,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushManager.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushManager.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushMessageData.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushMessageData.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushNotificationEvent.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushNotificationEvent.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushNotificationEventInit.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushNotificationEventInit.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushPermissionState.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushPermissionState.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSPushSubscription.cpp
@@ -2509,6 +2513,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReadableStreamSource.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReadableStreamSource.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRedEyeReduction.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRedEyeReduction.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReducerCallback.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReducerCallback.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRegistrationResponseJSON.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRegistrationResponseJSON.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRemotePlayback.cpp
@@ -3640,6 +3646,7 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebCoreJSBuiltinInternals.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebCoreJSBuiltinInternals.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebCoreJSBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebCoreJSBuiltins.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebCoreLogDefinitions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebCore_BUILTINS_DEPENDENCIES_LIST
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebCore_BUILTINS_SOURCES_LIST
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/WebKitFontFamilyNames.cpp

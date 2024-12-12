@@ -31,6 +31,11 @@
 #include "WKAPICast.h"
 #include "WebAutomationSession.h"
 #include "WebPageProxy.h"
+#include <WebKit/WKAuthenticationChallenge.h>
+#include <WebKit/WKAuthenticationDecisionListener.h>
+#include <WebKit/WKCredential.h>
+#include <WebKit/WKRetainPtr.h>
+#include <WebKit/WKString.h>
 #include <wtf/RunLoop.h>
 #endif
 
@@ -39,9 +44,10 @@ namespace WebKit {
 #if ENABLE(REMOTE_INSPECTOR)
 
 // AutomationSessionClient
-AutomationSessionClient::AutomationSessionClient(const String& sessionIdentifier)
+AutomationSessionClient::AutomationSessionClient(const String& sessionIdentifier, const Inspector::RemoteInspector::Client::SessionCapabilities& capabilities)
+    : m_sessionIdentifier(sessionIdentifier)
+    , m_capabilities(capabilities)
 {
-    m_sessionIdentifier = sessionIdentifier;
 }
 
 void AutomationSessionClient::close(WKPageRef pageRef, const void* clientInfo)
@@ -51,6 +57,23 @@ void AutomationSessionClient::close(WKPageRef pageRef, const void* clientInfo)
 
     auto sessionClient = static_cast<AutomationSessionClient*>(const_cast<void*>(clientInfo));
     sessionClient->releaseWebView(page);
+}
+
+void AutomationSessionClient::didReceiveAuthenticationChallenge(WKPageRef page, WKAuthenticationChallengeRef authenticationChallenge, const void *clientInfo)
+{
+    static_cast<AutomationSessionClient*>(const_cast<void*>(clientInfo))->didReceiveAuthenticationChallenge(page, authenticationChallenge);
+}
+
+void AutomationSessionClient::didReceiveAuthenticationChallenge(WKPageRef page, WKAuthenticationChallengeRef authenticationChallenge)
+{
+    auto decisionListener = WKAuthenticationChallengeGetDecisionListener(authenticationChallenge);
+    if (m_capabilities.acceptInsecureCertificates) {
+        auto username = adoptWK(WKStringCreateWithUTF8CString("accept server trust"));
+        auto password = adoptWK(WKStringCreateWithUTF8CString(""));
+        auto credential = adoptWK(WKCredentialCreate(username.get(), password.get(), kWKCredentialPersistenceNone));
+        WKAuthenticationDecisionListenerUseCredential(decisionListener, credential.get());
+    } else
+        WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(decisionListener);
 }
 
 void AutomationSessionClient::requestNewPageWithOptions(WebKit::WebAutomationSession& session, API::AutomationSessionBrowsingContextOptions options, CompletionHandler<void(WebKit::WebPageProxy*)>&& completionHandler)
@@ -69,6 +92,12 @@ void AutomationSessionClient::requestNewPageWithOptions(WebKit::WebAutomationSes
     uiClient.base.clientInfo = this;
     uiClient.close = close;
     WKPageSetPageUIClient(toAPI(newPage), &uiClient.base);
+
+    WKPageNavigationClientV0 navigationClient = { };
+    navigationClient.base.version = 0;
+    navigationClient.base.clientInfo = this;
+    navigationClient.didReceiveAuthenticationChallenge = didReceiveAuthenticationChallenge;
+    WKPageSetPageNavigationClient(toAPI(newPage), &navigationClient.base);
 
     retainWebView(WTFMove(newWindow));
 
@@ -124,13 +153,13 @@ RefPtr<WebProcessPool> AutomationClient::protectedProcessPool() const
     return nullptr;
 }
 
-void AutomationClient::requestAutomationSession(const String& sessionIdentifier, const Inspector::RemoteInspector::Client::SessionCapabilities&)
+void AutomationClient::requestAutomationSession(const String& sessionIdentifier, const Inspector::RemoteInspector::Client::SessionCapabilities& capabilities)
 {
     ASSERT(isMainRunLoop());
 
     auto session = adoptRef(new WebAutomationSession());
     session->setSessionIdentifier(sessionIdentifier);
-    session->setClient(WTF::makeUnique<AutomationSessionClient>(sessionIdentifier));
+    session->setClient(WTF::makeUnique<AutomationSessionClient>(sessionIdentifier, capabilities));
     m_processPool->setAutomationSession(WTFMove(session));
 }
 

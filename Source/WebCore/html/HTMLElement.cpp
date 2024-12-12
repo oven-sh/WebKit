@@ -1077,7 +1077,12 @@ void HTMLElement::queuePopoverToggleEventTask(ToggleState oldState, ToggleState 
     popoverData()->ensureToggleEventTask(*this)->queue(oldState, newState);
 }
 
-ExceptionOr<void> HTMLElement::showPopover(const HTMLFormControlElement* invoker)
+ExceptionOr<void> HTMLElement::showPopover(const ShowPopoverOptions& options)
+{
+    return showPopoverInternal(options.source.get());
+}
+
+ExceptionOr<void> HTMLElement::showPopoverInternal(const HTMLElement* invoker)
 {
     auto check = checkPopoverValidity(*this, PopoverVisibilityState::Hidden);
     if (check.hasException())
@@ -1217,14 +1222,29 @@ ExceptionOr<void> HTMLElement::hidePopover()
     return hidePopoverInternal(FocusPreviousElement::Yes, FireEvents::Yes);
 }
 
-ExceptionOr<bool> HTMLElement::togglePopover(std::optional<bool> force)
+ExceptionOr<bool> HTMLElement::togglePopover(std::optional<std::variant<WebCore::HTMLElement::TogglePopoverOptions, bool>> options)
 {
+    std::optional<bool> force;
+    HTMLElement* invoker = nullptr;
+
+    if (options.has_value()) {
+        WTF::switchOn(options.value(),
+            [&](TogglePopoverOptions options) {
+                force = options.force;
+                invoker = options.source.get();
+            },
+            [&](bool value) {
+                force = value;
+            }
+        );
+    }
+
     if (isPopoverShowing() && !force.value_or(false)) {
         auto returnValue = hidePopover();
         if (returnValue.hasException())
             return returnValue.releaseException();
     } else if (!isPopoverShowing() && force.value_or(true)) {
-        auto returnValue = showPopover();
+        auto returnValue = showPopoverInternal(invoker);
         if (returnValue.hasException())
             return returnValue.releaseException();
     } else {
@@ -1285,7 +1305,7 @@ bool HTMLElement::handleCommandInternal(const HTMLFormControlElement& invoker, c
     } else {
         bool shouldShow = command == CommandType::TogglePopover || command == CommandType::ShowPopover;
         if (shouldShow) {
-            showPopover(&invoker);
+            showPopoverInternal(&invoker);
             return true;
         }
     }

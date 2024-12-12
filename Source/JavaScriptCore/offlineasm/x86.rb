@@ -644,7 +644,7 @@ class Instruction
                     return
                 end
 
-                isUnordered = LocalLabel.unique("isUnordered")
+                isUnordered = LocalLabel.unique(codeOrigin, "isUnordered")
                 $asm.puts "mov#{x86Suffix(:quad)} #{orderOperands(const(0), target.x86Operand(:quad))}"
                 compare.call(right, left)
                 $asm.puts "jp #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
@@ -658,7 +658,7 @@ class Instruction
                     return
                 end
 
-                isUnordered = LocalLabel.unique("isUnordered")
+                isUnordered = LocalLabel.unique(codeOrigin, "isUnordered")
                 $asm.puts "mov#{x86Suffix(:quad)} #{orderOperands(const(1), target.x86Operand(:quad))}"
                 compare.call(right, left);
                 $asm.puts "jp #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
@@ -880,8 +880,8 @@ class Instruction
 
     def countLeadingZeros(kind)
         target = operands[1]
-        srcIsNonZero = LocalLabel.unique("srcIsNonZero")
-        skipNonZeroCase = LocalLabel.unique("skipNonZeroCase")
+        srcIsNonZero = LocalLabel.unique(codeOrigin, "srcIsNonZero")
+        skipNonZeroCase = LocalLabel.unique(codeOrigin, "skipNonZeroCase")
         zeroValue = Immediate.new(codeOrigin, x86Bytes(kind) * 8)
         xorValue = Immediate.new(codeOrigin, kind == :quad ? 0x3f : 0x1f)
         xor = kind == :quad ? "xorq" : "xori"
@@ -902,7 +902,7 @@ class Instruction
 
     def countTrailingZeros(kind)
         target = operands[1]
-        srcIsNonZero = LocalLabel.unique("srcIsNonZero")
+        srcIsNonZero = LocalLabel.unique(codeOrigin, "srcIsNonZero")
         zeroValue = Immediate.new(codeOrigin, x86Bytes(kind) * 8)
 
         $asm.puts "bsf#{x86Suffix(kind)} #{x86Operands(kind, kind)}"
@@ -917,8 +917,8 @@ class Instruction
     def truncateFloatingPointToQuad(kind)
         src = operands[0]
         dst = operands[1]
-        slow = LocalLabel.unique("slow")
-        done = LocalLabel.unique("done")
+        slow = LocalLabel.unique(codeOrigin, "slow")
+        done = LocalLabel.unique(codeOrigin, "done")
         gprScratch = X64_SCRATCH_REGISTER
         fprScratch = FPRegisterID.forName(codeOrigin, "wfa7")
         int64SignBit = Immediate.new(codeOrigin, 0x8000000000000000)
@@ -960,8 +960,8 @@ class Instruction
         src = operands[0]
         scratch1 = operands[1]
         dst = operands[2]
-        slow = LocalLabel.unique("slow")
-        done = LocalLabel.unique("done")
+        slow = LocalLabel.unique(codeOrigin, "slow")
+        done = LocalLabel.unique(codeOrigin, "done")
         scratch2 = X64_SCRATCH_REGISTER
         one = Immediate.new(codeOrigin, 0x1)
 
@@ -1205,7 +1205,7 @@ class Instruction
                 # This is just a jump ordered, which is a jnp.
                 $asm.puts "jnp #{operands[2].asmLabel}"
             else
-                isUnordered = LocalLabel.unique("bdeq")
+                isUnordered = LocalLabel.unique(codeOrigin, "bdeq")
                 $asm.puts "jp #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
                 $asm.puts "je #{LocalLabelReference.new(codeOrigin, operands[2]).asmLabel}"
                 isUnordered.lower($activeBackend)
@@ -1228,8 +1228,8 @@ class Instruction
                 # This is just a jump unordered, which is a jp.
                 $asm.puts "jp #{operands[2].asmLabel}"
             else
-                isUnordered = LocalLabel.unique("bdnequn")
-                isEqual = LocalLabel.unique("bdnequn")
+                isUnordered = LocalLabel.unique(codeOrigin, "bdnequn")
+                isEqual = LocalLabel.unique(codeOrigin, "bdnequn")
                 $asm.puts "jp #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
                 $asm.puts "je #{LocalLabelReference.new(codeOrigin, isEqual).asmLabel}"
                 isUnordered.lower($activeBackend)
@@ -1250,7 +1250,7 @@ class Instruction
                 # This is just a jump ordered, which is a jnp.
                 $asm.puts "jnp #{operands[2].asmLabel}"
             else
-                isUnordered = LocalLabel.unique("bfeq")
+                isUnordered = LocalLabel.unique(codeOrigin, "bfeq")
                 $asm.puts "jp #{LocalLabelReference.new(codeOrigin, isUnordered).asmLabel}"
                 $asm.puts "je #{LocalLabelReference.new(codeOrigin, operands[2]).asmLabel}"
                 isUnordered.lower($activeBackend)

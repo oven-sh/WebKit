@@ -538,7 +538,7 @@ void SVGToOTFFontConverter::appendOS2Table()
         }
     }
     if (numPanoseBytes != panoseSize)
-        memset(panoseBytes.data(), 0, panoseSize);
+        panoseBytes.fill(0);
     m_result.append(std::span<char> { panoseBytes });
 
     for (int i = 0; i < 4; ++i)

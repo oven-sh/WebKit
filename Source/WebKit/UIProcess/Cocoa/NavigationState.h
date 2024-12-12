@@ -147,9 +147,7 @@ private:
         void didFinishLoadForQuickLookDocumentInMainFrame(const WebCore::FragmentedSharedBuffer&) override;
 #endif
 
-#if PLATFORM(MAC)
         bool didChangeBackForwardList(WebPageProxy&, WebBackForwardListItem*, const Vector<Ref<WebBackForwardListItem>>&) final;
-#endif
         bool willGoToBackForwardListItem(WebPageProxy&, WebBackForwardListItem&, bool inBackForwardCache) final;
 
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -274,9 +272,7 @@ private:
         bool webViewDidRequestPasswordForQuickLookDocument : 1;
         bool webViewDidStopRequestingPasswordForQuickLookDocument : 1;
 
-#if PLATFORM(MAC)
         bool webViewBackForwardListItemAddedRemoved : 1;
-#endif
         bool webViewWillGoToBackForwardListItemInBackForwardCache : 1;
 
 #if HAVE(APP_SSO)

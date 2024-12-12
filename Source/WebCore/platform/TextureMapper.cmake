@@ -5,6 +5,7 @@ list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
 list(APPEND WebCore_SOURCES
     platform/graphics/texmap/BitmapTexture.cpp
     platform/graphics/texmap/BitmapTexturePool.cpp
+    platform/graphics/texmap/ClipPath.cpp
     platform/graphics/texmap/ClipStack.cpp
     platform/graphics/texmap/FloatPlane3D.cpp
     platform/graphics/texmap/FloatPolygon3D.cpp
@@ -14,6 +15,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/texmap/TextureMapperBackingStore.cpp
     platform/graphics/texmap/TextureMapperFPSCounter.cpp
     platform/graphics/texmap/TextureMapperGCGLPlatformLayer.cpp
+    platform/graphics/texmap/TextureMapperGPUBuffer.cpp
     platform/graphics/texmap/TextureMapperLayer.cpp
     platform/graphics/texmap/TextureMapperLayer3DRenderingContext.cpp
     platform/graphics/texmap/TextureMapperPlatformLayer.cpp
@@ -23,6 +25,7 @@ list(APPEND WebCore_SOURCES
 list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/texmap/BitmapTexture.h
     platform/graphics/texmap/BitmapTexturePool.h
+    platform/graphics/texmap/ClipPath.h
     platform/graphics/texmap/ClipStack.h
     platform/graphics/texmap/FloatPlane3D.h
     platform/graphics/texmap/FloatPolygon3D.h
@@ -35,6 +38,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/texmap/TextureMapperFlags.h
     platform/graphics/texmap/TextureMapperFPSCounter.h
     platform/graphics/texmap/TextureMapperGLHeaders.h
+    platform/graphics/texmap/TextureMapperGPUBuffer.h
     platform/graphics/texmap/TextureMapperLayer.h
     platform/graphics/texmap/TextureMapperLayer3DRenderingContext.h
     platform/graphics/texmap/TextureMapperPlatformLayer.h
@@ -64,6 +68,7 @@ if (USE_COORDINATED_GRAPHICS)
         platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferRGB.cpp
         platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferYUV.cpp
         platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+        platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperANGLECoordinated.cpp
     )
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
         platform/graphics/texmap/coordinated/CoordinatedAnimatedBackingStoreClient.h

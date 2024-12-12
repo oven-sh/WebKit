@@ -6338,20 +6338,20 @@ sub GenerateCallWith
     # Document of current realm (https://html.spec.whatwg.org/multipage/webappapis.html#concept-current-everything)
     if ($codeGenerator->ExtendedAttributeContains($callWith, "CurrentDocument")) {
         AddToImplIncludes("Document.h");
-        push(@$outputArray, $indent . "auto* context = ${scriptExecutionContextAccessor}->scriptExecutionContext();\n");
+        push(@$outputArray, $indent . "RefPtr context = ${scriptExecutionContextAccessor}->scriptExecutionContext();\n");
         push(@$outputArray, $indent . "if (UNLIKELY(!context))\n");
         push(@$outputArray, $indent . "    return" . ($contextMissing ? " " . $contextMissing : "") . ";\n");
-        push(@$outputArray, $indent . "auto& document = downcast<Document>(*context);\n");
-        push(@callWithArgs, "document");
+        push(@$outputArray, $indent . "Ref document = downcast<Document>(*context);\n");
+        push(@callWithArgs, "document.get()");
     }
     # Document of relevant realm (https://html.spec.whatwg.org/multipage/webappapis.html#concept-relevant-everything)
     if ($codeGenerator->ExtendedAttributeContains($callWith, "RelevantDocument")) {
         AddToImplIncludes("Document.h");
-        push(@$outputArray, $indent . "auto* context = ${relevantGlobalObjectPointer}->scriptExecutionContext();\n");
+        push(@$outputArray, $indent . "RefPtr context = ${relevantGlobalObjectPointer}->scriptExecutionContext();\n");
         push(@$outputArray, $indent . "if (UNLIKELY(!context))\n");
         push(@$outputArray, $indent . "    return" . ($contextMissing ? " " . $contextMissing : "") . ";\n");
-        push(@$outputArray, $indent . "auto& document = downcast<Document>(*context);\n");
-        push(@callWithArgs, "document");
+        push(@$outputArray, $indent . "Ref document = downcast<Document>(*context);\n");
+        push(@callWithArgs, "document.get()");
     }
     if ($codeGenerator->ExtendedAttributeContains($callWith, "IncumbentDocument")) {
         AddToImplIncludes("LocalDOMWindow.h");

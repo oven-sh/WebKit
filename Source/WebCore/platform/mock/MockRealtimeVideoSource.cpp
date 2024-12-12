@@ -683,7 +683,7 @@ ImageBuffer* MockRealtimeVideoSource::imageBufferInternal()
     if (m_imageBuffer)
         return m_imageBuffer.get();
 
-    m_imageBuffer = ImageBuffer::create(captureSize(), RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
+    m_imageBuffer = ImageBuffer::create(captureSize(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
     if (!m_imageBuffer)
         return nullptr;
 
@@ -700,8 +700,26 @@ bool MockRealtimeVideoSource::mockDisplayType(CaptureDevice::DeviceType type) co
     return std::get<MockDisplayProperties>(m_device.properties).type == type;
 }
 
+void MockRealtimeVideoSource::rotationAngleForHorizonLevelDisplayChanged(const String& persistentID, VideoFrameRotation rotation)
+{
+    if (this->persistentID() != persistentID) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    m_isUsingRotationAngleForHorizonLevelDisplayChanged = true;
+    if (rotation == m_deviceOrientation)
+        return;
+
+    m_deviceOrientation = rotation;
+    notifySettingsDidChangeObservers({ RealtimeMediaSourceSettings::Flag::Width, RealtimeMediaSourceSettings::Flag::Height });
+}
+
 void MockRealtimeVideoSource::orientationChanged(IntDegrees orientation)
 {
+    if (m_isUsingRotationAngleForHorizonLevelDisplayChanged)
+        return;
+
     auto deviceOrientation = m_deviceOrientation;
     switch (orientation) {
     case 0:

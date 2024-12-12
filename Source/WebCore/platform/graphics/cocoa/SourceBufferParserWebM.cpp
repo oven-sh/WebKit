@@ -1212,20 +1212,20 @@ WebMParser::ConsumeFrameDataResult WebMParser::AudioTrackData::consumeFrameData(
                 PARSER_LOG_ERROR_IF_POSSIBLE("AudioTrackData::consumeFrameData: unable to create contiguous data block");
                 return Skip(&reader, bytesRemaining);
             }
-            OpusCookieContents cookieContents;
-            if (!parseOpusPrivateData(std::span { privateData }, *contiguousBuffer, cookieContents)) {
+            if (auto cookieContents = parseOpusPrivateData(std::span { privateData }, contiguousBuffer->span())) {
+#if !HAVE(AUDIOFORMATPROPERTY_VARIABLEPACKET_SUPPORTED)
+                if (!cookieContents->framesPerPacket) {
+                    PARSER_LOG_ERROR_IF_POSSIBLE("Opus private data indicates 0 frames per packet; bailing");
+                    return Skip(&reader, bytesRemaining);
+                }
+                m_framesPerPacket = cookieContents->framesPerPacket;
+                m_frameDuration = cookieContents->frameDuration;
+#endif
+                formatDescription = createOpusAudioInfo(*cookieContents);
+            } else {
                 PARSER_LOG_ERROR_IF_POSSIBLE("Failed to parse Opus private data");
                 return Skip(&reader, bytesRemaining);
             }
-#if !HAVE(AUDIOFORMATPROPERTY_VARIABLEPACKET_SUPPORTED)
-            if (!cookieContents.framesPerPacket) {
-                PARSER_LOG_ERROR_IF_POSSIBLE("Opus private data indicates 0 frames per packet; bailing");
-                return Skip(&reader, bytesRemaining);
-            }
-            m_framesPerPacket = cookieContents.framesPerPacket;
-            m_frameDuration = cookieContents.frameDuration;
-#endif
-            formatDescription = createOpusAudioInfo(cookieContents);
         }
 
         if (!formatDescription) {
@@ -1245,16 +1245,15 @@ WebMParser::ConsumeFrameDataResult WebMParser::AudioTrackData::consumeFrameData(
         // Opus technically allows the frame duration and frames-per-packet values to change from packet to packet.
         // Prior rdar://71347713 CoreMedia opus decoder didn't support those, so throw an error when
         // that kind of variability is encountered.
-        OpusCookieContents cookieContents;
         auto& privateData = track().codec_private.value();
         auto contiguousBuffer = contiguousCompleteBlockBuffer(0, kOpusMinimumFrameDataSize);
         if (!contiguousBuffer) {
             PARSER_LOG_ERROR_IF_POSSIBLE("AudioTrackData::consumeFrameData: unable to create contiguous data block");
             return Skip(&reader, bytesRemaining);
         }
-        if (!parseOpusPrivateData(std::span { privateData }, *contiguousBuffer, cookieContents)
-            || cookieContents.framesPerPacket != m_framesPerPacket
-            || cookieContents.frameDuration != m_frameDuration) {
+        if (auto cookieContents = parseOpusPrivateData(std::span { privateData }, contiguousBuffer->span()); !cookieContents
+            || cookieContents->framesPerPacket != m_framesPerPacket
+            || cookieContents->frameDuration != m_frameDuration) {
             PARSER_LOG_ERROR_IF_POSSIBLE("Opus frames-per-packet changed within a track; error");
             return Status(Status::Code(ErrorCode::VariableFrameDuration));
         }
@@ -1276,7 +1275,7 @@ WebMParser::ConsumeFrameDataResult WebMParser::AudioTrackData::consumeFrameData(
         parser().formatDescriptionChangedForTrackData(*this);
     }
 
-    MediaTime packetDuration = MediaTime(m_packetDurationParser->framesInPacket(*contiguousBuffer), downcast<AudioInfo>(formatDescription())->rate);
+    MediaTime packetDuration = MediaTime(m_packetDurationParser->framesInPacket(contiguousBuffer->span()), downcast<AudioInfo>(formatDescription())->rate);
     auto trimDuration = MediaTime::zeroTime();
     MediaTime localPresentationTime = presentationTime;
     if (m_remainingTrimDuration.isFinite() && m_remainingTrimDuration > MediaTime::zeroTime()) {

@@ -900,9 +900,7 @@ static void setFontFromControlSize(RenderStyle& style, NSControlSize controlSize
 
     // Reset line height
     style.setLineHeight(RenderStyle::initialLineHeight());
-
-    if (style.setFontDescription(WTFMove(fontDescription)))
-        style.fontCascade().update(nullptr);
+    style.setFontDescription(WTFMove(fontDescription));
 }
 
 #if ENABLE(DATALIST_ELEMENT)

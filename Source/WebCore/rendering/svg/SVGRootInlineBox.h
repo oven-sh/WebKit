@@ -39,8 +39,6 @@ public:
     float virtualLogicalHeight() const override { return m_logicalHeight; }
     void setLogicalHeight(float height) { m_logicalHeight = height; }
 
-    LegacyInlineBox* closestLeafChildForPosition(const LayoutPoint&);
-
 private:
     RenderSVGText& renderSVGText() const;
 

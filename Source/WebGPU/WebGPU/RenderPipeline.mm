@@ -876,6 +876,7 @@ NSString* Device::addPipelineLayouts(Vector<Vector<WGPUBindGroupLayoutEntry>>& p
                 std::span(entries[existingBindingIndex].metalBinding)[stage] = entry.binding;
                 if (!BindGroupLayout::equalBindingEntries(toBindingLayout(entries[existingBindingIndex]), makeBindingLayout(newEntry, entry.bindingMember)))
                     return @"Binding mismatch in auto-generated layouts";
+                entryMap.set(entry.name, entry.webBinding);
                 continue;
             }
             uint64_t bufferSizeForBinding = 0;

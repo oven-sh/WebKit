@@ -80,7 +80,6 @@ RenderStyle RenderListItem::computeMarkerStyle() const
     auto fontDescription = style().fontDescription();
     fontDescription.setVariantNumericSpacing(FontVariantNumericSpacing::TabularNumbers);
     markerStyle.setFontDescription(WTFMove(fontDescription));
-    markerStyle.fontCascade().update(&document().fontSelector());
     markerStyle.setUnicodeBidi(UnicodeBidi::Isolate);
     markerStyle.setWhiteSpaceCollapse(WhiteSpaceCollapse::Preserve);
     markerStyle.setTextWrapMode(TextWrapMode::NoWrap);

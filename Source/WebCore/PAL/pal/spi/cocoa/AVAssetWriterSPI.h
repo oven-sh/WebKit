@@ -48,6 +48,7 @@ NS_ASSUME_NONNULL_BEGIN
 #if !HAVE(AVASSETWRITERDELEGATE_API)
 @property (weak, nullable) id <AVAssetWriterDelegate> delegate SPI_AVAILABLE(macos(10.15), ios(13.0), tvos(13.0), watchos(6.0));
 #endif
+@property (nonatomic) BOOL requiresInProcessOperation SPI_AVAILABLE(ios(16.4), tvos(16.4), watchos(9.4), visionos(1.0)) API_UNAVAILABLE(macos, macCatalyst);
 @end
 
 NS_ASSUME_NONNULL_END

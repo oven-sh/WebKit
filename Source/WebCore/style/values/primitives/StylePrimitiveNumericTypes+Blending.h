@@ -113,13 +113,13 @@ template<auto R> struct Blending<LengthPercentage<R>> {
     }
 };
 
-// `NumberOrPercentageResolvedToNumber<R>` forwards to `Number<R>`.
-template<auto R> struct Blending<NumberOrPercentageResolvedToNumber<R>> {
-    auto canBlend(const NumberOrPercentageResolvedToNumber<R>& a, const NumberOrPercentageResolvedToNumber<R>& b) -> bool
+// `NumberOrPercentageResolvedToNumber<nR,pR>` forwards to `Number<nR>`.
+template<auto nR, auto pR> struct Blending<NumberOrPercentageResolvedToNumber<nR, pR>> {
+    auto canBlend(const NumberOrPercentageResolvedToNumber<nR, pR>& a, const NumberOrPercentageResolvedToNumber<nR, pR>& b) -> bool
     {
         return Style::canBlend(a.value, b.value);
     }
-    auto blend(const NumberOrPercentageResolvedToNumber<R>& a, const NumberOrPercentageResolvedToNumber<R>& b, const BlendingContext& context) -> NumberOrPercentageResolvedToNumber<R>
+    auto blend(const NumberOrPercentageResolvedToNumber<nR, pR>& a, const NumberOrPercentageResolvedToNumber<nR, pR>& b, const BlendingContext& context) -> NumberOrPercentageResolvedToNumber<nR, pR>
     {
         return Style::blend(a.value, b.value, context);
     }

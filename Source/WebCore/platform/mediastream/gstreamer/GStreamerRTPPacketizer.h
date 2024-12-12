@@ -24,6 +24,7 @@
 #include "GRefPtrGStreamer.h"
 #include "GUniquePtrGStreamer.h"
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -81,6 +82,9 @@ private:
     unsigned m_lastExtensionId { 0 };
 
     unsigned long m_statsPadProbeId { 0 };
+
+    String m_mid;
+    String m_rid;
 };
 
 } // namespace WebCore

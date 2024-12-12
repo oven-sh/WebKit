@@ -65,6 +65,11 @@ inline std::span<const char> span(const char* string)
     return unsafeMakeSpan(string, string ? strlen(string) : 0);
 }
 
+inline std::span<const char> spanIncludingNullTerminator(const char* string)
+{
+    return unsafeMakeSpan(string, string ? strlen(string) + 1 : 0);
+}
+
 inline std::span<const LChar> span(const LChar* string)
 {
     return unsafeMakeSpan(string, string ? strlen(byteCast<char>(string)) : 0);
@@ -1173,7 +1178,7 @@ ALWAYS_INLINE bool charactersContain(std::span<const CharacterType> span)
     if (length >= stride) {
         size_t index = 0;
         BulkType accumulated { };
-        for (; index + (stride - 1) < length; index += stride)
+        for (; index + stride <= length; index += stride)
             accumulated = SIMD::bitOr(accumulated, SIMD::equal<characters...>(SIMD::load(std::bit_cast<const UnsignedType*>(data + index))));
 
         if (index < length)
@@ -1190,6 +1195,22 @@ ALWAYS_INLINE bool charactersContain(std::span<const CharacterType> span)
     return false;
 }
 
+template<typename CharacterType>
+inline size_t countMatchedCharacters(std::span<const CharacterType> span, CharacterType character)
+{
+    using UnsignedType = std::make_unsigned_t<CharacterType>;
+    auto mask = SIMD::splat<UnsignedType>(character);
+    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::equal(input, mask);
+    };
+
+    auto scalarMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+        return input == character;
+    };
+
+    return SIMD::count(span, vectorMatch, scalarMatch);
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 }
@@ -1200,6 +1221,7 @@ using WTF::equalLettersIgnoringASCIICase;
 using WTF::equalLettersIgnoringASCIICaseWithLength;
 using WTF::isLatin1;
 using WTF::span;
+using WTF::spanIncludingNullTerminator;
 using WTF::span8;
 using WTF::span8IncludingNullTerminator;
 using WTF::charactersContain;

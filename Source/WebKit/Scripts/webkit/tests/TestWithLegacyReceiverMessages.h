@@ -41,6 +41,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/MachSendRight.h>
 #include <wtf/OptionSet.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>

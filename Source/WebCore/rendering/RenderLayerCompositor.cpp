@@ -4443,7 +4443,7 @@ float RenderLayerCompositor::zoomedOutPageScaleFactor() const
 float RenderLayerCompositor::contentsScaleMultiplierForNewTiles(const GraphicsLayer*) const
 {
 #if PLATFORM(IOS_FAMILY)
-    LegacyTileCache* tileCache = nullptr;
+    RefPtr<LegacyTileCache> tileCache;
     auto* localMainFrame = dynamicDowncast<LocalFrame>(page().mainFrame());
     if (auto* frameView = localMainFrame ? localMainFrame->view() : nullptr)
         tileCache = frameView->legacyTileCache();

@@ -239,12 +239,13 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDesc
         constexpr int maxGeneratedDescriptors = 4;
         std::array<RetainPtr<MTLArgumentDescriptor>, maxGeneratedDescriptors> descriptors { };
         BindGroupLayout::Entry::BindingLayout bindingLayout;
+        Ref protectedThis = *this;
         auto processBindingLayout = [&](const auto& type) {
             if (!BindGroupLayout::isPresent(type))
                 return true;
             if (descriptors[0])
                 return false;
-            descriptors[0] = createArgumentDescriptor(type, *this, entry);
+            descriptors[0] = createArgumentDescriptor(type, protectedThis.get(), entry);
             if (!descriptors[0])
                 return false;
             bindingLayout = type;

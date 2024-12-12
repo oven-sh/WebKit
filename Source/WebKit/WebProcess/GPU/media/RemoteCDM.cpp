@@ -33,7 +33,6 @@
 #include "RemoteCDMInstanceConfiguration.h"
 #include "RemoteCDMInstanceIdentifier.h"
 #include "RemoteCDMProxyMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <WebCore/CDMKeySystemConfiguration.h>
 #include <WebCore/CDMRestrictions.h>

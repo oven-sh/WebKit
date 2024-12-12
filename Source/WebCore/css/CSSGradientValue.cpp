@@ -45,11 +45,6 @@ template<typename CSSType> static bool styleImageIsUncacheable(const CSSType& va
     return StyleImageIsUncacheable<CSSType>()(value);
 }
 
-template<typename T> static bool styleImageIsUncacheableOnVariantLike(const T& variantLike)
-{
-    return WTF::switchOn(variantLike, [](const auto& alternative) { return styleImageIsUncacheable(alternative); });
-}
-
 template<> struct StyleImageIsUncacheable<CSSUnitType> {
     bool operator()(const auto& value) { return conversionToCanonicalUnitRequiresConversionData(value); }
 };
@@ -60,14 +55,6 @@ template<RawNumeric CSSType> struct StyleImageIsUncacheable<CSSType> {
 
 template<RawNumeric CSSType> struct StyleImageIsUncacheable<UnevaluatedCalc<CSSType>> {
     constexpr bool operator()(const auto& value) { return value.protectedCalc()->requiresConversionData(); }
-};
-
-template<RawNumeric CSSType> struct StyleImageIsUncacheable<PrimitiveNumeric<CSSType>> {
-    constexpr bool operator()(const auto& value) { return styleImageIsUncacheableOnVariantLike(value); }
-};
-
-template<auto R> struct StyleImageIsUncacheable<NumberOrPercentageResolvedToNumber<R>> {
-    constexpr bool operator()(const auto& value) { return styleImageIsUncacheableOnVariantLike(value); }
 };
 
 template<CSSValueID C> struct StyleImageIsUncacheable<Constant<C>> {
@@ -95,7 +82,7 @@ template<typename CSSType> requires (TreatAsRangeLike<CSSType>) struct StyleImag
 };
 
 template<typename CSSType> requires (TreatAsVariantLike<CSSType>) struct StyleImageIsUncacheable<CSSType> {
-    bool operator()(const auto& value) { return styleImageIsUncacheableOnVariantLike(value); }
+    bool operator()(const auto& value) { return WTF::switchOn(value, [](const auto& alternative) { return styleImageIsUncacheable(alternative); }); }
 };
 
 } // namespace (anonymous)

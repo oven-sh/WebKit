@@ -592,17 +592,6 @@ LockBackForwardList NavigationScheduler::mustLockBackForwardList(Frame& targetFr
         && !localTargetFrame->loader().documentLoader()->wasOnloadDispatched())
         return LockBackForwardList::Yes;
     
-    // Navigation of a subframe during loading of an ancestor frame does not create a new back/forward item.
-    // The definition of "during load" is any time before all handlers for the load event have been run.
-    // See https://bugs.webkit.org/show_bug.cgi?id=14957 for the original motivation for this.
-    for (auto* ancestor = targetFrame.tree().parent(); ancestor; ancestor = ancestor->tree().parent()) {
-        RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor);
-        if (!localAncestor)
-            continue;
-        RefPtr document = localAncestor->document();
-        if (!localAncestor->loader().isComplete() || (document && document->processingLoadEvent()))
-            return LockBackForwardList::Yes;
-    }
     return LockBackForwardList::No;
 }
 

@@ -108,7 +108,7 @@ int Connection::socketDescriptor() const
 #endif
 }
 
-void Connection::platformInitialize(Identifier identifier)
+void Connection::platformInitialize(Identifier&& identifier)
 {
 #if USE(GLIB)
     GUniqueOutPtr<GError> error;

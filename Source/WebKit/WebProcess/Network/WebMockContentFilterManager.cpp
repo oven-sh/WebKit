@@ -30,7 +30,6 @@
 
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <WebCore/MockContentFilterManager.h>
 #include <WebCore/MockContentFilterSettings.h>

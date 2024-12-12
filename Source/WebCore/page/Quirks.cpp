@@ -46,10 +46,12 @@
 #include "HTMLMetaElement.h"
 #include "HTMLNames.h"
 #include "HTMLObjectElement.h"
+#include "HTMLTextAreaElement.h"
 #include "HTMLVideoElement.h"
 #include "JSEventListener.h"
 #include "LayoutUnit.h"
 #include "LocalDOMWindow.h"
+#include "LocalFrameView.h"
 #include "MouseEvent.h"
 #include "NamedNodeMap.h"
 #include "NetworkStorageSession.h"
@@ -447,6 +449,14 @@ bool Quirks::isESPN() const
     return *m_quirksData.isESPN;
 }
 
+bool Quirks::isFacebook() const
+{
+    if (!m_quirksData.isFacebook)
+        m_quirksData.isFacebook = isDomain("facebook.com"_s);
+
+    return *m_quirksData.isFacebook;
+}
+
 bool Quirks::isSpotifyPlayer() const
 {
     if (!m_quirksData.isSpotify)
@@ -530,8 +540,6 @@ bool Quirks::shouldDispatchSimulatedMouseEvents(const EventTarget* target) const
             return startsWithLettersIgnoringASCIICase(url.path(), "/website/templates/"_s) ? QuirksData::ShouldDispatchSimulatedMouseEvents::No : QuirksData::ShouldDispatchSimulatedMouseEvents::Yes;
         }
 
-        if (isDomain("trello.com"_s))
-            return QuirksData::ShouldDispatchSimulatedMouseEvents::Yes;
         if (isDomain("airtable.com"_s))
             return QuirksData::ShouldDispatchSimulatedMouseEvents::Yes;
         if (isDomain("flipkart.com"_s))
@@ -1406,7 +1414,7 @@ bool Quirks::requiresUserGestureToPauseInPictureInPicture() const
 
     if (!m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk) {
         auto domain = RegistrableDomain(topDocumentURL()).string();
-        m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk = isDomain("facebook.com"_s) || isDomain("x.com"_s) || isDomain("reddit.com"_s) || isDomain("forbes.com"_s);
+        m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk = isFacebook() || isDomain("x.com"_s) || isDomain("reddit.com"_s) || isDomain("forbes.com"_s);
     }
 
     return *m_quirksData.requiresUserGestureToPauseInPictureInPictureQuirk;
@@ -1693,19 +1701,6 @@ bool Quirks::needsResettingTransitionCancelsRunningTransitionQuirk() const
 #endif
 }
 
-bool Quirks::shouldStarBePermissionsPolicyDefaultValue() const
-{
-    if (!needsQuirks())
-        return false;
-
-    if (!m_quirksData.shouldStarBePermissionsPolicyDefaultValueQuirk) {
-        auto domain = m_document->securityOrigin().domain();
-        m_quirksData.shouldStarBePermissionsPolicyDefaultValueQuirk = domain == "jsfiddle.net"_s;
-    }
-
-    return *m_quirksData.shouldStarBePermissionsPolicyDefaultValueQuirk;
-}
-
 // Microsoft office online generates data URLs with incorrect padding on Safari only (rdar://114573089).
 bool Quirks::shouldDisableDataURLPaddingValidation() const
 {
@@ -1793,36 +1788,13 @@ bool Quirks::needsIPadMiniUserAgent(const URL& url)
     if (host == "tv.kakao.com"_s || host.endsWith(".tv.kakao.com"_s))
         return true;
 
-    if (host == "tving.com"_s || host.endsWith(".tving.com"_s))
-        return true;
-
-    if (host == "live.iqiyi.com"_s || host.endsWith(".live.iqiyi.com"_s))
-        return true;
-
-    if (host == "jsfiddle.net"_s || host.endsWith(".jsfiddle.net"_s))
-        return true;
-
-    if (host == "video.sina.com.cn"_s || host.endsWith(".video.sina.com.cn"_s))
-        return true;
-
     if (host == "huya.com"_s || host.endsWith(".huya.com"_s))
-        return true;
-
-    if (host == "video.tudou.com"_s || host.endsWith(".video.tudou.com"_s))
         return true;
 
     if (host == "cctv.com"_s || host.endsWith(".cctv.com"_s))
         return true;
 
-    if (host == "v.china.com.cn"_s)
-        return true;
-
-    if (host == "trello.com"_s || host.endsWith(".trello.com"_s))
-        return true;
-
-    if (host == "ted.com"_s || host.endsWith(".ted.com"_s))
-        return true;
-
+#if USE(HSBC_MOBILE_SITE_FOR_IPAD)
     if (host.contains("hsbc."_s)) {
         if (host == "hsbc.com.au"_s || host.endsWith(".hsbc.com.au"_s))
             return true;
@@ -1847,13 +1819,7 @@ bool Quirks::needsIPadMiniUserAgent(const URL& url)
         if (host == "hsbc.com.cn"_s || host.endsWith(".hsbc.com.cn"_s))
             return true;
     }
-
-    if (host == "nhl.com"_s || host.endsWith(".nhl.com"_s))
-        return true;
-
-    // FIXME: Remove this quirk when <rdar://problem/59480381> is complete.
-    if (host == "fidelity.com"_s || host.endsWith(".fidelity.com"_s))
-        return true;
+#endif
 
     // FIXME: Remove this quirk when <rdar://problem/61733101> is complete.
     if (host == "roblox.com"_s || host.endsWith(".roblox.com"_s))
@@ -2107,6 +2073,11 @@ bool Quirks::shouldSynthesizeTouchEventsAfterNonSyntheticClick(const Element& ta
     return false;
 }
 
+static AccessibilityRole accessibilityRole(const Element& element)
+{
+    return AccessibilityObject::ariaRoleToWebCoreRole(element.attributeWithoutSynchronization(HTMLNames::roleAttr));
+}
+
 bool Quirks::shouldIgnoreContentObservationForClick(const Node& targetNode) const
 {
     if (!needsQuirks())
@@ -2117,10 +2088,6 @@ bool Quirks::shouldIgnoreContentObservationForClick(const Node& targetNode) cons
 
     if (!m_quirksData.mayNeedToIgnoreContentObservation.value())
         return false;
-
-    auto accessibilityRole = [](const Element& element) {
-        return AccessibilityObject::ariaRoleToWebCoreRole(element.getAttribute(HTMLNames::roleAttr));
-    };
 
     RefPtr target = dynamicDowncast<Element>(targetNode);
     if (!target || accessibilityRole(*target) != AccessibilityRole::Button)
@@ -2230,6 +2197,58 @@ bool Quirks::hideIGNVolumeSlider() const
     return needsQuirks() && !PAL::currentUserInterfaceIdiomIsSmallScreen() && m_document->url().host() == "www.ign.com"_s;
 }
 #endif // PLATFORM(IOS)
+
+// facebook.com rdar://141103350
+bool Quirks::needsFacebookStoriesCreationFormQuirk(const Element& element, const RenderStyle& computedStyle) const
+{
+#if PLATFORM(IOS_FAMILY)
+    if (!needsQuirks())
+        return false;
+
+    if (!isFacebook())
+        return false;
+
+    if (!topDocumentURL().path().startsWith("/stories/create"_s)) {
+        m_facebookStoriesCreationFormContainer = { };
+        return false;
+    }
+
+    Ref document = element.document();
+    RefPtr loader = document->loader();
+    if (UNLIKELY(!loader))
+        return false;
+
+    if (loader->metaViewportPolicy() != MetaViewportPolicy::Ignore)
+        return false;
+
+    RefPtr view = document->view();
+    if (UNLIKELY(!view))
+        return false;
+
+    float width = view->sizeForCSSDefaultViewportUnits().width();
+    if (width < 800 || width > 900)
+        return false;
+
+    if (m_facebookStoriesCreationFormContainer)
+        return m_facebookStoriesCreationFormContainer.get() == &element;
+
+    if (computedStyle.display() != DisplayType::None)
+        return false;
+
+    if (accessibilityRole(element) != AccessibilityRole::LandmarkNavigation)
+        return false;
+
+    if (!descendantsOfType<HTMLTextAreaElement>(element).first())
+        return false;
+
+    m_facebookStoriesCreationFormContainer = element;
+    return true;
+#else
+    UNUSED_PARAM(element);
+    UNUSED_PARAM(computedStyle);
+    return false;
+#endif
+}
 
 URL Quirks::topDocumentURL() const
 {

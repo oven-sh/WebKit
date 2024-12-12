@@ -60,6 +60,10 @@ class LegacyPreviewLoader;
 class LocalFrame;
 class NetworkLoadMetrics;
 
+#if ENABLE(CONTENT_EXTENSIONS)
+class ResourceMonitor;
+#endif
+
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceLoader);
 class ResourceLoader : public RefCountedAndCanMakeWeakPtr<ResourceLoader>, protected ResourceHandleClient {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceLoader);
@@ -225,6 +229,10 @@ private:
     void receivedCancellation(ResourceHandle*, const AuthenticationChallenge& challenge) override { receivedCancellation(challenge); }
 #if PLATFORM(IOS_FAMILY)
     RetainPtr<CFDictionaryRef> connectionProperties(ResourceHandle*) override;
+#endif
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    ResourceMonitor* resourceMonitor();
 #endif
 
 #if USE(SOUP)

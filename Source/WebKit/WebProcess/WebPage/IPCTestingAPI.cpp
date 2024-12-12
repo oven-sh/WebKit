@@ -42,7 +42,6 @@
 #include "SerializedTypeInfo.h"
 #include "StreamClientConnection.h"
 #include "StreamConnectionBuffer.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebFrame.h"
 #include "WebPage.h"
 #include "WebProcess.h"

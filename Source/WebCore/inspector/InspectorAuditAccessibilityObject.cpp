@@ -191,7 +191,7 @@ ExceptionOr<std::optional<InspectorAuditAccessibilityObject::ComputedProperties>
         else
             computedProperties.invalidStatus = "true"_s;
 
-        computedProperties.isPopUpButton = axObject->isPopUpButton() || axObject->hasPopup();
+        computedProperties.isPopUpButton = axObject->isPopUpButton() || axObject->selfOrAncestorLinkHasPopup();
         computedProperties.label = axObject->computedLabel();
 
         if (axObject->supportsLiveRegion()) {

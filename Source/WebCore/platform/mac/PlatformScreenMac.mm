@@ -120,20 +120,6 @@ static DynamicRangeMode convertAVVideoRangeToEnum(NSString* range)
 }
 #endif
 
-static ContentsFormat screenContentsFormat(NSScreen *screen)
-{
-#if HAVE(IOSURFACE_RGB10)
-    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
-
-    if ([screen canRepresentDisplayGamut:NSDisplayGamutP3])
-        return ContentsFormat::RGBA10;
-#else
-    UNUSED_PARAM(screen);
-#endif
-
-    return ContentsFormat::RGBA8;
-}
-
 ScreenProperties collectScreenProperties()
 {
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
@@ -175,7 +161,7 @@ ScreenProperties collectScreenProperties()
         screenData.colorSpace = DestinationColorSpace { screen.colorSpace.CGColorSpace };
         screenData.screenDepth = NSBitsPerPixelFromDepth(screen.depth);
         screenData.screenDepthPerComponent = NSBitsPerSampleFromDepth(screen.depth);
-        screenData.screenContentsFormat = screenContentsFormat(screen);
+        screenData.screenSupportsExtendedColor = [screen canRepresentDisplayGamut:NSDisplayGamutP3];
         screenData.screenHasInvertedColors = screenHasInvertedColors;
         screenData.screenIsMonochrome = CGDisplayUsesForceToGray();
         screenData.displayMask = CGDisplayIDToOpenGLDisplayMask(displayID);
@@ -379,21 +365,25 @@ ContentsFormat screenContentsFormat(Widget* widget, PlatformCALayerClient* clien
 #if HAVE(HDR_SUPPORT)
     if (client && client->hdrForImagesEnabled() && screenSupportsHighDynamicRange(widget))
         return ContentsFormat::RGBA16F;
-#else
-    UNUSED_PARAM(client);
 #endif
 
-    if (auto data = screenProperties(widget))
-        return data->screenContentsFormat;
-
 #if HAVE(IOSURFACE_RGB10)
-    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
-
-    if ([screen(widget) canRepresentDisplayGamut:NSDisplayGamutP3])
+    if (screenSupportsExtendedColor(widget))
         return ContentsFormat::RGBA10;
 #endif
 
+    UNUSED_PARAM(widget);
+    UNUSED_PARAM(client);
     return ContentsFormat::RGBA8;
+}
+
+bool screenSupportsExtendedColor(Widget* widget)
+{
+    if (auto data = screenProperties(widget))
+        return data->screenSupportsExtendedColor;
+
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
+    return [screen(widget) canRepresentDisplayGamut:NSDisplayGamutP3];
 }
 
 bool screenSupportsHighDynamicRange(Widget* widget)

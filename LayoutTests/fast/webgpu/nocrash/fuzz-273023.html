@@ -10,7 +10,9 @@ async function run() {
         { texture: texture2, origin: { x: 0, y: 0, z: 198 } },
         { width: 1, height: 1 }
     );
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

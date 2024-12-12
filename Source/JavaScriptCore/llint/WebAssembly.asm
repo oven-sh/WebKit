@@ -457,7 +457,7 @@ macro forEachVectorArgument(fn)
 end
 
 # Tier up immediately, while saving full vectors in argument FPRs
-macro wasmPrologueSIMD()
+macro wasmPrologueSIMD(slow_path)
 if (WEBASSEMBLY_BBQJIT or WEBASSEMBLY_OMGJIT) and not ARMv7
     preserveCallerPCAndCFR()
     preserveCalleeSavesUsedByWasm()
@@ -511,10 +511,7 @@ end
         storev fpr, negOffset - 8 - CalleeSaveSpaceAsVirtualRegisters * 8[cfr]
     end)
 
-    move cfr, a0
-    move PC, a1
-    move wasmInstance, a2
-    cCall4(_slow_path_wasm_simd_go_straight_to_bbq_osr)
+    slow_path()
     move r0, ws0
 
 if ARM64 or ARM64E
@@ -1362,7 +1359,30 @@ op(wasm_function_prologue_simd, macro ()
         error
     end
 
-    wasmPrologueSIMD()
+    wasmPrologueSIMD(macro()
+        move cfr, a0
+        move PC, a1
+        move wasmInstance, a2
+        cCall4(_slow_path_wasm_simd_go_straight_to_bbq_osr)
+    end)
+    break
+end)
+
+op(ipint_function_prologue_simd_trampoline, macro ()
+    tagReturnAddress sp
+    jmp _ipint_function_prologue_simd
+end)
+
+op(ipint_function_prologue_simd, macro ()
+    if not WEBASSEMBLY or C_LOOP
+        error
+    end
+
+    wasmPrologueSIMD(macro()
+        move wasmInstance, a0
+        move cfr, a1
+        cCall2(_ipint_extern_simd_go_straight_to_bbq)
+    end)
     break
 end)
 

@@ -206,18 +206,4 @@ template<typename... F> decltype(auto) Color::switchOn(F&&... f) const
 } // namespace CSS
 } // namespace WebCore
 
-namespace WTF {
-
-// Overload WTF::switchOn to make it so CSS::Color can be used directly.
-
-template<class... F> ALWAYS_INLINE auto switchOn(const WebCore::CSS::Color& value, F&&... f) -> decltype(value.switchOn(std::forward<F>(f)...))
-{
-    return value.switchOn(std::forward<F>(f)...);
-}
-
-template<class... F> ALWAYS_INLINE auto switchOn(WebCore::CSS::Color&& value, F&&... f) -> decltype(value.switchOn(std::forward<F>(f)...))
-{
-    return value.switchOn(std::forward<F>(f)...);
-}
-
-} // namespace WTF
+template<> inline constexpr auto WebCore::TreatAsVariantLike<WebCore::CSS::Color> = true;

@@ -2,12 +2,14 @@
 TESTS = \
     TestWithCVPixelBuffer \
     TestWithDeferSendingOption \
+    TestWithDispatchedFromAndTo \
     TestWithEnabledBy \
     TestWithEnabledByAndConjunction \
     TestWithEnabledByOrConjunction \
     TestWithIfMessage \
     TestWithImageData \
     TestWithLegacyReceiver \
+    TestWithMultiLineExtendedAttributes \
     TestWithoutAttributes \
     TestWithoutUsingIPCConnection \
     TestWithSemaphore \

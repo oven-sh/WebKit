@@ -33,6 +33,13 @@ OBJC_CLASS PDFAnnotation;
 
 namespace WebKit::PDFAnnotationTypeHelpers {
 
+enum class AnnotationType : uint8_t {
+    Link,
+    Popup,
+    Text,
+    Widget,
+};
+
 enum class WidgetType : uint8_t {
     Button,
     Choice,
@@ -40,7 +47,8 @@ enum class WidgetType : uint8_t {
     Text,
 };
 
-bool annotationIsWidget(PDFAnnotation *);
+bool annotationIsOfType(PDFAnnotation *, AnnotationType);
+bool annotationIsOfType(PDFAnnotation *, std::initializer_list<AnnotationType>&&);
 bool annotationIsWidgetOfType(PDFAnnotation *, WidgetType);
 bool annotationIsWidgetOfType(PDFAnnotation *, std::initializer_list<WidgetType>&&);
 

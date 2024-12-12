@@ -29,6 +29,7 @@
 #include "DrawingArea.h"
 #include "NotificationPermissionRequestManager.h"
 #include "PluginView.h"
+#include "WebBackForwardListProxy.h"
 #include "WebNotificationClient.h"
 #include "WebPage.h"
 #include "WebPageTestingMessages.h"

@@ -102,10 +102,12 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/css/values/backgrounds"
     "${WEBCORE_DIR}/css/values/color"
     "${WEBCORE_DIR}/css/values/color-adjust"
+    "${WEBCORE_DIR}/css/values/filter-effects"
     "${WEBCORE_DIR}/css/values/images"
     "${WEBCORE_DIR}/css/values/motion"
     "${WEBCORE_DIR}/css/values/primitives"
     "${WEBCORE_DIR}/css/values/shapes"
+    "${WEBCORE_DIR}/css/values/text-decoration"
     "${WEBCORE_DIR}/cssjit"
     "${WEBCORE_DIR}/dom"
     "${WEBCORE_DIR}/dom/messageports"
@@ -192,10 +194,12 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/style/values/backgrounds"
     "${WEBCORE_DIR}/style/values/color"
     "${WEBCORE_DIR}/style/values/color-adjust"
+    "${WEBCORE_DIR}/style/values/filter-effects"
     "${WEBCORE_DIR}/style/values/images"
     "${WEBCORE_DIR}/style/values/motion"
     "${WEBCORE_DIR}/style/values/primitives"
     "${WEBCORE_DIR}/style/values/shapes"
+    "${WEBCORE_DIR}/style/values/text-decoration"
     "${WEBCORE_DIR}/svg"
     "${WEBCORE_DIR}/svg/animation"
     "${WEBCORE_DIR}/svg/graphics"
@@ -614,8 +618,6 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/push-api/PushEventInit.idl
     Modules/push-api/PushManager.idl
     Modules/push-api/PushMessageData.idl
-    Modules/push-api/PushNotificationEvent.idl
-    Modules/push-api/PushNotificationEventInit.idl
     Modules/push-api/PushPermissionState.idl
     Modules/push-api/PushSubscription.idl
     Modules/push-api/PushSubscriptionChangeEvent.idl
@@ -972,6 +974,7 @@ set(WebCore_NON_SVG_IDL_FILES
     css/CSSPaintCallback.idl
     css/CSSPaintSize.idl
     css/CSSPageRule.idl
+    css/CSSPositionTryRule.idl
     css/CSSPropertyRule.idl
     css/CSSRule.idl
     css/CSSRuleList.idl
@@ -1169,6 +1172,8 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/NonDocumentTypeChildNode.idl
     dom/NonElementParentNode.idl
     dom/Observable.idl
+    dom/ObservableInspector.idl
+    dom/ObservableInspectorAbortCallback.idl
     dom/PageRevealEvent.idl
     dom/PageSwapEvent.idl
     dom/PageTransitionEvent.idl
@@ -1183,6 +1188,7 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/Range+CSSOMView.idl
     dom/Range+DOMParsing.idl
     dom/Range.idl
+    dom/ReducerCallback.idl
     dom/RequestAnimationFrameCallback.idl
     dom/SecurityPolicyViolationEvent.idl
     dom/SecurityPolicyViolationEventDisposition.idl
@@ -2347,11 +2353,6 @@ if (USE_LIBWEBRTC)
     )
 endif ()
 
-# FIXME: This needs a more scalable solution. See webkit.org/b/267080 for some related discussion.
-if (HAVE_OS_DARK_MODE_SUPPORT)
-    set(FEATURE_DEFINES_WITH_SPACE_SEPARATOR "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR} HAVE_OS_DARK_MODE_SUPPORT")
-endif ()
-
 set(WebCoreTestSupport_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/platform/mock"
     "${WEBCORE_DIR}/testing"
@@ -2537,11 +2538,13 @@ add_custom_command(
 
 # Generate process sync data files
 add_custom_command(
-    OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncClient.cpp ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncClient.h ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncData.h ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncData.serialization.in
+    OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/DocumentSyncData.cpp ${WebCore_DERIVED_SOURCES_DIR}/DocumentSyncData.h ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncClient.cpp ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncClient.h ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncData.h ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncData.serialization.in
     MAIN_DEPENDENCY ${WEBCORE_DIR}/page/ProcessSyncData.in
     DEPENDS ${WEBCORE_DIR}/Scripts/generate-process-sync-data.py
     COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/Scripts/generate-process-sync-data.py ${WEBCORE_DIR}/page/ProcessSyncData.in ${WebCore_DERIVED_SOURCES_DIR}
     VERBATIM)
+list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/DocumentSyncData.cpp)
+list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/DocumentSyncData.h)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncClient.cpp)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncClient.h)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/ProcessSyncData.h)
@@ -2649,6 +2652,16 @@ add_custom_command(
     COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/platform/network/create-http-header-name-table ${WEBCORE_DIR}/platform/network/HTTPHeaderNames.in "${GPERF_EXECUTABLE}"
     VERBATIM)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/HTTPHeaderNames.cpp)
+
+# Log messages
+add_custom_command(
+    OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/WebCoreLogDefinitions.h
+    MAIN_DEPENDENCY ${WEBCORE_DIR}/platform/LogMessages.in
+    DEPENDS ${WEBCORE_DIR}/Scripts/generate-log-declarations.py
+    WORKING_DIRECTORY ${WebCore_DERIVED_SOURCES_DIR}
+    COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/Scripts/generate-log-declarations.py ${WEBCORE_DIR}/platform/LogMessages.in ${WebCore_DERIVED_SOURCES_DIR}/WebCoreLogDefinitions.h
+    VERBATIM)
+list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/WebCoreLogDefinitions.h)
 
 # Generate CSS property names
 add_custom_command(

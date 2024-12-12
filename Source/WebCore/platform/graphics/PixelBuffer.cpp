@@ -27,6 +27,7 @@
 #include "PixelBuffer.h"
 
 #include <JavaScriptCore/TypedArrayInlines.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/TextStream.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -117,7 +118,7 @@ bool PixelBuffer::zeroRange(size_t byteOffset, size_t rangeByteLength)
     if (!isSumSmallerThanOrEqual(byteOffset, rangeByteLength, m_bytes.size()))
         return false;
 
-    memset(m_bytes.data() + byteOffset, 0, rangeByteLength);
+    memsetSpan(m_bytes.subspan(byteOffset, rangeByteLength), 0);
     return true;
 }
 

@@ -335,6 +335,26 @@ ALWAYS_INLINE JSValue getProperty(JSGlobalObject* globalObject, JSObject* object
     return object->getIfPropertyExists(globalObject, index);
 }
 
+ALWAYS_INLINE bool isHole(double value)
+{
+    return std::isnan(value);
+}
+
+ALWAYS_INLINE bool isHole(const WriteBarrier<Unknown>& value)
+{
+    return !value;
+}
+
+template<typename T>
+ALWAYS_INLINE bool containsHole(const T* data, unsigned length)
+{
+    for (unsigned i = 0; i < length; ++i) {
+        if (isHole(data[i]))
+            return true;
+    }
+    return false;
+}
+
 } // namespace JSC
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -258,7 +258,7 @@ public:
 
         // Count the number of incoming transitions per node.
         m_flattenedTransitionsStartOffsetPerNode.resize(dfa.nodes.size());
-        memset(m_flattenedTransitionsStartOffsetPerNode.data(), 0, m_flattenedTransitionsStartOffsetPerNode.size() * sizeof(unsigned));
+        m_flattenedTransitionsStartOffsetPerNode.fill(0);
 
         auto singularTransitionsFirsts = WTF::map<0, ContentExtensionsOverflowHandler>(singularTransitions, [&](auto& transition) {
             return transition.first;
@@ -292,8 +292,7 @@ public:
             counter = 0;
         m_flattenedTransitions.resize(flattenedTransitionsSize);
 
-        Vector<uint32_t> transitionPerRangeOffset(m_transitionPartition.size());
-        memset(transitionPerRangeOffset.data(), 0, transitionPerRangeOffset.size() * sizeof(uint32_t));
+        Vector<uint32_t> transitionPerRangeOffset(m_transitionPartition.size(), 0);
 
         for (unsigned i = 0; i < dfa.nodes.size(); ++i) {
             const DFANode& node = dfa.nodes[i];

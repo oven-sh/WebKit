@@ -141,8 +141,15 @@
             of [% "${terms.bug} ${bug.dup_id}" FILTER bug_link(bug.dup_id) FILTER none %]
           [% END %]
         [% END %]
-      </span><a href="show_bug.cgi?id=[% bug.bug_id %]" class="bug_id" [% IF user.id %]id="copy-commitlog"[% END %]>[% terms.Bug %]&nbsp;[% bug.bug_id FILTER html %]</a>      
+      </span><a href="show_bug.cgi?id=[% bug.bug_id %]" class="bug_id" [% IF user.id %]  id="copy-commitlog"[% END %]>[% bug.bug_id FILTER html %]</a> [% IF user.id %]<span id="copy-commitlog-label"></span>[% END %]
      </div>
+     <style>
+     a.bug_id::before {
+       content: "[% terms.Bug %] ";
+       -webkit-user-select: none;
+       user-select: none;
+     }
+     </style>
      <span id="summary_container" class="bz_default_hidden">
       [% IF bug.alias.size > 0 %]
         <span id="alias_nonedit_display">[% bug.alias.join(', ') FILTER html %]</span>
@@ -193,18 +200,14 @@
         }
     }
     
-    document.getElementById('commit-urls').addEventListener('click', (e) => {
-      selectText(e.target.parentElement);
-    });
-    
-    let clipboardButtonElement = document.getElementById('copy-commitlog');
-    clipboardButtonElement.addEventListener('click', (e) => {
+    let copyCommitlogElement = document.getElementById('copy-commitlog');
+    copyCommitlogElement.addEventListener('click', (e) => {
       e.preventDefault();
       let text = document.getElementById('short_desc').value + "\n" + document.getElementById('commit-urls').textContent;
       navigator.clipboard.writeText(text).then(function() {
-        clipboardButtonElement.classList.add('clicked');
+        copyCommitlogElement.classList.add('clicked');
         setTimeout(function () {
-          clipboardButtonElement.classList.remove('clicked');  
+          copyCommitlogElement.classList.remove('clicked');  
         }, 3000);
       });
     });

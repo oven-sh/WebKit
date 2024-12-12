@@ -24,6 +24,7 @@ list(APPEND PAL_PUBLIC_HEADERS
     cocoa/PassKitSoftLink.h
     cocoa/QuartzCoreSoftLink.h
     cocoa/RevealSoftLink.h
+    cocoa/ScreenTimeSoftLink.h
     cocoa/SpeechSoftLink.h
     cocoa/TranslationUIServicesSoftLink.h
     cocoa/UsageTrackingSoftLink.h
@@ -187,6 +188,7 @@ list(APPEND PAL_SOURCES
     cocoa/PassKitSoftLink.mm
     cocoa/QuartzCoreSoftLink.mm
     cocoa/RevealSoftLink.mm
+    cocoa/ScreenTimeSoftLink.mm
     cocoa/SpeechSoftLink.mm
     cocoa/TranslationUIServicesSoftLink.mm
     cocoa/UsageTrackingSoftLink.mm

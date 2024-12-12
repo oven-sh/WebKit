@@ -1528,7 +1528,7 @@ std::optional<WebCore::RectEdges<bool>> ArgumentCoder<WebCore::RectEdges<bool>>:
 
 namespace WTF {
 
-template<> bool isValidEnum<IPC::WebCore_TimingFunction_Subclass, void>(IPC::EncodedVariantIndex value)
+template<> bool isValidEnum<IPC::WebCore_TimingFunction_Subclass>(IPC::EncodedVariantIndex value)
 {
 IGNORE_WARNINGS_BEGIN("switch-unreachable")
     switch (static_cast<IPC::WebCore_TimingFunction_Subclass>(value)) {
@@ -1544,7 +1544,7 @@ IGNORE_WARNINGS_END
     return false;
 }
 
-template<> bool isValidEnum<IPC::WebCore_MoveOnlyBaseClass_Subclass, void>(IPC::EncodedVariantIndex value)
+template<> bool isValidEnum<IPC::WebCore_MoveOnlyBaseClass_Subclass>(IPC::EncodedVariantIndex value)
 {
 IGNORE_WARNINGS_BEGIN("switch-unreachable")
     switch (static_cast<IPC::WebCore_MoveOnlyBaseClass_Subclass>(value)) {
@@ -1555,7 +1555,20 @@ IGNORE_WARNINGS_END
     return false;
 }
 
-template<> bool isValidEnum<EnumWithoutNamespace, void>(uint8_t value)
+#if ENABLE(BOOL_ENUM)
+template<> bool isValidEnum<EnumNamespace::BoolEnumType>(bool value)
+{
+    switch (static_cast<uint8_t>(value)) {
+    case 0:
+    case 1:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
+template<> bool isValidEnum<EnumWithoutNamespace>(uint8_t value)
 {
     switch (static_cast<EnumWithoutNamespace>(value)) {
     case EnumWithoutNamespace::Value1:
@@ -1568,7 +1581,7 @@ template<> bool isValidEnum<EnumWithoutNamespace, void>(uint8_t value)
 }
 
 #if ENABLE(UINT16_ENUM)
-template<> bool isValidEnum<EnumNamespace::EnumType, void>(uint16_t value)
+template<> bool isValidEnum<EnumNamespace::EnumType>(uint16_t value)
 {
     switch (static_cast<EnumNamespace::EnumType>(value)) {
     case EnumNamespace::EnumType::FirstValue:
@@ -1638,7 +1651,7 @@ template<> bool isValidOptionSet<OptionSetEnumAllCondition>(OptionSet<OptionSetE
 }
 
 #if (ENABLE(OUTER_CONDITION)) && (ENABLE(INNER_CONDITION))
-template<> bool isValidEnum<EnumNamespace::InnerEnumType, void>(uint8_t value)
+template<> bool isValidEnum<EnumNamespace::InnerEnumType>(uint8_t value)
 {
     switch (static_cast<EnumNamespace::InnerEnumType>(value)) {
     case EnumNamespace::InnerEnumType::InnerValue:
@@ -1648,6 +1661,19 @@ template<> bool isValidEnum<EnumNamespace::InnerEnumType, void>(uint8_t value)
 #if !(ENABLE(INNER_INNER_CONDITION))
     case EnumNamespace::InnerEnumType::OtherInnerInnerValue:
 #endif
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
+#if (ENABLE(OUTER_CONDITION)) && (!(ENABLE(INNER_CONDITION)))
+template<> bool isValidEnum<EnumNamespace::InnerBoolType>(bool value)
+{
+    switch (static_cast<uint8_t>(value)) {
+    case 0:
+    case 1:
         return true;
     default:
         return false;

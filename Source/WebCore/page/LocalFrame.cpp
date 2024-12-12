@@ -61,6 +61,7 @@
 #include "HTMLFormControlElement.h"
 #include "HTMLFormElement.h"
 #include "HTMLFrameElementBase.h"
+#include "HTMLIFrameElement.h"
 #include "HTMLNames.h"
 #include "HTMLTableCellElement.h"
 #include "HTMLTableRowElement.h"
@@ -89,6 +90,7 @@
 #include "RenderTheme.h"
 #include "RenderView.h"
 #include "RenderWidget.h"
+#include "ResourceMonitor.h"
 #include "SVGDocument.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
@@ -1241,10 +1243,8 @@ CheckedRef<const EventHandler> LocalFrame::checkedEventHandler() const
 
 void LocalFrame::documentURLDidChange(const URL& url)
 {
-    if (RefPtr page = this->page(); page && isMainFrame()) {
+    if (RefPtr page = this->page(); page && isMainFrame())
         page->setMainFrameURL(url);
-        page->processSyncClient().broadcastMainFrameURLChangeToOtherProcesses(url);
-    }
 }
 
 #if ENABLE(DATA_DETECTION)
@@ -1380,6 +1380,42 @@ void LocalFrame::setScrollingMode(ScrollbarMode scrollingMode)
     if (RefPtr view = this->view())
         view->setCanHaveScrollbars(m_scrollingMode != ScrollbarMode::AlwaysOff);
 }
+
+#if ENABLE(CONTENT_EXTENSIONS)
+
+void LocalFrame::networkUsageDidExceedThreshold()
+{
+    ASSERT(!isMainFrame());
+
+    // If the frame has sticky user activation, don't do offloading.
+    if (RefPtr protectedWindow = window(); protectedWindow && protectedWindow->hasStickyActivation())
+        return;
+
+    FRAME_RELEASE_LOG_ERROR(ResourceLoading, "networkUsageDidExceedThreshold: Unloading frame due to exceeding threshold.");
+
+    showResourceMonitoringError("This frame was unloaded."_s);
+
+    if (RefPtr document = this->document())
+        document->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Error, "Frame was unloaded because its network usage exceeded the limit."_s);
+}
+
+void LocalFrame::showResourceMonitoringError(String&& htmlContent)
+{
+    RefPtr iframeElement = dynamicDowncast<HTMLIFrameElement>(ownerElement());
+    if (!iframeElement)
+        return;
+
+    for (RefPtr<Frame> frame = this; frame; frame = frame->tree().traverseNext()) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame)) {
+            if (RefPtr window = localFrame->window())
+                window->removeAllEventListeners();
+        }
+    }
+
+    iframeElement->setSrcdoc(htmlContent);
+}
+
+#endif
 
 } // namespace WebCore
 

@@ -251,7 +251,7 @@ typedef NS_ENUM(NSInteger, WKFullscreenState) {
    - A `frame` value of `nil` to represent the main frame
    - A `contentWorld` value of `WKContentWorld.pageWorld`
 */
-- (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(_Nullable id, NSError * _Nullable error))completionHandler;
+- (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(id WK_NULLABLE_RESULT, NSError * _Nullable error))completionHandler;
 
 /* @abstract Evaluates the given JavaScript string.
  @param javaScriptString The JavaScript string to evaluate.
@@ -268,12 +268,12 @@ typedef NS_ENUM(NSInteger, WKFullscreenState) {
 
  No matter which WKContentWorld you use to evaluate your JavaScript string, you can make changes to the underlying web content. (e.g. the Document and its DOM structure)
  Such changes will be visible to script executing in all WKContentWorlds.
- Evaluating your JavaScript string can leave behind other changes to global state visibile to JavaScript. (e.g. `window.myVariable = 1;`)
- Those changes will only be visibile to scripts executed in the same WKContentWorld.
+ Evaluating your JavaScript string can leave behind other changes to global state visible to JavaScript. (e.g. `window.myVariable = 1;`)
+ Those changes will only be visible to scripts executed in the same WKContentWorld.
  evaluateJavaScript: is a great way to set up global state for future JavaScript execution in a given world. (e.g. Importing libraries/utilities that future JavaScript execution will rely on)
  Once your global state is set up, consider using callAsyncJavaScript: for more flexible interaction with the JavaScript programming model.
 */
-- (void)evaluateJavaScript:(NSString *)javaScriptString inFrame:(nullable WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(_Nullable id, NSError * _Nullable error))completionHandler NS_REFINED_FOR_SWIFT WK_API_AVAILABLE(macos(11.0), ios(14.0));
+- (void)evaluateJavaScript:(NSString *)javaScriptString inFrame:(nullable WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(id WK_NULLABLE_RESULT, NSError * _Nullable error))completionHandler NS_REFINED_FOR_SWIFT WK_API_AVAILABLE(macos(11.0), ios(14.0));
 
 /* @abstract Calls the given JavaScript string as an async JavaScript function, passing the given named arguments to that function.
  @param functionBody The JavaScript string to use as the function body.

@@ -43,11 +43,6 @@
 #include <wtf/OptionSet.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace IPC {
-class Decoder;
-class Encoder;
-}
-
 namespace WebCore {
 class DocumentLoader;
 }

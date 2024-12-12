@@ -30,6 +30,7 @@
 #include "LayerHostingContext.h"
 #include "MessageReceiver.h"
 #include "MessageSender.h"
+#include "RemoteSampleBufferDisplayLayerManager.h"
 #include "RemoteVideoFrameIdentifier.h"
 #include "SampleBufferDisplayLayerIdentifier.h"
 #include "SharedVideoFrame.h"
@@ -47,6 +48,7 @@ enum class VideoFrameRotation : uint16_t;
 
 namespace WebKit {
 class GPUConnectionToWebProcess;
+struct SharedPreferencesForWebProcess;
 
 class RemoteSampleBufferDisplayLayer : public RefCounted<RemoteSampleBufferDisplayLayer>, public WebCore::SampleBufferDisplayLayerClient, public IPC::MessageReceiver, private IPC::MessageSender {
     WTF_MAKE_TZONE_ALLOCATED(RemoteSampleBufferDisplayLayer);
@@ -54,7 +56,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    static RefPtr<RemoteSampleBufferDisplayLayer> create(GPUConnectionToWebProcess&, SampleBufferDisplayLayerIdentifier, Ref<IPC::Connection>&&);
+    static RefPtr<RemoteSampleBufferDisplayLayer> create(GPUConnectionToWebProcess&, SampleBufferDisplayLayerIdentifier, Ref<IPC::Connection>&&, RemoteSampleBufferDisplayLayerManager&);
     ~RemoteSampleBufferDisplayLayer();
 
     USING_CAN_MAKE_WEAKPTR(WebCore::SampleBufferDisplayLayerClient);
@@ -68,8 +70,10 @@ public:
     CGRect bounds() const;
     void updateBoundsAndPosition(CGRect, std::optional<WTF::MachSendRight>&&);
 
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+
 private:
-    RemoteSampleBufferDisplayLayer(GPUConnectionToWebProcess&, SampleBufferDisplayLayerIdentifier, Ref<IPC::Connection>&&);
+    RemoteSampleBufferDisplayLayer(GPUConnectionToWebProcess&, SampleBufferDisplayLayerIdentifier, Ref<IPC::Connection>&&, RemoteSampleBufferDisplayLayerManager&);
 
     RefPtr<WebCore::LocalSampleBufferDisplayLayer> protectedSampleBufferDisplayLayer() const;
 
@@ -104,6 +108,7 @@ private:
     std::unique_ptr<LayerHostingContext> m_layerHostingContext;
     SharedVideoFrameReader m_sharedVideoFrameReader;
     ThreadLikeAssertion m_consumeThread NO_UNIQUE_ADDRESS;
+    ThreadSafeWeakPtr<RemoteSampleBufferDisplayLayerManager> m_remoteSampleBufferDisplayLayerManager;
 };
 
 }

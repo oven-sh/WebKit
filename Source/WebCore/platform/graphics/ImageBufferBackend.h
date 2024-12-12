@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020-2024 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -70,6 +70,7 @@ class Image;
 class NativeImage;
 class PixelBuffer;
 class ProcessIdentity;
+class SharedBuffer;
 
 enum class PreserveResolution : bool {
     No,
@@ -128,6 +129,8 @@ public:
 
     virtual void getPixelBuffer(const IntRect& srcRect, PixelBuffer& destination) = 0;
     virtual void putPixelBuffer(const PixelBuffer&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) = 0;
+
+    WEBCORE_EXPORT virtual RefPtr<SharedBuffer> sinkToPDFDocument();
 
 #if HAVE(IOSURFACE)
     virtual IOSurface* surface() { return nullptr; }

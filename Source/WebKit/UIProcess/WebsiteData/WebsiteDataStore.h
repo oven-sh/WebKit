@@ -483,7 +483,8 @@ public:
 
     void getAppBadgeForTesting(CompletionHandler<void(std::optional<uint64_t>)>&&);
 
-    void fetchLocalStorage(CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>)>&&);
+    void fetchLocalStorage(CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&&);
+    void restoreLocalStorage(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&, CompletionHandler<void(bool)>&&);
 
 private:
     enum class ForceReinitialization : bool { No, Yes };

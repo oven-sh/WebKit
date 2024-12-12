@@ -97,6 +97,8 @@ public:
     String deviceIdToPersistentId(const String& deviceId) const { return m_audioOutputDeviceIdToPersistentId.get(deviceId); }
     String hashedGroupId(const String& groupId);
 
+    void willStartMediaCapture(bool microphone, bool camera);
+
 private:
     explicit MediaDevices(Document&);
 
@@ -137,6 +139,9 @@ private:
 
     MemoryCompactRobinHoodHashMap<String, String> m_audioOutputDeviceIdToPersistentId;
     String m_audioOutputDeviceId;
+
+    bool m_hasRestrictedCameraDevices { true };
+    bool m_hasRestrictedMicrophoneDevices { true };
 };
 
 } // namespace WebCore

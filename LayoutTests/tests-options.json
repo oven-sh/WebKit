@@ -4178,16 +4178,10 @@
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-attribute-basic.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-attribute-basic.tentative.html": [
-        "slow"
-    ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus-2.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus.tentative.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-hover-hide-hide.tentative.html": [
@@ -4208,22 +4202,13 @@
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-invoking-attribute.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-invoking-attribute.tentative.html": [
-        "slow"
-    ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-hint.tentative.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-with-anchor.tentative.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-with-anchor.tentative.tentative.html": [
-        "slow"
-    ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss.tentative.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-target-action-hover.tentative.html": [
@@ -5391,6 +5376,21 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/pointerevents/pointerlock/pointerevent_movementxy.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/pointerlock/movementX_Y_basic.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/pointerlock/pointerlock_promise.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/pointerlock/pointerlock_remove_target.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/pointerlock/pointerlock_shadow.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/pointerlock/pointerlock_without_gesture.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/quirks/hashless-hex-color/limited-quirks.html": [

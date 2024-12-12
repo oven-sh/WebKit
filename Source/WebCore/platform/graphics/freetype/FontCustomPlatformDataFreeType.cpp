@@ -212,4 +212,16 @@ bool FontCustomPlatformData::supportsTechnology(const FontTechnology& technology
     return false;
 }
 
+std::optional<Ref<FontCustomPlatformData>> FontCustomPlatformData::tryMakeFromSerializationData(FontCustomPlatformSerializedData&&, bool)
+{
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
+}
+
+FontCustomPlatformSerializedData FontCustomPlatformData::serializedData() const
+{
+    ASSERT_NOT_REACHED();
+    return FontCustomPlatformSerializedData { creationData.fontFaceData, creationData.itemInCollection, m_renderingResourceIdentifier };
+}
+
 }

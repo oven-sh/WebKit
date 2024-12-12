@@ -34,7 +34,6 @@
 #include "RemoteRealtimeVideoSource.h"
 #include "RemoteVideoFrameObjectHeapProxy.h"
 #include "UserMediaCaptureManagerMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <WebCore/AudioMediaStreamTrackRendererUnit.h>
 #include <WebCore/DeprecatedGlobalSettings.h>

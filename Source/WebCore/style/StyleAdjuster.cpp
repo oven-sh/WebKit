@@ -987,7 +987,9 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
         if (is<HTMLBodyElement>(*m_element) && m_element->hasClassName(className))
             style.setUsedTouchActions({ TouchAction::Auto });
     }
-#endif
+    if (m_document->quirks().needsFacebookStoriesCreationFormQuirk(*m_element, style))
+        style.setEffectiveDisplay(DisplayType::Flex);
+#endif // PLATFORM(IOS_FAMILY)
 
 #if ENABLE(VIDEO)
     if (m_document->quirks().needsFullscreenDisplayNoneQuirk()) {
@@ -1155,14 +1157,13 @@ auto Adjuster::adjustmentForTextAutosizing(const RenderStyle& style, const Eleme
     return adjustmentForTextAutosizing;
 }
 
-bool Adjuster::adjustForTextAutosizing(RenderStyle& style, const Element& element, AdjustmentForTextAutosizing adjustment)
+bool Adjuster::adjustForTextAutosizing(RenderStyle& style, AdjustmentForTextAutosizing adjustment)
 {
     AutosizeStatus::updateStatus(style);
     if (auto newFontSize = adjustment.newFontSize) {
         auto fontDescription = style.fontDescription();
         fontDescription.setComputedSize(*newFontSize);
         style.setFontDescription(WTFMove(fontDescription));
-        style.fontCascade().update(&element.document().fontSelector());
     }
     if (auto newLineHeight = adjustment.newLineHeight)
         style.setLineHeight({ *newLineHeight, LengthType::Fixed });
@@ -1173,7 +1174,7 @@ bool Adjuster::adjustForTextAutosizing(RenderStyle& style, const Element& elemen
 
 bool Adjuster::adjustForTextAutosizing(RenderStyle& style, const Element& element)
 {
-    return adjustForTextAutosizing(style, element, adjustmentForTextAutosizing(style, element));
+    return adjustForTextAutosizing(style, adjustmentForTextAutosizing(style, element));
 }
 #endif
 

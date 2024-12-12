@@ -173,7 +173,7 @@ void CSSAnimation::setBindingsTimeline(RefPtr<AnimationTimeline>&& timeline)
 void CSSAnimation::setBindingsRangeStart(TimelineRangeValue&& range)
 {
     m_overriddenProperties.add(Property::Range);
-    StyleOriginatedAnimation::setBindingsRangeEnd(WTFMove(range));
+    StyleOriginatedAnimation::setBindingsRangeStart(WTFMove(range));
 }
 
 void CSSAnimation::setBindingsRangeEnd(TimelineRangeValue&& range)

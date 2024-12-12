@@ -29,10 +29,15 @@
 
 #include "WasmCallee.h"
 
-extern "C" void ipint_entry();
-extern "C" void ipint_entry_simd();
-extern "C" void ipint_catch_entry();
-extern "C" void ipint_catch_all_entry();
+extern "C" void SYSV_ABI ipint_entry();
+extern "C" void SYSV_ABI ipint_entry_simd();
+extern "C" void SYSV_ABI ipint_catch_entry();
+extern "C" void SYSV_ABI ipint_catch_all_entry();
+
+extern "C" void SYSV_ABI ipint_table_catch_entry();
+extern "C" void SYSV_ABI ipint_table_catch_ref_entry();
+extern "C" void SYSV_ABI ipint_table_catch_all_entry();
+extern "C" void SYSV_ABI ipint_table_catch_allref_entry();
 
 #define IPINT_VALIDATE_DEFINE_FUNCTION(opcode, name) \
     extern "C" void ipint_ ## name ## _validate() REFERENCED_FROM_ASM WTF_INTERNAL NO_REORDER;
@@ -48,7 +53,7 @@ extern "C" void ipint_catch_all_entry();
     m(0x07, catch) \
     m(0x08, throw) \
     m(0x09, rethrow) \
-    m(0x0a, reserved_0xa) \
+    m(0x0a, throw_ref) \
     m(0x0b, end) \
     m(0x0c, br) \
     m(0x0d, br_if) \
@@ -69,7 +74,7 @@ extern "C" void ipint_catch_all_entry();
     m(0x1c, select_t) \
     m(0x1d, reserved_0x1d) \
     m(0x1e, reserved_0x1e) \
-    m(0x1f, reserved_0x1f) \
+    m(0x1f, try_table) \
     m(0x20, local_get) \
     m(0x21, local_set) \
     m(0x22, local_tee) \

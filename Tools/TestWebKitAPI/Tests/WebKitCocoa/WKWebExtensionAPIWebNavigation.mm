@@ -63,16 +63,16 @@ TEST(WKWebExtensionAPIWebNavigation, BeforeNavigateEvent)
 
     auto *backgroundScript = Util::constructScript(@[
         @"browser.webNavigation.onBeforeNavigate.addListener((details) => {",
-        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be:')",
-        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be:')",
+        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be')",
+        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be')",
 
-        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be:')",
+        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be')",
         @"    browser.test.assertTrue(details?.url?.includes('localhost'), 'details.url should include localhost')",
 
-        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be:')",
-        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be:')",
+        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be')",
+        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be')",
 
-        @"    browser.test.assertEq(details?.documentId, undefined, 'details.documentId should be:')",
+        @"    browser.test.assertEq(details?.documentId, undefined, 'details.documentId should be')",
 
         @"    browser.test.notifyPass()",
         @"})",
@@ -105,17 +105,17 @@ TEST(WKWebExtensionAPIWebNavigation, CommittedEvent)
 
     auto *backgroundScript = Util::constructScript(@[
         @"browser.webNavigation.onCommitted.addListener((details) => {",
-        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be:')",
-        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be:')",
+        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be')",
+        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be')",
 
-        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be:')",
+        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be')",
         @"    browser.test.assertTrue(details?.url?.includes('localhost'), 'details.url should include localhost')",
 
-        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be:')",
-        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be:')",
+        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be')",
+        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be')",
 
-        @"    browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be:')",
-        @"    browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be:')",
+        @"    browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be')",
+        @"    browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be')",
 
         @"    browser.test.notifyPass()",
         @"})",
@@ -148,17 +148,17 @@ TEST(WKWebExtensionAPIWebNavigation, DOMContentLoadedEvent)
 
     auto *backgroundScript = Util::constructScript(@[
         @"browser.webNavigation.onDOMContentLoaded.addListener((details) => {",
-        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be:')",
-        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be:')",
+        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be')",
+        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be')",
 
-        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be:')",
+        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be')",
         @"    browser.test.assertTrue(details?.url?.includes('localhost'), 'details.url should include localhost')",
 
-        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be:')",
-        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be:')",
+        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be')",
+        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be')",
 
-        @"    browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be:')",
-        @"    browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be:')",
+        @"    browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be')",
+        @"    browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be')",
 
         @"    browser.test.notifyPass()",
         @"})",
@@ -191,17 +191,17 @@ TEST(WKWebExtensionAPIWebNavigation, CompletedEvent)
 
     auto *backgroundScript = Util::constructScript(@[
         @"browser.webNavigation.onCompleted.addListener((details) => {",
-        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be:')",
-        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be:')",
+        @"    browser.test.assertEq(details?.frameId, 0, 'details.frameId should be')",
+        @"    browser.test.assertEq(details?.parentFrameId, -1, 'details.parentFrameId should be')",
 
-        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be:')",
+        @"    browser.test.assertEq(typeof details?.url, 'string', 'details.url should be')",
         @"    browser.test.assertTrue(details?.url?.includes('localhost'), 'details.url should include localhost')",
 
-        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be:')",
-        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be:')",
+        @"    browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be')",
+        @"    browser.test.assertEq(typeof details?.timeStamp, 'number', 'details.timeStamp should be')",
 
-        @"    browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be:')",
-        @"    browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be:')",
+        @"    browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be')",
+        @"    browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be')",
 
         @"    browser.test.notifyPass()",
         @"})",
@@ -317,6 +317,58 @@ TEST(WKWebExtensionAPIWebNavigation, AllEventsFired)
         @"browser.webNavigation.onCommitted.addListener(onCommittedHandler)",
         @"browser.webNavigation.onDOMContentLoaded.addListener(onDOMContentLoadedHandler)",
         @"browser.webNavigation.onCompleted.addListener(onCompletedHandler)",
+
+        @"browser.test.yield('Load Tab')"
+    ]);
+
+    auto extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:webNavigationManifest resources:@{ @"background.js": backgroundScript }]);
+    auto manager = adoptNS([[TestWebExtensionManager alloc] initForExtension:extension.get()]);
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebNavigation];
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager loadAndRun];
+
+    EXPECT_NS_EQUAL(manager.get().yieldMessage, @"Load Tab");
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIWebNavigation, DocumentIdAcrossEvents)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"let documentId = null",
+
+        @"browser.webNavigation.onBeforeNavigate.addListener((details) => {",
+        @"  browser.test.assertEq(details?.documentId, undefined, 'details.documentId should be')",
+        @"})",
+
+        @"browser.webNavigation.onCommitted.addListener((details) => {",
+        @"  browser.test.assertEq(documentId, null, 'documentId should be')",
+
+        @"  browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be')",
+        @"  browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be')",
+
+        @"  documentId = details?.documentId",
+        @"})",
+
+        @"browser.webNavigation.onDOMContentLoaded.addListener((details) => {",
+        @"  browser.test.assertEq(documentId, details?.documentId, 'details.documentId should stay consistent in onDOMContentLoaded')",
+        @"})",
+
+        @"browser.webNavigation.onCompleted.addListener((details) => {",
+        @"  browser.test.assertEq(documentId, details?.documentId, 'details.documentId should stay consistent in onCompleted')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
 
         @"browser.test.yield('Load Tab')"
     ]);

@@ -31,6 +31,7 @@
 #include "AudioSession.h"
 #include "Document.h"
 #include "EventNames.h"
+#include "Page.h"
 #include "PermissionsPolicy.h"
 #include "PlatformMediaSessionManager.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -85,10 +86,14 @@ ExceptionOr<void> DOMAudioSession::setType(Type type)
     if (!document)
         return Exception { ExceptionCode::InvalidStateError };
 
+    RefPtr page = document->protectedPage();
+    if (!page)
+        return Exception { ExceptionCode::InvalidStateError };
+
     if (!PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::Microphone, *document, PermissionsPolicy::ShouldReportViolation::No))
         return { };
 
-    document->topDocument().setAudioSessionType(type);
+    page->setAudioSessionType(type);
 
     auto categoryOverride = fromDOMAudioSessionType(type);
     AudioSession::protectedSharedSession()->setCategoryOverride(categoryOverride);
@@ -105,7 +110,13 @@ DOMAudioSession::Type DOMAudioSession::type() const
     if (document && !PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::Microphone, *document, PermissionsPolicy::ShouldReportViolation::No))
         return DOMAudioSession::Type::Auto;
 
-    return document ? document->topDocument().audioSessionType() : DOMAudioSession::Type::Auto;
+    if (!document)
+        return DOMAudioSession::Type::Auto;
+
+    if (RefPtr page = document->protectedPage())
+        return page->audioSessionType();
+
+    return DOMAudioSession::Type::Auto;
 }
 
 static DOMAudioSession::State computeAudioSessionState()

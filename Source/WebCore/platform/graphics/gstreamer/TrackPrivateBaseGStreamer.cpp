@@ -33,6 +33,7 @@
 #include "TrackPrivateBase.h"
 #include <gst/tag/tag.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/StringCommon.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 GST_DEBUG_CATEGORY_EXTERN(webkit_media_player_debug);
@@ -372,7 +373,7 @@ bool TrackPrivateBaseGStreamer::updateTrackIDFromTags(const GRefPtr<GstTagList>&
     if (!gst_tag_list_get_string(tags.get(), "container-specific-track-id", &trackIDString.outPtr()))
         return false;
 
-    auto trackID = WTF::parseInteger<TrackID>(StringView { std::span { trackIDString.get(), strlen(trackIDString.get()) } });
+    auto trackID = WTF::parseInteger<TrackID>(StringView { span(trackIDString.get()) });
     if (trackID && *trackID != m_trackID.value_or(0)) {
         m_trackID = *trackID;
         ASSERT(m_trackID);

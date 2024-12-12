@@ -63,6 +63,7 @@
 #import <WebCore/WebCoreObjCExtras.h>
 #import <WebCore/WebCorePersistentCoders.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/CallbackAggregator.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
 #import <wtf/Vector.h>
@@ -70,6 +71,8 @@
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
+#import <wtf/persistence/PersistentDecoder.h>
+#import <wtf/persistence/PersistentEncoder.h>
 
 #if HAVE(NW_PROXY_CONFIG)
 #import <Network/Network.h>
@@ -1154,10 +1157,10 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     WebCore::NotificationData notificationData = constNotificationData;
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
-    if (!notificationData.defaultActionURL.isEmpty() && _websiteDataStore->configuration().isDeclarativeWebPushEnabled()) {
+    if (!notificationData.navigateURL.isEmpty() && _websiteDataStore->configuration().isDeclarativeWebPushEnabled()) {
         RELEASE_LOG(Push, "Sending persistent notification clicked with default action URL. Requesting navigation to it now.");
 
-        _websiteDataStore->client().navigationToNotificationActionURL(notificationData.defaultActionURL);
+        _websiteDataStore->client().navigationToNotificationActionURL(notificationData.navigateURL);
         completionHandler(true);
         return;
     }
@@ -1428,22 +1431,98 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     });
 }
 
-- (void)_fetchDataOfTypes:(NSSet<NSString *> *)dataTypes completionHandler:(WK_SWIFT_UI_ACTOR void (^)(NSData *))completionHandler
+struct WKWebsiteData {
+    std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> localStorage;
+};
+
+static Vector<WebKit::WebsiteDataType> filterSupportedTypes(NSSet<NSString *> * dataTypes)
 {
+    Vector<WebKit::WebsiteDataType> supportedTypes;
+    if ([dataTypes containsObject:WKWebsiteDataTypeLocalStorage])
+        supportedTypes.append(WebKit::WebsiteDataType::LocalStorage);
+
+    return supportedTypes;
+}
+
+- (void)_fetchDataOfTypes:(NSSet<NSString *> *)dataTypes completionHandler:(void(^)(NSData *))completionHandler
+{
+    Vector<WebKit::WebsiteDataType> dataTypesToEncode = filterSupportedTypes(dataTypes);
+    auto data = Box<WKWebsiteData>::create();
+
+    auto callbackAggregator = CallbackAggregator::create([completionHandler = makeBlockPtr(completionHandler), dataTypesToEncode = WTFMove(dataTypesToEncode), data] {
+        WTF::Persistence::Encoder encoder;
+        constexpr unsigned currentWKWebsiteDataSerializationVersion = 1;
+        encoder << currentWKWebsiteDataSerializationVersion;
+        encoder << dataTypesToEncode;
+
+        for (auto& dataTypeToEncode : dataTypesToEncode) {
+            switch (dataTypeToEncode) {
+            case WebKit::WebsiteDataType::LocalStorage:
+                encoder << data->localStorage.value();
+                break;
+            default:
+                ASSERT_NOT_REACHED();
+                break;
+            }
+        }
+
+        completionHandler(toNSData(encoder.span()).get());
+    });
+
     if ([dataTypes containsObject:WKWebsiteDataTypeLocalStorage]) {
-        _websiteDataStore->fetchLocalStorage([completionHandler = makeBlockPtr(completionHandler)](HashMap<WebCore::ClientOrigin, HashMap<String, String>>&& localStorage) {
-            constexpr unsigned currentLocalStorageSerializationVersion = 1;
-
-            WTF::Persistence::Encoder encoder;
-            encoder << currentLocalStorageSerializationVersion;
-            encoder << localStorage;
-            completionHandler(toNSData(encoder.span()).get());
+        _websiteDataStore->fetchLocalStorage([callbackAggregator, data](HashMap<WebCore::ClientOrigin, HashMap<String, String>>&& localStorage) {
+            data->localStorage = WTFMove(localStorage);
         });
+    }
+}
 
+- (void)_restoreData:(NSData *)data completionHandler:(void(^)(BOOL))completionHandler
+{
+    WTF::Persistence::Decoder decoder(span(data));
+
+    std::optional<unsigned> currentLocalStorageSerializationVersion;
+    decoder >> currentLocalStorageSerializationVersion;
+    if (!currentLocalStorageSerializationVersion) {
+        completionHandler(NO);
         return;
     }
 
-    completionHandler(nil);
+    std::optional<Vector<WebKit::WebsiteDataType>> encodedDataTypes;
+    decoder >> encodedDataTypes;
+    if (!encodedDataTypes) {
+        completionHandler(NO);
+        return;
+    }
+
+    auto succeeded = Box<bool>::create(true);
+    auto callbackAggregator = CallbackAggregator::create([completionHandler = makeBlockPtr(completionHandler), succeeded] {
+        completionHandler(*succeeded);
+    });
+
+    for (auto& encodedDataType : *encodedDataTypes) {
+        switch (encodedDataType) {
+        case WebKit::WebsiteDataType::LocalStorage: {
+            std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> localStorage;
+            decoder >> localStorage;
+
+            if (!localStorage) {
+                *succeeded = false;
+                return;
+            }
+
+            if (!localStorage->isEmpty()) {
+                _websiteDataStore->restoreLocalStorage(WTFMove(*localStorage), [callbackAggregator, succeeded](bool restoreSucceeded) {
+                    if (!restoreSucceeded)
+                        *succeeded = false;
+                });
+            }
+            break;
+        }
+        default:
+            ASSERT_NOT_REACHED();
+            break;
+        }
+    }
 }
 
 @end

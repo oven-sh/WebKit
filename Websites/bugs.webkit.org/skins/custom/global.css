@@ -408,6 +408,15 @@ input[type=submit]:active {
     background-color: var(--link-color);
 }
 
+.button-primary[disabled],
+.bz_query_remember input[type=submit][disabled],
+.bz_query_buttons input[type=submit][disabled],
+#submitbug[disabled] {
+    opacity: 0.8;
+    background-color: var(--submit-background-active-color);
+}
+
+
 a.button.small {
     padding: 0.3rem 1rem;
     font-size: var(--font-size-small);
@@ -1625,11 +1634,9 @@ label.required, .required_explanation {
     font-weight: 400;
 }
 
-#copy-commitlog:hover {
-    text-decoration: none;
-}
-
-#copy-commitlog:after {
+#copy-commitlog + #copy-commitlog-label:after {
+    display: inline-block;
+    overflow: visible;
     background-image: var(--copy-commitlog-glyph);
     background-color: transparent;
     background-repeat: no-repeat;
@@ -1637,19 +1644,23 @@ label.required, .required_explanation {
     background-position: 0.7rem 0.1rem;
 
     content: "Copy bug for commit log";
+    
+    text-wrap: nowrap;
 
-    padding-left: 3rem;
     font-weight: 400;
     color: var(--text-color-coolgray);
     opacity: 0;
-    transition: opacity 500ms ease-in-out;
+    width: 0;
+    padding-left: 3rem;
+    transition: width 0ms, opacity 500ms ease-in-out;
 }
 
-#copy-commitlog:hover:after {
+#copy-commitlog:hover + #copy-commitlog-label:after {
+    width: auto;
     opacity: 1;
 }
 
-#copy-commitlog.clicked:after {
+#copy-commitlog.clicked + #copy-commitlog-label:after {
     color: green;
     content: "Copied!";
 }
@@ -2439,6 +2450,11 @@ table.attachment_entry {
     height: 350px;
     border: 1px solid var(--code-border-color);
     background-color: var(--input-background-color);
+}
+
+/** Bug Activity **/
+#bug-activity {
+    width: 100%;
 }
 
 /** Reports pages **/

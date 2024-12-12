@@ -29,7 +29,10 @@ interface AccessibilityUIElement {
 
     // Element access.
     AccessibilityUIElement elementAtPoint(long x, long y);
+    AccessibilityUIElement elementAtPointWithRemoteElement(long x, long y);
+    undefined elementAtPointResolvingRemoteFrame(long x, long y, object callbackFunction);
     AccessibilityUIElement childAtIndex(unsigned long index);
+    AccessibilityUIElement childAtIndexWithRemoteElement(unsigned long index);
     unsigned long indexOfChild(AccessibilityUIElement child);
     AccessibilityUIElement linkedUIElementAtIndex(unsigned long index);
     readonly attribute AccessibilityUIElement activeElement;
@@ -120,6 +123,7 @@ interface AccessibilityUIElement {
     readonly attribute boolean isDeletion;
     readonly attribute boolean isFirstItemInSuggestion;
     readonly attribute boolean isLastItemInSuggestion;
+    readonly attribute boolean isRemoteFrame;
 
     readonly attribute long x;
     readonly attribute long y;

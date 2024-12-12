@@ -72,8 +72,6 @@ Shared/API/glib/WebKitURIRequest.cpp @no-unify
 Shared/API/glib/WebKitURIResponse.cpp @no-unify
 Shared/API/glib/WebKitUserMessage.cpp @no-unify
 
-Shared/freetype/WebCoreArgumentCodersFreeType.cpp
-
 Shared/glib/ArgumentCodersGLib.cpp
 Shared/glib/InputMethodState.cpp
 Shared/glib/ProcessExecutablePathGLib.cpp

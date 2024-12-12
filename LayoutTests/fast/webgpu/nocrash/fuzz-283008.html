@@ -41,8 +41,10 @@ async function run() {
             { binding: 0, resource: { buffer: buffer, offset: 0, size: 56 } }
         ]
     })
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

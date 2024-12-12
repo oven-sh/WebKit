@@ -278,6 +278,15 @@ public:
     void incrementCheckedPtrCount() const { WebPopupMenuProxy::Client::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const { WebPopupMenuProxy::Client::decrementCheckedPtrCount(); }
 
+#if PLATFORM(MACCATALYST)
+    // EndowmentStateTrackerClient
+    void ref() const final { page->ref(); }
+    void deref() const final { page->deref(); }
+#else
+    void ref() const { page->ref(); }
+    void deref() const { page->deref(); }
+#endif
+
     WeakRef<WebPageProxy> page;
     OptionSet<WebCore::ActivityState> activityState;
     RunLoop::Timer audibleActivityTimer;

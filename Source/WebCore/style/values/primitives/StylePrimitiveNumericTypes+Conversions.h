@@ -27,6 +27,7 @@
 #include "CSSPrimitiveNumericTypes+Canonicalization.h"
 #include "CSSPrimitiveNumericTypes+ComputedStyleDependencies.h"
 #include "CSSToLengthConversionData.h"
+#include "FloatConversion.h"
 #include "StyleBuilderState.h"
 #include "StylePrimitiveNumericTypes.h"
 
@@ -230,9 +231,17 @@ template<StyleNumeric StylePrimitive> struct ToCSS<StylePrimitive> {
     }
 };
 
+// Specialization for NumberOrPercentage.
+template<auto nR, auto pR> struct ToCSS<NumberOrPercentage<nR, pR>> {
+    auto operator()(const NumberOrPercentage<nR, pR>& value, const RenderStyle& style) -> CSS::NumberOrPercentage<nR, pR>
+    {
+        return WTF::switchOn(value, [&](const auto& value) -> CSS::NumberOrPercentage<nR, pR> { return toCSS(value, style); });
+    }
+};
+
 // Specialization for NumberOrPercentageResolvedToNumber.
-template<auto R> struct ToCSS<NumberOrPercentageResolvedToNumber<R>> {
-    auto operator()(const NumberOrPercentageResolvedToNumber<R>& value, const RenderStyle& style) -> CSS::NumberOrPercentageResolvedToNumber<R>
+template<auto nR, auto pR> struct ToCSS<NumberOrPercentageResolvedToNumber<nR, pR>> {
+    auto operator()(const NumberOrPercentageResolvedToNumber<nR, pR>& value, const RenderStyle& style) -> CSS::NumberOrPercentageResolvedToNumber<nR, pR>
     {
         return { toCSS(value.value, style) };
     }
@@ -453,39 +462,62 @@ template<CSS::RawNumeric RawType> struct ToStyle<CSS::PrimitiveNumeric<RawType>>
     }
 };
 
-// NumberOrPercentageResolvedToNumber, as the name implies, resolves its percentage to a number.
-template<auto R> struct ToStyle<CSS::NumberOrPercentageResolvedToNumber<R>> {
-    auto operator()(const CSS::NumberOrPercentageResolvedToNumber<R>& value, const CSSToLengthConversionData& conversionData, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentageResolvedToNumber<R>
+template<auto nR, auto pR> struct ToStyle<CSS::NumberOrPercentage<nR, pR>> {
+    auto operator()(const CSS::NumberOrPercentage<nR, pR>& value, const CSSToLengthConversionData& conversionData, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentage<nR, pR>
     {
-        return WTF::switchOn(value.value,
-            [&](CSS::Number<R> number) -> NumberOrPercentageResolvedToNumber<R> {
+        return WTF::switchOn(value, [&](const auto& value) -> NumberOrPercentage<nR, pR> {
+            return { toStyle(value, conversionData, symbolTable) };
+        });
+    }
+
+    auto operator()(const CSS::NumberOrPercentage<nR, pR>& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentage<nR, pR>
+    {
+        return WTF::switchOn(value, [&](const auto& value) -> NumberOrPercentage<nR, pR> {
+            return { toStyle(value, state, symbolTable) };
+        });
+    }
+
+    auto operator()(const CSS::NumberOrPercentage<nR, pR>& value, NoConversionDataRequiredToken, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentage<nR, pR>
+    {
+        return WTF::switchOn(value, [&](const auto& value) -> NumberOrPercentage<nR, pR> {
+            return { toStyleNoConversionDataRequired(value, symbolTable) };
+        });
+    }
+};
+
+// NumberOrPercentageResolvedToNumber, as the name implies, resolves its percentage to a number.
+template<auto nR, auto pR> struct ToStyle<CSS::NumberOrPercentageResolvedToNumber<nR, pR>> {
+    auto operator()(const CSS::NumberOrPercentageResolvedToNumber<nR, pR>& value, const CSSToLengthConversionData& conversionData, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentageResolvedToNumber<nR, pR>
+    {
+        return WTF::switchOn(value,
+            [&](CSS::Number<nR> number) -> NumberOrPercentageResolvedToNumber<nR, pR> {
                 return { toStyle(number, conversionData, symbolTable) };
             },
-            [&](CSS::Percentage<R> percentage) -> NumberOrPercentageResolvedToNumber<R> {
+            [&](CSS::Percentage<pR> percentage) -> NumberOrPercentageResolvedToNumber<nR, pR> {
                 return { toStyle(percentage, conversionData, symbolTable).value / 100.0 };
             }
         );
     }
 
-    auto operator()(const CSS::NumberOrPercentageResolvedToNumber<R>& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentageResolvedToNumber<R>
+    auto operator()(const CSS::NumberOrPercentageResolvedToNumber<nR, pR>& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentageResolvedToNumber<nR, pR>
     {
-        return WTF::switchOn(value.value,
-            [&](CSS::Number<R> number) -> NumberOrPercentageResolvedToNumber<R> {
+        return WTF::switchOn(value,
+            [&](CSS::Number<nR> number) -> NumberOrPercentageResolvedToNumber<nR, pR> {
                 return { toStyle(number, state, symbolTable) };
             },
-            [&](CSS::Percentage<R> percentage) -> NumberOrPercentageResolvedToNumber<R> {
+            [&](CSS::Percentage<pR> percentage) -> NumberOrPercentageResolvedToNumber<nR, pR> {
                 return { toStyle(percentage, state, symbolTable).value / 100.0 };
             }
         );
     }
 
-    auto operator()(const CSS::NumberOrPercentageResolvedToNumber<R>& value, NoConversionDataRequiredToken, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentageResolvedToNumber<R>
+    auto operator()(const CSS::NumberOrPercentageResolvedToNumber<nR, pR>& value, NoConversionDataRequiredToken, const CSSCalcSymbolTable& symbolTable) -> NumberOrPercentageResolvedToNumber<nR, pR>
     {
-        return WTF::switchOn(value.value,
-            [&](CSS::Number<R> number) -> NumberOrPercentageResolvedToNumber<R> {
+        return WTF::switchOn(value,
+            [&](CSS::Number<nR> number) -> NumberOrPercentageResolvedToNumber<nR, pR> {
                 return { toStyleNoConversionDataRequired(number, symbolTable) };
             },
-            [&](CSS::Percentage<R> percentage) -> NumberOrPercentageResolvedToNumber<R> {
+            [&](CSS::Percentage<pR> percentage) -> NumberOrPercentageResolvedToNumber<nR, pR> {
                 return { toStyleNoConversionDataRequired(percentage, symbolTable).value / 100.0 };
             }
         );

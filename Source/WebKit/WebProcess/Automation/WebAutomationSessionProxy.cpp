@@ -31,7 +31,6 @@
 #include "WebAutomationDOMWindowObserver.h"
 #include "WebAutomationSessionProxyMessages.h"
 #include "WebAutomationSessionProxyScriptSource.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebFrame.h"
 #include "WebImage.h"
 #include "WebPage.h"

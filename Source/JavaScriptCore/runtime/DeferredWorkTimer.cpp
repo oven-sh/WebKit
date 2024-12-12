@@ -65,6 +65,7 @@ inline VM& DeferredWorkTimer::TicketData::vm()
 
 inline void DeferredWorkTimer::TicketData::cancel()
 {
+    dataLogLnIf(DeferredWorkTimerInternal::verbose, "Canceling ticket: ", RawPointer(this));
     m_isCancelled = true;
 }
 
@@ -241,7 +242,6 @@ bool DeferredWorkTimer::cancelPendingWork(Ticket ticket)
 
     bool result = false;
     if (!ticket->isCancelled()) {
-        dataLogLnIf(DeferredWorkTimerInternal::verbose, "Canceling ticket: ", RawPointer(ticket));
         ticket->cancel();
         result = true;
 
@@ -259,6 +259,8 @@ bool DeferredWorkTimer::cancelPendingWork(Ticket ticket)
 void DeferredWorkTimer::cancelPendingWorkSafe(JSGlobalObject* globalObject)
 {
     Locker locker { m_taskLock };
+
+    dataLogLnIf(DeferredWorkTimerInternal::verbose, "Cancel pending work for globalObject ", RawPointer(globalObject));
     for (Ref<TicketData> ticket : *globalObject->m_weakTickets) {
         if (!ticket->isCancelled())
             cancelPendingWork(ticket.ptr());
@@ -273,6 +275,7 @@ void DeferredWorkTimer::cancelPendingWork(VM& vm)
     ASSERT(vm.heap.isInPhase(CollectorPhase::End));
     Locker locker { m_taskLock };
 
+    dataLogLnIf(DeferredWorkTimerInternal::verbose, "Cancel pending work for vm ", RawPointer(&vm));
     auto isValid = [&](auto& ticket) {
         bool isTargetGlobalObjectLive = vm.heap.isMarked(ticket->target()->globalObject());
 #if ASSERT_ENABLED

@@ -50,6 +50,7 @@
 #import "NavigationState.h"
 #import "PageClient.h"
 #import "PlatformWritingToolsUtilities.h"
+#import "ProcessTerminationReason.h"
 #import "ProvisionalPageProxy.h"
 #import "QuickLookThumbnailLoader.h"
 #import "RemoteLayerTreeScrollingPerformanceData.h"
@@ -189,6 +190,10 @@
 #import "WKWebExtensionControllerInternal.h"
 #endif
 
+#if ENABLE(SCREEN_TIME)
+#import <pal/cocoa/ScreenTimeSoftLink.h>
+#endif
+
 #if PLATFORM(IOS_FAMILY)
 #import "PointerTouchCompatibilitySimulator.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
@@ -224,6 +229,10 @@ static const BOOL defaultFastClickingEnabled = YES;
 #elif PLATFORM(IOS_FAMILY)
 static const BOOL defaultAllowsViewportShrinkToFit = NO;
 static const BOOL defaultFastClickingEnabled = NO;
+#endif
+
+#if ENABLE(SCREEN_TIME)
+static void *screenTimeWebpageControllerBlockedKVOContext = &screenTimeWebpageControllerBlockedKVOContext;
 #endif
 
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
@@ -337,6 +346,62 @@ static uint32_t convertSystemLayoutDirection(NSUserInterfaceLayoutDirection dire
 }
 
 #endif // PLATFORM(MAC)
+
+#if ENABLE(SCREEN_TIME)
+- (void)_installScreenTimeWebpageController
+{
+    if (!PAL::isScreenTimeFrameworkAvailable())
+        return;
+
+    if (!_page->preferences().screenTimeEnabled())
+        return;
+
+    if (!_screenTimeWebpageController) {
+        _screenTimeWebpageController = adoptNS([PAL::allocSTWebpageControllerInstance() init]);
+        [_screenTimeWebpageController addObserver:self forKeyPath:@"URLIsBlocked" options:(NSKeyValueObservingOptionOld | NSKeyValueObservingOptionNew) context:screenTimeWebpageControllerBlockedKVOContext];
+
+#if PLATFORM(MAC)
+        RetainPtr screenTimeView = [_screenTimeWebpageController view];
+        [screenTimeView setTranslatesAutoresizingMaskIntoConstraints:NO];
+        [self addSubview:screenTimeView.get()];
+        [NSLayoutConstraint activateConstraints:@[
+            [[screenTimeView widthAnchor] constraintEqualToAnchor:self.widthAnchor],
+            [[screenTimeView heightAnchor] constraintEqualToAnchor:self.heightAnchor],
+            [[screenTimeView leadingAnchor] constraintEqualToAnchor:self.leadingAnchor],
+            [[screenTimeView topAnchor] constraintEqualToAnchor:self.topAnchor]
+        ]];
+#endif // PLATFORM(MAC)
+    }
+}
+
+- (void)_uninstallScreenTimeWebpageController
+{
+    if (!PAL::isScreenTimeFrameworkAvailable())
+        return;
+
+    if (!_screenTimeWebpageController)
+        return;
+
+    [[_screenTimeWebpageController view] removeFromSuperview];
+    [_screenTimeWebpageController removeObserver:self forKeyPath:@"URLIsBlocked" context:screenTimeWebpageControllerBlockedKVOContext];
+    _screenTimeWebpageController = nil;
+}
+#endif // ENABLE(SCREEN_TIME)
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey, id> *)change context:(void *)context
+{
+#if ENABLE(SCREEN_TIME)
+    if (context == &screenTimeWebpageControllerBlockedKVOContext) {
+        BOOL urlWasBlocked = dynamic_objc_cast<NSNumber>(change[NSKeyValueChangeOldKey]).boolValue;
+        BOOL urlIsBlocked = dynamic_objc_cast<NSNumber>(change[NSKeyValueChangeNewKey]).boolValue;
+
+        if (urlWasBlocked != urlIsBlocked)
+            [self setAllMediaPlaybackSuspended:urlIsBlocked completionHandler:nil];
+        return;
+    }
+#endif
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+}
 
 - (void)_initializeWithConfiguration:(WKWebViewConfiguration *)configuration
 {
@@ -671,6 +736,9 @@ static uint32_t convertSystemLayoutDirection(NSUserInterfaceLayoutDirection dire
 {
     if (WebCoreObjCScheduleDeallocateOnMainRunLoop(WKWebView.class, self))
         return;
+#if ENABLE(SCREEN_TIME)
+    [self _uninstallScreenTimeWebpageController];
+#endif
 
 #if PLATFORM(MAC)
     [_textFinderClient willDestroyView:self];
@@ -1860,6 +1928,13 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
 {
     return _page.get();
 }
+
+#if ENABLE(SCREEN_TIME)
+- (STWebpageController *)_screenTimeWebpageController
+{
+    return _screenTimeWebpageController.get();
+}
+#endif
 
 - (std::optional<BOOL>)_resolutionForShareSheetImmediateCompletionForTesting
 {

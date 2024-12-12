@@ -45,6 +45,10 @@
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/spi/cocoa/NSObjCRuntimeSPI.h>
 
+#if ENABLE(SCREEN_TIME)
+#import <ScreenTime/STWebpageController.h>
+#endif
+
 #if PLATFORM(IOS_FAMILY)
 #import "DynamicViewportSizeUpdate.h"
 #import "UIKitSPI.h"
@@ -263,6 +267,10 @@ struct PerWebProcessState {
     BOOL _writingToolsTextReplacementsFinished;
 #endif
 
+#if ENABLE(SCREEN_TIME)
+    RetainPtr<STWebpageController> _screenTimeWebpageController;
+#endif
+
 #if PLATFORM(MAC)
     std::unique_ptr<WebKit::WebViewImpl> _impl;
     RetainPtr<WKTextFinderClient> _textFinderClient;
@@ -418,6 +426,11 @@ struct PerWebProcessState {
 - (void)_storeAppHighlight:(const WebCore::AppHighlight&)info;
 #endif
 
+#if ENABLE(SCREEN_TIME)
+- (void)_installScreenTimeWebpageController;
+- (void)_uninstallScreenTimeWebpageController;
+#endif
+
 #if ENABLE(WRITING_TOOLS)
 - (void)_proofreadingSessionShowDetailsForSuggestionWithUUID:(NSUUID *)replacementUUID relativeToRect:(CGRect)rect;
 
@@ -472,6 +485,9 @@ struct PerWebProcessState {
 - (WKPageRef)_pageForTesting;
 - (NakedPtr<WebKit::WebPageProxy>)_page;
 - (RefPtr<WebKit::WebPageProxy>)_protectedPage;
+#if ENABLE(SCREEN_TIME)
+- (STWebpageController *)_screenTimeWebpageController;
+#endif
 
 @property (nonatomic, setter=_setHasActiveNowPlayingSession:) BOOL _hasActiveNowPlayingSession;
 

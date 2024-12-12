@@ -133,7 +133,7 @@ void VisitedLinkStore::didUpdateSharedStringHashes(const Vector<WebCore::SharedS
     for (Ref process : m_processes) {
         ASSERT(process->processPool().processes().containsIf([&](auto& item) { return item.ptr() == process.ptr(); }));
 
-        if (addedHashes.size() > 20 || !removedHashes.isEmpty())
+        if (addedHashes.size() > 20 || !removedHashes.isEmpty() || process->throttler().isSuspended())
             process->send(Messages::VisitedLinkTableController::AllVisitedLinkStateChanged(), identifier());
         else
             process->send(Messages::VisitedLinkTableController::VisitedLinkStateChanged(addedHashes), identifier());

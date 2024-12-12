@@ -98,11 +98,15 @@ typedef void (*AXPostedNotificationCallback)(id element, NSString* notification,
 - (BOOL)accessibilityReplaceRange:(NSRange)range withText:(NSString *)string;
 - (BOOL)accessibilityInsertText:(NSString *)text;
 - (NSArray *)accessibilityArrayAttributeValues:(NSString *)attribute index:(NSUInteger)index maxCount:(NSUInteger)maxCount;
+- (NSArray *)_accessibilityChildrenFromIndex:(NSUInteger)index maxCount:(NSUInteger)maxCount returnPlatformElements:(BOOL)returnPlatformElements;
 - (NSUInteger)accessibilityIndexOfChild:(id)child;
 - (NSUInteger)accessibilityArrayAttributeCount:(NSString *)attribute;
 - (void)_accessibilityScrollToMakeVisibleWithSubFocus:(NSRect)rect;
 - (void)_accessibilityScrollToGlobalPoint:(NSPoint)point;
 - (void)_accessibilitySetValue:(id)value forAttribute:(NSString*)attributeName;
+// For site-isolation testing use only.
+- (id)_accessibilityHitTest:(NSPoint)point returnPlatformElements:(BOOL)returnPlatformElements;
+- (void)_accessibilityHitTestResolvingRemoteFrame:(NSPoint)point callback:(void(^)(NSString *))callback;
 @end
 
 namespace WTR {
@@ -184,6 +188,7 @@ static id attributeValue(id element, NSString *attribute)
         @"AXIsIndeterminate",
         @"AXIsMultiSelectable",
         @"AXIsOnScreen",
+        @"AXIsRemoteFrame",
         @"AXLabelFor",
         @"AXLabelledBy",
         @"AXLineRectsAndText",
@@ -480,6 +485,16 @@ Vector<RefPtr<AccessibilityUIElement>> AccessibilityUIElement::getChildrenInRang
     return { };
 }
 
+RefPtr<AccessibilityUIElement> AccessibilityUIElement::childAtIndexWithRemoteElement(unsigned index)
+{
+    RetainPtr<NSArray> children;
+    s_controller->executeOnAXThreadAndWait([&children, index, this] {
+        children = [m_element _accessibilityChildrenFromIndex:index maxCount:1 returnPlatformElements:NO];
+    });
+    auto resultChildren = makeVector<RefPtr<AccessibilityUIElement>>(children.get());
+    return resultChildren.size() == 1 ? resultChildren[0] : nullptr;
+}
+
 JSRetainPtr<JSStringRef> AccessibilityUIElement::customContent() const
 {
     BEGIN_AX_OBJC_EXCEPTIONS
@@ -540,6 +555,36 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElement::elementAtPoint(int x, int
         return nullptr;
 
     return AccessibilityUIElement::create(element.get());
+}
+
+RefPtr<AccessibilityUIElement>  AccessibilityUIElement::elementAtPointWithRemoteElement(int x, int y)
+{
+    RetainPtr<id> element;
+    s_controller->executeOnAXThreadAndWait([&x, &y, &element, this] {
+        element = [m_element _accessibilityHitTest:NSMakePoint(x, y) returnPlatformElements:NO];
+    });
+
+    if (!element)
+        return nullptr;
+
+    return AccessibilityUIElement::create(element.get());
+}
+
+void AccessibilityUIElement::elementAtPointResolvingRemoteFrame(JSContextRef context, int x, int y, JSValueRef jsCallback)
+{
+    JSValueProtect(context, jsCallback);
+    s_controller->executeOnAXThreadAndWait([x, y, protectedThis = Ref { *this }, jsCallback = WTFMove(jsCallback), context = JSRetainPtr { JSContextGetGlobalContext(context) }] () mutable {
+        auto callback = [jsCallback = WTFMove(jsCallback), context = WTFMove(context)](NSString *result) {
+            s_controller->executeOnMainThread([result = WTFMove(result), jsCallback = WTFMove(jsCallback), context = WTFMove(context)] () {
+                JSValueRef arguments[1];
+                arguments[0] = makeValueRefForValue(context.get(), result);
+                JSObjectCallAsFunction(context.get(), const_cast<JSObjectRef>(jsCallback), 0, 1, arguments, 0);
+                JSValueUnprotect(context.get(), jsCallback);
+            });
+        };
+
+        [protectedThis->m_element _accessibilityHitTestResolvingRemoteFrame:NSMakePoint(x, y) callback:WTFMove(callback)];
+    });
 }
 
 unsigned AccessibilityUIElement::indexOfChild(AccessibilityUIElement* element)
@@ -2860,6 +2905,16 @@ bool AccessibilityUIElement::isFirstItemInSuggestion() const
 
 bool AccessibilityUIElement::isLastItemInSuggestion() const
 {
+    return false;
+}
+
+bool AccessibilityUIElement::isRemoteFrame() const
+{
+    BEGIN_AX_OBJC_EXCEPTIONS
+    auto value = attributeValue(@"AXIsRemoteFrame");
+    if ([value isKindOfClass:[NSNumber class]])
+        return [value boolValue];
+    END_AX_OBJC_EXCEPTIONS
     return false;
 }
 

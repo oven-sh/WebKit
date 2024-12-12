@@ -23,11 +23,9 @@ PASS Throws when setting invalid iterationStart value: NaN
 PASS Throws when setting invalid iterationStart value: Infinity
 PASS Throws when setting invalid iterationStart value: -Infinity
 PASS Allows setting iterations to a double value
-FAIL Throws when setting iterations to Infinity assert_throws_js: test function "() => {
-    anim.effect.updateTiming({ iterations: Infinity });
-  }" did not throw
+PASS Throws when setting iterations to Infinity
 PASS Allows setting the iterations of an animation in progress
-FAIL Allows setting the iterations of an animation in progress with duration "auto" assert_equals: progress after adding an iteration expected 1 but got 0
+PASS Allows setting the iterations of an animation in progress with duration "auto"
 PASS Allows setting the duration to 123.45
 PASS Allows setting the duration to auto
 PASS Throws when setting invalid duration: -1

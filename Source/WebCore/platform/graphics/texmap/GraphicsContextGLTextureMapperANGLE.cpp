@@ -318,7 +318,7 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitialize()
 #endif
 
     GLenum textureTarget = drawingBufferTextureTarget();
-#if USE(NICOSIA)
+#if USE(COORDINATED_GRAPHICS) && USE(LIBEPOXY)
     GL_BindTexture(textureTarget, m_texture);
     m_textureID = setupCurrentTexture();
 #endif
@@ -329,7 +329,7 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitialize()
     GL_TexParameteri(textureTarget, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     GL_TexParameteri(textureTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     GL_TexParameteri(textureTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-#if USE(NICOSIA)
+#if USE(COORDINATED_GRAPHICS) && USE(LIBEPOXY)
     m_compositorTextureID = setupCurrentTexture();
 #endif
     GL_BindTexture(textureTarget, 0);
@@ -340,7 +340,7 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitialize()
 void GraphicsContextGLTextureMapperANGLE::swapCompositorTexture()
 {
     std::swap(m_texture, m_compositorTexture);
-#if USE(NICOSIA)
+#if USE(COORDINATED_GRAPHICS) && USE(LIBEPOXY)
     std::swap(m_textureID, m_compositorTextureID);
 #endif
     m_isCompositorTextureInitialized = true;

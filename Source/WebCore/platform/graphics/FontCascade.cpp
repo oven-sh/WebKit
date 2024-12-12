@@ -1906,9 +1906,11 @@ TextStream& operator<<(TextStream& ts, const FontCascade& fontCascade)
 {
     ts << fontCascade.fontDescription();
 
-    ts << ", font selector " << fontCascade.fonts()->fontSelector();
-    ts << ", font selector version " << fontCascade.fonts()->fontSelectorVersion();
-    ts << ", generation " << fontCascade.fonts()->generation();
+    if (fontCascade.fonts()) {
+        ts << ", font selector " << fontCascade.fonts()->fontSelector();
+        ts << ", font selector version " << fontCascade.fonts()->fontSelectorVersion();
+        ts << ", generation " << fontCascade.fonts()->generation();
+    }
 
     return ts;
 }

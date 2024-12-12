@@ -565,7 +565,7 @@ void InspectorPageAgent::overridePrefersContrast(std::optional<Inspector::Protoc
 
 void InspectorPageAgent::overridePrefersColorScheme(std::optional<Inspector::Protocol::Page::UserPreferenceValue>&& value)
 {
-#if ENABLE(DARK_MODE_CSS) || HAVE(OS_DARK_MODE_SUPPORT)
+#if ENABLE(DARK_MODE_CSS)
     if (!value)
         m_inspectedPage.setUseDarkAppearanceOverride(std::nullopt);
     else if (value == Inspector::Protocol::Page::UserPreferenceValue::Light)
@@ -1018,7 +1018,7 @@ void InspectorPageAgent::defaultUserPreferencesDidChange()
 
     defaultUserPreferences->addItem(WTFMove(prefersContrastUserPreference));
 
-#if ENABLE(DARK_MODE_CSS) || HAVE(OS_DARK_MODE_SUPPORT)
+#if ENABLE(DARK_MODE_CSS)
     auto prefersColorSchemeUserPreference = Inspector::Protocol::Page::UserPreference::create()
         .setName(Inspector::Protocol::Page::UserPreferenceName::PrefersColorScheme)
         .setValue(m_inspectedPage.defaultUseDarkAppearance() ? Inspector::Protocol::Page::UserPreferenceValue::Dark : Inspector::Protocol::Page::UserPreferenceValue::Light)
@@ -1030,7 +1030,7 @@ void InspectorPageAgent::defaultUserPreferencesDidChange()
     m_frontendDispatcher->defaultUserPreferencesDidChange(WTFMove(defaultUserPreferences));
 }
 
-#if ENABLE(DARK_MODE_CSS) || HAVE(OS_DARK_MODE_SUPPORT)
+#if ENABLE(DARK_MODE_CSS)
 void InspectorPageAgent::defaultAppearanceDidChange()
 {
     defaultUserPreferencesDidChange();

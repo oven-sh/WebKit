@@ -37,7 +37,6 @@
 #import "RemoteVideoFrameIdentifier.h"
 #import "RemoteVideoFrameObjectHeap.h"
 #import "SharedVideoFrame.h"
-#import "WebCoreArgumentCoders.h"
 #import <WebCore/CVUtilities.h>
 #import <WebCore/FrameRateMonitor.h>
 #import <WebCore/HEVCUtilitiesCocoa.h>

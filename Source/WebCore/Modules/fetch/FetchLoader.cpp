@@ -44,6 +44,7 @@
 #include "SharedBuffer.h"
 #include "TextResourceDecoder.h"
 #include "ThreadableBlobRegistry.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 

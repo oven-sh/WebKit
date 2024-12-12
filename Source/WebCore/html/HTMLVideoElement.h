@@ -42,7 +42,7 @@ class PictureInPictureObserver;
 class VideoFrameRequestCallback;
 
 enum class ImageBufferPixelFormat : uint8_t;
-enum class RenderingMode : bool;
+enum class RenderingMode : uint8_t;
 
 class HTMLVideoElement final : public HTMLMediaElement, public Supplementable<HTMLVideoElement> {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLVideoElement);

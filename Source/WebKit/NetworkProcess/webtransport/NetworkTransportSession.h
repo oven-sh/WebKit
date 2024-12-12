@@ -41,6 +41,7 @@ namespace WebKit {
 
 class NetworkConnectionToWebProcess;
 class NetworkTransportStream;
+enum class NetworkTransportStreamType : uint8_t;
 
 struct SharedPreferencesForWebProcess;
 struct WebTransportSessionIdentifierType;
@@ -83,15 +84,18 @@ private:
 
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final;
+    void setupConnectionHandler();
+    void setupDatagramConnection(CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&&);
+    void receiveDatagramLoop();
+    void createStream(NetworkTransportStreamType, CompletionHandler<void(std::optional<WebTransportStreamIdentifier>)>&&);
 
-    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportStream>> m_bidirectionalStreams;
-    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportStream>> m_receiveStreams;
-    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportStream>> m_sendStreams;
+    HashMap<WebTransportStreamIdentifier, Ref<NetworkTransportStream>> m_streams;
     WeakPtr<NetworkConnectionToWebProcess> m_connectionToWebProcess;
 
 #if PLATFORM(COCOA)
     const RetainPtr<nw_connection_group_t> m_connectionGroup;
     const RetainPtr<nw_endpoint_t> m_endpoint;
+    RetainPtr<nw_connection_t> m_datagramConnection;
 #endif
 };
 

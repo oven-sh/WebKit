@@ -31,7 +31,6 @@
 #include "LegacyCustomProtocolManagerProxyMessages.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessCreationParameters.h"
-#include "WebCoreArgumentCoders.h"
 #include <WebCore/ResourceRequest.h>
 #include <wtf/TZoneMallocInlines.h>
 

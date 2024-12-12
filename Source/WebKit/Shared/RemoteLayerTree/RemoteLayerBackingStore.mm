@@ -43,7 +43,6 @@
 #import "RemoteLayerWithInProcessRenderingBackingStore.h"
 #import "RemoteLayerWithRemoteRenderingBackingStore.h"
 #import "SwapBuffersDisplayRequirement.h"
-#import "WebCoreArgumentCoders.h"
 #import "WebPageProxy.h"
 #import "WebProcess.h"
 #import "WebProcessPool.h"

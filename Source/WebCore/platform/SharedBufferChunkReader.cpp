@@ -32,6 +32,8 @@
 #include "config.h"
 #include "SharedBufferChunkReader.h"
 
+#include <wtf/text/StringCommon.h>
+
 namespace WebCore {
 
 #if ENABLE(MHTML)
@@ -62,7 +64,7 @@ void SharedBufferChunkReader::setSeparator(const Vector<char>& separator)
 void SharedBufferChunkReader::setSeparator(const char* separator)
 {
     m_separator.clear();
-    m_separator.append(span(separator));
+    m_separator.append(WTF::span(separator));
 }
 
 bool SharedBufferChunkReader::nextChunk(Vector<uint8_t>& chunk, bool includeSeparator)

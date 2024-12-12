@@ -23,6 +23,7 @@
 
 #if ENABLE(GPU_PROCESS) && PLATFORM(IOS_FAMILY)
 
+[EnabledBy=MediaPlaybackEnabled]
 messages -> RemoteMediaSessionHelperProxy {
 #if !PLATFORM(WATCHOS)
     [EnabledBy=MediaSessionEnabled] StartMonitoringWirelessRoutes()

@@ -104,6 +104,7 @@ public:
 
     LayoutUnit contentLogicalHeight() const;
     std::optional<LayoutUnit> clampedContentLogicalHeight() const;
+    bool hasEllipsisInBlockDirectionOnLastFormattedLine() const;
     bool contains(const RenderElement& renderer) const;
 
     bool isPaginated() const;
@@ -139,7 +140,7 @@ public:
     bool hasDetachedContent() const { return m_lineDamage && m_lineDamage->hasDetachedContent(); }
 #endif
 
-    void applySVGTextFragments(SVGTextFragmentMap&&);
+    FloatRect applySVGTextFragments(SVGTextFragmentMap&&);
 
 private:
     void preparePlacedFloats();

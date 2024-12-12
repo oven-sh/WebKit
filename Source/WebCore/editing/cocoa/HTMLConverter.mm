@@ -95,8 +95,6 @@
 #import <pal/spi/ios/UIKitSPI.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 using namespace WebCore;
 using namespace HTMLNames;
 
@@ -472,7 +470,7 @@ static bool stringFromCSSValue(CSSValue& value, String& result)
                 return true;
             }
         }
-    } else if (value.isValueList()) {
+    } else if (value.isValueList() || value.isAppleColorFilterPropertyValue() || value.isFilterPropertyValue() || value.isTextShadowPropertyValue() || value.isBoxShadowPropertyValue()) {
         result = value.cssText();
         return true;
     }
@@ -1462,14 +1460,21 @@ void HTMLConverter::_fillInBlock(NSTextBlock *block, Element& element, PlatformC
         [block setBorderColor:color.get() forEdge:NSMaxYEdge];
 }
 
-static inline BOOL read2DigitNumber(const char **pp, int8_t *outval)
+static char consume(std::span<const char>& span)
+{
+    auto character = span.front();
+    span = span.subspan(1);
+    return character;
+}
+
+static inline BOOL read2DigitNumber(std::span<const char>& p, int8_t& outval)
 {
     BOOL result = NO;
-    char c1 = *(*pp)++, c2;
+    char c1 = consume(p);
     if (isASCIIDigit(c1)) {
-        c2 = *(*pp)++;
+        char c2 = consume(p);
         if (isASCIIDigit(c2)) {
-            *outval = 10 * (c1 - '0') + (c2 - '0');
+            outval = 10 * (c1 - '0') + (c2 - '0');
             result = YES;
         }
     }
@@ -1478,37 +1483,37 @@ static inline BOOL read2DigitNumber(const char **pp, int8_t *outval)
 
 static inline NSDate *_dateForString(NSString *string)
 {
-    const char *p = [string UTF8String];
+    auto p = spanIncludingNullTerminator([string UTF8String]);
     RetainPtr<NSDateComponents> dateComponents = adoptNS([[NSDateComponents alloc] init]);
 
     // Set the time zone to GMT
     [dateComponents setTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
 
     NSInteger year = 0;
-    while (*p && isASCIIDigit(*p))
-        year = 10 * year + *p++ - '0';
-    if (*p++ != '-')
+    while (p.front() && isASCIIDigit(p.front()))
+        year = 10 * year + consume(p) - '0';
+    if (consume(p) != '-')
         return nil;
     [dateComponents setYear:year];
 
     int8_t component;
-    if (!read2DigitNumber(&p, &component) || *p++ != '-')
+    if (!read2DigitNumber(p, component) || consume(p) != '-')
         return nil;
     [dateComponents setMonth:component];
 
-    if (!read2DigitNumber(&p, &component) || *p++ != 'T')
+    if (!read2DigitNumber(p, component) || consume(p) != 'T')
         return nil;
     [dateComponents setDay:component];
 
-    if (!read2DigitNumber(&p, &component) || *p++ != ':')
+    if (!read2DigitNumber(p, component) || consume(p) != ':')
         return nil;
     [dateComponents setHour:component];
 
-    if (!read2DigitNumber(&p, &component) || *p++ != ':')
+    if (!read2DigitNumber(p, component) || consume(p) != ':')
         return nil;
     [dateComponents setMinute:component];
 
-    if (!read2DigitNumber(&p, &component) || *p++ != 'Z')
+    if (!read2DigitNumber(p, component) || consume(p) != 'Z')
         return nil;
     [dateComponents setSecond:component];
     
@@ -2669,5 +2674,3 @@ AttributedString editingAttributedString(const SimpleRange& range, OptionSet<Inc
 }
     
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

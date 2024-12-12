@@ -42,7 +42,6 @@
 #import "PrintInfo.h"
 #import "UserData.h"
 #import "WKAccessibilityWebPageObjectMac.h"
-#import "WebCoreArgumentCoders.h"
 #import "WebEventConversion.h"
 #import "WebFrame.h"
 #import "WebHitTestResultData.h"
@@ -697,17 +696,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     CGAffineTransform transform = CGContextGetCTM(context);
 
     for (PDFAnnotation *annotation in [pdfPage annotations]) {
-        if (![annotation isKindOfClass:getPDFAnnotationLinkClass()])
+        if (![[annotation valueForAnnotationKey:get_PDFKit_PDFAnnotationKeySubtype()] isEqualToString:get_PDFKit_PDFAnnotationSubtypeLink()])
             continue;
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        PDFAnnotationLink *linkAnnotation = (PDFAnnotationLink *)annotation;
-ALLOW_DEPRECATED_DECLARATIONS_END
-        NSURL *url = [linkAnnotation URL];
+        NSURL *url = annotation.URL;
         if (!url)
             continue;
 
-        CGRect urlRect = NSRectToCGRect([linkAnnotation bounds]);
+        CGRect urlRect = NSRectToCGRect(annotation.bounds);
         CGRect transformedRect = CGRectApplyAffineTransform(urlRect, transform);
         CGPDFContextSetURLForRect(context, (CFURLRef)url, transformedRect);
     }

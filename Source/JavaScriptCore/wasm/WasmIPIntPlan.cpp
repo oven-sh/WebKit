@@ -131,13 +131,23 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
         ASSERT(!callee->entrypoint());
 
 #if ENABLE(JIT)
-        if (Options::useWasmJIT())
-            callee->setEntrypoint(LLInt::inPlaceInterpreterEntryThunk().retaggedCode<WasmEntryPtrTag>());
+        if (Options::useWasmJIT()) {
+            if (m_moduleInformation->usesSIMD(functionIndex))
+                callee->setEntrypoint(LLInt::inPlaceInterpreterSIMDEntryThunk().retaggedCode<WasmEntryPtrTag>());
+            else
+                callee->setEntrypoint(LLInt::inPlaceInterpreterEntryThunk().retaggedCode<WasmEntryPtrTag>());
+        }
 #else
         if (false);
 #endif
-        else
+        else {
+            if (m_moduleInformation->usesSIMD(functionIndex)) {
+                Locker locker { m_lock };
+                Base::fail(makeString("JIT is disabled, but the entrypoint for "_s, functionIndex.rawIndex(), " requires JIT"_s));
+                return;
+            }
             callee->setEntrypoint(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(ipint_trampoline));
+        }
         ipintCallee = callee.ptr();
         m_calleesVector[functionIndex] = WTFMove(callee);
     } else

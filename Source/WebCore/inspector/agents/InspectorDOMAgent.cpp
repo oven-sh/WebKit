@@ -2426,7 +2426,7 @@ Ref<Inspector::Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildO
             hierarchicalLevel = axObject->hierarchicalLevel();
             
             level = hierarchicalLevel ? hierarchicalLevel : headingLevel;
-            isPopupButton = axObject->isPopUpButton() || axObject->hasPopup();
+            isPopupButton = axObject->isPopUpButton() || axObject->selfOrAncestorLinkHasPopup();
         }
     }
     

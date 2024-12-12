@@ -176,6 +176,7 @@ private:
     WEBCORE_EXPORT const GraphicsContextState& state() const final;
 
     WEBCORE_EXPORT void didUpdateState(GraphicsContextState&) final;
+    WEBCORE_EXPORT void didUpdateSingleState(GraphicsContextState&, GraphicsContextState::ChangeIndex) final;
     WEBCORE_EXPORT void fillPath(const Path&) final;
     WEBCORE_EXPORT void strokePath(const Path&) final;
     WEBCORE_EXPORT void drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect& sourceImageRect, Filter&, FilterResults&) final;

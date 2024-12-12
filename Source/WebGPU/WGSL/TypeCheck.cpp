@@ -250,6 +250,7 @@ private:
     Vector<Error> m_errors;
     Vector<BreakTarget> m_breakTargetStack;
     HashMap<String, OverloadedDeclaration> m_overloadedOperations;
+    HashMap<String, AST::IdentifierExpression*> m_arrayCountOverrides;
 };
 
 TypeChecker::TypeChecker(ShaderModule& shaderModule)
@@ -407,9 +408,7 @@ TypeChecker::TypeChecker(ShaderModule& shaderModule)
     introduceValue(AST::Identifier::make("write"_s), m_types.accessModeType());
     introduceValue(AST::Identifier::make("read_write"_s), m_types.accessModeType());
 
-    if (m_shaderModule.hasFeature("bgra8unorm-storage"_s))
-        introduceValue(AST::Identifier::make("bgra8unorm"_s), m_types.texelFormatType());
-
+    introduceValue(AST::Identifier::make("bgra8unorm"_s), m_types.texelFormatType());
     introduceValue(AST::Identifier::make("r32float"_s), m_types.texelFormatType());
     introduceValue(AST::Identifier::make("r32sint"_s), m_types.texelFormatType());
     introduceValue(AST::Identifier::make("r32uint"_s), m_types.texelFormatType());
@@ -1771,12 +1770,18 @@ void TypeChecker::visit(AST::ArrayTypeExpression& array)
             }
             size = { static_cast<unsigned>(elementCount) };
         } else {
-            m_shaderModule.addOverrideValidation(*array.maybeElementCount(), [&](const ConstantValue& elementCount) -> std::optional<String> {
+            auto* countExpression = array.maybeElementCount();
+            if (auto* identifier = dynamicDowncast<AST::IdentifierExpression>(countExpression)) {
+                auto result = m_arrayCountOverrides.add(identifier->identifier().id(), identifier);
+                countExpression = result.iterator->value;
+            }
+
+            m_shaderModule.addOverrideValidation(*countExpression, [&](const ConstantValue& elementCount) -> std::optional<String> {
                 if (elementCount.integerValue() < 1)
                     return { "array count must be greater than 0"_s };
                 return std::nullopt;
             });
-            size = { array.maybeElementCount() };
+            size = { countExpression };
         }
     }
 

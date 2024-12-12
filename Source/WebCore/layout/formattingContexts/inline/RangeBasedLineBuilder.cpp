@@ -109,6 +109,9 @@ bool RangeBasedLineBuilder::isEligibleForRangeInlineLayout(const InlineFormattin
     if (inlineBox.style().boxDecorationBreak() != RenderStyle::initialBoxDecorationBreak())
         return false;
 
+    if (inlineFormattingContext.layoutState().parentBlockLayoutState().lineClamp())
+        return false;
+
     // Check the nested text content.
     if (!inlineItems.hasTextAndLineBreakOnlyContent() || inlineItems.requiresVisualReordering() || !placedFloats.isEmpty() || inlineItems.hasTextAutospace())
         return false;

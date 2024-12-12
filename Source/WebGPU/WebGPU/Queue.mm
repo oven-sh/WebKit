@@ -746,8 +746,7 @@ void Queue::writeTexture(const WGPUImageCopyTexture& destination, std::span<uint
         auto checkedNewBytesPerImageTimesMaxZ = checkedProduct<uint32_t>(newBytesPerImage, maxZ);
         if (checkedNewBytesPerImageTimesMaxZ.hasOverflowed())
             return;
-        newData.resize(checkedNewBytesPerImageTimesMaxZ.value());
-        memset(&newData[0], 0, newData.size());
+        newData = Vector<uint8_t>(checkedNewBytesPerImageTimesMaxZ.value(), 0);
         dataLayoutOffset = 0;
 
         auto verticalOffset = checkedProduct<uint64_t>(maxY ? (maxY - 1) : 0, bytesPerRow);

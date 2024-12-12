@@ -42,7 +42,6 @@
 #include "APIUserContentURLPattern.h"
 #include "ArgumentCoders.h"
 #include "Encoder.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebImage.h"
 #include <WebCore/ShareableBitmap.h>
 #include <wtf/CheckedArithmetic.h>

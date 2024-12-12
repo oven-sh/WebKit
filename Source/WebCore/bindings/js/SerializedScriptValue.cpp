@@ -1874,7 +1874,7 @@ private:
                 }
                 write(static_cast<uint32_t>(data->width()));
                 write(static_cast<uint32_t>(data->height()));
-                CheckedUint32 dataLength = data->data().length();
+                CheckedUint32 dataLength = data->data().byteLength();
                 if (dataLength.hasOverflowed()) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
@@ -4966,16 +4966,12 @@ private:
             if (!m_isDOMGlobalObject)
                 return jsNull();
 
-            auto result = ImageData::createUninitialized(width, height, resultColorSpace);
+            auto result = ImageData::create(width, height, resultColorSpace, { }, std::span(bufferStart, length));
             if (result.hasException()) {
                 SERIALIZE_TRACE("FAIL deserialize");
                 fail();
                 return JSValue();
             }
-            if (length)
-                memcpy(result.returnValue()->data().data(), bufferStart, length);
-            else
-                result.returnValue()->data().zeroFill();
             m_imageDataPool.append(result.returnValue().copyRef());
             return getJSValue(result.releaseReturnValue());
         }

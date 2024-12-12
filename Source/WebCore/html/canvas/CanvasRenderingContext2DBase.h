@@ -103,6 +103,7 @@ public:
 
     const CanvasRenderingContext2DSettings& getContextAttributes() const { return m_settings; }
     using RenderingMode = WebCore::RenderingMode;
+    std::optional<RenderingMode> renderingModeForTesting() const final;
     std::optional<RenderingMode> getEffectiveRenderingModeForTesting();
 
     double lineWidth() const { return state().lineWidth; }
@@ -148,6 +149,12 @@ public:
 
     String filterString() const { return state().filterString; }
     void setFilterString(const String&);
+
+    String letterSpacing() const { return state().letterSpacing; }
+    void setLetterSpacing(const String&);
+
+    String wordSpacing() const { return state().wordSpacing; }
+    void setWordSpacing(const String&);
 
     void save() { ++m_unrealizedSaveCount; }
     void restore();
@@ -223,8 +230,6 @@ public:
     void putImageData(ImageData&, int dx, int dy);
     void putImageData(ImageData&, int dx, int dy, int dirtyX, int dirtyY, int dirtyWidth, int dirtyHeight);
 
-    static constexpr float webkitBackingStorePixelRatio() { return 1; }
-
     void reset();
 
     bool imageSmoothingEnabled() const { return state().imageSmoothingEnabled; }
@@ -265,6 +270,14 @@ public:
         bool isPopulated() const { return m_font.fonts(); }
 #endif
 
+        const FontCascade& fontCascade() const { return m_font; }
+
+        float letterSpacing() const { return m_font.letterSpacing(); }
+        void setLetterSpacing(const Length& letterSpacing) { m_font.setLetterSpacing(letterSpacing); }
+
+        float wordSpacing() const { return m_font.wordSpacing(); }
+        void setWordSpacing(const Length& wordSpacing) { m_font.setWordSpacing(wordSpacing); }
+
     private:
         void update(FontSelector&);
         void fontsNeedUpdate(FontSelector&) final;
@@ -301,6 +314,9 @@ public:
 
         String filterString;
         FilterOperations filterOperations;
+
+        String letterSpacing;
+        String wordSpacing;
 
         String unparsedFont;
         FontProxy font;
@@ -378,8 +394,6 @@ protected:
     Ref<TextMetrics> measureTextInternal(const String& text);
 
     bool usesCSSCompatibilityParseMode() const { return m_usesCSSCompatibilityParseMode; }
-
-    OptionSet<ImageBufferOptions> adjustImageBufferOptionsForTesting(OptionSet<ImageBufferOptions>) final;
 
 private:
     struct CachedContentsTransparent {

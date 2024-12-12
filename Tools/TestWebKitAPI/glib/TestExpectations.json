@@ -147,9 +147,6 @@
             "/webkit/WebKitWebContext/uri-scheme": {
                 "expected": {"gtk": {"status": ["PASS", "TIMEOUT"], "bug": "webkit.org/b/279204"}}
             },
-            "/webkit/WebKitWebContext/no-web-process-leak": {
-                "expected": {"wpe": {"status": ["CRASH"], "bug": "webkit.org/b/281137"}}
-            },
             "/webkit/WebKitWebContext/languages": {
                 "expected": {"gtk": {"status": ["PASS", "FAIL"], "bug": "webkit.org/b/281942"}}
             }
@@ -386,9 +383,6 @@
         "subtests": {
             "/webkit/Downloads/remote-file-error": {
                 "expected": {"gtk": {"status": ["TIMEOUT", "PASS"], "bug": "webkit.org/b/254002"}}
-            },
-            "/webkit/Downloads/local-file-error": {
-                "expected": {"wpe": {"status": ["CRASH", "PASS"], "bug": "webkit.org/b/281813"}}
             }
         }
     },

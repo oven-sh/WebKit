@@ -178,8 +178,8 @@ void ReverbConvolver::process(const AudioChannel* sourceChannel, AudioChannel* d
         return;
         
     const float* source = sourceChannel->data();
-    float* destination = destinationChannel->mutableData();
-    bool isDataSafe = source && destination;
+    auto destination = destinationChannel->mutableSpan();
+    bool isDataSafe = source && destination.data();
     ASSERT(isDataSafe);
     if (!isDataSafe)
         return;

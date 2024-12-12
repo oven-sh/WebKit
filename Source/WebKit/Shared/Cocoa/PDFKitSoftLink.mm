@@ -36,11 +36,7 @@ SOFT_LINK_FRAMEWORK_FOR_SOURCE(WebKit, PDFKit)
 SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFHostViewController)
 #endif
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFActionResetForm)
-SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationLink)
-SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationPopup)
-SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationText)
 SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFDocument)
 SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFLayerController)
 SOFT_LINK_CLASS_FOR_SOURCE(WebKit, PDFKit, PDFSelection)
@@ -49,11 +45,13 @@ SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFViewCopyPermissionNotification,
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFDocumentCreationDateAttribute, PDFDocumentAttribute)
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationKeySubtype, NSString *)
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationKeyWidgetFieldType, NSString *)
+SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationSubtypeLink, NSString *)
+SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationSubtypePopup, NSString *)
+SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationSubtypeText, NSString *)
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationSubtypeWidget, NSString *)
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationWidgetSubtypeButton, NSString *)
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationWidgetSubtypeChoice, NSString *)
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationWidgetSubtypeSignature, NSString *)
 SOFT_LINK_CONSTANT_FOR_SOURCE(WebKit, PDFKit, PDFAnnotationWidgetSubtypeText, NSString *)
-ALLOW_DEPRECATED_DECLARATIONS_END
 
 #endif // HAVE(PDFKIT)

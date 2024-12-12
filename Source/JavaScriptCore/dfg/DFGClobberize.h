@@ -167,6 +167,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case PutByValMegamorphic:
         case GetByVal:
         case GetByValMegamorphic:
+        case StringAt:
         case StringCharAt:
         case StringCharCodeAt:
         case StringCodePointAt:
@@ -2043,6 +2044,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         clobberTop();
         return;
 
+    case StringAt:
     case StringCharAt:
         def(PureValue(node));
         return;

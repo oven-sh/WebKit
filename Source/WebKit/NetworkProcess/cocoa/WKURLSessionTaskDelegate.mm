@@ -31,7 +31,6 @@
 #import "NetworkProcess.h"
 #import "NetworkProcessProxyMessages.h"
 #import "NetworkSessionCocoa.h"
-#import "WebCoreArgumentCoders.h"
 #import <Foundation/NSURLSession.h>
 #import <WebCore/AuthenticationChallenge.h>
 #import <WebCore/Credential.h>

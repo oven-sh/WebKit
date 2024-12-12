@@ -53,8 +53,8 @@ public:
 
     Ref<ToggleEventTask> ensureToggleEventTask(Element&);
 
-    HTMLFormControlElement* invoker() const { return m_invoker.get(); }
-    void setInvoker(const HTMLFormControlElement* element) { m_invoker = element; }
+    HTMLElement* invoker() const { return m_invoker.get(); }
+    void setInvoker(const HTMLElement* element) { m_invoker = element; }
 
     class ScopedStartShowingOrHiding {
     public:
@@ -81,7 +81,7 @@ private:
     PopoverVisibilityState m_visibilityState;
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_previouslyFocusedElement;
     RefPtr<ToggleEventTask> m_toggleEventTask;
-    WeakPtr<HTMLFormControlElement, WeakPtrImplWithEventTargetData> m_invoker;
+    WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_invoker;
     bool m_isHidingOrShowingPopover = false;
 };
 

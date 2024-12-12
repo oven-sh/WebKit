@@ -36,11 +36,10 @@
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/UTF8ConversionError.h>
 
-// FIXME: Enabling the StringView lifetime checking causes the MSVC build to fail. Figure out why.
-#if defined(NDEBUG) || COMPILER(MSVC)
-#define CHECK_STRINGVIEW_LIFETIME 0
-#else
+#if ASSERT_ENABLED
 #define CHECK_STRINGVIEW_LIFETIME 1
+#else
+#define CHECK_STRINGVIEW_LIFETIME 0
 #endif
 
 OBJC_CLASS NSString;

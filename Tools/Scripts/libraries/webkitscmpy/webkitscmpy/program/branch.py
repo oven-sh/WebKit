@@ -53,10 +53,7 @@ class Branch(Command):
             action=arguments.NoAction,
         )
 
-        if sys.version_info > (3, 0):
-            has_radar = bool(radar.Tracker.radarclient())
-        else:
-            has_radar = bool(radar.Tracker().radarclient())
+        has_radar = bool(radar.Tracker.radarclient())
         if has_radar:
             parser.add_argument(
                 '--cc-radar', '--no-cc-radar',
@@ -195,6 +192,9 @@ class Branch(Command):
             args._title = issue.title
         if issue:
             args._bug_urls = Commit.bug_urls(issue)
+        elif not (repository or local.Scm).DEV_BRANCHES.match(args.issue):
+            # Support creating a branch from PR or revert when update_issue is False
+            args.issue = cls.to_branch_name(args.issue)
 
         args.issue = cls.normalize_branch_name(args.issue)
 

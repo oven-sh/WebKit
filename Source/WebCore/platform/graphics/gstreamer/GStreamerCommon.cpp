@@ -47,6 +47,7 @@
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GThreadSafeWeakPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
@@ -334,13 +335,13 @@ void setGStreamerOptionsFromUIProcess(Vector<String>&& options)
 
 Vector<String> extractGStreamerOptionsFromCommandLine()
 {
-    GUniqueOutPtr<char> contents;
-    gsize length;
-    if (!g_file_get_contents("/proc/self/cmdline", &contents.outPtr(), &length, nullptr))
+    GUniqueOutPtr<GError> error;
+    GMallocSpan<char> contents = gFileGetContents("/proc/self/cmdline", error);
+    if (!contents)
         return { };
 
     Vector<String> options;
-    auto optionsString = String::fromUTF8(std::span(contents.get(), length));
+    auto optionsString = String::fromUTF8(contents.span());
     optionsString.split('\0', [&options](StringView item) {
         if (item.startsWith("--gst"_s))
             options.append(item.toString());
@@ -914,7 +915,7 @@ void connectSimpleBusMessageCallback(GstElement* pipeline, Function<void(GstMess
 template<>
 Vector<uint8_t> GstMappedBuffer::createVector() const
 {
-    return std::span<const uint8_t> { data(), size() };
+    return span();
 }
 
 bool isGStreamerPluginAvailable(const char* name)

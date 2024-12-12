@@ -395,7 +395,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/of-type-selectors.xhtml
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/only-child.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/only-of-type.html
-/LayoutTests/imported/w3c/web-platform-tests/css/selectors/open-closed-pseudo.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/open-pseudo.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/placeholder-shown.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/pseudo-enabled-disabled.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/pseudo-where-crash.html

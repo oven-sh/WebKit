@@ -1,9 +1,9 @@
 
 PASS Initial axis
-FAIL Vertical axis assert_equals: expected "175px" but got "100px"
+PASS Vertical axis
 PASS Horizontal axis
 PASS Block axis in horizontal writing-mode
 PASS Inline axis in horizontal writing-mode
-FAIL Block axis in vertical writing-mode assert_equals: expected "125px" but got "100px"
-FAIL Inline axis in vertical writing-mode assert_equals: expected "175px" but got "100px"
+PASS Block axis in vertical writing-mode
+PASS Inline axis in vertical writing-mode
 

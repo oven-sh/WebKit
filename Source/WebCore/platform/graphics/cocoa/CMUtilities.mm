@@ -367,7 +367,7 @@ PacketDurationParser::PacketDurationParser(const AudioInfo& info)
     m_isValid = true;
 }
 
-size_t PacketDurationParser::framesInPacket(SharedBuffer& packet)
+size_t PacketDurationParser::framesInPacket(std::span<const uint8_t> packet)
 {
 #if !HAVE(AUDIOFORMATPROPERTY_VARIABLEPACKET_SUPPORTED)
     UNUSED_PARAM(packet);
@@ -376,7 +376,7 @@ size_t PacketDurationParser::framesInPacket(SharedBuffer& packet)
     if (m_constantFramesPerPacket)
         return m_constantFramesPerPacket;
 
-    if (packet.isEmpty())
+    if (packet.empty())
         return 0;
 
     switch (m_audioFormatID) {

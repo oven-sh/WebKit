@@ -223,7 +223,7 @@ HashSet<WTF::String> PageConfiguration::maskedURLSchemes() const
 {
     if (m_data.maskedURLSchemesWasSet)
         return m_data.maskedURLSchemes;
-#if ENABLE(WK_WEB_EXTENSIONS)
+#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
     if (webExtensionController() || weakWebExtensionController())
         return WebKit::WebExtensionMatchPattern::extensionSchemes();
 #endif

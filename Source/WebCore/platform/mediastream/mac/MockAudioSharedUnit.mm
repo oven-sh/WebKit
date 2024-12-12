@@ -43,10 +43,11 @@
 #import <AVFoundation/AVAudioBuffer.h>
 #import <AudioToolbox/AudioConverter.h>
 #import <CoreAudio/CoreAudioTypes.h>
-#include <wtf/RunLoop.h>
-#include <wtf/TZoneMallocInlines.h>
-#include <wtf/Vector.h>
-#include <wtf/WorkQueue.h>
+#import <wtf/RunLoop.h>
+#import <wtf/StdLibExtras.h>
+#import <wtf/TZoneMallocInlines.h>
+#import <wtf/Vector.h>
+#import <wtf/WorkQueue.h>
 
 #import <pal/cf/AudioToolboxSoftLink.h>
 #import <pal/cf/CoreMediaSoftLink.h>
@@ -327,7 +328,7 @@ void MockAudioSharedInternalUnit::emitSampleBuffers(uint32_t frameCount)
     AudioUnitRenderActionFlags ioActionFlags = 0;
     
     AudioTimeStamp timeStamp;
-    memset(&timeStamp, 0, sizeof(AudioTimeStamp));
+    memsetSpan(asMutableByteSpan(timeStamp), 0);
     timeStamp.mSampleTime = sampleTime;
     timeStamp.mHostTime = static_cast<UInt64>(sampleTime);
 

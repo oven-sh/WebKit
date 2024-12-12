@@ -31,7 +31,7 @@
 #include "GPU.h"
 #include "JSDOMPromiseDeferred.h"
 #include "Page.h"
-#include "PushNotificationEvent.h"
+#include "PushEvent.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "WorkerBadgeProxy.h"
 #include "WorkerGlobalScope.h"
@@ -99,8 +99,8 @@ void WorkerNavigator::setAppBadge(std::optional<unsigned long long> badge, Ref<D
 {
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     if (is<ServiceWorkerGlobalScope>(scriptExecutionContext())) {
-        if (RefPtr pushNotificationEvent = downcast<ServiceWorkerGlobalScope>(scriptExecutionContext())->pushNotificationEvent()) {
-            pushNotificationEvent->setUpdatedAppBadge(WTFMove(badge));
+        if (RefPtr declarativePushEvent = downcast<ServiceWorkerGlobalScope>(scriptExecutionContext())->declarativePushEvent()) {
+            declarativePushEvent->setUpdatedAppBadge(WTFMove(badge));
             return;
         }
     }

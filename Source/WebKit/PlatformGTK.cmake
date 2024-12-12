@@ -353,6 +353,12 @@ if (GTK_UNIX_PRINT_FOUND)
     list(APPEND WebKit_LIBRARIES GTK::UnixPrint)
 endif ()
 
+if (USE_CAIRO)
+    list(APPEND WebKit_SERIALIZATION_IN_FILES
+        Shared/cairo/WebCoreFontCairo.serialization.in
+    )
+endif ()
+
 if (USE_LIBWEBRTC)
     list(APPEND WebKit_SYSTEM_INCLUDE_DIRECTORIES
         "${THIRDPARTY_DIR}/libwebrtc/Source/"

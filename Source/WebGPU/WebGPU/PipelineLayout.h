@@ -67,6 +67,7 @@ public:
     bool isAutoLayout() const;
     size_t numberOfBindGroupLayouts() const { return m_bindGroupLayouts ? m_bindGroupLayouts->size() : 0; }
     BindGroupLayout& bindGroupLayout(size_t) const;
+    BindGroupLayout* optionalBindGroupLayout(size_t) const;
 
     Device& device() const { return m_device; }
     void makeInvalid();

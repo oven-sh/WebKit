@@ -36,7 +36,6 @@
 #import "TextTrackRepresentationCocoa.h"
 #import "VideoPresentationManagerMessages.h"
 #import "VideoPresentationManagerProxyMessages.h"
-#import "WebCoreArgumentCoders.h"
 #import "WebPage.h"
 #import "WebProcess.h"
 #import <QuartzCore/CoreAnimation.h>

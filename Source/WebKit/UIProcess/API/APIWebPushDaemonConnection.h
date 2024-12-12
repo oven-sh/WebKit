@@ -27,6 +27,7 @@
 
 #include "APIObject.h"
 #include "WebPushDaemonConnection.h"
+#include <optional>
 
 namespace WebCore {
 enum class PushPermissionState : uint8_t;

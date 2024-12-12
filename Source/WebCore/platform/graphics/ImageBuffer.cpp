@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) Research In Motion Limited 2011. All rights reserved.
- * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,7 @@
 #include <wtf/text/MakeString.h>
 
 #if USE(CG)
+#include "ImageBufferCGPDFDocumentBackend.h"
 #include "ImageBufferUtilitiesCG.h"
 #endif
 
@@ -70,33 +71,47 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SerializedImageBuffer);
 static const float MaxClampedLength = 4096;
 static const float MaxClampedArea = MaxClampedLength * MaxClampedLength;
 
-RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat, OptionSet<ImageBufferOptions> options, GraphicsClient* graphicsClient)
+RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat, GraphicsClient* graphicsClient)
 {
     RefPtr<ImageBuffer> imageBuffer;
 
     if (graphicsClient) {
-        if (auto imageBuffer = graphicsClient->createImageBuffer(size, purpose, resolutionScale, colorSpace, pixelFormat, options))
+        if (auto imageBuffer = graphicsClient->createImageBuffer(size, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat))
             return imageBuffer;
     }
 
+    switch (renderingMode) {
+    case RenderingMode::Accelerated:
 #if HAVE(IOSURFACE)
-    if (options.contains(ImageBufferOptions::Accelerated) && ProcessCapabilities::canUseAcceleratedBuffers()) {
-        ImageBufferCreationContext creationContext;
-        if (graphicsClient)
-            creationContext.displayID = graphicsClient->displayID();
-        if (auto imageBuffer = ImageBuffer::create<ImageBufferIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext))
-            return imageBuffer;
-    }
-#endif
-
-#if USE(SKIA)
-    if (options.contains(ImageBufferOptions::Accelerated)) {
+        if (ProcessCapabilities::canUseAcceleratedBuffers()) {
+            ImageBufferCreationContext creationContext;
+            if (graphicsClient)
+                creationContext.displayID = graphicsClient->displayID();
+            if (auto imageBuffer = ImageBuffer::create<ImageBufferIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext))
+                return imageBuffer;
+        }
+#elif USE(SKIA)
         if (auto imageBuffer = ImageBuffer::create<ImageBufferSkiaAcceleratedBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { }))
             return imageBuffer;
-    }
+#endif
+        [[fallthrough]];
+
+    case RenderingMode::Unaccelerated:
+        return create<ImageBufferPlatformBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
+
+    case RenderingMode::PDFDocument:
+#if USE(CG)
+        return ImageBuffer::create<ImageBufferCGPDFDocumentBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
+#else
+        return nullptr;
 #endif
 
-    return create<ImageBufferPlatformBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
+    case RenderingMode::DisplayList:
+        return nullptr;
+    }
+
+    ASSERT_NOT_REACHED();
+    return nullptr;
 }
 
 ImageBuffer::ImageBuffer(Parameters parameters, const ImageBufferBackend::Info& backendInfo, const WebCore::ImageBufferCreationContext&, std::unique_ptr<ImageBufferBackend>&& backend, RenderingResourceIdentifier renderingResourceIdentifier)
@@ -540,6 +555,13 @@ void ImageBuffer::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& 
     auto destinationPointScaled = destinationPoint;
     destinationPointScaled.scale(resolutionScale());
     backend->putPixelBuffer(pixelBuffer, sourceRectScaled, destinationPointScaled, destinationFormat);
+}
+
+RefPtr<SharedBuffer> ImageBuffer::sinkToPDFDocument()
+{
+    if (auto* backend = ensureBackend())
+        return backend->sinkToPDFDocument();
+    return nullptr;
 }
 
 bool ImageBuffer::isInUse() const

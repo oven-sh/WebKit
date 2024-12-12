@@ -1,3 +1,11 @@
+CONSOLE MESSAGE: 1. Focusing editor
+CONSOLE MESSAGE: 2. Typing in editor
+CONSOLE MESSAGE: 3. Setting inline prediction
+CONSOLE MESSAGE: 4. Accepting inline prediction
+CONSOLE MESSAGE: 5. Verifying text content
+CONSOLE MESSAGE: 6. Tapping target element
+CONSOLE MESSAGE: 7. Waiting for caret selection
+CONSOLE MESSAGE: 8. Dismissing keyboard
 PASS targetContainsCaretSelection() became true
 PASS successfullyParsed is true
 

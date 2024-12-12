@@ -29,15 +29,25 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#include "Logging.h"
+
 #include "WebExtensionConstants.h"
 #include "WebExtensionPermission.h"
 #include "WebExtensionUtilities.h"
 #include <WebCore/LocalizedStrings.h>
+#include <WebCore/MIMETypeRegistry.h>
 #include <WebCore/TextResourceDecoder.h>
+#include <wtf/FileSystem.h>
 #include <wtf/Language.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebKit {
+
+using namespace WebCore;
 
 static constexpr auto defaultLocaleManifestKey = "default_locale"_s;
 
@@ -180,9 +190,10 @@ bool WebExtension::parseManifest(StringView manifestString)
             recordError(createError(Error::InvalidDefaultLocale));
     }
 
-    m_localization = WebExtensionLocalization::create(*this);
+    Ref localization = WebExtensionLocalization::create(*this);
+    m_localization = localization.copyRef();
 
-    RefPtr localizedManifestObject = m_localization->localizedJSONforJSON(manifestObject);
+    RefPtr localizedManifestObject = localization->localizedJSONforJSON(manifestObject);
     if (!localizedManifestObject) {
         m_manifestJSON = JSON::Value::null();
         recordError(createError(Error::InvalidManifest));
@@ -234,10 +245,11 @@ double WebExtension::manifestVersion()
 
 RefPtr<API::Data> WebExtension::serializeManifest()
 {
-    if (!m_manifestJSON)
+    Ref manifestJSON = m_manifestJSON;
+    if (!manifestJSON)
         return nullptr;
 
-    return API::Data::create(m_manifestJSON->toJSONString().utf8().span());
+    return API::Data::create(manifestJSON->toJSONString().utf8().span());
 }
 
 RefPtr<API::Data> WebExtension::serializeLocalization()

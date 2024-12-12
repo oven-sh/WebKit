@@ -28,14 +28,19 @@
 #include "config.h"
 #include "TextureMapperLayer3DRenderingContext.h"
 
+#include "ClipPath.h"
+#include "FloatPlane3D.h"
+#include "TextureMapperGPUBuffer.h"
 #include "TextureMapperLayer.h"
+#include <wtf/Deque.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextureMapperLayer3DRenderingContext);
 
-void TextureMapperLayer3DRenderingContext::paint(const Vector<TextureMapperLayer*>& layers, const std::function<void(TextureMapperLayer*, const FloatPolygon&)>& paintLayerFunction)
+void TextureMapperLayer3DRenderingContext::paint(TextureMapper& textureMapper, const Vector<TextureMapperLayer*>& layers,
+    const std::function<void(TextureMapperLayer*, const ClipPath&)>& paintLayerFunction)
 {
     if (layers.isEmpty())
         return;
@@ -46,7 +51,47 @@ void TextureMapperLayer3DRenderingContext::paint(const Vector<TextureMapperLayer
 
     auto root = makeUnique<TextureMapperLayerNode>(layerList.takeFirst());
     buildTree(*root, layerList);
-    traverseTreeAndPaint(*root, paintLayerFunction);
+
+    // Collect clip data
+    Vector<float> clipVertices;
+    traverseTree(*root, [&clipVertices](TextureMapperLayerNode& node) {
+        for (auto& polygon : node.polygons) {
+            auto toLayerTransform = polygon.layer->toSurfaceTransform().inverse();
+            if (polygon.isSplitted && toLayerTransform) {
+                polygon.clipVertexBufferOffset = clipVertices.size();
+
+                unsigned numVertices = polygon.geometry.numberOfVertices();
+                for (unsigned i = 0; i < numVertices; i++) {
+                    auto v = toLayerTransform->mapPoint(polygon.geometry.vertexAt(i));
+                    clipVertices.append(v.x());
+                    clipVertices.append(v.y());
+                }
+            }
+        }
+    });
+
+    unsigned clipBufferSize = clipVertices.size() * sizeof(float);
+    auto clipBuffer = textureMapper.acquireBufferFromPool(clipBufferSize, TextureMapperGPUBuffer::Type::Vertex);
+    clipBuffer->updateData(clipVertices.data(), 0, clipBufferSize);
+
+    // Paint
+    traverseTree(*root, [&clipVertices, &clipBuffer, &paintLayerFunction](TextureMapperLayerNode& node) {
+        for (auto& polygon : node.polygons) {
+            unsigned numberOfClipVertices = polygon.isSplitted ? polygon.geometry.numberOfVertices() : 0;
+
+            Vector<FloatPoint> points;
+            if (numberOfClipVertices > 0) {
+                points.reserveCapacity(numberOfClipVertices);
+                auto xy = clipVertices.subvector(polygon.clipVertexBufferOffset, numberOfClipVertices * 2);
+                for (size_t i = 0; i < xy.size(); i += 2)
+                    points.append(FloatPoint(xy.at(i), xy.at(i + 1)));
+            }
+
+            ClipPath clipPath(WTFMove(points), clipBuffer->bufferID(), polygon.clipVertexBufferOffset * sizeof(float));
+
+            paintLayerFunction(polygon.layer, clipPath);
+        }
+    });
 }
 
 // Build BSP tree for rendering polygons with painter's algorithm.
@@ -93,7 +138,7 @@ void TextureMapperLayer3DRenderingContext::buildTree(TextureMapperLayerNode& roo
     }
 }
 
-void TextureMapperLayer3DRenderingContext::traverseTreeAndPaint(TextureMapperLayerNode& node, const std::function<void(TextureMapperLayer*, const FloatPolygon&)>& paintLayerFunction)
+void TextureMapperLayer3DRenderingContext::traverseTree(TextureMapperLayerNode& node, const std::function<void(TextureMapperLayerNode&)>& processNode)
 {
     auto& geometry = node.firstPolygon().geometry;
     FloatPlane3D plane(geometry.normal(), geometry.vertexAt(0));
@@ -107,13 +152,12 @@ void TextureMapperLayer3DRenderingContext::traverseTreeAndPaint(TextureMapperLay
         std::swap(frontNode, backNode);
 
     if (backNode)
-        traverseTreeAndPaint(*backNode, paintLayerFunction);
+        traverseTree(*backNode, processNode);
 
-    for (auto& polygon : node.polygons)
-        paintLayerFunction(polygon.layer, polygon.layerClipArea());
+    processNode(node);
 
     if (frontNode)
-        traverseTreeAndPaint(*frontNode, paintLayerFunction);
+        traverseTree(*frontNode, processNode);
 }
 
 TextureMapperLayer3DRenderingContext::PolygonPosition TextureMapperLayer3DRenderingContext::classifyPolygon(const TextureMapperLayerPolygon& polygon, const FloatPlane3D& plane)

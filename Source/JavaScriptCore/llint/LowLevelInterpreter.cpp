@@ -589,7 +589,7 @@ JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, 
 #elif CPU(ARM)
 #define OFFLINE_ASM_ALIGN_TRAP(align) OFFLINE_ASM_BEGIN_SPACER "\n .balignw " #align ", 0xde00\n" // pad with udf instructions
 #elif CPU(RISCV64)
-#define OFFLINE_ASM_ALIGN_TRAP(align) OFFLINE_ASM_BEGIN_SPACER "\n .balign " #align ", 0x73\n" // pad with ebreak instructions
+#define OFFLINE_ASM_ALIGN_TRAP(align) OFFLINE_ASM_BEGIN_SPACER "\n .balignw " #align ", 0x9002\n" // pad with c.ebreak instructions
 #endif
 
 #define OFFLINE_ASM_EXPORT_SYMBOL(symbol)

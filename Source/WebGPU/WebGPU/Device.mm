@@ -632,14 +632,16 @@ id<MTLRenderPipelineState> Device::copyIndexIndirectArgsPipeline(NSUInteger rast
 
     static id<MTLFunction> function = nil;
     NSError *error = nil;
-    if (!function) {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
         ALLOW_DEPRECATED_DECLARATIONS_END
         /* NOLINT */ id<MTLLibrary> library = [m_device newLibraryWithSource:@R"(
     using namespace metal;
-    [[vertex]] void vs(device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(0)]], constant const MTLDrawIndexedPrimitivesIndirectArguments& indirectArguments [[buffer(1)]], const constant uint* instanceCount [[buffer(2)]]) {
+    [[vertex]] void vsCopyIndexedIndirect(device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(0)]], constant const MTLDrawIndexedPrimitivesIndirectArguments& indirectArguments [[buffer(1)]], const constant uint* instanceCount [[buffer(2)]])
+    {
         bool condition = indirectArguments.baseInstance + indirectArguments.instanceCount > instanceCount[0] || indirectArguments.baseInstance >= instanceCount[0];
         indexedOutput.indexCount = metal::select(indirectArguments.indexCount, 0u, condition);
         indexedOutput.instanceCount = metal::select(indirectArguments.instanceCount, 0u, condition);
@@ -647,14 +649,13 @@ id<MTLRenderPipelineState> Device::copyIndexIndirectArgsPipeline(NSUInteger rast
         indexedOutput.baseVertex = indirectArguments.baseVertex;
         indexedOutput.baseInstance = indirectArguments.baseInstance;
     })" /* NOLINT */ options:options error:&error];
-        if (error) {
+        if (error)
             WTFLogAlways("%@", error);
-            return nil;
-        }
 
-        function = [library newFunctionWithName:@"vs"];
-    }
+        function = [library newFunctionWithName:@"vsCopyIndexedIndirect"];
+    });
 
+    RELEASE_ASSERT(function);
     MTLRenderPipelineDescriptor* mtlRenderPipelineDescriptor = [MTLRenderPipelineDescriptor new];
     mtlRenderPipelineDescriptor.vertexFunction = function;
     mtlRenderPipelineDescriptor.rasterizationEnabled = false;
@@ -687,7 +688,8 @@ id<MTLRenderPipelineState> Device::indexBufferClampPipeline(MTLIndexType indexTy
     static id<MTLFunction> function = nil;
     static id<MTLFunction> functionUshort = nil;
     NSError *error = nil;
-    if (!function) {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
@@ -696,29 +698,30 @@ id<MTLRenderPipelineState> Device::indexBufferClampPipeline(MTLIndexType indexTy
 #define vertexCount 0
 #define primitiveRestart 1
     using namespace metal;
-    [[vertex]] void vsUshort(device const ushort* indexBuffer [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], const constant uint* data [[buffer(2)]], uint indexId [[vertex_id]]) {
+    [[vertex]] void vsUshortIndexClamp(device const ushort* indexBuffer [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], const constant uint* data [[buffer(2)]], uint indexId [[vertex_id]])
+    {
         ushort vertexIndex = data[primitiveRestart] + indexBuffer[indexId];
         if (vertexIndex + indexedOutput.baseVertex >= data[vertexCount] + data[primitiveRestart]) {
             indexedOutput.indexCount = 0u;
             *(&indexedOutput.baseInstance + 1) = 1;
         }
     }
-    [[vertex]] void vsUint(device const uint* indexBuffer [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], const constant uint* data [[buffer(2)]], uint indexId [[vertex_id]]) {
+    [[vertex]] void vsUintIndexClamp(device const uint* indexBuffer [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], const constant uint* data [[buffer(2)]], uint indexId [[vertex_id]])
+    {
         uint vertexIndex = data[primitiveRestart] + indexBuffer[indexId];
         if (vertexIndex + indexedOutput.baseVertex >= data[vertexCount] + data[primitiveRestart]) {
             indexedOutput.indexCount = 0u;
             *(&indexedOutput.baseInstance + 1) = 1;
         }
     })" /* NOLINT */ options:options error:&error];
-        if (error) {
+        if (error)
             WTFLogAlways("%@", error);
-            return nil;
-        }
 
-        function = [library newFunctionWithName:@"vsUint"];
-        functionUshort = [library newFunctionWithName:@"vsUshort"];
-    }
+        function = [library newFunctionWithName:@"vsUintIndexClamp"];
+        functionUshort = [library newFunctionWithName:@"vsUshortIndexClamp"];
+    });
 
+    RELEASE_ASSERT(function && functionUshort);
     MTLRenderPipelineDescriptor* mtlRenderPipelineDescriptor = [MTLRenderPipelineDescriptor new];
     mtlRenderPipelineDescriptor.vertexFunction = isUint16 ? functionUshort : function;
     mtlRenderPipelineDescriptor.rasterizationEnabled = false;
@@ -756,14 +759,16 @@ id<MTLRenderPipelineState> Device::indexedIndirectBufferClampPipeline(NSUInteger
 
     static id<MTLFunction> function = nil;
     NSError *error = nil;
-    if (!function) {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
         ALLOW_DEPRECATED_DECLARATIONS_END
         /* NOLINT */ id<MTLLibrary> library = [m_device newLibraryWithSource:@R"(
     using namespace metal;
-    [[vertex]] void vs(device const MTLDrawIndexedPrimitivesIndirectArguments& input [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], device MTLDrawPrimitivesIndirectArguments& output [[buffer(2)]], const constant uint* indexBufferCount [[buffer(3)]]) {
+    [[vertex]] void vsIndexedIndirect(device const MTLDrawIndexedPrimitivesIndirectArguments& input [[buffer(0)]], device MTLDrawIndexedPrimitivesIndirectArguments& indexedOutput [[buffer(1)]], device MTLDrawPrimitivesIndirectArguments& output [[buffer(2)]], const constant uint* indexBufferCount [[buffer(3)]])
+    {
 
         bool condition = input.indexCount + input.indexStart > indexBufferCount[0] || input.instanceCount + input.baseInstance > indexBufferCount[1] || input.baseInstance >= indexBufferCount[1];
 
@@ -778,14 +783,13 @@ id<MTLRenderPipelineState> Device::indexedIndirectBufferClampPipeline(NSUInteger
         output.vertexStart = input.indexStart;
         output.baseInstance = 0;
     })" /* NOLINT */ options:options error:&error];
-        if (error) {
+        if (error)
             WTFLogAlways("%@", error);
-            return nil;
-        }
 
-        function = [library newFunctionWithName:@"vs"];
-    }
+        function = [library newFunctionWithName:@"vsIndexedIndirect"];
+    });
 
+    RELEASE_ASSERT(function);
     MTLRenderPipelineDescriptor* mtlRenderPipelineDescriptor = [MTLRenderPipelineDescriptor new];
     mtlRenderPipelineDescriptor.vertexFunction = function;
     mtlRenderPipelineDescriptor.rasterizationEnabled = false;
@@ -816,14 +820,16 @@ id<MTLRenderPipelineState> Device::indirectBufferClampPipeline(NSUInteger raster
 
     static id<MTLFunction> function = nil;
     NSError *error = nil;
-    if (!function) {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
         ALLOW_DEPRECATED_DECLARATIONS_END
         /* NOLINT */ id<MTLLibrary> library = [m_device newLibraryWithSource:@R"(
     using namespace metal;
-    [[vertex]] void vs(device const MTLDrawPrimitivesIndirectArguments& input [[buffer(0)]], device MTLDrawPrimitivesIndirectArguments& output [[buffer(1)]], const constant uint* minCounts [[buffer(2)]]) {
+    [[vertex]] void vsIndirect(device const MTLDrawPrimitivesIndirectArguments& input [[buffer(0)]], device MTLDrawPrimitivesIndirectArguments& output [[buffer(1)]], const constant uint* minCounts [[buffer(2)]])
+    {
         bool vertexCondition = input.vertexCount + input.vertexStart > minCounts[0] || input.vertexStart >= minCounts[0];
         bool instanceCondition = input.baseInstance + input.instanceCount > minCounts[1] || input.baseInstance >= minCounts[1];
         bool condition = vertexCondition || instanceCondition;
@@ -832,14 +838,13 @@ id<MTLRenderPipelineState> Device::indirectBufferClampPipeline(NSUInteger raster
         output.vertexStart = input.vertexStart;
         output.baseInstance = input.baseInstance;
     })" /* NOLINT */ options:options error:&error];
-        if (error) {
+        if (error)
             WTFLogAlways("%@", error);
-            return nil;
-        }
 
-        function = [library newFunctionWithName:@"vs"];
-    }
+        function = [library newFunctionWithName:@"vsIndirect"];
+    });
 
+    RELEASE_ASSERT(function);
     MTLRenderPipelineDescriptor* mtlRenderPipelineDescriptor = [MTLRenderPipelineDescriptor new];
     mtlRenderPipelineDescriptor.vertexFunction = function;
     mtlRenderPipelineDescriptor.rasterizationEnabled = false;
@@ -898,7 +903,10 @@ id<MTLRenderPipelineState> Device::icbCommandClampPipeline(MTLIndexType indexTyp
 
 int Device::bufferIndexForICBContainer() const
 {
-    return 1;
+#define DEVICE_BUFFER_INDEX_FOR_ICB_CONTAINER 1
+#define OBJC_STRINGIFYHELPER(x) @#x
+#define OBJC_STRINGIFY(x) OBJC_STRINGIFYHELPER(x)
+    return DEVICE_BUFFER_INDEX_FOR_ICB_CONTAINER;
 }
 
 id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
@@ -906,7 +914,8 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
     static id<MTLFunction> function = nil;
     static id<MTLFunction> functionUshort = nil;
     NSError *error = nil;
-    if (!function) {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
@@ -942,13 +951,13 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
         primitive_type primitiveType { primitive_type::triangle };
     };
 
-    [[vertex]] void vs(device const IndexDataUint* indexData [[buffer(0)]],
-        device ICBContainer *icb_container [[buffer(1)]], // <-- must match Device::bufferIndexForICBContainer()
-        uint indexId [[vertex_id]]) {
-
+    [[vertex]] void vsICB(device const IndexDataUint* indexData [[buffer(0)]],
+        device ICBContainer *icb_container [[buffer()" OBJC_STRINGIFY(DEVICE_BUFFER_INDEX_FOR_ICB_CONTAINER) @R"()]],
+        uint indexId [[vertex_id]])
+    {
         device const IndexDataUint& data = *indexData;
         uint32_t k = (data.primitiveType == primitive_type::triangle_strip || data.primitiveType == primitive_type::line_strip) ? 1 : 0;
-        uint32_t vertexIndex = data.indexBuffer[indexId] + k;
+        uint32_t vertexIndex = data.indexBuffer[indexId + data.firstIndex] + k;
         if (data.baseVertex + vertexIndex >= data.minVertexCount + k) {
             *icb_container->outOfBoundsRead = 1;
             render_command cmd(icb_container->commandBuffer, data.renderCommand);
@@ -961,13 +970,13 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
         }
     }
 
-    [[vertex]] void vsUshort(device const IndexDataUshort* indexData [[buffer(0)]],
-        device ICBContainer *icb_container [[buffer(1)]], // <-- must match Device::bufferIndexForICBContainer()
-        uint indexId [[vertex_id]]) {
-
+    [[vertex]] void vsUshortICB(device const IndexDataUshort* indexData [[buffer(0)]],
+        device ICBContainer *icb_container [[buffer()" OBJC_STRINGIFY(DEVICE_BUFFER_INDEX_FOR_ICB_CONTAINER) @R"()]],
+        uint indexId [[vertex_id]])
+    {
         device const IndexDataUshort& data = *indexData;
         uint32_t k = (data.primitiveType == primitive_type::triangle_strip || data.primitiveType == primitive_type::line_strip) ? 1 : 0;
-        ushort vertexIndex = data.indexBuffer[indexId] + k;
+        ushort vertexIndex = data.indexBuffer[indexId + data.firstIndex] + k;
         if (data.baseVertex + vertexIndex >= data.minVertexCount + k) {
             *icb_container->outOfBoundsRead = 1;
             render_command cmd(icb_container->commandBuffer, data.renderCommand);
@@ -980,15 +989,17 @@ id<MTLFunction> Device::icbCommandClampFunction(MTLIndexType indexType)
         }
 
     })" /* NOLINT */ options:options error:&error];
-        if (error) {
+        if (error)
             WTFLogAlways("%@", error);
-            return nil;
-        }
 
-        function = [library newFunctionWithName:@"vs"];
-        functionUshort = [library newFunctionWithName:@"vsUshort"];
-    }
+        function = [library newFunctionWithName:@"vsICB"];
+        functionUshort = [library newFunctionWithName:@"vsUshortICB"];
+    });
+#undef DEVICE_BUFFER_INDEX_FOR_ICB_CONTAINER
+#undef OBJC_STRINGIFY
+#undef OBJC_STRINGIFYHELPER
 
+    RELEASE_ASSERT(function && functionUshort);
     return indexType == MTLIndexTypeUInt16 ? functionUshort : function;
 }
 

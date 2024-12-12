@@ -82,8 +82,10 @@ async function run() {
     renderPassEncoder.end();
     let commandBuffer = commandEncoder.finish();
     device.queue.submit([commandBuffer]);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

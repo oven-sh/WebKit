@@ -82,7 +82,10 @@ RetainPtr<NSAttributedString> AXTextMarkerRange::toAttributedString() const
     if (start.isolatedObject() == end.isolatedObject()) {
         size_t minOffset = std::min(start.offset(), end.offset());
         size_t maxOffset = std::max(start.offset(), end.offset());
-        return start.isolatedObject()->createAttributedString(start.runs()->substring(minOffset, maxOffset - minOffset)).autorelease();
+        // FIXME: createAttributedString takes a StringView, but we create a full-fledged String. Could we create a
+        // new substringView method that returns a StringView?
+        // FIXME: Should we be passing SpellCheck::Yes? Maybe we need to take `SpellCheck` as a function parameter?
+        return start.isolatedObject()->createAttributedString(start.runs()->substring(minOffset, maxOffset - minOffset), AXCoreObject::SpellCheck::No).autorelease();
     }
     // FIXME: Handle ranges that span multiple objects.
     return nil;

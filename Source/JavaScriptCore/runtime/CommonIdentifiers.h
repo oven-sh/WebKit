@@ -288,6 +288,7 @@
     macro(toJSON) \
     macro(toLocaleString) \
     macro(toPrecision) \
+    macro(toReversed) \
     macro(toString) \
     macro(toTemporalInstant) \
     macro(toWellFormed) \
@@ -325,6 +326,7 @@
     macro(continue) \
     macro(debugger) \
     macro(default) \
+    macro(defer) \
     macro(delete) \
     macro(do) \
     macro(else) \

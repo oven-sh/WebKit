@@ -81,16 +81,16 @@ void AudioChannel::copyFromRange(const AudioChannel* sourceChannel, unsigned sta
     if (!isRangeLengthSafe)
         return;
 
-    const float* source = sourceChannel->data();
-    float* destination = mutableData();
+    auto source = sourceChannel->span();
+    auto destination = mutableSpan();
 
     if (sourceChannel->isSilent()) {
         if (rangeLength == length())
             zero();
         else
-            memset(destination, 0, sizeof(float) * rangeLength);
+            memsetSpan(destination.first(rangeLength), 0);
     } else
-        memcpy(destination, source + startFrame, sizeof(float) * rangeLength);
+        memcpySpan(destination, source.subspan(startFrame, rangeLength));
 }
 
 void AudioChannel::sumFrom(const AudioChannel* sourceChannel)

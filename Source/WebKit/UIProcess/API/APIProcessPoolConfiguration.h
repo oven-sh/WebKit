@@ -165,8 +165,8 @@ public:
     const Vector<size_t>& memoryFootprintNotificationThresholds() const { return m_memoryFootprintNotificationThresholds; }
 
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
-    void setSuspendsWebProcessesAggressivelyOnCriticalMemoryPressure(bool enabled) { m_suspendsWebProcessesAggressivelyOnCriticalMemoryPressure = enabled; }
-    bool suspendsWebProcessesAggressivelyOnCriticalMemoryPressure() { return m_suspendsWebProcessesAggressivelyOnCriticalMemoryPressure; }
+    void setSuspendsWebProcessesAggressivelyOnMemoryPressure(bool enabled) { m_suspendsWebProcessesAggressivelyOnMemoryPressure = enabled; }
+    bool suspendsWebProcessesAggressivelyOnMemoryPressure() { return m_suspendsWebProcessesAggressivelyOnMemoryPressure; }
 #endif
 
 private:
@@ -212,7 +212,7 @@ private:
     Seconds m_memoryFootprintPollIntervalForTesting;
     Vector<size_t> m_memoryFootprintNotificationThresholds;
 #if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
-    bool m_suspendsWebProcessesAggressivelyOnCriticalMemoryPressure { false };
+    bool m_suspendsWebProcessesAggressivelyOnMemoryPressure { false };
 #endif
 };
 

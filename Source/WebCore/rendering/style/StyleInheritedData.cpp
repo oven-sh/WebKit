@@ -24,6 +24,7 @@
 
 #include "RenderStyleInlines.h"
 #include "RenderStyleDifference.h"
+#include "StyleFontData.h"
 
 namespace WebCore {
 
@@ -36,6 +37,7 @@ StyleInheritedData::StyleInheritedData()
 #if ENABLE(TEXT_AUTOSIZING)
     , specifiedLineHeight(RenderStyle::initialLineHeight())
 #endif
+    , fontData(StyleFontData::create())
     , color(RenderStyle::initialColor())
     , visitedLinkColor(RenderStyle::initialColor())
 {
@@ -49,7 +51,7 @@ inline StyleInheritedData::StyleInheritedData(const StyleInheritedData& o)
 #if ENABLE(TEXT_AUTOSIZING)
     , specifiedLineHeight(o.specifiedLineHeight)
 #endif
-    , fontCascade(o.fontCascade)
+    , fontData(o.fontData)
     , color(o.color)
     , visitedLinkColor(o.visitedLinkColor)
 {
@@ -80,7 +82,7 @@ bool StyleInheritedData::nonFastPathInheritedEqual(const StyleInheritedData& oth
 #if ENABLE(TEXT_AUTOSIZING)
         && specifiedLineHeight == other.specifiedLineHeight
 #endif
-        && fontCascade == other.fontCascade
+        && fontData == other.fontData
         && horizontalBorderSpacing == other.horizontalBorderSpacing
         && verticalBorderSpacing == other.verticalBorderSpacing;
 }
@@ -94,6 +96,8 @@ void StyleInheritedData::fastPathInheritFrom(const StyleInheritedData& inheritPa
 #if !LOG_DISABLED
 void StyleInheritedData::dumpDifferences(TextStream& ts, const StyleInheritedData& other) const
 {
+    fontData->dumpDifferences(ts, *other.fontData);
+
     LOG_IF_DIFFERENT(horizontalBorderSpacing);
     LOG_IF_DIFFERENT(verticalBorderSpacing);
     LOG_IF_DIFFERENT(lineHeight);
@@ -101,10 +105,6 @@ void StyleInheritedData::dumpDifferences(TextStream& ts, const StyleInheritedDat
 #if ENABLE(TEXT_AUTOSIZING)
     LOG_IF_DIFFERENT(specifiedLineHeight);
 #endif
-
-    // fontCascade is complex, so gets special dumping.
-    if (fontCascade != other.fontCascade)
-        ts << "fontCascade differs:\n  " << fontCascade << "\n  " << other.fontCascade;
 
     LOG_IF_DIFFERENT(color);
     LOG_IF_DIFFERENT(visitedLinkColor);

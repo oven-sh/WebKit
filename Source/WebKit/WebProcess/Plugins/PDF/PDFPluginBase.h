@@ -42,6 +42,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Identified.h>
 #include <wtf/Lock.h>
+#include <wtf/MainThread.h>
 #include <wtf/Range.h>
 #include <wtf/RangeSet.h>
 #include <wtf/RetainPtr.h>
@@ -95,7 +96,7 @@ struct PDFPluginPasteboardItem {
     RetainPtr<NSString> type;
 };
 
-class PDFPluginBase : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<PDFPluginBase>, public CanMakeThreadSafeCheckedPtr<PDFPluginBase>, public WebCore::ScrollableArea, public Identified<PDFPluginIdentifier> {
+class PDFPluginBase : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<PDFPluginBase, WTF::DestructionThread::Main>, public CanMakeThreadSafeCheckedPtr<PDFPluginBase>, public WebCore::ScrollableArea, public Identified<PDFPluginIdentifier> {
     WTF_MAKE_NONCOPYABLE(PDFPluginBase);
     WTF_MAKE_TZONE_ALLOCATED(PDFPluginBase);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PDFPluginBase);

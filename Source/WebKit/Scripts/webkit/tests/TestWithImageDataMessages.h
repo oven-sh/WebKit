@@ -30,6 +30,7 @@
 #include <WebCore/ImageData.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 

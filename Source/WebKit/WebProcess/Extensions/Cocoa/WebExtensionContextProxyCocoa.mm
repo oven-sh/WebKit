@@ -82,7 +82,8 @@ Ref<WebExtensionContextProxy> WebExtensionContextProxy::getOrCreate(const WebExt
         context.m_unsupportedAPIs = parameters.unsupportedAPIs;
         context.m_grantedPermissions = parameters.grantedPermissions;
         context.m_localization = parseLocalization(parameters.localizationJSON, parameters.baseURL);
-        context.m_manifest = parseJSON(*parameters.manifestJSON);
+        Ref manifestJSON = *parameters.manifestJSON;
+        context.m_manifest = parseJSON(manifestJSON);
         context.m_manifestVersion = parameters.manifestVersion;
         context.m_isSessionStorageAllowedInContentScripts = parameters.isSessionStorageAllowedInContentScripts;
 

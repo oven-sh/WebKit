@@ -42,7 +42,6 @@
 #include "RemoteRenderingBackendProxyMessages.h"
 #include "RemoteSharedResourceCacheProxy.h"
 #include "SwapBuffersDisplayRequirement.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebProcess.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
@@ -228,39 +227,42 @@ bool RemoteRenderingBackendProxy::canMapRemoteImageBufferBackendBackingStore()
     return !WebProcess::singleton().shouldUseRemoteRenderingFor(RenderingPurpose::DOM);
 }
 
-RefPtr<ImageBuffer> RemoteRenderingBackendProxy::createImageBuffer(const FloatSize& size, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat, OptionSet<ImageBufferOptions> options)
+RefPtr<ImageBuffer> RemoteRenderingBackendProxy::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat)
 {
     RefPtr<ImageBuffer> imageBuffer;
 
-    bool avoidBackendSizeCheckForTesting = options.contains(ImageBufferOptions::AvoidBackendSizeCheckForTesting);
-
+    switch (renderingMode) {
+    case RenderingMode::Accelerated:
 #if HAVE(IOSURFACE)
-    if (options.contains(ImageBufferOptions::Accelerated)) {
         if (canMapRemoteImageBufferBackendBackingStore())
-            imageBuffer = RemoteImageBufferProxy::create<ImageBufferShareableMappedIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, *this, avoidBackendSizeCheckForTesting);
+            imageBuffer = RemoteImageBufferProxy::create<ImageBufferShareableMappedIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, *this);
         else
-            imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, *this, avoidBackendSizeCheckForTesting);
-    }
+            imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, *this);
 #endif
-    if (!imageBuffer)
-        imageBuffer = RemoteImageBufferProxy::create<ImageBufferShareableBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, *this, avoidBackendSizeCheckForTesting);
+        [[fallthrough]];
 
-    if (imageBuffer) {
-        createRemoteImageBuffer(*imageBuffer);
-        return imageBuffer;
+    case RenderingMode::Unaccelerated:
+        if (!imageBuffer)
+            imageBuffer = RemoteImageBufferProxy::create<ImageBufferShareableBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, *this);
+        break;
+
+    case RenderingMode::PDFDocument:
+    case RenderingMode::DisplayList:
+        break;
     }
 
-    return nullptr;
+    if (!imageBuffer)
+        return nullptr;
+
+    createRemoteImageBuffer(*imageBuffer);
+    return imageBuffer;
 }
 
-std::unique_ptr<RemoteDisplayListRecorderProxy> RemoteRenderingBackendProxy::createDisplayListRecorder(WebCore::RenderingResourceIdentifier renderingResourceIdentifier, const FloatSize& size, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat, OptionSet<ImageBufferOptions> options)
+std::unique_ptr<RemoteDisplayListRecorderProxy> RemoteRenderingBackendProxy::createDisplayListRecorder(WebCore::RenderingResourceIdentifier renderingResourceIdentifier, const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferPixelFormat pixelFormat)
 {
     ASSERT(WebProcess::singleton().shouldUseRemoteRenderingFor(RenderingPurpose::DOM));
     ImageBufferParameters parameters { size, resolutionScale, colorSpace, pixelFormat, purpose };
-    auto renderingMode = RenderingMode::Unaccelerated;
     auto transform = ImageBufferBackend::calculateBaseTransform(ImageBuffer::backendParameters(parameters));
-    if (options.contains(ImageBufferOptions::Accelerated))
-        renderingMode = RenderingMode::Accelerated;
     return makeUnique<RemoteDisplayListRecorderProxy>(*this, renderingResourceIdentifier, colorSpace, renderingMode, FloatRect { { }, size }, transform);
 }
 
@@ -378,11 +380,7 @@ void RemoteRenderingBackendProxy::cacheFont(const WebCore::Font::Attributes& fon
 void RemoteRenderingBackendProxy::cacheFontCustomPlatformData(Ref<const FontCustomPlatformData>&& customPlatformData)
 {
     Ref<FontCustomPlatformData> data = adoptRef(const_cast<FontCustomPlatformData&>(customPlatformData.leakRef()));
-#if PLATFORM(COCOA) || USE(SKIA)
     send(Messages::RemoteRenderingBackend::CacheFontCustomPlatformData(data->serializedData()));
-#else
-    send(Messages::RemoteRenderingBackend::CacheFontCustomPlatformData(WTFMove(data)));
-#endif
 }
 
 void RemoteRenderingBackendProxy::cacheDecomposedGlyphs(Ref<DecomposedGlyphs>&& decomposedGlyphs)

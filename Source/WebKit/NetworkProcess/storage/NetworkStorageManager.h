@@ -125,6 +125,7 @@ public:
     void handleLowMemoryWarning();
     void syncLocalStorage(CompletionHandler<void()>&&);
     void fetchLocalStorage(CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&&);
+    void restoreLocalStorage(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&, CompletionHandler<void(bool)>&&);
     void registerTemporaryBlobFilePaths(IPC::Connection&, const Vector<String>&);
     void requestSpace(const WebCore::ClientOrigin&, uint64_t size, CompletionHandler<void(bool)>&&);
     void resetQuotaForTesting(CompletionHandler<void()>&&);

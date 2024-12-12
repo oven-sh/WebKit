@@ -18,7 +18,9 @@ async function run() {
             { binding: 0, resource: sampler }
         ],
     });
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

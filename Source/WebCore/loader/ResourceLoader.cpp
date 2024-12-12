@@ -57,6 +57,7 @@
 #include "Quirks.h"
 #include "ResourceError.h"
 #include "ResourceHandle.h"
+#include "ResourceMonitor.h"
 #include "SecurityOrigin.h"
 #include "SubresourceLoader.h"
 #include <wtf/CompletionHandler.h>
@@ -80,6 +81,7 @@
 #define PAGE_ID (frame() && frame()->pageID() ? frame()->pageID()->toUInt64() : 0)
 #define FRAME_ID (frame() ? frame()->frameID().object().toUInt64() : 0)
 #define RESOURCELOADER_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "%p - [pageID=%" PRIu64 ", frameID=%" PRIu64 ", frameLoader=%p, resourceID=%" PRIu64 "] ResourceLoader::" fmt, this, PAGE_ID, FRAME_ID, frameLoader(), identifier() ? identifier()->toUInt64() : 0, ##__VA_ARGS__)
+#define RESOURCELOADER_RELEASE_LOG_FORWARDABLE(fmt, ...) RELEASE_LOG_FORWARDABLE(Network, fmt, PAGE_ID, FRAME_ID, identifier() ? identifier()->toUInt64() : 0, ##__VA_ARGS__)
 
 namespace WebCore {
 
@@ -503,7 +505,7 @@ void ResourceLoader::willSendRequestInternal(ResourceRequest&& request, const Re
         }
     }
 
-    RESOURCELOADER_RELEASE_LOG("willSendRequestInternal: calling completion handler");
+    RESOURCELOADER_RELEASE_LOG_FORWARDABLE(RESOURCELOADER_WILLSENDREQUESTINTERNAL);
     completionHandler(WTFMove(request));
 }
 
@@ -601,6 +603,11 @@ void ResourceLoader::didReceiveResponse(const ResourceResponse& r, CompletionHan
 
     if (m_options.sendLoadCallbacks == SendCallbackPolicy::SendCallbacks)
         protectedFrameLoader()->notifier().didReceiveResponse(this, m_response);
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    if (RefPtr monitor = resourceMonitor())
+        monitor->didReceiveResponse(m_response.url(), m_resourceType);
+#endif
 }
 
 void ResourceLoader::didReceiveData(const SharedBuffer& buffer, long long encodedDataLength, DataPayloadType dataPayloadType)
@@ -627,6 +634,11 @@ void ResourceLoader::didReceiveBuffer(const FragmentedSharedBuffer& buffer, long
     // Could be an issue with a giant local file.
     if (m_options.sendLoadCallbacks == SendCallbackPolicy::SendCallbacks && m_frame)
         protectedFrameLoader()->notifier().didReceiveData(this, buffer.makeContiguous(), static_cast<int>(encodedDataLength));
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    if (RefPtr monitor = resourceMonitor())
+        monitor->addNetworkUsage(encodedDataLength > 0 ? static_cast<size_t>(encodedDataLength) : buffer.size());
+#endif
 }
 
 void ResourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLoadMetrics)
@@ -945,6 +957,15 @@ RefPtr<LocalFrame> ResourceLoader::protectedFrame() const
 {
     return m_frame;
 }
+
+#if ENABLE(CONTENT_EXTENSIONS)
+ResourceMonitor* ResourceLoader::resourceMonitor()
+{
+    if (RefPtr document = m_frame ? m_frame->document() : nullptr)
+        return document->resourceMonitor();
+    return nullptr;
+}
+#endif
 
 } // namespace WebCore
 

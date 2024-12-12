@@ -108,3 +108,7 @@ enum class WebKit::AllowsCellularAccess : bool;
 #endif
     WebKit::ResourceLoadStatisticsParameters resourceLoadStatisticsParameters;
 };
+
+#if USE(SOUP)
+enum class WebKit::SoupCookiePersistentStorageType : bool
+#endif

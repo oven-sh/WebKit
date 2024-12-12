@@ -190,6 +190,10 @@ class WebKit::WebMouseEvent : WebKit::WebEvent {
     Vector<WebKit::WebMouseEvent> coalescedEvents();
 };
 
+#if !PLATFORM(MAC) && PLATFORM(GTK)
+[Nested] enum class WebCore::PlatformMouseEvent::IsTouch : bool
+#endif
+
 #if ENABLE(MAC_GESTURE_EVENTS)
 class WebKit::WebGestureEvent : WebKit::WebEvent {
     WebCore::IntPoint position();

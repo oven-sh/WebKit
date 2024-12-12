@@ -41,7 +41,7 @@ namespace WebKit {
 
 class AutomationSessionClient final : public API::AutomationSessionClient {
 public:
-    explicit AutomationSessionClient(const String&);
+    explicit AutomationSessionClient(const String&, const Inspector::RemoteInspector::Client::SessionCapabilities&);
 
     String sessionIdentifier() const override { return m_sessionIdentifier; }
 
@@ -53,8 +53,13 @@ public:
 
 private:
     String m_sessionIdentifier;
+    Inspector::RemoteInspector::Client::SessionCapabilities m_capabilities { };
 
     static void close(WKPageRef, const void*);
+
+    static void didReceiveAuthenticationChallenge(WKPageRef, WKAuthenticationChallengeRef, const void*);
+    void didReceiveAuthenticationChallenge(WKPageRef, WKAuthenticationChallengeRef);
+
     HashSet<Ref<WebView>> m_webViews;
 };
 

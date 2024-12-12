@@ -34,7 +34,6 @@
 #include "RemoteRenderingBackendProxy.h"
 #include "SharedVideoFrame.h"
 #include "StreamClientConnection.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <WebCore/DisplayList.h>
 #include <WebCore/DisplayListDrawingContext.h>
@@ -653,11 +652,7 @@ RefPtr<ImageBuffer> RemoteDisplayListRecorderProxy::createImageBuffer(const Floa
 
     // FIXME: Ideally we'd plumb the purpose through for callers of GraphicsContext::createImageBuffer().
     RenderingPurpose purpose = RenderingPurpose::Unspecified;
-    // FIXME: Use purpose to decide the acceleration status and remove this.
-    OptionSet<ImageBufferOptions> options;
-    if (renderingMode.value_or(this->renderingMode()) == RenderingMode::Accelerated)
-        options.add(ImageBufferOptions::Accelerated);
-    return renderingBackend->createImageBuffer(size, purpose, resolutionScale, colorSpace, ImageBufferPixelFormat::BGRA8, options);
+    return renderingBackend->createImageBuffer(size, renderingMode.value_or(this->renderingMode()), purpose, resolutionScale, colorSpace, ImageBufferPixelFormat::BGRA8);
 }
 
 RefPtr<ImageBuffer> RemoteDisplayListRecorderProxy::createAlignedImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const

@@ -80,11 +80,12 @@ public:
     const URL& baseURL() const { return m_baseURL; }
     const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
 
+#if PLATFORM(COCOA)
     NSDictionary *manifest() const { return m_manifest.get(); }
 
     double manifestVersion() const { return m_manifestVersion; }
     bool supportsManifestVersion(double version) const { return manifestVersion() >= version; }
-
+#endif
     RefPtr<WebExtensionLocalization> localization() const { return m_localization; }
 
     bool isSessionStorageAllowedInContentScripts() const { return m_isSessionStorageAllowedInContentScripts; }
@@ -225,7 +226,9 @@ private:
     String m_uniqueIdentifier;
     HashSet<String> m_unsupportedAPIs;
     RefPtr<WebExtensionLocalization> m_localization;
+#if PLATFORM(COCOA)
     RetainPtr<NSDictionary> m_manifest;
+#endif
     double m_manifestVersion { 0 };
     bool m_isSessionStorageAllowedInContentScripts { false };
     mutable PermissionsMap m_grantedPermissions;

@@ -243,7 +243,6 @@ Shared/WebCompiledContentRuleList.cpp
 Shared/WebCompiledContentRuleListData.cpp
 Shared/WebContextMenuItem.cpp
 Shared/WebContextMenuItemData.cpp
-Shared/WebCoreArgumentCoders.cpp
 Shared/WebErrors.cpp
 Shared/WebEvent.cpp
 Shared/WebEventConversion.cpp

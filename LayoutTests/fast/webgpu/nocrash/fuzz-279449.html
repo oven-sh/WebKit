@@ -10,8 +10,10 @@ async function run() {
     let externalTexture = device.importExternalTexture({ source: videoFrame });
     device.createBindGroup({ layout: bindGroupLayout, entries: [{ binding: 4, resource: externalTexture }] });
     device.createBindGroup({ layout: bindGroupLayout, entries: [{ binding: 4, resource: externalTexture }] });
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

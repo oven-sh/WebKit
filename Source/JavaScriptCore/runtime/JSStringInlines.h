@@ -219,6 +219,7 @@ inline void JSRopeString::convertToNonRope(String&& string) const
 template<typename CharacterType>
 void JSRopeString::resolveToBufferSlow(JSString* fiber0, JSString* fiber1, JSString* fiber2, std::span<CharacterType> buffer, uint8_t*)
 {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     // Keep in mind that resolveToBufferSlow signature must be the same to resolveToBuffer to encourage tail-calls by clang, that's the reason why
     // it takes the last stackLimit parameter still while it is not used here.
 
@@ -258,6 +259,7 @@ void JSRopeString::resolveToBufferSlow(JSString* fiber0, JSString* fiber1, JSStr
     } while (!workQueue.isEmpty());
 
     ASSERT(buffer.data() == position);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 template<typename CharacterType>

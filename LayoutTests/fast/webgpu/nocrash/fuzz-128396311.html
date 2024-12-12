@@ -12,7 +12,9 @@ async function run() {
     let buffer2 = device.createBuffer({ size: 391719, usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_WRITE });
     buffer.unmap();
     commandEncoder.copyBufferToBuffer(buffer2, 278668, buffer, 14060, 64684);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

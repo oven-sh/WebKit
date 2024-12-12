@@ -69,6 +69,7 @@
 #include "XMLDocumentParserScope.h"
 #include <libxml/parser.h>
 #include <libxml/parserInternals.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/unicode/CharacterNames.h>
@@ -1286,7 +1287,7 @@ static void ignorableWhitespaceHandler(void*, const xmlChar*, int)
 void XMLDocumentParser::initializeParserContext(const CString& chunk)
 {
     xmlSAXHandler sax;
-    memset(&sax, 0, sizeof(sax));
+    memsetSpan(asMutableByteSpan(sax), 0);
 
     sax.error = normalErrorHandler;
     sax.fatalError = fatalErrorHandler;
@@ -1501,7 +1502,7 @@ std::optional<HashMap<String, String>> parseAttributes(CachedResourceLoader& cac
     AttributeParseState attributes;
 
     xmlSAXHandler sax;
-    memset(&sax, 0, sizeof(sax));
+    memsetSpan(asMutableByteSpan(sax), 0);
     sax.startElementNs = attributesStartElementNsHandler;
     sax.initialized = XML_SAX2_MAGIC;
 

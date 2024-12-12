@@ -371,7 +371,7 @@ void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier ident
         return;
     }
 
-    auto newConnection = NetworkConnectionToWebProcess::create(*this, identifier, sessionID, WTFMove(parameters), connectionIdentifiers->server);
+    auto newConnection = NetworkConnectionToWebProcess::create(*this, identifier, sessionID, WTFMove(parameters), WTFMove(connectionIdentifiers->server));
     Ref connection = newConnection;
 
     ASSERT(!m_webProcessConnections.contains(identifier));
@@ -1490,11 +1490,13 @@ void NetworkProcess::setShouldSendPrivateTokenIPCForTesting(PAL::SessionID sessi
         session->setShouldSendPrivateTokenIPCForTesting(enabled);
 }
 
+#if HAVE(ALLOW_ONLY_PARTITIONED_COOKIES)
 void NetworkProcess::setOptInCookiePartitioningEnabled(PAL::SessionID sessionID, bool enabled) const
 {
     if (auto* session = networkSession(sessionID))
         session->setOptInCookiePartitioningEnabled(enabled);
 }
+#endif
 
 void NetworkProcess::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain)
 {
@@ -3112,6 +3114,17 @@ void NetworkProcess::fetchLocalStorage(PAL::SessionID sessionID, CompletionHandl
     }
 
     session->protectedStorageManager()->fetchLocalStorage(WTFMove(completionHandler));
+}
+
+void NetworkProcess::restoreLocalStorage(PAL::SessionID sessionID, HashMap<WebCore::ClientOrigin, HashMap<String, String>>&& localStorageMap, CompletionHandler<void(bool)>&& completionHandler)
+{
+    CheckedPtr session = networkSession(sessionID);
+    if (!session) {
+        completionHandler(false);
+        return;
+    }
+
+    session->protectedStorageManager()->restoreLocalStorage(WTFMove(localStorageMap), WTFMove(completionHandler));
 }
 
 } // namespace WebKit

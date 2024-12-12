@@ -31,6 +31,7 @@
 #include "Event.h"
 #include "FrameLoader.h"
 #include "HTMLPlugInElement.h"
+#include "HistoryController.h"
 #include "InspectorInstrumentation.h"
 #include "JSDOMBindingSecurity.h"
 #include "JSDOMExceptionHandling.h"
@@ -895,6 +896,11 @@ void ScriptController::executeJavaScriptURL(const URL& url, const NavigationActi
 
         // We're still in a frame, so there should be a DocumentLoader.
         ASSERT(documentLoader);
+
+        // If there is no current history item, create one since we're about to commit a document
+        // from the JS URL.
+        if (!m_frame.history().currentItem())
+            m_frame.checkedHistory()->updateForRedirectWithLockedBackForwardList();
 
         // Since we're replacing the document, this JavaScript URL load acts as a "Replace" navigation.
         // Make sure the triggering action get set on the DocumentLoader since some logic in

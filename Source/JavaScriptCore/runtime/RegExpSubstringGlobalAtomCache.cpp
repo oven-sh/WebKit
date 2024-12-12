@@ -99,7 +99,7 @@ JSValue RegExpSubstringGlobalAtomCache::collectMatches(JSGlobalObject* globalObj
         if (input->is8Bit()) {
             if (pattern.length() == 1) {
                 if (input->length() >= startIndex) {
-                    numberOfMatches += countMatchedCharacters(input->span8().subspan(startIndex), pattern.span8()[0]);
+                    numberOfMatches += WTF::countMatchedCharacters(input->span8().subspan(startIndex), pattern.span8()[0]);
                     startIndex = input->length(); // Because the pattern atom is one character, it is ensured that we no longer find anything until this input string's end.
                 }
             } else {
@@ -110,7 +110,7 @@ JSValue RegExpSubstringGlobalAtomCache::collectMatches(JSGlobalObject* globalObj
         } else {
             if (pattern.length() == 1) {
                 if (input->length() >= startIndex) {
-                    numberOfMatches += countMatchedCharacters(input->span16().subspan(startIndex), pattern.characterAt(0));
+                    numberOfMatches += WTF::countMatchedCharacters(input->span16().subspan(startIndex), pattern.characterAt(0));
                     startIndex = input->length(); // Because the pattern atom is one character, it is ensured that we no longer find anything until this input string's end.
                 }
             } else {
@@ -127,7 +127,7 @@ JSValue RegExpSubstringGlobalAtomCache::collectMatches(JSGlobalObject* globalObj
         } else {
             if (pattern.length() == 1) {
                 if (input->length() >= startIndex) {
-                    numberOfMatches += countMatchedCharacters(input->span16().subspan(startIndex), pattern.characterAt(0));
+                    numberOfMatches += WTF::countMatchedCharacters(input->span16().subspan(startIndex), pattern.characterAt(0));
                     startIndex = input->length(); // Because the pattern atom is one character, it is ensured that we no longer find anything until this input string's end.
                 }
             } else {

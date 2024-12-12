@@ -37,6 +37,7 @@
 #include "FFTFrame.h"
 #include "VectorMath.h"
 #include <algorithm>
+#include <wtf/StdLibExtras.h>
 
 // The number of bands per octave. Each octave will have this many entries in the wave tables.
 constexpr unsigned NumberOfOctaveBands = 3;
@@ -218,9 +219,9 @@ void PeriodicWave::createBandLimitedTables(const float* realData, const float* i
         // pitch range.
         unsigned clampedNumberOfComponents = std::min(numberOfComponents, numberOfPartials + 1);
         if (clampedNumberOfComponents < halfSize) {
-            size_t numBytes = (halfSize - clampedNumberOfComponents) * sizeof(float);
-            memset(&realP[clampedNumberOfComponents], 0, numBytes);
-            memset(&imagP[clampedNumberOfComponents], 0, numBytes);
+            size_t numValues = halfSize - clampedNumberOfComponents;
+            memsetSpan(realP.span().subspan(clampedNumberOfComponents, numValues), 0);
+            memsetSpan(imagP.span().subspan(clampedNumberOfComponents, numValues), 0);
         }
 
         // Clear packed-nyquist and any DC-offset.

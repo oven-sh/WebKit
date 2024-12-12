@@ -30,7 +30,6 @@
 
 #include "Logging.h"
 #include "MessageSenderInlines.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebFrame.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"

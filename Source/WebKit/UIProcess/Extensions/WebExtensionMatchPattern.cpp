@@ -28,16 +28,16 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
-#import "WebProcessMessages.h"
-#import "WebProcessPool.h"
-#import <WebCore/LocalizedStrings.h>
-#import <WebCore/PublicSuffixStore.h>
-#import <wtf/HashMap.h>
-#import <wtf/HashSet.h>
-#import <wtf/NeverDestroyed.h>
-#import <wtf/URLParser.h>
-#import <wtf/text/MakeString.h>
-#import <wtf/text/StringHash.h>
+#include "WebProcessMessages.h"
+#include "WebProcessPool.h"
+#include <WebCore/LocalizedStrings.h>
+#include <WebCore/PublicSuffixStore.h>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/URLParser.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringHash.h>
 
 namespace WebKit {
 

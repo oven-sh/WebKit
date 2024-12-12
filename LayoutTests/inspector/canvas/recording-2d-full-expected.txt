@@ -962,16 +962,6 @@ frames:
         1: (anonymous function)
         2: executeFrameFunction
   70: (duration)
-    0: webkitImageSmoothingEnabled
-      trace:
-        0: (anonymous function)
-        1: executeFrameFunction
-    1: webkitImageSmoothingEnabled = true
-      swizzleTypes: [Boolean]
-      trace:
-        0: (anonymous function)
-        1: executeFrameFunction
-  71: (duration)
     0: webkitLineDash
       trace:
         0: (anonymous function)
@@ -981,7 +971,7 @@ frames:
       trace:
         0: (anonymous function)
         1: executeFrameFunction
-  72: (duration)
+  71: (duration)
     0: webkitLineDashOffset
       trace:
         0: (anonymous function)
@@ -991,7 +981,7 @@ frames:
       trace:
         0: (anonymous function)
         1: executeFrameFunction
-  73: (duration)
+  72: (duration)
     0: width
       trace:
         0: (anonymous function)
@@ -1001,7 +991,7 @@ frames:
       trace:
         0: (anonymous function)
         1: executeFrameFunction
-  74: (duration)
+  73: (duration)
     0: height
       trace:
         0: (anonymous function)
@@ -1011,7 +1001,7 @@ frames:
       trace:
         0: (anonymous function)
         1: executeFrameFunction
-  75: (duration)
+  74: (duration)
     0: roundRect(0, 0, 50, 50, 42)
       swizzleTypes: [Number, Number, Number, Number, Number]
       trace:

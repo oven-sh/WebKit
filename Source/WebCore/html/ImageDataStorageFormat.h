@@ -25,11 +25,38 @@
 
 #pragma once
 
+#include "PixelFormat.h"
+#include <JavaScriptCore/TypedArrayType.h>
+
 namespace WebCore {
 
 enum class ImageDataStorageFormat : bool {
     Uint8,
     Float16,
 };
+
+constexpr PixelFormat toPixelFormat(ImageDataStorageFormat storageFormat)
+{
+    switch (storageFormat) {
+    case ImageDataStorageFormat::Uint8:
+        break;
+    case ImageDataStorageFormat::Float16:
+#if HAVE(HDR_SUPPORT)
+        return PixelFormat::RGBA16F;
+#else
+        break;
+#endif
+    }
+    return PixelFormat::RGBA8;
+}
+
+constexpr std::optional<ImageDataStorageFormat> toImageDataStorageFormat(JSC::TypedArrayType typedArrayType)
+{
+    switch (typedArrayType) {
+    case JSC::TypeUint8Clamped: return ImageDataStorageFormat::Uint8;
+    case JSC::TypeFloat16: return ImageDataStorageFormat::Float16;
+    default: return std::nullopt;
+    }
+}
 
 }

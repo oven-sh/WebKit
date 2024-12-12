@@ -2911,6 +2911,14 @@ op(ipint_entry, macro ()
     crash()
 end)
 
+op(ipint_function_prologue_simd_trampoline, macro ()
+    crash()
+end)
+
+op(ipint_function_prologue_simd, macro ()
+    crash()
+end)
+
 _wasm_trampoline_wasm_call:
 _wasm_trampoline_wasm_call_indirect:
 _wasm_trampoline_wasm_call_ref:

@@ -43,7 +43,7 @@ bool DocumentFullscreen::webkitFullscreenEnabled(Document& document)
 
 Element* DocumentFullscreen::webkitFullscreenElement(Document& document)
 {
-    return document.ancestorElementInThisScope(document.fullscreenManager().fullscreenElement());
+    return document.ancestorElementInThisScope(document.fullscreenManager().protectedFullscreenElement().get());
 }
 
 bool DocumentFullscreen::webkitIsFullScreen(Document& document)
@@ -58,7 +58,7 @@ bool DocumentFullscreen::webkitFullScreenKeyboardInputAllowed(Document& document
 
 Element* DocumentFullscreen::webkitCurrentFullScreenElement(Document& document)
 {
-    return document.ancestorElementInThisScope(document.fullscreenManager().currentFullscreenElement());
+    return document.ancestorElementInThisScope(document.fullscreenManager().protectedCurrentFullscreenElement().get());
 }
 
 void DocumentFullscreen::webkitCancelFullScreen(Document& document)

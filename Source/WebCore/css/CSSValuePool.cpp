@@ -42,9 +42,9 @@ StaticCSSValuePool::StaticCSSValuePool()
 {
     m_implicitInitialValue.construct(CSSValue::StaticCSSValue, CSSPrimitiveValue::ImplicitInitialValue);
     
-    m_transparentColor.construct(CSSValue::StaticCSSValue, Color::transparentBlack);
-    m_whiteColor.construct(CSSValue::StaticCSSValue, Color::white);
-    m_blackColor.construct(CSSValue::StaticCSSValue, Color::black);
+    m_transparentColor.construct(CSSValue::StaticCSSValue, WebCore::Color::transparentBlack);
+    m_whiteColor.construct(CSSValue::StaticCSSValue, WebCore::Color::white);
+    m_blackColor.construct(CSSValue::StaticCSSValue, WebCore::Color::black);
 
     for (auto keyword : allCSSValueKeywords())
         m_identifierValues[enumToUnderlyingType(keyword)].construct(CSSValue::StaticCSSValue, keyword);
@@ -74,15 +74,15 @@ CSSValuePool& CSSValuePool::singleton()
     return pool;
 }
 
-Ref<CSSColorValue> CSSValuePool::createColorValue(const Color& color)
+Ref<CSSColorValue> CSSValuePool::createColorValue(const WebCore::Color& color)
 {
     // These are the empty and deleted values of the hash table.
-    if (color == Color::transparentBlack)
+    if (color == WebCore::Color::transparentBlack)
         return staticCSSValuePool->m_transparentColor.get();
-    if (color == Color::white)
+    if (color == WebCore::Color::white)
         return staticCSSValuePool->m_whiteColor.get();
     // Just because it is common.
-    if (color == Color::black)
+    if (color == WebCore::Color::black)
         return staticCSSValuePool->m_blackColor.get();
 
     // Remove one entry at random if the cache grows too large.

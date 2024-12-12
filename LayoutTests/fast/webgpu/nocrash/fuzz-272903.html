@@ -6,7 +6,9 @@ async function run() {
     let querySet = device.createQuerySet({ type: 'occlusion', count: 1 });
     let commandEncoder = device.createCommandEncoder();
     commandEncoder.resolveQuerySet(querySet, 0, 0, buffer, 1280);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

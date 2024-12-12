@@ -28,34 +28,48 @@
 
 #pragma once
 
+#include "ImageDataStorageFormat.h"
+#include <JavaScriptCore/Float16Array.h>
 #include <JavaScriptCore/Uint8ClampedArray.h>
+#include <optional>
+#include <variant>
+#include <wtf/JSONValues.h>
 
 namespace WebCore {
 
 class ImageDataArray {
 public:
-    // FIXME: This API is the minimum subset as currently used by ImageData. More to come...
-    ImageDataArray(Ref<JSC::Uint8ClampedArray>&& data)
-        : m_bufferView(WTFMove(data))
-    { }
+    static constexpr bool isSupported(JSC::TypedArrayType type) { return !!toImageDataStorageFormat(type); }
+    static bool isSupported(const JSC::ArrayBufferView&);
 
-    auto length() const
-    {
-        Ref bufferView = m_bufferView;
-        return bufferView->length();
-    }
+    ImageDataArray(Ref<JSC::Uint8ClampedArray>&&);
+    ImageDataArray(Ref<JSC::Float16Array>&&);
 
-    // FIXME: Remove these temporary functions.
-    Uint8ClampedArray& get() const { return m_bufferView.get(); }
-    auto data() const
-    {
-        Ref bufferView = m_bufferView;
-        return bufferView->data();
-    }
+    static std::optional<ImageDataArray> tryCreate(size_t, ImageDataStorageFormat, std::span<const uint8_t> = { });
+
+    ImageDataStorageFormat storageFormat() const;
+    size_t length() const;
+
+    JSC::ArrayBufferView& arrayBufferView() const { return m_arrayBufferView.get(); }
+    Ref<JSC::ArrayBufferView> protectedArrayBufferView() const { return m_arrayBufferView; }
+    auto byteLength() const { return protectedArrayBufferView()->byteLength(); }
+    auto isDetached() const { return protectedArrayBufferView()->isDetached(); }
+    auto span() const { return protectedArrayBufferView()->span(); }
+
+    Ref<JSC::Uint8ClampedArray> asUint8ClampedArray() const;
+    Ref<JSC::Float16Array> asFloat16Array() const;
+
+    Ref<JSON::Value> copyToJSONArray() const;
 
 private:
-    // FIXME: Handle other typed arrays.
-    Ref<JSC::Uint8ClampedArray> m_bufferView;
+    ImageDataArray(Ref<JSC::ArrayBufferView>&&);
+
+    // Needed by `toJS<IDLUnion<IDLUint8ClampedArray, ...>, const ImageDataArray&>()`
+    template<typename IDL, bool needsState, bool needsGlobalObject> friend struct JSConverterOverloader;
+    using Variant = std::variant<RefPtr<JSC::Uint8ClampedArray>, RefPtr<JSC::Float16Array>>;
+    operator Variant() const;
+
+    Ref<JSC::ArrayBufferView> m_arrayBufferView;
 };
 
 } // namespace WebCore

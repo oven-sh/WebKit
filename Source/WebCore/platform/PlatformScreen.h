@@ -82,6 +82,7 @@ FloatRect screenRect(Widget*);
 FloatRect screenAvailableRect(Widget*);
 
 WEBCORE_EXPORT ContentsFormat screenContentsFormat(Widget* = nullptr, PlatformCALayerClient* = nullptr);
+WEBCORE_EXPORT bool screenSupportsExtendedColor(Widget* = nullptr);
 
 enum class DynamicRangeMode : uint8_t {
     None,

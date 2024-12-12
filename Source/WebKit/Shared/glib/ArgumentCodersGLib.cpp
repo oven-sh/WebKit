@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ArgumentCodersGLib.h"
 
-#include "WebCoreArgumentCoders.h"
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 #include <wtf/Vector.h>

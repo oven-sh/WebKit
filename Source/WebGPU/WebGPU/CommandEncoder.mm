@@ -102,6 +102,7 @@ static MTLStoreAction storeAction(WGPUStoreOp storeOp, bool hasResolveTarget = f
 
 DEFINE_SWIFTCXX_THUNK(WebGPU::CommandEncoder, copyBufferToTexture, void, const WGPUImageCopyBuffer&, const WGPUImageCopyTexture&, const WGPUExtent3D&);
 DEFINE_SWIFTCXX_THUNK(WebGPU::CommandEncoder, copyTextureToBuffer, void, const WGPUImageCopyTexture&, const WGPUImageCopyBuffer&, const WGPUExtent3D&);
+DEFINE_SWIFTCXX_THUNK(WebGPU::CommandEncoder, copyTextureToTexture, void, const WGPUImageCopyTexture&, const WGPUImageCopyTexture&, const WGPUExtent3D&);
 #endif
 
 
@@ -351,15 +352,18 @@ static std::pair<id<MTLRenderPipelineState>, id<MTLDepthStencilState>> createSim
 
     static id<MTLFunction> function = nil;
     NSError *error = nil;
-    if (!function) {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
         ALLOW_DEPRECATED_DECLARATIONS_END
-        id<MTLLibrary> library = [device newLibraryWithSource:@"[[vertex]] float4 vs() { return (float4)0; }" options:options error:&error];
-        ASSERT_UNUSED(error, !error);
-        function = [library newFunctionWithName:@"vs"];
-    }
+        id<MTLLibrary> library = [device newLibraryWithSource:@"[[vertex]] float4 vsNop() { return (float4)0; }" options:options error:&error];
+        if (error)
+            WTFLogAlways("%@", error); // NOLINT
+        function = [library newFunctionWithName:@"vsNop"];
+    });
+    RELEASE_ASSERT(function);
 
     mtlRenderPipelineDescriptor.vertexFunction = function;
     mtlRenderPipelineDescriptor.fragmentFunction = nil;
@@ -1653,15 +1657,15 @@ static bool areCopyCompatible(WGPUTextureFormat format1, WGPUTextureFormat forma
     return Texture::removeSRGBSuffix(format1) == Texture::removeSRGBSuffix(format2);
 }
 
-static NSString* errorValidatingCopyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize, const CommandEncoder& commandEncoder)
+NSString* CommandEncoder::errorValidatingCopyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize) const
 {
 #define ERROR_STRING(x) [NSString stringWithFormat:@"GPUCommandEncoder.copyTextureToTexture: %@", x]
     Ref sourceTexture = fromAPI(source.texture);
-    if (!isValidToUseWith(sourceTexture, commandEncoder))
+    if (!isValidToUseWith(sourceTexture, *this))
         return ERROR_STRING(@"source texture is not valid to use with this GPUCommandEncoder");
 
     Ref destinationTexture = fromAPI(destination.texture);
-    if (!isValidToUseWith(destinationTexture, commandEncoder))
+    if (!isValidToUseWith(destinationTexture, *this))
         return ERROR_STRING(@"desintation texture is not valid to use with this GPUCommandEncoder");
 
     if (NSString* error = Texture::errorValidatingImageCopyTexture(source, copySize))
@@ -1731,6 +1735,7 @@ static NSString* errorValidatingCopyTextureToTexture(const WGPUImageCopyTexture&
     return nil;
 }
 
+#if !ENABLE(WEBGPU_SWIFT)
 void CommandEncoder::copyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize)
 {
     if (source.nextInChain || destination.nextInChain)
@@ -1743,7 +1748,7 @@ void CommandEncoder::copyTextureToTexture(const WGPUImageCopyTexture& source, co
         return;
     }
 
-    if (NSString* error = errorValidatingCopyTextureToTexture(source, destination, copySize, *this)) {
+    if (NSString* error = errorValidatingCopyTextureToTexture(source, destination, copySize)) {
         makeInvalid(error);
         return;
     }
@@ -1885,6 +1890,7 @@ void CommandEncoder::copyTextureToTexture(const WGPUImageCopyTexture& source, co
         return;
     }
 }
+#endif
 
 bool CommandEncoder::validateClearBuffer(const Buffer& buffer, uint64_t offset, uint64_t size)
 {
@@ -2007,7 +2013,7 @@ Ref<CommandBuffer> CommandEncoder::finish(const WGPUCommandBufferDescriptor& des
     }
 #endif
 
-    auto result = CommandBuffer::create(commandBuffer, m_device, m_sharedEvent, m_sharedEventSignalValue);
+    auto result = CommandBuffer::create(commandBuffer, m_device, m_sharedEvent, m_sharedEventSignalValue, *this);
     m_sharedEvent = nil;
     m_cachedCommandBuffer = result;
     m_cachedCommandBuffer->setBufferMapCount(m_bufferMapCount);

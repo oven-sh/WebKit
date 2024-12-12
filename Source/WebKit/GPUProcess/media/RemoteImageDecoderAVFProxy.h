@@ -46,7 +46,7 @@ class SharedBufferReference;
 namespace WebKit {
 class GPUConnectionToWebProcess;
 
-class RemoteImageDecoderAVFProxy : private IPC::MessageReceiver {
+class RemoteImageDecoderAVFProxy : public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteImageDecoderAVFProxy);
 public:
     explicit RemoteImageDecoderAVFProxy(GPUConnectionToWebProcess&);

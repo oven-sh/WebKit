@@ -623,6 +623,7 @@ macro ipintCatchCommon()
     subq cfr, t0, PL
 
     loadi [MC], t0
+    addp t1, t0
     # 1 << 4 == StackValueSize
     lshiftq 4, t0
     addq IPIntCalleeSaveSpaceStackAligned, t0
@@ -659,6 +660,82 @@ if WEBASSEMBLY and (ARM64 or ARM64E or X86_64)
     ipintReloadMemory()
     advanceMC(4)
     nextIPIntInstruction()
+else
+    break
+end
+
+global _ipint_table_catch_entry
+_ipint_table_catch_entry:
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64)
+    ipintCatchCommon()
+
+    # push arguments but no ref: sp in a2, call normal operation
+
+    move cfr, a1
+    move sp, a2
+    move PL, a3
+    operationCall(macro() cCall4(_ipint_extern_retrieve_and_clear_exception) end)
+
+    ipintReloadMemory()
+    advanceMC(4)
+    jmp _ipint_block
+else
+    break
+end
+
+global _ipint_table_catch_ref_entry
+_ipint_table_catch_ref_entry:
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64)
+    ipintCatchCommon()
+
+    # push both arguments and ref
+
+    move cfr, a1
+    move sp, a2
+    move PL, a3
+    operationCall(macro() cCall4(_ipint_extern_retrieve_clear_and_push_exception_and_arguments) end)
+
+    ipintReloadMemory()
+    advanceMC(4)
+    jmp _ipint_block
+else
+    break
+end
+
+global _ipint_table_catch_all_entry
+_ipint_table_catch_all_entry:
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64)
+    ipintCatchCommon()
+
+    # do nothing: 0 in sp for no arguments, call normal operation
+
+    move cfr, a1
+    move sp, a2
+    move PL, a3
+    operationCall(macro() cCall4(_ipint_extern_retrieve_and_clear_exception) end)
+
+    ipintReloadMemory()
+    advanceMC(4)
+    jmp _ipint_block
+else
+    break
+end
+
+global _ipint_table_catch_allref_entry
+_ipint_table_catch_allref_entry:
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64)
+    ipintCatchCommon()
+
+    # push only the ref
+
+    move cfr, a1
+    move sp, a2
+    move PL, a3
+    operationCall(macro() cCall4(_ipint_extern_retrieve_clear_and_push_exception) end)
+
+    ipintReloadMemory()
+    advanceMC(4)
+    jmp _ipint_block
 else
     break
 end

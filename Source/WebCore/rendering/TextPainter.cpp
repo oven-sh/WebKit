@@ -53,10 +53,10 @@ ShadowApplier::ShadowApplier(const RenderStyle& style, GraphicsContext& context,
         return;
     }
 
-    float shadowX = orientation == FontOrientation::Horizontal ? shadow->x().value() : shadow->y().value();
-    float shadowY = orientation == FontOrientation::Horizontal ? shadow->y().value() : -shadow->x().value();
-    FloatSize shadowOffset(shadowX, shadowY);
-    auto shadowRadius = shadow->radius();
+    auto shadowX = orientation == FontOrientation::Horizontal ? shadow->x().value : shadow->y().value;
+    auto shadowY = orientation == FontOrientation::Horizontal ? shadow->y().value : -shadow->x().value;
+    auto shadowOffset = FloatSize(shadowX, shadowY);
+    auto shadowRadius = shadow->radius().value;
     auto shadowColor = style.colorResolvingCurrentColor(shadow->color());
     if (colorFilter)
         colorFilter->transformColor(shadowColor);
@@ -72,12 +72,12 @@ ShadowApplier::ShadowApplier(const RenderStyle& style, GraphicsContext& context,
         context.clip(shadowRect);
 
         m_didSaveContext = true;
-        m_extraOffset = FloatSize(0, 2 * shadowRect.height() + std::max(0.0f, shadowOffset.height()) + shadowRadius.value());
+        m_extraOffset = FloatSize(0, 2 * shadowRect.height() + std::max(0.0f, shadowOffset.height()) + shadowRadius);
         shadowOffset -= m_extraOffset;
     }
 
     if (!m_avoidDrawingShadow)
-        context.setDropShadow({ shadowOffset, shadowRadius.value(), shadowColor });
+        context.setDropShadow({ shadowOffset, shadowRadius, shadowColor });
 }
 
 inline bool ShadowApplier::isLastShadowIteration()

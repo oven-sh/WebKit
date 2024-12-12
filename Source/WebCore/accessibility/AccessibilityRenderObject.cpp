@@ -2006,8 +2006,12 @@ AccessibilityObject* AccessibilityRenderObject::accessibilityHitTest(const IntPo
     if (!m_renderer || !m_renderer->hasLayer())
         return nullptr;
 
+    // Adjust point for the remoteFrameOffset
+    IntPoint adjustedPoint = point;
+    adjustedPoint.moveBy(-remoteFrameOffset());
+
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AccessibilityHitTest };
-    HitTestResult hitTestResult { point };
+    HitTestResult hitTestResult { adjustedPoint };
 
     dynamicDowncast<RenderLayerModelObject>(*m_renderer)->layer()->hitTest(hitType, hitTestResult);
     RefPtr node = hitTestResult.innerNode();
@@ -2136,7 +2140,7 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
         return AccessibilityRole::ImageMap;
     if (m_renderer->isImage()) {
         if (is<HTMLInputElement>(node))
-            return hasPopup() ? AccessibilityRole::PopUpButton : AccessibilityRole::Button;
+            return selfOrAncestorLinkHasPopup() ? AccessibilityRole::PopUpButton : AccessibilityRole::Button;
 
         if (auto* svgRoot = remoteSVGRootElement(Create)) {
             if (svgRoot->hasAccessibleContent())

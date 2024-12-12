@@ -33,8 +33,10 @@ async function run() {
     device.destroy();
     renderBundleEncoder.draw(0);
     renderBundleEncoder.finish();
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

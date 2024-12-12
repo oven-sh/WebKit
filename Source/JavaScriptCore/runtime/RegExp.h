@@ -118,6 +118,7 @@ public:
         return m_rareData->m_captureGroupNames[i];
     }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     template <typename Offsets>
     unsigned subpatternIdForGroupName(StringView groupName, const Offsets ovector) const
     {
@@ -131,6 +132,7 @@ public:
 
         return ovector[offsetVectorBaseForNamedCaptures() + it->value[0] - 1];
     }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     bool hasCode()
     {

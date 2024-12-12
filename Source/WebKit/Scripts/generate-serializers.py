@@ -269,11 +269,6 @@ class SerializedEnum(object):
             return 'isValidOptionSet'
         return 'isValidEnum'
 
-    def additional_template_parameter(self):
-        if self.is_option_set():
-            return ''
-        return ', void'
-
     def parameter(self):
         if self.is_option_set():
             return f'OptionSet<{self.namespace_and_name()}>'
@@ -700,7 +695,7 @@ def generate_header(serialized_types, serialized_enums, additional_forward_decla
             continue
         if enum.condition is not None:
             result.append(f'#if {enum.condition}')
-        result.append(f'template<> bool {enum.function_name()}<{enum.namespace_and_name() + enum.additional_template_parameter()}>({enum.parameter()});')
+        result.append(f'template<> bool {enum.function_name()}<{enum.namespace_and_name()}>({enum.parameter()});')
         if enum.condition is not None:
             result.append('#endif')
     result.append('')
@@ -1174,7 +1169,7 @@ def generate_impl(serialized_types, serialized_enums, headers, generating_webkit
         result.append('')
         if type.condition is not None:
             result.append(f'#if {type.condition}')
-        result.append(f'template<> bool {type.function_name_for_enum()}<IPC::{type.subclass_enum_name()}, void>(IPC::EncodedVariantIndex value)')
+        result.append(f'template<> bool {type.function_name_for_enum()}<IPC::{type.subclass_enum_name()}>(IPC::EncodedVariantIndex value)')
         result.append('{')
         result.append('IGNORE_WARNINGS_BEGIN("switch-unreachable")')
         result.append(f'    switch (static_cast<IPC::{type.subclass_enum_name()}>(value)) {{')
@@ -1195,12 +1190,10 @@ def generate_impl(serialized_types, serialized_enums, headers, generating_webkit
     for enum in serialized_enums:
         if enum.is_webkit_platform() != generating_webkit_platform_impl:
             continue
-        if enum.underlying_type == 'bool':
-            continue
         result.append('')
         if enum.condition is not None:
             result.append(f'#if {enum.condition}')
-        result.append(f'template<> bool {enum.function_name()}<{enum.namespace_and_name()}{enum.additional_template_parameter()}>({enum.parameter()} value)')
+        result.append(f'template<> bool {enum.function_name()}<{enum.namespace_and_name()}>({enum.parameter()} value)')
         result.append('{')
         if enum.is_option_set():
             result.append(f'    constexpr {enum.underlying_type} allValidBitsValue = 0')
@@ -1214,13 +1207,18 @@ def generate_impl(serialized_types, serialized_enums, headers, generating_webkit
             result.append('        | 0;')
             result.append('    return (value.toRaw() | allValidBitsValue) == allValidBitsValue;')
         else:
-            result.append(f'    switch (static_cast<{enum.namespace_and_name()}>(value)) {{')
-            for valid_value in enum.valid_values:
-                if valid_value.condition is not None:
-                    result.append(f'#if {valid_value.condition}')
-                result.append(f'    case {enum.namespace_and_name()}::{valid_value.name}:')
-                if valid_value.condition is not None:
-                    result.append('#endif')
+            if enum.underlying_type == 'bool':
+                result.append('    switch (static_cast<uint8_t>(value)) {')
+                result.append('    case 0:')
+                result.append('    case 1:')
+            else:
+                result.append(f'    switch (static_cast<{enum.namespace_and_name()}>(value)) {{')
+                for valid_value in enum.valid_values:
+                    if valid_value.condition is not None:
+                        result.append(f'#if {valid_value.condition}')
+                    result.append(f'    case {enum.namespace_and_name()}::{valid_value.name}:')
+                    if valid_value.condition is not None:
+                        result.append('#endif')
             result.append('        return true;')
             result.append('    default:')
             result.append('        return false;')

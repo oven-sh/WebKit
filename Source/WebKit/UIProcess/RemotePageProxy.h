@@ -84,6 +84,7 @@ public:
     RefPtr<WebPageProxy> protectedPage() const;
 
     void injectPageIntoNewProcess();
+    void removePageFromProcess();
     void processDidTerminate(WebProcessProxy&, ProcessTerminationReason);
 
     WebPageProxyMessageReceiverRegistration& messageReceiverRegistration() { return m_messageReceiverRegistration; }

@@ -950,7 +950,7 @@ public:
 
     struct RepaintRects {
         LayoutRect clippedOverflowRect; // Some rect (normally the visual overflow rect) mapped up to the repaint container, respecting clipping.
-        std::optional<LayoutRect> outlineBoundsRect; // A rect repsenting the extent of outlines and shadows, mapped to the repaint container, but not clipped.
+        std::optional<LayoutRect> outlineBoundsRect; // A rect representing the extent of outlines and shadows, mapped to the repaint container, but not clipped.
 
         RepaintRects(LayoutRect rect = { }, const std::optional<LayoutRect>& outlineBounds = { })
             : clippedOverflowRect(rect)

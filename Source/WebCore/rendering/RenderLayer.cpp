@@ -345,7 +345,6 @@ RenderLayer::RenderLayer(RenderLayerModelObject& renderer)
     , m_hasNotIsolatedCompositedBlendingDescendants(false)
     , m_hasNotIsolatedBlendingDescendants(false)
     , m_hasNotIsolatedBlendingDescendantsStatusDirty(false)
-    , m_repaintRectsValid(false)
     , m_renderer(renderer)
 {
     setIsNormalFlowOnly(shouldBeNormalFlowOnly());
@@ -1060,14 +1059,18 @@ uint32_t gVerifyPositionsCount = 0;
 uint32_t gVisitedPositionsCount = 0;
 #endif
 
-void RenderLayer::updateLayerPositionsAfterLayout(RenderElement::LayoutIdentifier layoutIdentifier, bool didFullRepaint, CanUseSimplifiedRepaintPass canUseSimplifiedRepaintPass)
+void RenderLayer::updateLayerPositionsAfterLayout(RenderElement::LayoutIdentifier layoutIdentifier, bool didFullRepaint, bool environmentChanged, CanUseSimplifiedRepaintPass canUseSimplifiedRepaintPass)
 {
-    auto updateLayerPositionFlags = [&](bool didFullRepaint) {
+    ASSERT(isRenderViewLayer());
+
+    auto updateLayerPositionFlags = [&](bool didFullRepaint, bool environmentChanged) {
         auto flags = flagsForUpdateLayerPositions(*this);
         if (didFullRepaint) {
             flags.remove(RenderLayer::CheckForRepaint);
             flags.add(RenderLayer::NeedsFullRepaintInBacking);
         }
+        if (environmentChanged)
+            flags.add(RenderLayer::EnvironmentChanged);
         return flags;
     };
 
@@ -1077,14 +1080,18 @@ void RenderLayer::updateLayerPositionsAfterLayout(RenderElement::LayoutIdentifie
     gVisitedPositionsCount = 0;
 #endif
 
-    LOG(Compositing, "RenderLayer %p updateLayerPositionsAfterLayout - before", this);
+    LOG_WITH_STREAM(Compositing, stream << "RenderLayer " << this << " updateLayerPositionsAfterLayout (environment changed " << environmentChanged << " - before");
 #if ENABLE(TREE_DEBUGGING)
     if (compositingLogEnabledRenderLayer())
         showLayerPositionTree(root());
 #endif
+
+    if (environmentChanged)
+        setSelfAndDescendantsNeedPositionUpdate();
+
     willUpdateLayerPositions();
 
-    recursiveUpdateLayerPositions(layoutIdentifier, updateLayerPositionFlags(didFullRepaint), canUseSimplifiedRepaintPass);
+    recursiveUpdateLayerPositions(layoutIdentifier, updateLayerPositionFlags(didFullRepaint, environmentChanged), canUseSimplifiedRepaintPass);
 
     LOG(Compositing, "RenderLayer %p updateLayerPositionsAfterLayout - after", this);
 #if ASSERT_ENABLED

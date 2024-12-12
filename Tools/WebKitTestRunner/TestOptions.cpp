@@ -129,6 +129,7 @@ const TestFeatures& TestOptions::defaults()
             { "NeedsStorageAccessFromFileURLsQuirk", false },
             { "PageVisibilityBasedProcessSuppressionEnabled", false },
             { "PeerConnectionVideoScalingAdaptationDisabled", true },
+            { "PerElementSpeakerSelectionEnabled", true },
             { "PDFJSViewerEnabled", false },
             { "PushAPIEnabled", true },
             { "RequiresUserGestureForAudioPlayback", false },

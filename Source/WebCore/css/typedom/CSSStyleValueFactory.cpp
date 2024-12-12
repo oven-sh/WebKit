@@ -30,8 +30,11 @@
 #include "config.h"
 #include "CSSStyleValueFactory.h"
 
+#include "CSSAppleColorFilterPropertyValue.h"
+#include "CSSBoxShadowPropertyValue.h"
 #include "CSSCalcValue.h"
 #include "CSSCustomPropertyValue.h"
+#include "CSSFilterPropertyValue.h"
 #include "CSSKeywordValue.h"
 #include "CSSNumericFactory.h"
 #include "CSSParser.h"
@@ -39,6 +42,7 @@
 #include "CSSPropertyParser.h"
 #include "CSSStyleImageValue.h"
 #include "CSSStyleValue.h"
+#include "CSSTextShadowPropertyValue.h"
 #include "CSSTokenizer.h"
 #include "CSSTransformListValue.h"
 #include "CSSTransformValue.h"
@@ -316,6 +320,42 @@ ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(const CSSValue&
         if (transformValue.hasException())
             return transformValue.releaseException();
         return Ref<CSSStyleValue> { transformValue.releaseReturnValue() };
+    } else if (RefPtr property = dynamicDowncast<CSSFilterPropertyValue>(cssValue)) {
+        return WTF::switchOn(property->filter(),
+            [&](CSS::Keyword::None) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return static_reference_cast<CSSStyleValue>(CSSKeywordValue::rectifyKeywordish(nameLiteral(CSSValueNone)));
+            },
+            [&](const auto&) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return CSSStyleValue::create(Ref(const_cast<CSSValue&>(cssValue)));
+            }
+        );
+    } else if (RefPtr property = dynamicDowncast<CSSAppleColorFilterPropertyValue>(cssValue)) {
+        return WTF::switchOn(property->filter(),
+            [&](CSS::Keyword::None) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return static_reference_cast<CSSStyleValue>(CSSKeywordValue::rectifyKeywordish(nameLiteral(CSSValueNone)));
+            },
+            [&](const auto&) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return CSSStyleValue::create(Ref(const_cast<CSSValue&>(cssValue)));
+            }
+        );
+    } else if (RefPtr property = dynamicDowncast<CSSBoxShadowPropertyValue>(cssValue)) {
+        return WTF::switchOn(property->shadow(),
+            [&](CSS::Keyword::None) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return static_reference_cast<CSSStyleValue>(CSSKeywordValue::rectifyKeywordish(nameLiteral(CSSValueNone)));
+            },
+            [&](const auto&) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return CSSStyleValue::create(Ref(const_cast<CSSValue&>(cssValue)));
+            }
+        );
+    } else if (RefPtr property = dynamicDowncast<CSSTextShadowPropertyValue>(cssValue)) {
+        return WTF::switchOn(property->shadow(),
+            [&](CSS::Keyword::None) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return static_reference_cast<CSSStyleValue>(CSSKeywordValue::rectifyKeywordish(nameLiteral(CSSValueNone)));
+            },
+            [&](const auto&) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return CSSStyleValue::create(Ref(const_cast<CSSValue&>(cssValue)));
+            }
+        );
     } else if (auto* valueList = dynamicDowncast<CSSValueList>(cssValue)) {
         // Reifying the first value in value list.
         // FIXME: Verify this is the expected behavior.

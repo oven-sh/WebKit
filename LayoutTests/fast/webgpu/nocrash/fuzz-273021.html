@@ -49,19 +49,27 @@ async function run() {
     })
     let texture = device.createTexture({ size: [], format: 'depth24plus-stencil8', usage: GPUTextureUsage.RENDER_ATTACHMENT });
     let textureView = texture.createView({ aspect: 'stencil-only' });
-    let renderPipeline = device.createRenderPipeline({
-        layout: 'auto',
-        vertex: { module: shaderModule },
-        depthStencil: { format: 'stencil8' }
-    });
-    let commandEncoder = device.createCommandEncoder()
-    let renderPass = commandEncoder.beginRenderPass({
-        colorAttachments: [],
-        depthStencilAttachment: { view: textureView, stencilLoadOp: 'clear', stencilStoreOp: 'discard' }
-    });
-    renderPass.setPipeline(renderPipeline);
-    renderPass.drawIndexed(0);
+    let renderPipeline;
+    try {
+        renderPipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: { module: shaderModule },
+            depthStencil: { format: 'stencil8' }
+        });
+    } catch {
+    }
+    if (renderPipeline) {
+        let commandEncoder = device.createCommandEncoder()
+        let renderPass = commandEncoder.beginRenderPass({
+            colorAttachments: [],
+            depthStencilAttachment: { view: textureView, stencilLoadOp: 'clear', stencilStoreOp: 'discard' }
+        });
+        renderPass.setPipeline(renderPipeline);
+        renderPass.drawIndexed(0);
+    }
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

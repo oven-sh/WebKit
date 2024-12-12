@@ -33,6 +33,7 @@
 #include "ReverbAccumulationBuffer.h"
 
 #include "VectorMath.h"
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #include <algorithm>
@@ -48,7 +49,7 @@ ReverbAccumulationBuffer::ReverbAccumulationBuffer(size_t length)
 {
 }
 
-void ReverbAccumulationBuffer::readAndClear(float* destination, size_t numberOfFrames)
+void ReverbAccumulationBuffer::readAndClear(std::span<float> destination, size_t numberOfFrames)
 {
     size_t bufferLength = m_buffer.size();
     bool isCopySafe = m_readIndex <= bufferLength && numberOfFrames <= bufferLength;
@@ -61,14 +62,14 @@ void ReverbAccumulationBuffer::readAndClear(float* destination, size_t numberOfF
     size_t numberOfFrames1 = std::min(numberOfFrames, framesAvailable);
     size_t numberOfFrames2 = numberOfFrames - numberOfFrames1;
 
-    float* source = m_buffer.data();
-    memcpy(destination, source + m_readIndex, sizeof(float) * numberOfFrames1);
-    memset(source + m_readIndex, 0, sizeof(float) * numberOfFrames1);
+    auto source = m_buffer.span();
+    memcpySpan(destination, source.subspan(m_readIndex).first(numberOfFrames1));
+    memsetSpan(source.subspan(m_readIndex, numberOfFrames1), 0);
 
     // Handle wrap-around if necessary
     if (numberOfFrames2 > 0) {
-        memcpy(destination + numberOfFrames1, source, sizeof(float) * numberOfFrames2);
-        memset(source, 0, sizeof(float) * numberOfFrames2);
+        memcpySpan(destination.subspan(numberOfFrames1), source.first(numberOfFrames2));
+        memsetSpan(source.first(numberOfFrames2), 0);
     }
 
     m_readIndex = (m_readIndex + numberOfFrames) % bufferLength;

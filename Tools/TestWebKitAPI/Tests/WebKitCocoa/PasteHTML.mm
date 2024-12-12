@@ -455,7 +455,7 @@ TEST(PasteHTML, ReadSelectionFromPasteboard)
 
 #endif // PLATFORM(MAC)
 
-#if ENABLE(DARK_MODE_CSS) && HAVE(OS_DARK_MODE_SUPPORT)
+#if ENABLE(DARK_MODE_CSS)
 
 TEST(PasteHTML, TransformColorsOfDarkContent)
 {
@@ -539,6 +539,6 @@ TEST(PasteHTML, TransformColorsDependsOnUsedInlineStyle)
     EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"rich.querySelector('li').style.color"], @"rgb(0, 0, 0)");
 }
 
-#endif // ENABLE(DARK_MODE_CSS) && HAVE(OS_DARK_MODE_SUPPORT)
+#endif // ENABLE(DARK_MODE_CSS)
 
 #endif // PLATFORM(COCOA)

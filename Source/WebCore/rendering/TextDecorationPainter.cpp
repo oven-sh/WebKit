@@ -247,8 +247,8 @@ void TextDecorationPainter::paintBackgroundDecorations(const RenderStyle& style,
             auto shadowExtent = shadow->paintingExtent();
             auto shadowRect = clipRect;
             shadowRect.inflate(shadowExtent);
-            auto shadowX = m_isHorizontal ? shadow->x().value() : shadow->y().value();
-            auto shadowY = m_isHorizontal ? shadow->y().value() : -shadow->x().value();
+            auto shadowX = m_isHorizontal ? shadow->x().value : shadow->y().value;
+            auto shadowY = m_isHorizontal ? shadow->y().value : -shadow->x().value;
             shadowRect.move(shadowX, shadowY);
             clipRect.unite(shadowRect);
             extraOffset = std::max(extraOffset, std::max(0.f, shadowY) + shadowExtent);
@@ -281,9 +281,9 @@ void TextDecorationPainter::paintBackgroundDecorations(const RenderStyle& style,
             if (m_shadowColorFilter)
                 m_shadowColorFilter->transformColor(shadowColor);
 
-            auto shadowX = m_isHorizontal ? shadow->x().value() : shadow->y().value();
-            auto shadowY = m_isHorizontal ? shadow->y().value() : -shadow->x().value();
-            m_context.setDropShadow({ { shadowX, shadowY - extraOffset }, shadow->radius().value(), shadowColor, ShadowRadiusMode::Default });
+            auto shadowX = m_isHorizontal ? shadow->x().value : shadow->y().value;
+            auto shadowY = m_isHorizontal ? shadow->y().value : -shadow->x().value;
+            m_context.setDropShadow({ { shadowX, shadowY - extraOffset }, shadow->radius().value, shadowColor, ShadowRadiusMode::Default });
             shadow = shadow->next();
         };
         applyShadowIfNeeded();

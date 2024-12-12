@@ -237,11 +237,12 @@ TextUtil::EnclosingGlyphBounds TextUtil::enclosingGlyphBounds(StringView textCon
         auto isRightToLeftInlineDirection = style.writingMode().isBidiRTL();
 
         auto firstGlyphData = fontCascade.glyphDataForCharacter(textContent[0], isRightToLeftInlineDirection);
-        auto firstGlyphOverflow = -(firstGlyphData.font ? *firstGlyphData.font : primaryFont).boundsForGlyph(firstGlyphData.glyph).x();
+        Ref fontForFirstGlyph = firstGlyphData.font ? *firstGlyphData.font : primaryFont;
+        auto firstGlyphOverflow = -fontForFirstGlyph->boundsForGlyph(firstGlyphData.glyph).x();
 
         auto lastGlyphData = fontCascade.glyphDataForCharacter(textContent[textContent.length() - 1], isRightToLeftInlineDirection);
-        auto& fontForLastGlyph = lastGlyphData.font ? *lastGlyphData.font : primaryFont;
-        auto lastGlyphOverflow = fontForLastGlyph.boundsForGlyph(lastGlyphData.glyph).maxX() - fontForLastGlyph.widthForGlyph(lastGlyphData.glyph);
+        Ref fontForLastGlyph = lastGlyphData.font ? *lastGlyphData.font : primaryFont;
+        auto lastGlyphOverflow = fontForLastGlyph->boundsForGlyph(lastGlyphData.glyph).maxX() - fontForLastGlyph->widthForGlyph(lastGlyphData.glyph);
 #if PLATFORM(IOS_FAMILY)
         // FIXME: Find out why we get false subpixel overflow values on iOS.
         firstGlyphOverflow -= 0.1f;

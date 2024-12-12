@@ -71,8 +71,10 @@ public:
     void reportDisconnection(Error);
     bool isDisconnected() const;
 
+#if PLATFORM(COCOA)
     void sendMessage(id message, CompletionHandler<void(Error)>&& = { });
     void receiveMessage(id message, Error);
+#endif
 
 #ifdef __OBJC__
     WKWebExtensionMessagePort *wrapper() const { return (WKWebExtensionMessagePort *)API::ObjectImpl<API::Object::Type::WebExtensionMessagePort>::wrapper(); }

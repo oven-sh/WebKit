@@ -65,10 +65,8 @@ public:
         RightToLeft
     };
 
-#if PLATFORM(COCOA)
     // Returns the default writing direction for the specified locale.
-    virtual WritingDirection defaultWritingDirection() const = 0;
-#endif
+    virtual WritingDirection defaultWritingDirection() const;
 
 #if ENABLE(DATE_AND_TIME_INPUT_TYPES)
     // Returns date format in Unicode TR35 LDML[1] containing day of month,

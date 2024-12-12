@@ -262,6 +262,8 @@ public:
 
     FieldSizing fieldSizing { FieldSizing::Fixed };
 
+    unsigned nativeAppearanceDisabled : 1;
+
 private:
     StyleRareNonInheritedData();
     StyleRareNonInheritedData(const StyleRareNonInheritedData&);

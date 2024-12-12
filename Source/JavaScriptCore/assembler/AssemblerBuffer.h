@@ -439,9 +439,11 @@ namespace JSC {
             template<typename IntegralType>
             void putIntegralUnchecked(IntegralType value)
             {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
                 ASSERT(m_index + sizeof(IntegralType) <= m_buffer.m_storage.capacity());
                 WTF::unalignedStore<IntegralType>(m_storageBuffer + m_index, value);
                 m_index += sizeof(IntegralType);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             }
             AssemblerBuffer& m_buffer;
             char* m_storageBuffer;
@@ -474,6 +476,7 @@ namespace JSC {
         template<typename IntegralType>
         void putIntegralUnchecked(IntegralType value)
         {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if CPU(ARM64)
             static_assert(sizeof(value) == 4);
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
@@ -484,6 +487,7 @@ namespace JSC {
             ASSERT(isAvailable(sizeof(IntegralType)));
             WTF::unalignedStore<IntegralType>(m_storage.buffer() + m_index, value);
             m_index += sizeof(IntegralType);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
 
     private:

@@ -82,6 +82,7 @@ public:
 
         virtual void startMonitoringCaptureDeviceRotation(WebCore::PageIdentifier, const String&) { }
         virtual void stopMonitoringCaptureDeviceRotation(WebCore::PageIdentifier, const String&) { }
+        virtual std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const = 0;
     };
     static Ref<UserMediaCaptureManagerProxy> create(UniqueRef<ConnectionProxy>&&);
     ~UserMediaCaptureManagerProxy();
@@ -99,6 +100,8 @@ public:
     bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
     bool hasSourceProxies() const;
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 private:
     explicit UserMediaCaptureManagerProxy(UniqueRef<ConnectionProxy>&&);

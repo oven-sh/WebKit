@@ -30,7 +30,7 @@ namespace WebCore {
 class GraphicsContext;
 class FloatRoundedRect;
 
-enum class ShadowStyle : uint8_t;
+enum class ShadowStyle : bool;
 
 class FloatRoundedRect;
 

@@ -28,6 +28,7 @@
 #include "PushPullFIFO.h"
 
 #include "AudioBus.h"
+#include <wtf/StdLibExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -92,24 +93,24 @@ size_t PushPullFIFO::pull(AudioBus* outputBus, size_t framesRequested)
     const size_t framesToFill = std::min(m_framesAvailable, framesRequested);
 
     for (unsigned i = 0; i < m_fifoBus->numberOfChannels(); ++i) {
-        const float* fifoBusChannel = m_fifoBus->channel(i)->data();
-        float* outputBusChannel = outputBus->channel(i)->mutableData();
+        auto fifoBusChannel = m_fifoBus->channel(i)->span();
+        auto outputBusChannel = outputBus->channel(i)->mutableSpan();
 
         // Fill up the output bus with the available frames first.
         if (remainder >= framesToFill) {
             // The remainder is big enough for the frames to pull.
-            memcpy(outputBusChannel, fifoBusChannel + m_indexRead, framesToFill * sizeof(*fifoBusChannel));
+            memcpySpan(outputBusChannel, fifoBusChannel.subspan(m_indexRead, framesToFill));
         } else {
             // The frames to pull is bigger than the remainder size.
             // Wrap around the index.
-            memcpy(outputBusChannel, fifoBusChannel + m_indexRead, remainder * sizeof(*fifoBusChannel));
-            memcpy(outputBusChannel + remainder, fifoBusChannel, (framesToFill - remainder) * sizeof(*fifoBusChannel));
+            memcpySpan(outputBusChannel, fifoBusChannel.subspan(m_indexRead, remainder));
+            memcpySpan(outputBusChannel.subspan(remainder), fifoBusChannel.first(framesToFill - remainder));
         }
 
         // The frames available was not enough to fulfill the requested frames. Fill
         // the rest of the channel with silence.
         if (framesRequested > framesToFill)
-            memset(outputBusChannel + framesToFill, 0, (framesRequested - framesToFill) * sizeof(*outputBusChannel));
+            memsetSpan(outputBusChannel.subspan(framesToFill, framesRequested - framesToFill), 0);
     }
 
     // Update the read index; wrap it around if necessary.

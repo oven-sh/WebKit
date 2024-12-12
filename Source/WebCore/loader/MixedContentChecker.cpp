@@ -71,13 +71,15 @@ static bool foundMixedContentInFrameTree(const LocalFrame& frame, const URL& url
         if (!frame || frame->isMainFrame())
             break;
 
-        RefPtr abstractParentFrame = frame->tree().parent();
-        RELEASE_ASSERT_WITH_MESSAGE(abstractParentFrame, "Should never have a parentless non main frame");
-        if (auto* parentFrame = dynamicDowncast<LocalFrame>(abstractParentFrame.get()))
-            document = parentFrame->document();
+        RefPtr parentFrame = frame->tree().parent();
+        if (!parentFrame)
+            break;
+
+        if (RefPtr localParentFrame = dynamicDowncast<LocalFrame>(parentFrame.get()))
+            document = localParentFrame->document();
         else {
             // FIXME: <rdar://116259764> Make mixed content checks work correctly with site isolated iframes.
-            document = nullptr;
+            break;
         }
     }
 

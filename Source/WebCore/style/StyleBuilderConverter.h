@@ -170,6 +170,7 @@ public:
     static std::optional<float> convertPerspective(const BuilderState&, const CSSValue&);
     static std::optional<WebCore::Length> convertMarqueeIncrement(const BuilderState&, const CSSValue&);
     static FilterOperations convertFilterOperations(const BuilderState&, const CSSValue&);
+    static FilterOperations convertAppleColorFilterOperations(const BuilderState&, const CSSValue&);
     static ListStyleType convertListStyleType(const BuilderState&, const CSSValue&);
 #if PLATFORM(IOS_FAMILY)
     static bool convertTouchCallout(const BuilderState&, const CSSValue&);
@@ -1529,6 +1530,11 @@ inline std::optional<WebCore::Length> BuilderConverter::convertMarqueeIncrement(
 inline FilterOperations BuilderConverter::convertFilterOperations(const BuilderState& builderState, const CSSValue& value)
 {
     return builderState.createFilterOperations(value);
+}
+
+inline FilterOperations BuilderConverter::convertAppleColorFilterOperations(const BuilderState& builderState, const CSSValue& value)
+{
+    return builderState.createAppleColorFilterOperations(value);
 }
 
 // The input value needs to parsed and valid, this function returns std::nullopt if the input was "normal".

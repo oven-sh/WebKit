@@ -38,7 +38,9 @@
 #include "CSSMarkup.h"
 #include "CSSParser.h"
 #include "CSSPropertyNames.h"
+#include "CSSPropertyParserConsumer+Length.h"
 #include "CSSStyleImageValue.h"
+#include "CSSTokenizer.h"
 #include "CachedImage.h"
 #include "CanvasFilterContextSwitcher.h"
 #include "CanvasGradient.h"
@@ -331,6 +333,8 @@ CanvasRenderingContext2DBase::State::State()
     , textBaseline(AlphabeticTextBaseline)
     , direction(Direction::Inherit)
     , filterString("none"_s)
+    , letterSpacing("0px"_s)
+    , wordSpacing("0px"_s)
     , unparsedFont(DefaultFont)
 {
 }
@@ -345,7 +349,13 @@ String CanvasRenderingContext2DBase::State::fontString() const
 
     auto italic = font.italic() ? "italic "_s : ""_s;
     auto smallCaps = font.variantCaps() == FontVariantCaps::Small ? "small-caps "_s : ""_s;
-    serializedFont.append(italic, smallCaps, font.computedSize(), "px"_s);
+    serializedFont.append(italic, smallCaps);
+    auto weight = static_cast<int>(font.weight());
+    if (weight == boldWeightValue())
+        serializedFont.append("bold "_s);
+    else if (weight != normalWeightValue())
+        serializedFont.append(weight, " "_s);
+    serializedFont.append(font.computedSize(), "px"_s);
 
     for (unsigned i = 0; i < font.familyCount(); ++i) {
         StringView family = font.familyAt(i);
@@ -2429,17 +2439,9 @@ bool CanvasRenderingContext2DBase::needsPreparationForDisplay() const
     return false;
 }
 
-static void initializeEmptyImageData(const ImageData& imageData)
-{
-    imageData.data().zeroFill();
-}
-
 ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::createImageData(ImageData& existingImageData) const
 {
-    auto newImageData = ImageData::createUninitialized(existingImageData.width(), existingImageData.height(), existingImageData.colorSpace());
-    if (!newImageData.hasException())
-        initializeEmptyImageData(newImageData.returnValue());
-    return newImageData;
+    return ImageData::create(existingImageData.width(), existingImageData.height(), existingImageData.colorSpace());
 }
 
 ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::createImageData(int sw, int sh, std::optional<ImageDataSettings> settings) const
@@ -2447,10 +2449,7 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::createImageData(int sw
     if (!sw || !sh)
         return Exception { ExceptionCode::IndexSizeError };
 
-    auto imageData = ImageData::createUninitialized(std::abs(sw), std::abs(sh), m_settings.colorSpace, settings);
-    if (!imageData.hasException())
-        initializeEmptyImageData(imageData.returnValue());
-    return imageData;
+    return ImageData::create(std::abs(sw), std::abs(sh), m_settings.colorSpace, settings);
 }
 
 void CanvasRenderingContext2DBase::evictCachedImageData()
@@ -2495,7 +2494,7 @@ RefPtr<ByteArrayPixelBuffer> CanvasRenderingContext2DBase::cacheImageDataIfPossi
     ConstPixelBufferConversionView source {
         .format = { AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA8, colorSpace },
         .bytesPerRow = bytesPerRow,
-        .rows = imageData.data().data(),
+        .rows = imageData.data().asUint8ClampedArray()->data(),
     };
     PixelBufferConversionView destination {
         .format = cachedFormat,
@@ -2509,12 +2508,8 @@ RefPtr<ByteArrayPixelBuffer> CanvasRenderingContext2DBase::cacheImageDataIfPossi
 
 RefPtr<ImageData> CanvasRenderingContext2DBase::makeImageDataIfContentsCached(const IntRect& sourceRect, PredefinedColorSpace colorSpace) const
 {
-    if (std::holds_alternative<CachedContentsTransparent>(m_cachedContents)) {
-        auto imageData = ImageData::create(sourceRect.size(), colorSpace);
-        if (imageData)
-            imageData->data().zeroFill();
-        return imageData;
-    }
+    if (std::holds_alternative<CachedContentsTransparent>(m_cachedContents))
+        return ImageData::create(sourceRect.size(), colorSpace);
     if (std::holds_alternative<CachedContentsUnknown>(m_cachedContents))
         return nullptr;
     static_assert(std::variant_size_v<decltype(m_cachedContents)> == 3); // Written this way to avoid dangling references during visit.
@@ -2590,12 +2585,8 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
         return imageData.releaseNonNull();
 
     RefPtr<ImageBuffer> buffer = canvasBase().makeRenderingResultsAvailable();
-    if (!buffer) {
-        auto imageData = ImageData::createUninitialized(imageDataRect.width(), imageDataRect.height(), m_settings.colorSpace, settings);
-        if (!imageData.hasException())
-            initializeEmptyImageData(imageData.returnValue());
-        return imageData;
-    }
+    if (!buffer)
+        return ImageData::create(imageDataRect.width(), imageDataRect.height(), m_settings.colorSpace, settings);
 
     PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA8, toDestinationColorSpace(computedColorSpace) };
     RefPtr pixelBuffer = dynamicDowncast<ByteArrayPixelBuffer>(buffer->getPixelBuffer(format, imageDataRect));
@@ -3031,21 +3022,17 @@ bool CanvasRenderingContext2DBase::willReadFrequently() const
     return m_settings.willReadFrequently;
 }
 
-OptionSet<ImageBufferOptions> CanvasRenderingContext2DBase::adjustImageBufferOptionsForTesting(OptionSet<ImageBufferOptions> bufferOptions)
+std::optional<RenderingMode> CanvasRenderingContext2DBase::renderingModeForTesting() const
 {
     if (!m_settings.renderingModeForTesting)
-        return bufferOptions;
+        return std::nullopt;
     switch (*m_settings.renderingModeForTesting) {
     case CanvasRenderingContext2DSettings::RenderingMode::Unaccelerated:
-        bufferOptions.remove(ImageBufferOptions::Accelerated);
-        bufferOptions.add(ImageBufferOptions::AvoidBackendSizeCheckForTesting);
-        break;
+        return RenderingMode::Unaccelerated;
     case CanvasRenderingContext2DSettings::RenderingMode::Accelerated:
-        bufferOptions.add(ImageBufferOptions::Accelerated);
-        bufferOptions.add(ImageBufferOptions::AvoidBackendSizeCheckForTesting);
-        break;
+        return RenderingMode::Accelerated;
     }
-    return bufferOptions;
+    return std::nullopt;
 }
 
 std::optional<CanvasRenderingContext2DBase::RenderingMode> CanvasRenderingContext2DBase::getEffectiveRenderingModeForTesting()
@@ -3056,6 +3043,40 @@ std::optional<CanvasRenderingContext2DBase::RenderingMode> CanvasRenderingContex
             return buffer->renderingMode();
     }
     return std::nullopt;
+}
+
+void CanvasRenderingContext2DBase::setLetterSpacing(const String& letterSpacing)
+{
+    if (state().letterSpacing == letterSpacing)
+        return;
+    realizeSaves();
+    CSSTokenizer tokenizer(letterSpacing);
+    auto tokenRange = tokenizer.tokenRange();
+    tokenRange.consumeWhitespace();
+    RefPtr parsedValue = CSSPropertyParserHelpers::consumeLength(tokenRange, HTMLStandardMode);
+    if (!parsedValue)
+        return;
+    modifiableState().letterSpacing = parsedValue->cssText();
+    auto& fontCascade = fontProxy()->fontCascade();
+    double pixels = CSSPrimitiveValue::computeUnzoomedNonCalcLengthDouble(parsedValue->primitiveType(), parsedValue->valueNoConversionDataRequired(), CSSPropertyLetterSpacing, &fontCascade);
+    modifiableState().font.setLetterSpacing(Length(pixels, LengthType::Fixed));
+}
+
+void CanvasRenderingContext2DBase::setWordSpacing(const String& wordSpacing)
+{
+    if (state().wordSpacing == wordSpacing)
+        return;
+    realizeSaves();
+    CSSTokenizer tokenizer(wordSpacing);
+    auto tokenRange = tokenizer.tokenRange();
+    tokenRange.consumeWhitespace();
+    RefPtr parsedValue = CSSPropertyParserHelpers::consumeLength(tokenRange, HTMLStandardMode);
+    if (!parsedValue)
+        return;
+    modifiableState().wordSpacing = parsedValue->cssText();
+    auto& fontCascade = fontProxy()->fontCascade();
+    double pixels = CSSPrimitiveValue::computeUnzoomedNonCalcLengthDouble(parsedValue->primitiveType(), parsedValue->valueNoConversionDataRequired(), CSSPropertyWordSpacing, &fontCascade);
+    modifiableState().font.setWordSpacing(Length(pixels, LengthType::Fixed));
 }
 
 } // namespace WebCore

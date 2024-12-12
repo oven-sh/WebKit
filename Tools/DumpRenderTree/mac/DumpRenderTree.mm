@@ -873,11 +873,13 @@ static void setWebPreferencesForTestOptions(WebPreferences *preferences, const W
         if (enableAllExperimentalFeatures) {
             for (WebFeature *feature in [WebPreferences _experimentalFeatures]) {
                 // FIXME: ShowModalDialogEnabled and NeedsSiteSpecificQuirks are `developer` settings which should not be enabled by default, but are currently lumped in with the other user-visible features. rdar://103648153
-                // FIXME: BeaconAPIEnabled and LocalFileContentSniffingEnabled These are `stable` settings but should be turned off in WebKitLegacy.
+                // FIXME: BeaconAPIEnabled, LocalFileContentSniffingEnabled, and DeclarativeWebPush.
+                //        These are `stable` settings but should be turned off in WebKitLegacy.
                 if (![feature.key isEqualToString:@"ShowModalDialogEnabled"]
                     && ![feature.key isEqualToString:@"NeedsSiteSpecificQuirks"]
                     && ![feature.key isEqualToString:@"BeaconAPIEnabled"]
-                    && ![feature.key isEqualToString:@"LocalFileContentSniffingEnabled"]) {
+                    && ![feature.key isEqualToString:@"LocalFileContentSniffingEnabled"]
+                    && ![feature.key isEqualToString:@"DeclarativeWebPush"]) {
                     [preferences _setEnabled:YES forFeature:feature];
                 }
             }

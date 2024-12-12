@@ -784,6 +784,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
     case AXPropertyName::HasLinethrough:
         stream << "HasLinethrough";
         break;
+    case AXPropertyName::HasMarkTag:
+        stream << "HasMarkTag";
+        break;
     case AXPropertyName::HasPlainText:
         stream << "HasPlainText";
         break;

@@ -66,7 +66,7 @@ public:
         explicit operator bool() const { return newFontSize || newLineHeight || newStatus; }
     };
     static AdjustmentForTextAutosizing adjustmentForTextAutosizing(const RenderStyle&, const Element&);
-    static bool adjustForTextAutosizing(RenderStyle&, const Element&, AdjustmentForTextAutosizing);
+    static bool adjustForTextAutosizing(RenderStyle&, AdjustmentForTextAutosizing);
     static bool adjustForTextAutosizing(RenderStyle&, const Element&);
 #endif
 

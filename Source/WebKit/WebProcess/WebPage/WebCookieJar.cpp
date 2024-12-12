@@ -404,14 +404,40 @@ void WebCookieJar::setCookieAsync(WebCore::Document& document, const URL& url, c
 }
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
-void WebCookieJar::addChangeListener(const String& host, const WebCore::CookieChangeListener& listener)
+void WebCookieJar::addChangeListenerWithAccess(const URL& url, const URL& firstParty, WebCore::FrameIdentifier frameID, WebCore::PageIdentifier pageID, WebCore::ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, const WebCore::CookieChangeListener& listener)
 {
-    auto& listenersForHost = m_changeListeners.add(host, WeakHashSet<CookieChangeListener> { }).iterator->value;
-    auto addResult = listenersForHost.add(listener);
-    if (listenersForHost.computeSize() > 1 || !addResult.isNewEntry)
+    auto host = url.host().toString();
+
+    if (auto iter = m_changeListeners.find(host); iter != m_changeListeners.end()) {
+        if (iter->value.contains(listener))
+            return;
+    }
+
+    auto completionHandler = [protectedThis = Ref { *this }, this, host, listener = WeakPtr { listener }] (bool listenerAdded)  {
+        if (!listenerAdded)
+            return;
+
+        if (!listener)
+            return;
+
+        auto& listenersForHost = m_changeListeners.add(host, WeakHashSet<CookieChangeListener> { }).iterator->value;
+        listenersForHost.add(*listener);
+    };
+
+    WebProcess::singleton().ensureNetworkProcessConnection().protectedConnection()->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::SubscribeToCookieChangeNotifications(url, firstParty, frameID, pageID, shouldRelaxThirdPartyCookieBlocking), WTFMove(completionHandler), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
+}
+
+void WebCookieJar::addChangeListener(const WebCore::Document& document, const WebCore::CookieChangeListener& listener)
+{
+    RefPtr webFrame = document.frame() ? WebFrame::fromCoreFrame(*document.protectedFrame()) : nullptr;
+    if (!webFrame || !webFrame->page())
         return;
 
-    WebProcess::singleton().ensureNetworkProcessConnection().protectedConnection()->send(Messages::NetworkConnectionToWebProcess::SubscribeToCookieChangeNotifications(host), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
+    ApplyTrackingPrevention applyTrackingPreventionInNetworkProcess = ApplyTrackingPrevention::No;
+    if (shouldBlockCookies(webFrame.get(), document.firstPartyForCookies(), document.cookieURL(), applyTrackingPreventionInNetworkProcess))
+        return;
+
+    addChangeListenerWithAccess(document.url(), document.firstPartyForCookies(), webFrame->frameID(), webFrame->page()->identifier(), shouldRelaxThirdPartyCookieBlocking(webFrame.get()), listener);
 }
 
 void WebCookieJar::removeChangeListener(const String& host, const WebCore::CookieChangeListener& listener)

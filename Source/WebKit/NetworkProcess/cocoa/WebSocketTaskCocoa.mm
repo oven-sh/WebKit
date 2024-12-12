@@ -70,7 +70,9 @@ WebSocketTask::WebSocketTask(NetworkSocketChannel& channel, WebPageProxyIdentifi
     readNextMessage();
     protectedChannel()->didSendHandshakeRequest(ResourceRequest { [m_task currentRequest] });
 
+#if HAVE(ALLOW_ONLY_PARTITIONED_COOKIES)
     updateTaskWithStoragePartitionIdentifier(request);
+#endif
 }
 
 WebSocketTask::~WebSocketTask() = default;

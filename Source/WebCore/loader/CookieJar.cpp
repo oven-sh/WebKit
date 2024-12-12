@@ -227,7 +227,7 @@ Ref<StorageSessionProvider> CookieJar::protectedStorageSessionProvider() const
 }
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
-void CookieJar::addChangeListener(const String&, const CookieChangeListener&)
+void CookieJar::addChangeListener(const WebCore::Document&, const CookieChangeListener&)
 {
 }
 

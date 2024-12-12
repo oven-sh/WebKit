@@ -520,6 +520,10 @@ template<class... Ts> ALWAYS_INLINE constexpr const std::variant<Ts...>&& asVari
     return std::move(v);
 }
 
+template<typename T> concept HasSwitchOn = requires(T t) {
+    t.switchOn([](const auto&) {});
+};
+
 #ifdef _LIBCPP_VERSION
 
 // Single-variant switch-based visit function adapted from https://www.reddit.com/r/cpp/comments/kst2pu/comment/giilcxv/.
@@ -587,19 +591,24 @@ template<size_t I = 0, class F, class V> ALWAYS_INLINE decltype(auto) visitOneVa
 #undef WTF_VISIT_CASE
 }
 
-template<class V, class... F> ALWAYS_INLINE auto switchOn(V&& v, F&&... f) -> decltype(visitOneVariant(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
+template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(V&& v, F&&... f) -> decltype(visitOneVariant(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
 {
     return visitOneVariant(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v)));
 }
 
 #else
 
-template<class V, class... F> ALWAYS_INLINE auto switchOn(V&& v, F&&... f) -> decltype(std::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
+template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(V&& v, F&&... f) -> decltype(std::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
 {
     return std::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v)));
 }
 
 #endif
+
+template<class V, class... F> requires (HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(const V& v, F&&... f) -> decltype(v.switchOn(std::forward<F>(f)...))
+{
+    return v.switchOn(std::forward<F>(f)...);
+}
 
 namespace detail {
 
@@ -937,6 +946,17 @@ void memsetSpan(std::span<T, Extent> destination, uint8_t byte)
     memset(destination.data(), byte, destination.size_bytes());
 }
 
+template<typename T, std::size_t Extent>
+void secureMemsetSpan(std::span<T, Extent> destination, uint8_t byte)
+{
+    static_assert(std::is_trivially_copyable_v<T>);
+#ifdef __STDC_LIB_EXT1__
+    memset_s(destination.data(), byte, destination.size_bytes());
+#else
+    memset(destination.data(), byte, destination.size_bytes());
+#endif
+}
+
 template<typename T> concept ByteType = sizeof(T) == 1 && ((std::is_integral_v<T> && !std::same_as<T, bool>) || std::same_as<T, std::byte>) && !std::is_const_v<T>;
 
 template<typename> struct ByteCastTraits;
@@ -1209,6 +1229,7 @@ using WTF::roundUpToMultipleOf;
 using WTF::roundUpToMultipleOfNonPowerOfTwo;
 using WTF::roundDownToMultipleOf;
 using WTF::safeCast;
+using WTF::secureMemsetSpan;
 using WTF::singleElementSpan;
 using WTF::spanConstCast;
 using WTF::spanReinterpretCast;

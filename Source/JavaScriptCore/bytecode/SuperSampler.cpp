@@ -29,6 +29,7 @@
 #include "Options.h"
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
+#include <wtf/Seconds.h>
 #include <wtf/Threading.h>
 
 namespace JSC {

@@ -56,7 +56,7 @@ extension WebPage_v0 {
         public var supportsAdaptiveImageGlyph: Bool = false
 
 #if os(iOS)
-        public var dataDetectorTypes: WKDataDetectorTypes = .none
+        public var dataDetectorTypes: WKDataDetectorTypes = []
 
         public var ignoresViewportScaleLimits: Bool = false
 #endif
@@ -88,7 +88,7 @@ extension WKWebViewConfiguration {
 #endif
 
         for (scheme, handler) in wrapped.urlSchemeHandlers {
-            let handlerAdapter = WKURLSchemeHandlerAdapter(wrapping: handler)
+            let handlerAdapter = WKURLSchemeHandlerAdapter(handler)
             self.setURLSchemeHandler(handlerAdapter, forURLScheme: scheme.rawValue)
         }
     }

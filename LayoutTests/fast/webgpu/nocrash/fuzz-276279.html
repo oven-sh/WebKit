@@ -109,7 +109,9 @@ async function run() {
     renderBundleEncoder.finish();
     let renderBundle = renderBundleEncoder.finish();
     renderPassEncoder.executeBundles([renderBundle]);
+    await device.queue.onSubmittedWorkDone();
+    globalThis.testRunner?.notifyDone();
 }
 globalThis.testRunner?.waitUntilDone();
-run().finally(() => globalThis.testRunner?.notifyDone());
+run();
 </script>

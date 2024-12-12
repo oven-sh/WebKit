@@ -33,13 +33,12 @@
 #include "PlatformDisplay.h"
 #include <skia/core/SkData.h>
 #include <skia/core/SkImage.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib/Win ports
 #include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/SkImageGanesh.h>
 #include <skia/private/chromium/SkImageChromium.h>
-
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
 #include <skia/core/SkPixmap.h>
-IGNORE_CLANG_WARNINGS_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 

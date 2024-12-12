@@ -162,6 +162,87 @@ static inline Wasm::JITCallee* jitCompileAndSetHeuristics(Wasm::IPIntCallee* cal
     return getReplacement();
 }
 
+static inline Expected<Wasm::JITCallee*, Wasm::Plan::Error> jitCompileSIMDFunction(Wasm::IPIntCallee* callee, JSWebAssemblyInstance* instance)
+{
+    Wasm::IPIntTierUpCounter& tierUpCounter = callee->tierUpCounter();
+
+    MemoryMode memoryMode = instance->memory()->mode();
+    Wasm::CalleeGroup& calleeGroup = *instance->calleeGroup();
+    {
+        Locker locker { calleeGroup.m_lock };
+        if (auto* replacement = calleeGroup.replacement(locker, callee->index()))  {
+            dataLogLnIf(Options::verboseOSR(), "\tSIMD code was already compiled.");
+            return replacement;
+        }
+    }
+
+    bool compile = false;
+    while (!compile) {
+        Locker locker { tierUpCounter.m_lock };
+        switch (tierUpCounter.compilationStatus(memoryMode)) {
+        case Wasm::IPIntTierUpCounter::CompilationStatus::NotCompiled:
+            compile = true;
+            tierUpCounter.setCompilationStatus(memoryMode, Wasm::IPIntTierUpCounter::CompilationStatus::Compiling);
+            break;
+        case Wasm::IPIntTierUpCounter::CompilationStatus::Compiling:
+            Thread::yield();
+            continue;
+        case Wasm::IPIntTierUpCounter::CompilationStatus::Compiled: {
+            // We can't hold a tierUpCounter lock while holding the calleeGroup lock since calleeGroup could reset our counter while releasing BBQ code.
+            // Besides we're outside the critical section.
+            locker.unlockEarly();
+            {
+                Locker locker { calleeGroup.m_lock };
+                auto* replacement = calleeGroup.replacement(locker, callee->index());
+                RELEASE_ASSERT(replacement);
+                return replacement;
+            }
+        }
+        }
+    }
+
+    Wasm::FunctionCodeIndex functionIndex = callee->functionIndex();
+    ASSERT(instance->module().moduleInformation().usesSIMD(functionIndex));
+    auto plan = Wasm::BBQPlan::create(instance->vm(), const_cast<Wasm::ModuleInformation&>(instance->module().moduleInformation()), functionIndex, callee->hasExceptionHandlers(), Ref(*instance->calleeGroup()), Wasm::Plan::dontFinalize());
+    Wasm::ensureWorklist().enqueue(plan.get());
+    plan->waitForCompletion();
+    if (plan->failed())
+        return makeUnexpected(plan->error());
+
+    {
+        Locker locker { tierUpCounter.m_lock };
+        RELEASE_ASSERT(tierUpCounter.compilationStatus(memoryMode) == Wasm::IPIntTierUpCounter::CompilationStatus::Compiled);
+    }
+
+    Locker locker { calleeGroup.m_lock };
+    auto* replacement = calleeGroup.replacement(locker, callee->index());
+    RELEASE_ASSERT(replacement);
+    return replacement;
+}
+
+WASM_IPINT_EXTERN_CPP_DECL(simd_go_straight_to_bbq, CallFrame* cfr)
+{
+    auto* callee = IPINT_CALLEE(cfr);
+
+    if (!Options::useWasmSIMD())
+        RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_ASSERT(shouldJIT(callee));
+
+    dataLogLnIf(Options::verboseOSR(), *callee, ": Entered simd_go_straight_to_bbq_osr with tierUpCounter = ", callee->tierUpCounter());
+
+    auto result = jitCompileSIMDFunction(callee, instance);
+    if (LIKELY(result.has_value()))
+        WASM_RETURN_TWO(result.value()->entrypoint().taggedPtr(), nullptr);
+
+    switch (result.error()) {
+    case Wasm::Plan::Error::OutOfMemory:
+        IPINT_THROW(Wasm::ExceptionType::OutOfMemory);
+    default:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 WASM_IPINT_EXTERN_CPP_DECL(prologue_osr, CallFrame* callFrame)
 {
     Wasm::IPIntCallee* callee = IPINT_CALLEE(callFrame);
@@ -286,6 +367,61 @@ WASM_IPINT_EXTERN_CPP_DECL(retrieve_and_clear_exception, CallFrame* callFrame, I
     WASM_RETURN_TWO(nullptr, nullptr);
 }
 
+WASM_IPINT_EXTERN_CPP_DECL(retrieve_clear_and_push_exception, CallFrame* callFrame, IPIntStackEntry* stackPointer, IPIntLocal* pl)
+{
+    VM& vm = instance->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_ASSERT(!!throwScope.exception());
+
+    Wasm::IPIntCallee* callee = IPINT_CALLEE(callFrame);
+    if (callee->rethrowSlots()) {
+        RELEASE_ASSERT(vm.targetTryDepthForThrow <= callee->rethrowSlots());
+        pl[callee->localSizeToAlloc() + vm.targetTryDepthForThrow - 1].i64 = std::bit_cast<uint64_t>(throwScope.exception()->value());
+    }
+
+    Exception* exception = throwScope.exception();
+    stackPointer[0].ref = JSValue::encode(exception->value());
+
+    // We want to clear the exception here rather than in the catch prologue
+    // JIT code because clearing it also entails clearing a bit in an Atomic
+    // bit field in VMTraps.
+    throwScope.clearException();
+
+    WASM_RETURN_TWO(nullptr, nullptr);
+}
+
+WASM_IPINT_EXTERN_CPP_DECL(retrieve_clear_and_push_exception_and_arguments, CallFrame* callFrame, IPIntStackEntry* stackPointer, IPIntLocal* pl)
+{
+    VM& vm = instance->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_ASSERT(!!throwScope.exception());
+
+    Wasm::IPIntCallee* callee = IPINT_CALLEE(callFrame);
+    if (callee->rethrowSlots()) {
+        RELEASE_ASSERT(vm.targetTryDepthForThrow <= callee->rethrowSlots());
+        pl[callee->localSizeToAlloc() + vm.targetTryDepthForThrow - 1].i64 = std::bit_cast<uint64_t>(throwScope.exception()->value());
+    }
+
+    Exception* exception = throwScope.exception();
+    auto* wasmException = jsSecureCast<JSWebAssemblyException*>(exception->value());
+
+    ASSERT(wasmException->payload().size() == wasmException->tag().parameterCount());
+    uint64_t size = wasmException->payload().size();
+
+    stackPointer[0].ref = JSValue::encode(exception->value());
+
+    // We only have a stack pointer if we're doing a catch_ref not a catch_all_ref
+    for (unsigned i = 0; i < size; ++i)
+        stackPointer[size - i].i64 = wasmException->payload()[i];
+
+    // We want to clear the exception here rather than in the catch prologue
+    // JIT code because clearing it also entails clearing a bit in an Atomic
+    // bit field in VMTraps.
+    throwScope.clearException();
+
+    WASM_RETURN_TWO(nullptr, nullptr);
+}
+
 WASM_IPINT_EXTERN_CPP_DECL(throw_exception, CallFrame* callFrame, IPIntStackEntry* arguments, unsigned exceptionIndex)
 {
     VM& vm = instance->vm();
@@ -311,7 +447,7 @@ WASM_IPINT_EXTERN_CPP_DECL(throw_exception, CallFrame* callFrame, IPIntStackEntr
     WASM_RETURN_TWO(vm.targetMachinePCForThrow, nullptr);
 }
 
-WASM_IPINT_EXTERN_CPP_DECL(rethrow_exception, CallFrame* callFrame, uint64_t* pl, unsigned tryDepth)
+WASM_IPINT_EXTERN_CPP_DECL(rethrow_exception, CallFrame* callFrame, IPIntStackEntry* pl, unsigned tryDepth)
 {
     SlowPathFrameTracer tracer(instance->vm(), callFrame);
 
@@ -321,7 +457,29 @@ WASM_IPINT_EXTERN_CPP_DECL(rethrow_exception, CallFrame* callFrame, uint64_t* pl
 
     Wasm::IPIntCallee* callee = IPINT_CALLEE(callFrame);
     RELEASE_ASSERT(tryDepth <= callee->rethrowSlots());
-    JSWebAssemblyException* exception = reinterpret_cast<JSWebAssemblyException**>(pl)[callee->localSizeToAlloc() + tryDepth - 1];
+#if CPU(ADDRESS64)
+    JSWebAssemblyException* exception = std::bit_cast<JSWebAssemblyException*>(pl[callee->localSizeToAlloc() + tryDepth - 1].i64);
+#else
+    JSWebAssemblyException* exception = std::bit_cast<JSWebAssemblyException*>(pl[callee->localSizeToAlloc() + tryDepth - 1].i32);
+#endif
+    RELEASE_ASSERT(exception);
+    throwException(globalObject, throwScope, exception);
+
+    genericUnwind(vm, callFrame);
+    ASSERT(!!vm.callFrameForCatch);
+    ASSERT(!!vm.targetMachinePCForThrow);
+    WASM_RETURN_TWO(vm.targetMachinePCForThrow, nullptr);
+}
+
+WASM_IPINT_EXTERN_CPP_DECL(throw_ref, CallFrame* callFrame, EncodedJSValue exnref)
+{
+    SlowPathFrameTracer tracer(instance->vm(), callFrame);
+
+    JSGlobalObject* globalObject = instance->globalObject();
+    VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto* exception = jsSecureCast<JSWebAssemblyException*>(JSValue::decode(exnref));
     RELEASE_ASSERT(exception);
     throwException(globalObject, throwScope, exception);
 

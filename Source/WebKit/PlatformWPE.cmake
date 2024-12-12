@@ -394,7 +394,6 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/Shared/libwpe"
     "${WEBKIT_DIR}/Shared/soup"
     "${WEBKIT_DIR}/Shared/wpe"
-    "${WEBKIT_DIR}/UIProcess/API/C/cairo"
     "${WEBKIT_DIR}/UIProcess/API/C/glib"
     "${WEBKIT_DIR}/UIProcess/API/C/wpe"
     "${WEBKIT_DIR}/UIProcess/API/glib"
@@ -452,15 +451,9 @@ if (USE_ATK)
 endif ()
 
 if (USE_CAIRO)
+    include(Platform/Cairo.cmake)
     list(APPEND WebKit_LIBRARIES
-        Cairo::Cairo
         Freetype::Freetype
-    )
-
-    list(APPEND WebKit_SOURCES
-        Shared/API/c/cairo/WKImageCairo.cpp
-
-        UIProcess/Automation/cairo/WebAutomationSessionCairo.cpp
     )
 endif ()
 

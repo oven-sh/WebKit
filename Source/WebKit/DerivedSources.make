@@ -129,6 +129,7 @@ endif
 to-pattern = $(join $(basename $1), $(subst .,%,$(suffix $1)))
 
 MESSAGE_RECEIVERS = \
+	LogStream \
 	NetworkProcess/Authentication/AuthenticationManager \
 	NetworkProcess/NetworkBroadcastChannelRegistry \
 	NetworkProcess/NetworkConnectionToWebProcess \
@@ -159,7 +160,6 @@ MESSAGE_RECEIVERS = \
 	Shared/IPCStreamTesterProxy \
 	Shared/IPCTester \
 	Shared/IPCTesterReceiver \
-	Shared/LogStream \
 	UIProcess/WebFullScreenManagerProxy \
 	UIProcess/RemoteLayerTree/RemoteLayerTreeDrawingAreaProxy \
 	UIProcess/GPU/GPUProcessProxy \
@@ -387,9 +387,39 @@ SANDBOX_IMPORT_DIR=$(SDKROOT)/usr/local/share/sandbox/profiles/embedded/imports
 
 .PHONY : all
 
+# Log messages
+
+all : WebCoreLogDefinitions.h WebKitLogDefinitions.h
+
+WEBCORE_LOG_DECLARATIONS_FILES = \
+    WebCoreLogDefinitions.h \
+    WebCoreVirtualLogFunctions.h \
+
+$(WEBCORE_LOG_DECLARATIONS_FILES) : $(WebCorePrivateHeaders)/LogMessages.in
+	@echo Creating WebCore log definitions $@
+	$(PYTHON) $(WebCorePrivateHeaders)/generate-log-declarations.py $< $(WEBCORE_LOG_DECLARATIONS_FILES)
+
+WEBKIT_LOG_DECLARATIONS_FILES = \
+    WebKitLogDefinitions.h \
+    WebKitVirtualLogFunctions.h \
+
+$(WEBKIT_LOG_DECLARATIONS_FILES) : Platform/LogMessages.in
+	@echo Creating WebKit log definitions $@
+	$(PYTHON) $(WebCorePrivateHeaders)/generate-log-declarations.py $< $(WEBKIT_LOG_DECLARATIONS_FILES)
+
+LOG_OUTPUT_FILES = \
+    LogStream.messages.in \
+    LogMessagesDeclarations.h \
+    LogMessagesImplementations.h \
+    WebKitLogClientDeclarations.h \
+    WebCoreLogClientDeclarations.h \
+
+$(LOG_OUTPUT_FILES) : Platform/LogMessages.in $(WebCorePrivateHeaders)/LogMessages.in
+	PYTHONPATH=$(WebCorePrivateHeaders) $(PYTHON) $(WebKit2)/Scripts/generate-derived-log-sources.py $^ $(LOG_OUTPUT_FILES)
+
 all : $(GENERATED_MESSAGES_FILES)
 
-$(GENERATED_MESSAGES_FILES_AS_PATTERNS) : $(MESSAGES_IN_FILES) $(GENERATE_MESSAGE_RECEIVER_SCRIPTS)
+$(GENERATED_MESSAGES_FILES_AS_PATTERNS) : $(LOG_OUTPUT_FILES) $(MESSAGES_IN_FILES) $(GENERATE_MESSAGE_RECEIVER_SCRIPTS)
 	$(PYTHON) $(GENERATE_MESSAGE_RECEIVER_SCRIPT) $(WebKit2) $(MESSAGE_RECEIVERS)
 
 TEXT_PREPROCESSOR_FLAGS=-E -P -w

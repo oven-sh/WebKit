@@ -48,6 +48,17 @@ enum class TestNonZeroBasedEnum {
 };
 
 namespace WTF {
+template<> bool isValidEnum<TestEnum>(std::underlying_type_t<TestEnum> value)
+{
+    switch (value) {
+    case enumToUnderlyingType(TestEnum::A):
+    case enumToUnderlyingType(TestEnum::B):
+    case enumToUnderlyingType(TestEnum::C):
+        return true;
+    default:
+        return false;
+    }
+}
 template<> struct EnumTraits<TestEnum> {
     using values = EnumValues<TestEnum, TestEnum::A, TestEnum::B, TestEnum::C>;
 };
