@@ -327,17 +327,17 @@ bool makeAllDirectories(const String& path)
     if (!access(fullPath.data(), F_OK))
         return true;
 
-    char* p = fullPath.mutableData() + 1;
+    auto p = fullPath.mutableSpanIncludingNullTerminator().subspan(1);
     if (p[length - 1] == '/')
         p[length - 1] = '\0';
-    for (; *p; ++p) {
-        if (*p == '/') {
-            *p = '\0';
+    for (; p[0]; p = p.subspan(1)) {
+        if (p[0] == '/') {
+            p[0] = '\0';
             if (access(fullPath.data(), F_OK)) {
                 if (mkdir(fullPath.data(), S_IRWXU))
                     return false;
             }
-            *p = '/';
+            p[0] = '/';
         }
     }
     if (access(fullPath.data(), F_OK)) {

@@ -76,7 +76,7 @@ String createTemporaryZipArchive(const String& path)
     RetainPtr coordinator = adoptNS([[NSFileCoordinator alloc] initWithFilePresenter:nil]);
     [coordinator coordinateReadingItemAtURL:[NSURL fileURLWithPath:path] options:NSFileCoordinatorReadingWithoutChanges error:nullptr byAccessor:[&](NSURL *newURL) mutable {
         CString archivePath([NSTemporaryDirectory() stringByAppendingPathComponent:@"WebKitGeneratedFileXXXXXX"].fileSystemRepresentation);
-        int fd = mkostemp(archivePath.mutableData(), O_CLOEXEC);
+        int fd = mkostemp(archivePath.mutableSpanIncludingNullTerminator().data(), O_CLOEXEC);
         if (fd == -1)
             return;
         close(fd);

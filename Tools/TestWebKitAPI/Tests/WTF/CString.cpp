@@ -103,7 +103,7 @@ TEST(WTF, CStringCopyOnWrite)
     CString string(initialString);
     CString copy = string;
 
-    string.mutableData()[3] = 'K';
+    string.mutableSpan()[3] = 'K';
     ASSERT_TRUE(string != copy);
     ASSERT_STREQ(string.data(), "WebKit");
     ASSERT_STREQ(copy.data(), initialString);

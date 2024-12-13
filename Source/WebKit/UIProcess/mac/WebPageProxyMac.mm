@@ -496,7 +496,7 @@ static NSString *temporaryPDFDirectoryPath()
     static NeverDestroyed path = [] {
         auto temporaryDirectoryTemplate = [NSTemporaryDirectory() stringByAppendingPathComponent:@"WebKitPDFs-XXXXXX"];
         CString templateRepresentation = [temporaryDirectoryTemplate fileSystemRepresentation];
-        if (mkdtemp(templateRepresentation.mutableData()))
+        if (mkdtemp(templateRepresentation.mutableSpanIncludingNullTerminator().data()))
             return adoptNS([[[NSFileManager defaultManager] stringWithFileSystemRepresentation:templateRepresentation.data() length:templateRepresentation.length()] copy]);
         return RetainPtr<id> { };
     }();
@@ -521,7 +521,7 @@ static NSString *pathToPDFOnDisk(const String& suggestedFilename)
         NSString *pathTemplate = [pathTemplatePrefix stringByAppendingString:suggestedFilename];
         CString pathTemplateRepresentation = [pathTemplate fileSystemRepresentation];
 
-        int fd = mkstemps(pathTemplateRepresentation.mutableData(), pathTemplateRepresentation.length() - strlen([pathTemplatePrefix fileSystemRepresentation]) + 1);
+        int fd = mkstemps(pathTemplateRepresentation.mutableSpanIncludingNullTerminator().data(), pathTemplateRepresentation.length() - strlen([pathTemplatePrefix fileSystemRepresentation]) + 1);
         if (fd < 0) {
             WTFLogAlways("Cannot create PDF file in the temporary directory (%s).", suggestedFilename.utf8().data());
             return nil;

@@ -58,12 +58,12 @@ void OSLogPrintStream::vprintf(const char* format, va_list argList)
     va_list backup;
     va_copy(backup, argList);
 ALLOW_NONLITERAL_FORMAT_BEGIN
-    size_t bytesWritten = vsnprintf(m_string.mutableData() + offset, freeBytes, format, argList);
+    size_t bytesWritten = vsnprintf(m_string.mutableSpanIncludingNullTerminator().subspan(offset).data(), freeBytes, format, argList);
     if (UNLIKELY(bytesWritten >= freeBytes)) {
         size_t newLength = std::max(bytesWritten + m_string.length(), m_string.length() * 2);
         m_string.grow(newLength);
         freeBytes = newLength - offset;
-        bytesWritten = vsnprintf(m_string.mutableData() + offset, freeBytes, format, backup);
+        bytesWritten = vsnprintf(m_string.mutableSpanIncludingNullTerminator().subspan(offset).data(), freeBytes, format, backup);
         ASSERT(bytesWritten < freeBytes);
     }
 ALLOW_NONLITERAL_FORMAT_END

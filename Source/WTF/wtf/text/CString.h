@@ -44,8 +44,10 @@ class CStringBuffer final : public RefCounted<CStringBuffer> {
 public:
     size_t length() const { return m_length; }
 
-    std::span<const LChar> span() const { return unsafeMakeSpan(byteCast<LChar>(data()), m_length); }
-    std::span<const char> spanIncludingNullCharacter() const { return unsafeMakeSpan(data(), m_length + 1); }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    std::span<const LChar> span() const { return unsafeMakeSpan(reinterpret_cast_ptr<const LChar*>(this + 1), m_length); }
+    std::span<const char> spanIncludingNullTerminator() const { return unsafeMakeSpan(reinterpret_cast_ptr<const char*>(this + 1), m_length + 1); }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 private:
     friend class CString;
@@ -54,11 +56,9 @@ private:
 
     CStringBuffer(size_t length) : m_length(length) { }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    const char* data() const { return reinterpret_cast_ptr<const char*>(this + 1); }
-    char* mutableData() { return reinterpret_cast_ptr<char*>(this + 1); }
+    std::span<char> mutableSpan() { return unsafeMakeSpan(reinterpret_cast_ptr<char*>(this + 1), m_length); }
+    std::span<char> mutableSpanIncludingNullTerminator() { return unsafeMakeSpan(reinterpret_cast_ptr<char*>(this + 1), m_length + 1); }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    std::span<char> mutableSpan() { return unsafeMakeSpan(mutableData(), m_length); }
-    std::span<char> mutableSpanIncludingNullCharacter() { return unsafeMakeSpan(mutableData(), m_length + 1); }
 
     const size_t m_length;
 };
@@ -79,13 +79,13 @@ public:
 
     const char* data() const;
 
-    std::string toStdString() const { return m_buffer ? std::string(m_buffer->data()) : std::string(); }
+    std::string toStdString() const { return m_buffer ? std::string(m_buffer->spanIncludingNullTerminator().data()) : std::string(); }
 
     std::span<const LChar> span() const;
     std::span<const char> spanIncludingNullTerminator() const;
 
-    WTF_EXPORT_PRIVATE char* mutableData();
     WTF_EXPORT_PRIVATE std::span<char> mutableSpan();
+    WTF_EXPORT_PRIVATE std::span<char> mutableSpanIncludingNullTerminator();
     size_t length() const;
 
     bool isNull() const { return !m_buffer; }
@@ -129,7 +129,7 @@ inline CString::CString(std::span<const LChar> bytes)
 
 inline const char* CString::data() const
 {
-    return m_buffer ? m_buffer->data() : nullptr;
+    return m_buffer ? m_buffer->spanIncludingNullTerminator().data() : nullptr;
 }
 
 inline std::span<const LChar> CString::span() const
@@ -142,7 +142,7 @@ inline std::span<const LChar> CString::span() const
 inline std::span<const char> CString::spanIncludingNullTerminator() const
 {
     if (m_buffer)
-        return m_buffer->spanIncludingNullCharacter();
+        return m_buffer->spanIncludingNullTerminator();
     return { };
 }
 
