@@ -1,4 +1,4 @@
 
 
-PASS traverseTo() inside onbeforeunload
+FAIL traverseTo() inside onbeforeunload assert_not_equals: got disallowed value undefined
 

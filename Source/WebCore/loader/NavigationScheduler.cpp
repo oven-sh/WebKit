@@ -336,17 +336,17 @@ public:
 
     std::optional<Ref<HistoryItem>> findBackForwardItemByKey(const LocalFrame& localFrame)
     {
-        RefPtr entry = localFrame.window()->navigation().findEntryByKey(m_key);
+        auto entry = localFrame.window()->navigation().findEntryByKey(m_key);
         if (!entry)
             return std::nullopt;
 
-        Ref historyItem = entry->associatedHistoryItem();
+        Ref historyItem = entry.value()->associatedHistoryItem();
 
         if (localFrame.isMainFrame())
             return historyItem;
 
         // FIXME: heuristic to fix disambigaute-* tests, we should find something more exact.
-        bool backwards = entry->index() < localFrame.window()->navigation().currentEntry()->index();
+        bool backwards = entry.value()->index() < localFrame.window()->navigation().currentEntry()->index();
 
         RefPtr page { localFrame.page() };
         auto items = page->checkedBackForward()->allItems();

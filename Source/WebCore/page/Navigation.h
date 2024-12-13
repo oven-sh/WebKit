@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalDOMWindowProperty.h"
@@ -122,7 +121,7 @@ public:
         RefPtr<DOMPromise> finished;
     };
 
-    Vector<Ref<NavigationHistoryEntry>> entries() const;
+    const Vector<Ref<NavigationHistoryEntry>>& entries() const;
     NavigationHistoryEntry* currentEntry() const;
     NavigationTransition* transition() { return m_transition.get(); };
     NavigationActivation* activation() { return m_activation.get(); };
@@ -155,7 +154,7 @@ public:
 
     void abortOngoingNavigationIfNeeded();
 
-    RefPtr<NavigationHistoryEntry> findEntryByKey(const String& key);
+    std::optional<Ref<NavigationHistoryEntry>> findEntryByKey(const String& key);
     bool suppressNormalScrollRestoration() const { return m_suppressNormalScrollRestorationDuringOngoingNavigation; }
 
     void setFocusChanged(FocusDidChange changed) { m_focusChangedDuringOngoingNavigation = changed; }
@@ -184,13 +183,10 @@ private:
     void notifyCommittedToEntry(NavigationAPIMethodTracker*, NavigationHistoryEntry*, NavigationNavigationType);
     Result apiMethodTrackerDerivedResult(const NavigationAPIMethodTracker&);
 
-    class NavigationHistoryEntryWrapper;
-    static std::optional<size_t> getEntryIndexOfHistoryItem(const Vector<NavigationHistoryEntryWrapper>& entries, const HistoryItem&, size_t start = 0);
-
     std::optional<size_t> m_currentEntryIndex;
     RefPtr<NavigationTransition> m_transition;
     RefPtr<NavigationActivation> m_activation;
-    Vector<NavigationHistoryEntryWrapper> m_entries;
+    Vector<Ref<NavigationHistoryEntry>> m_entries;
 
     RefPtr<NavigateEvent> m_ongoingNavigateEvent;
     FocusDidChange m_focusChangedDuringOngoingNavigation { FocusDidChange::No };
