@@ -237,11 +237,10 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::treeForPageID(PageIdentifier pageID)
     return nullptr;
 }
 
-RefPtr<AXIsolatedObject> AXIsolatedTree::objectForID(std::optional<AXID> axID) const
+AXIsolatedObject* AXIsolatedTree::objectForID(AXID axID) const
 {
     ASSERT(!isMainThread());
-
-    return axID ? m_readerThreadNodeMap.get(*axID) : nullptr;
+    return m_readerThreadNodeMap.get(axID);
 }
 
 void AXIsolatedTree::generateSubtree(AccessibilityObject& axObject)

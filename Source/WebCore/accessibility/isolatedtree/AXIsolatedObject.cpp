@@ -760,7 +760,7 @@ AXIsolatedObject* AXIsolatedObject::cellForColumnAndRow(unsigned columnIndex, un
         },
         [] (auto&) -> std::optional<AXID> { return std::nullopt; }
     );
-    return cellID ? tree()->objectForID(*cellID).get() : nullptr;
+    return tree()->objectForID(cellID);
 }
 
 void AXIsolatedObject::accessibilityText(Vector<AccessibilityText>& texts) const
@@ -975,7 +975,7 @@ AXIsolatedObject* AXIsolatedObject::accessibilityHitTest(const IntPoint& point) 
         return std::nullopt;
     });
 
-    return tree()->objectForID(axID).get();
+    return tree()->objectForID(axID);
 }
 
 IntPoint AXIsolatedObject::intPointAttributeValue(AXPropertyName propertyName) const
@@ -990,12 +990,12 @@ IntPoint AXIsolatedObject::intPointAttributeValue(AXPropertyName propertyName) c
 AXIsolatedObject* AXIsolatedObject::objectAttributeValue(AXPropertyName propertyName) const
 {
     auto value = m_propertyMap.get(propertyName);
-    auto nodeID = WTF::switchOn(value,
+    auto axID = WTF::switchOn(value,
         [] (Markable<AXID>& typedValue) -> std::optional<AXID> { return typedValue; },
         [] (auto&) { return std::optional<AXID> { }; }
     );
 
-    return tree()->objectForID(nodeID).get();
+    return tree()->objectForID(axID);
 }
 
 template<typename T>

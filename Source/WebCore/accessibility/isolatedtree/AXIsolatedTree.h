@@ -367,7 +367,11 @@ public:
     std::optional<AXID> focusedNodeID();
     WEBCORE_EXPORT RefPtr<AXIsolatedObject> focusedNode();
 
-    RefPtr<AXIsolatedObject> objectForID(std::optional<AXID>) const;
+    AXIsolatedObject* objectForID(AXID) const;
+    inline AXIsolatedObject* objectForID(std::optional<AXID> axID) const
+    {
+        return axID ? objectForID(*axID) : nullptr;
+    }
     template<typename U> Vector<Ref<AXCoreObject>> objectsForIDs(const U&);
 
     void generateSubtree(AccessibilityObject&);
