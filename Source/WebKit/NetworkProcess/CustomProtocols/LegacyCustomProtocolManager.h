@@ -99,7 +99,7 @@ private:
     void registerProtocolClass();
     Ref<NetworkProcess> protectedNetworkProcess() const;
 
-    WeakRef<NetworkProcess> m_networkProcess;
+    CheckedRef<NetworkProcess> m_networkProcess;
 
     typedef HashMap<LegacyCustomProtocolID, CustomProtocol> CustomProtocolMap;
     CustomProtocolMap m_customProtocolMap WTF_GUARDED_BY_LOCK(m_customProtocolMapLock);
