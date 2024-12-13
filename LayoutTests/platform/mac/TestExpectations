@@ -2456,3 +2456,5 @@ inspector/worker/console-basic-subworker.html [ Skip ]
 webkit.org/b/283203 [ Ventura+ ] fast/canvas/imageData-consistency.html [ Pass Timeout ]
 
 webkit.org/b/284082 [ Sequoia+ ] http/tests/media/fairplay/legacy-fairplay-mse-muxed-nowait.html [ Timeout Failure ]
+
+webkit.org/b/284597 [ Ventura+ ] http/tests/misc/repeat-open-cancel.html [ Slow ]
