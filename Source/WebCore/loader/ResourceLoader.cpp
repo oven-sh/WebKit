@@ -555,9 +555,14 @@ static void logResourceResponseSource(LocalFrame* frame, ResourceResponse::Sourc
 
 bool ResourceLoader::shouldAllowResourceToAskForCredentials() const
 {
+    if (m_canCrossOriginRequestsAskUserForCredentials)
+        return true;
+    if (!m_frame)
+        return false;
     RefPtr topFrame = dynamicDowncast<LocalFrame>(m_frame->tree().top());
-    return m_canCrossOriginRequestsAskUserForCredentials
-        || (topFrame && topFrame->document()->protectedSecurityOrigin()->canRequest(m_request.url(), OriginAccessPatternsForWebProcess::singleton()));
+    return topFrame
+        && topFrame->document()
+        && topFrame->document()->protectedSecurityOrigin()->canRequest(m_request.url(), OriginAccessPatternsForWebProcess::singleton());
 }
 
 void ResourceLoader::didBlockAuthenticationChallenge()
