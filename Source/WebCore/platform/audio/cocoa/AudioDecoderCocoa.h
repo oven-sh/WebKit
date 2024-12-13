@@ -33,6 +33,10 @@
 #include <wtf/Expected.h>
 #include <wtf/TZoneMalloc.h>
 
+namespace WTF {
+class WorkQueue;
+}
+
 namespace WebCore {
 
 class InternalAudioDecoderCocoa;
@@ -46,6 +50,8 @@ public:
     ~AudioDecoderCocoa();
 
     static Expected<std::pair<FourCharCode, std::optional<AudioStreamDescription::PCMFormat>>, String> isCodecSupported(const StringView&);
+
+    static WTF::WorkQueue& queueSingleton();
 
 private:
     explicit AudioDecoderCocoa(OutputCallback&&);

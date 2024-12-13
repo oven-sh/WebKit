@@ -6410,10 +6410,6 @@ imported/w3c/web-platform-tests/html/dom/render-blocking/element-render-blocking
 
 webkit.org/b/278192 imported/w3c/web-platform-tests/html/dom/render-blocking/element-render-blocking-033.html [ Failure ]
 
-# AudioEncoder implementation missing.
-imported/w3c/web-platform-tests/webcodecs/audio-encoder-codec-specific.https.any.html [ Failure ]
-imported/w3c/web-platform-tests/webcodecs/audio-encoder.https.any.html [ Failure ]
-
 webkit.org/b/258192 imported/w3c/web-platform-tests/webcodecs/full-cycle-test.https.any.worker.html?h264_avc [ Pass Failure ]
 
 # These tests are timing out since their import.

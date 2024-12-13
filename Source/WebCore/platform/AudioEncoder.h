@@ -31,6 +31,7 @@
 #if ENABLE(WEB_CODECS)
 
 #include "AudioEncoderActiveConfiguration.h"
+#include "BitrateMode.h"
 #include "WebCodecsAudioInternalData.h"
 #include <span>
 #include <wtf/CompletionHandler.h>
@@ -46,7 +47,7 @@ public:
     struct OpusConfig {
         bool isOggBitStream { false };
         uint64_t frameDuration { 20000 };
-        std::optional<size_t> complexity;
+        std::optional<size_t> complexity { };
         size_t packetlossperc { 0 };
         bool useinbandfec { false };
         bool usedtx { false };
@@ -61,21 +62,22 @@ public:
         size_t sampleRate;
         size_t numberOfChannels;
         uint64_t bitRate { 0 };
-        std::optional<OpusConfig> opusConfig;
-        std::optional<bool> isAacADTS;
-        std::optional<FlacConfig> flacConfig;
+        BitrateMode bitRateMode { BitrateMode::Variable };
+        std::optional<OpusConfig> opusConfig { };
+        std::optional<bool> isAacADTS { };
+        std::optional<FlacConfig> flacConfig { };
     };
     using ActiveConfiguration = AudioEncoderActiveConfiguration;
     struct EncodedFrame {
         Vector<uint8_t> data;
         bool isKeyFrame { false };
         int64_t timestamp { 0 };
-        std::optional<uint64_t> duration;
+        std::optional<uint64_t> duration { };
     };
     struct RawFrame {
         RefPtr<PlatformRawAudioData> frame;
         int64_t timestamp { 0 };
-        std::optional<uint64_t> duration;
+        std::optional<uint64_t> duration { };
     };
     using CreateResult = Expected<Ref<AudioEncoder>, String>;
     using CreatePromise = NativePromise<Ref<AudioEncoder>, String>;

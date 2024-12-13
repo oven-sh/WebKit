@@ -2420,6 +2420,8 @@ http/tests/media/fairplay/fps-mse-multi-key-renewal.html [ Pass Failure ]
 [ Ventura ] imported/w3c/web-platform-tests/webcodecs/audioDecoder-codec-specific.https.any.worker.html?mp3 [ Failure ]
 [ Ventura ] imported/w3c/web-platform-tests/webcodecs/audioDecoder-codec-specific.https.any.worker.html?opus [ Failure ]
 
+[ Ventura ] imported/w3c/web-platform-tests/webcodecs/audio-encoder.https.any.html [ Failure ] # Ventura doesn't support resampling when encoding to Opus, causing the test to fail.
+
 # webkit.org/b/280424 [ Sequoia ] fast/table/col-and-colgroup-offsets.html is a constant failure.
 [ Sequoia+ ] fast/table/col-and-colgroup-offsets.html [ Failure ]
 

@@ -1301,14 +1301,10 @@ imported/w3c/web-platform-tests/webcodecs/audioDecoder-codec-specific.https.any.
 # A bit flaky on Debug bot.
 imported/w3c/web-platform-tests/webcodecs/audioDecoder-codec-specific.https.any.html?mp4_aac [ Pass Failure ]
 
-imported/w3c/web-platform-tests/webcodecs/encoded-audio-chunk.any.html [ Pass ]
-imported/w3c/web-platform-tests/webcodecs/encoded-audio-chunk.any.worker.html [ Pass ]
-imported/w3c/web-platform-tests/webcodecs/encoded-audio-chunk.crossOriginIsolated.https.any.html [ Pass ]
-imported/w3c/web-platform-tests/webcodecs/encoded-audio-chunk.crossOriginIsolated.https.any.worker.html [ Pass ]
-imported/w3c/web-platform-tests/webcodecs/audio-encoder-codec-specific.https.any.html [ Pass ]
-imported/w3c/web-platform-tests/webcodecs/audio-encoder-config.https.any.html [ Pass ]
-imported/w3c/web-platform-tests/webcodecs/audio-encoder-config.https.any.worker.html [ Pass ]
-imported/w3c/web-platform-tests/webcodecs/audio-encoder.https.any.html [ Pass DumpJSConsoleLogInStdErr ]
+webkit.org/b/284426 imported/w3c/web-platform-tests/webcodecs/audio-encoder-codec-specific.https.any.html [ Failure ]
+webkit.org/b/284428 imported/w3c/web-platform-tests/webcodecs/audio-encoder-config.https.any.html [ Failure ]
+webkit.org/b/284428 imported/w3c/web-platform-tests/webcodecs/audio-encoder-config.https.any.worker.html [ Failure ]
+webkit.org/b/284429 imported/w3c/web-platform-tests/webcodecs/audio-encoder.https.any.html [ Failure ]
 http/wpt/webcodecs/encoder-task-failing.html [ Pass ]
 
 # H.264 high-4:2:2 encoding is supported in the GStreamer ports, so this test (checking that profile

@@ -72,9 +72,10 @@ WebCodecsAudioEncoder::WebCodecsAudioEncoder(ScriptExecutionContext& context, In
 
 WebCodecsAudioEncoder::~WebCodecsAudioEncoder() = default;
 
-static bool isSupportedEncoderCodec(const StringView& codec)
+static bool isSupportedEncoderCodec(const WebCodecsAudioEncoderConfig& config)
 {
     // FIXME: Check codec more accurately.
+    const auto& codec = config.codec;
     bool isMPEG4AAC = codec == "mp4a.40.2"_s || codec == "mp4a.40.02"_s || codec == "mp4a.40.5"_s
         || codec == "mp4a.40.05"_s || codec == "mp4a.40.29"_s || codec == "mp4a.40.42"_s;
     bool isCodecAllowed = isMPEG4AAC || codec == "mp3"_s || codec == "opus"_s
@@ -84,12 +85,31 @@ static bool isSupportedEncoderCodec(const StringView& codec)
     if (!isCodecAllowed)
         return false;
 
+    // FIXME: https://github.com/web-platform-tests/wpt/issues/49635
+    // WPT audio-encoder-config.https.any.html checks for the samplingRate is between "supported" values.
+    if (config.sampleRate < 3000 || config.sampleRate > 384000)
+        return false;
+
+    // FIXME: New WPT requires this to reject as non valid. For now we just state that it's not supported (webkit.org/b/283900)
+    // https://w3c.github.io/webcodecs/opus_codec_registration.html#opus-encoder-config
+    if (codec == "opus"_s && config.bitrate && (*config.bitrate < 6000 || *config.bitrate > 510000))
+        return false;
+
     return true;
 }
 
 static bool isValidEncoderConfig(const WebCodecsAudioEncoderConfig& config)
 {
     if (StringView(config.codec).trim(isASCIIWhitespace<UChar>).isEmpty())
+        return false;
+
+    if (!config.sampleRate || !config.numberOfChannels)
+        return false;
+
+    // FIXME: This isn't per spec, but both Chrome and Firefox checks that the bitrate is now greater than INT_MAX
+    // Even though the spec made it a `long long`
+    // https://github.com/web-platform-tests/wpt/issues/49634
+    if (config.bitrate && *config.bitrate > std::numeric_limits<int>::max())
         return false;
 
     // FIXME: The opus and flac checks will probably need to move so that they trigger NotSupported
@@ -110,8 +130,16 @@ static bool isValidEncoderConfig(const WebCodecsAudioEncoderConfig& config)
 static ExceptionOr<AudioEncoder::Config> createAudioEncoderConfig(const WebCodecsAudioEncoderConfig& config)
 {
     std::optional<AudioEncoder::OpusConfig> opusConfig = std::nullopt;
-    if (config.opus)
-        opusConfig = { config.opus->format == OpusBitstreamFormat::Ogg, config.opus->frameDuration, config.opus->complexity, config.opus->packetlossperc, config.opus->useinbandfec, config.opus->usedtx };
+    if (config.opus) {
+        opusConfig = {
+            .isOggBitStream = config.opus->format == OpusBitstreamFormat::Ogg,
+            .frameDuration = config.opus->frameDuration,
+            .complexity = config.opus->complexity,
+            .packetlossperc = config.opus->packetlossperc,
+            .useinbandfec = config.opus->useinbandfec,
+            .usedtx = config.opus->usedtx
+        };
+    }
 
     std::optional<bool> isAacADTS = std::nullopt;
     if (config.aac)
@@ -121,7 +149,15 @@ static ExceptionOr<AudioEncoder::Config> createAudioEncoderConfig(const WebCodec
     if (config.flac)
         flacConfig = { config.flac->blockSize, config.flac->compressLevel };
 
-    return AudioEncoder::Config { config.sampleRate, config.numberOfChannels, config.bitrate.value_or(0), WTFMove(opusConfig), WTFMove(isAacADTS), WTFMove(flacConfig) };
+    return AudioEncoder::Config {
+        .sampleRate = config.sampleRate,
+        .numberOfChannels = config.numberOfChannels,
+        .bitRate = config.bitrate.value_or(0),
+        .bitRateMode = config.bitrateMode,
+        .opusConfig = WTFMove(opusConfig),
+        .isAacADTS = isAacADTS,
+        .flacConfig = WTFMove(flacConfig)
+    };
 }
 
 ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebCodecsAudioEncoderConfig&& config)
@@ -153,7 +189,7 @@ ExceptionOr<void> WebCodecsAudioEncoder::configure(ScriptExecutionContext&, WebC
         } });
     }
 
-    bool isSupportedCodec = isSupportedEncoderCodec(config.codec);
+    bool isSupportedCodec = isSupportedEncoderCodec(config);
     queueControlMessageAndProcess({ *this, [this, config = WTFMove(config), isSupportedCodec, identifier = scriptExecutionContext()->identifier()]() mutable {
         RefPtr context = scriptExecutionContext();
 
@@ -255,26 +291,19 @@ ExceptionOr<void> WebCodecsAudioEncoder::encode(Ref<WebCodecsAudioData>&& frame)
     if (m_state != WebCodecsCodecState::Configured)
         return Exception { ExceptionCode::InvalidStateError, "AudioEncoder is not configured"_s };
 
-    // FIXME: These checks are not yet spec-compliant. See also https://github.com/w3c/webcodecs/issues/716
-    if (m_activeConfiguration.numberOfChannels && *m_activeConfiguration.numberOfChannels != audioData->numberOfChannels()) {
-        frame->close();
-        queueTaskKeepingObjectAlive(*this, TaskSource::MediaElement, [this]() mutable {
-            m_error->handleEvent(DOMException::create(Exception { ExceptionCode::EncodingError, "Input audio buffer is incompatible with codec parameters"_s }));
-        });
-        return { };
-    }
-    if (m_activeConfiguration.sampleRate && *m_activeConfiguration.sampleRate != audioData->sampleRate()) {
-        frame->close();
-        queueTaskKeepingObjectAlive(*this, TaskSource::MediaElement, [this]() mutable {
-            m_error->handleEvent(DOMException::create(Exception { ExceptionCode::EncodingError, "Input audio buffer is incompatible with codec parameters"_s }));
-        });
-        return { };
-    }
-
     ++m_encodeQueueSize;
     queueControlMessageAndProcess({ *this, [this, audioData = WTFMove(audioData), timestamp = frame->timestamp(), duration = frame->duration()]() mutable {
         --m_encodeQueueSize;
         scheduleDequeueEvent();
+
+        // FIXME: These checks are not yet spec-compliant. See also https://github.com/w3c/webcodecs/issues/716
+        if ((m_activeConfiguration.numberOfChannels && *m_activeConfiguration.numberOfChannels != audioData->numberOfChannels())
+            || (m_activeConfiguration.sampleRate && *m_activeConfiguration.sampleRate != audioData->sampleRate())) {
+            queueTaskKeepingObjectAlive(*this, TaskSource::MediaElement, [this]() mutable {
+                closeEncoder(Exception { ExceptionCode::EncodingError, "Input audio buffer is incompatible with codec parameters"_s });
+            });
+            return;
+        }
 
         protectedScriptExecutionContext()->enqueueTaskWhenSettled(Ref { *m_internalEncoder }->encode({ WTFMove(audioData), timestamp, duration }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
             RefPtr protectedThis = weakThis.get();
@@ -323,7 +352,7 @@ void WebCodecsAudioEncoder::isConfigSupported(ScriptExecutionContext& context, W
         return;
     }
 
-    if (!isSupportedEncoderCodec(config.codec)) {
+    if (!isSupportedEncoderCodec(config)) {
         promise->template resolve<IDLDictionary<WebCodecsAudioEncoderSupport>>(WebCodecsAudioEncoderSupport { false, WTFMove(config) });
         return;
     }

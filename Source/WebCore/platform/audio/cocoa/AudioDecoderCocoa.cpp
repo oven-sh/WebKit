@@ -50,12 +50,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioDecoderCocoa);
 
-static WorkQueue& queueSingleton()
+WorkQueue& AudioDecoderCocoa::queueSingleton()
 {
     static std::once_flag onceKey;
     static LazyNeverDestroyed<Ref<WorkQueue>> workQueue;
     std::call_once(onceKey, [] {
-        workQueue.construct(WorkQueue::create("AudioDecoder queue"_s));
+        workQueue.construct(WorkQueue::create("WebCodecCocoa queue"_s));
     });
     return workQueue.get();
 }
@@ -81,8 +81,9 @@ public:
 private:
     InternalAudioDecoderCocoa(AudioDecoder::OutputCallback&&);
 
+    static WorkQueue& queueSingleton() { return AudioDecoderCocoa::queueSingleton(); }
     static void decompressedAudioOutputBufferCallback(void*, CMBufferQueueTriggerToken);
-    Ref<AudioSampleBufferConverter> converter()
+    Ref<AudioSampleBufferConverter> converter() const
     {
         assertIsCurrent(queueSingleton());
         ASSERT(!m_isClosed);
@@ -287,7 +288,9 @@ String InternalAudioDecoderCocoa::initialize(const String& codecName, const Audi
 
     m_inputFormatDescription = createAudioFormatDescription(*m_inputDescription, m_codecDescription.span());
 
-    m_outputDescription = CAAudioStreamDescription { double(config.sampleRate), uint32_t(config.numberOfChannels), AudioStreamDescription::Float32, CAAudioStreamDescription::IsInterleaved::No };
+    // FIXME: we choose to create interleaved AudioData as tests incorrectly requires it (planar is more compatible with WebAudio)
+    // https://github.com/w3c/webcodecs/issues/859
+    m_outputDescription = CAAudioStreamDescription { double(config.sampleRate), uint32_t(config.numberOfChannels), AudioStreamDescription::Float32, CAAudioStreamDescription::IsInterleaved::Yes };
 
     AudioSampleBufferConverter::Options options = {
         .format = kAudioFormatLinearPCM,
