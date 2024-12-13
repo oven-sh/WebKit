@@ -526,6 +526,7 @@ private:
     
         bool run(BasicBlock* block)
         {
+            dataLogLnIf(DFGCSEPhaseInternal::verbose, "Starting block: ", block->index);
             m_maps.clear();
             m_changed = false;
             m_block = block;
@@ -609,11 +610,13 @@ private:
     
         void write(AbstractHeap heap)
         {
+            dataLogLnIf(DFGCSEPhaseInternal::verbose, "\tWrite to heap ", heap);
             m_maps.write(heap);
         }
         
         void def(PureValue value)
         {
+            dataLogLnIf(DFGCSEPhaseInternal::verbose, "\tDef of value ", value, " at node ", m_node->index());
             Node* match = m_maps.addPure(value, m_node);
             if (!match)
                 return;
@@ -624,6 +627,7 @@ private:
     
         void def(const HeapLocation& location, const LazyNode& value)
         {
+            dataLogLnIf(DFGCSEPhaseInternal::verbose, "\tDef to ", location, " of value ", value, " at node ", m_node->index());
             LazyNode match = m_maps.addImpure(location, value);
             if (!match)
                 return;
