@@ -4519,6 +4519,16 @@ void WebPage::getSelectionOrContentsAsString(CompletionHandler<void(const String
 {
     RefPtr focusedOrMainCoreFrame = m_page->checkedFocusController()->focusedOrMainFrame();
     RefPtr focusedOrMainFrame = focusedOrMainCoreFrame ? WebFrame::fromCoreFrame(*focusedOrMainCoreFrame) : nullptr;
+
+#if ENABLE(PDF_PLUGIN)
+    if (RefPtr pluginView = pluginViewForFrame(focusedOrMainCoreFrame.get())) {
+        auto result = pluginView->selectionString();
+        if (result.isEmpty())
+            result = pluginView->fullDocumentString();
+        return callback(WTFMove(result));
+    }
+#endif
+
     String resultString = focusedOrMainFrame->selectionAsString();
     if (resultString.isEmpty())
         resultString = focusedOrMainFrame->contentsAsString();

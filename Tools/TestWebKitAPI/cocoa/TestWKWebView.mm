@@ -844,6 +844,8 @@ static InputSessionChangeCount nextInputSessionChangeCount()
 #if PLATFORM(IOS_FAMILY)
     InputSessionChangeCount _inputSessionChangeCount;
     UIEdgeInsets _overrideSafeAreaInset;
+    RetainPtr<NSString> _textForSpeakSelection;
+    bool _doneWaitingForSpeakSelectionContent;
 #endif
 #if PLATFORM(MAC)
     BOOL _forceWindowToBecomeKey;
@@ -1129,6 +1131,22 @@ static InputSessionChangeCount nextInputSessionChangeCount()
 }
 
 #if PLATFORM(IOS_FAMILY)
+
+- (NSString *)textForSpeakSelection
+{
+    _textForSpeakSelection = { };
+    _doneWaitingForSpeakSelectionContent = false;
+    [self _accessibilityRetrieveSpeakSelectionContent];
+
+    TestWebKitAPI::Util::run(&_doneWaitingForSpeakSelectionContent);
+    return _textForSpeakSelection.get();
+}
+
+- (void)_accessibilityDidGetSpeakSelectionContent:(NSString *)content
+{
+    _textForSpeakSelection = adoptNS(content.copy);
+    _doneWaitingForSpeakSelectionContent = true;
+}
 
 - (void)didStartFormControlInteraction
 {

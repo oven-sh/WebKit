@@ -182,6 +182,7 @@ struct AutocorrectionContext {
 @property (nonatomic) UIEdgeInsets overrideSafeAreaInset;
 @property (nonatomic, readonly) CGRect caretViewRectInContentCoordinates;
 @property (nonatomic, readonly) NSArray<NSValue *> *selectionViewRectsInContentCoordinates;
+@property (nonatomic, readonly) NSString *textForSpeakSelection;
 - (_WKActivatedElementInfo *)activatedElementAtPosition:(CGPoint)position;
 - (void)evaluateJavaScriptAndWaitForInputSessionToChange:(NSString *)script;
 - (WKContentView *)wkContentView;

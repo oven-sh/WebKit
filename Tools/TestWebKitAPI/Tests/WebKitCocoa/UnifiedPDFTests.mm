@@ -260,6 +260,18 @@ UNIFIED_PDF_TEST(WebProcessShouldNotCrashWithUISideCompositingDisabled)
     EXPECT_FALSE([delegate webProcessCrashed]);
 }
 
+#if PLATFORM(IOS_FAMILY)
+
+UNIFIED_PDF_TEST(SpeakSelection)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 600, 600) configuration:configurationForWebViewTestingUnifiedPDF().get()]);
+    [webView synchronouslyLoadRequest:[NSURLRequest requestWithURL:[NSBundle.test_resourcesBundle URLForResource:@"test" withExtension:@"pdf"]]];
+
+    EXPECT_WK_STREQ(@"Test PDF Content\n555-555-1234", [webView textForSpeakSelection]);
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
 #if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
 
 UNIFIED_PDF_TEST(MouseDidMoveOverPDF)

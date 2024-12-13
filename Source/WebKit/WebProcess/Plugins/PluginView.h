@@ -122,6 +122,7 @@ public:
     RefPtr<WebCore::TextIndicator> textIndicatorForTextMatch(const WebFoundTextRange::PDFData&, WebCore::TextIndicatorPresentationTransition);
     void scrollToRevealTextMatch(const WebFoundTextRange::PDFData&);
 
+    String fullDocumentString() const;
     String selectionString() const;
 
     RefPtr<WebCore::FragmentedSharedBuffer> liveResourceData() const;

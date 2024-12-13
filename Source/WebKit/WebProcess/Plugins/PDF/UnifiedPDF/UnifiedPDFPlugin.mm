@@ -2916,6 +2916,11 @@ void UnifiedPDFPlugin::setCurrentSelection(RetainPtr<PDFSelection>&& selection)
     notifySelectionChanged();
 }
 
+String UnifiedPDFPlugin::fullDocumentString() const
+{
+    return [pdfDocument() string];
+}
+
 String UnifiedPDFPlugin::selectionString() const
 {
     if (!m_currentSelection)

@@ -671,6 +671,14 @@ void PluginView::scrollToRevealTextMatch(const WebFoundTextRange::PDFData& match
     return protectedPlugin()->scrollToRevealTextMatch(match);
 }
 
+String PluginView::fullDocumentString() const
+{
+    if (!m_isInitialized)
+        return { };
+
+    return protectedPlugin()->fullDocumentString();
+}
+
 String PluginView::selectionString() const
 {
     if (!m_isInitialized)

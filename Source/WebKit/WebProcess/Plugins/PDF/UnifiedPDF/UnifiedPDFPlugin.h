@@ -400,6 +400,7 @@ private:
     void repaintOnSelectionChange(ActiveStateChangeReason, PDFSelection *previousSelection = nil);
     void showOrHideSelectionLayerAsNecessary();
 
+    String fullDocumentString() const override;
     String selectionString() const override;
     bool existingSelectionContainsPoint(const WebCore::FloatPoint&) const override;
     WebCore::FloatRect rectForSelectionInRootView(PDFSelection *) const override;
