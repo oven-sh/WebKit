@@ -72,7 +72,7 @@ public:
 private:
     URLPattern();
     ExceptionOr<void> compileAllComponents(ScriptExecutionContext&, URLPatternInit&&, const URLPatternOptions&);
-    ExceptionOr<std::optional<URLPatternResult>> match(ScriptExecutionContext&, std::variant<URL, URLPatternInput>&&, std::optional<String>&& baseURLString) const;
+    ExceptionOr<std::optional<URLPatternResult>> match(ScriptExecutionContext&, std::variant<URL, URLPatternInput>&&, String&& baseURLString) const;
 
     URLPatternUtilities::URLPatternComponent m_protocolComponent;
     URLPatternUtilities::URLPatternComponent m_usernameComponent;

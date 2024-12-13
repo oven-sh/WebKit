@@ -356,7 +356,7 @@ static inline void matchHelperAssignInputsFromInit(const URLPatternInit& input, 
 }
 
 // https://urlpattern.spec.whatwg.org/#url-pattern-match
-ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionContext& context, std::variant<URL, URLPatternInput>&& input, std::optional<String>&& baseURLString) const
+ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionContext& context, std::variant<URL, URLPatternInput>&& input, String&& baseURLString) const
 {
     URLPatternResult result;
     String protocol, username, password, hostname, port, pathname, search, hash;
@@ -371,8 +371,8 @@ ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionCo
 
         WTF::switchOn(*inputPattern,
             [&] (const URLPatternInit& value) {
-                if (!value.baseURL.isEmpty())
-                    hasError = Exception { ExceptionCode::TypeError, "Initial URLPatternInit input should not contain a base URL string."_s };
+                if (!baseURLString.isNull())
+                    hasError = Exception { ExceptionCode::TypeError, "Base URL string is provided with a URLPatternInit. If URLPatternInit is provided, please use URLPatternInit.baseURL property instead"_s };
 
                 URLPatternInit initCopy = value;
                 auto maybeResult = processInit(WTFMove(initCopy), BaseURLStringType::URL);
@@ -383,8 +383,8 @@ ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionCo
                     matchHelperAssignInputsFromInit(processedInit, protocol, username, password, hostname, port, pathname, search, hash);
                 }
             }, [&] (const String& value) {
-                if (baseURLString) {
-                    auto baseURL = URL(*baseURLString);
+                if (!baseURLString.isNull()) {
+                    auto baseURL = URL(baseURLString);
                     if (!baseURL.isValid())
                         hasError = true;
                     else
