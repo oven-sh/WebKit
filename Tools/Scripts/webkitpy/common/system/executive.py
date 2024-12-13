@@ -36,7 +36,7 @@ import subprocess
 import sys
 import time
 
-from webkitcorepy import StringIO, string_utils, unicode
+from webkitcorepy import StringIO, Timeout, string_utils, unicode
 
 from webkitpy.common.system.abstractexecutive import AbstractExecutive
 from webkitpy.common.system.outputtee import Tee
@@ -389,11 +389,12 @@ class Executive(AbstractExecutive):
                              env=env,
                              close_fds=True,
                              pass_fds=pass_fds)
-        with process:
+        try:
+            output = ''
             if not string_to_communicate:
-                output = process.communicate()[0]
+                output = process.communicate(timeout=Timeout.difference())[0]
             else:
-                output = process.communicate(string_utils.encode(string_to_communicate, encoding='utf-8'))[0]
+                output = process.communicate(string_utils.encode(string_to_communicate, encoding='utf-8'), timeout=Timeout.difference())[0]
 
             # run_command automatically decodes to unicode() and converts CRLF to LF unless explicitly told not to.
             if decode_output:
@@ -401,25 +402,29 @@ class Executive(AbstractExecutive):
 
             # wait() is not threadsafe and can throw OSError due to:
             # http://bugs.python.org/issue1731717
-            exit_code = process.wait()
+            exit_code = process.wait(timeout=Timeout.difference())
 
             _log.debug('"%s" took %.2fs' % (self.command_for_printing(args), time.time() - start_time))
 
-            if return_exit_code:
-                return exit_code
+        except subprocess.TimeoutExpired:
+            _log.debug('"%s" timed out after %.2fs' % (self.command_for_printing(args), time.time() - start_time))
+            exit_code = 255
 
-            if exit_code:
-                script_error = ScriptError(script_args=args,
-                                           exit_code=exit_code,
-                                           output=output,
-                                           cwd=cwd)
+        finally:
+            if process.poll() is None:
+                process.kill()
 
-                if ignore_errors:
-                    assert error_handler is None, "don't specify error_handler if ignore_errors is True"
-                    error_handler = Executive.ignore_error
+        if return_exit_code:
+            return exit_code
 
-                (error_handler or self.default_error_handler)(script_error)
-            return output
+        if exit_code:
+            script_error = ScriptError(script_args=args, exit_code=exit_code, output=output, cwd=cwd)
+            if ignore_errors:
+                assert error_handler is None, "don't specify error_handler if ignore_errors is True"
+                error_handler = Executive.ignore_error
+            (error_handler or self.default_error_handler)(script_error)
+
+        return output
 
     def _child_process_encoding(self):
         # FIXME: Using UTF-8 on Cygwin will confuse Windows-native commands
