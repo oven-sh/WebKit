@@ -1304,8 +1304,14 @@ class CheckChangeRelevance(AnalyzeChange):
     ]
 
     safer_cpp_path_regexes = [
-        re.compile(rb'Source/WebKit', re.IGNORECASE),
         re.compile(rb'Source/WebCore', re.IGNORECASE),
+        re.compile(rb'Source/WebDriver', re.IGNORECASE),
+        re.compile(rb'Source/WebGPU', re.IGNORECASE),
+        re.compile(rb'Source/WebInspectorUI', re.IGNORECASE),
+        re.compile(rb'Source/WebKit', re.IGNORECASE),
+        re.compile(rb'Source/WebKitLegacy', re.IGNORECASE),
+        re.compile(rb'Source/WTF', re.IGNORECASE),
+        re.compile(rb'Source/JavaScriptCore', re.IGNORECASE),
         re.compile(rb'Tools/Scripts/build-and-analyze', re.IGNORECASE),
         re.compile(rb'Tools/Scripts/generate-dirty-files', re.IGNORECASE),
         re.compile(rb'Tools/Scripts/compare-static-analysis-results', re.IGNORECASE),
@@ -7475,7 +7481,7 @@ class DisplaySaferCPPResults(buildstep.BuildStep, AddToLogMixin):
         if num_passes:
             pluralSuffix = 's' if num_passes > 1 else ''
             pluralCommand = 's' if len(commands_for_comment) > 1 else ''
-            comment += f'\n:warning: Found {num_passes} fixed file{pluralSuffix}! Please update expectations in `Source/[WebKit/WebCore]/SaferCPPExpectations` by running the following command{pluralCommand} and update your {self.change_type}:\n'
+            comment += f'\n:warning: Found {num_passes} fixed file{pluralSuffix}! Please update expectations in `Source/[Project]/SaferCPPExpectations` by running the following command{pluralCommand} and update your {self.change_type}:\n'
             comment += '\n'.join([f"- `{c}`" for c in commands_for_comment])
 
         self.setProperty('comment_text', comment)

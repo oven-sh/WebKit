@@ -9543,7 +9543,7 @@ class TestDisplaySaferCPPResults(BuildStepMixinAdditions, unittest.TestCase):
         self.expectOutcome(result=SUCCESS, state_string='Found 1 fixed file: File17.cpp')
         rc = self.runStep()
         self.assertEqual(self.getProperty('passes'), ['File17.cpp'])
-        expected_comment = self.HEADER + "\n:warning: Found 1 fixed file! Please update expectations in `Source/[WebKit/WebCore]/SaferCPPExpectations` by running the following command and update your pull request:\n"
+        expected_comment = self.HEADER + "\n:warning: Found 1 fixed file! Please update expectations in `Source/[Project]/SaferCPPExpectations` by running the following command and update your pull request:\n"
         expected_comment += "- `Tools/Scripts/update-safer-cpp-expectations -p WebKit --RefCntblBaseVirtualDtor File17.cpp`"
         self.assertEqual(self.getProperty('comment_text'), expected_comment)
         self.assertEqual(self.getProperty('build_summary'), 'Found 1 fixed file: File17.cpp')
@@ -9578,7 +9578,7 @@ class TestDisplaySaferCPPResults(BuildStepMixinAdditions, unittest.TestCase):
         rc = self.runStep()
         expected_comment = self.HEADER + ":x: Found [10 new failures](https://ews-build.s3-us-west-2.amazonaws.com/None/None-123/scan-build-output/new-results.html). "
         expected_comment += "Please address these issues before landing. See [WebKit Guidelines for Safer C++ Programming](https://github.com/WebKit/WebKit/wiki/Safer-CPP-Guidelines).\n(cc @rniwa)\n"
-        expected_comment += "\n:warning: Found 1 fixed file! Please update expectations in `Source/[WebKit/WebCore]/SaferCPPExpectations` by running the following command and update your pull request:\n"
+        expected_comment += "\n:warning: Found 1 fixed file! Please update expectations in `Source/[Project]/SaferCPPExpectations` by running the following command and update your pull request:\n"
         expected_comment += '- `Tools/Scripts/update-safer-cpp-expectations -p WebKit --RefCntblBaseVirtualDtor File17.cpp`'
         self.assertEqual(self.getProperty('comment_text'), expected_comment)
         self.assertEqual(self.getProperty('build_finish_summary'), 'Found 10 new failures in File1.cpp')

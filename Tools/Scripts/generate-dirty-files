@@ -40,7 +40,7 @@ CHECKER_MAP = {
     'Unsafe cast': 'MemoryUnsafeCastChecker',
 }
 
-PROJECTS = ['WebCore', 'WebKit']
+PROJECTS = ['JavaScriptCore', 'WebCore', 'WebDriver', 'WebGPU', 'WebInspectorUI', 'WebKit', 'WebKitLegacy', 'WTF']
 DERIVED_SOURCES_RE = r'.*\/DerivedSources\/.*\/JS.*'
 
 
@@ -105,13 +105,12 @@ def find_project_results(args, project, file_list, results_data, issue_to_report
             bug_counts[bug_type] = 0
         bug_counts[bug_type] += 1
 
-        if not re.match(DERIVED_SOURCES_RE, file_name):
+        if f'{project.lower()}/' not in file_name.lower():
+            # Ignore WebKitBuild/Debug files that are included in other projects
+            continue
+        elif not re.match(DERIVED_SOURCES_RE, file_name):
             # Truncate path after project name to match the expectations file
-            try:
-                file_name = file_name.split(f'{project}/')[1]
-            except IndexError:
-                # Ignore WebKitBuild/Debug files that are included in other projects
-                continue
+            file_name = file_name.split(f'{project}/')[-1]
 
         # Map filename to issues for each bug type
         file_dict = results_data.get(CHECKER_MAP[bug_type], {})
@@ -152,6 +151,7 @@ def find_all_results(args):
     issue_to_report = {}
 
     for project in PROJECTS:
+        print('\n')
         subprocess.run(['mkdir', os.path.abspath(f'{args.output_dir}/{project}')])
         path = os.path.abspath(os.path.join(args.results_dir, 'StaticAnalyzer', project))
         command = 'find {} -name report\\*.html -print'.format(path)
@@ -159,8 +159,8 @@ def find_all_results(args):
             result_files = subprocess.check_output(command, shell=True, text=True)
         except subprocess.CalledProcessError as e:
             sys.stderr.write(f'{e.output}')
-            sys.stderr.write(f'Could not find results for {project}\n')
-            return -1
+            sys.stderr.write(f'No results for {project}\n')
+            continue
         project_files = result_files.splitlines()
         file_list.extend(project_files)
         result_counts[project] = len(project_files)

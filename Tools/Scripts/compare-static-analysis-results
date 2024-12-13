@@ -35,7 +35,7 @@ from libraries.webkitscmpy.webkitscmpy import local, log, remote
 
 CHECKERS = ['MemoryUnsafeCastChecker', 'NoUncountedMemberChecker', 'NoUncheckedPtrMemberChecker', 'RefCntblBaseVirtualDtor',
     'UncheckedCallArgsChecker', 'UncheckedLocalVarsChecker', 'UncountedCallArgsChecker', 'UncountedLambdaCapturesChecker', 'UncountedLocalVarsChecker']
-PROJECTS = ['WebCore', 'WebKit']
+PROJECTS = ['JavaScriptCore', 'WebCore', 'WebDriver', 'WebGPU', 'WebInspectorUI', 'WebKit', 'WebKitLegacy', 'WTF']
 STATIC_ANALYZER_UNEXPECTED = 'StaticAnalyzerUnexpectedRegressions'
 UNEXPECTED_PASS = {'actual': 'PASS', 'expected': 'FAIL'}
 UNEXPECTED_FAILURE = {'actual': 'FAIL', 'expected': 'PASS'}
@@ -99,10 +99,10 @@ def parser():
 
 def find_diff(args, file1, file2):
     # Create empty file if the corresponding one doesn't exist - this happens if a checker is added or removed
-    if not args.check_expectations:
-        if not os.path.exists(file1):
-            f = open(file1, 'a')
-            f.close()
+    if not args.check_expectations and not os.path.exists(file1):
+        f = open(file1, 'a')
+        f.close()
+
     if not os.path.exists(file2):
         f = open(file2, 'a')
         f.close()
@@ -178,13 +178,11 @@ def compare_project_results_to_expectations(args, new_path, project, upload_only
             with open(f'{new_path}/{project}/UnexpectedIssues{checker}', 'a') as f:
                 f.write('\n'.join(unexpected_issues))
 
-            print(f'\n{checker}:')
             if clean_files or buggy_files or unexpected_issues:
+                print(f'\n{checker}:')
                 print(f'    Unexpected passing files: {len(clean_files)}')
                 print(f'    Unexpected failing files: {len(buggy_files)}')
                 print(f'    Unexpected issues: {len(unexpected_issues)}')
-            else:
-                print('    No unexpected results')
 
         for file in current_results:
             if not file in project_results_for_upload.keys():
@@ -238,17 +236,18 @@ def compare_project_results_by_run(args, archive_path, new_path, project):
         project_results_passes[checker] = list(fixed_files)
         project_results_failures[checker] = list(new_files)
 
-        print(f'\n{checker}:')
         if fixed_issues or fixed_files or new_issues or new_files:
+            print(f'\n{checker}:')
             print(f'    Issues fixed: {len(fixed_issues)}')
             print(f'    Files fixed: {len(fixed_files)}')
             print(f'    Unexpected issues: {len(new_issues)}')
             print(f'    Unexpected failing files: {len(new_files)}')
-        else:
-            print('    No unexpected results')
 
     if new_issues_total and args.scan_build:
         create_filtered_results_dir(args, project, unexpected_result_paths_total, 'StaticAnalyzerRegressions')
+    
+    if not new_issues_total and not new_files_total and not fixed_issues_total and not fixed_files_total:
+        print('No unexpected results!')
 
     return new_issues_total, new_files_total, fixed_files_total, fixed_issues_total, project_results_passes, project_results_failures
 

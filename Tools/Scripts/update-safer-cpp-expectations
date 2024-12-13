@@ -27,7 +27,7 @@ import argparse
 EXPECTATIONS_PATH = '../../Source/{project}/SaferCPPExpectations/{checker_type}Expectations'
 CHECKERS = ['MemoryUnsafeCastChecker', 'NoUncountedMemberChecker', 'NoUncheckedPtrMemberChecker', 'RefCntblBaseVirtualDtor',
     'UncheckedCallArgsChecker', 'UncheckedLocalVarsChecker', 'UncountedCallArgsChecker', 'UncountedLambdaCapturesChecker', 'UncountedLocalVarsChecker']
-PROJECTS = ['WebCore', 'WebKit']
+PROJECTS = ['JavaScriptCore', 'WebCore', 'WebDriver', 'WebGPU', 'WebInspectorUI', 'WebKit', 'WebKitLegacy', 'WTF']
 
 
 def parser():
@@ -95,7 +95,7 @@ def modify_expectations_for_checker_from_file(checker_type, unexpected_contents,
 def update_expectations_from_file(unexpected_results, project, add=False):
     filename = unexpected_results.split('/')[-1]
     if not project:
-        projects = [p for p in ['WebKit', 'WebCore'] if p in filename]
+        projects = [p for p in PROJECTS if p in filename]
         if projects:
             project = projects[0]
         else:
