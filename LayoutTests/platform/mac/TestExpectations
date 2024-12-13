@@ -2460,3 +2460,6 @@ webkit.org/b/283203 [ Ventura+ ] fast/canvas/imageData-consistency.html [ Pass T
 webkit.org/b/284082 [ Sequoia+ ] http/tests/media/fairplay/legacy-fairplay-mse-muxed-nowait.html [ Timeout Failure ]
 
 webkit.org/b/284597 [ Ventura+ ] http/tests/misc/repeat-open-cancel.html [ Slow ]
+
+webkit.org/b/284653 [ Ventura+ ] http/tests/site-isolation/compositing/iframes/resize-from-zero-size.html [ Pass Failure ]
+
