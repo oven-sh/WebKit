@@ -226,10 +226,10 @@ void WebFileSystemStorageConnection::createWritable(WebCore::FileSystemHandleIde
     completionHandler(WebCore::Exception { WebCore::ExceptionCode::UnknownError, "Connection is lost"_s });
 }
 
-void WebFileSystemStorageConnection::closeWritable(WebCore::FileSystemHandleIdentifier identifier, bool aborted, WebCore::FileSystemStorageConnection::VoidCallback&& completionHandler)
+void WebFileSystemStorageConnection::closeWritable(WebCore::FileSystemHandleIdentifier identifier, FileSystemWriteCloseReason reason, WebCore::FileSystemStorageConnection::VoidCallback&& completionHandler)
 {
     if (RefPtr connection = m_connection) {
-        connection->sendWithAsyncReply(Messages::NetworkStorageManager::CloseWritable(identifier, aborted), [completionHandler = WTFMove(completionHandler)](auto error) mutable {
+        connection->sendWithAsyncReply(Messages::NetworkStorageManager::CloseWritable(identifier, reason), [completionHandler = WTFMove(completionHandler)](auto error) mutable {
             completionHandler(convertToExceptionOr(error));
         });
         return;

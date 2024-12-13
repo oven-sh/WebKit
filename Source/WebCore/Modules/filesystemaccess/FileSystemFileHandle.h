@@ -33,6 +33,7 @@ namespace WebCore {
 class File;
 class FileSystemSyncAccessHandle;
 class FileSystemWritableFileStream;
+enum class FileSystemWriteCloseReason : bool;
 enum class FileSystemWriteCommandType : uint8_t;
 template<typename> class ExceptionOr;
 
@@ -52,7 +53,8 @@ public:
         bool keepExistingData { false };
     };
     void createWritable(const CreateWritableOptions&, DOMPromiseDeferred<IDLInterface<FileSystemWritableFileStream>>&&);
-    void closeWritable(bool aborted);
+
+    void closeWritable(FileSystemWriteCloseReason);
     void executeCommandForWritable(FileSystemWriteCommandType, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError, DOMPromiseDeferred<void>&&);
 
 private:

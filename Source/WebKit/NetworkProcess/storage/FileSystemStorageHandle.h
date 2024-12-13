@@ -39,6 +39,7 @@ class SharedFileHandle;
 }
 
 namespace WebCore {
+enum class FileSystemWriteCloseReason : bool;
 enum class FileSystemWriteCommandType : uint8_t;
 }
 
@@ -73,7 +74,7 @@ public:
     std::optional<WebCore::FileSystemSyncAccessHandleIdentifier> activeSyncAccessHandle();
 
     std::optional<FileSystemStorageError> createWritable(bool keepExistingData);
-    std::optional<FileSystemStorageError> closeWritable(bool aborted);
+    std::optional<FileSystemStorageError> closeWritable(WebCore::FileSystemWriteCloseReason);
     std::optional<FileSystemStorageError> executeCommandForWritable(WebCore::FileSystemWriteCommandType, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError);
 
 private:

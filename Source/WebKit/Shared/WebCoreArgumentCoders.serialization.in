@@ -8723,6 +8723,8 @@ enum class WebCore::FileSystemWriteCommandType : uint8_t {
     Truncate
 };
 
+enum class WebCore::FileSystemWriteCloseReason : bool;
+
 [Nested] enum class WebCore::ResourceError::IsSanitized : bool
 
 #if ENABLE(DOM_AUDIO_SESSION)

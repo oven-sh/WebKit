@@ -29,6 +29,7 @@
 #include "FileSystemStorageError.h"
 #include "FileSystemStorageManager.h"
 #include "SharedFileHandle.h"
+#include <WebCore/FileSystemWriteCloseReason.h>
 #include <WebCore/FileSystemWriteCommandType.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -87,7 +88,7 @@ void FileSystemStorageHandle::close()
     if (m_activeSyncAccessHandle)
         closeSyncAccessHandle(m_activeSyncAccessHandle->identifier);
 
-    closeWritable(true);
+    closeWritable(WebCore::FileSystemWriteCloseReason::Aborted);
     manager->closeHandle(*this);
 }
 
@@ -255,7 +256,7 @@ std::optional<FileSystemStorageError> FileSystemStorageHandle::createWritable(bo
     return std::nullopt;
 }
 
-std::optional<FileSystemStorageError> FileSystemStorageHandle::closeWritable(bool aborted)
+std::optional<FileSystemStorageError> FileSystemStorageHandle::closeWritable(WebCore::FileSystemWriteCloseReason reason)
 {
     if (!m_activeWritableFile)
         return FileSystemStorageError::InvalidState;
@@ -267,7 +268,7 @@ std::optional<FileSystemStorageError> FileSystemStorageHandle::closeWritable(boo
 
     manager->releaseLockForFile(m_path, identifier());
 
-    if (aborted) {
+    if (reason == WebCore::FileSystemWriteCloseReason::Aborted) {
         m_activeWritableFile.close();
         FileSystem::deleteFile(m_activeWritableFile.path());
         return std::nullopt;
@@ -334,7 +335,7 @@ std::optional<FileSystemStorageError> FileSystemStorageHandle::executeCommandFor
 {
     auto error = executeCommandForWritableInternal(type, position, size, dataBytes, hasDataError);
     if (error)
-        closeWritable(true);
+        closeWritable(WebCore::FileSystemWriteCloseReason::Aborted);
 
     return error;
 }

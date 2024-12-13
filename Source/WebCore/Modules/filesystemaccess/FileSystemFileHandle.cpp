@@ -140,19 +140,19 @@ void FileSystemFileHandle::createWritable(const CreateWritableOptions& options, 
 
         RefPtr context = protectedThis->scriptExecutionContext();
         if (!context) {
-            closeWritable(true);
+            closeWritable(FileSystemWriteCloseReason::Aborted);
             return promise.reject(Exception { ExceptionCode::InvalidStateError, "Context has stopped"_s });
         }
 
         auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context->globalObject());
         if (!globalObject) {
-            closeWritable(true);
+            closeWritable(FileSystemWriteCloseReason::Aborted);
             return promise.reject(Exception { ExceptionCode::InvalidStateError, "Global object is invalid"_s });
         }
 
         auto sink = FileSystemWritableFileStreamSink::create(*this);
         if (sink.hasException()) {
-            closeWritable(true);
+            closeWritable(FileSystemWriteCloseReason::Aborted);
             return promise.reject(sink.releaseException());
         }
 
@@ -167,10 +167,10 @@ void FileSystemFileHandle::createWritable(const CreateWritableOptions& options, 
     });
 }
 
-void FileSystemFileHandle::closeWritable(bool aborted)
+void FileSystemFileHandle::closeWritable(FileSystemWriteCloseReason reason)
 {
     if (!isClosed())
-        connection().closeWritable(identifier(), aborted, [](auto) { });
+        connection().closeWritable(identifier(), reason, [](auto) { });
 }
 
 void FileSystemFileHandle::executeCommandForWritable(FileSystemWriteCommandType type, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError, DOMPromiseDeferred<void>&& promise)

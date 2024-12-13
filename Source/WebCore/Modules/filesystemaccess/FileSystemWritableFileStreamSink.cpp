@@ -28,6 +28,7 @@
 
 #include "FileSystemFileHandle.h"
 #include "FileSystemWritableFileStream.h"
+#include "FileSystemWriteCloseReason.h"
 #include "JSBlob.h"
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -104,7 +105,7 @@ FileSystemWritableFileStreamSink::FileSystemWritableFileStreamSink(FileSystemFil
 FileSystemWritableFileStreamSink::~FileSystemWritableFileStreamSink()
 {
     if (!m_isClosed)
-        protectedSource()->closeWritable(false);
+        protectedSource()->closeWritable(FileSystemWriteCloseReason::Completed);
 }
 
 // https://fs.spec.whatwg.org/#write-a-chunk
@@ -140,7 +141,7 @@ void FileSystemWritableFileStreamSink::close()
     ASSERT(!m_isClosed);
 
     m_isClosed = true;
-    protectedSource()->closeWritable(false);
+    protectedSource()->closeWritable(FileSystemWriteCloseReason::Completed);
 }
 
 void FileSystemWritableFileStreamSink::error(String&&)
@@ -148,7 +149,7 @@ void FileSystemWritableFileStreamSink::error(String&&)
     ASSERT(!m_isClosed);
 
     m_isClosed = true;
-    protectedSource()->closeWritable(true);
+    protectedSource()->closeWritable(FileSystemWriteCloseReason::Aborted);
 }
 
 } // namespace WebCore

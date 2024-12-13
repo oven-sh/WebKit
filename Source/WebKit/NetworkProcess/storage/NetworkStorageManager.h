@@ -79,6 +79,7 @@ struct IDBIterateCursorData;
 struct IDBKeyRangeData;
 struct RetrieveRecordsOptions;
 struct ServiceWorkerContextData;
+enum class FileSystemWriteCloseReason : bool;
 enum class FileSystemWriteCommandType : uint8_t;
 enum class StorageType : uint8_t;
 }
@@ -189,7 +190,7 @@ private:
     void closeSyncAccessHandle(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemSyncAccessHandleIdentifier, CompletionHandler<void()>&&);
     void requestNewCapacityForSyncAccessHandle(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemSyncAccessHandleIdentifier, uint64_t newCapacity, CompletionHandler<void(std::optional<uint64_t>)>&&);
     void createWritable(WebCore::FileSystemHandleIdentifier, bool keepExistingData, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
-    void closeWritable(WebCore::FileSystemHandleIdentifier, bool aborted, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
+    void closeWritable(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemWriteCloseReason, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
     void executeCommandForWritable(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemWriteCommandType, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
     void getHandleNames(WebCore::FileSystemHandleIdentifier, CompletionHandler<void(Expected<Vector<String>, FileSystemStorageError>)>&&);
     void getHandle(IPC::Connection&, WebCore::FileSystemHandleIdentifier, String&& name, CompletionHandler<void(Expected<std::optional<std::pair<WebCore::FileSystemHandleIdentifier, bool>>, FileSystemStorageError>)>&&);
