@@ -5346,7 +5346,8 @@ void Document::noteUserInteractionWithMediaElement()
     if (m_userHasInteractedWithMediaElement)
         return;
 
-    if (!protectedTopDocument()->userDidInteractWithPage())
+    RefPtr page = protectedPage();
+    if (!page || !page->userDidInteractWithPage())
         return;
 
     m_userHasInteractedWithMediaElement = true;
@@ -5639,7 +5640,12 @@ void Document::adjustFocusedNodeOnNodeRemoval(Node& node, NodeRemoval nodeRemova
 void Document::appendAutofocusCandidate(Element& candidate)
 {
     ASSERT(isTopDocument());
-    ASSERT(!m_isAutofocusProcessed);
+
+    RefPtr page = protectedPage();
+    if (!page)
+        return;
+    ASSERT(!page->autofocusProcessed());
+
     auto it = m_autofocusCandidates.findIf([&candidate](auto& c) {
         return c == &candidate;
     });
@@ -5657,7 +5663,8 @@ void Document::clearAutofocusCandidates()
 void Document::flushAutofocusCandidates()
 {
     ASSERT(isTopDocument());
-    if (m_isAutofocusProcessed)
+    RefPtr page = protectedPage();
+    if (!page || page->autofocusProcessed())
         return;
 
     if (m_autofocusCandidates.isEmpty())
@@ -5665,7 +5672,7 @@ void Document::flushAutofocusCandidates()
 
     if (cssTarget()) {
         m_autofocusCandidates.clear();
-        setAutofocusProcessed();
+        page->setAutofocusProcessed();
         return;
     }
 
@@ -5694,7 +5701,7 @@ void Document::flushAutofocusCandidates()
         // FIXME: Use the result of getting the focusable area for element if element is not focusable.
         if (element->isFocusable()) {
             clearAutofocusCandidates();
-            setAutofocusProcessed();
+            page->setAutofocusProcessed();
             element->runFocusingStepsForAutofocus();
             return;
         }

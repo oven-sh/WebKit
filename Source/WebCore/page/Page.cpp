@@ -439,7 +439,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_writingToolsController(makeUniqueRef<WritingToolsController>(*this))
 #endif
     , m_activeNowPlayingSessionUpdateTimer(*this, &Page::activeNowPlayingSessionUpdateTimerFired)
-    , m_documentSyncData(makeUniqueRef<DocumentSyncData>())
+    , m_topDocumentSyncData(makeUniqueRef<DocumentSyncData>())
 #if HAVE(AUDIT_TOKEN)
     , m_presentingApplicationAuditToken(WTFMove(pageConfiguration.presentingApplicationAuditToken))
 #endif
@@ -810,25 +810,59 @@ void Page::setMainFrameURL(const URL& url)
 #if ENABLE(DOM_AUDIO_SESSION)
 void Page::setAudioSessionType(DOMAudioSessionType audioSessionType)
 {
-    m_documentSyncData->audioSessionType = audioSessionType;
+    m_topDocumentSyncData->audioSessionType = audioSessionType;
     processSyncClient().broadcastAudioSessionTypeToOtherProcesses(audioSessionType);
 }
 
 DOMAudioSessionType Page::audioSessionType() const
 {
-    return m_documentSyncData->audioSessionType;
+    return m_topDocumentSyncData->audioSessionType;
 }
 #endif
+
+void Page::setUserDidInteractWithPage(bool didInteract)
+{
+    if (m_topDocumentSyncData->userDidInteractWithPage == didInteract)
+        return;
+
+    m_topDocumentSyncData->userDidInteractWithPage = didInteract;
+    processSyncClient().broadcastUserDidInteractWithPageToOtherProcesses(didInteract);
+}
+
+bool Page::userDidInteractWithPage() const
+{
+    return m_topDocumentSyncData->userDidInteractWithPage;
+}
+
+void Page::setAutofocusProcessed()
+{
+    if (m_topDocumentSyncData->isAutofocusProcessed)
+        return;
+
+    m_topDocumentSyncData->isAutofocusProcessed = true;
+    processSyncClient().broadcastIsAutofocusProcessedToOtherProcesses(true);
+}
+
+bool Page::autofocusProcessed() const
+{
+    return m_topDocumentSyncData->isAutofocusProcessed;
+}
 
 void Page::updateProcessSyncData(const ProcessSyncData& data)
 {
     switch (data.type) {
     case ProcessSyncDataType::MainFrameURLChange:
-        setMainFrameURL(std::get<URL>(data.value));
+        setMainFrameURL(std::get<enumToUnderlyingType(ProcessSyncDataType::MainFrameURLChange)>(data.value));
+        break;
+    case ProcessSyncDataType::IsAutofocusProcessed:
+        m_topDocumentSyncData->update(data);
+        break;
+    case ProcessSyncDataType::UserDidInteractWithPage:
+        m_topDocumentSyncData->update(data);
         break;
 #if ENABLE(DOM_AUDIO_SESSION)
     case ProcessSyncDataType::AudioSessionType:
-        m_documentSyncData->update(data);
+        m_topDocumentSyncData->update(data);
         break;
 #endif
     }
@@ -4112,6 +4146,8 @@ void Page::enableICECandidateFiltering()
 
 void Page::didChangeMainDocument(Document* newDocument)
 {
+    m_topDocumentSyncData = makeUniqueRef<DocumentSyncData>();
+
 #if ENABLE(WEB_RTC)
     m_rtcController->reset(m_shouldEnableICECandidateFilteringByDefault);
 #endif

@@ -3831,7 +3831,9 @@ static bool shouldAskForNavigationConfirmation(Document& document, const BeforeU
     if (document.isSandboxed(SandboxFlag::Modals))
         return false;
 
-    bool userDidInteractWithPage = document.topDocument().userDidInteractWithPage();
+    RefPtr page = document.protectedPage();
+    bool userDidInteractWithPage = page ? page->userDidInteractWithPage() : false;
+
     // Web pages can request we ask for confirmation before navigating by:
     // - Cancelling the BeforeUnloadEvent (modern way)
     // - Setting the returnValue attribute on the BeforeUnloadEvent to a non-empty string.
