@@ -211,6 +211,8 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
         // of non-root objects depend on the root object's screen relative position, so make sure it's there
         // from the start. We keep this up-to-date via AXIsolatedTree::updateRootScreenRelativePosition().
         setProperty(AXPropertyName::ScreenRelativePosition, axObject->screenRelativePosition());
+        // FIXME: We never update this property, e.g. when the iframe is moved in the hosting web content process.
+        setProperty(AXPropertyName::RemoteFrameOffset, object.remoteFrameOffset());
     }
 
     RefPtr geometryManager = tree()->geometryManager();
@@ -400,17 +402,10 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
         setObjectProperty(AXPropertyName::VerticalScrollBar, object.scrollBar(AccessibilityOrientation::Vertical));
         setObjectProperty(AXPropertyName::HorizontalScrollBar, object.scrollBar(AccessibilityOrientation::Horizontal));
         setProperty(AXPropertyName::HasRemoteFrameChild, object.hasRemoteFrameChild());
-    } else if (isWebArea) {
-        // Don't duplicate the remoteFrameOffset for every object. Just store in the WebArea.
-        // FIXME: We should store this in the root instead, as that is O(1) access (tree()->rootNode())
-        // vs. storing it in the web area, which requires an ancestry traversal.
-        setProperty(AXPropertyName::RemoteFrameOffset, object.remoteFrameOffset());
-
-        if (!tree()->isEmptyContentTree()) {
-            // We expose DocumentLinks only for the web area objects when the tree is not an empty content tree. This property is expensive and makes no sense in an empty content tree.
-            // FIXME: compute DocumentLinks on the AX thread instead of caching it.
-            setObjectVectorProperty(AXPropertyName::DocumentLinks, object.documentLinks());
-        }
+    } else if (isWebArea && !tree()->isEmptyContentTree()) {
+        // We expose DocumentLinks only for the web area objects when the tree is not an empty content tree. This property is expensive and makes no sense in an empty content tree.
+        // FIXME: compute DocumentLinks on the AX thread instead of caching it.
+        setObjectVectorProperty(AXPropertyName::DocumentLinks, object.documentLinks());
     }
 
     if (object.isWidget()) {
@@ -1395,17 +1390,8 @@ LayoutRect AXIsolatedObject::elementRect() const
 
 IntPoint AXIsolatedObject::remoteFrameOffset() const
 {
-    auto* webArea = Accessibility::findAncestor<AXIsolatedObject>(*this, true, [] (const auto& object) {
-        return object.isWebArea();
-    });
-
-    if (!webArea)
-        return { };
-
-    if (auto point = webArea->optionalAttributeValue<IntPoint>(AXPropertyName::RemoteFrameOffset))
-        return *point;
-
-    return { };
+    RefPtr root = tree()->rootNode();
+    return root ? root->propertyValue<IntPoint>(AXPropertyName::RemoteFrameOffset) : IntPoint();
 }
 
 FloatPoint AXIsolatedObject::screenRelativePosition() const
