@@ -50,7 +50,6 @@ struct GPUProcessCreationParameters {
 #if USE(MODERN_AVCONTENTKEYSESSION)
     bool shouldUseModernAVContentKeySession { false };
 #endif
-    ProcessID parentPID;
 
 #if USE(SANDBOX_EXTENSIONS_FOR_CACHE_AND_TEMP_DIRECTORY_ACCESS)
     SandboxExtension::Handle containerCachesDirectoryExtensionHandle;

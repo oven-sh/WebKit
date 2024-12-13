@@ -2617,6 +2617,11 @@ public:
     void fetchSessionStorage(CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&&);
     void restoreSessionStorage(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&, CompletionHandler<void(bool)>&&);
 
+#if HAVE(AUDIT_TOKEN)
+    const std::optional<audit_token_t>& presentingApplicationAuditToken() const;
+    void setPresentingApplicationAuditToken(const audit_token_t&);
+#endif
+
 private:
     void getWebCryptoMasterKey(CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
     WebPageProxy(PageClient&, WebProcessProxy&, Ref<API::PageConfiguration>&&);
@@ -3777,6 +3782,10 @@ private:
 #if PLATFORM(VISION)
     bool m_gamepadsConnected { false };
 #endif
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+    std::optional<audit_token_t> m_presentingApplicationAuditToken;
 #endif
 
     RefPtr<WebPageProxyTesting> m_pageForTesting;

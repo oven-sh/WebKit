@@ -66,7 +66,7 @@ public:
         virtual void removeMessageReceiver(IPC::ReceiverName) = 0;
         virtual IPC::Connection& connection() = 0;
         Ref<IPC::Connection> protectedConnection() { return connection(); }
-        virtual bool willStartCapture(WebCore::CaptureDevice::DeviceType) const = 0;
+        virtual bool willStartCapture(WebCore::CaptureDevice::DeviceType, WebCore::PageIdentifier) const = 0;
         virtual Logger& logger() = 0;
         Ref<Logger> protectedLogger() { return logger(); };
         virtual bool setCaptureAttributionString() { return true; }

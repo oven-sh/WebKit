@@ -84,6 +84,10 @@
 #include <WebCore/ShouldRequireExplicitConsentForGamepadAccess.h>
 #endif
 
+#if HAVE(AUDIT_TOKEN)
+#include "CoreIPCAuditToken.h"
+#endif
+
 namespace WebCore {
 enum class SandboxFlag : uint16_t;
 using SandboxFlags = OptionSet<SandboxFlag>;
@@ -343,6 +347,10 @@ struct WebPageCreationParameters {
 
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
     WebCore::ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent { WebCore::ShouldRequireExplicitConsentForGamepadAccess::No };
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+    std::optional<CoreIPCAuditToken> presentingApplicationAuditToken;
 #endif
 };
 

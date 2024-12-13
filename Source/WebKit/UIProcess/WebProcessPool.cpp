@@ -573,9 +573,6 @@ void WebProcessPool::gpuProcessExited(ProcessID identifier, ProcessTerminationRe
 
 void WebProcessPool::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Connection::Handle&& connectionIdentifier, WebKit::GPUProcessConnectionParameters&& parameters)
 {
-#if HAVE(AUDIT_TOKEN)
-    parameters.presentingApplicationAuditToken = configuration().presentingApplicationProcessToken();
-#endif
 #if PLATFORM(COCOA)
     parameters.applicationBundleIdentifier = applicationBundleIdentifier();
 #endif

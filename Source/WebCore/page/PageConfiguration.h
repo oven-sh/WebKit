@@ -231,6 +231,10 @@ public:
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
     ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent { ShouldRequireExplicitConsentForGamepadAccess::No };
 #endif
+
+#if HAVE(AUDIT_TOKEN)
+    std::optional<audit_token_t> presentingApplicationAuditToken;
+#endif
 };
 
 }

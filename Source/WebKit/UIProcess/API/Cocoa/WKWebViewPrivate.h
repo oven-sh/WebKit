@@ -608,6 +608,8 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 - (void)_fetchDataOfTypes:(_WKWebViewDataType)dataTypes completionHandler:(WK_SWIFT_UI_ACTOR void (^)(NSData *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 - (void)_restoreData:(NSData *)data completionHandler:(WK_SWIFT_UI_ACTOR void(^)(BOOL))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
+@property (nonatomic) audit_token_t presentingApplicationAuditToken WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
 @end
 
 #if TARGET_OS_IPHONE

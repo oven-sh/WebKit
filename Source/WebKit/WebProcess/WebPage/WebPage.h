@@ -437,6 +437,7 @@ enum class TextInteractionSource : uint8_t;
 enum class TextRecognitionUpdateResult : uint8_t;
 
 struct ContentWorldData;
+struct CoreIPCAuditToken;
 #if (PLATFORM(GTK) || PLATFORM(WPE)) && USE(GBM)
 struct DMABufRendererBufferFormat;
 #endif
@@ -1902,6 +1903,10 @@ public:
     void didDispatchClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&);
 
     bool isClosed() const { return m_isClosed; }
+
+#if HAVE(AUDIT_TOKEN)
+    void setPresentingApplicationAuditToken(CoreIPCAuditToken&&);
+#endif
 
 private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);

@@ -69,7 +69,7 @@ void NetworkExtensionContentFilter::initialize(const URL* url)
     ASSERT_UNUSED(url, !url);
     m_neFilterSource = adoptNS([[NEFilterSource alloc] initWithDecisionQueue:m_queue.get()]);
     [m_neFilterSource setSourceAppIdentifier:applicationBundleIdentifier()];
-    [m_neFilterSource setSourceAppPid:presentingApplicationPID()];
+    [m_neFilterSource setSourceAppPid:legacyPresentingApplicationPID()];
 }
 
 void NetworkExtensionContentFilter::willSendRequest(ResourceRequest& request, const ResourceResponse& redirectResponse)

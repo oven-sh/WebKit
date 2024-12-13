@@ -867,4 +867,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     SimulateClickOverFirstMatchingTextInViewportWithUserInteraction(String targetText) -> (bool success)
     UpdateOpener(WebCore::FrameIdentifier frameID, WebCore::FrameIdentifier newOpener)
+
+#if HAVE(AUDIT_TOKEN)
+    SetPresentingApplicationAuditToken(struct WebKit::CoreIPCAuditToken auditToken)
+#endif
 }

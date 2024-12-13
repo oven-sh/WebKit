@@ -31,6 +31,7 @@
 #include <wtf/Logger.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ProcessID.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -251,6 +252,8 @@ public:
     bool isActiveNowPlayingSession() const { return m_isActiveNowPlayingSession; }
     void setActiveNowPlayingSession(bool);
 
+    ProcessID presentingApplicationPID() const;
+
 #if !RELEASE_LOG_DISABLED
     virtual String description() const;
 #endif
@@ -330,6 +333,8 @@ public:
     virtual WeakPtr<PlatformMediaSession> selectBestMediaSession(const Vector<WeakPtr<PlatformMediaSession>>&, PlatformMediaSession::PlaybackControlsPurpose) { return nullptr; }
 
     virtual void isActiveNowPlayingSessionChanged() = 0;
+
+    virtual ProcessID presentingApplicationPID() const = 0;
 
 #if !RELEASE_LOG_DISABLED
     virtual const Logger& logger() const = 0;

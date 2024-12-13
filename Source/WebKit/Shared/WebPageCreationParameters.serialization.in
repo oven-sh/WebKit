@@ -268,6 +268,10 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
     WebCore::ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent;
 #endif
+
+#if HAVE(AUDIT_TOKEN)
+    std::optional<WebKit::CoreIPCAuditToken> presentingApplicationAuditToken;
+#endif
 }
 
 [Nested] struct WebKit::RemotePageParameters {

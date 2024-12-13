@@ -9821,6 +9821,14 @@ void HTMLMediaElement::isActiveNowPlayingSessionChanged()
         page->hasActiveNowPlayingSessionChanged();
 }
 
+ProcessID HTMLMediaElement::presentingApplicationPID() const
+{
+    if (RefPtr page = protectedDocument()->protectedPage())
+        return page->presentingApplicationPID();
+
+    return { };
+}
+
 #if HAVE(SPATIAL_TRACKING_LABEL)
 void HTMLMediaElement::updateSpatialTrackingLabel()
 {

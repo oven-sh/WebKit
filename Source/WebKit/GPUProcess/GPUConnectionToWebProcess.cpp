@@ -191,30 +191,32 @@ private:
     void addMessageReceiver(IPC::ReceiverName, IPC::MessageReceiver&) final { }
     void removeMessageReceiver(IPC::ReceiverName messageReceiverName) final { }
     IPC::Connection& connection() final { return m_process.get()->connection(); }
-    bool willStartCapture(CaptureDevice::DeviceType type) const final
+    bool willStartCapture(CaptureDevice::DeviceType type, PageIdentifier pageIdentifier) const final
     {
+        RefPtr process = m_process.get();
+
         switch (type) {
         case CaptureDevice::DeviceType::SystemAudio:
         case CaptureDevice::DeviceType::Unknown:
         case CaptureDevice::DeviceType::Speaker:
             return false;
         case CaptureDevice::DeviceType::Microphone:
-            return m_process.get()->allowsAudioCapture();
+            return process->allowsAudioCapture();
         case CaptureDevice::DeviceType::Camera:
-            if (!m_process.get()->allowsVideoCapture())
+            if (!process->allowsVideoCapture())
                 return false;
 #if PLATFORM(IOS_FAMILY)
-            MediaSessionManageriOS::providePresentingApplicationPID();
+            ASSERT(process->presentingApplicationPID(pageIdentifier));
+            MediaSessionHelper::sharedHelper().providePresentingApplicationPID(process->presentingApplicationPID(pageIdentifier));
 #endif
             return true;
-            break;
         case CaptureDevice::DeviceType::Screen:
-            return m_process.get()->allowsDisplayCapture();
+            return process->allowsDisplayCapture();
         case CaptureDevice::DeviceType::Window:
-            return m_process.get()->allowsDisplayCapture();
+            return process->allowsDisplayCapture();
         }
     }
-    
+
     bool setCaptureAttributionString() final
     {
         return m_process.get()->setCaptureAttributionString();
@@ -242,7 +244,7 @@ private:
         RefPtr process = m_process.get();
         if (type == CaptureDevice::DeviceType::Microphone)
             process->startCapturingAudio();
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
         else if (type == CaptureDevice::DeviceType::Camera) {
             process->overridePresentingApplicationPIDIfNeeded();
 #if HAVE(AVCAPTUREDEVICEROTATIONCOORDINATOR)
@@ -316,7 +318,7 @@ GPUConnectionToWebProcess::GPUConnectionToWebProcess(GPUProcess& gpuProcess, Web
     , m_libWebRTCCodecsProxy(LibWebRTCCodecsProxy::create(*this, parameters.sharedPreferencesForWebProcess))
 #endif
 #if HAVE(AUDIT_TOKEN)
-    , m_presentingApplicationAuditToken(parameters.presentingApplicationAuditToken ? std::optional(parameters.presentingApplicationAuditToken->auditToken()) : std::nullopt)
+    , m_presentingApplicationAuditTokens(WTFMove(parameters.presentingApplicationAuditTokens))
 #endif
 #if PLATFORM(COCOA)
     , m_applicationBundleIdentifier(parameters.applicationBundleIdentifier)
@@ -1297,6 +1299,36 @@ bool GPUConnectionToWebProcess::isAlwaysOnLoggingAllowed() const
 {
     return m_sessionID.isAlwaysOnLoggingAllowed() || m_sharedPreferencesForWebProcess.allowPrivacySensitiveOperationsInNonPersistentDataStores;
 }
+
+#if HAVE(AUDIT_TOKEN)
+std::optional<audit_token_t> GPUConnectionToWebProcess::presentingApplicationAuditToken(WebCore::PageIdentifier pageIdentifier) const
+{
+    auto iterator = m_presentingApplicationAuditTokens.find(pageIdentifier);
+    if (iterator != m_presentingApplicationAuditTokens.end())
+        return iterator->value.auditToken();
+
+    if (auto parentAuditToken = protectedGPUProcess()->protectedParentProcessConnection()->getAuditToken())
+        return *parentAuditToken;
+
+    return std::nullopt;
+}
+
+ProcessID GPUConnectionToWebProcess::presentingApplicationPID(WebCore::PageIdentifier pageIdentifier) const
+{
+    if (auto auditToken = presentingApplicationAuditToken(pageIdentifier))
+        return pidFromAuditToken(*auditToken);
+
+    return { };
+}
+
+void GPUConnectionToWebProcess::setPresentingApplicationAuditToken(WebCore::PageIdentifier pageIdentifier, std::optional<CoreIPCAuditToken>&& auditToken)
+{
+    if (auditToken)
+        m_presentingApplicationAuditTokens.set(pageIdentifier, *auditToken);
+    else
+        m_presentingApplicationAuditTokens.remove(pageIdentifier);
+}
+#endif
 
 } // namespace WebKit
 

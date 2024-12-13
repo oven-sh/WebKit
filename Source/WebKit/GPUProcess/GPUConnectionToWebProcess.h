@@ -247,7 +247,10 @@ public:
     RemoteRenderingBackend* remoteRenderingBackend(RenderingBackendIdentifier);
 
 #if HAVE(AUDIT_TOKEN)
-    const std::optional<audit_token_t>& presentingApplicationAuditToken() const { return m_presentingApplicationAuditToken; }
+    const HashMap<WebCore::PageIdentifier, CoreIPCAuditToken>& presentingApplicationAuditTokens() const { return m_presentingApplicationAuditTokens; }
+    std::optional<audit_token_t> presentingApplicationAuditToken(WebCore::PageIdentifier) const;
+    ProcessID presentingApplicationPID(WebCore::PageIdentifier) const;
+    void setPresentingApplicationAuditToken(WebCore::PageIdentifier, std::optional<CoreIPCAuditToken>&&);
 #endif
 #if PLATFORM(COCOA)
     const String& applicationBundleIdentifier() const { return m_applicationBundleIdentifier; }
@@ -394,7 +397,7 @@ private:
     IPC::ScopedActiveMessageReceiveQueue<LibWebRTCCodecsProxy> m_libWebRTCCodecsProxy;
 #endif
 #if HAVE(AUDIT_TOKEN)
-    const std::optional<audit_token_t> m_presentingApplicationAuditToken;
+    HashMap<WebCore::PageIdentifier, CoreIPCAuditToken> m_presentingApplicationAuditTokens;
 #endif
 #if PLATFORM(COCOA)
     const String m_applicationBundleIdentifier;

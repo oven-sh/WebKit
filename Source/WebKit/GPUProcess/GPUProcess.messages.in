@@ -94,6 +94,9 @@ messages -> GPUProcess : AuxiliaryProcess {
 #if ENABLE(WEBXR)
     WebXRPromptAccepted(std::optional<WebCore::ProcessIdentity> processIdentity) -> (bool accepted)
 #endif
+#if HAVE(AUDIT_TOKEN)
+    SetPresentingApplicationAuditToken(WebCore::ProcessIdentifier processIdentifier, WebCore::PageIdentifier pageIdentifier, std::optional<WebKit::CoreIPCAuditToken> auditToken);
+#endif
 }
 
 #endif // ENABLE(GPU_PROCESS)

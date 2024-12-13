@@ -410,7 +410,7 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
     loadParameters.webPageProxyID = trackingParameters.webPageProxyID;
     loadParameters.webPageID = trackingParameters.pageID;
     loadParameters.webFrameID = trackingParameters.frameID;
-    loadParameters.parentPID = presentingApplicationPID();
+    loadParameters.parentPID = legacyPresentingApplicationPID();
 #if HAVE(AUDIT_TOKEN)
     loadParameters.networkProcessAuditToken = WebProcess::singleton().ensureNetworkProcessConnection().networkProcessAuditToken();
 #endif
@@ -761,7 +761,7 @@ void WebLoaderStrategy::loadResourceSynchronously(FrameLoader& frameLoader, WebC
     loadParameters.webPageProxyID = webPageProxyID;
     loadParameters.webPageID = pageID;
     loadParameters.webFrameID = frameID;
-    loadParameters.parentPID = presentingApplicationPID();
+    loadParameters.parentPID = legacyPresentingApplicationPID();
 #if HAVE(AUDIT_TOKEN)
     loadParameters.networkProcessAuditToken = WebProcess::singleton().ensureNetworkProcessConnection().networkProcessAuditToken();
 #endif
@@ -845,7 +845,7 @@ void WebLoaderStrategy::startPingLoad(LocalFrame& frame, ResourceRequest& reques
     loadParameters.request = request;
     loadParameters.sourceOrigin = &document->securityOrigin();
     loadParameters.topOrigin = &document->topOrigin();
-    loadParameters.parentPID = presentingApplicationPID();
+    loadParameters.parentPID = legacyPresentingApplicationPID();
 #if HAVE(AUDIT_TOKEN)
     loadParameters.networkProcessAuditToken = WebProcess::singleton().ensureNetworkProcessConnection().networkProcessAuditToken();
 #endif
@@ -933,7 +933,7 @@ void WebLoaderStrategy::preconnectTo(WebCore::ResourceRequest&& request, WebPage
     parameters.webPageProxyID = webPage.webPageProxyIdentifier();
     parameters.webPageID = webPage.identifier();
     parameters.webFrameID = webFrame.frameID();
-    parameters.parentPID = presentingApplicationPID();
+    parameters.parentPID = legacyPresentingApplicationPID();
 #if HAVE(AUDIT_TOKEN)
     parameters.networkProcessAuditToken = WebProcess::singleton().ensureNetworkProcessConnection().networkProcessAuditToken();
 #endif

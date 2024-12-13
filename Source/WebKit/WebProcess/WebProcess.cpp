@@ -430,7 +430,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
     if (parameters.websiteDataStoreParameters)
         setWebsiteDataStoreParameters(WTFMove(*parameters.websiteDataStoreParameters));
 
-    setPresentingApplicationPID(parameters.presentingApplicationPID);
+    setLegacyPresentingApplicationPID(parameters.presentingApplicationPID);
 
 #if OS(LINUX)
     MemoryPressureHandler::ReliefLogger::setLoggingEnabled(parameters.shouldEnableMemoryPressureReliefLogging);
@@ -625,7 +625,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
 #if ENABLE(REMOTE_INSPECTOR) && PLATFORM(COCOA)
     if (std::optional<audit_token_t> auditToken = parentProcessConnection()->getAuditToken()) {
         RetainPtr<CFDataRef> auditData = adoptCF(CFDataCreate(nullptr, (const UInt8*)&*auditToken, sizeof(*auditToken)));
-        Inspector::RemoteInspector::singleton().setParentProcessInformation(presentingApplicationPID(), auditData);
+        Inspector::RemoteInspector::singleton().setParentProcessInformation(legacyPresentingApplicationPID(), auditData);
     }
     // We need to connect to webinspectord before the first page load for the XPC connection to be successfully opened.
     // This is because we block launchd before the first page load, and launchd is required to establish the connection.
@@ -662,7 +662,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
     WebCore::NavigatorGamepad::setGamepadsRecentlyAccessedThreshold(WebPageProxy::gamepadsRecentlyAccessedThreshold / 3);
 #endif
 
-    WEBPROCESS_RELEASE_LOG(Process, "initializeWebProcess: Presenting processPID=%d", presentingApplicationPID());
+    WEBPROCESS_RELEASE_LOG(Process, "initializeWebProcess: Presenting processPID=%d", legacyPresentingApplicationPID());
 }
 
 void WebProcess::setWebsiteDataStoreParameters(WebProcessDataStoreParameters&& parameters)

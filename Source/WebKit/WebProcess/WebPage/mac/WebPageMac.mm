@@ -126,7 +126,7 @@ void WebPage::platformInitializeAccessibility()
     [NSApplication _accessibilityInitialize];
 
     // Get the pid for the starting process.
-    pid_t pid = presentingApplicationPID();
+    pid_t pid = legacyPresentingApplicationPID();
     createMockAccessibilityElement(pid);
     RefPtr localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
     if (localMainFrame)

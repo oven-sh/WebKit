@@ -45,19 +45,28 @@ static std::optional<int>& presentingApplicationPIDOverride()
     return pid;
 }
 
-int presentingApplicationPID()
+int legacyPresentingApplicationPID()
 {
     const auto& pid = presentingApplicationPIDOverride();
     ASSERT(!pid || RunLoop::isMain());
     return pid ? pid.value() : getCurrentProcessID();
 }
 
-void setPresentingApplicationPID(int pid)
+void setLegacyPresentingApplicationPID(int pid)
 {
     ASSERT(RunLoop::isMain());
-    ASSERT_WITH_MESSAGE(!presentingApplicationPIDOverrideWasQueried, "presentingApplicationPID() should not be called before setPresentingApplicationPID()");
+    ASSERT_WITH_MESSAGE(!presentingApplicationPIDOverrideWasQueried, "legacyPresentingApplicationPID() should not be called before setLegacyPresentingApplicationPID()");
     presentingApplicationPIDOverride() = pid;
 }
+
+#if HAVE(AUDIT_TOKEN)
+ProcessID pidFromAuditToken(const audit_token_t& auditToken)
+{
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    return auditToken.val[5];
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+}
+#endif
 
 static std::optional<AuxiliaryProcessType>& auxiliaryProcessType()
 {

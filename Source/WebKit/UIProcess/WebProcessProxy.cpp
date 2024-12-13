@@ -300,7 +300,7 @@ private:
         return protectedProcess()->logger();
     }
 
-    bool willStartCapture(CaptureDevice::DeviceType) const final
+    bool willStartCapture(CaptureDevice::DeviceType, PageIdentifier) const final
     {
         // FIXME: We should validate this is granted.
         return true;
@@ -1169,6 +1169,9 @@ void WebProcessProxy::createGPUProcessConnection(GPUProcessConnectionIdentifier 
     parameters.ignoreInvalidMessageForTesting = ignoreInvalidMessageForTesting();
 #endif
     parameters.isLockdownModeEnabled = lockdownMode() == WebProcessProxy::LockdownMode::Enabled;
+#if HAVE(AUDIT_TOKEN)
+    parameters.presentingApplicationAuditTokens = presentingApplicationAuditTokens();
+#endif
     ASSERT(!m_gpuProcessConnectionIdentifier);
     m_gpuProcessConnectionIdentifier = identifier;
     protectedProcessPool()->createGPUProcessConnection(*this, WTFMove(connectionHandle), WTFMove(parameters));
@@ -3020,6 +3023,18 @@ void WebProcessProxy::registerServiceWorkerClients(CompletionHandler<void()>&& c
         completionHandler();
     });
 }
+
+#if HAVE(AUDIT_TOKEN)
+HashMap<WebCore::PageIdentifier, CoreIPCAuditToken> WebProcessProxy::presentingApplicationAuditTokens() const
+{
+    HashMap<WebCore::PageIdentifier, CoreIPCAuditToken> presentingApplicationAuditTokens;
+    WTF::forEach(pages(), [&] (auto& page) {
+        if (page->presentingApplicationAuditToken())
+            presentingApplicationAuditTokens.add(page->webPageIDInMainFrameProcess(), page->presentingApplicationAuditToken().value());
+    });
+    return presentingApplicationAuditTokens;
+}
+#endif
 
 TextStream& operator<<(TextStream& ts, const WebProcessProxy& process)
 {

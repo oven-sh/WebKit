@@ -5352,6 +5352,16 @@ struct WKWebViewData {
     }
 }
 
+- (audit_token_t)presentingApplicationAuditToken
+{
+    return self._protectedPage->presentingApplicationAuditToken().value_or(audit_token_t { });
+}
+
+- (void)setPresentingApplicationAuditToken:(audit_token_t)presentingApplicationAuditToken
+{
+    self._protectedPage->setPresentingApplicationAuditToken(presentingApplicationAuditToken);
+}
+
 @end
 
 @implementation WKWebView (WKDeprecated)

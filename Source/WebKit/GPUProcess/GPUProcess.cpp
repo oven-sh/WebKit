@@ -269,8 +269,6 @@ void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters,
     // Match the QoS of the UIProcess since the GPU process is doing rendering on its behalf.
     WTF::Thread::setCurrentThreadIsUserInteractive(0);
 
-    setPresentingApplicationPID(parameters.parentPID);
-
     if (!parameters.overrideLanguages.isEmpty())
         overrideUserPreferredLanguages(parameters.overrideLanguages);
 
@@ -634,6 +632,14 @@ void GPUProcess::webXRPromptAccepted(std::optional<WebCore::ProcessIdentity> pro
 {
     m_processIdentity = processIdentity;
     completionHandler(true);
+}
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+void GPUProcess::setPresentingApplicationAuditToken(WebCore::ProcessIdentifier processIdentifier, WebCore::PageIdentifier pageIdentifier, std::optional<WebKit::CoreIPCAuditToken>&& auditToken)
+{
+    if (RefPtr connection = m_webProcessConnections.get(processIdentifier))
+        connection->setPresentingApplicationAuditToken(pageIdentifier, WTFMove(auditToken));
 }
 #endif
 

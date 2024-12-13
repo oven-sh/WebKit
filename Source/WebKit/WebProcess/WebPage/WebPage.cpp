@@ -469,6 +469,10 @@
 #include "PDFPluginBase.h"
 #endif
 
+#if HAVE(AUDIT_TOKEN)
+#include "CoreIPCAuditToken.h"
+#endif
+
 #if PLATFORM(COCOA)
 #include <pal/cf/CoreTextSoftLink.h>
 #endif
@@ -860,6 +864,10 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
     pageConfiguration.gamepadAccessRequiresExplicitConsent = parameters.gamepadAccessRequiresExplicitConsent;
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+    pageConfiguration.presentingApplicationAuditToken = parameters.presentingApplicationAuditToken ? std::optional(parameters.presentingApplicationAuditToken->auditToken()) : std::nullopt;
 #endif
 
     m_page = Page::create(WTFMove(pageConfiguration));
@@ -10193,6 +10201,14 @@ void WebPage::callAfterPendingSyntheticClick(CompletionHandler<void(SyntheticCli
     completion(SyntheticClickResult::Failed);
 }
 
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+void WebPage::setPresentingApplicationAuditToken(CoreIPCAuditToken&& presentingApplicationAuditToken)
+{
+    if (RefPtr page = protectedCorePage())
+        page->setPresentingApplicationAuditToken(presentingApplicationAuditToken.auditToken());
+}
 #endif
 
 } // namespace WebKit

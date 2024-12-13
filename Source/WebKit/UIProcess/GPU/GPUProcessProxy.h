@@ -72,6 +72,7 @@ class WebPageProxy;
 class WebProcessProxy;
 class WebsiteDataStore;
 
+struct CoreIPCAuditToken;
 struct GPUProcessConnectionParameters;
 struct GPUProcessCreationParameters;
 struct SharedPreferencesForWebProcess;
@@ -158,6 +159,10 @@ public:
 #if PLATFORM(COCOA) && ENABLE(REMOTE_INSPECTOR)
     bool hasSentGPUToolsSandboxExtensions() const { return m_hasSentGPUToolsSandboxExtensions; }
     static Vector<SandboxExtensionHandle> createGPUToolsSandboxExtensionHandlesIfNeeded();
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+    void setPresentingApplicationAuditToken(WebCore::ProcessIdentifier, WebCore::PageIdentifier, std::optional<CoreIPCAuditToken>);
 #endif
 
 private:

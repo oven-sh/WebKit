@@ -117,19 +117,22 @@ void MediaSessionManageriOS::configureWirelessTargetMonitoring()
 #endif
 }
 
-void MediaSessionManageriOS::providePresentingApplicationPIDIfNecessary()
+void MediaSessionManageriOS::providePresentingApplicationPIDIfNecessary(ProcessID pid)
 {
 #if HAVE(MEDIAEXPERIENCE_AVSYSTEMCONTROLLER)
     if (m_havePresentedApplicationPID)
         return;
     m_havePresentedApplicationPID = true;
-    MediaSessionHelper::sharedHelper().providePresentingApplicationPID(presentingApplicationPID());
+    MediaSessionHelper::sharedHelper().providePresentingApplicationPID(pid);
 #endif
 }
 
-void MediaSessionManageriOS::providePresentingApplicationPID()
+void MediaSessionManageriOS::updatePresentingApplicationPIDIfNecessary(ProcessID pid)
 {
-    MediaSessionHelper::sharedHelper().providePresentingApplicationPID(presentingApplicationPID());
+#if HAVE(MEDIAEXPERIENCE_AVSYSTEMCONTROLLER)
+    if (m_havePresentedApplicationPID)
+        MediaSessionHelper::sharedHelper().providePresentingApplicationPID(pid, MediaSessionHelper::ShouldOverride::Yes);
+#endif
 }
 
 bool MediaSessionManageriOS::sessionWillBeginPlayback(PlatformMediaSession& session)
@@ -145,7 +148,7 @@ bool MediaSessionManageriOS::sessionWillBeginPlayback(PlatformMediaSession& sess
     session.setShouldPlayToPlaybackTarget(playbackTargetSupportsAirPlayVideo);
 #endif
 
-    providePresentingApplicationPIDIfNecessary();
+    providePresentingApplicationPIDIfNecessary(session.presentingApplicationPID());
 
     return true;
 }

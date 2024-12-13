@@ -39,6 +39,7 @@
 
 namespace WebCore {
 
+class Page;
 class PlatformMediaSession;
 struct MediaConfiguration;
 struct NowPlayingInfo;
@@ -103,7 +104,7 @@ public:
     virtual std::optional<MediaUniqueIdentifier> lastUpdatedNowPlayingInfoUniqueIdentifier() const { return std::nullopt; }
     virtual bool registeredAsNowPlayingApplication() const { return false; }
     virtual bool haveEverRegisteredAsNowPlayingApplication() const { return false; }
-    virtual void prepareToSendUserMediaPermissionRequest() { }
+    virtual void prepareToSendUserMediaPermissionRequestForPage(Page&) { }
 
     bool willIgnoreSystemInterruptions() const { return m_willIgnoreSystemInterruptions; }
     void setWillIgnoreSystemInterruptions(bool ignore) { m_willIgnoreSystemInterruptions = ignore; }
@@ -200,6 +201,8 @@ public:
     WEBCORE_EXPORT void removeNowPlayingMetadataObserver(const NowPlayingMetadataObserver&);
 
     bool hasActiveNowPlayingSessionInGroup(std::optional<MediaSessionGroupIdentifier>);
+
+    virtual void updatePresentingApplicationPIDIfNecessary(ProcessID) { }
 
 protected:
     friend class PlatformMediaSession;

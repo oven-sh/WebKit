@@ -240,8 +240,8 @@ void RemoteAudioSessionProxyManager::updatePresentingProcesses()
     m_proxies.forEach([&](auto& proxy) {
         if (!proxy.isActive())
             return;
-        if (auto& token = proxy.gpuConnectionToWebProcess()->presentingApplicationAuditToken())
-            presentingProcesses.append(*token);
+        for (auto& token : proxy.gpuConnectionToWebProcess()->presentingApplicationAuditTokens().values())
+            presentingProcesses.append(token.auditToken());
     });
     AudioSession::protectedSharedSession()->setPresentingProcesses(WTFMove(presentingProcesses));
 }

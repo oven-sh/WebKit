@@ -440,6 +440,9 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #endif
     , m_activeNowPlayingSessionUpdateTimer(*this, &Page::activeNowPlayingSessionUpdateTimerFired)
     , m_documentSyncData(makeUniqueRef<DocumentSyncData>())
+#if HAVE(AUDIT_TOKEN)
+    , m_presentingApplicationAuditToken(WTFMove(pageConfiguration.presentingApplicationAuditToken))
+#endif
 {
     updateTimerThrottlingState();
 
@@ -5374,6 +5377,31 @@ Ref<InspectorController> Page::protectedInspectorController()
 Ref<ServicesOverlayController> Page::protectedServicesOverlayController()
 {
     return m_servicesOverlayController.get();
+}
+#endif
+
+ProcessID Page::presentingApplicationPID() const
+{
+#if HAVE(AUDIT_TOKEN)
+    if (m_presentingApplicationAuditToken)
+        return pidFromAuditToken(*m_presentingApplicationAuditToken);
+#endif
+
+    return WTF::legacyPresentingApplicationPID();
+}
+
+#if HAVE(AUDIT_TOKEN)
+const std::optional<audit_token_t>& Page::presentingApplicationAuditToken() const
+{
+    return m_presentingApplicationAuditToken;
+}
+
+void Page::setPresentingApplicationAuditToken(std::optional<audit_token_t> presentingApplicationAuditToken)
+{
+    m_presentingApplicationAuditToken = WTFMove(presentingApplicationAuditToken);
+
+    if (auto mediaSessionManager = PlatformMediaSessionManager::singletonIfExists())
+        mediaSessionManager->updatePresentingApplicationPIDIfNecessary(presentingApplicationPID());
 }
 #endif
 

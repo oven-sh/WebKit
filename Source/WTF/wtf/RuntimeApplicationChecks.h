@@ -27,11 +27,16 @@
 
 #include <optional>
 #include <wtf/Forward.h>
+#include <wtf/ProcessID.h>
 
 namespace WTF {
 
-WTF_EXPORT_PRIVATE void setPresentingApplicationPID(int);
-WTF_EXPORT_PRIVATE int presentingApplicationPID();
+WTF_EXPORT_PRIVATE void setLegacyPresentingApplicationPID(int);
+WTF_EXPORT_PRIVATE int legacyPresentingApplicationPID();
+
+#if HAVE(AUDIT_TOKEN)
+WTF_EXPORT_PRIVATE ProcessID pidFromAuditToken(const audit_token_t&);
+#endif
 
 enum class AuxiliaryProcessType : uint8_t {
     WebContent,
@@ -80,9 +85,13 @@ using WTF::isInGPUProcess;
 using WTF::isInModelProcess;
 using WTF::isInNetworkProcess;
 using WTF::isInWebProcess;
-using WTF::presentingApplicationPID;
+using WTF::legacyPresentingApplicationPID;
 using WTF::processType;
 using WTF::processTypeDescription;
 using WTF::setAuxiliaryProcessType;
 using WTF::setAuxiliaryProcessTypeForTesting;
-using WTF::setPresentingApplicationPID;
+using WTF::setLegacyPresentingApplicationPID;
+
+#if HAVE(AUDIT_TOKEN)
+using WTF::pidFromAuditToken;
+#endif

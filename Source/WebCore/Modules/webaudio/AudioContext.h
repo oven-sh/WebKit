@@ -142,6 +142,7 @@ private:
     std::optional<NowPlayingInfo> nowPlayingInfo() const final;
     WeakPtr<PlatformMediaSession> selectBestMediaSession(const Vector<WeakPtr<PlatformMediaSession>>&, PlatformMediaSession::PlaybackControlsPurpose) final;
     void isActiveNowPlayingSessionChanged() final;
+    ProcessID presentingApplicationPID() const final;
 
     // MediaCanStartListener.
     void mediaCanStart(Document&) final;

@@ -919,7 +919,7 @@ protected:
     unsigned getLengthForTextRange() const;
 
 private:
-    ProcessID processID() const final { return presentingApplicationPID(); }
+    ProcessID processID() const final { return legacyPresentingApplicationPID(); }
     bool hasAncestorFlag(AXAncestorFlag flag) const { return ancestorFlagsAreInitialized() && m_ancestorFlags.contains(flag); }
     std::optional<SimpleRange> rangeOfStringClosestToRangeInDirection(const SimpleRange&, AccessibilitySearchDirection, const Vector<String>&) const;
     std::optional<SimpleRange> selectionRange() const;

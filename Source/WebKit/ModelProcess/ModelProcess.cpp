@@ -192,8 +192,6 @@ void ModelProcess::initializeModelProcess(ModelProcessCreationParameters&& param
     // Match the QoS of the UIProcess since the model process is doing rendering on its behalf.
     WTF::Thread::setCurrentThreadIsUserInteractive(0);
 
-    setPresentingApplicationPID(parameters.parentPID);
-
 #if USE(OS_STATE)
     registerWithStateDumper("ModelProcess state"_s);
 #endif

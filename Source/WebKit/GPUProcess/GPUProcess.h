@@ -33,6 +33,7 @@
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/IntDegrees.h>
 #include <WebCore/MediaPlayerIdentifier.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/ShareableBitmap.h>
 #include <WebCore/Timer.h>
@@ -69,6 +70,7 @@ namespace WebKit {
 
 class GPUConnectionToWebProcess;
 class RemoteAudioSessionProxyManager;
+struct CoreIPCAuditToken;
 struct GPUProcessConnectionParameters;
 struct GPUProcessCreationParameters;
 struct GPUProcessSessionParameters;
@@ -142,6 +144,10 @@ public:
 #endif
 #if ENABLE(WEBXR)
     std::optional<WebCore::ProcessIdentity> immersiveModeProcessIdentity() const;
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+    void setPresentingApplicationAuditToken(WebCore::ProcessIdentifier, WebCore::PageIdentifier, std::optional<CoreIPCAuditToken>&&);
 #endif
 
 private:

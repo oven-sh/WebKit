@@ -545,6 +545,7 @@ def types_that_cannot_be_forward_declared():
 
 def conditions_for_header(header):
     conditions = {
+        '"CoreIPCAuditToken.h"': ["HAVE(AUDIT_TOKEN)"],
         '"DMABufRendererBufferFormat.h"': ["PLATFORM(GTK)", "PLATFORM(WPE)"],
         '"GestureTypes.h"': ["PLATFORM(IOS_FAMILY)"],
         '"InputMethodState.h"': ["PLATFORM(GTK)", "PLATFORM(WPE)"],
@@ -970,6 +971,7 @@ def headers_for_type(type):
         'WebCore::MediaProducerMediaState': ['<WebCore/MediaProducer.h>'],
         'WebCore::MediaProducerMutedState': ['<WebCore/MediaProducer.h>'],
         'WebCore::MediaPromise::Result': ['<WebCore/MediaPromiseTypes.h>'],
+        'WebCore::MediaSessionHelper::ShouldOverride': ['<WebCore/MediaSessionHelperIOS.h>'],
         'WebCore::MediaSettingsRange': ['<WebCore/MediaSettingsRange.h>'],
         'WebCore::MediaSourcePrivateAddStatus': ['<WebCore/MediaSourcePrivate.h>'],
         'WebCore::MediaSourcePrivateEndOfStreamStatus': ['<WebCore/MediaSourcePrivate.h>'],
