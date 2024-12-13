@@ -32,6 +32,7 @@
 #include "DataDetectionResult.h"
 #include "EditorState.h"
 #include "FindController.h"
+#include "GestureTypes.h"
 #include "MessageSenderInlines.h"
 #include "PDFAnnotationTypeHelpers.h"
 #include "PDFContextMenu.h"
@@ -3900,17 +3901,97 @@ void UnifiedPDFPlugin::setSelectionRange(FloatPoint pointInRootView, TextGranula
         }
     }();
 
-    auto pointInPlugin = convertFromRootViewToPlugin(pointInRootView);
-    auto pointInDocument = convertDown<FloatPoint>(CoordinateSpace::Plugin, CoordinateSpace::PDFDocumentLayout, pointInPlugin);
-    auto pageIndex = m_presentationController->nearestPageIndexForDocumentPoint(pointInDocument);
-    auto pointInPage = convertDown(CoordinateSpace::PDFDocumentLayout, CoordinateSpace::PDFPage, pointInDocument, pageIndex);
+    auto [page, pointInPage] = rootViewToPage(pointInRootView);
+    if (!page)
+        return;
 
-    RetainPtr page = m_documentLayout.pageAtIndex(pageIndex);
     setCurrentSelection([pdfDocument selectionFromPage:page.get() atPoint:pointInPage toPage:page.get() atPoint:pointInPage withGranularity:pdfGranularity]);
 #else
     UNUSED_PARAM(pointInRootView);
     UNUSED_PARAM(granularity);
 #endif
+}
+
+SelectionWasFlipped UnifiedPDFPlugin::moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint extentEndpoint)
+{
+    auto flipped = SelectionWasFlipped::No;
+#if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
+    RetainPtr pdfDocument = m_pdfDocument;
+    if (!pdfDocument)
+        return flipped;
+
+    bool baseIsStart = extentEndpoint == SelectionEndpoint::End;
+    auto baseEndpoint = baseIsStart ? SelectionEndpoint::Start : SelectionEndpoint::End;
+    auto basePageAndPoint = selectionCaretPointInPage(baseEndpoint);
+    if (!basePageAndPoint)
+        return flipped;
+
+    auto [basePage, basePointInPage] = *basePageAndPoint;
+    if (!basePage)
+        return flipped;
+
+    auto [extentPage, extentPointInPage] = rootViewToPage(pointInRootView);
+    if (!extentPage)
+        return flipped;
+
+    RetainPtr newSelection = [pdfDocument selectionFromPage:baseIsStart ? basePage.get() : extentPage.get()
+        atPoint:baseIsStart ? basePointInPage : extentPointInPage
+        toPage:baseIsStart ? extentPage.get() : basePage.get()
+        atPoint:baseIsStart ? extentPointInPage : basePointInPage
+        withGranularity:PDFSelectionGranularityCharacter];
+
+    if (![[newSelection pages] count]) {
+        // The selection became collapsed; maintain the existing selection.
+        return flipped;
+    }
+
+    auto newExtentPageAndPoint = selectionCaretPointInPage(newSelection.get(), extentEndpoint);
+    auto newBasePageAndPoint = selectionCaretPointInPage(newSelection.get(), baseEndpoint);
+    if (newExtentPageAndPoint && newBasePageAndPoint) {
+        auto areVisuallyDistinct = [](FloatPoint a, FloatPoint b) {
+            static constexpr auto maxDistanceSquared = 0.1 * 0.1;
+            return (a - b).diagonalLengthSquared() > maxDistanceSquared;
+        };
+
+        auto [newExtentPage, newExtentPointInPage] = *newExtentPageAndPoint;
+        auto [newBasePage, newBasePointInPage] = *newBasePageAndPoint;
+        if (basePage != newBasePage || areVisuallyDistinct(basePointInPage, newBasePointInPage)) {
+            // Canonicalize the selection (i.e. swap the start and end points) if needed.
+            [newSelection addSelection:newSelection.get()];
+            flipped = SelectionWasFlipped::Yes;
+        }
+    }
+
+    setCurrentSelection(WTFMove(newSelection));
+#else
+    UNUSED_PARAM(pointInRootView);
+    UNUSED_PARAM(extentEndpoint);
+#endif
+    return flipped;
+}
+
+auto UnifiedPDFPlugin::selectionCaretPointInPage(PDFSelection *selection, SelectionEndpoint endpoint) -> std::optional<PageAndPoint>
+{
+    bool isStart = endpoint == SelectionEndpoint::Start;
+    RetainPtr pages = [selection pages];
+    RetainPtr page = isStart ? [pages firstObject] : [pages lastObject];
+    if (!page)
+        return { };
+
+    RetainPtr selectionsByLine = [selection selectionsByLine];
+    RetainPtr selectedLine = isStart ? [selectionsByLine firstObject] : [selectionsByLine lastObject];
+    FloatRect lineBounds = [selectedLine boundsForPage:page.get()];
+    if (lineBounds.isEmpty())
+        return { };
+
+    // FIXME: Account for RTL and vertical text.
+    auto offsetX = isStart ? lineBounds.x() : lineBounds.maxX();
+    return { { WTFMove(page), { offsetX, lineBounds.y() + (lineBounds.height() / 2) } } };
+}
+
+auto UnifiedPDFPlugin::selectionCaretPointInPage(SelectionEndpoint endpoint) const -> std::optional<PageAndPoint>
+{
+    return selectionCaretPointInPage(RetainPtr { m_currentSelection }.get(), endpoint);
 }
 
 bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) const
@@ -3974,6 +4055,15 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
 }
 
 #endif // PLATFORM(IOS_FAMILY)
+
+auto UnifiedPDFPlugin::rootViewToPage(WebCore::FloatPoint pointInRootView) const -> PageAndPoint
+{
+    auto pointInPlugin = convertFromRootViewToPlugin(pointInRootView);
+    auto pointInDocument = convertDown<FloatPoint>(CoordinateSpace::Plugin, CoordinateSpace::PDFDocumentLayout, pointInPlugin);
+    auto pageIndex = m_presentationController->nearestPageIndexForDocumentPoint(pointInDocument);
+    auto pointInPage = convertDown(CoordinateSpace::PDFDocumentLayout, CoordinateSpace::PDFPage, pointInDocument, pageIndex);
+    return { m_documentLayout.pageAtIndex(pageIndex), pointInPage };
+}
 
 TextStream& operator<<(TextStream& ts, RepaintRequirement requirement)
 {

@@ -79,4 +79,7 @@ enum class TextInteractionSource : uint8_t {
     Mouse = 1 << 1,
 };
 
+enum class SelectionEndpoint : bool { Start, End };
+enum class SelectionWasFlipped : bool { No, Yes };
+
 } // namespace WebKit

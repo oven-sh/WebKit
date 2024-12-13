@@ -57,6 +57,8 @@ namespace WebKit {
 class PDFPluginBase;
 class WebFrame;
 class WebPage;
+enum class SelectionEndpoint : bool;
+enum class SelectionWasFlipped : bool;
 struct EditorState;
 struct FrameInfoData;
 struct WebHitTestResultData;
@@ -95,6 +97,7 @@ public:
 #if PLATFORM(IOS_FAMILY)
     void pluginDidInstallPDFDocument(double initialScaleFactor);
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
+    SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint);
 #endif
 
     bool populateEditorStateIfNeeded(EditorState&) const;

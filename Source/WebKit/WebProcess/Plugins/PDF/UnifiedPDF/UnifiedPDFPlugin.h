@@ -574,10 +574,17 @@ private:
 
     WebCore::FloatRect pageBoundsInContentsSpace(PDFDocumentLayout::PageIndex) const;
 
+    using PageAndPoint = std::pair<RetainPtr<PDFPage>, WebCore::FloatPoint>;
+    PageAndPoint rootViewToPage(WebCore::FloatPoint) const;
+
 #if PLATFORM(IOS_FAMILY)
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity) final;
+    SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint) final;
     bool platformPopulateEditorStateIfNeeded(EditorState&) const final;
-#endif
+
+    static std::optional<PageAndPoint> selectionCaretPointInPage(PDFSelection *, SelectionEndpoint);
+    std::optional<PageAndPoint> selectionCaretPointInPage(SelectionEndpoint) const;
+#endif // PLATFORM(IOS_FAMILY)
 
     RefPtr<PDFPresentationController> m_presentationController;
 

@@ -84,6 +84,8 @@ class WebFrame;
 class WebKeyboardEvent;
 class WebMouseEvent;
 class WebWheelEvent;
+enum class SelectionEndpoint : bool;
+enum class SelectionWasFlipped : bool;
 struct EditorState;
 struct WebHitTestResultData;
 
@@ -313,6 +315,7 @@ public:
 
 #if PLATFORM(IOS_FAMILY)
     virtual void setSelectionRange(WebCore::FloatPoint /* pointInRootView */, WebCore::TextGranularity) { }
+    virtual SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint /* pointInRootView */, SelectionEndpoint);
 #endif
 
     bool populateEditorStateIfNeeded(EditorState&) const;

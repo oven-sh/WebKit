@@ -188,8 +188,6 @@
 namespace WebKit {
 using namespace WebCore;
 
-enum class SelectionWasFlipped : bool { No, Yes };
-
 // FIXME: Unclear if callers in this file are correctly choosing which of these two functions to use.
 
 static String plainTextForContext(const SimpleRange& range)
@@ -2022,6 +2020,16 @@ void WebPage::updateSelectionWithTouches(const IntPoint& point, SelectionTouch s
     RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
     if (!frame)
         return;
+
+#if ENABLE(PDF_PLUGIN)
+    if (RefPtr pluginView = pluginViewForFrame(frame.get())) {
+        OptionSet<SelectionFlags> resultFlags;
+        auto startOrEnd = baseIsStart ? SelectionEndpoint::End : SelectionEndpoint::Start;
+        if (pluginView->moveSelectionEndpoint(point, startOrEnd) == SelectionWasFlipped::Yes)
+            resultFlags.add(SelectionFlags::SelectionFlipped);
+        return completionHandler(point, selectionTouch, resultFlags);
+    }
+#endif
 
     if (selectionTouch == SelectionTouch::Started)
         addTextInteractionSources(TextInteractionSource::Touch);

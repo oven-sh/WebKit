@@ -29,6 +29,7 @@
 #if ENABLE(PDF_PLUGIN)
 
 #import "EditorState.h"
+#import "GestureTypes.h"
 #import "Logging.h"
 #import "MessageSenderInlines.h"
 #import "PDFIncrementalLoader.h"
@@ -1190,6 +1191,15 @@ bool PDFPluginBase::populateEditorStateIfNeeded(EditorState& state) const
 #endif
     return true;
 }
+
+#if PLATFORM(IOS_FAMILY)
+
+SelectionWasFlipped PDFPluginBase::moveSelectionEndpoint(FloatPoint, SelectionEndpoint)
+{
+    return SelectionWasFlipped::No;
+}
+
+#endif
 
 #if !LOG_DISABLED
 
