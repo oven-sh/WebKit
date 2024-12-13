@@ -976,8 +976,6 @@ void WebPushDaemon::showNotification(PushClientConnection& connection, const Web
 
 void WebPushDaemon::showNotification(const WebCore::PushSubscriptionSetIdentifier& identifier, const WebCore::NotificationData& notificationData, RefPtr<WebCore::NotificationResources> resources, std::optional<unsigned long long> appBadge, CompletionHandler<void()>&& completionHandler)
 {
-    RELEASE_ASSERT(supportsBuiltinNotifications(identifier));
-
     RetainPtr content = adoptNS([[UNMutableNotificationContent alloc] init]);
 
     [content setDefaultActionBundleIdentifier:platformDefaultActionBundleIdentifier(identifier)];
