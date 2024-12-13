@@ -101,7 +101,6 @@
 #include <WebCore/ScrollbarsController.h>
 #include <WebCore/ShadowRoot.h>
 #include <WebCore/VoidCallback.h>
-#include <WebCore/WheelEventDeltaFilter.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <wtf/Algorithms.h>
 #include <wtf/Scope.h>

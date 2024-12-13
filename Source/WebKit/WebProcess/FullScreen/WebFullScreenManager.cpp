@@ -30,7 +30,6 @@
 
 #include "Connection.h"
 #include "FullScreenMediaDetails.h"
-#include "InjectedBundlePageFullScreenClient.h"
 #include "Logging.h"
 #include "WebFrame.h"
 #include "WebFullScreenManagerProxyMessages.h"

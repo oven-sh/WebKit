@@ -25,10 +25,7 @@
 
 #pragma once
 
-#include "IdentifierTypes.h"
-#include "InjectedBundlePageFullScreenClient.h"
 #include "WebPage.h"
-#include <WebCore/ScrollTypes.h>
 #include <WebCore/VisibleSelection.h>
 
 #if ENABLE(APP_HIGHLIGHTS)
@@ -41,30 +38,12 @@ struct WebPage::Internals {
     WTF_MAKE_STRUCT_FAST_ALLOCATED;
 #if PLATFORM(IOS_FAMILY)
     WebCore::VisibleSelection storedSelectionForAccessibility { WebCore::VisibleSelection() };
-    FocusedElementInformationIdentifier lastFocusedElementInformationIdentifier;
-    TransactionID lastTransactionIDWithScaleChange;
-    std::optional<std::pair<TransactionID, double>> lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage;
 #endif
 #if ENABLE(APP_HIGHLIGHTS)
     WebCore::CreateNewGroupForHighlight highlightIsNewGroup { WebCore::CreateNewGroupForHighlight::No };
     WebCore::HighlightRequestOriginatedInApp highlightRequestOriginatedInApp { WebCore::HighlightRequestOriginatedInApp::No };
 #endif
     std::optional<WebsitePoliciesData> pendingWebsitePolicies;
-#if ENABLE(FULLSCREEN_API)
-    InjectedBundlePageFullScreenClient fullScreenClient;
-#endif
-    WebCore::ScrollPinningBehavior scrollPinningBehavior { WebCore::ScrollPinningBehavior::DoNotPin };
-    mutable EditorStateIdentifier lastEditorStateIdentifier;
-    HashMap<WebCore::RegistrableDomain, HashSet<WebCore::RegistrableDomain>> domainsWithPageLevelStorageAccess;
-    HashSet<WebCore::RegistrableDomain> loadedSubresourceDomains;
-#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    struct LinkDecorationFilteringConditionals {
-        HashSet<WebCore::RegistrableDomain> domains;
-        Vector<String> paths;
-    };
-    HashMap<String, LinkDecorationFilteringConditionals> linkDecorationFilteringData;
-    HashMap<WebCore::RegistrableDomain, HashSet<String>> allowedQueryParametersForAdvancedPrivacyProtections;
-#endif
 };
 
 } // namespace WebKit
