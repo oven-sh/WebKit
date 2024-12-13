@@ -58,6 +58,7 @@
 #include "LoadParameters.h"
 #include "Logging.h"
 #include "MediaKeySystemPermissionRequestManager.h"
+#include "MediaPlaybackState.h"
 #include "MessageSenderInlines.h"
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
@@ -1518,7 +1519,12 @@ void WebPage::setInjectedBundleUIClient(std::unique_ptr<API::InjectedBundle::Pag
 #if ENABLE(FULLSCREEN_API)
 void WebPage::initializeInjectedBundleFullScreenClient(WKBundlePageFullScreenClientBase* client)
 {
-    m_fullScreenClient.initialize(client);
+    m_internals->fullScreenClient.initialize(client);
+}
+
+InjectedBundlePageFullScreenClient& WebPage::injectedBundleFullScreenClient()
+{
+    return m_internals->fullScreenClient;
 }
 #endif
 
@@ -1531,7 +1537,7 @@ EditorState WebPage::editorState(ShouldPerformLayout shouldPerformLayout) const
 {
     // Always return an EditorState with a valid identifier or it will fail to decode and this process will be terminated.
     EditorState result;
-    result.identifier = m_lastEditorStateIdentifier.increment();
+    result.identifier = m_internals->lastEditorStateIdentifier.increment();
 
     // Ref the frame because this function may perform layout, which may cause frame destruction.
     RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
@@ -1935,7 +1941,7 @@ void WebPage::close()
     m_resourceLoadClient = makeUnique<API::InjectedBundle::ResourceLoadClient>();
     m_uiClient = makeUnique<API::InjectedBundle::PageUIClient>();
 #if ENABLE(FULLSCREEN_API)
-    m_fullScreenClient.initialize(0);
+    m_internals->fullScreenClient.initialize(0);
 #endif
 
     m_printContext = nullptr;
@@ -4966,7 +4972,7 @@ void WebPage::willCommitLayerTree(RemoteLayerTreeTransaction& layerTransaction, 
     }
     if (m_lastTransactionPageScaleFactor != layerTransaction.pageScaleFactor()) {
         m_lastTransactionPageScaleFactor = layerTransaction.pageScaleFactor();
-        m_lastTransactionIDWithScaleChange = layerTransaction.transactionID();
+        m_internals->lastTransactionIDWithScaleChange = layerTransaction.transactionID();
     }
 #endif
 
@@ -7745,12 +7751,12 @@ void WebPage::didCommitLoad(WebFrame* frame)
     m_sendAutocorrectionContextAfterFocusingElement = false;
     m_hasReceivedVisibleContentRectsAfterDidCommitLoad = false;
     m_hasRestoredExposedContentRectAfterDidCommitLoad = false;
-    m_lastTransactionIDWithScaleChange = firstTransactionIDAfterDidCommitLoad;
+    m_internals->lastTransactionIDWithScaleChange = firstTransactionIDAfterDidCommitLoad;
     m_scaleWasSetByUIProcess = false;
     m_userHasChangedPageScaleFactor = false;
     m_estimatedLatency = Seconds(1.0 / 60);
     m_shouldRevealCurrentSelectionAfterInsertion = true;
-    m_lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage = std::nullopt;
+    m_internals->lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage = std::nullopt;
     m_lastSelectedReplacementRange = { };
 
     invokePendingSyntheticClickCallback(SyntheticClickResult::PageInvalid);
@@ -8091,12 +8097,17 @@ void WebPage::stopExtendingIncrementalRenderingSuppression(unsigned token)
     if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame()))
         localMainFrame->view()->setVisualUpdatesAllowedByClient(!shouldExtendIncrementalRenderingSuppression());
 }
-    
+
+WebCore::ScrollPinningBehavior WebPage::scrollPinningBehavior()
+{
+    return m_internals->scrollPinningBehavior;
+}
+
 void WebPage::setScrollPinningBehavior(WebCore::ScrollPinningBehavior pinning)
 {
-    m_scrollPinningBehavior = pinning;
+    m_internals->scrollPinningBehavior = pinning;
     if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame()))
-        localMainFrame->view()->setScrollPinningBehavior(m_scrollPinningBehavior);
+        localMainFrame->view()->setScrollPinningBehavior(m_internals->scrollPinningBehavior);
 }
 
 void WebPage::setScrollbarOverlayStyle(std::optional<uint32_t> scrollbarStyle)
@@ -8493,22 +8504,22 @@ void WebPage::isLoggedIn(RegistrableDomain&& domain, CompletionHandler<void(bool
 
 void WebPage::addDomainWithPageLevelStorageAccess(const RegistrableDomain& topLevelDomain, const RegistrableDomain& resourceDomain)
 {
-    m_domainsWithPageLevelStorageAccess.add(topLevelDomain, HashSet<RegistrableDomain> { }).iterator->value.add(resourceDomain);
+    m_internals->domainsWithPageLevelStorageAccess.add(topLevelDomain, HashSet<RegistrableDomain> { }).iterator->value.add(resourceDomain);
 
     // Some sites have quirks where multiple login domains require storage access.
     if (auto additionalLoginDomain = NetworkStorageSession::findAdditionalLoginDomain(topLevelDomain, resourceDomain))
-        m_domainsWithPageLevelStorageAccess.add(topLevelDomain, HashSet<RegistrableDomain> { }).iterator->value.add(*additionalLoginDomain);
+        m_internals->domainsWithPageLevelStorageAccess.add(topLevelDomain, HashSet<RegistrableDomain> { }).iterator->value.add(*additionalLoginDomain);
 }
 
 bool WebPage::hasPageLevelStorageAccess(const RegistrableDomain& topLevelDomain, const RegistrableDomain& resourceDomain) const
 {
-    auto it = m_domainsWithPageLevelStorageAccess.find(topLevelDomain);
-    return it != m_domainsWithPageLevelStorageAccess.end() && it->value.contains(resourceDomain);
+    auto it = m_internals->domainsWithPageLevelStorageAccess.find(topLevelDomain);
+    return it != m_internals->domainsWithPageLevelStorageAccess.end() && it->value.contains(resourceDomain);
 }
 
 void WebPage::clearPageLevelStorageAccess()
 {
-    m_domainsWithPageLevelStorageAccess.clear();
+    m_internals->domainsWithPageLevelStorageAccess.clear();
 }
 
 void WebPage::wasLoadedWithDataTransferFromPrevalentResource()
@@ -8523,17 +8534,22 @@ void WebPage::wasLoadedWithDataTransferFromPrevalentResource()
 void WebPage::didLoadFromRegistrableDomain(RegistrableDomain&& targetDomain)
 {
     if (targetDomain != RegistrableDomain(mainWebFrame().url()))
-        m_loadedSubresourceDomains.add(targetDomain);
+        m_internals->loadedSubresourceDomains.add(targetDomain);
 }
 
 void WebPage::getLoadedSubresourceDomains(CompletionHandler<void(Vector<RegistrableDomain>)>&& completionHandler)
 {
-    completionHandler(copyToVector(m_loadedSubresourceDomains));
+    completionHandler(copyToVector(m_internals->loadedSubresourceDomains));
 }
 
 void WebPage::clearLoadedSubresourceDomains()
 {
-    m_loadedSubresourceDomains.clear();
+    m_internals->loadedSubresourceDomains.clear();
+}
+
+const HashSet<WebCore::RegistrableDomain>& WebPage::loadedSubresourceDomains() const
+{
+    return m_internals->loadedSubresourceDomains;
 }
 
 #if ENABLE(DEVICE_ORIENTATION)
@@ -9567,17 +9583,17 @@ bool WebPage::isUsingUISideCompositing() const
 
 void WebPage::setLinkDecorationFilteringData(Vector<WebCore::LinkDecorationFilteringData>&& strings)
 {
-    m_linkDecorationFilteringData.clear();
+    m_internals->linkDecorationFilteringData.clear();
 
     for (auto& data : strings) {
-        if (!m_linkDecorationFilteringData.isValidKey(data.linkDecoration)) {
+        if (!m_internals->linkDecorationFilteringData.isValidKey(data.linkDecoration)) {
             WEBPAGE_RELEASE_LOG_ERROR(ResourceLoadStatistics, "Unable to set link decoration filtering data (invalid key)");
             ASSERT_NOT_REACHED();
             continue;
         }
 
-        auto it = m_linkDecorationFilteringData.ensure(data.linkDecoration, [] {
-            return LinkDecorationFilteringConditionals { };
+        auto it = m_internals->linkDecorationFilteringData.ensure(data.linkDecoration, [] {
+            return Internals::LinkDecorationFilteringConditionals { };
         }).iterator;
 
         if (!data.domain.isEmpty()) {
@@ -9594,12 +9610,12 @@ void WebPage::setLinkDecorationFilteringData(Vector<WebCore::LinkDecorationFilte
 
 void WebPage::setAllowedQueryParametersForAdvancedPrivacyProtections(Vector<LinkDecorationFilteringData>&& allowStrings)
 {
-    m_allowedQueryParametersForAdvancedPrivacyProtections.clear();
+    m_internals->allowedQueryParametersForAdvancedPrivacyProtections.clear();
     for (auto& data : allowStrings) {
-        if (!m_allowedQueryParametersForAdvancedPrivacyProtections.isValidKey(data.domain))
+        if (!m_internals->allowedQueryParametersForAdvancedPrivacyProtections.isValidKey(data.domain))
             continue;
 
-        m_allowedQueryParametersForAdvancedPrivacyProtections.ensure(data.domain, [&] {
+        m_internals->allowedQueryParametersForAdvancedPrivacyProtections.ensure(data.domain, [&] {
             return HashSet<String> { };
         }).iterator->value.add(data.linkDecoration);
     }

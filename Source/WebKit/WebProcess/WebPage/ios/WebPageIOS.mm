@@ -3945,7 +3945,7 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformation()
         information.previousNodeRect = rootViewBounds(*previousElement);
         information.hasPreviousNode = true;
     }
-    information.identifier = m_lastFocusedElementInformationIdentifier.increment();
+    information.identifier = m_internals->lastFocusedElementInformationIdentifier.increment();
 
     if (htmlElement) {
         if (auto labels = htmlElement->labels()) {
@@ -4746,7 +4746,7 @@ static inline void adjustVelocityDataForBoundedScale(VelocityData& velocityData,
 std::optional<float> WebPage::scaleFromUIProcess(const VisibleContentRectUpdateInfo& visibleContentRectUpdateInfo) const
 {
     auto transactionIDForLastScaleFromUIProcess = visibleContentRectUpdateInfo.lastLayerTreeTransactionID();
-    if (m_lastTransactionIDWithScaleChange > transactionIDForLastScaleFromUIProcess)
+    if (m_internals->lastTransactionIDWithScaleChange > transactionIDForLastScaleFromUIProcess)
         return std::nullopt;
 
     float scaleFromUIProcess = visibleContentRectUpdateInfo.scale();
@@ -4832,13 +4832,13 @@ void WebPage::updateVisibleContentRects(const VisibleContentRectUpdateInfo& visi
     IntPoint scrollPosition = roundedIntPoint(visibleContentRectUpdateInfo.unobscuredContentRect().location());
 
     bool pageHasBeenScaledSinceLastLayerTreeCommitThatChangedPageScale = ([&] {
-        if (!m_lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage)
+        if (!m_internals->lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage)
             return false;
 
         if (scalesAreEssentiallyEqual(scaleToUse, m_page->pageScaleFactor()))
             return false;
 
-        auto [transactionIdBeforeScalingPage, scaleBeforeScalingPage] = *m_lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage;
+        auto [transactionIdBeforeScalingPage, scaleBeforeScalingPage] = *m_internals->lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage;
         if (!scalesAreEssentiallyEqual(scaleBeforeScalingPage, scaleToUse))
             return false;
 
@@ -5655,7 +5655,7 @@ void WebPage::focusTextInputContextAndPlaceCaret(const ElementContext& elementCo
 void WebPage::platformDidScalePage()
 {
     auto transactionID = downcast<RemoteLayerTreeDrawingArea>(*m_drawingArea).lastCommittedTransactionID();
-    m_lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage = {{ transactionID, m_lastTransactionPageScaleFactor }};
+    m_internals->lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage = { { transactionID, m_lastTransactionPageScaleFactor } };
 }
 
 #if USE(QUICK_LOOK)
