@@ -164,51 +164,41 @@ simctl_json_output = """{
  ],
  "runtimes" : [
    {
-     "runtimeRoot" : "/path/to/bundle.simruntime/path/to/RuntimeRoot",
-     "bundlePath" : "/path/to/bundle.simruntime",
+     "runtimeRoot" : "/path/to/RuntimeRoot",
      "buildversion" : "13E233",
      "availability" : "(available)",
-     "platform" : "iOS",
      "name" : "iOS 9.3",
      "identifier" : "com.apple.CoreSimulator.SimRuntime.iOS-9-3",
      "version" : "9.3"
    },
    {
-     "runtimeRoot" : "/path/to/bundle.simruntime/path/to/RuntimeRoot",
-     "bundlePath" : "/path/to/bundle.simruntime",
+     "runtimeRoot" : "/path/to/RuntimeRoot",
      "buildversion" : "15A8401",
      "availability" : "(available)",
-     "platform" : "iOS",
      "name" : "iOS 11.0",
      "identifier" : "com.apple.CoreSimulator.SimRuntime.iOS-11-0",
      "version" : "11.0.1"
    },
    {
-     "runtimeRoot" : "/path/to/bundle.simruntime/path/to/RuntimeRoot",
-     "bundlePath" : "/path/to/bundle.simruntime",
+     "runtimeRoot" : "/path/to/RuntimeRoot",
      "buildversion" : "15J380",
      "availability" : "(available)",
-     "platform" : "tvOS",
      "name" : "tvOS 11.0",
      "identifier" : "com.apple.CoreSimulator.SimRuntime.tvOS-11-0",
      "version" : "11.0"
    },
    {
-     "runtimeRoot" : "/path/to/bundle.simruntime/path/to/RuntimeRoot",
-     "bundlePath" : "/path/to/bundle.simruntime",
+     "runtimeRoot" : "/path/to/RuntimeRoot",
      "buildversion" : "15R372",
      "availability" : "(available)",
-     "platform" : "watchOS",
      "name" : "watchOS 4.0",
      "identifier" : "com.apple.CoreSimulator.SimRuntime.watchOS-4-0",
      "version" : "4.0"
    },
    {
-     "runtimeRoot" : "/path/to/bundle.simruntime/path/to/RuntimeRoot",
-     "bundlePath" : "/path/to/bundle.simruntime",
+     "runtimeRoot" : "/path/to/RuntimeRoot",
      "buildversion" : "16A367",
      "isAvailable" : "YES",
-     "platform" : "iOS",
      "name" : "iOS 12.0",
      "identifier" : "com.apple.CoreSimulator.SimRuntime.iOS-12-0",
      "version" : "12.0"

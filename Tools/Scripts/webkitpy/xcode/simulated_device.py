@@ -28,8 +28,6 @@ import pathlib
 import re
 import time
 
-from typing import List
-
 from webkitcorepy import Version, Timeout
 
 from webkitpy.common.memoized import memoized
@@ -59,26 +57,15 @@ class DeviceRequest(object):
 
 class SimulatedDeviceManager(object):
     class Runtime(object):
-        def __init__(self, runtime_dict: dict):
-            self.root: str = runtime_dict['runtimeRoot']
-            self.bundle_path: str = runtime_dict['bundlePath']
-            self.build_version: str = runtime_dict['buildversion']
-            self.os_variant: str = runtime_dict['name'].split(' ')[0]  # webkitpy doesn't know what xrOS is, so we can't use runtime_dict['platform'] here
-            self.version: str = Version.from_string(runtime_dict['version'])
-            self.identifier: str = runtime_dict['identifier']
-            self.name: str = runtime_dict['name']
-            self.has_rebuilt_cache: bool = False
+        def __init__(self, runtime_dict):
+            self.root = runtime_dict['runtimeRoot']
+            self.build_version = runtime_dict['buildversion']
+            self.os_variant = runtime_dict['name'].split(' ')[0]
+            self.version = Version.from_string(runtime_dict['version'])
+            self.identifier = runtime_dict['identifier']
+            self.name = runtime_dict['name']
 
-        def rebuild_dyld_shared_cache(self, host):
-            host = host or SystemHost.get_default()
-            if not self.has_rebuilt_cache:
-                _log.debug(f'Rebuilding dyld cache for {self.name} ({self.build_version}) simulator runtime...')
-                host.executive.run_command([
-                    SimulatedDeviceManager.xcrun, 'simctl', 'legacyruntime', 'update_dyld_shared_cache', self.bundle_path
-                ])
-                self.has_rebuilt_cache = True
-
-    AVAILABLE_RUNTIMES: List[Runtime] = []
+    AVAILABLE_RUNTIMES = []
     AVAILABLE_DEVICES = []
     INITIALIZED_DEVICES = None
 
@@ -485,16 +472,6 @@ class SimulatedDeviceManager(object):
 
         if len(requests):
             _log.debug(f'Running{"/specified" if udids else ""} simulators did not satisfy request. Finding matching non-booted ones, and/or creating new ones to satisfy the request.')
-
-            # New simulators will load all system frameworks into memory if the dyld shared cache doesn't exist.
-            # To avoid the immense strain this causes on the host's memory usage, we rebuild the cache here.
-            if len(SimulatedDeviceManager.INITIALIZED_DEVICES) == 0:
-                platforms_requested = []
-                for request in requests:
-                    platforms_requested.append(request.device_type.software_variant)
-                for runtime in SimulatedDeviceManager.AVAILABLE_RUNTIMES:
-                    if runtime.os_variant in platforms_requested:
-                        runtime.rebuild_dyld_shared_cache(host)
 
         # Check for any other matching simulators that can satisfy the request.
         # If none are found, we create and boot new ones.
