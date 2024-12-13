@@ -121,7 +121,12 @@ TEST(WebKit, SystemPreviewLoad)
     Util::run(&wasTriggered);
 }
 
+// FIXME when rdar://141378456 is resolved.
+#if PLATFORM(IOS)
+TEST(WebKit, DISABLED_SystemPreviewFail)
+#else
 TEST(WebKit, SystemPreviewFail)
+#endif
 {
     auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
@@ -185,7 +190,12 @@ TEST(WebKit, SystemPreviewBlobRevokedImmediately)
     Util::run(&wasTriggered);
 }
 
+// FIXME when rdar://141378456 is resolved.
+#if PLATFORM(IOS)
+TEST(WebKit, DISABLED_SystemPreviewBlob)
+#else
 TEST(WebKit, SystemPreviewBlob)
+#endif
 {
     auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];

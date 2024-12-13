@@ -29,6 +29,8 @@
 #include "ScriptExecutionContext.h"
 #include "URLPatternCanonical.h"
 #include "URLPatternParser.h"
+#include "URLPatternResult.h"
+#include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/RegExpObject.h>
 
@@ -85,6 +87,39 @@ bool URLPatternComponent::matchSpecialSchemeProtocol(ScriptExecutionContext& con
     });
 
     return isSchemeMatch != specialSchemeList.end();
+}
+
+JSC::JSValue URLPatternComponent::componentExec(ScriptExecutionContext& context, StringView comparedString) const
+{
+    Ref vm = context.vm();
+    JSC::JSLockHolder lock(vm);
+
+    auto regex = JSC::RegExpObject::create(vm, context.globalObject()->regExpStructure(), m_regularExpression.get(), true);
+    return regex->exec(context.globalObject(), JSC::jsString(vm, comparedString));
+}
+
+// https://urlpattern.spec.whatwg.org/#create-a-component-match-result
+URLPatternComponentResult URLPatternComponent::createComponentMatchResult(ScriptExecutionContext& context, String&& input, const JSC::JSValue& execResult) const
+{
+    URLPatternComponentResult::GroupsRecord groups;
+
+    auto globalObject = context.globalObject();
+    Ref vm = globalObject->vm();
+
+    auto length = execResult.get(globalObject, vm->propertyNames->length).toIntegerOrInfinity(globalObject);
+    ASSERT(length >= 0 && std::isfinite(length));
+
+    for (unsigned index = 1; index < length; ++index) {
+        auto match = execResult.get(globalObject, index);
+
+        std::variant<std::monostate, String> value;
+        if (!match.isNull() && !match.isUndefined())
+            value = match.toWTFString(globalObject);
+
+        groups.append(URLPatternComponentResult::NameMatchPair { m_groupNameList[index - 1], WTFMove(value) });
+    }
+
+    return URLPatternComponentResult { !input.isEmpty() ? WTFMove(input) : emptyString(), WTFMove(groups) };
 }
 
 }

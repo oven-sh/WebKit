@@ -59,6 +59,7 @@
 #include "HTMLLegendElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptionElement.h"
+#include "HTMLParagraphElement.h"
 #include "HTMLParserIdioms.h"
 #include "HTMLSelectElement.h"
 #include "HTMLSlotElement.h"
@@ -77,6 +78,7 @@
 #include "NodeTraversal.h"
 #include "ProgressTracker.h"
 #include "RenderImage.h"
+#include "RenderTableCell.h"
 #include "RenderView.h"
 #include "SVGElement.h"
 #include "ShadowRoot.h"
@@ -1101,12 +1103,36 @@ AccessibilityButtonState AccessibilityNodeObject::checkboxOrRadioValue() const
 }
 
 #if ENABLE(AX_THREAD_TEXT_APIS)
-bool AccessibilityNodeObject::shouldEmitNewlinesBeforeAndAfterNode() const
+TextEmissionBehavior AccessibilityNodeObject::emitTextAfterBehavior() const
 {
     RefPtr node = this->node();
-    return node ? WebCore::shouldEmitNewlinesBeforeAndAfterNode(*node) : false;
+    if (!node)
+        return TextEmissionBehavior::None;
+
+    if (is<HTMLParagraphElement>(*node)) {
+        // TextIterator only emits a double-newline for paragraphs conditionally (see shouldEmitExtraNewlineForNode)
+        // based on collapsed margin size. But the spec (https://html.spec.whatwg.org/multipage/dom.html#the-innertext-idl-attribute) says:
+        //   > If node is a p element, then append 2 (a required line break count) at the beginning and end of items.
+        // And Chrome seems to follow the spec: https://chromium.googlesource.com/chromium/src.git/+/8ff781cd5c1aabca068247de9a3f143645e80422
+        // WebKit tried to make this change in TextIterator, but it was reverted:
+        // https://github.com/WebKit/WebKit/commit/d206c2daf7219264b2c9b0cf0ee4cdce2450445b
+        //
+        // It's easier to unconditionally emit a double newline, so let's do that for now, since it's more spec-compliant anyways.
+        return TextEmissionBehavior::DoubleNewline;
+    }
+
+    if (WebCore::shouldEmitNewlinesBeforeAndAfterNode(*node))
+        return TextEmissionBehavior::Newline;
+
+    if (CheckedPtr cell = dynamicDowncast<RenderTableCell>(node->renderer()); cell && cell->nextCell()) {
+        // https://html.spec.whatwg.org/multipage/dom.html#the-innertext-idl-attribute
+        // > If node's computed value of 'display' is 'table-cell', and node's CSS box is not the last 'table-cell'
+        // > box of its enclosing 'table-row' box, then append a string containing a single U+0009 TAB code point to items.
+        return TextEmissionBehavior::Tab;
+    }
+    return TextEmissionBehavior::None;
 }
-#endif
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
 
 Element* AccessibilityNodeObject::anchorElement() const
 {

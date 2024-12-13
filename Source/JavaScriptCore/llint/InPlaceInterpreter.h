@@ -761,7 +761,8 @@ extern "C" void SYSV_ABI ipint_table_catch_allref_entry();
     m(0x0e, mint_fr6) \
     m(0x0f, mint_fr7) \
     m(0x10, mint_stack) \
-    m(0x11, mint_end) \
+    m(0x11, mint_stack_gap) \
+    m(0x12, mint_end) \
 
 #define FOR_EACH_IPINT_UINT_OPCODE(m) \
     m(0x00, uint_r0) \

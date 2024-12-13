@@ -2648,6 +2648,9 @@ TEST(WritingTools, APIWithBehaviorDefault)
     // If `PlatformWritingToolsBehaviorDefault` (or `Limited`), there should be a context menu item, but no affordance nor inline editing support.
 
 #if PLATFORM(MAC)
+    if (![PAL::getWTWritingToolsViewControllerClass() isAvailable])
+        return;
+
     InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(scheduleShowAffordanceForSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, NSRect rect, NSView *view, id delegate) {
         didCallScheduleShowAffordanceForSelectionRect = true;
     }));
@@ -2691,6 +2694,9 @@ TEST(WritingTools, APIWithBehaviorComplete)
     // If `PlatformWritingToolsBehaviorComplete`, there should be a context menu item, an affordance, and inline editing support.
 
 #if PLATFORM(MAC)
+    if (![PAL::getWTWritingToolsViewControllerClass() isAvailable])
+        return;
+
     InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(scheduleShowAffordanceForSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, NSRect rect, NSView *view, id delegate) {
         didCallScheduleShowAffordanceForSelectionRect = true;
     }));
@@ -2862,6 +2868,9 @@ TEST(WritingTools, PanelHidesInputAccessoryView)
 
 TEST(WritingTools, ShowAffordance)
 {
+    if (![PAL::getWTWritingToolsViewControllerClass() isAvailable])
+        return;
+
     InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(scheduleShowAffordanceForSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, NSRect rect, NSView *view, id delegate) {
         didCallScheduleShowAffordanceForSelectionRect = true;
     }));
@@ -2891,6 +2900,9 @@ TEST(WritingTools, ShowAffordance)
 
 TEST(WritingTools, ShowAffordanceForMultipleLines)
 {
+    if (![PAL::getWTWritingToolsViewControllerClass() isAvailable])
+        return;
+
     static const Vector<WebCore::IntRect> expectedRects {
         { { 0, 0 }, { 0, 0 } },
         { { 8, 8 }, { 139, 52 } }
@@ -2917,6 +2929,9 @@ TEST(WritingTools, ShowAffordanceForMultipleLines)
 
 TEST(WritingTools, ShowPanelWithNoSelection)
 {
+    if (![PAL::getWTWritingToolsViewControllerClass() isAvailable])
+        return;
+
     __block bool done = false;
     __block WTRequestedTool requestedTool = WTRequestedToolIndex;
     __block NSRect selectionRect = NSZeroRect;
@@ -2940,6 +2955,9 @@ TEST(WritingTools, ShowPanelWithNoSelection)
 
 TEST(WritingTools, ShowPanelWithCaretSelection)
 {
+    if (![PAL::getWTWritingToolsViewControllerClass() isAvailable])
+        return;
+
     __block bool done = false;
     __block WTRequestedTool requestedTool = WTRequestedToolIndex;
     __block NSRect selectionRect = NSZeroRect;
@@ -2979,6 +2997,9 @@ TEST(WritingTools, ShowPanelWithCaretSelection)
 
 TEST(WritingTools, ShowPanelWithRangedSelection)
 {
+    if (![PAL::getWTWritingToolsViewControllerClass() isAvailable])
+        return;
+
     __block bool done = false;
     __block WTRequestedTool requestedTool = WTRequestedToolIndex;
     __block NSRect selectionRect = NSZeroRect;

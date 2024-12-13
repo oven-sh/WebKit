@@ -1,5 +1,4 @@
 Modules/webtransport/WebTransportReceiveStream.h
-Modules/webtransport/WebTransportSendStream.h
 css/CSSAppleColorFilterPropertyValue.h
 css/CSSAspectRatioValue.h
 css/CSSAttrValue.h

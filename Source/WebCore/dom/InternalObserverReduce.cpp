@@ -101,7 +101,7 @@ private:
 
     void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
     {
-        protectedCallback()->visitJSFunction(visitor);
+        m_callback->visitJSFunction(visitor);
         m_accumulator.visit(visitor);
     }
 
@@ -119,10 +119,10 @@ private:
     }
 
     uint64_t m_index { 0 };
-    Ref<AbortSignal> m_signal;
-    Ref<ReducerCallback> m_callback;
+    const Ref<AbortSignal> m_signal;
+    const Ref<ReducerCallback> m_callback;
     JSValueInWrappedObject m_accumulator;
-    Ref<DeferredPromise> m_promise;
+    const Ref<DeferredPromise> m_promise;
 };
 
 void createInternalObserverOperatorReduce(ScriptExecutionContext& context, Observable& observable, Ref<ReducerCallback>&& callback, JSC::JSValue initialValue, const SubscribeOptions& options, Ref<DeferredPromise>&& promise)

@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <wtf/Assertions.h>
+#include <wtf/StdLibExtras.h>
 
 #ifndef UNIMPLEMENTED
 #define UNIMPLEMENTED() ASSERT_NOT_REACHED()
@@ -276,7 +277,7 @@ class StringBuilder {
   void AddSubstring(const char* s, int n) {
     ASSERT_WITH_SECURITY_IMPLICATION(!is_finalized() && position_ + n < static_cast<int>(buffer_.length()));
     ASSERT_WITH_SECURITY_IMPLICATION(static_cast<size_t>(n) <= strnlen(s, n));
-    memmove(&buffer_[position_], s, n * kCharSize);
+    memmoveSpan(buffer_.start().subspan(position_), unsafeMakeSpan(s, n));
     position_ += n;
   }
 
@@ -291,7 +292,7 @@ class StringBuilder {
   void RemoveCharacters(size_t start, size_t end) {
     ASSERT_WITH_SECURITY_IMPLICATION(start <= end);
     ASSERT_WITH_SECURITY_IMPLICATION(static_cast<int>(end) <= position_);
-    std::memmove(&buffer_[start], &buffer_[end], position_ - end);
+    memmoveSpan(buffer_.start().subspan(start), buffer_.start().subspan(end, position_ - end));
     position_ -= end - start;
   }
 
@@ -353,7 +354,7 @@ inline Dest BitCast(const Source& source) {
 #endif
 
   Dest dest;
-  memmove(&dest, &source, sizeof(dest));
+  memmoveSpan(asMutableByteSpan(dest), asByteSpan(source));
   return dest;
 }
 

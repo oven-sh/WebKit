@@ -82,11 +82,9 @@ Ref<ScrollingTreeNode> ScrollingTreeNicosia::createScrollingTreeNode(ScrollingNo
 void ScrollingTreeNicosia::applyLayerPositionsInternal()
 {
     std::unique_ptr<Nicosia::SceneIntegration::UpdateScope> updateScope;
-    if (ScrollingThread::isCurrentThread()) {
-        if (auto* rootScrollingNode = rootNode()) {
-            auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
-            updateScope = rootContentsLayer->createUpdateScope();
-        }
+    if (auto* rootScrollingNode = rootNode()) {
+        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
+        updateScope = rootContentsLayer->createUpdateScope(ScrollingThread::isCurrentThread());
     }
 
     ThreadedScrollingTree::applyLayerPositionsInternal();

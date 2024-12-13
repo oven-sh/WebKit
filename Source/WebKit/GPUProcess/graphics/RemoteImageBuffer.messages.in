@@ -23,6 +23,10 @@
 #if ENABLE(GPU_PROCESS)
 
 // FIXME: Will be renamed to RemoteImageBufferBackend.
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU
+]
 messages -> RemoteImageBuffer Stream {
     GetPixelBuffer(struct WebCore::PixelBufferFormat outputFormat, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize) -> () Synchronous
     GetPixelBufferWithNewMemory(WebCore::SharedMemory::Handle handle, struct WebCore::PixelBufferFormat outputFormat, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize) -> () Synchronous NotStreamEncodable

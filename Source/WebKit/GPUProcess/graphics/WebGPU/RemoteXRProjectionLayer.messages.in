@@ -23,13 +23,17 @@
 
 #if ENABLE(GPU_PROCESS)
 
-[EnabledBy=WebXRWebGPUBindingsEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=WebXRWebGPUBindingsEnabled
+]
 messages -> RemoteXRProjectionLayer Stream {
 #if PLATFORM(COCOA)
-void StartFrame(size_t frameIndex, MachSendRight colorBuffer, MachSendRight depthBuffer, MachSendRight completionSyncEvent, size_t textureIndex) NotStreamEncodable
+    void StartFrame(size_t frameIndex, MachSendRight colorBuffer, MachSendRight depthBuffer, MachSendRight completionSyncEvent, size_t textureIndex) NotStreamEncodable
 #endif
-void EndFrame()
-void Destruct()
+    void EndFrame()
+    void Destruct()
 }
 
 #endif

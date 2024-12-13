@@ -1785,9 +1785,6 @@ bool Quirks::needsIPadMiniUserAgent(const URL& url)
 {
     auto host = url.host();
 
-    if (host == "tv.kakao.com"_s || host.endsWith(".tv.kakao.com"_s))
-        return true;
-
     if (host == "huya.com"_s || host.endsWith(".huya.com"_s))
         return true;
 
@@ -1807,10 +1804,6 @@ bool Quirks::needsIPadMiniUserAgent(const URL& url)
         if (host == "hsbc.com.hk"_s || host.endsWith(".hsbc.com.hk"_s))
             return true;
         if (host == "hsbc.com.mx"_s || host.endsWith(".hsbc.com.mx"_s))
-            return true;
-        if (host == "hsbc.ca"_s || host.endsWith(".hsbc.ca"_s))
-            return true;
-        if (host == "hsbc.com.ar"_s || host.endsWith(".hsbc.com.ar"_s))
             return true;
         if (host == "hsbc.com.ph"_s || host.endsWith(".hsbc.com.ph"_s))
             return true;

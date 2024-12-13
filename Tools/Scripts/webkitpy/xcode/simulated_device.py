@@ -63,7 +63,7 @@ class SimulatedDeviceManager(object):
             self.root: str = runtime_dict['runtimeRoot']
             self.bundle_path: str = runtime_dict['bundlePath']
             self.build_version: str = runtime_dict['buildversion']
-            self.os_variant: str = runtime_dict['platform']
+            self.os_variant: str = runtime_dict['name'].split(' ')[0]  # webkitpy doesn't know what xrOS is, so we can't use runtime_dict['platform'] here
             self.version: str = Version.from_string(runtime_dict['version'])
             self.identifier: str = runtime_dict['identifier']
             self.name: str = runtime_dict['name']
@@ -489,8 +489,11 @@ class SimulatedDeviceManager(object):
             # New simulators will load all system frameworks into memory if the dyld shared cache doesn't exist.
             # To avoid the immense strain this causes on the host's memory usage, we rebuild the cache here.
             if len(SimulatedDeviceManager.INITIALIZED_DEVICES) == 0:
+                platforms_requested = []
+                for request in requests:
+                    platforms_requested.append(request.device_type.software_variant)
                 for runtime in SimulatedDeviceManager.AVAILABLE_RUNTIMES:
-                    if runtime.os_variant in ['iOS', 'xrOS']:
+                    if runtime.os_variant in platforms_requested:
                         runtime.rebuild_dyld_shared_cache(host)
 
         # Check for any other matching simulators that can satisfy the request.

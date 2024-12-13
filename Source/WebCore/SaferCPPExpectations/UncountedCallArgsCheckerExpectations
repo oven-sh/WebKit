@@ -602,7 +602,6 @@ dom/DeviceOrientationAndMotionAccessController.cpp
 dom/Document.cpp
 dom/DocumentFontLoader.cpp
 dom/DocumentFragment.cpp
-dom/DocumentFullscreen.h
 dom/DocumentInlines.h
 dom/DocumentOrShadowRootFullscreen.cpp
 dom/DocumentStorageAccess.cpp
@@ -626,10 +625,6 @@ dom/IdleCallbackController.cpp
 dom/IdleDeadline.cpp
 dom/ImageOverlay.cpp
 dom/InlineStyleSheetOwner.cpp
-dom/InternalObserverDrop.cpp
-dom/InternalObserverFilter.cpp
-dom/InternalObserverMap.cpp
-dom/InternalObserverTake.cpp
 dom/KeyboardEvent.cpp
 dom/LiveNodeList.h
 dom/LiveNodeListInlines.h
@@ -1126,7 +1121,6 @@ platform/audio/Reverb.cpp
 platform/audio/ReverbConvolver.cpp
 platform/audio/cocoa/AudioDestinationCocoa.cpp
 platform/audio/cocoa/AudioFileReaderCocoa.cpp
-platform/audio/cocoa/AudioSampleBufferConverter.mm
 platform/audio/cocoa/AudioSampleDataSource.mm
 platform/audio/cocoa/AudioSessionCocoa.mm
 platform/audio/cocoa/MediaSessionManagerCocoa.mm
@@ -1276,7 +1270,6 @@ platform/mediastream/mac/AVVideoCaptureSource.mm
 platform/mediastream/mac/CoreAudioSharedUnit.cpp
 platform/mediastream/mac/MediaStreamTrackAudioSourceProviderCocoa.cpp
 platform/mediastream/mac/MockAudioSharedUnit.mm
-platform/mediastream/mac/MockRealtimeVideoSourceMac.mm
 platform/mediastream/mac/RealtimeOutgoingAudioSourceCocoa.cpp
 platform/mediastream/mac/ScreenCaptureKitCaptureSource.mm
 platform/mediastream/mac/ScreenCaptureKitSharingSessionManager.mm
@@ -1382,7 +1375,6 @@ rendering/RenderView.cpp
 rendering/RenderViewTransitionCapture.cpp
 rendering/RenderWidget.cpp
 rendering/StyledMarkedText.cpp
-rendering/TextAutoSizing.cpp
 rendering/TextBoxPainter.cpp
 rendering/TextPaintStyle.cpp
 rendering/TextPainter.cpp
@@ -1426,7 +1418,6 @@ rendering/svg/RenderSVGResourcePattern.cpp
 rendering/svg/RenderSVGRoot.cpp
 rendering/svg/RenderSVGText.cpp
 rendering/svg/RenderSVGTextPath.cpp
-rendering/svg/SVGInlineTextBox.cpp
 rendering/svg/SVGLayerTransformComputation.h
 rendering/svg/SVGRenderTreeAsText.cpp
 rendering/svg/SVGRenderingContext.cpp
@@ -1464,7 +1455,6 @@ rendering/updating/RenderTreeBuilderRuby.cpp
 rendering/updating/RenderTreeBuilderTable.cpp
 rendering/updating/RenderTreeUpdater.cpp
 rendering/updating/RenderTreeUpdaterGeneratedContent.cpp
-rendering/updating/RenderTreeUpdaterViewTransition.cpp
 storage/Storage.cpp
 storage/StorageEventDispatcher.cpp
 storage/StorageMap.cpp

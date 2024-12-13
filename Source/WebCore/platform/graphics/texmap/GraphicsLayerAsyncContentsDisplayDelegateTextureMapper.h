@@ -31,21 +31,21 @@
 
 namespace WebCore {
 
-class CoordinatedGraphicsLayer;
+class GraphicsLayer;
 class TextureMapperPlatformLayerProxy;
 
 class GraphicsLayerAsyncContentsDisplayDelegateTextureMapper final : public GraphicsLayerAsyncContentsDisplayDelegate {
 public:
-    static Ref<GraphicsLayerAsyncContentsDisplayDelegateTextureMapper> create(CoordinatedGraphicsLayer& layer)
+    static Ref<GraphicsLayerAsyncContentsDisplayDelegateTextureMapper> create(GraphicsLayer& layer)
     {
         return adoptRef(*new GraphicsLayerAsyncContentsDisplayDelegateTextureMapper(layer));
     }
     virtual ~GraphicsLayerAsyncContentsDisplayDelegateTextureMapper();
 
-    void updateGraphicsLayer(CoordinatedGraphicsLayer&);
+    void updateGraphicsLayer(GraphicsLayer&);
 
 private:
-    explicit GraphicsLayerAsyncContentsDisplayDelegateTextureMapper(CoordinatedGraphicsLayer&);
+    explicit GraphicsLayerAsyncContentsDisplayDelegateTextureMapper(GraphicsLayer&);
 
     PlatformLayer* platformLayer() const override { return m_proxy.ptr(); }
     bool tryCopyToLayer(ImageBuffer&) override;

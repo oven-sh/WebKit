@@ -749,6 +749,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
     case AXPropertyName::EmbeddedImageDescription:
         stream << "EmbeddedImageDescription";
         break;
+    case AXPropertyName::EmitTextAfterBehavior:
+        stream << "EmitTextAfterBehavior";
+        break;
     case AXPropertyName::ExpandedTextValue:
         stream << "ExpandedTextValue";
         break;
@@ -1128,9 +1131,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
         break;
     case AXPropertyName::SetSize:
         stream << "SetSize";
-        break;
-    case AXPropertyName::ShouldEmitNewlinesBeforeAndAfterNode:
-        stream << "ShouldEmitNewlinesBeforeAndAfterNode";
         break;
     case AXPropertyName::SortDirection:
         stream << "SortDirection";

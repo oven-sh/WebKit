@@ -30,7 +30,8 @@
 namespace WebCore {
 
 struct URLPatternComponentResult {
-    using GroupsRecord = Vector<KeyValuePair<String, std::variant<std::monostate, String>>>;
+    using NameMatchPair = KeyValuePair<String, std::variant<std::monostate, String>>;
+    using GroupsRecord = Vector<NameMatchPair>;
     String input;
     GroupsRecord groups;
 };

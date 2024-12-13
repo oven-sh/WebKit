@@ -49,6 +49,7 @@ class LocalFrame;
 class RenderEmbeddedObject;
 class ShareableBitmap;
 class VoidCallback;
+enum class TextGranularity : uint8_t;
 }
 
 namespace WebKit {
@@ -56,6 +57,7 @@ namespace WebKit {
 class PDFPluginBase;
 class WebFrame;
 class WebPage;
+struct EditorState;
 struct FrameInfoData;
 struct WebHitTestResultData;
 
@@ -92,7 +94,10 @@ public:
     void pluginScaleFactorDidChange();
 #if PLATFORM(IOS_FAMILY)
     void pluginDidInstallPDFDocument(double initialScaleFactor);
+    void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
 #endif
+
+    bool populateEditorStateIfNeeded(EditorState&) const;
 
     void topContentInsetDidChange();
 

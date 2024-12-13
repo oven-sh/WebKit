@@ -291,7 +291,7 @@ public:
     // Traverses from m_start to m_end, collecting all text along the way.
     String toString() const;
 #if PLATFORM(COCOA)
-    RetainPtr<NSAttributedString> toAttributedString() const;
+    RetainPtr<NSAttributedString> toAttributedString(AXCoreObject::SpellCheck) const;
 #endif // PLATFORM(COCOA)
 #endif // ENABLE(AX_THREAD_TEXT_APIS)
 
@@ -341,5 +341,13 @@ inline bool operator>=(const AXTextMarkerRange& range1, const AXTextMarkerRange&
 {
     return range1 == range2 || range1 > range2;
 }
+
+namespace Accessibility {
+
+#if ENABLE(AX_THREAD_TEXT_APIS)
+AXIsolatedObject* findObjectWithRuns(AXIsolatedObject& start, AXDirection direction, std::optional<AXID> stopAtID = std::nullopt, const std::function<void(AXIsolatedObject&)>& exitObject = [] (AXIsolatedObject&) { });
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
+
+} // namespace Accessibility
 
 } // namespace WebCore

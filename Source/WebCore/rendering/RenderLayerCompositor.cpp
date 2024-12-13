@@ -780,14 +780,24 @@ void RenderLayerCompositor::scheduleRenderingUpdate()
     page().scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
 }
 
+static inline ScrollableArea::VisibleContentRectIncludesScrollbars scrollbarInclusionForVisibleRect()
+{
+#if USE(COORDINATED_GRAPHICS)
+    return ScrollableArea::VisibleContentRectIncludesScrollbars::Yes;
+#else
+    return ScrollableArea::VisibleContentRectIncludesScrollbars::No;
+#endif
+}
+
 FloatRect RenderLayerCompositor::visibleRectForLayerFlushing() const
 {
     const LocalFrameView& frameView = m_renderView.frameView();
 #if PLATFORM(IOS_FAMILY)
     return frameView.exposedContentRect();
 #else
+
     // Having a m_scrolledContentsLayer indicates that we're doing scrolling via GraphicsLayers.
-    FloatRect visibleRect = m_scrolledContentsLayer ? FloatRect({ }, frameView.sizeForVisibleContent()) : frameView.visibleContentRect();
+    FloatRect visibleRect = m_scrolledContentsLayer ? FloatRect({ }, frameView.sizeForVisibleContent(scrollbarInclusionForVisibleRect())) : frameView.visibleContentRect();
 
     if (auto exposedRect = frameView.viewExposedRect())
         visibleRect.intersect(*exposedRect);

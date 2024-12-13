@@ -69,6 +69,7 @@ class PDFPluginPasswordForm;
 class PDFPresentationController;
 class WebFrame;
 class WebMouseEvent;
+struct EditorState;
 struct PDFContextMenu;
 struct PDFContextMenuItem;
 
@@ -572,6 +573,11 @@ private:
     void setPresentationController(RefPtr<PDFPresentationController>&&);
 
     WebCore::FloatRect pageBoundsInContentsSpace(PDFDocumentLayout::PageIndex) const;
+
+#if PLATFORM(IOS_FAMILY)
+    void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity) final;
+    bool platformPopulateEditorStateIfNeeded(EditorState&) const final;
+#endif
 
     RefPtr<PDFPresentationController> m_presentationController;
 

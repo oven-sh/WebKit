@@ -25,6 +25,10 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(MEDIA_SOURCE)
 
+[
+    DispatchedFrom=GPU,
+    DispatchedTo=WebContent
+]
 messages -> SourceBufferPrivateRemoteMessageReceiver {
     SourceBufferPrivateDidReceiveInitializationSegment(struct WebKit::InitializationSegmentInfo segmentConfiguration) -> (Expected<void, WebCore::PlatformMediaError> result)
     TakeOwnershipOfMemory(WebCore::SharedMemory::Handle remoteData)

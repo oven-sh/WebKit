@@ -33,22 +33,22 @@
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace WebCore {
-class CoordinatedGraphicsLayer;
+class GraphicsLayer;
 class TransformationMatrix;
 
 class CoordinatedAnimatedBackingStoreClient final : public ThreadSafeRefCounted<CoordinatedAnimatedBackingStoreClient> {
 public:
-    static Ref<CoordinatedAnimatedBackingStoreClient> create(CoordinatedGraphicsLayer&, const FloatRect& visibleRect);
+    static Ref<CoordinatedAnimatedBackingStoreClient> create(GraphicsLayer&);
     ~CoordinatedAnimatedBackingStoreClient() = default;
 
     void invalidate();
-    void setCoverRect(const IntRect&);
+    void update(const FloatRect& visibleRect, const FloatRect& coverRect, const FloatSize&, float contentsScale);
     void requestBackingStoreUpdateIfNeeded(const TransformationMatrix&);
 
 private:
-    CoordinatedAnimatedBackingStoreClient(CoordinatedGraphicsLayer&, const FloatRect& visibleRect);
+    explicit CoordinatedAnimatedBackingStoreClient(GraphicsLayer&);
 
-    CoordinatedGraphicsLayer* m_layer { nullptr };
+    GraphicsLayer* m_layer { nullptr };
     FloatRect m_visibleRect;
     FloatRect m_coverRect;
     FloatSize m_size;

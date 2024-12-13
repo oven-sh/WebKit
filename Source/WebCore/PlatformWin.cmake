@@ -219,6 +219,10 @@ if (USE_CAIRO)
 
         platform/win/cairo/DragImageWinCairo.cpp
     )
+elseif (USE_SKIA)
+    list(APPEND WebCore_SOURCES
+        platform/graphics/win/FontCacheSkiaWin.cpp
+    )
 endif ()
 
 if (USE_WOFF2)

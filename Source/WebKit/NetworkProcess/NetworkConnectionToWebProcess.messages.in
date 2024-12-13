@@ -97,6 +97,7 @@ messages -> NetworkConnectionToWebProcess WantsDispatchMessage {
 
     EstablishSWContextConnection(WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::Site site, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier) -> ()
     CloseSWContextConnection()
+    PingPongForServiceWorkers() -> (bool isSuccess)
 
     EstablishSharedWorkerContextConnection(WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::Site site) -> ()
     CloseSharedWorkerContextConnection()

@@ -68,15 +68,16 @@ void SceneIntegration::requestUpdate()
         m_client.object->requestUpdate();
 }
 
-std::unique_ptr<SceneIntegration::UpdateScope> SceneIntegration::createUpdateScope()
+std::unique_ptr<SceneIntegration::UpdateScope> SceneIntegration::createUpdateScope(bool shouldRequestUpdate)
 {
-    return makeUnique<UpdateScope>(Ref { *this });
+    return makeUnique<UpdateScope>(Ref { *this }, shouldRequestUpdate);
 }
 
 SceneIntegration::Client::~Client() = default;
 
-SceneIntegration::UpdateScope::UpdateScope(Ref<SceneIntegration>&& sceneIntegration)
+SceneIntegration::UpdateScope::UpdateScope(Ref<SceneIntegration>&& sceneIntegration, bool shouldRequestUpdate)
     : m_sceneIntegration(WTFMove(sceneIntegration))
+    , m_shouldRequestUpdate(shouldRequestUpdate)
     , m_locker(m_sceneIntegration->m_client.lock)
 {
 }
@@ -92,6 +93,9 @@ SceneIntegration::UpdateScope::~UpdateScope()
             for (auto& compositionLayer : state.layers)
                 compositionLayer->flushState();
         });
+
+    if (!m_shouldRequestUpdate)
+        return;
 
     auto& sceneIntegrationObj = m_sceneIntegration.get();
     if (sceneIntegrationObj.m_client.object)

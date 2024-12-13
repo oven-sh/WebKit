@@ -82,7 +82,7 @@ public:
 
         bool hasCallback() const final { return true; }
 
-        Ref<Observable> m_sourceObservable;
+        const Ref<Observable> m_sourceObservable;
         uint64_t m_amount;
     };
 
@@ -110,7 +110,7 @@ private:
 
     void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
     {
-        protectedSubscriber()->visitAdditionalChildren(visitor);
+        m_subscriber->visitAdditionalChildren(visitor);
     }
 
     Ref<Subscriber> protectedSubscriber() const { return m_subscriber; }
@@ -121,7 +121,7 @@ private:
         , m_amount(amount)
     { }
 
-    Ref<Subscriber> m_subscriber;
+    const Ref<Subscriber> m_subscriber;
     uint64_t m_amount;
 };
 

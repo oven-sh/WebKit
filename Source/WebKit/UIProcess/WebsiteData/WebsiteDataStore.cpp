@@ -2718,7 +2718,10 @@ void WebsiteDataStore::setRestrictedOpenerTypeForDomainForTesting(const WebCore:
 
 void WebsiteDataStore::fetchLocalStorage(CompletionHandler<void(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&&)>&& completionHandler)
 {
-    protectedNetworkProcess()->fetchLocalStorage(m_sessionID, WTFMove(completionHandler));
+    if (RefPtr networkProcess = networkProcessIfExists())
+        networkProcess->fetchLocalStorage(m_sessionID, WTFMove(completionHandler));
+    else
+        completionHandler({ });
 }
 
 void WebsiteDataStore::restoreLocalStorage(HashMap<WebCore::ClientOrigin, HashMap<String, String>>&& localStorage, CompletionHandler<void(bool)>&& completionHandler)

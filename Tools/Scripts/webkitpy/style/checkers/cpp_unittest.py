@@ -6284,6 +6284,27 @@ class WebKitStyleTest(CppStyleTestBase):
             "  [runtime/once_flag] [4]",
             'foo.mm')
 
+    def test_safer_cpp(self):
+        self.assert_lint(
+            'template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::TimerAlignment> : std::true_type { };',
+            'Do not add IsDeprecatedWeakRefSmartPointerException.  [safercpp/weak_ref_exception] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'IsDeprecatedWeakRefSmartPointerException should be removed',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'template<> struct IsDeprecatedTimerSmartPointerException<WebCore::TimerAlignment> : std::true_type { };',
+            'Do not add IsDeprecatedTimerSmartPointerException.  [safercpp/timer_exception] [4]',
+            'foo.cpp')
+
+        self.assert_lint(
+            'IsDeprecatedTimerSmartPointerException should be removed',
+            '',
+            'foo.cpp')
+
     def test_ctype_fucntion(self):
         self.assert_lint(
             'int i = isascii(8);',

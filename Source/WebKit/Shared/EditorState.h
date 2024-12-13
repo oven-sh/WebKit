@@ -83,10 +83,10 @@ struct EditorState {
     bool isContentEditable { false };
     bool isContentRichlyEditable { false };
     bool isInPasswordField { false };
-    bool isInPlugin { false };
     bool hasComposition { false };
     bool triggeredByAccessibilitySelectionChange { false };
 #if PLATFORM(MAC)
+    bool isInPlugin { false };
     bool canEnableAutomaticSpellingCorrection { true };
 #endif
 

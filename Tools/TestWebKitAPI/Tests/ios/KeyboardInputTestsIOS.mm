@@ -973,7 +973,8 @@ static BOOL overrideHardwareKeyboardAttached(id, SEL)
     return NO;
 }
 
-TEST(KeyboardInputTests, EditableWebViewRequiresKeyboardWhenFirstResponder)
+// FIXME when rdar://141397449 is resolved.
+TEST(KeyboardInputTests, DISABLED_EditableWebViewRequiresKeyboardWhenFirstResponder)
 {
     InstanceMethodSwizzler swizzler {
         UIKeyboardImpl.class,

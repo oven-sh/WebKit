@@ -455,33 +455,6 @@ function at(index)
     return (k >= 0 && k < length) ? array[k] : @undefined;
 }
 
-function toSorted(comparator)
-{
-    "use strict";
-
-    // Step 1.
-    if (comparator !== @undefined && !@isCallable(comparator))
-        @throwTypeError("Array.prototype.toSorted requires the comparator argument to be a function or undefined");
-
-    // Step 2.
-    var array = @toObject(this, "Array.prototype.toSorted requires that |this| not be null or undefined");
-
-    // Step 3.
-    var length = @toLength(array.length);
-
-    // Step 4.
-    var result = @newArrayWithSize(length);
-
-    // Step 8.
-    for (var k = 0; k < length; k++)
-        @putByValDirect(result, k, array[k]);
-
-    // Step 6.
-    @arraySort.@call(result, comparator);
-
-    return result;
-}
-
 function toSpliced(start, deleteCount /*, ...items */)
 {
     "use strict"

@@ -27,6 +27,7 @@
 #include "URLPatternCanonical.h"
 
 #include "URLPattern.h"
+#include <wtf/URL.h>
 #include <wtf/URLParser.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -162,8 +163,13 @@ ExceptionOr<String> canonicalizePort(StringView portValue, const std::optional<S
 
     URL dummyURL(dummyURLCharacters);
 
-    if (protocolValue)
+    if (protocolValue) {
+        auto parsedPort = parseInteger<uint16_t>(portValue);
+        if (!parsedPort || isDefaultPortForProtocol(*parsedPort, *protocolValue))
+            return String { emptyString() };
+
         dummyURL.setProtocol(*protocolValue);
+    }
 
     dummyURL.setPort(parseInteger<uint16_t>(portValue));
 

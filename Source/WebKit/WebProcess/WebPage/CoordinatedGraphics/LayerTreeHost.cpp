@@ -38,6 +38,7 @@
 #include <WebCore/AsyncScrollingCoordinator.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/Damage.h>
+#include <WebCore/GraphicsLayerCoordinated.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/NativeImage.h>
@@ -125,12 +126,9 @@ LayerTreeHost::~LayerTreeHost()
     m_nicosia.sceneIntegration->invalidate();
 
     m_rootLayer = nullptr;
-    {
-        SetForScope purgingToggle(m_isPurgingBackingStores, true);
-        for (auto& registeredLayer : m_registeredLayers.values()) {
-            registeredLayer->purgeBackingStores();
-            registeredLayer->invalidateCoordinator();
-        }
+    while (!m_layers.isEmpty()) {
+        auto layer = m_layers.takeAny();
+        layer->invalidateClient();
     }
 
 #if USE(SKIA)
@@ -186,14 +184,13 @@ void LayerTreeHost::flushLayers()
 #if PLATFORM(GTK) || PLATFORM(WPE)
     TraceScope traceScope(FlushPendingLayerChangesStart, FlushPendingLayerChangesEnd);
 #endif
-    SetForScope isFlushingLayerChanges(m_isFlushingLayerChanges, true);
 
-    bool shouldSyncFrame = false;
     if (!m_didInitializeRootCompositingLayer) {
-        auto& rootLayer = downcast<CoordinatedGraphicsLayer>(*m_rootLayer);
-        m_nicosia.state.rootLayer = rootLayer.compositionLayer();
+        auto& rootLayer = downcast<GraphicsLayerCoordinated>(*m_rootLayer);
+        m_nicosia.state.rootLayer = rootLayer.coordinatedPlatformLayer().compositionLayer();
         m_didInitializeRootCompositingLayer = true;
-        shouldSyncFrame = true;
+        m_forceFrameSync = true;
+        m_didChangeSceneState = true;
     }
 
     Ref page { m_webPage };
@@ -215,42 +212,29 @@ void LayerTreeHost::flushLayers()
 #endif
     page->finalizeRenderingUpdate(flags);
 
-    WTFBeginSignpost(this, FinalizeCompositingStateFlush);
-    auto& coordinatedLayer = downcast<CoordinatedGraphicsLayer>(*m_rootLayer);
-    auto [performLayerSync, platformLayerUpdated] = coordinatedLayer.finalizeCompositingStateFlush();
-    shouldSyncFrame |= performLayerSync;
-    shouldSyncFrame |= m_forceFrameSync;
-    WTFEndSignpost(this, FinalizeCompositingStateFlush);
+    if (m_compositionRequired || m_forceFrameSync) {
+        if (m_didChangeSceneState) {
+            m_nicosia.scene->accessState([this](Nicosia::Scene::State& state) {
+                ++state.id;
+                state.layers = m_nicosia.state.layers;
+                state.rootLayer = m_nicosia.state.rootLayer;
+            });
 
-    if (shouldSyncFrame) {
-        WTFBeginSignpost(this, SyncFrame);
+            commitSceneState(m_nicosia.scene);
+        } else
+            commitSceneState(nullptr);
 
-        m_nicosia.scene->accessState([this](Nicosia::Scene::State& state) {
-            for (auto& compositionLayer : m_nicosia.state.layers)
-                compositionLayer->flushState();
-
-            ++state.id;
-            state.layers = m_nicosia.state.layers;
-            state.rootLayer = m_nicosia.state.rootLayer;
-        });
-
-        commitSceneState(m_nicosia.scene);
+        m_compositionRequired = false;
         m_forceFrameSync = false;
-
-        WTFEndSignpost(this, SyncFrame);
+        m_didChangeSceneState = false;
     }
-#if HAVE(DISPLAY_LINK)
-    else if (platformLayerUpdated)
-        commitSceneState(nullptr);
-#endif
 
     page->didUpdateRendering();
 
     // Eject any backing stores whose only reference is held in the HashMap cache.
-    m_imageBackingStores.removeIf(
-        [](auto& it) {
-            return it.value->hasOneRef();
-        });
+    m_imageBackingStores.removeIf([](auto& it) {
+        return it.value->hasOneRef();
+    });
 }
 
 void LayerTreeHost::layerFlushTimerFired()
@@ -382,28 +366,27 @@ void LayerTreeHost::backgroundColorDidChange()
     m_compositor->backgroundColorDidChange();
 }
 
-void LayerTreeHost::detachLayer(CoordinatedGraphicsLayer* layer)
+void LayerTreeHost::attachLayer(CoordinatedPlatformLayer& layer)
 {
-    if (m_isPurgingBackingStores)
-        return;
-
-    {
-        auto& compositionLayer = layer->compositionLayer();
-        m_nicosia.state.layers.remove(compositionLayer);
-        compositionLayer->setSceneIntegration(nullptr);
-    }
-    m_registeredLayers.remove(layer->id());
+    auto& compositionLayer = layer.compositionLayer();
+    m_nicosia.state.layers.add(compositionLayer);
+    compositionLayer->setSceneIntegration(m_nicosia.sceneIntegration.copyRef());
+    m_layers.add(layer);
+    m_didChangeSceneState = true;
 }
 
-void LayerTreeHost::attachLayer(CoordinatedGraphicsLayer* layer)
+void LayerTreeHost::detachLayer(CoordinatedPlatformLayer& layer)
 {
-    {
-        auto& compositionLayer = layer->compositionLayer();
-        m_nicosia.state.layers.add(compositionLayer);
-        compositionLayer->setSceneIntegration(m_nicosia.sceneIntegration.copyRef());
-    }
-    m_registeredLayers.add(layer->id(), layer);
-    layer->setNeedsVisibleRectAdjustment();
+    auto& compositionLayer = layer.compositionLayer();
+    m_nicosia.state.layers.remove(compositionLayer);
+    compositionLayer->setSceneIntegration(nullptr);
+    m_layers.remove(layer);
+    m_didChangeSceneState = true;
+}
+
+void LayerTreeHost::notifyCompositionRequired()
+{
+    m_compositionRequired = true;
 }
 
 #if USE(CAIRO)
@@ -424,9 +407,7 @@ Ref<CoordinatedImageBackingStore> LayerTreeHost::imageBackingStore(Ref<NativeIma
 
 Ref<GraphicsLayer> LayerTreeHost::createGraphicsLayer(GraphicsLayer::Type layerType, GraphicsLayerClient& client)
 {
-    auto layer = adoptRef(*new CoordinatedGraphicsLayer(layerType, client));
-    layer->setCoordinatorIncludingSubLayersIfNeeded(this);
-    return layer;
+    return adoptRef(*new GraphicsLayerCoordinated(layerType, client, CoordinatedPlatformLayer::create(*this)));
 }
 
 #if !HAVE(DISPLAY_LINK)
@@ -543,18 +524,21 @@ FloatPoint LayerTreeHost::constrainTransientZoomOrigin(double scale, FloatPoint 
     return constrainedOrigin;
 }
 
-CoordinatedGraphicsLayer* LayerTreeHost::layerForTransientZoom() const
+CoordinatedPlatformLayer* LayerTreeHost::layerForTransientZoom() const
 {
     auto* frameView = m_webPage.localMainFrameView();
     if (!frameView)
         return nullptr;
 
     RenderLayerBacking* renderViewBacking = frameView->renderView()->layer()->backing();
+    if (!renderViewBacking)
+        return nullptr;
 
-    if (GraphicsLayer* contentsContainmentLayer = renderViewBacking->contentsContainmentLayer())
-        return &downcast<CoordinatedGraphicsLayer>(*contentsContainmentLayer);
-
-    return &downcast<CoordinatedGraphicsLayer>(*renderViewBacking->graphicsLayer());
+    auto* scaledLayer = renderViewBacking->contentsContainmentLayer();
+    if (!scaledLayer)
+        scaledLayer = renderViewBacking->graphicsLayer();
+    ASSERT(scaledLayer);
+    return &downcast<GraphicsLayerCoordinated>(*scaledLayer).coordinatedPlatformLayer();
 }
 
 void LayerTreeHost::applyTransientZoomToLayers(double scale, FloatPoint origin)

@@ -86,7 +86,7 @@ private:
     }
 
     JSValueInWrappedObject m_lastValue;
-    Ref<DeferredPromise> m_promise;
+    const Ref<DeferredPromise> m_promise;
 };
 
 void createInternalObserverOperatorLast(ScriptExecutionContext& context, Observable& observable, const SubscribeOptions& options, Ref<DeferredPromise>&& promise)

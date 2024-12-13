@@ -26,6 +26,8 @@
 #include "config.h"
 #include "OSLogPrintStream.h"
 
+#include <wtf/StdLibExtras.h>
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WTF {
@@ -67,14 +69,14 @@ ALLOW_NONLITERAL_FORMAT_BEGIN
 ALLOW_NONLITERAL_FORMAT_END
 
     size_t newOffset = offset + bytesWritten;
-    char* buffer = m_string.mutableData();
+    auto buffer = m_string.mutableSpan();
     bool loggedText = false;
     do {
         if (buffer[offset] == '\n') {
             // Set the new line to a null character so os_log stops copying there.
             buffer[offset] = '\0';
-            os_log_with_type(m_log, m_logType, "%{public}s", buffer);
-            buffer += offset + 1;
+            os_log_with_type(m_log, m_logType, "%{public}s", buffer.data());
+            buffer = buffer.subspan(offset + 1);
             newOffset -= offset + 1;
             offset = 0;
             loggedText = true;
@@ -83,7 +85,7 @@ ALLOW_NONLITERAL_FORMAT_END
     } while (offset < newOffset);
 
     if (loggedText)
-        memmove(m_string.mutableData(), buffer, newOffset);
+        memmoveSpan(m_string.mutableSpan(), buffer.first(newOffset));
     m_offset = newOffset;
 }
 

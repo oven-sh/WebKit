@@ -770,6 +770,14 @@ enum class AXDebugStringOption {
     RemoteFrameOffset
 };
 
+enum class TextEmissionBehavior : uint8_t {
+    None,
+    Space,
+    Tab,
+    Newline,
+    DoubleNewline
+};
+
 class AXCoreObject : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<AXCoreObject> {
 public:
     virtual ~AXCoreObject() = default;
@@ -1113,7 +1121,8 @@ public:
     virtual std::optional<String> textContent() const = 0;
 #if ENABLE(AX_THREAD_TEXT_APIS)
     virtual bool hasTextRuns() = 0;
-    virtual bool shouldEmitNewlinesBeforeAndAfterNode() const = 0;
+    virtual TextEmissionBehavior emitTextAfterBehavior() const = 0;
+    bool emitsNewlineAfter() const;
 #endif
 
     // Methods for determining accessibility text.
@@ -1548,6 +1557,14 @@ inline Vector<AXID> AXCoreObject::childrenIDs(bool updateChildrenIfNeeded)
 {
     return axIDs(children(updateChildrenIfNeeded));
 }
+
+#if ENABLE(AX_THREAD_TEXT_APIS)
+inline bool AXCoreObject::emitsNewlineAfter() const
+{
+    auto behavior = emitTextAfterBehavior();
+    return behavior == TextEmissionBehavior::Newline || behavior == TextEmissionBehavior::DoubleNewline;
+}
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
 
 namespace Accessibility {
 

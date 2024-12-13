@@ -75,7 +75,7 @@ class GtkPortTest(port_testcase.PortTestCase):
             "MOCK run_command: ['/mock-build/bin/MiniBrowser', 'file://test.html'], cwd=/mock-checkout,"
         )
         # Check the environment variables defined by port.setup_environ_for_minibrowser()
-        for mb_env_var in ['LD_LIBRARY_PATH', 'WEBKIT_INJECTED_BUNDLE_PATH', 'WEBKIT_EXEC_PATH']:
+        for mb_env_var in ['LD_LIBRARY_PATH', 'WEBKIT_INJECTED_BUNDLE_PATH', 'WEBKIT_EXEC_PATH', 'WEBKIT_TOP_LEVEL']:
             self.assertTrue(mb_env_var in mock_env)
 
     def test_default_timeout_ms(self):

@@ -25,7 +25,11 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(MEDIA_SOURCE)
 
-[EnabledBy=MediaSourceEnabled || ManagedMediaSourceEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=MediaSourceEnabled || ManagedMediaSourceEnabled
+]
 messages -> RemoteSourceBufferProxy {
     SetActive(bool active)
     CanSwitchToType(WebCore::ContentType contentType) -> (bool canSwitch) Synchronous

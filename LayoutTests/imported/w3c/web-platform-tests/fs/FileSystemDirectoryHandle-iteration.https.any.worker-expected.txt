@@ -1,5 +1,5 @@
 
-FAIL returning early from an iteration doesn't crash promise_test: Unhandled rejection with value: object "InvalidStateError: The object is in an invalid state."
+FAIL returning early from an iteration doesn't crash promise_test: Unhandled rejection with value: object "TypeError: writer.write is not a function. (In 'writer.write(new Blob([contents]))', 'writer.write' is undefined)"
 FAIL @@asyncIterator: full iteration works promise_test: Unhandled rejection with value: object "InvalidStateError: The object is in an invalid state."
 FAIL entries: full iteration works promise_test: Unhandled rejection with value: object "InvalidStateError: The object is in an invalid state."
 FAIL values: full iteration works promise_test: Unhandled rejection with value: object "InvalidStateError: The object is in an invalid state."

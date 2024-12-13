@@ -146,18 +146,6 @@
 @end
 #endif
 
-#if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
-typedef NS_ENUM(NSUInteger, PDFSelectionGranularity);
-
-#define PDFSelectionGranularityCharacter 0
-#define PDFSelectionGranularityWord 1
-#define PDFSelectionGranularityLine 2
-
-@interface PDFDocument (Staging_122179178)
-- (/*nullable*/ PDFSelection *)selectionFromPage:(PDFPage *)startPage atPoint:(PDFPoint)startPoint toPage:(PDFPage *)endPage atPoint:(PDFPoint)endPoint withGranularity:(PDFSelectionGranularity)granularity;
-@end
-#endif
-
 #if ENABLE(UNIFIED_PDF_DATA_DETECTION)
 
 #if HAVE(PDFDOCUMENT_ENABLE_DATA_DETECTORS)

@@ -2587,12 +2587,13 @@ static inline bool rectIsTooBigForSelection(const IntRect& blockRect, const Loca
 
 void WebPage::setFocusedFrameBeforeSelectingTextAtLocation(const IntPoint& point)
 {
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
+    static constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
     if (!localMainFrame)
         return;
-    auto result = Ref(*localMainFrame)->eventHandler().hitTestResultAtPoint(point, hitType);
-    auto* hitNode = result.innerNode();
+
+    auto result = localMainFrame->eventHandler().hitTestResultAtPoint(point, hitType);
+    RefPtr hitNode = result.innerNode();
     if (hitNode && hitNode->renderer()) {
         RefPtr frame = result.innerNodeFrame();
         m_page->checkedFocusController()->setFocusedFrame(frame.get());
@@ -2606,6 +2607,14 @@ void WebPage::setSelectionRange(const WebCore::IntPoint& point, WebCore::TextGra
     RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
     if (!frame)
         return;
+
+#if ENABLE(PDF_PLUGIN)
+    // FIXME: Support text selection in embedded PDFs.
+    if (RefPtr pluginView = pluginViewForFrame(frame.get())) {
+        pluginView->setSelectionRange(point, granularity);
+        return;
+    }
+#endif
 
     auto range = rangeForGranularityAtPoint(*frame, point, granularity, isInteractingWithFocusedElement);
     if (range)

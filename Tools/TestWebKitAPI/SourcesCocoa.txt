@@ -236,6 +236,7 @@ Tests/WebKitCocoa/ResponsivenessTimerDoesntFireEarly.mm
 Tests/WebKitCocoa/RestoreLocalStorage.mm
 Tests/WebKitCocoa/RestoreScrollPosition.mm
 Tests/WebKitCocoa/RestoreSessionStateWithoutNavigation.mm
+Tests/WebKitCocoa/RestoreSessionStorage.mm
 Tests/WebKitCocoa/RunOpenPanel.mm
 Tests/WebKitCocoa/RunScriptAfterDocumentLoad.mm
 Tests/WebKitCocoa/SafeBrowsing.mm

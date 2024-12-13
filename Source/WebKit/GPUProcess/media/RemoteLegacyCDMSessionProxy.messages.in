@@ -23,7 +23,11 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(LEGACY_ENCRYPTED_MEDIA)
 
-[EnabledBy=LegacyEncryptedMediaAPIEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=LegacyEncryptedMediaAPIEnabled
+]
 messages -> RemoteLegacyCDMSessionProxy {
     GenerateKeyRequest(String mimeType, RefPtr<WebCore::SharedBuffer> initData) -> (RefPtr<WebCore::SharedBuffer> nextMessage, String destinationURL, unsigned short errorCode, uint32_t systemCode) Synchronous
     ReleaseKeys()

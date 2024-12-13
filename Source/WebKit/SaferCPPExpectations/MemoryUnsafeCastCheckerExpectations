@@ -1,5 +1,4 @@
 AutomationProtocolObjects.h
-GPUProcess/media/RemoteImageDecoderAVFProxy.cpp
 NetworkProcess/Downloads/cocoa/DownloadCocoa.mm
 NetworkProcess/ServiceWorker/WebSWServerConnection.cpp
 NetworkProcess/cocoa/NetworkProcessCocoa.mm

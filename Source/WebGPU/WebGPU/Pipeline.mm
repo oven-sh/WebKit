@@ -137,8 +137,12 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
             for (unsigned i = 0; i < wgslBindGroupLayout.entries.size(); ++i) {
                 auto& wgslBindGroupLayoutEntry = wgslBindGroupLayout.entries[i];
                 auto* wgslBufferBinding = std::get_if<WGSL::BufferBindingLayout>(&wgslBindGroupLayoutEntry.bindingMember);
-                if (wgslBufferBinding && wgslBufferBinding->minBindingSize)
-                    shaderBindingSizeForBuffer.set(wgslBindGroupLayoutEntry.binding, wgslBufferBinding->minBindingSize);
+                if (wgslBufferBinding && wgslBufferBinding->minBindingSize) {
+                    auto newValue = wgslBufferBinding->minBindingSize;
+                    if (auto existingValueIt = shaderBindingSizeForBuffer.find(wgslBindGroupLayoutEntry.binding); existingValueIt != shaderBindingSizeForBuffer.end())
+                        newValue = std::max(newValue, existingValueIt->value);
+                    shaderBindingSizeForBuffer.set(wgslBindGroupLayoutEntry.binding, newValue);
+                }
             }
         }
     }

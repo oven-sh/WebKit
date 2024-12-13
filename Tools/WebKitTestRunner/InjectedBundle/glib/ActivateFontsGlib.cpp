@@ -1,39 +1,33 @@
 /*
- * Copyright (C) 2005, 2006 Apple Inc.  All rights reserved.
- * Copyright (C) 2008 Nokia Corporation and/or its subsidiary(-ies)
- * Copyright (C) 2010 Igalia S.L.
+ * Copyright (C) 2014 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- * 1.  Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- * 2.  Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
- * 3.  Neither the name of Apple Inc. ("Apple") nor the names of
- *     its contributors may be used to endorse or promote products derived
- *     from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL APPLE OR ITS CONTRIBUTORS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
 #include "ActivateFonts.h"
 
-#include "InjectedBundleUtilities.h"
 #include <fontconfig/fontconfig.h>
-#include <gtk/gtk.h>
+#include <wtf/FileSystem.h>
 #include <wtf/glib/GUniquePtr.h>
 
 namespace WTR {
@@ -52,7 +46,7 @@ void activateFonts()
     if (appFontSet && numFonts && appFontSet->nfont == numFonts)
         return;
 
-    GUniquePtr<gchar> absoluteFontsDir(g_build_filename(TOP_LEVEL_DIR, "Tools", "WebKitTestRunner", "glib", "fonts", nullptr));
+    GUniquePtr<gchar> absoluteFontsDir(g_build_filename(FileSystem::webkitTopLevelDirectory().data(), "Tools", "WebKitTestRunner", "glib", "fonts", nullptr));
 
     // Load our configuration file, which sets up proper aliases for family
     // names like sans, serif and monospace.
@@ -75,7 +69,7 @@ void activateFonts()
     // Ahem is used by many layout tests.
     GUniquePtr<gchar> ahemFontFilename(g_build_filename(absoluteFontsDir.get(), "AHEM____.TTF", nullptr));
     if (!FcConfigAppFontAddFile(config, reinterpret_cast<FcChar8*>(ahemFontFilename.get())))
-        g_error("Could not load font at %s!", ahemFontFilename.get()); 
+        g_error("Could not load font at %s!", ahemFontFilename.get());
 
     static const char* fontFilenames[] = {
         "WebKitWeightWatcher100.ttf",
@@ -93,13 +87,13 @@ void activateFonts()
     for (size_t i = 0; fontFilenames[i]; ++i) {
         GUniquePtr<gchar> fontFilename(g_build_filename(absoluteFontsDir.get(), "..", "..", "fonts", fontFilenames[i], nullptr));
         if (!FcConfigAppFontAddFile(config, reinterpret_cast<FcChar8*>(fontFilename.get())))
-            g_error("Could not load font at %s!", fontFilename.get()); 
+            g_error("Could not load font at %s!", fontFilename.get());
     }
 
     // A font with no valid Fontconfig encoding to test https://bugs.webkit.org/show_bug.cgi?id=47452
     GUniquePtr<gchar> fontWithNoValidEncodingFilename(g_build_filename(absoluteFontsDir.get(), "FontWithNoValidEncoding.fon", nullptr));
     if (!FcConfigAppFontAddFile(config, reinterpret_cast<FcChar8*>(fontWithNoValidEncodingFilename.get())))
-        g_error("Could not load font at %s!", fontWithNoValidEncodingFilename.get()); 
+        g_error("Could not load font at %s!", fontWithNoValidEncodingFilename.get());
 
     if (!FcConfigSetCurrent(config))
         g_error("Could not set the current font configuration!");
@@ -115,4 +109,4 @@ void uninstallFakeHelvetica()
 {
 }
 
-}
+} // namespace WTR

@@ -23,9 +23,10 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if HAVE(WEB_TRANSPORT)
 #import "config.h"
 #import "WebTransportServer.h"
+
+#if HAVE(WEB_TRANSPORT)
 
 #import "HTTPServer.h"
 #import "Utilities.h"
@@ -52,7 +53,8 @@ WebTransportServer::WebTransportServer(Function<Task(Connection)>&& connectionHa
     auto configureWebTransport = [](nw_protocol_options_t options) {
         nw_webtransport_options_set_is_datagram(options, true);
         nw_webtransport_options_set_is_unidirectional(options, false);
-        nw_webtransport_options_set_connection_max_sessions(options, 1);
+        // FIXME: Add a call to nw_webtransport_options_set_connection_max_sessions(options, 1)
+        // here when enabling tests after rdar://141009498 is available in OS builds.
     };
 
     auto configureTLS = [](nw_protocol_options_t options) {

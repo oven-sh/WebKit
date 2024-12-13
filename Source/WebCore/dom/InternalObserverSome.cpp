@@ -100,7 +100,7 @@ private:
 
     void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
     {
-        protectedCallback()->visitJSFunction(visitor);
+        m_callback->visitJSFunction(visitor);
     }
 
     Ref<DeferredPromise> protectedPromise() const { return m_promise; }
@@ -116,9 +116,9 @@ private:
     }
 
     uint64_t m_idx { 0 };
-    Ref<PredicateCallback> m_callback;
-    Ref<AbortSignal> m_signal;
-    Ref<DeferredPromise> m_promise;
+    const Ref<PredicateCallback> m_callback;
+    const Ref<AbortSignal> m_signal;
+    const Ref<DeferredPromise> m_promise;
 };
 
 void createInternalObserverOperatorSome(ScriptExecutionContext& context, Observable& observable, Ref<PredicateCallback>&& callback, const SubscribeOptions& options, Ref<DeferredPromise>&& promise)

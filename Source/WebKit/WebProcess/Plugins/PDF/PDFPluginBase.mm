@@ -28,6 +28,7 @@
 
 #if ENABLE(PDF_PLUGIN)
 
+#import "EditorState.h"
 #import "Logging.h"
 #import "MessageSenderInlines.h"
 #import "PDFIncrementalLoader.h"
@@ -655,26 +656,6 @@ void PDFPluginBase::invalidateRect(const IntRect& rect)
     m_view->invalidateRect(rect);
 }
 
-IntPoint PDFPluginBase::convertFromRootViewToPlugin(const IntPoint& point) const
-{
-    return m_rootViewToPluginTransform.mapPoint(point);
-}
-
-IntRect PDFPluginBase::convertFromRootViewToPlugin(const IntRect& rect) const
-{
-    return m_rootViewToPluginTransform.mapRect(rect);
-}
-
-IntPoint PDFPluginBase::convertFromPluginToRootView(const IntPoint& point) const
-{
-    return m_rootViewToPluginTransform.inverse()->mapPoint(point);
-}
-
-IntRect PDFPluginBase::convertFromPluginToRootView(const IntRect& rect) const
-{
-    return m_rootViewToPluginTransform.inverse()->mapRect(rect);
-}
-
 IntRect PDFPluginBase::boundsOnScreen() const
 {
     return WebCore::Accessibility::retrieveValueFromMainThread<WebCore::IntRect>([&] () -> WebCore::IntRect {
@@ -1190,6 +1171,24 @@ id PDFPluginBase::accessibilityAssociatedPluginParentForElement(Element* element
 #endif
 
     return nil;
+}
+
+bool PDFPluginBase::populateEditorStateIfNeeded(EditorState& state) const
+{
+    if (platformPopulateEditorStateIfNeeded(state)) {
+        // Defer to platform-specific logic.
+        return true;
+    }
+
+    if (selectionString().isNull())
+        return false;
+
+    state.selectionIsNone = false;
+    state.selectionIsRange = true;
+#if PLATFORM(MAC)
+    state.isInPlugin = true;
+#endif
+    return true;
 }
 
 #if !LOG_DISABLED

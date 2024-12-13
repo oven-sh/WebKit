@@ -803,6 +803,11 @@ static NSAttributedString *attributedStringForTextMarkerRange(const AXCoreObject
 {
     if (!textMarkerRangeRef)
         return nil;
+
+#if ENABLE(AX_THREAD_TEXT_APIS)
+    if (AXObjectCache::useAXThreadTextApis())
+        return AXTextMarkerRange { textMarkerRangeRef }.toAttributedString(spellCheck).autorelease();
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
     return object.attributedStringForTextMarkerRange({ textMarkerRangeRef }, spellCheck).autorelease();
 }
 
@@ -3680,17 +3685,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         });
     }
 
-    if ([attribute isEqualToString:AXAttributedStringForTextMarkerRangeAttribute]) {
-        if (!textMarkerRange)
-            return nil;
-#if ENABLE(AX_THREAD_TEXT_APIS)
-        // FIXME: Expand this beyond static text (i.e. ranges that span multiple objects).
-        if (AXObjectCache::useAXThreadTextApis() && backingObject->isStaticText())
-            return AXTextMarkerRange { textMarkerRange }.toAttributedString().autorelease();
-#endif // ENABLE(AX_THREAD_TEXT_APIS)
-
+    if ([attribute isEqualToString:AXAttributedStringForTextMarkerRangeAttribute])
         return attributedStringForTextMarkerRange(*backingObject, textMarkerRange, AXCoreObject::SpellCheck::Yes);
-    }
 
     if ([attribute isEqualToString:AXAttributedStringForTextMarkerRangeWithOptionsAttribute]) {
         if (textMarkerRange)
@@ -3831,7 +3827,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
             AXTextMarkerRange range = { textMarkerRange };
             return @(range.toString().length());
         }
-#endif
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
         unsigned length = Accessibility::retrieveValueFromMainThread<unsigned>([textMarkerRange = retainPtr(textMarkerRange), protectedSelf = retainPtr(self)] () -> unsigned {
             auto* backingObject = protectedSelf.get().axBackingObject;
             if (!backingObject)

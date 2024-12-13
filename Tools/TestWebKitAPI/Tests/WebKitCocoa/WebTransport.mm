@@ -47,7 +47,7 @@ static void enableWebTransport(WKWebViewConfiguration *configuration)
     }
 }
 
-// FIXME: Re-enable these tests once rdar://141009498 is available in OS builds.
+// FIXME: Fix WebTransportServer constructor and re-enable these tests once rdar://141009498 is available in OS builds.
 TEST(WebTransport, DISABLED_ClientBidirectional)
 {
     WebTransportServer echoServer([] (Connection connection) -> Task {
@@ -80,6 +80,7 @@ TEST(WebTransport, DISABLED_ClientBidirectional)
     EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
 }
 
+// FIXME: Fix WebTransportServer constructor and re-enable these tests once rdar://141009498 is available in OS builds.
 TEST(WebTransport, DISABLED_Datagram)
 {
     WebTransportServer echoServer([] (Connection connection) -> Task {

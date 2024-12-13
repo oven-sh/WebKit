@@ -83,8 +83,8 @@ public:
 
         bool hasCallback() const final { return true; }
 
-        Ref<Observable> m_sourceObservable;
-        Ref<MapperCallback> m_mapper;
+        const Ref<Observable> m_sourceObservable;
+        const Ref<MapperCallback> m_mapper;
     };
 
 private:
@@ -130,8 +130,8 @@ private:
 
     void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
     {
-        protectedSubscriber()->visitAdditionalChildren(visitor);
-        protectedMapper()->visitJSFunction(visitor);
+        m_subscriber->visitAdditionalChildren(visitor);
+        m_mapper->visitJSFunction(visitor);
     }
 
     Ref<Subscriber> protectedSubscriber() const { return m_subscriber; }
@@ -143,8 +143,8 @@ private:
         , m_mapper(mapper)
     { }
 
-    Ref<Subscriber> m_subscriber;
-    Ref<MapperCallback> m_mapper;
+    const Ref<Subscriber> m_subscriber;
+    const Ref<MapperCallback> m_mapper;
     uint64_t m_idx { 0 };
 };
 

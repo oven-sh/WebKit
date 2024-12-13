@@ -30,6 +30,7 @@
 
 #include "AsyncPDFRenderer.h"
 #include "DataDetectionResult.h"
+#include "EditorState.h"
 #include "FindController.h"
 #include "MessageSenderInlines.h"
 #include "PDFAnnotationTypeHelpers.h"
@@ -2815,14 +2816,14 @@ void UnifiedPDFPlugin::continueTrackingSelection(PDFDocumentLayout::PageIndex pa
     auto toPDFSelectionGranularity = [](SelectionGranularity granularity) {
         switch (granularity) {
         case SelectionGranularity::Character:
-            return (PDFSelectionGranularity)PDFSelectionGranularityCharacter;
+            return PDFSelectionGranularityCharacter;
         case SelectionGranularity::Word:
-            return (PDFSelectionGranularity)PDFSelectionGranularityWord;
+            return PDFSelectionGranularityWord;
         case SelectionGranularity::Line:
-            return (PDFSelectionGranularity)PDFSelectionGranularityLine;
+            return PDFSelectionGranularityLine;
         }
         ASSERT_NOT_REACHED();
-        return (PDFSelectionGranularity)PDFSelectionGranularityCharacter;
+        return PDFSelectionGranularityCharacter;
     };
 
     if ([m_pdfDocument respondsToSelector:@selector(selectionFromPage:atPoint:toPage:atPoint:withGranularity:)])
@@ -2903,9 +2904,11 @@ void UnifiedPDFPlugin::setCurrentSelection(RetainPtr<PDFSelection>&& selection)
 {
     RetainPtr previousSelection = std::exchange(m_currentSelection, WTFMove(selection));
 
+#if ENABLE(TEXT_SELECTION)
     // FIXME: <https://webkit.org/b/268980> Selection painting requests should be only be made if the current selection has changed.
     // FIXME: <https://webkit.org/b/270070> Selection painting should be optimized by only repainting diff between old and new selection.
     repaintOnSelectionChange(ActiveStateChangeReason::SetCurrentSelection, previousSelection.get());
+#endif
     notifySelectionChanged();
 }
 
@@ -3873,6 +3876,104 @@ void UnifiedPDFPlugin::setDisplayModeAndUpdateLayout(PDFDocumentLayout::DisplayM
     if (didWantWheelEvents != wantsWheelEvents)
         wantsWheelEventsChanged();
 }
+
+#if PLATFORM(IOS_FAMILY)
+
+void UnifiedPDFPlugin::setSelectionRange(FloatPoint pointInRootView, TextGranularity granularity)
+{
+#if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
+    RetainPtr pdfDocument = m_pdfDocument;
+    if (!pdfDocument)
+        return;
+
+    auto pdfGranularity = [granularity] {
+        switch (granularity) {
+        case TextGranularity::CharacterGranularity:
+            return PDFSelectionGranularityCharacter;
+        case TextGranularity::WordGranularity:
+            return PDFSelectionGranularityWord;
+        case TextGranularity::LineGranularity:
+            return PDFSelectionGranularityLine;
+        default:
+            ASSERT_NOT_REACHED();
+            return PDFSelectionGranularityCharacter;
+        }
+    }();
+
+    auto pointInPlugin = convertFromRootViewToPlugin(pointInRootView);
+    auto pointInDocument = convertDown<FloatPoint>(CoordinateSpace::Plugin, CoordinateSpace::PDFDocumentLayout, pointInPlugin);
+    auto pageIndex = m_presentationController->nearestPageIndexForDocumentPoint(pointInDocument);
+    auto pointInPage = convertDown(CoordinateSpace::PDFDocumentLayout, CoordinateSpace::PDFPage, pointInDocument, pageIndex);
+
+    RetainPtr page = m_documentLayout.pageAtIndex(pageIndex);
+    setCurrentSelection([pdfDocument selectionFromPage:page.get() atPoint:pointInPage toPage:page.get() atPoint:pointInPage withGranularity:pdfGranularity]);
+#else
+    UNUSED_PARAM(pointInRootView);
+    UNUSED_PARAM(granularity);
+#endif
+}
+
+bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) const
+{
+    RetainPtr selection = m_currentSelection;
+    if (!selection)
+        return true;
+
+    Vector<FloatRect> selectionRects;
+#if HAVE(PDFSELECTION_ENUMERATE_RECTS_AND_TRANSFORMS)
+    for (PDFPage *page in [selection pages]) {
+        auto pageIndex = m_documentLayout.indexForPage(page);
+        [selection enumerateRectsAndTransformsForPage:page usingBlock:[&](CGRect rect, CGAffineTransform) {
+            auto rectInPlugin = convertUp(CoordinateSpace::PDFPage, CoordinateSpace::Plugin, FloatRect { rect }, pageIndex);
+            auto rectInRootView = convertFromPluginToRootView(rectInPlugin);
+            if (rectInRootView.isEmpty())
+                return;
+
+            selectionRects.append(WTFMove(rectInRootView));
+        }];
+    }
+#endif // HAVE(PDFSELECTION_ENUMERATE_RECTS_AND_TRANSFORMS)
+
+    auto selectionGeometries = selectionRects.map([](auto& rectInRootView) {
+        return SelectionGeometry {
+            rectInRootView,
+            SelectionRenderingBehavior::CoalesceBoundingRects,
+            TextDirection::LTR,
+            0, // minX
+            0, // maxX
+            0, // maxY
+            0, // lineNumber
+            false, // isLineBreak
+            false, // isFirstOnLine
+            false, // isLastOnLine
+            false, // containsStart
+            false, // containsEnd
+            true, // isHorizontal
+        };
+    });
+
+    if (selectionGeometries.size()) {
+        selectionGeometries.first().setContainsStart(true);
+        selectionGeometries.last().setContainsEnd(true);
+    }
+
+    state.selectionIsNone = false;
+    state.selectionIsRange = selectionGeometries.size();
+
+    auto selectedString = String { [selection string] };
+    state.postLayoutData = EditorState::PostLayoutData { };
+    state.postLayoutData->isStableStateUpdate = true;
+    state.postLayoutData->selectedTextLength = selectedString.length();
+    state.postLayoutData->canCopy = !selectedString.isEmpty();
+    state.postLayoutData->wordAtSelection = WTFMove(selectedString);
+
+    state.visualData = EditorState::VisualData { };
+    state.visualData->selectionGeometries = WTFMove(selectionGeometries);
+
+    return true;
+}
+
+#endif // PLATFORM(IOS_FAMILY)
 
 TextStream& operator<<(TextStream& ts, RepaintRequirement requirement)
 {

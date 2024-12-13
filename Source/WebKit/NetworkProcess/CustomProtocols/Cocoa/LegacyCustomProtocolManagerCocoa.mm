@@ -80,7 +80,7 @@ void LegacyCustomProtocolManager::networkProcessCreated(NetworkProcess& networkP
 + (BOOL)canInitWithRequest:(NSURLRequest *)request
 {
     // FIXME: This code runs in a dispatch queue so we can't ref NetworkProcess here.
-    if (auto* customProtocolManager = protectedFirstNetworkProcess()->supplement<LegacyCustomProtocolManager>())
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* customProtocolManager = protectedFirstNetworkProcess()->supplement<LegacyCustomProtocolManager>())
         SUPPRESS_UNCOUNTED_ARG return customProtocolManager->supportsScheme([[[request URL] scheme] lowercaseString]);
     return NO;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -1757,6 +1757,30 @@ Inspector::Protocol::ErrorStringOr<void> WebAutomationSession::setVirtualAuthent
 {
     SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NotImplemented, "This method is not yet implemented."_s);
 }
+
+#if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
+void WebAutomationSession::loadWebExtension(const Inspector::Protocol::Automation::WebExtensionResourceOptions resourceHint, const String& resource, Ref<LoadWebExtensionCallback>&& callback)
+{
+    ASSERT(m_client);
+    if (!m_client)
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(InternalError, "The remote session could not load the web extension."_s);
+
+    uint16_t options = 0;
+    if (resourceHint == Inspector::Protocol::Automation::WebExtensionResourceOptions::Path)
+        options |= API::AutomationSessionWebExtensionResourceOptionsPath;
+    else if (resourceHint == Inspector::Protocol::Automation::WebExtensionResourceOptions::ArchivePath)
+        options |= API::AutomationSessionWebExtensionResourceOptionsArchivePath;
+    else
+        options |= API::AutomationSessionWebExtensionResourceOptionsBase64;
+
+    m_client->loadWebExtensionWithOptions(*this, static_cast<API::AutomationSessionWebExtensionResourceOptions>(options), resource, [protectedThis = Ref { *this }, callback = WTFMove(callback)](const String& extensionId) {
+        if (!extensionId)
+            ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(UnableToLoadExtension, "Failed to load web extension."_s);
+        else
+            callback->sendSuccess(extensionId);
+    });
+}
+#endif
 
 Inspector::Protocol::ErrorStringOr<void> WebAutomationSession::generateTestReport(const String& browsingContextHandle, const String& message, const String& group)
 {

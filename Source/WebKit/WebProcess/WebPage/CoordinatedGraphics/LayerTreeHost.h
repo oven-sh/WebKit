@@ -30,8 +30,8 @@
 #include "CallbackID.h"
 #include "LayerTreeContext.h"
 #include "ThreadedCompositor.h"
-#include <WebCore/CoordinatedGraphicsLayer.h>
 #include <WebCore/CoordinatedImageBackingStore.h>
+#include <WebCore/CoordinatedPlatformLayer.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/GraphicsLayerClient.h>
 #include <WebCore/GraphicsLayerFactory.h>
@@ -54,7 +54,6 @@ class SceneIntegration;
 }
 
 namespace WebCore {
-class CoordinatedGraphicsLayer;
 class Damage;
 class IntRect;
 class IntSize;
@@ -82,7 +81,7 @@ namespace WebKit {
 
 class WebPage;
 
-class LayerTreeHost final : public CanMakeCheckedPtr<LayerTreeHost>, public WebCore::GraphicsLayerClient, public WebCore::CoordinatedGraphicsLayerClient, public WebCore::GraphicsLayerFactory, public Nicosia::SceneIntegration::Client
+class LayerTreeHost final : public CanMakeCheckedPtr<LayerTreeHost>, public WebCore::GraphicsLayerClient, public WebCore::GraphicsLayerFactory, public Nicosia::SceneIntegration::Client, public WebCore::CoordinatedPlatformLayer::Client
 #if !HAVE(DISPLAY_LINK)
     , public ThreadedDisplayRefreshMonitor::Client
 #endif
@@ -139,22 +138,23 @@ public:
     void preferredBufferFormatsDidChange();
 #endif
 private:
+    WebCore::FloatRect visibleContentsRect() const;
     void layerFlushTimerFired();
     void flushLayers();
     void commitSceneState(const RefPtr<Nicosia::Scene>&);
     void renderNextFrame(bool);
 
-    // CoordinatedGraphicsLayerClient
-    bool isFlushingLayerChanges() const override { return m_isFlushingLayerChanges; }
-    WebCore::FloatRect visibleContentsRect() const override;
-    void detachLayer(WebCore::CoordinatedGraphicsLayer*) override;
-    void attachLayer(WebCore::CoordinatedGraphicsLayer*) override;
+    // CoordinatedPlatformLayer::Client
 #if USE(CAIRO)
     WebCore::Cairo::PaintingEngine& paintingEngine() override;
 #elif USE(SKIA)
-    WebCore::SkiaPaintingEngine& skiaPaintingEngine() const override { return *m_skiaPaintingEngine.get(); }
+    WebCore::SkiaPaintingEngine& paintingEngine() const override { return *m_skiaPaintingEngine.get(); }
 #endif
     Ref<WebCore::CoordinatedImageBackingStore> imageBackingStore(Ref<WebCore::NativeImage>&&) override;
+
+    void attachLayer(WebCore::CoordinatedPlatformLayer&) override;
+    void detachLayer(WebCore::CoordinatedPlatformLayer&) override;
+    void notifyCompositionRequired() override;
 
     // GraphicsLayerFactory
     Ref<WebCore::GraphicsLayer> createGraphicsLayer(WebCore::GraphicsLayer::Type, WebCore::GraphicsLayerClient&) override;
@@ -170,7 +170,7 @@ private:
 
 #if PLATFORM(GTK)
     WebCore::FloatPoint constrainTransientZoomOrigin(double, WebCore::FloatPoint) const;
-    WebCore::CoordinatedGraphicsLayer* layerForTransientZoom() const;
+    WebCore::CoordinatedPlatformLayer* layerForTransientZoom() const;
     void applyTransientZoomToLayers(double, WebCore::FloatPoint);
 #endif
 
@@ -179,16 +179,16 @@ private:
     RefPtr<WebCore::GraphicsLayer> m_rootLayer;
     WebCore::GraphicsLayer* m_rootCompositingLayer { nullptr };
     WebCore::GraphicsLayer* m_overlayCompositingLayer { nullptr };
-    HashMap<Nicosia::PlatformLayer::LayerID, WebCore::CoordinatedGraphicsLayer*> m_registeredLayers;
+    HashSet<Ref<WebCore::CoordinatedPlatformLayer>> m_layers;
     bool m_didInitializeRootCompositingLayer { false };
+    bool m_didChangeSceneState { false };
     bool m_layerFlushSchedulingEnabled { true };
-    bool m_isFlushingLayerChanges { false };
     bool m_isPurgingBackingStores { false };
     bool m_isSuspended { false };
     bool m_isWaitingForRenderer { false };
     bool m_scheduledWhileWaitingForRenderer { false };
     bool m_forceFrameSync { false };
-    WebCore::IntPoint m_lastScrollPosition;
+    bool m_compositionRequired { false };
     double m_lastAnimationServiceTime { 0 };
     RefPtr<ThreadedCompositor> m_compositor;
     struct {

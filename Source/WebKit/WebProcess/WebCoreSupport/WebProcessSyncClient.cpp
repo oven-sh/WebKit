@@ -49,7 +49,7 @@ Ref<WebPage> WebProcessSyncClient::protectedPage() const
 
 bool WebProcessSyncClient::siteIsolationEnabled()
 {
-    RefPtr<WebCore::Page> corePage = m_page->protectedCorePage();
+    RefPtr<WebCore::Page> corePage = protectedPage()->protectedCorePage();
     return corePage ? corePage->settings().siteIsolationEnabled() : false;
 }
 

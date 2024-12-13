@@ -115,6 +115,8 @@ private:
     }
 
     friend struct IPC::ArgumentCoder<Damage, void>;
+
+    friend bool operator==(const Damage&, const Damage&) = default;
 };
 
 static inline WTF::TextStream& operator<<(WTF::TextStream& ts, const Damage& damage)

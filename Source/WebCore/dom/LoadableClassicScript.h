@@ -28,6 +28,7 @@
 #include "CachedResourceClient.h"
 #include "CachedResourceHandle.h"
 #include "CachedScript.h"
+#include "Document.h"
 #include "LoadableScript.h"
 #include "LoadableScriptError.h"
 #include "ReferrerPolicy.h"

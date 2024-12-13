@@ -125,6 +125,7 @@ enum class AXPropertyName : uint16_t {
     DocumentLinks,
     DocumentURI,
     EmbeddedImageDescription,
+    EmitTextAfterBehavior,
     ExpandedTextValue,
     ExtendedDescription,
 #if PLATFORM(COCOA)
@@ -253,7 +254,6 @@ enum class AXPropertyName : uint16_t {
     SelectedChildren,
     SelectedTextRange,
     SetSize,
-    ShouldEmitNewlinesBeforeAndAfterNode,
     SortDirection,
     SpeechHint,
     StringValue,
@@ -300,6 +300,7 @@ using AXPropertyValueVariant = std::variant<std::nullptr_t, Markable<AXID>, Stri
 #if ENABLE(AX_THREAD_TEXT_APIS)
     , RetainPtr<CTFontRef>
     , AXTextRuns
+    , TextEmissionBehavior
 #endif
 >;
 using AXPropertyMap = UncheckedKeyHashMap<AXPropertyName, AXPropertyValueVariant, IntHash<AXPropertyName>, WTF::StrongEnumHashTraits<AXPropertyName>>;

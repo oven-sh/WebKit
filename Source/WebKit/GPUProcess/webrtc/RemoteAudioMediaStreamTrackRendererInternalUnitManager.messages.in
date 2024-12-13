@@ -23,6 +23,10 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
 
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU
+]
 messages -> RemoteAudioMediaStreamTrackRendererInternalUnitManager {
     CreateUnit(WebKit::AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, String deviceID) -> (std::optional<WebCore::CAAudioStreamDescription> description, size_t frameChunkSize)
     DeleteUnit(WebKit::AudioMediaStreamTrackRendererInternalUnitIdentifier identifier)

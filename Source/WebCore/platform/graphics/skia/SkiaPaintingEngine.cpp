@@ -28,12 +28,12 @@
 
 #if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "BitmapTexturePool.h"
-#include "CoordinatedGraphicsLayer.h"
 #include "CoordinatedTileBuffer.h"
 #include "DisplayListRecorderImpl.h"
 #include "DisplayListReplayer.h"
 #include "GLContext.h"
 #include "GraphicsContextSkia.h"
+#include "GraphicsLayer.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
 #include "RenderingMode.h"
@@ -69,31 +69,30 @@ std::unique_ptr<SkiaPaintingEngine> SkiaPaintingEngine::create()
     return makeUnique<SkiaPaintingEngine>(numberOfCPUPaintingThreads(), numberOfGPUPaintingThreads());
 }
 
-std::unique_ptr<DisplayList::DisplayList> SkiaPaintingEngine::recordDisplayList(const CoordinatedGraphicsLayer& layer, const IntRect& dirtyRect) const
+std::unique_ptr<DisplayList::DisplayList> SkiaPaintingEngine::recordDisplayList(const GraphicsLayer& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale) const
 {
     auto displayList = makeUnique<DisplayList::DisplayList>(DisplayList::ReplayOption::FlushImagesAndWaitForCompletion);
     DisplayList::RecorderImpl recordingContext(*displayList, GraphicsContextState(), FloatRect({ }, dirtyRect.size()), AffineTransform());
-    paintIntoGraphicsContext(layer, recordingContext, dirtyRect);
+    paintIntoGraphicsContext(layer, recordingContext, dirtyRect, contentsOpaque, contentsScale);
     return displayList;
 }
 
-void SkiaPaintingEngine::paintIntoGraphicsContext(const CoordinatedGraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect) const
+void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale) const
 {
     IntRect initialClip(IntPoint::zero(), dirtyRect.size());
     context.clip(initialClip);
 
-    if (!layer.contentsOpaque()) {
+    if (!contentsOpaque) {
         context.setCompositeOperation(CompositeOperator::Copy);
         context.fillRect(initialClip, Color::transparentBlack);
         context.setCompositeOperation(CompositeOperator::SourceOver);
     }
 
-    auto scale = layer.effectiveContentsScale();
     FloatRect clipRect(dirtyRect);
-    clipRect.scale(1 / scale);
+    clipRect.scale(1 / contentsScale);
 
     context.translate(-dirtyRect.x(), -dirtyRect.y());
-    context.scale(scale);
+    context.scale(contentsScale);
     layer.paintGraphicsLayerContents(context, clipRect);
 }
 
@@ -117,7 +116,7 @@ bool SkiaPaintingEngine::paintDisplayListIntoBuffer(Ref<CoordinatedTileBuffer>& 
     return true;
 }
 
-bool SkiaPaintingEngine::paintGraphicsLayerIntoBuffer(Ref<CoordinatedTileBuffer>& buffer, const CoordinatedGraphicsLayer& layer, const IntRect& dirtyRect) const
+bool SkiaPaintingEngine::paintGraphicsLayerIntoBuffer(Ref<CoordinatedTileBuffer>& buffer, const GraphicsLayer& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale) const
 {
     auto* canvas = buffer->canvas();
     if (!canvas)
@@ -127,7 +126,7 @@ bool SkiaPaintingEngine::paintGraphicsLayerIntoBuffer(Ref<CoordinatedTileBuffer>
     canvas->clear(SkColors::kTransparent);
 
     GraphicsContextSkia context(*canvas, buffer->isBackedByOpenGL() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated, RenderingPurpose::LayerBacking);
-    paintIntoGraphicsContext(layer, context, dirtyRect);
+    paintIntoGraphicsContext(layer, context, dirtyRect, contentsOpaque, contentsScale);
 
     canvas->restore();
     return true;
@@ -157,39 +156,39 @@ std::optional<RenderingMode> SkiaPaintingEngine::threadedRenderingMode() const
     return std::nullopt;
 }
 
-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::createBuffer(RenderingMode renderingMode, const CoordinatedGraphicsLayer& layer, const IntSize& size) const
+Ref<CoordinatedTileBuffer> SkiaPaintingEngine::createBuffer(RenderingMode renderingMode, const IntSize& size, bool contentsOpaque) const
 {
     if (renderingMode == RenderingMode::Accelerated) {
         PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent();
 
         OptionSet<BitmapTexture::Flags> textureFlags;
-        if (!layer.contentsOpaque())
+        if (!contentsOpaque)
             textureFlags.add(BitmapTexture::Flags::SupportsAlpha);
 
         ASSERT(m_texturePool);
         return CoordinatedAcceleratedTileBuffer::create(m_texturePool->acquireTexture(size, textureFlags));
     }
 
-    return CoordinatedUnacceleratedTileBuffer::create(size, layer.contentsOpaque() ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
+    return CoordinatedUnacceleratedTileBuffer::create(size, contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
 }
 
-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::paintLayer(const CoordinatedGraphicsLayer& layer, const IntRect& dirtyRect)
+Ref<CoordinatedTileBuffer> SkiaPaintingEngine::paintLayer(const GraphicsLayer& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale)
 {
     // ### Asynchronous rendering on worker threads ###
     if (auto renderingMode = SkiaPaintingEngine::threadedRenderingMode())
-        return postPaintingTask(renderingMode.value(), layer, dirtyRect);
+        return postPaintingTask(layer, *renderingMode, dirtyRect, contentsOpaque, contentsScale);
 
     // ### Synchronous rendering on main thread ###
-    return performPaintingTask(renderingMode(), layer, dirtyRect);
+    return performPaintingTask(layer, renderingMode(), dirtyRect, contentsOpaque, contentsScale);
 }
 
-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::postPaintingTask(RenderingMode renderingMode, const CoordinatedGraphicsLayer& layer, const IntRect& dirtyRect)
+Ref<CoordinatedTileBuffer> SkiaPaintingEngine::postPaintingTask(const GraphicsLayer& layer, RenderingMode renderingMode, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale)
 {
     WTFBeginSignpost(this, RecordTile);
-    auto displayList = recordDisplayList(layer, dirtyRect);
+    auto displayList = recordDisplayList(layer, dirtyRect, contentsOpaque, contentsScale);
     WTFEndSignpost(this, RecordTile);
 
-    auto buffer = createBuffer(renderingMode, layer, dirtyRect.size());
+    auto buffer = createBuffer(renderingMode, dirtyRect.size(), contentsOpaque);
     buffer->beginPainting();
 
     auto& workerPool = renderingMode == RenderingMode::Accelerated ? *m_gpuWorkerPool.get() : *m_cpuWorkerPool.get();
@@ -211,14 +210,14 @@ Ref<CoordinatedTileBuffer> SkiaPaintingEngine::postPaintingTask(RenderingMode re
     return buffer;
 }
 
-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::performPaintingTask(RenderingMode renderingMode, const CoordinatedGraphicsLayer& layer, const IntRect& dirtyRect)
+Ref<CoordinatedTileBuffer> SkiaPaintingEngine::performPaintingTask(const GraphicsLayer& layer, RenderingMode renderingMode, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale)
 {
-    auto buffer = createBuffer(renderingMode, layer, dirtyRect.size());
+    auto buffer = createBuffer(renderingMode, dirtyRect.size(), contentsOpaque);
     buffer->beginPainting();
 
     if (auto* canvas = buffer->canvas()) {
         WTFBeginSignpost(canvas, PaintTile, "Skia/%s, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
-        paintGraphicsLayerIntoBuffer(buffer, layer, dirtyRect);
+        paintGraphicsLayerIntoBuffer(buffer, layer, dirtyRect, contentsOpaque, contentsScale);
         WTFEndSignpost(canvas, PaintTile);
     }
 

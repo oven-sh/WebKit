@@ -86,6 +86,8 @@ void FileSystemStorageHandle::close()
 
     if (m_activeSyncAccessHandle)
         closeSyncAccessHandle(m_activeSyncAccessHandle->identifier);
+
+    closeWritable(true);
     manager->closeHandle(*this);
 }
 

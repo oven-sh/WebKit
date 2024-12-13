@@ -22,6 +22,10 @@
 
 #if USE(LIBWEBRTC) && PLATFORM(COCOA) && ENABLE(GPU_PROCESS)
 
+[
+    DispatchedFrom=GPU,
+    DispatchedTo=WebContent
+]
 messages -> LibWebRTCCodecs {
     FailedDecoding(WebKit::VideoDecoderIdentifier identifier)
     CompletedDecoding(WebKit::VideoDecoderIdentifier identifier, int64_t timeStamp, int64_t timeStampNs, struct WebKit::RemoteVideoFrameProxyProperties frame)

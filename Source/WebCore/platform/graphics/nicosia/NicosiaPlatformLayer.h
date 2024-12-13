@@ -51,11 +51,11 @@ public:
         m_state.sceneIntegration = WTFMove(sceneIntegration);
     }
 
-    std::unique_ptr<SceneIntegration::UpdateScope> createUpdateScope()
+    std::unique_ptr<SceneIntegration::UpdateScope> createUpdateScope(bool shouldRequestUpdate)
     {
         Locker locker { m_state.lock };
         if (m_state.sceneIntegration)
-            return m_state.sceneIntegration->createUpdateScope();
+            return m_state.sceneIntegration->createUpdateScope(shouldRequestUpdate);
         return nullptr;
     }
 

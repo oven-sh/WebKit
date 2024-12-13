@@ -109,7 +109,7 @@ bool PixelBuffer::setRange(std::span<const uint8_t> data, size_t byteOffset)
     if (!isSumSmallerThanOrEqual(byteOffset, data.size(), m_bytes.size()))
         return false;
 
-    memmove(m_bytes.data() + byteOffset, data.data(), data.size());
+    memmoveSpan(m_bytes.subspan(byteOffset), data);
     return true;
 }
 

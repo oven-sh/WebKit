@@ -39,6 +39,60 @@ extension PDF: Transferable {
     }
 }
 
+@MainActor
+final class DialogPresenter: DialogPresenting {
+    struct Dialog: Hashable, Identifiable, Sendable {
+        enum Configuration: Sendable {
+            case alert(String, @Sendable () -> Void)
+            case confirm(String, @Sendable (sending WebPage_v0.JavaScriptConfirmResult) -> Void)
+            case prompt(String, defaultText: String?, @Sendable (sending WebPage_v0.JavaScriptPromptResult) -> Void)
+        }
+
+        let id = UUID()
+        let configuration: Configuration
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
+
+        static func == (lhs: Dialog, rhs: Dialog) -> Bool {
+            lhs.id == rhs.id
+        }
+    }
+
+    struct FilePicker {
+        let allowsMultipleSelection: Bool
+        let allowsDirectories: Bool
+        let completion: @Sendable (sending WebPage_v0.FileInputPromptResult) -> Void
+    }
+
+    weak var owner: BrowserViewModel? = nil
+
+    func handleJavaScriptAlert(message: String, initiatedBy frame: WebPage_v0.FrameInfo) async {
+        await withCheckedContinuation { continuation in
+            owner?.currentDialog = Dialog(configuration: .alert(message, continuation.resume))
+        }
+    }
+
+    func handleJavaScriptConfirm(message: String, initiatedBy frame: WebPage_v0.FrameInfo) async -> WebPage_v0.JavaScriptConfirmResult {
+        await withCheckedContinuation { continuation in
+            owner?.currentDialog = Dialog(configuration: .confirm(message, continuation.resume(returning:)))
+        }
+    }
+
+    func handleJavaScriptPrompt(message: String, defaultText: String?, initiatedBy frame: WebPage_v0.FrameInfo) async -> WebPage_v0.JavaScriptPromptResult {
+        await withCheckedContinuation { continuation in
+            owner?.currentDialog = Dialog(configuration: .prompt(message, defaultText: defaultText, continuation.resume(returning:)))
+        }
+    }
+
+    func handleFileInputPrompt(parameters: WKOpenPanelParameters, initiatedBy frame: WebPage_v0.FrameInfo) async -> WebPage_v0.FileInputPromptResult {
+        await withCheckedContinuation { continuation in
+            owner?.currentFilePicker = FilePicker(allowsMultipleSelection: parameters.allowsMultipleSelection, allowsDirectories: parameters.allowsDirectories, completion: continuation.resume(returning:))
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class BrowserViewModel {
@@ -46,9 +100,17 @@ final class BrowserViewModel {
 
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: String(describing: BrowserViewModel.self))
 
-    let page = WebPage()
+    init() {
+        self.page = WebPage(dialogPresenter: self.dialogPresenter)
+        self.dialogPresenter.owner = self
+    }
+
+    let page: WebPage
+    private let dialogPresenter = DialogPresenter()
 
     var displayedURL: String = ""
+
+    // MARK: PDF properties
 
     var pdfExporterIsPresented = false {
         didSet {
@@ -58,7 +120,6 @@ final class BrowserViewModel {
         }
     }
 
-    @ObservationIgnored
     private(set) var exportedPDF: PDF? = nil {
         didSet {
             if exportedPDF != nil {
@@ -66,6 +127,36 @@ final class BrowserViewModel {
             }
         }
     }
+
+    // MARK: Dialog properties
+
+    var isPresentingDialog = false {
+        didSet {
+            if !isPresentingDialog {
+                currentDialog = nil
+            }
+        }
+    }
+
+    var currentDialog: DialogPresenter.Dialog? = nil {
+        didSet {
+            if currentDialog != nil {
+                isPresentingDialog = true
+            }
+        }
+    }
+
+    var isPresentingFilePicker = false
+
+    var currentFilePicker: DialogPresenter.FilePicker? = nil {
+        didSet {
+            if currentFilePicker != nil {
+                isPresentingFilePicker = true
+            }
+        }
+    }
+
+    // MARK: View model functions
 
     func openURL(_ url: URL) {
         assert(url.isFileURL)
@@ -105,5 +196,19 @@ final class BrowserViewModel {
         case let .failure(error):
             Self.logger.error("Failed to export PDF: \(error)")
         }
+    }
+
+    func didImportFiles(result: Result<[URL], any Error>) {
+        precondition(currentFilePicker != nil)
+
+        switch result {
+        case let .success(urls):
+            currentFilePicker!.completion(.ok(urls))
+
+        case .failure:
+            currentFilePicker!.completion(.cancel)
+        }
+
+        currentFilePicker = nil
     }
 }

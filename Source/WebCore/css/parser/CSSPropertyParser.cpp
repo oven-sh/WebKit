@@ -147,13 +147,14 @@ template<typename CharacterType> static CSSValueID cssValueKeywordID(std::span<c
 
     // In most cases, if the prefix is -apple-, change it to -webkit-. This makes the string one character longer.
     auto length = characters.size();
-    if (buffer[0] == '-' && isAppleLegacyCSSValueKeyword(std::span { buffer }.first(length))) {
-        memmove(buffer.data() + 7, buffer.data() + 6, length - 6);
-        memcpy(buffer.data() + 1, "webkit", 6);
+    std::span bufferSpan { buffer };
+    if (buffer[0] == '-' && isAppleLegacyCSSValueKeyword(bufferSpan.first(length))) {
+        memmoveSpan(bufferSpan.subspan(7), bufferSpan.subspan(6, length - 6));
+        memcpySpan(bufferSpan.subspan(1), "webkit"_span);
         ++length;
     }
 
-    return findCSSValueKeyword(std::span { buffer }.first(length));
+    return findCSSValueKeyword(bufferSpan.first(length));
 }
 
 CSSValueID cssValueKeywordID(StringView string)

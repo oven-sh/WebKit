@@ -61,15 +61,16 @@ public:
     class UpdateScope {
         WTF_MAKE_TZONE_ALLOCATED(UpdateScope);
     public:
-        explicit UpdateScope(Ref<SceneIntegration>&&);
+        UpdateScope(Ref<SceneIntegration>&&, bool);
         ~UpdateScope();
 
     private:
         Ref<SceneIntegration> m_sceneIntegration;
+        bool m_shouldRequestUpdate { false };
         Locker<Lock> m_locker;
     };
 
-    std::unique_ptr<UpdateScope> createUpdateScope();
+    std::unique_ptr<UpdateScope> createUpdateScope(bool);
 
 private:
     explicit SceneIntegration(Scene&, Client&);

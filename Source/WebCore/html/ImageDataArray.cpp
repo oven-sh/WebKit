@@ -30,6 +30,7 @@
 #include "ImageDataArray.h"
 
 #include <JavaScriptCore/Float16Array.h>
+#include <JavaScriptCore/GenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/Uint8ClampedArray.h>
 
 // Needed for `downcast` below.

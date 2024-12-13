@@ -606,7 +606,7 @@ static inline void findFirstAndLastAttributesInVector(Vector<SVGTextLayoutAttrib
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-static inline void reverseInlineBoxRangeAndValueListsIfNeeded(Vector<SVGTextLayoutAttributes*>& attributes, Vector<InlineIterator::LeafBoxIterator>::iterator first, Vector<InlineIterator::LeafBoxIterator>::iterator last)
+static inline void reverseInlineBoxRangeAndValueListsIfNeeded(Vector<SVGTextLayoutAttributes*>& attributes, std::span<InlineIterator::LeafBoxIterator>::iterator first, std::span<InlineIterator::LeafBoxIterator>::iterator last)
 {
     // This is a copy of std::reverse(first, last). It additionally assures that the metrics map within the renderers belonging to the InlineBoxes are reordered as well.
     while (true)  {
@@ -651,8 +651,8 @@ void RenderSVGText::reorderValueListsToLogicalOrder()
     if (!lineBox)
         return;
 
-    InlineIterator::leafBoxesInLogicalOrder(lineBox, [&](auto first, auto last) {
-        reverseInlineBoxRangeAndValueListsIfNeeded(m_layoutAttributes, first, last);
+    InlineIterator::leafBoxesInLogicalOrder(lineBox, [&](auto span) {
+        reverseInlineBoxRangeAndValueListsIfNeeded(m_layoutAttributes, span.begin(), span.end());
     });
 
 }

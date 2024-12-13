@@ -45,13 +45,13 @@ TextStream& operator<<(TextStream& ts, const EditorState& editorState)
         ts.dumpProperty("isContentRichlyEditable", editorState.isContentRichlyEditable);
     if (editorState.isInPasswordField)
         ts.dumpProperty("isInPasswordField", editorState.isInPasswordField);
-    if (editorState.isInPlugin)
-        ts.dumpProperty("isInPlugin", editorState.isInPlugin);
     if (editorState.hasComposition)
         ts.dumpProperty("hasComposition", editorState.hasComposition);
     if (editorState.triggeredByAccessibilitySelectionChange)
         ts.dumpProperty("triggeredByAccessibilitySelectionChange", editorState.triggeredByAccessibilitySelectionChange);
 #if PLATFORM(MAC)
+    if (editorState.isInPlugin)
+        ts.dumpProperty("isInPlugin", editorState.isInPlugin);
     if (!editorState.canEnableAutomaticSpellingCorrection)
         ts.dumpProperty("canEnableAutomaticSpellingCorrection", editorState.canEnableAutomaticSpellingCorrection);
 #endif

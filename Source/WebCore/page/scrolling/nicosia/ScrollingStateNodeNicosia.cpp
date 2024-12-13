@@ -27,8 +27,8 @@
 #include "ScrollingStateNode.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "CoordinatedGraphicsLayer.h"
+#include "CoordinatedPlatformLayer.h"
+#include "GraphicsLayerCoordinated.h"
 #include "NicosiaCompositionLayer.h"
 
 namespace WebCore {
@@ -57,7 +57,7 @@ void* LayerRepresentation::makePlatformLayerTypeless(Nicosia::CompositionLayer* 
 
 Nicosia::CompositionLayer* LayerRepresentation::platformLayerFromGraphicsLayer(GraphicsLayer& graphicsLayer)
 {
-    return downcast<CoordinatedGraphicsLayer>(graphicsLayer).compositionLayer().get();
+    return downcast<GraphicsLayerCoordinated>(graphicsLayer).coordinatedPlatformLayer().compositionLayer().get();
 }
 
 } // namespace WebCore

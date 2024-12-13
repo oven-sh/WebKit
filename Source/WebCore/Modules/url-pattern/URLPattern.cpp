@@ -257,18 +257,25 @@ ExceptionOr<Ref<URLPattern>> URLPattern::create(ScriptExecutionContext& context,
 
 URLPattern::~URLPattern() = default;
 
-ExceptionOr<bool> URLPattern::test(std::optional<URLPatternInput>&&, String&& baseURL) const
+ExceptionOr<bool> URLPattern::test(ScriptExecutionContext& context, std::optional<URLPatternInput>&& input, String&& baseURL) const
 {
-    UNUSED_PARAM(baseURL);
+    if (!input)
+        return Exception { ExceptionCode::NotSupportedError };
 
-    return Exception { ExceptionCode::NotSupportedError };
+    auto maybeResult = match(context, WTFMove(*input), WTFMove(baseURL));
+    if (maybeResult.hasException())
+        return maybeResult.releaseException();
+
+    return !!maybeResult.returnValue();
+
 }
 
-ExceptionOr<std::optional<URLPatternResult>> URLPattern::exec(std::optional<URLPatternInput>&&, String&& baseURL) const
+ExceptionOr<std::optional<URLPatternResult>> URLPattern::exec(ScriptExecutionContext& context, std::optional<URLPatternInput>&& input, String&& baseURL) const
 {
-    UNUSED_PARAM(baseURL);
+    if (!input)
+        return Exception { ExceptionCode::NotSupportedError };
 
-    return Exception { ExceptionCode::NotSupportedError };
+    return match(context, WTFMove(*input), WTFMove(baseURL));
 }
 
 ExceptionOr<void> URLPattern::compileAllComponents(ScriptExecutionContext& context, URLPatternInit&& processedInit, const URLPatternOptions& options)
@@ -322,6 +329,121 @@ ExceptionOr<void> URLPattern::compileAllComponents(ScriptExecutionContext& conte
     m_hashComponent = maybeHashComponent.releaseReturnValue();
 
     return { };
+}
+
+static inline void matchHelperAssignInputsFromURL(const URL& input, String& protocol, String& username, String& password, String& hostname, String& port, String& pathname, String& search, String& hash)
+{
+    protocol = input.protocol().toString();
+    username = input.user();
+    password = input.password();
+    hostname = input.host().toString();
+    port = input.port() ? String::number(*input.port()) : emptyString();
+    pathname = input.path().toString();
+    search = input.query().toString();
+    hash = input.fragmentIdentifier().toString();
+}
+
+static inline void matchHelperAssignInputsFromInit(const URLPatternInit& input, String& protocol, String& username, String& password, String& hostname, String& port, String& pathname, String& search, String& hash)
+{
+    protocol = input.protocol;
+    username = input.username;
+    password = input.password;
+    hostname = input.hostname;
+    port = input.port;
+    pathname = input.pathname;
+    search = input.search;
+    hash = input.hash;
+}
+
+// https://urlpattern.spec.whatwg.org/#url-pattern-match
+ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionContext& context, std::variant<URL, URLPatternInput>&& input, std::optional<String>&& baseURLString) const
+{
+    URLPatternResult result;
+    String protocol, username, password, hostname, port, pathname, search, hash;
+
+    if (URL* inputURL = std::get_if<URL>(&input)) {
+        ASSERT(!inputURL->isEmpty() && inputURL->isValid());
+        matchHelperAssignInputsFromURL(*inputURL, protocol, username, password, hostname, port, pathname, search, hash);
+        result.inputs = Vector<URLPatternInput> { String { inputURL->string() } };
+    } else {
+        URLPatternInput* inputPattern = std::get_if<URLPatternInput>(&input);
+        ExceptionOr<bool> hasError = false;
+
+        WTF::switchOn(*inputPattern,
+            [&] (const URLPatternInit& value) {
+                if (!value.baseURL.isEmpty())
+                    hasError = Exception { ExceptionCode::TypeError, "Initial URLPatternInit input should not contain a base URL string."_s };
+
+                URLPatternInit initCopy = value;
+                auto maybeResult = processInit(WTFMove(initCopy), BaseURLStringType::URL);
+                if (maybeResult.hasException())
+                    hasError = true;
+                else {
+                    URLPatternInit processedInit = maybeResult.releaseReturnValue();
+                    matchHelperAssignInputsFromInit(processedInit, protocol, username, password, hostname, port, pathname, search, hash);
+                }
+            }, [&] (const String& value) {
+                if (baseURLString) {
+                    auto baseURL = URL(*baseURLString);
+                    if (!baseURL.isValid())
+                        hasError = true;
+                    else
+                        matchHelperAssignInputsFromURL(baseURL, protocol, username, password, hostname, port, pathname, search, hash);
+                }
+                // FIXME: Determine if there is a string input that should be parsed.
+                UNUSED_PARAM(value);
+            }
+        );
+
+        result.inputs = Vector<URLPatternInput> { WTFMove(*inputPattern) };
+
+        if (hasError.hasException())
+            return hasError.releaseException();
+        if (hasError.returnValue())
+            return { std::nullopt };
+    }
+
+    auto protocolExecResult = m_protocolComponent.componentExec(context, protocol);
+    if (protocolExecResult.isNull() || protocolExecResult.isUndefined())
+        return { std::nullopt };
+    result.protocol = m_protocolComponent.createComponentMatchResult(context, WTFMove(protocol), protocolExecResult);
+
+    auto usernameExecResult = m_usernameComponent.componentExec(context, username);
+    if (usernameExecResult.isNull() || usernameExecResult.isUndefined())
+        return { std::nullopt };
+    result.username = m_usernameComponent.createComponentMatchResult(context, WTFMove(username), usernameExecResult);
+
+    auto passwordExecResult = m_passwordComponent.componentExec(context, password);
+    if (passwordExecResult.isNull() || passwordExecResult.isUndefined())
+        return { std::nullopt };
+    result.password = m_passwordComponent.createComponentMatchResult(context, WTFMove(password), passwordExecResult);
+
+    auto hostnameExecResult = m_hostnameComponent.componentExec(context, hostname);
+    if (hostnameExecResult.isNull() || hostnameExecResult.isUndefined())
+        return { std::nullopt };
+    result.hostname = m_hostnameComponent.createComponentMatchResult(context, WTFMove(hostname), hostnameExecResult);
+
+    auto pathnameExecResult = m_pathnameComponent.componentExec(context, pathname);
+    if (pathnameExecResult.isNull() || pathnameExecResult.isUndefined())
+        return { std::nullopt };
+    result.pathname = m_pathnameComponent.createComponentMatchResult(context, WTFMove(pathname), pathnameExecResult);
+
+    auto portExecResult = m_portComponent.componentExec(context, port);
+    if (portExecResult.isNull() || portExecResult.isUndefined())
+        return { std::nullopt };
+    result.port = m_portComponent.createComponentMatchResult(context, WTFMove(port), portExecResult);
+
+    auto searchExecResult = m_searchComponent.componentExec(context, search);
+    if (searchExecResult.isNull() || searchExecResult.isUndefined())
+        return { std::nullopt };
+    result.search = m_searchComponent.createComponentMatchResult(context, WTFMove(search), searchExecResult);
+
+    auto hashExecResult = m_hashComponent.componentExec(context, hash);
+    if (hashExecResult.isNull() || hashExecResult.isUndefined())
+        return { std::nullopt };
+    result.hash = m_hashComponent.createComponentMatchResult(context, WTFMove(hash), hashExecResult);
+
+    return { result };
 }
 
 }

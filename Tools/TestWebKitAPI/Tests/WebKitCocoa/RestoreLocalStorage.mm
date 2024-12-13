@@ -117,12 +117,12 @@ static void testRestoreLocalStorage(RetainPtr<WKWebsiteDataStore> websiteDataSto
 
 TEST(WebKit, RestoreLocalStorageFromPersistentDataStore)
 {
-    testRestoreLocalStorage(adoptNS([WKWebsiteDataStore defaultDataStore]));
+    testRestoreLocalStorage([WKWebsiteDataStore defaultDataStore]);
 }
 
 TEST(WebKit, RestoreLocalStorageFromEphemeralDataStore)
 {
-    testRestoreLocalStorage(adoptNS([WKWebsiteDataStore nonPersistentDataStore]));
+    testRestoreLocalStorage([WKWebsiteDataStore nonPersistentDataStore]);
 }
 
 @interface RestoreLocalStorageMessageHandler : NSObject <WKScriptMessageHandler>
@@ -246,10 +246,10 @@ static void testRestoreLocalStorageThirdPartyIFrame(RetainPtr<WKWebsiteDataStore
 
 TEST(WebKit, RestoreLocalStorageFromPersistentDataStoreThirdPartyIFrame)
 {
-    testRestoreLocalStorageThirdPartyIFrame(adoptNS([WKWebsiteDataStore defaultDataStore]));
+    testRestoreLocalStorageThirdPartyIFrame([WKWebsiteDataStore defaultDataStore]);
 }
 
 TEST(WebKit, RestoreLocalStorageFromEphemeralDataStoreThirdPartyIFrame)
 {
-    testRestoreLocalStorageThirdPartyIFrame(adoptNS([WKWebsiteDataStore nonPersistentDataStore]));
+    testRestoreLocalStorageThirdPartyIFrame([WKWebsiteDataStore nonPersistentDataStore]);
 }

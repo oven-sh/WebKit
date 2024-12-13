@@ -66,7 +66,7 @@ public:
     void disconnectFromStorageArea(IPC::Connection::UniqueID, StorageAreaIdentifier);
 
     HashMap<String, String> fetchStorageMap() const;
-    bool populateStorageArea(WebCore::ClientOrigin, HashMap<String, String>&&, Ref<WorkQueue>&&);
+    bool setStorageMap(WebCore::ClientOrigin, HashMap<String, String>&&, Ref<WorkQueue>&&);
 
 private:
     void connectionClosedForLocalStorageArea(IPC::Connection::UniqueID);

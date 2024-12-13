@@ -932,6 +932,8 @@ void testRotateFringeClobber()
             || reg == GPRInfo::regT7
             || reg == GPRInfo::regCS0)
             continue;
+        if (RegisterSetBuilder::specialRegisters().contains(reg, IgnoreVectors))
+            continue;
         code.pinRegister(reg);
     }
 

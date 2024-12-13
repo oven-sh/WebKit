@@ -151,7 +151,7 @@ macro argumINTDispatch()
     emit "bx r9"
 end
 
-macro argumINTEnd()
+macro argumINTInitializeDefaultLocals()
     # zero out remaining locals
     bpeq argumINTDest, t6, .ipint_entry_finish_zero
     break
@@ -1115,6 +1115,9 @@ mintAlign(_fr7)
     break
 
 mintAlign(_stack)
+    break
+
+mintAlign(_stack_gap)
     break
 
 mintAlign(_end)

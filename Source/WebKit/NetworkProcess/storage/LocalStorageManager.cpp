@@ -261,7 +261,7 @@ HashMap<String, String> LocalStorageManager::fetchStorageMap() const
     return { };
 }
 
-bool LocalStorageManager::populateStorageArea(WebCore::ClientOrigin clientOrigin, HashMap<String, String>&& storageMap, Ref<WorkQueue>&& workQueue)
+bool LocalStorageManager::setStorageMap(WebCore::ClientOrigin clientOrigin, HashMap<String, String>&& storageMap, Ref<WorkQueue>&& workQueue)
 {
     bool succeeded = true;
 

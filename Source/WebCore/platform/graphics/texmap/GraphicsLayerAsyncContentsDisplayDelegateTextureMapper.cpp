@@ -27,8 +27,8 @@
 #include "GraphicsLayerAsyncContentsDisplayDelegateTextureMapper.h"
 
 #if USE(COORDINATED_GRAPHICS)
-#include "CoordinatedGraphicsLayer.h"
 #include "CoordinatedPlatformLayerBufferNativeImage.h"
+#include "GraphicsLayer.h"
 #include "ImageBuffer.h"
 #include "NativeImage.h"
 #include "TextureMapperFlags.h"
@@ -36,7 +36,7 @@
 
 namespace WebCore {
 
-GraphicsLayerAsyncContentsDisplayDelegateTextureMapper::GraphicsLayerAsyncContentsDisplayDelegateTextureMapper(CoordinatedGraphicsLayer& layer)
+GraphicsLayerAsyncContentsDisplayDelegateTextureMapper::GraphicsLayerAsyncContentsDisplayDelegateTextureMapper(GraphicsLayer& layer)
     : m_proxy(TextureMapperPlatformLayerProxy::create(TextureMapperPlatformLayerProxy::ContentType::OffscreenCanvas))
 {
     layer.setContentsToPlatformLayer(m_proxy.ptr(), GraphicsLayer::ContentsLayerPurpose::Canvas);
@@ -54,7 +54,7 @@ bool GraphicsLayerAsyncContentsDisplayDelegateTextureMapper::tryCopyToLayer(Imag
     return true;
 }
 
-void GraphicsLayerAsyncContentsDisplayDelegateTextureMapper::updateGraphicsLayer(CoordinatedGraphicsLayer& layer)
+void GraphicsLayerAsyncContentsDisplayDelegateTextureMapper::updateGraphicsLayer(GraphicsLayer& layer)
 {
     layer.setContentsToPlatformLayer(m_proxy.ptr(), GraphicsLayer::ContentsLayerPurpose::Canvas);
 }

@@ -72,6 +72,7 @@
 #include <objidl.h>
 #include <mlang.h>
 struct IDWriteFactory;
+struct IDWriteFontCollection;
 #endif
 
 #if USE(FREETYPE)
@@ -283,7 +284,11 @@ private:
 #endif
 
 #if PLATFORM(WIN) && USE(SKIA)
-    COMPtr<IDWriteFactory> m_DWFactory;
+    struct CreateDWriteFactoryResult {
+        COMPtr<IDWriteFactory> factory;
+        COMPtr<IDWriteFontCollection> fontCollection;
+    };
+    static CreateDWriteFactoryResult createDWriteFactory();
 #endif
 
     friend class Font;

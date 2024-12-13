@@ -51,10 +51,10 @@ struct WebKit::EditorState {
     bool isContentEditable;
     bool isContentRichlyEditable;
     bool isInPasswordField;
-    bool isInPlugin;
     bool hasComposition;
     bool triggeredByAccessibilitySelectionChange;
 #if PLATFORM(MAC)
+    bool isInPlugin;
     bool canEnableAutomaticSpellingCorrection;
 #endif
     std::optional<WebKit::EditorState::PostLayoutData> postLayoutData;

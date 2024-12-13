@@ -392,11 +392,6 @@ WKSelectionDrawingInfo::WKSelectionDrawingInfo(const EditorState& editorState)
         return;
     }
 
-    if (editorState.isInPlugin) {
-        type = SelectionType::Plugin;
-        return;
-    }
-
     type = SelectionType::Range;
     if (!editorState.postLayoutData)
         return;
@@ -453,7 +448,6 @@ static TextStream& operator<<(TextStream& stream, WKSelectionDrawingInfo::Select
 {
     switch (type) {
     case WKSelectionDrawingInfo::SelectionType::None: stream << "none"; break;
-    case WKSelectionDrawingInfo::SelectionType::Plugin: stream << "plugin"; break;
     case WKSelectionDrawingInfo::SelectionType::Range: stream << "range"; break;
     }
     

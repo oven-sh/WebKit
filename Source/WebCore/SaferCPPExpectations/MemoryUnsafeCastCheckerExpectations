@@ -70,13 +70,9 @@ TextEncoderStreamBuiltins.cpp
 TransformStreamDefaultControllerBuiltins.cpp
 TransformStreamInternalsBuiltins.cpp
 WebCoreJSBuiltinInternals.cpp
-WebKitFontFamilyNames.cpp
 WritableStreamDefaultControllerBuiltins.cpp
 WritableStreamDefaultWriterBuiltins.cpp
 WritableStreamInternalsBuiltins.cpp
-XLinkNames.cpp
-XMLNSNames.cpp
-XMLNames.cpp
 bindings/js/DOMGCOutputConstraint.cpp
 bindings/js/DOMWrapperWorld.cpp
 bindings/js/InternalReadableStream.cpp
@@ -193,7 +189,6 @@ rendering/cocoa/RenderThemeCocoa.mm
 rendering/svg/RenderSVGResourcePattern.cpp
 rendering/svg/SVGRenderTreeAsText.cpp
 rendering/svg/SVGTextQuery.cpp
-svg/SVGElement.h
 svg/SVGFELightElement.cpp
 svg/SVGPathSegListSource.cpp
 svg/SVGTRefElement.cpp

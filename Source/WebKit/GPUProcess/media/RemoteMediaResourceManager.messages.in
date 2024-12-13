@@ -25,6 +25,10 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU
+]
 messages -> RemoteMediaResourceManager {
     ResponseReceived(WebKit::RemoteMediaResourceIdentifier identifier, WebCore::ResourceResponse response, bool didPassAccessControlCheck) -> (enum:bool WebCore::ShouldContinuePolicyCheck shouldContinue)
     RedirectReceived(WebKit::RemoteMediaResourceIdentifier identifier, WebCore::ResourceRequest request, WebCore::ResourceResponse response) -> (WebCore::ResourceRequest returnRequest)

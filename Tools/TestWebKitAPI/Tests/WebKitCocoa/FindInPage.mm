@@ -766,7 +766,12 @@ TEST(WebKit, RequestRectForFoundTextRange)
     TestWebKitAPI::Util::run(&done);
 }
 
+// rdar://141248187
+#if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 180000)
+TEST(WebKit, DISABLED_ScrollToFoundRangeWithExistingSelection)
+#else
 TEST(WebKit, ScrollToFoundRangeWithExistingSelection)
+#endif
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)]);
     [webView synchronouslyLoadHTMLString:@"<meta name='viewport' content='width=device-width,initial-scale=1'><div contenteditable><p>Top</p><p style='margin-top: 800px'>Bottom</p></div>"];
@@ -782,7 +787,12 @@ TEST(WebKit, ScrollToFoundRangeWithExistingSelection)
     EXPECT_TRUE(CGPointEqualToPoint([webView scrollView].contentOffset, CGPointMake(0, 664)));
 }
 
+// rdar://141248187
+#if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 180000)
+TEST(WebKit, DISABLED_ScrollToFoundRangeDoesNotFocusElement)
+#else
 TEST(WebKit, ScrollToFoundRangeDoesNotFocusElement)
+#endif
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)]);
     [webView synchronouslyLoadHTMLString:@"<meta name='viewport' content='width=device-width,initial-scale=1'><input id='input'><div id='editor' contenteditable><p>Top</p><p style='margin-top: 800px'>Bottom</p></div>"];
@@ -816,7 +826,12 @@ TEST(WebKit, ScrollToFoundRangeDoesNotFocusElement)
     TestWebKitAPI::Util::run(&scrollViewDelegate->_finishedScrolling);
 }
 
+// rdar://141248187
+#if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 180000)
+TEST(WebKit, DISABLED_ScrollToFoundRangeRepeated)
+#else
 TEST(WebKit, ScrollToFoundRangeRepeated)
+#endif
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)]);
     [webView synchronouslyLoadHTMLString:@"<meta name='viewport' content='width=device-width,initial-scale=1'><div contenteditable><p>Top</p><p style='margin-top: 800px'>Bottom</p></div>"];

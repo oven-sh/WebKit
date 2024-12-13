@@ -217,7 +217,10 @@ WTF_EXPORT_PRIVATE CString currentExecutablePath();
 WTF_EXPORT_PRIVATE CString currentExecutableName();
 WTF_EXPORT_PRIVATE String userCacheDirectory();
 WTF_EXPORT_PRIVATE String userDataDirectory();
+#if ENABLE(DEVELOPER_MODE)
+WTF_EXPORT_PRIVATE CString webkitTopLevelDirectory();
 #endif
+#endif // USE(GLIB)
 
 #if OS(WINDOWS)
 WTF_EXPORT_PRIVATE String localUserSpecificStorageDirectory();

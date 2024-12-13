@@ -3474,6 +3474,26 @@ def check_objc_protocol(clean_lines, line_number, file_extension, error):
     error(line_number, 'spacing/objc-protocol', 2, "Protocol names shouldn't have a space before them.")
 
 
+def check_safer_cpp(clean_lines, line_number, error):
+    """Looks for safer C++ errors.
+
+    Args:
+      clean_lines: A CleansedLines instance containing the file.
+      line_number: The number of the line to check.
+      error: The function to call with any errors found.
+    """
+
+    line = clean_lines.elided[line_number]  # Get rid of comments and strings.
+
+    uses_deprecated_weak_ref_smart_pointer_exception = search(r'struct IsDeprecatedWeakRefSmartPointerException\<.+?\>', line)
+    if uses_deprecated_weak_ref_smart_pointer_exception:
+        error(line_number, 'safercpp/weak_ref_exception', 4, "Do not add IsDeprecatedWeakRefSmartPointerException.")
+
+    uses_deprecated_timer_smart_pointer_exception = search(r'struct IsDeprecatedTimerSmartPointerException\<.+?\>', line)
+    if uses_deprecated_timer_smart_pointer_exception:
+        error(line_number, 'safercpp/timer_exception', 4, "Do not add IsDeprecatedTimerSmartPointerException.")
+
+
 def check_style(clean_lines, line_number, file_extension, class_state, file_state, enum_state, error):
     """Checks rules from the 'C++ style rules' section of cppguide.html.
 
@@ -3557,6 +3577,7 @@ def check_style(clean_lines, line_number, file_extension, class_state, file_stat
     check_once_flag(clean_lines, line_number, error)
     check_arguments_for_wk_api_available(clean_lines, line_number, error)
     check_objc_protocol(clean_lines, line_number, file_extension, error)
+    check_safer_cpp(clean_lines, line_number, error)
 
 
 _RE_PATTERN_INCLUDE_NEW_STYLE = re.compile(r'#(?:include|import) +"[^/]+\.h"')
@@ -4811,6 +4832,8 @@ class CppChecker(object):
         'runtime/wtf_make_unique',
         'runtime/wtf_move',
         'runtime/wtf_never_destroyed',
+        'safercpp/weak_ref_exception',
+        'safercpp/timer_exception',
         'security/assertion',
         'security/assertion_fallthrough',
         'security/javascriptcore_wtf_blockptr',

@@ -33,6 +33,8 @@
 
 namespace TestWebKitAPI {
 
+#if HAVE(WEB_TRANSPORT)
+
 class WebTransportServer {
 public:
     WebTransportServer(Function<Task(Connection)>&&);
@@ -43,5 +45,7 @@ private:
     struct Data;
     Ref<Data> m_data;
 };
+
+#endif // HAVE(WEB_TRANSPORT)
 
 } // namespace TestWebKitAPI

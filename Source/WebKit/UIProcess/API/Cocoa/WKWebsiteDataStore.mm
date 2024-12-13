@@ -1470,7 +1470,7 @@ static Vector<WebKit::WebsiteDataType> filterSupportedTypes(NSSet<NSString *> * 
     });
 
     if ([dataTypes containsObject:WKWebsiteDataTypeLocalStorage]) {
-        _websiteDataStore->fetchLocalStorage([callbackAggregator, data](HashMap<WebCore::ClientOrigin, HashMap<String, String>>&& localStorage) {
+        _websiteDataStore->fetchLocalStorage([callbackAggregator, data](auto&& localStorage) {
             data->localStorage = WTFMove(localStorage);
         });
     }
@@ -1480,9 +1480,9 @@ static Vector<WebKit::WebsiteDataType> filterSupportedTypes(NSSet<NSString *> * 
 {
     WTF::Persistence::Decoder decoder(span(data));
 
-    std::optional<unsigned> currentLocalStorageSerializationVersion;
-    decoder >> currentLocalStorageSerializationVersion;
-    if (!currentLocalStorageSerializationVersion) {
+    std::optional<unsigned> currentWKWebsiteDataSerializationVersion;
+    decoder >> currentWKWebsiteDataSerializationVersion;
+    if (!currentWKWebsiteDataSerializationVersion) {
         completionHandler(NO);
         return;
     }

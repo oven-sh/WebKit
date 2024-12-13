@@ -1110,11 +1110,23 @@ void PluginView::openWithPreview(CompletionHandler<void(const String&, FrameInfo
 }
 
 #if PLATFORM(IOS_FAMILY)
+
 void PluginView::pluginDidInstallPDFDocument(double initialScale)
 {
     protectedWebPage()->pluginDidInstallPDFDocument(initialScale);
 }
-#endif
+
+void PluginView::setSelectionRange(FloatPoint pointInRootView, TextGranularity granularity)
+{
+    protectedPlugin()->setSelectionRange(pointInRootView, granularity);
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
+bool PluginView::populateEditorStateIfNeeded(EditorState& state) const
+{
+    return protectedPlugin()->populateEditorStateIfNeeded(state);
+}
 
 } // namespace WebKit
 

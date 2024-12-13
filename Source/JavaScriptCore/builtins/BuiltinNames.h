@@ -204,7 +204,6 @@ namespace JSC {
     macro(isRemoteFunction) \
     macro(arrayFromFastFillWithUndefined) \
     macro(arrayFromFastFillWithEmpty) \
-    macro(arraySort) \
     macro(jsonParse) \
     macro(jsonStringify) \
     macro(String) \

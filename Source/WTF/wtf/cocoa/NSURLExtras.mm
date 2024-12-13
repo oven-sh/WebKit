@@ -32,6 +32,7 @@
 #import <mutex>
 #import <wtf/Function.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/URL.h>
 #import <wtf/URLHelpers.h>
 #import <wtf/Vector.h>
@@ -288,7 +289,7 @@ static NSURL *URLByRemovingComponentAndSubsequentCharacter(NSURL *URL, CFURLComp
     if (numBytes < range.location + range.length)
         range.length = numBytes - range.location;
 
-    memmove(urlBytes.subspan(range.location).data(), urlBytes.subspan(range.location + range.length).data(), numBytes - range.location + range.length);
+    memmoveSpan(urlBytes.subspan(range.location), urlBytes.subspan(range.location + range.length, numBytes - range.location + range.length));
 
     auto result = adoptCF(CFURLCreateWithBytes(nullptr, urlBytes.data(), numBytes - range.length, kCFStringEncodingUTF8, nullptr));
     if (!result)

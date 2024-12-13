@@ -25,7 +25,11 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(ENCRYPTED_MEDIA)
 
-[EnabledBy=EncryptedMediaAPIEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=EncryptedMediaAPIEnabled
+]
 messages -> RemoteCDMFactoryProxy {
     CreateCDM(String keySystem) -> (std::optional<WebKit::RemoteCDMIdentifier> identifier, struct WebKit::RemoteCDMConfiguration configuration) Synchronous
     SupportsKeySystem(String keySystem) -> (bool result) Synchronous

@@ -123,7 +123,6 @@ private:
 
     bool requestClassicScript(const String& sourceURL);
     bool requestModuleScript(const TextPosition& scriptStartPosition);
-    bool requestImportMap(LocalFrame&, const String& sourceURL);
 
     void updateTaintedOriginFromSourceURL();
 

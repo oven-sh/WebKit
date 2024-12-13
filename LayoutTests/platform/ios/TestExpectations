@@ -3679,6 +3679,7 @@ webkit.org/b/240579 http/tests/workers/service/getnotifications-stop.html [ Skip
 webkit.org/b/240579 http/tests/workers/service/getnotifications.html [ Skip ]
 webkit.org/b/240579 http/tests/push-api [ Skip ]
 webkit.org/b/240579 http/wpt/push-api [ Skip ]
+http/tests/workers/service/registerServiceWorkerClient-after-network-process-crash.html [ Skip ]
 
 # These tests finish with unfired UI script callbacks, causing crashes. See webkit.org/b/236794
 imported/w3c/web-platform-tests/css/css-contain/content-visibility/content-visibility-047.html

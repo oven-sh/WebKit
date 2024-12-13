@@ -23,7 +23,11 @@
 
 #if ENABLE(GPU_PROCESS)
 
-[EnabledBy=WebGPUEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=WebGPUEnabled
+]
 messages -> RemoteCommandEncoder Stream {
     void BeginRenderPass(WebKit::WebGPU::RenderPassDescriptor descriptor, WebKit::WebGPUIdentifier identifier)
     void BeginComputePass(std::optional<WebKit::WebGPU::ComputePassDescriptor> descriptor, WebKit::WebGPUIdentifier identifier)

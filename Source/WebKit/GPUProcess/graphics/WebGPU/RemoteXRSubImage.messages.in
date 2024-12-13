@@ -23,11 +23,15 @@
 
 #if ENABLE(GPU_PROCESS)
 
-[EnabledBy=WebXRWebGPUBindingsEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=WebXRWebGPUBindingsEnabled
+]
 messages -> RemoteXRSubImage Stream {
-void Destruct()
-void GetColorTexture(WebKit::WebGPUIdentifier identifier)
-void GetDepthTexture(WebKit::WebGPUIdentifier identifier)
+    void Destruct()
+    void GetColorTexture(WebKit::WebGPUIdentifier identifier)
+    void GetDepthTexture(WebKit::WebGPUIdentifier identifier)
 }
 
 #endif

@@ -230,7 +230,7 @@ end
     break
 end
 
-macro argumINTEnd()
+macro argumINTInitializeDefaultLocals()
     # zero out remaining locals
     bqeq argumINTDst, argumINTEnd, .ipint_entry_finish_zero
     loadb [MC], argumINTTmp
@@ -506,7 +506,7 @@ instructionLabel(_call)
 
     # get function index
     loadi IPInt::CallMetadata::functionIndex[MC], a1
-    advanceMC(IPInt::CallMetadata::argumentBytecode)
+    advanceMC(IPInt::CallMetadata::signature)
 
     subq 16, sp
     move sp, a2
@@ -535,7 +535,7 @@ instructionLabel(_call_indirect)
 
     loadb IPInt::CallIndirectMetadata::length[MC], t2
     advancePCByReg(t2)
-    advanceMC(constexpr (sizeof(IPInt::CallIndirectMetadata)))
+    advanceMC(IPInt::CallIndirectMetadata::signature)
     popQuad(sc1, t2)
 
     jmp .ipint_call_common
@@ -600,7 +600,7 @@ instructionLabel(_call_ref)
 
     loadb IPInt::CallRefMetadata::length[MC], t2
     advancePCByReg(t2)
-    advanceMC(constexpr (sizeof(IPInt::CallRefMetadata)))
+    advanceMC(IPInt::CallRefMetadata::signature)
     popQuad(sc1, t2)
 
     jmp .ipint_call_common
@@ -5596,9 +5596,6 @@ slowPathLabel(_local_tee)
 ## "Out of line" logic for call ##
 ##################################
 
-# time to use the safe for call registers!
-# sc1 = mINT shadow stack pointer (tracks the Wasm stack)
-
 const mintSS = sc1
 
 macro mintPop(reg)
@@ -5652,27 +5649,96 @@ end
 end
 
 .ipint_call_common:
-    # save everything we'll need later
-    move sp, sc0
-    push PC, MC
-    push PL, wasmInstance
+    # we need to do some planning ahead to not step on our own values later
+    # step 1: save all the stuff we had earlier
+    # step 2: calling
+    # - if we have more results than arguments, we need to move our stack pointer up in advance, or else
+    #   pushing 16B values to the stack will overtake cleaning up 8B return values. we get this value from
+    #   CallSignatureMetadata::numExtraResults
+    # - set up the stack frame (with size CallSignatureMetadata::stackFrameSize)
+    # step 2.5: saving registers:
+    # - push our important data onto the stack here, after the saved space
+    # step 3: jump to called function
+    # - swap out instances, reload memory, and call
+    # step 4: returning
+    # - pop the registers from step 2.5
+    # - we've left enough space for us to push our new values starting at the original stack pointer now! yay!
 
     # Free up r0 to be used as argument register
 
     const targetEntrypoint = sc2
     const targetInstance = sc3
 
-    # sc1 = target callee => wasmInstance to free up sc1
     # sc2 = target entrypoint
     # sc3 = target instance
 
-    const savedCallee = wasmInstance
-
-    move sc1, savedCallee
     move r0, targetEntrypoint
     move r1, targetInstance
 
-    move sc0, sc1
+    const extraSpaceForReturns = t0
+    const stackFrameSize = t1
+    const numArguments = t2
+
+    loadi IPInt::CallSignatureMetadata::stackFrameSize[MC], stackFrameSize
+    loadh IPInt::CallSignatureMetadata::numExtraResults[MC], extraSpaceForReturns
+    lshiftq StackValueShift, extraSpaceForReturns
+    loadh IPInt::CallSignatureMetadata::numArguments[MC], numArguments
+    lshiftq StackValueShift, numArguments
+    advanceMC(constexpr (sizeof(IPInt::CallSignatureMetadata)))
+
+    # calculate the SP after popping all arguments
+    move sp, t3
+    addp numArguments, t3
+
+    # arg             <- initial SP
+    # arg
+    # ...
+    # arg
+    # <first non-arg> <- t3 = SP after all arguments
+
+    # store sp as our shadow stack for arguments later
+    move sp, sc0
+    # make extra space if necessary
+    subp extraSpaceForReturns, sp
+
+    # reserved        <- sp
+    # reserved
+    # arg             <- sc0 = initial sp
+    # arg
+    # ...
+    # arg
+    # <first non-arg> <- t3
+
+    push t3, t3
+    push PL, wasmInstance
+
+    # set up the call frame
+    move sp, t2
+    subp stackFrameSize, sp
+
+    # call frame      <- sp
+    # call frame
+    # call frame
+    # call frame
+    # call frame
+    # call frame
+    # PL, wasmInstance
+    # t3, t3
+    # reserved
+    # reserved
+    # arg             <- sc0 = initial sp
+    # arg
+    # ...
+    # arg
+    # <first non-arg> <- t3
+
+    # set up the Callee slot
+    storeq sc1, Callee - CallerFrameAndPCSize[sp]
+
+    push targetEntrypoint, targetInstance
+    move t2, sc3
+
+    move sc0, mintSS
 
     # MC is where it needs to be, go!
     mintArgDispatch()
@@ -5681,7 +5747,8 @@ end
     # Free up r0 to be used as argument register
 
     # sc1 = target callee => wasmInstance to free up sc1
-    move sc1, wasmInstance
+    const savedCallee = wasmInstance
+    move sc1, savedCallee 
 
     # keep the top of IPInt stack in sc1 as shadow stack
     move sp, sc1
@@ -5797,14 +5864,19 @@ mintAlign(_fa7)
     mintPopF(wfa7)
     mintArgDispatch()
 
+# Note that the regular call and tail call opcodes will be implemented slightly differently.
+# Regular calls have to save space for return values, while tail calls are reusing the stack frame
+# and thus do not have to care.
+
 mintAlign(_stackzero)
-    mintPop(PC)
-    storeq PC, [sp]
+    mintPop(sc2)
+    storeq sc2, [sc3]
     mintArgDispatch()
 
 mintAlign(_stackeight)
-    mintPop(PC)
-    pushQuad(PC)
+    mintPop(sc2)
+    subp 16, sc3
+    storeq sc2, 8[sc3]
     mintArgDispatch()
 
 mintAlign(_tail_stackzero)
@@ -5819,7 +5891,7 @@ mintAlign(_tail_stackeight)
     mintArgDispatch()
 
 mintAlign(_gap)
-    subp 16, sp
+    subp 16, sc3
     mintArgDispatch()
 
 mintAlign(_tail_gap)
@@ -5830,15 +5902,11 @@ mintAlign(_tail_call)
     jmp .ipint_perform_tail_call
 
 mintAlign(_call)
-    # Set up the rest of the stack frame
-    subp FirstArgumentOffset - CallerFrameAndPCSize, sp
+    pop targetInstance, targetEntrypoint
 
     # Save stack pointer, if we tail call someone who changes the frame above's stack argument size
     move sp, sc0
     storep sc0, ThisArgumentOffset[cfr]
-
-    # Set up callee slot
-    storeq wasmInstance, Callee - CallerFrameAndPCSize[sp]
 
     # Swap instances
     move targetInstance, wasmInstance
@@ -5867,42 +5935,61 @@ _wasm_ipint_call_return_location_wide32:
     # Restore the stack pointer
     loadp ThisArgumentOffset[cfr], sc0
     move sc0, sp
+
+    # call frame        <- sp
+    # call frame
+    # call frame
+    # call frame
+    # call frame return
+    # call frame return
+    # PL, wasmInstance  <- sc3
+    # t3, t3
+    # reserved
+    # reserved
+    # arg
+    # arg
+    # ...
+    # arg
+    # <first non-arg>   <- t3
+
+    loadi [MC], sc3
+    advanceMC(IPInt::CallReturnMetadata::resultBytecode)
+    leap [sp, sc3], sc3
     addp FirstArgumentOffset - CallerFrameAndPCSize, sp
-    loadh [MC], sc0  # number of stack args
-    leap [sp, sc0, 8], sp
 
-    # Restore everything else, save PL in sc1 for now
-    pop wasmInstance, sc1
-    pop sc0, PC
+    const mintRetSrc = sc1
+    const mintRetDst = sc2
 
-    # Pop all the arguments from the stack
-    loadh 2[MC], sc0
-    lshiftq StackValueShift, sc0
-    addq sc0, sp
-    advanceMCByReg(4)
+    move sp, mintRetSrc
+    loadp 2*SlotSize[sc3], mintRetDst
 
     mintRetDispatch()
 
 mintAlign(_r0)
 _mint_begin_return:
-    pushQuad(wa0)
+    subp StackValueSize, mintRetDst
+    storeq wa0, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_r1)
-    pushQuad(wa1)
+    subp StackValueSize, mintRetDst
+    storeq wa1, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_r2)
-    pushQuad(wa2)
+    subp StackValueSize, mintRetDst
+    storeq wa2, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_r3)
-    pushQuad(wa3)
+    subp StackValueSize, mintRetDst
+    storeq wa3, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_r4)
 if ARM64 or ARM64E
-    pushQuad(wa4)
+    subp StackValueSize, mintRetDst
+    storeq wa4, [mintRetDst]
     mintRetDispatch()
 else
     break
@@ -5910,7 +5997,8 @@ end
 
 mintAlign(_r5)
 if ARM64 or ARM64E
-    pushQuad(wa5)
+    subp StackValueSize, mintRetDst
+    storeq wa5, [mintRetDst]
     mintRetDispatch()
 else
     break
@@ -5918,7 +6006,8 @@ end
 
 mintAlign(_r6)
 if ARM64 or ARM64E
-    pushQuad(wa6)
+    subp StackValueSize, mintRetDst
+    storeq wa6, [mintRetDst]
     mintRetDispatch()
 else
     break
@@ -5926,53 +6015,94 @@ end
 
 mintAlign(_r7)
 if ARM64 or ARM64E
-    pushQuad(wa7)
+    subp StackValueSize, mintRetDst
+    storeq wa7, [mintRetDst]
     mintRetDispatch()
 else
     break
 end
 
 mintAlign(_fr0)
-    pushv wfa0
+    subp StackValueSize, mintRetDst
+    storev wfa0, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_fr1)
-    pushv wfa1
+    subp StackValueSize, mintRetDst
+    storev wfa1, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_fr2)
-    pushv wfa2
+    subp StackValueSize, mintRetDst
+    storev wfa2, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_fr3)
-    pushv wfa3
+    subp StackValueSize, mintRetDst
+    storev wfa3, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_fr4)
-    pushv wfa4
+    subp StackValueSize, mintRetDst
+    storev wfa4, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_fr5)
-    pushv wfa5
+    subp StackValueSize, mintRetDst
+    storev wfa5, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_fr6)
-    pushv wfa6
+    subp StackValueSize, mintRetDst
+    storev wfa6, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_fr7)
-    pushv wfa7
+    subp StackValueSize, mintRetDst
+    storev wfa7, [mintRetDst]
     mintRetDispatch()
 
 mintAlign(_stack)
-    # TODO
-    break
+    loadq [mintRetSrc], sc0
+    addp SlotSize, mintRetSrc
+    subp StackValueSize, mintRetDst
+    storeq sc0, [mintRetDst]
+    mintRetDispatch()
+
+mintAlign(_stack_gap)
+    addp SlotSize, mintRetSrc
+    mintRetDispatch()
 
 mintAlign(_end)
-    # Restore PL
-    move sc1, PL
-    # Restore PC / MC and figure out where we were help
+
+    # call frame
+    # call frame
+    # call frame
+    # call frame
+    # call frame return
+    # call frame return <- sp
+    # PL, wasmInstance  <- sc3
+    # t3, t3
+    # return result     <- mintRetDst => new SP
+    # return result
+    # return result
+    # return result
+    # ...
+    # return result
+    # <first non-arg>   <- t3
+
+    # note: we don't care about t3 anymore
+if ARM64 or ARM64E
+    loadpairq [sc3], PL, wasmInstance
+else
+    loadq [sc3], PL
+    loadq 8[sc3], wasmInstance
+end
+    move mintRetDst, sp
+
+    # Restore PC / MC
     getIPIntCallee()
+
     # Restore IB
     IfIPIntUsesIB(macro()
         pcrtoaddr _ipint_unreachable, IB

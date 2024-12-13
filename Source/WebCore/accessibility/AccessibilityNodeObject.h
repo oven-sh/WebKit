@@ -136,7 +136,7 @@ public:
     LayoutRect elementRect() const override;
 
 #if ENABLE(AX_THREAD_TEXT_APIS)
-    bool shouldEmitNewlinesBeforeAndAfterNode() const final;
+    TextEmissionBehavior emitTextAfterBehavior() const final;
 #endif
 
 protected:

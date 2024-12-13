@@ -80,8 +80,8 @@ private:
     {
     }
 
-    Ref<AbortSignal> m_signal;
-    Ref<DeferredPromise> m_promise;
+    const Ref<AbortSignal> m_signal;
+    const Ref<DeferredPromise> m_promise;
 };
 
 void createInternalObserverOperatorFirst(ScriptExecutionContext& context, Observable& observable, const SubscribeOptions& options, Ref<DeferredPromise>&& promise)

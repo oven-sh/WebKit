@@ -83,7 +83,8 @@
                 "ElementNotSelectable",
                 "ScreenshotError",
                 "UnexpectedAlertOpen",
-                "TargetOutOfBounds"
+                "TargetOutOfBounds",
+                "UnableToLoadExtension"
             ]
         },
         {
@@ -386,6 +387,16 @@
                 { "name": "isUserVerified", "type": "boolean", "optional": true, "description": "If user verification requests should succeeed"},
                 { "name": "extensions", "type": "array", "items": {"type": "string"}, "optional": true, "description": "An array containing extension identifiers" },
                 { "name": "uvm", "type": "array", "items": {"type": "integer"}, "optional": true, "description": "Up to 3 User Verification Method entries"}
+            ]
+        },
+        {
+            "id": "WebExtensionResourceOptions",
+            "type": "string",
+            "description": "The format of the resource used to load the web extension.",
+            "enum": [
+                "Path",
+                "ArchivePath",
+                "Base64"
             ]
         }
     ],
@@ -870,6 +881,20 @@
                 { "name": "message", "type": "string", "description": "The body message for the generated test report." },
                 { "name": "group", "type": "string", "description": "The group value to use when sending a test report."}
             ]
+        },
+        {
+            "name": "loadWebExtension",
+            "description": "Loads a web extension in the automation session.",
+            "condition": "defined(WK_WEB_EXTENSIONS_IN_WEBDRIVER) && WK_WEB_EXTENSIONS_IN_WEBDRIVER",
+            "platform": "macos",
+            "parameters": [
+                { "name": "type", "$ref": "WebExtensionResourceOptions", "optional": false, "description": "A hint for the resource format used to load the extension." },
+                { "name": "value", "type": "string", "description": "One of the following: the path to the extension, the path to the extension's archive, or the base 64 encoded data of the extension's archive." }
+            ],
+            "returns": [
+                { "name": "extensionId", "type": "string", "description": "The unique identifier of the extension." }
+            ],
+            "async": true
         }
     ],
     "events": [

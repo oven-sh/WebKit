@@ -54,9 +54,6 @@ navigator.serviceWorker.addEventListener('message', async event => {
             await internals.storeRegistrationsOnDisk();
         if (window.testRunner)
             testRunner.terminateNetworkProcess();
-        // After a network process crash, we do a fetch to register as a service worker client to the new network process.
-        await fetch("").then(() => { }, () => { });
-        await fetch("").then(() => { }, () => { });
 
         if (testRunner)
             testRunner.simulateWebNotificationClickForServiceWorkerNotifications();

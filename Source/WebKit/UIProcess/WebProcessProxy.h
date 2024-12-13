@@ -526,6 +526,10 @@ public:
 
     bool isAlwaysOnLoggingAllowed() const;
 
+    bool shouldRegisterServiceWorkerClients(const WebCore::Site&, PAL::SessionID) const;
+    void registerServiceWorkerClients(CompletionHandler<void()>&&);
+    void resetHasRegisteredServiceWorkerClients() { m_hasRegisteredServiceWorkerClients = false; }
+
 private:
     Type type() const final { return Type::WebContent; }
 
@@ -815,6 +819,8 @@ private:
     Seconds m_totalBackgroundTime;
     Seconds m_totalSuspendedTime;
     WebCore::ProcessIdentity m_processIdentity;
+
+    bool m_hasRegisteredServiceWorkerClients { true };
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
     IPC::ScopedActiveMessageReceiveQueue<LogStream> m_logStream;

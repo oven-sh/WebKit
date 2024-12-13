@@ -41,6 +41,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <wtf/CheckedArithmetic.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -248,13 +249,13 @@ ExceptionOr<void> AudioBuffer::copyFromChannel(Ref<Float32Array>&& destination, 
     size_t count = dataLength - bufferOffset;
     count = std::min(destination.get().length(), count);
     
-    const float* src = channelData->data();
-    float* dst = destination->data();
+    auto src = channelData->typedSpan();
+    auto dst = destination->typedMutableSpan();
     
-    ASSERT(src);
-    ASSERT(dst);
+    ASSERT(src.data());
+    ASSERT(dst.data());
     
-    memmove(dst, src + bufferOffset, count * sizeof(*src));
+    memmoveSpan(dst, src.subspan(bufferOffset, count));
     return { };
 }
 
@@ -276,13 +277,13 @@ ExceptionOr<void> AudioBuffer::copyToChannel(Ref<Float32Array>&& source, unsigne
     size_t count = dataLength - bufferOffset;
     count = std::min(source.get().length(), count);
     
-    const float* src = source->data();
-    float* dst = channelData->data();
+    auto src = source->typedSpan();
+    auto dst = channelData->typedMutableSpan();
     
-    ASSERT(src);
-    ASSERT(dst);
+    ASSERT(src.data());
+    ASSERT(dst.data());
     
-    memmove(dst + bufferOffset, src, count * sizeof(*dst));
+    memmoveSpan(dst.subspan(bufferOffset), src.first(count));
     m_noiseInjectionMultiplier = 0;
     return { };
 }

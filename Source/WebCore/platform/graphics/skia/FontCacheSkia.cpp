@@ -53,10 +53,6 @@ namespace WebCore {
 
 void FontCache::platformInit()
 {
-#if PLATFORM(WIN)
-    HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&m_DWFactory));
-    RELEASE_ASSERT(SUCCEEDED(hr));
-#endif
 }
 
 SkFontMgr& FontCache::fontManager() const
@@ -65,7 +61,8 @@ SkFontMgr& FontCache::fontManager() const
 #if defined(__ANDROID__) || defined(ANDROID)
         m_fontManager = SkFontMgr_New_Android(nullptr);
 #elif OS(WINDOWS)
-        m_fontManager = SkFontMgr_New_DirectWrite(m_DWFactory.get(), nullptr);
+        auto result = createDWriteFactory();
+        m_fontManager = SkFontMgr_New_DirectWrite(result.factory.get(), result.fontCollection.get());
 #else
         m_fontManager = SkFontMgr_New_FontConfig(FcConfigReference(nullptr));
 #endif

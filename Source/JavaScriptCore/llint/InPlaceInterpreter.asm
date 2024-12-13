@@ -554,7 +554,7 @@ end)
 
 if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7)
 .ipint_entry_end_local:
-    argumINTEnd()
+    argumINTInitializeDefaultLocals()
 
     jmp .ipint_entry_end_local
 .ipint_entry_finish_zero:

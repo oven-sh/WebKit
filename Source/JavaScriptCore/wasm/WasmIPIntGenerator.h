@@ -167,6 +167,12 @@ struct TableCopyMetadata {
 
 // Metadata structure for calls:
 
+struct CallSignatureMetadata {
+    uint32_t stackFrameSize; // 4B for stack frame size
+    uint16_t numExtraResults; // 2B for number of spots we need to reserve for returns
+    uint16_t numArguments; // 2B for number of arguments, to figure out how much to move SP down by
+};
+
 enum class CallArgumentBytecode : uint8_t { // (mINT)
     ArgumentGPR = 0x0, // 0x00 - 0x07: push into a0, a1, ...
     ArgumentFPR = 0x8, // 0x08 - 0x0f: push into fa0, fa1, ...
@@ -185,6 +191,7 @@ enum class CallArgumentBytecode : uint8_t { // (mINT)
 struct CallMetadata {
     uint8_t length; // 1B for instruction length
     Wasm::FunctionSpaceIndex functionIndex; // 4B for decoded index
+    CallSignatureMetadata signature;
     CallArgumentBytecode argumentBytecode[0];
 };
 
@@ -199,6 +206,7 @@ struct CallIndirectMetadata {
     uint8_t length; // 1B for length
     uint32_t tableIndex; // 4B for table index
     uint32_t typeIndex; // 4B for type index
+    CallSignatureMetadata signature;
     CallArgumentBytecode argumentBytecode[0];
 };
 
@@ -213,6 +221,7 @@ struct TailCallIndirectMetadata {
 struct CallRefMetadata {
     uint8_t length; // 1B for length
     uint32_t typeIndex; // 4B for type index
+    CallSignatureMetadata signature;
     CallArgumentBytecode argumentBytecode[0];
 };
 
@@ -228,15 +237,15 @@ struct TailCallRefMetadata {
 enum class CallResultBytecode : uint8_t { // (mINT)
     ResultGPR = 0x0, // 0x00 - 0x07: r0 - r7
     ResultFPR = 0x8, // 0x08 - 0x0f: fr0 - fr7
-    ResultStack = 0x10, // 0x0c: stack
-    End = 0x11, // 0x0d: end
+    ResultStack = 0x10, // 0x10: stack
+    StackGap = 0x11, // 0x11: skip a slot on the stack
+    End = 0x12, // 0x12: end
 
     NumOpcodes // this must be the last element of the enum!
 };
 
 struct CallReturnMetadata {
-    uint16_t stackSlots; // 2B for number of arguments on stack (to clean up current call frame)
-    uint16_t argumentCount; // 2B for number of arguments (to take off arguments)
+    uint32_t stackFrameSize; // 4B for stack frame size
     CallResultBytecode resultBytecode[0];
 };
 

@@ -25,6 +25,7 @@
 
 #import "config.h"
 
+#import "TestNSBundleExtras.h"
 #import "TestNavigationDelegate.h"
 #import "Utilities.h"
 #import <CoreText/CoreText.h>

@@ -56,6 +56,9 @@ AutomationSessionClient::AutomationSessionClient(id <_WKAutomationSessionDelegat
     m_delegateMethods.setUserInputForCurrentJavaScriptPromptForWebView = [delegate respondsToSelector:@selector(_automationSession:setUserInput:forCurrentJavaScriptDialogForWebView:)];
     m_delegateMethods.typeOfCurrentJavaScriptDialogForWebView = [delegate respondsToSelector:@selector(_automationSession:typeOfCurrentJavaScriptDialogForWebView:)];
     m_delegateMethods.currentPresentationForWebView = [delegate respondsToSelector:@selector(_automationSession:currentPresentationForWebView:)];
+#if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
+    m_delegateMethods.loadWebExtensionWithOptions = [delegate respondsToSelector:@selector(_automationSession:loadWebExtensionWithOptions:resource:completionHandler:)];
+#endif
 }
 
 void AutomationSessionClient::didDisconnectFromRemote(WebAutomationSession& session)
@@ -73,6 +76,22 @@ static inline _WKAutomationSessionBrowsingContextOptions toAPI(API::AutomationSe
 
     return static_cast<_WKAutomationSessionBrowsingContextOptions>(wkOptions);
 }
+
+#if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
+static inline _WKAutomationSessionWebExtensionResourceOptions toAPI(API::AutomationSessionWebExtensionResourceOptions options)
+{
+    uint16_t wkOptions = 0;
+
+    if (options & API::AutomationSessionWebExtensionResourceOptionsPath)
+        wkOptions |= _WKAutomationSessionWebExtensionResourceOptionsPath;
+    else if (options & API::AutomationSessionWebExtensionResourceOptionsArchivePath)
+        wkOptions |= _WKAutomationSessionWebExtensionResourceOptionsArchivePath;
+    else
+        wkOptions |= _WKAutomationSessionWebExtensionResourceOptionsBase64;
+
+    return static_cast<_WKAutomationSessionWebExtensionResourceOptions>(wkOptions);
+}
+#endif
 
 void AutomationSessionClient::requestNewPageWithOptions(WebAutomationSession& session, API::AutomationSessionBrowsingContextOptions options, CompletionHandler<void(WebKit::WebPageProxy*)>&& completionHandler)
 {
@@ -115,6 +134,20 @@ void AutomationSessionClient::requestMaximizeWindowOfPage(WebAutomationSession& 
     else
         completionHandler();
 }
+
+#if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
+void AutomationSessionClient::loadWebExtensionWithOptions(WebKit::WebAutomationSession& session, API::AutomationSessionWebExtensionResourceOptions options, const String& resource, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    if (!m_delegateMethods.loadWebExtensionWithOptions) {
+        completionHandler(nullString());
+        return;
+    }
+
+    [m_delegate.get() _automationSession:wrapper(session) loadWebExtensionWithOptions:toAPI(options) resource:(NSString *)resource completionHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](NSString *extensionId) mutable {
+        completionHandler(extensionId);
+    }).get()];
+}
+#endif
 
 bool AutomationSessionClient::isShowingJavaScriptDialogOnPage(WebAutomationSession& session, WebPageProxy& page)
 {

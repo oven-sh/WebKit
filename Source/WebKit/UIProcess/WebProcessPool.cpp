@@ -506,6 +506,9 @@ static bool shouldReportNetworkOrGPUProcessCrash(ProcessTerminationReason reason
 
 void WebProcessPool::networkProcessDidTerminate(NetworkProcessProxy& networkProcessProxy, ProcessTerminationReason reason)
 {
+    for (Ref process : m_processes)
+        process->resetHasRegisteredServiceWorkerClients();
+
     if (shouldReportNetworkOrGPUProcessCrash(reason))
         m_client.networkProcessDidCrash(this, networkProcessProxy.processID(), reason);
 
@@ -731,6 +734,11 @@ void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(Remo
 
     if (!processPool->m_remoteWorkerUserAgent.isNull())
         remoteWorkerProcessProxy->setRemoteWorkerUserAgent(processPool->m_remoteWorkerUserAgent);
+
+    for (Ref process : processPool->m_processes) {
+        if (process->shouldRegisterServiceWorkerClients(site, sessionID))
+            process->registerServiceWorkerClients([aggregator] { });
+    }
 }
 
 void WebProcessPool::addRemoteWorkerProcess(WebProcessProxy& process)

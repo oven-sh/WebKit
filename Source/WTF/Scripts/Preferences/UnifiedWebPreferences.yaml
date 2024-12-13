@@ -8478,16 +8478,19 @@ WebCryptoSafeCurvesEnabled:
 
 WebCryptoX25519Enabled:
   type: bool
-  status: preview
+  status: stable
   category: dom
   humanReadableName: "Web Crypto X25519 algorithm"
   humanReadableDescription: "Enable Web Crypto X25519 algorithm"
   defaultValue:
     WebKitLegacy:
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebKit:
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
 
 WebExtensionSidebarEnabled:
@@ -8497,6 +8500,21 @@ WebExtensionSidebarEnabled:
   humanReadableName: "WebExtension sidebarAction and sidePanel APIs"
   humanReadableDescription: "Enable support for WebExtensions using the sidebarAction / sidePanel family of APIs"
   condition: ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+WebExtensionWebDriverEnabled:
+  type: bool
+  status: testable
+  category: extensions
+  humanReadableName: "WebExtensions in WebDriver"
+  humanReadableDescription: "Enable support for WebExtensions in WebDriver"
+  condition: ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
   defaultValue:
     WebKitLegacy:
       default: false

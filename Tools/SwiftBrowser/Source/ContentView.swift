@@ -55,6 +55,65 @@ fileprivate struct ToolbarBackForwardMenuView: View {
     }
 }
 
+fileprivate struct DialogActionsView: View {
+    private let dialog: DialogPresenter.Dialog
+
+    @State private var promptText = ""
+
+    init(dialog: DialogPresenter.Dialog) {
+        self.dialog = dialog
+
+        if case let .prompt(_, defaultText, _) = dialog.configuration, let defaultText {
+            _promptText = State(initialValue: defaultText)
+        }
+    }
+
+    var body: some View {
+        switch dialog.configuration {
+        case let .alert(_, dismissAlert):
+            Button("Close", action: dismissAlert)
+
+        case let .confirm(_, dismissConfirm):
+            Button("OK") {
+                dismissConfirm(.ok)
+            }
+
+            Button("Cancel", role: .cancel) {
+                dismissConfirm(.cancel)
+            }
+
+        case let .prompt(_, _, dismissPrompt):
+            TextField("Text", text: $promptText)
+
+            Button("OK") {
+                dismissPrompt(.ok(promptText))
+            }
+            .keyboardShortcut(.defaultAction)
+
+            Button("Cancel", role: .cancel) {
+                dismissPrompt(.cancel)
+            }
+        }
+    }
+}
+
+fileprivate struct DialogMessageView: View {
+    let dialog: DialogPresenter.Dialog
+
+    var body: some View {
+        switch dialog.configuration {
+        case let .alert(message, _):
+            Text(message)
+
+        case let .confirm(message, _):
+            Text(message)
+
+        case let .prompt(message, _, _):
+            Text(message)
+        }
+    }
+}
+
 struct ContentView: View {
     @Binding var url: URL?
 
@@ -95,6 +154,12 @@ struct ContentView: View {
                 .focusedSceneValue(viewModel)
                 .onOpenURL(perform: viewModel.openURL(_:))
                 .fileExporter(isPresented: $viewModel.pdfExporterIsPresented, item: viewModel.exportedPDF, defaultFilename: viewModel.exportedPDF?.title, onCompletion: viewModel.didExportPDF(result:))
+                .fileImporter(isPresented: $viewModel.isPresentingFilePicker, allowedContentTypes: [.png, .pdf], allowsMultipleSelection: viewModel.currentFilePicker?.allowsMultipleSelection ?? false, onCompletion: viewModel.didImportFiles(result:))
+                .alert("\(url?.absoluteString ?? "") says:", isPresented: $viewModel.isPresentingDialog, presenting: viewModel.currentDialog) { dialog in
+                    DialogActionsView(dialog: dialog)
+                } message: { dialog in
+                    DialogMessageView(dialog: dialog)
+                }
                 .toolbar {
                     ToolbarItemGroup(placement: Self.navigationToolbarItemPlacement) {
                         ToolbarBackForwardMenuView(
@@ -115,8 +180,6 @@ struct ContentView: View {
                     ToolbarItemGroup(placement: .principal) {
                         HStack {
                             VStack(spacing: 0) {
-                                @Bindable var viewModel = viewModel
-
                                 TextField("URL", text: $viewModel.displayedURL)
                                     .textContentType(.URL)
                                     .onSubmit {

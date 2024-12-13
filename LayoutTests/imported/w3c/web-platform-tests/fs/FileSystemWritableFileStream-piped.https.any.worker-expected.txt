@@ -6,5 +6,5 @@ PASS can be piped to with a param object with write command
 PASS can be piped to with a param object with multiple commands
 PASS multiple operations can be queued
 PASS plays well with fetch
-FAIL abort() aborts write promise_test: Unhandled rejection with value: object "InvalidStateError: The object is in an invalid state."
+PASS abort() aborts write
 

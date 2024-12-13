@@ -83,8 +83,8 @@ public:
 
         bool hasCallback() const final { return true; }
 
-        Ref<Observable> m_sourceObservable;
-        Ref<PredicateCallback> m_predicate;
+        const Ref<Observable> m_sourceObservable;
+        const Ref<PredicateCallback> m_predicate;
     };
 
 private:
@@ -135,8 +135,8 @@ private:
 
     void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
     {
-        protectedSubscriber()->visitAdditionalChildren(visitor);
-        protectedPredicate()->visitJSFunction(visitor);
+        m_subscriber->visitAdditionalChildren(visitor);
+        m_predicate->visitJSFunction(visitor);
     }
 
     Ref<Subscriber> protectedSubscriber() const { return m_subscriber; }
@@ -148,8 +148,8 @@ private:
         , m_predicate(predicate)
     { }
 
-    Ref<Subscriber> m_subscriber;
-    Ref<PredicateCallback> m_predicate;
+    const Ref<Subscriber> m_subscriber;
+    const Ref<PredicateCallback> m_predicate;
     uint64_t m_idx { 0 };
 };
 

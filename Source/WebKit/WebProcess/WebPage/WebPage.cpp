@@ -1535,14 +1535,8 @@ EditorState WebPage::editorState(ShouldPerformLayout shouldPerformLayout) const
     });
 
 #if ENABLE(PDF_PLUGIN)
-    if (auto* pluginView = focusedPluginViewForFrame(*frame)) {
-        if (!pluginView->selectionString().isNull()) {
-            result.selectionIsNone = false;
-            result.selectionIsRange = true;
-            result.isInPlugin = true;
-            return result;
-        }
-    }
+    if (RefPtr pluginView = pluginViewForFrame(frame.get()); pluginView && pluginView->populateEditorStateIfNeeded(result))
+        return result;
 #endif
 
     const VisibleSelection& selection = frame->selection().selection();

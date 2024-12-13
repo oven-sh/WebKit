@@ -84,12 +84,19 @@ class WebFrame;
 class WebKeyboardEvent;
 class WebMouseEvent;
 class WebWheelEvent;
+struct EditorState;
 struct WebHitTestResultData;
 
 enum class ByteRangeRequestIdentifierType;
 using ByteRangeRequestIdentifier = ObjectIdentifier<ByteRangeRequestIdentifierType>;
 
 enum class CheckValidRanges : bool { No, Yes };
+
+template<typename T>
+concept CanMakeFloatRect = requires(T t)
+{
+    { WebCore::FloatRect { t } } -> std::same_as<WebCore::FloatRect>;
+};
 
 struct PDFPluginPasteboardItem {
     RetainPtr<NSData> data;
@@ -204,10 +211,25 @@ public:
     void streamDidFinishLoading();
     void streamDidFail();
 
-    WebCore::IntPoint convertFromRootViewToPlugin(const WebCore::IntPoint&) const;
-    WebCore::IntRect convertFromRootViewToPlugin(const WebCore::IntRect&) const;
-    WebCore::IntPoint convertFromPluginToRootView(const WebCore::IntPoint&) const;
-    WebCore::IntRect convertFromPluginToRootView(const WebCore::IntRect&) const;
+    template<typename T>
+    T convertFromRootViewToPlugin(const T& value) const
+    {
+        if constexpr (CanMakeFloatRect<T>)
+            return m_rootViewToPluginTransform.mapRect(value);
+        else
+            return m_rootViewToPluginTransform.mapPoint(value);
+    }
+
+    template<typename T>
+    T convertFromPluginToRootView(const T& value) const
+    {
+        auto inverseTransform = m_rootViewToPluginTransform.inverse();
+        if constexpr (CanMakeFloatRect<T>)
+            return inverseTransform->mapRect(value);
+        else
+            return inverseTransform->mapPoint(value);
+    }
+
     WebCore::IntRect boundsOnScreen() const;
 
     bool showContextMenuAtPoint(const WebCore::IntPoint&);
@@ -289,8 +311,15 @@ public:
     uint64_t streamedBytes() const;
     std::optional<WebCore::FrameIdentifier> rootFrameID() const final;
 
+#if PLATFORM(IOS_FAMILY)
+    virtual void setSelectionRange(WebCore::FloatPoint /* pointInRootView */, WebCore::TextGranularity) { }
+#endif
+
+    bool populateEditorStateIfNeeded(EditorState&) const;
+
 protected:
     virtual double contentScaleFactor() const = 0;
+    virtual bool platformPopulateEditorStateIfNeeded(EditorState&) const { return false; }
 
 private:
     bool documentFinishedLoading() const { return m_documentFinishedLoading; }

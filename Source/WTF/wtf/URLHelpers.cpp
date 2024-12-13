@@ -35,6 +35,7 @@
 #include <unicode/uidna.h>
 #include <unicode/uscript.h>
 #include <wtf/IteratorRange.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/WTFString.h>
 
 namespace WTF {
@@ -937,7 +938,7 @@ String userVisibleURL(const CString& url)
         // as we convert.
         int afterlength = afterIndex;
         auto p = after.mutableSpan().subspan(bufferLength.value() - afterlength - 1);
-        memmove(p.data(), after.data(), afterlength + 1); // copies trailing '\0'
+        memmoveSpan(p, after.span().first(afterlength + 1)); // copies trailing '\0'
         afterIndex = 0;
         while (p.front()) {
             unsigned char c = p.front();

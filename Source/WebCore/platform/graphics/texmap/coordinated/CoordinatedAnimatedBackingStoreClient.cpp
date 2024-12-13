@@ -30,23 +30,20 @@
 #include "CoordinatedAnimatedBackingStoreClient.h"
 
 #if USE(COORDINATED_GRAPHICS)
-#include "CoordinatedGraphicsLayer.h"
 #include "FloatQuad.h"
+#include "GraphicsLayerCoordinated.h"
 #include "TransformationMatrix.h"
 #include <wtf/MainThread.h>
 
 namespace WebCore {
 
-Ref<CoordinatedAnimatedBackingStoreClient> CoordinatedAnimatedBackingStoreClient::create(CoordinatedGraphicsLayer& layer, const FloatRect& visibleRect)
+Ref<CoordinatedAnimatedBackingStoreClient> CoordinatedAnimatedBackingStoreClient::create(GraphicsLayer& layer)
 {
-    return adoptRef(*new CoordinatedAnimatedBackingStoreClient(layer, visibleRect));
+    return adoptRef(*new CoordinatedAnimatedBackingStoreClient(layer));
 }
 
-CoordinatedAnimatedBackingStoreClient::CoordinatedAnimatedBackingStoreClient(CoordinatedGraphicsLayer& layer, const FloatRect& visibleRect)
+CoordinatedAnimatedBackingStoreClient::CoordinatedAnimatedBackingStoreClient(GraphicsLayer& layer)
     : m_layer(&layer)
-    , m_visibleRect(visibleRect)
-    , m_size(layer.size())
-    , m_contentsScale(layer.effectiveContentsScale())
 {
 }
 
@@ -56,10 +53,13 @@ void CoordinatedAnimatedBackingStoreClient::invalidate()
     m_layer = nullptr;
 }
 
-void CoordinatedAnimatedBackingStoreClient::setCoverRect(const IntRect& rect)
+void CoordinatedAnimatedBackingStoreClient::update(const FloatRect& visibleRect, const FloatRect& coverRect, const FloatSize& size, float contentsScale)
 {
     ASSERT(isMainThread());
-    m_coverRect = rect;
+    m_visibleRect = visibleRect;
+    m_coverRect = coverRect;
+    m_size = size;
+    m_contentsScale = contentsScale;
 }
 
 void CoordinatedAnimatedBackingStoreClient::requestBackingStoreUpdateIfNeeded(const TransformationMatrix& transform)
@@ -86,7 +86,7 @@ void CoordinatedAnimatedBackingStoreClient::requestBackingStoreUpdateIfNeeded(co
 
     // Apply the inverse transform to the visible rectangle, so we have the visible rectangle in layer coordinates.
     FloatRect rect = inverse.clampedBoundsOfProjectedQuad(FloatQuad(m_visibleRect));
-    CoordinatedGraphicsLayer::clampToContentsRectIfRectIsInfinite(rect, m_size);
+    GraphicsLayerCoordinated::clampToSizeIfRectIsInfinite(rect, m_size);
     FloatRect transformedVisibleRect = enclosingIntRect(rect);
 
     // Convert the calculated visible rectangle to backingStore coordinates.
@@ -95,14 +95,15 @@ void CoordinatedAnimatedBackingStoreClient::requestBackingStoreUpdateIfNeeded(co
     // Restrict the calculated visible rect to the contents rectangle of the layer.
     transformedVisibleRect.intersect(contentsRect);
 
-    // If the coverRect doesn't contain the calculated visible rectangle we need to request a backingStore
+    if (m_coverRect.contains(transformedVisibleRect))
+        return;
+
+    // The coverRect doesn't contain the calculated visible rectangle we need to request a backingStore
     // update to render more tiles.
-    if (!m_coverRect.contains(transformedVisibleRect)) {
-        callOnMainThread([this, protectedThis = Ref { *this }]() {
-            if (m_layer)
-                m_layer->requestBackingStoreUpdate();
-        });
-    }
+    callOnMainThread([this, protectedThis = Ref { *this }]() {
+        if (m_layer)
+            m_layer->client().notifyFlushRequired(m_layer);
+    });
 }
 
 } // namespace WebCore

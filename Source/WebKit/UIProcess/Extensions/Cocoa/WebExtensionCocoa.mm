@@ -175,13 +175,6 @@ WebExtension::WebExtension(NSBundle *appExtensionBundle, NSURL *resourceURL, Ref
                 return;
             }
 
-            auto *contentsOfTemporaryDirectory = [NSFileManager.defaultManager contentsOfDirectoryAtPath:temporaryDirectory error:nil];
-            if (contentsOfTemporaryDirectory.count == 1) {
-                auto *subdirectoryPath = [temporaryDirectory stringByAppendingPathComponent:contentsOfTemporaryDirectory.firstObject];
-                if ([NSFileManager.defaultManager fileExistsAtPath:subdirectoryPath isDirectory:&isDirectory] && isDirectory)
-                    temporaryDirectory = subdirectoryPath;
-            }
-
             ASSERT(temporaryDirectory.right(1) != "/"_s);
             m_resourceBaseURL = URL::fileURLWithFileSystemPath(makeString(temporaryDirectory, '/'));
         }

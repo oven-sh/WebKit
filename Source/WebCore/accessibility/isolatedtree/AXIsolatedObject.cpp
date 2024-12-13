@@ -204,11 +204,20 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     setProperty(AXPropertyName::BrailleLabel, object.brailleLabel().isolatedCopy());
     setProperty(AXPropertyName::IsNonLayerSVGObject, object.isNonLayerSVGObject());
 
+    bool isWebArea = axObject->isWebArea();
+    bool isScrollArea = axObject->isScrollView();
+    if (isScrollArea && !axObject->parentObject()) {
+        // Eagerly cache the screen relative position for the root. AXIsolatedObject::screenRelativePosition()
+        // of non-root objects depend on the root object's screen relative position, so make sure it's there
+        // from the start. We keep this up-to-date via AXIsolatedTree::updateRootScreenRelativePosition().
+        setProperty(AXPropertyName::ScreenRelativePosition, axObject->screenRelativePosition());
+    }
+
     RefPtr geometryManager = tree()->geometryManager();
     std::optional frame = geometryManager ? geometryManager->cachedRectForID(object.objectID()) : std::nullopt;
     if (frame)
         setProperty(AXPropertyName::RelativeFrame, WTFMove(*frame));
-    else if (object.isScrollView() || object.isWebArea() || object.isScrollbar()) {
+    else if (isScrollArea || isWebArea || object.isScrollbar()) {
         // The GeometryManager does not have a relative frame for ScrollViews, WebAreas, or scrollbars yet. We need to get it from the
         // live object so that we don't need to hit the main thread in the case a request comes in while the whole isolated tree is being built.
         setProperty(AXPropertyName::RelativeFrame, enclosingIntRect(object.relativeFrame()));
@@ -387,11 +396,17 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
     });
     setProperty(AXPropertyName::AccessibilityText, axTextValue);
 
-    if (object.isScrollView() || object.isWebArea()) {
-        if (object.isScrollView()) {
-            setObjectProperty(AXPropertyName::VerticalScrollBar, object.scrollBar(AccessibilityOrientation::Vertical));
-            setObjectProperty(AXPropertyName::HorizontalScrollBar, object.scrollBar(AccessibilityOrientation::Horizontal));
-        } else if (object.isWebArea() && !tree()->isEmptyContentTree()) {
+    if (isScrollArea) {
+        setObjectProperty(AXPropertyName::VerticalScrollBar, object.scrollBar(AccessibilityOrientation::Vertical));
+        setObjectProperty(AXPropertyName::HorizontalScrollBar, object.scrollBar(AccessibilityOrientation::Horizontal));
+        setProperty(AXPropertyName::HasRemoteFrameChild, object.hasRemoteFrameChild());
+    } else if (isWebArea) {
+        // Don't duplicate the remoteFrameOffset for every object. Just store in the WebArea.
+        // FIXME: We should store this in the root instead, as that is O(1) access (tree()->rootNode())
+        // vs. storing it in the web area, which requires an ancestry traversal.
+        setProperty(AXPropertyName::RemoteFrameOffset, object.remoteFrameOffset());
+
+        if (!tree()->isEmptyContentTree()) {
             // We expose DocumentLinks only for the web area objects when the tree is not an empty content tree. This property is expensive and makes no sense in an empty content tree.
             // FIXME: compute DocumentLinks on the AX thread instead of caching it.
             setObjectVectorProperty(AXPropertyName::DocumentLinks, object.documentLinks());
@@ -429,7 +444,7 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
 
 #if ENABLE(AX_THREAD_TEXT_APIS)
     setProperty(AXPropertyName::TextRuns, object.textRuns());
-    setProperty(AXPropertyName::ShouldEmitNewlinesBeforeAndAfterNode, object.shouldEmitNewlinesBeforeAndAfterNode());
+    setProperty(AXPropertyName::EmitTextAfterBehavior, object.emitTextAfterBehavior());
 #endif
 
     // These properties are only needed on the AXCoreObject interface due to their use in ATSPI,
@@ -447,10 +462,6 @@ void AXIsolatedObject::initializeProperties(const Ref<AccessibilityObject>& axOb
 #endif
 
     setObjectProperty(AXPropertyName::InternalLinkElement, object.internalLinkElement());
-    setProperty(AXPropertyName::HasRemoteFrameChild, object.hasRemoteFrameChild());
-    // Don't duplicate the remoteFrameOffset for every object. Just store in the WebArea.
-    if (object.isWebArea())
-        setProperty(AXPropertyName::RemoteFrameOffset, object.remoteFrameOffset());
 
     initializePlatformProperties(axObject);
 }
@@ -622,7 +633,8 @@ void AXIsolatedObject::setProperty(AXPropertyName propertyName, AXPropertyValueV
 #if ENABLE(AX_THREAD_TEXT_APIS)
         [](AXTextRuns& runs) { return !runs.size(); },
         [](RetainPtr<CTFontRef>& typedValue) { return !typedValue; },
-#endif
+        [](TextEmissionBehavior typedValue) { return typedValue == TextEmissionBehavior::None; },
+#endif // ENABLE(AX_THREAD_TEXT_APIS)
         [] (WallTime& time) { return !time; },
         [] (DateComponentsType& typedValue) { return typedValue == DateComponentsType::Invalid; },
         [](auto&) {
@@ -1401,13 +1413,12 @@ FloatPoint AXIsolatedObject::screenRelativePosition() const
     if (auto point = optionalAttributeValue<FloatPoint>(AXPropertyName::ScreenRelativePosition))
         return *point;
 
-    if (auto rootNode = tree()->rootNode()) {
-        if (auto rootPoint = rootNode->optionalAttributeValue<FloatPoint>(AXPropertyName::ScreenRelativePosition)) {
-            // Relative frames are top-left origin, but screen relative positions are bottom-left origin.
-            FloatRect rootRelativeFrame = rootNode->relativeFrame();
-            FloatRect relativeFrame = this->relativeFrame();
-            return { rootPoint->x() + relativeFrame.x(), rootPoint->y() + (rootRelativeFrame.maxY() - relativeFrame.maxY()) };
-        }
+    if (RefPtr rootNode = tree()->rootNode()) {
+        auto rootPoint = rootNode->propertyValue<FloatPoint>(AXPropertyName::ScreenRelativePosition);
+        auto rootRelativeFrame = rootNode->relativeFrame();
+        auto relativeFrame = this->relativeFrame();
+        // Relative frames are top-left origin, but screen relative positions are bottom-left origin.
+        return { rootPoint.x() + relativeFrame.x(), rootPoint.y() + (rootRelativeFrame.maxY() - relativeFrame.maxY()) };
     }
 
     return Accessibility::retrieveValueFromMainThread<FloatPoint>([&, this] () -> FloatPoint {

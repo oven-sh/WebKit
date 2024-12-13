@@ -23,7 +23,11 @@
 
 #if ENABLE(GPU_PROCESS)
 
-[EnabledBy=WebGPUEnabled]
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=WebGPUEnabled
+]
 messages -> RemoteShaderModule Stream {
     void CompilationInfo() -> (Vector<WebKit::WebGPU::CompilationMessage> messages)
     void SetLabel(String label)

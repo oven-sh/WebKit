@@ -117,6 +117,14 @@ String extractTemporaryZipArchive(const String& path)
         BOMCopierFree(copier);
     }];
 
+    auto *contentsOfTemporaryDirectory = [NSFileManager.defaultManager contentsOfDirectoryAtPath:temporaryDirectory error:nil];
+    if (contentsOfTemporaryDirectory.count == 1) {
+        auto *subdirectoryPath = [temporaryDirectory stringByAppendingPathComponent:contentsOfTemporaryDirectory.firstObject];
+        BOOL isDirectory;
+        if ([NSFileManager.defaultManager fileExistsAtPath:subdirectoryPath isDirectory:&isDirectory] && isDirectory)
+            temporaryDirectory = subdirectoryPath;
+    }
+
     return temporaryDirectory;
 }
 

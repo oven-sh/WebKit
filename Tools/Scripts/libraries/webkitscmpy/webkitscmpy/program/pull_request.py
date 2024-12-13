@@ -327,7 +327,7 @@ class PullRequest(Command):
         return existing_pr
 
     @classmethod
-    def pre_pr_checks(cls, repository, attempts=3, add_edits=True):
+    def pre_pr_checks(cls, repository, add_edits=True):
         num_checks = 0
         log.info('Running pre-PR checks...')
         for key, path in repository.config().items():
@@ -336,7 +336,7 @@ class PullRequest(Command):
             num_checks += 1
             name = key.split('.')[-1]
             log.info('    Running {}...'.format(name))
-            for attempt in range(attempts):
+            while True:
                 command_line = path.split(' ')
                 if command_line[0] == 'python3' and os.name == 'nt':
                     command_line[0] = sys.executable
@@ -347,7 +347,7 @@ class PullRequest(Command):
                 options = ['Yes', 'Retry', 'No']
                 response = Terminal.choose(
                     '{} failed!\nRetry will amend the commit with your changes. Continue uploading pull request?'.format(name),
-                    options=(options[0], options[2]) if attempt + 1 == attempts else options,
+                    options=options,
                     default='No',
                 )
                 if response == 'No':

@@ -88,7 +88,7 @@ public:
         const auto* runs = textRuns();
         return runs && runs->size();
     }
-    bool shouldEmitNewlinesBeforeAndAfterNode() const final { return boolAttributeValue(AXPropertyName::ShouldEmitNewlinesBeforeAndAfterNode); }
+    TextEmissionBehavior emitTextAfterBehavior() const final { return propertyValue<TextEmissionBehavior>(AXPropertyName::EmitTextAfterBehavior); }
 #endif // ENABLE(AX_THREAD_TEXT_APIS)
 
     AXTextMarkerRange textMarkerRange() const final;

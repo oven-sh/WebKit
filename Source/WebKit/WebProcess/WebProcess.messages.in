@@ -113,6 +113,8 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 
     EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebKit::PageGroupIdentifier pageGroupID, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, struct WebKit::WebPreferencesStore store, WebCore::Site site, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, struct WebKit::RemoteWorkerInitializationData initializationData) -> ()
 
+    RegisterServiceWorkerClients() -> (bool isSuccess)
+
     SetHasSuspendedPageProxy(bool hasSuspendedPageProxy);
     SetIsInProcessCache(bool isInProcessCache) -> ()
     MarkIsNoLongerPrewarmed()
@@ -130,7 +132,7 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 #endif
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
-    BacklightLevelDidChange(float backlightLevel)
+    [DeferSendingIfSuspended] BacklightLevelDidChange(float backlightLevel)
 #endif
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)

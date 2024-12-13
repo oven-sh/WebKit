@@ -37,9 +37,9 @@ typedef (USVString or URLPatternInit) URLPatternInput;
     [CallWith=CurrentScriptExecutionContext] constructor(URLPatternInit input, USVString baseURL, optional URLPatternOptions options);
     [CallWith=CurrentScriptExecutionContext] constructor(optional URLPatternInput input, optional URLPatternOptions options);
 
-    boolean test(optional URLPatternInput input, optional USVString baseURL);
-  
-    URLPatternResult? exec(optional URLPatternInput input, optional USVString baseURL);
+    [CallWith=CurrentScriptExecutionContext] boolean test(optional URLPatternInput input, optional USVString baseURL);
+
+    [CallWith=CurrentScriptExecutionContext] URLPatternResult? exec(optional URLPatternInput input, optional USVString baseURL);
 
     readonly attribute USVString protocol;
     readonly attribute USVString username;

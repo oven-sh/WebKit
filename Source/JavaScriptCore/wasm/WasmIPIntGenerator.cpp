@@ -522,7 +522,7 @@ public:
     {
         return m_parser->offset() - m_parser->currentOpcodeStartingOffset();
     }
-    void addCallCommonData(const FunctionSignature&);
+    void addCallCommonData(const FunctionSignature&, const CallInformation&);
     void addTailCallCommonData(const FunctionSignature&);
     void didFinishParsingLocals()
     {
@@ -2638,9 +2638,8 @@ static constexpr unsigned fprToIndex(FPRReg r)
     return 0;
 }
 
-void IPIntGenerator::addCallCommonData(const FunctionSignature& signature)
+void IPIntGenerator::addCallCommonData(const FunctionSignature& signature, const CallInformation& callConvention)
 {
-    CallInformation callConvention = wasmCallingConvention().callInformationFor(signature, CallRole::Caller);
     uint16_t stackArgs = 0;
 
     constexpr static int NUM_MINT_CALL_GPRS = 8;
@@ -2681,8 +2680,7 @@ void IPIntGenerator::addCallCommonData(const FunctionSignature& signature)
     }
 
     IPInt::CallReturnMetadata commonReturn {
-        .stackSlots = safeCast<uint16_t>(stackArgs), // stackArgs is already padded
-        .argumentCount = safeCast<uint16_t>(signature.argumentCount()),
+        .stackFrameSize = static_cast<uint32_t>(callConvention.headerAndArgumentStackSizeInBytes),
         .resultBytecode = { }
     };
     m_metadata->appendMetadata(commonReturn);
@@ -2696,6 +2694,7 @@ void IPIntGenerator::addCallCommonData(const FunctionSignature& signature)
     ASSERT_UNUSED(NUM_MINT_RET_GPRS, wasmCallingConvention().jsrArgs.size() <= NUM_MINT_RET_GPRS);
     ASSERT_UNUSED(NUM_MINT_RET_FPRS, wasmCallingConvention().fprArgs.size() <= NUM_MINT_RET_FPRS);
 
+    bool hasSeenStackArgument = false;
     for (size_t i = 0; i < signature.returnCount(); ++i) {
         auto loc = returnConvention.results[i].location;
         if (loc.isGPR()) {
@@ -2704,8 +2703,15 @@ void IPIntGenerator::addCallCommonData(const FunctionSignature& signature)
         } else if (loc.isFPR()) {
             ASSERT_UNUSED(NUM_MINT_RET_FPRS, fprToIndex(loc.fpr()) < NUM_MINT_RET_FPRS);
             mINTBytecode.append(static_cast<uint8_t>(IPInt::CallResultBytecode::ResultFPR) + fprToIndex(loc.fpr()));
-        } else if (loc.isStackArgument())
+        } else if (loc.isStackArgument()) {
+            if (!hasSeenStackArgument) {
+                hasSeenStackArgument = true;
+                // If our first stack argument is in an "odd" slot, we need to skip one slot.
+                if (loc.offsetFromSP() % 16)
+                    mINTBytecode.append(static_cast<uint8_t>(IPInt::CallResultBytecode::StackGap));
+            }
             mINTBytecode.append(static_cast<uint8_t>(IPInt::CallResultBytecode::ResultStack));
+        }
         else
             RELEASE_ASSERT_NOT_REACHED();
     }
@@ -2784,6 +2790,7 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCall(FunctionSpaceIndex inde
         m_metadata->appendMetadata(functionIndexMetadata);
         addTailCallCommonData(signature);
     } else {
+        CallInformation callConvention = wasmCallingConvention().callInformationFor(signature, CallRole::Caller);
         for (unsigned i = 0; i < signature.returnCount(); i ++)
             results.append(Value { });
         changeStackSize(signature.returnCount() - signature.argumentCount());
@@ -2793,10 +2800,15 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCall(FunctionSpaceIndex inde
         IPInt::CallMetadata functionIndexMetadata {
             .length = safeCast<uint8_t>(getCurrentInstructionLength()),
             .functionIndex = index,
+            .signature = {
+                static_cast<uint32_t>(callConvention.headerAndArgumentStackSizeInBytes),
+                static_cast<uint16_t>(signature.returnCount() > signature.argumentCount() ? signature.returnCount() - signature.argumentCount() : 0),
+                static_cast<uint16_t>(signature.argumentCount())
+            },
             .argumentBytecode = { }
         };
         m_metadata->appendMetadata(functionIndexMetadata);
-        addCallCommonData(signature);
+        addCallCommonData(signature, callConvention);
     }
     return { };
 }
@@ -2827,6 +2839,7 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallIndirect(unsigned tableI
         m_metadata->appendMetadata(functionIndexMetadata);
         addTailCallCommonData(signature);
     } else {
+        CallInformation callConvention = wasmCallingConvention().callInformationFor(signature, CallRole::Caller);
         for (unsigned i = 0; i < signature.returnCount(); i ++)
             results.append(Value { });
         const unsigned callIndex = 1;
@@ -2836,11 +2849,16 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallIndirect(unsigned tableI
             .length = safeCast<uint8_t>(getCurrentInstructionLength()),
             .tableIndex = tableIndex,
             .typeIndex = m_metadata->addSignature(type),
+            .signature = {
+                static_cast<uint32_t>(callConvention.headerAndArgumentStackSizeInBytes),
+                static_cast<uint16_t>(signature.returnCount() > signature.argumentCount() ? signature.returnCount() - signature.argumentCount() : 0),
+                static_cast<uint16_t>(signature.argumentCount())
+            },
             .argumentBytecode = { }
         };
         m_metadata->appendMetadata(functionIndexMetadata);
 
-        addCallCommonData(signature);
+        addCallCommonData(signature, callConvention);
     }
     return { };
 }
@@ -2870,6 +2888,7 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallRef(const TypeDefinition
         m_metadata->appendMetadata(callMetadata);
         addTailCallCommonData(signature);
     } else {
+        CallInformation callConvention = wasmCallingConvention().callInformationFor(signature, CallRole::Caller);
         for (unsigned i = 0; i < signature.returnCount(); i ++)
             results.append(Value { });
         const unsigned callRef = 1;
@@ -2878,11 +2897,16 @@ PartialResult WARN_UNUSED_RETURN IPIntGenerator::addCallRef(const TypeDefinition
         IPInt::CallRefMetadata callMetadata {
             .length = safeCast<uint8_t>(getCurrentInstructionLength()),
             .typeIndex = m_metadata->addSignature(type),
+            .signature = {
+                static_cast<uint32_t>(callConvention.headerAndArgumentStackSizeInBytes),
+                static_cast<uint16_t>(signature.returnCount() > signature.argumentCount() ? signature.returnCount() - signature.argumentCount() : 0),
+                static_cast<uint16_t>(signature.argumentCount())
+            },
             .argumentBytecode = { }
         };
         m_metadata->appendMetadata(callMetadata);
 
-        addCallCommonData(signature);
+        addCallCommonData(signature, callConvention);
     }
     return { };
 }

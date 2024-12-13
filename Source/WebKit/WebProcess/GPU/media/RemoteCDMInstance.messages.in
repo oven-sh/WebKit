@@ -23,6 +23,10 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(ENCRYPTED_MEDIA)
 
+[
+    DispatchedFrom=GPU,
+    DispatchedTo=WebContent
+]
 messages -> RemoteCDMInstance {
     UnrequestedInitializationDataReceived(String type, Ref<WebCore::SharedBuffer> initData)
 }

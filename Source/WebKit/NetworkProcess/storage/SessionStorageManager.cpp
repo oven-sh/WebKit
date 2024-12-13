@@ -129,4 +129,36 @@ void SessionStorageManager::cloneStorageArea(StorageNamespaceIdentifier sourceNa
         addStorageArea(storageArea->clone(), targetNamespaceIdentifier);
 }
 
+HashMap<String, String> SessionStorageManager::fetchStorageMap(StorageNamespaceIdentifier namespaceIdentifier)
+{
+    auto identifier = m_storageAreasByNamespace.getOptional(namespaceIdentifier);
+    if (!identifier)
+        return { };
+
+    RefPtr storageArea = m_storageAreas.get(*identifier);
+    if (!storageArea)
+        return { };
+
+    return storageArea->allItems();
+}
+
+bool SessionStorageManager::setStorageMap(StorageNamespaceIdentifier storageNamespaceIdentifier, WebCore::ClientOrigin clientOrigin, HashMap<String, String>&& storageMap)
+{
+    auto identifier = m_storageAreasByNamespace.getOptional(storageNamespaceIdentifier);
+    if (!identifier)
+        identifier = addStorageArea(MemoryStorageArea::create(clientOrigin), storageNamespaceIdentifier);
+
+    RefPtr storageArea = m_storageAreas.get(*identifier);
+    if (!storageArea)
+        return false;
+
+    bool succeeded = true;
+    for (auto& [key, value] : storageMap) {
+        if (!storageArea->setItem({ }, { }, WTFMove(key), WTFMove(value), { }))
+            succeeded = false;
+    }
+
+    return succeeded;
+}
+
 } // namespace WebKit

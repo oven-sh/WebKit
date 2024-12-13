@@ -23,6 +23,10 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 
+[
+    DispatchedFrom=GPU,
+    DispatchedTo=WebContent
+]
 messages -> MediaPlayerPrivateRemote {
     NetworkStateChanged(struct WebKit::RemoteMediaPlayerState state)
     ReadyStateChanged(struct WebKit::RemoteMediaPlayerState state, enum:uint8_t WebCore::MediaPlayerReadyState readyStat)

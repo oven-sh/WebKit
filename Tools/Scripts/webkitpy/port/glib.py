@@ -85,6 +85,7 @@ class GLibPort(Port):
 
         environment['TEST_RUNNER_INJECTED_BUNDLE_FILENAME'] = self._build_path('lib', 'libTestRunnerInjectedBundle.so')
         environment['WEBKIT_EXEC_PATH'] = self._build_path('bin')
+        environment['WEBKIT_TOP_LEVEL'] = self.path_from_webkit_base()
         environment['LD_LIBRARY_PATH'] = self._prepend_to_env_value(self._build_path('lib'), environment.get('LD_LIBRARY_PATH', ''))
         self._copy_value_from_environ_if_set(environment, 'LIBGL_ALWAYS_SOFTWARE')
         self._copy_value_from_environ_if_set(environment, 'AT_SPI_BUS_ADDRESS')
@@ -140,6 +141,7 @@ class GLibPort(Port):
         env['WEBKIT_EXEC_PATH'] = self._build_path('bin')
         env['WEBKIT_INJECTED_BUNDLE_PATH'] = self._build_path('lib')
         env['WEBKIT_INSPECTOR_RESOURCES_PATH'] = self._build_path('share')
+        env['WEBKIT_TOP_LEVEL'] = self.path_from_webkit_base()
         env['LD_LIBRARY_PATH'] = self._prepend_to_env_value(self._build_path('lib'), env.get('LD_LIBRARY_PATH', ''))
         return env
 

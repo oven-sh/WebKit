@@ -40,7 +40,6 @@ Modules/mediasource/SourceBuffer.cpp
 Modules/mediastream/CanvasCaptureMediaStreamTrack.cpp
 Modules/mediastream/MediaDevices.cpp
 Modules/mediastream/MediaStream.cpp
-Modules/mediastream/MediaStreamTrackProcessor.cpp
 Modules/mediastream/PeerConnectionBackend.cpp
 Modules/mediastream/RTCController.cpp
 Modules/mediastream/RTCDataChannel.cpp
@@ -312,7 +311,6 @@ css/MediaQueryMatcher.cpp
 css/PropertySetCSSStyleDeclaration.cpp
 css/SVGCSSComputedStyleDeclaration.cpp
 css/SelectorChecker.cpp
-css/SelectorCheckerTestFunctions.h
 css/SelectorFilter.cpp
 css/ShorthandSerializer.cpp
 css/StyleProperties.cpp
@@ -577,7 +575,6 @@ loader/ApplicationManifestLoader.cpp
 loader/DocumentLoader.cpp
 loader/FrameLoader.cpp
 loader/HistoryController.cpp
-loader/MixedContentChecker.cpp
 loader/NavigationAction.cpp
 loader/NavigationScheduler.cpp
 loader/ThreadableLoader.cpp
@@ -784,7 +781,6 @@ rendering/ReferencedSVGResources.cpp
 rendering/RenderAttachment.cpp
 rendering/RenderBlock.cpp
 rendering/RenderBox.cpp
-rendering/RenderCombineText.cpp
 rendering/RenderCounter.cpp
 rendering/RenderElement.cpp
 rendering/RenderEmbeddedObject.cpp
