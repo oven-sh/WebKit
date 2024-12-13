@@ -37,11 +37,11 @@
 namespace WebCore {
 namespace URLPatternUtilities {
 
-URLPatternComponent::URLPatternComponent(String&& patternString, JSC::Strong<JSC::RegExp>&& regex, Vector<String>&& groupNameList, bool hasRegexpGroups)
+URLPatternComponent::URLPatternComponent(String&& patternString, JSC::Strong<JSC::RegExp>&& regex, Vector<String>&& groupNameList, bool hasRegexpGroupsFromPartsList)
     : m_patternString(WTFMove(patternString))
     , m_regularExpression(WTFMove(regex))
     , m_groupNameList(WTFMove(groupNameList))
-    , m_hasRegexpGroups(hasRegexpGroups)
+    , m_hasRegexGroupsFromPartList(hasRegexpGroupsFromPartsList)
 {
 }
 

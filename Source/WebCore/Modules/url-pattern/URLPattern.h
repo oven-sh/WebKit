@@ -67,7 +67,7 @@ public:
     const String& search() const { return m_searchComponent.patternString(); }
     const String& hash() const { return m_hashComponent.patternString(); }
 
-    bool hasRegExpGroups() const { return m_hasRegExpGroups; }
+    bool hasRegExpGroups() const;
 
 private:
     URLPattern();
@@ -82,8 +82,6 @@ private:
     URLPatternUtilities::URLPatternComponent m_portComponent;
     URLPatternUtilities::URLPatternComponent m_searchComponent;
     URLPatternUtilities::URLPatternComponent m_hashComponent;
-
-    bool m_hasRegExpGroups { false };
 };
 
 }

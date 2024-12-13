@@ -446,4 +446,17 @@ ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionCo
     return { result };
 }
 
+// https://urlpattern.spec.whatwg.org/#url-pattern-has-regexp-groups
+bool URLPattern::hasRegExpGroups() const
+{
+    return m_protocolComponent.hasRegexGroupsFromPartList()
+    || m_usernameComponent.hasRegexGroupsFromPartList()
+    || m_passwordComponent.hasRegexGroupsFromPartList()
+    || m_hostnameComponent.hasRegexGroupsFromPartList()
+    || m_pathnameComponent.hasRegexGroupsFromPartList()
+    || m_portComponent.hasRegexGroupsFromPartList()
+    || m_searchComponent.hasRegexGroupsFromPartList()
+    || m_hashComponent.hasRegexGroupsFromPartList();
+}
+
 }
