@@ -148,7 +148,17 @@ bool ViewportConfiguration::setContentsSize(const IntSize& contentSize)
 bool ViewportConfiguration::setViewLayoutSize(const FloatSize& viewLayoutSize, std::optional<double>&& scaleFactor, std::optional<double>&& minimumEffectiveDeviceWidthFromClient)
 {
     double newScaleFactor = scaleFactor.value_or(m_layoutSizeScaleFactor);
-    double newEffectiveWidth = minimumEffectiveDeviceWidthFromClient.value_or(m_minimumEffectiveDeviceWidthForView);
+    double newEffectiveWidth = [&] {
+        if (!m_configuration.shouldHonorMinimumEffectiveDeviceWidthFromClient)
+            return m_minimumEffectiveDeviceWidthForView;
+
+        if (!minimumEffectiveDeviceWidthFromClient)
+            return m_minimumEffectiveDeviceWidthForView;
+
+        m_minimumEffectiveDeviceWidthWasSetByClient = true;
+        return *minimumEffectiveDeviceWidthFromClient;
+    }();
+
     if (m_viewLayoutSize == viewLayoutSize && m_layoutSizeScaleFactor == newScaleFactor && newEffectiveWidth == m_minimumEffectiveDeviceWidthForView)
         return false;
 
@@ -427,6 +437,7 @@ ViewportConfiguration::Parameters ViewportConfiguration::pluginDocumentParameter
     parameters.initialScale = 1;
     parameters.initialScaleIgnoringLayoutScaleFactor = 1;
     parameters.initialScaleIsSet = true;
+    parameters.shouldHonorMinimumEffectiveDeviceWidthFromClient = false;
     return parameters;
 }
 #endif
@@ -536,6 +547,9 @@ void ViewportConfiguration::updateConfiguration()
         m_configuration.widthIsSet = viewportArgumentsOverridesWidth;
         m_configuration.heightIsSet = viewportArgumentsOverridesHeight;
     }
+
+    if (!m_configuration.shouldHonorMinimumEffectiveDeviceWidthFromClient && std::exchange(m_minimumEffectiveDeviceWidthWasSetByClient, false))
+        m_minimumEffectiveDeviceWidthForView = 0;
 
     if (m_configuration.initialScaleIsSet && m_minimumEffectiveDeviceWidthForView > m_viewLayoutSize.width())
         m_configuration.ignoreInitialScaleForLayoutWidth = true;
@@ -717,6 +731,8 @@ TextStream& operator<<(TextStream& ts, const ViewportConfiguration::Parameters& 
     ts.dumpProperty("allowsUserScaling", parameters.allowsUserScaling);
     ts.dumpProperty("allowsShrinkToFit", parameters.allowsShrinkToFit);
     ts.dumpProperty("avoidsUnsafeArea", parameters.avoidsUnsafeArea);
+    ts.dumpProperty("ignoreInitialScaleForLayoutWidth", parameters.ignoreInitialScaleForLayoutWidth);
+    ts.dumpProperty("shouldHonorMinimumEffectiveDeviceWidthFromClient", parameters.shouldHonorMinimumEffectiveDeviceWidthFromClient);
 
     return ts;
 }

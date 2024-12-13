@@ -61,6 +61,8 @@ public:
 
         bool ignoreInitialScaleForLayoutWidth { false };
 
+        bool shouldHonorMinimumEffectiveDeviceWidthFromClient { true };
+
         friend bool operator==(const Parameters&, const Parameters&) = default;
     };
 
@@ -215,6 +217,7 @@ private:
     bool m_isKnownToLayOutWiderThanViewport { false };
     bool m_prefersHorizontalScrollingBelowDesktopViewportWidths { false };
     bool m_canIgnoreViewportArgumentsToAvoidExcessiveZoom { false };
+    bool m_minimumEffectiveDeviceWidthWasSetByClient { false };
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const ViewportConfiguration::Parameters&);
