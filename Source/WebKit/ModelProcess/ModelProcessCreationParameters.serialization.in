@@ -26,6 +26,7 @@ headers: "ModelProcessCreationParameters.h" "AuxiliaryProcessCreationParameters.
 
 [RValue] struct WebKit::ModelProcessCreationParameters {
     WebKit::AuxiliaryProcessCreationParameters auxiliaryProcessParameters;
+    ProcessID parentPID;
     String applicationVisibleName;
 };
 
