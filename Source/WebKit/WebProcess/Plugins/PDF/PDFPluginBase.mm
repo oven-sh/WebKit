@@ -1199,7 +1199,12 @@ SelectionWasFlipped PDFPluginBase::moveSelectionEndpoint(FloatPoint, SelectionEn
     return SelectionWasFlipped::No;
 }
 
-#endif
+SelectionEndpoint PDFPluginBase::extendInitialSelection(FloatPoint pointInRootView, TextGranularity)
+{
+    return SelectionEndpoint::Start;
+}
+
+#endif // PLATFORM(IOS_FAMILY)
 
 #if !LOG_DISABLED
 

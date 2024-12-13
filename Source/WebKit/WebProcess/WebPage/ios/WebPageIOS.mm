@@ -2682,6 +2682,13 @@ void WebPage::updateSelectionWithExtentPointAndBoundary(const WebCore::IntPoint&
     if (!frame)
         return callback(false);
 
+#if ENABLE(PDF_PLUGIN)
+    if (RefPtr pluginView = pluginViewForFrame(frame.get())) {
+        auto movedEndpoint = pluginView->extendInitialSelection(point, granularity);
+        return callback(movedEndpoint == SelectionEndpoint::End);
+    }
+#endif
+
     auto position = visiblePositionInFocusedNodeForPoint(*frame, point, isInteractingWithFocusedElement);
     auto newRange = rangeForGranularityAtPoint(*frame, point, granularity, isInteractingWithFocusedElement);
     

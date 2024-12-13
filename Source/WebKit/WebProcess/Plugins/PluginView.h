@@ -99,6 +99,7 @@ public:
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
     void clearSelection();
     SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint);
+    SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
 #endif
 
     bool populateEditorStateIfNeeded(EditorState&) const;

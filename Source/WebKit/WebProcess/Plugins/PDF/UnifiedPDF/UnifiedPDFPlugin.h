@@ -581,10 +581,17 @@ private:
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity) final;
     void clearSelection() final;
     SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint) final;
+    SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity) final;
     bool platformPopulateEditorStateIfNeeded(EditorState&) const final;
 
-    static std::optional<PageAndPoint> selectionCaretPointInPage(PDFSelection *, SelectionEndpoint);
-    std::optional<PageAndPoint> selectionCaretPointInPage(SelectionEndpoint) const;
+#if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
+    PDFSelection *selectionAtPoint(WebCore::FloatPoint pointInPage, PDFPage *, WebCore::TextGranularity) const;
+    PDFSelection *selectionBetweenPoints(WebCore::FloatPoint fromPoint, PDFPage *fromPage, WebCore::FloatPoint toPoint, PDFPage *toPage) const;
+#endif
+
+    static PageAndPoint selectionCaretPointInPage(PDFSelection *, SelectionEndpoint);
+    PageAndPoint selectionCaretPointInPage(SelectionEndpoint) const;
+    void resetInitialSelection();
 #endif // PLATFORM(IOS_FAMILY)
 
     RefPtr<PDFPresentationController> m_presentationController;
@@ -644,6 +651,11 @@ private:
 
 #if ENABLE(UNIFIED_PDF_DATA_DETECTION)
     std::unique_ptr<PDFDataDetectorOverlayController> m_dataDetectorOverlayController;
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+    RetainPtr<PDFSelection> m_initialSelection;
+    PageAndPoint m_initialSelectionStart;
 #endif
 
     RefPtr<WebCore::ShadowRoot> m_shadowRoot;
