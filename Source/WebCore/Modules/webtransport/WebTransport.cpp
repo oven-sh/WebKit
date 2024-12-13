@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebTransport.h"
 
+#include "ContextDestructionObserverInlines.h"
 #include "DatagramSink.h"
 #include "DatagramSource.h"
 #include "JSDOMPromise.h"
