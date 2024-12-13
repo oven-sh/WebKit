@@ -315,6 +315,7 @@ public:
 
 #if PLATFORM(IOS_FAMILY)
     virtual void setSelectionRange(WebCore::FloatPoint /* pointInRootView */, WebCore::TextGranularity) { }
+    virtual void clearSelection() { }
     virtual SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint /* pointInRootView */, SelectionEndpoint);
 #endif
 

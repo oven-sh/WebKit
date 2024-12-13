@@ -1126,6 +1126,11 @@ SelectionWasFlipped PluginView::moveSelectionEndpoint(WebCore::FloatPoint pointI
     return protectedPlugin()->moveSelectionEndpoint(pointInRootView, endpoint);
 }
 
+void PluginView::clearSelection()
+{
+    protectedPlugin()->clearSelection();
+}
+
 #endif // PLATFORM(IOS_FAMILY)
 
 bool PluginView::populateEditorStateIfNeeded(EditorState& state) const

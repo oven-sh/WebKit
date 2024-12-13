@@ -579,6 +579,7 @@ private:
 
 #if PLATFORM(IOS_FAMILY)
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity) final;
+    void clearSelection() final;
     SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint) final;
     bool platformPopulateEditorStateIfNeeded(EditorState&) const final;
 

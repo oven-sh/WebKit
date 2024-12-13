@@ -981,6 +981,11 @@ void WebPage::completeSyntheticClick(Node& nodeRespondingToClick, const WebCore:
     if (m_isClosed)
         return;
 
+#if ENABLE(PDF_PLUGIN)
+    if (RefPtr pluginView = pluginViewForFrame(newFocusedFrame.get()))
+        pluginView->clearSelection();
+#endif
+
     invokePendingSyntheticClickCallback(SyntheticClickResult::Click);
 
     if ((!handledPress && !handledRelease) || !nodeRespondingToClick.isElementNode())
@@ -1353,6 +1358,13 @@ void WebPage::clearSelectionAfterTapIfNeeded()
     RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
     if (!frame)
         return;
+
+#if ENABLE(PDF_PLUGIN)
+    if (RefPtr pluginView = pluginViewForFrame(frame.get())) {
+        pluginView->clearSelection();
+        return;
+    }
+#endif
 
     if (frame->selection().selection().isContentEditable())
         return;
@@ -1898,6 +1910,10 @@ void WebPage::clearSelection()
     m_startingGestureRange = std::nullopt;
     RefPtr focusedOrMainFrame = m_page->checkedFocusController()->focusedOrMainFrame();
     focusedOrMainFrame->selection().clear();
+#if ENABLE(PDF_PLUGIN)
+    if (RefPtr pluginView = pluginViewForFrame(focusedOrMainFrame.get()))
+        pluginView->clearSelection();
+#endif
 }
 
 void WebPage::dispatchSyntheticMouseEventsForSelectionGesture(SelectionTouch touch, const IntPoint& point)

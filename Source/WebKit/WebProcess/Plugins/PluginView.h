@@ -97,6 +97,7 @@ public:
 #if PLATFORM(IOS_FAMILY)
     void pluginDidInstallPDFDocument(double initialScaleFactor);
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
+    void clearSelection();
     SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint);
 #endif
 

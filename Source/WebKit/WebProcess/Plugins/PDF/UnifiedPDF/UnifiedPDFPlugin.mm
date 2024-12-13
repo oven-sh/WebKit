@@ -2903,6 +2903,9 @@ RetainPtr<PDFSelection> UnifiedPDFPlugin::protectedCurrentSelection() const
 
 void UnifiedPDFPlugin::setCurrentSelection(RetainPtr<PDFSelection>&& selection)
 {
+    if (!selection && !m_currentSelection)
+        return;
+
     RetainPtr previousSelection = std::exchange(m_currentSelection, WTFMove(selection));
 
 #if ENABLE(TEXT_SELECTION)
@@ -3880,6 +3883,11 @@ void UnifiedPDFPlugin::setDisplayModeAndUpdateLayout(PDFDocumentLayout::DisplayM
 
 #if PLATFORM(IOS_FAMILY)
 
+void UnifiedPDFPlugin::clearSelection()
+{
+    setCurrentSelection({ });
+}
+
 void UnifiedPDFPlugin::setSelectionRange(FloatPoint pointInRootView, TextGranularity granularity)
 {
 #if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
@@ -3997,8 +4005,12 @@ auto UnifiedPDFPlugin::selectionCaretPointInPage(SelectionEndpoint endpoint) con
 bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) const
 {
     RetainPtr selection = m_currentSelection;
-    if (!selection)
+    if (!selection) {
+        state.visualData = EditorState::VisualData { };
+        state.postLayoutData = EditorState::PostLayoutData { };
+        state.postLayoutData->isStableStateUpdate = true;
         return true;
+    }
 
     Vector<FloatRect> selectionRects;
 #if HAVE(PDFSELECTION_ENUMERATE_RECTS_AND_TRANSFORMS)
