@@ -505,12 +505,13 @@ bool WebExtensionAPITabs::parseConnectOptions(NSDictionary *options, std::option
 
 bool WebExtensionAPITabs::parseScriptOptions(NSDictionary *options, WebExtensionScriptInjectionParameters& parameters, NSString **outExceptionString)
 {
-    static NSDictionary<NSString *, id> *keyTypes = @{
+    static auto *keyTypes = @{
         allFramesKey: @YES.class,
         codeKey: NSString.class,
-        tabIdKey: NSNumber.class,
+        documentIdKey: NSString.class,
         fileKey: NSString.class,
         frameIdKey: NSNumber.class,
+        tabIdKey: NSNumber.class,
     };
 
     if (!validateDictionary(options, @"details", nil, keyTypes, outExceptionString))
@@ -526,8 +527,19 @@ bool WebExtensionAPITabs::parseScriptOptions(NSDictionary *options, WebExtension
         return false;
     }
 
-    if (objectForKey<NSNumber>(options, allFramesKey).boolValue && options[frameIdKey]) {
+    bool allFrames = boolForKey(options, allFramesKey, false);
+    if (allFrames && options[frameIdKey]) {
         *outExceptionString = toErrorString(nil, @"details", @"it cannot specify both 'allFrames' and 'frameId'");
+        return false;
+    }
+
+    if (options[frameIdKey] && options[documentIdKey]) {
+        *outExceptionString = toErrorString(nil, @"details", @"it cannot specify both 'frameId' and 'documentId'");
+        return false;
+    }
+
+    if (allFrames && options[documentIdKey]) {
+        *outExceptionString = toErrorString(nil, @"details", @"it cannot specify both 'allFrames' and 'documentId'");
         return false;
     }
 
@@ -537,6 +549,16 @@ bool WebExtensionAPITabs::parseScriptOptions(NSDictionary *options, WebExtension
     if (NSString *code = options[codeKey])
         parameters.code = code;
 
+    if (NSString *documentIdentifer = options[documentIdKey]) {
+        auto parsedUUID = WTF::UUID::parse(String(documentIdentifer));
+        if (!parsedUUID) {
+            *outExceptionString = toErrorString(nil, documentIdKey, @"'%@' is not a valid document identifier", documentIdentifer);
+            return false;
+        }
+
+        parameters.documentIdentifiers = { WTFMove(parsedUUID.value()) };
+    }
+
     if (NSNumber *frameID = options[frameIdKey]) {
         auto frameIdentifier = toWebExtensionFrameIdentifier(frameID.doubleValue);
         if (!isValid(frameIdentifier)) {
@@ -544,9 +566,9 @@ bool WebExtensionAPITabs::parseScriptOptions(NSDictionary *options, WebExtension
             return false;
         }
 
-        parameters.frameIDs = { frameIdentifier.value() };
-    } else if (!boolForKey(options, allFramesKey, false))
-        parameters.frameIDs = { WebExtensionFrameConstants::MainFrameIdentifier };
+        parameters.frameIdentifiers = { frameIdentifier.value() };
+    } else if (!allFrames && !parameters.documentIdentifiers)
+        parameters.frameIdentifiers = { WebExtensionFrameConstants::MainFrameIdentifier };
 
     if (NSString *origin = options[cssOriginKey]) {
         if ([origin isEqualToString:userValue])

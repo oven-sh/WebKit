@@ -55,6 +55,7 @@ static NSString * const argsKey = @"args";
 static NSString * const argumentsKey = @"arguments";
 static NSString * const cssKey = @"css";
 static NSString * const cssOriginKey = @"cssOrigin";
+static NSString * const documentIDsKey = @"documentIds";
 static NSString * const filesKey = @"files";
 static NSString * const frameIDsKey = @"frameIds";
 static NSString * const funcKey = @"func";
@@ -109,9 +110,13 @@ NSArray *toWebAPI(const Vector<WebExtensionScriptInjectionResultParameters>& par
         id value = parameters.resultJSON ? parseJSON(parameters.resultJSON.value(), JSONOptions::FragmentsAllowed) : nil;
         result[@"result"] = value ?: NSNull.null;
 
-        ASSERT(parameters.frameID);
-        if (parameters.frameID)
-            result[@"frameId"] = @(WebKit::toWebAPI(parameters.frameID.value()));
+        ASSERT(parameters.frameIdentifier);
+        if (parameters.frameIdentifier)
+            result[@"frameId"] = @(WebKit::toWebAPI(parameters.frameIdentifier.value()));
+
+        ASSERT(parameters.documentIdentifier);
+        if (parameters.documentIdentifier)
+            result[@"documentId"] = parameters.documentIdentifier.value().toString();
 
         if (parameters.error)
             result[@"error"] = parameters.error.value();
@@ -331,21 +336,33 @@ bool WebExtensionAPIScripting::parseExecutionWorld(NSDictionary *script, std::op
 
 bool WebExtensionAPIScripting::parseTargetInjectionOptions(NSDictionary *targetInfo, WebExtensionScriptInjectionParameters& parameters, NSString **outExceptionString)
 {
-    static NSArray<NSString *> *requiredKeys = @[
+    static auto *requiredKeys = @[
         tabIDKey,
     ];
 
-    static NSDictionary<NSString *, id> *keyTypes = @{
+    static auto *keyTypes = @{
+        allFramesKey: @YES.class,
+        documentIDsKey: @[ NSString.class ],
         frameIDsKey: @[ NSNumber.class ],
         tabIDKey: NSNumber.class,
-        allFramesKey: @YES.class,
     };
 
     if (!validateDictionary(targetInfo, targetKey, requiredKeys, keyTypes, outExceptionString))
         return false;
 
-    if (objectForKey<NSNumber>(targetInfo, allFramesKey).boolValue && targetInfo[frameIDsKey]) {
+    bool allFrames = boolForKey(targetInfo, allFramesKey, false);
+    if (allFrames && targetInfo[frameIDsKey]) {
         *outExceptionString = toErrorString(nil, targetKey, @"it cannot specify both 'allFrames' and 'frameIds'");
+        return false;
+    }
+
+    if (targetInfo[frameIDsKey] && targetInfo[documentIDsKey]) {
+        *outExceptionString = toErrorString(nil, targetKey, @"it cannot specify both 'frameIds' and 'documentIds'");
+        return false;
+    }
+
+    if (allFrames && targetInfo[documentIDsKey]) {
+        *outExceptionString = toErrorString(nil, targetKey, @"it cannot specify both 'allFrames' and 'documentIds'");
         return false;
     }
 
@@ -357,6 +374,21 @@ bool WebExtensionAPIScripting::parseTargetInjectionOptions(NSDictionary *targetI
     }
 
     parameters.tabIdentifier = tabIdentifier;
+
+    if (NSArray *documentIdentifiers = targetInfo[documentIDsKey]) {
+        Vector<WTF::UUID> parsedDocumentIdentifiers;
+        for (NSString *documentIdentifier in documentIdentifiers) {
+            auto parsedUUID = WTF::UUID::parse(String(documentIdentifier));
+            if (!parsedUUID) {
+                *outExceptionString = toErrorString(nil, documentIDsKey, @"'%@' is not a document identifier", documentIdentifier);
+                return false;
+            }
+
+            parsedDocumentIdentifiers.append(WTFMove(parsedUUID.value()));
+        }
+
+        parameters.documentIdentifiers = WTFMove(parsedDocumentIdentifiers);
+    }
 
     if (NSArray *frameIDs = targetInfo[frameIDsKey]) {
         Vector<WebExtensionFrameIdentifier> frames;
@@ -370,9 +402,9 @@ bool WebExtensionAPIScripting::parseTargetInjectionOptions(NSDictionary *targetI
             frames.append(frameIdentifier.value());
         }
 
-        parameters.frameIDs = WTFMove(frames);
-    } else if (!boolForKey(targetInfo, allFramesKey, false))
-        parameters.frameIDs = { WebExtensionFrameConstants::MainFrameIdentifier };
+        parameters.frameIdentifiers = WTFMove(frames);
+    } else if (!allFrames && !parameters.documentIdentifiers)
+        parameters.frameIdentifiers = { WebExtensionFrameConstants::MainFrameIdentifier };
 
     return true;
 }

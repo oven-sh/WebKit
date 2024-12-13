@@ -161,33 +161,45 @@ TEST(WKWebExtensionAPIScripting, ExecuteScript)
 
         @"  const blueValue = 'rgb(0, 0, 255)'",
 
-        @"  const expectedResultWithFileExecution = { 'result': 'pink', 'frameId': 0 }",
-        @"  const expectedResultWithFunctionExecution = { 'result': null, 'frameId': 0 }",
-
         @"  function changeBackgroundColor(color) { document.body.style.background = color }",
         @"  function getBackgroundColor() { return window.getComputedStyle(document.body).getPropertyValue('background-color') }",
 
-        @"  let results = await browser.scripting.executeScript( { target: { tabId: tabId, allFrames: false }, files: [ 'backgroundColor.js' ] })",
-        @"  browser.test.assertDeepEq(results[0], expectedResultWithFileExecution)",
+        @"  let results = await browser.scripting.executeScript({ target: { tabId, allFrames: false }, files: [ 'backgroundColor.js' ] })",
+        @"  browser.test.assertEq(results?.[0]?.result, 'pink', 'Result should be')",
+        @"  browser.test.assertEq(results?.[0]?.frameId, 0, 'Frame should be')",
 
-        @"  results = await browser.scripting.executeScript( { target: { tabId: tabId, frameIds: [ 0 ] }, files: [ 'backgroundColor.js' ] })",
-        @"  browser.test.assertDeepEq(results[0], expectedResultWithFileExecution)",
+        @"  results = await browser.scripting.executeScript({ target: { tabId, frameIds: [ 0 ] }, files: [ 'backgroundColor.js' ] })",
+        @"  browser.test.assertEq(results?.[0]?.result, 'pink', 'Result should be')",
+        @"  browser.test.assertEq(results?.[0]?.frameId, 0, 'Frame should be')",
 
-        @"  results = await browser.scripting.executeScript( { target: { tabId: tabId }, files: [ 'backgroundColor.js'] })",
-        @"  browser.test.assertDeepEq(results[0], expectedResultWithFileExecution)",
+        @"  results = await browser.scripting.executeScript({ target: { tabId }, files: [ 'backgroundColor.js'] })",
+        @"  browser.test.assertEq(results?.[0]?.result, 'pink', 'Result should be')",
+        @"  browser.test.assertEq(results?.[0]?.frameId, 0, 'Frame should be')",
 
-        @"  results = await browser.scripting.executeScript( { target: { tabId: tabId, frameIds: [ 0 ] }, func: changeBackgroundColor, args: ['pink'] })",
-        @"  browser.test.assertDeepEq(results[0], expectedResultWithFunctionExecution)",
+        @"  results = await browser.scripting.executeScript({ target: { tabId, frameIds: [ 0 ] }, func: changeBackgroundColor, args: ['pink'] })",
+        @"  browser.test.assertEq(results?.[0]?.result, null, 'Result should be')",
+        @"  browser.test.assertEq(results?.[0]?.frameId, 0, 'Frame should be')",
 
-        @"  results = await browser.scripting.executeScript({target: {tabId: tabId}, func: (bool, number, string, dict, array) => { browser.test.log('supported argument types') }, args: [true, 10, 'string', { }, [ ]]})",
-        @"  browser.test.assertDeepEq(results[0], expectedResultWithFunctionExecution)",
+        @"  results = await browser.scripting.executeScript({",
+        @"    target: { tabId },",
+        @"    func: (bool, number, string, dict, array) => {",
+        @"      browser.test.assertEq(typeof bool, 'boolean', 'Boolean argument should be')",
+        @"      browser.test.assertEq(typeof number, 'number', 'Number argument should be')",
+        @"      browser.test.assertEq(typeof string, 'string', 'String argument should be')",
+        @"      browser.test.assertEq(typeof dict, 'object', 'Object argument should be')",
+        @"      browser.test.assertTrue(Array.isArray(array), 'Array argument should be an array')",
+        @"    },",
+        @"    args: [true, 10, 'string', {}, []]",
+        @"  })",
+        @"  browser.test.assertEq(results?.[0]?.result, null, 'Result should be')",
+        @"  browser.test.assertEq(results?.[0]?.frameId, 0, 'Frame should be')",
 
-        @"  await browser.scripting.executeScript( { target: { tabId: tabId, allFrames: true }, func: changeBackgroundColor, args: ['blue'] })",
-        @"  results = await browser.scripting.executeScript( { target: { tabId: tabId, allFrames: true }, func: getBackgroundColor })",
-        @"  browser.test.assertEq(results[0].result, blueValue)",
-        @"  browser.test.assertEq(results[0].result, blueValue)",
+        @"  await browser.scripting.executeScript({ target: { tabId, allFrames: true }, func: changeBackgroundColor, args: ['blue'] })",
+        @"  results = await browser.scripting.executeScript({ target: { tabId, allFrames: true }, func: getBackgroundColor })",
+        @"  browser.test.assertEq(results?.[0]?.result, blueValue, 'Result should be')",
+        @"  browser.test.assertEq(results?.[0]?.frameId, 0, 'Frame should be')",
 
-        @"  browser.test.assertSafeResolve(() => browser.scripting.executeScript({ target: { tabId: tabId, frameIds: [0], allFrames: false }, func: () => {} }))",
+        @"  browser.test.assertSafeResolve(() => browser.scripting.executeScript({ target: { tabId, frameIds: [0], allFrames: false }, func: () => {} }))",
 
         @"  browser.test.notifyPass()",
         @"})",
@@ -283,6 +295,81 @@ TEST(WKWebExtensionAPIScripting, ExecuteScriptWithFrameIds)
         @"  })",
 
         @"  browser.test.assertEq(result[0].result, '/frame.html', 'Should execute in the iframe and return the correct path')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"browser.test.yield('Load Tab')"
+    ]);
+
+    auto *contentScript = Util::constructScript(@[
+        @"browser.runtime.sendMessage('Hello from frame')",
+    ]);
+
+    static auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Scripting API Test",
+        @"description": @"Scripting API Test",
+        @"version": @"1.0",
+
+        @"background": @{
+            @"scripts": @[ @"background.js" ],
+            @"type": @"module"
+        },
+
+        @"content_scripts": @[ @{
+            @"js": @[ @"content.js" ],
+            @"matches": @[ @"*://localhost/frame.html" ],
+            @"all_frames": @YES
+        } ],
+
+        @"permissions": @[ @"scripting" ]
+    };
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"content.js": contentScript,
+    };
+
+    auto extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources]);
+    auto manager = adoptNS([[TestWebExtensionManager alloc] initForExtension:extension.get()]);
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:server.requestWithLocalhost("/frame.html"_s).URL];
+
+    [manager loadAndRun];
+
+    EXPECT_NS_EQUAL(manager.get().yieldMessage, @"Load Tab");
+
+    [manager.get().defaultTab.webView loadRequest:server.requestWithLocalhost()];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIScripting, ExecuteScriptWithDocumentIds)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<span>Main Document</span><iframe src='/frame.html'></iframe>"_s } },
+        { "/frame.html"_s, { { { "Content-Type"_s, "text/html"_s } }, "<span>Frame Document</span>"_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.runtime.onMessage.addListener(async (message, sender) => {",
+        @"  browser.test.assertEq(message, 'Hello from frame')",
+
+        @"  const documentId = sender?.documentId",
+        @"  browser.test.assertEq(typeof documentId, 'string', 'sender.documentId should be')",
+        @"  browser.test.assertEq(documentId.length, 36, 'sender.documentId should be')",
+
+        @"  const result = await browser.scripting.executeScript({",
+        @"    target: { tabId: sender?.tab?.id, documentIds: [ documentId ] },",
+        @"    func: () => document.body.innerText.trim()",
+        @"  })",
+
+        @"  browser.test.assertEq(result?.[0]?.result, 'Frame Document', 'Result should be')",
+        @"  browser.test.assertEq(typeof result?.[0]?.documentId, 'string', 'Result documentId should be')",
+        @"  browser.test.assertEq(result?.[0]?.documentId.length, 36, 'Result documentId should be')",
+        @"  browser.test.assertEq(result?.[0]?.documentId, documentId, 'Result documentId should be')",
 
         @"  browser.test.notifyPass()",
         @"})",

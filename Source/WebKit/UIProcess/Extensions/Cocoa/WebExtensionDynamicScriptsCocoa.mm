@@ -63,24 +63,28 @@ static bool userStyleSheetMatchesContent(Ref<API::UserStyleSheet> userStyleSheet
     return userStyleSheet->userStyleSheet().source() == styleSheetContent.first && userStyleSheet->userStyleSheet().injectedFrames() == injectedFrames;
 }
 
-Vector<RetainPtr<_WKFrameTreeNode>> getFrames(_WKFrameTreeNode *currentNode, std::optional<Vector<WebExtensionFrameIdentifier>> frameIDs)
+static NSArray *getFrames(_WKFrameTreeNode *currentNode, const WebExtensionScriptInjectionParameters& parameters)
 {
-    Vector<RetainPtr<_WKFrameTreeNode>> matchingFrames;
-    Vector<RetainPtr<_WKFrameTreeNode>> framesToCheck { currentNode };
+    NSMutableArray *matchingFrames = [[NSMutableArray alloc] init];
+    Deque<RetainPtr<_WKFrameTreeNode>> framesToCheck { currentNode };
+
+    auto& frameIDs = parameters.frameIdentifiers;
+    auto& documentIDs = parameters.documentIdentifiers;
 
     while (!framesToCheck.isEmpty()) {
-        _WKFrameTreeNode *frame = framesToCheck.first().get();
-        framesToCheck.removeFirst(frame);
+        auto *frame = framesToCheck.takeFirst().get();
 
         auto currentFrameID = toWebExtensionFrameIdentifier(frame.info);
-        if (!frameIDs || frameIDs->contains(currentFrameID))
-            matchingFrames.append(frame);
+        auto currentDocumentID = WTF::UUID::fromNSUUID(frame.info._documentIdentifier);
+
+        if ((!frameIDs && !documentIDs) || (frameIDs && frameIDs->contains(currentFrameID)) || (documentIDs && documentIDs->contains(currentDocumentID)))
+            [matchingFrames addObject:frame];
 
         for (_WKFrameTreeNode *child in frame.childFrames)
             framesToCheck.append(child);
     }
 
-    return matchingFrames;
+    return [matchingFrames copy];
 }
 
 std::optional<SourcePair> sourcePairForResource(const String& path, WebExtensionContext& extensionContext)
@@ -139,12 +143,12 @@ void executeScript(const SourcePairs& scriptPairs, WKWebView *webView, API::Cont
             return;
         }
 
-        WKContentWorld *world = executionWorld->wrapper();
-        Vector<RetainPtr<_WKFrameTreeNode>> frames = getFrames(mainFrame, parameters.frameIDs);
+        auto *world = executionWorld->wrapper();
+        auto *frames = getFrames(mainFrame, parameters);
 
-        for (auto& frame : frames) {
-            WKFrameInfo *frameInfo = frame.get().info;
-            NSURL *frameURL = frameInfo.request.URL;
+        for (_WKFrameTreeNode *frame in frames) {
+            auto *frameInfo = frame.info;
+            auto *frameURL = frameInfo.request.URL;
 
             if (!context->hasPermission(frameURL, tab.ptr())) {
                 injectionResults->results.append(toInjectionResultParameters(nil, frameInfo, @"Failed to execute script. Extension does not have access to this frame."));
@@ -214,8 +218,10 @@ WebExtensionScriptInjectionResultParameters toInjectionResultParameters(id resul
     if (resultOfExecution)
         parameters.resultJSON = encodeJSONString(resultOfExecution, JSONOptions::FragmentsAllowed);
 
-    if (info)
-        parameters.frameID = toWebExtensionFrameIdentifier(info);
+    if (info) {
+        parameters.frameIdentifier = toWebExtensionFrameIdentifier(info);
+        parameters.documentIdentifier = WTF::UUID::fromNSUUID(info._documentIdentifier);
+    }
 
     if (errorMessage)
         parameters.error = errorMessage;
