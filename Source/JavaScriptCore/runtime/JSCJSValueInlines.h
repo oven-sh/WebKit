@@ -73,7 +73,7 @@ inline uint32_t JSValue::toIndex(JSGlobalObject* globalObject, ASCIILiteral erro
     double d = toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, 0);
     if (d <= -1) {
-        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " cannot be negative"_s)));
+        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " cannot be negative: "_s, d)));
         return 0;
     }
 
@@ -81,7 +81,7 @@ inline uint32_t JSValue::toIndex(JSGlobalObject* globalObject, ASCIILiteral erro
         return asInt32();
 
     if (d > static_cast<double>(std::numeric_limits<unsigned>::max())) {
-        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " too large"_s)));
+        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " too large: "_s, d)));
         return 0;
     }
 
@@ -96,7 +96,7 @@ inline size_t JSValue::toTypedArrayIndex(JSGlobalObject* globalObject, ASCIILite
     double d = toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, 0);
     if (d <= -1) {
-        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " cannot be negative"_s)));
+        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " cannot be negative: "_s, d)));
         return 0;
     }
 
@@ -104,7 +104,7 @@ inline size_t JSValue::toTypedArrayIndex(JSGlobalObject* globalObject, ASCIILite
         return asInt32();
 
     if (d > static_cast<double>(MAX_ARRAY_BUFFER_SIZE)) {
-        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " too large"_s)));
+        throwException(globalObject, scope, createRangeError(globalObject, makeString(errorName, " too large: "_s, d)));
         return 0;
     }
 
