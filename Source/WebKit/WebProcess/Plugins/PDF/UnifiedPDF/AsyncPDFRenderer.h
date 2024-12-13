@@ -84,6 +84,13 @@ struct TileRenderData {
 
 WTF::TextStream& operator<<(WTF::TextStream&, const TileRenderData&);
 
+struct PagePreviewRequest {
+    PDFDocumentLayout::PageIndex pageIndex;
+    WebCore::FloatRect normalizedPageBounds;
+    float scale { 1.0f };
+    bool showDebugIndicators { false };
+};
+
 } // namespace WebKit
 
 namespace WTF {
@@ -147,7 +154,6 @@ public:
     void pdfContentChangedInRect(const WebCore::GraphicsLayer*, const WebCore::FloatRect& paintingRect, std::optional<PDFLayoutRow>);
 
     void generatePreviewImageForPage(PDFDocumentLayout::PageIndex, float scale);
-    RefPtr<WebCore::ImageBuffer> previewImageForPage(PDFDocumentLayout::PageIndex) const;
     void removePreviewForPage(PDFDocumentLayout::PageIndex);
 
     void setShowDebugBorders(bool);
@@ -198,17 +204,8 @@ private:
 
     void clearRequestsAndCachedTiles();
 
-    struct PagePreviewRequest {
-        PDFDocumentLayout::PageIndex pageIndex;
-        WebCore::FloatRect normalizedPageBounds;
-        float scale;
-    };
-
-    void paintPagePreviewOnWorkQueue(RetainPtr<PDFDocument>&&, const PagePreviewRequest&);
-    void didCompletePagePreviewRender(RefPtr<WebCore::ImageBuffer>&&, const PagePreviewRequest&);
+    void didCompletePagePreviewRender(RefPtr<WebCore::NativeImage>&&, const PagePreviewRequest&);
     void removePagePreviewsOutsideCoverageRect(const WebCore::FloatRect&, const std::optional<PDFLayoutRow>& = { });
-
-    void paintPDFPageIntoBuffer(RetainPtr<PDFDocument>&&, Ref<WebCore::ImageBuffer>, PDFDocumentLayout::PageIndex, const WebCore::FloatRect& pageBounds);
 
     Ref<ConcurrentWorkQueue> protectedPaintingWorkQueue() { return m_paintingWorkQueue; }
 
@@ -238,14 +235,18 @@ private:
 
     HashMap<WebCore::TileGridIdentifier, std::unique_ptr<RevalidationStateForGrid>> m_gridRevalidationState;
 
+    struct RenderedPagePreview {
+        RefPtr<WebCore::NativeImage> image;
+        float scale { 1.0f };
+    };
     using PDFPageIndexSet = HashSet<PDFDocumentLayout::PageIndex, IntHash<PDFDocumentLayout::PageIndex>, WTF::UnsignedWithZeroKeyHashTraits<PDFDocumentLayout::PageIndex>>;
     using PDFPageIndexToPreviewHash = HashMap<PDFDocumentLayout::PageIndex, PagePreviewRequest, IntHash<PDFDocumentLayout::PageIndex>, WTF::UnsignedWithZeroKeyHashTraits<PDFDocumentLayout::PageIndex>>;
-    using PDFPageIndexToBufferHash = HashMap<PDFDocumentLayout::PageIndex, RefPtr<WebCore::ImageBuffer>, IntHash<PDFDocumentLayout::PageIndex>, WTF::UnsignedWithZeroKeyHashTraits<PDFDocumentLayout::PageIndex>>;
+    using PDFPageIndexToBufferHash = HashMap<PDFDocumentLayout::PageIndex, RenderedPagePreview, IntHash<PDFDocumentLayout::PageIndex>, WTF::UnsignedWithZeroKeyHashTraits<PDFDocumentLayout::PageIndex>>;
 
     PDFPageIndexToPreviewHash m_enqueuedPagePreviews;
     PDFPageIndexToBufferHash m_pagePreviews;
 
-    std::atomic<bool> m_showDebugBorders { false };
+    bool m_showDebugBorders { false };
 };
 
 

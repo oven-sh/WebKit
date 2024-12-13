@@ -129,6 +129,29 @@ void AsyncPDFRenderer::setShowDebugBorders(bool showDebugBorders)
     m_showDebugBorders = showDebugBorders;
 }
 
+static RefPtr<NativeImage> renderPDFPagePreview(RetainPtr<PDFDocument>&& pdfDocument, const PagePreviewRequest& request)
+{
+    ASSERT(!isMainRunLoop());
+    RefPtr imageBuffer = ImageBuffer::create(request.normalizedPageBounds.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, request.scale, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
+    if (!imageBuffer)
+        return nullptr;
+    if (RetainPtr pdfPage = [pdfDocument pageAtIndex:request.pageIndex]) {
+        auto& context = imageBuffer->context();
+        auto destinationRect = request.normalizedPageBounds;
+        if (request.showDebugIndicators)
+            context.fillRect(destinationRect, Color::orange.colorWithAlphaByte(32));
+        // Translate the context to the bottom of pageBounds and flip, so that PDFKit operates
+        // from this page's drawing origin.
+        context.translate(destinationRect.minXMaxYCorner());
+        context.scale({ 1, -1 });
+        CGContextSetShouldSubpixelQuantizeFonts(context.platformContext(), false);
+        CGContextSetAllowsFontSubpixelPositioning(context.platformContext(), true);
+        LOG_WITH_STREAM(PDFAsyncRendering, stream << "renderPDFPagePreview - page:" << request.pageIndex);
+        [pdfPage drawWithBox:kPDFDisplayBoxCropBox toContext:context.platformContext()];
+    }
+    return ImageBuffer::sinkIntoNativeImage(WTFMove(imageBuffer));
+}
+
 void AsyncPDFRenderer::generatePreviewImageForPage(PDFDocumentLayout::PageIndex pageIndex, float scale)
 {
     RefPtr presentationController = m_presentationController.get();
@@ -147,11 +170,17 @@ void AsyncPDFRenderer::generatePreviewImageForPage(PDFDocumentLayout::PageIndex 
     auto pageBounds = presentationController->layoutBoundsForPageAtIndex(pageIndex);
     pageBounds.setLocation({ });
 
-    auto pagePreviewRequest = PagePreviewRequest { pageIndex, pageBounds, scale };
+    auto pagePreviewRequest = PagePreviewRequest { pageIndex, pageBounds, scale, m_showDebugBorders };
     m_enqueuedPagePreviews.set(pageIndex, pagePreviewRequest);
 
-    protectedPaintingWorkQueue()->dispatch([protectedThis = Ref { *this }, pdfDocument = WTFMove(pdfDocument), pagePreviewRequest]() mutable {
-        protectedThis->paintPagePreviewOnWorkQueue(WTFMove(pdfDocument), pagePreviewRequest);
+    protectedPaintingWorkQueue()->dispatch([weakThis = ThreadSafeWeakPtr { *this }, pdfDocument = WTFMove(pdfDocument), pagePreviewRequest]() mutable {
+        RefPtr image = renderPDFPagePreview(WTFMove(pdfDocument), pagePreviewRequest);
+        callOnMainRunLoop([weakThis = WTFMove(weakThis), image = WTFMove(image), pagePreviewRequest]() mutable {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis)
+                return;
+            protectedThis->didCompletePagePreviewRender(WTFMove(image), pagePreviewRequest);
+        });
     });
 }
 
@@ -163,30 +192,7 @@ void AsyncPDFRenderer::removePreviewForPage(PDFDocumentLayout::PageIndex pageInd
     m_pagePreviews.remove(pageIndex);
 }
 
-void AsyncPDFRenderer::paintPagePreviewOnWorkQueue(RetainPtr<PDFDocument>&& pdfDocument, const PagePreviewRequest& pagePreviewRequest)
-{
-    ASSERT(!isMainRunLoop());
-
-    auto pageImageBuffer = ImageBuffer::create(pagePreviewRequest.normalizedPageBounds.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, pagePreviewRequest.scale, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
-    if (!pageImageBuffer)
-        return;
-
-    paintPDFPageIntoBuffer(WTFMove(pdfDocument), *pageImageBuffer, pagePreviewRequest.pageIndex, pagePreviewRequest.normalizedPageBounds);
-
-    // This is really a no-op (but only works if there's just one ref).
-    auto bufferCopy = ImageBuffer::sinkIntoBufferForDifferentThread(WTFMove(pageImageBuffer));
-    ASSERT(bufferCopy);
-
-    callOnMainRunLoop([weakThis = ThreadSafeWeakPtr { *this }, imageBuffer = WTFMove(bufferCopy), pagePreviewRequest]() mutable {
-        RefPtr protectedThis = weakThis.get();
-        if (!protectedThis)
-            return;
-
-        protectedThis->didCompletePagePreviewRender(WTFMove(imageBuffer), pagePreviewRequest);
-    });
-}
-
-void AsyncPDFRenderer::didCompletePagePreviewRender(RefPtr<ImageBuffer>&& imageBuffer, const PagePreviewRequest& pagePreviewRequest)
+void AsyncPDFRenderer::didCompletePagePreviewRender(RefPtr<NativeImage>&& image, const PagePreviewRequest& pagePreviewRequest)
 {
     ASSERT(isMainRunLoop());
     RefPtr presentationController = m_presentationController.get();
@@ -197,13 +203,8 @@ void AsyncPDFRenderer::didCompletePagePreviewRender(RefPtr<ImageBuffer>&& imageB
     LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::didCompletePagePreviewRender for page " << pageIndex << " (have request " << m_enqueuedPagePreviews.contains(pageIndex) << ")");
 
     m_enqueuedPagePreviews.remove(pageIndex);
-    m_pagePreviews.set(pageIndex, WTFMove(imageBuffer));
+    m_pagePreviews.set(pageIndex, RenderedPagePreview { WTFMove(image), pagePreviewRequest.scale });
     presentationController->didGeneratePreviewForPage(pageIndex);
-}
-
-RefPtr<ImageBuffer> AsyncPDFRenderer::previewImageForPage(PDFDocumentLayout::PageIndex pageIndex) const
-{
-    return m_pagePreviews.get(pageIndex);
 }
 
 bool AsyncPDFRenderer::renderInfoIsValidForTile(TiledBacking& tiledBacking, const TileForGrid& tileInfo, const TileRenderInfo& renderInfo) const
@@ -507,7 +508,7 @@ TileRenderInfo AsyncPDFRenderer::renderInfoForTile(const TiledBacking& tiledBack
 
     auto pageCoverage = presentationController->pageCoverageAndScalesForContentsRect(paintingClipRect, layoutRow, tilingScaleFactor);
 
-    return TileRenderInfo { tileRect, renderRect, WTFMove(background), pageCoverage, m_showDebugBorders.load() };
+    return TileRenderInfo { tileRect, renderRect, WTFMove(background), pageCoverage, m_showDebugBorders };
 }
 
 static RefPtr<NativeImage> renderPDFTile(RetainPtr<PDFDocument>&& pdfDocument, const TileRenderInfo& renderInfo)
@@ -585,36 +586,6 @@ void AsyncPDFRenderer::serviceRequestQueue()
     }
 
     LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::serviceRequestQueue() - " << m_numConcurrentTileRenders << " renders in flight, " << m_requestWorkQueue.size() << " in queue");
-}
-
-void AsyncPDFRenderer::paintPDFPageIntoBuffer(RetainPtr<PDFDocument>&& pdfDocument, Ref<ImageBuffer> imageBuffer, PDFDocumentLayout::PageIndex pageIndex, const FloatRect& pageBounds)
-{
-    ASSERT(!isMainRunLoop());
-
-    auto& context = imageBuffer->context();
-
-    auto stateSaver = GraphicsContextStateSaver(context);
-
-    RetainPtr pdfPage = [pdfDocument pageAtIndex:pageIndex];
-    if (!pdfPage)
-        return;
-
-    auto pageStateSaver = GraphicsContextStateSaver(context);
-    auto destinationRect = pageBounds;
-
-    if (m_showDebugBorders.load())
-        context.fillRect(destinationRect, Color::orange.colorWithAlphaByte(32));
-
-    // Translate the context to the bottom of pageBounds and flip, so that PDFKit operates
-    // from this page's drawing origin.
-    context.translate(destinationRect.minXMaxYCorner());
-    context.scale({ 1, -1 });
-
-    CGContextSetShouldSubpixelQuantizeFonts(context.platformContext(), false);
-    CGContextSetAllowsFontSubpixelPositioning(context.platformContext(), true);
-
-    LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::paintPDFPageIntoBuffer - painting page " << pageIndex);
-    [pdfPage drawWithBox:kPDFDisplayBoxCropBox toContext:context.platformContext()];
 }
 
 // The image may be null if allocation on the decoding thread failed.
@@ -702,7 +673,7 @@ bool AsyncPDFRenderer::paintTilesForPage(const GraphicsLayer* layer, GraphicsCon
 
                 context.drawNativeImage(*image, destRect, sourceRect, { CompositeOperator::Copy });
 
-                if (m_showDebugBorders.load())
+                if (m_showDebugBorders)
                     context.fillRect(destRect, Color::blue.colorWithAlphaByte(64));
             }
         }
@@ -741,14 +712,17 @@ bool AsyncPDFRenderer::paintTilesForPage(const GraphicsLayer* layer, GraphicsCon
     return paintedATile;
 }
 
-void AsyncPDFRenderer::paintPagePreview(GraphicsContext& context, const FloatRect& clipRect, const FloatRect& pageBoundsInPaintingCoordinates, PDFDocumentLayout::PageIndex pageIndex)
+void AsyncPDFRenderer::paintPagePreview(GraphicsContext& context, const FloatRect&, const FloatRect& pageBoundsInPaintingCoordinates, PDFDocumentLayout::PageIndex pageIndex)
 {
-    RefPtr imageBuffer = previewImageForPage(pageIndex);
-
-    LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::paintPagePreview for page " << pageIndex  << " - buffer " << imageBuffer);
-
-    if (imageBuffer)
-        context.drawImageBuffer(*imageBuffer, pageBoundsInPaintingCoordinates, pageBoundsInPaintingCoordinates);
+    auto preview = m_pagePreviews.get(pageIndex);
+    LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::paintPagePreview for page " << pageIndex  << " - buffer " << !!preview.image);
+    if (!preview.image)
+        return;
+    Ref image = *preview.image;
+    auto imageRect = pageBoundsInPaintingCoordinates;
+    imageRect.scale(preview.scale);
+    // FIXME: Cannot use CompositeOperator::Copy because the scale is incorrect.
+    context.drawNativeImage(image, pageBoundsInPaintingCoordinates, imageRect);
 }
 
 void AsyncPDFRenderer::invalidateTilesForPaintingRect(float pageScaleFactor, const FloatRect& paintingRect)
