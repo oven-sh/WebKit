@@ -315,6 +315,9 @@ void PageClientImpl::didCommitLoadForMainFrame(const String& mimeType, bool useC
     [webView _hidePasswordView];
     [webView _setHasCustomContentView:useCustomContentProvider loadedMIMEType:mimeType];
     [contentView() _didCommitLoadForMainFrame];
+#if ENABLE(SCREEN_TIME)
+    updateScreenTimeWebpageControllerURL(webView.get());
+#endif // ENABLE(SCREEN_TIME)
 }
 
 void PageClientImpl::didChangeContentSize(const WebCore::IntSize&)

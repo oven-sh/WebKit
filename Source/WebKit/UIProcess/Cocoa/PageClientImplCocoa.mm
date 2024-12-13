@@ -39,6 +39,10 @@
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/WTFString.h>
 
+#if ENABLE(SCREEN_TIME)
+#import <pal/cocoa/ScreenTimeSoftLink.h>
+#endif
+
 namespace WebKit {
 
 PageClientImplCocoa::PageClientImplCocoa(WKWebView *webView)
@@ -319,6 +323,30 @@ void PageClientImplCocoa::removeTextAnimationForAnimationID(const WTF::UUID& uui
     [m_webView _removeTextAnimationForAnimationID:uuid];
 }
 
+#endif
+
+#if ENABLE(SCREEN_TIME)
+void PageClientImplCocoa::installScreenTimeWebpageController()
+{
+    [m_webView _installScreenTimeWebpageController];
+}
+
+void PageClientImplCocoa::updateScreenTimeWebpageControllerURL(WKWebView *webView)
+{
+    if (!PAL::isScreenTimeFrameworkAvailable())
+        return;
+
+    RetainPtr screenTimeWebpageController = [webView _screenTimeWebpageController];
+    if (!screenTimeWebpageController)
+        return;
+
+    NakedPtr<WebKit::WebPageProxy> pageProxy = [webView _page];
+    if (pageProxy && !pageProxy->preferences().screenTimeEnabled()) {
+        [webView _uninstallScreenTimeWebpageController];
+        return;
+    }
+    [screenTimeWebpageController setURL:[webView _mainFrameURL]];
+}
 #endif
 
 #if ENABLE(GAMEPAD)

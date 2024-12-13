@@ -92,10 +92,6 @@
 #import <WebCore/WebMediaSessionManager.h>
 #endif
 
-#if ENABLE(SCREEN_TIME)
-#import <pal/cocoa/ScreenTimeSoftLink.h>
-#endif
-
 #import <pal/cocoa/WritingToolsUISoftLink.h>
 
 static NSString * const kAXLoadCompleteNotification = @"AXLoadComplete";
@@ -287,30 +283,6 @@ void PageClientImpl::toolTipChanged(const String& oldToolTip, const String& newT
 {
     m_impl->toolTipChanged(oldToolTip, newToolTip);
 }
-
-#if ENABLE(SCREEN_TIME)
-void PageClientImpl::installScreenTimeWebpageController()
-{
-    [webView() _installScreenTimeWebpageController];
-}
-
-static void updateScreenTimeWebpageControllerURL(WKWebView *webView)
-{
-    if (!PAL::isScreenTimeFrameworkAvailable())
-        return;
-
-    RetainPtr screenTimeWebpageController = [webView _screenTimeWebpageController];
-    if (!screenTimeWebpageController)
-        return;
-
-    NakedPtr<WebKit::WebPageProxy> pageProxy = [webView _page];
-    if (pageProxy && !pageProxy->preferences().screenTimeEnabled()) {
-        [webView _uninstallScreenTimeWebpageController];
-        return;
-    }
-    [screenTimeWebpageController setURL:[webView _mainFrameURL]];
-}
-#endif
 
 void PageClientImpl::didCommitLoadForMainFrame(const String&, bool)
 {

@@ -128,6 +128,11 @@ public:
     void removeTextAnimationForAnimationID(const WTF::UUID&) final;
 #endif
 
+#if ENABLE(SCREEN_TIME)
+    void installScreenTimeWebpageController() final;
+    void updateScreenTimeWebpageControllerURL(WKWebView *);
+#endif
+
 #if ENABLE(GAMEPAD)
     void setGamepadsRecentlyAccessed(GamepadsRecentlyAccessed) final;
 #if PLATFORM(VISION)

@@ -325,10 +325,6 @@ private:
         
     void requestScrollToRect(const WebCore::FloatRect& targetRect, const WebCore::FloatPoint& origin) override;
 
-#if ENABLE(SCREEN_TIME)
-    void installScreenTimeWebpageController() override;
-#endif
-
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     void didEnterFullscreen() final { }
     void didExitFullscreen() final { }
