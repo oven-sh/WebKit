@@ -124,6 +124,7 @@ RefPtr<GraphicsLayer> PDFPresentationController::makePageContainerLayer(PDFDocum
     pageBackgroundLayer->setDrawsContent(true);
     pageBackgroundLayer->setAcceleratesDrawing(true);
     pageBackgroundLayer->setShouldUpdateRootRelativeScaleFactor(false);
+    pageBackgroundLayer->setAllowsTiling(false);
     pageBackgroundLayer->setNeedsDisplay(); // We only need to paint this layer once when page backgrounds change.
 
     // FIXME: <https://webkit.org/b/276981> Need to add a 1px black border with alpha 0.0586.

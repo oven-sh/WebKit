@@ -1069,7 +1069,7 @@ void PDFDiscretePresentationController::buildRows()
 
         row.leftPageContainerLayer = makePageContainerLayer(leftPageIndex);
         RefPtr pageBackgroundLayer = pageBackgroundLayerForPageContainerLayer(*row.protectedLeftPageContainerLayer());
-        m_layerIDToRowIndexMap.add(*pageBackgroundLayer->primaryLayerID(), rowIndex);
+        m_layerToRowIndexMap.add(pageBackgroundLayer.get(), rowIndex);
 
         if (row.pages.numPages() == 1) {
             ASSERT(!row.rightPageContainerLayer);
@@ -1079,7 +1079,7 @@ void PDFDiscretePresentationController::buildRows()
         auto rightPageIndex = layoutRow.pages[1];
         row.rightPageContainerLayer = makePageContainerLayer(rightPageIndex);
         RefPtr rightPageBackgroundLayer = pageBackgroundLayerForPageContainerLayer(*row.protectedRightPageContainerLayer());
-        m_layerIDToRowIndexMap.add(*rightPageBackgroundLayer->primaryLayerID(), rowIndex);
+        m_layerToRowIndexMap.add(rightPageBackgroundLayer.get(), rowIndex);
     };
 
     auto parentRowLayers = [](RowData& row) {
@@ -1112,7 +1112,7 @@ void PDFDiscretePresentationController::buildRows()
         // This is the call that enables async rendering.
         asyncRenderer()->startTrackingLayer(*rowContentsLayer);
 
-        m_layerIDToRowIndexMap.set(*rowContentsLayer->primaryLayerID(), rowIndex);
+        m_layerToRowIndexMap.set(rowContentsLayer.get(), rowIndex);
 
 #if ENABLE(UNIFIED_PDF_SELECTION_LAYER)
         RefPtr rowSelectionLayer = row.selectionLayer = createGraphicsLayer(makeString("Row selection "_s, rowIndex), GraphicsLayer::Type::TiledBacking);
@@ -1120,7 +1120,7 @@ void PDFDiscretePresentationController::buildRows()
         rowSelectionLayer->setDrawsContent(true);
         rowSelectionLayer->setAcceleratesDrawing(true);
         rowSelectionLayer->setBlendMode(BlendMode::Multiply);
-        m_layerIDToRowIndexMap.set(*rowSelectionLayer->primaryLayerID(), rowIndex);
+        m_layerToRowIndexMap.set(rowSelectionLayer.get(), rowIndex);
 #endif
 
         parentRowLayers(row);
@@ -1446,7 +1446,7 @@ float PDFDiscretePresentationController::deviceScaleFactor() const
 
 std::optional<float> PDFDiscretePresentationController::customContentsScale(const GraphicsLayer* layer) const
 {
-    auto* rowData = rowDataForLayerID(*layer->primaryLayerID());
+    auto* rowData = rowDataForLayer(layer);
     if (!rowData)
         return { };
 
@@ -1464,7 +1464,7 @@ bool PDFDiscretePresentationController::layerNeedsPlatformContext(const Graphics
     // We need a platform context if the plugin can not paint selections into its own layer,
     // since we would then have to vend a platform context that PDFKit can paint into.
     // However, this constraint only applies for the contents layer. No other layer needs to be WP-backed.
-    auto* rowData = rowDataForLayerID(*layer->primaryLayerID());
+    auto* rowData = rowDataForLayer(layer);
     if (!rowData)
         return false;
 
@@ -1503,9 +1503,9 @@ void PDFDiscretePresentationController::paintBackgroundLayerForRow(const Graphic
     }
 }
 
-auto PDFDiscretePresentationController::rowDataForLayerID(PlatformLayerIdentifier layerID) const -> const RowData*
+auto PDFDiscretePresentationController::rowDataForLayer(const GraphicsLayer* layer) const -> const RowData*
 {
-    auto rowIndex = m_layerIDToRowIndexMap.getOptional(layerID);
+    auto rowIndex = m_layerToRowIndexMap.getOptional(layer);
     if (!rowIndex)
         return nullptr;
 
@@ -1523,9 +1523,9 @@ std::optional<PDFLayoutRow> PDFDiscretePresentationController::visibleRow() cons
     return m_rows[m_visibleRowIndex].pages;
 }
 
-std::optional<PDFLayoutRow> PDFDiscretePresentationController::rowForLayerID(PlatformLayerIdentifier layerID) const
+std::optional<PDFLayoutRow> PDFDiscretePresentationController::rowForLayer(const GraphicsLayer* layer) const
 {
-    auto* rowData = rowDataForLayerID(layerID);
+    auto* rowData = rowDataForLayer(layer);
     if (rowData)
         return rowData->pages;
 
@@ -1534,7 +1534,7 @@ std::optional<PDFLayoutRow> PDFDiscretePresentationController::rowForLayerID(Pla
 
 void PDFDiscretePresentationController::paintContents(const GraphicsLayer* layer, GraphicsContext& context, const FloatRect& clipRect, OptionSet<GraphicsLayerPaintBehavior>)
 {
-    auto rowIndex = m_layerIDToRowIndexMap.getOptional(*layer->primaryLayerID());
+    auto rowIndex = m_layerToRowIndexMap.getOptional(layer);
     if (!rowIndex)
         return;
 

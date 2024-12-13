@@ -155,7 +155,7 @@ public:
 private:
     AsyncPDFRenderer(PDFPresentationController&);
 
-    WebCore::GraphicsLayer* layerForTileGrid(WebCore::TileGridIdentifier) const;
+    RefPtr<WebCore::GraphicsLayer> layerForTileGrid(WebCore::TileGridIdentifier) const;
 
     TileRenderInfo renderInfoForFullTile(const WebCore::TiledBacking&, const TileForGrid& tileInfo, const WebCore::FloatRect& tileRect) const;
     TileRenderInfo renderInfoForTile(const WebCore::TiledBacking&, const TileForGrid& tileInfo, const WebCore::FloatRect& tileRect, const WebCore::FloatRect& renderRect, RefPtr<WebCore::NativeImage>&& background) const;

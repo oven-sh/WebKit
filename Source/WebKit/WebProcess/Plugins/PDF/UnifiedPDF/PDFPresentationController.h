@@ -92,7 +92,7 @@ public:
     virtual void setNeedsRepaintInDocumentRect(OptionSet<RepaintRequirement>, const WebCore::FloatRect& rectInDocumentCoordinates, std::optional<PDFLayoutRow>) = 0;
 
     virtual std::optional<PDFLayoutRow> visibleRow() const { return { }; }
-    virtual std::optional<PDFLayoutRow> rowForLayerID(WebCore::PlatformLayerIdentifier) const { return { }; }
+    virtual std::optional<PDFLayoutRow> rowForLayer(const WebCore::GraphicsLayer*) const { return { }; }
 
     struct VisiblePDFPosition {
         PDFDocumentLayout::PageIndex pageIndex { 0 };

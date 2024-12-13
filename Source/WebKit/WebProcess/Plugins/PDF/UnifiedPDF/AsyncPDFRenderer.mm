@@ -84,10 +84,10 @@ void AsyncPDFRenderer::releaseMemory()
     if (!presentationController)
         return;
 
-    for (auto& [layerID, layer] : m_layerIDtoLayerMap) {
+    for (Ref layer : m_layerIDtoLayerMap.values()) {
         // Ideally we'd be able to make the ImageBuffer memory volatile which would eliminate the need for this callback: webkit.org/b/274878
         if (auto* tiledBacking = layer->tiledBacking())
-            removePagePreviewsOutsideCoverageRect(tiledBacking->coverageRect(), presentationController->rowForLayerID(layerID));
+            removePagePreviewsOutsideCoverageRect(tiledBacking->coverageRect(), presentationController->rowForLayer(layer.ptr()));
     }
 
     LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::releaseMemory - reduced page preview count from " << oldPagePreviewCount << " to " << m_pagePreviews.size());
@@ -95,28 +95,27 @@ void AsyncPDFRenderer::releaseMemory()
 
 void AsyncPDFRenderer::startTrackingLayer(GraphicsLayer& layer)
 {
-    Ref layerRef = layer;
-    if (auto* tiledBacking = layerRef->tiledBacking()) {
-        tiledBacking->setClient(this);
-        m_tileGridToLayerIDMap.set(tiledBacking->primaryGridIdentifier(), *layer.primaryLayerID());
-    }
-
-    m_layerIDtoLayerMap.set(*layer.primaryLayerID(), WTFMove(layerRef));
+    auto* tiledBacking = layer.tiledBacking();
+    if (!tiledBacking)
+        return;
+    tiledBacking->setClient(this);
+    m_tileGridToLayerIDMap.set(tiledBacking->primaryGridIdentifier(), *layer.primaryLayerID());
+    m_layerIDtoLayerMap.set(*layer.primaryLayerID(), layer);
 }
 
 void AsyncPDFRenderer::stopTrackingLayer(GraphicsLayer& layer)
 {
-    if (auto* tiledBacking = layer.tiledBacking()) {
-        auto gridIdentifier = tiledBacking->primaryGridIdentifier();
-        m_tileGridToLayerIDMap.remove(gridIdentifier);
-        m_gridRevalidationState.remove(gridIdentifier);
-        tiledBacking->setClient(nullptr);
-    }
-
+    auto* tiledBacking = layer.tiledBacking();
+    if (!tiledBacking)
+        return;
+    auto gridIdentifier = tiledBacking->primaryGridIdentifier();
+    m_tileGridToLayerIDMap.remove(gridIdentifier);
+    m_gridRevalidationState.remove(gridIdentifier);
+    tiledBacking->setClient(nullptr);
     m_layerIDtoLayerMap.remove(*layer.primaryLayerID());
 }
 
-GraphicsLayer* AsyncPDFRenderer::layerForTileGrid(TileGridIdentifier identifier) const
+RefPtr<GraphicsLayer> AsyncPDFRenderer::layerForTileGrid(TileGridIdentifier identifier) const
 {
     auto layerID = m_tileGridToLayerIDMap.getOptional(identifier);
     if (!layerID)
@@ -286,12 +285,9 @@ void AsyncPDFRenderer::coverageRectDidChange(TiledBacking& tiledBacking, const F
         return;
 
     std::optional<PDFLayoutRow> layoutRow;
-    RefPtr<GraphicsLayer> layer;
-    auto layerID = m_tileGridToLayerIDMap.getOptional(tiledBacking.primaryGridIdentifier());
-    if (layerID) {
-        layoutRow = presentationController->rowForLayerID(*layerID);
-        layer = m_layerIDtoLayerMap.get(*layerID);
-    }
+    RefPtr<GraphicsLayer> layer = layerForTileGrid(tiledBacking.primaryGridIdentifier());
+    if (layer)
+        layoutRow = presentationController->rowForLayer(layer.get());
 
     auto pageCoverage = presentationController->pageCoverageForContentsRect(coverageRect, layoutRow);
 
@@ -506,9 +502,8 @@ TileRenderInfo AsyncPDFRenderer::renderInfoForTile(const TiledBacking& tiledBack
     auto paintingClipRect = convertTileRectToPaintingCoords(tileRect, tilingScaleFactor);
 
     std::optional<PDFLayoutRow> layoutRow;
-    auto layerID = m_tileGridToLayerIDMap.getOptional(tileInfo.gridIdentifier);
-    if (layerID)
-        layoutRow = presentationController->rowForLayerID(*layerID);
+    if (RefPtr layer = layerForTileGrid(tileInfo.gridIdentifier))
+        layoutRow = presentationController->rowForLayer(layer.get());
 
     auto pageCoverage = presentationController->pageCoverageAndScalesForContentsRect(paintingClipRect, layoutRow, tilingScaleFactor);
 

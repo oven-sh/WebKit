@@ -85,7 +85,7 @@ private:
     WebCore::GraphicsLayerClient& graphicsLayerClient() override { return *this; }
 
     std::optional<PDFLayoutRow> visibleRow() const override;
-    std::optional<PDFLayoutRow> rowForLayerID(WebCore::PlatformLayerIdentifier) const override;
+    std::optional<PDFLayoutRow> rowForLayer(const WebCore::GraphicsLayer*) const override;
 
     WebCore::FloatSize contentsOffsetForPage(PDFDocumentLayout::PageIndex) const;
 
@@ -216,7 +216,7 @@ private:
 #endif
     };
 
-    const RowData* rowDataForLayerID(WebCore::PlatformLayerIdentifier) const;
+    const RowData* rowDataForLayer(const WebCore::GraphicsLayer*) const;
     WebCore::FloatPoint positionForRowContainerLayer(const PDFLayoutRow&) const;
     WebCore::FloatSize rowContainerSize(const PDFLayoutRow&) const;
 
@@ -225,7 +225,7 @@ private:
     RefPtr<WebCore::GraphicsLayer> m_rowsContainerLayer;
     Vector<RowData> m_rows;
 
-    HashMap<WebCore::PlatformLayerIdentifier, unsigned> m_layerIDToRowIndexMap;
+    HashMap<const WebCore::GraphicsLayer*, unsigned> m_layerToRowIndexMap;
     std::optional<PDFDocumentLayout::DisplayMode> m_displayModeAtLastLayerSetup;
 
     unsigned m_visibleRowIndex { 0 };
