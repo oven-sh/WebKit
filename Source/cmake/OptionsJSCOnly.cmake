@@ -73,7 +73,7 @@ set(DEFAULT_EVENT_LOOP_TYPE "Generic")
 
 set(EVENT_LOOP_TYPE ${DEFAULT_EVENT_LOOP_TYPE} CACHE STRING "Implementation of event loop to be used in JavaScriptCore (one of ${ALL_EVENT_LOOP_TYPES})")
 
-if (USE_BUN_JSC_ADDITIONS)
+if (USE_BUN_EVENT_LOOP)
     set(EVENT_LOOP_TYPE "Bun")
 endif ()
 

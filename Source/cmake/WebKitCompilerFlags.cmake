@@ -229,7 +229,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
     # used may not support input from a pipe, but in practice the toolchains we support all do.
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-pipe)
 
-    if (USE_BUN_JSC_ADDITIONS)
+    if (USE_BUN_EVENT_LOOP)
         if (APPLE)
             WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wl,-U,_WTFTimer__create
                                                 -Wl,-U,_WTFTimer__update
