@@ -718,8 +718,8 @@ void NetworkStorageSession::registerCookieChangeListenersIfNecessary()
         auto cookies = nsCookiesToCookieVector(addedCookies, [](NSHTTPCookie *cookie) { return !cookie.HTTPOnly; });
         if (cookies.isEmpty())
             return;
-        for (auto& observer : it->value)
-            observer.cookiesAdded(host, cookies);
+        for (Ref observer : it->value)
+            observer->cookiesAdded(host, cookies);
     }).get() onQueue:dispatch_get_main_queue()];
 
     [nsCookieStorage() _setCookiesRemovedHandler:makeBlockPtr([this, weakThis = WeakPtr { *this }](NSArray<NSHTTPCookie *> *removedCookies, NSString *domainForRemovedCookies, bool removeAllCookies) {
@@ -727,8 +727,8 @@ void NetworkStorageSession::registerCookieChangeListenersIfNecessary()
             return;
         if (removeAllCookies) {
             for (auto& observers : m_cookieChangeObservers.values()) {
-                for (auto& observer : observers)
-                    observer.allCookiesDeleted();
+                for (Ref observer : observers)
+                    observer->allCookiesDeleted();
             }
             return;
         }
@@ -741,8 +741,8 @@ void NetworkStorageSession::registerCookieChangeListenersIfNecessary()
         auto cookies = nsCookiesToCookieVector(removedCookies, [](NSHTTPCookie *cookie) { return !cookie.HTTPOnly; });
         if (cookies.isEmpty())
             return;
-        for (auto& observer : it->value)
-            observer.cookiesDeleted(host, cookies);
+        for (Ref observer : it->value)
+            observer->cookiesDeleted(host, cookies);
     }).get() onQueue:dispatch_get_main_queue()];
 }
 
