@@ -47,6 +47,7 @@ class DatagramSource;
 class DeferredPromise;
 class JSDOMGlobalObject;
 class ReadableStream;
+class ReadableStreamSource;
 class ScriptExecutionContext;
 class SocketProvider;
 class WebTransportBidirectionalStreamSource;
@@ -56,6 +57,7 @@ class WebTransportReceiveStreamSource;
 class WebTransportSession;
 class WritableStream;
 
+struct WebTransportBidirectionalStreamConstructionParameters;
 struct WebTransportCloseInfo;
 struct WebTransportSendStreamOptions;
 struct WebTransportHash;
@@ -94,8 +96,8 @@ private:
     bool virtualHasPendingActivity() const final;
 
     void receiveDatagram(std::span<const uint8_t>) final;
-    void receiveIncomingUnidirectionalStream() final;
-    void receiveBidirectionalStream() final;
+    void receiveIncomingUnidirectionalStream(Ref<ReadableStreamSource>&&) final;
+    void receiveBidirectionalStream(WebTransportBidirectionalStreamConstructionParameters&&) final;
 
     ListHashSet<Ref<WritableStream>> m_sendStreams;
     ListHashSet<Ref<ReadableStream>> m_receiveStreams;

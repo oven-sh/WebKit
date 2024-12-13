@@ -116,14 +116,14 @@ void NetworkTransportSession::streamReceiveBytes(WebTransportStreamIdentifier id
     send(Messages::WebTransportSession::StreamReceiveBytes(identifier, bytes, withFin));
 }
 
-void NetworkTransportSession::receiveIncomingUnidirectionalStream()
+void NetworkTransportSession::receiveIncomingUnidirectionalStream(WebTransportStreamIdentifier identifier)
 {
-    // FIXME: Implement and send Messages::WebTransportSession::ReceiveIncomingUnidirectionalStream.
+    send(Messages::WebTransportSession::ReceiveIncomingUnidirectionalStream(identifier));
 }
 
-void NetworkTransportSession::receiveBidirectionalStream()
+void NetworkTransportSession::receiveBidirectionalStream(WebTransportStreamIdentifier identifier)
 {
-    // FIXME: Implement and send Messages::WebTransportSession::ReceiveBidirectionalStream.
+    send(Messages::WebTransportSession::ReceiveBidirectionalStream(identifier));
 }
 
 std::optional<SharedPreferencesForWebProcess> NetworkTransportSession::sharedPreferencesForWebProcess() const

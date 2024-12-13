@@ -25,27 +25,27 @@
 
 #pragma once
 
+#if HAVE(WEB_TRANSPORT)
+
 #import "CoroutineUtilities.h"
 #import "NetworkConnection.h"
 #import <Network/Network.h>
-#import <wtf/RetainPtr.h>
-#import <wtf/Vector.h>
 
 namespace TestWebKitAPI {
 
-#if HAVE(WEB_TRANSPORT)
-
 class WebTransportServer {
 public:
-    WebTransportServer(Function<Task(Connection)>&&);
+    WebTransportServer(Function<Task(ConnectionGroup)>&&);
     ~WebTransportServer();
 
     uint16_t port() const;
 private:
     struct Data;
     Ref<Data> m_data;
+
+    void setupConnection(nw_connection_t);
 };
 
-#endif // HAVE(WEB_TRANSPORT)
-
 } // namespace TestWebKitAPI
+
+#endif // HAVE(WEB_TRANSPORT)

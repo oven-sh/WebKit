@@ -89,18 +89,33 @@ void WebTransportSession::receiveDatagram(std::span<const uint8_t> datagram)
         ASSERT_NOT_REACHED();
 }
 
-void WebTransportSession::receiveIncomingUnidirectionalStream(WebTransportStreamIdentifier)
+void WebTransportSession::receiveIncomingUnidirectionalStream(WebTransportStreamIdentifier identifier)
 {
     ASSERT(RunLoop::isMain());
-    if (auto strongClient = m_client.get())
-        strongClient->receiveIncomingUnidirectionalStream();
+    if (auto strongClient = m_client.get()) {
+        auto readStreamSource = WebTransportReceiveStreamSource::create(*this, identifier);
+        ASSERT(!m_readStreamSources.get(identifier));
+        m_readStreamSources.set(identifier, readStreamSource);
+        strongClient->receiveIncomingUnidirectionalStream(WTFMove(readStreamSource));
+    } else
+        ASSERT_NOT_REACHED();
 }
 
-void WebTransportSession::receiveBidirectionalStream(WebTransportStreamIdentifier)
+void WebTransportSession::receiveBidirectionalStream(WebTransportStreamIdentifier identifier)
 {
     ASSERT(RunLoop::isMain());
-    if (auto strongClient = m_client.get())
-        strongClient->receiveBidirectionalStream();
+    if (auto strongClient = m_client.get()) {
+        auto readStreamSource = WebTransportReceiveStreamSource::create(*this, identifier);
+        ASSERT(!m_readStreamSources.get(identifier));
+        m_readStreamSources.set(identifier, readStreamSource);
+
+        WebCore::WebTransportBidirectionalStreamConstructionParameters parameters {
+            WTFMove(readStreamSource),
+            WebTransportSendStreamSink::create(*this, identifier)
+        };
+        strongClient->receiveBidirectionalStream(WTFMove(parameters));
+    } else
+        ASSERT_NOT_REACHED();
 }
 
 void WebTransportSession::streamReceiveBytes(WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin)
@@ -135,7 +150,7 @@ void WebTransportSession::createBidirectionalStream(CompletionHandler<void(std::
         if (!identifier || !weakThis)
             return completionHandler(std::nullopt);
 
-        auto readStreamSource = WebTransportReceiveStreamSource::create();
+        auto readStreamSource = WebTransportReceiveStreamSource::create(*this, *identifier);
         ASSERT(!m_readStreamSources.get(*identifier));
         m_readStreamSources.set(*identifier, readStreamSource);
 

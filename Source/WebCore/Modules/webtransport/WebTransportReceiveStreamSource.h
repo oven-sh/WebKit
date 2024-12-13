@@ -29,10 +29,12 @@
 
 namespace WebCore {
 
+class WebTransportReceiveStream;
+
 class WebTransportReceiveStreamSource : public RefCountedReadableStreamSource {
 public:
     static Ref<WebTransportReceiveStreamSource> create() { return adoptRef(*new WebTransportReceiveStreamSource()); }
-    void receiveIncomingStream();
+    void receiveIncomingStream(JSC::JSGlobalObject&, Ref<WebTransportReceiveStream>&&);
 private:
     void setActive() final { }
     void setInactive() final { }

@@ -29,12 +29,21 @@
 
 namespace WebKit {
 
+class WebTransportSession;
+
+struct WebTransportStreamIdentifierType;
+using WebTransportStreamIdentifier = ObjectIdentifier<WebTransportStreamIdentifierType>;
+
 class WebTransportReceiveStreamSource : public WebCore::RefCountedReadableStreamSource {
 public:
-    static Ref<WebTransportReceiveStreamSource> create() { return adoptRef(*new WebTransportReceiveStreamSource()); }
+    static Ref<WebTransportReceiveStreamSource> create(WebTransportSession& session, WebTransportStreamIdentifier identifier) { return adoptRef(*new WebTransportReceiveStreamSource(session, identifier)); }
+
+    ~WebTransportReceiveStreamSource();
 
     void receiveBytes(std::span<const uint8_t>, bool withFin);
 private:
+    WebTransportReceiveStreamSource(WebTransportSession&, WebTransportStreamIdentifier);
+
     void setActive() final { }
     void setInactive() final { }
     void doStart() final { }
@@ -42,6 +51,9 @@ private:
     void doCancel();
 
     bool m_isCancelled { false };
+
+    WeakPtr<WebTransportSession> m_session;
+    const WebTransportStreamIdentifier m_identifier;
 };
 
 }

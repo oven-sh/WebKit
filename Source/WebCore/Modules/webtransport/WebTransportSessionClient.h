@@ -29,12 +29,15 @@
 
 namespace WebCore {
 
+class ReadableStreamSource;
+struct WebTransportBidirectionalStreamConstructionParameters;
+
 class WebTransportSessionClient : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebTransportSessionClient> {
 public:
     virtual ~WebTransportSessionClient() { }
     virtual void receiveDatagram(std::span<const uint8_t>) = 0;
-    virtual void receiveIncomingUnidirectionalStream() = 0;
-    virtual void receiveBidirectionalStream() = 0;
+    virtual void receiveIncomingUnidirectionalStream(Ref<ReadableStreamSource>&&) = 0;
+    virtual void receiveBidirectionalStream(WebTransportBidirectionalStreamConstructionParameters&&) = 0;
 };
 
 }

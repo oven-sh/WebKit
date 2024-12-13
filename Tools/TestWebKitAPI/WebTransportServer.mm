@@ -36,19 +36,18 @@
 namespace TestWebKitAPI {
 
 struct WebTransportServer::Data : public RefCounted<WebTransportServer::Data> {
-    static Ref<Data> create(Function<Task(Connection)>&& connectionHandler) { return adoptRef(*new Data(WTFMove(connectionHandler))); }
-    Data(Function<Task(Connection)>&& connectionHandler)
-        : connectionHandler(WTFMove(connectionHandler)) { }
+    static Ref<Data> create(Function<Task(ConnectionGroup)>&& connectionGroupHandler) { return adoptRef(*new Data(WTFMove(connectionGroupHandler))); }
+    Data(Function<Task(ConnectionGroup)>&& connectionGroupHandler)
+        : connectionGroupHandler(WTFMove(connectionGroupHandler)) { }
 
-    Function<Task(Connection)> connectionHandler;
+    Function<Task(ConnectionGroup)> connectionGroupHandler;
     RetainPtr<nw_listener_t> listener;
-    RetainPtr<nw_connection_group_t> connectionGroup;
-    Vector<RetainPtr<nw_connection_t>> connections;
+    Vector<ConnectionGroup> connectionGroups;
     Vector<CoroutineHandle<Task::promise_type>> coroutineHandles;
 };
 
-WebTransportServer::WebTransportServer(Function<Task(Connection)>&& connectionHandler)
-    : m_data(Data::create(WTFMove(connectionHandler)))
+WebTransportServer::WebTransportServer(Function<Task(ConnectionGroup)>&& connectionGroupHandler)
+    : m_data(Data::create(WTFMove(connectionGroupHandler)))
 {
     auto configureWebTransport = [](nw_protocol_options_t options) {
         nw_webtransport_options_set_is_datagram(options, true);
@@ -72,36 +71,22 @@ WebTransportServer::WebTransportServer(Function<Task(Connection)>&& connectionHa
     ASSERT(parameters);
     nw_parameters_set_server_mode(parameters.get(), true);
 
-    RetainPtr webtransportOptions = adoptNS(nw_webtransport_create_options());
-    ASSERT(webtransportOptions);
-    nw_webtransport_options_set_is_unidirectional(webtransportOptions.get(), false);
-    nw_webtransport_options_set_is_datagram(webtransportOptions.get(), true);
-
     RetainPtr listener = adoptNS(nw_listener_create(parameters.get()));
 
-    nw_listener_set_new_connection_group_handler(listener.get(), [data = m_data, webtransportOptions = webtransportOptions] (nw_connection_group_t connectionGroup) {
-        ASSERT(!data->connectionGroup);
-        data->connectionGroup = connectionGroup;
-
-        nw_connection_group_set_state_changed_handler(connectionGroup, [data = data, webtransportOptions = webtransportOptions](nw_connection_group_state_t state, nw_error_t error) {
-            if (state == nw_connection_group_state_ready) {
-                // We need to peel off the datagram connection.
-                nw_connection_t datagramConnection = nw_connection_group_extract_connection(data->connectionGroup.get(), nil, webtransportOptions.get());
-                data->connections.append(datagramConnection);
-                data->coroutineHandles.append(data->connectionHandler(datagramConnection).handle);
-                nw_connection_set_queue(datagramConnection, dispatch_get_main_queue());
-                nw_connection_start(datagramConnection);
-            }
+    nw_listener_set_new_connection_group_handler(listener.get(), [data = m_data] (nw_connection_group_t incomingConnectionGroup) {
+        ConnectionGroup connectionGroup = ConnectionGroup(incomingConnectionGroup);
+        data->connectionGroups.append(connectionGroup);
+        nw_connection_group_set_state_changed_handler(incomingConnectionGroup, [connectionGroup, data] (nw_connection_group_state_t state, nw_error_t error) mutable {
+            if (state != nw_connection_group_state_ready)
+                return;
+            data->coroutineHandles.append(data->connectionGroupHandler(connectionGroup).handle);
         });
 
-        nw_connection_group_set_new_connection_handler(connectionGroup, [data = data] (nw_connection_t connection) {
-            data->connections.append(connection);
-            data->coroutineHandles.append(data->connectionHandler(connection).handle);
-            nw_connection_set_queue(connection, dispatch_get_main_queue());
-            nw_connection_start(connection);
+        nw_connection_group_set_new_connection_handler(incomingConnectionGroup, [connectionGroup] (nw_connection_t incomingConnection) mutable {
+            connectionGroup.receiveIncomingConnection(incomingConnection);
         });
-        nw_connection_group_set_queue(connectionGroup, dispatch_get_main_queue());
-        nw_connection_group_start(connectionGroup);
+        nw_connection_group_set_queue(incomingConnectionGroup, dispatch_get_main_queue());
+        nw_connection_group_start(incomingConnectionGroup);
     });
 
     nw_listener_set_queue(listener.get(), dispatch_get_main_queue());
@@ -124,7 +109,6 @@ uint16_t WebTransportServer::port() const
 {
     return nw_listener_get_port(m_data->listener.get());
 }
-
 } // namespace TestWebKitAPI
 
 #endif // HAVE(WEB_TRANSPORT)

@@ -154,14 +154,51 @@ void WebTransport::receiveDatagram(std::span<const uint8_t> datagram)
     m_datagramSource->receiveDatagram(datagram);
 }
 
-void WebTransport::receiveIncomingUnidirectionalStream()
+void WebTransport::receiveIncomingUnidirectionalStream(Ref<ReadableStreamSource>&& incomingStream)
 {
-    m_receiveStreamSource->receiveIncomingStream();
+    auto* globalObject = scriptExecutionContext()->globalObject();
+    if (!globalObject)
+        return;
+    auto& jsDOMGlobalObject = *JSC::jsCast<JSDOMGlobalObject*>(globalObject);
+    auto stream = [&] {
+        Locker<JSC::JSLock> locker(jsDOMGlobalObject.vm().apiLock());
+        return WebTransportReceiveStream::create(jsDOMGlobalObject, WTFMove(incomingStream));
+    } ();
+    if (stream.hasException())
+        return;
+    m_receiveStreamSource->receiveIncomingStream(jsDOMGlobalObject, stream.releaseReturnValue());
 }
 
-void WebTransport::receiveBidirectionalStream()
+static ExceptionOr<Ref<WebTransportBidirectionalStream>> createBidirectionalStream(JSDOMGlobalObject& globalObject, WebTransportBidirectionalStreamConstructionParameters&& parameters)
 {
-    m_bidirectionalStreamSource->receiveIncomingStream();
+    auto sendStream = [&] {
+        Locker<JSC::JSLock> locker(globalObject.vm().apiLock());
+        return WebTransportSendStream::create(globalObject, WTFMove(parameters.sink));
+    } ();
+    if (sendStream.hasException())
+        return sendStream.releaseException();
+    auto receiveStream = [&] {
+        Locker<JSC::JSLock> locker(globalObject.vm().apiLock());
+        return WebTransportReceiveStream::create(globalObject, WTFMove(parameters.source));
+    } ();
+    if (receiveStream.hasException())
+        return receiveStream.releaseException();
+    return WebTransportBidirectionalStream::create(receiveStream.releaseReturnValue(), sendStream.releaseReturnValue());
+}
+
+void WebTransport::receiveBidirectionalStream(WebTransportBidirectionalStreamConstructionParameters&& parameters)
+{
+    RefPtr context = scriptExecutionContext();
+    if (!context)
+        return;
+    auto* globalObject = context->globalObject();
+    if (!globalObject)
+        return;
+    auto& jsDOMGlobalObject = *JSC::jsCast<JSDOMGlobalObject*>(globalObject);
+    auto stream = WebCore::createBidirectionalStream(jsDOMGlobalObject, WTFMove(parameters));
+    if (stream.hasException())
+        return;
+    m_bidirectionalStreamSource->receiveIncomingStream(jsDOMGlobalObject, stream.releaseReturnValue());
 }
 
 void WebTransport::getStats(Ref<DeferredPromise>&& promise)
@@ -272,20 +309,10 @@ void WebTransport::createBidirectionalStream(ScriptExecutionContext& context, We
         if (!globalObject)
             return promise->reject(nullptr);
         auto& jsDOMGlobalObject = *JSC::jsCast<JSDOMGlobalObject*>(globalObject);
-        auto sendStream = [&] {
-            Locker<JSC::JSLock> locker(jsDOMGlobalObject.vm().apiLock());
-            return WebTransportSendStream::create(jsDOMGlobalObject, WTFMove(parameters->sink));
-        } ();
-        if (sendStream.hasException())
-            return promise->reject(sendStream.releaseException());
-        auto receiveStream = [&] {
-            Locker<JSC::JSLock> locker(jsDOMGlobalObject.vm().apiLock());
-            return WebTransportReceiveStream::create(jsDOMGlobalObject, WTFMove(parameters->source));
-        } ();
-        if (receiveStream.hasException())
-            return promise->reject(receiveStream.releaseException());
-        auto stream = WebTransportBidirectionalStream::create(receiveStream.releaseReturnValue(), sendStream.releaseReturnValue());
-        promise->resolveWithNewlyCreated<IDLInterface<WebTransportBidirectionalStream>>(WTFMove(stream));
+        auto stream = WebCore::createBidirectionalStream(jsDOMGlobalObject, WTFMove(*parameters));
+        if (stream.hasException())
+            return promise->reject(stream.releaseException());
+        promise->resolveWithNewlyCreated<IDLInterface<WebTransportBidirectionalStream>>(stream.releaseReturnValue());
     });
 }
 

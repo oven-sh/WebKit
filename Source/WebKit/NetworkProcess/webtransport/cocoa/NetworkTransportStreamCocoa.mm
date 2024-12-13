@@ -57,7 +57,14 @@ void NetworkTransportStream::sendBytes(std::span<const uint8_t> data, bool)
 void NetworkTransportStream::receiveLoop()
 {
     ASSERT(m_streamType != NetworkTransportStreamType::OutgoingUnidirectional);
-    nw_connection_receive(m_connection.get(), 1, std::numeric_limits<uint32_t>::max(), makeBlockPtr([weakThis = WeakPtr { *this }] (dispatch_data_t content, nw_content_context_t, bool withFin, nw_error_t error) {
+    nw_connection_receive(m_connection.get(), 0, std::numeric_limits<uint32_t>::max(), makeBlockPtr([weakThis = WeakPtr { *this }] (dispatch_data_t content, nw_content_context_t, bool withFin, nw_error_t error) {
+        RefPtr strongThis = weakThis.get();
+        if (!strongThis)
+            return;
+        if (error)
+            return; // FIXME: Pipe this error to JS.
+        if (!content && withFin)
+            return;
 
         // FIXME: Not only is this an unnecessary string copy, but it's also something that should probably be in WTF or FragmentedSharedBuffer.
         auto vectorFromData = [](dispatch_data_t content) {
@@ -70,11 +77,6 @@ void NetworkTransportStream::receiveLoop()
             return request;
         };
 
-        RefPtr strongThis = weakThis.get();
-        if (!strongThis)
-            return;
-        if (error)
-            return; // FIXME: Pipe this error to JS.
         if (RefPtr session = strongThis->m_session.get())
             session->streamReceiveBytes(strongThis->m_identifier, vectorFromData(content).span(), withFin);
         if (!withFin)

@@ -49,7 +49,7 @@ private:
     void error(String&&) final { }
 
     WeakPtr<WebTransportSession> m_session;
-    WebTransportStreamIdentifier m_identifier;
+    const WebTransportStreamIdentifier m_identifier;
 };
 
 }

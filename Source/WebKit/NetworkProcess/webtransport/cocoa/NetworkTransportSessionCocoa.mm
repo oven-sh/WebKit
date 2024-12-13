@@ -221,8 +221,56 @@ void NetworkTransportSession::setupConnectionHandler()
 {
 #if HAVE(WEB_TRANSPORT)
     nw_connection_group_set_new_connection_handler(m_connectionGroup.get(), makeBlockPtr([weakThis = WeakPtr { *this }] (nw_connection_t inboundConnection) mutable {
-        ASSERT_UNUSED(weakThis, weakThis);
-        // FIXME: Implement incoming connection handler
+        ASSERT(inboundConnection);
+        RefPtr strongThis = weakThis.get();
+        if (!strongThis)
+            return;
+        nw_connection_set_state_changed_handler(inboundConnection, makeBlockPtr([
+            weakThis = WeakPtr { *strongThis },
+            inboundConnection = RetainPtr { inboundConnection }
+        ] (nw_connection_state_t state, nw_error_t error) mutable {
+            if (!inboundConnection)
+                return;
+            RefPtr strongThis = weakThis.get();
+            if (!strongThis) {
+                inboundConnection = nullptr;
+                return;
+            }
+            if (error) {
+                inboundConnection = nullptr;
+                return; // FIXME: Pipe this error to JS.
+            }
+            switch (state) {
+            case nw_connection_state_invalid:
+                inboundConnection = nullptr;
+                return;
+            case nw_connection_state_waiting:
+            case nw_connection_state_preparing:
+                return; // We will get another callback with another state change.
+            case nw_connection_state_ready:
+                break;
+            case nw_connection_state_failed:
+            case nw_connection_state_cancelled:
+                inboundConnection = nullptr;
+                return;
+            }
+            RetainPtr metadata = adoptNS(nw_connection_copy_protocol_metadata(inboundConnection.get(), nw_protocol_copy_webtransport_definition()));
+            if (nw_webtransport_metadata_get_is_unidirectional(metadata.get())) {
+                Ref stream = NetworkTransportStream::create(*strongThis.get(), std::exchange(inboundConnection, nullptr).get(), NetworkTransportStreamType::IncomingUnidirectional);
+                auto identifier = stream->identifier();
+                ASSERT(!strongThis->m_streams.contains(identifier));
+                strongThis->m_streams.set(identifier, stream);
+                strongThis->receiveIncomingUnidirectionalStream(identifier);
+                return;
+            }
+            Ref stream = NetworkTransportStream::create(*strongThis.get(), std::exchange(inboundConnection, nullptr).get(), NetworkTransportStreamType::Bidirectional);
+            auto identifier = stream->identifier();
+            ASSERT(!strongThis->m_streams.contains(identifier));
+            strongThis->m_streams.set(identifier, stream);
+            strongThis->receiveBidirectionalStream(identifier);
+        }).get());
+        nw_connection_set_queue(inboundConnection, dispatch_get_main_queue());
+        nw_connection_start(inboundConnection);
     }).get());
 #endif // HAVE(WEB_TRANSPORT)
 }

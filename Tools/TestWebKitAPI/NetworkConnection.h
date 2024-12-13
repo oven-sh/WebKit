@@ -34,6 +34,10 @@ namespace TestWebKitAPI {
 class ReceiveHTTPRequestOperation;
 class ReceiveBytesOperation;
 class SendOperation;
+class ConnectionGroup;
+#if HAVE(WEB_TRANSPORT)
+class ReceiveIncomingConnectionOperation;
+#endif
 
 class Connection {
 public:
@@ -55,11 +59,48 @@ public:
 private:
     friend class HTTPServer;
     friend class WebTransportServer;
+    friend class ConnectionGroup;
     Connection(nw_connection_t connection)
         : m_connection(connection) { }
 
     RetainPtr<nw_connection_t> m_connection;
 };
+
+#if HAVE(WEB_TRANSPORT)
+
+class ConnectionGroup {
+public:
+    ~ConnectionGroup();
+    ConnectionGroup(const ConnectionGroup&);
+
+    enum class ConnectionType : uint8_t { Datagram, Bidirectional, Unidirectional };
+    Connection createWebTransportConnection(ConnectionType) const;
+    ReceiveIncomingConnectionOperation receiveIncomingConnection() const;
+
+private:
+    friend class WebTransportServer;
+    friend class ReceiveIncomingConnectionOperation;
+    ConnectionGroup(nw_connection_group_t);
+    void receiveIncomingConnection(Connection);
+    void receiveIncomingConnection(CompletionHandler<void(Connection)>&&);
+
+    struct Data;
+    Ref<Data> m_data;
+};
+
+class ReceiveIncomingConnectionOperation {
+public:
+    ReceiveIncomingConnectionOperation(const ConnectionGroup& group)
+        : m_group(group) { }
+    bool await_ready() { return false; }
+    void await_suspend(std::coroutine_handle<>);
+    Connection await_resume() { return WTFMove(*m_result); }
+private:
+    ConnectionGroup m_group;
+    std::optional<Connection> m_result;
+};
+
+#endif
 
 class ReceiveHTTPRequestOperation {
 public:

@@ -30,6 +30,18 @@
 
 namespace WebKit {
 
+WebTransportReceiveStreamSource::WebTransportReceiveStreamSource(WebTransportSession& session, WebTransportStreamIdentifier identifier)
+    : m_session(session)
+    , m_identifier(identifier)
+{
+    ASSERT(RunLoop::isMain());
+}
+
+WebTransportReceiveStreamSource::~WebTransportReceiveStreamSource()
+{
+    ASSERT(RunLoop::isMain());
+}
+
 void WebTransportReceiveStreamSource::receiveBytes(std::span<const uint8_t> bytes, bool)
 {
     ASSERT(RunLoop::isMain());

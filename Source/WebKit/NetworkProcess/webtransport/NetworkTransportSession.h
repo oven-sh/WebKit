@@ -71,8 +71,8 @@ public:
 
     void receiveDatagram(std::span<const uint8_t>);
     void streamReceiveBytes(WebTransportStreamIdentifier, std::span<const uint8_t>, bool withFin);
-    void receiveIncomingUnidirectionalStream();
-    void receiveBidirectionalStream();
+    void receiveIncomingUnidirectionalStream(WebTransportStreamIdentifier);
+    void receiveBidirectionalStream(WebTransportStreamIdentifier);
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
