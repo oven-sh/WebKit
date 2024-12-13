@@ -118,6 +118,8 @@ public:
     RetainPtr<PDFDocument> pluginPDFDocument() const;
     bool pluginShouldCachePagePreviews() const;
 
+    virtual std::optional<WebCore::PlatformLayerIdentifier> contentsLayerIdentifier() const { return std::nullopt; }
+
 protected:
     RefPtr<WebCore::GraphicsLayer> createGraphicsLayer(const String&, WebCore::GraphicsLayer::Type);
     RefPtr<WebCore::GraphicsLayer> makePageContainerLayer(PDFDocumentLayout::PageIndex);

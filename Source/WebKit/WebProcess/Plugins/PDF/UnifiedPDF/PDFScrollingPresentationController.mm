@@ -459,6 +459,14 @@ void PDFScrollingPresentationController::paintPDFSelection(const GraphicsLayer* 
 }
 #endif
 
+std::optional<PlatformLayerIdentifier> PDFScrollingPresentationController::contentsLayerIdentifier() const
+{
+    if (!m_contentsLayer)
+        return std::nullopt;
+
+    return m_contentsLayer->primaryLayerID();
+}
+
 } // namespace WebKit
 
 #endif // ENABLE(UNIFIED_PDF)

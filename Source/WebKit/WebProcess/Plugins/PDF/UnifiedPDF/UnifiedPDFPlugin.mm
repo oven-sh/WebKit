@@ -4051,6 +4051,14 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
     state.visualData = EditorState::VisualData { };
     state.visualData->selectionGeometries = WTFMove(selectionGeometries);
 
+    if (m_presentationController)
+        state.visualData->enclosingLayerID = m_presentationController->contentsLayerIdentifier();
+
+    if (m_scrollingNodeID) {
+        state.visualData->enclosingScrollingNodeID = *m_scrollingNodeID;
+        state.visualData->enclosingScrollPosition = scrollPosition();
+    }
+
     return true;
 }
 

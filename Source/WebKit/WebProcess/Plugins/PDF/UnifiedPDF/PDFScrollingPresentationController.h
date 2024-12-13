@@ -92,6 +92,8 @@ private:
     void paintPDFSelection(const WebCore::GraphicsLayer*, WebCore::GraphicsContext&, const WebCore::FloatRect& clipRect, std::optional<PDFLayoutRow> = { });
 #endif
 
+    std::optional<WebCore::PlatformLayerIdentifier> contentsLayerIdentifier() const final;
+
     void updatePageBackgroundLayers();
     std::optional<PDFDocumentLayout::PageIndex> pageIndexForPageBackgroundLayer(const WebCore::GraphicsLayer*) const;
     WebCore::GraphicsLayer* backgroundLayerForPage(PDFDocumentLayout::PageIndex) const;
