@@ -595,8 +595,8 @@ void NetworkStorageSession::removeCookiesEnabledStateObserver(CookiesEnabledStat
 
 void NetworkStorageSession::cookieEnabledStateMayHaveChanged()
 {
-    for (auto& observer : m_cookiesEnabledStateObservers)
-        observer.cookieEnabledStateMayHaveChanged();
+    for (Ref observer : m_cookiesEnabledStateObservers)
+        observer->cookieEnabledStateMayHaveChanged();
 }
 
 }

@@ -79,11 +79,6 @@ class CookiesEnabledStateObserver;
 class NetworkStorageSession;
 }
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::CookiesEnabledStateObserver> : std::true_type { };
-}
-
 namespace WebCore {
 
 class CurlProxySettings;
@@ -122,7 +117,7 @@ public:
 };
 #endif
 
-class CookiesEnabledStateObserver : public CanMakeWeakPtr<CookiesEnabledStateObserver> {
+class CookiesEnabledStateObserver : public AbstractRefCountedAndCanMakeWeakPtr<CookiesEnabledStateObserver> {
 public:
     virtual ~CookiesEnabledStateObserver() { }
     virtual void cookieEnabledStateMayHaveChanged() = 0;
