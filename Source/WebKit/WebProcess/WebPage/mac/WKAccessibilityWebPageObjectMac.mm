@@ -192,7 +192,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return [self accessibilityChildren];
     }
 
-    // The follwoing attributes have to be retrieved from the main thread. Return nil for any other attribute.
+    // The following attributes have to be retrieved from the main thread. Return nil for any other attribute.
     if (![attribute isEqualToString:NSAccessibilityParentAttribute]
         && ![attribute isEqualToString:NSAccessibilityWindowAttribute]
         && ![attribute isEqualToString:NSAccessibilityTopLevelUIElementAttribute]

@@ -1050,7 +1050,6 @@ RefPtr<AXIsolatedTree> AXObjectCache::getOrCreateIsolatedTree()
             m_buildIsolatedTreeTimer.startOneShot(0_s);
     } else
         tree = AXIsolatedTree::create(*this);
-    setIsolatedTreeRoot(tree->rootNode().get());
 
     initializeAXThreadIfNeeded();
 
@@ -1065,8 +1064,6 @@ void AXObjectCache::buildIsolatedTree()
         return;
 
     auto tree = AXIsolatedTree::create(*this);
-    setIsolatedTreeRoot(tree->rootNode().get());
-
     if (RefPtr webArea = rootWebArea()) {
         postPlatformNotification(*webArea, AXNotification::LoadComplete);
         postPlatformNotification(*webArea, AXNotification::FocusedUIElementChanged);
@@ -1076,7 +1073,7 @@ void AXObjectCache::buildIsolatedTree()
 AXCoreObject* AXObjectCache::isolatedTreeRootObject()
 {
     if (auto tree = getOrCreateIsolatedTree())
-        return tree->rootNode().get();
+        return tree->rootNode();
 
     // Should not get here, couldn't create the IsolatedTree.
     ASSERT_NOT_REACHED();

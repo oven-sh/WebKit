@@ -736,11 +736,13 @@ void AXIsolatedObject::setSelectedChildren(const AccessibilityChildrenVector& se
 
 bool AXIsolatedObject::isDetachedFromParent()
 {
+    ASSERT(!isMainThread());
+
     if (parent())
         return false;
 
     // Check whether this is the root node, in which case we should return false.
-    if (auto root = tree()->rootNode())
+    if (RefPtr root = tree()->rootNode())
         return root->objectID() != objectID();
     return false;
 }

@@ -362,7 +362,7 @@ public:
     AXObjectCache* axObjectCache() const;
     constexpr AXGeometryManager* geometryManager() const { return m_geometryManager.get(); }
 
-    RefPtr<AXIsolatedObject> rootNode();
+    AXIsolatedObject* rootNode() { return m_rootNode.get(); }
     RefPtr<AXIsolatedObject> rootWebArea();
     std::optional<AXID> focusedNodeID();
     WEBCORE_EXPORT RefPtr<AXIsolatedObject> focusedNode();
@@ -449,11 +449,12 @@ public:
 #endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     }
 
-    // Both setRootNodeID and setFocusedNodeID are called during the generation
+    // Both setPendingRootNodeLocked and setFocusedNodeID are called during the generation
     // of the IsolatedTree.
     // Focused node updates in AXObjectCache use setFocusNodeID.
-    void setRootNode(AXIsolatedObject*) WTF_REQUIRES_LOCK(m_changeLogLock);
+    void setPendingRootNodeLocked(AXIsolatedObject&) WTF_REQUIRES_LOCK(m_changeLogLock);
     void setFocusedNodeID(std::optional<AXID>);
+    void applyPendingRootNode();
 
     // Relationships between objects.
     std::optional<ListHashSet<AXID>> relatedObjectIDsFor(const AXIsolatedObject&, AXRelationType);
@@ -567,11 +568,12 @@ private:
     // 1-based tree level, 0 = not collecting. Only accessed on the main thread.
     unsigned m_collectingNodeChangesAtTreeLevel { 0 };
 
-    // Only accessed on AX thread requesting data.
+    // Only accessed on AX thread.
     UncheckedKeyHashMap<AXID, Ref<AXIsolatedObject>> m_readerThreadNodeMap;
+    RefPtr<AXIsolatedObject> m_rootNode;
 
     // Written to by main thread under lock, accessed and applied by AX thread.
-    RefPtr<AXIsolatedObject> m_rootNode WTF_GUARDED_BY_LOCK(m_changeLogLock);
+    RefPtr<AXIsolatedObject> m_pendingRootNode WTF_GUARDED_BY_LOCK(m_changeLogLock);
     Vector<NodeChange> m_pendingAppends WTF_GUARDED_BY_LOCK(m_changeLogLock); // Nodes to be added to the tree and platform-wrapped.
     Vector<AXPropertyChange> m_pendingPropertyChanges WTF_GUARDED_BY_LOCK(m_changeLogLock);
     Vector<AXID> m_pendingSubtreeRemovals WTF_GUARDED_BY_LOCK(m_changeLogLock); // Nodes whose subtrees are to be removed from the tree.
