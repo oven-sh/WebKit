@@ -29,6 +29,7 @@
 #if PLATFORM(MAC)
 
 #include <algorithm>
+#include <wtf/StdLibExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -142,15 +143,15 @@ AudioHardwareListenerMac::~AudioHardwareListenerMac()
 
 void AudioHardwareListenerMac::propertyChanged(UInt32 propertyCount, const AudioObjectPropertyAddress properties[])
 {
-    const AudioObjectPropertyAddress& deviceRunning = processIsRunningPropertyDescriptor();
-    const AudioObjectPropertyAddress& outputDevice = outputDevicePropertyDescriptor();
+    auto deviceRunning = asByteSpan(processIsRunningPropertyDescriptor());
+    auto outputDevice = asByteSpan(outputDevicePropertyDescriptor());
 
     for (UInt32 i = 0; i < propertyCount; ++i) {
-        const AudioObjectPropertyAddress& property = properties[i];
+        auto property = asByteSpan(properties[i]);
 
-        if (!memcmp(&property, &deviceRunning, sizeof(AudioObjectPropertyAddress)))
+        if (equalSpans(property, deviceRunning))
             processIsRunningChanged();
-        else if (!memcmp(&property, &outputDevice, sizeof(AudioObjectPropertyAddress)))
+        else if (equalSpans(property, outputDevice))
             outputDeviceChanged();
     }
 }

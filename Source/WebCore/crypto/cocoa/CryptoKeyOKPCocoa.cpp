@@ -29,6 +29,7 @@
 #include "CommonCryptoDERUtilities.h"
 #include "JsonWebKey.h"
 #include "Logging.h"
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/Base64.h>
 
 #if HAVE(SWIFT_CPP_INTEROP)
@@ -158,7 +159,7 @@ bool CryptoKeyOKP::platformCheckPairedKeys(CryptoAlgorithmIdentifier identifier,
         ASSERT_NOT_REACHED();
         return false;
     }
-    return !std::memcmp(ccPublicKey, publicKey.data(), sizeof(ccPublicKey));
+    return equalSpans(asByteSpan(ccPublicKey), publicKey.span());
 #else // HAVE(SWIFT_CPP_INTEROP)
     switch (identifier) {
     case CryptoAlgorithmIdentifier::Ed25519:

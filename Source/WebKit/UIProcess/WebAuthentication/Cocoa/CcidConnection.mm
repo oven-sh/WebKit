@@ -32,24 +32,11 @@
 #import <WebCore/FidoConstants.h>
 #import <wtf/Algorithms.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 namespace WebKit {
 using namespace fido;
-
-namespace {
-
-// FIXME: This is duplicate code with compareVersion in NfcConnection.mm.
-inline bool compareCcidVersion(NSData *data, const uint8_t version[], size_t versionSize)
-{
-    if (!data)
-        return false;
-    if (data.length != versionSize)
-        return false;
-    return !memcmp(data.bytes, version, versionSize);
-}
-
-} // namespace
 
 Ref<CcidConnection> CcidConnection::create(RetainPtr<TKSmartCard>&& smartCard, CcidService& service)
 {
@@ -93,18 +80,18 @@ void CcidConnection::trySelectFidoApplet()
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
-        if (equalSpans(response.span(), std::span { kCtapNfcAppletSelectionU2f, sizeof(kCtapNfcAppletSelectionU2f) })
-            || equalSpans(response.span(), std::span { kCtapNfcAppletSelectionCtap, sizeof(kCtapNfcAppletSelectionCtap) })) {
+        if (equalSpans(response.span(), std::span { kCtapNfcAppletSelectionU2f })
+            || equalSpans(response.span(), std::span { kCtapNfcAppletSelectionCtap })) {
             if (RefPtr service = protectedThis->m_service.get())
                 service->didConnectTag();
             return;
         }
-        protectedThis->transact(Vector(std::span { kCtapNfcAppletSelectionCommand, sizeof(kCtapNfcAppletSelectionCommand) }), [weakThis = WTFMove(weakThis)] (Vector<uint8_t>&& response) mutable {
+        protectedThis->transact(Vector(std::span { kCtapNfcAppletSelectionCommand }), [weakThis = WTFMove(weakThis)] (Vector<uint8_t>&& response) mutable {
             ASSERT(RunLoop::isMain());
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
-            if (equalSpans(response.span(), std::span { kCtapNfcAppletSelectionU2f, sizeof(kCtapNfcAppletSelectionU2f) })) {
+            if (equalSpans(response.span(), std::span { kCtapNfcAppletSelectionU2f })) {
                 if (RefPtr service = protectedThis->m_service.get())
                     service->didConnectTag();
             }

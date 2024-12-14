@@ -909,11 +909,13 @@ bool equalSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
     return !memcmp(a.data(), b.data(), a.size_bytes());
 }
 
-template<typename T>
-int compareSpans(std::span<const T> a, std::span<const T> b)
+template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
+int compareSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
 {
+    static_assert(sizeof(T) == sizeof(U));
     static_assert(std::has_unique_object_representations_v<T>);
-    int result = memcmp(a.data(), b.data(), std::min(a.size(), b.size()));
+    static_assert(std::has_unique_object_representations_v<U>);
+    int result = memcmp(a.data(), b.data(), std::min(a.size_bytes(), b.size_bytes()));
     if (!result && a.size() != b.size())
         result = (a.size() > b.size()) ? 1 : -1;
     return result;

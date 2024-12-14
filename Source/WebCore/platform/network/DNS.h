@@ -29,6 +29,7 @@
 #include <variant>
 #include <wtf/Forward.h>
 #include <wtf/HashTraits.h>
+#include <wtf/StdLibExtras.h>
 
 #if OS(WINDOWS)
 #include <winsock2.h>
@@ -88,10 +89,10 @@ public:
         };
 
         if (isIPv4() && other.isIPv4())
-            return comparisonResult(memcmp(&ipv4Address(), &other.ipv4Address(), sizeof(struct in_addr)));
+            return comparisonResult(compareSpans(asByteSpan(ipv4Address()), asByteSpan(other.ipv4Address())));
 
         if (isIPv6() && other.isIPv6())
-            return comparisonResult(memcmp(&ipv6Address(), &other.ipv6Address(), sizeof(struct in6_addr)));
+            return comparisonResult(compareSpans(asByteSpan(ipv6Address()), asByteSpan(other.ipv6Address())));
 
         return ComparisonResult::CannotCompare;
     }

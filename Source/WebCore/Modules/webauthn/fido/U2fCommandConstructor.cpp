@@ -45,12 +45,12 @@ using namespace WebCore;
 
 namespace {
 
-static Vector<uint8_t> constructU2fRegisterCommand(const Vector<uint8_t>& applicationParameter, const Vector<uint8_t>& challengeParameter)
+static Vector<uint8_t> constructU2fRegisterCommand(std::span<const uint8_t> applicationParameter, std::span<const uint8_t> challengeParameter)
 {
     Vector<uint8_t> data;
     data.reserveInitialCapacity(kU2fChallengeParamLength + kU2fApplicationParamLength);
-    data.appendVector(challengeParameter);
-    data.appendVector(applicationParameter);
+    data.append(challengeParameter);
+    data.append(applicationParameter);
 
     apdu::ApduCommand command;
     command.setIns(static_cast<uint8_t>(U2fApduInstruction::kRegister));
@@ -128,7 +128,7 @@ std::optional<Vector<uint8_t>> convertToU2fSignCommand(const Vector<uint8_t>& cl
 
 Vector<uint8_t> constructBogusU2fRegistrationCommand()
 {
-    return constructU2fRegisterCommand(convertBytesToVector(kBogusAppParam, sizeof(kBogusAppParam)), convertBytesToVector(kBogusChallenge, sizeof(kBogusChallenge)));
+    return constructU2fRegisterCommand(std::span { kBogusAppParam }, std::span { kBogusChallenge });
 }
 
 } // namespace fido

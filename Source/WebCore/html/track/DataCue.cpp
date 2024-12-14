@@ -36,6 +36,7 @@
 #include "TextTrackCueList.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/StrongInlines.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -126,7 +127,7 @@ bool DataCue::cueContentsMatch(const TextTrackCue& cue) const
         return false;
     if (m_data && m_data->byteLength() != otherData->byteLength())
         return false;
-    if (m_data && m_data->data() && memcmp(m_data->data(), otherData->data(), m_data->byteLength()))
+    if (m_data && m_data->data() && !equalSpans(m_data->span(), otherData->span()))
         return false;
 
     auto otherPlatformValue = dataCue->platformValue();

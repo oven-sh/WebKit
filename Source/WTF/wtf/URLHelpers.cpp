@@ -454,7 +454,7 @@ static inline bool isSecondLevelDomainNameAllowedByTLDRules(std::span<const UCha
 #define CHECK_RULES_IF_SUFFIX_MATCHES(suffix, function) \
     { \
         static constexpr size_t suffixLength = suffix.size(); \
-        if (buffer.size() > suffixLength && !memcmp(buffer.last(suffixLength).data(), suffix.data(), suffix.size())) \
+        if (buffer.size() > suffixLength && equalSpans(buffer.last(suffixLength), std::span { suffix })) \
             return isSecondLevelDomainNameAllowedByTLDRules(buffer.first(buffer.size() - suffixLength), function); \
     }
 

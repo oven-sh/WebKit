@@ -63,47 +63,45 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ScalableImageDecoder);
 namespace {
 
 #if !PLATFORM(COCOA)
-static bool matchesGIFSignature(char* contents)
+static bool matchesGIFSignature(std::span<const uint8_t> contents)
 {
-    return !memcmp(contents, "GIF87a", 6) || !memcmp(contents, "GIF89a", 6);
+    auto start = contents.first(6);
+    return equalSpans(start, "GIF87a"_span) || equalSpans(start, "GIF89a"_span);
 }
 
-static bool matchesPNGSignature(char* contents)
+static bool matchesPNGSignature(std::span<const uint8_t> contents)
 {
-    return !memcmp(contents, "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A", 8);
+    return equalSpans(contents.first(8), unsafeMakeSpan("\x89\x50\x4E\x47\x0D\x0A\x1A\x0A", 8));
 }
 
-static bool matchesJPEGSignature(char* contents)
+static bool matchesJPEGSignature(std::span<const uint8_t> contents)
 {
-    return !memcmp(contents, "\xFF\xD8\xFF", 3);
+    return equalSpans(contents.first(3), unsafeMakeSpan("\xFF\xD8\xFF", 3));
 }
 
-static bool matchesBMPSignature(char* contents)
+static bool matchesBMPSignature(std::span<const uint8_t> contents)
 {
-    return !memcmp(contents, "BM", 2);
+    return equalSpans(contents.first(2), "BM"_span);
 }
 
-static bool matchesICOSignature(char* contents)
+static bool matchesICOSignature(std::span<const uint8_t> contents)
 {
-    return !memcmp(contents, "\x00\x00\x01\x00", 4);
+    return equalSpans(contents.first(4), unsafeMakeSpan("\x00\x00\x01\x00", 4));
 }
 
-static bool matchesCURSignature(char* contents)
+static bool matchesCURSignature(std::span<const uint8_t> contents)
 {
-    return !memcmp(contents, "\x00\x00\x02\x00", 4);
+    return equalSpans(contents.first(4), unsafeMakeSpan("\x00\x00\x02\x00", 4));
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-static bool matchesWebPSignature(char* contents)
+static bool matchesWebPSignature(std::span<const uint8_t> contents)
 {
-    return !memcmp(contents, "RIFF", 4) && !memcmp(contents + 8, "WEBPVP", 6);
+    return equalSpans(contents.first(4), "RIFF"_span) && equalSpans(contents.subspan(8, 6), "WEBPVP"_span);
 }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
 #if USE(AVIF)
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-static bool matchesAVIFSignature(char* contents, FragmentedSharedBuffer& data)
+static bool matchesAVIFSignature(std::span<const uint8_t> contents, FragmentedSharedBuffer& data)
 {
 #if USE(CG)
     UNUSED_PARAM(contents);
@@ -114,20 +112,19 @@ static bool matchesAVIFSignature(char* contents, FragmentedSharedBuffer& data)
     return uti == "public.avif"_s || uti == "public.avis"_s;
 #else
     UNUSED_PARAM(data);
-    return !memcmp(contents + 4, "\x66\x74\x79\x70", 4);
+    return equalSpans(contents.subspan(4, 4), unsafeMakeSpan("\x66\x74\x79\x70", 4));
 #endif
 }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // USE(AVIF)
 
 #if USE(JPEGXL)
-static bool matchesJPEGXLSignature(const uint8_t* contents, size_t length)
+static bool matchesJPEGXLSignature(std::span<const uint8_t> contents)
 {
 #if PLATFORM(COCOA)
     if (!&JxlSignatureCheck)
         return false;
 #endif
-    JxlSignature signature = JxlSignatureCheck(contents, length);
+    JxlSignature signature = JxlSignatureCheck(contents.data(), contents.size());
     return signature != JXL_SIG_NOT_ENOUGH_BYTES && signature != JXL_SIG_INVALID;
 }
 #endif
@@ -140,31 +137,33 @@ RefPtr<ScalableImageDecoder> ScalableImageDecoder::create(FragmentedSharedBuffer
     if (data.size() < lengthOfLongestSignature)
         return nullptr;
 
-    char contents[lengthOfLongestSignature];
-    data.copyTo(byteCast<uint8_t>(std::span { contents }));
+    std::array<uint8_t, lengthOfLongestSignature> contents;
+    data.copyTo(std::span { contents });
+
+    std::span contentsSpan { contents };
 
 #if !PLATFORM(COCOA)
-    if (matchesGIFSignature(contents))
+    if (matchesGIFSignature(contentsSpan))
         return GIFImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 
-    if (matchesPNGSignature(contents))
+    if (matchesPNGSignature(contentsSpan))
         return PNGImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 
-    if (matchesICOSignature(contents) || matchesCURSignature(contents))
+    if (matchesICOSignature(contentsSpan) || matchesCURSignature(contentsSpan))
         return ICOImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 
-    if (matchesJPEGSignature(contents))
+    if (matchesJPEGSignature(contentsSpan))
         return JPEGImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 
-    if (matchesBMPSignature(contents))
+    if (matchesBMPSignature(contentsSpan))
         return BMPImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 
-    if (matchesWebPSignature(contents))
+    if (matchesWebPSignature(contentsSpan))
         return WEBPImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 #endif
 
 #if USE(AVIF)
-    if (matchesAVIFSignature(contents, data))
+    if (matchesAVIFSignature(contentsSpan, data))
         return AVIFImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 #else
     UNUSED_PARAM(alphaOption);
@@ -172,7 +171,7 @@ RefPtr<ScalableImageDecoder> ScalableImageDecoder::create(FragmentedSharedBuffer
 #endif
 
 #if USE(JPEGXL)
-    if (matchesJPEGXLSignature(reinterpret_cast<const uint8_t*>(contents), lengthOfLongestSignature))
+    if (matchesJPEGXLSignature(contentsSpan))
         return JPEGXLImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 #endif
 

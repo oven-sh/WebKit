@@ -427,7 +427,7 @@ static CSSPrimitiveValue* valueFromPool(std::span<LazyNeverDestroyed<CSSPrimitiv
     // integer is undefined behavior.
     unsigned poolIndex = static_cast<unsigned>(static_cast<int>(value));
     double roundTripValue = poolIndex;
-    if (!memcmp(&value, &roundTripValue, sizeof(double)) && poolIndex < pool.size())
+    if (equalSpans(asByteSpan(value), asByteSpan(roundTripValue)) && poolIndex < pool.size())
         return &pool[poolIndex].get();
     return nullptr;
 }
