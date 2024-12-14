@@ -78,7 +78,7 @@ static bool deviceHasStreams(AudioObjectID deviceID, const AudioObjectPropertyAd
         return false;
 
     auto bufferList = std::unique_ptr<AudioBufferList>((AudioBufferList*) ::operator new (dataSize));
-    zeroSpan(unsafeMakeSpan(bufferList.get(), dataSize));
+    zeroSpan(unsafeMakeSpan(reinterpret_cast<uint8_t*>(bufferList.get()), dataSize));
     err = AudioObjectGetPropertyData(deviceID, &address, 0, nullptr, &dataSize, bufferList.get());
 
     return !err && bufferList->mNumberBuffers;
