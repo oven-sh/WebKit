@@ -24,7 +24,7 @@ var tests = [
     ['div', {'dir': 'ltr'}, 'ltr', 'isolate'],
     ['div', {'dir': 'rtl'}, 'rtl', 'isolate'],
     ['div', {'dir': 'auto'}, 'ltr', 'isolate'],
-    ['div', {'dir': ''}, 'ltr', 'normal'],
+    ['div', {'dir': ''}, 'ltr', 'isolate'],
 
     ['span', {}, 'ltr', 'normal'],
     ['span', {'dir': 'ltr'}, 'ltr', 'isolate'],
@@ -44,6 +44,7 @@ var tests = [
     ['output', {'dir': 'auto'}, 'ltr', 'isolate'],
     ['output', {'dir': ''}, 'ltr', 'isolate'],
 
+    // https://html.spec.whatwg.org/multipage/rendering.html#bidi-rendering
     ['bdo', {}, 'ltr', 'isolate-override'],
     ['bdo', {'dir': 'ltr'}, 'ltr', 'isolate-override'],
     ['bdo', {'dir': 'rtl'}, 'rtl', 'isolate-override'],
@@ -56,11 +57,11 @@ var tests = [
     ['textarea', {'dir': 'auto'}, 'ltr', 'plaintext'],
     ['textarea', {'dir': ''}, 'ltr', 'normal'],
 
-    ['pre', {}, 'ltr', 'normal'],
+    ['pre', {}, 'ltr', 'isolate'],
     ['pre', {'dir': 'ltr'}, 'ltr', 'isolate'],
     ['pre', {'dir': 'rtl'}, 'rtl', 'isolate'],
     ['pre', {'dir': 'auto'}, 'ltr', 'plaintext'],
-    ['pre', {'dir': ''}, 'ltr', 'normal'],
+    ['pre', {'dir': ''}, 'ltr', 'isolate'],
 ].forEach(function (test) {
     shouldBe('styleOf("' + test[0] + '", ' + JSON.stringify(test[1]) + ').direction', '"' + test[2] + '"');
     container.innerHTML = '';

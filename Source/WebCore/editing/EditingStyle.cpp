@@ -1674,7 +1674,7 @@ WritingDirection EditingStyle::textDirectionForSelection(const VisibleSelection&
         if (unicodeBidiValue == CSSValueBidiOverride)
             return WritingDirection::Natural;
 
-        ASSERT(unicodeBidiValue == CSSValueEmbed);
+        ASSERT(isEmbedOrIsolate(unicodeBidiValue));
         RefPtr<CSSValue> direction = computedStyle.propertyValue(CSSPropertyDirection);
         if (!is<CSSPrimitiveValue>(direction))
             continue;

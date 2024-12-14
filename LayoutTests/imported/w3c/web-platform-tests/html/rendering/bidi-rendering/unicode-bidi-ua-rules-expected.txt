@@ -1,52 +1,52 @@
 
-FAIL UA stylesheet rule for unicode-bidi, for <address> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <blockquote> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <center> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <div> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <figure> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <figcaption> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <footer> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <form> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <header> assert_equals: expected "isolate" but got "normal"
+PASS UA stylesheet rule for unicode-bidi, for <address>
+PASS UA stylesheet rule for unicode-bidi, for <blockquote>
+PASS UA stylesheet rule for unicode-bidi, for <center>
+PASS UA stylesheet rule for unicode-bidi, for <div>
+PASS UA stylesheet rule for unicode-bidi, for <figure>
+PASS UA stylesheet rule for unicode-bidi, for <figcaption>
+PASS UA stylesheet rule for unicode-bidi, for <footer>
+PASS UA stylesheet rule for unicode-bidi, for <form>
+PASS UA stylesheet rule for unicode-bidi, for <header>
 PASS UA stylesheet rule for unicode-bidi, for <hr>
-FAIL UA stylesheet rule for unicode-bidi, for <legend> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <listing> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <main> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <p> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <plaintext> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <pre> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <summary> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <xmp> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <article> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <aside> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <h1> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <h2> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <h3> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <h4> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <h5> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <h6> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <hgroup> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <nav> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <section> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <search> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <table> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <caption> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <colgroup> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <col> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <thead> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <tbody> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <tfoot> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <tr> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <td> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <th> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <dir> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <dd> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <dl> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <dt> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <menu> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <ol> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <ul> assert_equals: expected "isolate" but got "normal"
-FAIL UA stylesheet rule for unicode-bidi, for <li> assert_equals: expected "isolate" but got "normal"
+PASS UA stylesheet rule for unicode-bidi, for <legend>
+PASS UA stylesheet rule for unicode-bidi, for <listing>
+PASS UA stylesheet rule for unicode-bidi, for <main>
+PASS UA stylesheet rule for unicode-bidi, for <p>
+PASS UA stylesheet rule for unicode-bidi, for <plaintext>
+PASS UA stylesheet rule for unicode-bidi, for <pre>
+PASS UA stylesheet rule for unicode-bidi, for <summary>
+PASS UA stylesheet rule for unicode-bidi, for <xmp>
+PASS UA stylesheet rule for unicode-bidi, for <article>
+PASS UA stylesheet rule for unicode-bidi, for <aside>
+PASS UA stylesheet rule for unicode-bidi, for <h1>
+PASS UA stylesheet rule for unicode-bidi, for <h2>
+PASS UA stylesheet rule for unicode-bidi, for <h3>
+PASS UA stylesheet rule for unicode-bidi, for <h4>
+PASS UA stylesheet rule for unicode-bidi, for <h5>
+PASS UA stylesheet rule for unicode-bidi, for <h6>
+PASS UA stylesheet rule for unicode-bidi, for <hgroup>
+PASS UA stylesheet rule for unicode-bidi, for <nav>
+PASS UA stylesheet rule for unicode-bidi, for <section>
+PASS UA stylesheet rule for unicode-bidi, for <search>
+PASS UA stylesheet rule for unicode-bidi, for <table>
+PASS UA stylesheet rule for unicode-bidi, for <caption>
+PASS UA stylesheet rule for unicode-bidi, for <colgroup>
+PASS UA stylesheet rule for unicode-bidi, for <col>
+PASS UA stylesheet rule for unicode-bidi, for <thead>
+PASS UA stylesheet rule for unicode-bidi, for <tbody>
+PASS UA stylesheet rule for unicode-bidi, for <tfoot>
+PASS UA stylesheet rule for unicode-bidi, for <tr>
+PASS UA stylesheet rule for unicode-bidi, for <td>
+PASS UA stylesheet rule for unicode-bidi, for <th>
+PASS UA stylesheet rule for unicode-bidi, for <dir>
+PASS UA stylesheet rule for unicode-bidi, for <dd>
+PASS UA stylesheet rule for unicode-bidi, for <dl>
+PASS UA stylesheet rule for unicode-bidi, for <dt>
+PASS UA stylesheet rule for unicode-bidi, for <menu>
+PASS UA stylesheet rule for unicode-bidi, for <ol>
+PASS UA stylesheet rule for unicode-bidi, for <ul>
+PASS UA stylesheet rule for unicode-bidi, for <li>
 PASS UA stylesheet rule for unicode-bidi, for <bdi>
 PASS UA stylesheet rule for unicode-bidi, for <output>
 
