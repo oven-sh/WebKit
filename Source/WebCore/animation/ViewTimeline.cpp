@@ -28,15 +28,6 @@
 
 #include "AnimationTimelinesController.h"
 #include "CSSNumericFactory.h"
-#include "CSSParserTokenRange.h"
-#include "CSSPrimitiveValue.h"
-#include "CSSPrimitiveValueMappings.h"
-#include "CSSPropertyParserConsumer+Timeline.h"
-#include "CSSTokenizer.h"
-#include "CSSUnits.h"
-#include "CSSValueList.h"
-#include "CSSValuePool.h"
-#include "CSSViewValue.h"
 #include "Document.h"
 #include "Element.h"
 #include "LegacyRenderSVGModelObject.h"
@@ -59,28 +50,6 @@ Ref<ViewTimeline> ViewTimeline::create(ViewTimelineOptions&& options)
 Ref<ViewTimeline> ViewTimeline::create(const AtomString& name, ScrollAxis axis, ViewTimelineInsets&& insets)
 {
     return adoptRef(*new ViewTimeline(name, axis, WTFMove(insets)));
-}
-
-Ref<ViewTimeline> ViewTimeline::createFromCSSValue(const Style::BuilderState& builderState, const CSSViewValue& cssViewValue)
-{
-    auto axisValue = cssViewValue.axis();
-    auto axis = axisValue ? fromCSSValueID<ScrollAxis>(axisValue->valueID()) : ScrollAxis::Block;
-
-    auto convertInsetValue = [&](CSSValue* value) -> std::optional<Length> {
-        if (!value)
-            return std::nullopt;
-        return Style::BuilderConverter::convertLengthOrAuto(builderState, *value);
-    };
-
-    auto startInset = convertInsetValue(cssViewValue.startInset().get());
-
-    auto endInset = [&]() {
-        if (auto endInsetValue = cssViewValue.endInset())
-            return convertInsetValue(endInsetValue.get());
-        return convertInsetValue(cssViewValue.startInset().get());
-    }();
-
-    return adoptRef(*new ViewTimeline(nullAtom(), axis, { startInset, endInset }));
 }
 
 static std::optional<Length> lengthForInset(std::variant<RefPtr<CSSNumericValue>, RefPtr<CSSKeywordValue>> inset)
@@ -163,41 +132,6 @@ void ViewTimeline::setSubject(const Element* subject)
 
     if (newSubject)
         newSubject->protectedDocument()->ensureTimelinesController().addTimeline(*this);
-}
-
-void ViewTimeline::dump(TextStream& ts) const
-{
-    auto hasAxis = axis() != ScrollAxis::Block;
-    auto hasEndInset = m_insets.end && m_insets.end != m_insets.start;
-    auto hasStartInset = (m_insets.start && !m_insets.start->isAuto()) || (m_insets.start && m_insets.start->isAuto() && hasEndInset);
-
-    ts << "view(";
-    if (hasAxis)
-        ts << axis();
-    if (hasAxis && hasStartInset)
-        ts << " ";
-    if (hasStartInset)
-        ts << *m_insets.start;
-    if (hasStartInset && hasEndInset)
-        ts << " ";
-    if (hasEndInset)
-        ts << *m_insets.end;
-    ts << ")";
-}
-
-Ref<CSSValue> ViewTimeline::toCSSValue(const RenderStyle& style) const
-{
-    auto insetCSSValue = [&](const std::optional<Length>& inset) -> RefPtr<CSSValue> {
-        if (!inset)
-            return nullptr;
-        return CSSPrimitiveValue::create(*inset, style);
-    };
-
-    return CSSViewValue::create(
-        CSSPrimitiveValue::create(toCSSValueID(axis())),
-        insetCSSValue(m_insets.start),
-        insetCSSValue(m_insets.end)
-    );
 }
 
 AnimationTimelinesController* ViewTimeline::controller() const

@@ -36,7 +36,6 @@
 namespace WebCore {
 
 class AnimationTimelinesController;
-class CSSScrollValue;
 class Document;
 class Element;
 class RenderStyle;
@@ -44,11 +43,15 @@ class ScrollableArea;
 
 struct TimelineRange;
 
+enum class Scroller : uint8_t { Nearest, Root, Self };
+
+TextStream& operator<<(TextStream&, Scroller);
+
 class ScrollTimeline : public AnimationTimeline {
 public:
     static Ref<ScrollTimeline> create(Document&, ScrollTimelineOptions&& = { });
     static Ref<ScrollTimeline> create(const AtomString&, ScrollAxis);
-    static Ref<ScrollTimeline> createFromCSSValue(const CSSScrollValue&);
+    static Ref<ScrollTimeline> create(Scroller, ScrollAxis);
 
     virtual Element* source() const;
     void setSource(const Element*);
@@ -58,9 +61,6 @@ public:
 
     const AtomString& name() const { return m_name; }
     void setName(const AtomString& name) { m_name = name; }
-
-    virtual void dump(TextStream&) const;
-    virtual Ref<CSSValue> toCSSValue(const RenderStyle&) const;
 
     AnimationTimeline::ShouldUpdateAnimationsAndSendEvents documentWillUpdateAnimationsAndSendEvents() override;
 
@@ -94,8 +94,6 @@ protected:
     std::optional<ResolvedScrollDirection> resolvedScrollDirection() const;
 
 private:
-    enum class Scroller : uint8_t { Nearest, Root, Self };
-
     explicit ScrollTimeline();
     explicit ScrollTimeline(Scroller, ScrollAxis);
 

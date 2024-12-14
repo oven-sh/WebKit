@@ -449,12 +449,52 @@ void CSSToStyleMap::mapAnimationProperty(Animation& animation, const CSSValue& v
 
 void CSSToStyleMap::mapAnimationTimeline(Animation& animation, const CSSValue& value) const
 {
+    auto mapScrollValue = [](const CSSScrollValue& cssScrollValue) -> Animation::AnonymousScrollTimeline {
+        auto scroller = [&] {
+            auto& scrollerValue = cssScrollValue.scroller();
+            if (!scrollerValue)
+                return Scroller::Nearest;
+
+            switch (scrollerValue->valueID()) {
+            case CSSValueNearest:
+                return Scroller::Nearest;
+            case CSSValueRoot:
+                return Scroller::Root;
+            case CSSValueSelf:
+                return Scroller::Self;
+            default:
+                ASSERT_NOT_REACHED();
+                return Scroller::Nearest;
+            }
+        }();
+        auto& axisValue = cssScrollValue.axis();
+        auto axis = axisValue ? fromCSSValueID<ScrollAxis>(axisValue->valueID()) : ScrollAxis::Block;
+        return { scroller, axis };
+    };
+
+    auto mapViewValue = [&](const CSSViewValue& cssViewValue) -> Animation::AnonymousViewTimeline {
+        auto& axisValue = cssViewValue.axis();
+        auto axis = axisValue ? fromCSSValueID<ScrollAxis>(axisValue->valueID()) : ScrollAxis::Block;
+        auto convertInsetValue = [&](CSSValue* value) -> std::optional<Length> {
+            if (!value)
+                return std::nullopt;
+            return Style::BuilderConverter::convertLengthOrAuto(m_builderState, *value);
+        };
+        auto startInset = convertInsetValue(cssViewValue.startInset().get());
+        auto endInset = [&] {
+            if (auto& endInsetValue = cssViewValue.endInset())
+                return convertInsetValue(endInsetValue.get());
+            return convertInsetValue(cssViewValue.startInset().get());
+        }();
+        return { axis, { startInset, endInset } };
+    };
+
     if (treatAsInitialValue(value, CSSPropertyAnimationTimeline))
         animation.setTimeline(Animation::initialTimeline());
     else if (auto* viewValue = dynamicDowncast<CSSViewValue>(value))
-        animation.setTimeline(ViewTimeline::createFromCSSValue(m_builderState, *viewValue));
+        animation.setTimeline(mapViewValue(*viewValue));
     else if (auto* scrollValue = dynamicDowncast<CSSScrollValue>(value))
-        animation.setTimeline(ScrollTimeline::createFromCSSValue(*scrollValue));
+        animation.setTimeline(mapScrollValue(*scrollValue));
     else if (value.isCustomIdent())
         animation.setTimeline(AtomString(value.customIdent()));
     else {

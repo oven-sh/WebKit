@@ -38,7 +38,6 @@ namespace Style {
 class BuilderState;
 }
 
-class CSSViewValue;
 class Element;
 
 struct TimelineRange;
@@ -53,7 +52,6 @@ class ViewTimeline final : public ScrollTimeline {
 public:
     static Ref<ViewTimeline> create(ViewTimelineOptions&& = { });
     static Ref<ViewTimeline> create(const AtomString&, ScrollAxis, ViewTimelineInsets&&);
-    static Ref<ViewTimeline> createFromCSSValue(const Style::BuilderState&, const CSSViewValue&);
 
     Element* subject() const { return m_subject.get(); }
     void setSubject(const Element*);
@@ -78,8 +76,6 @@ private:
     explicit ViewTimeline(ViewTimelineOptions&& = { });
     explicit ViewTimeline(const AtomString&, ScrollAxis, ViewTimelineInsets&&);
 
-    void dump(TextStream&) const final;
-    Ref<CSSValue> toCSSValue(const RenderStyle&) const final;
     bool isViewTimeline() const final { return true; }
 
     struct CurrentTimeData {

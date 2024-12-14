@@ -30,6 +30,7 @@
 #include "ScopedName.h"
 #include "ScrollTimeline.h"
 #include "TimingFunction.h"
+#include "ViewTimeline.h"
 #include "WebAnimationTypes.h"
 
 namespace WebCore {
@@ -134,7 +135,17 @@ public:
     };
 
     enum class TimelineKeyword : bool { None, Auto };
-    using Timeline = std::variant<TimelineKeyword, AtomString, Ref<ScrollTimeline>>;
+    struct AnonymousScrollTimeline {
+        Scroller scroller;
+        ScrollAxis axis;
+        bool operator==(const AnonymousScrollTimeline& o) const { return scroller == o.scroller && axis == o.axis; }
+    };
+    struct AnonymousViewTimeline {
+        ScrollAxis axis;
+        ViewTimelineInsets insets;
+        bool operator==(const AnonymousViewTimeline& o) const { return axis == o.axis && insets == o.insets; }
+    };
+    using Timeline = std::variant<TimelineKeyword, AtomString, AnonymousScrollTimeline, AnonymousViewTimeline>;
 
     Direction direction() const { return static_cast<Direction>(m_direction); }
     bool directionIsForwards() const { return direction() == Direction::Normal || direction() == Direction::Alternate; }
@@ -298,6 +309,8 @@ WTF::TextStream& operator<<(WTF::TextStream&, AnimationPlayState);
 WTF::TextStream& operator<<(WTF::TextStream&, Animation::TransitionProperty);
 WTF::TextStream& operator<<(WTF::TextStream&, Animation::Direction);
 WTF::TextStream& operator<<(WTF::TextStream&, Animation::TimelineKeyword);
+WTF::TextStream& operator<<(WTF::TextStream&, const Animation::AnonymousScrollTimeline&);
+WTF::TextStream& operator<<(WTF::TextStream&, const Animation::AnonymousViewTimeline&);
 WTF::TextStream& operator<<(WTF::TextStream&, const Animation::Timeline&);
 WTF::TextStream& operator<<(WTF::TextStream&, const Animation&);
 

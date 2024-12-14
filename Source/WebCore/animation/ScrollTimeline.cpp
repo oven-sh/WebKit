@@ -27,9 +27,6 @@
 #include "ScrollTimeline.h"
 
 #include "AnimationTimelinesController.h"
-#include "CSSPrimitiveValueMappings.h"
-#include "CSSScrollValue.h"
-#include "CSSValuePool.h"
 #include "DocumentInlines.h"
 #include "Element.h"
 #include "RenderLayerScrollableArea.h"
@@ -70,29 +67,8 @@ Ref<ScrollTimeline> ScrollTimeline::create(const AtomString& name, ScrollAxis ax
     return adoptRef(*new ScrollTimeline(name, axis));
 }
 
-Ref<ScrollTimeline> ScrollTimeline::createFromCSSValue(const CSSScrollValue& cssScrollValue)
+Ref<ScrollTimeline> ScrollTimeline::create(Scroller scroller, ScrollAxis axis)
 {
-    auto scroller = [&]() {
-        auto scrollerValue = cssScrollValue.scroller();
-        if (!scrollerValue)
-            return Scroller::Nearest;
-
-        switch (scrollerValue->valueID()) {
-        case CSSValueNearest:
-            return Scroller::Nearest;
-        case CSSValueRoot:
-            return Scroller::Root;
-        case CSSValueSelf:
-            return Scroller::Self;
-        default:
-            ASSERT_NOT_REACHED();
-            return Scroller::Nearest;
-        }
-    }();
-
-    auto axisValue = cssScrollValue.axis();
-    auto axis = axisValue ? fromCSSValueID<ScrollAxis>(axisValue->valueID()) : ScrollAxis::Block;
-
     return adoptRef(*new ScrollTimeline(scroller, axis));
 }
 
@@ -173,40 +149,6 @@ void ScrollTimeline::setSource(const Element* source)
 
     if (newSource)
         newSource->protectedDocument()->ensureTimelinesController().addTimeline(*this);
-}
-
-void ScrollTimeline::dump(TextStream& ts) const
-{
-    auto hasScroller = m_scroller != Scroller::Nearest;
-    auto hasAxis = m_axis != ScrollAxis::Block;
-
-    ts << "scroll(";
-    if (hasScroller)
-        ts << (m_scroller == Scroller::Root ? "root" : "self");
-    if (hasScroller && hasAxis)
-        ts << " ";
-    if (hasAxis)
-        ts << m_axis;
-    ts << ")";
-}
-
-Ref<CSSValue> ScrollTimeline::toCSSValue(const RenderStyle&) const
-{
-    auto scroller = [&]() {
-        switch (m_scroller) {
-        case Scroller::Nearest:
-            return CSSValueNearest;
-        case Scroller::Root:
-            return CSSValueRoot;
-        case Scroller::Self:
-            return CSSValueSelf;
-        default:
-            ASSERT_NOT_REACHED();
-            return CSSValueNearest;
-        }
-    }();
-
-    return CSSScrollValue::create(CSSPrimitiveValue::create(scroller), CSSPrimitiveValue::create(toCSSValueID(m_axis)));
 }
 
 AnimationTimelinesController* ScrollTimeline::controller() const
@@ -388,6 +330,16 @@ void ScrollTimeline::animationTimingDidChange(WebAnimation& animation)
 
     if (RefPtr page = m_source->protectedDocument()->page())
         page->scheduleRenderingUpdate(RenderingUpdateStep::Animations);
+}
+
+TextStream& operator<<(TextStream& ts, Scroller scroller)
+{
+    switch (scroller) {
+    case Scroller::Nearest: ts << "nearest"; break;
+    case Scroller::Root: ts << "root"; break;
+    case Scroller::Self: ts << "self"; break;
+    }
+    return ts;
 }
 
 } // namespace WebCore

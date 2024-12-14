@@ -193,17 +193,57 @@ TextStream& operator<<(TextStream& ts, Animation::TimelineKeyword keyword)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, const Animation::AnonymousScrollTimeline& timeline)
+{
+    auto hasScroller = timeline.scroller != Scroller::Nearest;
+    auto hasAxis = timeline.axis != ScrollAxis::Block;
+
+    ts << "scroll(";
+    if (hasScroller)
+        ts << (timeline.scroller == Scroller::Root ? "root" : "self");
+    if (hasScroller && hasAxis)
+        ts << " ";
+    if (hasAxis)
+        ts << timeline.axis;
+    ts << ")";
+
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, const Animation::AnonymousViewTimeline& timeline)
+{
+    auto hasAxis = timeline.axis != ScrollAxis::Block;
+    auto& insets = timeline.insets;
+    auto hasEndInset = insets.end && insets.end != insets.start;
+    auto hasStartInset = (insets.start && !insets.start->isAuto()) || (insets.start && insets.start->isAuto() && hasEndInset);
+
+    ts << "view(";
+    if (hasAxis)
+        ts << timeline.axis;
+    if (hasAxis && hasStartInset)
+        ts << " ";
+    if (hasStartInset)
+        ts << *insets.start;
+    if (hasStartInset && hasEndInset)
+        ts << " ";
+    if (hasEndInset)
+        ts << *insets.end;
+    ts << ")";
+
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, const Animation::Timeline& timeline)
 {
     WTF::switchOn(timeline,
         [&](Animation::TimelineKeyword keyword) {
             ts << keyword;
-        },
-        [&](const AtomString& customIdent) {
+        }, [&](const AtomString& customIdent) {
             ts << customIdent;
-        },
-        [&](const Ref<ScrollTimeline>& scrollTimeline) {
-            scrollTimeline->dump(ts);
+        }, [&] (const Animation::AnonymousScrollTimeline& anonymousScrollTimeline) {
+            ts << anonymousScrollTimeline;
+        }, [&] (const Animation::AnonymousViewTimeline& anonymousViewTimeline) {
+            ts << anonymousViewTimeline;
         }
     );
     return ts;

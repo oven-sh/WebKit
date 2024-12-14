@@ -1613,13 +1613,45 @@ static Ref<CSSPrimitiveValue> valueForScopedName(const Style::ScopedName& scoped
 
 static Ref<CSSValue> valueForAnimationTimeline(const RenderStyle& style, const Animation::Timeline& timeline)
 {
+    auto valueForAnonymousScrollTimeline = [](const Animation::AnonymousScrollTimeline& anonymousScrollTimeline) {
+        auto scroller = [&]() {
+            switch (anonymousScrollTimeline.scroller) {
+            case Scroller::Nearest:
+                return CSSValueNearest;
+            case Scroller::Root:
+                return CSSValueRoot;
+            case Scroller::Self:
+                return CSSValueSelf;
+            default:
+                ASSERT_NOT_REACHED();
+                return CSSValueNearest;
+            }
+        }();
+        return CSSScrollValue::create(CSSPrimitiveValue::create(scroller), createConvertingToCSSValueID(anonymousScrollTimeline.axis));
+    };
+
+    auto valueForAnonymousViewTimeline = [&](const Animation::AnonymousViewTimeline& anonymousViewTimeline) {
+        auto insetCSSValue = [&](const std::optional<Length>& inset) -> RefPtr<CSSValue> {
+            if (!inset)
+                return nullptr;
+            return CSSPrimitiveValue::create(*inset, style);
+        };
+        return CSSViewValue::create(
+            createConvertingToCSSValueID(anonymousViewTimeline.axis),
+            insetCSSValue(anonymousViewTimeline.insets.start),
+            insetCSSValue(anonymousViewTimeline.insets.end)
+        );
+    };
+
     return WTF::switchOn(timeline,
         [&] (Animation::TimelineKeyword keyword) -> Ref<CSSValue> {
             return CSSPrimitiveValue::create(keyword == Animation::TimelineKeyword::None ? CSSValueNone : CSSValueAuto);
         }, [&] (const AtomString& customIdent) -> Ref<CSSValue> {
             return CSSPrimitiveValue::createCustomIdent(customIdent);
-        }, [&] (const Ref<ScrollTimeline>& scrollTimeline) -> Ref<CSSValue> {
-            return scrollTimeline->toCSSValue(style);
+        }, [&] (const Animation::AnonymousScrollTimeline& anonymousScrollTimeline) -> Ref<CSSValue> {
+            return valueForAnonymousScrollTimeline(anonymousScrollTimeline);
+        }, [&] (const Animation::AnonymousViewTimeline& anonymousViewTimeline) -> Ref<CSSValue> {
+            return valueForAnonymousViewTimeline(anonymousViewTimeline);
         }
     );
 }
