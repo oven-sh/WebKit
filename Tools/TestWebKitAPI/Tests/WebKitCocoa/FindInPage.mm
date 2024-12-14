@@ -351,6 +351,11 @@ TEST(WebKit, FindTextInImageOverlay)
 
 #if HAVE(UIFINDINTERACTION)
 
+static BOOL swizzledIsEmbeddedScreen(id, SEL, UIScreen *)
+{
+    return NO;
+}
+
 // FIXME: (rdar://95125552) Remove conformance to _UITextSearching.
 @interface WKWebView () <UITextSearching>
 - (void)didBeginTextSearchOperation;
@@ -359,6 +364,8 @@ TEST(WebKit, FindTextInImageOverlay)
 
 @interface TestScrollViewDelegate : NSObject<UIScrollViewDelegate>  {
     @public bool _finishedScrolling;
+
+    std::unique_ptr<InstanceMethodSwizzler> _isEmbeddedScreenSwizzler;
 }
 @end
 
@@ -370,6 +377,16 @@ TEST(WebKit, FindTextInImageOverlay)
         return nil;
 
     _finishedScrolling = false;
+
+    // Force UIKit to use a `CADisplayLink` rather than its own update cycle for `UIAnimation`s.
+    // UIKit's own update cycle does not work in TestWebKitAPIApp, as it is started in
+    // UIApplicationMain(), and TestWebKitAPIApp is not a real UIApplication. Without this,
+    // scroll view animations would not be completed.
+    _isEmbeddedScreenSwizzler = WTF::makeUnique<InstanceMethodSwizzler>(
+        UIScreen.class,
+        @selector(_isEmbeddedScreen),
+        reinterpret_cast<IMP>(swizzledIsEmbeddedScreen)
+    );
 
     return self;
 }
@@ -766,12 +783,7 @@ TEST(WebKit, RequestRectForFoundTextRange)
     TestWebKitAPI::Util::run(&done);
 }
 
-// rdar://141248187
-#if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 180000)
-TEST(WebKit, DISABLED_ScrollToFoundRangeWithExistingSelection)
-#else
 TEST(WebKit, ScrollToFoundRangeWithExistingSelection)
-#endif
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)]);
     [webView synchronouslyLoadHTMLString:@"<meta name='viewport' content='width=device-width,initial-scale=1'><div contenteditable><p>Top</p><p style='margin-top: 800px'>Bottom</p></div>"];
@@ -787,12 +799,7 @@ TEST(WebKit, ScrollToFoundRangeWithExistingSelection)
     EXPECT_TRUE(CGPointEqualToPoint([webView scrollView].contentOffset, CGPointMake(0, 664)));
 }
 
-// rdar://141248187
-#if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 180000)
-TEST(WebKit, DISABLED_ScrollToFoundRangeDoesNotFocusElement)
-#else
 TEST(WebKit, ScrollToFoundRangeDoesNotFocusElement)
-#endif
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)]);
     [webView synchronouslyLoadHTMLString:@"<meta name='viewport' content='width=device-width,initial-scale=1'><input id='input'><div id='editor' contenteditable><p>Top</p><p style='margin-top: 800px'>Bottom</p></div>"];
@@ -826,12 +833,7 @@ TEST(WebKit, ScrollToFoundRangeDoesNotFocusElement)
     TestWebKitAPI::Util::run(&scrollViewDelegate->_finishedScrolling);
 }
 
-// rdar://141248187
-#if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 180000)
-TEST(WebKit, DISABLED_ScrollToFoundRangeRepeated)
-#else
 TEST(WebKit, ScrollToFoundRangeRepeated)
-#endif
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)]);
     [webView synchronouslyLoadHTMLString:@"<meta name='viewport' content='width=device-width,initial-scale=1'><div contenteditable><p>Top</p><p style='margin-top: 800px'>Bottom</p></div>"];

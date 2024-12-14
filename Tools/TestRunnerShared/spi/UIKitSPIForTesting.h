@@ -255,6 +255,7 @@ typedef NS_ENUM(NSInteger, UIWKGestureType) {
 @end
 
 @interface UIScreen ()
+- (BOOL)_isEmbeddedScreen;
 @property (nonatomic, readonly) CGRect _referenceBounds;
 @end
 
