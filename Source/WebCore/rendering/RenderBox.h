@@ -40,7 +40,6 @@ class RoundedRectRadii;
 struct PaintInfo;
 
 enum class AvailableLogicalHeightType : bool { ExcludeMarginBorderPadding, IncludeMarginBorderPadding };
-enum class OverlayScrollbarSizeRelevancy : bool { IgnoreOverlayScrollbarSize, IncludeOverlayScrollbarSize };
 
 enum class ShouldComputePreferred : bool { ComputeActual, ComputePreferred };
 
