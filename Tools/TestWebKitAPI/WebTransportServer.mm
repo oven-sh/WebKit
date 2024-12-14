@@ -73,6 +73,7 @@ WebTransportServer::WebTransportServer(Function<Task(ConnectionGroup)>&& connect
 
     RetainPtr listener = adoptNS(nw_listener_create(parameters.get()));
 
+    // FIXME: Verify the incoming CONNECT request has an Origin header once rdar://141457647 is available in OS builds.
     nw_listener_set_new_connection_group_handler(listener.get(), [data = m_data] (nw_connection_group_t incomingConnectionGroup) {
         ConnectionGroup connectionGroup = ConnectionGroup(incomingConnectionGroup);
         data->connectionGroups.append(connectionGroup);

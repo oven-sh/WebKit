@@ -47,13 +47,21 @@ RefPtr<ThreadableWebSocketChannel> WebSocketProvider::createWebSocketChannel(Doc
 
 void WebSocketProvider::initializeWebTransportSession(WebCore::ScriptExecutionContext& context, const URL& url, CompletionHandler<void(RefPtr<WebCore::WebTransportSession>&&)>&& completionHandler)
 {
+    RefPtr origin = context.securityOrigin();
+    if (!origin) {
+        ASSERT_NOT_REACHED();
+        return completionHandler(nullptr);
+    }
     if (is<WorkerGlobalScope>(context)) {
         // FIXME: Add an implementation that uses WorkQueueMessageReceiver to safely send to/from the network process
         // off the main thread without unnecessarily copying the data.
         return completionHandler(nullptr);
     }
-    ASSERT(is<Document>(context));
-    WebKit::WebTransportSession::initialize(url, WTFMove(completionHandler));
+    if (!is<Document>(context)) {
+        ASSERT_NOT_REACHED();
+        return completionHandler(nullptr);
+    }
+    WebKit::WebTransportSession::initialize(url, origin->data(), WTFMove(completionHandler));
 }
 
 } // namespace WebKit

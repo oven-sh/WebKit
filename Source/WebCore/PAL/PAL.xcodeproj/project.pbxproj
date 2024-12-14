@@ -40,6 +40,8 @@
 		1CD50E0F2A33EA1300032F1A /* AppleJPEGXLSPI.h in Headers */ = {isa = PBXBuildFile; fileRef = 1CD50E0E2A33E9FA00032F1A /* AppleJPEGXLSPI.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		1CDE179A2A3BC3F9004E646F /* VideoToolboxSPI.h in Headers */ = {isa = PBXBuildFile; fileRef = 1CDE17992A3BC3F2004E646F /* VideoToolboxSPI.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		1D2B413425F05E3500A3F70A /* ClockGeneric.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1D2B413225F05E3400A3F70A /* ClockGeneric.cpp */; };
+		240C836F2D0CB22B00E5DD75 /* NetworkSoftLink.h in Headers */ = {isa = PBXBuildFile; fileRef = 240C836D2D0CB22B00E5DD75 /* NetworkSoftLink.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		240C83702D0CB22B00E5DD75 /* NetworkSoftLink.mm in Sources */ = {isa = PBXBuildFile; fileRef = 240C836E2D0CB22B00E5DD75 /* NetworkSoftLink.mm */; };
 		293EE4A824154F8F0047493D /* AccessibilitySupportSoftLink.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 293EE4A624154F8F0047493D /* AccessibilitySupportSoftLink.cpp */; };
 		297CB482288B11D700BB7971 /* AccessibilitySoftLink.h in Headers */ = {isa = PBXBuildFile; fileRef = 297CB480288B11D700BB7971 /* AccessibilitySoftLink.h */; };
 		297CB483288B11D700BB7971 /* AccessibilitySoftLink.mm in Sources */ = {isa = PBXBuildFile; fileRef = 297CB481288B11D700BB7971 /* AccessibilitySoftLink.mm */; };
@@ -584,6 +586,8 @@
 		1D12CC4A2411BCAE00FDA0A3 /* FeatureFlagsSPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FeatureFlagsSPI.h; sourceTree = "<group>"; };
 		1D2B413225F05E3400A3F70A /* ClockGeneric.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ClockGeneric.cpp; sourceTree = "<group>"; };
 		1D2B413325F05E3500A3F70A /* ClockGeneric.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ClockGeneric.h; sourceTree = "<group>"; };
+		240C836D2D0CB22B00E5DD75 /* NetworkSoftLink.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NetworkSoftLink.h; sourceTree = "<group>"; };
+		240C836E2D0CB22B00E5DD75 /* NetworkSoftLink.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NetworkSoftLink.mm; sourceTree = "<group>"; };
 		293EE4A624154F8F0047493D /* AccessibilitySupportSoftLink.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AccessibilitySupportSoftLink.cpp; sourceTree = "<group>"; };
 		293EE4A724154F8F0047493D /* AccessibilitySupportSoftLink.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AccessibilitySupportSoftLink.h; sourceTree = "<group>"; };
 		297CB480288B11D700BB7971 /* AccessibilitySoftLink.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AccessibilitySoftLink.h; sourceTree = "<group>"; };
@@ -1123,6 +1127,8 @@
 				CDACB35F23873E480018D7CE /* MediaToolboxSoftLink.h */,
 				F47221F5276FC32300B984C7 /* NaturalLanguageSoftLink.h */,
 				F47221F6276FC32300B984C7 /* NaturalLanguageSoftLink.mm */,
+				240C836D2D0CB22B00E5DD75 /* NetworkSoftLink.h */,
+				240C836E2D0CB22B00E5DD75 /* NetworkSoftLink.mm */,
 				F4EC01B12A85432D00DA295D /* NetworkSPI.h */,
 				31647FAF251759DC0010F8FB /* OpenGLSoftLinkCocoa.h */,
 				31647FAE251759DB0010F8FB /* OpenGLSoftLinkCocoa.mm */,
@@ -1467,6 +1473,7 @@
 				EBC13F3C2BD07DA500310E86 /* MobileKeyBagSPI.h in Headers */,
 				DD20DD2027BC90D60093D175 /* NaturalLanguageSoftLink.h in Headers */,
 				DD20DDF027BC90D70093D175 /* NEFilterSourceSPI.h in Headers */,
+				240C836F2D0CB22B00E5DD75 /* NetworkSoftLink.h in Headers */,
 				F4EC01B22A85432D00DA295D /* NetworkSPI.h in Headers */,
 				DD20DDF127BC90D70093D175 /* NotifySPI.h in Headers */,
 				DD20DDF227BC90D70093D175 /* NSAccessibilitySPI.h in Headers */,
@@ -1741,6 +1748,7 @@
 				0CF99CA41F736375007EE793 /* MediaTimeAVFoundation.cpp in Sources */,
 				CDACB3602387425B0018D7CE /* MediaToolboxSoftLink.cpp in Sources */,
 				F47221F8276FC32300B984C7 /* NaturalLanguageSoftLink.mm in Sources */,
+				240C83702D0CB22B00E5DD75 /* NetworkSoftLink.mm in Sources */,
 				31647FB0251759DD0010F8FB /* OpenGLSoftLinkCocoa.mm in Sources */,
 				1C77C8CE25D7A4A300635E0C /* OTSVGTable.cpp in Sources */,
 				CD6122CD2559B6AC00FC657A /* OutputContext.mm in Sources */,

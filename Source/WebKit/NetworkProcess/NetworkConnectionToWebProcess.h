@@ -414,7 +414,7 @@ private:
     void navigatorGetPushPermissionState(URL&& scopeURL, CompletionHandler<void(Expected<uint8_t, WebCore::ExceptionData>&&)>&&);
 #endif
 
-    void initializeWebTransportSession(URL&&, CompletionHandler<void(std::optional<WebTransportSessionIdentifier>)>&&);
+    void initializeWebTransportSession(URL&&, WebCore::SecurityOriginData&&, CompletionHandler<void(std::optional<WebTransportSessionIdentifier>)>&&);
     void destroyWebTransportSession(WebTransportSessionIdentifier);
 
     struct ResourceNetworkActivityTracker {

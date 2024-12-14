@@ -37,6 +37,10 @@
 #include <wtf/RetainPtr.h>
 #endif
 
+namespace WebCore {
+class SecurityOriginData;
+}
+
 namespace WebKit {
 
 class NetworkConnectionToWebProcess;
@@ -53,7 +57,7 @@ using WebTransportStreamIdentifier = ObjectIdentifier<WebTransportStreamIdentifi
 class NetworkTransportSession : public RefCounted<NetworkTransportSession>, public IPC::MessageReceiver, public IPC::MessageSender, public Identified<WebTransportSessionIdentifier> {
     WTF_MAKE_TZONE_ALLOCATED(NetworkTransportSession);
 public:
-    static void initialize(NetworkConnectionToWebProcess&, URL&&, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&&);
+    static void initialize(NetworkConnectionToWebProcess&, URL&&, WebCore::SecurityOriginData&&, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&&);
 
     ~NetworkTransportSession();
 

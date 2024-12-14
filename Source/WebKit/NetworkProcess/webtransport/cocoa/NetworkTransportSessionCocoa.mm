@@ -29,6 +29,7 @@
 #import "NetworkConnectionToWebProcess.h"
 #import "NetworkTransportStream.h"
 #import <pal/spi/cocoa/NetworkSPI.h>
+#import <pal/cocoa/NetworkSoftLink.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/RetainPtr.h>
@@ -46,11 +47,12 @@ NetworkTransportSession::NetworkTransportSession(NetworkConnectionToWebProcess& 
 }
 
 #if HAVE(WEB_TRANSPORT)
-static RetainPtr<nw_parameters_t> createParameters()
+static RetainPtr<nw_parameters_t> createParameters(WebCore::SecurityOriginData&& origin)
 {
-    auto configureWebTransport = [](nw_protocol_options_t options) {
+    auto configureWebTransport = [origin = WTFMove(origin)](nw_protocol_options_t options) {
         nw_webtransport_options_set_is_unidirectional(options, false);
         nw_webtransport_options_set_is_datagram(options, true);
+        nw_webtransport_options_add_connect_request_header(options, "origin", origin.toString().utf8().data());
     };
 
     auto configureTLS = [](nw_protocol_options_t options) {
@@ -73,7 +75,7 @@ static RetainPtr<nw_parameters_t> createParameters()
 }
 #endif // HAVE(WEB_TRANSPORT)
 
-void NetworkTransportSession::initialize(NetworkConnectionToWebProcess& connectionToWebProcess, URL&& url, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&& completionHandler)
+void NetworkTransportSession::initialize(NetworkConnectionToWebProcess& connectionToWebProcess, URL&& url, WebCore::SecurityOriginData&& origin, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&& completionHandler)
 {
 #if HAVE(WEB_TRANSPORT)
     RetainPtr endpoint = adoptNS(nw_endpoint_create_url(url.string().utf8().data()));
@@ -82,7 +84,7 @@ void NetworkTransportSession::initialize(NetworkConnectionToWebProcess& connecti
         return completionHandler(nullptr);
     }
 
-    RetainPtr parameters = createParameters();
+    RetainPtr parameters = createParameters(WTFMove(origin));
     if (!parameters) {
         ASSERT_NOT_REACHED();
         return completionHandler(nullptr);
