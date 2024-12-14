@@ -38,6 +38,7 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 @implementation _WKWebPushDaemonConnectionConfiguration
@@ -75,7 +76,7 @@
 #if !USE(EXTENSIONKIT)
     auto hostAppAuditToken = configuration.hostApplicationAuditToken;
     Vector<uint8_t> hostAppAuditTokenData(sizeof(hostAppAuditToken));
-    memcpy(hostAppAuditTokenData.data(), &hostAppAuditToken, sizeof(hostAppAuditToken));
+    memcpySpan(hostAppAuditTokenData.mutableSpan(), asByteSpan(hostAppAuditToken));
     connectionConfiguration.hostAppAuditTokenData = WTFMove(hostAppAuditTokenData);
 #endif
 

@@ -98,8 +98,8 @@ FFTFrame::FFTFrame(const FFTFrame& frame)
     m_frame.imagp = m_imagData.data();
 
     // Copy/setup frame data
-    memcpy(realData().data(), frame.m_frame.realp, sizeof(float) * realData().size());
-    memcpy(imagData().data(), frame.m_frame.imagp, sizeof(float) * imagData().size());
+    memcpySpan(realData().span(), unsafeMakeSpan(frame.m_frame.realp, realData().size()));
+    memcpySpan(imagData().span(), unsafeMakeSpan(frame.m_frame.imagp, imagData().size()));
 }
 
 FFTFrame::~FFTFrame() = default;

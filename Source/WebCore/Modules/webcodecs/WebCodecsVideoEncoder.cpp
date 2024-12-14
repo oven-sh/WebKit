@@ -43,6 +43,7 @@
 #include "WebCodecsVideoEncoderEncodeOptions.h"
 #include "WebCodecsVideoFrame.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -258,7 +259,7 @@ WebCodecsEncodedVideoChunkMetadata WebCodecsVideoEncoder::createEncodedChunkMeta
             auto arrayBuffer = ArrayBuffer::tryCreateUninitialized(m_activeConfiguration.description->size(), 1);
             RELEASE_LOG_ERROR_IF(!!arrayBuffer, Media, "Cannot create array buffer for WebCodecs encoder description");
             if (arrayBuffer) {
-                memcpy(static_cast<uint8_t*>(arrayBuffer->data()), m_activeConfiguration.description->data(), m_activeConfiguration.description->size());
+                memcpySpan(arrayBuffer->mutableSpan(), m_activeConfiguration.description->span());
                 metadata.decoderConfig->description = WTFMove(arrayBuffer);
             }
         }

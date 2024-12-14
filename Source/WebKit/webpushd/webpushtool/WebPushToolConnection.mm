@@ -39,6 +39,7 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/MainThread.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 
 namespace WebPushTool {
@@ -142,7 +143,7 @@ void Connection::sendAuditToken()
 
     Vector<uint8_t> tokenVector;
     tokenVector.resize(32);
-    memcpy(tokenVector.data(), &token, sizeof(token));
+    memcpySpan(tokenVector.mutableSpan(), asByteSpan(token));
     configuration.hostAppAuditTokenData = WTFMove(tokenVector);
 
     sendWithoutUsingIPCConnection(Messages::PushClientConnection::InitializeConnection(WTFMove(configuration)));

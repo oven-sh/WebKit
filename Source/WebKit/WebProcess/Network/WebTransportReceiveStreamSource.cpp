@@ -27,6 +27,7 @@
 #include "WebTransportReceiveStreamSource.h"
 
 #include <wtf/RunLoop.h>
+#include <wtf/StdLibExtras.h>
 
 namespace WebKit {
 
@@ -49,7 +50,7 @@ void WebTransportReceiveStreamSource::receiveBytes(std::span<const uint8_t> byte
         return;
     auto arrayBuffer = ArrayBuffer::tryCreateUninitialized(bytes.size(), 1);
     if (arrayBuffer)
-        memcpy(static_cast<uint8_t*>(arrayBuffer->data()), bytes.data(), bytes.size());
+        memcpySpan(arrayBuffer->mutableSpan(), bytes);
     if (!controller().enqueue(WTFMove(arrayBuffer)))
         doCancel();
 }

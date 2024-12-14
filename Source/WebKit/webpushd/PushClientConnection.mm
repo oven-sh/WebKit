@@ -41,6 +41,7 @@
 #import <WebCore/PushPermissionState.h>
 #import <wtf/ASCIICType.h>
 #import <wtf/HexNumber.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/Vector.h>
 #import <wtf/cocoa/Entitlements.h>
@@ -169,7 +170,7 @@ RefPtr<PushClientConnection> PushClientConnection::create(xpc_connection_t conne
         return nullptr;
     }
 
-    memcpy(&hostAppAuditToken, configuration.hostAppAuditTokenData.data(), sizeof(hostAppAuditToken));
+    memcpySpan(asMutableByteSpan(hostAppAuditToken), configuration.hostAppAuditTokenData.span());
 #endif
 
     bool hostAppHasWebPushEntitlement = hostAppHasEntitlement(hostAppAuditToken, hostAppWebPushEntitlement);

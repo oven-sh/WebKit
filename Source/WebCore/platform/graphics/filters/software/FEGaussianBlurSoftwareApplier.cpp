@@ -35,6 +35,7 @@
 #include "PixelBuffer.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if USE(ACCELERATE)
@@ -290,7 +291,7 @@ inline void FEGaussianBlurSoftwareApplier::boxBlurAccelerated(PixelBuffer& ioBuf
 
     // The final result should be stored in ioBuffer.
     ASSERT(ioBuffer.bytes().size() == tempBuffer.bytes().size());
-    memcpy(ioBuffer.bytes().data(), tempBuffer.bytes().data(), ioBuffer.bytes().size());
+    memcpySpan(ioBuffer.bytes(), tempBuffer.bytes().first(ioBuffer.bytes().size()));
 }
 #endif
 
@@ -335,7 +336,7 @@ inline void FEGaussianBlurSoftwareApplier::boxBlurUnaccelerated(PixelBuffer& ioB
     // The final result should be stored in ioBuffer.
     if (&ioBuffer != fromBuffer) {
         ASSERT(ioBuffer.bytes().size() == fromBuffer->bytes().size());
-        memcpy(ioBuffer.bytes().data(), fromBuffer->bytes().data(), ioBuffer.bytes().size());
+        memcpySpan(ioBuffer.bytes(), fromBuffer->bytes().first(ioBuffer.bytes().size()));
     }
 }
 
@@ -396,7 +397,7 @@ inline void FEGaussianBlurSoftwareApplier::applyPlatform(PixelBuffer& ioBuffer, 
                 } else {
                     params.ioBuffer = ioBuffer.createScratchPixelBuffer(blockSize);
                     params.tempBuffer = tempBuffer.createScratchPixelBuffer(blockSize);
-                    memcpy(params.ioBuffer->bytes().data(), ioBuffer.bytes().data() + startY * scanline, params.ioBuffer->bytes().size());
+                    memcpySpan(params.ioBuffer->bytes(), ioBuffer.bytes().subspan(startY * scanline, params.ioBuffer->bytes().size()));
                 }
 
                 params.width = paintSize.width();
@@ -423,7 +424,7 @@ inline void FEGaussianBlurSoftwareApplier::applyPlatform(PixelBuffer& ioBuffer, 
                 destinationOffset = currentY * scanline;
                 size = adjustedBlockHeight * scanline;
 
-                memcpy(ioBuffer.bytes().data() + destinationOffset, params.ioBuffer->bytes().data() + sourceOffset, size);
+                memcpySpan(ioBuffer.bytes().subspan(destinationOffset), params.ioBuffer->bytes().subspan(sourceOffset, size));
             }
             return;
         }

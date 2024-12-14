@@ -28,6 +28,8 @@
 #include <array>
 #include <mach/mach.h>
 
+#include <wtf/StdLibExtras.h>
+
 namespace WebKit {
 
 static std::array<unsigned, 8> invalidAuditToken()
@@ -45,7 +47,7 @@ struct CoreIPCAuditToken {
 
     CoreIPCAuditToken(audit_token_t input)
     {
-        memcpy(token.data(), &input, sizeof(token));
+        memcpySpan(asMutableByteSpan(token), asByteSpan(input));
     }
 
     CoreIPCAuditToken(std::array<unsigned, 8> token)
@@ -56,7 +58,7 @@ struct CoreIPCAuditToken {
     audit_token_t auditToken() const
     {
         audit_token_t result;
-        memcpy(&result, token.data(), sizeof(token));
+        memcpySpan(asMutableByteSpan(result), asByteSpan(token));
         return result;
     }
 

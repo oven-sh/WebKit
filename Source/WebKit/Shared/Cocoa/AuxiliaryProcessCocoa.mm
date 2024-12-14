@@ -42,9 +42,11 @@
 #import <wtf/FileSystem.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/RuntimeApplicationChecks.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/SoftLinking.h>
+#import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/text/MakeString.h>
 
 #if ENABLE(CFPREFS_DIRECT_MODE)
@@ -166,7 +168,7 @@ void AuxiliaryProcess::registerWithStateDumper(ASCIILiteral title)
                 os_state->osd_type = OS_STATE_DATA_SERIALIZED_NSCF_OBJECT;
                 os_state->osd_data_size = data.length;
                 strlcpy(os_state->osd_title, title.characters(), sizeof(os_state->osd_title));
-                memcpy(os_state->osd_data, data.bytes, data.length);
+                memcpySpan(unsafeMakeSpan(os_state->osd_data, os_state->osd_data_size), span(data));
             }
 
             return os_state;

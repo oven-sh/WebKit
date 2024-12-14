@@ -459,7 +459,7 @@ bool TextResourceDecoder::checkForCSSCharset(std::span<const uint8_t> data, bool
 
     size_t oldSize = m_buffer.size();
     m_buffer.grow(oldSize + data.size());
-    memcpy(m_buffer.data() + oldSize, data.data(), data.size());
+    memcpySpan(m_buffer.mutableSpan().subspan(oldSize), data);
 
     movedDataToBuffer = true;
 
@@ -505,7 +505,7 @@ bool TextResourceDecoder::checkForHeadCharset(std::span<const uint8_t> data, boo
 
     size_t oldSize = m_buffer.size();
     m_buffer.grow(oldSize + data.size());
-    memcpy(m_buffer.data() + oldSize, data.data(), data.size());
+    memcpySpan(m_buffer.mutableSpan().subspan(oldSize), data);
 
     movedDataToBuffer = true;
 
@@ -635,7 +635,7 @@ String TextResourceDecoder::decode(std::span<const uint8_t> data)
     if (!movedDataToBuffer) {
         size_t oldSize = m_buffer.size();
         m_buffer.grow(oldSize + data.size());
-        memcpy(m_buffer.data() + oldSize, data.data(), data.size());
+        memcpySpan(m_buffer.mutableSpan().subspan(oldSize), data);
     }
 
     String result = m_codec->decode(m_buffer.subspan(lengthOfBOM), false, m_contentType == XML && !m_useLenientXMLDecoding, m_sawError);

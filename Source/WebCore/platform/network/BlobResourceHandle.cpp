@@ -48,6 +48,7 @@
 #include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 #include <wtf/Ref.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -377,7 +378,7 @@ int BlobResourceHandle::readDataSync(const BlobDataItem& item, std::span<uint8_t
 
     long long remaining = item.length() - m_currentItemReadSize;
     long long bytesToRead = std::min(std::min<long long>(remaining, buffer.size()), m_totalRemainingSize);
-    memcpy(buffer.data(), item.data()->span().subspan(item.offset() + m_currentItemReadSize).data(), bytesToRead);
+    memcpySpan(buffer, item.data()->span().subspan(item.offset() + m_currentItemReadSize).first(bytesToRead));
     m_totalRemainingSize -= bytesToRead;
 
     m_currentItemReadSize += bytesToRead;

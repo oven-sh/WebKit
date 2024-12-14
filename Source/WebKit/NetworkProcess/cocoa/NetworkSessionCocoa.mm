@@ -66,6 +66,7 @@
 #import <wtf/ObjCRuntimeExtras.h>
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/SoftLinking.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
 #import <wtf/WeakObjCPtr.h>
@@ -2322,7 +2323,7 @@ void NetworkSessionCocoa::setProxyConfigData(const Vector<std::pair<Vector<uint8
     bool recreateSessions = false;
     for (auto& config : proxyConfigurations) {
         uuid_t identifier;
-        memcpy(identifier, config.second.span().data(), sizeof(uuid_t));
+        memcpySpan(asMutableByteSpan(identifier), config.second.span().first(sizeof(uuid_t)));
 
         auto nwProxyConfig = adoptNS(createProxyConfig(config.first.data(), config.first.size(), identifier));
 

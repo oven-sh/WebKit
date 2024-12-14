@@ -33,6 +33,7 @@
 #include "FFTConvolver.h"
 
 #include "VectorMath.h"
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -103,7 +104,7 @@ void FFTConvolver::process(FFTFrame* fftKernel, const float* sourceP, float* des
             if (!isCopyGood3)
                 return;
 
-            memcpy(m_lastOverlapBuffer.data(), m_outputBuffer.data() + halfSize, sizeof(float) * halfSize);
+            memcpySpan(m_lastOverlapBuffer.span(), m_outputBuffer.span().subspan(halfSize, halfSize));
 
             // Reset index back to start for next time
             m_readWriteIndex = 0;

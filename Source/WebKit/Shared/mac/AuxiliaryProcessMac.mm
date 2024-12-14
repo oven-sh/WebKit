@@ -52,6 +52,7 @@
 #import <wtf/SafeStrerror.h>
 #import <wtf/Scope.h>
 #import <wtf/SoftLinking.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/SystemTracing.h>
 #import <wtf/WTFProcess.h>
 #import <wtf/WallTime.h>
@@ -501,7 +502,7 @@ static bool tryApplyCachedSandbox(const SandboxInfo& info)
         profile.builtin = cstringBuffer.data();
         if (builtin.isNull())
             return false;
-        memcpy(profile.builtin, sandboxBuiltin.data(), cachedSandboxHeader.builtinSize);
+        memcpySpan(builtin.mutableSpan(), sandboxBuiltin.first(cachedSandboxHeader.builtinSize));
     }
     ASSERT(sandboxData.subspan(profile.size).data() <= std::to_address(cachedSandboxContents.end()));
     profile.data = sandboxData.data();

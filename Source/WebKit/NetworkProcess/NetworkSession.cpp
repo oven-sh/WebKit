@@ -58,6 +58,7 @@
 #include <WebCore/SWServer.h>
 #include <numeric>
 #include <wtf/RuntimeApplicationChecks.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(COCOA)
@@ -135,7 +136,7 @@ static WebPushD::WebPushDaemonConnectionConfiguration configurationWithHostAudit
     auto token = networkProcess.parentProcessConnection()->getAuditToken();
     if (token) {
         Vector<uint8_t> auditTokenData(sizeof(*token));
-        memcpy(auditTokenData.data(), &(*token), sizeof(*token));
+        memcpySpan(auditTokenData.mutableSpan(), asByteSpan(*token));
         configuration.hostAppAuditTokenData = WTFMove(auditTokenData);
     }
 #endif

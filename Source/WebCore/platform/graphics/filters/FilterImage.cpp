@@ -187,13 +187,15 @@ static void copyImageBytes(const PixelBuffer& sourcePixelBuffer, PixelBuffer& de
     if (UNLIKELY(size.hasOverflowed() || destinationBytesPerRow.hasOverflowed() || sourceBytesPerRow.hasOverflowed() || destinationOffset.hasOverflowed() || sourceOffset.hasOverflowed()))
         return;
 
-    uint8_t* destinationPixel = destinationPixelBuffer.bytes().data() + destinationOffset.value();
-    const uint8_t* sourcePixel = sourcePixelBuffer.bytes().data() + sourceOffset.value();
+    auto destinationPixel = destinationPixelBuffer.bytes().subspan(destinationOffset.value());
+    auto sourcePixel = sourcePixelBuffer.bytes().subspan(sourceOffset.value());
 
     for (int y = 0; y < sourceRectClipped.height(); ++y) {
-        memcpy(destinationPixel, sourcePixel, size);
-        destinationPixel += destinationBytesPerRow;
-        sourcePixel += sourceBytesPerRow;
+        if (y) {
+            destinationPixel = destinationPixel.subspan(destinationBytesPerRow);
+            sourcePixel = sourcePixel.subspan(sourceBytesPerRow);
+        }
+        memcpySpan(destinationPixel, sourcePixel.first(size));
     }
 }
 
