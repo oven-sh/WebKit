@@ -132,7 +132,7 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
         }();
         if (shouldProcessPreviousNavigationEntries) {
             for (auto& entry : previousNavigation->m_entries)
-                m_entries.append(NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), entry.get()));
+                m_entries.append(NavigationHistoryEntry::create(*this, entry.get()));
 
             RELEASE_ASSERT(m_entries.size() > previousNavigation->m_currentEntryIndex);
 
@@ -151,7 +151,7 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
                 auto previousEntry = m_entries[*previousNavigation->m_currentEntryIndex];
 
                 if (navigationType == NavigationNavigationType::Replace)
-                    m_entries[*previousNavigation->m_currentEntryIndex] = NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), *currentItem);
+                    m_entries[*previousNavigation->m_currentEntryIndex] = NavigationHistoryEntry::create(*this, *currentItem);
 
                 m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, *currentItem);
 
@@ -192,7 +192,7 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
     size_t start = m_entries.size();
 
     for (Ref item : items)
-        m_entries.append(NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), WTFMove(item)));
+        m_entries.append(NavigationHistoryEntry::create(*this, WTFMove(item)));
 
     m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, *currentItem, start);
     updateForActivation(frame()->history().previousItem(), navigationType);
@@ -222,7 +222,7 @@ void Navigation::updateForActivation(HistoryItem* previousItem, std::optional<Na
     if (type == NavigationNavigationType::Reload)
         previousEntry = currentEntry();
     else if (type == NavigationNavigationType::Replace && (isSameOrigin || wasAboutBlank))
-        previousEntry = NavigationHistoryEntry::create(scriptExecutionContext(), *previousItem);
+        previousEntry = NavigationHistoryEntry::create(*this, *previousItem);
 
     m_activation = NavigationActivation::create(*type, *currentEntry(), WTFMove(previousEntry));
 }
@@ -243,7 +243,7 @@ RefPtr<NavigationActivation> Navigation::createForPageswapEvent(HistoryItem* new
     if (frame()->document() && frame()->document()->settings().navigationAPIEnabled())
         oldEntry = currentEntry();
     else if (RefPtr currentItem = frame()->checkedHistory()->currentItem())
-        oldEntry = NavigationHistoryEntry::create(scriptExecutionContext(), *currentItem);
+        oldEntry = NavigationHistoryEntry::create(*this, *currentItem);
 
     RefPtr<NavigationHistoryEntry> newEntry;
     if (*type == NavigationNavigationType::Reload) {
@@ -253,11 +253,11 @@ RefPtr<NavigationActivation> Navigation::createForPageswapEvent(HistoryItem* new
         // FIXME: For a traverse navigation, we should be identifying the right existing history
         // entry for 'newEntry' instead of allocating a new one.
         if (newItem)
-            newEntry = NavigationHistoryEntry::create(scriptExecutionContext(), *newItem);
+            newEntry = NavigationHistoryEntry::create(*this, *newItem);
     } else {
         ASSERT(newItem);
         if (newItem)
-            newEntry = NavigationHistoryEntry::create(scriptExecutionContext(), *newItem);
+            newEntry = NavigationHistoryEntry::create(*this, *newItem);
     }
 
     if (newEntry)
@@ -300,6 +300,8 @@ enum EventTargetInterfaceType Navigation::eventTargetInterface() const
 
 static RefPtr<DOMPromise> createDOMPromise(const DeferredPromise& deferredPromise)
 {
+    Locker<JSC::JSLock> locker(commonVM().apiLock());
+
     auto promiseValue = deferredPromise.promise();
     auto& jsPromise = *JSC::jsCast<JSC::JSPromise*>(promiseValue);
     auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(jsPromise.globalObject());
@@ -627,7 +629,7 @@ void Navigation::updateForNavigation(Ref<HistoryItem>&& item, NavigationNavigati
     }
 
     if (navigationType == NavigationNavigationType::Push || navigationType == NavigationNavigationType::Replace) {
-        m_entries[*m_currentEntryIndex] = NavigationHistoryEntry::create(protectedScriptExecutionContext().get(), WTFMove(item));
+        m_entries[*m_currentEntryIndex] = NavigationHistoryEntry::create(*this, WTFMove(item));
         if (shouldCopyStateObjectFromCurrentEntry == ShouldCopyStateObjectFromCurrentEntry::Yes)
             m_entries[*m_currentEntryIndex]->setState(oldCurrentEntry->state());
     }
@@ -641,7 +643,7 @@ void Navigation::updateForNavigation(Ref<HistoryItem>&& item, NavigationNavigati
     dispatchEvent(currentEntryChangeEvent);
 
     for (auto& disposedEntry : disposedEntries)
-        disposedEntry->dispatchEvent(Event::create(eventNames().disposeEvent, { }));
+        disposedEntry->dispatchDisposeEvent();
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#update-the-navigation-api-entries-for-reactivation
@@ -666,7 +668,7 @@ void Navigation::updateForReactivation(Vector<Ref<HistoryItem>>& newHistoryItems
         }
 
         if (!newEntry)
-            newEntry = NavigationHistoryEntry::create(scriptExecutionContext(), WTFMove(item));
+            newEntry = NavigationHistoryEntry::create(*this, WTFMove(item));
 
         newEntries.append(newEntry.releaseNonNull());
     }
@@ -675,7 +677,7 @@ void Navigation::updateForReactivation(Vector<Ref<HistoryItem>>& newHistoryItems
     m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, reactivatedItem);
 
     for (auto& disposedEntry : oldEntries)
-        disposedEntry->dispatchEvent(Event::create(eventNames().disposeEvent, { }));
+        disposedEntry->dispatchDisposeEvent();
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#can-have-its-url-rewritten

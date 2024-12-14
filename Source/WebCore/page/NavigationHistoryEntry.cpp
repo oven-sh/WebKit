@@ -26,6 +26,7 @@
 #include "config.h"
 #include "NavigationHistoryEntry.h"
 
+#include "EventNames.h"
 #include "FrameLoader.h"
 #include "HistoryController.h"
 #include "JSDOMGlobalObject.h"
@@ -40,8 +41,9 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(NavigationHistoryEntry);
 
-NavigationHistoryEntry::NavigationHistoryEntry(ScriptExecutionContext* context, const DocumentState& originalDocumentState, Ref<HistoryItem>&& historyItem, String urlString, WTF::UUID key, RefPtr<SerializedScriptValue>&& state, WTF::UUID id)
-    : ContextDestructionObserver(context)
+NavigationHistoryEntry::NavigationHistoryEntry(Navigation& navigation, const DocumentState& originalDocumentState, Ref<HistoryItem>&& historyItem, String urlString, WTF::UUID key, RefPtr<SerializedScriptValue>&& state, WTF::UUID id)
+    : ActiveDOMObject(navigation.protectedScriptExecutionContext().get())
+    , m_navigation(navigation)
     , m_urlString(urlString)
     , m_key(key)
     , m_id(id)
@@ -51,18 +53,22 @@ NavigationHistoryEntry::NavigationHistoryEntry(ScriptExecutionContext* context, 
 {
 }
 
-Ref<NavigationHistoryEntry> NavigationHistoryEntry::create(ScriptExecutionContext* context, Ref<HistoryItem>&& historyItem)
+Ref<NavigationHistoryEntry> NavigationHistoryEntry::create(Navigation& navigation, Ref<HistoryItem>&& historyItem)
 {
-    return adoptRef(*new NavigationHistoryEntry(context, DocumentState::fromContext(context), WTFMove(historyItem), historyItem->urlString(), historyItem->uuidIdentifier()));
+    Ref entry = adoptRef(*new NavigationHistoryEntry(navigation, DocumentState::fromContext(navigation.protectedScriptExecutionContext().get()), WTFMove(historyItem), historyItem->urlString(), historyItem->uuidIdentifier()));
+    entry->suspendIfNeeded();
+    return entry;
 }
 
-Ref<NavigationHistoryEntry> NavigationHistoryEntry::create(ScriptExecutionContext* context, const NavigationHistoryEntry& other)
+Ref<NavigationHistoryEntry> NavigationHistoryEntry::create(Navigation& navigation, const NavigationHistoryEntry& other)
 {
     Ref historyItem = other.m_associatedHistoryItem;
     RefPtr state = historyItem->navigationAPIStateObject();
     if (!state)
         state = other.m_state;
-    return adoptRef(*new NavigationHistoryEntry(context, DocumentState::fromContext(other.scriptExecutionContext()), WTFMove(historyItem), other.m_urlString, other.m_key, WTFMove(state), other.m_id));
+    Ref entry = adoptRef(*new NavigationHistoryEntry(navigation, DocumentState::fromContext(other.scriptExecutionContext()), WTFMove(historyItem), other.m_urlString, other.m_key, WTFMove(state), other.m_id));
+    entry->suspendIfNeeded();
+    return entry;
 }
 
 ScriptExecutionContext* NavigationHistoryEntry::scriptExecutionContext() const
@@ -73,6 +79,11 @@ ScriptExecutionContext* NavigationHistoryEntry::scriptExecutionContext() const
 enum EventTargetInterfaceType NavigationHistoryEntry::eventTargetInterface() const
 {
     return EventTargetInterfaceType::NavigationHistoryEntry;
+}
+
+void NavigationHistoryEntry::eventListenersDidChange()
+{
+    m_hasDisposeEventListener = hasEventListeners(eventNames().disposeEvent);
 }
 
 const String& NavigationHistoryEntry::url() const
@@ -147,6 +158,18 @@ auto NavigationHistoryEntry::DocumentState::fromContext(ScriptExecutionContext* 
     if (!context)
         return { };
     return { context->identifier(), context->referrerPolicy() };
+}
+
+bool NavigationHistoryEntry::virtualHasPendingActivity() const
+{
+    return m_hasDisposeEventListener && !m_hasDispatchedDisposeEvent && m_navigation;
+}
+
+void NavigationHistoryEntry::dispatchDisposeEvent()
+{
+    ASSERT(!m_hasDispatchedDisposeEvent);
+    dispatchEvent(Event::create(eventNames().disposeEvent, { }, Event::IsTrusted::Yes));
+    m_hasDispatchedDisposeEvent = true;
 }
 
 } // namespace WebCore

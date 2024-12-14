@@ -159,12 +159,15 @@ public:
 
     void setFocusChanged(FocusDidChange changed) { m_focusChangedDuringOngoingNavigation = changed; }
 
+    // EventTarget.
+    ScriptExecutionContext* scriptExecutionContext() const final;
+    RefPtr<ScriptExecutionContext> protectedScriptExecutionContext() const;
+
 private:
     explicit Navigation(LocalDOMWindow&);
 
+    // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final;
-    RefPtr<ScriptExecutionContext> protectedScriptExecutionContext() const;
-    ScriptExecutionContext* scriptExecutionContext() const final;
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
