@@ -68,6 +68,14 @@ class WebPage;
 class WebProcess;
 class WebWheelEvent;
 
+#if ENABLE(IOS_TOUCH_EVENTS)
+struct TouchEventData {
+    WebCore::FrameIdentifier frameID;
+    WebTouchEvent event;
+    CompletionHandler<void(bool, std::optional<WebCore::RemoteUserInputEventData>)> completionHandler;
+};
+#endif
+
 class EventDispatcher final :
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
     public MomentumEventDispatcher::Client,
@@ -94,11 +102,6 @@ public:
 #endif
 
 #if ENABLE(IOS_TOUCH_EVENTS)
-    struct TouchEventData {
-        WebCore::FrameIdentifier frameID;
-        WebTouchEvent event;
-        CompletionHandler<void(bool, std::optional<WebCore::RemoteUserInputEventData>)> completionHandler;
-    };
     using TouchEventQueue = Vector<TouchEventData, 1>;
     void takeQueuedTouchEventsForPage(const WebPage&, UniqueRef<TouchEventQueue>&);
 #endif

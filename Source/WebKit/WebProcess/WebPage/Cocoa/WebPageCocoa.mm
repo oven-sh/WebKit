@@ -37,6 +37,7 @@
 #import "UserMediaCaptureManager.h"
 #import "WKAccessibilityWebPageObjectBase.h"
 #import "WebFrame.h"
+#import "WebPageInternals.h"
 #import "WebPageProxyMessages.h"
 #import "WebPasteboardOverrides.h"
 #import "WebPaymentCoordinator.h"
@@ -842,7 +843,7 @@ void WebPage::insertMultiRepresentationHEIC(std::span<const uint8_t> data, const
 std::pair<URL, DidFilterLinkDecoration> WebPage::applyLinkDecorationFilteringWithResult(const URL& url, LinkDecorationFilteringTrigger trigger)
 {
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    if (m_linkDecorationFilteringData.isEmpty()) {
+    if (m_internals->linkDecorationFilteringData.isEmpty()) {
         RELEASE_LOG_ERROR(ResourceLoadStatistics, "Unable to filter tracking query parameters (missing data)");
         return { url, DidFilterLinkDecoration::No };
     }
@@ -873,8 +874,8 @@ std::pair<URL, DidFilterLinkDecoration> WebPage::applyLinkDecorationFilteringWit
 
     auto sanitizedURL = url;
     auto removedParameters = WTF::removeQueryParameters(sanitizedURL, [&](auto& parameter) {
-        auto it = m_linkDecorationFilteringData.find(parameter);
-        if (it == m_linkDecorationFilteringData.end())
+        auto it = m_internals->linkDecorationFilteringData.find(parameter);
+        if (it == m_internals->linkDecorationFilteringData.end())
             return false;
 
         const auto& conditionals = it->value;
@@ -903,7 +904,7 @@ std::pair<URL, DidFilterLinkDecoration> WebPage::applyLinkDecorationFilteringWit
 URL WebPage::allowedQueryParametersForAdvancedPrivacyProtections(const URL& url)
 {
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    if (m_allowedQueryParametersForAdvancedPrivacyProtections.isEmpty()) {
+    if (m_internals->allowedQueryParametersForAdvancedPrivacyProtections.isEmpty()) {
         RELEASE_LOG_ERROR(ResourceLoadStatistics, "Unable to hide query parameters from script (missing data)");
         return url;
     }
@@ -913,7 +914,7 @@ URL WebPage::allowedQueryParametersForAdvancedPrivacyProtections(const URL& url)
 
     auto sanitizedURL = url;
 
-    auto allowedParameters = m_allowedQueryParametersForAdvancedPrivacyProtections.get(RegistrableDomain { sanitizedURL });
+    auto allowedParameters = m_internals->allowedQueryParametersForAdvancedPrivacyProtections.get(RegistrableDomain { sanitizedURL });
 
     if (!allowedParameters.contains("#"_s))
         sanitizedURL.removeFragmentIdentifier();

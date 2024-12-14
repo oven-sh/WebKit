@@ -26,22 +26,8 @@
 #pragma once
 
 #include "APIObject.h"
-#include "EventDispatcher.h"
-#include "IdentifierTypes.h"
-#include "InjectedBundlePageFullScreenClient.h"
-#include "MediaPlaybackState.h"
 #include "MessageReceiver.h"
 #include "MessageSender.h"
-#include "NetworkResourceLoadIdentifier.h"
-#include "PDFPluginIdentifier.h"
-#include "StorageNamespaceIdentifier.h"
-#include "TransactionID.h"
-#include "UserContentControllerIdentifier.h"
-#include "VisitedLinkTableIdentifier.h"
-#include "WebEventType.h"
-#include "WebPageProxyIdentifier.h"
-#include "WebURLSchemeHandlerIdentifier.h"
-#include "WebUndoStepID.h"
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <WebCore/DictionaryPopupInfo.h>
 #include <WebCore/DisabledAdaptations.h>
@@ -211,6 +197,7 @@ class Page;
 class PolicyDecision;
 class PrintContext;
 class Range;
+class RegistrableDomain;
 class RenderImage;
 class Report;
 class ResourceRequest;
@@ -249,9 +236,16 @@ enum class MediaConstraintType : uint8_t;
 enum class MediaProducerMediaCaptureKind : uint8_t;
 enum class MediaProducerMediaState : uint32_t;
 enum class MediaProducerMutedState : uint8_t;
+enum class PlatformEventModifier : uint8_t;
 enum class RenderAsTextFlag : uint16_t;
 enum class ScheduleLocationChangeResult : uint8_t;
 enum class SelectionDirection : uint8_t;
+enum class ScrollDirection : uint8_t;
+enum class ScrollGranularity : uint8_t;
+enum ScrollLogicalDirection : uint8_t;
+enum class ScrollPinningBehavior : uint8_t;
+enum class ScrollbarMode : uint8_t;
+enum ScrollbarOverlayStyle : uint8_t;
 enum class ShouldTreatAsContinuingLoad : uint8_t;
 enum class StorageAccessScope : bool;
 enum class SyntheticClickResult : uint8_t;
@@ -264,6 +258,7 @@ enum class UserContentInjectedFrames : bool;
 enum class UserInterfaceLayoutDirection : bool;
 enum class ViolationReportType : uint8_t;
 enum class WheelEventProcessingSteps : uint8_t;
+enum class WheelScrollGestureState : uint8_t;
 enum class WritingDirection : uint8_t;
 enum class PaginationMode : uint8_t;
 
@@ -302,6 +297,7 @@ struct PromisedAttachmentInfo;
 struct RemoteUserInputEventData;
 struct RequestStorageAccessResult;
 struct RunJavaScriptParameters;
+struct ScrollingNodeIDType;
 struct TargetedElementAdjustment;
 struct TargetedElementInfo;
 struct TargetedElementRequest;
@@ -320,6 +316,7 @@ using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
 using MediaProducerMutedStateFlags = OptionSet<MediaProducerMutedState>;
 using NavigationIdentifier = ObjectIdentifier<NavigationIdentifierType, uint64_t>;
 using PlatformDisplayID = uint32_t;
+using ScrollingNodeID = ProcessQualified<ObjectIdentifier<ScrollingNodeIDType>>;
 
 namespace TextExtraction {
 struct Item;
@@ -353,6 +350,7 @@ class FrameState;
 class GPUProcessConnection;
 class GamepadData;
 class GeolocationPermissionRequestManager;
+class InjectedBundlePageFullScreenClient;
 class InjectedBundleScriptWorld;
 class LayerHostingContext;
 class MediaDeviceSandboxExtensions;
@@ -418,6 +416,7 @@ class WebPopupMenu;
 class WebRemoteObjectRegistry;
 class WebScreenOrientationManager;
 class WebTouchEvent;
+class WebURLSchemeHandler;
 class WebURLSchemeHandlerProxy;
 class WebUndoStep;
 class WebUserContentController;
@@ -431,10 +430,15 @@ enum class FindOptions : uint16_t;
 enum class FindDecorationStyle : uint8_t;
 enum class LayerHostingMode : uint8_t;
 enum class NavigatingToAppBoundDomain : bool;
+enum class MediaPlaybackState : uint8_t;
 enum class SnapshotOption : uint16_t;
+enum class StorageNamespaceIdentifierType;
 enum class SyntheticEditingCommandType : uint8_t;
 enum class TextInteractionSource : uint8_t;
 enum class TextRecognitionUpdateResult : uint8_t;
+enum class VisitedLinkTableIdentifierType;
+enum class WebEventModifier : uint8_t;
+enum class WebEventType : uint8_t;
 
 struct ContentWorldData;
 struct CoreIPCAuditToken;
@@ -461,11 +465,19 @@ struct InsertTextOptions;
 struct InteractionInformationAtPosition;
 struct InteractionInformationRequest;
 struct LoadParameters;
+struct PDFPluginIdentifierType;
 struct PlatformFontInfo;
 struct PrintInfo;
 struct ProvisionalFrameCreationParameters;
+struct TapIdentifierType;
 struct TextAnimationData;
+struct TextCheckerRequestType;
 struct TextInputContext;
+#if ENABLE(IOS_TOUCH_EVENTS)
+struct TouchEventData;
+#endif
+struct TransactionIDType;
+struct UserContentControllerIdentifierType;
 struct UserMessage;
 struct ViewWindowCoordinates;
 struct WebAutocorrectionData;
@@ -473,14 +485,27 @@ struct WebAutocorrectionContext;
 struct WebFoundTextRange;
 struct WebHitTestResultData;
 struct WebPageCreationParameters;
+struct WebPageProxyIdentifierType;
 struct WebPreferencesStore;
 struct WebsitePoliciesData;
+
+template<typename T> class MonotonicObjectIdentifier;
 
 using ActivityStateChangeID = uint64_t;
 using ContentWorldIdentifier = ObjectIdentifier<ContentWorldIdentifierType>;
 using GeolocationIdentifier = ObjectIdentifier<GeolocationIdentifierType>;
+using PDFPluginIdentifier = ObjectIdentifier<PDFPluginIdentifierType>;
 using SnapshotOptions = OptionSet<SnapshotOption>;
+using StorageNamespaceIdentifier = ObjectIdentifier<StorageNamespaceIdentifierType>;
+using TapIdentifier = ObjectIdentifier<TapIdentifierType>;
+using TextCheckerRequestID = ObjectIdentifier<TextCheckerRequestType>;
+using TransactionID = MonotonicObjectIdentifier<TransactionIDType>;
+using UserContentControllerIdentifier = ObjectIdentifier<UserContentControllerIdentifierType>;
+using VisitedLinkTableIdentifier = ObjectIdentifier<VisitedLinkTableIdentifierType>;
 using WKEventModifiers = uint32_t;
+using WebPageProxyIdentifier = ObjectIdentifier<WebPageProxyIdentifierType>;
+using WebURLSchemeHandlerIdentifier = ObjectIdentifier<WebURLSchemeHandler>;
+using WebUndoStepID = uint64_t;
 
 enum class DisallowLayoutViewportHeightExpansionReason : uint8_t {
     ElementFullScreen       = 1 << 0,
@@ -696,7 +721,7 @@ public:
     API::InjectedBundle::ResourceLoadClient& injectedBundleResourceLoadClient() { return *m_resourceLoadClient; }
     API::InjectedBundle::PageUIClient& injectedBundleUIClient() { return *m_uiClient; }
 #if ENABLE(FULLSCREEN_API)
-    InjectedBundlePageFullScreenClient& injectedBundleFullScreenClient() { return m_fullScreenClient; }
+    InjectedBundlePageFullScreenClient& injectedBundleFullScreenClient();
 #endif
 
     bool findStringFromInjectedBundle(const String&, OptionSet<FindOptions>);
@@ -1065,8 +1090,8 @@ public:
     void didChangeSelectionForAccessibility() { m_isChangingSelectionForAccessibility = false; }
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(IOS_TOUCH_EVENTS)
-    void dispatchAsynchronousTouchEvents(UniqueRef<EventDispatcher::TouchEventQueue>&&);
-    void cancelAsynchronousTouchEvents(UniqueRef<EventDispatcher::TouchEventQueue>&&);
+    void dispatchAsynchronousTouchEvents(UniqueRef<Vector<TouchEventData, 1>>&&);
+    void cancelAsynchronousTouchEvents(UniqueRef<Vector<TouchEventData, 1>>&&);
 #endif
 
     bool hasRichlyEditableSelection() const;
@@ -1425,7 +1450,7 @@ public:
     void stopExtendingIncrementalRenderingSuppression(unsigned token);
     bool shouldExtendIncrementalRenderingSuppression() { return !m_activeRenderingSuppressionTokens.isEmpty(); }
 
-    WebCore::ScrollPinningBehavior scrollPinningBehavior() { return m_scrollPinningBehavior; }
+    WebCore::ScrollPinningBehavior scrollPinningBehavior();
     void setScrollPinningBehavior(WebCore::ScrollPinningBehavior);
 
     std::optional<WebCore::ScrollbarOverlayStyle> scrollbarOverlayStyle() { return m_scrollbarOverlayStyle; }
@@ -1552,7 +1577,7 @@ public:
     void didLoadFromRegistrableDomain(WebCore::RegistrableDomain&&);
     void clearLoadedSubresourceDomains();
     void getLoadedSubresourceDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>)>&&);
-    const HashSet<WebCore::RegistrableDomain>& loadedSubresourceDomains() const { return m_loadedSubresourceDomains; }
+    const HashSet<WebCore::RegistrableDomain>& loadedSubresourceDomains() const;
 
 #if ENABLE(DEVICE_ORIENTATION)
     void shouldAllowDeviceOrientationAndMotionAccess(WebCore::FrameIdentifier, FrameInfoData&&, bool mayPrompt, CompletionHandler<void(WebCore::DeviceOrientationOrMotionPermissionState)>&&);
@@ -1579,7 +1604,7 @@ public:
     UnixFileDescriptor hostFileDescriptor() const { return m_hostFileDescriptor.duplicate(); }
 #endif
 
-    void updateCurrentModifierState(OptionSet<WebCore::PlatformEvent::Modifier> modifiers);
+    void updateCurrentModifierState(OptionSet<WebCore::PlatformEventModifier> modifiers);
 
     inline UserContentControllerIdentifier userContentControllerIdentifier() const;
 
@@ -2569,9 +2594,6 @@ private:
     std::unique_ptr<API::InjectedBundle::PageLoaderClient> m_loaderClient;
     std::unique_ptr<API::InjectedBundle::ResourceLoadClient> m_resourceLoadClient;
     std::unique_ptr<API::InjectedBundle::PageUIClient> m_uiClient;
-#if ENABLE(FULLSCREEN_API)
-    InjectedBundlePageFullScreenClient m_fullScreenClient;
-#endif
 
     UniqueRef<FindController> m_findController;
 
@@ -2795,15 +2817,12 @@ private:
     WebCore::FloatRect m_previousExposedContentRect;
     OptionSet<WebKit::WebEventModifier> m_pendingSyntheticClickModifiers;
     WebCore::PointerID m_pendingSyntheticClickPointerId { 0 };
-    FocusedElementInformationIdentifier m_lastFocusedElementInformationIdentifier;
     std::optional<DynamicViewportSizeUpdateID> m_pendingDynamicViewportSizeUpdateID;
     double m_lastTransactionPageScaleFactor { 0 };
-    TransactionID m_lastTransactionIDWithScaleChange;
 
     WebCore::DeferrableOneShotTimer m_updateFocusedElementInformationTimer;
 
     CompletionHandler<void(InteractionInformationAtPosition&&)> m_pendingSynchronousPositionInformationReply;
-    std::optional<std::pair<TransactionID, double>> m_lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage;
     bool m_sendAutocorrectionContextAfterFocusingElement { false };
     std::unique_ptr<WebCore::IgnoreSelectionChangeForScope> m_ignoreSelectionChangeScopeForDictation;
 
@@ -2824,7 +2843,6 @@ private:
     HashSet<unsigned> m_activeRenderingSuppressionTokens;
     unsigned m_maximumRenderingSuppressionToken { 0 };
 
-    WebCore::ScrollPinningBehavior m_scrollPinningBehavior { WebCore::ScrollPinningBehavior::DoNotPin };
     std::optional<WebCore::ScrollbarOverlayStyle> m_scrollbarOverlayStyle;
 
     bool m_useAsyncScrolling { false };
@@ -2843,7 +2861,6 @@ private:
 
     enum class EditorStateIsContentEditable { No, Yes, Unset };
     mutable EditorStateIsContentEditable m_lastEditorStateWasContentEditable { EditorStateIsContentEditable::Unset };
-    mutable EditorStateIdentifier m_lastEditorStateIdentifier;
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     std::optional<InputMethodState> m_inputMethodState;
@@ -2883,9 +2900,6 @@ private:
 #if ENABLE(TEXT_AUTOSIZING)
     WebCore::Timer m_textAutoSizingAdjustmentTimer;
 #endif
-
-    HashMap<WebCore::RegistrableDomain, HashSet<WebCore::RegistrableDomain>> m_domainsWithPageLevelStorageAccess;
-    HashSet<WebCore::RegistrableDomain> m_loadedSubresourceDomains;
 
     AtomString m_overriddenMediaType;
     String m_processDisplayName;
@@ -2967,15 +2981,6 @@ private:
 #endif
 
     Ref<WebHistoryItemClient> m_historyItemClient;
-
-#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    struct LinkDecorationFilteringConditionals {
-        HashSet<WebCore::RegistrableDomain> domains;
-        Vector<String> paths;
-    };
-    HashMap<String, LinkDecorationFilteringConditionals> m_linkDecorationFilteringData;
-    HashMap<WebCore::RegistrableDomain, HashSet<String>> m_allowedQueryParametersForAdvancedPrivacyProtections;
-#endif
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     WeakHashSet<WebCore::HTMLImageElement, WebCore::WeakPtrImplWithEventTargetData> m_elementsToExcludeFromRemoveBackground;
