@@ -69,6 +69,8 @@ public:
 #endif
         virtual Ref<CoordinatedImageBackingStore> imageBackingStore(Ref<NativeImage>&&) = 0;
         virtual void notifyCompositionRequired() = 0;
+        virtual bool isCompositionRequiredOrOngoing() const = 0;
+        virtual void requestComposition() = 0;
     };
 
     static Ref<CoordinatedPlatformLayer> create();
@@ -87,15 +89,19 @@ public:
     GraphicsLayerCoordinated* owner() const;
 
     void setPosition(FloatPoint&&);
-    void syncPosition(const FloatPoint&);
+    enum class ForcePositionSync : bool { No, Yes };
+    void setPositionForScrolling(const FloatPoint&, ForcePositionSync = ForcePositionSync::No);
     const FloatPoint& position() const;
+    void setTopLeftPositionForScrolling(const FloatPoint&, ForcePositionSync = ForcePositionSync::No);
+    FloatPoint topLeftPositionForScrolling();
     void setBoundsOrigin(const FloatPoint&);
-    void syncBoundsOrigin(const FloatPoint&);
+    void setBoundsOriginForScrolling(const FloatPoint&);
     const FloatPoint& boundsOrigin() const;
     void setAnchorPoint(FloatPoint3D&&);
     const FloatPoint3D& anchorPoint() const;
     void setSize(FloatSize&&);
     const FloatSize& size() const;
+    FloatRect bounds() const;
 
     void setTransform(const TransformationMatrix&);
     const TransformationMatrix& transform() const;
@@ -108,6 +114,7 @@ public:
 
 #if ENABLE(SCROLLING_THREAD)
     void setScrollingNodeID(std::optional<ScrollingNodeID>);
+    const Markable<ScrollingNodeID>& scrollingNodeID() const;
 #endif
 
     void setDrawsContent(bool);
@@ -143,8 +150,10 @@ public:
     void setAnimations(const TextureMapperAnimations&);
 
     void setChildren(Vector<Ref<CoordinatedPlatformLayer>>&&);
+    const Vector<Ref<CoordinatedPlatformLayer>>& children() const;
 
     void setEventRegion(const EventRegion&);
+    const EventRegion& eventRegion() const;
 
     void setDebugBorder(Color&&, float);
     void setShowRepaintCounter(bool);
@@ -153,6 +162,8 @@ public:
 
     bool hasPendingTilesCreation() const { return m_pendingTilesCreation; }
     bool hasImageBackingStore() const { return !!m_imageBackingStore; }
+    bool isCompositionRequiredOrOngoing() const;
+    void requestComposition();
 
     Ref<CoordinatedTileBuffer> paint(const IntRect&);
 

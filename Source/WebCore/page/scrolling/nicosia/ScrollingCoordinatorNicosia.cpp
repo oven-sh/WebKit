@@ -52,7 +52,7 @@ ScrollingCoordinatorNicosia::~ScrollingCoordinatorNicosia()
 
 void ScrollingCoordinatorNicosia::didCompletePlatformRenderingUpdate()
 {
-    downcast<ThreadedScrollingTree>(scrollingTree())->didCompleteRenderingUpdate();
+    downcast<ScrollingTreeNicosia>(scrollingTree())->didCompletePlatformRenderingUpdate();
 }
 
 } // namespace WebCore

@@ -113,13 +113,20 @@ void CoordinatedPlatformLayer::setPosition(FloatPoint&& position)
     notifyCompositionRequired();
 }
 
-void CoordinatedPlatformLayer::syncPosition(const FloatPoint& position)
+void CoordinatedPlatformLayer::setPositionForScrolling(const FloatPoint& position, ForcePositionSync forceSync)
 {
     Locker locker { m_lock };
-    if (m_position == position)
+    if (m_position == position && forceSync == ForcePositionSync::No)
         return;
 
     m_position = position;
+    Nicosia::CompositionLayer::LayerState::Delta delta;
+    delta.positionChanged = true;
+    m_nicosia.layer->accessPending([&](Nicosia::CompositionLayer::LayerState& state) {
+        state.delta.value |= delta.value;
+        state.position = m_position;
+    });
+    m_nicosia.layer->flushState();
     notifyCompositionRequired();
 }
 
@@ -127,6 +134,22 @@ const FloatPoint& CoordinatedPlatformLayer::position() const
 {
     ASSERT(m_lock.isHeld());
     return m_position;
+}
+
+void CoordinatedPlatformLayer::setTopLeftPositionForScrolling(const FloatPoint& position, ForcePositionSync forceSync)
+{
+    FloatPoint newPosition;
+    {
+        Locker locker { m_lock };
+        newPosition = { position.x() + m_anchorPoint.x() * m_size.width(), position.y() + m_anchorPoint.y() * m_size.height() };
+    }
+    setPositionForScrolling(newPosition, forceSync);
+}
+
+FloatPoint CoordinatedPlatformLayer::topLeftPositionForScrolling()
+{
+    Locker locker { m_lock };
+    return m_position - toFloatSize(m_anchorPoint.xy()) * m_size;
 }
 
 void CoordinatedPlatformLayer::setBoundsOrigin(const FloatPoint& origin)
@@ -140,13 +163,20 @@ void CoordinatedPlatformLayer::setBoundsOrigin(const FloatPoint& origin)
     notifyCompositionRequired();
 }
 
-void CoordinatedPlatformLayer::syncBoundsOrigin(const FloatPoint& origin)
+void CoordinatedPlatformLayer::setBoundsOriginForScrolling(const FloatPoint& origin)
 {
     Locker locker { m_lock };
     if (m_boundsOrigin == origin)
         return;
 
     m_boundsOrigin = origin;
+    Nicosia::CompositionLayer::LayerState::Delta delta;
+    delta.boundsOriginChanged = true;
+    m_nicosia.layer->accessPending([&](Nicosia::CompositionLayer::LayerState& state) {
+        state.delta.value |= delta.value;
+        state.boundsOrigin = m_boundsOrigin;
+    });
+    m_nicosia.layer->flushState();
     notifyCompositionRequired();
 }
 
@@ -188,6 +218,12 @@ const FloatSize& CoordinatedPlatformLayer::size() const
 {
     ASSERT(m_lock.isHeld());
     return m_size;
+}
+
+FloatRect CoordinatedPlatformLayer::bounds() const
+{
+    ASSERT(m_lock.isHeld());
+    return FloatRect({ }, m_size);
 }
 
 void CoordinatedPlatformLayer::setTransform(const TransformationMatrix& matrix)
@@ -252,12 +288,19 @@ void CoordinatedPlatformLayer::setTransformedVisibleRect(IntRect&& transformedVi
 #if ENABLE(SCROLLING_THREAD)
 void CoordinatedPlatformLayer::setScrollingNodeID(std::optional<ScrollingNodeID> nodeID)
 {
+    ASSERT(m_lock.isHeld());
     if (m_scrollingNodeID == nodeID)
         return;
 
     m_scrollingNodeID = nodeID;
     m_nicosia.delta.scrollingNodeChanged = true;
     notifyCompositionRequired();
+}
+
+const Markable<ScrollingNodeID>& CoordinatedPlatformLayer::scrollingNodeID() const
+{
+    ASSERT(m_lock.isHeld());
+    return m_scrollingNodeID;
 }
 #endif
 
@@ -561,6 +604,12 @@ void CoordinatedPlatformLayer::setChildren(Vector<Ref<CoordinatedPlatformLayer>>
     notifyCompositionRequired();
 }
 
+const Vector<Ref<CoordinatedPlatformLayer>>& CoordinatedPlatformLayer::children() const
+{
+    ASSERT(m_lock.isHeld());
+    return m_children;
+}
+
 void CoordinatedPlatformLayer::setEventRegion(const EventRegion& eventRegion)
 {
     ASSERT(m_lock.isHeld());
@@ -570,6 +619,12 @@ void CoordinatedPlatformLayer::setEventRegion(const EventRegion& eventRegion)
     m_eventRegion = eventRegion;
     m_nicosia.delta.eventRegionChanged = true;
     notifyCompositionRequired();
+}
+
+const EventRegion& CoordinatedPlatformLayer::eventRegion() const
+{
+    ASSERT(m_lock.isHeld());
+    return m_eventRegion;
 }
 
 void CoordinatedPlatformLayer::setDebugBorder(Color&& borderColor, float borderWidth)
@@ -789,6 +844,17 @@ void CoordinatedPlatformLayer::purgeBackingStores()
         m_animatedBackingStoreClient = nullptr;
     }
     m_imageBackingStore = nullptr;
+}
+
+bool CoordinatedPlatformLayer::isCompositionRequiredOrOngoing() const
+{
+    return m_client ? m_client->isCompositionRequiredOrOngoing() : false;
+}
+
+void CoordinatedPlatformLayer::requestComposition()
+{
+    if (m_client)
+        m_client->requestComposition();
 }
 
 Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::paint(const IntRect& dirtyRect)

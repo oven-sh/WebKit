@@ -29,9 +29,8 @@
 #include "ScrollingTreeNicosia.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
 #include "AsyncScrollingCoordinator.h"
-#include "NicosiaCompositionLayer.h"
+#include "CoordinatedPlatformLayer.h"
 #include "ScrollingThread.h"
 #include "ScrollingTreeFixedNodeNicosia.h"
 #include "ScrollingTreeFrameHostingNode.h"
@@ -81,42 +80,55 @@ Ref<ScrollingTreeNode> ScrollingTreeNicosia::createScrollingTreeNode(ScrollingNo
 
 void ScrollingTreeNicosia::applyLayerPositionsInternal()
 {
-    std::unique_ptr<Nicosia::SceneIntegration::UpdateScope> updateScope;
-    if (auto* rootScrollingNode = rootNode()) {
-        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
-        updateScope = rootContentsLayer->createUpdateScope(ScrollingThread::isCurrentThread());
-    }
+    auto* rootScrollingNode = rootNode();
+    if (!rootScrollingNode)
+        return;
 
     ThreadedScrollingTree::applyLayerPositionsInternal();
+
+    if (ScrollingThread::isCurrentThread()) {
+        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
+        rootContentsLayer->requestComposition();
+    }
 }
 
-using Nicosia::CompositionLayer;
-
-static bool collectDescendantLayersAtPoint(Vector<RefPtr<CompositionLayer>>& layersAtPoint, RefPtr<CompositionLayer> parent, const FloatPoint& point)
+void ScrollingTreeNicosia::didCompleteRenderingUpdate()
 {
-    bool existsOnLayer = false;
+    // If there's a composition requested or ongoing, wait for didCompletePlatformRenderingUpdate() that will be
+    // called once the composiiton finishes.
+    if (auto* rootScrollingNode = rootNode()) {
+        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
+        if (rootContentsLayer->isCompositionRequiredOrOngoing())
+            return;
+    }
+
+    renderingUpdateComplete();
+}
+
+void ScrollingTreeNicosia::didCompletePlatformRenderingUpdate()
+{
+    renderingUpdateComplete();
+}
+
+static bool collectDescendantLayersAtPoint(Vector<Ref<CoordinatedPlatformLayer>>& layersAtPoint, const Ref<CoordinatedPlatformLayer>& parent, const FloatPoint& point)
+{
     bool existsOnDescendent = false;
-
-    parent->accessCommitted([&](const CompositionLayer::LayerState& state) {
-        existsOnLayer = !!state.scrollingNodeID && FloatRect({ }, state.size).contains(point) && state.eventRegion.contains(roundedIntPoint(point));
-
-        for (auto child : state.children) {
-            FloatPoint transformedPoint(point);
-            child->accessCommitted([&](const CompositionLayer::LayerState& childState) {
-                if (!childState.transform.isInvertible())
-                    return;
-                float originX = childState.anchorPoint.x() * childState.size.width();
-                float originY = childState.anchorPoint.y() * childState.size.height();
-                auto transform = *(TransformationMatrix()
-                    .translate3d(originX + childState.position.x() - state.boundsOrigin.x(), originY + childState.position.y() - state.boundsOrigin.y(), childState.anchorPoint.z())
-                    .multiply(childState.transform)
-                    .translate3d(-originX, -originY, -childState.anchorPoint.z()).inverse());
-                auto pointInChildSpace = transform.projectPoint(point);
-                transformedPoint.set(pointInChildSpace.x(), pointInChildSpace.y());
-            });
-            existsOnDescendent |= collectDescendantLayersAtPoint(layersAtPoint, child, transformedPoint);
+    bool existsOnLayer = !!parent->scrollingNodeID() && parent->bounds().contains(point) && parent->eventRegion().contains(roundedIntPoint(point));
+    for (auto& child : parent->children()) {
+        Locker childLocker { child->lock() };
+        FloatPoint transformedPoint(point);
+        if (child->transform().isInvertible()) {
+            float originX = child->anchorPoint().x() * child->size().width();
+            float originY = child->anchorPoint().y() * child->size().height();
+            auto transform = *(TransformationMatrix()
+                .translate3d(originX + child->position().x() - child->boundsOrigin().x(), originY + child->position().y() - child->boundsOrigin().y(), child->anchorPoint().z())
+                .multiply(child->transform())
+                .translate3d(-originX, -originY, -child->anchorPoint().z()).inverse());
+            auto pointInChildSpace = transform.projectPoint(point);
+            transformedPoint.set(pointInChildSpace.x(), pointInChildSpace.y());
         }
-    });
+        existsOnDescendent |= collectDescendantLayersAtPoint(layersAtPoint, child, transformedPoint);
+    }
 
     if (existsOnLayer && !existsOnDescendent)
         layersAtPoint.append(parent);
@@ -133,21 +145,20 @@ RefPtr<ScrollingTreeNode> ScrollingTreeNicosia::scrollingNodeForPoint(FloatPoint
     Locker layerLocker { m_layerHitTestMutex };
 
     auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
-    Vector<RefPtr<CompositionLayer>> layersAtPoint;
-    collectDescendantLayersAtPoint(layersAtPoint, rootContentsLayer, point);
-
-    ScrollingTreeNode* returnNode = nullptr;
-    for (auto layer : makeReversedRange(layersAtPoint)) {
-        layer->accessCommitted([&](const CompositionLayer::LayerState& state) {
-            auto* scrollingNode = nodeForID(state.scrollingNodeID);
-            if (is<ScrollingTreeScrollingNode>(scrollingNode))
-                returnNode = scrollingNode;
-        });
-        if (returnNode)
-            break;
+    Vector<Ref<CoordinatedPlatformLayer>> layersAtPoint;
+    {
+        Locker rootContentsLayerLocker { rootContentsLayer->lock() };
+        collectDescendantLayersAtPoint(layersAtPoint, Ref { *rootContentsLayer }, point);
     }
 
-    return returnNode ? returnNode : rootScrollingNode;
+    for (auto& layer : makeReversedRange(layersAtPoint)) {
+        Locker locker { layer->lock() };
+        auto* scrollingNode = nodeForID(layer->scrollingNodeID());
+        if (is<ScrollingTreeScrollingNode>(scrollingNode))
+            return scrollingNode;
+    }
+
+    return rootScrollingNode;
 }
 
 } // namespace WebCore

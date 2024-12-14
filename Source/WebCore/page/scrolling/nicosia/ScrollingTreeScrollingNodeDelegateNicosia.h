@@ -29,8 +29,6 @@
 #include "ScrollingTreeScrollingNodeDelegate.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "NicosiaSceneIntegration.h"
 #include "ThreadedScrollingTreeScrollingNodeDelegate.h"
 
 namespace WebCore {

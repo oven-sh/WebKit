@@ -141,7 +141,6 @@ if (USE_NICOSIA)
         platform/graphics/nicosia/NicosiaCompositionLayer.h
         platform/graphics/nicosia/NicosiaPlatformLayer.h
         platform/graphics/nicosia/NicosiaScene.h
-        platform/graphics/nicosia/NicosiaSceneIntegration.h
     )
 endif ()
 

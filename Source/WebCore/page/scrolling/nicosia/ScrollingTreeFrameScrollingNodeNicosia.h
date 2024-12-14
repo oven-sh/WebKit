@@ -33,12 +33,8 @@
 #include "ScrollingTreeFrameScrollingNode.h"
 #include <wtf/RefPtr.h>
 
-namespace Nicosia {
-class CompositionLayer;
-}
-
 namespace WebCore {
-
+class CoordinatedPlatformLayer;
 class ScrollingTreeScrollingNodeDelegateNicosia;
 
 class ScrollingTreeFrameScrollingNodeNicosia final : public ScrollingTreeFrameScrollingNode {
@@ -46,7 +42,7 @@ public:
     static Ref<ScrollingTreeFrameScrollingNode> create(ScrollingTree&, ScrollingNodeType, ScrollingNodeID);
     virtual ~ScrollingTreeFrameScrollingNodeNicosia();
 
-    RefPtr<Nicosia::CompositionLayer> rootContentsLayer() const { return m_rootContentsLayer; }
+    RefPtr<CoordinatedPlatformLayer> rootContentsLayer() const { return m_rootContentsLayer; }
 
 private:
     ScrollingTreeFrameScrollingNodeNicosia(ScrollingTree&, ScrollingNodeType, ScrollingNodeID);
@@ -60,12 +56,12 @@ private:
     void repositionScrollingLayers() override;
     void repositionRelatedLayers() override;
 
-    RefPtr<Nicosia::CompositionLayer> m_rootContentsLayer;
-    RefPtr<Nicosia::CompositionLayer> m_counterScrollingLayer;
-    RefPtr<Nicosia::CompositionLayer> m_insetClipLayer;
-    RefPtr<Nicosia::CompositionLayer> m_contentShadowLayer;
-    RefPtr<Nicosia::CompositionLayer> m_headerLayer;
-    RefPtr<Nicosia::CompositionLayer> m_footerLayer;
+    RefPtr<CoordinatedPlatformLayer> m_rootContentsLayer;
+    RefPtr<CoordinatedPlatformLayer> m_counterScrollingLayer;
+    RefPtr<CoordinatedPlatformLayer> m_insetClipLayer;
+    RefPtr<CoordinatedPlatformLayer> m_contentShadowLayer;
+    RefPtr<CoordinatedPlatformLayer> m_headerLayer;
+    RefPtr<CoordinatedPlatformLayer> m_footerLayer;
 };
 
 } // namespace WebCore

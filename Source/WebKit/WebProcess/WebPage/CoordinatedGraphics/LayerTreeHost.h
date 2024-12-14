@@ -37,7 +37,6 @@
 #include <WebCore/GraphicsLayerFactory.h>
 #include <WebCore/NicosiaPlatformLayer.h>
 #include <WebCore/NicosiaScene.h>
-#include <WebCore/NicosiaSceneIntegration.h>
 #include <WebCore/PlatformScreen.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
@@ -48,10 +47,6 @@
 #if !HAVE(DISPLAY_LINK)
 #include "ThreadedDisplayRefreshMonitor.h"
 #endif
-
-namespace Nicosia {
-class SceneIntegration;
-}
 
 namespace WebCore {
 class Damage;
@@ -81,7 +76,7 @@ namespace WebKit {
 
 class WebPage;
 
-class LayerTreeHost final : public CanMakeCheckedPtr<LayerTreeHost>, public WebCore::GraphicsLayerClient, public WebCore::GraphicsLayerFactory, public Nicosia::SceneIntegration::Client, public WebCore::CoordinatedPlatformLayer::Client
+class LayerTreeHost final : public CanMakeCheckedPtr<LayerTreeHost>, public WebCore::GraphicsLayerClient, public WebCore::GraphicsLayerFactory, public WebCore::CoordinatedPlatformLayer::Client
 #if !HAVE(DISPLAY_LINK)
     , public ThreadedDisplayRefreshMonitor::Client
 #endif
@@ -155,12 +150,11 @@ private:
     void attachLayer(WebCore::CoordinatedPlatformLayer&) override;
     void detachLayer(WebCore::CoordinatedPlatformLayer&) override;
     void notifyCompositionRequired() override;
+    bool isCompositionRequiredOrOngoing() const override;
+    void requestComposition() override;
 
     // GraphicsLayerFactory
     Ref<WebCore::GraphicsLayer> createGraphicsLayer(WebCore::GraphicsLayer::Type, WebCore::GraphicsLayerClient&) override;
-
-    // Nicosia::SceneIntegration::Client
-    void requestUpdate() override;
 
 #if !HAVE(DISPLAY_LINK)
     // ThreadedDisplayRefreshMonitor::Client
@@ -189,6 +183,9 @@ private:
     bool m_scheduledWhileWaitingForRenderer { false };
     bool m_forceFrameSync { false };
     bool m_compositionRequired { false };
+#if ENABLE(SCROLLING_THREAD)
+    bool m_compositionRequiredInScrollingThread { false };
+#endif
     double m_lastAnimationServiceTime { 0 };
     RefPtr<ThreadedCompositor> m_compositor;
     struct {
@@ -207,7 +204,6 @@ private:
     HashMap<uint64_t, Ref<WebCore::CoordinatedImageBackingStore>> m_imageBackingStores;
     struct {
         RefPtr<Nicosia::Scene> scene;
-        RefPtr<Nicosia::SceneIntegration> sceneIntegration;
         Nicosia::Scene::State state;
     } m_nicosia;
 

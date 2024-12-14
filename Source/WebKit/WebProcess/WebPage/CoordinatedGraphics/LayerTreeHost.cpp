@@ -45,6 +45,7 @@
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/RenderLayerBacking.h>
 #include <WebCore/RenderView.h>
+#include <WebCore/ScrollingThread.h>
 #include <WebCore/Settings.h>
 #include <WebCore/ThreadedScrollingTree.h>
 #include <wtf/SetForScope.h>
@@ -83,7 +84,6 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
 #endif
 {
     m_nicosia.scene = Nicosia::Scene::create();
-    m_nicosia.sceneIntegration = Nicosia::SceneIntegration::create(*m_nicosia.scene, *this);
 
     m_rootLayer = GraphicsLayer::create(this, *this);
 #ifndef NDEBUG
@@ -122,8 +122,6 @@ LayerTreeHost::~LayerTreeHost()
         m_forceRepaintAsync.callback();
 
     cancelPendingLayerFlush();
-
-    m_nicosia.sceneIntegration->invalidate();
 
     m_rootLayer = nullptr;
     while (!m_layers.isEmpty()) {
@@ -370,7 +368,6 @@ void LayerTreeHost::attachLayer(CoordinatedPlatformLayer& layer)
 {
     auto& compositionLayer = layer.compositionLayer();
     m_nicosia.state.layers.add(compositionLayer);
-    compositionLayer->setSceneIntegration(m_nicosia.sceneIntegration.copyRef());
     m_layers.add(layer);
     m_didChangeSceneState = true;
 }
@@ -379,14 +376,37 @@ void LayerTreeHost::detachLayer(CoordinatedPlatformLayer& layer)
 {
     auto& compositionLayer = layer.compositionLayer();
     m_nicosia.state.layers.remove(compositionLayer);
-    compositionLayer->setSceneIntegration(nullptr);
     m_layers.remove(layer);
     m_didChangeSceneState = true;
 }
 
 void LayerTreeHost::notifyCompositionRequired()
 {
+#if ENABLE(SCROLLING_THREAD)
+    if (ScrollingThread::isCurrentThread()) {
+        m_compositionRequiredInScrollingThread = true;
+        return;
+    }
+#endif
     m_compositionRequired = true;
+}
+
+bool LayerTreeHost::isCompositionRequiredOrOngoing() const
+{
+    return m_compositionRequired || m_forceFrameSync || m_compositor->isActive();
+}
+
+void LayerTreeHost::requestComposition()
+{
+#if ENABLE(SCROLLING_THREAD)
+    if (ScrollingThread::isCurrentThread()) {
+        if (!m_compositionRequiredInScrollingThread)
+            return;
+        m_compositionRequiredInScrollingThread = false;
+    }
+#endif
+
+    m_compositor->updateScene();
 }
 
 #if USE(CAIRO)
@@ -459,11 +479,6 @@ void LayerTreeHost::commitSceneState(const RefPtr<Nicosia::Scene>& state)
     m_isWaitingForRenderer = true;
     m_compositionRequestID = m_compositor->requestComposition(state);
     WTFEmitSignpost(this, CommitSceneState, "compositionRequestID %i", m_compositionRequestID);
-}
-
-void LayerTreeHost::requestUpdate()
-{
-    m_compositor->updateScene();
 }
 
 void LayerTreeHost::renderNextFrame(bool forceRepaint)

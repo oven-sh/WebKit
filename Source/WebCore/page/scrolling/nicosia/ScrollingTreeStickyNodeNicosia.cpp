@@ -30,9 +30,10 @@
 #include "ScrollingTreeStickyNodeNicosia.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
+#include "CoordinatedPlatformLayer.h"
 #include "Logging.h"
 #include "ScrollingStateStickyNode.h"
+#include "ScrollingThread.h"
 #include "ScrollingTree.h"
 #include "ScrollingTreeFixedNode.h"
 #include "ScrollingTreeFrameScrollingNode.h"
@@ -53,12 +54,8 @@ ScrollingTreeStickyNodeNicosia::ScrollingTreeStickyNodeNicosia(ScrollingTree& sc
 
 bool ScrollingTreeStickyNodeNicosia::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
-    if (!is<ScrollingStateStickyNode>(stateNode))
-        return false;
-
-    auto& stickyStateNode = downcast<ScrollingStateStickyNode>(stateNode);
-    if (stickyStateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
-        m_layer = static_cast<Nicosia::CompositionLayer*>(stickyStateNode.layer());
+    if (stateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
+        m_layer = static_cast<CoordinatedPlatformLayer*>(stateNode.layer());
 
     return ScrollingTreeStickyNode::commitStateBeforeChildren(stateNode);
 }
@@ -69,27 +66,16 @@ void ScrollingTreeStickyNodeNicosia::applyLayerPositions()
 
     LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeStickyNodeNicosia " << scrollingNodeID() << " constrainingRectAtLastLayout " << m_constraints.constrainingRectAtLastLayout() << " last layer pos " << m_constraints.layerPositionAtLastLayout() << " layerPosition " << layerPosition);
 
-    layerPosition -= m_constraints.alignmentOffset();
+    // Match the behavior of ScrollingTreeFrameScrollingNodeNicosia::repositionScrollingLayers().
+    CoordinatedPlatformLayer::ForcePositionSync forceSync = ScrollingThread::isCurrentThread() && !scrollingTree()->isScrollingSynchronizedWithMainThread() ?
+        CoordinatedPlatformLayer::ForcePositionSync::Yes : CoordinatedPlatformLayer::ForcePositionSync::No;
 
-    ASSERT(m_layer);
-    m_layer->accessPending(
-        [&layerPosition](Nicosia::CompositionLayer::LayerState& state)
-        {
-            state.position = layerPosition;
-            state.delta.positionChanged = true;
-        });
+    m_layer->setTopLeftPositionForScrolling(layerPosition - m_constraints.alignmentOffset(), forceSync);
 }
 
 FloatPoint ScrollingTreeStickyNodeNicosia::layerTopLeft() const
 {
-    FloatPoint layerTopLeft;
-    ASSERT(m_layer);
-    m_layer->accessCommitted(
-        [this, &layerTopLeft](Nicosia::CompositionLayer::LayerState& state)
-        {
-            layerTopLeft = state.position - toFloatSize(state.anchorPoint.xy()) * state.size + m_constraints.alignmentOffset();
-        });
-    return layerTopLeft;
+    return m_layer->topLeftPositionForScrolling() + m_constraints.alignmentOffset();
 }
 
 } // namespace WebCore

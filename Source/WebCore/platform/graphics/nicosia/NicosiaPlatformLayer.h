@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include "NicosiaSceneIntegration.h"
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TypeCasts.h>
@@ -45,20 +44,6 @@ public:
     using LayerID = uint64_t;
     LayerID id() const { return m_id; }
 
-    void setSceneIntegration(RefPtr<SceneIntegration>&& sceneIntegration)
-    {
-        Locker locker { m_state.lock };
-        m_state.sceneIntegration = WTFMove(sceneIntegration);
-    }
-
-    std::unique_ptr<SceneIntegration::UpdateScope> createUpdateScope(bool shouldRequestUpdate)
-    {
-        Locker locker { m_state.lock };
-        if (m_state.sceneIntegration)
-            return m_state.sceneIntegration->createUpdateScope(shouldRequestUpdate);
-        return nullptr;
-    }
-
 protected:
     explicit PlatformLayer(uint64_t id)
         : m_id(id)
@@ -69,7 +54,6 @@ protected:
 
     struct {
         Lock lock;
-        RefPtr<SceneIntegration> sceneIntegration WTF_GUARDED_BY_LOCK(lock);
     } m_state;
 };
 

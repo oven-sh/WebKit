@@ -30,11 +30,11 @@
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
 
-#include "NicosiaCompositionLayer.h"
 #include "ScrollingTreeFixedNode.h"
 #include <wtf/RefPtr.h>
 
 namespace WebCore {
+class CoordinatedPlatformLayer;
 
 class ScrollingTreeFixedNodeNicosia final : public ScrollingTreeFixedNode {
 public:
@@ -44,14 +44,14 @@ public:
 private:
     ScrollingTreeFixedNodeNicosia(ScrollingTree&, ScrollingNodeID);
 
-    Nicosia::CompositionLayer* layer() const override { return m_layer.get(); }
+    CoordinatedPlatformLayer* layer() const override { return m_layer.get(); }
 
     bool commitStateBeforeChildren(const ScrollingStateNode&) override;
     void applyLayerPositions() override WTF_REQUIRES_LOCK(scrollingTree()->treeLock());
 
     void dumpProperties(WTF::TextStream&, OptionSet<ScrollingStateTreeAsTextBehavior>) const override;
 
-    RefPtr<Nicosia::CompositionLayer> m_layer;
+    RefPtr<CoordinatedPlatformLayer> m_layer;
 };
 
 } // namespace WebCore

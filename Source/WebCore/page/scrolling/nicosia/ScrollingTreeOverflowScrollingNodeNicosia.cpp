@@ -30,8 +30,7 @@
 #include "ScrollingTreeOverflowScrollingNodeNicosia.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "NicosiaCompositionLayer.h"
+#include "CoordinatedPlatformLayer.h"
 #include "ScrollingTreeScrollingNodeDelegateNicosia.h"
 #include "ThreadedScrollingTree.h"
 
@@ -66,17 +65,11 @@ bool ScrollingTreeOverflowScrollingNodeNicosia::commitStateBeforeChildren(const 
 
 void ScrollingTreeOverflowScrollingNodeNicosia::repositionScrollingLayers()
 {
-    auto* scrollLayer = static_cast<Nicosia::CompositionLayer*>(scrollContainerLayer());
+    auto* scrollLayer = static_cast<CoordinatedPlatformLayer*>(scrollContainerLayer());
     ASSERT(scrollLayer);
 
     auto scrollOffset = currentScrollOffset();
-
-    scrollLayer->accessPending(
-        [&scrollOffset](Nicosia::CompositionLayer::LayerState& state)
-        {
-            state.boundsOrigin = scrollOffset;
-            state.delta.boundsOriginChanged = true;
-        });
+    scrollLayer->setBoundsOriginForScrolling(scrollOffset);
 
     delegate().updateVisibleLengths();
 }

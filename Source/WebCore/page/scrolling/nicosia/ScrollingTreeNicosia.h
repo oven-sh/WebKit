@@ -37,16 +37,23 @@ class ScrollingTreeNicosia final : public ThreadedScrollingTree {
 public:
     static Ref<ScrollingTreeNicosia> create(AsyncScrollingCoordinator&);
 
+    void didCompletePlatformRenderingUpdate();
+
 private:
     explicit ScrollingTreeNicosia(AsyncScrollingCoordinator&);
+
+    bool isScrollingTreeNicosia() const final { return true; }
 
     Ref<ScrollingTreeNode> createScrollingTreeNode(ScrollingNodeType, ScrollingNodeID) override;
 
     void applyLayerPositionsInternal() final;
+    void didCompleteRenderingUpdate() final;
 
     RefPtr<ScrollingTreeNode> scrollingNodeForPoint(FloatPoint) final;
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_SCROLLING_TREE(WebCore::ScrollingTreeNicosia, isScrollingTreeNicosia())
 
 #endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)

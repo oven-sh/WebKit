@@ -55,6 +55,7 @@ public:
     ~CompositingRunLoop();
 
     bool isCurrent() const;
+    bool isActive();
 
     void performTask(Function<void ()>&&);
     void performTaskSync(Function<void ()>&&);

@@ -28,7 +28,7 @@
 #include "ScrollingTreeOverflowScrollProxyNodeNicosia.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
+#include "CoordinatedPlatformLayer.h"
 #include "Logging.h"
 #include "ScrollingStateOverflowScrollProxyNode.h"
 #include "ScrollingStateTree.h"
@@ -51,7 +51,7 @@ ScrollingTreeOverflowScrollProxyNodeNicosia::~ScrollingTreeOverflowScrollProxyNo
 bool ScrollingTreeOverflowScrollProxyNodeNicosia::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
     if (stateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
-        m_layer = static_cast<Nicosia::CompositionLayer*>(stateNode.layer());
+        m_layer = static_cast<CoordinatedPlatformLayer*>(stateNode.layer());
 
     return ScrollingTreeOverflowScrollProxyNode::commitStateBeforeChildren(stateNode);
 }
@@ -61,12 +61,8 @@ void ScrollingTreeOverflowScrollProxyNodeNicosia::applyLayerPositions()
     FloatPoint scrollOffset = computeLayerPosition();
 
     LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeOverflowScrollProxyNodeNicosia " << scrollingNodeID() << " applyLayerPositions: setting bounds origin to " << scrollOffset);
-    m_layer->accessPending(
-        [&scrollOffset](Nicosia::CompositionLayer::LayerState& state)
-        {
-            state.boundsOrigin = scrollOffset;
-            state.delta.boundsOriginChanged = true;
-        });
+
+    m_layer->setBoundsOriginForScrolling(scrollOffset);
 }
 
 } // namespace WebCore

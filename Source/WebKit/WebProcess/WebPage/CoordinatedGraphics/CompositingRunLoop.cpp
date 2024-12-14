@@ -70,6 +70,12 @@ bool CompositingRunLoop::isCurrent() const
     return m_runLoop->isCurrent();
 }
 
+bool CompositingRunLoop::isActive()
+{
+    Locker stateLocker { m_state.lock };
+    return m_state.update != UpdateState::Idle;
+}
+
 void CompositingRunLoop::performTask(Function<void ()>&& function)
 {
     ASSERT(RunLoop::isMain());

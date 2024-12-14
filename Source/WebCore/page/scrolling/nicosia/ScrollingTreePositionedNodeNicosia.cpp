@@ -30,9 +30,10 @@
 #include "ScrollingTreePositionedNodeNicosia.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
+#include "CoordinatedPlatformLayer.h"
 #include "Logging.h"
 #include "ScrollingStatePositionedNode.h"
+#include "ScrollingThread.h"
 #include "ScrollingTree.h"
 
 namespace WebCore {
@@ -51,12 +52,8 @@ ScrollingTreePositionedNodeNicosia::~ScrollingTreePositionedNodeNicosia() = defa
 
 bool ScrollingTreePositionedNodeNicosia::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
-    if (!is<ScrollingStatePositionedNode>(stateNode))
-        return false;
-
-    const ScrollingStatePositionedNode& positionedStateNode = downcast<ScrollingStatePositionedNode>(stateNode);
-    if (positionedStateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
-        m_layer = static_cast<Nicosia::CompositionLayer*>(positionedStateNode.layer());
+    if (stateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
+        m_layer = static_cast<CoordinatedPlatformLayer*>(stateNode.layer());
 
     return ScrollingTreePositionedNode::commitStateBeforeChildren(stateNode);
 }
@@ -64,19 +61,15 @@ bool ScrollingTreePositionedNodeNicosia::commitStateBeforeChildren(const Scrolli
 void ScrollingTreePositionedNodeNicosia::applyLayerPositions()
 {
     FloatSize delta = scrollDeltaSinceLastCommit();
-    FloatPoint layerPosition = m_constraints.layerPositionAtLastLayout() + delta;
+    FloatPoint layerPosition = m_constraints.layerPositionAtLastLayout() - delta;
 
     LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreePositionedNode " << scrollingNodeID() << " applyLayerPositions: overflow delta " << delta << " moving layer to " << layerPosition);
 
-    layerPosition -= m_constraints.alignmentOffset();
+    // Match the behavior of ScrollingTreeFrameScrollingNodeNicosia::repositionScrollingLayers().
+    CoordinatedPlatformLayer::ForcePositionSync forceSync = ScrollingThread::isCurrentThread() && !scrollingTree()->isScrollingSynchronizedWithMainThread() ?
+        CoordinatedPlatformLayer::ForcePositionSync::Yes : CoordinatedPlatformLayer::ForcePositionSync::No;
 
-    ASSERT(m_layer);
-    m_layer->accessPending(
-        [&layerPosition](Nicosia::CompositionLayer::LayerState& state)
-        {
-            state.position = layerPosition;
-            state.delta.positionChanged = true;
-        });
+    m_layer->setTopLeftPositionForScrolling(layerPosition - m_constraints.alignmentOffset(), forceSync);
 }
 
 } // namespace WebCore

@@ -27,11 +27,10 @@
 #pragma once
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "NicosiaCompositionLayer.h"
 #include "ScrollingTreeOverflowScrollProxyNode.h"
 
 namespace WebCore {
+class CoordinatedPlatformLayer;
 
 class ScrollingTreeOverflowScrollProxyNodeNicosia final : public ScrollingTreeOverflowScrollProxyNode {
 public:
@@ -44,9 +43,9 @@ private:
     bool commitStateBeforeChildren(const ScrollingStateNode&) override;
     void applyLayerPositions() override;
 
-    Nicosia::CompositionLayer* layer() const override { return m_layer.get(); }
+    CoordinatedPlatformLayer* layer() const override { return m_layer.get(); }
 
-    RefPtr<Nicosia::CompositionLayer> m_layer;
+    RefPtr<CoordinatedPlatformLayer> m_layer;
 };
 
 } // namespace WebCore

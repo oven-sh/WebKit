@@ -30,9 +30,10 @@
 #include "ScrollingTreeFixedNodeNicosia.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
+#include "CoordinatedPlatformLayer.h"
 #include "Logging.h"
 #include "ScrollingStateFixedNode.h"
+#include "ScrollingThread.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -56,7 +57,7 @@ bool ScrollingTreeFixedNodeNicosia::commitStateBeforeChildren(const ScrollingSta
 
     auto& fixedStateNode = downcast<ScrollingStateFixedNode>(stateNode);
     if (fixedStateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
-        m_layer = static_cast<Nicosia::CompositionLayer*>(fixedStateNode.layer());
+        m_layer = static_cast<CoordinatedPlatformLayer*>(fixedStateNode.layer());
 
     return ScrollingTreeFixedNode::commitStateBeforeChildren(stateNode);
 }
@@ -67,13 +68,11 @@ void ScrollingTreeFixedNodeNicosia::applyLayerPositions()
 
     LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeFixedNode " << scrollingNodeID() << " relatedNodeScrollPositionDidChange: viewportRectAtLastLayout " << m_constraints.viewportRectAtLastLayout() << " last layer pos " << m_constraints.layerPositionAtLastLayout() << " layerPosition " << layerPosition);
 
-    ASSERT(m_layer);
-    m_layer->accessPending(
-        [&layerPosition](Nicosia::CompositionLayer::LayerState& state)
-        {
-            state.position = layerPosition;
-            state.delta.positionChanged = true;
-        });
+    // Match the behavior of ScrollingTreeFrameScrollingNodeNicosia::repositionScrollingLayers().
+    CoordinatedPlatformLayer::ForcePositionSync forceSync = ScrollingThread::isCurrentThread() && !scrollingTree()->isScrollingSynchronizedWithMainThread() ?
+        CoordinatedPlatformLayer::ForcePositionSync::Yes : CoordinatedPlatformLayer::ForcePositionSync::No;
+
+    m_layer->setTopLeftPositionForScrolling(layerPosition - m_constraints.alignmentOffset(), forceSync);
 }
 
 void ScrollingTreeFixedNodeNicosia::dumpProperties(TextStream& ts, OptionSet<ScrollingStateTreeAsTextBehavior> behavior) const
@@ -81,14 +80,7 @@ void ScrollingTreeFixedNodeNicosia::dumpProperties(TextStream& ts, OptionSet<Scr
     ScrollingTreeFixedNode::dumpProperties(ts, behavior);
 
     if (behavior & ScrollingStateTreeAsTextBehavior::IncludeLayerPositions) {
-        FloatPoint layerTopLeft;
-        ASSERT(m_layer);
-        m_layer->accessCommitted(
-            [this, &layerTopLeft](Nicosia::CompositionLayer::LayerState& state)
-            {
-                layerTopLeft = state.position - toFloatSize(state.anchorPoint.xy()) * state.size + m_constraints.alignmentOffset();
-            });
-
+        FloatPoint layerTopLeft = m_layer->topLeftPositionForScrolling() + m_constraints.alignmentOffset();
         ts.dumpProperty("layer top left", layerTopLeft);
     }
 }

@@ -89,6 +89,8 @@ public:
     void suspend();
     void resume();
 
+    bool isActive() const;
+
 #if ENABLE(DAMAGE_TRACKING)
     void setDamagePropagation(WebCore::Damage::Propagation);
 #endif

@@ -139,8 +139,6 @@ void GraphicsLayerCoordinated::syncPosition(const FloatPoint& position)
 
     GraphicsLayer::syncPosition(position);
 
-    // FIXME: remove this when async scrolling uses CoordinatedPlatformLayer.
-    m_platformLayer->syncPosition(m_position);
     // Ensure future flushes will recompute the coverage rect and update tiling.
     noteLayerPropertyChanged(Change::TileCoverage, ScheduleFlush::No);
     setNeedsUpdateLayerTransform();
@@ -163,8 +161,6 @@ void GraphicsLayerCoordinated::syncBoundsOrigin(const FloatPoint& origin)
 
     GraphicsLayer::syncBoundsOrigin(origin);
 
-    // FIXME: remove this when async scrolling uses CoordinatedPlatformLayer.
-    m_platformLayer->syncBoundsOrigin(m_boundsOrigin);
     // Ensure future flushes will recompute the coverage rect and update tiling.
     noteLayerPropertyChanged(Change::TileCoverage, ScheduleFlush::No);
     setNeedsUpdateLayerTransform();

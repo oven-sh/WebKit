@@ -28,8 +28,6 @@
 #include "ScrollingTreeScrollingNodeDelegateNicosia.h"
 
 #if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "NicosiaPlatformLayer.h"
 #include "ScrollingTreeFrameScrollingNode.h"
 
 namespace WebCore {

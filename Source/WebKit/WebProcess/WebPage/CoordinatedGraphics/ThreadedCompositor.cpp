@@ -200,6 +200,11 @@ void ThreadedCompositor::resume()
     m_compositingRunLoop->resume();
 }
 
+bool ThreadedCompositor::isActive() const
+{
+    return m_compositingRunLoop->isActive();
+}
+
 void ThreadedCompositor::setViewportSize(const IntSize& size, float scaleFactor)
 {
     ASSERT(RunLoop::isMain());
