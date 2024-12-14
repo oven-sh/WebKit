@@ -514,7 +514,7 @@ public:
 
     bool canRender3DTransforms() const;
 
-    void updateLayerPositionsAfterStyleChange();
+    void updateLayerPositionsAfterStyleChange(bool environmentChanged = false);
     enum class CanUseSimplifiedRepaintPass : uint8_t { No, Yes };
     void updateLayerPositionsAfterLayout(RenderElement::LayoutIdentifier, bool didFullRepaint, bool environmentChanged, CanUseSimplifiedRepaintPass);
     void updateLayerPositionsAfterOverflowScroll();

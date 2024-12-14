@@ -116,6 +116,7 @@ public:
 
     void flushUpdateLayerPositions();
 
+    bool updateCompositingLayersAfterStyleChange();
     void updateCompositingLayersAfterLayout();
     // Returns true if a pending compositing layer update was done.
     bool updateCompositingLayersAfterLayoutIfNeeded();

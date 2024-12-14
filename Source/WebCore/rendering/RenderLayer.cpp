@@ -1035,7 +1035,7 @@ static inline bool compositingLogEnabledRenderLayer()
 }
 #endif
 
-void RenderLayer::updateLayerPositionsAfterStyleChange()
+void RenderLayer::updateLayerPositionsAfterStyleChange(bool environmentChanged)
 {
     LOG(Compositing, "RenderLayer %p updateLayerPositionsAfterStyleChange - before", this);
 #if ENABLE(TREE_DEBUGGING)
@@ -1043,8 +1043,18 @@ void RenderLayer::updateLayerPositionsAfterStyleChange()
         showLayerPositionTree(this);
 #endif
 
+    auto updateLayerPositionFlags = [&](bool environmentChanged) {
+        auto flags = flagsForUpdateLayerPositions(*this);
+        if (environmentChanged)
+            flags.add(RenderLayer::EnvironmentChanged);
+        return flags;
+    };
+
+    if (environmentChanged)
+        setSelfAndDescendantsNeedPositionUpdate();
+
     willUpdateLayerPositions();
-    recursiveUpdateLayerPositions(0, flagsForUpdateLayerPositions(*this));
+    recursiveUpdateLayerPositions(0, updateLayerPositionFlags(environmentChanged));
 
     LOG(Compositing, "RenderLayer %p updateLayerPositionsAfterStyleChange - after", this);
 #if ENABLE(TREE_DEBUGGING)

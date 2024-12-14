@@ -359,6 +359,26 @@ void LocalFrameViewLayoutContext::flushUpdateLayerPositions()
     m_lastRepaintRectEnvironment = WTFMove(repaintRectEnvironment);
 }
 
+bool LocalFrameViewLayoutContext::updateCompositingLayersAfterStyleChange()
+{
+    // If we expect to update compositing after an incipient layout, don't do so here.
+    CheckedPtr view = renderView();
+    if (!view)
+        return false;
+
+    if (needsLayout() || isInLayout())
+        return false;
+
+    auto repaintRectEnvironment = RepaintRectEnvironment { view->page().deviceScaleFactor(), document()->printing() };
+    bool environmentChanged = repaintRectEnvironment != m_lastRepaintRectEnvironment;
+
+    view->layer()->updateLayerPositionsAfterStyleChange(environmentChanged);
+
+    m_lastRepaintRectEnvironment = WTFMove(repaintRectEnvironment);
+
+    return view->compositor().didRecalcStyleWithNoPendingLayout();
+}
+
 void LocalFrameViewLayoutContext::updateCompositingLayersAfterLayout()
 {
     auto* renderView = this->renderView();

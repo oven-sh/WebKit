@@ -748,18 +748,6 @@ void LocalFrameView::styleAndRenderTreeDidChange()
     checkAndDispatchDidReachVisuallyNonEmptyState();
 }
 
-bool LocalFrameView::updateCompositingLayersAfterStyleChange()
-{
-    // If we expect to update compositing after an incipient layout, don't do so here.
-    auto* renderView = this->renderView();
-    if (!renderView)
-        return false;
-    if (needsLayout() || layoutContext().isInLayout())
-        return false;
-    renderView->layer()->updateLayerPositionsAfterStyleChange();
-    return renderView->compositor().didRecalcStyleWithNoPendingLayout();
-}
-
 void LocalFrameView::invalidateScrollbarsForAllScrollableAreas()
 {
     if (!m_scrollableAreas)
