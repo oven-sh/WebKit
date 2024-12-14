@@ -195,6 +195,7 @@ $(PROJECT_DIR)/Scripts/PreferencesTemplates/WebPreferencesKeys.cpp.erb
 $(PROJECT_DIR)/Scripts/PreferencesTemplates/WebPreferencesKeys.h.erb
 $(PROJECT_DIR)/Scripts/PreferencesTemplates/WebPreferencesStoreDefaultsMap.cpp.erb
 $(PROJECT_DIR)/Scripts/create-http-header-serialization-interface.py
+$(PROJECT_DIR)/Scripts/generate-derived-log-sources.py
 $(PROJECT_DIR)/Scripts/generate-https-upgrade-database.sh
 $(PROJECT_DIR)/Scripts/generate-message-receiver.py
 $(PROJECT_DIR)/Scripts/generate-serializers.py
