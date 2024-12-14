@@ -1065,6 +1065,10 @@ void LocalDOMWindow::focus(bool allowFocus)
     if (!frame)
         return;
 
+    RefPtr document = frame->protectedDocument();
+    if (!document)
+        return;
+
     RefPtr page = frame->page();
     if (!page)
         return;
@@ -1075,7 +1079,7 @@ void LocalDOMWindow::focus(bool allowFocus)
     if (frame->isMainFrame() && allowFocus)
         page->chrome().focus();
 
-    if (!frame->hasHadUserInteraction() && !isSameSecurityOriginAsMainFrame())
+    if (!document->hasHadUserInteraction() && !isSameSecurityOriginAsMainFrame())
         return;
 
     // Clear the current frame's focused node if a new frame is about to be focused.

@@ -181,9 +181,6 @@ public:
 
     bool documentIsBeingReplaced() const { return m_documentIsBeingReplaced; }
 
-    bool hasHadUserInteraction() const { return m_hasHadUserInteraction; }
-    void setHasHadUserInteraction() { m_hasHadUserInteraction = true; }
-
     bool requestDOMPasteAccess(DOMPasteAccessCategory = DOMPasteAccessCategory::General);
 
     String debugDescription() const;
@@ -401,7 +398,6 @@ private:
     bool m_documentIsBeingReplaced { false };
     unsigned m_navigationDisableCount { 0 };
     unsigned m_selfOnlyRefCount { 0 };
-    bool m_hasHadUserInteraction { false };
 
 #if ENABLE(WINDOW_PROXY_PROPERTY_ACCESS_NOTIFICATION)
     OptionSet<WindowProxyProperty> m_accessedWindowProxyPropertiesViaOpener;
