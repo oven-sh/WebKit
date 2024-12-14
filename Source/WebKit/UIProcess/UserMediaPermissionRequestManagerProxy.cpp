@@ -1088,6 +1088,9 @@ void UserMediaPermissionRequestManagerProxy::syncWithWebCorePrefs() const
     bool mockDevicesEnabled = m_mockDevicesEnabledOverride ? *m_mockDevicesEnabledOverride : page->preferences().mockCaptureDevicesEnabled();
 
 #if ENABLE(GPU_PROCESS)
+    if (page->preferences().captureAudioInGPUProcessEnabled() && page->preferences().useMicrophoneMuteStatusAPI())
+        page->legacyMainFrameProcess().protectedProcessPool()->ensureProtectedGPUProcess()->enableMicrophoneMuteStatusAPI();
+
     if (page->preferences().captureAudioInGPUProcessEnabled() || page->preferences().captureVideoInGPUProcessEnabled())
         page->legacyMainFrameProcess().protectedProcessPool()->ensureProtectedGPUProcess()->setUseMockCaptureDevices(mockDevicesEnabled);
 #endif
@@ -1098,8 +1101,6 @@ void UserMediaPermissionRequestManagerProxy::syncWithWebCorePrefs() const
 #if ENABLE(GPU_PROCESS)
     if (useSharingPicker)
         page->legacyMainFrameProcess().protectedProcessPool()->ensureProtectedGPUProcess()->setUseSCContentSharingPicker(useSharingPicker);
-    if (bool useMicrophoneMuteStatusAPI = page->preferences().useMicrophoneMuteStatusAPI())
-        page->legacyMainFrameProcess().protectedProcessPool()->ensureProtectedGPUProcess()->enableMicrophoneMuteStatusAPI();
 #endif
 
     PlatformMediaSessionManager::setUseSCContentSharingPicker(useSharingPicker);
