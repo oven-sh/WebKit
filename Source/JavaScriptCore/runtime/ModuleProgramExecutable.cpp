@@ -35,7 +35,8 @@ const ClassInfo ModuleProgramExecutable::s_info = { "ModuleProgramExecutable"_s,
 ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source)
     : Base(globalObject->vm().moduleProgramExecutableStructure.get(), globalObject->vm(), source, StrictModeLexicallyScopedFeature, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
 {
-    ASSERT(source.provider()->sourceType() == SourceProviderSourceType::Module);
+    SourceProviderSourceType sourceType = source.provider()->sourceType();
+    ASSERT(sourceType == SourceProviderSourceType::Module || sourceType == SourceProviderSourceType::BunTranspiledModule);
     VM& vm = globalObject->vm();
     if (vm.typeProfiler() || vm.controlFlowProfiler())
         vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), typeProfilingStartOffset(), typeProfilingEndOffset());

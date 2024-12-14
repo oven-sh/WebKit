@@ -56,6 +56,9 @@ class UnlinkedFunctionCodeBlock;
         JSON,
         Synthetic,
         ImportMap,
+#if USE(BUN_JSC_ADDITIONS)
+        BunTranspiledModule,
+#endif
     };
 
     using BytecodeCacheGenerator = Function<RefPtr<CachedBytecode>()>;

@@ -309,6 +309,19 @@ JSValue JSModuleLoader::evaluateNonVirtual(JSGlobalObject* globalObject, JSValue
     return jsUndefined();
 }
 
+
+#if USE(BUN_JSC_ADDITIONS)
+extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise) {
+    (void)globalObject;
+    (void)moduleKey;
+    (void)sourceCode;
+    (void)promise;
+
+    promise->reject(globalObject, createError(globalObject, makeString("Bun__analyzeTranspiledModule is not implemented"_s)));
+    return JSValue::encode(promise);
+}
+#endif
+
 JSModuleNamespaceObject* JSModuleLoader::getModuleNamespaceObject(JSGlobalObject* globalObject, JSValue moduleRecordValue)
 {
     VM& vm = globalObject->vm();
@@ -375,6 +388,13 @@ JSC_DEFINE_HOST_FUNCTION(moduleLoaderParseModule, (JSGlobalObject* globalObject,
             promise->fulfillWithNonPromise(globalObject, moduleRecord);
             return JSValue::encode(promise);
         }
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule: {
+            EncodedJSValue result = Bun__analyzeTranspiledModule(globalObject, moduleKey, sourceCode, promise);
+            scope.release();
+            return result;
+        }
+#endif
         default: {
             break;
         }
