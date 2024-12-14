@@ -165,16 +165,14 @@ void BaseAudioSharedUnit::prepareForNewCapture()
     captureFailed();
 }
 
-void BaseAudioSharedUnit::setCaptureDevice(String&& persistentID, uint32_t captureDeviceID)
+void BaseAudioSharedUnit::setCaptureDevice(String&& persistentID, uint32_t captureDeviceID, bool isDefault)
 {
-    bool hasChanged = this->persistentID() != persistentID || this->captureDeviceID() != captureDeviceID;
+    bool hasChanged = this->persistentID() != persistentID || this->captureDeviceID() != captureDeviceID || m_isCapturingWithDefaultMicrophone != isDefault;
     if (hasChanged)
         willChangeCaptureDevice();
 
     m_capturingDevice = { WTFMove(persistentID), captureDeviceID };
-
-    auto devices = RealtimeMediaSourceCenter::singleton().audioCaptureFactory().audioCaptureDeviceManager().captureDevices();
-    m_isCapturingWithDefaultMicrophone = devices.size() && devices[0].persistentId() == m_capturingDevice->first;
+    m_isCapturingWithDefaultMicrophone = isDefault;
 
     if (hasChanged)
         captureDeviceChanged();

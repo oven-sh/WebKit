@@ -170,18 +170,22 @@ void AVAudioSessionCaptureDeviceManager::configurePreferredAudioCaptureDevice()
 bool AVAudioSessionCaptureDeviceManager::setPreferredAudioSessionDeviceUIDInternal(const String& deviceUID)
 {
     AVAudioSessionPortDescription *preferredPort = nil;
-    NSString *nsDeviceUID = deviceUID;
-    for (AVAudioSessionPortDescription *portDescription in [m_audioSession availableInputs]) {
-        if ([portDescription.UID isEqualToString:nsDeviceUID]) {
-            preferredPort = portDescription;
-            break;
+    if (!deviceUID.isNull()) {
+        NSString *nsDeviceUID = deviceUID;
+        for (AVAudioSessionPortDescription *portDescription in [m_audioSession availableInputs]) {
+            if ([portDescription.UID isEqualToString:nsDeviceUID]) {
+                preferredPort = portDescription;
+                break;
+            }
+        }
+
+        if (!preferredPort) {
+            RELEASE_LOG_ERROR(WebRTC, "failed to find preferred input '%{public}s'", deviceUID.ascii().data());
+            return false;
         }
     }
 
-    if (!preferredPort) {
-        RELEASE_LOG_ERROR(WebRTC, "failed to find preferred input '%{public}s'", deviceUID.ascii().data());
-        return false;
-    }
+    RELEASE_LOG_INFO(WebRTC, "AVAudioSessionCaptureDeviceManager setting preferred input to '%{public}s'", deviceUID.ascii().data());
 
     NSError *error = nil;
     if (![[PAL::getAVAudioSessionClass() sharedInstance] setPreferredInput:preferredPort error:&error]) {

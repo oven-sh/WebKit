@@ -84,7 +84,7 @@ public:
     void clearClients();
 
     virtual bool hasAudioUnit() const = 0;
-    void setCaptureDevice(String&&, uint32_t);
+    void setCaptureDevice(String&&, uint32_t, bool isDefault);
 
     virtual LongCapabilityRange sampleRateCapacities() const = 0;
     virtual int actualSampleRate() const { return sampleRate(); }
@@ -135,6 +135,8 @@ protected:
 
     void disableVoiceActivityThrottleTimerForTesting() { m_voiceActivityThrottleTimer.stop(); }
     void stopRunning();
+
+    bool isCapturingWithDefaultMicrophone() const { return m_isCapturingWithDefaultMicrophone; }
 
 private:
     OSStatus startUnit();

@@ -266,7 +266,7 @@ void CoreAudioSharedUnit::captureDeviceChanged()
 #if PLATFORM(MAC)
     reconfigureAudioUnit();
 #else
-    AVAudioSessionCaptureDeviceManager::singleton().setPreferredAudioSessionDeviceUID(persistentID());
+    AVAudioSessionCaptureDeviceManager::singleton().setPreferredAudioSessionDeviceUID(isCapturingWithDefaultMicrophone() ? String { } : persistentID());
 #endif
     updateVoiceActivityDetection();
 }
@@ -725,7 +725,7 @@ bool CoreAudioSharedUnit::migrateToNewDefaultDevice(const CaptureDevice& capture
         return false;
 
     // We were capturing with the default device which disappeared, let's move capture to the new default device.
-    setCaptureDevice(WTFMove(newDefaultDevicePersistentId), device->deviceID());
+    setCaptureDevice(WTFMove(newDefaultDevicePersistentId), device->deviceID(), true);
     handleNewCurrentMicrophoneDevice(WTFMove(*device));
     return true;
 }
