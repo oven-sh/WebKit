@@ -215,7 +215,7 @@ bool TextCodecUTF8::handlePartialSequence(LChar*& destination, std::span<const u
         bool partialSequenceIsTooShort = false;
         if (count > m_partialSequenceSize) {
             partialSequenceIsTooShort = true;
-            memsetSpan(std::span { m_partialSequence }.subspan(m_partialSequenceSize, count - m_partialSequenceSize), 0);
+            zeroSpan(std::span { m_partialSequence }.subspan(m_partialSequenceSize, count - m_partialSequenceSize));
         }
 
         int character = decodeNonASCIISequence(std::span { m_partialSequence }, count);
@@ -272,7 +272,7 @@ void TextCodecUTF8::handlePartialSequence(UChar*& destination, std::span<const u
         bool partialSequenceIsTooShort = false;
         if (count > m_partialSequenceSize) {
             partialSequenceIsTooShort = true;
-            memsetSpan(std::span { m_partialSequence }.subspan(m_partialSequenceSize, count - m_partialSequenceSize), 0);
+            zeroSpan(std::span { m_partialSequence }.subspan(m_partialSequenceSize, count - m_partialSequenceSize));
         }
 
         int character = decodeNonASCIISequence(std::span { m_partialSequence }, count);

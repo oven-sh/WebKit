@@ -143,7 +143,7 @@ cbor::CBORValue::MapValue buildAttestationMap(Vector<uint8_t>&& authData, String
     if (attestation == AttestationConveyancePreference::None) {
         const size_t aaguidOffset = rpIdHashLength + flagsLength + signCounterLength;
         if (authData.size() >= aaguidOffset + aaguidLength && shouldZero == ShouldZeroAAGUID::Yes)
-            memsetSpan(authData.mutableSpan().subspan(aaguidOffset, aaguidLength), 0);
+            zeroSpan(authData.mutableSpan().subspan(aaguidOffset, aaguidLength));
         format = String::fromLatin1(noneAttestationValue);
         statementMap.clear();
     }

@@ -50,7 +50,7 @@ static WKPageRef createNewPageThenClose(WKPageRef page, WKPageConfigurationRef c
     openedWebView = makeUnique<PlatformWebView>(configuration);
 
     WKPageUIClientV6 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 6;
     uiClient.runJavaScriptAlert = runJavaScriptAlert;
@@ -69,7 +69,7 @@ TEST(WebKit, CloseFromWithinCreatePage)
     PlatformWebView webView(context.get());
 
     WKPageUIClientV6 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 6;
     uiClient.createNewPage = createNewPageThenClose;
@@ -96,7 +96,7 @@ static WKPageRef createNewPage(WKPageRef page, WKPageConfigurationRef configurat
     openedWebView = makeUnique<PlatformWebView>(configuration);
 
     WKPageUIClientV6 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 6;
     uiClient.runJavaScriptAlert = runJavaScriptAlert;
@@ -113,7 +113,7 @@ TEST(WebKit, CreatePageThenDocumentOpenMIMEType)
     PlatformWebView webView(context.get());
 
     WKPageUIClientV6 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 6;
     uiClient.createNewPage = createNewPage;

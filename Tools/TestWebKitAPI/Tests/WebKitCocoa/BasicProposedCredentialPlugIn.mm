@@ -39,7 +39,7 @@
 - (void)webProcessPlugIn:(WKWebProcessPlugInController *)plugInController didCreateBrowserContextController:(WKWebProcessPlugInBrowserContextController *)browserContextController
 {
     WKBundlePageResourceLoadClientV1 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 1;
     client.shouldUseCredentialStorage = [](auto...) {
         static size_t queries { 0 };

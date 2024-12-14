@@ -70,7 +70,7 @@ static void willAddMessageWithDetailsToConsoleCallback(WKBundlePageRef page, WKS
 - (void)webProcessPlugIn:(WKWebProcessPlugInController *)plugInController didCreateBrowserContextController:(WKWebProcessPlugInBrowserContextController *)browserContextController
 {
     WKBundlePageUIClientV5 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 5;
     client.willAddMessageWithDetailsToConsole = willAddMessageWithDetailsToConsoleCallback;
     WKBundlePageSetUIClient([browserContextController _bundlePageRef], &client.base);

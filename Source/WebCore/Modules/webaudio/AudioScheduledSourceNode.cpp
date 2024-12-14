@@ -118,7 +118,7 @@ void AudioScheduledSourceNode::updateSchedulingInfo(size_t quantumFrameSize, Aud
     // Zero any initial frames representing silence leading up to a rendering start time in the middle of the quantum.
     if (quantumFrameOffset) {
         for (unsigned i = 0; i < outputBus.numberOfChannels(); ++i)
-            memsetSpan(outputBus.channel(i)->mutableSpan().first(quantumFrameOffset), 0);
+            zeroSpan(outputBus.channel(i)->mutableSpan().first(quantumFrameOffset));
     }
 
     // Handle silence after we're done playing.
@@ -140,7 +140,7 @@ void AudioScheduledSourceNode::updateSchedulingInfo(size_t quantumFrameSize, Aud
                 nonSilentFramesToProcess -= framesToZero;
 
             for (unsigned i = 0; i < outputBus.numberOfChannels(); ++i)
-                memsetSpan(outputBus.channel(i)->mutableSpan().subspan(zeroStartFrame, framesToZero), 0);
+                zeroSpan(outputBus.channel(i)->mutableSpan().subspan(zeroStartFrame, framesToZero));
         }
 
         finish();

@@ -465,7 +465,7 @@ void AudioBus::copyWithGainFrom(const AudioBus& sourceBus, float gain)
             memcpySpan(destinations[channelIndex], sources[channelIndex].first(framesToProcess));
     } else if (!gain) {
         for (unsigned channelIndex = 0; channelIndex < numberOfChannels; ++channelIndex)
-            memsetSpan(destinations[channelIndex].first(framesToProcess), 0);
+            zeroSpan(destinations[channelIndex].first(framesToProcess));
     } else {
         for (unsigned channelIndex = 0; channelIndex < numberOfChannels; ++channelIndex)
             VectorMath::multiplyByScalar(sources[channelIndex].data(), gain, destinations[channelIndex].data(), framesToProcess);

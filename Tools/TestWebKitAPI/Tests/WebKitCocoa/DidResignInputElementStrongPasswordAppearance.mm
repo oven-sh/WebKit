@@ -52,7 +52,7 @@ void didResignInputElementStrongPasswordAppearance(WKBundlePageRef, WKBundleNode
 - (void)webProcessPlugIn:(WKWebProcessPlugInController *)plugInController didCreateBrowserContextController:(WKWebProcessPlugInBrowserContextController *)browserContextController
 {
     WKBundlePageUIClientV4 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 4;
     client.didResignInputElementStrongPasswordAppearance = didResignInputElementStrongPasswordAppearance;
     WKBundlePageSetUIClient([browserContextController _bundlePageRef], &client.base);

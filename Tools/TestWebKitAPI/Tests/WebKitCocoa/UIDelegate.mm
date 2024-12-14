@@ -163,7 +163,7 @@ TEST(WebKit, GeolocationPermission)
     auto pool = adoptNS([[WKProcessPool alloc] init]);
     
     WKGeolocationProviderV1 providerCallback;
-    memset(&providerCallback, 0, sizeof(WKGeolocationProviderV1));
+    zeroBytes(providerCallback);
     providerCallback.base.version = 1;
     providerCallback.startUpdating = [] (WKGeolocationManagerRef manager, const void*) {
         WKGeolocationManagerProviderDidChangePosition(manager, adoptWK(WKGeolocationPositionCreate(0, 50.644358, 3.345453, 2.53)).get());
@@ -278,7 +278,7 @@ TEST(WebKit, GeolocationPermissionInIFrame)
     auto pool = adoptNS([[WKProcessPool alloc] init]);
 
     WKGeolocationProviderV1 providerCallback;
-    memset(&providerCallback, 0, sizeof(WKGeolocationProviderV1));
+    zeroBytes(providerCallback);
     providerCallback.base.version = 1;
     providerCallback.startUpdating = [] (WKGeolocationManagerRef manager, const void*) {
         WKGeolocationManagerProviderDidChangePosition(manager, adoptWK(WKGeolocationPositionCreate(0, 50.644358, 3.345453, 2.53)).get());
@@ -341,7 +341,7 @@ TEST(WebKit, GeolocationPermissionInDisallowedIFrame)
     auto pool = adoptNS([[WKProcessPool alloc] init]);
 
     WKGeolocationProviderV1 providerCallback;
-    memset(&providerCallback, 0, sizeof(WKGeolocationProviderV1));
+    zeroBytes(providerCallback);
     providerCallback.base.version = 1;
     providerCallback.startUpdating = [] (WKGeolocationManagerRef manager, const void*) {
         WKGeolocationManagerProviderDidChangePosition(manager, adoptWK(WKGeolocationPositionCreate(0, 50.644358, 3.345453, 2.53)).get());

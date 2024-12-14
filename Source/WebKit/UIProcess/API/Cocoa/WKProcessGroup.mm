@@ -63,7 +63,7 @@ static void setUpInjectedBundleClient(WKProcessGroup *processGroup, WKContextRef
 ALLOW_DEPRECATED_DECLARATIONS_END
 {
     WKContextInjectedBundleClientV1 injectedBundleClient;
-    memsetSpan(asMutableByteSpan(injectedBundleClient), 0);
+    zeroBytes(injectedBundleClient);
 
     injectedBundleClient.base.version = 1;
     injectedBundleClient.base.clientInfo = (__bridge void*)processGroup;
@@ -132,7 +132,7 @@ static void setUpHistoryClient(WKProcessGroup *processGroup, WKContextRef contex
 ALLOW_DEPRECATED_DECLARATIONS_END
 {
     WKContextHistoryClientV0 historyClient;
-    memsetSpan(asMutableByteSpan(historyClient), 0);
+    zeroBytes(historyClient);
 
     historyClient.base.version = 0;
     historyClient.base.clientInfo = (__bridge CFTypeRef)processGroup;

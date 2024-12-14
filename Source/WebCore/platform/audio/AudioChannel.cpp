@@ -88,7 +88,7 @@ void AudioChannel::copyFromRange(const AudioChannel* sourceChannel, unsigned sta
         if (rangeLength == length())
             zero();
         else
-            memsetSpan(destination.first(rangeLength), 0);
+            zeroSpan(destination.first(rangeLength));
     } else
         memcpySpan(destination, source.subspan(startFrame, rangeLength));
 }

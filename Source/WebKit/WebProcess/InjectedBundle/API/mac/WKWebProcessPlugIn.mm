@@ -75,7 +75,7 @@ static void willDestroyPage(WKBundleRef bundle, WKBundlePageRef page, const void
 static void setUpBundleClient(WKWebProcessPlugInController *plugInController, WebKit::InjectedBundle& bundle)
 {
     WKBundleClientV1 bundleClient;
-    memsetSpan(asMutableByteSpan(bundleClient), 0);
+    zeroBytes(bundleClient);
 
     bundleClient.base.version = 1;
     bundleClient.base.clientInfo = (__bridge void*)plugInController;

@@ -52,7 +52,7 @@ void didClickAutoFillButton(WKBundlePageRef, WKBundleNodeHandleRef, WKTypeRef* u
 - (void)webProcessPlugIn:(WKWebProcessPlugInController *)plugInController didCreateBrowserContextController:(WKWebProcessPlugInBrowserContextController *)browserContextController
 {
     WKBundlePageUIClientV3 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 3;
     client.didClickAutoFillButton = didClickAutoFillButton;
     WKBundlePageSetUIClient([browserContextController _bundlePageRef], &client.base);

@@ -56,7 +56,7 @@ TextMarkerData::TextMarkerData(AXObjectCache& cache, const VisiblePosition& visi
 {
     ASSERT(isMainThread());
 
-    memsetSpan(asMutableByteSpan(*this), 0);
+    zeroBytes(*this);
     treeID = cache.treeID().toUInt64();
     auto position = visiblePosition.deepEquivalent();
     auto optionalObjectID = nodeID(cache, position.anchorNode());
@@ -73,7 +73,7 @@ TextMarkerData::TextMarkerData(AXObjectCache& cache, const CharacterOffset& char
 {
     ASSERT(isMainThread());
 
-    memsetSpan(asMutableByteSpan(*this), 0);
+    zeroBytes(*this);
     treeID = cache.treeID().toUInt64();
     auto optionalObjectID = nodeID(cache, characterOffsetParam.node.get());
     objectID = optionalObjectID ? optionalObjectID->toUInt64() : 0;

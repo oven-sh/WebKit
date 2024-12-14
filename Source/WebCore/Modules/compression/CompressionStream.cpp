@@ -32,7 +32,7 @@ namespace WebCore {
 CompressionStream::CompressionStream()
 {
 #if PLATFORM(COCOA)
-    memsetSpan(asMutableByteSpan(m_stream), 0);
+    zeroBytes(m_stream);
 #endif
 }
 

@@ -91,7 +91,7 @@ static void didReceiveMessageFromInjectedBundle(WKContextRef, WKStringRef messag
 static void setInjectedBundleClient(WKContextRef context)
 {
     WKContextInjectedBundleClientV0 injectedBundleClient;
-    memset(&injectedBundleClient, 0, sizeof(injectedBundleClient));
+    zeroBytes(injectedBundleClient);
 
     injectedBundleClient.base.version = 0;
     injectedBundleClient.didReceiveMessageFromInjectedBundle = didReceiveMessageFromInjectedBundle;
@@ -112,7 +112,7 @@ TEST(WebKit, WebArchive)
     PlatformWebView webView(context.get());
 
     WKPageNavigationClientV3 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
     
     loaderClient.base.version = 3;
     loaderClient.didFinishNavigation = didFinishNavigation;

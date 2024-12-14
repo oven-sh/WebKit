@@ -44,7 +44,7 @@ void mouseDidMoveOverElement(WKBundlePageRef page, WKBundleHitTestResultRef hitT
 - (void)webProcessPlugIn:(WKWebProcessPlugInController *)plugInController didCreateBrowserContextController:(WKWebProcessPlugInBrowserContextController *)browserContextController
 {
     WKBundlePageUIClientV0 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.mouseDidMoveOverElement = mouseDidMoveOverElement;
     WKBundlePageSetUIClient([browserContextController _bundlePageRef], &client.base);
 }

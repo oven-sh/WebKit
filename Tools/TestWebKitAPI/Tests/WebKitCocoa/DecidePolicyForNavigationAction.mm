@@ -300,7 +300,7 @@ TEST(WebKit, DecidePolicyForNewWindowAction)
     TestWebKitAPI::PlatformWebView webView(context.get());
 
     WKPagePolicyClientV1 policyClient;
-    memset(&policyClient, 0, sizeof(policyClient));
+    zeroBytes(policyClient);
     policyClient.base.version = 1;
     policyClient.decidePolicyForNewWindowAction = [] (WKPageRef page, WKFrameRef frame, WKFrameNavigationType navigationType, WKEventModifiers modifiers, WKEventMouseButton mouseButton, WKURLRequestRef request, WKStringRef frameName, WKFramePolicyListenerRef listener, WKTypeRef userData, const void* clientInfo) {
         EXPECT_TRUE(WKStringIsEqualToUTF8CString(adoptWK(WKURLCopyString(adoptWK(WKURLRequestCopyURL(request)).get())).get(), "https://webkit.org/"));

@@ -81,7 +81,7 @@ struct TextMarkerData {
     // For an example of such byte-comparison, see the TestRunner WTR::AccessibilityTextMarker::isEqual.
     TextMarkerData()
     {
-        memsetSpan(asMutableByteSpan(*this), 0);
+        zeroBytes(*this);
     }
 
     TextMarkerData(std::optional<AXID> axTreeID, std::optional<AXID> axObjectID,
@@ -90,7 +90,7 @@ struct TextMarkerData {
         Affinity affinityParam = Affinity::Downstream,
         unsigned charStart = 0, unsigned charOffset = 0, bool ignoredParam = false)
     {
-        memsetSpan(asMutableByteSpan(*this), 0);
+        zeroBytes(*this);
         treeID = axTreeID ? axTreeID->toUInt64() : 0;
         objectID = axObjectID ? axObjectID->toUInt64() : 0;
         offset = offsetParam;

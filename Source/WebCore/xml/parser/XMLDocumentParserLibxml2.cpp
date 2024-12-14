@@ -1287,7 +1287,7 @@ static void ignorableWhitespaceHandler(void*, const xmlChar*, int)
 void XMLDocumentParser::initializeParserContext(const CString& chunk)
 {
     xmlSAXHandler sax;
-    memsetSpan(asMutableByteSpan(sax), 0);
+    zeroBytes(sax);
 
     sax.error = normalErrorHandler;
     sax.fatalError = fatalErrorHandler;
@@ -1502,7 +1502,7 @@ std::optional<HashMap<String, String>> parseAttributes(CachedResourceLoader& cac
     AttributeParseState attributes;
 
     xmlSAXHandler sax;
-    memsetSpan(asMutableByteSpan(sax), 0);
+    zeroBytes(sax);
     sax.startElementNs = attributesStartElementNsHandler;
     sax.initialized = XML_SAX2_MAGIC;
 

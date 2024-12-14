@@ -64,12 +64,12 @@ void ReverbAccumulationBuffer::readAndClear(std::span<float> destination, size_t
 
     auto source = m_buffer.span();
     memcpySpan(destination, source.subspan(m_readIndex).first(numberOfFrames1));
-    memsetSpan(source.subspan(m_readIndex, numberOfFrames1), 0);
+    zeroSpan(source.subspan(m_readIndex, numberOfFrames1));
 
     // Handle wrap-around if necessary
     if (numberOfFrames2 > 0) {
         memcpySpan(destination.subspan(numberOfFrames1), source.first(numberOfFrames2));
-        memsetSpan(source.first(numberOfFrames2), 0);
+        zeroSpan(source.first(numberOfFrames2));
     }
 
     m_readIndex = (m_readIndex + numberOfFrames) % bufferLength;

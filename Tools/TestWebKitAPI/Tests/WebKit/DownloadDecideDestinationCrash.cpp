@@ -51,7 +51,7 @@ static WKStringRef decideDestinationWithSuggestedFilename(WKDownloadRef download
 static void navigationResponseDidBecomeDownload(WKPageRef page, WKNavigationResponseRef navigationResponse, WKDownloadRef download, const void* clientInfo)
 {
     WKDownloadClientV0 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 0;
     client.decideDestinationWithResponse = decideDestinationWithSuggestedFilename;
     WKDownloadSetClient(download, &client.base);
@@ -60,7 +60,7 @@ static void navigationResponseDidBecomeDownload(WKPageRef page, WKNavigationResp
 static void setPagePolicyClient(WKPageRef page)
 {
     WKPageNavigationClientV3 navigationClient;
-    memset(&navigationClient, 0, sizeof(navigationClient));
+    zeroBytes(navigationClient);
 
     navigationClient.base.version = 3;
     navigationClient.decidePolicyForNavigationResponse = decidePolicyForNavigationResponse;

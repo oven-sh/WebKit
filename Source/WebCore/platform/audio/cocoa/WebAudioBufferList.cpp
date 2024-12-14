@@ -152,7 +152,7 @@ RetainPtr<CMBlockBufferRef> WebAudioBufferList::setSampleCountWithBlockBuffer(si
 
 void WebAudioBufferList::initializeList(std::span<uint8_t> buffer, size_t channelLength)
 {
-    memsetSpan(buffer, 0);
+    zeroSpan(buffer);
 
     for (uint32_t index = 0; index < m_canonicalList->mNumberBuffers; ++index) {
         m_canonicalList->mBuffers[index].mData = buffer.data() + channelLength * index;

@@ -86,7 +86,7 @@ static RetainPtr<WKWebView> wkView;
 {
     dispatch_async(dispatch_get_main_queue(), ^ {
         WKContextClientV0 client;
-        memsetSpan(asMutableByteSpan(client), 0);
+        zeroBytes(client);
         client.base.clientInfo = self;
         client.networkProcessDidCrash = [](WKContextRef context, const void* clientInfo) {
             auto protocol = (CloseWhileStartingProtocol *)clientInfo;

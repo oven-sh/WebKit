@@ -124,7 +124,7 @@ void SharedStringHashStore::resizeTable(unsigned newTableLength)
         return;
     }
 
-    memsetSpan(newTableMemory->mutableSpan(), 0);
+    zeroSpan(newTableMemory->mutableSpan());
 
     RefPtr<SharedMemory> currentTableMemory = m_table.sharedMemory();
     unsigned currentTableLength = m_tableLength;

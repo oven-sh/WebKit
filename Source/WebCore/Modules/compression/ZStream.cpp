@@ -74,7 +74,7 @@ bool ZStream::initializeIfNecessary(Algorithm algorithm, Operation operation)
 
 ZStream::ZStream()
 {
-    memsetSpan(asMutableByteSpan(m_stream), 0);
+    zeroBytes(m_stream);
 }
 
 ZStream::~ZStream()

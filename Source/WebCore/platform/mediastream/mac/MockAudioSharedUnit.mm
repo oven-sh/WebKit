@@ -328,7 +328,7 @@ void MockAudioSharedInternalUnit::emitSampleBuffers(uint32_t frameCount)
     AudioUnitRenderActionFlags ioActionFlags = 0;
     
     AudioTimeStamp timeStamp;
-    memsetSpan(asMutableByteSpan(timeStamp), 0);
+    zeroBytes(timeStamp);
     timeStamp.mSampleTime = sampleTime;
     timeStamp.mHostTime = static_cast<UInt64>(sampleTime);
 

@@ -174,7 +174,7 @@ int32_t Dav1dDecoder::Decode(const webrtc::EncodedImage& encodedImage, bool /*mi
 
     ScopedDav1dData scopedDav1dData;
     Dav1dData& dav1dData = scopedDav1dData.Data();
-    memsetSpan(asMutableByteSpan(dav1dData), 0);
+    zeroBytes(dav1dData);
     auto* data = encodedImage.data();
     auto size = encodedImage.size();
     if (!data || !size) {
@@ -190,7 +190,7 @@ int32_t Dav1dDecoder::Decode(const webrtc::EncodedImage& encodedImage, bool /*mi
 
     ScopedDav1dPicture scopedDav1dPicture;
     Dav1dPicture& dav1dPicture = scopedDav1dPicture.Picture();
-    memsetSpan(asMutableByteSpan(dav1dPicture), 0);
+    zeroBytes(dav1dPicture);
 
     if (int res = dav1d_get_picture(m_context, &dav1dPicture)) {
         RELEASE_LOG_ERROR(WebRTC, "Dav1dDecoder::Decode getting picture failed with error code %d", res);

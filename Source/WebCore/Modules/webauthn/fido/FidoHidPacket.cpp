@@ -107,7 +107,7 @@ Vector<uint8_t> FidoHidInitPacket::getSerializedData() const
     serialized.appendVector(m_data);
     auto offset = serialized.size();
     serialized.grow(kHidPacketSize);
-    memsetSpan(serialized.mutableSpan().subspan(offset, kHidPacketSize - offset), 0);
+    zeroSpan(serialized.mutableSpan().subspan(offset, kHidPacketSize - offset));
 
     return serialized;
 }
@@ -155,7 +155,7 @@ Vector<uint8_t> FidoHidContinuationPacket::getSerializedData() const
     serialized.appendVector(m_data);
     auto offset = serialized.size();
     serialized.grow(kHidPacketSize);
-    memsetSpan(serialized.mutableSpan().subspan(offset, kHidPacketSize - offset), 0);
+    zeroSpan(serialized.mutableSpan().subspan(offset, kHidPacketSize - offset));
 
     return serialized;
 }

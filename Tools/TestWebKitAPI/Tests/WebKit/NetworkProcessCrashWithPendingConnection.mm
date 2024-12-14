@@ -70,7 +70,7 @@ TEST(WebKit, NetworkProcessCrashWithPendingConnection)
 
     // FIXME: Adopt the new API once it's added in webkit.org/b/174061.
     WKContextClientV0 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.networkProcessDidCrash = [](WKContextRef context, const void* clientInfo) {
         networkProcessCrashed = true;
     };
@@ -137,7 +137,7 @@ TEST(WebKit, NetworkProcessRelaunchOnLaunchFailure)
     networkProcessCrashed = false;
 
     WKContextClientV0 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.networkProcessDidCrash = [](WKContextRef context, const void* clientInfo) {
         networkProcessCrashed = true;
     };

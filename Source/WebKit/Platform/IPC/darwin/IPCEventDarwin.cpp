@@ -63,7 +63,7 @@ static void clearNoSenderNotifications(mach_port_t port)
 void Signal::signal()
 {
     mach_msg_header_t message;
-    memsetSpan(asMutableByteSpan(message), 0);
+    zeroBytes(message);
     message.msgh_remote_port = m_sendRight.sendRight();
     message.msgh_local_port = MACH_PORT_NULL;
     message.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
@@ -111,7 +111,7 @@ typedef struct {
 bool Event::wait()
 {
     ReceiveMessage receiveMessage;
-    memsetSpan(asMutableByteSpan(receiveMessage), 0);
+    zeroBytes(receiveMessage);
     mach_msg_return_t ret = mach_msg(&receiveMessage.header, MACH_RCV_MSG, 0, sizeof(receiveMessage), m_receiveRight, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
     if (ret != MACH_MSG_SUCCESS)
         return false;
@@ -123,7 +123,7 @@ bool Event::wait()
 bool Event::waitFor(Timeout timeout)
 {
     ReceiveMessage receiveMessage;
-    memsetSpan(asMutableByteSpan(receiveMessage), 0);
+    zeroBytes(receiveMessage);
     mach_msg_return_t ret = mach_msg(&receiveMessage.header, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0, sizeof(receiveMessage), m_receiveRight, timeout.secondsUntilDeadline().milliseconds(), MACH_PORT_NULL);
     if (ret != MACH_MSG_SUCCESS)
         return false;

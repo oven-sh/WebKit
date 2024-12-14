@@ -735,11 +735,10 @@ TEST(URLSchemeHandler, XHRPost)
             EXPECT_TRUE(!!stream);
             [stream open];
             EXPECT_TRUE(stream.hasBytesAvailable);
-            uint8_t buffer[9];
-            memset(buffer, 0, 9);
-            auto length = [stream read:buffer maxLength:9];
+            std::array<uint8_t, 9> buffer = { };
+            auto length = [stream read:buffer.data() maxLength:buffer.size()];
             EXPECT_EQ(length, 8);
-            EXPECT_STREQ(reinterpret_cast<const char*>(buffer), "foo=bar2");
+            EXPECT_STREQ(reinterpret_cast<const char*>(buffer.data()), "foo=bar2");
             EXPECT_FALSE(stream.hasBytesAvailable);
             [stream close];
         } else if ([task.request.URL.absoluteString isEqualToString:@"xhrpost://example/arraybuffer"]) {

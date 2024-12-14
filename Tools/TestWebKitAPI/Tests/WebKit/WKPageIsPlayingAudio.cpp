@@ -68,7 +68,7 @@ static void isPlayingAudioDidChangeCallback(WKPageRef page, const void*)
 static void setUpClients(WKPageRef page)
 {
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
 
     loaderClient.base.version = 0;
     loaderClient.didFinishNavigation = didFinishNavigation;
@@ -76,7 +76,7 @@ static void setUpClients(WKPageRef page)
     WKPageSetPageNavigationClient(page, &loaderClient.base);
 
     WKPageUIClientV5 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 5;
     uiClient.isPlayingAudioDidChange = isPlayingAudioDidChangeCallback;

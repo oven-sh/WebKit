@@ -229,7 +229,7 @@ static bool connectToRemoteAddress(int socket, bool useIPv4)
     const int publicPort = 53;
 
     sockaddr_storage remoteAddressStorage;
-    memsetSpan(asMutableByteSpan(remoteAddressStorage), 0);
+    zeroBytes(remoteAddressStorage);
     size_t remoteAddressStorageLength = 0;
     if (useIPv4) {
         auto& remoteAddress = *reinterpret_cast<sockaddr_in*>(&remoteAddressStorage);
@@ -267,7 +267,7 @@ static bool connectToRemoteAddress(int socket, bool useIPv4)
 static std::optional<RTCNetwork::IPAddress> getSocketLocalAddress(int socket, bool useIPv4)
 {
     sockaddr_storage localAddressStorage;
-    memsetSpan(asMutableByteSpan(localAddressStorage), 0);
+    zeroBytes(localAddressStorage);
     socklen_t localAddressStorageLength = sizeof(sockaddr_storage);
     if (::getsockname(socket, reinterpret_cast<sockaddr*>(&localAddressStorage), &localAddressStorageLength) < 0) {
         RELEASE_LOG_ERROR(WebRTC, "getDefaultIPAddress getsockname failed, useIPv4=%d", useIPv4);

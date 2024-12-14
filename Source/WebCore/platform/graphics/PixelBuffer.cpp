@@ -118,7 +118,7 @@ bool PixelBuffer::zeroRange(size_t byteOffset, size_t rangeByteLength)
     if (!isSumSmallerThanOrEqual(byteOffset, rangeByteLength, m_bytes.size()))
         return false;
 
-    memsetSpan(m_bytes.subspan(byteOffset, rangeByteLength), 0);
+    zeroSpan(m_bytes.subspan(byteOffset, rangeByteLength));
     return true;
 }
 

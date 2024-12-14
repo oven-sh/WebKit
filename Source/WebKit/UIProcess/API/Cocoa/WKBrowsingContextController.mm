@@ -439,7 +439,7 @@ static void setUpPageLoaderClient(WKBrowsingContextController *browsingContext, 
 ALLOW_DEPRECATED_DECLARATIONS_END
 {
     WKPageNavigationClientV0 loaderClient;
-    memsetSpan(asMutableByteSpan(loaderClient), 0);
+    zeroBytes(loaderClient);
 
     loaderClient.base.version = 0;
     loaderClient.base.clientInfo = (__bridge void*)browsingContext;
@@ -478,7 +478,7 @@ static void setUpPagePolicyClient(WKBrowsingContextController *browsingContext, 
 ALLOW_DEPRECATED_DECLARATIONS_END
 {
     WKPagePolicyClientInternal policyClient;
-    memsetSpan(asMutableByteSpan(policyClient), 0);
+    zeroBytes(policyClient);
 
     policyClient.base.version = 2;
     policyClient.base.clientInfo = (__bridge void*)browsingContext;

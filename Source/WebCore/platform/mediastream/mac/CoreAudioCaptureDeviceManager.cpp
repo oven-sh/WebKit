@@ -38,6 +38,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/StdLibExtras.h>
 
 #import <pal/cf/CoreMediaSoftLink.h>
 
@@ -77,7 +78,7 @@ static bool deviceHasStreams(AudioObjectID deviceID, const AudioObjectPropertyAd
         return false;
 
     auto bufferList = std::unique_ptr<AudioBufferList>((AudioBufferList*) ::operator new (dataSize));
-    memset(bufferList.get(), 0, dataSize);
+    zeroSpan(unsafeMakeSpan(bufferList.get(), dataSize));
     err = AudioObjectGetPropertyData(deviceID, &address, 0, nullptr, &dataSize, bufferList.get());
 
     return !err && bufferList->mNumberBuffers;

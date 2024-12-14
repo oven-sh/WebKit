@@ -947,6 +947,20 @@ void memsetSpan(std::span<T, Extent> destination, uint8_t byte)
 }
 
 template<typename T, std::size_t Extent>
+void zeroSpan(std::span<T, Extent> destination)
+{
+    static_assert(std::is_trivially_copyable_v<T>);
+    memset(destination.data(), 0, destination.size_bytes());
+}
+
+template<typename T>
+void zeroBytes(T& object)
+{
+    static_assert(std::is_trivially_copyable_v<T>);
+    zeroSpan(asMutableByteSpan(object));
+}
+
+template<typename T, std::size_t Extent>
 void secureMemsetSpan(std::span<T, Extent> destination, uint8_t byte)
 {
     static_assert(std::is_trivially_copyable_v<T>);
@@ -1238,6 +1252,8 @@ using WTF::tryBinarySearch;
 using WTF::unsafeMakeSpan;
 using WTF::valueOrCompute;
 using WTF::valueOrDefault;
+using WTF::zeroBytes;
+using WTF::zeroSpan;
 using WTF::Invocable;
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

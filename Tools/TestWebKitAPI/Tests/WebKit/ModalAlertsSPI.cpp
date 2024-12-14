@@ -107,7 +107,7 @@ static WKPageRef createNewPage(WKPageRef page, WKPageConfigurationRef configurat
     openedWebView = makeUnique<PlatformWebView>(configuration);
 
     WKPageUIClientV6 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 6;
     uiClient.runJavaScriptAlert = runJavaScriptAlert;
@@ -127,7 +127,7 @@ TEST(WebKit, ModalAlertsSPI)
     PlatformWebView webView(context.get());
 
     WKPageUIClientV6 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 6;
     uiClient.createNewPage = createNewPage;
@@ -158,7 +158,7 @@ TEST(WebKit, CreateNewPageDelegateFrameLoadState)
         PlatformWebView webView(context.get());
 
         WKPageUIClientV6 uiClient;
-        memset(&uiClient, 0, sizeof(uiClient));
+        zeroBytes(uiClient);
         uiClient.base.version = 6;
         uiClient.createNewPage = checkFrameLoadStateAndCreateNewPage;
         WKPageSetPageUIClient(webView.page(), &uiClient.base);

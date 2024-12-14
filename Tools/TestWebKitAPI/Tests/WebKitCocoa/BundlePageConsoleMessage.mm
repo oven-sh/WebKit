@@ -48,7 +48,7 @@ void willAddMessageToConsoleCallback(WKBundlePageRef page, WKStringRef message, 
 - (void)webProcessPlugIn:(WKWebProcessPlugInController *)plugInController didCreateBrowserContextController:(WKWebProcessPlugInBrowserContextController *)browserContextController
 {
     WKBundlePageUIClientV4 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 4;
     client.willAddMessageToConsole = willAddMessageToConsoleCallback;
     WKBundlePageSetUIClient([browserContextController _bundlePageRef], &client.base);

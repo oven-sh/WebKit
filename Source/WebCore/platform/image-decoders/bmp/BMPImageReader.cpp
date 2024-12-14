@@ -54,7 +54,7 @@ BMPImageReader::BMPImageReader(ScalableImageDecoder* parent, size_t decodedAndHe
     , m_andMaskState(usesAndMask ? NotYetDecoded : None)
 {
     // Clue-in decodeBMP() that we need to detect the correct info header size.
-    memsetSpan(asMutableByteSpan(m_infoHeader), 0);
+    zeroBytes(m_infoHeader);
 }
 
 bool BMPImageReader::decodeBMP(bool onlySize)

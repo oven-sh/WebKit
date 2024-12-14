@@ -255,7 +255,7 @@ static void didHandleOnloadEventsForFrame(WKBundlePageRef page, WKBundleFrameRef
 static void setUpPageLoaderClient(WKWebProcessPlugInBrowserContextController *contextController, WebKit::WebPage& page)
 {
     WKBundlePageLoaderClientV11 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
 
     client.base.version = 11;
     client.base.clientInfo = (__bridge void*)contextController;
@@ -352,7 +352,7 @@ static void didFailLoadForResource(WKBundlePageRef, WKBundleFrameRef frame, uint
 static void setUpResourceLoadClient(WKWebProcessPlugInBrowserContextController *contextController, WebKit::WebPage& page)
 {
     WKBundlePageResourceLoadClientV1 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
 
     client.base.version = 1;
     client.base.clientInfo = (__bridge void*) contextController;

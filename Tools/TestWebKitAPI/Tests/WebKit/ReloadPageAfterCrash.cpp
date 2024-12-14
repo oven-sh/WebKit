@@ -78,7 +78,7 @@ TEST(WebKit, ReloadPageAfterCrash)
     PlatformWebView webView(context.get());
 
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
 
     loaderClient.base.version = 0;
     loaderClient.didFinishNavigation = didFinishLoad;
@@ -121,7 +121,7 @@ TEST(WebKit, FocusedFrameAfterCrash)
     PlatformWebView webView(context.get());
 
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
 
     loaderClient.base.version = 0;
     loaderClient.didFinishNavigation = didFinishLoad;

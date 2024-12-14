@@ -102,23 +102,23 @@ public:
     T& operator[](size_t i) { return at(i); }
     const T& operator[](size_t i) const { return at(i); }
 
-    void zero() { memsetSpan(this->span(), 0); }
+    void zero() { zeroSpan(span()); }
 
     void zeroRange(unsigned start, unsigned end)
     {
-        bool isSafe = (start <= end) && (end <= this->size());
+        bool isSafe = (start <= end) && (end <= size());
         ASSERT(isSafe);
         if (!isSafe)
             return;
 
         // This expression cannot overflow because end - start cannot be
         // greater than m_size, which is safe due to the check in resize().
-        memsetSpan(this->span().subspan(start, end - start), 0);
+        zeroSpan(span().subspan(start, end - start));
     }
 
     void copyToRange(const T* sourceData, unsigned start, unsigned end)
     {
-        bool isSafe = (start <= end) && (end <= this->size());
+        bool isSafe = (start <= end) && (end <= size());
         ASSERT(isSafe);
         if (!isSafe)
             return;

@@ -64,7 +64,7 @@ TEST(WebKit, ForceLightAppearanceInBundle)
     [webView.platformView() setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]];
 
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
 
     loaderClient.base.version = 0;
     loaderClient.didFinishNavigation = didFinishNavigation;
@@ -72,7 +72,7 @@ TEST(WebKit, ForceLightAppearanceInBundle)
     WKPageSetPageNavigationClient(webView.page(), &loaderClient.base);
 
     WKContextInjectedBundleClientV0 injectedBundleClient;
-    memset(&injectedBundleClient, 0, sizeof(injectedBundleClient));
+    zeroBytes(injectedBundleClient);
 
     injectedBundleClient.base.version = 0;
     injectedBundleClient.didReceiveMessageFromInjectedBundle = didReceiveMessageFromInjectedBundle;

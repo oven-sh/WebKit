@@ -217,7 +217,7 @@ void SincResampler::processBuffer(std::span<const float> source, std::span<float
 
         // Zero-pad if necessary.
         if (framesToCopy < framesToProcess)
-            memsetSpan(buffer.subspan(framesToCopy, framesToProcess - framesToCopy), 0);
+            zeroSpan(buffer.subspan(framesToCopy, framesToProcess - framesToCopy));
 
         source = source.subspan(framesToCopy);
     });

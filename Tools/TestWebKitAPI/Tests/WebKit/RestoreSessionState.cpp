@@ -74,7 +74,7 @@ static void decidePolicyForResponse(WKPageRef page, WKFrameRef frame, WKURLRespo
 static void setPageLoaderClient(WKPageRef page)
 {
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
 
     loaderClient.base.version = 0;
     loaderClient.didFinishNavigation = didFinishNavigation;
@@ -121,7 +121,7 @@ TEST(WebKit, RestoreSessionStateContainingScrollRestorationDefaultWithAsyncPolic
     setPageLoaderClient(webView.page());
 
     WKPagePolicyClientV1 policyClient;
-    memset(&policyClient, 0, sizeof(policyClient));
+    zeroBytes(policyClient);
     policyClient.base.version = 1;
     policyClient.decidePolicyForNavigationAction = decidePolicyForNavigationAction;
     policyClient.decidePolicyForResponse = decidePolicyForResponse;
@@ -175,7 +175,7 @@ TEST(WebKit, ClearedPendingURLAfterCancelingRestoreSessionState)
     setPageLoaderClient(webView.page());
 
     WKPagePolicyClientV1 policyClient;
-    memset(&policyClient, 0, sizeof(policyClient));
+    zeroBytes(policyClient);
     policyClient.base.version = 1;
     policyClient.decidePolicyForNavigationAction = decidePolicyForNavigationActionIgnore;
     WKPageSetPagePolicyClient(webView.page(), &policyClient.base);

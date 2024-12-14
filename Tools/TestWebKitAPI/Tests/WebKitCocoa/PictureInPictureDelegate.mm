@@ -202,14 +202,14 @@ TEST(PictureInPicture, WKPageUIClient)
     WKPreferencesSetAllowsPictureInPictureMediaPlayback(preferences, true);
 
     WKPageUIClientV10 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
     uiClient.base.version = 10;
     uiClient.base.clientInfo = NULL;
     uiClient.hasVideoInPictureInPictureDidChange = hasVideoInPictureInPictureDidChange;
     WKPageSetPageUIClient(webView.page(), &uiClient.base);
     
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0 , sizeof(loaderClient));
+    zeroBytes(loaderClient);
     loaderClient.base.version = 0;
     loaderClient.didFinishNavigation = didFinishNavigation;
     WKPageSetPageNavigationClient(webView.page(), &loaderClient.base);

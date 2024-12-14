@@ -104,7 +104,7 @@ private:
         } __attribute__ ((aligned (16)));
 
         fxsaveResult registerData;
-        memsetSpan(asMutableByteSpan(registerData), 0);
+        zeroBytes(registerData);
         asm volatile("fxsave %0" : "=m" (registerData));
         s_isSupported = registerData.CSRMask & 0x0040;
         s_isInited = true;

@@ -105,7 +105,7 @@ void decidePolicyForGeolocationPermissionRequestCallBack(WKPageRef page, WKFrame
 void setupGeolocationProvider(WKContextRef context, void* clientInfo)
 {
     WKGeolocationProviderV1 providerCallback;
-    memset(&providerCallback, 0, sizeof(WKGeolocationProviderV1));
+    zeroBytes(providerCallback);
 
     providerCallback.base.version = 1;
     providerCallback.base.clientInfo = clientInfo;
@@ -124,7 +124,7 @@ void clearGeolocationProvider(WKContextRef context)
 void setupView(PlatformWebView& webView)
 {
     WKPageUIClientV2 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
 
     uiClient.base.version = 2;
     uiClient.decidePolicyForGeolocationPermissionRequest = decidePolicyForGeolocationPermissionRequestCallBack;
@@ -344,7 +344,7 @@ TEST(WebKit, GeolocationTransitionToLowAccuracy)
     JavaScriptAlertContext secondStepContext;
 
     WKPageUIClientV2 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
     uiClient.base.version = 2;
     uiClient.base.clientInfo = &secondStepContext;
     uiClient.decidePolicyForGeolocationPermissionRequest = decidePolicyForGeolocationPermissionRequestCallBack;
@@ -377,7 +377,7 @@ TEST(WebKit, GeolocationWatchMultiprocess)
     JavaScriptAlertContext testContext;
 
     WKPageUIClientV2 uiClient;
-    memset(&uiClient, 0, sizeof(uiClient));
+    zeroBytes(uiClient);
     uiClient.base.version = 2;
     uiClient.base.clientInfo = &testContext;
     uiClient.decidePolicyForGeolocationPermissionRequest = decidePolicyForGeolocationPermissionRequestCallBack;

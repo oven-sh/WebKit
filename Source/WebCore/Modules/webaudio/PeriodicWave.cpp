@@ -220,8 +220,8 @@ void PeriodicWave::createBandLimitedTables(const float* realData, const float* i
         unsigned clampedNumberOfComponents = std::min(numberOfComponents, numberOfPartials + 1);
         if (clampedNumberOfComponents < halfSize) {
             size_t numValues = halfSize - clampedNumberOfComponents;
-            memsetSpan(realP.span().subspan(clampedNumberOfComponents, numValues), 0);
-            memsetSpan(imagP.span().subspan(clampedNumberOfComponents, numValues), 0);
+            zeroSpan(realP.span().subspan(clampedNumberOfComponents, numValues));
+            zeroSpan(imagP.span().subspan(clampedNumberOfComponents, numValues));
         }
 
         // Clear packed-nyquist and any DC-offset.

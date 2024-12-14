@@ -56,7 +56,7 @@ TEST(WebKit, PageLoadDidChangeLocationWithinPage)
     PlatformWebView webView(context.get());
 
     WKPageNavigationClientV0 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
 
     loaderClient.base.version = 0;
     loaderClient.didFinishNavigation = [] (WKPageRef, WKNavigationRef, WKTypeRef, const void*) {

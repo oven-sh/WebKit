@@ -182,7 +182,7 @@ private:
             return AtomString::fromUTF8(scratchBuffer.subspan(0, lengthNeeded));
         if (needsToGrowToProduceBuffer(status)) {
             scratchBuffer.grow(lengthNeeded + 1);
-            memsetSpan(scratchBuffer.mutableSpan().subspan(utf8Locale.length()), 0);
+            zeroSpan(scratchBuffer.mutableSpan().subspan(utf8Locale.length()));
             status = U_ZERO_ERROR;
             int32_t lengthNeeded2 = uloc_setKeywordValue("lb", keywordValue, scratchBuffer.data(), scratchBuffer.size(), &status);
             if (!U_SUCCESS(status) || lengthNeeded != lengthNeeded2)

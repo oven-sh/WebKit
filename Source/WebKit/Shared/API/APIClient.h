@@ -67,7 +67,7 @@ public:
             return;
         }
 
-        memsetSpan(asMutableByteSpan(m_client), 0);
+        zeroBytes(m_client);
 
         if (client && client->version < latestClientVersion) {
             auto interfaceSizes = InterfaceSizes<ClientVersions>::sizes();

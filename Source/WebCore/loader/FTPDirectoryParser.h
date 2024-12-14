@@ -98,7 +98,7 @@ struct ListState {
         , carryBufferLength(0)
         , numLines(0)
     { 
-        memsetSpan(asMutableByteSpan(nowFTPTime), 0);
+        zeroBytes(nowFTPTime);
     }
     
     double      now;               /* needed for year determination */
@@ -135,7 +135,7 @@ struct ListResult
         linknameLength = 0;
         fileSize = { };
         caseSensitive = false;
-        memsetSpan(asMutableByteSpan(modifiedTime), 0);
+        zeroBytes(modifiedTime);
     }
 
     std::span<const char> filenameSpan() const { return { filename, filenameLength }; }

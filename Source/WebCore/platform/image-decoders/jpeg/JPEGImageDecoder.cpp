@@ -260,7 +260,7 @@ public:
         , m_state(JPEG_HEADER)
         , m_samples(0)
     {
-        memsetSpan(asMutableByteSpan(m_info), 0);
+        zeroBytes(m_info);
 
         // We set up the normal JPEG error routines, then override error_exit.
         m_info.err = jpeg_std_error(&m_err.pub);

@@ -108,7 +108,7 @@ public:
         if (m_memBuffer)
             m_memBuffer->zero();
         else
-            memsetSpan(mutableSpan(), 0);
+            zeroSpan(mutableSpan());
     }
 
     // Clears the silent flag.

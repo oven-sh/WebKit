@@ -1782,7 +1782,7 @@ void TransformationMatrix::blend(const TransformationMatrix& from, double progre
 bool TransformationMatrix::decompose2(Decomposed2Type& decomp) const
 {
     if (isIdentity()) {
-        memsetSpan(asMutableByteSpan(decomp), 0);
+        zeroBytes(decomp);
         decomp.scaleX = 1;
         decomp.scaleY = 1;
         decomp.m11 = 1;
@@ -1796,7 +1796,7 @@ bool TransformationMatrix::decompose2(Decomposed2Type& decomp) const
 bool TransformationMatrix::decompose4(Decomposed4Type& decomp) const
 {
     if (isIdentity()) {
-        memsetSpan(asMutableByteSpan(decomp), 0);
+        zeroBytes(decomp);
         decomp.perspectiveW = 1;
         decomp.scaleX = 1;
         decomp.scaleY = 1;

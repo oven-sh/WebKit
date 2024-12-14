@@ -81,7 +81,7 @@ static WKStringRef decideDestinationWithSuggestedFilename(WKDownloadRef download
 static void contextMenuDidCreateDownload(WKPageRef page, WKDownloadRef download, const void* clientInfo)
 {
     WKDownloadClientV0 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 0;
     client.decideDestinationWithResponse = decideDestinationWithSuggestedFilename;
     WKDownloadSetClient(download, &client.base);
@@ -96,14 +96,14 @@ TEST(WebKit, ContextMenuDownloadHTMLDownloadAttribute)
     PlatformWebView webView(context.get());
 
     WKPageNavigationClientV3 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
     loaderClient.base.version = 3;
     loaderClient.didFinishNavigation = didFinishNavigation;
     loaderClient.contextMenuDidCreateDownload = contextMenuDidCreateDownload;
     WKPageSetPageNavigationClient(webView.page(), &loaderClient.base);
 
     WKPageContextMenuClientV3 contextMenuClient;
-    memset(&contextMenuClient, 0, sizeof(contextMenuClient));
+    zeroBytes(contextMenuClient);
     contextMenuClient.base.version = 3;
     contextMenuClient.getContextMenuFromProposedMenu = getContextMenuFromProposedMenu;
     WKPageSetPageContextMenuClient(webView.page(), &contextMenuClient.base);
@@ -133,7 +133,7 @@ static WKStringRef decideDestinationWithSuggestedFilenameContainingSlashes(WKDow
 static void contextMenuDidCreateDownloadWithSuggestedFilenameContainingSlashes(WKPageRef page, WKDownloadRef download, const void* clientInfo)
 {
     WKDownloadClientV0 client;
-    memsetSpan(asMutableByteSpan(client), 0);
+    zeroBytes(client);
     client.base.version = 0;
     client.decideDestinationWithResponse = decideDestinationWithSuggestedFilenameContainingSlashes;
     WKDownloadSetClient(download, &client.base);
@@ -146,14 +146,14 @@ TEST(WebKit, ContextMenuDownloadHTMLDownloadAttributeWithSlashes)
     PlatformWebView webView(context.get());
 
     WKPageNavigationClientV3 loaderClient;
-    memset(&loaderClient, 0, sizeof(loaderClient));
+    zeroBytes(loaderClient);
     loaderClient.base.version = 3;
     loaderClient.didFinishNavigation = didFinishNavigation;
     loaderClient.contextMenuDidCreateDownload = contextMenuDidCreateDownloadWithSuggestedFilenameContainingSlashes;
     WKPageSetPageNavigationClient(webView.page(), &loaderClient.base);
 
     WKPageContextMenuClientV3 contextMenuClient;
-    memset(&contextMenuClient, 0, sizeof(contextMenuClient));
+    zeroBytes(contextMenuClient);
     contextMenuClient.base.version = 3;
     contextMenuClient.getContextMenuFromProposedMenu = getContextMenuFromProposedMenu;
     WKPageSetPageContextMenuClient(webView.page(), &contextMenuClient.base);

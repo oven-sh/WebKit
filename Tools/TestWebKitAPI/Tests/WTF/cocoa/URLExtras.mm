@@ -27,6 +27,7 @@
 
 #import "Test.h"
 #import "WTFTestUtilities.h"
+#import <wtf/StdLibExtras.h>
 #import <wtf/URL.h>
 #import <wtf/Vector.h>
 #import <wtf/cocoa/NSURLExtras.h>
@@ -312,11 +313,10 @@ TEST(WTF_URLExtras, URLExtras_ParsingError)
     EXPECT_TRUE(url4.string().is8Bit());
     EXPECT_STREQ([[url4 absoluteString] UTF8String], "%C3%82%C2%B6");
 
-    char buffer[100];
-    memset(buffer, 0, sizeof(buffer));
+    std::array<char, 100> buffer = { };
     WTF::URL url5 { "file:///A%C3%A7%C3%A3o.html"_str };
-    CFURLGetFileSystemRepresentation(url5.createCFURL().get(), false, reinterpret_cast<UInt8*>(buffer), sizeof(buffer));
-    EXPECT_STREQ(buffer, "/Ação.html");
+    CFURLGetFileSystemRepresentation(url5.createCFURL().get(), false, byteCast<UInt8>(buffer.data()), buffer.size());
+    EXPECT_STREQ(buffer.data(), "/Ação.html");
 }
 
 TEST(WTF_URLExtras, URLExtras_Nil)

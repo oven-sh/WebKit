@@ -232,7 +232,7 @@ private:
 
         growCapacity(bufferSize.value());
 
-        memsetSpan(mutableBuffer().subspan(m_bufferSize, alignedSize - m_bufferSize), 0);
+        zeroSpan(mutableBuffer().subspan(m_bufferSize, alignedSize - m_bufferSize));
 
         m_bufferSize = bufferSize.value();
         m_bufferPointer = mutableBuffer().subspan(m_bufferSize).data();

@@ -110,7 +110,7 @@ size_t PushPullFIFO::pull(AudioBus* outputBus, size_t framesRequested)
         // The frames available was not enough to fulfill the requested frames. Fill
         // the rest of the channel with silence.
         if (framesRequested > framesToFill)
-            memsetSpan(outputBusChannel.subspan(framesToFill, framesRequested - framesToFill), 0);
+            zeroSpan(outputBusChannel.subspan(framesToFill, framesRequested - framesToFill));
     }
 
     // Update the read index; wrap it around if necessary.
