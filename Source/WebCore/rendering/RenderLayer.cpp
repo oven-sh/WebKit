@@ -140,6 +140,7 @@
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "SourceGraphic.h"
+#include "StyleAttributeMutationScope.h"
 #include "StyleProperties.h"
 #include "StyleResolver.h"
 #include "Styleable.h"
@@ -2927,14 +2928,15 @@ void RenderLayer::resize(const PlatformMouseEvent& evt, const LayoutSize& oldOff
 
     LayoutSize difference = (currentSize + newOffset - adjustedOldOffset).expandedTo(minimumSizeForResizing(zoomFactor)) - currentSize;
 
-    StyledElement* styledElement = downcast<StyledElement>(element);
+    StyleAttributeMutationScope mutationScope { element };
+    Ref styledElement = downcast<StyledElement>(*element);
     bool isBoxSizingBorder = renderer->style().boxSizing() == BoxSizing::BorderBox;
 
     Resize resize = renderer->style().resize();
     bool canResizeWidth = resize == Resize::Horizontal || resize == Resize::Both
         || (renderer->isHorizontalWritingMode() ? resize == Resize::Inline : resize == Resize::Block);
     if (canResizeWidth && difference.width()) {
-        if (is<HTMLFormControlElement>(*element)) {
+        if (is<HTMLFormControlElement>(styledElement)) {
             // Make implicit margins from the theme explicit (see <http://bugs.webkit.org/show_bug.cgi?id=9547>).
             styledElement->setInlineStyleProperty(CSSPropertyMarginLeft, renderer->marginLeft() / zoomFactor, CSSUnitType::CSS_PX);
             styledElement->setInlineStyleProperty(CSSPropertyMarginRight, renderer->marginRight() / zoomFactor, CSSUnitType::CSS_PX);
@@ -2942,12 +2944,14 @@ void RenderLayer::resize(const PlatformMouseEvent& evt, const LayoutSize& oldOff
         LayoutUnit baseWidth = renderer->width() - (isBoxSizingBorder ? 0_lu : renderer->horizontalBorderAndPaddingExtent());
         baseWidth = baseWidth / zoomFactor;
         styledElement->setInlineStyleProperty(CSSPropertyWidth, roundToInt(baseWidth + difference.width()), CSSUnitType::CSS_PX);
+
+        mutationScope.enqueueMutationRecord();
     }
 
     bool canResizeHeight = resize == Resize::Vertical || resize == Resize::Both
         || (renderer->isHorizontalWritingMode() ? resize == Resize::Block : resize == Resize::Inline);
     if (canResizeHeight && difference.height()) {
-        if (is<HTMLFormControlElement>(*element)) {
+        if (is<HTMLFormControlElement>(styledElement)) {
             // Make implicit margins from the theme explicit (see <http://bugs.webkit.org/show_bug.cgi?id=9547>).
             styledElement->setInlineStyleProperty(CSSPropertyMarginTop, renderer->marginTop() / zoomFactor, CSSUnitType::CSS_PX);
             styledElement->setInlineStyleProperty(CSSPropertyMarginBottom, renderer->marginBottom() / zoomFactor, CSSUnitType::CSS_PX);
@@ -2955,6 +2959,8 @@ void RenderLayer::resize(const PlatformMouseEvent& evt, const LayoutSize& oldOff
         LayoutUnit baseHeight = renderer->height() - (isBoxSizingBorder ? 0_lu : renderer->verticalBorderAndPaddingExtent());
         baseHeight = baseHeight / zoomFactor;
         styledElement->setInlineStyleProperty(CSSPropertyHeight, roundToInt(baseHeight + difference.height()), CSSUnitType::CSS_PX);
+
+        mutationScope.enqueueMutationRecord();
     }
 
     document.updateLayout();
