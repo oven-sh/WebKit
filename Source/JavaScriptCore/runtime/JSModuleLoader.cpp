@@ -390,9 +390,7 @@ JSC_DEFINE_HOST_FUNCTION(moduleLoaderParseModule, (JSGlobalObject* globalObject,
         }
 #if USE(BUN_JSC_ADDITIONS)
         case SourceProviderSourceType::BunTranspiledModule: {
-            EncodedJSValue result = Bun__analyzeTranspiledModule(globalObject, moduleKey, sourceCode, promise);
-            scope.release();
-            return result;
+            RELEASE_AND_RETURN(scope, Bun__analyzeTranspiledModule(globalObject, moduleKey, sourceCode, promise));
         }
 #endif
         default: {
