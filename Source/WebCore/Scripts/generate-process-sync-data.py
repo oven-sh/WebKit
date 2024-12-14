@@ -177,6 +177,7 @@ _process_sync_client_impl_prefix = """
 #include "ProcessSyncClient.h"
 
 #include "ProcessSyncData.h"
+#include <wtf/EnumTraits.h>
 
 namespace WebCore {
 """
@@ -307,6 +308,7 @@ _document_synched_data_impl_prefix = """
 #include "DocumentSyncData.h"
 
 #include "ProcessSyncData.h"
+#include <wtf/EnumTraits.h>
 
 namespace WebCore {
 
