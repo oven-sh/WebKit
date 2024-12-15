@@ -28,6 +28,7 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "CGImagePixelReader.h"
+#import "ClassMethodSwizzler.h"
 #import "InstanceMethodSwizzler.h"
 #import "PlatformUtilities.h"
 #import "TestCocoa.h"
@@ -968,19 +969,14 @@ TEST(KeyboardInputTests, DoNotCrashWhenFocusingSelectWithoutViewSnapshot)
     [webView waitForNextPresentationUpdate];
 }
 
-static BOOL overrideHardwareKeyboardAttached(id, SEL)
+TEST(KeyboardInputTests, EditableWebViewRequiresKeyboardWhenFirstResponder)
 {
-    return NO;
-}
+    auto returnNo = imp_implementationWithBlock(^{
+        return NO;
+    });
 
-// FIXME when rdar://141397449 is resolved.
-TEST(KeyboardInputTests, DISABLED_EditableWebViewRequiresKeyboardWhenFirstResponder)
-{
-    InstanceMethodSwizzler swizzler {
-        UIKeyboardImpl.class,
-        @selector(hardwareKeyboardAttached),
-        reinterpret_cast<IMP>(overrideHardwareKeyboardAttached)
-    };
+    InstanceMethodSwizzler hardwareKeyboardAttachedSwizzler { UIKeyboardImpl.class, @selector(hardwareKeyboardAttached), returnNo };
+    ClassMethodSwizzler hardwareKeyboardModeSwizzler { UIKeyboard.class, @selector(isInHardwareKeyboardMode), returnNo };
 
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
     auto delegate = adoptNS([TestInputDelegate new]);
