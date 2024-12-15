@@ -1248,6 +1248,8 @@ fast/dom/Window/window-focus-self.html [ Failure ]
 fast/dom/Window/window-resize-and-move-arguments.html [ Failure ]
 fast/dom/Window/window-resize.html [ Failure ]
 
+fast/dom/no-scroll-when-command-click-fragment-URL.html [ Failure ]
+
 #//////////////////////////////////////////////////////////////////////////////////////////
 # Editing
 #//////////////////////////////////////////////////////////////////////////////////////////
