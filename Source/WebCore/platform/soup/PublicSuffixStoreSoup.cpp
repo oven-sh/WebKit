@@ -68,13 +68,16 @@ String PublicSuffixStore::platformTopPrivatelyControlledDomain(StringView domain
     if (position == domain.length())
         return String();
 
+    auto tldView = domain.substring(position);
+    const auto tldCString = tldView.utf8();
+
     GUniqueOutPtr<GError> error;
-    if (const char* baseDomain = soup_tld_get_base_domain(domain.substring(position).utf8().data(), &error.outPtr()))
+    if (const char* baseDomain = soup_tld_get_base_domain(tldCString.data(), &error.outPtr()))
         return String::fromUTF8(baseDomain);
 
     if (g_error_matches(error.get(), SOUP_TLD_ERROR, SOUP_TLD_ERROR_NO_BASE_DOMAIN)) {
         if (domain.endsWithIgnoringASCIICase("web-platform.test"_s))
-            return permissiveTopPrivateDomain(domain.substring(position));
+            return permissiveTopPrivateDomain(tldView);
         return String();
     }
 
