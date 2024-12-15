@@ -327,6 +327,7 @@ async function selectPartialElementTextById(id, startIndex, endIndex, axWebArea)
     const element = document.getElementById(id);
     if (element.setSelectionRange) {
         // For textarea and input elements.
+        element.focus();
         element.setSelectionRange(startIndex, endIndex);
     } else {
         // For contenteditable elements.

@@ -130,6 +130,7 @@ enum class SDKAlignedBehavior {
     BlockCrossOriginRedirectDownloads,
     BlobFileAccessEnforcement,
     DevolvableWidgets,
+    SetSelectionRangeCachesSelectionIfNotFocusedOrSelected,
 
     NumberOfBehaviors
 };
