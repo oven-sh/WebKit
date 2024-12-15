@@ -890,9 +890,6 @@ webkit.org/b/214290 imported/w3c/web-platform-tests/css/css-text/white-space/tex
 
 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphenate-character-002.html [ Pass ]
 
-# Timing out since import.
-imported/w3c/web-platform-tests/html/anonymous-iframe/embedding.tentative.https.window.html [ Skip ]
-
 imported/w3c/web-platform-tests/html/browsers/the-window-object/open-close/open-features-non-integer-screeny.html [ Failure ]
 
 # We don't yet support EXIF-based resolution
