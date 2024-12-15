@@ -65,17 +65,6 @@ WebCodecsAudioDecoder::WebCodecsAudioDecoder(ScriptExecutionContext& context, In
 
 WebCodecsAudioDecoder::~WebCodecsAudioDecoder() = default;
 
-static bool isValidDecoderConfig(const WebCodecsAudioDecoderConfig& config)
-{
-    if (StringView(config.codec).trim(isASCIIWhitespace<UChar>).isEmpty())
-        return false;
-
-    if (!config.numberOfChannels || !config.sampleRate)
-        return false;
-
-    return true;
-}
-
 static AudioDecoder::Config createAudioDecoderConfig(const WebCodecsAudioDecoderConfig& config)
 {
     std::span<const uint8_t> description;
@@ -91,6 +80,31 @@ static AudioDecoder::Config createAudioDecoderConfig(const WebCodecsAudioDecoder
     }
 
     return { description, config.sampleRate, config.numberOfChannels };
+}
+
+static bool isValidDecoderConfig(const WebCodecsAudioDecoderConfig& config)
+{
+    if (StringView(config.codec).trim(isASCIIWhitespace<UChar>).isEmpty())
+        return false;
+
+    if (!config.numberOfChannels || !config.sampleRate)
+        return false;
+
+    auto descriptionSize = createAudioDecoderConfig(config).description.size();
+
+    // FIXME: Not yet per spec, but being tested and tracked by https://github.com/w3c/webcodecs/issues/826
+    // And handled that way by all other UAs.
+    // If we have a config.description, ensures it's not an empty one.
+    if (config.description && !descriptionSize)
+        return false;
+
+    // FIXME: WPT issue: https://github.com/web-platform-tests/wpt/issues/49636 is causing a test to fail when it shouldn't
+    // Opus with more than two channels require a description
+    // Extra spec issue: https://github.com/w3c/webcodecs/issues/861 : configure shouldn't throw on invalid config.
+    if (config.codec == "opus"_s && config.numberOfChannels > 2 && descriptionSize < 10)
+        return false;
+
+    return true;
 }
 
 ExceptionOr<void> WebCodecsAudioDecoder::configure(ScriptExecutionContext&, WebCodecsAudioDecoderConfig&& config)

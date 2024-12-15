@@ -90,11 +90,6 @@ static bool isSupportedEncoderCodec(const WebCodecsAudioEncoderConfig& config)
     if (config.sampleRate < 3000 || config.sampleRate > 384000)
         return false;
 
-    // FIXME: New WPT requires this to reject as non valid. For now we just state that it's not supported (webkit.org/b/283900)
-    // https://w3c.github.io/webcodecs/opus_codec_registration.html#opus-encoder-config
-    if (codec == "opus"_s && config.bitrate && (*config.bitrate < 6000 || *config.bitrate > 510000))
-        return false;
-
     return true;
 }
 
@@ -106,14 +101,22 @@ static bool isValidEncoderConfig(const WebCodecsAudioEncoderConfig& config)
     if (!config.sampleRate || !config.numberOfChannels)
         return false;
 
-    // FIXME: This isn't per spec, but both Chrome and Firefox checks that the bitrate is now greater than INT_MAX
+    // FIXME: This isn't per spec, but both Chrome and Firefox checks that the bitrate is not greater than INT_MAX
     // Even though the spec made it a `long long`
     // https://github.com/web-platform-tests/wpt/issues/49634
     if (config.bitrate && *config.bitrate > std::numeric_limits<int>::max())
         return false;
 
-    // FIXME: The opus and flac checks will probably need to move so that they trigger NotSupported
-    // errors in the future.
+    // FIXME: https://github.com/w3c/webcodecs/issues/860
+    // Not per spec yet, but tested by w3c/web-platform-tests/webcodecs/audio-encoder-config.https.any.js 'Bit rate present but equal to zero'
+    if (config.bitrate && !*config.bitrate)
+        return false;
+
+    // FIXME: New WPT requires this to reject as non valid. For now we just state that it's not supported (webkit.org/b/283900)
+    // https://w3c.github.io/webcodecs/opus_codec_registration.html#opus-encoder-config
+    if (config.codec == "opus"_s && config.bitrate && (*config.bitrate < 6000 || *config.bitrate > 510000))
+        return false;
+
     if (auto opusConfig = config.opus) {
         if (!opusConfig->isValid())
             return false;
