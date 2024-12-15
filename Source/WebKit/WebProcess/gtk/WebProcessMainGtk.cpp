@@ -42,6 +42,9 @@
 
 #if USE(SKIA)
 #include <skia/core/SkGraphics.h>
+#if USE(SKIA_OPENTYPE_SVG)
+#include <skia/modules/svg/SkSVGOpenTypeSVGDecoder.h>
+#endif
 #endif
 
 #if USE(SYSPROF_CAPTURE)
@@ -65,6 +68,9 @@ public:
 
 #if USE(SKIA)
         SkGraphics::Init();
+#if USE(SKIA_OPENTYPE_SVG)
+        SkGraphics::SetOpenTypeSVGDecoderFactory(SkSVGOpenTypeSVGDecoder::Make);
+#endif
 #endif
 
 #if ENABLE(DEVELOPER_MODE)

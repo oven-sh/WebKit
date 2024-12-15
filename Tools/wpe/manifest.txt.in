@@ -67,6 +67,12 @@ file Source/ThirdParty/skia/CMakeLists.txt
 file Source/ThirdParty/skia/LICENSE
 directory Source/ThirdParty/skia/include
 directory Source/ThirdParty/skia/modules/skcms
+directory Source/ThirdParty/skia/modules/skresources/include
+directory Source/ThirdParty/skia/modules/skresources/src
+directory Source/ThirdParty/skia/modules/skshaper/include
+directory Source/ThirdParty/skia/modules/skshaper/src
+directory Source/ThirdParty/skia/modules/svg/include
+directory Source/ThirdParty/skia/modules/svg/src
 directory Source/ThirdParty/skia/src
 directory Source/ThirdParty/unifdef
 directory Source/ThirdParty/xdgmime

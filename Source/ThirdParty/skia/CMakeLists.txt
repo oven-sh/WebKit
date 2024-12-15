@@ -946,6 +946,90 @@ else ()
         Freetype::Freetype
     )
 endif ()
+
+if (USE_SKIA_OPENTYPE_SVG)
+    find_package(EXPAT)
+    if (NOT EXPAT_FOUND)
+        message(FATAL_ERROR "Expat is required by USE_SKIA_OPENTYPE_SVG")
+    endif ()
+
+    target_link_libraries(Skia PRIVATE
+        EXPAT::EXPAT
+        HarfBuzz::HarfBuzz
+    )
+    target_compile_definitions(Skia PRIVATE
+        SK_ENABLE_SVG
+
+        SK_DISABLE_LEGACY_SKSHAPER_FUNCTIONS
+
+        SK_SHAPER_HARFBUZZ_AVAILABLE
+        SK_SHAPER_PRIMITIVE_AVAILABLE
+    )
+    target_sources(Skia PRIVATE
+        src/base/SkBase64.cpp
+
+        src/effects/SkColorMatrix.cpp
+
+        src/utils/SkOSPath.cpp
+        src/utils/SkParseColor.cpp
+        src/utils/SkParsePath.cpp
+
+        src/xml/SkDOM.cpp
+        src/xml/SkXMLParser.cpp
+
+        modules/skresources/src/SkAnimCodecPlayer.cpp
+        modules/skresources/src/SkResources.cpp
+
+        modules/skshaper/src/SkShaper.cpp
+        modules/skshaper/src/SkShaper_factory.cpp
+        modules/skshaper/src/SkShaper_harfbuzz.cpp
+        modules/skshaper/src/SkShaper_primitive.cpp
+
+        modules/svg/src/SkSVGAttribute.cpp
+        modules/svg/src/SkSVGAttributeParser.cpp
+        modules/svg/src/SkSVGCircle.cpp
+        modules/svg/src/SkSVGClipPath.cpp
+        modules/svg/src/SkSVGContainer.cpp
+        modules/svg/src/SkSVGDOM.cpp
+        modules/svg/src/SkSVGEllipse.cpp
+        modules/svg/src/SkSVGFe.cpp
+        modules/svg/src/SkSVGFeBlend.cpp
+        modules/svg/src/SkSVGFeColorMatrix.cpp
+        modules/svg/src/SkSVGFeComponentTransfer.cpp
+        modules/svg/src/SkSVGFeComposite.cpp
+        modules/svg/src/SkSVGFeDisplacementMap.cpp
+        modules/svg/src/SkSVGFeFlood.cpp
+        modules/svg/src/SkSVGFeGaussianBlur.cpp
+        modules/svg/src/SkSVGFeImage.cpp
+        modules/svg/src/SkSVGFeLightSource.cpp
+        modules/svg/src/SkSVGFeLighting.cpp
+        modules/svg/src/SkSVGFeMerge.cpp
+        modules/svg/src/SkSVGFeMorphology.cpp
+        modules/svg/src/SkSVGFeOffset.cpp
+        modules/svg/src/SkSVGFeTurbulence.cpp
+        modules/svg/src/SkSVGFilter.cpp
+        modules/svg/src/SkSVGFilterContext.cpp
+        modules/svg/src/SkSVGGradient.cpp
+        modules/svg/src/SkSVGImage.cpp
+        modules/svg/src/SkSVGLine.cpp
+        modules/svg/src/SkSVGLinearGradient.cpp
+        modules/svg/src/SkSVGMask.cpp
+        modules/svg/src/SkSVGNode.cpp
+        modules/svg/src/SkSVGOpenTypeSVGDecoder.cpp
+        modules/svg/src/SkSVGPath.cpp
+        modules/svg/src/SkSVGPattern.cpp
+        modules/svg/src/SkSVGPoly.cpp
+        modules/svg/src/SkSVGRadialGradient.cpp
+        modules/svg/src/SkSVGRect.cpp
+        modules/svg/src/SkSVGRenderContext.cpp
+        modules/svg/src/SkSVGSVG.cpp
+        modules/svg/src/SkSVGShape.cpp
+        modules/svg/src/SkSVGStop.cpp
+        modules/svg/src/SkSVGText.cpp
+        modules/svg/src/SkSVGTransformableNode.cpp
+        modules/svg/src/SkSVGUse.cpp
+    )
+endif ()
     
 target_link_libraries(Skia PRIVATE
     JPEG::JPEG
@@ -962,6 +1046,7 @@ WEBKIT_ADD_TARGET_CXX_FLAGS(Skia
     -Wno-dangling-reference
     -Wno-deprecated
     -Wno-psabi
+    -Wno-redundant-move
     -Wno-suggest-attribute=format
     -Wno-undef
     -Wno-uninitialized
@@ -973,14 +1058,24 @@ if (WIN32)
 endif ()
 
 target_include_directories(Skia
-    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
-    INTERFACE "${Skia_FRAMEWORK_HEADERS_DIR}"
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    INTERFACE
+        "${Skia_FRAMEWORK_HEADERS_DIR}/top"
+        "${Skia_FRAMEWORK_HEADERS_DIR}/mod"
 )
 
-file(MAKE_DIRECTORY "${Skia_FRAMEWORK_HEADERS_DIR}")
+file(MAKE_DIRECTORY "${Skia_FRAMEWORK_HEADERS_DIR}/top")
 file(CREATE_LINK
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    "${Skia_FRAMEWORK_HEADERS_DIR}/skia"
+    "${Skia_FRAMEWORK_HEADERS_DIR}/top/skia"
+    SYMBOLIC
+)
+
+file(MAKE_DIRECTORY "${Skia_FRAMEWORK_HEADERS_DIR}/mod/skia/modules")
+file(CREATE_LINK
+    "${CMAKE_CURRENT_SOURCE_DIR}/modules/svg/include"
+    "${Skia_FRAMEWORK_HEADERS_DIR}/mod/skia/modules/svg"
     SYMBOLIC
 )
 
