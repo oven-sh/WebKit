@@ -195,7 +195,7 @@ private:
 
     static Vector<String> localeData(const String&, RelevantExtensionKey);
 
-    enum class CurrencyDisplay : uint8_t { Code, Symbol, NarrowSymbol, Name };
+    enum class CurrencyDisplay : uint8_t { Code, Symbol, FormalSymbol, NarrowSymbol, Name, Never };
     enum class CurrencySign : uint8_t { Standard, Accounting };
     enum class UnitDisplay : uint8_t { Short, Narrow, Long };
     enum class CompactDisplay : uint8_t { Short, Long };

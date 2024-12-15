@@ -345,7 +345,10 @@ void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSVa
         currencyDigits = computeCurrencyDigits(currency);
     }
 
-    m_currencyDisplay = intlOption<CurrencyDisplay>(globalObject, options, Identifier::fromString(vm, "currencyDisplay"_s), { { "code"_s, CurrencyDisplay::Code }, { "symbol"_s, CurrencyDisplay::Symbol }, { "narrowSymbol"_s, CurrencyDisplay::NarrowSymbol }, { "name"_s, CurrencyDisplay::Name } }, "currencyDisplay must be either \"code\", \"symbol\", \"narrowSymbol\" or \"name\""_s, CurrencyDisplay::Symbol);
+    if (Options::useMoreCurrencyDisplayChoices())
+        m_currencyDisplay = intlOption<CurrencyDisplay>(globalObject, options, Identifier::fromString(vm, "currencyDisplay"_s), { { "code"_s, CurrencyDisplay::Code }, { "symbol"_s, CurrencyDisplay::Symbol }, { "formalSymbol"_s, CurrencyDisplay::FormalSymbol },  { "narrowSymbol"_s, CurrencyDisplay::NarrowSymbol }, { "name"_s, CurrencyDisplay::Name }, { "never"_s, CurrencyDisplay::Never } }, "currencyDisplay must be either \"code\", \"symbol\", \"formalSymbol\", \"narrowSymbol\", \"name\" or \"never\""_s, CurrencyDisplay::Symbol);
+    else
+        m_currencyDisplay = intlOption<CurrencyDisplay>(globalObject, options, Identifier::fromString(vm, "currencyDisplay"_s), { { "code"_s, CurrencyDisplay::Code }, { "symbol"_s, CurrencyDisplay::Symbol }, { "narrowSymbol"_s, CurrencyDisplay::NarrowSymbol }, { "name"_s, CurrencyDisplay::Name } }, "currencyDisplay must be either \"code\", \"symbol\", or \"name\""_s, CurrencyDisplay::Symbol);
     RETURN_IF_EXCEPTION(scope, void());
 
     m_currencySign = intlOption<CurrencySign>(globalObject, options, Identifier::fromString(vm, "currencySign"_s), { { "standard"_s, CurrencySign::Standard }, { "accounting"_s, CurrencySign::Accounting } }, "currencySign must be either \"standard\" or \"accounting\""_s, CurrencySign::Standard);
@@ -419,11 +422,19 @@ void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSVa
         case CurrencyDisplay::Symbol:
             // Default option. Do not specify unit-width.
             break;
+        case CurrencyDisplay::FormalSymbol:
+            ASSERT(Options::useMoreCurrencyDisplayChoices());
+            skeletonBuilder.append(" unit-width-formal"_s);
+            break;
         case CurrencyDisplay::NarrowSymbol:
             skeletonBuilder.append(" unit-width-narrow"_s);
             break;
         case CurrencyDisplay::Name:
             skeletonBuilder.append(" unit-width-full-name"_s);
+            break;
+        case CurrencyDisplay::Never:
+            ASSERT(Options::useMoreCurrencyDisplayChoices());
+            skeletonBuilder.append(" unit-width-hidden"_s);
             break;
         }
         break;
@@ -1044,6 +1055,12 @@ ASCIILiteral IntlNumberFormat::currencyDisplayString(CurrencyDisplay currencyDis
         return "narrowSymbol"_s;
     case CurrencyDisplay::Name:
         return "name"_s;
+    case CurrencyDisplay::FormalSymbol:
+        ASSERT(Options::useMoreCurrencyDisplayChoices());
+        return "formalSymbol"_s;
+    case CurrencyDisplay::Never:
+        ASSERT(Options::useMoreCurrencyDisplayChoices());
+        return "never"_s;
     }
     ASSERT_NOT_REACHED();
     return { };
