@@ -40,10 +40,12 @@ class AXCoreObject;
     NakedPtr<WebKit::WebPage> m_page;
     Markable<WebCore::PageIdentifier> m_pageID;
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    Lock m_parentLock;
     Lock m_cacheLock;
     WebCore::FloatPoint m_position WTF_GUARDED_BY_LOCK(m_cacheLock);
     WebCore::IntSize m_size WTF_GUARDED_BY_LOCK(m_cacheLock);
     ThreadSafeWeakPtr<WebCore::AXCoreObject> m_isolatedTreeRoot;
+    RetainPtr<id> m_window;
 #endif
 
     WebCore::IntPoint m_remoteFrameOffset;
@@ -56,6 +58,7 @@ class AXCoreObject;
 - (void)setPosition:(const WebCore::FloatPoint&)point;
 - (void)setSize:(const WebCore::IntSize&)size;
 - (void)setIsolatedTreeRoot:(NakedPtr<WebCore::AXCoreObject>)root;
+- (void)setWindow:(id)window;
 #endif
 - (void)setRemoteParent:(id)parent;
 - (void)setRemoteFrameOffset:(WebCore::IntPoint)offset;

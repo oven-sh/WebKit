@@ -152,6 +152,18 @@ namespace ax = WebCore::Accessibility;
     ASSERT(isMainRunLoop());
     m_isolatedTreeRoot = root.get();
 }
+
+- (void)setWindow:(id)window
+{
+    ASSERT(window);
+    // We should only set the window once before the AX thread is created to avoid thread-safety issues.
+    // Otherwise, we could write m_window while the AX thread is reading it.
+    ASSERT(isMainRunLoop());
+    ASSERT(!m_window);
+    if (m_window)
+        return;
+    m_window = window;
+}
 #endif
 
 - (void)setHasMainFramePlugin:(bool)hasPlugin
@@ -174,6 +186,10 @@ namespace ax = WebCore::Accessibility;
 - (void)setRemoteParent:(id)parent
 {
     ASSERT(isMainRunLoop());
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    Locker lock { m_parentLock };
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     m_parent = parent;
 }
 
