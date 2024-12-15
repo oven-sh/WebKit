@@ -28,6 +28,7 @@
 
 #include "Logging.h"
 #include "NotImplemented.h"
+#include "SpanCoreAudio.h"
 #include "VectorMath.h"
 #include <Accelerate/Accelerate.h>
 #include <AudioToolbox/AudioConverter.h>
@@ -244,7 +245,7 @@ void AudioSampleBufferList::zero()
 void AudioSampleBufferList::zeroABL(AudioBufferList& buffer, size_t byteCount)
 {
     for (uint32_t i = 0; i < buffer.mNumberBuffers; ++i)
-        memset(buffer.mBuffers[i].mData, 0, byteCount);
+        zeroSpan(dataMutableByteSpan(buffer.mBuffers[i]).first(byteCount));
 }
 
 struct AudioConverterFromABLContext {

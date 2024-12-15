@@ -41,6 +41,7 @@
 #include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <wtf/GetPtr.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -208,7 +209,7 @@ static bool zeroJSArray(JSGlobalObject& globalObject, const Vector<Ref<AudioBus>
             auto* jsChannelArray = getArrayAtIndex<JSFloat32Array>(*jsChannelsArray, globalObject, channelIndex);
             if (!jsChannelArray || jsChannelArray->isShared() || jsChannelArray->length() != channel->length())
                 return false;
-            memset(jsChannelArray->typedVector(), 0, sizeof(float) * jsChannelArray->length());
+            zeroSpan(jsChannelArray->typedSpan());
         }
     }
     return true;

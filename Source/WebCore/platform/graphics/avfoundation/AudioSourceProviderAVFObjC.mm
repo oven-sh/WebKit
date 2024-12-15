@@ -34,6 +34,7 @@
 #import "CAAudioStreamDescription.h"
 #import "CARingBuffer.h"
 #import "Logging.h"
+#import "SpanCoreAudio.h"
 #import <AVFoundation/AVAssetTrack.h>
 #import <AVFoundation/AVAudioMix.h>
 #import <AVFoundation/AVMediaFormat.h>
@@ -408,7 +409,7 @@ void AudioSourceProviderAVFObjC::process(MTAudioProcessingTapRef tap, CMItemCoun
     // Mute the default audio playback by zeroing the tap-owned buffers.
     for (uint32_t i = 0; i < bufferListInOut->mNumberBuffers; ++i) {
         AudioBuffer& buffer = bufferListInOut->mBuffers[i];
-        memset(buffer.mData, 0, buffer.mDataByteSize);
+        zeroSpan(dataMutableByteSpan(buffer));
     }
     *numberFramesOut = 0;
 

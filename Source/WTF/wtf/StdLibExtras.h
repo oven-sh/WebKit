@@ -864,7 +864,7 @@ template<typename T, std::size_t Extent = std::dynamic_extent>
 std::span<uint8_t, Extent> asMutableByteSpan(T& input)
 {
     static_assert(!std::is_const_v<T>);
-    return unsafeMakeSpan<uint8_t, Extent>(reinterpret_cast<uint8_t*>(&input), sizeof(input));
+    return unsafeMakeSpan<uint8_t, Extent>(reinterpret_cast<uint8_t*>(std::addressof(input)), sizeof(input));
 }
 
 template<typename T, std::size_t Extent>
@@ -925,8 +925,8 @@ template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
 void memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
 {
     static_assert(sizeof(T) == sizeof(U));
-    static_assert(std::is_trivially_copyable_v<T>);
-    static_assert(std::is_trivially_copyable_v<U>);
+    static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
+    static_assert(std::is_trivially_copyable_v<U> || std::is_floating_point_v<U>);
     RELEASE_ASSERT(destination.size() >= source.size());
     memcpy(destination.data(), source.data(), source.size_bytes());
 }
@@ -935,8 +935,8 @@ template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
 void memmoveSpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
 {
     static_assert(sizeof(T) == sizeof(U));
-    static_assert(std::is_trivially_copyable_v<T>);
-    static_assert(std::is_trivially_copyable_v<U>);
+    static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
+    static_assert(std::is_trivially_copyable_v<U> || std::is_floating_point_v<U>);
     RELEASE_ASSERT(destination.size() >= source.size());
     memmove(destination.data(), source.data(), source.size_bytes());
 }
@@ -951,14 +951,13 @@ void memsetSpan(std::span<T, Extent> destination, uint8_t byte)
 template<typename T, std::size_t Extent>
 void zeroSpan(std::span<T, Extent> destination)
 {
-    static_assert(std::is_trivially_copyable_v<T>);
+    static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
     memset(destination.data(), 0, destination.size_bytes());
 }
 
 template<typename T>
 void zeroBytes(T& object)
 {
-    static_assert(std::is_trivially_copyable_v<T>);
     zeroSpan(asMutableByteSpan(object));
 }
 

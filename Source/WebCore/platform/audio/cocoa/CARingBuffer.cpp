@@ -30,6 +30,7 @@
 
 #include "CAAudioStreamDescription.h"
 #include "Logging.h"
+#include "SpanCoreAudio.h"
 #include <Accelerate/Accelerate.h>
 #include <CoreAudio/CoreAudioTypes.h>
 #include <wtf/MathExtras.h>
@@ -146,7 +147,10 @@ inline void ZeroABL(AudioBufferList* list, size_t destOffset, size_t nbytes)
     while (--nBuffers >= 0) {
         if (destOffset > dest->mDataByteSize)
             continue;
-        memset(static_cast<Byte*>(dest->mData) + destOffset, 0, std::min<size_t>(nbytes, dest->mDataByteSize - destOffset));
+        auto dataSpan = dataMutableByteSpan(*dest).subspan(destOffset);
+        if (nbytes < dataSpan.size())
+            dataSpan = dataSpan.first(nbytes);
+        zeroSpan(dataSpan);
         ++dest;
     }
 }
