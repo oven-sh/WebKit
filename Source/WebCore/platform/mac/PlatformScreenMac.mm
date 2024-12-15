@@ -34,6 +34,7 @@
 #import "LocalFrameView.h"
 #import "PlatformCALayerClient.h"
 #import "ScreenProperties.h"
+#import "ThermalMitigationNotifier.h"
 #import <ColorSync/ColorSync.h>
 #import <pal/cocoa/OpenGLSoftLinkCocoa.h>
 #import <pal/spi/cg/CoreGraphicsSPI.h>
@@ -145,6 +146,9 @@ ScreenProperties collectScreenProperties()
 
         if (!supportsHighDynamicRange && dynamicRangeMode > DynamicRangeMode::Standard)
             dynamicRangeMode = DynamicRangeMode::Standard;
+
+        if (supportsHighDynamicRange && WebCore::ThermalMitigationNotifier::isThermalMitigationEnabled())
+            supportsHighDynamicRange = false;
 
         return supportsHighDynamicRange;
     };

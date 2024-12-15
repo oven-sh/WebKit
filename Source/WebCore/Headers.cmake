@@ -1900,6 +1900,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/SystemSoundDelegate.h
     platform/TextRecognitionOptions.h
     platform/ThemeTypes.h
+    platform/ThermalMitigationNotifier.h
     platform/ThreadCheck.h
     platform/ThreadGlobalData.h
     platform/ThreadSafeDataBuffer.h

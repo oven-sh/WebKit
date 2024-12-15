@@ -45,9 +45,10 @@
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
+class FragmentedSharedBuffer;
 class LowPowerModeNotifier;
 class ResourceRequest;
-class FragmentedSharedBuffer;
+class ThermalMitigationNotifier;
 enum class AdvancedPrivacyProtections : uint16_t;
 }
 
@@ -233,7 +234,11 @@ private:
     Ref<NetworkProcess> m_networkProcess;
 
 #if ENABLE(NETWORK_CACHE_SPECULATIVE_REVALIDATION)
+    bool shouldUseSpeculativeLoadManager() const;
+    void updateSpeculativeLoadManagerEnabledState();
+
     std::unique_ptr<WebCore::LowPowerModeNotifier> m_lowPowerModeNotifier;
+    std::unique_ptr<WebCore::ThermalMitigationNotifier> m_thermalMitigationNotifier;
     std::unique_ptr<SpeculativeLoadManager> m_speculativeLoadManager;
 #endif
 

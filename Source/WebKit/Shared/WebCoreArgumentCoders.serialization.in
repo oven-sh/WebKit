@@ -7336,6 +7336,7 @@ struct WebCore::MediaUsageInfo {
     bool isVideoAndRequiresUserGestureForVideoRateChange;
     bool isAudioAndRequiresUserGestureForAudioRateChange;
     bool isVideoAndRequiresUserGestureForVideoDueToLowPowerMode;
+    bool isVideoAndRequiresUserGestureForVideoDueToAggressiveThermalMitigation;
     bool noUserGestureRequired;
     bool requiresPlaybackAndIsNotPlaying;
     bool hasEverNotifiedAboutPlaying;

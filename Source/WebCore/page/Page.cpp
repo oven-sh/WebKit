@@ -491,8 +491,10 @@ Page::Page(PageConfiguration&& pageConfiguration)
     if (m_lowPowerModeNotifier->isLowPowerModeEnabled())
         m_throttlingReasons.add(ThrottlingReason::LowPowerMode);
 
-    if (m_thermalMitigationNotifier->thermalMitigationEnabled())
+    if (m_thermalMitigationNotifier->thermalMitigationEnabled()) {
         m_throttlingReasons.add(ThrottlingReason::ThermalMitigation);
+        m_throttlingReasons.set(ThrottlingReason::AggressiveThermalMitigation, settings().respondToThermalPressureAggressively());
+    }
 }
 
 Page::~Page()
@@ -1758,6 +1760,19 @@ void Page::setLowPowerModeEnabledOverrideForTesting(std::optional<bool> isEnable
     m_throttlingReasonsOverridenForTesting.add(ThrottlingReason::LowPowerMode);
 }
 
+void Page::setAggressiveThermalMitigationEnabledForTesting(std::optional<bool> isEnabled)
+{
+    m_throttlingReasonsOverridenForTesting.remove(ThrottlingReason::AggressiveThermalMitigation);
+
+    if (!isEnabled.has_value()) {
+        handleThermalMitigationChange(m_thermalMitigationNotifier->thermalMitigationEnabled());
+        return;
+    }
+
+    handleThermalMitigationChange(isEnabled.value());
+    m_throttlingReasonsOverridenForTesting.add(ThrottlingReason::AggressiveThermalMitigation);
+}
+
 void Page::setOutsideViewportThrottlingEnabledForTesting(bool isEnabled)
 {
     if (!isEnabled)
@@ -2537,6 +2552,15 @@ void Page::handleThermalMitigationChange(bool thermalMitigationEnabled)
         return;
 
     m_throttlingReasons.set(ThrottlingReason::ThermalMitigation, thermalMitigationEnabled);
+
+    if (settings().respondToThermalPressureAggressively()) {
+        m_throttlingReasons.set(ThrottlingReason::AggressiveThermalMitigation, thermalMitigationEnabled);
+        if (CheckedPtr scheduler = existingRenderingUpdateScheduler())
+            scheduler->adjustRenderingUpdateFrequency();
+        chrome().client().renderingUpdateFramesPerSecondChanged();
+    }
+
+    RELEASE_LOG(PerformanceLogging, "%p - Page::handleThermalMitigationChange: thermal mitigation %d, aggressive thermal mitigation %d", this, isThermalMitigationEnabled(), isAggressiveThermalMitigationEnabled());
 
     updateDOMTimerAlignmentInterval();
 }

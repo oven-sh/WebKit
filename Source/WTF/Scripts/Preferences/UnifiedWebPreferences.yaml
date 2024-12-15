@@ -6203,6 +6203,23 @@ ResourceUsageOverlayVisible:
     WebCore:
       default: false
 
+RespondToThermalPressureAggressively:
+  type: bool
+  status: internal
+  defaultsOverridable: true
+  humanReadableName: "Respond to thermal pressure aggressively"
+  humanReadableDescription: "Enable responding to thermal pressure aggressively"
+  defaultValue:
+    WebKitLegacy:
+      "PLATFORM(IOS_FAMILY)": true
+      default: false
+    WebKit:
+      "PLATFORM(IOS_FAMILY)": true
+      default: false
+    WebCore:
+      "PLATFORM(IOS_FAMILY)": true
+      default: false
+
 # FIXME: This is not relevent for WebKitLegacy, so should be excluded from WebKitLegacy entirely.
 RestrictedHTTPResponseAccess:
   type: bool

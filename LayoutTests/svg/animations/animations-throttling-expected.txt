@@ -8,6 +8,11 @@ internals.setLowPowerModeEnabled(true)
 PASS internals.svgAnimationsInterval(svgElement) is 1/30.
 internals.setLowPowerModeEnabled(false)
 PASS internals.svgAnimationsInterval(svgElement) is 1/60.
+PASS internals.svgAnimationsInterval(svgElement) is 1/60.
+internals.setAggressiveThermalMitigationEnabled(true)
+PASS internals.svgAnimationsInterval(svgElement) is 1/30.
+internals.setAggressiveThermalMitigationEnabled(false)
+PASS internals.svgAnimationsInterval(svgElement) is 1/60.
 PASS successfullyParsed is true
 
 TEST COMPLETE

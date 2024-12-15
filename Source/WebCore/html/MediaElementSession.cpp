@@ -119,6 +119,7 @@ static String restrictionNames(MediaElementSession::BehaviorRestrictions restric
     CASE(RequireUserGestureToControlControlsManager)
     CASE(RequirePlaybackToControlControlsManager)
     CASE(RequireUserGestureForVideoDueToLowPowerMode)
+    CASE(RequireUserGestureForVideoDueToAggressiveThermalMitigation)
 
     return restrictionBuilder.toString();
 }
@@ -446,6 +447,11 @@ Expected<void, MediaPlaybackDenialReason> MediaElementSession::playbackStateChan
 
     if (m_restrictions & RequireUserGestureForVideoDueToLowPowerMode && m_element.isVideo() && !document->processingUserGestureForMedia()) {
         ALWAYS_LOG(LOGIDENTIFIER, "Returning FALSE because of video low power mode restriction");
+        return makeUnexpected(MediaPlaybackDenialReason::UserGestureRequired);
+    }
+
+    if (m_restrictions & RequireUserGestureForVideoDueToAggressiveThermalMitigation && m_element.isVideo() && !document->processingUserGestureForMedia()) {
+        ALWAYS_LOG(LOGIDENTIFIER, "Returning FALSE because of video aggressive thermal mitigation restriction");
         return makeUnexpected(MediaPlaybackDenialReason::UserGestureRequired);
     }
 
@@ -1377,6 +1383,7 @@ void MediaElementSession::updateMediaUsageIfChanged()
         isVideo && hasBehaviorRestriction(RequireUserGestureForVideoRateChange) && !processingUserGesture,
         isAudio && hasBehaviorRestriction(RequireUserGestureForAudioRateChange) && !processingUserGesture && !m_element.muted() && m_element.volume(),
         isVideo && hasBehaviorRestriction(RequireUserGestureForVideoDueToLowPowerMode) && !processingUserGesture,
+        isVideo && hasBehaviorRestriction(RequireUserGestureForVideoDueToAggressiveThermalMitigation) && !processingUserGesture,
         !hasBehaviorRestriction(RequireUserGestureToControlControlsManager) || processingUserGesture,
         hasBehaviorRestriction(RequirePlaybackToControlControlsManager) && !isPlaying,
         m_element.hasEverNotifiedAboutPlaying(),

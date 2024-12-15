@@ -7,6 +7,10 @@ internals.setLowPowerModeEnabled(true)
 PASS internals.animationsInterval is throttled
 internals.setLowPowerModeEnabled(false)
 PASS internals.animationsInterval is unthrottled
+internals.setAggressiveThermalMitigationEnabled(true)
+PASS internals.animationsInterval is throttled
+internals.setAggressiveThermalMitigationEnabled(false)
+PASS internals.animationsInterval is unthrottled
 PASS successfullyParsed is true
 
 TEST COMPLETE

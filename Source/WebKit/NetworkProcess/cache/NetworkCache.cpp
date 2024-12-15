@@ -43,6 +43,7 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SharedBuffer.h>
+#include <WebCore/ThermalMitigationNotifier.h>
 #include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -111,20 +112,15 @@ Cache::Cache(NetworkProcess& networkProcess, const String& storageDirectory, Ref
 {
 #if ENABLE(NETWORK_CACHE_SPECULATIVE_REVALIDATION)
     if (options.contains(CacheOption::SpeculativeRevalidation)) {
-        m_lowPowerModeNotifier = makeUnique<WebCore::LowPowerModeNotifier>([weakThis = WeakPtr { *this }](bool isLowPowerModeEnabled) {
-            ASSERT(WTF::RunLoop::isMain());
-            RefPtr protectedThis = weakThis.get();
-            if (!protectedThis)
-                return;
-
-            if (isLowPowerModeEnabled)
-                protectedThis->m_speculativeLoadManager = nullptr;
-            else {
-                ASSERT(!protectedThis->m_speculativeLoadManager);
-                protectedThis->m_speculativeLoadManager = makeUnique<SpeculativeLoadManager>(*protectedThis, protectedThis->protectedStorage());
-            }
+        m_lowPowerModeNotifier = makeUnique<WebCore::LowPowerModeNotifier>([this, weakThis = WeakPtr { *this }](bool) {
+            if (RefPtr protectedThis = weakThis.get())
+                updateSpeculativeLoadManagerEnabledState();
         });
-        if (!m_lowPowerModeNotifier->isLowPowerModeEnabled())
+        m_thermalMitigationNotifier = makeUnique<WebCore::ThermalMitigationNotifier>([this, weakThis = WeakPtr { *this }](bool) {
+            if (RefPtr protectedThis = weakThis.get())
+                updateSpeculativeLoadManagerEnabledState();
+        });
+        if (shouldUseSpeculativeLoadManager())
             m_speculativeLoadManager = makeUnique<SpeculativeLoadManager>(*this, protectedStorage());
     }
 #endif
@@ -333,6 +329,27 @@ static StoreDecision makeStoreDecision(const WebCore::ResourceRequest& originalR
 }
 
 #if ENABLE(NETWORK_CACHE_SPECULATIVE_REVALIDATION)
+bool Cache::shouldUseSpeculativeLoadManager() const
+{
+    bool isLowPowerModeEnabled = m_lowPowerModeNotifier && m_lowPowerModeNotifier->isLowPowerModeEnabled();
+    bool isThermalMitigationEnabled = m_thermalMitigationNotifier && m_thermalMitigationNotifier->isThermalMitigationEnabled();
+    return !isLowPowerModeEnabled && !isThermalMitigationEnabled;
+}
+
+void Cache::updateSpeculativeLoadManagerEnabledState()
+{
+    ASSERT(WTF::RunLoop::isMain());
+
+    bool shouldEnable = shouldUseSpeculativeLoadManager();
+    if (!shouldEnable && m_speculativeLoadManager) {
+        m_speculativeLoadManager = nullptr;
+        RELEASE_LOG(NetworkCacheSpeculativePreloading, "%p - Cache::updateSpeculativeLoadManagerEnabledState: disabling speculative loads due to low power mode or thermal change", this);
+    } else if (shouldEnable && !m_speculativeLoadManager) {
+        m_speculativeLoadManager = makeUnique<SpeculativeLoadManager>(*this, protectedStorage());
+        RELEASE_LOG(NetworkCacheSpeculativePreloading, "%p - Cache::updateSpeculativeLoadManagerEnabledState: enabling speculative loads due to low power mode or thermal change", this);
+    }
+}
+
 static bool inline canRequestUseSpeculativeRevalidation(const WebCore::ResourceRequest& request)
 {
     if (request.isConditional())

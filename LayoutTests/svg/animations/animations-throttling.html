@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> <!-- webkit-test-runner [ RespondToThermalPressureAggressively=true ] -->
 <html>
 <body>
 <script src="../../resources/js-test-pre.js"></script>
@@ -19,6 +19,12 @@ window.onload = function() {
     evalAndLog("internals.setLowPowerModeEnabled(true)");
     shouldBe("internals.svgAnimationsInterval(svgElement)", "1/30.");
     evalAndLog("internals.setLowPowerModeEnabled(false)");
+    shouldBe("internals.svgAnimationsInterval(svgElement)", "1/60.");
+
+    shouldBe("internals.svgAnimationsInterval(svgElement)", "1/60.");
+    evalAndLog("internals.setAggressiveThermalMitigationEnabled(true)");
+    shouldBe("internals.svgAnimationsInterval(svgElement)", "1/30.");
+    evalAndLog("internals.setAggressiveThermalMitigationEnabled(false)");
     shouldBe("internals.svgAnimationsInterval(svgElement)", "1/60.");
     finishJSTest();
 }

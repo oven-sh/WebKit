@@ -3354,6 +3354,7 @@ media/modern-media-controls/playback-support/playback-support-button-click.html 
 media/modern-media-controls/scrubber-support/scrubber-support-click.html [ Skip ]
 media/modern-media-controls/seek-backward-support/seek-backward-support.html [ Skip ]
 media/modern-media-controls/seek-forward-support/seek-forward-support.html [ Skip ]
+media/modern-media-controls/start-support/start-support-aggressiveThermalMitigation.html [ Skip ]
 media/modern-media-controls/start-support/start-support-click-to-start.html [ Skip ]
 media/modern-media-controls/start-support/start-support-disable-controls-and-re-enable-post-play.html [ Skip ]
 media/modern-media-controls/start-support/start-support-fullscreen.html [ Skip ]

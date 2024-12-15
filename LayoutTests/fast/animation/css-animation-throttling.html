@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> <!-- webkit-test-runner [ RespondToThermalPressureAggressively=true ] -->
 <html>
 <head>
 <script src="../../resources/js-test-pre.js"></script>
@@ -35,6 +35,10 @@ element.onanimationstart = function() {
     evalAndLog("internals.setLowPowerModeEnabled(true)");
     shouldBe("internals.animationsInterval", "throttled");
     evalAndLog("internals.setLowPowerModeEnabled(false)");
+    shouldBe("internals.animationsInterval", "unthrottled");
+    evalAndLog("internals.setAggressiveThermalMitigationEnabled(true)");
+    shouldBe("internals.animationsInterval", "throttled");
+    evalAndLog("internals.setAggressiveThermalMitigationEnabled(false)");
     shouldBe("internals.animationsInterval", "unthrottled");
     finishJSTest();
 };
