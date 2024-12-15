@@ -440,22 +440,22 @@ Vector<AudioStreamPacketDescription> getPacketDescriptions(CMSampleBufferRef sam
 {
     size_t packetDescriptionsSize;
     if (PAL::CMSampleBufferGetAudioStreamPacketDescriptions(sampleBuffer, 0, nullptr, &packetDescriptionsSize) != noErr) {
-        RELEASE_LOG_FAULT(WebAudio, "Unable to get packet description list size");
+        RELEASE_LOG_FAULT(Media, "Unable to get packet description list size");
         return { };
     }
     size_t numDescriptions = packetDescriptionsSize / sizeof(AudioStreamPacketDescription);
     if (!numDescriptions) {
-        RELEASE_LOG_FAULT(WebAudio, "No packet description found.");
+        RELEASE_LOG_DEBUG(Media, "No packet description found.");
         return { };
     }
     Vector<AudioStreamPacketDescription> descriptions(numDescriptions);
     if (PAL::CMSampleBufferGetAudioStreamPacketDescriptions(sampleBuffer, packetDescriptionsSize, descriptions.data(), nullptr) != noErr) {
-        RELEASE_LOG_FAULT(WebAudio, "Unable to get packet description list");
+        RELEASE_LOG_FAULT(Media, "Unable to get packet description list");
         return { };
     }
     auto numPackets = PAL::CMSampleBufferGetNumSamples(sampleBuffer);
     if (numDescriptions != size_t(numPackets)) {
-        RELEASE_LOG_FAULT(WebAudio, "Unhandled CMSampleBuffer structure");
+        RELEASE_LOG_FAULT(Media, "Unhandled CMSampleBuffer structure");
         return { };
     }
     return descriptions;

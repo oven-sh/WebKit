@@ -441,6 +441,9 @@ OSStatus AudioSampleBufferConverter::provideSourceDataNumOutputPackets(UInt32* n
     if (packetDescriptionOut) {
         *numOutputPacketsPtr = m_packetDescriptions.size();
         *packetDescriptionOut = m_packetDescriptions.data();
+    } else if (m_sourceFormat.mFormatID == kAudioFormatLinearPCM) {
+        ASSERT(audioBufferList->mNumberBuffers && m_sourceFormat.mBytesPerPacket);
+        *numOutputPacketsPtr = (audioBufferList->mBuffers[0].mDataByteSize / m_sourceFormat.mBytesPerPacket);
     } else
         *numOutputPacketsPtr = 1;
 
