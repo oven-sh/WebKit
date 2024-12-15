@@ -419,6 +419,7 @@ void AVVideoCaptureSource::settingsDidChange(OptionSet<RealtimeMediaSourceSettin
     if (!whiteBalanceModeChanged && !torchChanged)
         return;
 
+    m_pendingSettingsChanges = settings;
     scheduleDeferredTask([this, whiteBalanceModeChanged, torchChanged] {
         startApplyingConstraints();
         if (whiteBalanceModeChanged)
@@ -426,6 +427,7 @@ void AVVideoCaptureSource::settingsDidChange(OptionSet<RealtimeMediaSourceSettin
         if (torchChanged)
             updateTorch();
         endApplyingConstraints();
+        m_pendingSettingsChanges = { };
     });
 }
 
@@ -494,12 +496,14 @@ const RealtimeMediaSourceSettings& AVVideoCaptureSource::settings()
 
     if (!supportedWhiteBalanceModes(device()).isEmpty()) {
         supportedConstraints.setSupportsWhiteBalanceMode(true);
-        settings.setWhiteBalanceMode(meteringModeFromAVCaptureWhiteBalanceMode([device() whiteBalanceMode]));
+        auto value = m_pendingSettingsChanges.contains(RealtimeMediaSourceSettings::Flag::WhiteBalanceMode) ? whiteBalanceMode() : meteringModeFromAVCaptureWhiteBalanceMode([device() whiteBalanceMode]);
+        settings.setWhiteBalanceMode(value);
     }
 
     if ([device() hasTorch]) {
         supportedConstraints.setSupportsTorch(true);
-        settings.setTorch([device() torchMode] == AVCaptureTorchModeOn);
+        auto value = m_pendingSettingsChanges.contains(RealtimeMediaSourceSettings::Flag::Torch) ? torch() : [device() torchMode] == AVCaptureTorchModeOn;
+        settings.setTorch(value);
     }
 
 #if PLATFORM(IOS_FAMILY)
@@ -822,10 +826,12 @@ void AVVideoCaptureSource::applyFrameRateAndZoomWithPreset(double requestedFrame
 #if PLATFORM(IOS_FAMILY)
     // Updating the device configuration may switch off the torch. We reenable torch asynchronously if needed.
     if (torch()) {
+        m_pendingSettingsChanges = { RealtimeMediaSourceSettings::Flag::Torch };
         scheduleDeferredTask([this] {
             startApplyingConstraints();
             updateTorch();
             endApplyingConstraints();
+            m_pendingSettingsChanges = { };
         });
     }
 #endif
@@ -988,6 +994,7 @@ void AVVideoCaptureSource::updateWhiteBalanceMode()
     }
 
     [device unlockForConfiguration];
+    m_currentSettings = std::nullopt;
 }
 
 void AVVideoCaptureSource::updateTorch()
@@ -1018,6 +1025,7 @@ void AVVideoCaptureSource::updateTorch()
     }
 
     [device unlockForConfiguration];
+    m_currentSettings = std::nullopt;
 }
 
 IntDegrees AVVideoCaptureSource::sensorOrientationFromVideoOutput()
