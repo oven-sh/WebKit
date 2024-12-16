@@ -7160,6 +7160,14 @@
    },
    {
       "emails" : [
+         "sa_engida@apple.com",
+         "samuel.adisu@gmail.com"
+      ],
+      "github" : "samuelengida",
+      "name" : "Samuel Engida"
+   },
+   {
+      "emails" : [
          "samuel_white@apple.com"
       ],
       "expertise" : "Accessibility",
