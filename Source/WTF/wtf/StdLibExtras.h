@@ -843,7 +843,7 @@ std::span<uint8_t, Extent == std::dynamic_extent ? std::dynamic_extent: Extent *
 }
 
 template<typename T>
-std::span<const T> singleElementSpan(const T& object)
+std::span<T> singleElementSpan(T& object)
 {
     return unsafeMakeSpan(std::addressof(object), 1);
 }

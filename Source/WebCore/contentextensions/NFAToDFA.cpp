@@ -36,8 +36,7 @@
 #include "SerializedNFA.h"
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#include <wtf/IndexedRange.h>
 
 namespace WebCore {
 
@@ -95,14 +94,14 @@ static ALWAYS_INLINE void extendSetWithClosure(const NFANodeClosures& nfaNodeClo
 }
 
 struct UniqueNodeIdSetImpl {
-    unsigned* buffer()
+    std::span<unsigned> buffer()
     {
-        return m_buffer;
+        return unsafeMakeSpan(m_buffer, m_size);
     }
 
-    const unsigned* buffer() const
+    std::span<const unsigned> buffer() const
     {
-        return m_buffer;
+        return unsafeMakeSpan(m_buffer, m_size);
     }
 
     unsigned m_size;
@@ -138,11 +137,10 @@ public:
         m_uniqueNodeIdSetBuffer->m_hash = hash;
         m_uniqueNodeIdSetBuffer->m_dfaNodeId = dfaNodeId;
 
-        unsigned* buffer = m_uniqueNodeIdSetBuffer->buffer();
-        for (unsigned nodeId : nodeIdSet) {
-            *buffer = nodeId;
-            ++buffer;
-        }
+        auto buffer = m_uniqueNodeIdSetBuffer->buffer();
+        size_t bufferIndex = 0;
+        for (unsigned nodeId : nodeIdSet)
+            buffer[bufferIndex++] = nodeId;
     }
 
     UniqueNodeIdSet(UniqueNodeIdSet&& other)
@@ -169,7 +167,7 @@ public:
     {
         if (m_uniqueNodeIdSetBuffer->m_size != static_cast<unsigned>(other.size()))
             return false;
-        unsigned* buffer = m_uniqueNodeIdSetBuffer->buffer();
+        auto buffer = m_uniqueNodeIdSetBuffer->buffer();
         for (unsigned i = 0; i < m_uniqueNodeIdSetBuffer->m_size; ++i) {
             if (!other.contains(buffer[i]))
                 return false;
@@ -299,7 +297,7 @@ static inline void createCombinedTransition(PreallocatedNFANodeRangeList& combin
 {
     combinedRangeList.clear();
 
-    const unsigned* buffer = sourceNodeSet.buffer();
+    auto buffer = sourceNodeSet.buffer();
 
     DataConverterWithEpsilonClosure converter { nfaNodeclosures };
     for (unsigned i = 0; i < sourceNodeSet.m_size; ++i) {
@@ -364,7 +362,5 @@ std::optional<DFA> NFAToDFA::convert(NFA&& nfa)
 } // namespace ContentExtensions
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

@@ -33,12 +33,11 @@
 #include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <wtf/CrossThreadCopier.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 #include <wtf/URLParser.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore::ContentExtensions {
 
@@ -46,7 +45,7 @@ static void append(Vector<uint8_t>& vector, size_t length)
 {
     RELEASE_ASSERT(length <= std::numeric_limits<uint32_t>::max());
     uint32_t integer = length;
-    vector.append(std::span { reinterpret_cast<const uint8_t*>(&integer), sizeof(integer) });
+    vector.append(asByteSpan(integer));
 }
 
 static void append(Vector<uint8_t>& vector, const CString& string)
@@ -56,8 +55,7 @@ static void append(Vector<uint8_t>& vector, const CString& string)
 
 static size_t deserializeLength(std::span<const uint8_t> span, size_t offset)
 {
-    RELEASE_ASSERT(span.size() >= offset + sizeof(uint32_t));
-    return *reinterpret_cast<const uint32_t*>(span.data() + offset);
+    return reinterpretCastSpanStartTo<const uint32_t>(span.subspan(offset));
 }
 
 static String deserializeUTF8String(std::span<const uint8_t> span, size_t offset, size_t length)
@@ -71,9 +69,8 @@ static void writeLengthToVectorAtOffset(Vector<uint8_t>& vector, size_t offset)
     auto length = vector.size() - offset;
     RELEASE_ASSERT(length <= std::numeric_limits<uint32_t>::max());
     uint32_t integer = length;
-    RELEASE_ASSERT(vector.size() >= offset + sizeof(uint32_t));
-    RELEASE_ASSERT(!*reinterpret_cast<uint32_t*>(vector.data() + offset));
-    *reinterpret_cast<uint32_t*>(vector.data() + offset) = integer;
+    RELEASE_ASSERT(!reinterpretCastSpanStartTo<uint32_t>(vector.subspan(offset)));
+    reinterpretCastSpanStartTo<uint32_t>(vector.mutableSpan().subspan(offset)) = integer;
 }
 
 Expected<ModifyHeadersAction, std::error_code> ModifyHeadersAction::parse(const JSON::Object& modifyHeaders)
@@ -913,7 +910,5 @@ size_t RedirectAction::URLTransformAction::QueryTransform::QueryKeyValue::serial
 }
 
 } // namespace WebCore::ContentExtensions
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(CONTENT_EXTENSIONS)
