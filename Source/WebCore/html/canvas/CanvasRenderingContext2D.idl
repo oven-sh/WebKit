@@ -40,10 +40,6 @@ enum RenderingMode {
 
     CanvasRenderingContext2DSettings getContextAttributes();
 
-    // Non-standard legacy aliases (Compositing).
-    [ImplementedAs=setGlobalAlpha] undefined setAlpha(optional unrestricted float alpha = NaN);
-    [ImplementedAs=setGlobalCompositeOperation] undefined setCompositeOperation(optional DOMString compositeOperation);
-
     // Non-standard functionality (CanvasDrawImage).
     undefined drawImageFromRect(HTMLImageElement image,
         optional unrestricted float sx = 0, optional unrestricted float sy = 0, optional unrestricted float sw = 0, optional unrestricted float sh = 0,
