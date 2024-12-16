@@ -2885,6 +2885,15 @@ NetworkConnectionToWebProcess* NetworkProcess::webProcessConnection(ProcessIdent
     return m_webProcessConnections.get(identifier);
 }
 
+NetworkConnectionToWebProcess* NetworkProcess::webProcessConnection(const IPC::Connection& connection) const
+{
+    for (Ref webProcessConnection : m_webProcessConnections.values()) {
+        if (webProcessConnection->connection().uniqueID() == connection.uniqueID())
+            return webProcessConnection.ptr();
+    }
+    return nullptr;
+}
+
 const Seconds NetworkProcess::defaultServiceWorkerFetchTimeout = 70_s;
 void NetworkProcess::setServiceWorkerFetchTimeoutForTesting(Seconds timeout, CompletionHandler<void()>&& completionHandler)
 {

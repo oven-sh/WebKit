@@ -31,6 +31,7 @@
 #include "DaemonDecoder.h"
 #include "DaemonEncoder.h"
 #include "Logging.h"
+#include "NetworkProcess.h"
 #include "NetworkSession.h"
 #include "PushClientConnectionMessages.h"
 #include "WebPushDaemonConnectionConfiguration.h"
@@ -43,12 +44,13 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkNotificationManager);
 
-Ref<NetworkNotificationManager> NetworkNotificationManager::create(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&& configuration)
+Ref<NetworkNotificationManager> NetworkNotificationManager::create(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&& configuration, NetworkProcess& networkProcess)
 {
-    return adoptRef(*new NetworkNotificationManager(webPushMachServiceName, WTFMove(configuration)));
+    return adoptRef(*new NetworkNotificationManager(webPushMachServiceName, WTFMove(configuration), networkProcess));
 }
 
-NetworkNotificationManager::NetworkNotificationManager(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&& configuration)
+NetworkNotificationManager::NetworkNotificationManager(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&& configuration, NetworkProcess& networkProcess)
+    : m_networkProcess(networkProcess)
 {
     if (!webPushMachServiceName.isEmpty())
         m_connection = WebPushD::Connection::create(webPushMachServiceName.utf8(), WTFMove(configuration));
@@ -246,6 +248,12 @@ void NetworkNotificationManager::getPermissionState(WebCore::SecurityOriginData&
 void NetworkNotificationManager::getPermissionStateSync(WebCore::SecurityOriginData&& origin, CompletionHandler<void(WebCore::PushPermissionState)>&& completionHandler)
 {
     getPushPermissionStateImpl(protectedConnection().get(), WTFMove(origin), WTFMove(completionHandler));
+}
+
+std::optional<SharedPreferencesForWebProcess> NetworkNotificationManager::sharedPreferencesForWebProcess(const IPC::Connection& connection) const
+{
+    Ref networkProcess = m_networkProcess;
+    return networkProcess->webProcessConnection(connection)->sharedPreferencesForWebProcess();
 }
 
 RefPtr<WebPushD::Connection> NetworkNotificationManager::protectedConnection() const

@@ -27,7 +27,9 @@
 
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
 
+#include "NetworkProcess.h"
 #include "NotificationManagerMessageHandler.h"
+#include "SharedPreferencesForWebProcess.h"
 #include "WebPushDaemonConnection.h"
 #include "WebPushDaemonConnectionConfiguration.h"
 #include "WebPushMessage.h"
@@ -52,7 +54,7 @@ enum class MessageType : uint8_t;
 class NetworkNotificationManager : public NotificationManagerMessageHandler, public RefCounted<NetworkNotificationManager> {
     WTF_MAKE_TZONE_ALLOCATED(NetworkNotificationManager);
 public:
-    static Ref<NetworkNotificationManager> create(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&);
+    static Ref<NetworkNotificationManager> create(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&, NetworkProcess&);
 
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
@@ -80,17 +82,18 @@ public:
     void setAppBadge(const WebCore::SecurityOriginData&, std::optional<uint64_t> badge) final;
 
 private:
-    NetworkNotificationManager(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&);
+    NetworkNotificationManager(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&, NetworkProcess&);
 
     void showNotification(IPC::Connection&, const WebCore::NotificationData&, RefPtr<WebCore::NotificationResources>&&, CompletionHandler<void()>&&) final;
     void cancelNotification(WebCore::SecurityOriginData&&, const WTF::UUID& notificationID) final;
     void didDestroyNotification(const WTF::UUID& notificationID) final;
     void pageWasNotifiedOfNotificationPermission() final { }
     void getPermissionStateSync(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&) final;
-
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const final;
     RefPtr<WebPushD::Connection> protectedConnection() const;
 
     RefPtr<WebPushD::Connection> m_connection;
+    Ref<NetworkProcess> m_networkProcess;
 };
 
 } // namespace WebKit

@@ -34,6 +34,8 @@ namespace WebKit {
 
 class WebsiteDataStore;
 
+struct SharedPreferencesForWebProcess;
+
 class ServiceWorkerNotificationHandler final : public NotificationManagerMessageHandler {
 public:
     static ServiceWorkerNotificationHandler& singleton();
@@ -52,7 +54,7 @@ public:
     void setAppBadge(const WebCore::SecurityOriginData&, std::optional<uint64_t> badge) final { }
     void getPermissionState(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&) final;
     void getPermissionStateSync(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&) final;
-
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const final;
     bool handlesNotification(WTF::UUID value) const { return m_notificationToSessionMap.contains(value); }
 
 private:
