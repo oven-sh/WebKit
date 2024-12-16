@@ -75,7 +75,7 @@ public:
     virtual bool isScrollingTreeMac() const { return false; }
     virtual bool isRemoteScrollingTree() const { return false; }
     virtual bool isScrollingTreeIOS() const { return false; }
-    virtual bool isScrollingTreeNicosia() const { return false; }
+    virtual bool isScrollingTreeCoordinated() const { return false; }
 
     // This implies that we'll do hit-testing in the scrolling tree.
     bool asyncFrameOrOverflowScrollingEnabled() const { return m_asyncFrameOrOverflowScrollingEnabled; }

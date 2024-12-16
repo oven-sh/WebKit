@@ -80,7 +80,7 @@ bool ScrollingCoordinator::coordinatesScrollingForFrameView(const LocalFrameView
 
     Ref localFrame = frameView.frame();
     if (!localFrame->isMainFrame() && !m_page->settings().scrollingTreeIncludesFrames()
-#if PLATFORM(MAC) || USE(NICOSIA)
+#if PLATFORM(MAC) || USE(COORDINATED_GRAPHICS)
         && !m_page->settings().asyncFrameScrollingEnabled()
 #endif
     )

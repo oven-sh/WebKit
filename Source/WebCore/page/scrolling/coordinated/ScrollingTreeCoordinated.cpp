@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Igalia S.L.
+ * Copyright (C) 2018, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,50 +26,50 @@
  */
 
 #include "config.h"
-#include "ScrollingTreeNicosia.h"
+#include "ScrollingTreeCoordinated.h"
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "AsyncScrollingCoordinator.h"
 #include "CoordinatedPlatformLayer.h"
 #include "ScrollingThread.h"
-#include "ScrollingTreeFixedNodeNicosia.h"
+#include "ScrollingTreeFixedNodeCoordinated.h"
 #include "ScrollingTreeFrameHostingNode.h"
-#include "ScrollingTreeFrameScrollingNodeNicosia.h"
-#include "ScrollingTreeOverflowScrollProxyNodeNicosia.h"
-#include "ScrollingTreeOverflowScrollingNodeNicosia.h"
-#include "ScrollingTreePositionedNodeNicosia.h"
-#include "ScrollingTreeStickyNodeNicosia.h"
+#include "ScrollingTreeFrameScrollingNodeCoordinated.h"
+#include "ScrollingTreeOverflowScrollProxyNodeCoordinated.h"
+#include "ScrollingTreeOverflowScrollingNodeCoordinated.h"
+#include "ScrollingTreePositionedNodeCoordinated.h"
+#include "ScrollingTreeStickyNodeCoordinated.h"
 
 namespace WebCore {
 
-Ref<ScrollingTreeNicosia> ScrollingTreeNicosia::create(AsyncScrollingCoordinator& scrollingCoordinator)
+Ref<ScrollingTreeCoordinated> ScrollingTreeCoordinated::create(AsyncScrollingCoordinator& scrollingCoordinator)
 {
-    return adoptRef(*new ScrollingTreeNicosia(scrollingCoordinator));
+    return adoptRef(*new ScrollingTreeCoordinated(scrollingCoordinator));
 }
 
-ScrollingTreeNicosia::ScrollingTreeNicosia(AsyncScrollingCoordinator& scrollingCoordinator)
+ScrollingTreeCoordinated::ScrollingTreeCoordinated(AsyncScrollingCoordinator& scrollingCoordinator)
     : ThreadedScrollingTree(scrollingCoordinator)
 {
 }
 
-Ref<ScrollingTreeNode> ScrollingTreeNicosia::createScrollingTreeNode(ScrollingNodeType nodeType, ScrollingNodeID nodeID)
+Ref<ScrollingTreeNode> ScrollingTreeCoordinated::createScrollingTreeNode(ScrollingNodeType nodeType, ScrollingNodeID nodeID)
 {
     switch (nodeType) {
     case ScrollingNodeType::MainFrame:
     case ScrollingNodeType::Subframe:
-        return ScrollingTreeFrameScrollingNodeNicosia::create(*this, nodeType, nodeID);
+        return ScrollingTreeFrameScrollingNodeCoordinated::create(*this, nodeType, nodeID);
     case ScrollingNodeType::FrameHosting:
         return ScrollingTreeFrameHostingNode::create(*this, nodeID);
     case ScrollingNodeType::Overflow:
-        return ScrollingTreeOverflowScrollingNodeNicosia::create(*this, nodeID);
+        return ScrollingTreeOverflowScrollingNodeCoordinated::create(*this, nodeID);
     case ScrollingNodeType::OverflowProxy:
-        return ScrollingTreeOverflowScrollProxyNodeNicosia::create(*this, nodeID);
+        return ScrollingTreeOverflowScrollProxyNodeCoordinated::create(*this, nodeID);
     case ScrollingNodeType::Fixed:
-        return ScrollingTreeFixedNodeNicosia::create(*this, nodeID);
+        return ScrollingTreeFixedNodeCoordinated::create(*this, nodeID);
     case ScrollingNodeType::Sticky:
-        return ScrollingTreeStickyNodeNicosia::create(*this, nodeID);
+        return ScrollingTreeStickyNodeCoordinated::create(*this, nodeID);
     case ScrollingNodeType::Positioned:
-        return ScrollingTreePositionedNodeNicosia::create(*this, nodeID);
+        return ScrollingTreePositionedNodeCoordinated::create(*this, nodeID);
     case ScrollingNodeType::PluginScrolling:
     case ScrollingNodeType::PluginHosting:
         RELEASE_ASSERT_NOT_REACHED();
@@ -78,7 +78,7 @@ Ref<ScrollingTreeNode> ScrollingTreeNicosia::createScrollingTreeNode(ScrollingNo
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void ScrollingTreeNicosia::applyLayerPositionsInternal()
+void ScrollingTreeCoordinated::applyLayerPositionsInternal()
 {
     auto* rootScrollingNode = rootNode();
     if (!rootScrollingNode)
@@ -87,17 +87,17 @@ void ScrollingTreeNicosia::applyLayerPositionsInternal()
     ThreadedScrollingTree::applyLayerPositionsInternal();
 
     if (ScrollingThread::isCurrentThread()) {
-        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
+        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeCoordinated*>(rootScrollingNode)->rootContentsLayer();
         rootContentsLayer->requestComposition();
     }
 }
 
-void ScrollingTreeNicosia::didCompleteRenderingUpdate()
+void ScrollingTreeCoordinated::didCompleteRenderingUpdate()
 {
     // If there's a composition requested or ongoing, wait for didCompletePlatformRenderingUpdate() that will be
     // called once the composiiton finishes.
     if (auto* rootScrollingNode = rootNode()) {
-        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
+        auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeCoordinated*>(rootScrollingNode)->rootContentsLayer();
         if (rootContentsLayer->isCompositionRequiredOrOngoing())
             return;
     }
@@ -105,7 +105,7 @@ void ScrollingTreeNicosia::didCompleteRenderingUpdate()
     renderingUpdateComplete();
 }
 
-void ScrollingTreeNicosia::didCompletePlatformRenderingUpdate()
+void ScrollingTreeCoordinated::didCompletePlatformRenderingUpdate()
 {
     renderingUpdateComplete();
 }
@@ -136,7 +136,7 @@ static bool collectDescendantLayersAtPoint(Vector<Ref<CoordinatedPlatformLayer>>
     return existsOnLayer || existsOnDescendent;
 }
 
-RefPtr<ScrollingTreeNode> ScrollingTreeNicosia::scrollingNodeForPoint(FloatPoint point)
+RefPtr<ScrollingTreeNode> ScrollingTreeCoordinated::scrollingNodeForPoint(FloatPoint point)
 {
     auto* rootScrollingNode = rootNode();
     if (!rootScrollingNode)
@@ -144,7 +144,7 @@ RefPtr<ScrollingTreeNode> ScrollingTreeNicosia::scrollingNodeForPoint(FloatPoint
 
     Locker layerLocker { m_layerHitTestMutex };
 
-    auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeNicosia*>(rootScrollingNode)->rootContentsLayer();
+    auto rootContentsLayer = static_cast<ScrollingTreeFrameScrollingNodeCoordinated*>(rootScrollingNode)->rootContentsLayer();
     Vector<Ref<CoordinatedPlatformLayer>> layersAtPoint;
     {
         Locker rootContentsLayerLocker { rootContentsLayer->lock() };
@@ -163,4 +163,4 @@ RefPtr<ScrollingTreeNode> ScrollingTreeNicosia::scrollingNodeForPoint(FloatPoint
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

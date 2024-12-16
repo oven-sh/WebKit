@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2019 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,34 +27,34 @@
  */
 
 #include "config.h"
-#include "ScrollingTreeOverflowScrollingNodeNicosia.h"
+#include "ScrollingTreeOverflowScrollingNodeCoordinated.h"
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "CoordinatedPlatformLayer.h"
-#include "ScrollingTreeScrollingNodeDelegateNicosia.h"
+#include "ScrollingTreeScrollingNodeDelegateCoordinated.h"
 #include "ThreadedScrollingTree.h"
 
 namespace WebCore {
 
-Ref<ScrollingTreeOverflowScrollingNode> ScrollingTreeOverflowScrollingNodeNicosia::create(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
+Ref<ScrollingTreeOverflowScrollingNode> ScrollingTreeOverflowScrollingNodeCoordinated::create(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
 {
-    return adoptRef(*new ScrollingTreeOverflowScrollingNodeNicosia(scrollingTree, nodeID));
+    return adoptRef(*new ScrollingTreeOverflowScrollingNodeCoordinated(scrollingTree, nodeID));
 }
 
-ScrollingTreeOverflowScrollingNodeNicosia::ScrollingTreeOverflowScrollingNodeNicosia(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
+ScrollingTreeOverflowScrollingNodeCoordinated::ScrollingTreeOverflowScrollingNodeCoordinated(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
     : ScrollingTreeOverflowScrollingNode(scrollingTree, nodeID)
 {
-    m_delegate = makeUnique<ScrollingTreeScrollingNodeDelegateNicosia>(*this, downcast<ThreadedScrollingTree>(scrollingTree).scrollAnimatorEnabled());
+    m_delegate = makeUnique<ScrollingTreeScrollingNodeDelegateCoordinated>(*this, downcast<ThreadedScrollingTree>(scrollingTree).scrollAnimatorEnabled());
 }
 
-ScrollingTreeOverflowScrollingNodeNicosia::~ScrollingTreeOverflowScrollingNodeNicosia() = default;
+ScrollingTreeOverflowScrollingNodeCoordinated::~ScrollingTreeOverflowScrollingNodeCoordinated() = default;
 
-ScrollingTreeScrollingNodeDelegateNicosia& ScrollingTreeOverflowScrollingNodeNicosia::delegate() const
+ScrollingTreeScrollingNodeDelegateCoordinated& ScrollingTreeOverflowScrollingNodeCoordinated::delegate() const
 {
-    return *static_cast<ScrollingTreeScrollingNodeDelegateNicosia*>(m_delegate.get());
+    return *static_cast<ScrollingTreeScrollingNodeDelegateCoordinated*>(m_delegate.get());
 }
 
-bool ScrollingTreeOverflowScrollingNodeNicosia::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
+bool ScrollingTreeOverflowScrollingNodeCoordinated::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
     if (!ScrollingTreeOverflowScrollingNode::commitStateBeforeChildren(stateNode))
         return false;
@@ -63,7 +63,7 @@ bool ScrollingTreeOverflowScrollingNodeNicosia::commitStateBeforeChildren(const 
     return true;
 }
 
-void ScrollingTreeOverflowScrollingNodeNicosia::repositionScrollingLayers()
+void ScrollingTreeOverflowScrollingNodeCoordinated::repositionScrollingLayers()
 {
     auto* scrollLayer = static_cast<CoordinatedPlatformLayer*>(scrollContainerLayer());
     ASSERT(scrollLayer);
@@ -74,7 +74,7 @@ void ScrollingTreeOverflowScrollingNodeNicosia::repositionScrollingLayers()
     delegate().updateVisibleLengths();
 }
 
-WheelEventHandlingResult ScrollingTreeOverflowScrollingNodeNicosia::handleWheelEvent(const PlatformWheelEvent& wheelEvent, EventTargeting eventTargeting)
+WheelEventHandlingResult ScrollingTreeOverflowScrollingNodeCoordinated::handleWheelEvent(const PlatformWheelEvent& wheelEvent, EventTargeting eventTargeting)
 {
     if (!canHandleWheelEvent(wheelEvent, eventTargeting))
         return WheelEventHandlingResult::unhandled();
@@ -84,4 +84,4 @@ WheelEventHandlingResult ScrollingTreeOverflowScrollingNodeNicosia::handleWheelE
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

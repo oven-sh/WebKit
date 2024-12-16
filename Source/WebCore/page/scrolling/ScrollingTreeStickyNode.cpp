@@ -121,4 +121,4 @@ FloatSize ScrollingTreeStickyNode::scrollDeltaSinceLastCommit() const
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING)

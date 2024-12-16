@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Igalia S.L.
+ * Copyright (C) 2018, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,36 +25,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "ScrollingCoordinatorNicosia.h"
+#pragma once
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "ScrollingTreeNicosia.h"
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ThreadedScrollingCoordinator.h"
 
 namespace WebCore {
 
-Ref<ScrollingCoordinator> ScrollingCoordinator::create(Page* page)
-{
-    return adoptRef(*new ScrollingCoordinatorNicosia(page));
-}
+class ScrollingCoordinatorCoordinated final : public ThreadedScrollingCoordinator {
+public:
+    explicit ScrollingCoordinatorCoordinated(Page*);
+    virtual ~ScrollingCoordinatorCoordinated();
 
-ScrollingCoordinatorNicosia::ScrollingCoordinatorNicosia(Page* page)
-    : ThreadedScrollingCoordinator(page)
-{
-    setScrollingTree(ScrollingTreeNicosia::create(*this));
-}
-
-ScrollingCoordinatorNicosia::~ScrollingCoordinatorNicosia()
-{
-    ASSERT(!scrollingTree());
-}
-
-void ScrollingCoordinatorNicosia::didCompletePlatformRenderingUpdate()
-{
-    downcast<ScrollingTreeNicosia>(scrollingTree())->didCompletePlatformRenderingUpdate();
-}
+private:
+    void didCompletePlatformRenderingUpdate() final;
+};
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

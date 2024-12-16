@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2019 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,9 +25,9 @@
  */
 
 #include "config.h"
-#include "ScrollingTreeOverflowScrollProxyNodeNicosia.h"
+#include "ScrollingTreeOverflowScrollProxyNodeCoordinated.h"
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "CoordinatedPlatformLayer.h"
 #include "Logging.h"
 #include "ScrollingStateOverflowScrollProxyNode.h"
@@ -36,19 +36,19 @@
 
 namespace WebCore {
 
-Ref<ScrollingTreeOverflowScrollProxyNodeNicosia> ScrollingTreeOverflowScrollProxyNodeNicosia::create(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
+Ref<ScrollingTreeOverflowScrollProxyNodeCoordinated> ScrollingTreeOverflowScrollProxyNodeCoordinated::create(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
 {
-    return adoptRef(*new ScrollingTreeOverflowScrollProxyNodeNicosia(scrollingTree, nodeID));
+    return adoptRef(*new ScrollingTreeOverflowScrollProxyNodeCoordinated(scrollingTree, nodeID));
 }
 
-ScrollingTreeOverflowScrollProxyNodeNicosia::ScrollingTreeOverflowScrollProxyNodeNicosia(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
+ScrollingTreeOverflowScrollProxyNodeCoordinated::ScrollingTreeOverflowScrollProxyNodeCoordinated(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
     : ScrollingTreeOverflowScrollProxyNode(scrollingTree, nodeID)
 {
 }
 
-ScrollingTreeOverflowScrollProxyNodeNicosia::~ScrollingTreeOverflowScrollProxyNodeNicosia() = default;
+ScrollingTreeOverflowScrollProxyNodeCoordinated::~ScrollingTreeOverflowScrollProxyNodeCoordinated() = default;
 
-bool ScrollingTreeOverflowScrollProxyNodeNicosia::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
+bool ScrollingTreeOverflowScrollProxyNodeCoordinated::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
     if (stateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
         m_layer = static_cast<CoordinatedPlatformLayer*>(stateNode.layer());
@@ -56,15 +56,15 @@ bool ScrollingTreeOverflowScrollProxyNodeNicosia::commitStateBeforeChildren(cons
     return ScrollingTreeOverflowScrollProxyNode::commitStateBeforeChildren(stateNode);
 }
 
-void ScrollingTreeOverflowScrollProxyNodeNicosia::applyLayerPositions()
+void ScrollingTreeOverflowScrollProxyNodeCoordinated::applyLayerPositions()
 {
     FloatPoint scrollOffset = computeLayerPosition();
 
-    LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeOverflowScrollProxyNodeNicosia " << scrollingNodeID() << " applyLayerPositions: setting bounds origin to " << scrollOffset);
+    LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeOverflowScrollProxyNodeCoordinated " << scrollingNodeID() << " applyLayerPositions: setting bounds origin to " << scrollOffset);
 
     m_layer->setBoundsOriginForScrolling(scrollOffset);
 }
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

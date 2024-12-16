@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2019 Apple Inc. All rights reserved.
- * Copyright (C) 2019, 2021 Igalia S.L.
+ * Copyright (C) 2019, 2021, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,30 +24,36 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+#include "config.h"
+#include "ScrollingTreeScrollingNodeDelegateCoordinated.h"
 
-#include "ScrollingTreeScrollingNodeDelegate.h"
-
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-#include "ThreadedScrollingTreeScrollingNodeDelegate.h"
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ScrollingTreeFrameScrollingNode.h"
 
 namespace WebCore {
 
-class ScrollingTreeScrollingNodeDelegateNicosia final : public ThreadedScrollingTreeScrollingNodeDelegate {
-public:
-    explicit ScrollingTreeScrollingNodeDelegateNicosia(ScrollingTreeScrollingNode&, bool scrollAnimatorEnabled);
-    virtual ~ScrollingTreeScrollingNodeDelegateNicosia();
+ScrollingTreeScrollingNodeDelegateCoordinated::ScrollingTreeScrollingNodeDelegateCoordinated(ScrollingTreeScrollingNode& scrollingNode, bool scrollAnimatorEnabled)
+    : ThreadedScrollingTreeScrollingNodeDelegate(scrollingNode)
+    , m_scrollAnimatorEnabled(scrollAnimatorEnabled)
+{
+}
 
-    void updateVisibleLengths();
-    bool handleWheelEvent(const PlatformWheelEvent&);
+ScrollingTreeScrollingNodeDelegateCoordinated::~ScrollingTreeScrollingNodeDelegateCoordinated() = default;
 
-private:
-    // ScrollingEffectsControllerClient.
-    bool scrollAnimationEnabled() const final { return m_scrollAnimatorEnabled; }
+void ScrollingTreeScrollingNodeDelegateCoordinated::updateVisibleLengths()
+{
+    m_scrollController.contentsSizeChanged();
+}
 
-    bool m_scrollAnimatorEnabled { false };
-};
+bool ScrollingTreeScrollingNodeDelegateCoordinated::handleWheelEvent(const PlatformWheelEvent& wheelEvent)
+{
+    auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { *scrollingTree(), scrollingNode().scrollingNodeID(), WheelEventTestMonitor::DeferReason::HandlingWheelEvent };
+
+    updateUserScrollInProgressForEvent(wheelEvent);
+
+    return m_scrollController.handleWheelEvent(wheelEvent);
+}
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

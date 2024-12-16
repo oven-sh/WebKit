@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2012, 2014-2015 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,38 +27,38 @@
  */
 
 #include "config.h"
-#include "ScrollingTreeFrameScrollingNodeNicosia.h"
+#include "ScrollingTreeFrameScrollingNodeCoordinated.h"
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "CoordinatedPlatformLayer.h"
 #include "LocalFrameView.h"
 #include "Logging.h"
 #include "ScrollingStateFrameScrollingNode.h"
 #include "ScrollingThread.h"
-#include "ScrollingTreeScrollingNodeDelegateNicosia.h"
+#include "ScrollingTreeScrollingNodeDelegateCoordinated.h"
 #include "ThreadedScrollingTree.h"
 
 namespace WebCore {
 
-Ref<ScrollingTreeFrameScrollingNode> ScrollingTreeFrameScrollingNodeNicosia::create(ScrollingTree& scrollingTree, ScrollingNodeType nodeType, ScrollingNodeID nodeID)
+Ref<ScrollingTreeFrameScrollingNode> ScrollingTreeFrameScrollingNodeCoordinated::create(ScrollingTree& scrollingTree, ScrollingNodeType nodeType, ScrollingNodeID nodeID)
 {
-    return adoptRef(*new ScrollingTreeFrameScrollingNodeNicosia(scrollingTree, nodeType, nodeID));
+    return adoptRef(*new ScrollingTreeFrameScrollingNodeCoordinated(scrollingTree, nodeType, nodeID));
 }
 
-ScrollingTreeFrameScrollingNodeNicosia::ScrollingTreeFrameScrollingNodeNicosia(ScrollingTree& scrollingTree, ScrollingNodeType nodeType, ScrollingNodeID nodeID)
+ScrollingTreeFrameScrollingNodeCoordinated::ScrollingTreeFrameScrollingNodeCoordinated(ScrollingTree& scrollingTree, ScrollingNodeType nodeType, ScrollingNodeID nodeID)
     : ScrollingTreeFrameScrollingNode(scrollingTree, nodeType, nodeID)
 {
-    m_delegate = makeUnique<ScrollingTreeScrollingNodeDelegateNicosia>(*this, downcast<ThreadedScrollingTree>(scrollingTree).scrollAnimatorEnabled());
+    m_delegate = makeUnique<ScrollingTreeScrollingNodeDelegateCoordinated>(*this, downcast<ThreadedScrollingTree>(scrollingTree).scrollAnimatorEnabled());
 }
 
-ScrollingTreeFrameScrollingNodeNicosia::~ScrollingTreeFrameScrollingNodeNicosia() = default;
+ScrollingTreeFrameScrollingNodeCoordinated::~ScrollingTreeFrameScrollingNodeCoordinated() = default;
 
-ScrollingTreeScrollingNodeDelegateNicosia& ScrollingTreeFrameScrollingNodeNicosia::delegate() const
+ScrollingTreeScrollingNodeDelegateCoordinated& ScrollingTreeFrameScrollingNodeCoordinated::delegate() const
 {
-    return *static_cast<ScrollingTreeScrollingNodeDelegateNicosia*>(m_delegate.get());
+    return *static_cast<ScrollingTreeScrollingNodeDelegateCoordinated*>(m_delegate.get());
 }
 
-bool ScrollingTreeFrameScrollingNodeNicosia::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
+bool ScrollingTreeFrameScrollingNodeCoordinated::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
     if (!ScrollingTreeFrameScrollingNode::commitStateBeforeChildren(stateNode))
         return false;
@@ -85,7 +85,7 @@ bool ScrollingTreeFrameScrollingNodeNicosia::commitStateBeforeChildren(const Scr
     return true;
 }
 
-WheelEventHandlingResult ScrollingTreeFrameScrollingNodeNicosia::handleWheelEvent(const PlatformWheelEvent& wheelEvent, EventTargeting eventTargeting)
+WheelEventHandlingResult ScrollingTreeFrameScrollingNodeCoordinated::handleWheelEvent(const PlatformWheelEvent& wheelEvent, EventTargeting eventTargeting)
 {
     if (!canHandleWheelEvent(wheelEvent, eventTargeting))
         return WheelEventHandlingResult::unhandled();
@@ -95,14 +95,14 @@ WheelEventHandlingResult ScrollingTreeFrameScrollingNodeNicosia::handleWheelEven
     return WheelEventHandlingResult::result(handled);
 }
 
-void ScrollingTreeFrameScrollingNodeNicosia::currentScrollPositionChanged(ScrollType scrollType, ScrollingLayerPositionAction action)
+void ScrollingTreeFrameScrollingNodeCoordinated::currentScrollPositionChanged(ScrollType scrollType, ScrollingLayerPositionAction action)
 {
-    LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeFrameScrollingNodeNicosia::currentScrollPositionChanged to " << currentScrollPosition() << " min: " << minimumScrollPosition() << " max: " << maximumScrollPosition() << " sync: " << hasSynchronousScrollingReasons());
+    LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeFrameScrollingNodeCoordinated::currentScrollPositionChanged to " << currentScrollPosition() << " min: " << minimumScrollPosition() << " max: " << maximumScrollPosition() << " sync: " << hasSynchronousScrollingReasons());
 
     ScrollingTreeFrameScrollingNode::currentScrollPositionChanged(scrollType, hasSynchronousScrollingReasons() ? ScrollingLayerPositionAction::Set : action);
 }
 
-void ScrollingTreeFrameScrollingNodeNicosia::repositionScrollingLayers()
+void ScrollingTreeFrameScrollingNodeCoordinated::repositionScrollingLayers()
 {
     auto* scrollLayer = static_cast<CoordinatedPlatformLayer*>(scrolledContentsLayer());
     if (!scrollLayer)
@@ -119,7 +119,7 @@ void ScrollingTreeFrameScrollingNodeNicosia::repositionScrollingLayers()
     scrollLayer->setPositionForScrolling(-scrollPosition, forceSync);
 }
 
-void ScrollingTreeFrameScrollingNodeNicosia::repositionRelatedLayers()
+void ScrollingTreeFrameScrollingNodeCoordinated::repositionRelatedLayers()
 {
     auto scrollPosition = currentScrollPosition();
     auto layoutViewport = this->layoutViewport();
@@ -157,4 +157,4 @@ void ScrollingTreeFrameScrollingNodeNicosia::repositionRelatedLayers()
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

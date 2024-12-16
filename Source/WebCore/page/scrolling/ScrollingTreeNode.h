@@ -60,10 +60,10 @@ public:
     bool isPositionedNodeCocoa() const { return isPositionedNode(); }
     bool isOverflowScrollProxyNodeCocoa() const { return isOverflowScrollProxyNode(); }
 #endif
-#if USE(NICOSIA)
-    bool isFixedNodeNicosia() const { return isFixedNode(); }
-    bool isPositionedNodeNicosia() const { return isPositionedNode(); }
-    bool isOverflowScrollProxyNodeNicosia() const { return isOverflowScrollProxyNode(); }
+#if USE(COORDINATED_GRAPHICS)
+    bool isFixedNodeCoordinated() const { return isFixedNode(); }
+    bool isPositionedNodeCoordinated() const { return isPositionedNode(); }
+    bool isOverflowScrollProxyNodeCoordinated() const { return isOverflowScrollProxyNode(); }
 #endif
     bool isScrollingNode() const { return isFrameScrollingNode() || isOverflowScrollingNode() || isPluginScrollingNode(); }
     bool isFrameScrollingNode() const { return nodeType() == ScrollingNodeType::MainFrame || nodeType() == ScrollingNodeType::Subframe; }

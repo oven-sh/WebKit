@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2019 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,19 +26,19 @@
 
 #pragma once
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "ScrollingTreeOverflowScrollProxyNode.h"
 
 namespace WebCore {
 class CoordinatedPlatformLayer;
 
-class ScrollingTreeOverflowScrollProxyNodeNicosia final : public ScrollingTreeOverflowScrollProxyNode {
+class ScrollingTreeOverflowScrollProxyNodeCoordinated final : public ScrollingTreeOverflowScrollProxyNode {
 public:
-    static Ref<ScrollingTreeOverflowScrollProxyNodeNicosia> create(ScrollingTree&, ScrollingNodeID);
-    virtual ~ScrollingTreeOverflowScrollProxyNodeNicosia();
+    static Ref<ScrollingTreeOverflowScrollProxyNodeCoordinated> create(ScrollingTree&, ScrollingNodeID);
+    virtual ~ScrollingTreeOverflowScrollProxyNodeCoordinated();
 
 private:
-    ScrollingTreeOverflowScrollProxyNodeNicosia(ScrollingTree&, ScrollingNodeID);
+    ScrollingTreeOverflowScrollProxyNodeCoordinated(ScrollingTree&, ScrollingNodeID);
 
     bool commitStateBeforeChildren(const ScrollingStateNode&) override;
     void applyLayerPositions() override;
@@ -50,6 +50,6 @@ private:
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreeOverflowScrollProxyNodeNicosia, isOverflowScrollProxyNodeNicosia())
+SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreeOverflowScrollProxyNodeCoordinated, isOverflowScrollProxyNodeCoordinated())
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

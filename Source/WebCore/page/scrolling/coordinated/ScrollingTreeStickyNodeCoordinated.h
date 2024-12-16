@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,29 +28,32 @@
 
 #pragma once
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "ScrollingTreeOverflowScrollingNode.h"
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ScrollingConstraints.h"
+#include "ScrollingTreeStickyNode.h"
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
+class CoordinatedPlatformLayer;
 
-class ScrollingTreeScrollingNodeDelegateNicosia;
-
-class ScrollingTreeOverflowScrollingNodeNicosia final : public ScrollingTreeOverflowScrollingNode {
+class ScrollingTreeStickyNodeCoordinated final : public ScrollingTreeStickyNode {
 public:
-    static Ref<ScrollingTreeOverflowScrollingNode> create(ScrollingTree&, ScrollingNodeID);
-    virtual ~ScrollingTreeOverflowScrollingNodeNicosia();
+    static Ref<ScrollingTreeStickyNodeCoordinated> create(ScrollingTree&, ScrollingNodeID);
+    virtual ~ScrollingTreeStickyNodeCoordinated() = default;
 
 private:
-    ScrollingTreeOverflowScrollingNodeNicosia(ScrollingTree&, ScrollingNodeID);
-
-    ScrollingTreeScrollingNodeDelegateNicosia& delegate() const;
+    ScrollingTreeStickyNodeCoordinated(ScrollingTree&, ScrollingNodeID);
 
     bool commitStateBeforeChildren(const ScrollingStateNode&) override;
-    void repositionScrollingLayers() override;
-    WheelEventHandlingResult handleWheelEvent(const PlatformWheelEvent&, EventTargeting) override;
+    void applyLayerPositions() override;
+    FloatPoint layerTopLeft() const override;
+    CoordinatedPlatformLayer* layer() const override { return m_layer.get(); }
+
+    RefPtr<CoordinatedPlatformLayer> m_layer;
 };
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreeStickyNodeCoordinated, isStickyNode())
+
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

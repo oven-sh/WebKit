@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Igalia S.L.
+ * Copyright (C) 2018, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,16 +33,16 @@
 
 namespace WebCore {
 
-class ScrollingTreeNicosia final : public ThreadedScrollingTree {
+class ScrollingTreeCoordinated final : public ThreadedScrollingTree {
 public:
-    static Ref<ScrollingTreeNicosia> create(AsyncScrollingCoordinator&);
+    static Ref<ScrollingTreeCoordinated> create(AsyncScrollingCoordinator&);
 
     void didCompletePlatformRenderingUpdate();
 
 private:
-    explicit ScrollingTreeNicosia(AsyncScrollingCoordinator&);
+    explicit ScrollingTreeCoordinated(AsyncScrollingCoordinator&);
 
-    bool isScrollingTreeNicosia() const final { return true; }
+    bool isScrollingTreeCoordinated() const final { return true; }
 
     Ref<ScrollingTreeNode> createScrollingTreeNode(ScrollingNodeType, ScrollingNodeID) override;
 
@@ -54,6 +54,6 @@ private:
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_SCROLLING_TREE(WebCore::ScrollingTreeNicosia, isScrollingTreeNicosia())
+SPECIALIZE_TYPE_TRAITS_SCROLLING_TREE(WebCore::ScrollingTreeCoordinated, isScrollingTreeCoordinated())
 
 #endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2012 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2012, 2014-2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,34 +28,41 @@
 
 #pragma once
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "ScrollingTreeFixedNode.h"
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ScrollingTreeFrameScrollingNode.h"
 #include <wtf/RefPtr.h>
 
 namespace WebCore {
 class CoordinatedPlatformLayer;
+class ScrollingTreeScrollingNodeDelegateCoordinated;
 
-class ScrollingTreeFixedNodeNicosia final : public ScrollingTreeFixedNode {
+class ScrollingTreeFrameScrollingNodeCoordinated final : public ScrollingTreeFrameScrollingNode {
 public:
-    static Ref<ScrollingTreeFixedNodeNicosia> create(ScrollingTree&, ScrollingNodeID);
-    virtual ~ScrollingTreeFixedNodeNicosia();
+    static Ref<ScrollingTreeFrameScrollingNode> create(ScrollingTree&, ScrollingNodeType, ScrollingNodeID);
+    virtual ~ScrollingTreeFrameScrollingNodeCoordinated();
+
+    RefPtr<CoordinatedPlatformLayer> rootContentsLayer() const { return m_rootContentsLayer; }
 
 private:
-    ScrollingTreeFixedNodeNicosia(ScrollingTree&, ScrollingNodeID);
+    ScrollingTreeFrameScrollingNodeCoordinated(ScrollingTree&, ScrollingNodeType, ScrollingNodeID);
 
-    CoordinatedPlatformLayer* layer() const override { return m_layer.get(); }
+    ScrollingTreeScrollingNodeDelegateCoordinated& delegate() const;
 
     bool commitStateBeforeChildren(const ScrollingStateNode&) override;
-    void applyLayerPositions() override WTF_REQUIRES_LOCK(scrollingTree()->treeLock());
 
-    void dumpProperties(WTF::TextStream&, OptionSet<ScrollingStateTreeAsTextBehavior>) const override;
+    WheelEventHandlingResult handleWheelEvent(const PlatformWheelEvent&, EventTargeting) override;
+    void currentScrollPositionChanged(ScrollType, ScrollingLayerPositionAction) override;
+    void repositionScrollingLayers() override;
+    void repositionRelatedLayers() override;
 
-    RefPtr<CoordinatedPlatformLayer> m_layer;
+    RefPtr<CoordinatedPlatformLayer> m_rootContentsLayer;
+    RefPtr<CoordinatedPlatformLayer> m_counterScrollingLayer;
+    RefPtr<CoordinatedPlatformLayer> m_insetClipLayer;
+    RefPtr<CoordinatedPlatformLayer> m_contentShadowLayer;
+    RefPtr<CoordinatedPlatformLayer> m_headerLayer;
+    RefPtr<CoordinatedPlatformLayer> m_footerLayer;
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreeFixedNodeNicosia, isFixedNodeNicosia())
-
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

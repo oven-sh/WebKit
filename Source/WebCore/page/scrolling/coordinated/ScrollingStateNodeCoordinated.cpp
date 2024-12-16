@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2024 Igalia S.L.
  * Copyright (C) 2013 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,7 +27,7 @@
 #include "config.h"
 #include "ScrollingStateNode.h"
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "CoordinatedPlatformLayer.h"
 #include "GraphicsLayerCoordinated.h"
 
@@ -61,4 +62,4 @@ CoordinatedPlatformLayer* LayerRepresentation::platformLayerFromGraphicsLayer(Gr
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

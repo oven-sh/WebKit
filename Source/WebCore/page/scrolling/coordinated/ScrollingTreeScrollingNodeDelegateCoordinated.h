@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2019 Apple Inc. All rights reserved.
- * Copyright (C) 2019, 2021 Igalia S.L.
+ * Copyright (C) 2019, 2021, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,36 +24,30 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "ScrollingTreeScrollingNodeDelegateNicosia.h"
+#pragma once
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-#include "ScrollingTreeFrameScrollingNode.h"
+#include "ScrollingTreeScrollingNodeDelegate.h"
+
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ThreadedScrollingTreeScrollingNodeDelegate.h"
 
 namespace WebCore {
 
-ScrollingTreeScrollingNodeDelegateNicosia::ScrollingTreeScrollingNodeDelegateNicosia(ScrollingTreeScrollingNode& scrollingNode, bool scrollAnimatorEnabled)
-    : ThreadedScrollingTreeScrollingNodeDelegate(scrollingNode)
-    , m_scrollAnimatorEnabled(scrollAnimatorEnabled)
-{
-}
+class ScrollingTreeScrollingNodeDelegateCoordinated final : public ThreadedScrollingTreeScrollingNodeDelegate {
+public:
+    explicit ScrollingTreeScrollingNodeDelegateCoordinated(ScrollingTreeScrollingNode&, bool scrollAnimatorEnabled);
+    virtual ~ScrollingTreeScrollingNodeDelegateCoordinated();
 
-ScrollingTreeScrollingNodeDelegateNicosia::~ScrollingTreeScrollingNodeDelegateNicosia() = default;
+    void updateVisibleLengths();
+    bool handleWheelEvent(const PlatformWheelEvent&);
 
-void ScrollingTreeScrollingNodeDelegateNicosia::updateVisibleLengths()
-{
-    m_scrollController.contentsSizeChanged();
-}
+private:
+    // ScrollingEffectsControllerClient.
+    bool scrollAnimationEnabled() const final { return m_scrollAnimatorEnabled; }
 
-bool ScrollingTreeScrollingNodeDelegateNicosia::handleWheelEvent(const PlatformWheelEvent& wheelEvent)
-{
-    auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { *scrollingTree(), scrollingNode().scrollingNodeID(), WheelEventTestMonitor::DeferReason::HandlingWheelEvent };
-
-    updateUserScrollInProgressForEvent(wheelEvent);
-
-    return m_scrollController.handleWheelEvent(wheelEvent);
-}
+    bool m_scrollAnimatorEnabled { false };
+};
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

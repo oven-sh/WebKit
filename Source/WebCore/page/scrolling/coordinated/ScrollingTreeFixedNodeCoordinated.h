@@ -28,30 +28,33 @@
 
 #pragma once
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-#include "ScrollingTreePositionedNode.h"
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ScrollingTreeFixedNode.h"
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
 class CoordinatedPlatformLayer;
 
-class ScrollingTreePositionedNodeNicosia final : public ScrollingTreePositionedNode {
+class ScrollingTreeFixedNodeCoordinated final : public ScrollingTreeFixedNode {
 public:
-    static Ref<ScrollingTreePositionedNodeNicosia> create(ScrollingTree&, ScrollingNodeID);
-    virtual ~ScrollingTreePositionedNodeNicosia();
+    static Ref<ScrollingTreeFixedNodeCoordinated> create(ScrollingTree&, ScrollingNodeID);
+    virtual ~ScrollingTreeFixedNodeCoordinated();
+
+private:
+    ScrollingTreeFixedNodeCoordinated(ScrollingTree&, ScrollingNodeID);
 
     CoordinatedPlatformLayer* layer() const override { return m_layer.get(); }
 
-private:
-    ScrollingTreePositionedNodeNicosia(ScrollingTree&, ScrollingNodeID);
-
     bool commitStateBeforeChildren(const ScrollingStateNode&) override;
-    void applyLayerPositions() override;
+    void applyLayerPositions() override WTF_REQUIRES_LOCK(scrollingTree()->treeLock());
+
+    void dumpProperties(WTF::TextStream&, OptionSet<ScrollingStateTreeAsTextBehavior>) const override;
 
     RefPtr<CoordinatedPlatformLayer> m_layer;
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreePositionedNodeNicosia, isPositionedNodeNicosia())
+SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreeFixedNodeCoordinated, isFixedNodeCoordinated())
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

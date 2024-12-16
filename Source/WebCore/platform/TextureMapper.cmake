@@ -50,9 +50,21 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
 if (USE_COORDINATED_GRAPHICS)
     list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+        "${WEBCORE_DIR}/page/scrolling/coordinated"
         "${WEBCORE_DIR}/platform/graphics/texmap/coordinated"
     )
     list(APPEND WebCore_SOURCES
+        page/scrolling/coordinated/ScrollingCoordinatorCoordinated.cpp
+        page/scrolling/coordinated/ScrollingStateNodeCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreeCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreeFixedNodeCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreeFrameScrollingNodeCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreeOverflowScrollProxyNodeCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreeOverflowScrollingNodeCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreePositionedNodeCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreeScrollingNodeDelegateCoordinated.cpp
+        page/scrolling/coordinated/ScrollingTreeStickyNodeCoordinated.cpp
+
         platform/graphics/texmap/GraphicsLayerAsyncContentsDisplayDelegateTextureMapper.cpp
         platform/graphics/texmap/TextureMapperPlatformLayerProxy.cpp
 
@@ -127,7 +139,6 @@ endif ()
 
 if (USE_NICOSIA)
     list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
-        "${WEBCORE_DIR}/page/scrolling/nicosia"
         "${WEBCORE_DIR}/platform/graphics/nicosia"
         "${WEBCORE_DIR}/platform/graphics/nicosia/texmap"
     )
@@ -135,9 +146,6 @@ if (USE_NICOSIA)
         "platform/SourcesNicosia.txt"
     )
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
-        page/scrolling/nicosia/ScrollingTreeFixedNodeNicosia.h
-        page/scrolling/nicosia/ScrollingTreeStickyNodeNicosia.h
-
         platform/graphics/nicosia/NicosiaCompositionLayer.h
         platform/graphics/nicosia/NicosiaPlatformLayer.h
         platform/graphics/nicosia/NicosiaScene.h

@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2018 Igalia S.L.
+ * Copyright (C) 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,21 +28,30 @@
 
 #pragma once
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-
-#include "ThreadedScrollingCoordinator.h"
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ScrollingTreePositionedNode.h"
 
 namespace WebCore {
+class CoordinatedPlatformLayer;
 
-class ScrollingCoordinatorNicosia final : public ThreadedScrollingCoordinator {
+class ScrollingTreePositionedNodeCoordinated final : public ScrollingTreePositionedNode {
 public:
-    explicit ScrollingCoordinatorNicosia(Page*);
-    virtual ~ScrollingCoordinatorNicosia();
+    static Ref<ScrollingTreePositionedNodeCoordinated> create(ScrollingTree&, ScrollingNodeID);
+    virtual ~ScrollingTreePositionedNodeCoordinated();
+
+    CoordinatedPlatformLayer* layer() const override { return m_layer.get(); }
 
 private:
-    void didCompletePlatformRenderingUpdate() final;
+    ScrollingTreePositionedNodeCoordinated(ScrollingTree&, ScrollingNodeID);
+
+    bool commitStateBeforeChildren(const ScrollingStateNode&) override;
+    void applyLayerPositions() override;
+
+    RefPtr<CoordinatedPlatformLayer> m_layer;
 };
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreePositionedNodeCoordinated, isPositionedNodeCoordinated())
+
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

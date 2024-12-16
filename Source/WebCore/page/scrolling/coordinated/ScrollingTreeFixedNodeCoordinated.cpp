@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2012 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2019, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,9 +27,9 @@
  */
 
 #include "config.h"
-#include "ScrollingTreeFixedNodeNicosia.h"
+#include "ScrollingTreeFixedNodeCoordinated.h"
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
 #include "CoordinatedPlatformLayer.h"
 #include "Logging.h"
 #include "ScrollingStateFixedNode.h"
@@ -38,19 +38,19 @@
 
 namespace WebCore {
 
-Ref<ScrollingTreeFixedNodeNicosia> ScrollingTreeFixedNodeNicosia::create(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
+Ref<ScrollingTreeFixedNodeCoordinated> ScrollingTreeFixedNodeCoordinated::create(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
 {
-    return adoptRef(*new ScrollingTreeFixedNodeNicosia(scrollingTree, nodeID));
+    return adoptRef(*new ScrollingTreeFixedNodeCoordinated(scrollingTree, nodeID));
 }
 
-ScrollingTreeFixedNodeNicosia::ScrollingTreeFixedNodeNicosia(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
+ScrollingTreeFixedNodeCoordinated::ScrollingTreeFixedNodeCoordinated(ScrollingTree& scrollingTree, ScrollingNodeID nodeID)
     : ScrollingTreeFixedNode(scrollingTree, nodeID)
 {
 }
 
-ScrollingTreeFixedNodeNicosia::~ScrollingTreeFixedNodeNicosia() = default;
+ScrollingTreeFixedNodeCoordinated::~ScrollingTreeFixedNodeCoordinated() = default;
 
-bool ScrollingTreeFixedNodeNicosia::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
+bool ScrollingTreeFixedNodeCoordinated::commitStateBeforeChildren(const ScrollingStateNode& stateNode)
 {
     if (!is<ScrollingStateFixedNode>(stateNode))
         return false;
@@ -62,20 +62,20 @@ bool ScrollingTreeFixedNodeNicosia::commitStateBeforeChildren(const ScrollingSta
     return ScrollingTreeFixedNode::commitStateBeforeChildren(stateNode);
 }
 
-void ScrollingTreeFixedNodeNicosia::applyLayerPositions()
+void ScrollingTreeFixedNodeCoordinated::applyLayerPositions()
 {
     auto layerPosition = computeLayerPosition();
 
     LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeFixedNode " << scrollingNodeID() << " relatedNodeScrollPositionDidChange: viewportRectAtLastLayout " << m_constraints.viewportRectAtLastLayout() << " last layer pos " << m_constraints.layerPositionAtLastLayout() << " layerPosition " << layerPosition);
 
-    // Match the behavior of ScrollingTreeFrameScrollingNodeNicosia::repositionScrollingLayers().
+    // Match the behavior of ScrollingTreeFrameScrollingNodeCoordinated::repositionScrollingLayers().
     CoordinatedPlatformLayer::ForcePositionSync forceSync = ScrollingThread::isCurrentThread() && !scrollingTree()->isScrollingSynchronizedWithMainThread() ?
         CoordinatedPlatformLayer::ForcePositionSync::Yes : CoordinatedPlatformLayer::ForcePositionSync::No;
 
     m_layer->setTopLeftPositionForScrolling(layerPosition - m_constraints.alignmentOffset(), forceSync);
 }
 
-void ScrollingTreeFixedNodeNicosia::dumpProperties(TextStream& ts, OptionSet<ScrollingStateTreeAsTextBehavior> behavior) const
+void ScrollingTreeFixedNodeCoordinated::dumpProperties(TextStream& ts, OptionSet<ScrollingStateTreeAsTextBehavior> behavior) const
 {
     ScrollingTreeFixedNode::dumpProperties(ts, behavior);
 
@@ -87,4 +87,4 @@ void ScrollingTreeFixedNodeNicosia::dumpProperties(TextStream& ts, OptionSet<Scr
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)

@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2012 Apple Inc. All rights reserved.
- * Copyright (C) 2019 Igalia S.L.
+ * Copyright (C) 2018, 2024 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,34 +25,35 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+#include "config.h"
+#include "ScrollingCoordinatorCoordinated.h"
 
-#if ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
-#include "ScrollingConstraints.h"
-#include "ScrollingTreeStickyNode.h"
-#include <wtf/RefPtr.h>
+#if ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
+#include "ScrollingTreeCoordinated.h"
 
 namespace WebCore {
-class CoordinatedPlatformLayer;
 
-class ScrollingTreeStickyNodeNicosia final : public ScrollingTreeStickyNode {
-public:
-    static Ref<ScrollingTreeStickyNodeNicosia> create(ScrollingTree&, ScrollingNodeID);
-    virtual ~ScrollingTreeStickyNodeNicosia() = default;
+Ref<ScrollingCoordinator> ScrollingCoordinator::create(Page* page)
+{
+    return adoptRef(*new ScrollingCoordinatorCoordinated(page));
+}
 
-private:
-    ScrollingTreeStickyNodeNicosia(ScrollingTree&, ScrollingNodeID);
+ScrollingCoordinatorCoordinated::ScrollingCoordinatorCoordinated(Page* page)
+    : ThreadedScrollingCoordinator(page)
+{
+    setScrollingTree(ScrollingTreeCoordinated::create(*this));
+}
 
-    bool commitStateBeforeChildren(const ScrollingStateNode&) override;
-    void applyLayerPositions() override;
-    FloatPoint layerTopLeft() const override;
-    CoordinatedPlatformLayer* layer() const override { return m_layer.get(); }
+ScrollingCoordinatorCoordinated::~ScrollingCoordinatorCoordinated()
+{
+    ASSERT(!scrollingTree());
+}
 
-    RefPtr<CoordinatedPlatformLayer> m_layer;
-};
+void ScrollingCoordinatorCoordinated::didCompletePlatformRenderingUpdate()
+{
+    downcast<ScrollingTreeCoordinated>(scrollingTree())->didCompletePlatformRenderingUpdate();
+}
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_SCROLLING_NODE(ScrollingTreeStickyNodeNicosia, isStickyNode())
-
-#endif // ENABLE(ASYNC_SCROLLING) && USE(NICOSIA)
+#endif // ENABLE(ASYNC_SCROLLING) && USE(COORDINATED_GRAPHICS)
