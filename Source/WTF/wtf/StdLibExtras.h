@@ -898,12 +898,14 @@ T& reinterpretCastSpanStartTo(std::span<std::byte, Extent> span)
     return spanReinterpretCast<T>(span.first(sizeof(T)))[0];
 }
 
-template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
+enum class IgnoreTypeChecks : bool { No, Yes };
+
+template<IgnoreTypeChecks ignoreTypeChecks = IgnoreTypeChecks::No, typename T, std::size_t TExtent, typename U, std::size_t UExtent>
 bool equalSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
 {
     static_assert(sizeof(T) == sizeof(U));
-    static_assert(std::has_unique_object_representations_v<T>);
-    static_assert(std::has_unique_object_representations_v<U>);
+    static_assert(ignoreTypeChecks == IgnoreTypeChecks::Yes || std::has_unique_object_representations_v<T>);
+    static_assert(ignoreTypeChecks == IgnoreTypeChecks::Yes || std::has_unique_object_representations_v<U>);
     if (a.size() != b.size())
         return false;
     return !memcmp(a.data(), b.data(), a.size_bytes());

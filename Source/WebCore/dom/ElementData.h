@@ -27,6 +27,7 @@
 
 #include "Attribute.h"
 #include "SpaceSplitString.h"
+#include <wtf/StdLibExtras.h>
 #include <wtf/TypeCasts.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -205,6 +206,8 @@ public:
     ~ShareableElementData();
 
     static constexpr ptrdiff_t attributeArrayMemoryOffset() { return OBJECT_OFFSETOF(ShareableElementData, m_attributeArray); }
+
+    std::span<const Attribute> span() const { return unsafeMakeSpan(m_attributeArray, arraySize()); }
 
     Attribute m_attributeArray[0];
 };
