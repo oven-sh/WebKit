@@ -610,7 +610,7 @@ void ResourceLoader::didReceiveResponse(const ResourceResponse& r, CompletionHan
         protectedFrameLoader()->notifier().didReceiveResponse(this, m_response);
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    if (RefPtr monitor = resourceMonitor())
+    if (RefPtr monitor = resourceMonitorIfExists())
         monitor->didReceiveResponse(m_response.url(), m_resourceType);
 #endif
 }
@@ -641,7 +641,7 @@ void ResourceLoader::didReceiveBuffer(const FragmentedSharedBuffer& buffer, long
         protectedFrameLoader()->notifier().didReceiveData(this, buffer.makeContiguous(), static_cast<int>(encodedDataLength));
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    if (RefPtr monitor = resourceMonitor())
+    if (RefPtr monitor = resourceMonitorIfExists())
         monitor->addNetworkUsage(encodedDataLength > 0 ? static_cast<size_t>(encodedDataLength) : buffer.size());
 #endif
 }
@@ -964,10 +964,10 @@ RefPtr<LocalFrame> ResourceLoader::protectedFrame() const
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-ResourceMonitor* ResourceLoader::resourceMonitor()
+ResourceMonitor* ResourceLoader::resourceMonitorIfExists()
 {
     if (RefPtr document = m_frame ? m_frame->document() : nullptr)
-        return document->resourceMonitor();
+        return document->resourceMonitorIfExists();
     return nullptr;
 }
 #endif

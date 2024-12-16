@@ -1976,9 +1976,10 @@ public:
     unsigned unloadCounter() const { return m_unloadCounter; }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    ResourceMonitor* resourceMonitor();
-    void setResourceMonitor(RefPtr<ResourceMonitor>&&);
-    ResourceMonitor* parentResourceMonitor();
+    ResourceMonitor* resourceMonitorIfExists();
+    ResourceMonitor& resourceMonitor();
+    Ref<ResourceMonitor> protectedResourceMonitor();
+    ResourceMonitor* parentResourceMonitorIfExists();
 #endif
 
 protected:

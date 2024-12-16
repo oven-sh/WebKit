@@ -11139,20 +11139,29 @@ void Document::securityOriginDidChange()
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-ResourceMonitor* Document::resourceMonitor()
+ResourceMonitor* Document::resourceMonitorIfExists()
 {
     return m_resourceMonitor.get();
 }
 
-void Document::setResourceMonitor(RefPtr<ResourceMonitor>&& resourceMonitor)
+ResourceMonitor& Document::resourceMonitor()
 {
-    m_resourceMonitor = WTFMove(resourceMonitor);
+    ASSERT(!frame()->isMainFrame());
+
+    if (!m_resourceMonitor)
+        m_resourceMonitor = ResourceMonitor::create(*frame());
+    return *m_resourceMonitor.get();
 }
 
-ResourceMonitor* Document::parentResourceMonitor()
+Ref<ResourceMonitor> Document::protectedResourceMonitor()
+{
+    return resourceMonitor();
+}
+
+ResourceMonitor* Document::parentResourceMonitorIfExists()
 {
     if (RefPtr parent = parentDocument())
-        return parent->resourceMonitor();
+        return parent->resourceMonitorIfExists();
 
     return nullptr;
 }

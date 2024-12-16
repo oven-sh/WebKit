@@ -38,20 +38,21 @@ class ResourceMonitor final : public RefCountedAndCanMakeWeakPtr<ResourceMonitor
 public:
     enum class Eligibility : uint8_t { Unsure, NotEligible, Eligible };
 
-    static RefPtr<ResourceMonitor> create(LocalFrame&, URL&&);
+    static Ref<ResourceMonitor> create(LocalFrame&);
 
     Eligibility eligibility() const { return m_eligibility; }
     void setEligibility(Eligibility);
 
+    void setDocumentURL(URL&&);
     void didReceiveResponse(const URL&, OptionSet<ContentExtensions::ResourceType>);
     void addNetworkUsage(size_t);
 
 private:
-    explicit ResourceMonitor(LocalFrame&, URL&&);
+    explicit ResourceMonitor(LocalFrame&);
 
     void checkNetworkUsageExcessIfNecessary();
     Ref<LocalFrame> protectedFrame() const;
-    ResourceMonitor* parentResourceMonitor() const;
+    ResourceMonitor* parentResourceMonitorIfExists() const;
 
     WeakRef<LocalFrame> m_frame;
     URL m_frameURL;

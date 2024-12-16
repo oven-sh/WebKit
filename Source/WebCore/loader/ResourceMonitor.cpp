@@ -27,6 +27,7 @@
 #include "ResourceMonitor.h"
 
 #include "Document.h"
+#include "HTMLIFrameElement.h"
 #include "LocalFrame.h"
 #include "ResourceMonitorChecker.h"
 #include <wtf/CryptographicallyRandomNumber.h>
@@ -44,23 +45,17 @@ static size_t networkUsageThresholdWithRandomNoise()
     return networkUsageThreshold + static_cast<size_t>(cryptographicallyRandomUnitInterval() * networkUsageThresholdRandomness);
 }
 
-RefPtr<ResourceMonitor> ResourceMonitor::create(LocalFrame& frame, URL&& url)
+Ref<ResourceMonitor> ResourceMonitor::create(LocalFrame& frame)
 {
-    if (url.isEmpty() || !url.protocolIsInHTTPFamily())
-        return nullptr;
-
-    return adoptRef(*new ResourceMonitor(frame, WTFMove(url)));
+    return adoptRef(*new ResourceMonitor(frame));
 }
 
-ResourceMonitor::ResourceMonitor(LocalFrame& frame, URL&& documentURL)
+ResourceMonitor::ResourceMonitor(LocalFrame& frame)
     : m_frame(frame)
-    , m_frameURL(WTFMove(documentURL))
     , m_networkUsageThreshold { networkUsageThresholdWithRandomNoise() }
 {
-    if (RefPtr parentMonitor = parentResourceMonitor())
+    if (RefPtr parentMonitor = parentResourceMonitorIfExists())
         setEligibility(parentMonitor->eligibility());
-
-    didReceiveResponse(m_frameURL, ContentExtensions::ResourceType::Document);
 }
 
 void ResourceMonitor::setEligibility(Eligibility eligibility)
@@ -70,10 +65,22 @@ void ResourceMonitor::setEligibility(Eligibility eligibility)
 
     m_eligibility = eligibility;
 
-    if (RefPtr parentMonitor = parentResourceMonitor())
+    if (RefPtr parentMonitor = parentResourceMonitorIfExists())
         parentMonitor->setEligibility(eligibility);
     else
         checkNetworkUsageExcessIfNecessary();
+}
+
+void ResourceMonitor::setDocumentURL(URL&& url)
+{
+    m_frameURL = WTFMove(url);
+
+    didReceiveResponse(m_frameURL, ContentExtensions::ResourceType::Document);
+
+    if (RefPtr iframe = dynamicDowncast<HTMLIFrameElement>(protectedFrame()->ownerElement())) {
+        if (auto& url = iframe->initiatorSourceURL(); !url.isEmpty())
+            didReceiveResponse(url, ContentExtensions::ResourceType::Script);
+    }
 }
 
 void ResourceMonitor::didReceiveResponse(const URL& url, OptionSet<ContentExtensions::ResourceType> resourceType)
@@ -107,7 +114,7 @@ void ResourceMonitor::addNetworkUsage(size_t bytes)
 
     m_networkUsage += bytes;
 
-    if (RefPtr parentMonitor = parentResourceMonitor())
+    if (RefPtr parentMonitor = parentResourceMonitorIfExists())
         parentMonitor->addNetworkUsage(bytes);
     else
         checkNetworkUsageExcessIfNecessary();
@@ -115,7 +122,7 @@ void ResourceMonitor::addNetworkUsage(size_t bytes)
 
 void ResourceMonitor::checkNetworkUsageExcessIfNecessary()
 {
-    ASSERT(!parentResourceMonitor());
+    ASSERT(!parentResourceMonitorIfExists());
     if (m_eligibility != Eligibility::Eligible || m_networkUsageExceed)
         return;
 
@@ -130,10 +137,10 @@ Ref<LocalFrame> ResourceMonitor::protectedFrame() const
     return m_frame.get();
 }
 
-ResourceMonitor* ResourceMonitor::parentResourceMonitor() const
+ResourceMonitor* ResourceMonitor::parentResourceMonitorIfExists() const
 {
     RefPtr document = protectedFrame()->document();
-    return document ? document->parentResourceMonitor() : nullptr;
+    return document ? document->parentResourceMonitorIfExists() : nullptr;
 }
 
 #endif

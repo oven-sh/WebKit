@@ -232,7 +232,7 @@ private:
 #endif
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    ResourceMonitor* resourceMonitor();
+    ResourceMonitor* resourceMonitorIfExists();
 #endif
 
 #if USE(SOUP)

@@ -1290,8 +1290,12 @@ void DocumentLoader::commitData(const SharedBuffer& data)
         ASSERT(frame);
 
 #if ENABLE(CONTENT_EXTENSIONS)
-        if (shouldEnableResourceMonitor(*frame))
-            document.setResourceMonitor(ResourceMonitor::create(*frame, documentURL()));
+        if (shouldEnableResourceMonitor(*frame)) {
+            URL url = documentURL();
+
+            if (!url.isEmpty() && url.protocolIsInHTTPFamily())
+                document.protectedResourceMonitor()->setDocumentURL(WTFMove(url));
+        }
 #endif
 
         if (SecurityPolicy::allowSubstituteDataAccessToLocal() && m_originalSubstituteDataWasValid) {
