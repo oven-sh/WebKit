@@ -2657,11 +2657,14 @@ LayoutUnit RenderFlexibleBox::computeGap(RenderFlexibleBox::GapType gapType) con
 
 bool RenderFlexibleBox::layoutUsingFlexFormattingContext()
 {
-    if (!firstInFlowChild())
+    if (m_hasFlexFormattingContextLayout && !*m_hasFlexFormattingContextLayout) {
+        // FIXME: Avoid continous content checking on (potentially) unsupported content. This ensures no pref impact on cases like resize etc.
+        // Remove when canUseForFlexLayout becomes less expensive.
         return false;
+    }
 
     m_hasFlexFormattingContextLayout = LayoutIntegration::canUseForFlexLayout(*this);
-    if (!m_hasFlexFormattingContextLayout)
+    if (!*m_hasFlexFormattingContextLayout)
         return false;
 
     auto flexLayout = LayoutIntegration::FlexLayout { *this };

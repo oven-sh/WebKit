@@ -126,7 +126,7 @@ public:
 
     static std::optional<TextDirection> leftRightAxisDirectionFromStyle(const RenderStyle&);
 
-    bool hasModernLayout() const { return m_hasFlexFormattingContextLayout; }
+    bool hasModernLayout() const { return m_hasFlexFormattingContextLayout && *m_hasFlexFormattingContextLayout; }
 
 protected:
     void computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const override;
@@ -303,7 +303,7 @@ private:
     bool m_inLayout { false };
     bool m_shouldResetFlexItemLogicalHeightBeforeLayout { false };
     bool m_isComputingFlexBaseSizes { false };
-    bool m_hasFlexFormattingContextLayout { false };
+    std::optional<bool> m_hasFlexFormattingContextLayout;
 };
 
 } // namespace WebCore
