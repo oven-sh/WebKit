@@ -2824,41 +2824,54 @@ void MediaPlayerPrivateMediaFoundation::Direct3DPresenter::paintCurrentFrame(Gra
 
     if (!m_memSurface)
         return;
+    D3DSURFACE_DESC desc;
+    if (FAILED(m_memSurface->GetDesc(&desc)))
+        return;
+
+    SkColorType colorType = kUnknown_SkColorType;
+    switch (desc.Format) {
+    case D3DFMT_A8R8G8B8:
+        colorType = kRGBA_8888_SkColorType;
+        break;
+    case D3DFMT_X8R8G8B8:
+        colorType = kRGB_888x_SkColorType;
+        break;
+    default:
+        return;
+    }
 
     D3DLOCKED_RECT lockedRect;
-    if (SUCCEEDED(m_memSurface->LockRect(&lockedRect, nullptr, D3DLOCK_READONLY))) {
-        void* data = lockedRect.pBits;
-        int pitch = lockedRect.Pitch;
-        D3DFORMAT format = D3DFMT_UNKNOWN;
-        D3DSURFACE_DESC desc;
-        if (SUCCEEDED(m_memSurface->GetDesc(&desc)))
-            format = desc.Format;
+    if (FAILED(m_memSurface->LockRect(&lockedRect, nullptr, D3DLOCK_READONLY)))
+        return;
+    auto* data = static_cast<const DWORD*>(lockedRect.pBits);
 
-        SkColorType colorType = kUnknown_SkColorType;
+    int pitchInByte = lockedRect.Pitch;
+    ASSERT(!(pitchInByte % 4));
+    int pitchInDWORD = pitchInByte / 4;
+    auto wholeInput = unsafeMakeSpan(data, pitchInDWORD * height);
+    Vector<byte> buffer(wholeInput.size_bytes());
+    auto wholeOutput = buffer.mutableSpan();
 
-        switch (format) {
-        case D3DFMT_A8R8G8B8:
-            // FIXME: Needs swizzling
-            colorType = kRGBA_8888_SkColorType;
-            break;
-        case D3DFMT_X8R8G8B8:
-            // FIXME: Needs swizzling
-            colorType = kRGB_888x_SkColorType;
-            break;
-        default:
-            break;
+    for (unsigned y = 0; y < height; ++y) {
+        auto lineInput = wholeInput.subspan(pitchInDWORD * y, pitchInDWORD);
+        auto lineOutput = wholeOutput.subspan(pitchInByte * y, pitchInByte);
+        auto output = lineOutput.begin();
+        for (auto d : lineInput) {
+            *output++ = LOBYTE(HIWORD(d));
+            *output++ = HIBYTE(LOWORD(d));
+            *output++ = LOBYTE(LOWORD(d));
+            *output++ = HIBYTE(HIWORD(d));
         }
-        ASSERT(colorType != kUnknown_SkColorType);
-
-        auto imageInfo = SkImageInfo::Make(width, height, colorType, kUnpremul_SkAlphaType);
-        auto pixmap = SkPixmap(imageInfo, data, pitch);
-        auto skImage = SkImages::RasterFromPixmap(pixmap, nullptr, nullptr);
-        auto image = NativeImage::create(WTFMove(skImage));
-        FloatRect srcRect(0, 0, width, height);
-        context.drawNativeImage(*image, destRect, srcRect);
-
-        m_memSurface->UnlockRect();
     }
+
+    auto imageInfo = SkImageInfo::Make(width, height, colorType, kUnpremul_SkAlphaType);
+    auto pixmap = SkPixmap(imageInfo, wholeOutput.data(), pitchInByte);
+    auto skImage = SkImages::RasterFromPixmap(pixmap, nullptr, nullptr);
+    auto image = NativeImage::create(WTFMove(skImage));
+    FloatRect srcRect(0, 0, width, height);
+    context.drawNativeImage(*image, destRect, srcRect);
+
+    m_memSurface->UnlockRect();
 }
 #endif
 
