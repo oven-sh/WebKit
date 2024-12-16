@@ -457,7 +457,7 @@ void WebPage::registerUIProcessAccessibilityTokens(std::span<const uint8_t> elem
 
     [remoteElement setWindowUIElement:remoteWindow.get()];
     [remoteElement setTopLevelUIElement:remoteWindow.get()];
-    [accessibilityRemoteObject() setWindow:remoteWindow.get()];
+
     [accessibilityRemoteObject() setRemoteParent:remoteElement.get()];
 }
 

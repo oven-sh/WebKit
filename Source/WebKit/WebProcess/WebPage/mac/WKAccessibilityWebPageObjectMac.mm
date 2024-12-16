@@ -159,23 +159,15 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 - (id)accessibilityAttributeValue:(NSString *)attribute
 ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
-    static std::atomic<bool> didInitialize { false };
-    static std::atomic<unsigned> screenHeight { 0 };
-    if (UNLIKELY(!didInitialize)) {
-        didInitialize = true;
-        callOnMainRunLoopAndWait([] {
-            if (!WebCore::AXObjectCache::accessibilityEnabled())
-                WebCore::AXObjectCache::enableAccessibility();
+    callOnMainRunLoopAndWait([] {
+        if (!WebCore::AXObjectCache::accessibilityEnabled())
+            WebCore::AXObjectCache::enableAccessibility();
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-            if (WebCore::AXObjectCache::isIsolatedTreeEnabled())
-                WebCore::AXObjectCache::initializeAXThreadIfNeeded();
-#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-
-            float roundedHeight = std::round(WebCore::screenRectForPrimaryScreen().size().height());
-            screenHeight = std::max(0u, static_cast<unsigned>(roundedHeight));
-        });
-    }
+        if (WebCore::AXObjectCache::isIsolatedTreeEnabled())
+            WebCore::AXObjectCache::initializeAXThreadIfNeeded();
+#endif
+    });
 
     // The following attributes can be handled off the main thread.
 
@@ -200,19 +192,32 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return [self accessibilityChildren];
     }
 
-    if ([attribute isEqualToString:NSAccessibilityParentAttribute])
-        return [self accessibilityAttributeParentValue].get();
+    // The following attributes have to be retrieved from the main thread. Return nil for any other attribute.
+    if (![attribute isEqualToString:NSAccessibilityParentAttribute]
+        && ![attribute isEqualToString:NSAccessibilityWindowAttribute]
+        && ![attribute isEqualToString:NSAccessibilityTopLevelUIElementAttribute]
+        && ![attribute isEqualToString:NSAccessibilityPrimaryScreenHeightAttribute])
+        return nil;
 
-    if ([attribute isEqualToString:NSAccessibilityPrimaryScreenHeightAttribute])
-        return @(screenHeight.load());
+    return ax::retrieveAutoreleasedValueFromMainThread<id>([attribute = retainPtr(attribute), PROTECTED_SELF] () -> RetainPtr<id> {
+        if ([attribute isEqualToString:NSAccessibilityParentAttribute])
+            return protectedSelf->m_parent.get();
 
-    if ([attribute isEqualToString:NSAccessibilityWindowAttribute])
-        return [self accessibilityAttributeWindowValue].get();
+        if ([attribute isEqualToString:NSAccessibilityWindowAttribute])
+            return [protectedSelf->m_parent accessibilityAttributeValue:NSAccessibilityWindowAttribute];
 
-    if ([attribute isEqualToString:NSAccessibilityTopLevelUIElementAttribute])
-        return [self accessibilityAttributeTopLevelUIElementValue].get();
+        if ([attribute isEqualToString:NSAccessibilityTopLevelUIElementAttribute])
+            return [protectedSelf->m_parent accessibilityAttributeValue:NSAccessibilityTopLevelUIElementAttribute];
 
-    return nil;
+        // FIXME: do we need this check?
+        if (!protectedSelf->m_pageID)
+            return nil;
+
+        if ([attribute isEqualToString:NSAccessibilityPrimaryScreenHeightAttribute])
+            return @(WebCore::screenRectForPrimaryScreen().size().height());
+
+        return nil;
+    });
 }
 
 - (NSValue *)accessibilityAttributeSizeValue
@@ -222,9 +227,13 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         Locker lock { m_cacheLock };
         return [NSValue valueWithSize:(NSSize)m_size];
     }
-#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+#endif
 
-    return m_page ? [NSValue valueWithSize:m_page->size()] : nil;
+    return ax::retrieveAutoreleasedValueFromMainThread<id>([PROTECTED_SELF] () -> RetainPtr<id> {
+        if (!protectedSelf->m_page)
+            return nil;
+        return [NSValue valueWithSize:(NSSize)protectedSelf->m_page->size()];
+    });
 }
 
 - (NSValue *)accessibilityAttributePositionValue
@@ -234,54 +243,13 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         Locker lock { m_cacheLock };
         return [NSValue valueWithPoint:(NSPoint)m_position];
     }
-#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+#endif
 
-    return m_page ? [NSValue valueWithPoint:m_page->accessibilityPosition()] : nil;
-}
-
-- (RetainPtr<id>)accessibilityAttributeParentValue
-{
-#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (!isMainRunLoop()) {
-        Locker lock { m_parentLock };
-        return m_parent;
-    }
-#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-
-    return m_parent;
-}
-
-// FIXME: accessibilityAttributeWindowValue and accessibilityAttributeTopLevelUIElementValue
-// always return nil for instances of this class when set up by WebPage::registerRemoteFrameAccessibilityTokens,
-// as nothing there sets m_window, setWindowUIElement, and setTopLevelUIElement.
-- (RetainPtr<id>)accessibilityAttributeWindowValue
-{
-#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (!isMainRunLoop()) {
-        // Use the cached window to avoid using m_parent (which is possibly an AppKit object) off the main-thread.
-        return m_window.get();
-    }
-#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    return [m_parent accessibilityAttributeValue:NSAccessibilityWindowAttribute];
-    ALLOW_DEPRECATED_DECLARATIONS_END
-}
-
-- (RetainPtr<id>)accessibilityAttributeTopLevelUIElementValue
-{
-#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (!isMainRunLoop()) {
-        // Use the cached window to avoid using m_parent (which is possibly an AppKit object) off the main-thread.
-        // The TopLevelUIElement is the window, as we set it as such in WebPage::registerUIProcessAccessibilityTokens,
-        // so we can return m_window here.
-        return m_window.get();
-    }
-#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    return [m_parent accessibilityAttributeValue:NSAccessibilityTopLevelUIElementAttribute];
-    ALLOW_DEPRECATED_DECLARATIONS_END
+    return ax::retrieveAutoreleasedValueFromMainThread<id>([PROTECTED_SELF] () -> RetainPtr<id> {
+        if (!protectedSelf->m_page)
+            return nil;
+        return [NSValue valueWithPoint:(NSPoint)protectedSelf->m_page->accessibilityPosition()];
+    });
 }
 
 - (id)accessibilityDataDetectorValue:(NSString *)attribute point:(WebCore::FloatPoint&)point
