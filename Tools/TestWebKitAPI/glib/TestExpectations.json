@@ -188,9 +188,6 @@
         "subtests": {
            "/webkit/WebKitWebInspectorServer/test-page-list": {
               "expected": {"gtk": {"status": ["FAIL", "PASS"], "bug": "webkit.org/b/216646"}}
-           },
-           "/webkit/WebKitWebInspectorServer/http-test-page-list": {
-              "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/269586"}}
            }
         },
         "expected": {"all": {"slow": true}}
