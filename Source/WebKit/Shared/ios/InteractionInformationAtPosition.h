@@ -90,6 +90,7 @@ struct InteractionInformationAtPosition {
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
     bool isSpatialImage { false };
 #endif
+    bool isInPlugin { false };
     bool needsPointerTouchCompatibilityQuirk { false };
     WebCore::FloatPoint adjustedPointForNodeRespondingToClickEvents;
     URL url;

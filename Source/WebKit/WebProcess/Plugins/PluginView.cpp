@@ -1144,6 +1144,11 @@ void PluginView::clearSelection()
     protectedPlugin()->clearSelection();
 }
 
+std::pair<URL, FloatRect> PluginView::linkURLAndBoundsAtPoint(FloatPoint pointInRootView) const
+{
+    return protectedPlugin()->linkURLAndBoundsAtPoint(pointInRootView);
+}
+
 std::optional<FloatRect> PluginView::highlightRectForTapAtPoint(FloatPoint pointInRootView) const
 {
     return protectedPlugin()->highlightRectForTapAtPoint(pointInRootView);

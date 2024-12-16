@@ -98,6 +98,7 @@ public:
     void pluginScaleFactorDidChange();
 #if PLATFORM(IOS_FAMILY)
     void pluginDidInstallPDFDocument(double initialScaleFactor);
+    std::pair<URL, WebCore::FloatRect> linkURLAndBoundsAtPoint(WebCore::FloatPoint pointInRootView) const;
     std::optional<WebCore::FloatRect> highlightRectForTapAtPoint(WebCore::FloatPoint pointInRootView) const;
     void handleSyntheticClick(WebCore::PlatformMouseEvent&&);
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);

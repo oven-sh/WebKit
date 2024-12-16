@@ -3729,10 +3729,14 @@ InteractionInformationAtPosition WebPage::positionInformation(const InteractionI
     auto& eventHandler = localMainFrame->eventHandler();
     auto hitTestResult = eventHandler.hitTestResultAtPoint(request.point, hitTestRequestTypes);
 
+#if ENABLE(PDF_PLUGIN)
+    RefPtr pluginView = pluginViewForFrame(hitTestResult.innerNodeFrame());
+#endif
+
     info.cursorContext = [&] {
         if (request.includeCursorContext) {
 #if ENABLE(PDF_PLUGIN)
-            if (RefPtr pluginView = pluginViewForFrame(hitTestResult.innerNodeFrame()))
+            if (pluginView)
                 return pluginView->cursorContext(request.point);
 #endif
         }
@@ -3780,6 +3784,17 @@ InteractionInformationAtPosition WebPage::positionInformation(const InteractionI
 #if ENABLE(DATALIST_ELEMENT)
     if (RefPtr input = dynamicDowncast<HTMLInputElement>(nodeRespondingToClickEvents))
         textInteractionPositionInformation(*this, *input, request, info);
+#endif
+
+#if ENABLE(PDF_PLUGIN)
+    if (pluginView) {
+        if (auto [url, bounds] = pluginView->linkURLAndBoundsAtPoint(request.point); !url.isEmpty()) {
+            info.isLink = true;
+            info.url = WTFMove(url);
+            info.bounds = enclosingIntRect(bounds);
+        }
+        info.isInPlugin = true;
+    }
 #endif
 
     return info;

@@ -63,6 +63,7 @@ struct WebKit::InteractionInformationAtPosition {
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
     bool isSpatialImage;
 #endif
+    bool isInPlugin;
     bool needsPointerTouchCompatibilityQuirk;
     WebCore::FloatPoint adjustedPointForNodeRespondingToClickEvents;
     URL url;

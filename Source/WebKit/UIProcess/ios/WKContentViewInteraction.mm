@@ -9566,6 +9566,9 @@ static String fallbackLabelTextForUnlabeledInputFieldInZoomedFormControls(WebCor
 
 - (void)actionSheetAssistant:(WKActionSheetAssistant *)assistant performAction:(WebKit::SheetAction)action
 {
+    if (action == WebKit::SheetAction::Copy && [self _tryToCopyLinkURLFromPlugin])
+        return;
+
     _page->performActionOnElement((uint32_t)action);
 }
 
@@ -9626,6 +9629,21 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     }
 
     return NO;
+}
+
+- (BOOL)_tryToCopyLinkURLFromPlugin
+{
+    if (!_positionInformation.isLink || !_positionInformation.isInPlugin)
+        return NO;
+
+    RetainPtr urlToCopy = (NSURL *)_positionInformation.url;
+    if (!urlToCopy)
+        return NO;
+
+    [UIPasteboard _performAsDataOwner:[_webView _effectiveDataOwner:self._dataOwnerForCopy] block:^{
+        UIPasteboard.generalPasteboard.URL = urlToCopy.get();
+    }];
+    return YES;
 }
 
 // FIXME: Likely we can remove this special case for watchOS.

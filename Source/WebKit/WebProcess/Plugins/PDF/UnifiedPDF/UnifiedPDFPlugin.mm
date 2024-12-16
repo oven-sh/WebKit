@@ -3894,22 +3894,39 @@ void UnifiedPDFPlugin::setDisplayModeAndUpdateLayout(PDFDocumentLayout::DisplayM
 
 #if PLATFORM(IOS_FAMILY)
 
-std::optional<FloatRect> UnifiedPDFPlugin::highlightRectForTapAtPoint(FloatPoint pointInRootView) const
+std::pair<URL, FloatRect> UnifiedPDFPlugin::linkURLAndBoundsAtPoint(FloatPoint pointInRootView) const
 {
     RetainPtr annotation = annotationForRootViewPoint(roundedIntPoint(pointInRootView));
     if (!annotation)
-        return std::nullopt;
+        return { };
 
     if (!annotationIsLinkWithDestination(annotation.get()))
+        return { };
+
+    return { [annotation URL], pageToRootView([annotation bounds], [annotation page]) };
+}
+
+std::optional<FloatRect> UnifiedPDFPlugin::highlightRectForTapAtPoint(FloatPoint pointInRootView) const
+{
+    // FIXME: We only support tapping on links at the moment. In the future, we might want to
+    // support more types of annotations.
+    auto [url, rect] = linkURLAndBoundsAtPoint(pointInRootView);
+    if (rect.isEmpty())
         return std::nullopt;
 
-    return { pageToRootView([annotation bounds], [annotation page]) };
+    return rect;
 }
 
 void UnifiedPDFPlugin::handleSyntheticClick(PlatformMouseEvent&& event)
 {
 #if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
     auto pointInRootView = event.position();
+    if (RetainPtr annotation = annotationForRootViewPoint(pointInRootView)) {
+        if (annotationIsLinkWithDestination(annotation.get()))
+            followLinkAnnotation(annotation.get(), { WTFMove(event) });
+        return;
+    }
+
     RetainPtr selection = m_currentSelection;
     if (selection && event.shiftKey()) {
         auto [page, pointInPage] = rootViewToPage(pointInRootView);
@@ -3927,12 +3944,6 @@ void UnifiedPDFPlugin::handleSyntheticClick(PlatformMouseEvent&& event)
             return;
 
         setCurrentSelection(selectionBetweenPoints(startPointInPage, startPage.get(), endPointInPage, endPage.get()));
-        return;
-    }
-
-    if (RetainPtr annotation = annotationForRootViewPoint(pointInRootView)) {
-        if (annotationIsLinkWithDestination(annotation.get()))
-            followLinkAnnotation(annotation.get(), { WTFMove(event) });
         return;
     }
 #else
