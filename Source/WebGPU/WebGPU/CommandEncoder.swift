@@ -57,6 +57,10 @@ public func CommandEncoder_copyTextureToTexture_thunk(commandEncoder: WebGPU.Com
     commandEncoder.copyTextureToTexture(source: source, destination: destination, copySize: copySize)
 }
 
+@_expose(Cxx)
+public func CommandEncoder_copyBufferToBuffer_thunk(commandEncoder: WebGPU.CommandEncoder, source: WebGPU.Buffer, sourceOffset: UInt64, destination: WebGPU.Buffer, destinationOffset: UInt64, size: UInt64) {
+    commandEncoder.copyBufferToBuffer(source: source, sourceOffset: sourceOffset, destination: destination, destinationOffset: destinationOffset, size: size)
+}
 extension WebGPU.CommandEncoder {
     static func hasValidDimensions(dimension: WGPUTextureDimension, width: UInt, height: UInt, depth: UInt) -> Bool {
         switch (dimension.rawValue) {
@@ -72,6 +76,32 @@ extension WebGPU.CommandEncoder {
         return true
     }
 
+    public func copyBufferToBuffer(source: WebGPU.Buffer, sourceOffset: UInt64, destination: WebGPU.Buffer, destinationOffset: UInt64, size: UInt64) {
+        // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-copybuffertobuffer
+        guard prepareTheEncoderState() else {
+            self.generateInvalidEncoderStateError()
+            return
+        }
+        let error = self.errorValidatingCopyBufferToBuffer(source, sourceOffset, destination, destinationOffset, size)
+        guard error != nil else {
+            self.makeInvalid(error)
+            return
+        }
+
+        // FIXME: rdar://138042799 remove default argument.
+        source.setCommandEncoder(self, false)
+        destination.setCommandEncoder(self, false)
+        destination.indirectBufferInvalidated()
+        guard size != 0, !source.isDestroyed() && !destination.isDestroyed() else {
+            return
+        }
+
+        guard let blitCommandEncoder = ensureBlitCommandEncoder() else {
+            return
+        }
+        blitCommandEncoder.copy(from: source.buffer(), sourceOffset: Int(sourceOffset), to: destination.buffer(), destinationOffset: Int(destinationOffset), size: Int(size))
+    }
+    
     public func copyTextureToBuffer(source: WGPUImageCopyTexture, destination: WGPUImageCopyBuffer, copySize: WGPUExtent3D) {
         guard source.nextInChain == nil && destination.nextInChain == nil && destination.layout.nextInChain == nil else {
             return
@@ -81,7 +111,7 @@ extension WebGPU.CommandEncoder {
 
         guard prepareTheEncoderState() else {
             self.generateInvalidEncoderStateError()
-            return;
+            return
         }
 
         let sourceTexture = WebGPU.fromAPI(source.texture);
@@ -664,7 +694,7 @@ extension WebGPU.CommandEncoder {
             let initialSize = buffer.initialSize()
             let (subtractionResult, didOverflow) = initialSize.subtractingReportingOverflow(offset)
             if didOverflow {
-                self.device().generateAValidationError(
+                self.m_device.ptr().generateAValidationError(
                     "CommandEncoder::clearBuffer(): offset > buffer.size")
                 return
             }
