@@ -1783,6 +1783,11 @@ auto UnifiedPDFPlugin::pdfElementTypesForPluginPoint(const IntPoint& point) cons
     RetainPtr page = m_documentLayout.pageAtIndex(pageIndex);
     auto pointInPDFPageSpace = convertDown(CoordinateSpace::PDFDocumentLayout, CoordinateSpace::PDFPage, pointInDocumentSpace, pageIndex);
 
+    return pdfElementTypesForPagePoint(roundedIntPoint(pointInPDFPageSpace), page.get());
+}
+
+auto UnifiedPDFPlugin::pdfElementTypesForPagePoint(const IntPoint& pointInPDFPageSpace, PDFPage *page) const -> PDFElementTypes
+{
     PDFElementTypes pdfElementTypes { PDFElementType::Page };
 
 #if HAVE(PDFPAGE_AREA_OF_INTEREST_AT_POINT)
@@ -1837,7 +1842,7 @@ auto UnifiedPDFPlugin::pdfElementTypesForPluginPoint(const IntPoint& point) cons
         }
     }
 
-    LOG_WITH_STREAM(PDF, stream << "UnifiedPDFPlugin::pdfElementTypesForPluginPoint " << point << " document point " << pointInDocumentSpace << " found page " << pageIndex << " point in page " << pointInPDFPageSpace << " - elements " << pdfElementTypes);
+    LOG_WITH_STREAM(PDF, stream << "UnifiedPDFPlugin::pdfElementTypesForPage " << pointInPDFPageSpace << " - elements " << pdfElementTypes);
 
     if (!isTaggedPDF())
         return pdfElementTypes;
@@ -3974,7 +3979,7 @@ static bool isEmpty(PDFSelection *selection)
     return !selection.pages.count;
 }
 
-SelectionWasFlipped UnifiedPDFPlugin::moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint extentEndpoint)
+SelectionWasFlipped UnifiedPDFPlugin::moveSelectionEndpoint(FloatPoint pointInRootView, SelectionEndpoint extentEndpoint)
 {
     auto flipped = SelectionWasFlipped::No;
 #if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
@@ -4055,7 +4060,7 @@ PDFSelection *UnifiedPDFPlugin::selectionAtPoint(FloatPoint pointInPage, PDFPage
 
 #endif // HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
 
-SelectionEndpoint UnifiedPDFPlugin::extendInitialSelection(WebCore::FloatPoint pointInRootView, TextGranularity granularity)
+SelectionEndpoint UnifiedPDFPlugin::extendInitialSelection(FloatPoint pointInRootView, TextGranularity granularity)
 {
 #if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
     auto [page, pointInPage] = rootViewToPage(pointInRootView);
@@ -4189,6 +4194,28 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
     }
 
     return true;
+}
+
+CursorContext UnifiedPDFPlugin::cursorContext(FloatPoint pointInRootView) const
+{
+    CursorContext context;
+#if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
+    auto [page, pointInPage] = rootViewToPage(pointInRootView);
+    if (!page)
+        return context;
+
+    auto elementTypes = pdfElementTypesForPagePoint(roundedIntPoint(pointInPage), page.get());
+    if (toWebCoreCursorType(elementTypes) == Cursor::Type::IBeam)
+        context.cursor = Cursor::fromType(Cursor::Type::IBeam);
+
+    RetainPtr lineUnderCursor = selectionAtPoint(pointInPage, page.get(), TextGranularity::LineGranularity);
+    auto pageRectForLine = FloatRect { [lineUnderCursor boundsForPage:page.get()] };
+    if (pageRectForLine.contains(pointInPage))
+        context.lineCaretExtent = pageToRootView(pageRectForLine, page.get());
+#else
+    UNUSED_PARAM(pointInRootView);
+#endif
+    return context;
 }
 
 #endif // PLATFORM(IOS_FAMILY)

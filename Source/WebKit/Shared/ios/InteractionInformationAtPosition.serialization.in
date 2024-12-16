@@ -59,9 +59,7 @@ struct WebKit::InteractionInformationAtPosition {
     bool preventTextInteraction;
 #endif
     bool elementContainsImageOverlay;
-    bool shouldNotUseIBeamInEditableContent;
     bool isImageOverlayText;
-    bool isVerticalWritingMode;
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
     bool isSpatialImage;
 #endif
@@ -80,10 +78,7 @@ struct WebKit::InteractionInformationAtPosition {
     String textBefore;
     String textAfter;
 
-    float caretLength;
-    WebCore::FloatRect lineCaretExtent;
-
-    std::optional<WebCore::Cursor> cursor;
+    WebKit::CursorContext cursorContext;
 
     WebCore::TextIndicatorData linkIndicator;
 #if ENABLE(DATA_DETECTION)

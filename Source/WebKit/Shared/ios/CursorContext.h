@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,45 +23,22 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#import "config.h"
-#import "InteractionInformationRequest.h"
-
-
-namespace WebKit {
+#pragma once
 
 #if PLATFORM(IOS_FAMILY)
 
-bool InteractionInformationRequest::isValidForRequest(const InteractionInformationRequest& other, int radius) const
-{
-    if (other.includeSnapshot && !includeSnapshot)
-        return false;
+#include <WebCore/Cursor.h>
+#include <WebCore/FloatRect.h>
 
-    if (other.includeLinkIndicator && !includeLinkIndicator)
-        return false;
+namespace WebKit {
 
-    if (other.includeCursorContext && !includeCursorContext)
-        return false;
+struct CursorContext {
+    WebCore::FloatRect lineCaretExtent;
+    std::optional<WebCore::Cursor> cursor;
+    bool isVerticalWritingMode { false };
+    bool shouldNotUseIBeamInEditableContent { false };
+};
 
-    if (other.includeHasDoubleClickHandler && !includeHasDoubleClickHandler)
-        return false;
-
-    if (other.includeImageData && !includeImageData)
-        return false;
-
-    if (other.gatherAnimations && !gatherAnimations)
-        return false;
-
-    if (other.linkIndicatorShouldHaveLegacyMargins != linkIndicatorShouldHaveLegacyMargins)
-        return false;
-
-    return (other.point - point).diagonalLengthSquared() <= radius * radius;
-}
-    
-bool InteractionInformationRequest::isApproximatelyValidForRequest(const InteractionInformationRequest& other, int radius) const
-{
-    return isValidForRequest(other, radius);
-}
+} // namespace WebKit
 
 #endif // PLATFORM(IOS_FAMILY)
-
-}

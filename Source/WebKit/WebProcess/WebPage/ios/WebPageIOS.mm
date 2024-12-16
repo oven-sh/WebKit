@@ -3590,29 +3590,36 @@ static bool canForceCaretForPosition(const VisiblePosition& position)
     return renderer->isRenderText() && node->canStartSelection();
 }
 
-static void populateCaretContext(const HitTestResult& hitTestResult, const InteractionInformationRequest& request, InteractionInformationAtPosition& info)
+static CursorContext cursorContext(const HitTestResult& hitTestResult, const InteractionInformationRequest& request)
 {
+    CursorContext context;
     RefPtr frame = hitTestResult.innerNodeFrame();
     if (!frame)
-        return;
+        return context;
+
+    // FIXME: Do we really need to set the cursor here if `includeCursorContext` is not set?
+    context.cursor = frame->eventHandler().selectCursor(hitTestResult, false);
+
+    if (!request.includeCursorContext)
+        return context;
 
     RefPtr view = frame->view();
     if (!view)
-        return;
+        return context;
 
     auto node = hitTestResult.innerNode();
     if (!node)
-        return;
+        return context;
 
     auto* renderer = node->renderer();
     if (!renderer)
-        return;
+        return context;
 
     while (renderer && !is<RenderBlockFlow>(*renderer))
         renderer = renderer->parent();
 
     if (!renderer)
-        return;
+        return context;
 
     // FIXME: We should be able to retrieve this geometry information without
     // forcing the text to fall out of Simple Line Layout.
@@ -3624,9 +3631,8 @@ static void populateCaretContext(const HitTestResult& hitTestResult, const Inter
     if (isEditable)
         lineRect.setWidth(blockFlow.contentWidth());
 
-    info.isVerticalWritingMode = !renderer->isHorizontalWritingMode();
-    info.lineCaretExtent = view->contentsToRootView(lineRect);
-    info.caretLength = info.isVerticalWritingMode ? info.lineCaretExtent.width() : info.lineCaretExtent.height();
+    context.isVerticalWritingMode = !renderer->isHorizontalWritingMode();
+    context.lineCaretExtent = view->contentsToRootView(lineRect);
 
     auto cursorTypeIs = [](const auto& maybeCursor, auto type) {
         return maybeCursor.transform([type](const auto& cursor) {
@@ -3634,18 +3640,17 @@ static void populateCaretContext(const HitTestResult& hitTestResult, const Inter
         }).value_or(false);
     };
 
-    bool lineContainsRequestPoint = info.lineCaretExtent.contains(request.point);
+    bool lineContainsRequestPoint = context.lineCaretExtent.contains(request.point);
     // Force an I-beam cursor if the page didn't request a hand, and we're inside the bounds of the line.
-    if (lineContainsRequestPoint && !cursorTypeIs(info.cursor, Cursor::Type::Hand) && canForceCaretForPosition(position))
-        info.cursor = Cursor::fromType(Cursor::Type::IBeam);
+    if (lineContainsRequestPoint && !cursorTypeIs(context.cursor, Cursor::Type::Hand) && canForceCaretForPosition(position))
+        context.cursor = Cursor::fromType(Cursor::Type::IBeam);
 
-    if (!lineContainsRequestPoint && cursorTypeIs(info.cursor, Cursor::Type::IBeam)) {
+    if (!lineContainsRequestPoint && cursorTypeIs(context.cursor, Cursor::Type::IBeam)) {
         auto approximateLineRectInContentCoordinates = renderer->absoluteBoundingBoxRect();
         approximateLineRectInContentCoordinates.setHeight(renderer->style().computedLineHeight());
-        info.lineCaretExtent = view->contentsToRootView(approximateLineRectInContentCoordinates);
-        if (!info.lineCaretExtent.contains(request.point) || !isEditable)
-            info.lineCaretExtent.setY(request.point.y() - info.lineCaretExtent.height() / 2);
-        info.caretLength = info.isVerticalWritingMode ? info.lineCaretExtent.width() : info.lineCaretExtent.height();
+        context.lineCaretExtent = view->contentsToRootView(approximateLineRectInContentCoordinates);
+        if (!context.lineCaretExtent.contains(request.point) || !isEditable)
+            context.lineCaretExtent.setY(request.point.y() - context.lineCaretExtent.height() / 2);
     }
 
     auto nodeShouldNotUseIBeam = ^(Node* node) {
@@ -3658,7 +3663,8 @@ static void populateCaretContext(const HitTestResult& hitTestResult, const Inter
     };
 
     const auto& deepPosition = position.deepEquivalent();
-    info.shouldNotUseIBeamInEditableContent = nodeShouldNotUseIBeam(node) || nodeShouldNotUseIBeam(deepPosition.computeNodeBeforePosition()) || nodeShouldNotUseIBeam(deepPosition.computeNodeAfterPosition());
+    context.shouldNotUseIBeamInEditableContent = nodeShouldNotUseIBeam(node) || nodeShouldNotUseIBeam(deepPosition.computeNodeBeforePosition()) || nodeShouldNotUseIBeam(deepPosition.computeNodeAfterPosition());
+    return context;
 }
 
 static void animationPositionInformation(WebPage& page, const InteractionInformationRequest& request, const HitTestResult& hitTestResult, InteractionInformationAtPosition& info)
@@ -3720,11 +3726,16 @@ InteractionInformationAtPosition WebPage::positionInformation(const InteractionI
 
     auto& eventHandler = localMainFrame->eventHandler();
     auto hitTestResult = eventHandler.hitTestResultAtPoint(request.point, hitTestRequestTypes);
-    if (auto* hitFrame = hitTestResult.innerNodeFrame()) {
-        info.cursor = hitFrame->eventHandler().selectCursor(hitTestResult, false);
-        if (request.includeCaretContext)
-            populateCaretContext(hitTestResult, request, info);
-    }
+
+    info.cursorContext = [&] {
+        if (request.includeCursorContext) {
+#if ENABLE(PDF_PLUGIN)
+            if (RefPtr pluginView = pluginViewForFrame(hitTestResult.innerNodeFrame()))
+                return pluginView->cursorContext(request.point);
+#endif
+        }
+        return cursorContext(hitTestResult, request);
+    }();
 
     if (m_focusedElement)
         focusedElementPositionInformation(*this, *m_focusedElement, request, info);

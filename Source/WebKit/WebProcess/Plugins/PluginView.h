@@ -27,6 +27,7 @@
 
 #if ENABLE(PDF_PLUGIN)
 
+#include "CursorContext.h"
 #include "PDFPluginIdentifier.h"
 #include "WebFoundTextRange.h"
 #include <WebCore/FindOptions.h>
@@ -103,6 +104,7 @@ public:
     void clearSelection();
     SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint);
     SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
+    CursorContext cursorContext(WebCore::FloatPoint pointInRootView) const;
 #endif
 
     bool populateEditorStateIfNeeded(EditorState&) const;

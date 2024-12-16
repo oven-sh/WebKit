@@ -11762,7 +11762,7 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
 {
     WebKit::InteractionInformationRequest interactionInformationRequest;
     interactionInformationRequest.point = WebCore::roundedIntPoint(request.location);
-    interactionInformationRequest.includeCaretContext = true;
+    interactionInformationRequest.includeCursorContext = true;
     interactionInformationRequest.includeHasDoubleClickHandler = false;
 
     if ([self _currentPositionInformationIsValidForRequest:interactionInformationRequest]) {
@@ -11777,7 +11777,7 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
     // WebKit) may have queried position information at a totally different location, for unrelated
     // reasons. However, this seems to work well in practice, since pointer updates are very frequent,
     // so any invalid state would only persist for a single frame.
-    if (self.webView._editable && !_positionInformation.shouldNotUseIBeamInEditableContent) {
+    if (self.webView._editable && !_positionInformation.cursorContext.shouldNotUseIBeamInEditableContent) {
         auto lastRegionRect = _lastPointerRegion ? [_lastPointerRegion rect] : self.bounds;
         _lastPointerRegion = [UIPointerRegion regionWithRect:lastRegionRect identifier:editablePointerRegionIdentifier];
     }
@@ -11801,15 +11801,15 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
 
 - (UIPointerRegion *)pointerRegionForPositionInformation:(const WebKit::InteractionInformationAtPosition&)interactionInformation point:(CGPoint)location
 {
-    WebCore::FloatRect expandedLineRect = enclosingIntRect(interactionInformation.lineCaretExtent);
+    WebCore::FloatRect expandedLineRect = enclosingIntRect(interactionInformation.cursorContext.lineCaretExtent);
 
     // Pad lines of text in order to avoid switching back to the dot cursor between lines.
     // This matches the value that UIKit uses.
     // FIXME: Should this account for vertical writing mode?
     expandedLineRect.inflateY(10);
 
-    if (interactionInformation.cursor) {
-        WebCore::Cursor::Type cursorType = interactionInformation.cursor->type();
+    if (auto cursor = interactionInformation.cursorContext.cursor) {
+        auto cursorType = cursor->type();
         if (cursorType == WebCore::Cursor::Type::Hand)
             return [UIPointerRegion regionWithRect:interactionInformation.bounds identifier:pointerRegionIdentifier];
 
@@ -11830,11 +11830,13 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
 {
     double scaleFactor = self._contentZoomScale;
 
+    auto lineCaretExtent = _positionInformation.cursorContext.lineCaretExtent;
     UIPointerStyle *(^iBeamCursor)(void) = ^{
-        float beamLength = _positionInformation.caretLength * scaleFactor;
-        auto axisOrientation = _positionInformation.isVerticalWritingMode ? UIAxisHorizontal : UIAxisVertical;
-        auto iBeamConstraintAxes = _positionInformation.isVerticalWritingMode ? UIAxisHorizontal : UIAxisVertical;
-        auto regionLengthInBlockAxis = _positionInformation.isVerticalWritingMode ? CGRectGetWidth(region.rect) : CGRectGetHeight(region.rect);
+        bool isVertical = _positionInformation.cursorContext.isVerticalWritingMode;
+        float beamLength = (isVertical ? lineCaretExtent.width() : lineCaretExtent.height()) * scaleFactor;
+        auto axisOrientation = isVertical ? UIAxisHorizontal : UIAxisVertical;
+        auto iBeamConstraintAxes = isVertical ? UIAxisHorizontal : UIAxisVertical;
+        auto regionLengthInBlockAxis = isVertical ? CGRectGetWidth(region.rect) : CGRectGetHeight(region.rect);
 
         // If the I-beam is so large that the magnetism is hard to fight, we should not apply any magnetism.
         static constexpr auto maximumBeamSnappingLength = 100;
@@ -11849,18 +11851,17 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
     };
 
     if (self.webView._editable) {
-        if (_positionInformation.shouldNotUseIBeamInEditableContent)
+        if (_positionInformation.cursorContext.shouldNotUseIBeamInEditableContent)
             return [UIPointerStyle systemPointerStyle];
         return iBeamCursor();
     }
 
-    if (_positionInformation.cursor && [region.identifier isEqual:pointerRegionIdentifier]) {
-        WebCore::Cursor::Type cursorType = _positionInformation.cursor->type();
-
+    if (auto cursor = _positionInformation.cursorContext.cursor; cursor && [region.identifier isEqual:pointerRegionIdentifier]) {
+        auto cursorType = cursor->type();
         if (cursorType == WebCore::Cursor::Type::Hand)
             return [UIPointerStyle systemPointerStyle];
 
-        if (cursorType == WebCore::Cursor::Type::IBeam && _positionInformation.lineCaretExtent.contains(_positionInformation.request.point))
+        if (cursorType == WebCore::Cursor::Type::IBeam && lineCaretExtent.contains(_positionInformation.request.point))
             return iBeamCursor();
     }
 

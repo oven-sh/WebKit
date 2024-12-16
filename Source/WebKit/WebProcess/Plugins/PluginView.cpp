@@ -1154,6 +1154,11 @@ void PluginView::handleSyntheticClick(PlatformMouseEvent&& event)
     protectedPlugin()->handleSyntheticClick(WTFMove(event));
 }
 
+CursorContext PluginView::cursorContext(FloatPoint pointInRootView) const
+{
+    return protectedPlugin()->cursorContext(pointInRootView);
+}
+
 #endif // PLATFORM(IOS_FAMILY)
 
 bool PluginView::populateEditorStateIfNeeded(EditorState& state) const
