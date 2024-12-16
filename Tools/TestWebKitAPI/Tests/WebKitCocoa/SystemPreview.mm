@@ -28,7 +28,7 @@
 #if (PLATFORM(IOS) || PLATFORM(VISION)) && USE(SYSTEM_PREVIEW)
 
 #import "TestUIDelegate.h"
-#import "TestWKWebView.h"
+#import "TestWKWebViewController.h"
 #import "Utilities.h"
 #import "WKWebViewConfigurationExtras.h"
 #import <WebKit/WKWebViewConfigurationPrivate.h>
@@ -121,19 +121,14 @@ TEST(WebKit, SystemPreviewLoad)
     Util::run(&wasTriggered);
 }
 
-// FIXME when rdar://141378456 is resolved.
-#if PLATFORM(IOS)
-TEST(WebKit, DISABLED_SystemPreviewFail)
-#else
 TEST(WebKit, SystemPreviewFail)
-#endif
 {
-    auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
 
-    auto viewController = adoptNS([[UIViewController alloc] init]);
-    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
-    auto uiDelegate = adoptNS([[TestSystemPreviewUIDelegate alloc] init]);
+    RetainPtr viewController = adoptNS([[TestWKWebViewController alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
+    RetainPtr webView = [viewController webView];
+    RetainPtr uiDelegate = adoptNS([[TestSystemPreviewUIDelegate alloc] init]);
     uiDelegate.get().viewController = viewController.get();
     [webView setUIDelegate:uiDelegate.get()];
     [viewController setView:webView.get()];
@@ -190,19 +185,14 @@ TEST(WebKit, SystemPreviewBlobRevokedImmediately)
     Util::run(&wasTriggered);
 }
 
-// FIXME when rdar://141378456 is resolved.
-#if PLATFORM(IOS)
-TEST(WebKit, DISABLED_SystemPreviewBlob)
-#else
 TEST(WebKit, SystemPreviewBlob)
-#endif
 {
-    auto *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
     [configuration _setSystemPreviewEnabled:YES];
 
-    auto viewController = adoptNS([[UIViewController alloc] init]);
-    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
-    auto uiDelegate = adoptNS([[TestSystemPreviewUIDelegate alloc] init]);
+    RetainPtr viewController = adoptNS([[TestWKWebViewController alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
+    RetainPtr webView = [viewController webView];
+    RetainPtr uiDelegate = adoptNS([[TestSystemPreviewUIDelegate alloc] init]);
     uiDelegate.get().viewController = viewController.get();
     [webView setUIDelegate:uiDelegate.get()];
     [viewController setView:webView.get()];
