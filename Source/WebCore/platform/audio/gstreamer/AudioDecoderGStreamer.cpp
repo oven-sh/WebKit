@@ -83,24 +83,14 @@ void GStreamerAudioDecoder::create(const String& codecName, const Config& config
         GST_DEBUG_CATEGORY_INIT(webkit_audio_decoder_debug, "webkitaudiodecoder", 0, "WebKit WebCodecs Audio Decoder");
     });
 
-    GRefPtr<GstElement> element;
-    if (codecName.startsWith("pcm-"_s)) {
-        auto components = codecName.split('-');
-        if (components.size() != 2) {
-            GST_WARNING("Invalid LPCM codec string: %s", codecName.utf8().data());
-            callback(makeUnexpected(makeString("Invalid LPCM codec string: "_s, codecName)));
-            return;
-        }
-    } else {
-        auto& scanner = GStreamerRegistryScanner::singleton();
-        auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName);
-        if (!lookupResult) {
-            GST_WARNING("No decoder found for codec %s", codecName.utf8().data());
-            callback(makeUnexpected(makeString("No decoder found for codec "_s, codecName)));
-            return;
-        }
-        element = gst_element_factory_create(lookupResult.factory.get(), nullptr);
+    auto& scanner = GStreamerRegistryScanner::singleton();
+    auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName);
+    if (!lookupResult) {
+        GST_WARNING("No decoder found for codec %s", codecName.utf8().data());
+        callback(makeUnexpected(makeString("No decoder found for codec "_s, codecName)));
+        return;
     }
+    GRefPtr<GstElement> element = gst_element_factory_create(lookupResult.factory.get(), nullptr);
 
     Ref decoder = adoptRef(*new GStreamerAudioDecoder(codecName, config, WTFMove(outputCallback), WTFMove(element)));
     Ref internalDecoder = decoder->m_internalDecoder;
@@ -215,26 +205,26 @@ GStreamerInternalAudioDecoder::GStreamerInternalAudioDecoder(const String& codec
         m_inputCaps = adoptGRef(gst_caps_new_simple("audio/x-raw", "format", G_TYPE_STRING, gst_audio_format_to_string(gstPcmFormat),
             "rate", G_TYPE_INT, config.sampleRate, "channels", G_TYPE_INT, config.numberOfChannels,
             "layout", G_TYPE_STRING, "interleaved", nullptr));
-        parser = "rawaudioparse";
     } else
         return;
 
     configureAudioDecoderForHarnessing(element);
 
-    GRefPtr<GstElement> harnessedElement;
-    bool isParserRequired = false;
-    if (element) {
-        auto* factory = gst_element_get_factory(element.get());
-        isParserRequired = !gst_element_factory_can_sink_all_caps(factory, m_inputCaps.get());
-    }
-    if (!g_strcmp0(parser, "rawaudioparse")) {
-        harnessedElement = makeGStreamerElement(parser, nullptr);
-        if (!harnessedElement) {
-            GST_WARNING_OBJECT(element.get(), "Required parser %s not found", parser);
-            m_inputCaps.clear();
-            return;
-        }
-    } else if (parser && isParserRequired) {
+    auto factory = gst_element_get_factory(element.get());
+    bool isParserRequired = !gst_element_factory_can_sink_all_caps(factory, m_inputCaps.get());
+
+    static Atomic<uint64_t> counter = 0;
+    auto binName = makeString("audio-decoder-"_s, span(GST_OBJECT_NAME(element.get())), '-', counter.exchangeAdd(1));
+
+    GRefPtr<GstElement> harnessedElement = gst_bin_new(binName.ascii().data());
+    auto audioconvert = gst_element_factory_make("audioconvert", nullptr);
+    auto outputCapsFilter = gst_element_factory_make("capsfilter", nullptr);
+    auto outputCaps = adoptGRef(gst_caps_new_simple("audio/x-raw", "format", G_TYPE_STRING, "F32LE", nullptr));
+    g_object_set(outputCapsFilter, "caps", outputCaps.get(), nullptr);
+    gst_bin_add_many(GST_BIN_CAST(harnessedElement.get()), audioconvert, outputCapsFilter, element.get(), nullptr);
+
+    GRefPtr<GstElement> head = element;
+    if (parser && isParserRequired) {
         // The decoder won't accept the input caps, so put a parser in front.
         auto* parserElement = makeGStreamerElement(parser, nullptr);
         if (!parserElement) {
@@ -242,15 +232,19 @@ GStreamerInternalAudioDecoder::GStreamerInternalAudioDecoder(const String& codec
             m_inputCaps.clear();
             return;
         }
-        harnessedElement = gst_bin_new(nullptr);
-        gst_bin_add_many(GST_BIN_CAST(harnessedElement.get()), parserElement, element.get(), nullptr);
+
+        gst_bin_add(GST_BIN_CAST(harnessedElement.get()), parserElement);
         gst_element_link(parserElement, element.get());
-        auto sinkPad = adoptGRef(gst_element_get_static_pad(parserElement, "sink"));
-        gst_element_add_pad(harnessedElement.get(), gst_ghost_pad_new("sink", sinkPad.get()));
-        auto srcPad = adoptGRef(gst_element_get_static_pad(element.get(), "src"));
-        gst_element_add_pad(harnessedElement.get(), gst_ghost_pad_new("src", srcPad.get()));
-    } else
-        harnessedElement = WTFMove(element);
+        head = parserElement;
+    }
+
+    gst_element_link_many(head.get(), audioconvert, outputCapsFilter, nullptr);
+
+    auto pad = adoptGRef(gst_element_get_static_pad(head.get(), "sink"));
+    gst_element_add_pad(harnessedElement.get(), gst_ghost_pad_new("sink", pad.get()));
+
+    pad = adoptGRef(gst_element_get_static_pad(outputCapsFilter, "src"));
+    gst_element_add_pad(harnessedElement.get(), gst_ghost_pad_new("src", pad.get()));
 
     m_harness = GStreamerElementHarness::create(WTFMove(harnessedElement), [weakThis = ThreadSafeWeakPtr { *this }, this](auto&, GRefPtr<GstSample>&& outputSample) {
         RefPtr protectedThis = weakThis.get();

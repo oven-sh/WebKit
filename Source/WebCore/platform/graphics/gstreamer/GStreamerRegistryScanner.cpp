@@ -619,6 +619,15 @@ void GStreamerRegistryScanner::initializeDecoders(const GStreamerRegistryScanner
         if (factories.hasElementForMediaType(ElementFactories::Type::VideoDecoder, "video/x-vp10"_s))
             m_decoderMimeTypeSet.add("video/webm"_s);
     }
+
+    // WebCodecs linear PCM codecs.
+    if (auto result = factories.hasElementForMediaType(ElementFactories::Type::AudioParser, "audio/x-raw"_s)) {
+        m_decoderCodecMap.add("pcm-u8"_s, result);
+        m_decoderCodecMap.add("pcm-s16"_s, result);
+        m_decoderCodecMap.add("pcm-s24"_s, result);
+        m_decoderCodecMap.add("pcm-f32"_s, result);
+        m_decoderCodecMap.add("pcm-s32"_s, result);
+    }
 }
 
 void GStreamerRegistryScanner::initializeEncoders(const GStreamerRegistryScanner::ElementFactories& factories)

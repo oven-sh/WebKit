@@ -136,11 +136,7 @@ GStreamerAudioEncoder::~GStreamerAudioEncoder()
 Ref<AudioEncoder::EncodePromise> GStreamerAudioEncoder::encode(RawFrame&& frame)
 {
     return invokeAsync(gstEncoderWorkQueue(), [frame = WTFMove(frame), encoder = m_internalEncoder]() mutable {
-        auto result = encoder->encode(WTFMove(frame));
-        if (encoder->isClosed())
-            return EncodePromise::createAndReject("Empty frame"_s);
-
-        if (!result)
+        if (!encoder->encode(WTFMove(frame)))
             return EncodePromise::createAndReject("Encoding failed"_s);
 
         encoder->harness()->processOutputSamples();
@@ -264,36 +260,56 @@ GStreamerInternalAudioEncoder::~GStreamerInternalAudioEncoder()
 String GStreamerInternalAudioEncoder::initialize(const String& codecName, const AudioEncoder::Config& config)
 {
     GST_DEBUG_OBJECT(m_harness->element(), "Initializing encoder for codec %s", codecName.ascii().data());
+
+    GUniquePtr<char> name(gst_element_get_name(m_encoder.get()));
+    auto nameView = StringView::fromLatin1(name.get());
     if (codecName.startsWith("mp4a"_s)) {
         const char* streamFormat = config.isAacADTS.value_or(false) ? "adts" : "raw";
         m_outputCaps = adoptGRef(gst_caps_new_simple("audio/mpeg", "mpegversion", G_TYPE_INT, 4, "stream-format", G_TYPE_STRING, streamFormat, nullptr));
         if (gstObjectHasProperty(m_encoder.get(), "bitrate") && config.bitRate && config.bitRate < std::numeric_limits<int>::max())
             g_object_set(m_encoder.get(), "bitrate", static_cast<int>(config.bitRate), nullptr);
-    } else if (codecName == "mp3"_s)
+    } else if (codecName == "mp3"_s) {
+        if (gstObjectHasProperty(m_encoder.get(), "cbr")) {
+            switch (config.bitRateMode) {
+            case BitrateMode::Constant:
+                g_object_set(m_encoder.get(), "cbr", TRUE, nullptr);
+                break;
+            case BitrateMode::Variable:
+                g_object_set(m_encoder.get(), "cbr", FALSE, nullptr);
+                break;
+            };
+        }
         m_outputCaps = adoptGRef(gst_caps_new_simple("audio/mpeg", "mpegversion", G_TYPE_INT, 1, "layer", G_TYPE_INT, 3, nullptr));
-    else if (codecName == "opus"_s) {
+    } else if (codecName == "opus"_s && nameView.startsWith("opusenc"_s)) {
+        if (config.bitRate && config.bitRate < std::numeric_limits<int>::max()) {
+            if (config.bitRate >= 4000 && config.bitRate <= 650000)
+                g_object_set(m_encoder.get(), "bitrate", static_cast<int>(config.bitRate), nullptr);
+            else
+                return makeString("Opus bitrate out of range: "_s, config.bitRate, "not in [4000, 650000]"_s);
+        }
+
+        if (config.numberOfChannels > 255)
+            return makeString("Too many audio channels requested from Opus config, the maximum allowed is 255."_s);
+
+        switch (config.bitRateMode) {
+        case BitrateMode::Constant:
+            gst_util_set_object_arg(G_OBJECT(m_encoder.get()), "bitrate-type", "cbr");
+            break;
+        case BitrateMode::Variable:
+            gst_util_set_object_arg(G_OBJECT(m_encoder.get()), "bitrate-type", "vbr");
+            break;
+        };
+
         if (auto parameters = config.opusConfig) {
-            GUniquePtr<char> name(gst_element_get_name(m_encoder.get()));
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-            if (LIKELY(g_str_has_prefix(name.get(), "opusenc"))) {
-                if (config.bitRate && config.bitRate < std::numeric_limits<int>::max()) {
-                    if (config.bitRate >= 4000 && config.bitRate <= 650000)
-                        g_object_set(m_encoder.get(), "bitrate", static_cast<int>(config.bitRate), nullptr);
-                    else
-                        return makeString("Opus bitrate out of range: "_s, config.bitRate, "not in [4000, 650000]"_s);
-                }
+            g_object_set(m_encoder.get(), "packet-loss-percentage", parameters->packetlossperc, "inband-fec", parameters->useinbandfec, "dtx", parameters->usedtx, nullptr);
 
-                g_object_set(m_encoder.get(), "packet-loss-percentage", parameters->packetlossperc, "inband-fec", parameters->useinbandfec, "dtx", parameters->usedtx, nullptr);
+            if (parameters->complexity)
+                g_object_set(m_encoder.get(), "complexity", static_cast<int>(*parameters->complexity), nullptr);
 
-                if (parameters->complexity)
-                    g_object_set(m_encoder.get(), "complexity", static_cast<int>(*parameters->complexity), nullptr);
-
-                // The frame-size property is expressed in milli-seconds, the value in parameters is
-                // expressed in micro-seconds.
-                auto frameSize = makeString(parameters->frameDuration / 1000);
-                gst_util_set_object_arg(G_OBJECT(m_encoder.get()), "frame-size", frameSize.ascii().data());
-            }
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            // The frame-size property is expressed in milli-seconds, the value in parameters is
+            // expressed in micro-seconds.
+            auto frameSize = makeString(parameters->frameDuration / 1000);
+            gst_util_set_object_arg(G_OBJECT(m_encoder.get()), "frame-size", frameSize.ascii().data());
         }
         int channelMappingFamily = config.numberOfChannels <= 2 ? 0 : 1;
         m_outputCaps = adoptGRef(gst_caps_new_simple("audio/x-opus", "channel-mapping-family", G_TYPE_INT, channelMappingFamily, nullptr));
@@ -304,11 +320,8 @@ String GStreamerInternalAudioEncoder::initialize(const String& codecName, const 
     else if (codecName == "flac"_s) {
         m_outputCaps = adoptGRef(gst_caps_new_empty_simple("audio/x-flac"));
         if (auto parameters = config.flacConfig) {
-            GUniquePtr<char> name(gst_element_get_name(m_encoder.get()));
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-            if (LIKELY(g_str_has_prefix(name.get(), "flacenc")))
+            if (nameView.startsWith("flacenc"_s))
                 g_object_set(m_encoder.get(), "blocksize", static_cast<unsigned>(parameters->blockSize), "quality", parameters->compressLevel, nullptr);
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
     } else if (codecName == "vorbis"_s) {
         m_outputCaps = adoptGRef(gst_caps_new_empty_simple("audio/x-vorbis"));
