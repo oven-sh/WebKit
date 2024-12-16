@@ -155,19 +155,19 @@ bool MediaRecorderPrivateWriterAVFObjC::allTracksAdded()
     return true;
 }
 
-MediaRecorderPrivateWriterAVFObjC::Result MediaRecorderPrivateWriterAVFObjC::muxFrame(const MediaSample& sample, uint8_t trackIndex)
+MediaRecorderPrivateWriterAVFObjC::Result MediaRecorderPrivateWriterAVFObjC::writeFrame(const MediaSample& sample)
 {
-    if (trackIndex == m_audioTrackIndex) {
+    if (sample.trackID() == m_audioTrackIndex) {
         if (![m_audioAssetWriterInput isReadyForMoreMediaData])
             return Result::NotReady;
 
         auto result = [m_audioAssetWriterInput appendSampleBuffer:downcast<MediaSampleAVFObjC>(sample).sampleBuffer()] ? Result::Success : Result::Failure;
         if (result != Result::Success)
-            RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::muxFrame audio failed with %ld", static_cast<long>([m_writer error].code));
+            RELEASE_LOG_ERROR(MediaStream, "MediaRecorderPMediaRecorderPrivateWriterAVFObjC::writeFrame audio failed with %ld", static_cast<long>([m_writer error].code));
         return result;
     }
 
-    ASSERT(trackIndex == m_videoTrackIndex);
+    ASSERT(sample.trackID() == m_videoTrackIndex);
     if (![m_videoAssetWriterInput isReadyForMoreMediaData])
         return Result::NotReady;
 

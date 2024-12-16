@@ -162,7 +162,7 @@ std::optional<uint8_t> MediaRecorderPrivateWriterWebM::addVideoTrack(CMFormatDes
     return m_delegate->addVideoTrack(dimensions.width, dimensions.height, mkvCodeIcForMediaVideoCodecId(codec));
 }
 
-MediaRecorderPrivateWriterWebM::Result MediaRecorderPrivateWriterWebM::muxFrame(const MediaSample& sample, uint8_t trackIndex)
+MediaRecorderPrivateWriterWebM::Result MediaRecorderPrivateWriterWebM::writeFrame(const MediaSample& sample)
 {
     RetainPtr sampleBuffer = downcast<MediaSampleAVFObjC>(sample).sampleBuffer();
     RetainPtr buffer = PAL::CMSampleBufferGetDataBuffer(sampleBuffer.get());
@@ -174,7 +174,7 @@ MediaRecorderPrivateWriterWebM::Result MediaRecorderPrivateWriterWebM::muxFrame(
 
     bool isKeyFrame = sample.flags() & MediaSample::IsSync;
 
-    return m_delegate->addFrame({ reinterpret_cast<const uint8_t*>(srcData), srcSize }, trackIndex, Seconds { sample.presentationTime().toDouble() }.nanosecondsAs<uint64_t>(), isKeyFrame) ? Result::Success : Result::Failure;
+    return m_delegate->addFrame({ reinterpret_cast<const uint8_t*>(srcData), srcSize }, sample.trackID(), Seconds { sample.presentationTime().toDouble() }.nanosecondsAs<uint64_t>(), isKeyFrame) ? Result::Success : Result::Failure;
 }
 
 void MediaRecorderPrivateWriterWebM::forceNewSegment(const MediaTime&)

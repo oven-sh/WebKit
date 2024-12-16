@@ -28,13 +28,11 @@
 
 #include <memory>
 #include <optional>
+#include <wtf/Deque.h>
 #include <wtf/Forward.h>
+#include <wtf/MediaTime.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeWeakPtr.h>
-
-namespace WTF {
-class MediaTime;
-}
 
 typedef const struct opaqueCMFormatDescription* CMFormatDescriptionRef;
 struct CGAffineTransform;
@@ -61,9 +59,16 @@ public:
     virtual std::optional<uint8_t> addVideoTrack(CMFormatDescriptionRef, const std::optional<CGAffineTransform>&) = 0;
     virtual bool allTracksAdded() = 0;
     enum class Result : uint8_t { Success, Failure, NotReady };
-    virtual Result muxFrame(const MediaSample&, uint8_t) = 0;
-    virtual void forceNewSegment(const WTF::MediaTime&) = 0;
-    virtual Ref<GenericPromise> close(const WTF::MediaTime&) = 0;
+    using WriterPromise = NativePromise<void, Result>;
+    Ref<WriterPromise> writeFrames(Deque<Ref<MediaSample>>&&, const MediaTime&);
+    Ref<GenericPromise> close();
+
+private:
+    virtual Result writeFrame(const MediaSample&) = 0;
+    virtual void forceNewSegment(const MediaTime&) = 0;
+    virtual Ref<GenericPromise> close(const MediaTime&) = 0;
+    Deque<Ref<MediaSample>> m_pendingFrames;
+    MediaTime m_lastEndTime { MediaTime::invalidTime() };
 };
 
 } // namespace WebCore

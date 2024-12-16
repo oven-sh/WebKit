@@ -46,7 +46,7 @@ private:
     std::optional<uint8_t> addAudioTrack(CMFormatDescriptionRef) final;
     std::optional<uint8_t> addVideoTrack(CMFormatDescriptionRef, const std::optional<CGAffineTransform>&) final;
     bool allTracksAdded() final { return true; }
-    Result muxFrame(const MediaSample&, uint8_t) final;
+    Result writeFrame(const MediaSample&) final;
     void forceNewSegment(const WTF::MediaTime&) final;
     Ref<GenericPromise> close(const WTF::MediaTime&) final;
 

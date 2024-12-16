@@ -116,9 +116,9 @@ private:
     void partiallyFlushEncodedQueues();
     Ref<GenericPromise> waitForMatchingAudio(const MediaTime&);
     using Result = MediaRecorderPrivateWriter::Result;
-    std::pair<Result, MediaTime> flushToEndSegment(const MediaTime&);
+    MediaTime flushToEndSegment(const MediaTime&);
     void flushAllEncodedQueues();
-    Result muxNextFrame();
+    void interleaveAndEnqueueNextFrame();
 
     void maybeStartWriter();
     bool hasMuxedDataSinceEndSegment() const;
@@ -169,6 +169,7 @@ private:
     RefPtr<VideoEncoder> m_videoEncoder WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     Deque<std::pair<Ref<VideoFrame>, MediaTime>> m_pendingVideoFrames WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     Deque<Ref<MediaSample>> m_encodedVideoFrames WTF_GUARDED_BY_CAPABILITY(queueSingleton());
+    Deque<Ref<MediaSample>> m_interleavedFrames WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     bool m_firstVideoFrameProcessed WTF_GUARDED_BY_CAPABILITY(queueSingleton()) { false };
     MediaTime m_lastEnqueuedRawVideoFrame WTF_GUARDED_BY_CAPABILITY(queueSingleton()) { MediaTime::negativeInfiniteTime() };
     MediaTime m_lastVideoKeyframeTime WTF_GUARDED_BY_CAPABILITY(queueSingleton());

@@ -47,6 +47,7 @@ String convertEnumerationToString(PlatformMediaError enumerationValue)
         MAKE_STATIC_STRING_IMPL("DecoderCreationError"),
         MAKE_STATIC_STRING_IMPL("NotSupportedError"),
         MAKE_STATIC_STRING_IMPL("NetworkError"),
+        MAKE_STATIC_STRING_IMPL("NotReady"),
     };
     static_assert(!static_cast<size_t>(PlatformMediaError::AppendError), "PlatformMediaError::AppendError is not 0 as expected");
     static_assert(static_cast<size_t>(PlatformMediaError::ClientDisconnected) == 1, "PlatformMediaError::ClientDisconnected is not 1 as expected");
@@ -60,6 +61,7 @@ String convertEnumerationToString(PlatformMediaError enumerationValue)
     static_assert(static_cast<size_t>(PlatformMediaError::DecoderCreationError) == 9, "PlatformMediaError::DecoderCreationError is not 9 as expected");
     static_assert(static_cast<size_t>(PlatformMediaError::NotSupportedError) == 10, "PlatformMediaError::NotSupportedError is not 10 as expected");
     static_assert(static_cast<size_t>(PlatformMediaError::NetworkError) == 11, "PlatformMediaError::NetworkError is not 11 as expected");
+    static_assert(static_cast<size_t>(PlatformMediaError::NotReady) == 12, "PlatformMediaError::NotReady is not 12 as expected");
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
