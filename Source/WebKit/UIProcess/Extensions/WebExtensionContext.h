@@ -519,6 +519,10 @@ public:
     bool inTestingMode() const;
 
 #if PLATFORM(COCOA)
+    void sendTestMessage(const String& message, id argument);
+#endif
+
+#if PLATFORM(COCOA)
     URL backgroundContentURL();
     WKWebView *backgroundWebView() const { return m_backgroundWebView.get(); }
     bool safeToLoadBackgroundContent() const { return m_safeToLoadBackgroundContent; }

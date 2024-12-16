@@ -831,12 +831,19 @@ static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> toImpl(WKWeb
 
 - (WKWebView *)_backgroundWebView
 {
-    return Ref { *_webExtensionContext }->backgroundWebView();
+    return self._protectedWebExtensionContext->backgroundWebView();
 }
 
 - (NSURL *)_backgroundContentURL
 {
-    return Ref { *_webExtensionContext }->backgroundContentURL();
+    return self._protectedWebExtensionContext->backgroundContentURL();
+}
+
+- (void)_sendTestMessage:(NSString *)message withArgument:(id)argument
+{
+    NSParameterAssert([message isKindOfClass:NSString.class]);
+
+    self._protectedWebExtensionContext->sendTestMessage(message, argument);
 }
 
 #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
@@ -862,6 +869,11 @@ static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> toImpl(WKWeb
 }
 
 - (WebKit::WebExtensionContext&)_webExtensionContext
+{
+    return *_webExtensionContext;
+}
+
+- (Ref<WebKit::WebExtensionContext>)_protectedWebExtensionContext
 {
     return *_webExtensionContext;
 }
@@ -1248,6 +1260,10 @@ static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> toImpl(WKWeb
 - (NSURL *)_backgroundContentURL
 {
     return nil;
+}
+
+- (void)_sendTestMessage:(NSString *)message withArgument:(id)argument
+{
 }
 
 - (nullable _WKWebExtensionSidebar *)sidebarForTab:(id<WKWebExtensionTab>)tab

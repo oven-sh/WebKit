@@ -223,6 +223,7 @@ private:
     void testEqual(bool result, String expected, String actual, String message, String sourceURL, unsigned lineNumber);
     void testMessage(String message, String sourceURL, unsigned lineNumber);
     void testYielded(String message, String sourceURL, unsigned lineNumber);
+    void testSentMessage(String message, String argument, String sourceURL, unsigned lineNumber);
     void testFinished(bool result, String message, String sourceURL, unsigned lineNumber);
 
     class HTTPCookieStoreObserver : public API::HTTPCookieStoreObserver {

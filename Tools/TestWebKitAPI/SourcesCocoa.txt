@@ -325,6 +325,7 @@ Tests/WebKitCocoa/WKWebExtensionAPIStorage.mm
 Tests/WebKitCocoa/WKWebExtensionAPIRuntime.mm
 Tests/WebKitCocoa/WKWebExtensionAPISidebar.mm
 Tests/WebKitCocoa/WKWebExtensionAPITabs.mm
+Tests/WebKitCocoa/WKWebExtensionAPITest.mm
 Tests/WebKitCocoa/WKWebExtensionAPIWebNavigation.mm
 Tests/WebKitCocoa/WKWebExtensionAPIWebRequest.mm
 Tests/WebKitCocoa/WKWebExtensionAPIWindows.mm

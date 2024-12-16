@@ -4955,6 +4955,20 @@ _WKWebExtensionStorageSQLiteStore *WebExtensionContext::storageForType(WebExtens
     return nil;
 }
 
+void WebExtensionContext::sendTestMessage(const String& message, id argument)
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    String argumentJSON = encodeJSONString(argument, JSONOptions::FragmentsAllowed);
+
+    constexpr auto eventType = WebExtensionEventListenerType::TestOnMessage;
+    wakeUpBackgroundContentIfNecessaryToFireEvents({ eventType }, [=, this, protectedThis = Ref { *this }] {
+        sendToProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argumentJSON));
+    });
+}
+
 } // namespace WebKit
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

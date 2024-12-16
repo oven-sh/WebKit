@@ -45,6 +45,8 @@
 
 @implementation TestWebExtensionManager {
     bool _done;
+    bool _receivedMessage;
+    NSMutableDictionary *_messages;
     NSMutableArray *_windows;
 }
 
@@ -208,6 +210,16 @@
     [_controller didFocusWindow:_defaultWindow];
 }
 
+- (void)sendTestMessage:(NSString *)message
+{
+    [self sendTestMessage:message withArgument:nil];
+}
+
+- (void)sendTestMessage:(NSString *)message withArgument:(id)argument
+{
+    [_context _sendTestMessage:message withArgument:argument];
+}
+
 - (void)load
 {
     NSError *error;
@@ -233,6 +245,32 @@
     });
 
     TestWebKitAPI::Util::run(&_done);
+}
+
+- (id)runUntilTestMessage:(NSString *)message
+{
+    id (^processMessage)(void) = ^id {
+        NSMutableArray *messagesArray = self->_messages[message];
+        if (!messagesArray.count)
+            return nil;
+
+        id argument = messagesArray.firstObject;
+        [messagesArray removeObjectAtIndex:0];
+
+        return argument;
+    };
+
+    if (id result = processMessage())
+        return result;
+
+    while (true) {
+        _receivedMessage = false;
+
+        TestWebKitAPI::Util::run(&_receivedMessage);
+
+        if (id result = processMessage())
+            return result;
+    }
 }
 
 - (void)loadAndRun
@@ -280,6 +318,22 @@
 {
     _done = true;
     _yieldMessage = [message copy] ?: @"";
+}
+
+- (void)_webExtensionController:(WKWebExtensionController *)controller receivedTestMessage:(NSString *)message withArgument:(id)argument andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
+{
+    _receivedMessage = true;
+
+    if (!_messages)
+        _messages = [NSMutableDictionary dictionary];
+
+    NSMutableArray *messagesArray = _messages[message];
+    if (!messagesArray) {
+        messagesArray = [NSMutableArray array];
+        _messages[message] = messagesArray;
+    }
+
+    [messagesArray addObject:argument ?: NSNull.null];
 }
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller recordTestFinishedWithResult:(BOOL)result message:(NSString *)message andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
