@@ -8361,6 +8361,14 @@
    },
    {
       "emails" : [
+         "yulun_wu@apple.com",
+         "yulunwu@chromium.org"
+      ],
+      "github" : "yulunwu2",
+      "name" : "Yulun Wu"
+   },
+   {
+      "emails" : [
          "yuqiang.xian@intel.com"
       ],
       "expertise" : "JavaScriptCore",
