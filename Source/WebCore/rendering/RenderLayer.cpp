@@ -2897,21 +2897,25 @@ LayoutSize RenderLayer::minimumSizeForResizing(float zoomFactor) const
 void RenderLayer::resize(const PlatformMouseEvent& evt, const LayoutSize& oldOffset)
 {
     // FIXME: This should be possible on generated content but is not right now.
-    if (!inResizeMode() || !canResize() || !renderer().element())
+    if (!inResizeMode() || !canResize())
+        return;
+
+    // FIXME: This should be possible on all elements but is not right now.
+    RefPtr styledElement = dynamicDowncast<StyledElement>(renderer().element());
+    if (!styledElement)
         return;
 
     // FIXME: The only case where renderer->element()->renderer() != renderer is with continuations. Do they matter here?
     // If they do it would still be better to deal with them explicitly.
-    Element* element = renderer().element();
-    auto* renderer = downcast<RenderBox>(element->renderer());
+    CheckedPtr renderer = downcast<RenderBox>(styledElement->renderer());
 
-    Document& document = element->document();
-    if (!document.frame()->eventHandler().mousePressed())
+    Ref document = styledElement->document();
+    if (!document->frame()->eventHandler().mousePressed())
         return;
 
     float zoomFactor = renderer->style().usedZoom();
 
-    auto absolutePoint = document.view()->windowToContents(evt.position());
+    auto absolutePoint = document->view()->windowToContents(evt.position());
     auto localPoint = roundedIntPoint(absoluteToContents(absolutePoint));
 
     LayoutSize newOffset = offsetFromResizeCorner(localPoint);
@@ -2928,15 +2932,14 @@ void RenderLayer::resize(const PlatformMouseEvent& evt, const LayoutSize& oldOff
 
     LayoutSize difference = (currentSize + newOffset - adjustedOldOffset).expandedTo(minimumSizeForResizing(zoomFactor)) - currentSize;
 
-    StyleAttributeMutationScope mutationScope { element };
-    Ref styledElement = downcast<StyledElement>(*element);
+    StyleAttributeMutationScope mutationScope { styledElement.get() };
     bool isBoxSizingBorder = renderer->style().boxSizing() == BoxSizing::BorderBox;
 
     Resize resize = renderer->style().resize();
     bool canResizeWidth = resize == Resize::Horizontal || resize == Resize::Both
         || (renderer->isHorizontalWritingMode() ? resize == Resize::Inline : resize == Resize::Block);
     if (canResizeWidth && difference.width()) {
-        if (is<HTMLFormControlElement>(styledElement)) {
+        if (is<HTMLFormControlElement>(*styledElement)) {
             // Make implicit margins from the theme explicit (see <http://bugs.webkit.org/show_bug.cgi?id=9547>).
             styledElement->setInlineStyleProperty(CSSPropertyMarginLeft, renderer->marginLeft() / zoomFactor, CSSUnitType::CSS_PX);
             styledElement->setInlineStyleProperty(CSSPropertyMarginRight, renderer->marginRight() / zoomFactor, CSSUnitType::CSS_PX);
@@ -2951,7 +2954,7 @@ void RenderLayer::resize(const PlatformMouseEvent& evt, const LayoutSize& oldOff
     bool canResizeHeight = resize == Resize::Vertical || resize == Resize::Both
         || (renderer->isHorizontalWritingMode() ? resize == Resize::Block : resize == Resize::Inline);
     if (canResizeHeight && difference.height()) {
-        if (is<HTMLFormControlElement>(styledElement)) {
+        if (is<HTMLFormControlElement>(*styledElement)) {
             // Make implicit margins from the theme explicit (see <http://bugs.webkit.org/show_bug.cgi?id=9547>).
             styledElement->setInlineStyleProperty(CSSPropertyMarginTop, renderer->marginTop() / zoomFactor, CSSUnitType::CSS_PX);
             styledElement->setInlineStyleProperty(CSSPropertyMarginBottom, renderer->marginBottom() / zoomFactor, CSSUnitType::CSS_PX);
@@ -2963,7 +2966,7 @@ void RenderLayer::resize(const PlatformMouseEvent& evt, const LayoutSize& oldOff
         mutationScope.enqueueMutationRecord();
     }
 
-    document.updateLayout();
+    document->updateLayout();
 
     // FIXME (Radar 4118564): We should also autoscroll the window as necessary to keep the point under the cursor in view.
 }

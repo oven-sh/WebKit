@@ -1,6 +1,6 @@
 <!doctype html>
 <script>
-function resize(id) {
+function resize() {
   const target = document.getElementById("div");
   const result = document.getElementById("result");
 
@@ -28,11 +28,6 @@ function test() {
   resize();
 }
 </script>
-<style>
-textarea { 
-        resize: both; 
-}
-</style>
 </head>
 <body onload="test()">
   <div id="div" style="overflow: auto; resize: both; width: 150px; height: 100px; border: blue 2px solid;"></div>
