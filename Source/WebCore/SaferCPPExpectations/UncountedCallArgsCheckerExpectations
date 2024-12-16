@@ -670,7 +670,6 @@ dom/TextDecoderStreamDecoder.h
 dom/Traversal.cpp
 dom/TreeScope.cpp
 dom/TreeWalker.cpp
-dom/TrustedType.cpp
 dom/ViewTransition.cpp
 dom/ViewTransitionTypeSet.cpp
 dom/VisitedLinkState.cpp

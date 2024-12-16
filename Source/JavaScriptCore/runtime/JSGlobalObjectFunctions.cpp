@@ -479,38 +479,51 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue x = callFrame->argument(0);
-    JSString* codeString = nullptr;
-    if (LIKELY(x.isString()))
-        codeString = asString(x);
-    else if (Options::useTrustedTypes()) {
-        auto code = globalObject->globalObjectMethodTable()->codeForEval(globalObject, x);
-        if (!code.isNull())
-            codeString = jsString(vm, code);
+    String programSource;
+    bool isTrusted = false;
+    if (LIKELY(x.isString())) {
+        programSource = x.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    } else if (Options::useTrustedTypes() && x.isObject()) {
+        auto* structure = globalObject->trustedScriptStructure();
+        if (structure == asObject(x)->structure()) {
+            programSource = x.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            isTrusted = true;
+        } else {
+            auto code = globalObject->globalObjectMethodTable()->codeForEval(globalObject, x);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!code.isNull()) {
+                programSource = code;
+                isTrusted = true;
+            }
+        }
     }
 
-    if (!codeString)
+    if (programSource.isNull())
         return JSValue::encode(x);
 
-    auto s = codeString->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    if (Options::useTrustedTypes() && globalObject->requiresTrustedTypes() && !globalObject->globalObjectMethodTable()->canCompileStrings(globalObject, CompilationType::IndirectEval, s, x)) {
-        throwException(globalObject, scope, createEvalError(globalObject, "Refused to evaluate a string as JavaScript because this document requires a 'Trusted Type' assignment."_s));
-        return { };
+    if (Options::useTrustedTypes() && globalObject->requiresTrustedTypes() && !isTrusted) {
+        bool canCompileStrings = globalObject->globalObjectMethodTable()->canCompileStrings(globalObject, CompilationType::IndirectEval, programSource, *vm.emptyList);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!canCompileStrings) {
+            throwException(globalObject, scope, createEvalError(globalObject, "Refused to evaluate a string as JavaScript because this document requires a 'Trusted Type' assignment."_s));
+            return { };
+        }
     }
 
     if (!globalObject->evalEnabled()) {
-        globalObject->globalObjectMethodTable()->reportViolationForUnsafeEval(globalObject, codeString);
+        globalObject->globalObjectMethodTable()->reportViolationForUnsafeEval(globalObject, programSource);
         throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));
         return JSValue::encode(jsUndefined());
     }
 
     JSValue parsedObject;
-    if (s->is8Bit()) {
-        LiteralParser preparser(globalObject, s->span8(), SloppyJSON, nullptr);
+    if (programSource.is8Bit()) {
+        LiteralParser preparser(globalObject, programSource.span8(), SloppyJSON, nullptr);
         parsedObject = preparser.tryLiteralParse();
     } else {
-        LiteralParser preparser(globalObject, s->span16(), SloppyJSON, nullptr);
+        LiteralParser preparser(globalObject, programSource.span16(), SloppyJSON, nullptr);
         parsedObject = preparser.tryLiteralParse();
     }
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -520,7 +533,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     SourceTaintedOrigin sourceTaintedOrigin = computeNewSourceTaintedOriginFromStack(vm, callFrame);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
-    EvalExecutable* eval = IndirectEvalExecutable::tryCreate(globalObject, makeSource(s, sourceOrigin, sourceTaintedOrigin), lexicallyScopedFeatures, DerivedContextType::None, false, EvalContextType::None);
+    EvalExecutable* eval = IndirectEvalExecutable::tryCreate(globalObject, makeSource(programSource, sourceOrigin, sourceTaintedOrigin), lexicallyScopedFeatures, DerivedContextType::None, false, EvalContextType::None);
     EXCEPTION_ASSERT(!!scope.exception() == !eval);
     if (!eval)
         return encodedJSValue();
