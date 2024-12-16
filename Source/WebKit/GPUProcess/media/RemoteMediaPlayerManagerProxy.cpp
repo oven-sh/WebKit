@@ -36,6 +36,7 @@
 #include "RemoteMediaPlayerProxyConfiguration.h"
 #include "RemoteVideoFrameObjectHeap.h"
 #include "ScopedRenderingResourcesRequest.h"
+#include "SharedPreferencesForWebProcess.h"
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/MediaPlayer.h>
 #include <WebCore/MediaPlayerPrivate.h>
@@ -241,6 +242,13 @@ RefPtr<RemoteMediaSourceProxy> RemoteMediaPlayerManagerProxy::pendingMediaSource
     return iterator->value;
 }
 #endif
+
+std::optional<SharedPreferencesForWebProcess> RemoteMediaPlayerManagerProxy::sharedPreferencesForWebProcess() const
+{
+    if (RefPtr connection = m_gpuConnectionToWebProcess.get())
+        return connection->sharedPreferencesForWebProcess();
+    return std::nullopt;
+}
 
 } // namespace WebKit
 
