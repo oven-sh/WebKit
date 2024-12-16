@@ -1207,6 +1207,7 @@ void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID
             return;
     }
 
+#if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = pluginViewForFrame(node->document().frame())) {
         if (auto rect = pluginView->highlightRectForTapAtPoint(point)) {
             auto highlightColor = RenderThemeIOS::singleton().platformTapHighlightColor();
@@ -1215,6 +1216,7 @@ void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID
             return;
         }
     }
+#endif // ENABLE(PDF_PLUGIN)
 
     Vector<FloatQuad> quads;
     if (RenderObject *renderer = node->renderer()) {
