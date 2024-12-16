@@ -24,13 +24,13 @@
  */
 
 #import "config.h"
-#import "VideoPresentationInterfaceAVKit.h"
+#import "VideoPresentationInterfaceAVKitLegacy.h"
 
 #if PLATFORM(IOS_FAMILY) && HAVE(AVKIT)
 
 #import "Logging.h"
 #import "PictureInPictureSupport.h"
-#import "PlaybackSessionInterfaceAVKit.h"
+#import "PlaybackSessionInterfaceAVKitLegacy.h"
 #import "UIViewControllerUtilities.h"
 #import "WebAVPlayerController.h"
 #import "WebAVPlayerLayer.h"
@@ -80,9 +80,9 @@ SOFT_LINK_CLASS_OPTIONAL(AVKit, AVPictureInPictureContentViewController)
     , AVPictureInPictureControllerDelegate
 #endif
 > {
-    ThreadSafeWeakPtr<WebCore::VideoPresentationInterfaceAVKit> _fullscreenInterface;
+    ThreadSafeWeakPtr<WebCore::VideoPresentationInterfaceAVKitLegacy> _fullscreenInterface;
 }
-@property (nonatomic, assign /* weak */) RefPtr<WebCore::VideoPresentationInterfaceAVKit> fullscreenInterface;
+@property (nonatomic, assign /* weak */) RefPtr<WebCore::VideoPresentationInterfaceAVKitLegacy> fullscreenInterface;
 #if !PLATFORM(APPLETV)
 - (BOOL)playerViewController:(AVPlayerViewController *)playerViewController shouldExitFullScreenWithReason:(AVPlayerViewControllerExitFullScreenReason)reason;
 #else
@@ -91,13 +91,13 @@ SOFT_LINK_CLASS_OPTIONAL(AVKit, AVPictureInPictureContentViewController)
 @end
 
 @implementation WebAVPlayerViewControllerDelegate
-- (RefPtr<WebCore::VideoPresentationInterfaceAVKit>)fullscreenInterface
+- (RefPtr<WebCore::VideoPresentationInterfaceAVKitLegacy>)fullscreenInterface
 {
     ASSERT(isMainThread());
     return _fullscreenInterface.get();
 }
 
-- (void)setFullscreenInterface:(RefPtr<WebCore::VideoPresentationInterfaceAVKit>)fullscreenInterface
+- (void)setFullscreenInterface:(RefPtr<WebCore::VideoPresentationInterfaceAVKitLegacy>)fullscreenInterface
 {
     ASSERT(isMainThread());
     if (!fullscreenInterface) {
@@ -155,19 +155,19 @@ IGNORE_WARNINGS_BEGIN("deprecated-implementations")
 
 #if !PLATFORM(APPLETV)
 
-static WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason convertToExitFullScreenReason(AVPlayerViewControllerExitFullScreenReason reason)
+static WebCore::VideoPresentationInterfaceAVKitLegacy::ExitFullScreenReason convertToExitFullScreenReason(AVPlayerViewControllerExitFullScreenReason reason)
 {
     switch (reason) {
     case AVPlayerViewControllerExitFullScreenReasonDoneButtonTapped:
-        return WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason::DoneButtonTapped;
+        return WebCore::VideoPresentationInterfaceAVKitLegacy::ExitFullScreenReason::DoneButtonTapped;
     case AVPlayerViewControllerExitFullScreenReasonFullScreenButtonTapped:
-        return WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason::FullScreenButtonTapped;
+        return WebCore::VideoPresentationInterfaceAVKitLegacy::ExitFullScreenReason::FullScreenButtonTapped;
     case AVPlayerViewControllerExitFullScreenReasonPictureInPictureStarted:
-        return WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason::PictureInPictureStarted;
+        return WebCore::VideoPresentationInterfaceAVKitLegacy::ExitFullScreenReason::PictureInPictureStarted;
     case AVPlayerViewControllerExitFullScreenReasonPinchGestureHandled:
-        return WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason::PinchGestureHandled;
+        return WebCore::VideoPresentationInterfaceAVKitLegacy::ExitFullScreenReason::PinchGestureHandled;
     case AVPlayerViewControllerExitFullScreenReasonRemoteControlStopEventReceived:
-        return WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason::RemoteControlStopEventReceived;
+        return WebCore::VideoPresentationInterfaceAVKitLegacy::ExitFullScreenReason::RemoteControlStopEventReceived;
     }
 }
 
@@ -186,7 +186,7 @@ static WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason convertToE
 {
     UNUSED_PARAM(playerViewController);
     if (auto fullscreenInterface = self.fullscreenInterface)
-        return fullscreenInterface->shouldExitFullscreenWithReason(WebCore::VideoPresentationInterfaceAVKit::ExitFullScreenReason::PinchGestureHandled);
+        return fullscreenInterface->shouldExitFullscreenWithReason(WebCore::VideoPresentationInterfaceAVKitLegacy::ExitFullScreenReason::PinchGestureHandled);
 
     return YES;
 }
@@ -352,7 +352,7 @@ static WebAVPictureInPictureContentViewController *allocWebAVPictureInPictureCon
 NS_ASSUME_NONNULL_BEGIN
 @interface WebAVPlayerViewController : NSObject<AVPlayerViewControllerDelegate>
 @property (readonly, nonatomic) WebAVPlayerLayerView *playerLayerView;
-- (instancetype)initWithFullscreenInterface:(WebCore::VideoPresentationInterfaceAVKit *)interface;
+- (instancetype)initWithFullscreenInterface:(WebCore::VideoPresentationInterfaceAVKitLegacy *)interface;
 - (void)enterFullScreenAnimated:(BOOL)animated completionHandler:(void (^)(BOOL success, NSError *))completionHandler;
 - (void)exitFullScreenAnimated:(BOOL)animated completionHandler:(void (^)(BOOL success, NSError *))completionHandler;
 - (void)startPictureInPicture;
@@ -370,7 +370,7 @@ NS_ASSUME_NONNULL_BEGIN
 NS_ASSUME_NONNULL_END
 
 @implementation WebAVPlayerViewController {
-    ThreadSafeWeakPtr<WebCore::VideoPresentationInterfaceAVKit> _fullscreenInterface;
+    ThreadSafeWeakPtr<WebCore::VideoPresentationInterfaceAVKitLegacy> _fullscreenInterface;
 #if PLATFORM(WATCHOS) || PLATFORM(APPLETV)
     RetainPtr<UIViewController> _presentingViewController;
 #endif
@@ -385,7 +385,7 @@ NS_ASSUME_NONNULL_END
 #endif
 }
 
-- (instancetype)initWithFullscreenInterface:(WebCore::VideoPresentationInterfaceAVKit *)interface
+- (instancetype)initWithFullscreenInterface:(WebCore::VideoPresentationInterfaceAVKitLegacy *)interface
 {
     if (!(self = [super init]))
         return nil;
@@ -428,7 +428,7 @@ NS_ASSUME_NONNULL_END
 }
 
 #if PLATFORM(APPLETV)
-- (void)configurePlayerViewControllerWithFullscreenInterface:(WebCore::VideoPresentationInterfaceAVKit *)interface
+- (void)configurePlayerViewControllerWithFullscreenInterface:(WebCore::VideoPresentationInterfaceAVKitLegacy *)interface
 {
     // FIXME (116592344): This is a proof-of-concept hack to work around lack support for a custom
     // AVPlayerLayerView in tvOS's version of AVPlayerViewController. This will be replaced once
@@ -774,38 +774,38 @@ static const NSTimeInterval startPictureInPictureTimeInterval = 5.0;
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(VideoPresentationInterfaceAVKit);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(VideoPresentationInterfaceAVKitLegacy);
 
-Ref<VideoPresentationInterfaceAVKit> VideoPresentationInterfaceAVKit::create(PlaybackSessionInterfaceIOS& playbackSessionInterface)
+Ref<VideoPresentationInterfaceAVKitLegacy> VideoPresentationInterfaceAVKitLegacy::create(PlaybackSessionInterfaceIOS& playbackSessionInterface)
 {
-    return adoptRef(*new VideoPresentationInterfaceAVKit(playbackSessionInterface));
+    return adoptRef(*new VideoPresentationInterfaceAVKitLegacy(playbackSessionInterface));
 }
 
-VideoPresentationInterfaceAVKit::VideoPresentationInterfaceAVKit(PlaybackSessionInterfaceIOS& playbackSessionInterface)
+VideoPresentationInterfaceAVKitLegacy::VideoPresentationInterfaceAVKitLegacy(PlaybackSessionInterfaceIOS& playbackSessionInterface)
     : VideoPresentationInterfaceIOS(playbackSessionInterface)
     , m_playerViewControllerDelegate(adoptNS([[WebAVPlayerViewControllerDelegate alloc] init]))
 {
     [m_playerViewControllerDelegate setFullscreenInterface:this];
 }
 
-VideoPresentationInterfaceAVKit::~VideoPresentationInterfaceAVKit()
+VideoPresentationInterfaceAVKitLegacy::~VideoPresentationInterfaceAVKitLegacy()
 {
     WebAVPlayerController* playerController = this->playerController();
     if (playerController && playerController.externalPlaybackActive)
         externalPlaybackChanged(false, PlaybackSessionModel::ExternalPlaybackTargetType::TargetTypeNone, emptyString());
 }
 
-UIViewController *VideoPresentationInterfaceAVKit::playerViewController() const
+UIViewController *VideoPresentationInterfaceAVKitLegacy::playerViewController() const
 {
     return avPlayerViewController();
 }
 
-AVPlayerViewController *VideoPresentationInterfaceAVKit::avPlayerViewController() const
+AVPlayerViewController *VideoPresentationInterfaceAVKitLegacy::avPlayerViewController() const
 {
     return [m_playerViewController avPlayerViewController];
 }
 
-void VideoPresentationInterfaceAVKit::setupFullscreen(const FloatRect& initialRect, const FloatSize& videoDimensions, UIView* parentView, HTMLMediaElementEnums::VideoFullscreenMode mode, bool allowsPictureInPicturePlayback, bool standby, bool blocksReturnToFullscreenFromPictureInPicture)
+void VideoPresentationInterfaceAVKitLegacy::setupFullscreen(const FloatRect& initialRect, const FloatSize& videoDimensions, UIView* parentView, HTMLMediaElementEnums::VideoFullscreenMode mode, bool allowsPictureInPicturePlayback, bool standby, bool blocksReturnToFullscreenFromPictureInPicture)
 {
     [playerController() setContentDimensions:videoDimensions];
     VideoPresentationInterfaceIOS::setupFullscreen(initialRect, videoDimensions, parentView, mode, allowsPictureInPicturePlayback, standby, blocksReturnToFullscreenFromPictureInPicture);
@@ -813,24 +813,24 @@ void VideoPresentationInterfaceAVKit::setupFullscreen(const FloatRect& initialRe
         playerLayer().captionsLayer = captionsLayer();
 }
 
-void VideoPresentationInterfaceAVKit::updateRouteSharingPolicy()
+void VideoPresentationInterfaceAVKitLegacy::updateRouteSharingPolicy()
 {
     if (m_playerViewController && !m_routingContextUID.isEmpty())
         [m_playerViewController setWebKitOverrideRouteSharingPolicy:(NSUInteger)m_routeSharingPolicy routingContextUID:m_routingContextUID];
 }
 
-void VideoPresentationInterfaceAVKit::hasVideoChanged(bool hasVideo)
+void VideoPresentationInterfaceAVKitLegacy::hasVideoChanged(bool hasVideo)
 {
     [playerController() setHasEnabledVideo:hasVideo];
     [playerController() setHasVideo:hasVideo];
 }
 
-bool VideoPresentationInterfaceAVKit::pictureInPictureWasStartedWhenEnteringBackground() const
+bool VideoPresentationInterfaceAVKitLegacy::pictureInPictureWasStartedWhenEnteringBackground() const
 {
     return [m_playerViewController pictureInPictureWasStartedWhenEnteringBackground];
 }
 
-void VideoPresentationInterfaceAVKit::setPlayerIdentifier(std::optional<MediaPlayerIdentifier> identifier)
+void VideoPresentationInterfaceAVKitLegacy::setPlayerIdentifier(std::optional<MediaPlayerIdentifier> identifier)
 {
 #if !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
     if (!identifier)
@@ -839,12 +839,12 @@ void VideoPresentationInterfaceAVKit::setPlayerIdentifier(std::optional<MediaPla
     VideoPresentationInterfaceIOS::setPlayerIdentifier(identifier);
 }
 
-bool VideoPresentationInterfaceAVKit::mayAutomaticallyShowVideoPictureInPicture() const
+bool VideoPresentationInterfaceAVKitLegacy::mayAutomaticallyShowVideoPictureInPicture() const
 {
     return [playerController() isPlaying] && (m_standby || m_currentMode.isFullscreen()) && supportsPictureInPicture();
 }
 
-void VideoPresentationInterfaceAVKit::setupPlayerViewController()
+void VideoPresentationInterfaceAVKitLegacy::setupPlayerViewController()
 {
     if (!m_playerViewController)
         m_playerViewController = adoptNS([[WebAVPlayerViewController alloc] initWithFullscreenInterface:this]);
@@ -867,7 +867,7 @@ void VideoPresentationInterfaceAVKit::setupPlayerViewController()
 #endif
 }
 
-void VideoPresentationInterfaceAVKit::invalidatePlayerViewController()
+void VideoPresentationInterfaceAVKitLegacy::invalidatePlayerViewController()
 {
     returnVideoView();
 
@@ -876,57 +876,57 @@ void VideoPresentationInterfaceAVKit::invalidatePlayerViewController()
     m_playerViewController = nil;
 }
 
-void VideoPresentationInterfaceAVKit::presentFullscreen(bool animated, Function<void(BOOL, NSError *)>&& completionHandler)
+void VideoPresentationInterfaceAVKitLegacy::presentFullscreen(bool animated, Function<void(BOOL, NSError *)>&& completionHandler)
 {
     [m_playerViewController enterFullScreenAnimated:animated completionHandler:makeBlockPtr(WTFMove(completionHandler)).get()];
 }
 
-void VideoPresentationInterfaceAVKit::dismissFullscreen(bool animated, Function<void(BOOL, NSError *)>&& completionHandler)
+void VideoPresentationInterfaceAVKitLegacy::dismissFullscreen(bool animated, Function<void(BOOL, NSError *)>&& completionHandler)
 {
     [m_playerViewController exitFullScreenAnimated:animated completionHandler:makeBlockPtr(WTFMove(completionHandler)).get()];
 }
 
-void VideoPresentationInterfaceAVKit::tryToStartPictureInPicture()
+void VideoPresentationInterfaceAVKitLegacy::tryToStartPictureInPicture()
 {
     [m_playerViewController tryToStartPictureInPicture];
 }
 
-void VideoPresentationInterfaceAVKit::stopPictureInPicture()
+void VideoPresentationInterfaceAVKitLegacy::stopPictureInPicture()
 {
     [m_playerViewController stopPictureInPicture];
 }
 
-bool VideoPresentationInterfaceAVKit::isPlayingVideoInEnhancedFullscreen() const
+bool VideoPresentationInterfaceAVKitLegacy::isPlayingVideoInEnhancedFullscreen() const
 {
     return hasMode(WebCore::HTMLMediaElementEnums::VideoFullscreenModePictureInPicture) && [playerController() isPlaying];
 }
 
-void VideoPresentationInterfaceAVKit::setAllowsPictureInPicturePlayback(bool allowsPictureInPicturePlayback)
+void VideoPresentationInterfaceAVKitLegacy::setAllowsPictureInPicturePlayback(bool allowsPictureInPicturePlayback)
 {
     [m_playerViewController setAllowsPictureInPicturePlayback:allowsPictureInPicturePlayback];
 }
 
-void VideoPresentationInterfaceAVKit::setShowsPlaybackControls(bool showsPlaybackControls)
+void VideoPresentationInterfaceAVKitLegacy::setShowsPlaybackControls(bool showsPlaybackControls)
 {
     [m_playerViewController setShowsPlaybackControls:showsPlaybackControls];
 }
 
-void VideoPresentationInterfaceAVKit::setContentDimensions(const FloatSize& contentDimensions)
+void VideoPresentationInterfaceAVKitLegacy::setContentDimensions(const FloatSize& contentDimensions)
 {
     [playerController() setContentDimensions:contentDimensions];
 }
 
-bool VideoPresentationInterfaceAVKit::isExternalPlaybackActive() const
+bool VideoPresentationInterfaceAVKitLegacy::isExternalPlaybackActive() const
 {
     return [playerController() isExternalPlaybackActive];
 }
 
-bool VideoPresentationInterfaceAVKit::willRenderToLayer() const
+bool VideoPresentationInterfaceAVKitLegacy::willRenderToLayer() const
 {
     return true;
 }
 
-void VideoPresentationInterfaceAVKit::returnVideoView()
+void VideoPresentationInterfaceAVKitLegacy::returnVideoView()
 {
     [[m_playerViewController playerLayerView] transferVideoViewTo:playerLayerView()];
 }
@@ -949,7 +949,7 @@ bool supportsPictureInPicture()
 #endif
 }
 
-void VideoPresentationInterfaceAVKit::setupCaptionsLayer(CALayer *, const WebCore::FloatSize&)
+void VideoPresentationInterfaceAVKitLegacy::setupCaptionsLayer(CALayer *, const WebCore::FloatSize&)
 {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];

@@ -48,11 +48,11 @@
 #import <QuartzCore/CoreAnimation.h>
 #import <WebCore/MediaPlayerEnums.h>
 #import <WebCore/NullVideoPresentationInterface.h>
-#import <WebCore/PlaybackSessionInterfaceAVKit.h>
+#import <WebCore/PlaybackSessionInterfaceAVKitLegacy.h>
 #import <WebCore/PlaybackSessionInterfaceMac.h>
 #import <WebCore/PlaybackSessionInterfaceTVOS.h>
 #import <WebCore/TimeRanges.h>
-#import <WebCore/VideoPresentationInterfaceAVKit.h>
+#import <WebCore/VideoPresentationInterfaceAVKitLegacy.h>
 #import <WebCore/VideoPresentationInterfaceMac.h>
 #import <WebCore/VideoPresentationInterfaceTVOS.h>
 #import <WebCore/WebAVPlayerLayer.h>
@@ -631,7 +631,7 @@ VideoPresentationManagerProxy::ModelInterfaceTuple VideoPresentationManagerProxy
     if (m_page->preferences().linearMediaPlayerEnabled())
         interface = VideoPresentationInterfaceLMK::create(playbackSessionInterface.get());
     else
-        interface = VideoPresentationInterfaceAVKit::create(playbackSessionInterface.get());
+        interface = VideoPresentationInterfaceAVKitLegacy::create(playbackSessionInterface.get());
 #else
     interface = PlatformVideoPresentationInterface::create(playbackSessionInterface.get());
 #endif

@@ -38,7 +38,7 @@
 #import "WebProcessPool.h"
 #import "WebProcessProxy.h"
 #import <WebCore/NullPlaybackSessionInterface.h>
-#import <WebCore/PlaybackSessionInterfaceAVKit.h>
+#import <WebCore/PlaybackSessionInterfaceAVKitLegacy.h>
 #import <WebCore/PlaybackSessionInterfaceMac.h>
 #import <WebCore/PlaybackSessionInterfaceTVOS.h>
 #import <wtf/LoggerHelper.h>
@@ -556,7 +556,7 @@ PlaybackSessionManagerProxy::ModelInterfaceTuple PlaybackSessionManagerProxy::cr
         lmkInterface->setSpatialVideoEnabled(page->preferences().spatialVideoEnabled());
         interface = WTFMove(lmkInterface);
     } else
-        interface = PlaybackSessionInterfaceAVKit::create(model);
+        interface = PlaybackSessionInterfaceAVKitLegacy::create(model);
 #else
     interface = PlatformPlaybackSessionInterface::create(model);
 #endif

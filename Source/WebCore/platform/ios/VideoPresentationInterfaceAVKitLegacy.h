@@ -41,17 +41,17 @@ namespace WebCore {
 
 class PlaybackSessionInterfaceIOS;
 
-class VideoPresentationInterfaceAVKit final : public VideoPresentationInterfaceIOS {
-    WTF_MAKE_TZONE_ALLOCATED_EXPORT(VideoPresentationInterfaceAVKit, WEBCORE_EXPORT);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(VideoPresentationInterfaceAVKit);
+class VideoPresentationInterfaceAVKitLegacy final : public VideoPresentationInterfaceIOS {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(VideoPresentationInterfaceAVKitLegacy, WEBCORE_EXPORT);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(VideoPresentationInterfaceAVKitLegacy);
 public:
-    WEBCORE_EXPORT static Ref<VideoPresentationInterfaceAVKit> create(PlaybackSessionInterfaceIOS&);
-    WEBCORE_EXPORT ~VideoPresentationInterfaceAVKit();
+    WEBCORE_EXPORT static Ref<VideoPresentationInterfaceAVKitLegacy> create(PlaybackSessionInterfaceIOS&);
+    WEBCORE_EXPORT ~VideoPresentationInterfaceAVKitLegacy();
 
     WEBCORE_EXPORT void hasVideoChanged(bool) final;
 
 #if !RELEASE_LOG_DISABLED
-    ASCIILiteral logClassName() const { return "VideoPresentationInterfaceAVKit"_s; };
+    ASCIILiteral logClassName() const { return "VideoPresentationInterfaceAVKitLegacy"_s; };
 #endif
 
     WEBCORE_EXPORT AVPlayerViewController *avPlayerViewController() const final;
@@ -68,7 +68,7 @@ public:
     WEBCORE_EXPORT void setupCaptionsLayer(CALayer *parent, const WebCore::FloatSize&) final;
 
 private:
-    WEBCORE_EXPORT VideoPresentationInterfaceAVKit(PlaybackSessionInterfaceIOS&);
+    WEBCORE_EXPORT VideoPresentationInterfaceAVKitLegacy(PlaybackSessionInterfaceIOS&);
 
     void updateRouteSharingPolicy() final;
     void setupPlayerViewController() final;

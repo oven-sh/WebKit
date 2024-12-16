@@ -32,12 +32,12 @@
 
 namespace WebCore {
 
-class WEBCORE_EXPORT PlaybackSessionInterfaceAVKit final : public PlaybackSessionInterfaceIOS {
-    WTF_MAKE_TZONE_ALLOCATED_EXPORT(PlaybackSessionInterfaceAVKit, WEBCORE_EXPORT);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PlaybackSessionInterfaceAVKit);
+class WEBCORE_EXPORT PlaybackSessionInterfaceAVKitLegacy final : public PlaybackSessionInterfaceIOS {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(PlaybackSessionInterfaceAVKitLegacy, WEBCORE_EXPORT);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PlaybackSessionInterfaceAVKitLegacy);
 public:
-    static Ref<PlaybackSessionInterfaceAVKit> create(PlaybackSessionModel&);
-    ~PlaybackSessionInterfaceAVKit();
+    static Ref<PlaybackSessionInterfaceAVKitLegacy> create(PlaybackSessionModel&);
+    ~PlaybackSessionInterfaceAVKitLegacy();
     void invalidate() final;
 
     WebAVPlayerController *playerController() const final;
@@ -59,7 +59,7 @@ public:
 #endif
 
 private:
-    PlaybackSessionInterfaceAVKit(PlaybackSessionModel&);
+    PlaybackSessionInterfaceAVKitLegacy(PlaybackSessionModel&);
 
     RetainPtr<WebAVPlayerController> m_playerController;
 

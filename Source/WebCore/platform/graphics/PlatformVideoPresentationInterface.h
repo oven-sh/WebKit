@@ -28,7 +28,7 @@
 namespace WebCore {
 
 class NullVideoPresentationInterface;
-class VideoPresentationInterfaceAVKit;
+class VideoPresentationInterfaceAVKitLegacy;
 class VideoPresentationInterfaceIOS;
 class VideoPresentationInterfaceMac;
 class VideoPresentationInterfaceTVOS;
@@ -40,7 +40,7 @@ using PlatformVideoPresentationInterface = VideoPresentationInterfaceIOS;
 #elif PLATFORM(APPLETV)
 using PlatformVideoPresentationInterface = VideoPresentationInterfaceTVOS;
 #elif PLATFORM(IOS_FAMILY)
-using PlatformVideoPresentationInterface = VideoPresentationInterfaceAVKit;
+using PlatformVideoPresentationInterface = VideoPresentationInterfaceAVKitLegacy;
 #elif PLATFORM(MAC)
 using PlatformVideoPresentationInterface = VideoPresentationInterfaceMac;
 #endif

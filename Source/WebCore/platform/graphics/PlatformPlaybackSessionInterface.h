@@ -28,7 +28,7 @@
 namespace WebCore {
 
 class NullPlaybackSessionInterface;
-class PlaybackSessionInterfaceAVKit;
+class PlaybackSessionInterfaceAVKitLegacy;
 class PlaybackSessionInterfaceIOS;
 class PlaybackSessionInterfaceMac;
 class PlaybackSessionInterfaceTVOS;
@@ -40,7 +40,7 @@ using PlatformPlaybackSessionInterface = PlaybackSessionInterfaceIOS;
 #elif PLATFORM(APPLETV)
 using PlatformPlaybackSessionInterface = PlaybackSessionInterfaceTVOS;
 #elif PLATFORM(IOS_FAMILY)
-using PlatformPlaybackSessionInterface = PlaybackSessionInterfaceAVKit;
+using PlatformPlaybackSessionInterface = PlaybackSessionInterfaceAVKitLegacy;
 #elif PLATFORM(MAC)
 using PlatformPlaybackSessionInterface = PlaybackSessionInterfaceMac;
 #endif
