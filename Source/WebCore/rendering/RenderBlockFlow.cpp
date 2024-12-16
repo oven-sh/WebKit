@@ -3214,7 +3214,7 @@ std::optional<LayoutUnit> RenderBlockFlow::lastLineBaseline() const
 std::optional<LayoutUnit> RenderBlockFlow::inlineBlockBaseline(LineDirectionMode lineDirection) const
 {
     if (isWritingModeRoot())
-        return std::nullopt;
+        return { };
 
     if (shouldApplyLayoutContainment())
         return RenderBlock::inlineBlockBaseline(lineDirection);
@@ -3224,7 +3224,7 @@ std::optional<LayoutUnit> RenderBlockFlow::inlineBlockBaseline(LineDirectionMode
         // property has a computed value other than 'visible'. see https://www.w3.org/TR/CSS22/visudet.html
         auto shouldSynthesizeBaseline = !style().isOverflowVisible() && !is<HTMLFormControlElement>(element()) && !isRenderTextControlInnerBlock();
         if (shouldSynthesizeBaseline)
-            return std::nullopt;
+            return { };
     }
     // Note that here we only take the left and bottom into consideration. Our caller takes the right and top into consideration.
     auto boxHeight = synthesizedBaseline(*this, *parentStyle(), lineDirection, BorderBox) + (lineDirection == HorizontalLine ? m_marginBox.bottom() : m_marginBox.left());

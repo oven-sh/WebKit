@@ -2507,7 +2507,7 @@ std::optional<LayoutUnit> RenderBlock::firstLineBaseline() const
         return { };
 
     if (isWritingModeRoot() && !isFlexItem())
-        return std::optional<LayoutUnit>();
+        return { };
 
     for (RenderBox* child = firstInFlowChildBox(); child; child = child->nextInFlowSiblingBox()) {
         if (child->isLegend() && child->isExcludedFromNormalLayout())
@@ -2515,7 +2515,7 @@ std::optional<LayoutUnit> RenderBlock::firstLineBaseline() const
         if (auto baseline = child->firstLineBaseline())
             return LayoutUnit { floorToInt(child->logicalTop() + baseline.value()) };
     }
-    return std::optional<LayoutUnit>();
+    return { };
 }
 
 std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
@@ -2524,7 +2524,7 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
         return { };
 
     if (isWritingModeRoot())
-        return std::optional<LayoutUnit>();
+        return { };
 
     for (RenderBox* child = lastInFlowChildBox(); child; child = child->previousInFlowSiblingBox()) {
         if (child->isLegend() && child->isExcludedFromNormalLayout())
@@ -2532,16 +2532,19 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
         if (auto baseline = child->lastLineBaseline())
             return LayoutUnit { floorToInt(child->logicalTop() + baseline.value()) };
     } 
-    return std::optional<LayoutUnit>();
+    return { };
 }
 
 std::optional<LayoutUnit> RenderBlock::inlineBlockBaseline(LineDirectionMode lineDirection) const
 {
-    if (shouldApplyLayoutContainment())
-        return synthesizedBaseline(*this, *parentStyle(), lineDirection, BorderBox) + (lineDirection == HorizontalLine ? marginBottom() : marginLeft());
+    if (shouldApplyLayoutContainment()) {
+        if (isInline())
+            return synthesizedBaseline(*this, *parentStyle(), lineDirection, BorderBox) + (lineDirection == HorizontalLine ? marginBottom() : marginLeft());
+        return { };
+    }
 
     if (isWritingModeRoot())
-        return std::optional<LayoutUnit>();
+        return { };
 
     bool haveNormalFlowChild = false;
     for (auto* box = lastChildBox(); box; box = box->previousSiblingBox()) {
@@ -2559,7 +2562,7 @@ std::optional<LayoutUnit> RenderBlock::inlineBlockBaseline(LineDirectionMode lin
             + (lineDirection == HorizontalLine ? borderTop() + paddingTop() : borderRight() + paddingRight())).toInt() };
     }
 
-    return std::optional<LayoutUnit>();
+    return { };
 }
 
 static inline bool isRenderBlockFlowOrRenderButton(RenderElement& renderElement)
