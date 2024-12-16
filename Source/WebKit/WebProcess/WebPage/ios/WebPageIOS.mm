@@ -962,7 +962,8 @@ void WebPage::completeSyntheticClick(Node& nodeRespondingToClick, const WebCore:
     else if (!handledPress)
         clearSelectionAfterTapIfNeeded();
 
-    bool handledRelease = localMainFrame->eventHandler().handleMouseReleaseEvent(PlatformMouseEvent(roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, 1, platformModifiers, WallTime::now(), WebCore::ForceAtClick, syntheticClickType, pointerId)).wasHandled();
+    auto releaseEvent = PlatformMouseEvent { roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, 1, platformModifiers, WallTime::now(), ForceAtClick, syntheticClickType, pointerId };
+    bool handledRelease = localMainFrame->eventHandler().handleMouseReleaseEvent(releaseEvent).wasHandled();
     if (m_isClosed)
         return;
 
@@ -983,7 +984,7 @@ void WebPage::completeSyntheticClick(Node& nodeRespondingToClick, const WebCore:
 
 #if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = pluginViewForFrame(newFocusedFrame.get()))
-        pluginView->clearSelection();
+        pluginView->handleSyntheticClick(WTFMove(releaseEvent));
 #endif
 
     invokePendingSyntheticClickCallback(SyntheticClickResult::Click);
@@ -1182,13 +1183,13 @@ void WebPage::computeAndSendEditDragSnapshot()
 
 #endif
 
-void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID, Node* node)
+void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID, Node* node, FloatPoint point)
 {
 #if ENABLE(TOUCH_EVENTS)
     if (!node)
         return;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
+    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
     if (!localMainFrame)
         return;
 
@@ -1204,6 +1205,15 @@ void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID
         node = area->imageElement().get();
         if (!node)
             return;
+    }
+
+    if (RefPtr pluginView = pluginViewForFrame(node->document().frame())) {
+        if (auto rect = pluginView->highlightRectForTapAtPoint(point)) {
+            auto highlightColor = RenderThemeIOS::singleton().platformTapHighlightColor();
+            auto highlightQuads = Vector { FloatQuad { WTFMove(*rect) } };
+            send(Messages::WebPageProxy::DidGetTapHighlightGeometries(requestID, WTFMove(highlightColor), WTFMove(highlightQuads), { }, { }, { }, { }, true));
+            return;
+        }
     }
 
     Vector<FloatQuad> quads;
@@ -1240,7 +1250,7 @@ void WebPage::handleTwoFingerTapAtPoint(const WebCore::IntPoint& point, OptionSe
         send(Messages::WebPageProxy::DidNotHandleTapAsClick(roundedIntPoint(adjustedPoint)));
         return;
     }
-    sendTapHighlightForNodeIfNecessary(requestID, nodeRespondingToClick);
+    sendTapHighlightForNodeIfNecessary(requestID, nodeRespondingToClick, point);
     completeSyntheticClick(*nodeRespondingToClick, adjustedPoint, modifiers, WebCore::SyntheticClickType::TwoFingerTap);
 }
 
@@ -1296,7 +1306,7 @@ void WebPage::potentialTapAtPosition(WebKit::TapIdentifier requestID, const WebC
         send(Messages::WebPageProxy::HandleSmartMagnificationInformationForPotentialTap(requestID, absoluteBoundingRect, fitEntireRect, viewportMinimumScale, viewportMaximumScale, nodeIsRootLevel));
     }
 
-    sendTapHighlightForNodeIfNecessary(requestID, m_potentialTapNode.get());
+    sendTapHighlightForNodeIfNecessary(requestID, m_potentialTapNode.get(), position);
 #if ENABLE(TOUCH_EVENTS)
     if (m_potentialTapNode && !m_potentialTapNode->allowsDoubleTapGesture())
         send(Messages::WebPageProxy::DisableDoubleTapGesturesDuringTapIfNecessary(requestID));
@@ -1407,7 +1417,7 @@ void WebPage::tapHighlightAtPosition(WebKit::TapIdentifier requestID, const Floa
     if (!localMainFrame)
         return;
     FloatPoint adjustedPoint;
-    sendTapHighlightForNodeIfNecessary(requestID, localMainFrame->nodeRespondingToClickEvents(position, adjustedPoint));
+    sendTapHighlightForNodeIfNecessary(requestID, localMainFrame->nodeRespondingToClickEvents(position, adjustedPoint), position);
 }
 
 void WebPage::inspectorNodeSearchMovedToPosition(const FloatPoint& position)

@@ -1134,7 +1134,7 @@ WebCore::IntPoint PDFPluginBase::lastKnownMousePositionInView() const
     return { };
 }
 
-void PDFPluginBase::navigateToURL(const URL& url)
+void PDFPluginBase::navigateToURL(const URL& url, std::optional<PlatformMouseEvent>&& event)
 {
     if (url.protocolIsJavaScript())
         return;
@@ -1144,8 +1144,10 @@ void PDFPluginBase::navigateToURL(const URL& url)
         return;
 
     RefPtr<Event> coreEvent;
-    if (m_lastMouseEvent)
-        coreEvent = MouseEvent::create(eventNames().clickEvent, &frame->windowProxy(), platform(*m_lastMouseEvent), { }, { }, 0, 0);
+    if (event || m_lastMouseEvent) {
+        auto platformEvent = event ? WTFMove(*event) : platform(*m_lastMouseEvent);
+        coreEvent = MouseEvent::create(eventNames().clickEvent, &frame->windowProxy(), platformEvent, { }, { }, 0, 0);
+    }
 
     frame->loader().changeLocation(url, emptyAtom(), coreEvent.get(), ReferrerPolicy::NoReferrer, ShouldOpenExternalURLsPolicy::ShouldAllow);
 }

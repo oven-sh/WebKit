@@ -2073,11 +2073,11 @@ bool UnifiedPDFPlugin::handleKeyboardEvent(const WebKeyboardEvent& event)
     return m_presentationController->handleKeyboardEvent(event);
 }
 
-void UnifiedPDFPlugin::followLinkAnnotation(PDFAnnotation *annotation)
+void UnifiedPDFPlugin::followLinkAnnotation(PDFAnnotation *annotation, std::optional<PlatformMouseEvent>&& event)
 {
     ASSERT(annotationIsLinkWithDestination(annotation));
     if (NSURL *url = [annotation URL])
-        navigateToURL(url);
+        navigateToURL(url, WTFMove(event));
     else if (PDFDestination *destination = [annotation destination])
         revealPDFDestination(destination);
 }
@@ -3889,6 +3889,54 @@ void UnifiedPDFPlugin::setDisplayModeAndUpdateLayout(PDFDocumentLayout::DisplayM
 
 #if PLATFORM(IOS_FAMILY)
 
+std::optional<FloatRect> UnifiedPDFPlugin::highlightRectForTapAtPoint(FloatPoint pointInRootView) const
+{
+    RetainPtr annotation = annotationForRootViewPoint(roundedIntPoint(pointInRootView));
+    if (!annotation)
+        return std::nullopt;
+
+    if (!annotationIsLinkWithDestination(annotation.get()))
+        return std::nullopt;
+
+    return { pageToRootView([annotation bounds], [annotation page]) };
+}
+
+void UnifiedPDFPlugin::handleSyntheticClick(PlatformMouseEvent&& event)
+{
+#if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
+    auto pointInRootView = event.position();
+    RetainPtr selection = m_currentSelection;
+    if (selection && event.shiftKey()) {
+        auto [page, pointInPage] = rootViewToPage(pointInRootView);
+        if (!page)
+            return;
+
+        [selection addSelection:selectionAtPoint(pointInPage, page.get(), TextGranularity::WordGranularity)];
+
+        auto [startPage, startPointInPage] = selectionCaretPointInPage(selection.get(), SelectionEndpoint::Start);
+        if (!startPage)
+            return;
+
+        auto [endPage, endPointInPage] = selectionCaretPointInPage(selection.get(), SelectionEndpoint::End);
+        if (!endPage)
+            return;
+
+        setCurrentSelection(selectionBetweenPoints(startPointInPage, startPage.get(), endPointInPage, endPage.get()));
+        return;
+    }
+
+    if (RetainPtr annotation = annotationForRootViewPoint(pointInRootView)) {
+        if (annotationIsLinkWithDestination(annotation.get()))
+            followLinkAnnotation(annotation.get(), { WTFMove(event) });
+        return;
+    }
+#else
+    UNUSED_PARAM(event);
+#endif
+
+    clearSelection();
+}
+
 void UnifiedPDFPlugin::clearSelection()
 {
     resetInitialSelection();
@@ -4087,8 +4135,7 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
     for (PDFPage *page in [selection pages]) {
         auto pageIndex = m_documentLayout.indexForPage(page);
         [selection enumerateRectsAndTransformsForPage:page usingBlock:[&](CGRect rect, CGAffineTransform) {
-            auto rectInPlugin = convertUp(CoordinateSpace::PDFPage, CoordinateSpace::Plugin, FloatRect { rect }, pageIndex);
-            auto rectInRootView = convertFromPluginToRootView(rectInPlugin);
+            auto rectInRootView = pageToRootView(FloatRect { rect }, pageIndex);
             if (rectInRootView.isEmpty())
                 return;
 
@@ -4146,7 +4193,18 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
 
 #endif // PLATFORM(IOS_FAMILY)
 
-auto UnifiedPDFPlugin::rootViewToPage(WebCore::FloatPoint pointInRootView) const -> PageAndPoint
+FloatRect UnifiedPDFPlugin::pageToRootView(FloatRect rectInPage, PDFPage *page) const
+{
+    return pageToRootView(rectInPage, m_documentLayout.indexForPage(page));
+}
+
+FloatRect UnifiedPDFPlugin::pageToRootView(FloatRect rectInPage, std::optional<PDFDocumentLayout::PageIndex> pageIndex) const
+{
+    auto rectInPlugin = convertUp(CoordinateSpace::PDFPage, CoordinateSpace::Plugin, rectInPage, pageIndex);
+    return convertFromPluginToRootView(rectInPlugin);
+}
+
+auto UnifiedPDFPlugin::rootViewToPage(FloatPoint pointInRootView) const -> PageAndPoint
 {
     auto pointInPlugin = convertFromRootViewToPlugin(pointInRootView);
     auto pointInDocument = convertDown<FloatPoint>(CoordinateSpace::Plugin, CoordinateSpace::PDFDocumentLayout, pointInPlugin);

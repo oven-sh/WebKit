@@ -524,7 +524,7 @@ private:
     std::optional<PDFDocumentLayout::PageIndex> pageIndexWithHoveredAnnotation() const;
     void paintHoveredAnnotationOnPage(PDFDocumentLayout::PageIndex, WebCore::GraphicsContext&, const WebCore::FloatRect& clipRect);
 
-    void followLinkAnnotation(PDFAnnotation *);
+    void followLinkAnnotation(PDFAnnotation *, std::optional<WebCore::PlatformMouseEvent>&& = std::nullopt);
 
     void startTrackingAnnotation(RetainPtr<PDFAnnotation>&&, WebEventType, WebMouseEventButton);
     void updateTrackedAnnotation(PDFAnnotation *annotationUnderMouse);
@@ -577,10 +577,14 @@ private:
 
     using PageAndPoint = std::pair<RetainPtr<PDFPage>, WebCore::FloatPoint>;
     PageAndPoint rootViewToPage(WebCore::FloatPoint) const;
+    WebCore::FloatRect pageToRootView(WebCore::FloatRect rectInPage, PDFPage *) const;
+    WebCore::FloatRect pageToRootView(WebCore::FloatRect rectInPage, std::optional<PDFDocumentLayout::PageIndex>) const;
 
 #if PLATFORM(IOS_FAMILY)
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity) final;
     void clearSelection() final;
+    std::optional<WebCore::FloatRect> highlightRectForTapAtPoint(WebCore::FloatPoint pointInRootView) const final;
+    void handleSyntheticClick(WebCore::PlatformMouseEvent&&) final;
     SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint) final;
     SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity) final;
     bool platformPopulateEditorStateIfNeeded(EditorState&) const final;

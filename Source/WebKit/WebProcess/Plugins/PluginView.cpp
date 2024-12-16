@@ -1144,6 +1144,16 @@ void PluginView::clearSelection()
     protectedPlugin()->clearSelection();
 }
 
+std::optional<FloatRect> PluginView::highlightRectForTapAtPoint(FloatPoint pointInRootView) const
+{
+    return protectedPlugin()->highlightRectForTapAtPoint(pointInRootView);
+}
+
+void PluginView::handleSyntheticClick(PlatformMouseEvent&& event)
+{
+    protectedPlugin()->handleSyntheticClick(WTFMove(event));
+}
+
 #endif // PLATFORM(IOS_FAMILY)
 
 bool PluginView::populateEditorStateIfNeeded(EditorState& state) const
