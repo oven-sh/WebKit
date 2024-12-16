@@ -86,6 +86,7 @@ void RenderGrid::styleDidChange(StyleDifference diff, const RenderStyle* oldStyl
     if (!oldStyle || diff != StyleDifference::Layout)
         return;
 
+    m_intrinsicLogicalHeightsForRowSizingFirstPass.reset();
     const RenderStyle& newStyle = this->style();
 
     auto hasDifferentTrackSizes = [&newStyle, &oldStyle](GridTrackSizingDirection direction) {
@@ -319,6 +320,7 @@ void RenderGrid::layoutGrid(bool relayoutChildren)
 
         GridLayoutState gridLayoutState;
 
+        updateIntrinsicLogicalHeightsForRowSizingFirstPassCacheAvailability();
         computeLayoutRequirementsForItemsBeforeLayout(gridLayoutState);
 
         preparePaginationBeforeBlockLayout(relayoutChildren);
@@ -2130,6 +2132,11 @@ LayoutUnit RenderGrid::rowAxisOffsetForGridItem(const RenderBox& gridItem) const
     return 0;
 }
 
+bool RenderGrid::isSubgrid() const
+{
+    return isSubgrid(GridTrackSizingDirection::ForRows) || isSubgrid(GridTrackSizingDirection::ForColumns);
+}
+
 bool RenderGrid::isSubgrid(GridTrackSizingDirection direction) const
 {
     // If the grid container is forced to establish an independent formatting
@@ -2610,6 +2617,63 @@ void RenderGrid::computeOverflow(LayoutUnit oldClientAfterEdge, bool recomputeFl
         gridAreaSize += { paddingEnd(), paddingAfter() };
         addLayoutOverflow({ { }, gridAreaSize });
     }
+}
+
+void RenderGrid::updateIntrinsicLogicalHeightsForRowSizingFirstPassCacheAvailability()
+{
+    auto canCreateIntrinsicLogicalHeightsCacheForRowSizingFirstPass = this->canCreateIntrinsicLogicalHeightsForRowSizingFirstPassCache();
+
+    if (canCreateIntrinsicLogicalHeightsCacheForRowSizingFirstPass && m_intrinsicLogicalHeightsForRowSizingFirstPass) {
+        for (auto& gridItem : childrenOfType<RenderBox>(*this)) {
+            if (gridItem.needsLayout())
+                m_intrinsicLogicalHeightsForRowSizingFirstPass->invalidateSizeForItem(gridItem);
+        }
+    } else if (canCreateIntrinsicLogicalHeightsCacheForRowSizingFirstPass)
+        m_intrinsicLogicalHeightsForRowSizingFirstPass.emplace();
+    else
+        m_intrinsicLogicalHeightsForRowSizingFirstPass.reset();
+}
+
+std::optional<GridItemSizeCache>& RenderGrid::intrinsicLogicalHeightsForRowSizingFirstPass() const
+{
+    ASSERT_IMPLIES(m_intrinsicLogicalHeightsForRowSizingFirstPass, canCreateIntrinsicLogicalHeightsForRowSizingFirstPassCache());
+    return m_intrinsicLogicalHeightsForRowSizingFirstPass;
+}
+
+bool RenderGrid::canCreateIntrinsicLogicalHeightsForRowSizingFirstPassCache() const
+{
+    if (isMasonry())
+        return false;
+
+    if (isSubgrid())
+        return false;
+
+    if (locateEnclosingFragmentedFlow())
+        return false;
+
+    for (auto& gridItem : childrenOfType<RenderBox>(*this)) {
+        if (auto* renderGrid = dynamicDowncast<RenderGrid>(gridItem); renderGrid && renderGrid->isSubgrid())
+            return false;
+
+        if (isBaselineAlignmentForGridItem(gridItem))
+            return false;
+    }
+    return true;
+}
+
+void GridItemSizeCache::setSizeForGridItem(const RenderBox& gridItem, LayoutUnit size)
+{
+    m_sizes.set(gridItem, size);
+}
+
+std::optional<LayoutUnit> GridItemSizeCache::sizeForItem(const RenderBox& gridItem) const
+{
+    return m_sizes.get(gridItem);
+}
+
+void GridItemSizeCache::invalidateSizeForItem(const RenderBox& gridItem)
+{
+    m_sizes.remove(gridItem);
 }
 
 } // namespace WebCore

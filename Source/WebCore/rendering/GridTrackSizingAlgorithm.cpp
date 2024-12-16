@@ -1037,6 +1037,13 @@ void GridTrackSizingAlgorithm::computeGridContainerIntrinsicSizes()
 LayoutUnit GridTrackSizingAlgorithmStrategy::logicalHeightForGridItem(RenderBox& gridItem, GridLayoutState& gridLayoutState) const
 {
     GridTrackSizingDirection gridItemBlockDirection = GridLayoutFunctions::flowAwareDirectionForGridItem(*renderGrid(), gridItem, GridTrackSizingDirection::ForRows);
+
+    auto& intrinsicLogicalHeightsForRowSizingFirstPass = renderGrid()->intrinsicLogicalHeightsForRowSizingFirstPass();
+    if (intrinsicLogicalHeightsForRowSizingFirstPass && !gridItem.needsLayout() && sizingState() == GridTrackSizingAlgorithm::SizingState::RowSizingFirstIteration) {
+        if (auto cachedLogicalHeight = intrinsicLogicalHeightsForRowSizingFirstPass->sizeForItem(gridItem))
+            return *cachedLogicalHeight;
+    }
+
     // If |gridItem| has a relative logical height, we shouldn't let it override its intrinsic height, which is
     // what we are interested in here. Thus we need to set the block-axis override size to nullopt (no possible resolution).
     auto hasOverridingContainingBlockContentSizeForGridItem = [&] {
@@ -1057,7 +1064,12 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::logicalHeightForGridItem(RenderBox&
         gridItem.clearOverridingContentSize();
 
     gridItem.layoutIfNeeded();
-    return gridItem.logicalHeight() + GridLayoutFunctions::marginLogicalSizeForGridItem(*renderGrid(), gridItemBlockDirection, gridItem) + m_algorithm.baselineOffsetForGridItem(gridItem, gridAxisForDirection(direction()));
+
+    auto gridItemLogicalHeight = gridItem.logicalHeight() + GridLayoutFunctions::marginLogicalSizeForGridItem(*renderGrid(), gridItemBlockDirection, gridItem) + m_algorithm.baselineOffsetForGridItem(gridItem, gridAxisForDirection(direction()));
+    if (intrinsicLogicalHeightsForRowSizingFirstPass && sizingState() == GridTrackSizingAlgorithm::SizingState::RowSizingFirstIteration)
+        intrinsicLogicalHeightsForRowSizingFirstPass->setSizeForGridItem(gridItem, gridItemLogicalHeight);
+
+    return gridItemLogicalHeight;
 }
 
 LayoutUnit GridTrackSizingAlgorithmStrategy::minContentContributionForGridItem(RenderBox& gridItem, GridLayoutState& gridLayoutState) const
@@ -1103,6 +1115,10 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::minContentContributionForGridItem(R
 
     if (updateOverridingContainingBlockContentSizeForGridItem(gridItem, gridItemInlineDirection)) {
         gridItem.setNeedsLayout(MarkOnlyThis);
+
+        if (auto& intrinsicLogicalHeightsForRowSizingFirstPass = renderGrid()->intrinsicLogicalHeightsForRowSizingFirstPass())
+            intrinsicLogicalHeightsForRowSizingFirstPass->invalidateSizeForItem(gridItem);
+
         // For a grid item with relative width constraints to the grid area, such as percentaged paddings, we reset the overridingContainingBlockContentSizeForGridItem value for columns when we are executing a definite strategy
         // for columns. Since we have updated the overridingContainingBlockContentSizeForGridItem inline-axis/width value here, we might need to recompute the grid item's relative width. For some cases, we probably will not
         // be able to do it during the RenderGrid::layoutGridItems() function as the grid area does't change there any more. Also, as we are doing a layout inside GridTrackSizingAlgorithmStrategy::logicalHeightForGridItem()
@@ -1126,8 +1142,11 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::maxContentContributionForGridItem(R
         return gridItem.maxPreferredLogicalWidth() + GridLayoutFunctions::marginLogicalSizeForGridItem(*renderGrid(), gridItemInlineDirection, gridItem) + m_algorithm.baselineOffsetForGridItem(gridItem, gridAxisForDirection(direction()));
     }
 
-    if (updateOverridingContainingBlockContentSizeForGridItem(gridItem, gridItemInlineDirection))
+    if (updateOverridingContainingBlockContentSizeForGridItem(gridItem, gridItemInlineDirection)) {
+        if (auto& intrinsicLogicalHeightsForRowSizingFirstPass = renderGrid()->intrinsicLogicalHeightsForRowSizingFirstPass())
+            intrinsicLogicalHeightsForRowSizingFirstPass->invalidateSizeForItem(gridItem);
         gridItem.setNeedsLayout(MarkOnlyThis);
+    }
     return logicalHeightForGridItem(gridItem, gridLayoutState);
 }
 
