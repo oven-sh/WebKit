@@ -36,9 +36,19 @@ inline std::span<uint8_t> dataMutableByteSpan(AudioBuffer& buffer)
     return unsafeMakeSpan(static_cast<uint8_t*>(buffer.mData), buffer.mDataByteSize);
 }
 
+inline std::span<float> dataMutableFloatSpan(AudioBuffer& buffer)
+{
+    return unsafeMakeSpan(static_cast<float*>(buffer.mData), buffer.mDataByteSize / sizeof(float));
+}
+
 inline std::span<const uint8_t> dataByteSpan(const AudioBuffer& buffer)
 {
     return unsafeMakeSpan(static_cast<const uint8_t*>(buffer.mData), buffer.mDataByteSize);
+}
+
+inline std::span<const float> dataFloatSpan(AudioBuffer& buffer)
+{
+    return unsafeMakeSpan(static_cast<const float*>(buffer.mData), buffer.mDataByteSize / sizeof(float));
 }
 
 } // namespace WebCore

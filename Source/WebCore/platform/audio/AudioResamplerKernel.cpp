@@ -48,7 +48,7 @@ AudioResamplerKernel::AudioResamplerKernel(AudioResampler* resampler)
     m_lastValues[1] = 0.0f;
 }
 
-float* AudioResamplerKernel::getSourcePointer(size_t framesToProcess, size_t* numberOfSourceFramesNeededP)
+std::span<float> AudioResamplerKernel::getSourceSpan(size_t framesToProcess, size_t* numberOfSourceFramesNeededP)
 {
     ASSERT(framesToProcess <= AudioUtilities::renderQuantumSize);
     
@@ -68,9 +68,9 @@ float* AudioResamplerKernel::getSourcePointer(size_t framesToProcess, size_t* nu
     bool isGood = m_fillIndex < m_sourceBuffer.size() && m_fillIndex + framesNeeded <= m_sourceBuffer.size();
     ASSERT(isGood);
     if (!isGood)
-        return 0;
+        return { };
 
-    return m_sourceBuffer.data() + m_fillIndex;
+    return m_sourceBuffer.span().subspan(m_fillIndex);
 }
 
 void AudioResamplerKernel::process(float* destination, size_t framesToProcess)

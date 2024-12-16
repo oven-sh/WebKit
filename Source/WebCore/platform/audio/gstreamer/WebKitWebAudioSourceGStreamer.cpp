@@ -34,6 +34,7 @@
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
 
@@ -298,7 +299,7 @@ static GRefPtr<GstBuffer> webKitWebAudioSrcAllocateBuffer(WebKitWebAudioSrc* src
         ASSERT(mappedBuffer);
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
         for (unsigned channelIndex = 0; channelIndex < priv->bus->numberOfChannels(); channelIndex++)
-            priv->bus->setChannelMemory(channelIndex, reinterpret_cast<float*>(mappedBuffer.data() + channelIndex * priv->bufferSize), priv->framesToPull);
+            priv->bus->setChannelMemory(channelIndex, spanReinterpretCast<float>(mappedBuffer.mutableSpan().subspan(channelIndex * priv->bufferSize)).first(priv->framesToPull));
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 

@@ -54,7 +54,7 @@ public:
     double tailTime() const override;
     double latencyTime() const override;
 
-    void updateCoefficients(size_t numberOfFrames, const float* cutoffFrequency, const float* q, const float* gain, const float* detune);
+    void updateCoefficients(size_t numberOfFrames, std::span<const float> cutoffFrequency, std::span<const float> q, std::span<const float> gain, std::span<const float> detune);
 
     bool requiresTailProcessing() const final;
 

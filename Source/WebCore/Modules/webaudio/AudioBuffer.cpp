@@ -220,13 +220,13 @@ RefPtr<Float32Array> AudioBuffer::channelData(unsigned channelIndex)
     return m_channels[channelIndex].copyRef();
 }
 
-float* AudioBuffer::rawChannelData(unsigned channelIndex)
+std::span<float> AudioBuffer::rawChannelData(unsigned channelIndex)
 {
     if (channelIndex >= m_channels.size())
-        return nullptr;
+        return { };
     if (hasDetachedChannelBuffer())
-        return nullptr;
-    return m_channels[channelIndex]->data();
+        return { };
+    return m_channels[channelIndex]->typedMutableSpan();
 }
 
 ExceptionOr<void> AudioBuffer::copyFromChannel(Ref<Float32Array>&& destination, unsigned channelNumber, unsigned bufferOffset)
@@ -333,7 +333,7 @@ bool AudioBuffer::copyTo(AudioBuffer& other) const
         return false;
 
     for (unsigned channelIndex = 0; channelIndex < numberOfChannels(); ++channelIndex)
-        memcpy(other.rawChannelData(channelIndex), m_channels[channelIndex]->data(), length() * sizeof(float));
+        memcpySpan(other.rawChannelData(channelIndex), m_channels[channelIndex]->typedSpan().first(length()));
 
     other.m_noiseInjectionMultiplier = m_noiseInjectionMultiplier;
     return true;

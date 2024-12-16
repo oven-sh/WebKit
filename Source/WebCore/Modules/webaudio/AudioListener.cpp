@@ -109,17 +109,17 @@ void AudioListener::updateValuesIfNeeded(size_t framesToProcess)
         ASSERT(framesToProcess <= m_upYValues.size());
         ASSERT(framesToProcess <= m_upZValues.size());
 
-        positionX().calculateSampleAccurateValues(m_positionXValues.data(), framesToProcess);
-        positionY().calculateSampleAccurateValues(m_positionYValues.data(), framesToProcess);
-        positionZ().calculateSampleAccurateValues(m_positionZValues.data(), framesToProcess);
+        positionX().calculateSampleAccurateValues(m_positionXValues.span().first(framesToProcess));
+        positionY().calculateSampleAccurateValues(m_positionYValues.span().first(framesToProcess));
+        positionZ().calculateSampleAccurateValues(m_positionZValues.span().first(framesToProcess));
 
-        forwardX().calculateSampleAccurateValues(m_forwardXValues.data(), framesToProcess);
-        forwardY().calculateSampleAccurateValues(m_forwardYValues.data(), framesToProcess);
-        forwardZ().calculateSampleAccurateValues(m_forwardZValues.data(), framesToProcess);
+        forwardX().calculateSampleAccurateValues(m_forwardXValues.span().first(framesToProcess));
+        forwardY().calculateSampleAccurateValues(m_forwardYValues.span().first(framesToProcess));
+        forwardZ().calculateSampleAccurateValues(m_forwardZValues.span().first(framesToProcess));
 
-        upX().calculateSampleAccurateValues(m_upXValues.data(), framesToProcess);
-        upY().calculateSampleAccurateValues(m_upYValues.data(), framesToProcess);
-        upZ().calculateSampleAccurateValues(m_upZValues.data(), framesToProcess);
+        upX().calculateSampleAccurateValues(m_upXValues.span().first(framesToProcess));
+        upY().calculateSampleAccurateValues(m_upYValues.span().first(framesToProcess));
+        upZ().calculateSampleAccurateValues(m_upZValues.span().first(framesToProcess));
     }
 }
 

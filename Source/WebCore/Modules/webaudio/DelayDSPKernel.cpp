@@ -121,7 +121,7 @@ void DelayDSPKernel::processARate(const float* source, float* destination, size_
     size_t bufferLength = m_buffer.size();
     auto* buffer = m_buffer.data();
 
-    delayProcessor()->delayTime().calculateSampleAccurateValues(m_delayTimes.data(), framesToProcess);
+    delayProcessor()->delayTime().calculateSampleAccurateValues(m_delayTimes.span().first(framesToProcess));
 
     copyToCircularBuffer(buffer, m_writeIndex, bufferLength, source, framesToProcess);
 
@@ -214,10 +214,10 @@ void DelayDSPKernel::processOnlyAudioParams(size_t framesToProcess)
     if (!delayProcessor())
         return;
 
-    float values[AudioUtilities::renderQuantumSize];
+    std::array<float, AudioUtilities::renderQuantumSize> values;
     ASSERT(framesToProcess <= AudioUtilities::renderQuantumSize);
 
-    delayProcessor()->delayTime().calculateSampleAccurateValues(values, framesToProcess);
+    delayProcessor()->delayTime().calculateSampleAccurateValues(std::span { values }.first(framesToProcess));
 }
 
 void DelayDSPKernel::reset()

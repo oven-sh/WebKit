@@ -33,6 +33,7 @@
 #include "AudioUtilities.h"
 #include "PeriodicWave.h"
 #include "VectorMath.h"
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -52,12 +53,10 @@ static inline float detuneToFrequencyMultiplier(float detuneValue)
 }
 
 // Clamp the frequency value to lie within Nyquist frequency. For NaN, arbitrarily clamp to +Nyquist.
-static void clampFrequency(float* frequency, size_t framesToProcess, float nyquist)
+static void clampFrequency(std::span<float> frequencies, float nyquist)
 {
-    for (size_t k = 0; k < framesToProcess; ++k) {
-        float f = frequency[k];
-        frequency[k] = std::isnan(f) ? nyquist : clampTo(f, -nyquist, nyquist);
-    }
+    for (auto& frequency : frequencies)
+        frequency = std::isnan(frequency) ? nyquist : clampTo(frequency, -nyquist, nyquist);
 }
 
 ExceptionOr<Ref<OscillatorNode>> OscillatorNode::create(BaseAudioContext& context, const OscillatorOptions& options)
@@ -132,7 +131,7 @@ bool OscillatorNode::calculateSampleAccuratePhaseIncrements(size_t framesToProce
 
     bool hasSampleAccurateValues = false;
     bool hasFrequencyChanges = false;
-    float* phaseIncrements = m_phaseIncrements.data();
+    auto phaseIncrements = m_phaseIncrements.span();
 
     float finalScale = m_periodicWave->rateScale();
 
@@ -142,7 +141,7 @@ bool OscillatorNode::calculateSampleAccuratePhaseIncrements(size_t framesToProce
 
         // Get the sample-accurate frequency values and convert to phase increments.
         // They will be converted to phase increments below.
-        m_frequency->calculateSampleAccurateValues(phaseIncrements, framesToProcess);
+        m_frequency->calculateSampleAccurateValues(phaseIncrements.first(framesToProcess));
     } else {
         float frequency = m_frequency->finalValue();
         finalScale *= frequency;
@@ -152,17 +151,17 @@ bool OscillatorNode::calculateSampleAccuratePhaseIncrements(size_t framesToProce
         hasSampleAccurateValues = true;
 
         // Get the sample-accurate detune values.
-        float* detuneValues = hasFrequencyChanges ? m_detuneValues.data() : phaseIncrements;
-        m_detune->calculateSampleAccurateValues(detuneValues, framesToProcess);
+        auto detuneValues = hasFrequencyChanges ? m_detuneValues.span() : phaseIncrements;
+        m_detune->calculateSampleAccurateValues(detuneValues.first(framesToProcess));
 
         // Convert from cents to rate scalar.
-        VectorMath::multiplyByScalar(detuneValues, 1.0 / 1200, detuneValues, framesToProcess);
+        VectorMath::multiplyByScalar(detuneValues.data(), 1.0 / 1200, detuneValues.data(), framesToProcess);
         for (unsigned i = 0; i < framesToProcess; ++i)
             detuneValues[i] = std::exp2(detuneValues[i]);
 
         if (hasFrequencyChanges) {
             // Multiply frequencies by detune scalings.
-            VectorMath::multiply(detuneValues, phaseIncrements, phaseIncrements, framesToProcess);
+            VectorMath::multiply(detuneValues.data(), phaseIncrements.data(), phaseIncrements.data(), framesToProcess);
         }
     } else {
         float detune = m_detune->finalValue();
@@ -171,9 +170,9 @@ bool OscillatorNode::calculateSampleAccuratePhaseIncrements(size_t framesToProce
     }
 
     if (hasSampleAccurateValues) {
-        clampFrequency(phaseIncrements, framesToProcess, context().sampleRate() / 2);
+        clampFrequency(phaseIncrements.first(framesToProcess), context().sampleRate() / 2);
         // Convert from frequency to wave increment.
-        VectorMath::multiplyByScalar(phaseIncrements, finalScale, phaseIncrements, framesToProcess);
+        VectorMath::multiplyByScalar(phaseIncrements.data(), finalScale, phaseIncrements.data(), framesToProcess);
     }
 
     return hasSampleAccurateValues;
@@ -320,7 +319,7 @@ double OscillatorNode::processKRate(int n, float* destP, double virtualReadIndex
     float detune = m_detune->finalValue();
     float detuneScale = detuneToFrequencyMultiplier(detune);
     frequency *= detuneScale;
-    clampFrequency(&frequency, 1, context().sampleRate() / 2);
+    clampFrequency(singleElementSpan(frequency), context().sampleRate() / 2);
     m_periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
 
     float rateScale = m_periodicWave->rateScale();
@@ -397,7 +396,7 @@ void OscillatorNode::process(size_t framesToProcess)
         float detune = m_detune->finalValue();
         float detuneScale = detuneToFrequencyMultiplier(detune);
         frequency *= detuneScale;
-        clampFrequency(&frequency, 1, context().sampleRate() / 2);
+        clampFrequency(singleElementSpan(frequency), context().sampleRate() / 2);
         m_periodicWave->waveDataForFundamentalFrequency(frequency, lowerWaveData, higherWaveData, tableInterpolationFactor);
     }
 

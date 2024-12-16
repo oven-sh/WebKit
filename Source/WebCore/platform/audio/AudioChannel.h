@@ -49,9 +49,8 @@ public:
     // Memory can be externally referenced, or can be internally allocated with an AudioFloatArray.
 
     // Reference an external buffer.
-    AudioChannel(float* storage, size_t length)
-        : m_rawPointer(storage)
-        , m_length(length)
+    AudioChannel(std::span<float> storage)
+        : m_span(storage)
         , m_silent(false)
     {
     }
@@ -59,7 +58,7 @@ public:
     // Manage storage for us.
     explicit AudioChannel(size_t length)
         : m_memBuffer(makeUnique<AudioFloatArray>(length))
-        , m_length(length)
+        , m_span(m_memBuffer->span())
     {
     }
 
@@ -68,35 +67,37 @@ public:
 
     // Redefine the memory for this channel.
     // storage represents external memory not managed by this object.
-    void set(float* storage, size_t length)
+    void set(std::span<float> storage)
     {
         m_memBuffer = nullptr; // cleanup managed storage
-        m_rawPointer = storage;
-        m_length = length;
+        m_span = storage;
         m_silent = false;
     }
 
     // How many sample-frames do we contain?
-    size_t length() const { return m_length; }
+    size_t length() const { return m_span.size(); }
 
     // Set new length. Can only be set to a value lower than the current length.
     void setLength(size_t newLength)
     {
-        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(newLength <= length());
-        m_length = newLength;
+        m_span = m_span.first(newLength);
     }
 
-    std::span<const float> span() const { return { data(), length() }; }
-    std::span<float> mutableSpan() { return { mutableData(), length() }; }
+    std::span<const float> span() const { return m_span; }
+    std::span<float> mutableSpan()
+    {
+        clearSilentFlag();
+        return m_span;
+    }
 
     // Direct access to PCM sample data. Non-const accessor clears silent flag.
     float* mutableData()
     {
         clearSilentFlag();
-        return m_rawPointer ? m_rawPointer : m_memBuffer->data(); 
+        return m_span.data();
     }
 
-    const float* data() const { return m_rawPointer ? m_rawPointer : m_memBuffer->data(); }
+    const float* data() const { return m_span.data(); }
 
     // Zeroes out all sample values in buffer.
     void zero()
@@ -108,7 +109,7 @@ public:
         if (m_memBuffer)
             m_memBuffer->zero();
         else
-            zeroSpan(mutableSpan());
+            zeroSpan(m_span);
     }
 
     // Clears the silent flag.
@@ -132,9 +133,8 @@ public:
     float maxAbsValue() const;
 
 private:
-    float* m_rawPointer { nullptr };
     std::unique_ptr<AudioFloatArray> m_memBuffer;
-    size_t m_length { 0 };
+    std::span<float> m_span;
     bool m_silent { true };
 };
 

@@ -39,16 +39,16 @@ namespace WebCore {
 
 namespace StereoPanner {
 
-void panWithSampleAccurateValues(const AudioBus* inputBus, AudioBus* outputBus, const float* panValues, size_t framesToProcess)
+void panWithSampleAccurateValues(const AudioBus* inputBus, AudioBus* outputBus, std::span<const float> panValues)
 {
-    bool isInputSafe = inputBus && (inputBus->numberOfChannels() == 1 || inputBus->numberOfChannels() == 2) && framesToProcess <= inputBus->length();
+    bool isInputSafe = inputBus && (inputBus->numberOfChannels() == 1 || inputBus->numberOfChannels() == 2) && panValues.size() <= inputBus->length();
     ASSERT(isInputSafe);
     if (!isInputSafe)
         return;
     
     unsigned numberOfInputChannels = inputBus->numberOfChannels();
     
-    bool isOutputSafe = outputBus && outputBus->numberOfChannels() == 2 && framesToProcess <= outputBus->length();
+    bool isOutputSafe = outputBus && outputBus->numberOfChannels() == 2 && panValues.size() <= outputBus->length();
     ASSERT(isOutputSafe);
     if (!isOutputSafe)
         return;
@@ -65,13 +65,11 @@ void panWithSampleAccurateValues(const AudioBus* inputBus, AudioBus* outputBus, 
     double gainR;
     double panRadian;
     
-    int n = framesToProcess;
-    
     // Handles mono source case first, then stereo source case.
     if (numberOfInputChannels == 1) {
-        while (n--) {
+        for (auto panValue : panValues) {
             float inputL = *sourceL++;
-            double pan = clampTo(*panValues++, -1.0, 1.0);
+            double pan = clampTo(panValue, -1.0, 1.0);
             // Pan from left to right [-1; 1] will be normalized as [0; 1].
             panRadian = (pan * 0.5 + 0.5) * piOverTwoDouble;
             gainL = cos(panRadian);
@@ -80,10 +78,10 @@ void panWithSampleAccurateValues(const AudioBus* inputBus, AudioBus* outputBus, 
             *destinationR++ = static_cast<float>(inputL * gainR);
         }
     } else {
-        while (n--) {
+        for (auto panValue : panValues) {
             float inputL = *sourceL++;
             float inputR = *sourceR++;
-            double pan = clampTo(*panValues++, -1.0, 1.0);
+            double pan = clampTo(panValue, -1.0, 1.0);
             // Normalize [-1; 0] to [0; 1]. Do nothing when [0; 1].
             panRadian = (pan <= 0 ? pan + 1 : pan) * piOverTwoDouble;
             gainL = cos(panRadian);

@@ -135,7 +135,7 @@ ExceptionOr<void> ConvolverNode::setBufferForBindings(RefPtr<AudioBuffer>&& buff
     // This memory is simply used in the Reverb constructor and no reference to it is kept for later use in that class.
     auto bufferBus = AudioBus::create(numberOfChannels, bufferLength, false);
     for (unsigned i = 0; i < numberOfChannels; ++i)
-        bufferBus->setChannelMemory(i, buffer->channelData(i)->data(), bufferLength);
+        bufferBus->setChannelMemory(i, buffer->channelData(i)->typedMutableSpan().first(bufferLength));
 
     bufferBus->setSampleRate(buffer->sampleRate());
 

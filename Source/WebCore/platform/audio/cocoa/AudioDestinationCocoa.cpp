@@ -35,6 +35,7 @@
 #include "MultiChannelResampler.h"
 #include "PushPullFIFO.h"
 #include "SharedAudioDestination.h"
+#include "SpanCoreAudio.h"
 #include <algorithm>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -117,9 +118,10 @@ OSStatus AudioDestinationCocoa::render(double sampleTime, uint64_t hostTime, UIn
 
     // Associate the destination data array with the output bus then fill the FIFO.
     for (UInt32 i = 0; i < numberOfBuffers; ++i) {
-        auto* memory = reinterpret_cast<float*>(buffers[i].mData);
-        size_t channelNumberOfFrames = std::min<size_t>(numberOfFrames, buffers[i].mDataByteSize / sizeof(float));
-        m_outputBus->setChannelMemory(i, memory, channelNumberOfFrames);
+        auto memory = dataMutableFloatSpan(buffers[i]);
+        if (numberOfFrames < memory.size())
+            memory = memory.first(numberOfFrames);
+        m_outputBus->setChannelMemory(i, memory);
     }
     auto framesToRender = pullRendered(numberOfFrames);
     bool success = AudioDestinationResampler::render(sampleTime, MonotonicTime::fromMachAbsoluteTime(hostTime), framesToRender);

@@ -41,6 +41,7 @@
 #if PLATFORM(COCOA)
 #include <WebCore/AudioUtilitiesCocoa.h>
 #include <WebCore/CARingBuffer.h>
+#include <WebCore/SpanCoreAudio.h>
 #include <WebCore/WebAudioBufferList.h>
 #include <mach/mach_time.h>
 #endif
@@ -246,9 +247,10 @@ void RemoteAudioDestinationProxy::renderAudio(unsigned frameCount)
 
         // Associate the destination data array with the output bus then fill the FIFO.
         for (UInt32 i = 0; i < numberOfBuffers; ++i) {
-            auto* memory = reinterpret_cast<float*>(buffers[i].mData);
-            size_t channelNumberOfFrames = std::min<size_t>(numberOfFrames, buffers[i].mDataByteSize / sizeof(float));
-            m_outputBus->setChannelMemory(i, memory, channelNumberOfFrames);
+            auto memory = dataMutableFloatSpan(buffers[i]);
+            if (numberOfFrames < memory.size())
+                memory = memory.first(numberOfFrames);
+            m_outputBus->setChannelMemory(i, memory);
         }
         size_t framesToRender = pullRendered(numberOfFrames);
         m_ringBuffer->store(m_audioBufferList->list(), numberOfFrames, m_currentFrame);

@@ -53,6 +53,7 @@
 #include "SerializedScriptValue.h"
 #include "WorkerRunLoop.h"
 #include <JavaScriptCore/JSLock.h>
+#include <algorithm>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -232,9 +233,9 @@ void AudioWorkletNode::process(size_t framesToProcess)
         ASSERT(paramValues);
         RELEASE_ASSERT(paramValues->size() >= framesToProcess);
         if (audioParam->hasSampleAccurateValues() && audioParam->automationRate() == AutomationRate::ARate)
-            audioParam->calculateSampleAccurateValues(paramValues->data(), framesToProcess);
+            audioParam->calculateSampleAccurateValues(paramValues->span().first(framesToProcess));
         else
-            std::fill_n(paramValues->data(), framesToProcess, audioParam->finalValue());
+            std::ranges::fill(paramValues->span().first(framesToProcess), audioParam->finalValue());
     }
 
     bool threwException = false;

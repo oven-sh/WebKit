@@ -111,13 +111,14 @@ void BiquadProcessor::process(const AudioBus* source, AudioBus* destination, siz
 
 void BiquadProcessor::processOnlyAudioParams(size_t framesToProcess)
 {
-    float values[AudioUtilities::renderQuantumSize];
+    std::array<float, AudioUtilities::renderQuantumSize> values;
     ASSERT(framesToProcess <= AudioUtilities::renderQuantumSize);
 
-    m_parameter1->calculateSampleAccurateValues(values, framesToProcess);
-    m_parameter2->calculateSampleAccurateValues(values, framesToProcess);
-    m_parameter3->calculateSampleAccurateValues(values, framesToProcess);
-    m_parameter4->calculateSampleAccurateValues(values, framesToProcess);
+    auto valuesSpan = std::span { values }.first(framesToProcess);
+    m_parameter1->calculateSampleAccurateValues(valuesSpan);
+    m_parameter2->calculateSampleAccurateValues(valuesSpan);
+    m_parameter3->calculateSampleAccurateValues(valuesSpan);
+    m_parameter4->calculateSampleAccurateValues(valuesSpan);
 }
 
 void BiquadProcessor::setType(BiquadFilterType type)
@@ -143,7 +144,7 @@ void BiquadProcessor::getFrequencyResponse(unsigned nFrequencies, const float* f
     float gain = parameter3().value();
     float detune = parameter4().value();
 
-    responseKernel->updateCoefficients(1, &cutoffFrequency, &q, &gain, &detune);
+    responseKernel->updateCoefficients(1, singleElementSpan(cutoffFrequency), singleElementSpan(q), singleElementSpan(gain), singleElementSpan(detune));
     responseKernel->getFrequencyResponse(nFrequencies, frequencyHz, magResponse, phaseResponse);
 }
 
