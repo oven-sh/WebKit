@@ -51,7 +51,6 @@ WebProcess/InjectedBundle/API/mac/WKDOMInternals.mm
 WebProcess/Network/NetworkProcessConnection.cpp
 WebProcess/Network/webrtc/LibWebRTCNetworkManager.cpp
 WebProcess/Plugins/PDF/PDFPlugin.mm
-WebProcess/Plugins/PDF/PDFPluginAnnotation.mm
 WebProcess/Plugins/PDF/UnifiedPDF/UnifiedPDFPlugin.mm
 WebProcess/Plugins/PluginView.cpp
 WebProcess/WebCoreSupport/WebLocalFrameLoaderClient.cpp

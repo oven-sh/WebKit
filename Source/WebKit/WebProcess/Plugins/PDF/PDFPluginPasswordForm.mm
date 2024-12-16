@@ -49,7 +49,7 @@ PDFPluginPasswordForm::~PDFPluginPasswordForm() = default;
 Ref<Element> PDFPluginPasswordForm::createAnnotationElement()
 {
     Ref document = parent()->document();
-    Ref element = downcast<StyledElement>(document->createElement(divTag, false));
+    Ref element = document->createElement(divTag, false);
     element->setAttributeWithoutSynchronization(classAttr, "password-form"_s);
 
     auto iconElement = document->createElement(svgTag, false);
