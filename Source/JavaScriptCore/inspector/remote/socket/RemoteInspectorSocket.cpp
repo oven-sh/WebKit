@@ -366,8 +366,8 @@ void RemoteInspector::startAutomationSession(const Event& event)
 
     RemoteInspector::Client::SessionCapabilities capabilities { };
     auto capabilitiesObject = parsedMessageObject->getObject("capabilities"_s);
-    if (capabilitiesObject && capabilitiesObject->getBoolean("acceptInsecureCerts"_s))
-        capabilities.acceptInsecureCertificates = true;
+    if (capabilitiesObject)
+        capabilities.acceptInsecureCertificates = capabilitiesObject->getBoolean("acceptInsecureCerts"_s).value_or(false);
 
     requestAutomationSession(WTFMove(sessionID), capabilities);
 
