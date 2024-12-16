@@ -532,13 +532,6 @@ void WebMParser::reset()
     m_parser->DidSeek();
 }
 
-void WebMParser::createByteRangeSamples()
-{
-    for (auto& track : m_tracks)
-        track->createByteRangeSamples();
-    m_createByteRangeSamples = true;
-}
-
 ExceptionOr<int> WebMParser::parse(SourceBufferParser::Segment&& segment)
 {
     if (!m_parser)
@@ -864,9 +857,6 @@ Status WebMParser::OnTrackEntry(const ElementMetadata&, const TrackEntry& trackE
         return TrackData::create(CodecType::Unsupported, trackEntry, *this);
     }();
 
-    if (m_createByteRangeSamples)
-        track->createByteRangeSamples();
-
     m_tracks.append(WTFMove(track));
     return Status(Status::kOkCompleted);
 }
@@ -1029,10 +1019,7 @@ webm::Status WebMParser::TrackData::readFrameData(webm::Reader& reader, const we
         return webm::Status(webm::Status::kOkPartial);
 
     m_completeBlockBuffer = m_currentBlockBuffer.take();
-    if (m_useByteRange)
-        m_completeFrameData = MediaSample::ByteRange { metadata.position, metadata.size };
-    else
-        m_completeFrameData = Ref { *m_completeBlockBuffer };
+    m_completeFrameData = Ref { *m_completeBlockBuffer };
 
     m_completePacketSize = std::nullopt;
     m_partialBytesRead = 0;
@@ -1095,7 +1082,12 @@ WebMParser::ConsumeFrameDataResult WebMParser::VideoTrackData::consumeFrameData(
         parser().formatDescriptionChangedForTrackData(*this);
     }
 
-    m_pendingMediaSamples.append({ presentationTime, presentationTime, MediaTime::indefiniteTime(), MediaTime::zeroTime(), WTFMove(m_completeFrameData), isKey ? MediaSample::SampleFlags::IsSync : MediaSample::SampleFlags::None });
+    m_pendingMediaSamples.append({
+        .presentationTime = presentationTime,
+        .decodeTime = presentationTime,
+        .data = WTFMove(m_completeFrameData),
+        .flags = isKey ? MediaSample::SampleFlags::IsSync : MediaSample::SampleFlags::None
+    });
 
     ASSERT(!*bytesRemaining);
     return webm::Status(webm::Status::kOkCompleted);
@@ -1310,7 +1302,13 @@ WebMParser::ConsumeFrameDataResult WebMParser::AudioTrackData::consumeFrameData(
 
     m_lastPresentationEndTime = localPresentationTime + packetDuration;
 
-    m_processedMediaSamples.append({ localPresentationTime, MediaTime::invalidTime(), packetDuration, trimDuration, WTFMove(m_completeFrameData), MediaSample::SampleFlags::IsSync });
+    m_processedMediaSamples.append({
+        .presentationTime = localPresentationTime,
+        .duration = packetDuration,
+        .trimInterval = { trimDuration, MediaTime::zeroTime() },
+        .data = WTFMove(m_completeFrameData),
+        .flags = MediaSample::SampleFlags::IsSync
+    });
 
     drainPendingSamples();
 
@@ -1481,7 +1479,7 @@ void SourceBufferParserWebM::parsedMediaData(MediaSamplesBlock&& samplesBlock)
     }
 
     if (samplesBlock.isVideo()) {
-        returnSamples(WTFMove(samplesBlock), m_videoFormatDescription.get());
+        returnSamples(std::exchange(samplesBlock, { }), m_videoFormatDescription.get());
         return;
     }
 
@@ -1504,7 +1502,7 @@ void SourceBufferParserWebM::returnSamples(MediaSamplesBlock&& block, CMFormatDe
     if (block.isEmpty())
         return;
 
-    auto expectedBuffer = toCMSampleBuffer(WTFMove(block), description);
+    auto expectedBuffer = toCMSampleBuffer(block, description);
     if (!expectedBuffer) {
         ERROR_LOG_IF_POSSIBLE(LOGIDENTIFIER, "toCMSampleBuffer error:", expectedBuffer.error().data());
         return;
@@ -1550,9 +1548,7 @@ void SourceBufferParserWebM::flushPendingAudioSamples()
     m_queuedAudioSamples.setInfo(m_audioInfo.copyRef());
     m_queuedAudioSamples.setDiscontinuity(m_audioDiscontinuity);
     m_audioDiscontinuity = false;
-    returnSamples(WTFMove(m_queuedAudioSamples), m_audioFormatDescription.get());
-
-    m_queuedAudioSamples = { };
+    returnSamples(std::exchange(m_queuedAudioSamples, { }), m_audioFormatDescription.get());
     m_queuedAudioDuration = { };
 }
 

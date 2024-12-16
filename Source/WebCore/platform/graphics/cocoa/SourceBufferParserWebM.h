@@ -146,8 +146,6 @@ public:
         webm::TrackEntry& track() { return m_track; }
         TrackInfo::TrackType trackType() const { return m_trackType; }
 
-        void createByteRangeSamples() { m_useByteRange = true; }
-
         RefPtr<TrackInfo> formatDescription() const { return m_formatDescription.copyRef(); }
         void setFormatDescription(Ref<TrackInfo>&& description)
         {
@@ -192,7 +190,6 @@ public:
         webm::Status readFrameData(webm::Reader&, const webm::FrameMetadata&, uint64_t* bytesRemaining);
         WTFLogChannel& logChannel() const { return m_parser.logChannel(); }
         MediaSamplesBlock m_processedMediaSamples;
-        bool m_useByteRange { false };
         MediaSamplesBlock::MediaSampleDataType m_completeFrameData;
         RefPtr<TrackInfo> m_trackInfo;
 
@@ -202,7 +199,7 @@ public:
         const TrackInfo::TrackType m_trackType;
         RefPtr<TrackInfo> m_formatDescription;
         SharedBufferBuilder m_currentBlockBuffer;
-        RefPtr<const FragmentedSharedBuffer> m_completeBlockBuffer;
+        RefPtr<FragmentedSharedBuffer> m_completeBlockBuffer;
         WebMParser& m_parser;
         std::optional<size_t> m_completePacketSize;
         // Size of the currently incomplete parsed packet.

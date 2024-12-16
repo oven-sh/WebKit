@@ -670,7 +670,12 @@ void MediaRecorderPrivateEncoder::enqueueCompressedVideoFrame(VideoEncoder::Enco
 
     MediaSamplesBlock block;
     block.setInfo(m_videoTrackInfo.copyRef());
-    block.append({ m_lastReceivedCompressedVideoFrame, m_lastReceivedCompressedVideoFrame, MediaTime::indefiniteTime(), MediaTime::zeroTime(), SharedBuffer::create(WTFMove(frame.data)), frame.isKeyFrame ? MediaSample::SampleFlags::IsSync : MediaSample::SampleFlags::None });
+    block.append({
+        .presentationTime = m_lastReceivedCompressedVideoFrame,
+        .decodeTime = m_lastReceivedCompressedVideoFrame,
+        .data = SharedBuffer::create(WTFMove(frame.data)),
+        .flags = frame.isKeyFrame ? MediaSample::SampleFlags::IsSync : MediaSample::SampleFlags::None
+    });
     auto sample = toCMSampleBuffer(WTFMove(block), m_videoFormatDescription.get());
     if (!sample) {
         LOG(MediaStream, "appendVideoFrame: error creation compressed sample");

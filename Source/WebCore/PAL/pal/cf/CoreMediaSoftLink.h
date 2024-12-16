@@ -255,6 +255,8 @@ SOFT_LINK_FUNCTION_FOR_HEADER(PAL, CoreMedia, CMTimebaseSetTimerDispatchSourceTo
 #define CMTimebaseSetTimerDispatchSourceToFireImmediately softLink_CoreMedia_CMTimebaseSetTimerDispatchSourceToFireImmediately
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, CoreMedia, CMTimeCopyAsDictionary, CFDictionaryRef, (CMTime time, CFAllocatorRef allocator), (time, allocator))
 #define CMTimeCopyAsDictionary softLink_CoreMedia_CMTimeCopyAsDictionary
+SOFT_LINK_FUNCTION_FOR_HEADER(PAL, CoreMedia, CMTimeMakeFromDictionary, CMTime, (CFDictionaryRef dictionaryRepresentation), (dictionaryRepresentation))
+#define CMTimeMakeFromDictionary softLink_CoreMedia_CMTimeMakeFromDictionary
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, CoreMedia, CMVideoFormatDescriptionCreate, OSStatus, (CFAllocatorRef allocator, CMVideoCodecType codecType, int32_t width, int32_t height, CFDictionaryRef extensions, CMVideoFormatDescriptionRef* formatDescriptionOut), (allocator, codecType, width, height, extensions, formatDescriptionOut))
 #define CMVideoFormatDescriptionCreate softLink_CoreMedia_CMVideoFormatDescriptionCreate
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, CoreMedia, CMVideoFormatDescriptionCreateForImageBuffer, OSStatus, (CFAllocatorRef allocator, CVImageBufferRef imageBuffer, CMVideoFormatDescriptionRef* outDesc), (allocator, imageBuffer, outDesc))
