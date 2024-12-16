@@ -60,7 +60,7 @@ class RenderPassEncoder;
 class Texture;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandencoder
-class CommandEncoder : public RefCountedAndCanMakeWeakPtr<CommandEncoder>, public CommandsMixin, public WGPUCommandEncoderImpl {
+class CommandEncoder : public CommandsMixin, public RefCountedAndCanMakeWeakPtr<CommandEncoder>, public WGPUCommandEncoderImpl {
     WTF_MAKE_TZONE_ALLOCATED(CommandEncoder);
 public:
     static Ref<CommandEncoder> create(id<MTLCommandBuffer> commandBuffer, Device& device)
