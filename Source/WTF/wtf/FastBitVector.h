@@ -61,7 +61,7 @@ public:
     
     uint32_t word(size_t index) const
     {
-        ASSERT_WITH_SECURITY_IMPLICATION(index < fastBitVectorArrayLength(numBits()));
+        RELEASE_ASSERT(index < fastBitVectorArrayLength(numBits()));
         return m_words[index];
     }
     
@@ -149,13 +149,13 @@ public:
     
     uint32_t word(size_t index) const
     {
-        ASSERT_WITH_SECURITY_IMPLICATION(index < arrayLength());
+        RELEASE_ASSERT(index < arrayLength());
         return m_words[index];
     }
     
     uint32_t& word(size_t index)
     {
-        ASSERT_WITH_SECURITY_IMPLICATION(index < arrayLength());
+        RELEASE_ASSERT(index < arrayLength());
         return m_words[index];
     }
     
@@ -569,7 +569,7 @@ public:
     
     FastBitReference at(size_t index)
     {
-        ASSERT_WITH_SECURITY_IMPLICATION(index < numBits());
+        RELEASE_ASSERT(index < numBits());
         return FastBitReference(&m_words.word(index >> 5), 1 << (index & 31));
     }
     
