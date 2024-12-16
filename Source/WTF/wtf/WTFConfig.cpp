@@ -117,6 +117,8 @@ void Config::initialize()
 
     uint8_t* reservedConfigBytes = reinterpret_cast_ptr<uint8_t*>(WebConfig::g_config + WebConfig::reservedSlotsForExecutableAllocator);
     reservedConfigBytes[WebConfig::ReservedByteForAllocationProfiling] = 0;
+    reservedConfigBytes[WebConfig::ReservedByteForAllocationProfilingMode] = 0;
+
     const char* useAllocationProfilingRaw = getenv("JSC_useAllocationProfiling");
     if (useAllocationProfilingRaw) {
         auto useAllocationProfiling = span(useAllocationProfilingRaw);
@@ -124,7 +126,17 @@ void Config::initialize()
             || equalLettersIgnoringASCIICase(useAllocationProfiling, "yes"_s)
             || equal(useAllocationProfiling, "1"_s))
             reservedConfigBytes[WebConfig::ReservedByteForAllocationProfiling] = 1;
+
+        const char* useAllocationProfilingModeRaw = getenv("JSC_allocationProfilingMode");
+        if (useAllocationProfilingModeRaw && reservedConfigBytes[WebConfig::ReservedByteForAllocationProfiling] == 1) {
+            unsigned value { 0 };
+            if (sscanf(useAllocationProfilingModeRaw, "%u", &value) == 1) {
+                RELEASE_ASSERT(value <= 0xFF);
+                reservedConfigBytes[WebConfig::ReservedByteForAllocationProfilingMode] = static_cast<uint8_t>(value & 0xFF);
+            }
+        }
     }
+
 }
 
 void Config::finalize()

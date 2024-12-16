@@ -568,6 +568,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, exposeCustomSettersOnGlobalObjectForTesting, false, Normal, nullptr) \
     v(Bool, useJITCage, canUseJITCage(), Normal, nullptr) \
     v(Bool, useAllocationProfiling, false, Normal, "Allows toggling of bmalloc/libPAS allocation profiling features at JSC launch."_s) \
+    v(Unsigned, allocationProfilingMode, 0, Normal, "Allows custom arguments to be passed to bmalloc/libPAS allocation profiling features at JSC launch."_s) \
     v(Bool, dumpBaselineJITSizeStatistics, false, Normal, nullptr) \
     v(Bool, dumpDFGJITSizeStatistics, false, Normal, nullptr) \
     v(Bool, useLoopUnrolling, true, Normal, nullptr) \

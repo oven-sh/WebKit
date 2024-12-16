@@ -56,6 +56,7 @@ constexpr size_t additionalReservedSlots = 2;
 
 enum ReservedConfigByteOffset {
     ReservedByteForAllocationProfiling,
+    ReservedByteForAllocationProfilingMode,
     NumberOfReservedConfigBytes
 };
 
