@@ -34,6 +34,7 @@ namespace WebCore {
 
 class Image;
 class IntRect;
+class Settings;
 
 // Interface for notification about changes to an image, including decoding,
 // drawing, and animating.
@@ -57,7 +58,7 @@ public:
     virtual void scheduleRenderingUpdate(const Image&) = 0;
 
     virtual bool allowsAnimation(const Image&) const { return true; }
-    virtual bool layerBasedSVGEngineEnabled() const { return false; }
+    virtual const Settings* settings() { return nullptr; }
 
 protected:
     ImageObserver() = default;

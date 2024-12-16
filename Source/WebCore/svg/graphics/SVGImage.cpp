@@ -476,8 +476,12 @@ EncodedDataStatus SVGImage::dataChanged(bool allDataReceived)
         m_page->settings().setAcceleratedCompositingEnabled(false);
         m_page->settings().setShouldAllowUserInstalledFonts(false);
 
-        if (RefPtr observer = imageObserver())
-            m_page->settings().setLayerBasedSVGEngineEnabled(observer->layerBasedSVGEngineEnabled());
+        if (RefPtr observer = imageObserver()) {
+            if (RefPtr parentSettings = observer->settings()) {
+                m_page->settings().setLayerBasedSVGEngineEnabled(parentSettings->layerBasedSVGEngineEnabled());
+                m_page->settings().fontGenericFamilies() = parentSettings->fontGenericFamilies();
+            }
+        }
 
         RefPtr localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
         if (!localMainFrame)
