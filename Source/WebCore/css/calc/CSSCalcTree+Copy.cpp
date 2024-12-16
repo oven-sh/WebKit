@@ -30,6 +30,10 @@
 namespace WebCore {
 namespace CSSCalc {
 
+static auto copy(const MQ::MediaProgressProviding*) -> const MQ::MediaProgressProviding*;
+static auto copy(const CQ::ContainerProgressProviding*) -> const CQ::ContainerProgressProviding*;
+static auto copy(const AtomString&) -> AtomString;
+static auto copy(const CSS::NoneRaw&) -> CSS::NoneRaw;
 static auto copy(const std::optional<Child>& root) -> std::optional<Child>;
 static auto copy(const CSS::NoneRaw&) -> CSS::NoneRaw;
 static auto copy(const ChildOrNone&) -> ChildOrNone;
@@ -49,9 +53,24 @@ std::optional<Child> copy(const std::optional<Child>& root)
     return std::nullopt;
 }
 
-CSS::NoneRaw copy(const CSS::NoneRaw& none)
+const MQ::MediaProgressProviding* copy(const MQ::MediaProgressProviding* root)
 {
-    return none;
+    return root;
+}
+
+const CQ::ContainerProgressProviding* copy(const CQ::ContainerProgressProviding* root)
+{
+    return root;
+}
+
+AtomString copy(const AtomString& root)
+{
+    return root;
+}
+
+CSS::NoneRaw copy(const CSS::NoneRaw& root)
+{
+    return root;
 }
 
 ChildOrNone copy(const ChildOrNone& root)

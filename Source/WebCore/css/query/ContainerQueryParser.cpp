@@ -34,6 +34,11 @@
 namespace WebCore {
 namespace CQ {
 
+Vector<const MQ::FeatureSchema*> ContainerQueryParser::featureSchemas()
+{
+    return Features::allSchemas();
+}
+
 std::optional<ContainerQuery> ContainerQueryParser::consumeContainerQuery(CSSParserTokenRange& range, const MediaQueryParserContext& context)
 {
     auto consumeName = [&] {
@@ -76,16 +81,18 @@ const MQ::FeatureSchema* ContainerQueryParser::schemaForFeatureName(const AtomSt
     return GenericMediaQueryParser<ContainerQueryParser>::schemaForFeatureName(name, context, state);
 }
 
-Vector<const MQ::FeatureSchema*> ContainerQueryParser::featureSchemas()
+const ContainerProgressProviding* ContainerQueryParser::containerProgressProvidingSchemaForFeatureName(const AtomString& name, const MediaQueryParserContext&)
 {
-    return {
-        &Features::width(),
-        &Features::height(),
-        &Features::inlineSize(),
-        &Features::blockSize(),
-        &Features::aspectRatio(),
-        &Features::orientation(),
-    };
+    using Map = MemoryCompactLookupOnlyRobinHoodHashMap<AtomString, const ContainerProgressProviding*>;
+
+    static NeverDestroyed<Map> schemas = [&] {
+        Map map;
+        for (auto& entry : Features::allContainerProgressProvidingSchemas())
+            map.add(entry->name(), entry);
+        return map;
+    }();
+
+    return schemas->get(name);
 }
 
 }

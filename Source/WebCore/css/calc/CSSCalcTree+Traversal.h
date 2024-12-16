@@ -63,6 +63,18 @@ template<typename F, typename Op> void forAllChildren(const Op& root, const F& f
         {
             functor(root);
         }
+        void operator()(const AtomString& root)
+        {
+            functor(root);
+        }
+        void operator()(const MQ::MediaProgressProviding* root)
+        {
+            functor(root);
+        }
+        void operator()(const CQ::ContainerProgressProviding* root)
+        {
+            functor(root);
+        }
     };
     auto caller = Caller { functor };
     WTF::apply([&](const auto& ...x) { (..., caller(x)); }, root);
@@ -107,6 +119,15 @@ template<typename F, typename Op> void forAllChildNodes(const Op& root, const F&
         void operator()(const Child& root)
         {
             functor(root);
+        }
+        void operator()(const AtomString&)
+        {
+        }
+        void operator()(const MQ::MediaProgressProviding*)
+        {
+        }
+        void operator()(const CQ::ContainerProgressProviding*)
+        {
         }
     };
     auto caller = Caller { functor };

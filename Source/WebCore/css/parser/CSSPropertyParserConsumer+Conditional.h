@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "CSSValueKeywords.h"
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -43,6 +44,19 @@ RefPtr<CSSPrimitiveValue> consumeSingleContainerName(CSSParserTokenRange&, const
 // MARK: <'container-name'> consuming
 // https://drafts.csswg.org/css-conditional-5/#propdef-container-name
 RefPtr<CSSValue> consumeContainerName(CSSParserTokenRange&, const CSSParserContext&);
+
+inline bool isValidContainerNameIdentifier(CSSValueID valueID)
+{
+    switch (valueID) {
+    case CSSValueNone:
+    case CSSValueAnd:
+    case CSSValueOr:
+    case CSSValueNot:
+        return false;
+    default:
+        return true;
+    }
+}
 
 } // namespace CSSPropertyParserHelpers
 } // namespace WebCore

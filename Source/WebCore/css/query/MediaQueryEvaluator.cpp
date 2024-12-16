@@ -134,8 +134,7 @@ OptionSet<MediaQueryDynamicDependency> MediaQueryEvaluator::collectDynamicDepend
     traverseFeatures(query, [&](const Feature& feature) {
         if (!feature.schema)
             return;
-        if (auto dependency = Features::dynamicDependency(*feature.schema))
-            result.add(*dependency);
+        result.add(feature.schema->dependencies);
     });
 
     return result;

@@ -98,6 +98,8 @@ std::optional<Child> simplify(Exp&, const SimplificationOptions&);
 std::optional<Child> simplify(Abs&, const SimplificationOptions&);
 std::optional<Child> simplify(Sign&, const SimplificationOptions&);
 std::optional<Child> simplify(Progress&, const SimplificationOptions&);
+std::optional<Child> simplify(MediaProgress&, const SimplificationOptions&);
+std::optional<Child> simplify(ContainerProgress&, const SimplificationOptions&);
 std::optional<Child> simplify(Anchor&, const SimplificationOptions&);
 std::optional<Child> simplify(AnchorSize&, const SimplificationOptions&);
 

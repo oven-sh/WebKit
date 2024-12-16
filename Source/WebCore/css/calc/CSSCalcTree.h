@@ -38,11 +38,16 @@
 
 namespace WebCore {
 
+namespace CQ {
+struct ContainerProgressProviding;
+}
+
+namespace MQ {
+struct MediaProgressProviding;
+}
+
 namespace Style {
-
-// Forward declared from AnchorPositionEvaluator.h
 enum class AnchorSizeDimension : uint8_t;
-
 }
 
 enum class CSSUnitType : uint8_t;
@@ -80,8 +85,8 @@ struct Exp;
 struct Abs;
 struct Sign;
 struct Progress;
-
-// CSS Anchor Positioning functions.
+struct MediaProgress;
+struct ContainerProgress;
 struct Anchor;
 struct AnchorSize;
 
@@ -202,6 +207,8 @@ using Node = std::variant<
     IndirectNode<Abs>,
     IndirectNode<Sign>,
     IndirectNode<Progress>,
+    IndirectNode<MediaProgress>,
+    IndirectNode<ContainerProgress>,
     IndirectNode<Anchor>,
     IndirectNode<AnchorSize>
 >;
@@ -226,8 +233,7 @@ struct Tree {
 };
 
 struct Sum {
-    WTF_MAKE_TZONE_ALLOCATED(Sum);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Sum);
     using Base = Calculation::Sum;
 
     Children children;
@@ -236,8 +242,7 @@ public:
 };
 
 struct Product {
-    WTF_MAKE_TZONE_ALLOCATED(Product);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Product);
     using Base = Calculation::Product;
 
     Children children;
@@ -246,8 +251,7 @@ public:
 };
 
 struct Negate {
-    WTF_MAKE_TZONE_ALLOCATED(Negate);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Negate);
     using Base = Calculation::Negate;
 
     Child a;
@@ -256,8 +260,7 @@ public:
 };
 
 struct Invert {
-    WTF_MAKE_TZONE_ALLOCATED(Invert);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Invert);
     using Base = Calculation::Invert;
 
     Child a;
@@ -269,8 +272,7 @@ public:
 
 // Comparison Functions - https://drafts.csswg.org/css-values-4/#comp-func
 struct Min {
-    WTF_MAKE_TZONE_ALLOCATED(Min);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Min);
     using Base = Calculation::Min;
     static constexpr auto id = CSSValueMin;
 
@@ -287,8 +289,7 @@ public:
 };
 
 struct Max {
-    WTF_MAKE_TZONE_ALLOCATED(Max);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Max);
     using Base = Calculation::Max;
     static constexpr auto id = CSSValueMax;
 
@@ -305,8 +306,7 @@ public:
 };
 
 struct Clamp {
-    WTF_MAKE_TZONE_ALLOCATED(Clamp);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Clamp);
     using Base = Calculation::Clamp;
     static constexpr auto id = CSSValueClamp;
 
@@ -326,8 +326,7 @@ public:
 
 // Stepped Value Functions - https://drafts.csswg.org/css-values-4/#round-func
 struct RoundNearest {
-    WTF_MAKE_TZONE_ALLOCATED(RoundNearest);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(RoundNearest);
     using Base = Calculation::RoundNearest;
     static constexpr auto id = CSSValueNearest;
 
@@ -353,8 +352,7 @@ public:
 };
 
 struct RoundUp {
-    WTF_MAKE_TZONE_ALLOCATED(RoundUp);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(RoundUp);
     using Base = Calculation::RoundUp;
     static constexpr auto id = CSSValueUp;
 
@@ -380,8 +378,7 @@ public:
 };
 
 struct RoundDown {
-    WTF_MAKE_TZONE_ALLOCATED(RoundDown);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(RoundDown);
     using Base = Calculation::RoundDown;
     static constexpr auto id = CSSValueDown;
 
@@ -407,8 +404,7 @@ public:
 };
 
 struct RoundToZero {
-    WTF_MAKE_TZONE_ALLOCATED(RoundToZero);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(RoundToZero);
     using Base = Calculation::RoundToZero;
     static constexpr auto id = CSSValueToZero;
 
@@ -434,8 +430,7 @@ public:
 };
 
 struct Mod {
-    WTF_MAKE_TZONE_ALLOCATED(Mod);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Mod);
     using Base = Calculation::Mod;
     static constexpr auto id = CSSValueMod;
 
@@ -454,8 +449,7 @@ public:
 };
 
 struct Rem {
-    WTF_MAKE_TZONE_ALLOCATED(Rem);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Rem);
     using Base = Calculation::Rem;
     static constexpr auto id = CSSValueRem;
 
@@ -475,8 +469,7 @@ public:
 
 // Trigonometric Functions - https://drafts.csswg.org/css-values-4/#trig-funcs
 struct Sin {
-    WTF_MAKE_TZONE_ALLOCATED(Sin);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Sin);
     using Base = Calculation::Sin;
     static constexpr auto id = CSSValueSin;
 
@@ -492,8 +485,7 @@ public:
 };
 
 struct Cos {
-    WTF_MAKE_TZONE_ALLOCATED(Cos);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Cos);
     using Base = Calculation::Cos;
     static constexpr auto id = CSSValueCos;
 
@@ -509,8 +501,7 @@ public:
 };
 
 struct Tan {
-    WTF_MAKE_TZONE_ALLOCATED(Tan);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Tan);
     using Base = Calculation::Tan;
     static constexpr auto id = CSSValueTan;
 
@@ -526,8 +517,7 @@ public:
 };
 
 struct Asin {
-    WTF_MAKE_TZONE_ALLOCATED(Asin);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Asin);
     using Base = Calculation::Asin;
     static constexpr auto id = CSSValueAsin;
 
@@ -543,8 +533,7 @@ public:
 };
 
 struct Acos {
-    WTF_MAKE_TZONE_ALLOCATED(Acos);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Acos);
     using Base = Calculation::Acos;
     static constexpr auto id = CSSValueAcos;
 
@@ -560,8 +549,7 @@ public:
 };
 
 struct Atan {
-    WTF_MAKE_TZONE_ALLOCATED(Atan);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Atan);
     using Base = Calculation::Atan;
     static constexpr auto id = CSSValueAtan;
 
@@ -577,8 +565,7 @@ public:
 };
 
 struct Atan2 {
-    WTF_MAKE_TZONE_ALLOCATED(Atan2);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Atan2);
     using Base = Calculation::Atan2;
     static constexpr auto id = CSSValueAtan2;
 
@@ -597,8 +584,7 @@ public:
 
 // Exponential Functions - https://drafts.csswg.org/css-values-4/#exponent-funcs
 struct Pow {
-    WTF_MAKE_TZONE_ALLOCATED(Pow);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Pow);
     using Base = Calculation::Pow;
     static constexpr auto id = CSSValuePow;
 
@@ -616,8 +602,7 @@ public:
 };
 
 struct Sqrt {
-    WTF_MAKE_TZONE_ALLOCATED(Sqrt);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Sqrt);
     using Base = Calculation::Sqrt;
     static constexpr auto id = CSSValueSqrt;
 
@@ -633,8 +618,7 @@ public:
 };
 
 struct Hypot {
-    WTF_MAKE_TZONE_ALLOCATED(Hypot);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Hypot);
     using Base = Calculation::Hypot;
     static constexpr auto id = CSSValueHypot;
 
@@ -651,8 +635,7 @@ public:
 };
 
 struct Log {
-    WTF_MAKE_TZONE_ALLOCATED(Log);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Log);
     using Base = Calculation::Log;
     static constexpr auto id = CSSValueLog;
 
@@ -670,8 +653,7 @@ public:
 };
 
 struct Exp {
-    WTF_MAKE_TZONE_ALLOCATED(Exp);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Exp);
     using Base = Calculation::Exp;
     static constexpr auto id = CSSValueExp;
 
@@ -688,8 +670,7 @@ public:
 
 // Sign-Related Functions - https://drafts.csswg.org/css-values-4/#sign-funcs
 struct Abs {
-    WTF_MAKE_TZONE_ALLOCATED(Abs);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Abs);
     using Base = Calculation::Abs;
     static constexpr auto id = CSSValueAbs;
 
@@ -705,8 +686,7 @@ public:
 };
 
 struct Sign {
-    WTF_MAKE_TZONE_ALLOCATED(Sign);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Sign);
     using Base = Calculation::Sign;
     static constexpr auto id = CSSValueSign;
 
@@ -723,28 +703,63 @@ public:
 
 // Progress-Related Functions - https://drafts.csswg.org/css-values-5/#progress
 struct Progress {
-    WTF_MAKE_TZONE_ALLOCATED(Progress);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Progress);
     using Base = Calculation::Progress;
     static constexpr auto id = CSSValueProgress;
 
-    // <progress()> = progress( <calc-sum> from <calc-sum> to <calc-sum> )
+    // <progress()> = progress( <calc-sum>, <calc-sum>, <calc-sum> )
     //     - INPUT: "consistent" <number>, <dimension>, or <percentage>
     //     - OUTPUT: <number> "made consistent"
     static constexpr auto input = AllowedTypes::Any;
     static constexpr auto merge = MergePolicy::Consistent;
     static constexpr auto output = OutputTransform::NumberMadeConsistent;
 
-    Child progress;
-    Child from;
-    Child to;
+    Child value;
+    Child start;
+    Child end;
 
     bool operator==(const Progress&) const = default;
 };
 
+struct MediaProgress {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(MediaProgress);
+    static constexpr auto id = CSSValueMediaProgress;
+
+    // <media-progress()> = media-progress( <mf-name>, <calc-sum>, <calc-sum> )
+    //     - INPUT: "consistent" <number>, <dimension>, or <percentage>, dependent on type of <mf-name> feature.
+    //     - OUTPUT: <number>
+
+    // media-progress() is not a "math function", so its children do not inherit
+    // nor contribute to the type of the overall calculation tree.
+
+    const MQ::MediaProgressProviding* feature;
+    Child start;
+    Child end;
+
+    bool operator==(const MediaProgress&) const = default;
+};
+
+struct ContainerProgress {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(ContainerProgress);
+    static constexpr auto id = CSSValueContainerProgress;
+
+    // <container-progress()> = container-progress( <mf-name> [ of <container-name> ]?, <calc-sum>, <calc-sum> )
+    //     - INPUT: "consistent" <number>, <dimension>, or <percentage>, dependent on type of <mf-name> feature.
+    //     - OUTPUT: <number>
+
+    // container-progress() is not a "math function", so its children do not inherit
+    // nor contribute to the type of the overall calculation tree.
+
+    const CQ::ContainerProgressProviding* feature;
+    AtomString container;
+    Child start;
+    Child end;
+
+    bool operator==(const ContainerProgress&) const = default;
+};
+
 struct Anchor {
-    WTF_MAKE_TZONE_ALLOCATED(Anchor);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Anchor);
     static constexpr auto id = CSSValueAnchor;
 
     // <anchor()> = anchor( <anchor-element>? && <anchor-side>, <length-percentage>? )
@@ -761,8 +776,7 @@ public:
 };
 
 struct AnchorSize {
-    WTF_MAKE_TZONE_ALLOCATED(AnchorSize);
-public:
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(AnchorSize);
     static constexpr auto id = CSSValueAnchorSize;
 
     // anchor-size() = anchor-size( [ <anchor-element> || <anchor-size> ]? , <length-percentage>? )
@@ -915,6 +929,8 @@ std::optional<Type> toType(const Exp&);
 std::optional<Type> toType(const Abs&);
 std::optional<Type> toType(const Sign&);
 std::optional<Type> toType(const Progress&);
+std::optional<Type> toType(const MediaProgress&);
+std::optional<Type> toType(const ContainerProgress&);
 
 // MARK: CSSUnitType Evaluation
 
@@ -1187,11 +1203,33 @@ template<size_t I> const auto& get(const Sign& root)
 template<size_t I> const auto& get(const Progress& root)
 {
     if constexpr (!I)
-        return root.progress;
+        return root.value;
     else if constexpr (I == 1)
-        return root.from;
+        return root.start;
     else if constexpr (I == 2)
-        return root.to;
+        return root.end;
+}
+
+template<size_t I> const auto& get(const MediaProgress& root)
+{
+    if constexpr (!I)
+        return root.feature;
+    else if constexpr (I == 1)
+        return root.start;
+    else if constexpr (I == 2)
+        return root.end;
+}
+
+template<size_t I> const auto& get(const ContainerProgress& root)
+{
+    if constexpr (!I)
+        return root.feature;
+    else if constexpr (I == 1)
+        return root.container;
+    else if constexpr (I == 2)
+        return root.start;
+    else if constexpr (I == 3)
+        return root.end;
 }
 
 } // namespace CSSCalc
@@ -1235,6 +1273,8 @@ OP_TUPLE_LIKE_CONFORMANCE(Exp, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Abs, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Sign, 1);
 OP_TUPLE_LIKE_CONFORMANCE(Progress, 3);
+OP_TUPLE_LIKE_CONFORMANCE(MediaProgress, 3);
+OP_TUPLE_LIKE_CONFORMANCE(ContainerProgress, 4);
 // FIXME (webkit.org/b/280798): make Anchor and AnchorSize tuple-like
 OP_TUPLE_LIKE_CONFORMANCE(Anchor, 0);
 OP_TUPLE_LIKE_CONFORMANCE(AnchorSize, 0);

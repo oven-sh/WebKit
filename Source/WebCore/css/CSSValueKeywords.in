@@ -1504,8 +1504,8 @@ rem
 to-zero
 // nearest
 // progress
-// from
-// to
+media-progress
+container-progress
 infinity
 -infinity id=NegativeInfinity
 NaN

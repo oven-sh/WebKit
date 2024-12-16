@@ -29,7 +29,6 @@
 #include "CSSParserContext.h"
 #include "CSSParserTokenRange.h"
 #include "CSSPropertyParserConsumer+Ident.h"
-#include "CSSValueKeywords.h"
 #include "CSSValueList.h"
 
 namespace WebCore {
@@ -40,17 +39,9 @@ RefPtr<CSSPrimitiveValue> consumeSingleContainerName(CSSParserTokenRange& range,
     // <single-container-name> = <custom-ident excluding=[none,and,or,not]>+
     // https://drafts.csswg.org/css-conditional-5/#propdef-container-name
 
-    switch (range.peek().id()) {
-    case CSSValueNone:
-    case CSSValueAnd:
-    case CSSValueOr:
-    case CSSValueNot:
+    if (!isValidContainerNameIdentifier(range.peek().id()))
         return nullptr;
-    default:
-        if (auto ident = consumeCustomIdent(range))
-            return ident;
-        return nullptr;
-    }
+    return consumeCustomIdent(range);
 }
 
 RefPtr<CSSValue> consumeContainerName(CSSParserTokenRange& range, const CSSParserContext& context)
