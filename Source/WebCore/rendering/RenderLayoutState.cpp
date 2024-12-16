@@ -48,7 +48,7 @@ RenderLayoutState::RenderLayoutState(RenderElement& renderer)
 #if ASSERT_ENABLED
     , m_layoutDeltaXSaturated(false)
     , m_layoutDeltaYSaturated(false)
-    , m_blockStartTrimming(Vector<bool>(0))
+    , m_blockStartTrimming(false)
     , m_renderer(&renderer)
 #endif
 {
@@ -77,7 +77,7 @@ RenderLayoutState::RenderLayoutState(const LocalFrameViewLayoutContext::LayoutSt
     , m_layoutDeltaXSaturated(false)
     , m_layoutDeltaYSaturated(false)
 #endif
-    , m_blockStartTrimming(Vector<bool>(0))
+    , m_blockStartTrimming(false)
     , m_lineClamp(lineClamp)
     , m_legacyLineClamp(legacyLineClamp)
     , m_textBoxTrim(textBoxTrim)

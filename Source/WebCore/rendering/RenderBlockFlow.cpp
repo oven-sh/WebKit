@@ -75,6 +75,7 @@
 #include "TextBoxTrimmer.h"
 #include "TextUtil.h"
 #include "VisiblePosition.h"
+#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -728,21 +729,20 @@ void RenderBlockFlow::layoutBlockChildren(bool relayoutChildren, LayoutUnit& max
     // The margin struct caches all our current margin collapsing state.
     MarginInfo marginInfo(*this, beforeEdge, afterEdge);
 
-    auto hasMarginTrimState = false;
-    auto updateMarginTrimStateIfNeeded = [&] {
-        auto containingBlockTrimmingState = layoutState->blockStartTrimming();
+    bool blockStartTrimmingFromContainingBlock = layoutState->blockStartTrimming();
+    bool newBlockStartTrimmingForSubtree = [&] {
         if (style().marginTrim().contains(MarginTrimType::BlockStart))
-            layoutState->pushBlockStartTrimming(true);
-        else if (!marginInfo.canCollapseMarginBeforeWithChildren() && containingBlockTrimmingState)
-            layoutState->pushBlockStartTrimming(false);
-        else if (marginInfo.canCollapseMarginBeforeWithChildren() && containingBlockTrimmingState)
-            layoutState->pushBlockStartTrimming(containingBlockTrimmingState.value());
-        else
-            return;
-        hasMarginTrimState = true;
-    };
+            return true;
+        if (!marginInfo.canCollapseMarginBeforeWithChildren() && blockStartTrimmingFromContainingBlock)
+            return false;
+        return blockStartTrimmingFromContainingBlock;
+    }();
 
-    updateMarginTrimStateIfNeeded();
+    layoutState->setBlockStartTrimming(newBlockStartTrimmingForSubtree);
+    auto resetBlockStartTrimming = WTF::makeScopeExit([&] {
+        layoutState->setBlockStartTrimming(blockStartTrimmingFromContainingBlock);
+    });
+
 
     // Fieldsets need to find their legend and position it inside the border of the object.
     // The legend then gets skipped during normal layout. The same is true for ruby text.
@@ -806,8 +806,6 @@ void RenderBlockFlow::layoutBlockChildren(bool relayoutChildren, LayoutUnit& max
     // Now do the handling of the bottom of the block, adding in our bottom border/padding and
     // determining the correct collapsed bottom margin information.
     handleAfterSideOfBlock(beforeEdge, afterEdge, marginInfo);
-    if (hasMarginTrimState)
-        layoutState->popBlockStartTrimming();
 }
 
 
@@ -1035,10 +1033,8 @@ void RenderBlockFlow::layoutBlockChild(RenderBox& child, MarginInfo& marginInfo,
     if (marginInfo.atBeforeSideOfBlock() && !child.isSelfCollapsingBlock()) {
         marginInfo.setAtBeforeSideOfBlock(false);
 
-        if (auto* layoutState = frame().view()->layoutContext().layoutState(); layoutState && layoutState->blockStartTrimming()) {
-            layoutState->popBlockStartTrimming();
-            layoutState->pushBlockStartTrimming(false);
-        }
+        if (auto* layoutState = frame().view()->layoutContext().layoutState(); layoutState && layoutState->blockStartTrimming())
+            layoutState->setBlockStartTrimming(false);
     }
     // Now place the child in the correct left position
     determineLogicalLeftPositionForChild(child, ApplyLayoutDelta);
@@ -1349,7 +1345,7 @@ LayoutUnit RenderBlockFlow::collapseMarginsWithChildInfo(RenderBox* child, Margi
             setTrimmedMarginForChild(*child, MarginTrimType::BlockEnd);
         }
     };
-    if (frame().view()->layoutContext().layoutState()->blockStartTrimming().value_or(false)) {
+    if (frame().view()->layoutContext().layoutState()->blockStartTrimming()) {
         ASSERT(marginInfo.atBeforeSideOfBlock());
         trimChildBlockMargins();
     }
