@@ -455,6 +455,8 @@ void RenderText::styleDidChange(StyleDifference diff, const RenderStyle* oldStyl
 
     if (CheckedPtr cache = document().existingAXObjectCache())
         cache->onStyleChange(*this, diff, oldStyle, newStyle);
+
+    setHorizontalWritingMode(newStyle.writingMode().isHorizontal());
 }
 
 void RenderText::removeAndDestroyLegacyTextBoxes()
