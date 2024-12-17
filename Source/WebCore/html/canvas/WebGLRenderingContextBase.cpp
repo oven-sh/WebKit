@@ -1969,8 +1969,6 @@ WebGLAny WebGLRenderingContextBase::getParameter(GCGLenum pname)
         return getIntParameter(pname);
     case GraphicsContextGL::MAX_VIEWPORT_DIMS:
         return getWebGLIntArrayParameter(pname);
-    case GraphicsContextGL::NUM_SHADER_BINARY_FORMATS:
-        return getIntParameter(pname);
     case GraphicsContextGL::PACK_ALIGNMENT:
         return m_packParameters.alignment;
     case GraphicsContextGL::POLYGON_OFFSET_FACTOR:
