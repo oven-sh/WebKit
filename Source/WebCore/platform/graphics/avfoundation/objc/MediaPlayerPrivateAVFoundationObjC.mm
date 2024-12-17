@@ -889,19 +889,6 @@ void MediaPlayerPrivateAVFoundationObjC::createAVAssetForURL(const URL& url, Ret
 
     [options setObject:@(AVAssetReferenceRestrictionForbidRemoteReferenceToLocal | AVAssetReferenceRestrictionForbidLocalReferenceToRemote) forKey:AVURLAssetReferenceRestrictionsKey];
 
-    RetainPtr<NSMutableDictionary> headerFields = adoptNS([[NSMutableDictionary alloc] init]);
-
-    String referrer = player->referrer();
-    if (!referrer.isEmpty())
-        [headerFields setObject:referrer forKey:@"Referer"];
-
-    String userAgent = player->userAgent();
-    if (!userAgent.isEmpty())
-        [headerFields setObject:userAgent forKey:@"User-Agent"];
-
-    if ([headerFields count])
-        [options setObject:headerFields.get() forKey:@"AVURLAssetHTTPHeaderFieldsKey"];
-
     if (shouldEnableInheritURIQueryComponent())
         [options setObject:@YES forKey:AVURLAssetInheritURIQueryComponentFromReferencingURIKey];
 
