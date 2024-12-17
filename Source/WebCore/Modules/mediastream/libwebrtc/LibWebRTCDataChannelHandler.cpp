@@ -54,7 +54,7 @@ webrtc::DataChannelInit LibWebRTCDataChannelHandler::fromRTCDataChannelInit(cons
         init.negotiated = *options.negotiated;
     if (options.id)
         init.id = *options.id;
-    init.priority = fromRTCPriorityType(options.priority);
+    init.priority = webrtc::PriorityValue(fromRTCPriorityType(options.priority));
     return init;
 }
 

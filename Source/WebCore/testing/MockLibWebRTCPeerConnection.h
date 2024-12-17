@@ -235,7 +235,7 @@ private:
     webrtc::RtpParameters GetParameters() const { return { }; }
     bool SetParameters(const webrtc::RtpParameters&) { return true; }
     void SetObserver(webrtc::RtpReceiverObserverInterface*) { }
-    void SetJitterBufferMinimumDelay(absl::optional<double>) final { }
+    void SetJitterBufferMinimumDelay(std::optional<double>) final { }
     rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track() const final
     {
         if (!m_track)
@@ -258,12 +258,12 @@ public:
 
 private:
     cricket::MediaType media_type() const final { return m_sender->media_type(); }
-    absl::optional<std::string> mid() const final { return { }; }
+    std::optional<std::string> mid() const final { return { }; }
     rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver() const final { return m_receiver; }
     bool stopped() const final { return false; }
     webrtc::RtpTransceiverDirection direction() const final { return webrtc::RtpTransceiverDirection::kSendRecv; }
     void SetDirection(webrtc::RtpTransceiverDirection) final { }
-    absl::optional<webrtc::RtpTransceiverDirection> current_direction() const final { return { }; }
+    std::optional<webrtc::RtpTransceiverDirection> current_direction() const final { return { }; }
     void StopInternal() final { }
     webrtc::RTCError StopStandard() final { return { }; }
     bool stopping() const final { return true; }
@@ -326,7 +326,7 @@ private:
     void ReconfigureBandwidthEstimation(const webrtc::BandwidthEstimationSettings&) final { }
     void SetAudioPlayout(bool) final { }
     void SetAudioRecording(bool) final { }
-    absl::optional<bool> can_trickle_ice_candidates() final { return { }; }
+    std::optional<bool> can_trickle_ice_candidates() final { return { }; }
     void AddAdaptationResource(rtc::scoped_refptr<webrtc::Resource>) final { }
     rtc::Thread* signaling_thread() const final { return nullptr; }
     webrtc::NetworkControllerInterface* GetNetworkController() final { return nullptr; }

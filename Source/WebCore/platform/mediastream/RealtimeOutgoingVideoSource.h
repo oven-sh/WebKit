@@ -116,7 +116,7 @@ private:
 
     // VideoTrackSourceInterface API
     bool is_screencast() const final { return false; }
-    absl::optional<bool> needs_denoising() const final { return absl::optional<bool>(); }
+    std::optional<bool> needs_denoising() const final { return std::optional<bool>(); }
     bool GetStats(Stats*) final { return false; };
     bool SupportsEncodedOutput() const final { return false; }
     void GenerateKeyFrame() final { }

@@ -68,6 +68,17 @@ webrtc::Priority fromRTCPriorityType(RTCPriorityType priority)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+RTCPriorityType toRTCPriorityType(webrtc::PriorityValue priority)
+{
+    if (priority <= webrtc::PriorityValue(webrtc::Priority::kVeryLow))
+        return RTCPriorityType::VeryLow;
+    if (priority <= webrtc::PriorityValue(webrtc::Priority::kLow))
+        return RTCPriorityType::Low;
+    if (priority <= webrtc::PriorityValue(webrtc::Priority::kMedium))
+        return RTCPriorityType::Medium;
+    return RTCPriorityType::High;
+}
+
 RTCPriorityType toRTCPriorityType(webrtc::Priority priority)
 {
     switch (priority) {

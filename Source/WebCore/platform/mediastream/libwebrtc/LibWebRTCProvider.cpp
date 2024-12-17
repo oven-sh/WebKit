@@ -422,13 +422,6 @@ static inline std::optional<cricket::MediaType> typeFromKind(const String& kind)
     return { };
 }
 
-static inline std::optional<uint16_t> toChannels(absl::optional<int> numChannels)
-{
-    if (!numChannels)
-        return { };
-    return static_cast<uint32_t>(*numChannels);
-}
-
 static inline RTCRtpCapabilities toRTCRtpCapabilities(const webrtc::RtpCapabilities& rtpCapabilities)
 {
     RTCRtpCapabilities capabilities;
@@ -443,7 +436,7 @@ static inline RTCRtpCapabilities toRTCRtpCapabilities(const webrtc::RtpCapabilit
         String sdpFmtpLine;
         if (sdpFmtpLineBuilder.length())
             sdpFmtpLine = sdpFmtpLineBuilder.toString();
-        return RTCRtpCodecCapability { fromStdString(codec.mime_type()), static_cast<uint32_t>(codec.clock_rate ? *codec.clock_rate : 0), toChannels(codec.num_channels), WTFMove(sdpFmtpLine) };
+        return RTCRtpCodecCapability { fromStdString(codec.mime_type()), static_cast<uint32_t>(codec.clock_rate ? *codec.clock_rate : 0), codec.num_channels, WTFMove(sdpFmtpLine) };
 
     });
 

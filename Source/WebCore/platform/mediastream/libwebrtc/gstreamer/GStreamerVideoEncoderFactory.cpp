@@ -271,7 +271,7 @@ public:
         m_encodedFrame._encodedHeight = resolution->height();
         m_encodedFrame._frameType = GST_BUFFER_FLAG_IS_SET(encodedBuffer, GST_BUFFER_FLAG_DELTA_UNIT) ? webrtc::VideoFrameType::kVideoFrameDelta : webrtc::VideoFrameType::kVideoFrameKey;
         m_encodedFrame.capture_time_ms_ = frame.render_time_ms();
-        m_encodedFrame.SetRtpTimestamp(frame.timestamp());
+        m_encodedFrame.SetRtpTimestamp(frame.rtp_timestamp());
 
         GST_LOG_OBJECT(m_pipeline.get(), "Got buffer capture_time_ms: %" G_GINT64_FORMAT " _timestamp: %u", m_encodedFrame.capture_time_ms_, m_encodedFrame.RtpTimestamp());
 

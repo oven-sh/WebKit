@@ -228,7 +228,7 @@ int32_t Dav1dDecoder::Decode(const webrtc::EncodedImage& encodedImage, bool /*mi
         .set_color_space(encodedImage.ColorSpace())
         .build();
 
-    m_decodeCompleteCallback->Decoded(decodedFrame, absl::nullopt, absl::nullopt);
+    m_decodeCompleteCallback->Decoded(decodedFrame, std::nullopt, std::nullopt);
     return WEBRTC_VIDEO_CODEC_OK;
 }
 

@@ -482,7 +482,7 @@ public:
       bool bitstream_restriction_flag { false };
       uint64_t max_num_reorder_frames { 0 };
     };
-    static absl::optional<State> Parse(const std::vector<uint8_t>& unpacked_buffer)
+    static std::optional<State> Parse(const std::vector<uint8_t>& unpacked_buffer)
     {
       BitstreamReader reader(unpacked_buffer);
       auto spsState = ParseSpsUpToVui(reader);
@@ -802,7 +802,7 @@ AnnexBBufferReader::AnnexBBufferReader(const uint8_t* annexb_buffer,
     : start_(annexb_buffer), length_(length) {
   RTC_DCHECK(annexb_buffer);
 
-  offsets_ = H264::FindNaluIndices(annexb_buffer, length);
+        offsets_ = H264::FindNaluIndices({ annexb_buffer, length });
   offset_ = offsets_.begin();
 }
 
