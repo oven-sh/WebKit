@@ -114,10 +114,6 @@ table.tabs {
     margin: 0 auto;
 }
 
-p:has(input[type=submit]) {
-    text-align: right;
-}
-
 #email_prefs, #saved_search_prefs, #shared_search_prefs, #bug_activity {
     border: none;
     border-collapse: collapse;
