@@ -1167,4 +1167,11 @@ inline bool isSkippedContentRoot(const RenderStyle& style, const Element& elemen
     }
 }
 
+inline bool RenderStyle::fontCascadeEqual(const RenderStyle& other) const
+{
+    return m_inheritedData.ptr() == other.m_inheritedData.ptr()
+        || m_inheritedData->fontData.ptr() == other.m_inheritedData->fontData.ptr()
+        || m_inheritedData->fontData->fontCascade == other.m_inheritedData->fontData->fontCascade;
+}
+
 } // namespace WebCore

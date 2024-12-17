@@ -44,6 +44,7 @@
 #include "RenderMenuList.h"
 #include "RenderSVGInline.h"
 #include "RenderSlider.h"
+#include "RenderStyleInlines.h"
 #include "RenderStyleSetters.h"
 #include "RenderTable.h"
 #include "RenderTextControl.h"
@@ -311,7 +312,7 @@ void BoxTreeUpdater::insertChild(UniqueRef<Layout::Box> childBox, RenderObject& 
 static void updateContentCharacteristic(const RenderText& rendererText, Layout::InlineTextBox& inlineTextBox)
 {
     auto& rendererStyle = rendererText.style();
-    auto shouldUpdateContentCharacteristic = rendererStyle.fontCascade() != inlineTextBox.style().fontCascade();
+    auto shouldUpdateContentCharacteristic = !rendererStyle.fontCascadeEqual(inlineTextBox.style());
     if (!shouldUpdateContentCharacteristic)
         return;
 

@@ -724,7 +724,7 @@ std::optional<InlineContentBreaker::OverflowingTextContent::BreakingPosition> In
         // FIXME: Maybe content across inline boxes should be hyphenated as well.
         if (inlineItem.isOpaque())
             continue;
-        if (inlineItem.style().fontCascade() != style.fontCascade())
+        if (!inlineItem.style().fontCascadeEqual(style))
             return { };
 
         auto* inlineTextItem = dynamicDowncast<InlineTextItem>(inlineItem);

@@ -431,7 +431,7 @@ void RenderText::styleDidChange(StyleDifference diff, const RenderStyle* oldStyl
     const RenderStyle& newStyle = style();
     if (!oldStyle)
         initiateFontLoadingByAccessingGlyphDataAndComputeCanUseSimplifiedTextMeasuring(m_text);
-    if (oldStyle && oldStyle->fontCascade() != newStyle.fontCascade())
+    if (oldStyle && !oldStyle->fontCascadeEqual(newStyle))
         m_canUseSimplifiedTextMeasuring = { };
 
     bool needsResetText = false;

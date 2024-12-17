@@ -115,6 +115,7 @@
 #include "RenderProgress.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSlider.h"
+#include "RenderStyleInlines.h"
 #include "RenderTable.h"
 #include "RenderTableCell.h"
 #include "RenderTableRow.h"
@@ -1991,7 +1992,7 @@ void AXObjectCache::onStyleChange(RenderText& renderText, StyleDifference differ
     if (!object)
         return;
 
-    if (oldStyle->fontCascade() != newStyle.fontCascade())
+    if (!oldStyle->fontCascadeEqual(newStyle))
         tree->queueNodeUpdate(object->objectID(), { AXPropertyName::Font });
 
     if (oldStyle->visitedDependentColor(CSSPropertyColor) != newStyle.visitedDependentColor(CSSPropertyColor))

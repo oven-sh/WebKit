@@ -732,7 +732,7 @@ static inline bool canCacheMeasuredWidthOnInlineTextItem(const InlineTextBox& in
     // Do not cache when:
     // 1. first-line style's unique font properties may produce non-matching width values.
     // 2. position dependent content is present (preserved tab character atm).
-    if (&inlineTextBox.style() != &inlineTextBox.firstLineStyle() && inlineTextBox.style().fontCascade() != inlineTextBox.firstLineStyle().fontCascade())
+    if (&inlineTextBox.style() != &inlineTextBox.firstLineStyle() && !inlineTextBox.style().fontCascadeEqual(inlineTextBox.firstLineStyle()))
         return false;
     if (!isWhitespace || !TextUtil::shouldPreserveSpacesAndTabs(inlineTextBox))
         return true;

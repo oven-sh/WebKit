@@ -58,6 +58,7 @@
 #include "RenderElementInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderImageResourceStyleImage.h"
+#include "RenderStyleInlines.h"
 #include "RenderStyleSetters.h"
 #include "RenderTheme.h"
 #include "RenderView.h"

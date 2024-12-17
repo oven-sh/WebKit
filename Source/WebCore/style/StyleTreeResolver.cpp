@@ -251,7 +251,7 @@ static bool styleChangeAffectsRelativeUnits(const RenderStyle& style, const Rend
 {
     if (!existingStyle)
         return true;
-    return existingStyle->fontCascade() != style.fontCascade()
+    return !existingStyle->fontCascadeEqual(style)
         || existingStyle->computedLineHeight() != style.computedLineHeight();
 }
 
