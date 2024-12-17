@@ -30,6 +30,7 @@
 
 namespace WebCore {
 
+class DocumentSyncData;
 struct ProcessSyncData;
 
 class ProcessSyncClient {
@@ -38,6 +39,8 @@ class ProcessSyncClient {
 public:
     ProcessSyncClient() = default;
     virtual ~ProcessSyncClient() = default;
+
+    virtual void broadcastTopDocumentSyncDataToOtherProcesses(DocumentSyncData&) { }
 
 #if ENABLE(DOM_AUDIO_SESSION)
     void broadcastAudioSessionTypeToOtherProcesses(const WebCore::DOMAudioSessionType&);

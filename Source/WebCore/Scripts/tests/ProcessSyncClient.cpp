@@ -27,6 +27,7 @@
 #include "ProcessSyncClient.h"
 
 #include "ProcessSyncData.h"
+#include <wtf/EnumTraits.h>
 
 namespace WebCore {
 
@@ -35,26 +36,26 @@ void ProcessSyncClient::broadcastAudioSessionTypeToOtherProcesses(const WebCore:
 {
     ProcessSyncDataVariant dataVariant;
     dataVariant.emplace<enumToUnderlyingType(ProcessSyncDataType::AudioSessionType)>(data);
-    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::AudioSessionType, WTFMove(dataVariant)});
+    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::AudioSessionType, WTFMove(dataVariant) });
 }
 #endif
 void ProcessSyncClient::broadcastMainFrameURLChangeToOtherProcesses(const URL& data)
 {
     ProcessSyncDataVariant dataVariant;
     dataVariant.emplace<enumToUnderlyingType(ProcessSyncDataType::MainFrameURLChange)>(data);
-    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::MainFrameURLChange, WTFMove(dataVariant)});
+    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::MainFrameURLChange, WTFMove(dataVariant) });
 }
 void ProcessSyncClient::broadcastUserDidInteractWithPageToOtherProcesses(const bool& data)
 {
     ProcessSyncDataVariant dataVariant;
     dataVariant.emplace<enumToUnderlyingType(ProcessSyncDataType::UserDidInteractWithPage)>(data);
-    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::UserDidInteractWithPage, WTFMove(dataVariant)});
+    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::UserDidInteractWithPage, WTFMove(dataVariant) });
 }
 void ProcessSyncClient::broadcastIsAutofocusProcessedToOtherProcesses(const bool& data)
 {
     ProcessSyncDataVariant dataVariant;
     dataVariant.emplace<enumToUnderlyingType(ProcessSyncDataType::IsAutofocusProcessed)>(data);
-    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::IsAutofocusProcessed, WTFMove(dataVariant)});
+    broadcastProcessSyncDataToOtherProcesses({ ProcessSyncDataType::IsAutofocusProcessed, WTFMove(dataVariant) });
 }
 
 } // namespace WebCore

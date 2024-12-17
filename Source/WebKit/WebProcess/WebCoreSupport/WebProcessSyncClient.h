@@ -43,6 +43,7 @@ private:
     bool siteIsolationEnabled();
 
     void broadcastProcessSyncDataToOtherProcesses(const WebCore::ProcessSyncData&) final;
+    void broadcastTopDocumentSyncDataToOtherProcesses(WebCore::DocumentSyncData&) final;
 
     Ref<WebPage> protectedPage() const;
 

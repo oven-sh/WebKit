@@ -61,4 +61,12 @@ void WebProcessSyncClient::broadcastProcessSyncDataToOtherProcesses(const WebCor
     protectedPage()->send(Messages::WebPageProxy::BroadcastProcessSyncData(data));
 }
 
+void WebProcessSyncClient::broadcastTopDocumentSyncDataToOtherProcesses(WebCore::DocumentSyncData& data)
+{
+    if (!siteIsolationEnabled())
+        return;
+
+    protectedPage()->send(Messages::WebPageProxy::BroadcastTopDocumentSyncData(data));
+}
+
 } // namespace WebKit

@@ -25,6 +25,14 @@
 
 header: <WebCore/ProcessSyncData.h>
 
+[RefCounted] class WebCore::DocumentSyncData {
+    bool userDidInteractWithPage;
+#if ENABLE(DOM_AUDIO_SESSION)
+    WebCore::DOMAudioSessionType audioSessionType;
+#endif
+    bool isAutofocusProcessed;
+};
+
 enum class WebCore::ProcessSyncDataType : uint8_t {
 #if ENABLE(DOM_AUDIO_SESSION)
     AudioSessionType,

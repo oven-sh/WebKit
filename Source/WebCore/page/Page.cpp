@@ -439,7 +439,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_writingToolsController(makeUniqueRef<WritingToolsController>(*this))
 #endif
     , m_activeNowPlayingSessionUpdateTimer(*this, &Page::activeNowPlayingSessionUpdateTimerFired)
-    , m_topDocumentSyncData(makeUniqueRef<DocumentSyncData>())
+    , m_topDocumentSyncData(DocumentSyncData::create())
 #if HAVE(AUDIT_TOKEN)
     , m_presentingApplicationAuditToken(WTFMove(pageConfiguration.presentingApplicationAuditToken))
 #endif
@@ -868,6 +868,14 @@ void Page::updateProcessSyncData(const ProcessSyncData& data)
         break;
 #endif
     }
+}
+
+void Page::updateTopDocumentSyncData(Ref<DocumentSyncData>&& data)
+{
+    // Pages should never get updates to top document sync data from another
+    // process if they directly host the main frame document.
+    RELEASE_ASSERT(!hasLocalMainFrame());
+    m_topDocumentSyncData = WTFMove(data);
 }
 
 void Page::setMainFrameURLFragment(String&& fragment)
@@ -4168,9 +4176,16 @@ void Page::enableICECandidateFiltering()
 #endif
 }
 
+bool Page::hasLocalMainFrame()
+{
+    return dynamicDowncast<LocalFrame>(mainFrame());
+}
+
 void Page::didChangeMainDocument(Document* newDocument)
 {
-    m_topDocumentSyncData = makeUniqueRef<DocumentSyncData>();
+    m_topDocumentSyncData = newDocument ? newDocument->syncData() : DocumentSyncData::create();
+
+    processSyncClient().broadcastTopDocumentSyncDataToOtherProcesses(m_topDocumentSyncData.get());
 
 #if ENABLE(WEB_RTC)
     m_rtcController->reset(m_shouldEnableICECandidateFilteringByDefault);

@@ -119,6 +119,7 @@ class DOMRectList;
 class DatabaseProvider;
 class DeviceOrientationUpdateProvider;
 class DiagnosticLoggingClient;
+class DocumentSyncData;
 class CredentialRequestCoordinator;
 class DragCaretController;
 class DragController;
@@ -215,7 +216,6 @@ struct CharacterRange;
 struct ProcessSyncData;
 struct SimpleRange;
 struct TextRecognitionResult;
-struct DocumentSyncData;
 struct WindowFeatures;
 
 using PlatformDisplayID = uint32_t;
@@ -392,6 +392,8 @@ public:
     bool autofocusProcessed() const;
 
     WEBCORE_EXPORT void updateProcessSyncData(const ProcessSyncData&);
+    WEBCORE_EXPORT void updateTopDocumentSyncData(Ref<DocumentSyncData>&&);
+
     WEBCORE_EXPORT void setMainFrameURLFragment(String&&);
     String mainFrameURLFragment() const { return m_mainFrameURLFragment; }
 
@@ -1340,6 +1342,8 @@ private:
     void computeSampledPageTopColorIfNecessary();
     void clearSampledPageTopColor();
 
+    bool hasLocalMainFrame();
+
     std::optional<PageIdentifier> m_identifier;
     UniqueRef<Chrome> m_chrome;
     UniqueRef<DragCaretController> m_dragCaretController;
@@ -1703,7 +1707,7 @@ private:
     bool m_shouldDeferResizeEvents { false };
     bool m_shouldDeferScrollEvents { false };
 
-    UniqueRef<DocumentSyncData> m_topDocumentSyncData;
+    Ref<DocumentSyncData> m_topDocumentSyncData;
 
 #if HAVE(AUDIT_TOKEN)
     std::optional<audit_token_t> m_presentingApplicationAuditToken;

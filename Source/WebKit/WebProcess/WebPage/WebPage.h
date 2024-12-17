@@ -170,6 +170,7 @@ class AXCoreObject;
 class CachedPage;
 class CaptureDevice;
 class DocumentLoader;
+class DocumentSyncData;
 class DragData;
 class WeakPtrImplWithEventTargetData;
 class FontAttributeChanges;
@@ -743,6 +744,7 @@ public:
     void frameWasRemovedInAnotherProcess(WebCore::FrameIdentifier);
 
     void processSyncDataChangedInAnotherProcess(const WebCore::ProcessSyncData&);
+    void topDocumentSyncDataChangedInAnotherProcess(Ref<WebCore::DocumentSyncData>&&);
 
     std::optional<WebCore::SimpleRange> currentSelectionAsRange();
 

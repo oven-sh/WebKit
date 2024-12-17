@@ -25,23 +25,39 @@
 #pragma once
 
 #include "DOMAudioSession.h"
+#include <wtf/RefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 
 struct ProcessSyncData;
 
-struct DocumentSyncData {
+class DocumentSyncData : public RefCounted<DocumentSyncData> {
 WTF_MAKE_TZONE_ALLOCATED_INLINE(DocumentSyncData);
 public:
+    template<typename... Args>
+    static Ref<DocumentSyncData> create(Args&&... args)
+    {
+        return adoptRef(*new DocumentSyncData(std::forward<Args>(args)...));
+    }
+    static Ref<DocumentSyncData> create() { return adoptRef(*new DocumentSyncData); }
     void update(const ProcessSyncData&);
 
+    bool userDidInteractWithPage = { };
 #if ENABLE(DOM_AUDIO_SESSION)
     WebCore::DOMAudioSessionType audioSessionType = { };
 #endif
-    bool userDidInteractWithPage = { };
     bool isAutofocusProcessed = { };
+
+private:
+    DocumentSyncData() = default;
+    WEBCORE_EXPORT DocumentSyncData(
+        bool
+#if ENABLE(DOM_AUDIO_SESSION)
+      , WebCore::DOMAudioSessionType
+#endif
+      , bool
+    );
 };
 
 } // namespace WebCore

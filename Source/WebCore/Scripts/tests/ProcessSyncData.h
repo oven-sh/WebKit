@@ -38,7 +38,7 @@ enum class ProcessSyncDataType : uint8_t {
     UserDidInteractWithPage = 2,
     IsAutofocusProcessed = 3,
 };
- 
+
 #if !ENABLE(DOM_AUDIO_SESSION)
 using DOMAudioSessionType = bool;
 #endif

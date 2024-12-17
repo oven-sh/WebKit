@@ -27,20 +27,21 @@
 #include "DocumentSyncData.h"
 
 #include "ProcessSyncData.h"
+#include <wtf/EnumTraits.h>
 
 namespace WebCore {
 
 void DocumentSyncData::update(const ProcessSyncData& data)
 {
     switch (data.type) {
+    case ProcessSyncDataType::UserDidInteractWithPage:
+        userDidInteractWithPage = std::get<enumToUnderlyingType(ProcessSyncDataType::UserDidInteractWithPage)>(data.value);
+        break;
 #if ENABLE(DOM_AUDIO_SESSION)
     case ProcessSyncDataType::AudioSessionType:
         audioSessionType = std::get<enumToUnderlyingType(ProcessSyncDataType::AudioSessionType)>(data.value);
         break;
 #endif
-    case ProcessSyncDataType::UserDidInteractWithPage:
-        userDidInteractWithPage = std::get<enumToUnderlyingType(ProcessSyncDataType::UserDidInteractWithPage)>(data.value);
-        break;
     case ProcessSyncDataType::IsAutofocusProcessed:
         isAutofocusProcessed = std::get<enumToUnderlyingType(ProcessSyncDataType::IsAutofocusProcessed)>(data.value);
         break;
@@ -49,4 +50,19 @@ void DocumentSyncData::update(const ProcessSyncData& data)
     }
 }
 
-} //namespace WebCore
+DocumentSyncData::DocumentSyncData(
+      bool userDidInteractWithPage
+#if ENABLE(DOM_AUDIO_SESSION)
+    , WebCore::DOMAudioSessionType audioSessionType
+#endif
+    , bool isAutofocusProcessed
+)
+    : userDidInteractWithPage(userDidInteractWithPage)
+#if ENABLE(DOM_AUDIO_SESSION)
+    , audioSessionType(audioSessionType)
+#endif
+    , isAutofocusProcessed(isAutofocusProcessed)
+{
+}
+
+} // namespace WebCore
