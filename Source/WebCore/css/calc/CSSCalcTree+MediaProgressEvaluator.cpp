@@ -26,7 +26,9 @@
 #include "CSSCalcTree+MediaProgressEvaluator.h"
 
 #include "CSSCalcTree.h"
+#include "Document.h"
 #include "MediaQueryFeatures.h"
+#include "RenderElement.h"
 
 namespace WebCore {
 namespace CSSCalc {

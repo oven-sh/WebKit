@@ -29,6 +29,7 @@
 namespace WebCore {
 
 class CSSToLengthConversionData;
+class Element;
 
 namespace CSSCalc {
 

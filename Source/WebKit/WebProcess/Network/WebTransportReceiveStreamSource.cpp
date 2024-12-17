@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebTransportReceiveStreamSource.h"
 
+#include "WebTransportSession.h"
 #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
 

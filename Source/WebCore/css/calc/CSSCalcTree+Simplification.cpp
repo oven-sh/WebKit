@@ -37,6 +37,8 @@
 #include "CSSPrimitiveValue.h"
 #include "CalculationCategory.h"
 #include "CalculationExecutor.h"
+#include "ContainerQueryFeatures.h"
+#include "MediaQueryFeatures.h"
 #include "RenderStyle.h"
 #include "RenderStyleInlines.h"
 #include "StyleBuilderState.h"

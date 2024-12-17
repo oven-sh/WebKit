@@ -28,6 +28,7 @@
 
 #include "AnimationTimelinesController.h"
 #include "CSSNumericFactory.h"
+#include "CSSPropertyParserConsumer+Timeline.h"
 #include "Document.h"
 #include "Element.h"
 #include "LegacyRenderSVGModelObject.h"
