@@ -1451,7 +1451,7 @@ std::optional<float> PDFDiscretePresentationController::customContentsScale(cons
         return { };
 
     if (rowData->isPageBackgroundLayer(layer))
-        return m_plugin->scaleForPagePreviews();
+        return scaleForPagePreviews();
 
     return { };
 }

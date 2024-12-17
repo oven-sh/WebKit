@@ -292,7 +292,7 @@ void AsyncPDFRenderer::coverageRectDidChange(TiledBacking& tiledBacking, const F
 
     auto pageCoverage = presentationController->pageCoverageForContentsRect(coverageRect, layoutRow);
 
-    auto pagePreviewScale = presentationController->graphicsLayerClient().customContentsScale(layer.get()).value_or(1);
+    auto pagePreviewScale = presentationController->scaleForPagePreviews();
 
     for (auto& pageInfo : pageCoverage) {
         if (m_pagePreviews.contains(pageInfo.pageIndex))
@@ -721,8 +721,7 @@ void AsyncPDFRenderer::paintPagePreview(GraphicsContext& context, const FloatRec
     Ref image = *preview.image;
     auto imageRect = pageBoundsInPaintingCoordinates;
     imageRect.scale(preview.scale);
-    // FIXME: Cannot use CompositeOperator::Copy because the scale is incorrect.
-    context.drawNativeImage(image, pageBoundsInPaintingCoordinates, imageRect);
+    context.drawNativeImage(image, pageBoundsInPaintingCoordinates, imageRect, { CompositeOperator::Copy });
 }
 
 void AsyncPDFRenderer::invalidateTilesForPaintingRect(float pageScaleFactor, const FloatRect& paintingRect)
@@ -785,7 +784,7 @@ void AsyncPDFRenderer::pdfContentChangedInRect(const GraphicsLayer* layer, const
         enqueueTileRenderIfNecessary(tileInfo, renderInfoForTile(*tiledBacking, tileInfo, tileRect, renderRect, WTFMove(background)));
     }
 
-    auto pagePreviewScale = presentationController->graphicsLayerClient().customContentsScale(layer).value_or(1);
+    auto pagePreviewScale = presentationController->scaleForPagePreviews();
     for (auto& pageInfo : pageCoverage)
         generatePreviewImageForPage(pageInfo.pageIndex, pagePreviewScale);
 }

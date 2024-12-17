@@ -413,7 +413,7 @@ float PDFScrollingPresentationController::deviceScaleFactor() const
 std::optional<float> PDFScrollingPresentationController::customContentsScale(const GraphicsLayer* layer) const
 {
     if (pageIndexForPageBackgroundLayer(layer))
-        return m_plugin->scaleForPagePreviews();
+        return scaleForPagePreviews();
 
     return { };
 }

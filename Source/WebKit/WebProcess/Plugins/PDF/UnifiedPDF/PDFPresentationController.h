@@ -120,6 +120,7 @@ public:
 
     virtual std::optional<WebCore::PlatformLayerIdentifier> contentsLayerIdentifier() const { return std::nullopt; }
 
+    float scaleForPagePreviews() const;
 protected:
     RefPtr<WebCore::GraphicsLayer> createGraphicsLayer(const String&, WebCore::GraphicsLayer::Type);
     RefPtr<WebCore::GraphicsLayer> makePageContainerLayer(PDFDocumentLayout::PageIndex);

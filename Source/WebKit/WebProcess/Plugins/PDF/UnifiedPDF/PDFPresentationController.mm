@@ -168,6 +168,11 @@ bool PDFPresentationController::pluginShouldCachePagePreviews() const
     return m_plugin->shouldCachePagePreviews();
 }
 
+float PDFPresentationController::scaleForPagePreviews() const
+{
+    return m_plugin->scaleForPagePreviews();
+}
+
 PDFDocumentLayout::PageIndex PDFPresentationController::nearestPageIndexForDocumentPoint(const FloatPoint& point) const
 {
     if (m_plugin->isLocked())
