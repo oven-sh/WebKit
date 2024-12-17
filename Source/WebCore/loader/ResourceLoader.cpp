@@ -560,9 +560,15 @@ bool ResourceLoader::shouldAllowResourceToAskForCredentials() const
     if (!m_frame)
         return false;
     RefPtr topFrame = dynamicDowncast<LocalFrame>(m_frame->tree().top());
-    return topFrame
-        && topFrame->document()
-        && topFrame->document()->protectedSecurityOrigin()->canRequest(m_request.url(), OriginAccessPatternsForWebProcess::singleton());
+    if (!topFrame)
+        return false;
+    RefPtr topDocument = topFrame->document();
+    if (!topDocument)
+        return false;
+    RefPtr securityOrigin = static_cast<SecurityContext*>(topDocument.get())->securityOrigin();
+    if (!securityOrigin)
+        return false;
+    return securityOrigin->canRequest(m_request.url(), OriginAccessPatternsForWebProcess::singleton());
 }
 
 void ResourceLoader::didBlockAuthenticationChallenge()
