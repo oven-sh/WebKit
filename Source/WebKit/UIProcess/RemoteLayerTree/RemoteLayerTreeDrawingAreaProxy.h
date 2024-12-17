@@ -54,9 +54,6 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    virtual bool isRemoteLayerTreeDrawingAreaProxyMac() const { return false; }
-    virtual bool isRemoteLayerTreeDrawingAreaProxyIOS() const { return false; }
-
     const RemoteLayerTreeHost& remoteLayerTreeHost() const { return *m_remoteLayerTreeHost; }
     std::unique_ptr<RemoteLayerTreeHost> detachRemoteLayerTreeHost();
 

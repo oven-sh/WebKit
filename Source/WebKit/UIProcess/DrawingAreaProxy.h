@@ -75,6 +75,9 @@ public:
 
     DrawingAreaType type() const { return m_type; }
 
+    virtual bool isRemoteLayerTreeDrawingAreaProxyMac() const { return false; }
+    virtual bool isRemoteLayerTreeDrawingAreaProxyIOS() const { return false; }
+
     void startReceivingMessages(WebProcessProxy&);
     void stopReceivingMessages(WebProcessProxy&);
     virtual std::span<IPC::ReceiverName> messageReceiverNames() const;

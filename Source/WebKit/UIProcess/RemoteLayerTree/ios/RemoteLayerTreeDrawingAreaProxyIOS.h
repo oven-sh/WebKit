@@ -71,4 +71,8 @@ private:
 
 } // namespace WebKit
 
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::RemoteLayerTreeDrawingAreaProxyIOS)
+    static bool isType(const WebKit::DrawingAreaProxy& proxy) { return proxy.isRemoteLayerTreeDrawingAreaProxyIOS(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
 #endif // PLATFORM(IOS_FAMILY)

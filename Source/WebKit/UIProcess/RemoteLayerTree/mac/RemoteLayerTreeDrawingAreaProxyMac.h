@@ -123,5 +123,8 @@ private:
 
 } // namespace WebKit
 
-#endif // #if PLATFORM(MAC)
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::RemoteLayerTreeDrawingAreaProxyMac)
+    static bool isType(const WebKit::DrawingAreaProxy& proxy) { return proxy.isRemoteLayerTreeDrawingAreaProxyMac(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
+#endif // #if PLATFORM(MAC)
