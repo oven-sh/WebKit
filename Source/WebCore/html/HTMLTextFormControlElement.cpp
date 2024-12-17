@@ -337,7 +337,7 @@ bool HTMLTextFormControlElement::setSelectionRange(unsigned start, unsigned end,
         bool cacheSelectionIfNotFocusedOrSelected = true;
 #endif
         // Cache selection if neither selection or focus is on the input.
-        if (cacheSelectionIfNotFocusedOrSelected && enclosingTextFormControl(frame->selection().selection().start()) != this)
+        if (cacheSelectionIfNotFocusedOrSelected && frame && enclosingTextFormControl(frame->selection().selection().start()) != this)
             return cacheSelection(start, end, direction);
 
         // Cache selection if renderer is invisible.
