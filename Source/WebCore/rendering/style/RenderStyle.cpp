@@ -3930,6 +3930,16 @@ UserSelect RenderStyle::usedUserSelect() const
     return value;
 }
 
+const Vector<PositionTryFallback>& RenderStyle::positionTryFallbacks() const
+{
+    return m_nonInheritedData->rareData->positionTryFallbacks;
+}
+
+void RenderStyle::setPositionTryFallbacks(const Vector<PositionTryFallback>& fallbacks)
+{
+    SET_NESTED_VAR(m_nonInheritedData, rareData, positionTryFallbacks, fallbacks);
+}
+
 void RenderStyle::adjustScrollTimelines()
 {
     auto& names = scrollTimelineNames();

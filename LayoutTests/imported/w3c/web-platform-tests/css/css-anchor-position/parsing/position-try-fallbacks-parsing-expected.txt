@@ -1,15 +1,15 @@
 
-FAIL e.style['position-try-fallbacks'] = "initial" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "inherit" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "unset" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "revert" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "none" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "flip-block" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "flip-block " should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "flip-start, flip-block" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "flip-start flip-inline, flip-block" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "flip-start, flip-start" should set the property value assert_not_equals: property should be set got disallowed value ""
-FAIL e.style['position-try-fallbacks'] = "flip-start flip-inline flip-block" should set the property value assert_not_equals: property should be set got disallowed value ""
+PASS e.style['position-try-fallbacks'] = "initial" should set the property value
+PASS e.style['position-try-fallbacks'] = "inherit" should set the property value
+PASS e.style['position-try-fallbacks'] = "unset" should set the property value
+PASS e.style['position-try-fallbacks'] = "revert" should set the property value
+PASS e.style['position-try-fallbacks'] = "none" should set the property value
+PASS e.style['position-try-fallbacks'] = "flip-block" should set the property value
+PASS e.style['position-try-fallbacks'] = "flip-block " should set the property value
+PASS e.style['position-try-fallbacks'] = "flip-start, flip-block" should set the property value
+PASS e.style['position-try-fallbacks'] = "flip-start flip-inline, flip-block" should set the property value
+PASS e.style['position-try-fallbacks'] = "flip-start, flip-start" should set the property value
+PASS e.style['position-try-fallbacks'] = "flip-start flip-inline flip-block" should set the property value
 FAIL e.style['position-try-fallbacks'] = "flip-block, --foo" should set the property value assert_not_equals: property should be set got disallowed value ""
 FAIL e.style['position-try-fallbacks'] = "--bar, flip-block flip-start" should set the property value assert_not_equals: property should be set got disallowed value ""
 FAIL e.style['position-try-fallbacks'] = "--foo, --bar, --baz" should set the property value assert_not_equals: property should be set got disallowed value ""

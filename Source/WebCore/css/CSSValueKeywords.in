@@ -1815,3 +1815,8 @@ most-width
 most-height
 most-block-size
 most-inline-size
+// position-try-fallbacks
+// none
+flip-block
+flip-inline
+flip-start

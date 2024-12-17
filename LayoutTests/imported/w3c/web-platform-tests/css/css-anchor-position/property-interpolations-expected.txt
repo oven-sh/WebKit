@@ -251,132 +251,132 @@ FAIL Web Animations: property <position-area> from [left] to [right] at (0.5) sh
 FAIL Web Animations: property <position-area> from [left] to [right] at (0.6) should be [right] assert_true: 'from' value should be supported expected true got false
 FAIL Web Animations: property <position-area> from [left] to [right] at (1) should be [right] assert_true: 'from' value should be supported expected true got false
 FAIL Web Animations: property <position-area> from [left] to [right] at (1.5) should be [right] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block] assert_true: 'from' value should be supported expected true got false
-FAIL Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block] assert_true: 'from' value should be supported expected true got false
+FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL CSS Animations: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (-0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.3) should be [none] assert_true: 'to' value should be supported expected true got false
+FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (0.6) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (1) should be [--foo] assert_true: 'to' value should be supported expected true got false
+FAIL Web Animations: property <position-try-fallbacks> from [none] to [--foo] at (1.5) should be [--foo] assert_true: 'to' value should be supported expected true got false
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block]
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none] assert_equals: expected "none " but got "flip - block "
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none] assert_equals: expected "none " but got "flip - block "
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none] assert_equals: expected "none " but got "flip - block "
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none]
+PASS CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none]
+PASS CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none]
+PASS CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (-0.3) should be [none]
+PASS Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0) should be [none]
+PASS Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.3) should be [none]
+PASS Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.5) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (0.6) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [none] to [flip-block] at (1.5) should be [flip-block]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block]
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline] assert_equals: expected "flip - inline " but got "flip - block "
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline] assert_equals: expected "flip - inline " but got "flip - block "
+FAIL CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline] assert_equals: expected "flip - inline " but got "flip - block "
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions with transition-property:all and transition-behavor:allow-discrete: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block]
+PASS CSS Transitions with transition: all: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline]
+PASS CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline]
+PASS CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline]
+PASS CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block]
+PASS CSS Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (-0.3) should be [flip-inline]
+PASS Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0) should be [flip-inline]
+PASS Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.3) should be [flip-inline]
+PASS Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.5) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (0.6) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1) should be [flip-block]
+PASS Web Animations: property <position-try-fallbacks> from [flip-inline] to [flip-block] at (1.5) should be [flip-block]
 FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [--foo] to [--bar] at (-0.3) should be [--foo] assert_true: 'from' value should be supported expected true got false
 FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [--foo] to [--bar] at (0) should be [--foo] assert_true: 'from' value should be supported expected true got false
 FAIL CSS Transitions with transition-behavior:allow-discrete: property <position-try-fallbacks> from [--foo] to [--bar] at (0.3) should be [--foo] assert_true: 'from' value should be supported expected true got false

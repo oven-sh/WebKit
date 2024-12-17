@@ -263,6 +263,7 @@ struct MasonryAutoFlow;
 struct NamedGridAreaMap;
 struct NamedGridLinesMap;
 struct OrderedNamedGridLinesMap;
+struct PositionTryFallback;
 struct SingleTimelineRange;
 
 struct ScrollSnapAlign;
@@ -2292,6 +2293,10 @@ public:
     static constexpr Style::PositionTryOrder initialPositionTryOrder();
     inline Style::PositionTryOrder positionTryOrder() const;
     inline void setPositionTryOrder(Style::PositionTryOrder);
+
+    static Vector<PositionTryFallback> initialPositionTryFallbacks();
+    const Vector<PositionTryFallback>& positionTryFallbacks() const;
+    void setPositionTryFallbacks(const Vector<PositionTryFallback>&);
 
 private:
     struct NonInheritedFlags {

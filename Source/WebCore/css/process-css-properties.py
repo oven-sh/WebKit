@@ -3971,6 +3971,7 @@ class GenerateCSSPropertyParsing:
                     "CSSPropertyParserConsumer+Percentage.h",
                     "CSSPropertyParserConsumer+PointerEvents.h",
                     "CSSPropertyParserConsumer+Position.h",
+                    "CSSPropertyParserConsumer+PositionTry.h",
                     "CSSPropertyParserConsumer+Primitives.h",
                     "CSSPropertyParserConsumer+Resolution.h",
                     "CSSPropertyParserConsumer+Ruby.h",

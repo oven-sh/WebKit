@@ -1102,6 +1102,22 @@ static Ref<CSSValue> valueForTextShadow(const ShadowData* shadow, const RenderSt
     return CSSTextShadowPropertyValue::create(CSS::TextShadowProperty { WTFMove(list) });
 }
 
+static Ref<CSSValue> valueForPositionTryFallbacks(const Vector<PositionTryFallback>& fallbacks)
+{
+    if (fallbacks.isEmpty())
+        return CSSPrimitiveValue::create(CSSValueNone);
+
+    CSSValueListBuilder list;
+    for (auto& fallback : fallbacks) {
+        CSSValueListBuilder tacticsList;
+        for (auto& tactic : fallback.tactics)
+            tacticsList.append(createConvertingToCSSValueID(tactic));
+        list.append(CSSValueList::createSpaceSeparated(tacticsList));
+    }
+
+    return CSSValueList::createCommaSeparated(WTFMove(list));
+}
+
 Ref<CSSValue> ComputedStyleExtractor::cssValueForFilter(const RenderStyle& style, const FilterOperations& filterOperations)
 {
     return CSSFilterPropertyValue::create(Style::toCSSFilterProperty(filterOperations, style));
@@ -4813,6 +4829,8 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         if (!style.positionAnchor())
             return CSSPrimitiveValue::create(CSSValueAuto);
         return valueForScopedName(*style.positionAnchor());
+    case CSSPropertyPositionTryFallbacks:
+        return valueForPositionTryFallbacks(style.positionTryFallbacks());
     case CSSPropertyPositionTryOrder: {
         switch (style.positionTryOrder()) {
         case Style::PositionTryOrder::Normal:

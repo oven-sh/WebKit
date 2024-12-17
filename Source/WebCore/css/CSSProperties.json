@@ -9524,6 +9524,19 @@
                 "url": "https://drafts.csswg.org/css-anchor-position-1/#position-try-order-property"
             }
         },
+        "position-try-fallbacks": {
+            "codegen-properties": {
+                "settings-flag": "cssAnchorPositioningEnabled",
+                "parser-function": "consumePositionTryFallbacks",
+                "parser-grammar-unused": "none | [ [<dashed-ident> || <try-tactic>] | <position-area> ]#",
+                "parser-grammar-unused-reason": "Needs support for '||' groups.",
+                "converter": "PositionTryFallbacks"
+            },
+            "specification": {
+                "category": "css-anchor-position",
+                "url": "https://drafts.csswg.org/css-anchor-position-1/#position-try-fallbacks"
+            }
+        },
         "-webkit-tap-highlight-color": {
             "inherited": true,
             "codegen-properties": {
