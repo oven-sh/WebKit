@@ -1572,7 +1572,7 @@ bool WebChromeClient::shouldDispatchFakeMouseMoveEvents() const
     return protectedPage()->shouldDispatchFakeMouseMoveEvents();
 }
 
-static RefPtr<API::Object> userDataFromJSONData(JSON::Value& value)
+RefPtr<API::Object> userDataFromJSONData(JSON::Value& value)
 {
     switch (value.type()) {
     case JSON::Value::Type::Null:

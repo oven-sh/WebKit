@@ -42,6 +42,10 @@ enum class StorageAccessWasGranted : uint8_t;
 struct TextRecognitionOptions;
 }
 
+namespace API {
+class Object;
+};
+
 namespace WebKit {
 
 class WebFrame;
@@ -569,5 +573,7 @@ private:
     WeakRef<WebPage> m_page;
     AutomaticallySend m_automaticallySend;
 };
+
+RefPtr<API::Object> userDataFromJSONData(JSON::Value&);
 
 } // namespace WebKit

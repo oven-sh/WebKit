@@ -5833,7 +5833,7 @@ bool Document::setFocusedElement(Element* newFocusedElement, const FocusOptions&
     if (backForwardCacheState() != NotInBackForwardCache)
         return false;
 
-    RefPtr oldFocusedElement = WTFMove(m_focusedElement);
+    RefPtr oldFocusedElement = std::exchange(m_focusedElement, nullptr);
 
     // Remove focus from the existing focus node (if any)
     if (oldFocusedElement) {

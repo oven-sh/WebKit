@@ -7386,6 +7386,14 @@ void WebPage::elementDidFocus(Element& element, const FocusOptions& options)
 
         m_formClient->willBeginInputSession(this, &element, WebFrame::fromCoreFrame(*element.document().frame()).get(), m_userIsInteracting, userData);
 
+        if (!userData) {
+            auto userInfo = element.userInfo();
+            if (!userInfo.isNull()) {
+                if (auto data = JSON::Value::parseJSON(element.userInfo()))
+                    userData = userDataFromJSONData(*data);
+            }
+        }
+
         information->preventScroll = options.preventScroll;
         send(Messages::WebPageProxy::ElementDidFocus(information.value(), m_userIsInteracting, m_recentlyBlurredElement, m_lastActivityStateChanges, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
 #elif PLATFORM(MAC)
