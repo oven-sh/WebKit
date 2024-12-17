@@ -1780,6 +1780,20 @@ void WebAutomationSession::loadWebExtension(const Inspector::Protocol::Automatio
             callback->sendSuccess(extensionId);
     });
 }
+
+void WebAutomationSession::unloadWebExtension(const String& identifier, Ref<UnloadWebExtensionCallback>&& callback)
+{
+    ASSERT(m_client);
+    if (!m_client)
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(InternalError, "The remote session could not unload the web extension."_s);
+
+    m_client->unloadWebExtension(*this, identifier, [protectedThis = Ref { *this }, callback = WTFMove(callback)](const bool success) {
+        if (success)
+            callback->sendSuccess();
+        else
+            ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NoSuchExtension, "Failed to unload web extension because it could not be found."_s);
+    });
+}
 #endif
 
 Inspector::Protocol::ErrorStringOr<void> WebAutomationSession::generateTestReport(const String& browsingContextHandle, const String& message, const String& group)

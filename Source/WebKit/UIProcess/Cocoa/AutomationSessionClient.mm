@@ -58,6 +58,7 @@ AutomationSessionClient::AutomationSessionClient(id <_WKAutomationSessionDelegat
     m_delegateMethods.currentPresentationForWebView = [delegate respondsToSelector:@selector(_automationSession:currentPresentationForWebView:)];
 #if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
     m_delegateMethods.loadWebExtensionWithOptions = [delegate respondsToSelector:@selector(_automationSession:loadWebExtensionWithOptions:resource:completionHandler:)];
+    m_delegateMethods.unloadWebExtension = [delegate respondsToSelector:@selector(_automationSession:unloadWebExtensionWithIdentifier:completionHandler:)];
 #endif
 }
 
@@ -145,6 +146,18 @@ void AutomationSessionClient::loadWebExtensionWithOptions(WebKit::WebAutomationS
 
     [m_delegate.get() _automationSession:wrapper(session) loadWebExtensionWithOptions:toAPI(options) resource:(NSString *)resource completionHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](NSString *extensionId) mutable {
         completionHandler(extensionId);
+    }).get()];
+}
+
+void AutomationSessionClient::unloadWebExtension(WebKit::WebAutomationSession& session, const String& identifier, CompletionHandler<void(bool)>&& completionHandler)
+{
+    if (!m_delegateMethods.unloadWebExtension) {
+        completionHandler(false);
+        return;
+    }
+
+    [m_delegate.get() _automationSession:wrapper(session) unloadWebExtensionWithIdentifier:identifier completionHandler:makeBlockPtr([completionHandler = WTFMove(completionHandler)](BOOL success) mutable {
+        completionHandler(success);
     }).get()];
 }
 #endif

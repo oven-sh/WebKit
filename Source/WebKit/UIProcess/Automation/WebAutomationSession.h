@@ -241,6 +241,7 @@ public:
 
 #if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
     void loadWebExtension(const Inspector::Protocol::Automation::WebExtensionResourceOptions, const String& resource, Ref<LoadWebExtensionCallback>&&);
+    void unloadWebExtension(const String& identifier, Ref<UnloadWebExtensionCallback>&&);
 #endif
 
 #if PLATFORM(MAC)

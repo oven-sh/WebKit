@@ -90,6 +90,7 @@ public:
     virtual BrowsingContextPresentation currentPresentationOfPage(WebKit::WebAutomationSession&, WebKit::WebPageProxy&) { return BrowsingContextPresentation::Window; }
 #if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
     virtual void loadWebExtensionWithOptions(WebKit::WebAutomationSession&, API::AutomationSessionWebExtensionResourceOptions, const WTF::String& resource, CompletionHandler<void(const WTF::String&)>&& completionHandler) { completionHandler(WTF::String()); }
+    virtual void unloadWebExtension(WebKit::WebAutomationSession&, const WTF::String& identifier, CompletionHandler<void(bool)>&& completionHandler) { completionHandler(false); }
 #endif
 };
 

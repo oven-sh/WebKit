@@ -84,7 +84,9 @@
                 "ScreenshotError",
                 "UnexpectedAlertOpen",
                 "TargetOutOfBounds",
-                "UnableToLoadExtension"
+                "UnableToLoadExtension",
+                "UnableToUnloadExtension",
+                "NoSuchExtension"
             ]
         },
         {
@@ -893,6 +895,16 @@
             ],
             "returns": [
                 { "name": "extensionId", "type": "string", "description": "The unique identifier of the extension." }
+            ],
+            "async": true
+        },
+        {
+            "name": "unloadWebExtension",
+            "description": "Unloads a web extension in the automation session.",
+            "condition": "defined(WK_WEB_EXTENSIONS_IN_WEBDRIVER) && WK_WEB_EXTENSIONS_IN_WEBDRIVER",
+            "platform": "macos",
+            "parameters": [
+                { "name": "identifier", "type": "string", "description": "The identifier of the extension to unload." }
             ],
             "async": true
         }

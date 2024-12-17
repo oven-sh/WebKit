@@ -53,6 +53,7 @@ private:
 
 #if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
     void loadWebExtensionWithOptions(WebKit::WebAutomationSession&, API::AutomationSessionWebExtensionResourceOptions, const String& resource, CompletionHandler<void(const String&)>&&) override;
+    void unloadWebExtension(WebKit::WebAutomationSession&, const String& identifier, CompletionHandler<void(bool)>&&) override;
 #endif
 
     bool isShowingJavaScriptDialogOnPage(WebAutomationSession&, WebPageProxy&) override;
@@ -81,6 +82,7 @@ private:
         bool typeOfCurrentJavaScriptDialogForWebView : 1;
         bool currentPresentationForWebView : 1;
         bool loadWebExtensionWithOptions : 1;
+        bool unloadWebExtension : 1;
     } m_delegateMethods;
 };
 
