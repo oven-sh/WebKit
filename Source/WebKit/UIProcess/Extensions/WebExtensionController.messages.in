@@ -26,6 +26,7 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=UI
 ]

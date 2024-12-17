@@ -24,6 +24,7 @@
 
 // FIXME: Will be renamed to RemoteImageBufferBackend.
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=GPU
 ]

@@ -22,6 +22,7 @@
 
 #if ENABLE(IPC_TESTING_API)
 
+[ExceptionForEnabledBy]
 messages -> IPCStreamTesterProxy {
     void WasCreated(IPC::Semaphore streamWakeUpSemaphore, IPC::Semaphore streamClientWaitSemaphore)
 }

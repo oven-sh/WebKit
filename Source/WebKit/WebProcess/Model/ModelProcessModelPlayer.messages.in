@@ -22,6 +22,7 @@
 
 #if ENABLE(MODEL_PROCESS)
 
+[ExceptionForEnabledBy]
 messages -> ModelProcessModelPlayer {
     DidCreateLayer(WebCore::LayerHostingContextIdentifier identifier)
     DidFinishLoading(WebCore::FloatPoint3D center, WebCore::FloatPoint3D extents)

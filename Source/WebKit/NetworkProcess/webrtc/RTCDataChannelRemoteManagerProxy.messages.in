@@ -23,6 +23,7 @@
 #if ENABLE(WEB_RTC)
 
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=Networking
 ]

@@ -23,6 +23,7 @@
 #if PLATFORM(IOS_FAMILY)
 
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=UI
 ]

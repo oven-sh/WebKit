@@ -24,6 +24,7 @@
 #if ENABLE(GPU_PROCESS)
 
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=GPU
 ]

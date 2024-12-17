@@ -22,6 +22,7 @@
 
 #if ENABLE(GPU_PROCESS)
 
+[ExceptionForEnabledBy]
 messages -> GPUProcessProxy {
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)

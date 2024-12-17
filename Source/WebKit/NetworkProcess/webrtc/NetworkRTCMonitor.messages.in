@@ -23,6 +23,7 @@
 #if USE(LIBWEBRTC)
 
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=Networking
 ]

@@ -23,6 +23,7 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=GPU
 ]

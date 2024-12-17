@@ -25,10 +25,11 @@
 
 [
     DispatchedFrom=WebContent,
-    DispatchedTo=GPU
+    DispatchedTo=GPU,
+    EnabledBy=ShapeDetection
 ]
 messages -> RemoteFaceDetector Stream {
-    [EnabledBy=ShapeDetection] void Detect(WebCore::RenderingResourceIdentifier renderingResourceIdentifier) -> (Vector<WebCore::ShapeDetection::DetectedFace> detectedFaces)
+    void Detect(WebCore::RenderingResourceIdentifier renderingResourceIdentifier) -> (Vector<WebCore::ShapeDetection::DetectedFace> detectedFaces)
 }
 
 #endif

@@ -22,6 +22,7 @@
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=UI
 ]

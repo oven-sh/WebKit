@@ -25,10 +25,11 @@
 
 [
     DispatchedFrom=WebContent,
-    DispatchedTo=GPU
+    DispatchedTo=GPU,
+    EnabledBy=ShapeDetection
 ]
 messages -> RemoteTextDetector Stream {
-    [EnabledBy=ShapeDetection] void Detect(WebCore::RenderingResourceIdentifier renderingResourceIdentifier) -> (Vector<WebCore::ShapeDetection::DetectedText> detectedText)
+    void Detect(WebCore::RenderingResourceIdentifier renderingResourceIdentifier) -> (Vector<WebCore::ShapeDetection::DetectedText> detectedText)
 }
 
 #endif

@@ -23,6 +23,7 @@
 #if ENABLE(INSPECTOR_EXTENSIONS)
 
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=UI
 ]

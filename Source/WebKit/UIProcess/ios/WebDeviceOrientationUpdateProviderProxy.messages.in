@@ -22,6 +22,7 @@
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(DEVICE_ORIENTATION)
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=UI
 ]

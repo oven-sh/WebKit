@@ -23,10 +23,11 @@
 [
     DispatchedFrom=WebContent,
     DispatchedTo=UI,
-    SharedPreferencesNeedsConnection
+    SharedPreferencesNeedsConnection,
+    EnabledBy=GeolocationAPIEnabled
 ]
 messages -> WebGeolocationManagerProxy {
-    [EnabledBy=GeolocationAPIEnabled] StartUpdating(WebCore::RegistrableDomain registrableDomain, WebKit::WebPageProxyIdentifier pageProxyID, String authorizationToken, bool enableHighAccuracy)
-    [EnabledBy=GeolocationAPIEnabled] StopUpdating(WebCore::RegistrableDomain registrableDomain)
-    [EnabledBy=GeolocationAPIEnabled] SetEnableHighAccuracy(WebCore::RegistrableDomain registrableDomain, bool enabled)
+    StartUpdating(WebCore::RegistrableDomain registrableDomain, WebKit::WebPageProxyIdentifier pageProxyID, String authorizationToken, bool enableHighAccuracy)
+    StopUpdating(WebCore::RegistrableDomain registrableDomain)
+    SetEnableHighAccuracy(WebCore::RegistrableDomain registrableDomain, bool enabled)
 }

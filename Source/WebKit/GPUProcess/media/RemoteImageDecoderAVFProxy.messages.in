@@ -28,6 +28,7 @@
 #if ENABLE(GPU_PROCESS) && HAVE(AVASSETREADER)
 
 [
+    ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
     DispatchedTo=GPU
 ]
