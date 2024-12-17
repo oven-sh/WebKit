@@ -330,7 +330,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'extract-test-results',
             'set-permissions',
         ],
-        'Apple-Sequoia-Debug-WK2-Site-Isolation-Tree-Tests': [
+        'Apple-Sequoia-Release-WK2-Site-Isolation-Tree-Tests': [
             'configure-build',
             'configuration',
             'clean-and-update-working-directory',

@@ -163,7 +163,8 @@
                   "triggers": [
                       "sequoia-release-tests-wk1", "sequoia-release-tests-wk2", "sequoia-release-perf-tests",
                       "sequoia-release-applesilicon-tests-wk1", "sequoia-release-applesilicon-tests-wk2",
-                      "sequoia-applesilicon-release-tests-test262", "sequoia-release-tests-wk2-accessibility-isolated-tree"
+                      "sequoia-applesilicon-release-tests-test262", "sequoia-release-tests-wk2-accessibility-isolated-tree", 
+                      "sequoia-release-tests-wk2-site-isolation-tree"
                   ],
                   "workernames": ["bot279", "bot198"]
                   },
@@ -200,8 +201,8 @@
                     "additionalArguments": ["--no-retry-failures", "--accessibility-isolated-tree", "accessibility/"],
                     "workernames": ["bot179"]
                   },
-                  { "name": "Apple-Sequoia-Debug-WK2-Site-Isolation-Tree-Tests", "factory": "TestLayoutFactory",
-                  "platform": "mac-sequoia", "configuration": "debug", "architectures": ["x86_64", "arm64"],
+                  { "name": "Apple-Sequoia-Release-WK2-Site-Isolation-Tree-Tests", "factory": "TestLayoutFactory",
+                  "platform": "mac-sequoia", "configuration": "release", "architectures": ["x86_64", "arm64"],
                   "additionalArguments": ["--no-retry-failures", "--site-isolation" ],
                   "workernames": ["bot303"]
                   },
@@ -209,7 +210,7 @@
                   "platform": "mac-sequoia", "configuration": "debug", "architectures": ["x86_64", "arm64"],
                   "triggers": [
                       "sequoia-debug-tests-wk1", "sequoia-debug-tests-wk2", "sequoia-debug-applesilicon-tests-wk1",
-                      "sequoia-debug-applesilicon-tests-wk2", "sequoia-debug-tests-wk2-site-isolation-tree"
+                      "sequoia-debug-applesilicon-tests-wk2"
                   ],
                   "workernames": ["bot131", "bot141"]
                   },
@@ -792,8 +793,8 @@
                   { "type": "Triggerable", "name": "sequoia-applesilicon-release-tests-test262",
                   "builderNames": ["Apple-Sequoia-AppleSilicon-Release-Test262-Tests"]
                   },
-                  { "type": "Triggerable", "name": "sequoia-debug-tests-wk2-site-isolation-tree",
-                  "builderNames": ["Apple-Sequoia-Debug-WK2-Site-Isolation-Tree-Tests"]
+                  { "type": "Triggerable", "name": "sequoia-release-tests-wk2-site-isolation-tree",
+                  "builderNames": ["Apple-Sequoia-Release-WK2-Site-Isolation-Tree-Tests"]
                   },                  
                   { "type": "PlatformSpecificScheduler", "platform": "mac-sonoma", "branch": "main", "treeStableTimer": 45.0,
                   "builderNames": ["Apple-Sonoma-Release-Build", "Apple-Sonoma-Debug-Build"]
