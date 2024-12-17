@@ -121,7 +121,7 @@ static bool collectDescendantLayersAtPoint(Vector<Ref<CoordinatedPlatformLayer>>
             float originX = child->anchorPoint().x() * child->size().width();
             float originY = child->anchorPoint().y() * child->size().height();
             auto transform = *(TransformationMatrix()
-                .translate3d(originX + child->position().x() - child->boundsOrigin().x(), originY + child->position().y() - child->boundsOrigin().y(), child->anchorPoint().z())
+                .translate3d(originX + child->position().x() - parent->boundsOrigin().x(), originY + child->position().y() - parent->boundsOrigin().y(), child->anchorPoint().z())
                 .multiply(child->transform())
                 .translate3d(-originX, -originY, -child->anchorPoint().z()).inverse());
             auto pointInChildSpace = transform.projectPoint(point);
