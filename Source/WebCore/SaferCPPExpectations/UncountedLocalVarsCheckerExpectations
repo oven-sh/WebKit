@@ -52,6 +52,7 @@ Modules/mediastream/libwebrtc/LibWebRTCPeerConnectionBackend.cpp
 Modules/model-element/HTMLModelElement.cpp
 Modules/notifications/Notification.cpp
 Modules/paymentrequest/PaymentRequest.cpp
+Modules/permissions/PermissionStatus.cpp
 Modules/permissions/Permissions.cpp
 Modules/pictureinpicture/DocumentPictureInPicture.cpp
 Modules/speech/SpeechRecognition.cpp
@@ -290,6 +291,7 @@ css/CSSKeyframeRule.cpp
 css/CSSLayerBlockRule.cpp
 css/CSSPageRule.cpp
 css/CSSPrimitiveValue.cpp
+css/CSSPrimitiveValueMappings.h
 css/CSSRule.cpp
 css/CSSStyleRule.cpp
 css/CSSStyleSheet.cpp
@@ -319,6 +321,7 @@ css/StyleRuleImport.cpp
 css/StyleSheetContents.cpp
 css/parser/CSSParserImpl.cpp
 css/query/ContainerQueryFeatures.cpp
+css/query/GenericMediaQueryEvaluator.cpp
 css/query/MediaQueryFeatures.cpp
 css/typedom/CSSNumericValue.cpp
 css/typedom/CSSStyleValueFactory.cpp
@@ -350,9 +353,13 @@ dom/DocumentFragment.cpp
 dom/DocumentStorageAccess.cpp
 dom/Element.cpp
 dom/ElementAndTextDescendantIterator.h
+dom/ElementInlines.h
 dom/ElementIteratorInlines.h
 dom/ElementTextDirection.cpp
 dom/ElementTraversal.h
+dom/Event.cpp
+dom/EventContext.cpp
+dom/EventDispatcher.cpp
 dom/EventLoop.cpp
 dom/EventLoop.h
 dom/EventPath.cpp
@@ -369,6 +376,7 @@ dom/Node.cpp
 dom/NodeTraversal.cpp
 dom/NodeTraversal.h
 dom/Position.cpp
+dom/Position.h
 dom/QualifiedNameCache.cpp
 dom/RadioButtonGroups.cpp
 dom/Range.cpp
@@ -445,6 +453,7 @@ html/HTMLDetailsElement.cpp
 html/HTMLDialogElement.cpp
 html/HTMLDocument.cpp
 html/HTMLElement.cpp
+html/HTMLEmbedElement.cpp
 html/HTMLFieldSetElement.cpp
 html/HTMLFormControlsCollection.cpp
 html/HTMLFormElement.cpp
@@ -461,10 +470,13 @@ html/HTMLOptionElement.cpp
 html/HTMLPictureElement.cpp
 html/HTMLSelectElement.cpp
 html/HTMLSlotElement.cpp
+html/HTMLSourceElement.cpp
 html/HTMLStyleElement.cpp
 html/HTMLSummaryElement.cpp
+html/HTMLTableCellElement.cpp
 html/HTMLTableElement.cpp
 html/HTMLTableRowElement.cpp
+html/HTMLTableRowsCollection.cpp
 html/HTMLTextFormControlElement.cpp
 html/ImageBitmap.cpp
 html/ImageInputType.cpp
@@ -493,6 +505,7 @@ html/canvas/EXTDisjointTimerQueryWebGL2.cpp
 html/canvas/EXTPolygonOffsetClamp.cpp
 html/canvas/GPUBasedCanvasRenderingContext.cpp
 html/canvas/GPUCanvasContextCocoa.mm
+html/canvas/ImageBitmapRenderingContext.cpp
 html/canvas/OESDrawBuffersIndexed.cpp
 html/canvas/OESVertexArrayObject.cpp
 html/canvas/OffscreenCanvasRenderingContext2D.cpp
@@ -576,6 +589,7 @@ loader/DocumentLoader.cpp
 loader/FrameLoader.cpp
 loader/HistoryController.cpp
 loader/NavigationAction.cpp
+loader/NavigationDisabler.h
 loader/NavigationScheduler.cpp
 loader/ThreadableLoader.cpp
 loader/WorkerThreadableLoader.cpp
@@ -592,6 +606,7 @@ page/BarProp.cpp
 page/CaptionUserPreferences.cpp
 page/CaptionUserPreferencesMediaAF.cpp
 page/ContextMenuController.cpp
+page/DOMTimer.cpp
 page/DOMWindow.cpp
 page/DebugPageOverlays.cpp
 page/DeviceController.cpp
@@ -625,6 +640,7 @@ page/PageGroupLoadDeferrer.cpp
 page/PageOverlayController.cpp
 page/PageSerializer.cpp
 page/Performance.cpp
+page/PerformanceLogging.cpp
 page/PerformanceMark.cpp
 page/PerformanceMonitor.cpp
 page/PerformanceNavigation.cpp
@@ -780,6 +796,7 @@ rendering/MotionPath.cpp
 rendering/ReferencedSVGResources.cpp
 rendering/RenderAttachment.cpp
 rendering/RenderBlock.cpp
+rendering/RenderBlockFlow.cpp
 rendering/RenderBox.cpp
 rendering/RenderCounter.cpp
 rendering/RenderElement.cpp
@@ -797,12 +814,14 @@ rendering/RenderListBox.cpp
 rendering/RenderListItem.cpp
 rendering/RenderMarquee.cpp
 rendering/RenderMenuList.cpp
+rendering/RenderMeter.cpp
 rendering/RenderObject.cpp
 rendering/RenderProgress.cpp
 rendering/RenderQuote.cpp
 rendering/RenderReplaced.cpp
 rendering/RenderSlider.cpp
 rendering/RenderTableCell.cpp
+rendering/RenderTableCol.cpp
 rendering/RenderText.cpp
 rendering/RenderTextControl.cpp
 rendering/RenderTextControlMultiLine.cpp
@@ -829,10 +848,12 @@ rendering/style/StyleGradientImage.cpp
 rendering/style/StylePaintImage.cpp
 rendering/svg/RenderSVGPath.cpp
 rendering/svg/RenderSVGResourcePattern.cpp
+rendering/svg/RenderSVGRoot.cpp
 rendering/svg/RenderSVGShape.cpp
 rendering/svg/RenderSVGTransformableContainer.cpp
 rendering/svg/SVGRenderSupport.cpp
 rendering/svg/SVGRenderTreeAsText.cpp
+rendering/svg/SVGRenderingContext.cpp
 rendering/svg/SVGTextBoxPainter.cpp
 rendering/svg/SVGTextChunk.cpp
 rendering/svg/SVGTextLayoutEngine.cpp
@@ -900,12 +921,15 @@ svg/SVGFELightElement.cpp
 svg/SVGFEMergeElement.cpp
 svg/SVGFontFaceSrcElement.cpp
 svg/SVGGradientElement.cpp
+svg/SVGLengthContext.cpp
 svg/SVGLinearGradientElement.cpp
 svg/SVGLocatable.cpp
 svg/SVGMPathElement.cpp
 svg/SVGMaskElement.cpp
 svg/SVGSVGElement.cpp
 svg/SVGSwitchElement.cpp
+svg/SVGTextContentElement.cpp
+svg/SVGTextPositioningElement.cpp
 svg/SVGToOTFFontConversion.cpp
 svg/SVGUseElement.cpp
 svg/graphics/SVGImage.cpp
