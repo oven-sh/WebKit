@@ -387,9 +387,6 @@
         "subtests": {
             "/webkit/WebKitWebContext/process-per-web-view": {
                 "expected": {"gtk": {"status": ["TIMEOUT", "PASS"], "bug": "webkit.org/b/254002"}}
-            },
-            "/webkit/WebKitWebView/multiprocess-create-ready-close": {
-                "expected": {"wpe": {"status": ["PASS", "CRASH"], "bug": "webkit.org/b/281983"}}
             }
         }
 
