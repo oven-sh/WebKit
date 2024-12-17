@@ -944,7 +944,7 @@ void Element::setFocus(bool value, FocusVisibility visibility)
     for (RefPtr element = this; element; element = element->parentElementInComposedTree())
         element->setHasFocusWithin(value);
 
-    setHasFocusVisible(value && (visibility == FocusVisibility::Visible || shouldAlwaysHaveFocusVisibleWhenFocused(*this)));
+    setHasFocusVisible(value && (visibility == FocusVisibility::Visible || (visibility == FocusVisibility::Invisible && shouldAlwaysHaveFocusVisibleWhenFocused(*this))));
 }
 
 void Element::setHasFocusVisible(bool value)
@@ -953,7 +953,6 @@ void Element::setHasFocusVisible(bool value)
 
 #if ASSERT_ENABLED
     ASSERT(!value || focused());
-    ASSERT(!focused() || !shouldAlwaysHaveFocusVisibleWhenFocused(*this) || value);
 #endif
 
     if (hasFocusVisible() == value)
@@ -3899,7 +3898,9 @@ void Element::focus(const FocusOptions& options)
             return;
 
         FocusOptions optionsWithVisibility = options;
-        if (options.trigger == FocusTrigger::Bindings && document->wasLastFocusByClick())
+        if (options.focusVisible)
+            optionsWithVisibility.visibility = *options.focusVisible ? FocusVisibility::Visible : FocusVisibility::ForceInvisible;
+        else if (options.trigger == FocusTrigger::Bindings && document->wasLastFocusByClick())
             optionsWithVisibility.visibility = FocusVisibility::Invisible;
         else if (options.trigger != FocusTrigger::Click)
             optionsWithVisibility.visibility = FocusVisibility::Visible;
