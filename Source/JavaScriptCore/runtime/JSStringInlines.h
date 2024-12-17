@@ -262,6 +262,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 template<typename CharacterType>
 inline void JSRopeString::resolveToBuffer(JSString* fiber0, JSString* fiber1, JSString* fiber2, std::span<CharacterType> buffer)
 {
+#if HAVE(MUST_TAIL_CALL)
     ASSERT(fiber0);
 
     // We must ensure that all JSRopeString::resolveToBufferSlow and JSRopeString::resolveToBuffer calls must be done directly from this function, and it has
@@ -345,6 +346,9 @@ inline void JSRopeString::resolveToBuffer(JSString* fiber0, JSString* fiber1, JS
         return;
     }
     MUST_TAIL_CALL return resolveToBuffer(rope0->fiber0(), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0Length));
+#else
+    return JSRopeString::resolveToBufferSlow(fiber0, fiber1, fiber2, buffer);
+#endif
 }
 
 inline JSString* jsAtomString(JSGlobalObject* globalObject, VM& vm, JSString* string)

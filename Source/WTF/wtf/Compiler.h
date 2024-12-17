@@ -293,6 +293,7 @@
 #if !defined(MUST_TAIL_CALL) && defined(__cplusplus) && defined(__has_cpp_attribute)
 #if __has_cpp_attribute(clang::musttail) && !defined(__powerpc__) && !defined(_WIN32)
 #define MUST_TAIL_CALL [[clang::musttail]]
+#define HAVE_MUST_TAIL_CALL 1
 #endif
 #endif
 #endif
@@ -300,6 +301,7 @@
 
 #if !defined(MUST_TAIL_CALL)
 #define MUST_TAIL_CALL
+#define HAVE_MUST_TAIL_CALL 0
 #endif
 
 /* RETURNS_NONNULL */
