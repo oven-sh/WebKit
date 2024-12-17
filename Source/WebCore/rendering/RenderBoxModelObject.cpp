@@ -388,8 +388,6 @@ DecodingMode RenderBoxModelObject::decodingModeForImageDraw(const Image& image, 
 
 LayoutSize RenderBoxModelObject::relativePositionOffset() const
 {
-    // This function has been optimized to avoid calls to containingBlock() in the common case
-    // where all values are either auto or fixed.
     auto* containingBlock = this->containingBlock();
 
     auto& style = this->style();
@@ -404,20 +402,22 @@ LayoutSize RenderBoxModelObject::relativePositionOffset() const
         return offset;
     }
 
-    // Objects that shrink to avoid floats normally use available line width when computing containing block width.  However
-    // in the case of relative positioning using percentages, we can't do this.  The offset should always be resolved using the
-    // available width of the containing block.  Therefore we don't use containingBlockLogicalWidthForContent() here, but instead explicitly
+    // Objects that shrink to avoid floats normally use available line width when computing containing block width. However
+    // in the case of relative positioning using percentages, we can't do this. The offset should always be resolved using the
+    // available width of the containing block. Therefore we don't use containingBlockLogicalWidthForContent() here, but instead explicitly
     // call availableWidth on our containing block.
-    // However for grid items the containing block is the grid area, so offsets should be resolved against that:
-    // https://drafts.csswg.org/css-grid/#grid-item-sizing
     if (!left.isAuto() || !right.isAuto()) {
         auto availableWidth = [&] {
             auto* renderBox = dynamicDowncast<RenderBox>(*this);
-            if (!renderBox)
+            if (!renderBox || !renderBox->isGridItem())
                 return containingBlock->availableWidth();
-            if (auto overridingContainingBlockContentWidth = renderBox->overridingContainingBlockContentWidth(containingBlock->writingMode()))
-                return overridingContainingBlockContentWidth->value_or(0_lu);
-            return containingBlock->availableWidth();
+            // For grid items the containing block is the grid area, so offsets should be resolved against that.
+            auto containingBlockContentWidth = renderBox->overridingContainingBlockContentWidth(containingBlock->writingMode());
+            if (!containingBlockContentWidth || !*containingBlockContentWidth) {
+                ASSERT_NOT_REACHED();
+                return containingBlock->availableWidth();
+            }
+            return **containingBlockContentWidth;
         };
         if (!left.isAuto()) {
             if (!right.isAuto() && !containingBlock->writingMode().isAnyLeftToRight())
@@ -439,26 +439,27 @@ LayoutSize RenderBoxModelObject::relativePositionOffset() const
     if (top.isAuto() && bottom.isAuto())
         return offset;
 
-    auto overridingContainingBlockContentHeight = [&]() -> std::optional<LayoutUnit> {
+    auto containingBlockHasDefiniteHeight = !containingBlock->hasAutoHeightOrContainingBlockWithAutoHeight() || containingBlock->stretchesToViewport();
+    auto availableHeight = [&] {
         auto* renderBox = dynamicDowncast<RenderBox>(*this);
-        if (!renderBox)
-            return { };
-        if (auto overridingContainingBlockContentHeight = renderBox->overridingContainingBlockContentHeight(containingBlock->style().writingMode()))
-            return *overridingContainingBlockContentHeight;
-        return { };
-    }();
-    auto containingBlockHasDefiniteHeight = !containingBlock->hasAutoHeightOrContainingBlockWithAutoHeight() || containingBlock->stretchesToViewport() || overridingContainingBlockContentHeight;
-    auto containingBlockContentHeight = [&] {
-        return overridingContainingBlockContentHeight ? overridingContainingBlockContentHeight.value_or(0_lu) : containingBlock->availableHeight();
+        if (!renderBox || !renderBox->isGridItem())
+            return containingBlock->availableHeight();
+        // For grid items the containing block is the grid area, so offsets should be resolved against that.
+        auto containingBlockContentHeight = renderBox->overridingContainingBlockContentHeight(containingBlock->style().writingMode());
+        if (!containingBlockContentHeight || !*containingBlockContentHeight) {
+            ASSERT_NOT_REACHED();
+            return containingBlock->availableHeight();
+        }
+        return **containingBlockContentHeight;
     };
     if (!top.isAuto() && (!top.isPercentOrCalculated() || containingBlockHasDefiniteHeight)) {
         // FIXME: The computation of the available height is repeated later for "bottom".
         // We could refactor this and move it to some common code for both ifs, however moving it outside of the ifs
         // is not possible as it'd cause performance regressions.
-        offset.expand(0_lu, valueForLength(top, !top.isFixed() ? containingBlockContentHeight() : 0_lu));
+        offset.expand(0_lu, valueForLength(top, !top.isFixed() ? availableHeight() : 0_lu));
     } else if (!bottom.isAuto() && (!bottom.isPercentOrCalculated() || containingBlockHasDefiniteHeight)) {
         // FIXME: Check comment above for "top", it applies here too.
-        offset.expand(0_lu, -valueForLength(bottom, !bottom.isFixed() ? containingBlockContentHeight() : 0_lu));
+        offset.expand(0_lu, -valueForLength(bottom, !bottom.isFixed() ? availableHeight() : 0_lu));
     }
     return offset;
 }
