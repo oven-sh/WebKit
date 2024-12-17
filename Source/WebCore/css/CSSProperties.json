@@ -1689,7 +1689,7 @@
                 ],
                 "name-for-methods": "TimingFunction",
                 "separator": ",",
-                "parser-grammar": "<timing-function>#"
+                "parser-grammar": "<easing-function>#"
             },
             "specification": {
                 "category": "css-animations",
@@ -6316,7 +6316,7 @@
                     "-webkit-transition-timing-function"
                 ],
                 "name-for-methods": "TimingFunction",
-                "parser-grammar": "<timing-function>#"
+                "parser-grammar": "<easing-function>#"
             },
             "specification": {
                 "category": "css-transitions",

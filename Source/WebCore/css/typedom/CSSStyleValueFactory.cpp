@@ -34,6 +34,7 @@
 #include "CSSBoxShadowPropertyValue.h"
 #include "CSSCalcValue.h"
 #include "CSSCustomPropertyValue.h"
+#include "CSSEasingFunctionValue.h"
 #include "CSSFilterPropertyValue.h"
 #include "CSSKeywordValue.h"
 #include "CSSNumericFactory.h"
@@ -351,6 +352,15 @@ ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(const CSSValue&
         return WTF::switchOn(property->shadow(),
             [&](CSS::Keyword::None) -> ExceptionOr<Ref<CSSStyleValue>> {
                 return static_reference_cast<CSSStyleValue>(CSSKeywordValue::rectifyKeywordish(nameLiteral(CSSValueNone)));
+            },
+            [&](const auto&) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return CSSStyleValue::create(Ref(const_cast<CSSValue&>(cssValue)));
+            }
+        );
+    } else if (RefPtr property = dynamicDowncast<CSSEasingFunctionValue>(cssValue)) {
+        return WTF::switchOn(property->easingFunction(),
+            [&]<CSSValueID keyword>(Constant<keyword>) -> ExceptionOr<Ref<CSSStyleValue>> {
+                return static_reference_cast<CSSStyleValue>(CSSKeywordValue::rectifyKeywordish(nameLiteral(keyword)));
             },
             [&](const auto&) -> ExceptionOr<Ref<CSSStyleValue>> {
                 return CSSStyleValue::create(Ref(const_cast<CSSValue&>(cssValue)));

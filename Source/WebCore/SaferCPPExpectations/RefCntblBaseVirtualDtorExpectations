@@ -16,6 +16,7 @@ css/CSSCounterValue.h
 css/CSSCrossfadeValue.h
 css/CSSCursorImageValue.h
 css/CSSCustomPropertyValue.h
+css/CSSEasingFunctionValue.h
 css/CSSFilterImageValue.h
 css/CSSFilterPropertyValue.h
 css/CSSFontFaceSrcValue.h
@@ -53,7 +54,6 @@ css/CSSReflectValue.h
 css/CSSScrollValue.h
 css/CSSSubgridValue.h
 css/CSSTextShadowPropertyValue.h
-css/CSSTimingFunctionValue.h
 css/CSSTransformListValue.h
 css/CSSUnicodeRangeValue.h
 css/CSSValueList.h

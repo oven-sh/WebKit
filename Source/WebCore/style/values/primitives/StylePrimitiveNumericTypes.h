@@ -54,6 +54,21 @@ template<typename T> concept StyleDimensionPercentage = StyleNumeric<T> && requi
 
 // MARK: Number Primitive
 
+template<CSS::Range R = CSS::All, typename T = int> struct Integer {
+    static constexpr auto range = R;
+    static constexpr auto unit = CSSUnitType::CSS_INTEGER;
+    using CSS = WebCore::CSS::Integer<R, T>;
+    using Raw = WebCore::CSS::IntegerRaw<R, T>;
+    using ValueType = T;
+
+    ValueType value { 0 };
+
+    constexpr bool isZero() const { return !value; }
+
+    constexpr bool operator==(const Integer<R, T>&) const = default;
+    constexpr bool operator==(ValueType other) const { return value == other; };
+};
+
 template<CSS::Range R = CSS::All> struct Number {
     static constexpr auto range = R;
     static constexpr auto unit = CSSUnitType::CSS_NUMBER;
@@ -675,20 +690,21 @@ using LengthPercentageSpaceSeparatedSizeNonnegative = SpaceSeparatedSize<LengthP
 
 // MARK: CSS type -> Style type mapping
 
-template<auto R> struct ToStyleMapping<CSS::Number<R>>           { using type = Number<R>; };
-template<auto R> struct ToStyleMapping<CSS::Percentage<R>>       { using type = Percentage<R>; };
-template<auto R> struct ToStyleMapping<CSS::Angle<R>>            { using type = Angle<R>; };
-template<auto R> struct ToStyleMapping<CSS::Length<R>>           { using type = Length<R>; };
-template<auto R> struct ToStyleMapping<CSS::Time<R>>             { using type = Time<R>; };
-template<auto R> struct ToStyleMapping<CSS::Frequency<R>>        { using type = Frequency<R>; };
-template<auto R> struct ToStyleMapping<CSS::Resolution<R>>       { using type = Resolution<R>; };
-template<auto R> struct ToStyleMapping<CSS::Flex<R>>             { using type = Flex<R>; };
-template<auto R> struct ToStyleMapping<CSS::AnglePercentage<R>>  { using type = AnglePercentage<R>; };
-template<auto R> struct ToStyleMapping<CSS::LengthPercentage<R>> { using type = LengthPercentage<R>; };
+template<auto R, typename T> struct ToStyleMapping<CSS::Integer<R, T>> { using type = Integer<R, T>; };
+template<auto R> struct ToStyleMapping<CSS::Number<R>>                 { using type = Number<R>; };
+template<auto R> struct ToStyleMapping<CSS::Percentage<R>>             { using type = Percentage<R>; };
+template<auto R> struct ToStyleMapping<CSS::Angle<R>>                  { using type = Angle<R>; };
+template<auto R> struct ToStyleMapping<CSS::Length<R>>                 { using type = Length<R>; };
+template<auto R> struct ToStyleMapping<CSS::Time<R>>                   { using type = Time<R>; };
+template<auto R> struct ToStyleMapping<CSS::Frequency<R>>              { using type = Frequency<R>; };
+template<auto R> struct ToStyleMapping<CSS::Resolution<R>>             { using type = Resolution<R>; };
+template<auto R> struct ToStyleMapping<CSS::Flex<R>>                   { using type = Flex<R>; };
+template<auto R> struct ToStyleMapping<CSS::AnglePercentage<R>>        { using type = AnglePercentage<R>; };
+template<auto R> struct ToStyleMapping<CSS::LengthPercentage<R>>       { using type = LengthPercentage<R>; };
 
 // MARK: Style type mapping -> CSS type mappings
 
-template<StyleNumeric T> struct ToCSSMapping<T>                  { using type = typename T::CSS; };
+template<StyleNumeric T> struct ToCSSMapping<T>                        { using type = typename T::CSS; };
 
 } // namespace Style
 

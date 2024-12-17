@@ -67,4 +67,4 @@ template<> struct Blending<BoxShadow> {
 } // namespace Style
 } // namespace WebCore
 
-STYLE_TUPLE_LIKE_CONFORMANCE(BoxShadow, 5)
+STYLE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(BoxShadow, 5)

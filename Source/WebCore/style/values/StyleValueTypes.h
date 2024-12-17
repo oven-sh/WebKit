@@ -54,6 +54,16 @@ class BuilderState;
     template<> inline constexpr bool WebCore::TreatAsTupleLike<WebCore::Style::t> = true; \
 \
 
+#define STYLE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    STYLE_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    template<> inline constexpr ASCIILiteral WebCore::SerializationSeparator<WebCore::Style::t> = " "_s; \
+\
+
+#define STYLE_COMMA_SEPARATED_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    STYLE_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    template<> inline constexpr ASCIILiteral WebCore::SerializationSeparator<WebCore::Style::t> = ", "_s; \
+\
+
 // Types can specialize this and set the value to true to be treated as "non-converting"
 // for css to style / style to css conversion algorithms. This means the type is identical
 // for both CSS and Style systems (e.g. a constant value or an enum).

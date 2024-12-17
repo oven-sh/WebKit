@@ -40,7 +40,6 @@
 #include "CSSPropertyParser.h"
 #include "CSSQuadValue.h"
 #include "CSSScrollValue.h"
-#include "CSSTimingFunctionValue.h"
 #include "CSSValueKeywords.h"
 #include "CSSViewValue.h"
 #include "CompositeOperation.h"

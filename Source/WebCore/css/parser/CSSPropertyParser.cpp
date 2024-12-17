@@ -52,6 +52,7 @@
 #include "CSSPropertyParserConsumer+Background.h"
 #include "CSSPropertyParserConsumer+Color.h"
 #include "CSSPropertyParserConsumer+Conditional.h"
+#include "CSSPropertyParserConsumer+Easing.h"
 #include "CSSPropertyParserConsumer+Font.h"
 #include "CSSPropertyParserConsumer+Grid.h"
 #include "CSSPropertyParserConsumer+Ident.h"
@@ -70,7 +71,6 @@
 #include "CSSPropertyParserConsumer+TextDecoration.h"
 #include "CSSPropertyParserConsumer+Time.h"
 #include "CSSPropertyParserConsumer+Timeline.h"
-#include "CSSPropertyParserConsumer+TimingFunction.h"
 #include "CSSPropertyParserConsumer+Transform.h"
 #include "CSSPropertyParserConsumer+Transitions.h"
 #include "CSSPropertyParserConsumer+URL.h"
@@ -1891,7 +1891,7 @@ static RefPtr<CSSValue> consumeAnimationValueForShorthand(CSSPropertyID property
         return consumeAnimationTimeline(range, context);
     case CSSPropertyAnimationTimingFunction:
     case CSSPropertyTransitionTimingFunction:
-        return consumeTimingFunction(range, context);
+        return consumeEasingFunction(range, context);
     case CSSPropertyTransitionBehavior:
         return CSSPropertyParsing::consumeTransitionBehaviorValue(range);
     default:

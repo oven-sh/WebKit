@@ -33,10 +33,9 @@
 #include "CSSPropertyAnimation.h"
 #include "CSSPropertyNames.h"
 #include "CSSPropertyParser.h"
-#include "CSSPropertyParserConsumer+TimingFunction.h"
+#include "CSSPropertyParserConsumer+Easing.h"
 #include "CSSSelector.h"
 #include "CSSStyleDeclaration.h"
-#include "CSSTimingFunctionValue.h"
 #include "CSSTransition.h"
 #include "CSSValue.h"
 #include "CSSValueKeywords.h"
@@ -928,7 +927,9 @@ ExceptionOr<void> KeyframeEffect::processKeyframes(JSGlobalObject& lexicalGlobal
         // Let the timing function of frame be the result of parsing the “easing” property on frame using the CSS syntax
         // defined for the easing property of the AnimationEffectTiming interface.
         // If parsing the “easing” property fails, throw a TypeError and abort this procedure.
-        auto timingFunctionResult = CSSPropertyParserHelpers::parseTimingFunction(keyframe.easing, parserContext);
+
+        // FIXME: Determine the how calc() and relative units should be resolved and switch to the non-deprecated parsing function.
+        auto timingFunctionResult = CSSPropertyParserHelpers::parseEasingFunctionDeprecated(keyframe.easing, parserContext);
         if (!timingFunctionResult)
             return Exception { ExceptionCode::TypeError };
         keyframe.timingFunction = WTFMove(timingFunctionResult);
@@ -938,7 +939,8 @@ ExceptionOr<void> KeyframeEffect::processKeyframes(JSGlobalObject& lexicalGlobal
     //    AnimationEffectTiming interface, and if any of the values fail to parse, throw a TypeError
     //    and abort this procedure.
     for (auto& easing : unusedEasings) {
-        auto timingFunctionResult = CSSPropertyParserHelpers::parseTimingFunction(easing, parserContext);
+        // FIXME: Determine the how calc() and relative units should be resolved and switch to the non-deprecated parsing function.
+        auto timingFunctionResult = CSSPropertyParserHelpers::parseEasingFunctionDeprecated(easing, parserContext);
         if (!timingFunctionResult)
             return Exception { ExceptionCode::TypeError };
     }

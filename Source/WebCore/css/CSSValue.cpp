@@ -46,6 +46,7 @@
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
 #include "CSSCustomPropertyValue.h"
+#include "CSSEasingFunctionValue.h"
 #include "CSSFilterImageValue.h"
 #include "CSSFilterPropertyValue.h"
 #include "CSSFontFaceSrcValue.h"
@@ -81,7 +82,6 @@
 #include "CSSScrollValue.h"
 #include "CSSSubgridValue.h"
 #include "CSSTextShadowPropertyValue.h"
-#include "CSSTimingFunctionValue.h"
 #include "CSSToLengthConversionData.h"
 #include "CSSTransformListValue.h"
 #include "CSSUnicodeRangeValue.h"
@@ -142,12 +142,12 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCounterValue>(*this));
     case Crossfade:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCrossfadeValue>(*this));
-    case CubicBezierTimingFunction:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCubicBezierTimingFunctionValue>(*this));
     case CursorImage:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCursorImageValue>(*this));
     case CustomProperty:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCustomPropertyValue>(*this));
+    case EasingFunction:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSEasingFunctionValue>(*this));
     case FilterImage:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFilterImageValue>(*this));
     case FilterProperty:
@@ -192,8 +192,6 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSImageSetValue>(*this));
     case LineBoxContain:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSLineBoxContainValue>(*this));
-    case LinearTimingFunction:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSLinearTimingFunctionValue>(*this));
     case NamedImage:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSNamedImageValue>(*this));
     case OffsetRotate:
@@ -216,10 +214,6 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSScrollValue>(*this));
     case Subgrid:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSSubgridValue>(*this));
-    case StepsTimingFunction:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSStepsTimingFunctionValue>(*this));
-    case SpringTimingFunction:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSSpringTimingFunctionValue>(*this));
     case TextShadowProperty:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSTextShadowPropertyValue>(*this));
     case TransformList:

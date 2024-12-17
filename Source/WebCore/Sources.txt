@@ -877,6 +877,7 @@ css/CSSCounterValue.cpp
 css/CSSCrossfadeValue.cpp
 css/CSSCursorImageValue.cpp
 css/CSSCustomPropertyValue.cpp
+css/CSSEasingFunctionValue.cpp
 css/CSSFilterImageValue.cpp
 css/CSSFilterPropertyValue.cpp
 css/CSSFontFace.cpp
@@ -946,7 +947,6 @@ css/CSSStyleSheetObservableArray.cpp
 css/CSSSubgridValue.cpp
 css/CSSSupportsRule.cpp
 css/CSSTextShadowPropertyValue.cpp
-css/CSSTimingFunctionValue.cpp
 css/CSSToLengthConversionData.cpp
 css/CSSToStyleMap.cpp
 css/CSSTransformListValue.cpp
@@ -1038,6 +1038,7 @@ css/parser/CSSPropertyParserConsumer+Contain.cpp
 css/parser/CSSPropertyParserConsumer+Content.cpp
 css/parser/CSSPropertyParserConsumer+CounterStyles.cpp
 css/parser/CSSPropertyParserConsumer+Display.cpp
+css/parser/CSSPropertyParserConsumer+Easing.cpp
 css/parser/CSSPropertyParserConsumer+Filter.cpp
 css/parser/CSSPropertyParserConsumer+Font.cpp
 css/parser/CSSPropertyParserConsumer+Grid.cpp
@@ -1074,7 +1075,6 @@ css/parser/CSSPropertyParserConsumer+Text.cpp
 css/parser/CSSPropertyParserConsumer+TextDecoration.cpp
 css/parser/CSSPropertyParserConsumer+Time.cpp
 css/parser/CSSPropertyParserConsumer+Timeline.cpp
-css/parser/CSSPropertyParserConsumer+TimingFunction.cpp
 css/parser/CSSPropertyParserConsumer+Transform.cpp
 css/parser/CSSPropertyParserConsumer+Transitions.cpp
 css/parser/CSSPropertyParserConsumer+UI.cpp
@@ -3138,6 +3138,11 @@ style/values/color/StyleHexColor.cpp
 style/values/color/StyleKeywordColor.cpp
 style/values/color/StyleLightDarkColor.cpp
 style/values/color/StyleResolvedColor.cpp
+style/values/easing/StyleCubicBezierEasingFunction.cpp
+style/values/easing/StyleEasingFunction.cpp
+style/values/easing/StyleLinearEasingFunction.cpp
+style/values/easing/StyleSpringEasingFunction.cpp
+style/values/easing/StyleStepsEasingFunction.cpp
 style/values/filter-effects/StyleAppleColorFilterProperty.cpp
 style/values/filter-effects/StyleAppleInvertLightnessFunction.cpp
 style/values/filter-effects/StyleBlurFunction.cpp

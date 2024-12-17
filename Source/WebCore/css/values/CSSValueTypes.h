@@ -46,6 +46,16 @@ namespace CSS {
     template<> inline constexpr bool WebCore::TreatAsTupleLike<WebCore::CSS::t> = true; \
 \
 
+#define CSS_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    CSS_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    template<> inline constexpr ASCIILiteral WebCore::SerializationSeparator<WebCore::CSS::t> = " "_s; \
+\
+
+#define CSS_COMMA_SEPARATED_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    CSS_TUPLE_LIKE_CONFORMANCE(t, numberOfArguments) \
+    template<> inline constexpr ASCIILiteral WebCore::SerializationSeparator<WebCore::CSS::t> = ", "_s; \
+\
+
 // MARK: - Serialization
 
 // All leaf types must implement the following conversions:

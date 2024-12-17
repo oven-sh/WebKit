@@ -44,7 +44,7 @@ template<typename T> concept RawNumeric = requires(T raw) {
 
 // MARK: Number Primitives Raw
 
-template<Range R, typename T> struct IntegerRaw {
+template<Range R = All, typename T = int> struct IntegerRaw {
     using ValueType = T;
     static constexpr auto range = R;
     static constexpr auto category = Calculation::Category::Integer;
@@ -223,6 +223,16 @@ template<RawNumeric T> struct PrimitiveNumeric {
         value.calc = &calc.protectedCalc().leakRef();
     }
 
+    PrimitiveNumeric(CSSUnitType unit, typename Raw::ValueType value)
+        : PrimitiveNumeric { Raw { unit, value } }
+    {
+    }
+
+    PrimitiveNumeric(typename Raw::ValueType value) requires (requires { { Raw(value) }; })
+        : PrimitiveNumeric { Raw { value } }
+    {
+    }
+
     PrimitiveNumeric(const PrimitiveNumeric& other)
     {
         if (other.isCalc()) {
@@ -388,7 +398,7 @@ private:
 
 // MARK: Number Primitive
 
-template<Range R, typename IntType> using Integer = PrimitiveNumeric<IntegerRaw<R, IntType>>;
+template<Range R = All, typename IntType = int> using Integer = PrimitiveNumeric<IntegerRaw<R, IntType>>;
 
 template<Range R = All> using Number = PrimitiveNumeric<NumberRaw<R>>;
 
@@ -560,18 +570,19 @@ namespace Type {
 // MARK: Raw type -> CSS type mapping (CSS type -> Raw type directly available via typename CSSType::Raw).
 
 template<typename> struct RawToCSSMapping;
-template<auto R> struct RawToCSSMapping<NumberRaw<R>>           { using CSS = Number<R>; };
-template<auto R> struct RawToCSSMapping<PercentageRaw<R>>       { using CSS = Percentage<R>; };
-template<auto R> struct RawToCSSMapping<AngleRaw<R>>            { using CSS = Angle<R>; };
-template<auto R> struct RawToCSSMapping<LengthRaw<R>>           { using CSS = Length<R>; };
-template<auto R> struct RawToCSSMapping<TimeRaw<R>>             { using CSS = Time<R>; };
-template<auto R> struct RawToCSSMapping<FrequencyRaw<R>>        { using CSS = Frequency<R>; };
-template<auto R> struct RawToCSSMapping<ResolutionRaw<R>>       { using CSS = Resolution<R>; };
-template<auto R> struct RawToCSSMapping<FlexRaw<R>>             { using CSS = Flex<R>; };
-template<auto R> struct RawToCSSMapping<AnglePercentageRaw<R>>  { using CSS = AnglePercentage<R>; };
-template<auto R> struct RawToCSSMapping<LengthPercentageRaw<R>> { using CSS = LengthPercentage<R>; };
-template<> struct RawToCSSMapping<NoneRaw> { using CSS = None; };
-template<> struct RawToCSSMapping<SymbolRaw> { using CSS = Symbol; };
+template<auto R, typename T> struct RawToCSSMapping<IntegerRaw<R, T>> { using CSS = Integer<R, T>; };
+template<auto R> struct RawToCSSMapping<NumberRaw<R>>                 { using CSS = Number<R>; };
+template<auto R> struct RawToCSSMapping<PercentageRaw<R>>             { using CSS = Percentage<R>; };
+template<auto R> struct RawToCSSMapping<AngleRaw<R>>                  { using CSS = Angle<R>; };
+template<auto R> struct RawToCSSMapping<LengthRaw<R>>                 { using CSS = Length<R>; };
+template<auto R> struct RawToCSSMapping<TimeRaw<R>>                   { using CSS = Time<R>; };
+template<auto R> struct RawToCSSMapping<FrequencyRaw<R>>              { using CSS = Frequency<R>; };
+template<auto R> struct RawToCSSMapping<ResolutionRaw<R>>             { using CSS = Resolution<R>; };
+template<auto R> struct RawToCSSMapping<FlexRaw<R>>                   { using CSS = Flex<R>; };
+template<auto R> struct RawToCSSMapping<AnglePercentageRaw<R>>        { using CSS = AnglePercentage<R>; };
+template<auto R> struct RawToCSSMapping<LengthPercentageRaw<R>>       { using CSS = LengthPercentage<R>; };
+template<> struct RawToCSSMapping<NoneRaw>                            { using CSS = None; };
+template<> struct RawToCSSMapping<SymbolRaw>                          { using CSS = Symbol; };
 
 // MARK: Transform Raw type -> CSS type
 

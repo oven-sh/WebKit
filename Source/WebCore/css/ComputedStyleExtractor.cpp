@@ -32,6 +32,7 @@
 #include "CSSBoxShadowPropertyValue.h"
 #include "CSSColorSchemeValue.h"
 #include "CSSCounterValue.h"
+#include "CSSEasingFunctionValue.h"
 #include "CSSFilterPropertyValue.h"
 #include "CSSFontFeatureValue.h"
 #include "CSSFontStyleWithAngleValue.h"
@@ -54,7 +55,6 @@
 #include "CSSRegisteredCustomProperty.h"
 #include "CSSScrollValue.h"
 #include "CSSTextShadowPropertyValue.h"
-#include "CSSTimingFunctionValue.h"
 #include "CSSTransformListValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
@@ -88,6 +88,7 @@
 #include "StyleAppleColorFilterProperty.h"
 #include "StyleBoxShadow.h"
 #include "StyleColorScheme.h"
+#include "StyleEasingFunction.h"
 #include "StyleFilterProperty.h"
 #include "StylePathData.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
@@ -1656,71 +1657,9 @@ static Ref<CSSValue> valueForAnimationTimeline(const RenderStyle& style, const A
     );
 }
 
-static Ref<CSSValue> valueForAnimationTimingFunction(const TimingFunction& timingFunction)
+static Ref<CSSValue> valueForAnimationTimingFunction(const RenderStyle& style, const TimingFunction& timingFunction)
 {
-    switch (timingFunction.type()) {
-    case TimingFunction::Type::CubicBezierFunction: {
-        auto& function = uncheckedDowncast<CubicBezierTimingFunction>(timingFunction);
-        if (function.timingFunctionPreset() != CubicBezierTimingFunction::TimingFunctionPreset::Custom) {
-            CSSValueID valueId = CSSValueInvalid;
-            switch (function.timingFunctionPreset()) {
-            case CubicBezierTimingFunction::TimingFunctionPreset::Ease:
-                valueId = CSSValueEase;
-                break;
-            case CubicBezierTimingFunction::TimingFunctionPreset::EaseIn:
-                valueId = CSSValueEaseIn;
-                break;
-            case CubicBezierTimingFunction::TimingFunctionPreset::EaseOut:
-                valueId = CSSValueEaseOut;
-                break;
-            case CubicBezierTimingFunction::TimingFunctionPreset::Custom:
-            case CubicBezierTimingFunction::TimingFunctionPreset::EaseInOut:
-                ASSERT(function.timingFunctionPreset() == CubicBezierTimingFunction::TimingFunctionPreset::EaseInOut);
-                valueId = CSSValueEaseInOut;
-                break;
-            }
-            return CSSPrimitiveValue::create(valueId);
-        }
-        return CSSCubicBezierTimingFunctionValue::create(
-            CSSPrimitiveValue::create(function.x1()),
-            CSSPrimitiveValue::create(function.y1()),
-            CSSPrimitiveValue::create(function.x2()),
-            CSSPrimitiveValue::create(function.y2())
-        );
-    }
-    case TimingFunction::Type::StepsFunction: {
-        auto& function = uncheckedDowncast<StepsTimingFunction>(timingFunction);
-        return CSSStepsTimingFunctionValue::create(
-            CSSPrimitiveValue::createInteger(function.numberOfSteps()),
-            function.stepPosition()
-        );
-    }
-    case TimingFunction::Type::SpringFunction: {
-        auto& function = uncheckedDowncast<SpringTimingFunction>(timingFunction);
-        return CSSSpringTimingFunctionValue::create(
-            CSSPrimitiveValue::create(function.mass()),
-            CSSPrimitiveValue::create(function.stiffness()),
-            CSSPrimitiveValue::create(function.damping()),
-            CSSPrimitiveValue::create(function.initialVelocity())
-        );
-    }
-    case TimingFunction::Type::LinearFunction: {
-        auto& function = uncheckedDowncast<LinearTimingFunction>(timingFunction);
-        if (function.points().isEmpty())
-            return CSSPrimitiveValue::create(CSSValueLinear);
-
-        return CSSLinearTimingFunctionValue::create(function.points().map([](const auto& point) {
-            return CSSLinearTimingFunctionValue::LinearStop {
-                .output = CSSPrimitiveValue::create(point.value),
-                .input = CSSLinearTimingFunctionValue::LinearStop::Length {
-                    .input = CSSPrimitiveValue::create(point.progress * 100, CSSUnitType::CSS_PERCENTAGE),
-                    .extra = nullptr
-                }
-            };
-        }));
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return CSSEasingFunctionValue::create(Style::toCSSEasingFunction(timingFunction, style));
 }
 
 static Ref<CSSValue> valueForSingleAnimationRange(const RenderStyle& style, const SingleTimelineRange& range, SingleTimelineRange::Type type)
@@ -1808,9 +1747,9 @@ static void addValueForAnimationPropertyToList(const RenderStyle& style, CSSValu
     case CSSPropertyTransitionTimingFunction:
         if (animation) {
             if (!animation->isTimingFunctionFilled())
-                list.append(valueForAnimationTimingFunction(*animation->timingFunction()));
+                list.append(valueForAnimationTimingFunction(style, *animation->timingFunction()));
         } else
-            list.append(valueForAnimationTimingFunction(CubicBezierTimingFunction::defaultTimingFunction()));
+            list.append(valueForAnimationTimingFunction(style, CubicBezierTimingFunction::defaultTimingFunction()));
         break;
     case CSSPropertyAnimationRangeStart:
         if (!animation || !animation->isRangeStartFilled())
@@ -1907,7 +1846,7 @@ static Ref<CSSValue> singleAnimationValue(const RenderStyle& style, const Animat
     if (showsDuration)
         list.append(valueForAnimationDuration(animation.duration()));
     if (showsTimingFunction())
-        list.append(valueForAnimationTimingFunction(*animation.timingFunction()));
+        list.append(valueForAnimationTimingFunction(style, *animation.timingFunction()));
     if (showsDelay)
         list.append(valueForAnimationDelay(animation.delay()));
     if (showsIterationCount())
@@ -1941,7 +1880,7 @@ static Ref<CSSValue> animationShorthandValue(const RenderStyle& style, const Ani
     return CSSValueList::createCommaSeparated(WTFMove(list));
 }
 
-static Ref<CSSValue> singleTransitionValue(const Animation& transition)
+static Ref<CSSValue> singleTransitionValue(const RenderStyle& style, const Animation& transition)
 {
     static NeverDestroyed<Ref<TimingFunction>> initialTimingFunction(Animation::initialTimingFunction());
 
@@ -1957,7 +1896,7 @@ static Ref<CSSValue> singleTransitionValue(const Animation& transition)
     if (showsDuration)
         list.append(valueForAnimationDuration(transition.duration()));
     if (auto* timingFunction = transition.timingFunction(); *timingFunction != initialTimingFunction.get())
-        list.append(valueForAnimationTimingFunction(*timingFunction));
+        list.append(valueForAnimationTimingFunction(style, *timingFunction));
     if (showsDelay)
         list.append(valueForAnimationDelay(transition.delay()));
     if (transition.allowsDiscreteTransitions() != Animation::initialAllowsDiscreteTransitions())
@@ -1967,14 +1906,14 @@ static Ref<CSSValue> singleTransitionValue(const Animation& transition)
     return CSSValueList::createSpaceSeparated(WTFMove(list));
 }
 
-static Ref<CSSValue> transitionShorthandValue(const AnimationList* transitions)
+static Ref<CSSValue> transitionShorthandValue(const RenderStyle& style, const AnimationList* transitions)
 {
     if (!transitions || transitions->isEmpty())
         return CSSPrimitiveValue::create(CSSValueAll);
 
     CSSValueListBuilder list;
     for (auto& transition : *transitions)
-        list.append(singleTransitionValue(transition));
+        list.append(singleTransitionValue(style, transition));
     ASSERT(!list.isEmpty());
     return CSSValueList::createCommaSeparated(WTFMove(list));
 }
@@ -4592,7 +4531,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     case CSSPropertyTransitionProperty:
         return valueListForAnimationOrTransitionProperty(style, propertyID, style.transitions());
     case CSSPropertyTransition:
-        return transitionShorthandValue(style.transitions());
+        return transitionShorthandValue(style, style.transitions());
     case CSSPropertyPointerEvents:
         return createConvertingToCSSValueID(style.pointerEvents());
     case CSSPropertyWebkitLineGrid:

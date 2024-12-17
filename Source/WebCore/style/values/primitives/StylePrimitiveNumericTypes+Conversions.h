@@ -34,6 +34,16 @@
 namespace WebCore {
 namespace Style {
 
+template<auto R, typename T> constexpr Integer<R, T> canonicalizeNoConversionDataRequired(const CSS::IntegerRaw<R, T>& raw)
+{
+    return { raw.value };
+}
+
+template<auto R, typename T> constexpr Integer<R, T> canonicalize(const CSS::IntegerRaw<R, T>& raw, const CSSToLengthConversionData&)
+{
+    return canonicalizeNoConversionDataRequired(raw);
+}
+
 template<auto R> constexpr Number<R> canonicalizeNoConversionDataRequired(const CSS::NumberRaw<R>& raw)
 {
     return { raw.value };
@@ -252,6 +262,50 @@ template<auto nR, auto pR> struct ToCSS<NumberOrPercentageResolvedToNumber<nR, p
 // Define the CSS (a.k.a. primitive) type the primary representation of `Raw` and `UnevaluatedCalc` types.
 template<CSS::RawNumeric RawType> struct ToPrimaryCSSTypeMapping<RawType> { using type = CSS::PrimitiveNumeric<RawType>; };
 template<CSS::RawNumeric RawType> struct ToPrimaryCSSTypeMapping<CSS::UnevaluatedCalc<RawType>> { using type = CSS::PrimitiveNumeric<RawType>; };
+
+template<auto R, typename T> struct ToStyle<CSS::Integer<R, T>> {
+    using From = CSS::Integer<R, T>;
+    using To = Integer<R, T>;
+
+    auto operator()(const typename From::Raw& value, const CSSToLengthConversionData& conversionData, const CSSCalcSymbolTable&) -> To
+    {
+        return { canonicalize(value, conversionData) };
+    }
+    auto operator()(const typename From::Calc& value, const CSSToLengthConversionData& conversionData, const CSSCalcSymbolTable& symbolTable) -> To
+    {
+        return { roundForImpreciseConversion<T>(CSS::unevaluatedCalcEvaluate(value.protectedCalc(), conversionData, symbolTable, From::category)) };
+    }
+    auto operator()(const From& value, const CSSToLengthConversionData& conversionData, const CSSCalcSymbolTable& symbolTable) -> To
+    {
+        return WTF::switchOn(value, [&](const auto& value) { return (*this)(value, conversionData, symbolTable); });
+    }
+
+    auto operator()(const typename From::Raw& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> To
+    {
+        return (*this)(value, conversionData<typename From::Raw>(state), symbolTable);
+    }
+    auto operator()(const typename From::Calc& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> To
+    {
+        return (*this)(value, conversionData<typename From::Raw>(state), symbolTable);
+    }
+    auto operator()(const From& value, const BuilderState& state, const CSSCalcSymbolTable& symbolTable) -> To
+    {
+        return (*this)(value, conversionData<typename From::Raw>(state), symbolTable);
+    }
+
+    auto operator()(const typename From::Raw& value, NoConversionDataRequiredToken, const CSSCalcSymbolTable&) -> To
+    {
+        return { canonicalizeNoConversionDataRequired(value) };
+    }
+    auto operator()(const typename From::Calc& value, NoConversionDataRequiredToken, const CSSCalcSymbolTable& symbolTable) -> To
+    {
+        return { roundForImpreciseConversion<T>(CSS::unevaluatedCalcEvaluateNoConversionDataRequired(value.protectedCalc(), symbolTable, From::category)) };
+    }
+    auto operator()(const From& value, NoConversionDataRequiredToken token, const CSSCalcSymbolTable& symbolTable) -> To
+    {
+        return WTF::switchOn(value, [&](const auto& value) { return (*this)(value, token, symbolTable); });
+    }
+};
 
 // AnglePercentage / LengthPercentage require specialized implementations due to additional `calc` field.
 template<auto R> struct ToStyle<CSS::AnglePercentage<R>> {

@@ -53,6 +53,4 @@ template<size_t I> const auto& get(const TextShadow& value)
 } // namespace CSS
 } // namespace WebCore
 
-CSS_TUPLE_LIKE_CONFORMANCE(TextShadow, 3)
-
-template<> inline constexpr ASCIILiteral WebCore::SerializationSeparator<WebCore::CSS::TextShadow> = " "_s;
+CSS_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(TextShadow, 3)

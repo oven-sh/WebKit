@@ -79,9 +79,9 @@ public:
     bool isContentDistributionValue() const { return m_classType == ClassType::ContentDistribution; }
     bool isCounter() const { return m_classType == ClassType::Counter; }
     bool isCrossfadeValue() const { return m_classType == ClassType::Crossfade; }
-    bool isCubicBezierTimingFunctionValue() const { return m_classType == ClassType::CubicBezierTimingFunction; }
     bool isCursorImageValue() const { return m_classType == ClassType::CursorImage; }
     bool isCustomPropertyValue() const { return m_classType == ClassType::CustomProperty; }
+    bool isEasingFunctionValue() const { return m_classType == ClassType::EasingFunction; }
     bool isFilterImageValue() const { return m_classType == ClassType::FilterImage; }
     bool isFilterPropertyValue() const { return m_classType == ClassType::FilterProperty; }
     bool isFontFaceSrcLocalValue() const { return m_classType == ClassType::FontFaceSrcLocal; }
@@ -104,7 +104,6 @@ public:
     bool isImageSetValue() const { return m_classType == ClassType::ImageSet; }
     bool isImageValue() const { return m_classType == ClassType::Image; }
     bool isLineBoxContainValue() const { return m_classType == ClassType::LineBoxContain; }
-    bool isLinearTimingFunctionValue() const { return m_classType == ClassType::LinearTimingFunction; }
     bool isNamedImageValue() const { return m_classType == ClassType::NamedImage; }
     bool isOffsetRotateValue() const { return m_classType == ClassType::OffsetRotate; }
     bool isPair() const { return m_classType == ClassType::ValuePair; }
@@ -116,8 +115,6 @@ public:
     bool isRect() const { return m_classType == ClassType::Rect; }
     bool isReflectValue() const { return m_classType == ClassType::Reflect; }
     bool isScrollValue() const { return m_classType == ClassType::Scroll; }
-    bool isSpringTimingFunctionValue() const { return m_classType == ClassType::SpringTimingFunction; }
-    bool isStepsTimingFunctionValue() const { return m_classType == ClassType::StepsTimingFunction; }
     bool isSubgridValue() const { return m_classType == ClassType::Subgrid; }
     bool isTextShadowPropertyValue() const { return m_classType == ClassType::TextShadowProperty; }
     bool isTransformListValue() const { return m_classType == ClassType::TransformList; }
@@ -210,12 +207,6 @@ protected:
         FilterImage,
         Gradient,
 
-        // Timing function classes.
-        LinearTimingFunction,
-        CubicBezierTimingFunction,
-        SpringTimingFunction,
-        StepsTimingFunction,
-
         // Other non-list classes.
         AppleColorFilterProperty,
         AspectRatio,
@@ -233,6 +224,7 @@ protected:
         ContentDistribution,
         Counter,
         CustomProperty,
+        EasingFunction,
         FilterProperty,
         Font,
         FontFaceSrcLocal,

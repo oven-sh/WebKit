@@ -41,7 +41,6 @@
 #include "CSSSelector.h"
 #include "CSSStyleRule.h"
 #include "CSSStyleSheet.h"
-#include "CSSTimingFunctionValue.h"
 #include "CSSViewTransitionRule.h"
 #include "CachedResourceLoader.h"
 #include "CompositeOperation.h"
@@ -72,6 +71,7 @@
 #include "SharedStringHash.h"
 #include "StyleAdjuster.h"
 #include "StyleBuilder.h"
+#include "StyleEasingFunction.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleProperties.h"
 #include "StylePropertyShorthand.h"
@@ -420,7 +420,7 @@ Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& 
 
     auto timingFunctionForKeyframe = [](Ref<StyleRuleKeyframe> keyframe) -> RefPtr<const TimingFunction> {
         if (auto timingFunctionCSSValue = keyframe->properties().getPropertyCSSValue(CSSPropertyAnimationTimingFunction)) {
-            if (auto timingFunction = createTimingFunction(*timingFunctionCSSValue))
+            if (auto timingFunction = createTimingFunctionDeprecated(*timingFunctionCSSValue))
                 return timingFunction;
         }
         return &CubicBezierTimingFunction::defaultTimingFunction();
@@ -498,7 +498,7 @@ void Resolver::keyframeStylesForAnimation(Element& element, const RenderStyle& e
             blendingKeyframe.setStyle(styleForKeyframe(element, elementStyle, context, keyframeRule.get(), blendingKeyframe));
             blendingKeyframe.setOffset(key);
             if (auto timingFunctionCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyAnimationTimingFunction))
-                blendingKeyframe.setTimingFunction(createTimingFunction(*timingFunctionCSSValue));
+                blendingKeyframe.setTimingFunction(createTimingFunctionDeprecated(*timingFunctionCSSValue));
             if (auto compositeOperationCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyAnimationComposition)) {
                 if (auto compositeOperation = toCompositeOperation(*compositeOperationCSSValue))
                     blendingKeyframe.setCompositeOperation(*compositeOperation);

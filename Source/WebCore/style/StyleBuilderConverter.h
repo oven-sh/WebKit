@@ -54,7 +54,6 @@
 #include "CSSRayValue.h"
 #include "CSSReflectValue.h"
 #include "CSSSubgridValue.h"
-#include "CSSTimingFunctionValue.h"
 #include "CSSValuePair.h"
 #include "CalculationValue.h"
 #include "FontPalette.h"
@@ -78,6 +77,7 @@
 #include "StyleBasicShape.h"
 #include "StyleBuilderState.h"
 #include "StyleColorScheme.h"
+#include "StyleEasingFunction.h"
 #include "StylePathData.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StyleRayFunction.h"
@@ -2164,9 +2164,9 @@ inline LineClampValue BuilderConverter::convertLineClamp(const BuilderState& bui
     return LineClampValue();
 }
 
-inline RefPtr<TimingFunction> BuilderConverter::convertTimingFunction(const BuilderState&, const CSSValue& value)
+inline RefPtr<TimingFunction> BuilderConverter::convertTimingFunction(const BuilderState& builderState, const CSSValue& value)
 {
-    return createTimingFunction(value);
+    return Style::createTimingFunction(value, builderState.cssToLengthConversionData());
 }
 
 inline TimelineScope BuilderConverter::convertTimelineScope(const BuilderState&, const CSSValue& value)

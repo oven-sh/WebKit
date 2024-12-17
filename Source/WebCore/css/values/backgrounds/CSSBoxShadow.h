@@ -60,6 +60,4 @@ template<size_t I> const auto& get(const BoxShadow& value)
 } // namespace CSS
 } // namespace WebCore
 
-CSS_TUPLE_LIKE_CONFORMANCE(BoxShadow, 5)
-
-template<> inline constexpr ASCIILiteral WebCore::SerializationSeparator<WebCore::CSS::BoxShadow> = " "_s;
+CSS_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(BoxShadow, 5)

@@ -519,7 +519,6 @@ css/CSSSelector.cpp
 css/CSSStyleRule.cpp
 css/CSSStyleSheet.cpp
 css/CSSStyleSheetObservableArray.cpp
-css/CSSTimingFunctionValue.cpp
 css/CSSToStyleMap.cpp
 css/CSSValueList.cpp
 css/CSSValuePair.cpp

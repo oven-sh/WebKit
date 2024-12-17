@@ -29,8 +29,7 @@
 #include "CSSAnimation.h"
 #include "CSSNumericFactory.h"
 #include "CSSNumericValue.h"
-#include "CSSPropertyParserConsumer+TimingFunction.h"
-#include "CSSTimingFunctionValue.h"
+#include "CSSPropertyParserConsumer+Easing.h"
 #include "CommonAtomStrings.h"
 #include "FillMode.h"
 #include "JSComputedEffectTiming.h"
@@ -205,7 +204,8 @@ ExceptionOr<void> AnimationEffect::updateTiming(Document& document, std::optiona
     // 4. If the easing member of input is present but cannot be parsed using the <timing-function> production [CSS-EASING-1], throw a TypeError and abort this procedure.
     if (!timing->easing.isNull()) {
         CSSParserContext parsingContext(document);
-        auto timingFunctionResult = CSSPropertyParserHelpers::parseTimingFunction(timing->easing, parsingContext);
+        // FIXME: Determine the how calc() and relative units should be resolved and switch to the non-deprecated parsing function.
+        auto timingFunctionResult = CSSPropertyParserHelpers::parseEasingFunctionDeprecated(timing->easing, parsingContext);
         if (!timingFunctionResult)
             return Exception { ExceptionCode::TypeError };
         setTimingFunction(WTFMove(timingFunctionResult));
