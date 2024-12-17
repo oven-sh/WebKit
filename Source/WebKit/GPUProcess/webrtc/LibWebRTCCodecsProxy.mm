@@ -77,7 +77,7 @@ LibWebRTCCodecsProxy::LibWebRTCCodecsProxy(GPUConnectionToWebProcess& webProcess
     , m_resourceOwner(webProcessConnection.webProcessIdentity())
     , m_sharedPreferencesForWebProcess(sharedPreferencesForWebProcess)
 {
-    protectedWorkQueue()->dispatch([this, sharedPreferencesForWebProcess] {
+    protectedWorkQueue()->dispatch([this, protectedThis = Ref { *this }, sharedPreferencesForWebProcess] {
         m_sharedPreferencesForWebProcess = sharedPreferencesForWebProcess;
     });
 }
@@ -552,7 +552,7 @@ void LibWebRTCCodecsProxy::setRTCLoggingLevel(WTFLogLevel level)
 
 void LibWebRTCCodecsProxy::updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess sharedPreferencesForWebProcess)
 {
-    protectedWorkQueue()->dispatch([this, sharedPreferencesForWebProcess = WTFMove(sharedPreferencesForWebProcess)] {
+    protectedWorkQueue()->dispatch([this, protectedThis = Ref { *this }, sharedPreferencesForWebProcess = WTFMove(sharedPreferencesForWebProcess)] {
         m_sharedPreferencesForWebProcess = sharedPreferencesForWebProcess;
     });
 }
