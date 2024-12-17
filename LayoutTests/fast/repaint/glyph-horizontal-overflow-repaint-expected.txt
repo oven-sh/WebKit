@@ -1,6 +1,0 @@
-PASS if 'f' is all green.
-f
-(repaint rects
-  (rect 8 26 107 322)
-)
-
