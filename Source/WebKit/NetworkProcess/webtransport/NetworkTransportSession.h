@@ -27,6 +27,7 @@
 
 #include "MessageReceiver.h"
 #include "MessageSender.h"
+#include "WebPageProxyIdentifier.h"
 #include <WebCore/ProcessQualified.h>
 #include <wtf/Identified.h>
 #include <wtf/RefCounted.h>
@@ -38,7 +39,7 @@
 #endif
 
 namespace WebCore {
-class SecurityOriginData;
+struct ClientOrigin;
 }
 
 namespace WebKit {
@@ -57,7 +58,7 @@ using WebTransportStreamIdentifier = ObjectIdentifier<WebTransportStreamIdentifi
 class NetworkTransportSession : public RefCounted<NetworkTransportSession>, public IPC::MessageReceiver, public IPC::MessageSender, public Identified<WebTransportSessionIdentifier> {
     WTF_MAKE_TZONE_ALLOCATED(NetworkTransportSession);
 public:
-    static void initialize(NetworkConnectionToWebProcess&, URL&&, WebCore::SecurityOriginData&&, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&&);
+    static void initialize(NetworkConnectionToWebProcess&, URL&&, WebKit::WebPageProxyIdentifier&&, WebCore::ClientOrigin&&, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&&);
 
     ~NetworkTransportSession();
 

@@ -61,7 +61,6 @@
 // 2 - Run a test exercising that type
 
 @interface NSURLProtectionSpace (WebKitNSURLProtectionSpace)
-- (void)_setServerTrust:(SecTrustRef)serverTrust;
 - (void)_setDistinguishedNames:(NSArray<NSData *> *)distinguishedNames;
 @end
 

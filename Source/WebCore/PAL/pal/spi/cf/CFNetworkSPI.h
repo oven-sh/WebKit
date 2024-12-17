@@ -614,4 +614,8 @@ WTF_EXTERN_C_END
 @end
 #endif
 
+@interface NSURLProtectionSpace (SPI)
+- (void)_setServerTrust:(SecTrustRef)serverTrust;
+@end
+
 #endif // defined(__OBJC__)

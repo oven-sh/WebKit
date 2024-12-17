@@ -26,8 +26,11 @@
 #import "config.h"
 #import "NetworkTransportSession.h"
 
+#import "AuthenticationManager.h"
 #import "NetworkConnectionToWebProcess.h"
 #import "NetworkTransportStream.h"
+#import <Security/Security.h>
+#import <WebCore/AuthenticationChallenge.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
 #import <pal/cocoa/NetworkSoftLink.h>
 #import <wtf/BlockPtr.h>
@@ -47,20 +50,73 @@ NetworkTransportSession::NetworkTransportSession(NetworkConnectionToWebProcess& 
 }
 
 #if HAVE(WEB_TRANSPORT)
-static RetainPtr<nw_parameters_t> createParameters(WebCore::SecurityOriginData&& origin)
+
+static void didReceiveServerTrustChallenge(Ref<NetworkConnectionToWebProcess>&& connectionToWebProcess, URL&& url, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin, sec_trust_t trust, sec_protocol_verify_complete_t completion)
 {
-    auto configureWebTransport = [origin = WTFMove(origin)](nw_protocol_options_t options) {
-        nw_webtransport_options_set_is_unidirectional(options, false);
-        nw_webtransport_options_set_is_datagram(options, true);
-        nw_webtransport_options_add_connect_request_header(options, "origin", origin.toString().utf8().data());
+    uint16_t port = url.port() ? *url.port() : *defaultPortForProtocol(url.protocol());
+    RetainPtr secTrust = adoptCF(sec_trust_copy_ref(trust));
+    RetainPtr protectionSpace = adoptNS([[NSURLProtectionSpace alloc] initWithHost:url.host().createNSString().get() port:port protocol:NSURLProtectionSpaceHTTPS realm:nil authenticationMethod:NSURLAuthenticationMethodServerTrust]);
+    [protectionSpace _setServerTrust:secTrust.get()];
+
+    id<NSURLAuthenticationChallengeSender> sender = nil;
+    RetainPtr challenge = adoptNS([[NSURLAuthenticationChallenge alloc] initWithProtectionSpace:protectionSpace.get() proposedCredential:nil previousFailureCount:0 failureResponse:nil error:nil sender:sender]);
+
+    auto challengeCompletionHandler = [completion = makeBlockPtr(completion), secTrust = WTFMove(secTrust)] (AuthenticationChallengeDisposition disposition, const WebCore::Credential& credential) {
+        switch (disposition) {
+        case AuthenticationChallengeDisposition::UseCredential: {
+            if (!credential.isEmpty())
+                completion(true);
+        }
+        FALLTHROUGH;
+        case AuthenticationChallengeDisposition::RejectProtectionSpaceAndContinue:
+        case AuthenticationChallengeDisposition::PerformDefaultHandling: {
+            OSStatus status = SecTrustEvaluateAsyncWithError(secTrust.get(), dispatch_get_main_queue(), makeBlockPtr([completion = completion](SecTrustRef trustRef, bool result, CFErrorRef error) {
+                completion(result);
+            }).get());
+            if (status != errSecSuccess)
+                completion(false);
+            return;
+        }
+        case AuthenticationChallengeDisposition::Cancel:
+            completion(false);
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     };
 
-    auto configureTLS = [](nw_protocol_options_t options) {
+    auto* sessionCocoa = static_cast<NetworkSessionCocoa*>(connectionToWebProcess->networkProcess().networkSession(connectionToWebProcess->sessionID()));
+
+    if (sessionCocoa && sessionCocoa->fastServerTrustEvaluationEnabled()) {
+        auto decisionHandler = makeBlockPtr([connectionToWebProcess = WTFMove(connectionToWebProcess), pageID = WTFMove(pageID), clientOrigin = WTFMove(clientOrigin), challengeCompletionHandler = WTFMove(challengeCompletionHandler)](NSURLAuthenticationChallenge *challenge, OSStatus trustResult) mutable {
+            if (trustResult == noErr) {
+                challengeCompletionHandler(AuthenticationChallengeDisposition::PerformDefaultHandling, WebCore::Credential());
+                return;
+            }
+
+            connectionToWebProcess->networkProcess().protectedAuthenticationManager()->didReceiveAuthenticationChallenge(connectionToWebProcess->sessionID(), pageID, &clientOrigin.topOrigin, challenge, NegotiatedLegacyTLS::No, WTFMove(challengeCompletionHandler));
+        });
+
+
+        [NSURLSession _strictTrustEvaluate:challenge.get() queue:[NSOperationQueue mainQueue].underlyingQueue completionHandler:decisionHandler.get()];
+        return;
+    }
+
+    connectionToWebProcess->networkProcess().protectedAuthenticationManager()->didReceiveAuthenticationChallenge(connectionToWebProcess->sessionID(), pageID, &clientOrigin.topOrigin, challenge.get(), NegotiatedLegacyTLS::No, WTFMove(challengeCompletionHandler));
+}
+
+static RetainPtr<nw_parameters_t> createParameters(NetworkConnectionToWebProcess& connectionToWebProcess, URL&& url, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin)
+{
+    auto configureWebTransport = [clientOrigin = clientOrigin.clientOrigin.toString()](nw_protocol_options_t options) {
+        nw_webtransport_options_set_is_unidirectional(options, false);
+        nw_webtransport_options_set_is_datagram(options, true);
+        nw_webtransport_options_add_connect_request_header(options, "origin", clientOrigin.utf8().data());
+    };
+
+    auto configureTLS = [connectionToWebProcess = Ref { connectionToWebProcess }, url = WTFMove(url), pageID = WTFMove(pageID), clientOrigin = WTFMove(clientOrigin)] (nw_protocol_options_t options) {
         RetainPtr securityOptions = adoptNS(nw_tls_copy_sec_protocol_options(options));
         sec_protocol_options_set_peer_authentication_required(securityOptions.get(), true);
-        sec_protocol_options_set_verify_block(securityOptions.get(), makeBlockPtr([](sec_protocol_metadata_t metadata, sec_trust_t trust, sec_protocol_verify_complete_t completion) {
-            // FIXME: Hook this up with WKNavigationDelegate.didReceiveChallenge.
-            completion(true);
+        sec_protocol_options_set_verify_block(securityOptions.get(), makeBlockPtr([connectionToWebProcess = WTFMove(connectionToWebProcess), url = WTFMove(url), pageID = WTFMove(pageID), clientOrigin = WTFMove(clientOrigin)](sec_protocol_metadata_t metadata, sec_trust_t trust, sec_protocol_verify_complete_t completion) mutable {
+            didReceiveServerTrustChallenge(WTFMove(connectionToWebProcess), WTFMove(url), WTFMove(pageID), WTFMove(clientOrigin), trust, completion);
         }).get(), dispatch_get_main_queue());
         // FIXME: Pipe client cert auth into this too, probably.
     };
@@ -75,7 +131,7 @@ static RetainPtr<nw_parameters_t> createParameters(WebCore::SecurityOriginData&&
 }
 #endif // HAVE(WEB_TRANSPORT)
 
-void NetworkTransportSession::initialize(NetworkConnectionToWebProcess& connectionToWebProcess, URL&& url, WebCore::SecurityOriginData&& origin, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&& completionHandler)
+void NetworkTransportSession::initialize(NetworkConnectionToWebProcess& connectionToWebProcess, URL&& url, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&& completionHandler)
 {
 #if HAVE(WEB_TRANSPORT)
     RetainPtr endpoint = adoptNS(nw_endpoint_create_url(url.string().utf8().data()));
@@ -84,7 +140,7 @@ void NetworkTransportSession::initialize(NetworkConnectionToWebProcess& connecti
         return completionHandler(nullptr);
     }
 
-    RetainPtr parameters = createParameters(WTFMove(origin));
+    RetainPtr parameters = createParameters(connectionToWebProcess, WTFMove(url), WTFMove(pageID), WTFMove(clientOrigin));
     if (!parameters) {
         ASSERT_NOT_REACHED();
         return completionHandler(nullptr);

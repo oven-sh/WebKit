@@ -40,10 +40,10 @@
 
 namespace WebKit {
 
-void WebTransportSession::initialize(const URL& url, const WebCore::SecurityOriginData& origin, CompletionHandler<void(RefPtr<WebTransportSession>&&)>&& completionHandler)
+void WebTransportSession::initialize(const URL& url, const WebPageProxyIdentifier& pageID, const WebCore::ClientOrigin& clientOrigin, CompletionHandler<void(RefPtr<WebTransportSession>&&)>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
-    WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::InitializeWebTransportSession(url, origin), [completionHandler = WTFMove(completionHandler)] (std::optional<WebTransportSessionIdentifier> identifier) mutable {
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::InitializeWebTransportSession(url, pageID, clientOrigin), [completionHandler = WTFMove(completionHandler)] (std::optional<WebTransportSessionIdentifier> identifier) mutable {
         ASSERT(RunLoop::isMain());
         if (!identifier)
             return completionHandler(nullptr);

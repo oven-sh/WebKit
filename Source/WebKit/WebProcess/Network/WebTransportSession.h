@@ -27,11 +27,15 @@
 
 #include "MessageReceiver.h"
 #include "MessageSender.h"
+#include "WebPageProxyIdentifier.h"
 #include <WebCore/ProcessQualified.h>
-#include <WebCore/SecurityOrigin.h>
 #include <WebCore/WebTransportSession.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/ThreadSafeRefCounted.h>
+
+namespace WebCore {
+struct ClientOrigin;
+}
 
 namespace WebKit {
 
@@ -48,7 +52,7 @@ using WebTransportSessionIdentifier = ObjectIdentifier<WebTransportSessionIdenti
 
 class WebTransportSession : public WebCore::WebTransportSession, public IPC::MessageReceiver, public IPC::MessageSender, public ThreadSafeRefCounted<WebTransportSession, WTF::DestructionThread::MainRunLoop> {
 public:
-    static void initialize(const URL&, const WebCore::SecurityOriginData&, CompletionHandler<void(RefPtr<WebTransportSession>&&)>&&);
+    static void initialize(const URL&, const WebPageProxyIdentifier&, const WebCore::ClientOrigin&, CompletionHandler<void(RefPtr<WebTransportSession>&&)>&&);
     ~WebTransportSession();
 
     void receiveDatagram(std::span<const uint8_t>);

@@ -29,6 +29,7 @@
 
 #import "PlatformUtilities.h"
 #import "Test.h"
+#import "TestNavigationDelegate.h"
 #import "TestUIDelegate.h"
 #import "Utilities.h"
 #import "WebTransportServer.h"
@@ -48,6 +49,15 @@ static void enableWebTransport(WKWebViewConfiguration *configuration)
     }
 }
 
+static void validateChallenge(NSURLAuthenticationChallenge *challenge, uint16_t port)
+{
+    EXPECT_WK_STREQ(challenge.protectionSpace.authenticationMethod, NSURLAuthenticationMethodServerTrust);
+    EXPECT_NOT_NULL(challenge.protectionSpace.serverTrust);
+    EXPECT_EQ(challenge.protectionSpace.port, port);
+    EXPECT_WK_STREQ(challenge.protectionSpace.host, "127.0.0.1");
+    verifyCertificateAndPublicKey(challenge.protectionSpace.serverTrust);
+}
+
 // FIXME: Fix WebTransportServer constructor and re-enable these tests once rdar://141009498 is available in OS builds.
 TEST(WebTransport, DISABLED_ClientBidirectional)
 {
@@ -60,6 +70,15 @@ TEST(WebTransport, DISABLED_ClientBidirectional)
     auto configuration = adoptNS([WKWebViewConfiguration new]);
     enableWebTransport(configuration.get());
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    auto delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+    __block bool challenged { false };
+    __block uint16_t port = echoServer.port();
+    delegate.get().didReceiveAuthenticationChallenge = ^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^completionHandler)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        validateChallenge(challenge, port);
+        challenged = true;
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
 
     NSString *html = [NSString stringWithFormat:@""
         "<script>async function test() {"
@@ -75,9 +94,10 @@ TEST(WebTransport, DISABLED_ClientBidirectional)
         "  } catch (e) { alert('caught ' + e); }"
         "}; test();"
         "</script>",
-        echoServer.port()];
+        port];
     [webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
     EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
+    EXPECT_TRUE(challenged);
 }
 
 // FIXME: Fix WebTransportServer constructor and re-enable these tests once rdar://141009498 is available in OS builds.
@@ -92,6 +112,15 @@ TEST(WebTransport, DISABLED_Datagram)
     auto configuration = adoptNS([WKWebViewConfiguration new]);
     enableWebTransport(configuration.get());
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    auto delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+    __block bool challenged { false };
+    __block uint16_t port = echoServer.port();
+    delegate.get().didReceiveAuthenticationChallenge = ^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^completionHandler)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        validateChallenge(challenge, port);
+        challenged = true;
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
 
     NSString *html = [NSString stringWithFormat:@""
         "<script>async function test() {"
@@ -106,9 +135,10 @@ TEST(WebTransport, DISABLED_Datagram)
         "  } catch (e) { alert('caught ' + e); }"
         "}; test();"
         "</script>",
-        echoServer.port()];
+        port];
     [webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
     EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
+    EXPECT_TRUE(challenged);
 }
 
 // FIXME: Fix WebTransportServer constructor and re-enable these tests once rdar://141009498 is available in OS builds.
@@ -124,6 +154,15 @@ TEST(WebTransport, DISABLED_Unidirectional)
     auto configuration = adoptNS([WKWebViewConfiguration new]);
     enableWebTransport(configuration.get());
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    auto delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+    __block bool challenged { false };
+    __block uint16_t port = echoServer.port();
+    delegate.get().didReceiveAuthenticationChallenge = ^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^completionHandler)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        validateChallenge(challenge, port);
+        challenged = true;
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
 
     NSString *html = [NSString stringWithFormat:@""
         "<script>async function test() {"
@@ -141,9 +180,10 @@ TEST(WebTransport, DISABLED_Unidirectional)
         "  } catch (e) { alert('caught ' + e); }"
         "}; test();"
         "</script>",
-        echoServer.port()];
+        port];
     [webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
     EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
+    EXPECT_TRUE(challenged);
 }
 
 // FIXME: Fix WebTransportServer constructor and re-enable these tests once rdar://141009498 is available in OS builds.
@@ -159,6 +199,15 @@ TEST(WebTransport, DISABLED_ServerBidirectional)
     auto configuration = adoptNS([WKWebViewConfiguration new]);
     enableWebTransport(configuration.get());
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    auto delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+    __block bool challenged { false };
+    __block uint16_t port = echoServer.port();
+    delegate.get().didReceiveAuthenticationChallenge = ^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^completionHandler)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        validateChallenge(challenge, port);
+        challenged = true;
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
 
     NSString *html = [NSString stringWithFormat:@""
         "<script>async function test() {"
@@ -176,9 +225,10 @@ TEST(WebTransport, DISABLED_ServerBidirectional)
         "  } catch (e) { alert('caught ' + e); }"
         "}; test();"
         "</script>",
-        echoServer.port()];
+        port];
     [webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
     EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
+    EXPECT_TRUE(challenged);
 }
 } // namespace TestWebKitAPI
 

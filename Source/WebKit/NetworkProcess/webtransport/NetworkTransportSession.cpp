@@ -37,7 +37,7 @@ namespace WebKit {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkTransportSession);
 
 #if !PLATFORM(COCOA)
-void NetworkTransportSession::initialize(NetworkConnectionToWebProcess&, URL&&, WebCore::SecurityOriginData&&, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&& completionHandler)
+void NetworkTransportSession::initialize(NetworkConnectionToWebProcess&, URL&&, WebKit::WebPageProxyIdentifier&&, WebCore::ClientOrigin&&, CompletionHandler<void(RefPtr<NetworkTransportSession>&&)>&& completionHandler)
 {
     completionHandler(nullptr);
 }
