@@ -35,6 +35,7 @@
 #include "CommonVM.h"
 #include "ContentSecurityPolicy.h"
 #include "Crypto.h"
+#include "CryptoKeyData.h"
 #include "DocumentInlines.h"
 #include "FontCustomPlatformData.h"
 #include "FontFaceSet.h"
@@ -500,6 +501,23 @@ std::optional<Vector<uint8_t>> WorkerGlobalScope::wrapCryptoKey(const Vector<uin
     std::optional<Vector<uint8_t>> wrappedKey;
     workerLoaderProxy->postTaskToLoader([&semaphore, &key, &wrappedKey](auto& context) {
         wrappedKey = context.wrapCryptoKey(key);
+        semaphore.signal();
+    });
+    semaphore.wait();
+    return wrappedKey;
+}
+
+std::optional<Vector<uint8_t>> WorkerGlobalScope::serializeAndWrapCryptoKey(CryptoKeyData&& keyData)
+{
+    Ref protectedThis { *this };
+    auto* workerLoaderProxy = thread().workerLoaderProxy();
+    if (!workerLoaderProxy)
+        return std::nullopt;
+
+    BinarySemaphore semaphore;
+    std::optional<Vector<uint8_t>> wrappedKey;
+    workerLoaderProxy->postTaskToLoader([&semaphore, &wrappedKey, keyData = crossThreadCopy(WTFMove(keyData))](auto& context) mutable  {
+        wrappedKey = context.serializeAndWrapCryptoKey(WTFMove(keyData));
         semaphore.signal();
     });
     semaphore.wait();

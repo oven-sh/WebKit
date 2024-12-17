@@ -162,6 +162,7 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
     }
 
     result.key_ops = usages();
+    result.usages = usagesBitmap();
     result.ext = extractable();
 
     switch (type()) {
@@ -177,6 +178,17 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
     }
 
     return result;
+}
+
+std::optional<CryptoKeyOKP::NamedCurve> CryptoKeyOKP::namedCurveFromString(const String& curveString)
+{
+    if (curveString == X25519)
+        return NamedCurve::X25519;
+
+    if (curveString == Ed25519)
+        return NamedCurve::Ed25519;
+
+    return std::nullopt;
 }
 
 String CryptoKeyOKP::namedCurveString() const
@@ -200,6 +212,23 @@ bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)
 auto CryptoKeyOKP::algorithm() const -> KeyAlgorithm
 {
     return CryptoKeyAlgorithm { CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier()) };
+}
+
+CryptoKey::Data CryptoKeyOKP::data() const
+{
+    auto key = platformKey();
+    return CryptoKey::Data {
+        CryptoKeyClass::OKP,
+        algorithmIdentifier(),
+        extractable(),
+        usagesBitmap(),
+        WTFMove(key),
+        std::nullopt,
+        std::nullopt,
+        namedCurveString(),
+        std::nullopt,
+        type()
+    };
 }
 
 #if !PLATFORM(COCOA) && !USE(GCRYPT)

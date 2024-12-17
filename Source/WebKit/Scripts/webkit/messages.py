@@ -897,6 +897,7 @@ def headers_for_type(type):
         'WebCore::ColorSchemePreference': ['<WebCore/DocumentLoader.h>'],
         'WebCore::CompositeMode': ['<WebCore/GraphicsTypes.h>'],
         'WebCore::CompositeOperator': ['<WebCore/GraphicsTypes.h>'],
+        'WebCore::CryptoKey::Data': ['<WebCore/CryptoKey.h>'],
         'WebCore::COOPDisposition': ['<WebCore/CrossOriginOpenerPolicy.h>'],
         'WebCore::CreateNewGroupForHighlight': ['<WebCore/AppHighlight.h>'],
         'WebCore::CrossOriginOpenerPolicyValue': ['<WebCore/CrossOriginOpenerPolicy.h>'],

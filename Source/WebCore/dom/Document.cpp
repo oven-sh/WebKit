@@ -9330,6 +9330,15 @@ std::optional<Vector<uint8_t>> Document::wrapCryptoKey(const Vector<uint8_t>& ke
     return page->cryptoClient().wrapCryptoKey(key);
 }
 
+std::optional<Vector<uint8_t>> Document::serializeAndWrapCryptoKey(CryptoKeyData&& keyData)
+{
+    RefPtr page = this->page();
+    if (!page)
+        return std::nullopt;
+
+    return page->cryptoClient().serializeAndWrapCryptoKey(WTFMove(keyData));
+}
+
 std::optional<Vector<uint8_t>>Document::unwrapCryptoKey(const Vector<uint8_t>& wrappedKey)
 {
     RefPtr page = this->page();

@@ -855,8 +855,22 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     contentextensions/Term.h
     contentextensions/URLFilterParser.h
 
+    crypto/CryptoAlgorithmIdentifier.h
+    crypto/CryptoKey.h
+    crypto/CryptoKeyData.h
+    crypto/CryptoKeyType.h
+    crypto/CryptoKeyUsage.h
+    crypto/JsonWebKey.h
+    crypto/RsaOtherPrimesInfo.h
     crypto/SerializedCryptoKeyWrap.h
     crypto/WrappedCryptoKey.h
+
+    crypto/keys/CryptoAesKeyAlgorithm.h
+    crypto/keys/CryptoEcKeyAlgorithm.h
+    crypto/keys/CryptoHmacKeyAlgorithm.h
+    crypto/keys/CryptoKeyAlgorithm.h
+    crypto/keys/CryptoRsaHashedKeyAlgorithm.h
+    crypto/keys/CryptoRsaKeyAlgorithm.h
 
     css/CSSAttrValue.h
     css/CSSColorValue.h

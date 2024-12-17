@@ -62,6 +62,7 @@ private:
     CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
 
     KeyAlgorithm algorithm() const final;
+    CryptoKey::Data data() const final;
 
     CryptoAlgorithmIdentifier m_hash;
     Vector<uint8_t> m_key;

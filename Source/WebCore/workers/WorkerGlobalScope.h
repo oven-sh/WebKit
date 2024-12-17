@@ -53,6 +53,7 @@ class CSSValuePool;
 class CacheStorageConnection;
 class ContentSecurityPolicyResponseHeaders;
 class Crypto;
+class CryptoKey;
 class FileSystemStorageConnection;
 class FontFaceSet;
 class MessagePortChannelProvider;
@@ -208,6 +209,7 @@ private:
     bool shouldBypassMainWorldContentSecurityPolicy() const final { return m_shouldBypassMainWorldContentSecurityPolicy; }
 
     std::optional<Vector<uint8_t>> wrapCryptoKey(const Vector<uint8_t>& key) final;
+    std::optional<Vector<uint8_t>> serializeAndWrapCryptoKey(CryptoKeyData&&) final;
     std::optional<Vector<uint8_t>> unwrapCryptoKey(const Vector<uint8_t>& wrappedKey) final;
 
     // ReportingClient.

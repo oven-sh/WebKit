@@ -165,4 +165,13 @@ WKRetainPtr<WKTypeRef> SerializedScriptValue::deserializeWK(WebCore::SerializedS
     return valueToWKObject(context.get(), value);
 }
 
+Vector<uint8_t> SerializedScriptValue::serializeCryptoKey(const WebCore::CryptoKey& key)
+{
+    ASSERT(RunLoop::isMain());
+    JSRetainPtr context = SharedJSContextWK::singleton().ensureContext();
+    ASSERT(context);
+
+    return WebCore::SerializedScriptValue::serializeCryptoKey(context.get(), key);
+}
+
 } // API

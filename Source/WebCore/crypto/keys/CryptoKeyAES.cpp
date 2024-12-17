@@ -107,6 +107,7 @@ JsonWebKey CryptoKeyAES::exportJwk() const
     result.kty = "oct"_s;
     result.k = base64URLEncodeToString(m_key);
     result.key_ops = usages();
+    result.usages = usagesBitmap();
     result.ext = extractable();
     return result;
 }
@@ -125,6 +126,18 @@ auto CryptoKeyAES::algorithm() const -> KeyAlgorithm
     result.name = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
     result.length = m_key.size() * 8;
     return result;
+}
+
+CryptoKey::Data CryptoKeyAES::data() const
+{
+    return CryptoKey::Data {
+        CryptoKeyClass::AES,
+        algorithmIdentifier(),
+        extractable(),
+        usagesBitmap(),
+        std::nullopt,
+        exportJwk()
+    };
 }
 
 } // namespace WebCore

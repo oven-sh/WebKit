@@ -59,6 +59,8 @@
 #include "ExtensionCapabilityGrant.h"
 #endif
 
+#include "WebPageProxyMessages.h"
+
 namespace WebKit {
 
 static HashMap<IPC::Connection::UniqueID, WeakPtr<AuxiliaryProcessProxy>>& connectionToProcessMap()

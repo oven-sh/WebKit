@@ -91,6 +91,7 @@ enum class LoadedFromOpaqueSource : bool;
 enum class NoiseInjectionPolicy : uint8_t;
 enum class ScriptTelemetryCategory : uint8_t;
 enum class TaskSource : uint8_t;
+struct CryptoKeyData;
 
 #if ENABLE(NOTIFICATIONS)
 class NotificationClient;
@@ -289,6 +290,7 @@ public:
     // used for things that utilize the same structure clone algorithm, for example, message passing between
     // worker and document.
     virtual std::optional<Vector<uint8_t>> wrapCryptoKey(const Vector<uint8_t>& key) = 0;
+    virtual std::optional<Vector<uint8_t>> serializeAndWrapCryptoKey(CryptoKeyData&&) = 0;
     virtual std::optional<Vector<uint8_t>> unwrapCryptoKey(const Vector<uint8_t>& wrappedKey) = 0;
 
     int timerNestingLevel() const { return m_timerNestingLevel; }

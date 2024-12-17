@@ -29,6 +29,7 @@
 #include "APIFrameHandle.h"
 #include "APIPageConfiguration.h"
 #include "APIPageHandle.h"
+#include "APISerializedScriptValue.h"
 #include "APIUIClient.h"
 #include "AuthenticatorManager.h"
 #include "DownloadProxyMap.h"
@@ -2828,6 +2829,15 @@ void WebProcessProxy::wrapCryptoKey(Vector<uint8_t>&& key, CompletionHandler<voi
             return completionHandler(WTFMove(wrappedKey));
         completionHandler(std::nullopt);
     });
+}
+
+void WebProcessProxy::serializeAndWrapCryptoKey(WebCore::CryptoKeyData&& keyData, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&& completionHandler)
+{
+    auto key = WebCore::CryptoKey::create(WTFMove(keyData));
+    MESSAGE_CHECK_COMPLETION(key, completionHandler(std::nullopt));
+
+    auto serializedKey = API::SerializedScriptValue::serializeCryptoKey(*key);
+    wrapCryptoKey(WTFMove(serializedKey), WTFMove(completionHandler));
 }
 
 void WebProcessProxy::unwrapCryptoKey(WrappedCryptoKey&& wrappedKey, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&& completionHandler)

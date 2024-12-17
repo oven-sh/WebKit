@@ -55,6 +55,7 @@ public:
     ExceptionOr<Vector<uint8_t>> exportSpki() const;
     ExceptionOr<Vector<uint8_t>> exportPkcs8() const;
 
+    static std::optional<NamedCurve> namedCurveFromString(const String&);
     NamedCurve namedCurve() const { return m_curve; }
     String namedCurveString() const;
 
@@ -69,6 +70,7 @@ private:
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::OKP; }
     KeyAlgorithm algorithm() const final;
+    CryptoKey::Data data() const final;
 
     String generateJwkD() const;
     String generateJwkX() const;
