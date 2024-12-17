@@ -22,9 +22,9 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Document-write-exception-order.xhtml
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Document-write.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-insertAdjacentHTML.html
-/LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-insertAdjacentText.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-outerHTML.html
-/LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-setAttribute-respects-Elements-node-documents-globals-CSP.html
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-setAttribute-respects-Elements-node-documents-globals-CSP-after-adoption-from-TT-realm.html
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-setAttribute-respects-Elements-node-documents-globals-CSP-after-adoption-from-non-TT-realm.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-setAttribute.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-setAttributeNS.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/Element-toggleAttribute.html
@@ -95,6 +95,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-csp-tt-default-policy.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-csp-tt-no-default-policy.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-function-constructor-untrusted-arguments-and-applying-default-policy.html
+/LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-function-constructor-untrusted-arguments-and-default-policy-throwing.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-function-constructor.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-no-csp-no-tt-default-policy.html
 /LayoutTests/imported/w3c/web-platform-tests/trusted-types/eval-no-csp-no-tt.html
