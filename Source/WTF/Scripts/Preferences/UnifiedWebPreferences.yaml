@@ -81,6 +81,21 @@ AVFoundationEnabled:
       "PLATFORM(WATCHOS)": false
       default: true
 
+AVKitContentSourceEnabled:
+  type: bool
+  status: unstable
+  getter: isAVKitContentSourceEnabled
+  humanReadableName: "AVKit Content Source"
+  humanReadableDescription: "Enable AVKit Content Source"
+  condition: HAVE(AVKIT_CONTENT_SOURCE)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 AbortSignalAnyOperationEnabled:
   type: bool
   category: dom

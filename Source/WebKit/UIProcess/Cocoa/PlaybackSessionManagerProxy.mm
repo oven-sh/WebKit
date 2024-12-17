@@ -38,6 +38,7 @@
 #import "WebProcessPool.h"
 #import "WebProcessProxy.h"
 #import <WebCore/NullPlaybackSessionInterface.h>
+#import <WebCore/PlaybackSessionInterfaceAVKit.h>
 #import <WebCore/PlaybackSessionInterfaceAVKitLegacy.h>
 #import <WebCore/PlaybackSessionInterfaceMac.h>
 #import <WebCore/PlaybackSessionInterfaceTVOS.h>
@@ -545,23 +546,37 @@ void PlaybackSessionManagerProxy::invalidate()
     }
 }
 
-PlaybackSessionManagerProxy::ModelInterfaceTuple PlaybackSessionManagerProxy::createModelAndInterface(PlaybackSessionContextIdentifier contextId)
+static Ref<PlatformPlaybackSessionInterface> playbackSessionInterface(WebPageProxy& page, PlaybackSessionModel& model)
 {
-    Ref<PlaybackSessionModelContext> model = PlaybackSessionModelContext::create(*this, contextId);
-
-    RefPtr<PlatformPlaybackSessionInterface> interface;
-#if ENABLE(LINEAR_MEDIA_PLAYER)
-    if (RefPtr page = m_page.get(); page->preferences().linearMediaPlayerEnabled()) {
-        auto lmkInterface = PlaybackSessionInterfaceLMK::create(model);
-        lmkInterface->setSpatialVideoEnabled(page->preferences().spatialVideoEnabled());
-        interface = WTFMove(lmkInterface);
-    } else
-        interface = PlaybackSessionInterfaceAVKitLegacy::create(model);
-#else
-    interface = PlatformPlaybackSessionInterface::create(model);
+#if HAVE(AVKIT_CONTENT_SOURCE)
+    if (page.preferences().isAVKitContentSourceEnabled())
+        return PlaybackSessionInterfaceAVKit::create(model);
 #endif
 
-    return std::make_tuple(WTFMove(model), interface.releaseNonNull());
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    if (page.preferences().linearMediaPlayerEnabled()) {
+        Ref interface = PlaybackSessionInterfaceLMK::create(model);
+        interface->setSpatialVideoEnabled(page.preferences().spatialVideoEnabled());
+        return interface;
+    }
+#endif
+
+#if PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION)
+    return PlaybackSessionInterfaceAVKitLegacy::create(model);
+#elif PLATFORM(APPLETV)
+    return PlaybackSessionInterfaceTVOS::create(model);
+#else
+    return PlatformPlaybackSessionInterface::create(model);
+#endif
+}
+
+PlaybackSessionManagerProxy::ModelInterfaceTuple PlaybackSessionManagerProxy::createModelAndInterface(PlaybackSessionContextIdentifier contextId)
+{
+    Ref page = *m_page;
+    Ref model = PlaybackSessionModelContext::create(*this, contextId);
+    Ref interface = playbackSessionInterface(page.get(), model.get());
+
+    return std::make_tuple(WTFMove(model), WTFMove(interface));
 }
 
 const PlaybackSessionManagerProxy::ModelInterfaceTuple& PlaybackSessionManagerProxy::ensureModelAndInterface(PlaybackSessionContextIdentifier contextId)

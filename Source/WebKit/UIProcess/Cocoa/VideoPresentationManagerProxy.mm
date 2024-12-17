@@ -48,10 +48,12 @@
 #import <QuartzCore/CoreAnimation.h>
 #import <WebCore/MediaPlayerEnums.h>
 #import <WebCore/NullVideoPresentationInterface.h>
+#import <WebCore/PlaybackSessionInterfaceAVKit.h>
 #import <WebCore/PlaybackSessionInterfaceAVKitLegacy.h>
 #import <WebCore/PlaybackSessionInterfaceMac.h>
 #import <WebCore/PlaybackSessionInterfaceTVOS.h>
 #import <WebCore/TimeRanges.h>
+#import <WebCore/VideoPresentationInterfaceAVKit.h>
 #import <WebCore/VideoPresentationInterfaceAVKitLegacy.h>
 #import <WebCore/VideoPresentationInterfaceMac.h>
 #import <WebCore/VideoPresentationInterfaceTVOS.h>
@@ -619,28 +621,41 @@ void VideoPresentationManagerProxy::requestRouteSharingPolicyAndContextUID(Playb
         callback({ }, { });
 }
 
+static Ref<PlatformVideoPresentationInterface> videoPresentationInterface(WebPageProxy& page, PlatformPlaybackSessionInterface& playbackSessionInterface)
+{
+#if HAVE(AVKIT_CONTENT_SOURCE)
+    if (page.preferences().isAVKitContentSourceEnabled())
+        return VideoPresentationInterfaceAVKit::create(playbackSessionInterface);
+#endif
+
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    if (page.preferences().linearMediaPlayerEnabled())
+        return VideoPresentationInterfaceLMK::create(playbackSessionInterface);
+#endif
+
+#if PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION)
+    return VideoPresentationInterfaceAVKitLegacy::create(playbackSessionInterface);
+#elif PLATFORM(APPLETV)
+    return VideoPresentationInterfaceTVOS::create(playbackSessionInterface);
+#else
+    return PlatformVideoPresentationInterface::create(playbackSessionInterface);
+#endif
+}
+
 VideoPresentationManagerProxy::ModelInterfaceTuple VideoPresentationManagerProxy::createModelAndInterface(PlaybackSessionContextIdentifier contextId)
 {
+    Ref page = *m_page;
     Ref playbackSessionManagerProxy = m_playbackSessionManagerProxy;
     Ref playbackSessionModel = playbackSessionManagerProxy->ensureModel(contextId);
     Ref model = VideoPresentationModelContext::create(*this, playbackSessionModel, contextId);
     Ref playbackSessionInterface = playbackSessionManagerProxy->ensureInterface(contextId);
-
-    RefPtr<PlatformVideoPresentationInterface> interface;
-#if ENABLE(LINEAR_MEDIA_PLAYER)
-    if (m_page->preferences().linearMediaPlayerEnabled())
-        interface = VideoPresentationInterfaceLMK::create(playbackSessionInterface.get());
-    else
-        interface = VideoPresentationInterfaceAVKitLegacy::create(playbackSessionInterface.get());
-#else
-    interface = PlatformVideoPresentationInterface::create(playbackSessionInterface.get());
-#endif
+    Ref interface = videoPresentationInterface(page.get(), playbackSessionInterface.get());
 
     playbackSessionManagerProxy->addClientForContext(contextId);
 
     interface->setVideoPresentationModel(model.ptr());
 
-    return std::make_tuple(WTFMove(model), interface.releaseNonNull());
+    return std::make_tuple(WTFMove(model), WTFMove(interface));
 }
 
 const VideoPresentationManagerProxy::ModelInterfaceTuple& VideoPresentationManagerProxy::ensureModelAndInterface(PlaybackSessionContextIdentifier contextId)
