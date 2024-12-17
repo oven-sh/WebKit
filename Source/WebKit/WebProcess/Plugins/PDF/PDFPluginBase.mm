@@ -47,6 +47,7 @@
 #import "WebProcess.h"
 #import <CoreFoundation/CoreFoundation.h>
 #import <PDFKit/PDFKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <WebCore/AXObjectCache.h>
 #import <WebCore/ArchiveResource.h>
 #import <WebCore/Chrome.h>
@@ -62,6 +63,11 @@
 #import <WebCore/LoaderNSURLExtras.h>
 #import <WebCore/LocalizedStrings.h>
 #import <WebCore/MouseEvent.h>
+#import <WebCore/PageIdentifier.h>
+#import <WebCore/PagePasteboardContext.h>
+#import <WebCore/Pasteboard.h>
+#import <WebCore/PasteboardStrategy.h>
+#import <WebCore/PlatformStrategies.h>
 #import <WebCore/PluginDocument.h>
 #import <WebCore/RenderEmbeddedObject.h>
 #import <WebCore/RenderLayer.h>
@@ -73,6 +79,7 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/cf/VectorCF.h>
+#import <wtf/cocoa/NSURLExtras.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/MakeString.h>
 #import <wtf/text/TextStream.h>
@@ -994,36 +1001,118 @@ void PDFPluginBase::print()
         page->chrome().print(*m_frame->coreLocalFrame());
 }
 
-#if PLATFORM(MAC)
-
-void PDFPluginBase::writeItemsToPasteboard(NSString *pasteboardName, Vector<PasteboardItem>&& pasteboardItems) const
+std::optional<PageIdentifier> PDFPluginBase::pageIdentifier() const
 {
-    // FIXME: <https://webkit.org/b/269174> PDFPluginBase::writeItemsToPasteboard should be platform-agnostic.
-    auto pasteboardTypes = pasteboardItems.map([](const auto& item) -> String {
-        return item.type.get();
-    });
-    auto pageIdentifier = m_frame && m_frame->coreLocalFrame() ? m_frame->coreLocalFrame()->pageID() : std::nullopt;
-
-    auto& webProcess = WebProcess::singleton();
-    webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardTypes(pasteboardName, pasteboardTypes, pageIdentifier), 0);
-
-    for (auto&& [data, type] : WTFMove(pasteboardItems)) {
-        // We don't expect the data for any items to be empty, but aren't completely sure.
-        // Avoid crashing in the SharedMemory constructor in release builds if we're wrong.
-        ASSERT([data length]);
-        if (![data length])
-            continue;
-
-        if ([type isEqualToString:legacyStringPasteboardType()] || [type isEqualToString:NSPasteboardTypeString]) {
-            auto plainTextString = adoptNS([[NSString alloc] initWithData:data.get() encoding:NSUTF8StringEncoding]);
-            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardStringForType(pasteboardName, type.get(), plainTextString.get(), pageIdentifier), 0);
-        } else {
-            auto buffer = SharedBuffer::create(data.get());
-            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardBufferForType(pasteboardName, type.get(), WTFMove(buffer), pageIdentifier), 0);
-        }
-    }
+    return m_frame && m_frame->coreLocalFrame() ? m_frame->coreLocalFrame()->pageID() : std::nullopt;
 }
 
+NSString *PDFPluginBase::stringPasteboardType()
+{
+#if PLATFORM(IOS_FAMILY)
+    return UTTypeUTF8PlainText.identifier;
+#else
+    return NSPasteboardTypeString;
+#endif
+}
+
+NSString *PDFPluginBase::urlPasteboardType()
+{
+#if PLATFORM(IOS_FAMILY)
+    return UTTypeURL.identifier;
+#else
+    return NSPasteboardTypeURL;
+#endif
+}
+
+NSString *PDFPluginBase::htmlPasteboardType()
+{
+#if PLATFORM(IOS_FAMILY)
+    return UTTypeHTML.identifier;
+#else
+    return NSPasteboardTypeHTML;
+#endif
+}
+
+NSString *PDFPluginBase::rtfPasteboardType()
+{
+#if PLATFORM(IOS_FAMILY)
+    return UTTypeRTF.identifier;
+#else
+    return NSPasteboardTypeRTF;
+#endif
+}
+
+void PDFPluginBase::writeItemsToGeneralPasteboard(Vector<PasteboardItem>&& pasteboardItems) const
+{
+    auto originIdentifier = [frame = m_frame] -> String {
+        if (!frame || !frame->coreLocalFrame())
+            return { };
+        RefPtr document = frame->coreLocalFrame()->document();
+        if (!document)
+            return { };
+        return document->originIdentifierForPasteboard();
+    }();
+
+    auto applyLinkDecorationFiltering = [frame = m_frame](const URL& url) {
+        if (!frame || !frame->coreLocalFrame())
+            return url;
+        RefPtr document = frame->coreLocalFrame()->document();
+        if (!document)
+            return url;
+        RefPtr page = document->page();
+        if (!page)
+            return url;
+        return page->applyLinkDecorationFiltering(url, LinkDecorationFilteringTrigger::Copy);
+    };
+
+    std::optional<PasteboardWebContent> pasteboardContent;
+    std::optional<PasteboardURL> pasteboardURL;
+
+    auto ensureContent = [originIdentifier](std::optional<PasteboardWebContent>& content) -> decltype(content) {
+        if (!content)
+            content = PasteboardWebContent { .contentOrigin = originIdentifier, .canSmartCopyOrDelete = false };
+        return content;
+    };
+
+    for (auto&& [data, type] : WTFMove(pasteboardItems)) {
+        if (![data length]) {
+            ASSERT_NOT_REACHED();
+            continue;
+        }
+
+        if ([type isEqualToString:htmlPasteboardType()])
+            ensureContent(pasteboardContent)->dataInHTMLFormat = String { adoptNS([[NSString alloc] initWithData:data.get() encoding:NSUTF8StringEncoding]).autorelease() };
+        else if ([type isEqualToString:rtfPasteboardType()])
+            ensureContent(pasteboardContent)->dataInRTFFormat = SharedBuffer::create(data.get());
+        else if ([type isEqualToString:stringPasteboardType()])
+            ensureContent(pasteboardContent)->dataInStringFormat = String { adoptNS([[NSString alloc] initWithData:data.get() encoding:NSUTF8StringEncoding]).autorelease() };
+        else if ([type isEqualToString:urlPasteboardType()]) {
+            URL url { [NSURL URLWithDataRepresentation:data.get() relativeToURL:nil] };
+            URL sanitizedURL { applyLinkDecorationFiltering(url) };
+            pasteboardURL = PasteboardURL {
+                .url = sanitizedURL,
+                .title = sanitizedURL.string(),
+#if PLATFORM(MAC)
+                .userVisibleForm = userVisibleString(sanitizedURL),
+#endif
+            };
+        }
+    }
+
+    auto pasteboard = Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(pageIdentifier()));
+    if (pasteboardContent)
+        pasteboard->write(*pasteboardContent);
+    if (pasteboardURL)
+        pasteboard->write(*pasteboardURL);
+}
+
+#if PLATFORM(MAC)
+void PDFPluginBase::writeStringToFindPasteboard(const String& string) const
+{
+    auto context = PagePasteboardContext::create(pageIdentifier());
+    platformStrategies()->pasteboardStrategy()->setTypes({ NSPasteboardTypeString }, NSPasteboardNameFind, context.get());
+    platformStrategies()->pasteboardStrategy()->setStringForType(string, NSPasteboardTypeString, NSPasteboardNameFind, context.get());
+}
 #endif
 
 #if ENABLE(PDF_HUD)

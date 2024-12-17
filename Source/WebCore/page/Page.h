@@ -1114,7 +1114,7 @@ public:
 
     bool httpsUpgradeEnabled() const { return m_httpsUpgradeEnabled; }
 
-    URL applyLinkDecorationFiltering(const URL&, LinkDecorationFilteringTrigger) const;
+    WEBCORE_EXPORT URL applyLinkDecorationFiltering(const URL&, LinkDecorationFilteringTrigger) const;
     String applyLinkDecorationFiltering(const String&, LinkDecorationFilteringTrigger) const;
     URL allowedQueryParametersForAdvancedPrivacyProtections(const URL&) const;
 

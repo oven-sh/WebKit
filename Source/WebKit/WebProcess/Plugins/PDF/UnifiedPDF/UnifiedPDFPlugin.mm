@@ -59,6 +59,7 @@
 #include "WebPageProxyMessages.h"
 #include <CoreGraphics/CoreGraphics.h>
 #include <PDFKit/PDFKit.h>
+#include <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <WebCore/AffineTransform.h>
 #include <WebCore/AutoscrollController.h>
 #include <WebCore/BitmapImage.h>
@@ -2581,16 +2582,12 @@ void UnifiedPDFPlugin::performCopyLinkOperation(const IntPoint& contextMenuEvent
     if (!url)
         return;
 
-#if PLATFORM(MAC)
     RetainPtr urlData = [[url absoluteString] dataUsingEncoding:NSUTF8StringEncoding];
     Vector<PasteboardItem> pasteboardItems {
-        { urlData, NSPasteboardTypeURL },
-        { urlData, NSPasteboardTypeString },
+        { urlData, urlPasteboardType() },
+        { urlData, stringPasteboardType() },
     };
-    writeItemsToPasteboard(NSPasteboardNameGeneral, WTFMove(pasteboardItems));
-#else
-    // FIXME: Implement.
-#endif
+    writeItemsToGeneralPasteboard(WTFMove(pasteboardItems));
 }
 
 #pragma mark Editing Commands
@@ -2628,7 +2625,6 @@ bool UnifiedPDFPlugin::isEditingCommandEnabled(const String& commandName)
     return false;
 }
 
-#if PLATFORM(MAC)
 static NSData *htmlDataFromSelection(PDFSelection *selection)
 {
     if (!selection)
@@ -2641,11 +2637,9 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     return [[selection html] dataUsingEncoding:NSUTF8StringEncoding];
 ALLOW_DEPRECATED_DECLARATIONS_END
 }
-#endif
 
 bool UnifiedPDFPlugin::performCopyEditingOperation() const
 {
-#if PLATFORM(MAC)
     if (!m_currentSelection)
         return false;
 
@@ -2657,22 +2651,20 @@ bool UnifiedPDFPlugin::performCopyEditingOperation() const
     Vector<PasteboardItem> pasteboardItems;
 
     if (NSData *htmlData = htmlDataFromSelection(m_currentSelection.get()))
-        pasteboardItems.append({ htmlData, NSPasteboardTypeHTML });
+        pasteboardItems.append({ htmlData, htmlPasteboardType() });
 
 #if HAVE(PDFSELECTION_HTMLDATA_RTFDATA)
     if ([m_currentSelection respondsToSelector:@selector(rtfData)]) {
         if (NSData *rtfData = [m_currentSelection rtfData])
-            pasteboardItems.append({ rtfData, NSPasteboardTypeRTF });
+            pasteboardItems.append({ rtfData, rtfPasteboardType() });
     }
 #endif
 
     if (NSData *plainStringData = [[m_currentSelection string] dataUsingEncoding:NSUTF8StringEncoding])
-        pasteboardItems.append({ plainStringData, NSPasteboardTypeString });
+        pasteboardItems.append({ plainStringData, stringPasteboardType() });
 
-    writeItemsToPasteboard(NSPasteboardNameGeneral, WTFMove(pasteboardItems));
+    writeItemsToGeneralPasteboard(WTFMove(pasteboardItems));
     return true;
-#endif
-    return false;
 }
 
 
@@ -2686,7 +2678,7 @@ bool UnifiedPDFPlugin::takeFindStringFromSelection()
         return false;
 
 #if PLATFORM(MAC)
-    writeItemsToPasteboard(NSPasteboardNameFind, { { [nsStringNilIfEmpty(findString) dataUsingEncoding:NSUTF8StringEncoding], NSPasteboardTypeString } });
+    writeStringToFindPasteboard(findString);
 #else
     if (!m_frame || !m_frame->coreLocalFrame())
         return false;

@@ -35,6 +35,7 @@
 #include <WebCore/AffineTransform.h>
 #include <WebCore/FindOptions.h>
 #include <WebCore/FloatRect.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/PlatformMouseEvent.h>
 #include <WebCore/PluginData.h>
 #include <WebCore/PluginViewBase.h>
@@ -309,9 +310,7 @@ public:
     virtual void didSameDocumentNavigationForFrame(WebFrame&) { }
 
     using PasteboardItem = PDFPluginPasteboardItem;
-#if PLATFORM(MAC)
-    void writeItemsToPasteboard(NSString *pasteboardName, Vector<PasteboardItem>&&) const;
-#endif
+    void writeItemsToGeneralPasteboard(Vector<PasteboardItem>&&) const;
 
     uint64_t streamedBytes() const;
     std::optional<WebCore::FrameIdentifier> rootFrameID() const final;
@@ -433,6 +432,17 @@ protected:
     virtual void teardownPasswordEntryForm() = 0;
 
     String annotationStyle() const;
+
+    static NSString *htmlPasteboardType();
+    static NSString *rtfPasteboardType();
+    static NSString *stringPasteboardType();
+    static NSString *urlPasteboardType();
+
+#if PLATFORM(MAC)
+    void writeStringToFindPasteboard(const String&) const;
+#endif
+
+    std::optional<WebCore::PageIdentifier> pageIdentifier() const;
 
     SingleThreadWeakPtr<PluginView> m_view;
     WeakPtr<WebFrame> m_frame;
