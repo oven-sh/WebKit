@@ -1976,6 +1976,9 @@
     "imported/w3c/web-platform-tests/content-security-policy/reporting/report-cross-origin-no-cookies.sub.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/content-security-policy/reporting/report-frame-ancestors-no-parent-cookies.sub.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/content-security-policy/reporting/report-only-in-meta.sub.html": [
         "slow"
     ],

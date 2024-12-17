@@ -1,5 +1,9 @@
 
 PASS Unsafe eval violation sample is clipped to 40 characters.
-FAIL Function constructor - the other kind of eval - is clipped. assert_equals: expected "Function|(a,b) {return '12345678901234567890123" but got "Function|function anonymous(a,b) {return '12345"
+PASS Unsafe indirect eval violation sample is clipped to 40 characters.
+FAIL Function constructor - the other kind of eval - is clipped. assert_equals: expected "Function|(a,b\n) {\nreturn '12345678901234567890123" but got "Function|function anonymous(a,b\n) {\nreturn '12345"
+FAIL Async Function constructor is also clipped. assert_equals: expected "Function|(a,b\n) {\nreturn '12345678901234567890123" but got "Function|async function anonymous(a,b\n) {\nreturn "
+FAIL Generator Function constructor is also clipped. assert_equals: expected "Function|(a,b\n) {\nreturn '12345678901234567890123" but got "Function|function* anonymous(a,b\n) {\nreturn '1234"
+FAIL AsyncGenerator Function constructor is also clipped. assert_equals: expected "Function|(a,b\n) {\nreturn '12345678901234567890123" but got "Function|async function* anonymous(a,b\n) {\nreturn"
 PASS Trusted Types violation sample is clipped to 40 characters excluded the sink name.
 
