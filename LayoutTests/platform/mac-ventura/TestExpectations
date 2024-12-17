@@ -27,3 +27,15 @@ pdf/annotations/dropdown-select-second-option.html [ Skip ]
 # linkedOnOrAfter(Sequoa) for Cross Origin Redirect Downloads.
 http/tests/download/anchor-download-redirect-cross-origin.html
 http/tests/download/anchor-download-redirect-cross-origin-top-level.html
+
+# These fail with an "IOSurface textures must use MTLStorageModeManaged" assertion on Ventura, but not on later OSes.
+fast/webgpu/nocrash/fuzz-274161.html [ Skip ]
+fast/webgpu/nocrash/fuzz-274270.html [ Skip ]
+fast/webgpu/nocrash/fuzz-274334.html [ Skip ]
+fast/webgpu/nocrash/fuzz-275294.html [ Skip ]
+fast/webgpu/nocrash/fuzz-278545.html [ Skip ]
+fast/webgpu/nocrash/fuzz-281614.html [ Skip ]
+
+# These fail with a shader validation error on Ventura, but not on later OSes.
+fast/webgpu/nocrash/fuzz-283071.html [ Skip ]
+fast/webgpu/nocrash/fuzz-283157.html [ Skip ]

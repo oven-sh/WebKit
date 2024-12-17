@@ -1608,9 +1608,13 @@ webkit.org/b/263396 css3/color/text.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-281271.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-281555.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-282499.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-283196.html [ Skip ]
 
 # skipped on Intel due to intermittently timing out due to the workload
 [ x86_64 ] fast/webgpu/nocrash/fuzz-282052.html [ Skip ]
+
+# currently fails with a validation error on Intel (rdar://141529109)
+[ x86_64 ] fast/webgpu/nocrash/fuzz-282710.html [ Skip ]
 
 # skipped due to failing when run in stress test mode
 [ Ventura Sonoma ] fast/webgpu/nocrash/RenderBundle_WRITE.html [ Skip ]
