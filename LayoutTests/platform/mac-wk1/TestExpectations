@@ -2362,6 +2362,7 @@ webkit.org/b/228801 [ Release ] media/video-page-visibility-restriction.html [ P
 webkit.org/b/230071 media/video-preload.html [ Pass Failure ]
 
 webkit.org/b/232276 imported/w3c/web-platform-tests/html/interaction/focus/the-autofocus-attribute/spin-by-blocking-style-sheet.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/interaction/focus/sequential-focus-navigation-and-the-tabindex-attribute/focus-tabindex-order.html [ Skip ]
 
 imported/w3c/web-platform-tests/mathml/presentation-markup/operators/operator-dictionary-arabic-002.html [ ImageOnlyFailure ]
 

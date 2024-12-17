@@ -777,12 +777,8 @@ imported/w3c/web-platform-tests/html/browsers/the-window-object/navigate-to-abou
 imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/canvas-createImageBitmap-resize.html [ Skip ]
 imported/w3c/web-platform-tests/html/infrastructure/urls/resolving-urls/query-encoding/windows-1251.html [ Skip ]
 imported/w3c/web-platform-tests/html/infrastructure/urls/resolving-urls/query-encoding/windows-1252.html [ Skip ]
-imported/w3c/web-platform-tests/html/interaction/focus/focus-01.html [ Skip ]
-imported/w3c/web-platform-tests/html/interaction/focus/focus-02.html [ Skip ]
-imported/w3c/web-platform-tests/html/interaction/focus/sequential-focus-navigation-and-the-tabindex-attribute/focus-tabindex-negative.html [ Skip ]
+# Below test can be progressed if we add `TabsToLinks` as 'true'.
 imported/w3c/web-platform-tests/html/interaction/focus/sequential-focus-navigation-and-the-tabindex-attribute/focus-tabindex-order.html [ Skip ]
-imported/w3c/web-platform-tests/html/interaction/focus/sequential-focus-navigation-and-the-tabindex-attribute/focus-tabindex-positive.html [ Skip ]
-imported/w3c/web-platform-tests/html/interaction/focus/sequential-focus-navigation-and-the-tabindex-attribute/focus-tabindex-zero.html [ Skip ]
 imported/w3c/web-platform-tests/html/rendering/replaced-elements/embedded-content-rendering-rules/audio-controls-001.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/playing-the-media-resource/loop-from-ended.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/src_object_blob.html [ Skip ]

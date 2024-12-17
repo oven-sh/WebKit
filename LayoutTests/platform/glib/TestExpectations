@@ -2731,6 +2731,9 @@ imported/w3c/web-platform-tests/navigation-api/navigate-event/cross-window/ [ Pa
 imported/w3c/web-platform-tests/fetch/metadata/preload.https.sub.html [ Skip ]
 imported/w3c/web-platform-tests/fetch/metadata/window-open.https.sub.html [ Skip ]
 
+# This test times out only in mac-wk1, WPE and GTK.
+imported/w3c/web-platform-tests/html/interaction/focus/sequential-focus-navigation-and-the-tabindex-attribute/focus-tabindex-order.html [ Skip ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of WPT-related bugs
 #////////////////////////////////////////////////////////////////////////////////////////
