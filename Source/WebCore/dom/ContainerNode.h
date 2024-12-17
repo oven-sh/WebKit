@@ -203,10 +203,25 @@ inline Node* Node::firstChild() const
     return containerNode ? containerNode->firstChild() : nullptr;
 }
 
+inline RefPtr<Node> Node::protectedFirstChild() const
+{
+    return firstChild();
+}
+
 inline Node* Node::lastChild() const
 {
     auto* containerNode = dynamicDowncast<ContainerNode>(*this);
     return containerNode ? containerNode->lastChild() : nullptr;
+}
+
+inline RefPtr<Node> Node::protectedLastChild() const
+{
+    return lastChild();
+}
+
+inline bool Node::hasChildNodes() const
+{
+    return firstChild();
 }
 
 inline ContainerNode& TreeScope::rootNode() const
