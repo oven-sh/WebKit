@@ -235,11 +235,6 @@ public:
 
     bool shouldAvoidStartingSelectionOnMouseDown(const Node&) const;
 
-#if PLATFORM(IOS)
-    bool hideForbesVolumeSlider() const;
-    bool hideIGNVolumeSlider() const;
-#endif
-
     bool needsFacebookStoriesCreationFormQuirk(const Element&, const RenderStyle&) const;
 
 private:

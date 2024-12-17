@@ -2178,19 +2178,6 @@ bool Quirks::needsPointerTouchCompatibility(const Element& target) const
 
 #endif
 
-#if PLATFORM(IOS)
-// forbes.com rdar://117093458
-bool Quirks::hideForbesVolumeSlider() const
-{
-    return needsQuirks() && !PAL::currentUserInterfaceIdiomIsSmallScreen() && m_document->url().host() == "www.forbes.com"_s;
-}
-
-bool Quirks::hideIGNVolumeSlider() const
-{
-    return needsQuirks() && !PAL::currentUserInterfaceIdiomIsSmallScreen() && m_document->url().host() == "www.ign.com"_s;
-}
-#endif // PLATFORM(IOS)
-
 // facebook.com rdar://141103350
 bool Quirks::needsFacebookStoriesCreationFormQuirk(const Element& element, const RenderStyle& computedStyle) const
 {
