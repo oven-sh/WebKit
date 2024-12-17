@@ -282,37 +282,6 @@ RenderBlock* RenderBoxModelObject::containingBlockForAutoHeightDetection(Length 
     
     return cb;
 }
-    
-bool RenderBoxModelObject::hasAutoHeightOrContainingBlockWithAutoHeight(UpdatePercentageHeightDescendants updatePercentageDescendants) const
-{
-    auto* thisBox = dynamicDowncast<RenderBox>(this);
-    Length logicalHeightLength = style().logicalHeight();
-    auto* cb = containingBlockForAutoHeightDetection(logicalHeightLength);
-    
-    if (updatePercentageDescendants == UpdatePercentageHeightDescendants::Yes && logicalHeightLength.isPercentOrCalculated() && cb && thisBox)
-        cb->addPercentHeightDescendant(*const_cast<RenderBox*>(thisBox));
-
-    if (thisBox && thisBox->isFlexItem() && downcast<RenderFlexibleBox>(*parent()).usedFlexItemOverridingLogicalHeightForPercentageResolution(*thisBox))
-        return false;
-    
-    if (thisBox && thisBox->isGridItem()) {
-        if (auto overridingContainingBlockContentLogicalHeight = thisBox->overridingContainingBlockContentLogicalHeight())
-            return !*overridingContainingBlockContentLogicalHeight;
-    }
-    
-    if (logicalHeightLength.isAuto() && !isOutOfFlowPositionedWithImplicitHeight(*this))
-        return true;
-
-    // We need the containing block to have a definite block-size in order to resolve the block-size of the descendant,
-    // except when in quirks mode. Flexboxes follow strict behavior even in quirks mode, though.
-    if (!cb || (document().inQuirksMode() && !cb->isFlexibleBoxIncludingDeprecated()))
-        return false;
-    if (thisBox) {
-        if (auto overridingContainingBlockContentLogicalHeight = thisBox->overridingContainingBlockContentLogicalHeight())
-            return !*overridingContainingBlockContentLogicalHeight;
-    }
-    return !cb->hasDefiniteLogicalHeight();
-}
 
 DecodingMode RenderBoxModelObject::decodingModeForImageDraw(const Image& image, const PaintInfo& paintInfo) const
 {

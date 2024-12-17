@@ -87,7 +87,7 @@ static inline Layout::ConstraintsForFlexContent constraintsForFlexContent(const 
 
         if (computedValue.isPercent()) {
             if (callRendererForPercentValue)
-                return flexContainerRenderer.computePercentageLogicalHeight(computedValue, RenderBoxModelObject::UpdatePercentageHeightDescendants::No);
+                return flexContainerRenderer.computePercentageLogicalHeight(computedValue, RenderBox::UpdatePercentageHeightDescendants::No);
 
             if (flexContainerRenderer.containingBlock()->style().logicalHeight().isFixed()) {
                 auto value = valueForLength(computedValue, flexContainerRenderer.containingBlock()->style().height().value());

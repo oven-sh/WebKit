@@ -6055,4 +6055,34 @@ void RenderBox::computeAnchorCenteredPosition(LogicalExtentComputedValues& compu
     }
 }
 
+bool RenderBox::hasAutoHeightOrContainingBlockWithAutoHeight(UpdatePercentageHeightDescendants updatePercentageDescendants) const
+{
+    Length logicalHeightLength = style().logicalHeight();
+    auto* containingBlock = containingBlockForAutoHeightDetection(logicalHeightLength);
+
+    if (updatePercentageDescendants == UpdatePercentageHeightDescendants::Yes && logicalHeightLength.isPercentOrCalculated() && containingBlock)
+        containingBlock->addPercentHeightDescendant(const_cast<RenderBox&>(*this));
+
+    if (isFlexItem() && downcast<RenderFlexibleBox>(*parent()).usedFlexItemOverridingLogicalHeightForPercentageResolution(*this))
+        return false;
+
+    if (isGridItem()) {
+        if (auto containingBlockContentLogicalHeight = overridingContainingBlockContentLogicalHeight())
+            return !*containingBlockContentLogicalHeight;
+    }
+
+    auto isOutOfFlowPositionedWithImplicitHeight = isOutOfFlowPositioned() && !style().logicalTop().isAuto() && !style().logicalBottom().isAuto();
+    if (logicalHeightLength.isAuto() && !isOutOfFlowPositionedWithImplicitHeight)
+        return true;
+
+    // We need the containing block to have a definite block-size in order to resolve the block-size of the descendant,
+    // except when in quirks mode. Flexboxes follow strict behavior even in quirks mode, though.
+    if (!containingBlock || (document().inQuirksMode() && !containingBlock->isFlexibleBoxIncludingDeprecated()))
+        return false;
+
+    if (auto containingBlockContentLogicalHeight = overridingContainingBlockContentLogicalHeight())
+        return !*containingBlockContentLogicalHeight;
+    return !containingBlock->hasDefiniteLogicalHeight();
+}
+
 } // namespace WebCore
