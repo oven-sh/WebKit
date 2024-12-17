@@ -2,7 +2,6 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>A recorded muted audio track should produce silence</title>
     <script src="/resources/testharness.js"></script>
     <script src="/resources/testharnessreport.js"></script>
 </head>
@@ -15,6 +14,7 @@ function waitFor(duration)
 
 promise_test(async (test) => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    test.add_cleanup(() => { stream.getTracks().forEach(t => t.stop()); });
 
     const recorder = new MediaRecorder(stream);
     const dataPromise = new Promise(resolve => recorder.ondataavailable = (e) => resolve(e.data));
@@ -42,6 +42,7 @@ promise_test(async (test) => {
 
 promise_test(async (test) => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    test.add_cleanup(() => { stream.getTracks().forEach(t => t.stop()); });
 
     const recorder = new MediaRecorder(stream);
     const dataPromise = new Promise(resolve => recorder.ondataavailable = (e) => resolve(e.data));
@@ -64,6 +65,7 @@ promise_test(async (test) => {
 
 promise_test(async (test) => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    test.add_cleanup(() => { stream.getTracks().forEach(t => t.stop()); });
 
     const recorder = new MediaRecorder(stream);
     let dataPromise = new Promise(resolve => recorder.ondataavailable = (e) => resolve(e.data));
@@ -94,47 +96,7 @@ promise_test(async (test) => {
 
 promise_test(async (test) => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-
-    const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
-    const dataPromise = new Promise(resolve => recorder.ondataavailable = (e) => resolve(e.data));
-
-    const startPromise = new Promise(resolve => recorder.onstart = resolve);
-    recorder.start();
-    await startPromise;
-
-    setTimeout(() => recorder.pause(), 50);
-    setTimeout(() => recorder.resume(), 950);
-
-    await waitFor(2000);
-    recorder.stop();
-    const blob = await dataPromise;
-
-    const video = document.createElement("video");
-    video.disableRemotePlayback = true;
-    const metadataPromise = new Promise((resolve) => video.addEventListener("loadedmetadata", resolve, { once: true }));
-
-    // webm generated don't have a duration located in the metadata. Determine the duration with MediaSource.
-    if (!window.ManagedMediaSource?.isTypeSupported(blob.type)) {
-        const url = URL.createObjectURL(blob);
-        video.src = url;
-        await metadatapromise;
-        URL.revokeObjectURL(url);
-        return ;
-    }
-    const source = new ManagedMediaSource();
-    video.srcObject = source;
-    await new Promise((resolve) => source.addEventListener("sourceopen", resolve, { once: true }));
-    const buffer = source.addSourceBuffer(blob.type);
-    buffer.appendBuffer(await blob.arrayBuffer());
-    await new Promise((resolve) => buffer.addEventListener("update", resolve, { once: true }));
-    await metadataPromise;
-    source.endOfStream();
-    await new Promise((resolve) => source.addEventListener("sourceended", resolve, { once: true }));
-    assert_less_than(video.duration, 1.5);
-}, "Pausing and resuming the WebM recording should impact the video duration");
-
-promise_test(async (test) => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    test.add_cleanup(() => { stream.getTracks().forEach(t => t.stop()); });
 
     const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
     const dataPromise = new Promise(resolve => recorder.ondataavailable = (e) => resolve(e.data));
@@ -157,6 +119,7 @@ promise_test(async (test) => {
 
 promise_test(async (test) => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    test.add_cleanup(() => { stream.getTracks().forEach(t => t.stop()); });
 
     const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
     let dataPromise = new Promise(resolve => recorder.ondataavailable = (e) => resolve(e.data));

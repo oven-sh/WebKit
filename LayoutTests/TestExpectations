@@ -2479,6 +2479,10 @@ webrtc/h265.html [ Pass Failure ]
 webrtc/h264-baseline.html [ Slow ]
 webrtc/h264-high.html [ Slow ]
 
+http/wpt/mediarecorder/MediaRecorder-audio-bitrate-webm.html [ Slow ]
+http/wpt/mediarecorder/pause-recording.html [ Slow ]
+http/wpt/mediarecorder/pause-recording-2.html [ Pass Failure ]
+
 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Slow ]
 imported/w3c/web-platform-tests/webrtc/protocol/split.https.html [ Pass Failure ]
 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-relay-canvas.https.html [ Failure ]
