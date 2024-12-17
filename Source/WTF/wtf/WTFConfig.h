@@ -39,8 +39,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if USE(SYSTEM_MALLOC)
 namespace Gigacage {
-constexpr size_t reservedSlotsForGigacageConfig = 0;
-constexpr size_t reservedBytesForGigacageConfig = 0;
+// The first 4 slots are reserved for the use of the ExecutableAllocator and additionalReservedSlots.
+constexpr size_t reservedSlotsForGigacageConfig = 4;
+constexpr size_t reservedBytesForGigacageConfig = reservedSlotsForGigacageConfig * sizeof(uint64_t);
 }
 #else
 #include <bmalloc/GigacageConfig.h>
