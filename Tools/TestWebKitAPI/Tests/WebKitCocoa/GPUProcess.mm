@@ -756,7 +756,12 @@ TEST(GPUProcess, ExitsUnderMemoryPressureGetUserMediaVideoCase)
     });
 }
 
+// FIXME when rdar://141566093 is resolved.
+#if PLATFORM(IOS)
+TEST(GPUProcess, DISABLED_ExitsUnderMemoryPressureWebRTCCase)
+#else
 TEST(GPUProcess, ExitsUnderMemoryPressureWebRTCCase)
+#endif
 {
     runMemoryPressureExitTest([](WKWebView *webView) {
         auto delegate = adoptNS([[UserMediaCaptureUIDelegate alloc] init]);
