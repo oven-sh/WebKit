@@ -47,7 +47,7 @@ PASS styleOf("bdo", {"dir":"ltr"}).unicodeBidi is "isolate-override"
 PASS styleOf("bdo", {"dir":"rtl"}).direction is "rtl"
 PASS styleOf("bdo", {"dir":"rtl"}).unicodeBidi is "isolate-override"
 PASS styleOf("bdo", {"dir":"auto"}).direction is "ltr"
-FAIL styleOf("bdo", {"dir":"auto"}).unicodeBidi should be isolate-override. Was isolate.
+PASS styleOf("bdo", {"dir":"auto"}).unicodeBidi is "isolate-override"
 PASS styleOf("bdo", {"dir":""}).direction is "ltr"
 PASS styleOf("bdo", {"dir":""}).unicodeBidi is "isolate-override"
 PASS styleOf("textarea", {}).direction is "ltr"
@@ -71,7 +71,6 @@ PASS styleOf("pre", {"dir":"auto"}).unicodeBidi is "plaintext"
 PASS styleOf("pre", {"dir":""}).direction is "ltr"
 PASS styleOf("pre", {"dir":""}).unicodeBidi is "isolate"
 PASS successfullyParsed is true
-Some tests failed.
 
 TEST COMPLETE
 
