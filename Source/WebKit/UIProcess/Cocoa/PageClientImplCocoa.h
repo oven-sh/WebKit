@@ -130,6 +130,7 @@ public:
 
 #if ENABLE(SCREEN_TIME)
     void installScreenTimeWebpageController() final;
+    void didChangeScreenTimeWebpageControllerURL() final;
     void updateScreenTimeWebpageControllerURL(WKWebView *);
 #endif
 

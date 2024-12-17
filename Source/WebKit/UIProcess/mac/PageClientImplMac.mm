@@ -293,10 +293,6 @@ void PageClientImpl::didCommitLoadForMainFrame(const String&, bool)
 #if ENABLE(WRITING_TOOLS)
     m_impl->hideTextAnimationView();
 #endif
-
-#if ENABLE(SCREEN_TIME)
-    updateScreenTimeWebpageControllerURL(webView().get());
-#endif // ENABLE(SCREEN_TIME)
 }
 
 void PageClientImpl::didFinishLoadingDataForCustomContentProvider(const String& suggestedFilename, std::span<const uint8_t> dataReference)

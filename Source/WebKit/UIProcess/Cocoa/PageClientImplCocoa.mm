@@ -331,6 +331,11 @@ void PageClientImplCocoa::installScreenTimeWebpageController()
     [m_webView _installScreenTimeWebpageController];
 }
 
+void PageClientImplCocoa::didChangeScreenTimeWebpageControllerURL()
+{
+    updateScreenTimeWebpageControllerURL(webView().get());
+}
+
 void PageClientImplCocoa::updateScreenTimeWebpageControllerURL(WKWebView *webView)
 {
     if (!PAL::isScreenTimeFrameworkAvailable())
@@ -345,6 +350,7 @@ void PageClientImplCocoa::updateScreenTimeWebpageControllerURL(WKWebView *webVie
         [webView _uninstallScreenTimeWebpageController];
         return;
     }
+
     [screenTimeWebpageController setURL:[webView _mainFrameURL]];
 }
 #endif

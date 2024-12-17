@@ -164,12 +164,15 @@ void WebPageProxy::didCommitLayerTree(const WebKit::RemoteLayerTreeTransaction& 
     pageExtendedBackgroundColorDidChange(layerTreeTransaction.pageExtendedBackgroundColor());
     sampledPageTopColorChanged(layerTreeTransaction.sampledPageTopColor());
 
-    if (!m_hasUpdatedRenderingAfterDidCommitLoad) {
-        if (layerTreeTransaction.transactionID() >= internals().firstLayerTreeTransactionIdAfterDidCommitLoad) {
-            m_hasUpdatedRenderingAfterDidCommitLoad = true;
-            stopMakingViewBlankDueToLackOfRenderingUpdateIfNecessary();
-            internals().lastVisibleContentRectUpdate = { };
-        }
+    if (!m_hasUpdatedRenderingAfterDidCommitLoad
+        && (layerTreeTransaction.transactionID() >= internals().firstLayerTreeTransactionIdAfterDidCommitLoad)) {
+        m_hasUpdatedRenderingAfterDidCommitLoad = true;
+#if ENABLE(SCREEN_TIME)
+        if (RefPtr pageClient = this->pageClient())
+            pageClient->didChangeScreenTimeWebpageControllerURL();
+#endif
+        stopMakingViewBlankDueToLackOfRenderingUpdateIfNecessary();
+        internals().lastVisibleContentRectUpdate = { };
     }
 
     if (RefPtr pageClient = this->pageClient())

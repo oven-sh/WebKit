@@ -812,6 +812,7 @@ public:
 
 #if ENABLE(SCREEN_TIME)
     virtual void installScreenTimeWebpageController() { }
+    virtual void didChangeScreenTimeWebpageControllerURL() { };
 #endif
 };
 
