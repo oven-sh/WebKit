@@ -180,6 +180,14 @@ bool RemoteImageDecoderAVFProxy::allowsExitUnderMemoryPressure() const
     return m_imageDecoders.isEmpty();
 }
 
+std::optional<SharedPreferencesForWebProcess> RemoteImageDecoderAVFProxy::sharedPreferencesForWebProcess() const
+{
+    if (RefPtr connectionToWebProcess = m_connectionToWebProcess.get())
+        return connectionToWebProcess->sharedPreferencesForWebProcess();
+
+    return std::nullopt;
+}
+
 }
 
 #endif

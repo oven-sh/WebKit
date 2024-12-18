@@ -187,6 +187,8 @@ private:
     void presentFindNavigator() override;
     void dismissFindNavigator() override;
 
+    JSRetainPtr<JSStringRef> frontmostViewAtPoint(int, int) final;
+
     void waitForModalTransitionToFinish() const;
     void waitForSingleTapToReset() const;
     WebCore::FloatRect rectForMenuAction(CFStringRef) const;

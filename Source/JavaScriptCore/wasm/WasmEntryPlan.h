@@ -95,9 +95,14 @@ public:
 
     bool completeSyncIfPossible();
 
+    virtual void completeInStreaming() = 0;
+    virtual void didCompileFunctionInStreaming() = 0;
+    virtual void didFailInStreaming(String&&) = 0;
+
 private:
     class ThreadCountHolder;
     friend class ThreadCountHolder;
+    friend class StreamingPlan;
 
 protected:
     // For some reason friendship doesn't extend to parent classes...

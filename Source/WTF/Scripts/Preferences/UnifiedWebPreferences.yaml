@@ -5128,6 +5128,7 @@ MediaStreamEnabled:
       default: true
     WebCore:
       default: true
+  sharedPreferenceForWebProcess: true
 
 MediaStreamTrackProcessingEnabled:
   type: bool
@@ -7882,6 +7883,7 @@ UseGPUProcessForMediaEnabled:
     WebKit:
       "ENABLE(GPU_PROCESS_BY_DEFAULT)": true
       default: false
+  sharedPreferenceForWebProcess: true
 
 UseGPUProcessForWebGLEnabled:
   type: bool
@@ -8265,10 +8267,10 @@ VisuallyContiguousBidiTextSelectionEnabled:
   status: internal
   humanReadableName: "Visually Contiguous Bidi Selection"
   humanReadableDescription: "Visually contiguous bidi selection"
-  conditional: PLATFORM(IOS_FAMILY)
+  condition: PLATFORM(IOS_FAMILY)
   defaultValue:
     WebKit:
-      default: false
+      default: WebKit::defaultVisuallyContiguousBidiTextSelectionEnabled()
     WebKitLegacy:
       default: false
     WebCore:

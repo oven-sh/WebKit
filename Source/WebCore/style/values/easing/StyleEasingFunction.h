@@ -29,6 +29,7 @@ namespace WebCore {
 class CSSToLengthConversionData;
 class CSSValue;
 class RenderStyle;
+class TimingFunction;
 
 namespace CSS {
 struct EasingFunction;

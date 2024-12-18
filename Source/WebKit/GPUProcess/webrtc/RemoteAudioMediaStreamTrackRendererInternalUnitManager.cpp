@@ -161,6 +161,14 @@ void RemoteAudioMediaStreamTrackRendererInternalUnitManager::notifyLastToCapture
         unit->updateShouldRegisterAsSpeakerSamplesProducer();
 }
 
+std::optional<SharedPreferencesForWebProcess> RemoteAudioMediaStreamTrackRendererInternalUnitManager::sharedPreferencesForWebProcess() const
+{
+    if (RefPtr gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get())
+        return gpuConnectionToWebProcess->sharedPreferencesForWebProcess();
+
+    return std::nullopt;
+}
+
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit);
 
 RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit::RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, const String& deviceID, GPUConnectionToWebProcess& connection, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback)

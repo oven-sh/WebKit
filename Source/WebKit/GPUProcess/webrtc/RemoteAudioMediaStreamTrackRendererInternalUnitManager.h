@@ -29,7 +29,9 @@
 
 #include "AudioMediaStreamTrackRendererInternalUnitIdentifier.h"
 #include "Connection.h"
+#include "GPUConnectionToWebProcess.h"
 #include "SharedCARingBuffer.h"
+#include "SharedPreferencesForWebProcess.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -64,6 +66,7 @@ public:
 
     void ref() const final;
     void deref() const final;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 private:
     // Messages

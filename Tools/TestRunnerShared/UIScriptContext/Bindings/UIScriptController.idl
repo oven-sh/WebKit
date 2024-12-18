@@ -423,4 +423,6 @@ interface UIScriptController {
     undefined requestRenderedTextForFrontmostTarget(long x, long y, object callback);
     undefined adjustVisibilityForFrontmostTarget(long x, long y, object callback);
     undefined resetVisibilityAdjustments(object callback);
+
+    DOMString frontmostViewAtPoint(long x, long y);
 };

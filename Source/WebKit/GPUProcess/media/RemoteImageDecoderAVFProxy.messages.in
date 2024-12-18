@@ -30,7 +30,8 @@
 [
     ExceptionForEnabledBy,
     DispatchedFrom=WebContent,
-    DispatchedTo=GPU
+    DispatchedTo=GPU,
+    EnabledBy=UseGPUProcessForMediaEnabled && MediaPlaybackEnabled
 ]
 messages -> RemoteImageDecoderAVFProxy {
     CreateDecoder(IPC::SharedBufferReference data, String mimeType) -> (std::optional<WebCore::ImageDecoderIdentifier> identifier) Synchronous

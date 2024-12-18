@@ -2249,6 +2249,15 @@ window.UIHelper = class UIHelper {
         await new Promise(resolve => setTimeout(resolve, pdfFadeInDelay));
         await new Promise(requestAnimationFrame);
     }
+
+    static async frontmostViewAtPoint(x, y) {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`uiController.frontmostViewAtPoint(${x}, ${y})`, resolve);
+        });
+    }
 }
 
 UIHelper.EventStreamBuilder = class {

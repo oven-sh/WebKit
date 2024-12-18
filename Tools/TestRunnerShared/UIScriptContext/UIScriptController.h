@@ -423,6 +423,8 @@ public:
     virtual void adjustVisibilityForFrontmostTarget(int, int, JSValueRef) { notImplemented(); }
     virtual void resetVisibilityAdjustments(JSValueRef) { notImplemented(); }
 
+    virtual JSRetainPtr<JSStringRef> frontmostViewAtPoint(int, int) { notImplemented(); return { }; }
+
 protected:
     explicit UIScriptController(UIScriptContext&);
     

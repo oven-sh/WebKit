@@ -76,6 +76,28 @@ SOFT_LINK_CLASS(UIKit, UIPhysicalKeyboardEvent)
 
 @end
 
+@interface UIView (WebKitTestRunner)
+- (UIView *)_wtr_frontmostViewAtPoint:(CGPoint)point;
+@end
+
+@implementation UIView (WebKitTestRunner)
+
+- (UIView *)_wtr_frontmostViewAtPoint:(CGPoint)point
+{
+    if (self.hidden || !self.alpha)
+        return nil;
+
+    for (UIView *subview in self.subviews.reverseObjectEnumerator) {
+        CGPoint convertedPoint = [subview convertPoint:point fromView:self];
+        if (RetainPtr frontmostView = [subview _wtr_frontmostViewAtPoint:convertedPoint])
+            return frontmostView.get();
+    }
+
+    return [self.layer.presentationLayer containsPoint:point] ? self : nil;
+}
+
+@end
+
 namespace WTR {
 
 #if HAVE(UI_TEXT_SELECTION_DISPLAY_INTERACTION)
@@ -1635,6 +1657,14 @@ UITextSelectionDisplayInteraction *UIScriptControllerIOS::textSelectionDisplayIn
 JSRetainPtr<JSStringRef> UIScriptControllerIOS::scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool isVertical) const
 {
     return adopt(JSStringCreateWithCFString((CFStringRef) [webView() _scrollbarState:scrollingNodeID processID:processID isVertical:isVertical]));
+}
+
+JSRetainPtr<JSStringRef> UIScriptControllerIOS::frontmostViewAtPoint(int x, int y)
+{
+    if (RetainPtr view = [platformContentView() _wtr_frontmostViewAtPoint:CGPointMake(x, y)])
+        return adopt(JSStringCreateWithUTF8CString(class_getName([view class])));
+
+    return nil;
 }
 
 }

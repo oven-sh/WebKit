@@ -42,7 +42,7 @@ class VM;
 
 namespace Wasm {
 
-class LLIntPlan;
+class EntryPlan;
 class StreamingPlan;
 
 class StreamingCompiler final : public StreamingParserClient, public ThreadSafeRefCounted<StreamingCompiler> {
@@ -76,7 +76,7 @@ private:
     DeferredWorkTimer::Ticket m_ticket;
     Ref<Wasm::ModuleInformation> m_info;
     StreamingParser m_parser;
-    RefPtr<LLIntPlan> m_plan;
+    RefPtr<EntryPlan> m_plan;
 };
 
 

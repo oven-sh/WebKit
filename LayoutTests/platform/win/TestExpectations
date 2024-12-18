@@ -486,12 +486,16 @@ webkit.org/b/278895 http/tests/canvas/canvas-slow-font-loading.html [ Skip ]
 # image diffs off by 0.0x%
 #//////////////////////////////////////////////////////////////////////////////////////////
 
+compositing/repaint/needs-no-display-volatile-repaint.html [ ImageOnlyFailure ]
+compositing/repaint/needs-no-display-volatile.html [ ImageOnlyFailure ]
 css3/unicode-bidi-isolate-aharon.html [ ImageOnlyFailure ]
 editing/caret/caret-in-empty-cell.html [ ImageOnlyFailure ]
 fast/css-generated-content/013.html [ ImageOnlyFailure ]
 fast/css-generated-content/016.html [ ImageOnlyFailure ]
 fast/css-generated-content/close-quote-negative-depth.html [ ImageOnlyFailure Pass ]
 fast/css-generated-content/content-property-change.html [ ImageOnlyFailure Pass ]
+fast/css-generated-content/initial-letter-pagination-raised.html [ ImageOnlyFailure ]
+fast/css-generated-content/initial-letter-pagination-sunken.html [ ImageOnlyFailure ]
 fast/css-generated-content/nested-quote-more-than-pairs.html [ ImageOnlyFailure Pass ]
 fast/css-generated-content/quote-first-letter.html [ ImageOnlyFailure Pass ]
 fast/css-generated-content/quotes-lang-case-insensitive.html [ ImageOnlyFailure Pass ]
@@ -511,9 +515,14 @@ fast/text/complex-text-selection.html [ ImageOnlyFailure ]
 fast/text/incorrect-baseline-with-nested-inline-box.html [ ImageOnlyFailure ]
 fast/text/soft-hyphen-min-preferred-width.html [ ImageOnlyFailure ]
 fast/text/text-underline-position-under.html [ ImageOnlyFailure ]
+ietestcenter/css3/multicolumn/column-width-applies-to-001.htm [ ImageOnlyFailure ]
+ietestcenter/css3/multicolumn/column-width-applies-to-002.htm [ ImageOnlyFailure ]
+ietestcenter/css3/multicolumn/column-width-applies-to-003.htm [ ImageOnlyFailure ]
+ietestcenter/css3/multicolumn/column-width-applies-to-004.htm [ ImageOnlyFailure ]
+ietestcenter/css3/multicolumn/column-width-applies-to-013.htm [ ImageOnlyFailure ]
+ietestcenter/css3/multicolumn/column-width-applies-to-014.htm [ ImageOnlyFailure ]
 imported/blink/fast/css/case-sensitive-003.xhtml [ ImageOnlyFailure ]
 imported/blink/fast/css/text-overflow-ellipsis-button.html [ ImageOnlyFailure Pass ]
-
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # Following tests are labeled "Skip" because not working well and causes crash or timeout
@@ -4228,8 +4237,6 @@ fast/canvas/canvas-composite-text-alpha.html [ Failure Pass ]
 
 animations/stacking-context-not-fill-forwards.html [ ImageOnlyFailure ]
 fast/box-shadow/inset-box-shadow.html [ ImageOnlyFailure ]
-fast/css-generated-content/initial-letter-pagination-sunken-rl.html [ ImageOnlyFailure ]
-fast/css-generated-content/initial-letter-pagination-raised-rl.html [ ImageOnlyFailure ]
 fast/css/sticky/sticky-top-zoomed.html [ ImageOnlyFailure ]
 fast/text/international/bdo-bidi-width.html [ ImageOnlyFailure ]
 

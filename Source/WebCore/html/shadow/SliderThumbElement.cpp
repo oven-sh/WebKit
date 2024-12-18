@@ -183,6 +183,7 @@ void RenderSliderContainer::layout()
             thumbLocation.setX(thumbLocation.x() - offset);
     }
     thumb->setLocation(thumbLocation);
+    track->repaint();
     thumb->repaint();
 }
 

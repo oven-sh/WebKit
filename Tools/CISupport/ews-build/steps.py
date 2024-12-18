@@ -551,7 +551,7 @@ class GitHubMixin(object):
 
 
 class ShellMixin(object):
-    WINDOWS_SHELL_PLATFORMS = ['win']
+    WINDOWS_SHELL_PLATFORMS = ['win', 'playstation']
 
     def has_windows_shell(self):
         return self.getProperty('platform', '*') in self.WINDOWS_SHELL_PLATFORMS

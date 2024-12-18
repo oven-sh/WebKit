@@ -283,6 +283,7 @@ def generate_document_synched_data_header(synched_datas):
 
     headers = []
     headers.append('<wtf/TZoneMallocInlines.h>')
+    headers.append('<wtf/Ref.h>')
     headers.append('<wtf/RefCounted.h>')
     for data in synched_datas:
         if data.header is None:

@@ -125,6 +125,15 @@ bool defaultAutomaticLiveResizeEnabled()
 #endif
 }
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPreferencesDefaultValuesIOSAdditions.mm>)
+#import <WebKitAdditions/WebPreferencesDefaultValuesIOSAdditions.mm>
+#else
+bool defaultVisuallyContiguousBidiTextSelectionEnabled()
+{
+    return false;
+}
+#endif
+
 } // namespace WebKit
 
 #endif // PLATFORM(IOS_FAMILY)
