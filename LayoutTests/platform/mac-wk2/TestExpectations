@@ -1967,3 +1967,7 @@ webkit.org/b/284492 [ Sequoia+ ] imported/w3c/web-platform-tests/fetch/api/cors/
 webkit.org/b/284492 [ Sequoia+ ] imported/w3c/web-platform-tests/fetch/api/cors/cors-cookies-redirect.any.worker.html [ Failure ]
 
 webkit.org/b/232282 [ Ventura+ ] fast/scrolling/mac/scrollbars/overlay-scrollbar-hovered.html [ Pass Failure ]
+
+# webkit.org/b/284853 REGRESSION(287869@main?): [macOS Debug wk2] ASSERTION FAILED: WebCore::MediaRecorderPrivateEncoder::interleaveAndEnqueueNextFrame() in http/wpt/mediarecorder tests (flaky in EWS)
+[ Debug ] http/wpt/mediarecorder/MediaRecorder-video-bitrate.html [ Skip ]
+[ Debug ] http/wpt/mediarecorder/pause-recording.html [ Skip ]
