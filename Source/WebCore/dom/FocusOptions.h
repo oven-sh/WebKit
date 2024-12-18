@@ -27,6 +27,7 @@
 
 #include "FocusDirection.h"
 #include "SelectionRestorationMode.h"
+#include <optional>
 
 namespace WebCore {
 
