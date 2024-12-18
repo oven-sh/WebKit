@@ -264,6 +264,10 @@ public:
 
     FieldSizing fieldSizing { FieldSizing::Fixed };
 
+#if HAVE(CORE_MATERIAL)
+    unsigned appleVisualEffect : 4; // AppleVisualEffect
+#endif
+
     unsigned nativeAppearanceDisabled : 1;
 
 private:

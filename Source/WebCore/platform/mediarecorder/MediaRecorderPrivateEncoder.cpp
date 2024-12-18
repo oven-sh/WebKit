@@ -32,10 +32,12 @@
 #include "CARingBuffer.h"
 #include "CMUtilities.h"
 #include "ContentType.h"
+#include "Logging.h"
 #include "MediaRecorderPrivateOptions.h"
 #include "MediaRecorderPrivateWriter.h"
 #include "MediaSampleAVFObjC.h"
 #include "MediaUtilities.h"
+#include "WebAudioBufferList.h"
 
 #include <CoreAudio/CoreAudioTypes.h>
 #include <CoreMedia/CMTime.h>

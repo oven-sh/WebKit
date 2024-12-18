@@ -4779,6 +4779,11 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return createConvertingToCSSValueID(style.applePayButtonType());
 #endif
 
+#if HAVE(CORE_MATERIAL)
+    case CSSPropertyAppleVisualEffect:
+        return createConvertingToCSSValueID(style.appleVisualEffect());
+#endif
+
 #if ENABLE(DARK_MODE_CSS)
     case CSSPropertyColorScheme:
         return CSSColorSchemeValue::create(Style::toCSS(style.colorScheme(), style));

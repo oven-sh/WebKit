@@ -111,6 +111,7 @@ enum class PaginationMode : uint8_t;
 
 enum class ApplePayButtonStyle : uint8_t;
 enum class ApplePayButtonType : uint8_t;
+enum class AppleVisualEffect : uint8_t;
 enum class AspectRatioType : uint8_t;
 enum class AutoRepeatType : uint8_t;
 enum class BackfaceVisibility : uint8_t;
@@ -1151,6 +1152,10 @@ public:
     inline ApplePayButtonType applePayButtonType() const;
 #endif
 
+#if HAVE(CORE_MATERIAL)
+    inline AppleVisualEffect appleVisualEffect() const;
+#endif
+
     inline MathStyle mathStyle() const;
 
     inline const Vector<Style::ScopedName>& viewTransitionClasses() const;
@@ -1662,6 +1667,10 @@ public:
     inline void setApplePayButtonType(ApplePayButtonType);
 #endif
 
+#if HAVE(CORE_MATERIAL)
+    inline void setAppleVisualEffect(AppleVisualEffect);
+#endif
+
     void addCustomPaintWatchProperty(const AtomString&);
 
     // Support for paint-order, stroke-linecap, stroke-linejoin, and stroke-miterlimit from https://drafts.fxtf.org/paint/.
@@ -2107,6 +2116,10 @@ public:
 #if ENABLE(APPLE_PAY)
     static constexpr ApplePayButtonStyle initialApplePayButtonStyle();
     static constexpr ApplePayButtonType initialApplePayButtonType();
+#endif
+
+#if HAVE(CORE_MATERIAL)
+    static constexpr AppleVisualEffect initialAppleVisualEffect();
 #endif
 
     static inline Vector<GridTrackSize> initialGridColumnTrackSizes();

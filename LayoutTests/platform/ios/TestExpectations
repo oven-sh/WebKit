@@ -11,6 +11,7 @@
 # --- ios ---
 
 accessibility/ios-simulator [ Pass ]
+apple-visual-effects [ Pass ]
 displaylists [ Pass ]
 editing/editable-region [ Pass ]
 editing/execCommand/ios [ Pass ]

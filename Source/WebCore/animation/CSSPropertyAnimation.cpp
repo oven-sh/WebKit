@@ -4063,6 +4063,9 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
 #if ENABLE(DARK_MODE_CSS)
         new DiscretePropertyWrapper<Style::ColorScheme>(CSSPropertyColorScheme, &RenderStyle::colorScheme, &RenderStyle::setColorScheme),
 #endif
+#if HAVE(CORE_MATERIAL)
+        new DiscretePropertyWrapper<AppleVisualEffect>(CSSPropertyAppleVisualEffect, &RenderStyle::appleVisualEffect, &RenderStyle::setAppleVisualEffect),
+#endif
         new PropertyWrapperAspectRatio,
         new DiscretePropertyWrapper<const FontPalette&>(CSSPropertyFontPalette, &RenderStyle::fontPalette, &RenderStyle::setFontPalette),
 

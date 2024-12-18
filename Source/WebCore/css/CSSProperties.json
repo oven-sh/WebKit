@@ -9615,6 +9615,30 @@
             },
             "status": "non-standard"
         },
+        "-apple-visual-effect": {
+            "values": [
+                "none",
+                "-apple-system-blur-material-ultra-thin",
+                "-apple-system-blur-material-thin",
+                "-apple-system-blur-material",
+                "-apple-system-blur-material-thick",
+                "-apple-system-blur-material-chrome",
+                "-apple-system-vibrancy-label",
+                "-apple-system-vibrancy-secondary-label",
+                "-apple-system-vibrancy-tertiary-label",
+                "-apple-system-vibrancy-quaternary-label",
+                "-apple-system-vibrancy-fill",
+                "-apple-system-vibrancy-secondary-fill",
+                "-apple-system-vibrancy-tertiary-fill",
+                "-apple-system-vibrancy-separator"
+            ],
+            "codegen-properties": {
+                "enable-if": "HAVE_CORE_MATERIAL",
+                "settings-flag": "appleSystemVisualEffectsEnabled",
+                "parser-grammar": "<<values>>"
+            },
+            "status": "non-standard"
+        },
         "-apple-pay-button-style": {
             "values": [
                 "white",

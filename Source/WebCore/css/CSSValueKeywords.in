@@ -1414,6 +1414,21 @@ spring
 steps
 apple-invert-lightness
 
+// -apple-visual-effect
+-apple-system-blur-material-ultra-thin enable-if=HAVE_CORE_MATERIAL
+-apple-system-blur-material-thin enable-if=HAVE_CORE_MATERIAL
+-apple-system-blur-material enable-if=HAVE_CORE_MATERIAL
+-apple-system-blur-material-thick enable-if=HAVE_CORE_MATERIAL
+-apple-system-blur-material-chrome enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-label enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-secondary-label enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-tertiary-label enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-quaternary-label enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-fill enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-secondary-fill enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-tertiary-fill enable-if=HAVE_CORE_MATERIAL
+-apple-system-vibrancy-separator enable-if=HAVE_CORE_MATERIAL
+
 // colors
 rgb
 rgba

@@ -6,6 +6,7 @@
 # Platform-specific tests. Skipped here, then re-enabled on the appropriate platform.
 #//////////////////////////////////////////////////////////////////////////////////////////
 
+apple-visual-effects [ Skip ]
 compositing/ios [ Skip ]
 compositing/contents-format/ipad [ Skip ]
 compositing/scrolling/async-overflow-scrolling/mac [ Skip ]
