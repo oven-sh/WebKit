@@ -6038,6 +6038,16 @@ void WebPageProxy::getAllFrames(CompletionHandler<void(FrameTreeNodeData&&)>&& c
     mainFrame->getFrameInfo(WTFMove(completionHandler));
 }
 
+void WebPageProxy::getFrameInfo(WebCore::FrameIdentifier frameID, CompletionHandler<void(API::FrameInfo*)>&& completionHandler)
+{
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::GetFrameInfo(frameID), [weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)] (std::optional<FrameInfoData>&& data) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!data || !protectedThis)
+            return completionHandler(nullptr);
+        completionHandler(API::FrameInfo::create(WTFMove(*data), WTFMove(protectedThis)).ptr());
+    });
+}
+
 void WebPageProxy::getAllFrameTrees(CompletionHandler<void(Vector<FrameTreeNodeData>&&)>&& completionHandler)
 {
     class FrameTreeCallbackAggregator : public RefCounted<FrameTreeCallbackAggregator> {

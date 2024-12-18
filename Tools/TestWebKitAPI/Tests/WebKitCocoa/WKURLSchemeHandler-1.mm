@@ -1573,7 +1573,10 @@ TEST(URLSchemeHandler, Frames)
         [webView _callAsyncJavaScript:@"window.customProperty = 'customValue'" arguments:nil inFrame:grandchild1.info inContentWorld:[WKContentWorld defaultClientWorld] completionHandler:^(id, NSError *error) {
             [webView _evaluateJavaScript:@"window.location.href + window.customProperty" inFrame:grandchild1.info inContentWorld:[WKContentWorld defaultClientWorld] completionHandler:^(id result, NSError *error) {
                 EXPECT_WK_STREQ(result, "frame://host3/customValue");
-                done = true;
+                [webView _frameInfoFromHandle:grandchild1.info._handle completionHandler:^(WKFrameInfo *fetchedInfo) {
+                    EXPECT_WK_STREQ(fetchedInfo.request.URL.host, "host3");
+                    done = true;
+                }];
             }];
         }];
     }];

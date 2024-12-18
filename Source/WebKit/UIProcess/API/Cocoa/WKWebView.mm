@@ -70,7 +70,7 @@
 #import "WKErrorInternal.h"
 #import "WKFindConfiguration.h"
 #import "WKFindResultInternal.h"
-#import "WKFrameInfoPrivate.h"
+#import "WKFrameInfoInternal.h"
 #import "WKHistoryDelegatePrivate.h"
 #import "WKLayoutMode.h"
 #import "WKNSData.h"
@@ -2824,6 +2824,16 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKCONTENTVIEW)
         for (auto& data : vector)
             [set addObject:wrapper(API::FrameTreeNode::create(WTFMove(data), page.get())).get()];
         completionHandler(set.get());
+    });
+}
+
+- (void)_frameInfoFromHandle:(_WKFrameHandle *)handle completionHandler:(void (^)(WKFrameInfo *))completionHandler
+{
+    auto frameID = handle->_frameHandle->frameID();
+    if (!frameID)
+        completionHandler(nil);
+    _page->getFrameInfo(*frameID, [completionHandler = makeBlockPtr(completionHandler)] (auto* frameInfo) {
+        completionHandler(wrapper(frameInfo));
     });
 }
 

@@ -61,6 +61,7 @@ class Error;
 class FindClient;
 class FindMatchesClient;
 class FormClient;
+class FrameInfo;
 class FullscreenClient;
 class HistoryClient;
 class HitTestResult;
@@ -711,6 +712,7 @@ public:
 
     void getAllFrames(CompletionHandler<void(FrameTreeNodeData&&)>&&);
     void getAllFrameTrees(CompletionHandler<void(Vector<FrameTreeNodeData>&&)>&&);
+    void getFrameInfo(WebCore::FrameIdentifier, CompletionHandler<void(API::FrameInfo*)>&&);
 
 #if ENABLE(REMOTE_INSPECTOR)
     void setIndicating(bool);
