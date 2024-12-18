@@ -1949,9 +1949,6 @@ webkit.org/b/283144 [ Sequoia ] http/tests/storageAccess/request-and-grant-acces
 
 webkit.org/b/283210 http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavailable.html [ Pass Failure ]
 
-# webkit.org/b/283368 [macOS Debug ] fast/css/view-transitions-hide-under-page-background-color.html is a flaky crash (flaky in EWS)
-[ Sonoma+ Debug ] fast/css/view-transitions-hide-under-page-background-color.html [ Pass Crash ]
-
 webkit.org/b/283596 [ Sequoia+ Debug ] ipc/cfnetwork-crashes-with-string-to-string-http-headers.html [ Skip ]
 
 webkit.org/b/284511 [ Release ] imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-Error.https.window.html [ Pass Failure ]
