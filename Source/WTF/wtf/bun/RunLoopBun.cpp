@@ -1,7 +1,6 @@
 #include "config.h"
 #include <wtf/RunLoop.h>
 
-
 namespace WTF {
 
 // Functions exported by Timer.zig
@@ -20,45 +19,54 @@ RunLoop::TimerBase::TimerBase(Ref<RunLoop>&& loop)
 {
 }
 
+// Bun might start a JSC::VM without intending to create a Timer.
+// An example case is bytecode caching.
+// In such cases, we should avoid calling the function.
+
 RunLoop::TimerBase::~TimerBase()
 {
     if (&WTFTimer__deinit) {
-        ASSERT(m_zigTimer);
-        WTFTimer__deinit(m_zigTimer);
+        if (m_zigTimer)
+            WTFTimer__deinit(m_zigTimer);
     }
 }
 
-void RunLoop::TimerBase::stop() {
+void RunLoop::TimerBase::stop()
+{
     if (&WTFTimer__cancel) {
-        ASSERT(m_zigTimer);
-        WTFTimer__cancel(m_zigTimer);
+        if (m_zigTimer)
+            WTFTimer__cancel(m_zigTimer);
     }
 }
 
-bool RunLoop::TimerBase::isActive() const {
+bool RunLoop::TimerBase::isActive() const
+{
     if (&WTFTimer__isActive) {
-        ASSERT(m_zigTimer);
-        return WTFTimer__isActive(m_zigTimer);
+        if (m_zigTimer)
+            return WTFTimer__isActive(m_zigTimer);
     }
     return false;
 }
 
-Seconds RunLoop::TimerBase::secondsUntilFire() const {
+Seconds RunLoop::TimerBase::secondsUntilFire() const
+{
     if (&WTFTimer__secondsUntilTimer) {
-        ASSERT(m_zigTimer);
-        return Seconds(WTFTimer__secondsUntilTimer(m_zigTimer));
+        if (m_zigTimer)
+            return Seconds(WTFTimer__secondsUntilTimer(m_zigTimer));
     }
     return -1.0_s;
 }
 
-void RunLoop::TimerBase::start(Seconds interval, bool repeat) {
+void RunLoop::TimerBase::start(Seconds interval, bool repeat)
+{
     if (&WTFTimer__update) {
-        ASSERT(m_zigTimer);
-        WTFTimer__update(m_zigTimer, interval.value(), repeat);
+        if (m_zigTimer)
+            WTFTimer__update(m_zigTimer, interval.value(), repeat);
     }
 }
 
-extern "C" void WTFTimer__fire(RunLoop::TimerBase* timer) {
+extern "C" void WTFTimer__fire(RunLoop::TimerBase* timer)
+{
     timer->fired();
 }
 
@@ -72,20 +80,24 @@ RunLoop::~RunLoop()
 {
 }
 
-void RunLoop::run() {
+void RunLoop::run()
+{
     ASSERT_NOT_REACHED();
 }
 
-void RunLoop::stop() {
+void RunLoop::stop()
+{
     ASSERT_NOT_REACHED();
 }
 
-void RunLoop::wakeUp() {
+void RunLoop::wakeUp()
+{
     ASSERT_NOT_REACHED();
 }
 
-RunLoop::CycleResult RunLoop::cycle(RunLoopMode mode) {
-    (void) mode;
+RunLoop::CycleResult RunLoop::cycle(RunLoopMode mode)
+{
+    (void)mode;
     ASSERT_NOT_REACHED();
     return RunLoop::CycleResult::Stop;
 }
