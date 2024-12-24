@@ -435,6 +435,7 @@ public:
     JS_EXPORT_PRIVATE size_t protectedGlobalObjectCount();
     JS_EXPORT_PRIVATE std::unique_ptr<TypeCountSet> protectedObjectTypeCounts();
     JS_EXPORT_PRIVATE std::unique_ptr<TypeCountSet> objectTypeCounts();
+    JS_EXPORT_PRIVATE size_t arrayBufferSize();
 
     HashSet<MarkedVectorBase*>& markListSet();
     void addMarkedJSValueRefArray(MarkedJSValueRefArray*);

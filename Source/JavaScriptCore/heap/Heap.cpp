@@ -985,6 +985,11 @@ size_t Heap::objectCount()
     return m_objectSpace.objectCount();
 }
 
+size_t Heap::arrayBufferSize()
+{
+    return m_arrayBuffers.size();
+}
+
 size_t Heap::extraMemorySize()
 {
     // FIXME: Change this to use SaturatedArithmetic when available.
