@@ -33,23 +33,6 @@
 
 namespace JSC {
 
-JSValue call(JSGlobalObject* globalObject, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
-{
-    return call(globalObject, functionObject, functionObject, args, errorMessage);
-}
-
-JSValue call(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto callData = JSC::getCallData(functionObject);
-    if (callData.type == CallData::Type::None)
-        return throwTypeError(globalObject, scope, errorMessage);
-
-    RELEASE_AND_RETURN(scope, call(globalObject, functionObject, callData, thisValue, args));
-}
-
 JSValue call(JSGlobalObject* globalObject, JSValue functionObject, const CallData& callData, JSValue thisValue, const ArgList& args)
 {
     VM& vm = globalObject->vm();
@@ -69,20 +52,6 @@ JSValue call(JSGlobalObject* globalObject, JSValue functionObject, const CallDat
     }
     RELEASE_ASSERT(result);
     return result;
-}
-
-JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason reason, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
-{
-    VM& vm = globalObject->vm();
-    ScriptProfilingScope profilingScope(vm.deprecatedVMEntryGlobalObject(globalObject), reason);
-    return call(globalObject, functionObject, args, errorMessage);
-}
-
-JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason reason, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
-{
-    VM& vm = globalObject->vm();
-    ScriptProfilingScope profilingScope(vm.deprecatedVMEntryGlobalObject(globalObject), reason);
-    return call(globalObject, functionObject, thisValue, args, errorMessage);
 }
 
 JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason reason, JSValue functionObject, const CallData& callData, JSValue thisValue, const ArgList& args)
