@@ -70,6 +70,10 @@ JS_EXPORT_PRIVATE JSValue call(JSGlobalObject*, JSValue functionObject, JSValue 
 JS_EXPORT_PRIVATE JSValue call(JSGlobalObject*, JSValue functionObject, const CallData&, JSValue thisValue, const ArgList&);
 JS_EXPORT_PRIVATE JSValue call(JSGlobalObject*, JSValue functionObject, const CallData&, JSValue thisValue, const ArgList&, NakedPtr<Exception>& returnedException);
 
+// Convenience wrapper so you don't need to deal with CallData unless you are going to use it.
+JS_EXPORT_PRIVATE JSValue profiledCall(JSGlobalObject*, ProfilingReason, JSValue functionObject, const ArgList&, ASCIILiteral errorMessage);
+JS_EXPORT_PRIVATE JSValue profiledCall(JSGlobalObject*, ProfilingReason, JSValue functionObject, JSValue thisValue, const ArgList&, ASCIILiteral errorMessage);
+
 JS_EXPORT_PRIVATE JSValue profiledCall(JSGlobalObject*, ProfilingReason, JSValue functionObject, const CallData&, JSValue thisValue, const ArgList&);
 JS_EXPORT_PRIVATE JSValue profiledCall(JSGlobalObject*, ProfilingReason, JSValue functionObject, const CallData&, JSValue thisValue, const ArgList&, NakedPtr<Exception>& returnedException);
 

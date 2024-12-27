@@ -71,6 +71,20 @@ JSValue call(JSGlobalObject* globalObject, JSValue functionObject, const CallDat
     return result;
 }
 
+JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason reason, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
+{
+    VM& vm = globalObject->vm();
+    ScriptProfilingScope profilingScope(vm.deprecatedVMEntryGlobalObject(globalObject), reason);
+    return call(globalObject, functionObject, args, errorMessage);
+}
+
+JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason reason, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
+{
+    VM& vm = globalObject->vm();
+    ScriptProfilingScope profilingScope(vm.deprecatedVMEntryGlobalObject(globalObject), reason);
+    return call(globalObject, functionObject, thisValue, args, errorMessage);
+}
+
 JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason reason, JSValue functionObject, const CallData& callData, JSValue thisValue, const ArgList& args)
 {
     VM& vm = globalObject->vm();
