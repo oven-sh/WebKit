@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
@@ -83,7 +83,7 @@ PreciseAllocation* PreciseAllocation::tryCreate(JSC::Heap& heap, size_t size, Su
 
     size_t adjustedAlignmentAllocationSize = headerSize() + size + halfAlignment + cacheLineAdjustment;
     static_assert(halfAlignment == 8, "We assume that memory returned by malloc has alignment >= 8.");
-    
+
     // We must use tryAllocateMemory instead of tryAllocateAlignedMemory since we want to use "realloc" feature.
     void* space = subspace->alignedMemoryAllocator()->tryAllocateMemory(adjustedAlignmentAllocationSize);
     if (!space)
@@ -106,6 +106,10 @@ PreciseAllocation* PreciseAllocation::tryCreate(JSC::Heap& heap, size_t size, Su
 
     if (UNLIKELY(scribbleFreeCells()))
         scribble(space, size);
+
+#if USE(JSC_THROUGHPUT_GC)
+    heap.m_oldGenBytesAllocatedDirectly.fetch_add(size, std::memory_order_relaxed);
+#endif
     return new (NotNull, space) PreciseAllocation(heap, size, subspace, indexInSpace, adjustment);
 }
 
@@ -154,12 +158,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return newAllocation;
 }
 
-
 PreciseAllocation* PreciseAllocation::tryCreateForLowerTierPrecise(JSC::Heap& heap, size_t size, Subspace* subspace, uint8_t lowerTierPreciseIndex)
 {
     if constexpr (validateDFGDoesGC)
         heap.vm().verifyCanGC();
-
 
     size_t adjustedAlignmentAllocationSize = headerSize() + size + halfAlignment + cacheLineAdjustment;
     static_assert(halfAlignment == 8, "We assume that memory returned by malloc has alignment >= 8.");
@@ -186,6 +188,9 @@ PreciseAllocation* PreciseAllocation::tryCreateForLowerTierPrecise(JSC::Heap& he
         scribble(space, size);
     PreciseAllocation* preciseAllocation = new (NotNull, space) PreciseAllocation(heap, size, subspace, 0, adjustment);
     preciseAllocation->m_lowerTierPreciseIndex = lowerTierPreciseIndex;
+#if USE(JSC_THROUGHPUT_GC)
+    heap.m_oldGenBytesAllocatedDirectly.fetch_add(size, std::memory_order_relaxed);
+#endif
     return preciseAllocation;
 }
 
@@ -205,6 +210,9 @@ PreciseAllocation* PreciseAllocation::reuseForLowerTierPrecise()
     PreciseAllocation* preciseAllocation = new (NotNull, space) PreciseAllocation(heap, size, subspace, 0, adjustment);
     preciseAllocation->m_lowerTierPreciseIndex = lowerTierPreciseIndex;
     preciseAllocation->m_hasValidCell = false;
+#if USE(JSC_THROUGHPUT_GC)
+    heap.m_oldGenBytesAllocatedDirectly.fetch_add(size, std::memory_order_relaxed);
+#endif
     return preciseAllocation;
 }
 

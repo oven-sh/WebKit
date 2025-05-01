@@ -84,6 +84,7 @@ set(WTF_PUBLIC_HEADERS
     Expected.h
     ExperimentalFeatureNames.h
     ExportMacros.h
+    ExponentialMovingAverage.h
     FailureAction.h
     FastBitVector.h
     FastFloat.h
@@ -545,6 +546,7 @@ set(WTF_SOURCES
     DateMath.cpp
     DebugHeap.cpp
     EmbeddedFixedVector.cpp
+    ExponentialMovingAverage.cpp
     FastBitVector.cpp
     FastFloat.cpp
     FastMalloc.cpp

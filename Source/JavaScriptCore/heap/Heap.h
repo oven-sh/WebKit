@@ -61,6 +61,10 @@
 #include "WeakSet.h"
 #endif
 
+#if USE(JSC_THROUGHPUT_GC)
+#include <wtf/ExponentialMovingAverage.h>
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -977,6 +981,18 @@ private:
     Ref<AutomaticThreadCondition> m_threadCondition; // The mutator must not wait on this. It would cause a deadlock.
     RefPtr<AutomaticThread> m_thread;
 
+#if USE(JSC_THROUGHPUT_GC)
+public:
+    MonotonicTime m_lastEdenGCEndTime;
+    WTF::ExponentialMovingAverage m_edenAllocationRateEWMA { 0.0 }; // bytes/ms
+    WTF::ExponentialMovingAverage m_edenCollectionSpeedEWMA { 0.0 }; // bytes/ms
+    size_t m_edenBytesAllocatedSinceLastEdenGC { 0 };
+    std::atomic<size_t> m_oldGenBytesAllocatedDirectly { 0 };
+    size_t m_edenAllocationLimit { 0 };
+private:
+#endif
+
+
 #if USE(BUN_JSC_ADDITIONS)
     WeakSet m_largeStringWeakSet;
 #endif
@@ -987,6 +1003,11 @@ private:
     MonotonicTime m_lastGCEndTime;
     MonotonicTime m_currentGCStartTime;
     MonotonicTime m_lastFullGCEndTime;
+#if USE(JSC_THROUGHPUT_GC)
+    MonotonicTime m_lastFullGCEndTimeForMetrics; // Separate for rate calculation
+    WTF::ExponentialMovingAverage m_oldGenAllocationRateEWMA { 0.0 }; // bytes/ms
+    WTF::ExponentialMovingAverage m_fullCollectionSpeedEWMA { 0.0 }; // bytes/ms
+#endif
     Seconds m_totalGCTime;
     
     uintptr_t m_barriersExecuted { 0 };

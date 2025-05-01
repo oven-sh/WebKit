@@ -91,6 +91,16 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
     v(Bool, useDOMJIT, is64Bit(), Normal, "allows the DOMJIT to be used if true"_s) \
     \
+    v(Bool, throughputGC, true, Normal, "Use adaptive GC triggering and heap sizing based on application throughput."_s) \
+    v(Double, targetEdenMutatorUtilization, 0.95, Normal, "Target mutator utilization (1.0 - GC time fraction) for Eden collections."_s) \
+    v(Double, edenAllocationRateSmoothingAlpha, 0.3, Normal, "Smoothing factor (alpha) for Eden allocation rate EWMA."_s) \
+    v(Double, edenCollectionSpeedSmoothingAlpha, 0.3, Normal, "Smoothing factor (alpha) for Eden collection speed EWMA."_s) \
+    v(Double, targetFullGCMutatorUtilization, 0.97, Normal, "Target mutator utilization for Full collections."_s) \
+    v(Double, oldGenAllocationRateSmoothingAlpha, 0.3, Normal, "Smoothing factor (alpha) for Old Gen allocation rate EWMA."_s) \
+    v(Double, fullCollectionSpeedSmoothingAlpha, 0.3, Normal, "Smoothing factor (alpha) for Full collection speed EWMA."_s) \
+    v(Double, minHeapGrowthFactor, 1.1, Normal, "Minimum heap growth factor after Full GC."_s) \
+    v(Double, maxHeapGrowthFactor, 4.0, Normal, "Maximum heap growth factor after Full GC."_s) \
+    \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \
     /* Bun Features */\
     v(Bool, useV8DateParser, false, Normal, nullptr) \

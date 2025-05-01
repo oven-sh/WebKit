@@ -2518,10 +2518,46 @@ void Heap::updateAllocationLimits()
         // To avoid pathological GC churn in very small and very large heaps, we set
         // the new allocation limit based on the current size of the heap, with a
         // fixed minimum.
+#if USE(JSC_THROUGHPUT_GC)
+        if (Options::throughputGC()) {
+            double dynamicGrowingFactor = Options::minHeapGrowthFactor();
+            double oldGenAllocationRate = m_oldGenAllocationRateEWMA.value();
+            double fullCollectionSpeed = m_fullCollectionSpeedEWMA.value();
+            
+            if (oldGenAllocationRate > 0 && fullCollectionSpeed > 0) {
+                double speedRatio = fullCollectionSpeed / oldGenAllocationRate;
+                double targetUtil = Options::targetFullGCMutatorUtilization();
+                // Avoid division by zero or negative denominator which can happen if speedRatio is too low
+                double denominator = speedRatio * (1.0 - targetUtil) - targetUtil;
+                if (denominator > 0) {
+                    dynamicGrowingFactor = speedRatio * (1.0 - targetUtil) / denominator;
+                    dynamicGrowingFactor = std::clamp(dynamicGrowingFactor, Options::minHeapGrowthFactor(), Options::maxHeapGrowthFactor());
+                }
+            }
+            
+            size_t targetOldGenSize = static_cast<size_t>(static_cast<double>(currentHeapSize) * dynamicGrowingFactor);
+            
+            // The new maxHeapSize is the target old gen size plus the current eden size.
+            // We update maxEdenSize below based on the final maxHeapSize
+            m_maxHeapSize = targetOldGenSize + m_maxEdenSize;
+            m_maxHeapSize = std::max(m_maxHeapSize, minHeapSize(m_heapType, m_ramSize));
+            
+            dataLogLnIf(verbose, "Full Adaptive: oldGenRate=", oldGenAllocationRate, 
+                " fullSpeed=", fullCollectionSpeed, 
+                " dynamicFactor=", dynamicGrowingFactor, 
+                " targetOldGen=", targetOldGenSize, 
+                " tempMaxHeap=", m_maxHeapSize);
+        } else {
+            // Original non-adaptive logic
+            if (!m_isInOpportunisticTask)
+                m_maxHeapSize = std::max(minHeapSize(m_heapType, m_ramSize), proportionalHeapSize(currentHeapSize, m_ramSize));
+        }
+#else
         if (!m_isInOpportunisticTask)
             m_maxHeapSize = std::max(minHeapSize(m_heapType, m_ramSize), proportionalHeapSize(currentHeapSize, m_ramSize));
+#endif
         dataLogLnIf(verbose, "Full: maxHeapSize = ", m_maxHeapSize);
-        m_maxEdenSize = m_maxHeapSize - currentHeapSize;
+        m_maxEdenSize = m_maxHeapSize > currentHeapSize ? m_maxHeapSize - currentHeapSize : 0; // Recalculate based on final maxHeapSize
         dataLogLnIf(verbose, "Full: maxEdenSize = ", m_maxEdenSize);
         m_sizeAfterLastFullCollect = currentHeapSize;
         dataLogLnIf(verbose, "Full: sizeAfterLastFullCollect = ", currentHeapSize);
@@ -2544,6 +2580,44 @@ void Heap::updateAllocationLimits()
         dataLogLnIf(verbose, "Eden: maxHeapSize = ", m_maxHeapSize);
         m_maxEdenSize = m_maxHeapSize - currentHeapSize;
         dataLogLnIf(verbose, "Eden: maxEdenSize = ", m_maxEdenSize);
+        
+#if USE(JSC_THROUGHPUT_GC)
+        // Calculate new eden limit after eden collection if adaptive GC is enabled
+        if (Options::throughputGC()) {
+            size_t minEdenGrowthStep = 1 * MB; // Minimum growth value
+            size_t newEdenLimit;
+            double edenAllocationRate = m_edenAllocationRateEWMA.value();
+            double edenCollectionSpeed = m_edenCollectionSpeedEWMA.value();
+            
+            if (edenCollectionSpeed > std::numeric_limits<double>::epsilon() && edenAllocationRate > std::numeric_limits<double>::epsilon()) {
+                double targetUtil = Options::targetEdenMutatorUtilization();
+                double speedRatio = edenCollectionSpeed / edenAllocationRate;
+                double denominator = speedRatio * (1.0 - targetUtil) - targetUtil;
+                double dynamicGrowingFactor = Options::minHeapGrowthFactor(); // Default growth if formula fails
+                if (denominator > std::numeric_limits<double>::epsilon()) {
+                    dynamicGrowingFactor = speedRatio * (1.0 - targetUtil) / denominator;
+                    // Use full GC growth factors for eden limit growth clamp for simplicity
+                    dynamicGrowingFactor = std::clamp(dynamicGrowingFactor, Options::minHeapGrowthFactor(), Options::maxHeapGrowthFactor());
+                }
+                
+                // Apply factor to the size *after* this Eden collection
+                size_t limitBasedOnRate = static_cast<size_t>(static_cast<double>(currentHeapSize) * dynamicGrowingFactor);
+                newEdenLimit = std::max(currentHeapSize + minEdenGrowthStep, limitBasedOnRate);
+                dataLogLnIf(verbose, "Eden Adaptive: edenRate=", edenAllocationRate, 
+                    " edenSpeed=", edenCollectionSpeed, 
+                    " dynamicFactor=", dynamicGrowingFactor, 
+                    " limitBasedOnRate=", limitBasedOnRate);
+            } else {
+                newEdenLimit = currentHeapSize + minEdenGrowthStep; // Fallback growth
+                dataLogLnIf(verbose, "Eden Adaptive: Fallback growth");
+            }
+            
+            m_edenAllocationLimit = std::min(newEdenLimit, m_maxEdenSize); // Clamp by the overall eden size limit
+            dataLogLnIf(verbose || Options::logGC(), "Eden: newEdenLimit = ", newEdenLimit, 
+                ", m_edenAllocationLimit = ", m_edenAllocationLimit);
+        }
+#endif
+        
         if (m_fullActivityCallback) {
             ASSERT(currentHeapSize >= m_sizeAfterLastFullCollect);
             m_fullActivityCallback->didAllocate(*this, currentHeapSize - m_sizeAfterLastFullCollect);
@@ -2577,10 +2651,71 @@ void Heap::didFinishCollection()
     ASSERT(externalMemorySize() <= extraMemorySize());
 #endif
 
+#if USE(JSC_THROUGHPUT_GC)
+    if (Options::throughputGC()) {
+        // Update the throughputGC rates and collection speeds metrics for adaptive GC
+        MonotonicTime now = m_afterGC;
+        
+        if (scope == CollectionScope::Eden) {
+            // Calculate allocation rate for Eden
+            Seconds timeSinceLastEdenGC = m_lastEdenGCEndTime ? now - m_lastEdenGCEndTime : 0_s;
+            if (timeSinceLastEdenGC.milliseconds() > 0) {
+                double currentEdenAllocationRate = static_cast<double>(m_edenBytesAllocatedSinceLastEdenGC) / timeSinceLastEdenGC.milliseconds();
+                m_edenAllocationRateEWMA.update(currentEdenAllocationRate, Options::edenAllocationRateSmoothingAlpha());
+            } else {
+                m_edenAllocationRateEWMA.reset(0); // Avoid NaN if time is zero
+            }
+            
+            // Calculate collection speed for Eden
+            size_t bytesCollected = m_sizeBeforeLastEdenCollect > m_sizeAfterLastEdenCollect ? 
+                m_sizeBeforeLastEdenCollect - m_sizeAfterLastEdenCollect : 0;
+                
+            if (m_lastEdenGCLength.milliseconds() > 0) {
+                double currentEdenCollectionSpeed = static_cast<double>(bytesCollected) / m_lastEdenGCLength.milliseconds();
+                m_edenCollectionSpeedEWMA.update(currentEdenCollectionSpeed, Options::edenCollectionSpeedSmoothingAlpha());
+            } else {
+                m_edenCollectionSpeedEWMA.reset(0);
+            }
+            
+            // Update tracking variables for next time
+            m_lastEdenGCEndTime = now;
+            m_edenBytesAllocatedSinceLastEdenGC = 0;
+            
+        } else if (scope == CollectionScope::Full) {
+            // Calculate allocation/promotion rate for Old Generation
+            Seconds timeSinceLastFullGC = m_lastFullGCEndTimeForMetrics ? now - m_lastFullGCEndTimeForMetrics : 0_s;
+            if (timeSinceLastFullGC.milliseconds() > 0) {
+                // Estimate promoted bytes using the difference in heap sizes after the last Eden and current Full GC.
+                size_t promotedBytesApprox = m_sizeAfterLastFullCollect > m_sizeAfterLastEdenCollect ?
+                    m_sizeAfterLastFullCollect - m_sizeAfterLastEdenCollect : 0;
+
+                // Add bytes allocated directly to the old generation since the last Full GC.
+                size_t bytesAllocatedOrPromotedOldGen = m_oldGenBytesAllocatedDirectly.load(std::memory_order_relaxed) +
+                    promotedBytesApprox;
+
+                double currentOldGenAllocationRate = static_cast<double>(bytesAllocatedOrPromotedOldGen) /
+                    timeSinceLastFullGC.milliseconds();
+
+                m_oldGenAllocationRateEWMA.update(currentOldGenAllocationRate, Options::oldGenAllocationRateSmoothingAlpha());
+            } else {
+                m_oldGenAllocationRateEWMA.reset(0);
+            }
+
+            // Reset the direct old gen allocation counter *after* using its value for the rate calculation.
+            m_oldGenBytesAllocatedDirectly.store(0, std::memory_order_relaxed); // M
+            
+            // Update tracking variables for next time
+            m_lastFullGCEndTimeForMetrics = now;
+
+        }
+    }
+#endif
+
     if (HeapProfiler* heapProfiler = vm().heapProfiler()) {
         gatherExtraHeapData(*heapProfiler);
         removeDeadHeapSnapshotNodes(*heapProfiler);
     }
+
 
     if (UNLIKELY(m_verifier))
         m_verifier->endGC();
@@ -2637,6 +2772,9 @@ void Heap::didAllocate(size_t bytes)
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversidedAllocationThisCycle = bytes;
     } else
+#if USE(JSC_THROUGHPUT_GC)
+        m_edenBytesAllocatedSinceLastEdenGC += bytes;
+#endif
         m_nonOversizedBytesAllocatedThisCycle += bytes;
     performIncrement(bytes);
 }
@@ -2865,57 +3003,92 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
             stopIfNecessary();
     }
     
-    auto shouldRequestGC = [&] () -> bool {
-        bool logRequestGC = false;
-        // Don't log if we already have a request pending or if we have to come back later so we don't flood dataFile.
-        if (UNLIKELY(Options::logGC()))
-            logRequestGC = m_requests.isEmpty() && !deferralContext && !isDeferred();
-#if !USE(BUN_JSC_ADDITIONS)
-        if (UNLIKELY(Options::gcMaxHeapSize())) {
-            size_t bytesAllocatedThisCycle = totalBytesAllocatedThisCycle();
-            if (bytesAllocatedThisCycle <= Options::gcMaxHeapSize())
-                return false;
-            dataLogLnIf(logRequestGC, "Requesting GC because bytes allocated this cycle: ", bytesAllocatedThisCycle, " exceed Options::gcMaxHeapSize(): ", Options::gcMaxHeapSize());
-            return true;
-        }
-#endif
 
-        size_t bytesAllowedThisCycle = m_maxEdenSize;
+    // --- Define the two trigger logic lambdas ---
 
-        bool isCritical = false;
+    // Common setup needed by both lambdas
+    bool logRequestGC = false;
+    if (UNLIKELY(Options::logGC()))
+        logRequestGC = m_requests.isEmpty() && !deferralContext && !isDeferred();
+    bool isCritical = false;
 #if USE(BMALLOC_MEMORY_FOOTPRINT_API)
-        isCritical = overCriticalMemoryThreshold();
+    isCritical = overCriticalMemoryThreshold();
+#endif
+    size_t bytesAllocatedThisCycle = totalBytesAllocatedThisCycle();
+
+#if USE(JSC_THROUGHPUT_GC)
+    auto shouldRequestGCAdaptive = [&] () -> bool {
+        // Calculate the effective Eden limit for this check
+        size_t edenLimit = (m_edenAllocationLimit > 0) ? m_edenAllocationLimit : m_maxEdenSize;
         if (isCritical)
-            bytesAllowedThisCycle = std::min(m_maxEdenSizeWhenCritical, bytesAllowedThisCycle);
-#endif
+            edenLimit = std::min(m_maxEdenSizeWhenCritical, edenLimit);
 
-        size_t bytesAllocatedThisCycle = totalBytesAllocatedThisCycle();
+        // Calculate the safety cap based on max possible Eden size
+        size_t safetyCap = m_maxEdenSize;
+         if (isCritical)
+            safetyCap = std::min(m_maxEdenSizeWhenCritical, safetyCap);
 
-#if USE(BUN_JSC_ADDITIONS)
-        if (Options::gcMaxHeapSize()) {
-            if (bytesAllocatedThisCycle > Options::gcMaxHeapSize()) {
-                dataLogLnIf(logRequestGC, "Requesting GC because bytes allocated this cycle: ", bytesAllocatedThisCycle, " exceed Options::gcMaxHeapSize(): ", Options::gcMaxHeapSize());
-                return true;
-            }
-        }
-#endif
+        bool limitExceeded = false;
+        // Primary check: Eden allocation vs calculated limit
+        if (m_edenBytesAllocatedSinceLastEdenGC >= edenLimit)
+            limitExceeded = true;
+        // Safety check: Total allocation vs max possible Eden size
+        else if (bytesAllocatedThisCycle > safetyCap)
+            limitExceeded = true;
 
-        if (bytesAllocatedThisCycle <= bytesAllowedThisCycle)
+        if (!limitExceeded)
             return false;
 
-        // We don't want to GC if the last oversized allocation makes up too much of the memory allocated this cycle since it's likely
-        //  that object is still live and doesn't give us much indication about how much memory we could actually reclaim. That said,
-        // if the system is cricital or we have a small heap we want to be very agressive about reclaiming memory to reduce overall
-        // pressure on the system.
+        // Apply oversized allocation heuristic
         if (!isCritical && m_heapType == HeapType::Large) {
             if (static_cast<double>(m_lastOversidedAllocationThisCycle) / bytesAllocatedThisCycle > 1.0 / 3.0)
                 return false;
         }
 
-        dataLogLnIf(logRequestGC, "Requesting GC because bytes allocated this cycle: ", bytesAllocatedThisCycle, " exceed bytes allowed: ", bytesAllowedThisCycle, ConditionalDump(isCritical, " (critical)"), " normal bytes: ", m_nonOversizedBytesAllocatedThisCycle, " oversized bytes: ", m_oversizedBytesAllocatedThisCycle, " last oversized: ", m_lastOversidedAllocationThisCycle);
+        dataLogLnIf(logRequestGC, "Requesting Adaptive GC because bytes allocated since last Eden GC: ", m_edenBytesAllocatedSinceLastEdenGC, " exceed dynamic limit: ", edenLimit, " or total allocation ", bytesAllocatedThisCycle, " exceeds safety cap: ", safetyCap, ConditionalDump(isCritical, " (critical)"), " normal bytes: ", m_nonOversizedBytesAllocatedThisCycle, " oversized bytes: ", m_oversizedBytesAllocatedThisCycle, " last oversized: ", m_lastOversidedAllocationThisCycle);
         return true;
     };
-    if (!shouldRequestGC())
+#endif
+
+    auto shouldRequestGCDefault = [&] () -> bool {
+        // Default logic uses maxEdenSize as the limit
+        size_t bytesAllowedThisCycle = m_maxEdenSize;
+        if (isCritical)
+            bytesAllowedThisCycle = std::min(m_maxEdenSizeWhenCritical, bytesAllowedThisCycle);
+
+#if !USE(BUN_JSC_ADDITIONS) // Keep original Bun behavior separate if needed
+        // Optional maxHeapSize check (only for non-Bun or if desired)
+        if (UNLIKELY(Options::gcMaxHeapSize())) {
+            if (bytesAllocatedThisCycle > Options::gcMaxHeapSize()) {
+                 dataLogLnIf(logRequestGC, "Requesting Default GC because bytes allocated this cycle: ", bytesAllocatedThisCycle, " exceed Options::gcMaxHeapSize(): ", Options::gcMaxHeapSize());
+                return true;
+            }
+        }
+#endif
+
+        if (bytesAllocatedThisCycle < bytesAllowedThisCycle)
+            return false;
+
+        // Apply oversized allocation heuristic
+        if (!isCritical && m_heapType == HeapType::Large) {
+            if (static_cast<double>(m_lastOversidedAllocationThisCycle) / bytesAllocatedThisCycle > 1.0 / 3.0)
+                return false;
+        }
+
+        dataLogLnIf(logRequestGC, "Requesting Default GC because bytes allocated this cycle: ", bytesAllocatedThisCycle, " exceed bytes allowed: ", bytesAllowedThisCycle, ConditionalDump(isCritical, " (critical)"), " normal bytes: ", m_nonOversizedBytesAllocatedThisCycle, " oversized bytes: ", m_oversizedBytesAllocatedThisCycle, " last oversized: ", m_lastOversidedAllocationThisCycle);
+        return true;
+    };
+
+    bool doRequestGC = false;
+#if USE(JSC_THROUGHPUT_GC)
+    if (Options::throughputGC())
+        doRequestGC = shouldRequestGCAdaptive();
+    else
+        doRequestGC = shouldRequestGCDefault();
+#else
+    doRequestGC = shouldRequestGCDefault();
+#endif
+    if (!doRequestGC)
         return;
 
     if (deferralContext)

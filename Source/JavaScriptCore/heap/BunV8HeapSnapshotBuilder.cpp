@@ -562,7 +562,7 @@ std::optional<BunV8HeapSnapshotBuilder::TraceLocation> BunV8HeapSnapshotBuilder:
     return { location };
 }
 
-void BunV8HeapSnapshotBuilder::TraceLocation::sourcemap(VM& vm)
+void BunV8HeapSnapshotBuilder::TraceLocation::sourcemap(VM&)
 {
     if (scriptName.isEmpty()) {
         return;
