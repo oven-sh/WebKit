@@ -32,6 +32,7 @@
 #include "RenderTableInlines.h"
 #include "RenderTableSection.h"
 #include "RenderView.h"
+#include "StylePreferredSize.h"
 
 namespace WebCore {
 
@@ -684,16 +685,16 @@ void AutoTableLayout::layout()
         }
     }
 
-    // If we have overallocated, reduce every cell according to the difference between desired width and minwidth
+    // If we have over-allocated, reduce every cell according to the difference between desired width and min-width
     // this seems to produce to the pixel exact results with IE. Wonder if some of this also holds for width distributing.
     // Need to reduce cells with the following prioritization:
     // This is basically the reverse of how we grew the cells.
     if (available < 0)
-        available = shrinkCellWidth(LengthType::Auto, available);
+        available = shrinkCellWidthForType<CSS::Keyword::Auto>(available);
     if (available < 0)
-        available = shrinkCellWidth(LengthType::Fixed, available);
+        available = shrinkCellWidthForType<Style::PreferredSize::Fixed>(available);
     if (available < 0)
-        available = shrinkCellWidth(LengthType::Percent, available);
+        available = shrinkCellWidthForType<Style::PreferredSize::Percentage>(available);
 
     LayoutUnit pos;
     for (size_t i = 0; i < nEffCols; ++i) {
@@ -703,21 +704,21 @@ void AutoTableLayout::layout()
     m_table->setColumnPosition(m_table->columnPositions().size() - 1, pos);
 }
 
-float AutoTableLayout::shrinkCellWidth(const LengthType& lengthType, float available)
+template<typename T> float AutoTableLayout::shrinkCellWidthForType(float available)
 {
     unsigned nEffCols = m_table->numEffCols();
     float logicalWidthBeyondMin = 0;
     for (unsigned i = nEffCols; i; ) {
         --i;
         auto& logicalWidth = m_layoutStruct[i].effectiveLogicalWidth;
-        if (logicalWidth.type() == lengthType)
+        if (WTF::holdsAlternative<T>(logicalWidth))
             logicalWidthBeyondMin += m_layoutStruct[i].computedLogicalWidth - m_layoutStruct[i].effectiveMinLogicalWidth;
     }
 
     for (unsigned i = nEffCols; i && logicalWidthBeyondMin > 0; ) {
         --i;
         auto& logicalWidth = m_layoutStruct[i].effectiveLogicalWidth;
-        if (logicalWidth.type() == lengthType) {
+        if (WTF::holdsAlternative<T>(logicalWidth)) {
             float minMaxDiff = m_layoutStruct[i].computedLogicalWidth - m_layoutStruct[i].effectiveMinLogicalWidth;
             float reduce = available * minMaxDiff / logicalWidthBeyondMin;
             m_layoutStruct[i].computedLogicalWidth += reduce;

@@ -385,7 +385,7 @@ void CSSToStyleMap::mapAnimationName(Animation& layer, const CSSValue& value)
         return;
 
     if (primitiveValue->valueID() == CSSValueNone)
-        layer.setIsNoneAnimation(true);
+        layer.setName(Animation::initialName());
     else
         layer.setName({ AtomString { primitiveValue->stringValue() }, m_builderState.styleScopeOrdinal(), primitiveValue->isCustomIdent() });
 }

@@ -38,6 +38,7 @@
 #include "ErrorEvent.h"
 #include "EventNames.h"
 #include "FetchRequestCredentials.h"
+#include "IDBConnectionProxy.h"
 #include "LoaderStrategy.h"
 #include "LocalDOMWindow.h"
 #include "MessageEvent.h"
@@ -45,6 +46,8 @@
 #include "PlatformStrategies.h"
 #include "ScriptExecutionContext.h"
 #include "Settings.h"
+#include "SocketProvider.h"
+#include "UserGestureIndicator.h"
 #include "WebRTCProvider.h"
 #include "Worker.h"
 #include "WorkerInitializationData.h"
@@ -231,8 +234,7 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
         userGestureForwarder = WorkerUserGestureForwarder::create(UserGestureIndicator::currentUserGesture());
 
     postTaskToWorkerGlobalScope([this, protectedThis = Ref { *this }, message = WTFMove(message), userGestureForwarder = WTFMove(userGestureForwarder)](auto& scriptContext) mutable {
-        ASSERT_WITH_SECURITY_IMPLICATION(scriptContext.isWorkerGlobalScope());
-        auto& context = static_cast<DedicatedWorkerGlobalScope&>(scriptContext);
+        auto& context = downcast<DedicatedWorkerGlobalScope>(scriptContext);
         auto* globalObject = context.globalObject();
         if (!globalObject)
             return;

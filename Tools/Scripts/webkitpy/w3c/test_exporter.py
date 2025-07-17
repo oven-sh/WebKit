@@ -52,7 +52,7 @@ EXCLUDED_FILE_SUFFIXES = ['-expected.txt', '-expected.html', '-expected-mismatch
 
 
 class WebPlatformTestExporter(object):
-    def __init__(self, host, options, bugzillaClass=Bugzilla, WPTLinterClass=WPTLinter):
+    def __init__(self, host, options, bugzillaClass=Bugzilla, WPTLinterClass=WPTLinter, WKRepository=None):
         self._host = host
         self._filesystem = host.filesystem
         self._options = options
@@ -65,12 +65,13 @@ class WebPlatformTestExporter(object):
         self._bug = None
 
         issue = None
+        repo_path = WebKitFinder(self._filesystem).webkit_base()
+        self._repository = WKRepository or local.Git(repo_path)
+
         if not self._bug_id:
             if options.attachment_id:
                 self._bug_id = self._bugzilla.bug_id_for_attachment_id(options.attachment_id)  # FIXME: Dependency on webkitpy.bugzilla should be removed when patch workflow is disabled
             elif options.git_commit:
-                repo_path = WebKitFinder(self._filesystem).webkit_base()
-                self._repository = local.Git(repo_path)
                 commit = self._repository.find(options.git_commit)
                 issue = next((issue for issue in commit.issues if isinstance(issue.tracker, bugzilla.Tracker)), None)
                 if not issue:

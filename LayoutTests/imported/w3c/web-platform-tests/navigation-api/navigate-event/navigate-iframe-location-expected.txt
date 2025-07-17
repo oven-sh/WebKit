@@ -1,4 +1,4 @@
 
 
-PASS location API on another window fires navigate event in the target window only
+FAIL location API on another window fires navigate event in the target window only assert_equals: expected (object) null but got (undefined) undefined
 

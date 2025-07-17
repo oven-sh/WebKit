@@ -835,7 +835,7 @@ imported/w3c/web-platform-tests/storage-access-api/storage-access-beyond-cookies
 #http/tests/storageAccess/request-and-grant-access-then-navigate-cross-site-should-not-have-access.html [ Pass Timeout ]
 http/tests/storageAccess/deny-with-prompt-does-not-preserve-gesture.html [ Skip ]
 
-# Enable on appropriate platforms: rdar://140222322
+# rdar://140222322 (Supposed to pass on 2025 OSes (Sequoia-aligned) xx.4+, but failing on debug)
 http/tests/storageAccess/grant-with-prompt-under-general-third-party-cookie-blocking-with-partitioned-cookies.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-third-party-cookies.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-cookies-after-redirect.https.html [ Skip ]
@@ -1975,11 +1975,6 @@ webkit.org/b/284492 [ Sequoia+ ] imported/w3c/web-platform-tests/fetch/api/cors/
 
 webkit.org/b/232282 fast/scrolling/mac/scrollbars/overlay-scrollbar-hovered.html [ Pass Failure ]
 
-# webkit.org/b/288409 [ MacOS iOS ] 3x imported/w3c/web-platform-tests/navigation-api/navigation are consistent failures
-imported/w3c/web-platform-tests/navigation-api/navigation-activation/activation-traverse-not-in-entries.html [ Failure ]
-imported/w3c/web-platform-tests/navigation-api/navigation-methods/disambigaute-forward.html [ Failure ]
-imported/w3c/web-platform-tests/navigation-api/navigation-methods/disambigaute-traverseTo-forward-multiple.html [ Failure ]
-
 # webkit.org/b/280415 [ Sequoia wk2 release arm64 ] 2x fast/selectors/* are flaky image only failures.
 [ arm64 ] fast/selectors/selection-window-inactive-stroke-color.html [ Pass ImageOnlyFailure ]
 [ arm64 ] fast/selectors/text-field-selection-stroke-color.html [ Pass ImageOnlyFailure ]
@@ -2161,11 +2156,6 @@ webkit.org/b/291966 [ Sequoia+ ] http/tests/webgpu/webgpu/api/validation/render_
 
 webkit.org/b/292203 [ Debug ] imported/w3c/web-platform-tests/css/css-view-transitions/transition-in-hidden-page.html [ Pass Crash ]
 
-# webkit.org/b/292582 REGRESSION (294079@main): [ MacOS iOS WK2 ] 3X imported/w3c/web-platform-tests/navigation-api/navigate-event/navigate-form are consistent failures 
-imported/w3c/web-platform-tests/navigation-api/navigate-event/navigate-form-userInitiated.html [ Failure ]
-imported/w3c/web-platform-tests/navigation-api/navigate-event/navigate-form-with-target.html [ Failure ]
-imported/w3c/web-platform-tests/navigation-api/navigate-event/navigate-form.html [ Failure ]
-
 webkit.org/b/292650 http/tests/iframe-monitor/throttler.html [ Timeout ]
 
 webkit.org/b/292794 [ Debug ] http/tests/media/media-play-stream-chunked-icy.html [ Pass Crash ]
@@ -2174,14 +2164,9 @@ webkit.org/b/292883 http/wpt/service-workers/basic-fetch-with-contentfilter.http
 
 webkit.org/b/283410 media/media-vp8-webm-with-poster.html [ Pass ImageOnlyFailure ]
 
-webkit.org/b/293761 http/wpt/service-workers/navigate-iframes-window-client.https.html [ Failure ]
 webkit.org/b/293761 http/tests/navigation/keyboard-events-during-provisional-navigation.html [ Failure ]
 
 webkit.org/b/293804 [ Debug ] pdf/annotations/checkbox-set-active.html [ Pass Timeout ]
-
-# webkit.org/b/293827 [macOS] 2x tests in webgl are constant failures (flaky in EWS)
-[ Sequoia ] webgl/1.0.x/conformance/textures/misc/gl-teximage.html [ Failure ]
-[ Sequoia ] webgl/2.0.y/conformance/textures/misc/gl-teximage.html [ Failure ]
 
 # webkit.org/b/294272 REGRESSION(295925@main?) [macOS Debug]: 2x tests in fast/scrolling/Mac/scrollbars are flaky crash
 [ Debug ] fast/scrolling/mac/scrollbars/overflow-overlay-scrollbar-reveal.html [ Pass Crash ]
@@ -2199,3 +2184,60 @@ webkit.org/b/295226 http/wpt/mediarecorder/MediaRecorder-audio-samplingrate-chan
 webkit.org/b/295304 [ Sonoma Debug x86_64 ] webgl/1.0.x/conformance/rendering/many-draw-calls.html [ Slow ]
 
 webkit.org/b/295366 [ Sonoma Debug x86_64 ] webgl/2.0.y/conformance/offscreencanvas/offscreencanvas-transfer-image-bitmap.html [ Slow ]
+
+webkit.org/b/295412 [ Debug ] media/media-vp8-webm-error.html [ Pass Failure ]
+
+webkit.org/b/295419 loader/navigation-policy/should-open-external-urls/subframe-navigated-programatically-by-main-frame.html [ Pass Failure ]
+
+webkit.org/b/295439 media/video-unmuted-after-play-holds-sleep-assertion.html [ Pass Failure ]
+
+webkit.org/b/295441 [ Release ] fast/scrolling/mac/scrollbars/scrollbar-width-dynamic-none-to-auto.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/295527 fast/animation/css-animation-resuming-when-visible-with-style-change2.html [ Pass Failure ]
+
+webkit.org/b/295738 [ arm64 ] http/tests/images/gif-progressive-load.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/295743 [ Debug ] media/video-display-aspect-ratio.html [ Pass Failure ]
+
+# webkit.org/b/293827 (REGRESSION (iOS 18.4 / macOS 15.4): 2x webgl tests are constantly failing.)
+[ Sequoia+ ] webgl/1.0.x/conformance/textures/misc/gl-teximage.html [ Failure ]
+[ Sequoia+ ] webgl/2.0.y/conformance/textures/misc/gl-teximage.html [ Failure ]
+
+# # rdar://155272309 (New Test (294762@main): [ Tahoe wk2 ] 3 digital-credentials are a consistent failure)
+imported/w3c/web-platform-tests/digital-credentials/allow-attribute-with-get.https.html [ Failure ]
+imported/w3c/web-platform-tests/digital-credentials/get.tentative.https.html [ Failure ]
+imported/w3c/web-platform-tests/digital-credentials/user-activation.https.html [ Failure ]
+
+# FIXME: Needs bug.
+http/tests/resourceLoadStatistics/website-data-removal-for-site-navigated-to-with-unfiltered-link-decoration-before-short-deletion.html [ Failure ]
+
+webkit.org/b/295756 [ arm64 ] webgl/2.0.y/conformance2/rendering/texture-switch-performance.html  [ Pass Failure ]
+
+webkit.org/b/295814 [ arm64 ] scrollingcoordinator/mac/latching/horizontal-overflow-back-swipe.html [ Pass Timeout ]
+
+webkit.org/b/295820 [ arm64 Debug ] webrtc/audio-peer-connection-webaudio.html [ Pass Failure ]
+
+webkit.org/b/295913 [ Sequoia Release arm64 ] media/video-seek-pause.html [ Pass Failure ]
+
+webkit.org/b/295923 [ Release ] tiled-drawing/scrolling/scroll-with-top-left-content-inset.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/295938 scrollingcoordinator/mac/latching/horizontal-overflow-back-swipe-overscroll-behavior.html [ Pass Timeout ]
+
+# webkit.org/b/296008 [macOS Debug] http/tests/media/hls and platform/mac/media/encrypted-media tests are timing out on some EWS bots
+[ Sequoia Debug arm64 ] http/tests/media/hls/hls-audio-tracks-language.html [ Timeout ]
+[ Sequoia Debug arm64 ] http/tests/media/hls/hls-webvtt-default.html [ Timeout ]
+[ Sequoia Debug arm64 ] http/tests/media/hls/hls-webvtt-style.html [ Timeout ]
+[ Sequoia Debug arm64 ] http/tests/media/hls/range-request-cross-origin.html [ Timeout ]
+[ Sequoia Debug arm64 ] http/tests/media/hls/track-in-band-multiple-cues.html [ Timeout ]
+[ Sequoia Debug arm64 ] http/tests/media/hls/track-webvtt-multitracks.html [ Timeout ]
+[ Sequoia Debug arm64 ] platform/mac/media/encrypted-media/fps-generateRequest.html [ Timeout ]
+
+webkit.org/b/296017 [ Release ] imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image-021.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/296066 [ Sequoia Debug arm64 ] accessibility/mac/scrolling-in-pdf-crash.html [ Pass Timeout ]
+
+webkit.org/b/296070 [ Debug arm64 ] pdf/pdf-in-styled-embed.html [ Pass Timeout Failure ]
+
+webkit.org/b/295929 [ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-002.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/296096 [ Debug arm64 ] pdf/annotations/radio-buttons-select-second.html [ Pass Timeout ]

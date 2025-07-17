@@ -54,6 +54,7 @@
 #import "WebPageGroup.h"
 #import "WebPageMessages.h"
 #import "WebPageProxy.h"
+#import "WebPreferencesDefaultValues.h"
 #import "WebPreferencesKeys.h"
 #import "WebPrivacyHelpers.h"
 #import "WebProcessCache.h"
@@ -537,6 +538,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     parameters.notifyState = WTF::map(m_notifyState, [] (auto&& item) {
         return std::make_pair(item.key, item.value);
     });
+#endif
+
+#if ENABLE(INITIALIZE_ACCESSIBILITY_ON_DEMAND)
+    parameters.shouldInitializeAccessibility = m_hasReceivedAXRequestInUIProcess;
+#endif
+
+#if HAVE(LIQUID_GLASS)
+    parameters.isLiquidGlassEnabled = isLiquidGlassEnabled();
 #endif
 }
 
@@ -1261,13 +1270,10 @@ void WebProcessPool::screenPropertiesChanged()
 #if HAVE(SUPPORT_HDR_DISPLAY)
     if (m_suppressEDR) {
         for (auto& properties : screenProperties.screenDataMap.values()) {
-            constexpr auto maxStudioDisplayHeadroom = 2.f;
-            constexpr auto threeQuartersStudioDisplayHeadroom = 1.5f;
-            constexpr auto halfMaxHeadroomMultiplier = 0.5f;
-            auto maxHeadroom = std::clamp(properties.maxEDRHeadroom * halfMaxHeadroomMultiplier, std::min(properties.maxEDRHeadroom, threeQuartersStudioDisplayHeadroom), maxStudioDisplayHeadroom);
-            properties.currentEDRHeadroom = maxHeadroom;
-            properties.maxEDRHeadroom = maxHeadroom;
-            properties.suppressEDR = m_suppressEDR;
+            constexpr auto maxSuppressedHeadroom = 1.6f;
+            auto suppressedHeadroom = std::min(maxSuppressedHeadroom, properties.currentEDRHeadroom);
+            properties.currentEDRHeadroom = suppressedHeadroom;
+            properties.suppressEDR = true;
         }
     }
 #endif

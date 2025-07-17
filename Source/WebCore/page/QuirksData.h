@@ -50,6 +50,7 @@ struct WEBCORE_EXPORT QuirksData {
 
     bool hasBrokenEncryptedMediaAPISupportQuirk : 1 { false };
     bool implicitMuteWhenVolumeSetToZero : 1 { false };
+    bool inputMethodUsesCorrectKeyEventOrder : 1 { false };
     bool maybeBypassBackForwardCache : 1 { false };
     bool needsBingGestureEventQuirk : 1 { false };
     bool needsBodyScrollbarWidthNoneDisabledQuirk : 1 { false };
@@ -140,6 +141,7 @@ struct WEBCORE_EXPORT QuirksData {
 
 #if PLATFORM(IOS_FAMILY)
     bool shouldHideCoarsePointerCharacteristicsQuirk : 1 { false };
+    bool shouldHideSoftTopScrollEdgeEffectDuringFocusQuirk : 1 { false };
 #endif
 
 #if ENABLE(FLIP_SCREEN_DIMENSIONS_QUIRKS)
@@ -189,6 +191,7 @@ struct WEBCORE_EXPORT QuirksData {
     bool needsWebKitMediaTextTrackDisplayQuirk : 1 { false };
     bool needsMediaRewriteRangeRequestQuirk : 1 { false };
     bool shouldEnterNativeFullscreenWhenCallingElementRequestFullscreen : 1 { false };
+    bool shouldDelayReloadWhenRegisteringServiceWorker : 1 { false };
 };
 
 } // namespace WebCore

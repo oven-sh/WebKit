@@ -1,4 +1,4 @@
 
 
-PASS <meta> refresh fires navigate event
+FAIL <meta> refresh fires navigate event assert_equals: expected (object) null but got (undefined) undefined
 

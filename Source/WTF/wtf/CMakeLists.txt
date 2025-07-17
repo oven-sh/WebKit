@@ -328,6 +328,7 @@ set(WTF_PUBLIC_HEADERS
     StringPrintStream.h
     StructDump.h
     SuspendableWorkQueue.h
+    SwiftBridging.h
     SynchronizedFixedQueue.h
     SystemFree.h
     SystemMalloc.h
@@ -732,6 +733,7 @@ elseif (APPLE)
         spi/cocoa/SecuritySPI.h
         spi/cocoa/objcSPI.h
 
+        spi/darwin/ReasonSPI.h
         spi/darwin/CodeSignSPI.h
         spi/darwin/DataVaultSPI.h
         spi/darwin/OSVariantSPI.h

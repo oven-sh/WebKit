@@ -157,7 +157,7 @@ std::tuple<unsigned, UChar> SVGTextMetricsBuilder::measureTextRenderer(RenderSVG
         if (data.allCharactersMap)
             attributes->clear();
         else
-            textMetricsValues->resize(0);
+            textMetricsValues->shrink(0);
     }
 
     initializeMeasurementWithTextRenderer(text);

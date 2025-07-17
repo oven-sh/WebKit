@@ -1389,6 +1389,8 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 
     WKWebsiteDataStoreResetResourceMonitorThrottler(websiteDataStore(), nullptr, nullptr);
 
+    WKURLRequestSetDefaultTimeoutInterval((60_s).value());
+
     // FIXME: This function should also ensure that there is only one page open.
 
     // Reset the EventSender for each test.

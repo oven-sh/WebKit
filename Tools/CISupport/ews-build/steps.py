@@ -68,7 +68,7 @@ WithProperties = properties.WithProperties
 Interpolate = properties.Interpolate
 GITHUB_URL = 'https://github.com/'
 # First project is treated as the default
-GITHUB_PROJECTS = ['WebKit/WebKit', 'WebKit/WebKit-security', 'apple/WebKit']
+GITHUB_PROJECTS = ['WebKit/WebKit', 'WebKit/WebKit-security']
 HASH_LENGTH_TO_DISPLAY = 8
 DEFAULT_BRANCH = 'main'
 DEFAULT_REMOTE = 'origin'
@@ -764,7 +764,7 @@ class CheckOutSource(git.Git):
 
     def getResultSummary(self):
         if self.results == FAILURE:
-            self.build.addStepsAfterCurrentStep([CleanUpGitIndexLock()])
+            self.build.addStepsAfterCurrentStep([CleanUpGitIndexLock(workdir=self.workdir)])
 
         if self.results != SUCCESS:
             return {'step': 'Failed to updated working directory'}
@@ -3226,17 +3226,6 @@ class InstallWpeDependencies(shell.ShellCommandNewStyle):
         super().__init__(logEnviron=False, **kwargs)
 
 
-class InstallWinDependencies(shell.ShellCommandNewStyle):
-    name = 'win-deps'
-    description = ['Updating Win dependencies']
-    descriptionDone = ['Updated Win dependencies']
-    command = ['python3', 'Tools/Scripts/update-webkit-win-libs.py']
-    haltOnFailure = True
-
-    def __init__(self, **kwargs):
-        super().__init__(logEnviron=False, **kwargs)
-
-
 def customBuildFlag(platform, fullPlatform):
     # FIXME: Make a common 'supported platforms' list.
     if platform not in ('gtk', 'ios', 'visionos', 'jsc-only', 'wpe', 'playstation', 'tvos', 'watchos'):
@@ -4073,6 +4062,8 @@ class RunWebKitTests(shell.Test, AddToLogMixin, ShellMixin):
                 self.setCommand(self.command + ['--exit-after-n-failures', '{}'.format(self.EXIT_AFTER_FAILURES)])
             if not self.STRESS_MODE:
                 self.setCommand(self.command + ['--skip-failing-tests'])
+            else:
+                self.setCommand(self.command + ['--skipped', 'always'])
 
         if platform in ['gtk', 'wpe']:
             self.setCommand(self.command + ['--enable-core-dumps-nolimit'])

@@ -452,16 +452,16 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(RenderObject
     bool isTooBigForInteraction = bounds.area() > viewportArea / 3;
     bool isTooBigForOcclusion = bounds.area() > viewportArea * 3;
 
-    auto elementIdentifier = matchedElement->identifier();
+    auto nodeIdentifier = matchedElement->nodeIdentifier();
 
     if (!hasPointer) {
         if (auto* labelElement = dynamicDowncast<HTMLLabelElement>(matchedElement)) {
             // Could be a `<label for="...">` or a label with a descendant.
-            // In cases where both elements get a region we want to group them by the same `elementIdentifier`.
+            // In cases where both elements get a region we want to group them by the same `nodeIdentifier`.
             auto associatedElement = labelElement->control();
             if (associatedElement && !associatedElement->isDisabledFormControl()) {
                 hasPointer = true;
-                elementIdentifier = associatedElement->identifier();
+                nodeIdentifier = associatedElement->nodeIdentifier();
             }
         }
     }
@@ -482,7 +482,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(RenderObject
         if (isOriginalMatch && shouldGetOcclusion(renderer) && !isTooBigForOcclusion) {
             return { {
                 InteractionRegion::Type::Occlusion,
-                elementIdentifier,
+                nodeIdentifier,
                 bounds
             } };
         }
@@ -523,7 +523,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(RenderObject
     if (isOriginalMatch && matchedElementIsGuardContainer) {
         return { {
             InteractionRegion::Type::Guard,
-            elementIdentifier,
+            nodeIdentifier,
             bounds
         } };
     }
@@ -648,7 +648,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(RenderObject
 
     return { {
         InteractionRegion::Type::Interaction,
-        elementIdentifier,
+        nodeIdentifier,
         rect,
         cornerRadius,
         maskedCorners,

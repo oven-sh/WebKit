@@ -1,3 +1,3 @@
 
-PASS <form> submission with GET method fires navigate event but with formData null
+FAIL <form> submission with GET method fires navigate event but with formData null assert_equals: expected (object) Element node <form id="form" action=""></form> but got (undefined) undefined
 

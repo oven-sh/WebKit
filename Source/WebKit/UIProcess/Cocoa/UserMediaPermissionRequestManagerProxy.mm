@@ -28,7 +28,6 @@
 
 #import "MediaPermissionUtilities.h"
 #import "SandboxUtilities.h"
-#import "UserMediaCaptureManagerProxy.h"
 #import "WKWebView.h"
 #import "WebPageProxy.h"
 #import "WebPreferences.h"

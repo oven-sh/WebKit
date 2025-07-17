@@ -91,7 +91,7 @@ protected:
 private:
     bool supportsFocus() const override;
     bool isMouseFocusable() const override;
-    bool isKeyboardFocusable(KeyboardEvent*) const override;
+    bool isKeyboardFocusable(const FocusEventData&) const override;
     void defaultEventHandler(Event&) final;
     void setActive(bool active, Style::InvalidationScope) final;
     bool isURLAttribute(const Attribute&) const final;
@@ -133,7 +133,7 @@ private:
     OptionSet<Relation> m_linkRelations;
 
     // This is computed only once and must not be affected by subsequent URL changes.
-    mutable Markable<SharedStringHash, SharedStringHashMarkableTraits> m_storedVisitedLinkHash;
+    mutable Markable<SharedStringHash> m_storedVisitedLinkHash;
 
     const std::unique_ptr<DOMTokenList> m_relList;
 };

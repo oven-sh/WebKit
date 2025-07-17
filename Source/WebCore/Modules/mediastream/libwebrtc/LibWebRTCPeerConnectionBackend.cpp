@@ -101,8 +101,7 @@ void LibWebRTCPeerConnectionBackend::resume()
 void LibWebRTCPeerConnectionBackend::disableICECandidateFiltering()
 {
     PeerConnectionBackend::disableICECandidateFiltering();
-    if (auto* factory = m_endpoint->rtcSocketFactory())
-        factory->disableRelay();
+    m_endpoint->disableSocketRelay();
 }
 
 bool LibWebRTCPeerConnectionBackend::isNegotiationNeeded(uint32_t eventId) const

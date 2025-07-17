@@ -1516,6 +1516,7 @@ void TreeResolver::sortPositionOptionsIfNeeded(PositionOptions& options, const S
 
     for (auto& optionStyle : options.optionStyles) {
         auto constraints = PositionedLayoutConstraints { *box, *optionStyle, boxAxis };
+        constraints.computeInsets();
         optionsForSorting.append({ WTFMove(optionStyle), constraints.insetModifiedContainingSize() });
     }
 

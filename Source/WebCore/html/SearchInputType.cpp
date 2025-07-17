@@ -32,6 +32,7 @@
 #include "config.h"
 #include "SearchInputType.h"
 
+#include "ContainerNodeInlines.h"
 #include "ElementInlines.h"
 #include "HTMLInputElement.h"
 #include "HTMLNames.h"

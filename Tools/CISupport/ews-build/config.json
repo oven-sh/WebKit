@@ -45,14 +45,12 @@
     { "name": "playstation-ews-002", "platform": "playstation" },
     { "name": "playstation-ews-003", "platform": "playstation" },
     { "name": "playstation-ews-004", "platform": "playstation" },
-    { "name": "win-tests-ews-001", "platform": "win" },
-    { "name": "win-tests-ews-002", "platform": "win" },
-    { "name": "win-tests-ews-003", "platform": "win" },
-    { "name": "win-tests-ews-004", "platform": "win" },
-    { "name": "win-tests-ews-005", "platform": "win" },
-    { "name": "win-tests-ews-006", "platform": "win" },
-    { "name": "win-tests-ews-007", "platform": "win" },
-    { "name": "win-tests-ews-008", "platform": "win" },
+    { "name": "win-bot-001", "platform": "win" },
+    { "name": "win-bot-002", "platform": "win" },
+    { "name": "win-bot-003", "platform": "win" },
+    { "name": "win-bot-004", "platform": "win" },
+    { "name": "win-bot-005", "platform": "win" },
+    { "name": "win-bot-006", "platform": "win" },
     { "name": "wincairo-ews-001", "platform": "win" },
     { "name": "wincairo-ews-002", "platform": "win" },
     { "name": "wincairo-ews-003", "platform": "win" },
@@ -375,14 +373,14 @@
       "factory": "WinBuildFactory", "configuration": "release",
       "architectures": ["x86_64"], "platform": "win",
       "triggers": ["win-tests-ews"],
-      "workernames": ["wincairo-ews-001", "wincairo-ews-002", "wincairo-ews-003", "wincairo-ews-004"]
+      "workernames": ["wincairo-ews-001", "wincairo-ews-002", "wincairo-ews-003", "wincairo-ews-004", "win-bot-001", "win-bot-002"]
     },
     {
       "name": "Win-Tests-EWS", "shortname": "win-tests", "icon": "testOnly",
       "factory": "WinTestsFactory", "configuration": "release",
       "architectures": ["x86_64"], "platform": "win",
       "triggered_by": ["win-build-ews"],
-      "workernames": ["win-tests-ews-001", "win-tests-ews-002", "win-tests-ews-003", "win-tests-ews-004", "win-tests-ews-005", "win-tests-ews-006", "win-tests-ews-007", "win-tests-ews-008"]
+      "workernames": ["win-bot-003", "win-bot-004", "win-bot-005", "win-bot-006"]
     },
     {
       "name": "WPE-Build-EWS", "shortname": "wpe", "icon": "buildOnly",

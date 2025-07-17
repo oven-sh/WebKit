@@ -745,6 +745,15 @@ void GraphicsLayerCA::setDrawsHDRContent(bool drawsHDRContent)
     noteLayerPropertyChanged(DrawsHDRContentChanged | DebugIndicatorsChanged);
 }
 
+void GraphicsLayerCA::setTonemappingEnabled(bool tonemappingEnabled)
+{
+    if (tonemappingEnabled == m_tonemappingEnabled)
+        return;
+
+    GraphicsLayer::setTonemappingEnabled(tonemappingEnabled);
+    noteLayerPropertyChanged(TonemappingEnabledChanged);
+}
+
 void GraphicsLayerCA::setNeedsDisplayIfEDRHeadroomExceeds(float headroom)
 {
     if (protectedLayer()->setNeedsDisplayIfEDRHeadroomExceeds(headroom)) {
@@ -1469,6 +1478,9 @@ void GraphicsLayerCA::setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDis
         // backing store settings accordingly.
         contentsLayer->setBackingStoreAttached(true);
         contentsLayer->setAcceleratesDrawing(true);
+#if HAVE(SUPPORT_HDR_DISPLAY)
+        contentsLayer->setTonemappingEnabled(true);
+#endif
         delegate->prepareToDelegateDisplay(contentsLayer);
     }
 
@@ -1751,7 +1763,10 @@ GraphicsLayerCA::VisibleAndCoverageRects GraphicsLayerCA::computeVisibleAndCover
     bool mapWasClamped;
     auto clipRectFromParent = state.mappedQuad(&mapWasClamped).boundingBox();
 
-    auto clipRectForSelf = FloatRect { { }, m_size };
+    FloatRect clipRectForSelf { { }, m_size };
+    if (CheckedPtr backing = this->tiledBacking())
+        clipRectForSelf = backing->adjustedTileClipRectForObscuredInsets(clipRectForSelf);
+
     if (!applyWasClamped && !mapWasClamped)
         clipRectForSelf.intersect(clipRectFromParent);
 
@@ -2157,6 +2172,9 @@ void GraphicsLayerCA::commitLayerChangesBeforeSublayers(CommitState& commitState
 #if HAVE(SUPPORT_HDR_DISPLAY)
     if (m_uncommittedChanges & DrawsHDRContentChanged)
         updateDrawsHDRContent();
+
+    if (m_uncommittedChanges & TonemappingEnabledChanged)
+        updateTonemappingEnabled();
 #endif
 
     if (m_uncommittedChanges & NameChanged)
@@ -3336,6 +3354,11 @@ void GraphicsLayerCA::updateDrawsHDRContent()
 {
     auto contentsFormat = PlatformCALayer::contentsFormatForLayer(this);
     protectedLayer()->setContentsFormat(contentsFormat);
+}
+
+void GraphicsLayerCA::updateTonemappingEnabled()
+{
+    protectedLayer()->setTonemappingEnabled(m_tonemappingEnabled);
 }
 #endif
 
@@ -4671,6 +4694,7 @@ ASCIILiteral GraphicsLayerCA::layerChangeAsString(LayerChange layerChange)
 #endif
 #if HAVE(SUPPORT_HDR_DISPLAY)
     case LayerChange::DrawsHDRContentChanged: return "DrawsHDRContentChanged"_s;
+    case LayerChange::TonemappingEnabledChanged: return "TonemappingEnabledChanged"_s;
 #endif
     }
     ASSERT_NOT_REACHED();
@@ -5143,13 +5167,6 @@ void GraphicsLayerCA::updateOpacityOnLayer()
 void GraphicsLayerCA::deviceOrPageScaleFactorChanged()
 {
     noteChangesForScaleSensitiveProperties();
-}
-
-void GraphicsLayerCA::screenSupportedContentsFormatsChanged()
-{
-#if HAVE(SUPPORT_HDR_DISPLAY)
-    noteLayerPropertyChanged(DrawsHDRContentChanged | DebugIndicatorsChanged);
-#endif
 }
 
 void GraphicsLayerCA::noteChangesForScaleSensitiveProperties()

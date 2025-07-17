@@ -1,0 +1,4 @@
+
+FAIL Initially, the sibling-index() is 3 for #target assert_equals: expected "x 30deg" but got "x 0deg"
+FAIL Removing a preceding sibling of #target reduces the sibling-index() assert_equals: expected "x 20deg" but got "x 0deg"
+

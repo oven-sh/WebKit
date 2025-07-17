@@ -1169,12 +1169,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             return completionHandler(false);
         }
 
-        RefPtr page = [self._webView _page].get();
-        RefPtr manager = { self._manager };
+        auto page = [self._webView _page];
+        auto* manager = self._manager;
+
         if (page && manager) {
             OBJC_ALWAYS_LOG(logIdentifier, "presentation completed");
 
-            [self._webView _wkScrollView].contentOffset = _viewState._savedContentOffset;
             [self._webView becomeFirstResponder];
             completionHandler(true);
             manager->setAnimatingFullScreen(false);

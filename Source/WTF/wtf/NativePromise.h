@@ -286,7 +286,7 @@ public:
 class ConvertibleToNativePromise { };
 
 class NativePromiseRequest :  public CanMakeWeakPtr<NativePromiseRequest> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NativePromiseRequest);
 public:
     NativePromiseRequest() = default;
     NativePromiseRequest(NativePromiseRequest&& other) = default;
@@ -1322,7 +1322,7 @@ private:
 
 template<typename ResolveValueT, typename RejectValueT, unsigned options>
 class NativePromiseProducer final : public ConvertibleToNativePromise {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NativePromiseProducer);
 public:
     // used by IsConvertibleToNativePromise to determine how to cast the result.
     using PromiseType = NativePromise<ResolveValueT, RejectValueT, options & ~static_cast<unsigned>(PromiseOption::AutoRejectProducer)>;

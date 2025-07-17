@@ -41,8 +41,6 @@ struct SharedStringHashHash {
     static constexpr SharedStringHash deletedValue = std::numeric_limits<SharedStringHash>::max();
 };
 
-using SharedStringHashMarkableTraits = IntegralMarkableTraits<SharedStringHash, SharedStringHashHash::deletedValue>;
-
 // Returns the hash of the string that will be used for visited link coloring.
 WEBCORE_EXPORT SharedStringHash computeSharedStringHash(const String& url);
 WEBCORE_EXPORT SharedStringHash computeSharedStringHash(std::span<const UChar> url);

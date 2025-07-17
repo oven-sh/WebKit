@@ -56,6 +56,8 @@ from webkitpy.style.checkers.jstest import JSTestChecker
 from webkitpy.style.checkers.messagesin import MessagesInChecker
 from webkitpy.style.checkers.png import PNGChecker
 from webkitpy.style.checkers.python import PythonChecker, Python3Checker
+from webkitpy.style.checkers.spi_allowlist import SPIAllowlistChecker
+from webkitpy.style.checkers.swift import SwiftChecker
 from webkitpy.style.checkers.test_expectations import TestExpectationsChecker
 from webkitpy.style.checkers.text import TextChecker
 from webkitpy.style.checkers.watchlist import WatchListChecker
@@ -305,6 +307,8 @@ _PATH_RULES_SPECIFIER = [
       os.path.join('Source', 'WebCore', 'platform', 'graphics', 'gstreamer', 'WebKitWebSourceGStreamer.cpp'),
       os.path.join('Source', 'WebCore', 'platform', 'graphics', 'gstreamer', 'WebKitAudioSinkGStreamer.cpp'),
       os.path.join('Source', 'WebCore', 'platform', 'graphics', 'gstreamer', 'WebKitAudioSinkGStreamer.h'),
+      os.path.join('Source', 'WebCore', 'platform', 'graphics', 'gstreamer', 'eme', 'WebKitThunderParser.cpp'),
+      os.path.join('Source', 'WebCore', 'platform', 'graphics', 'gstreamer', 'eme', 'WebKitThunderParser.h'),
       os.path.join('Source', 'WebCore', 'platform', 'graphics', 'gstreamer', 'mse', 'WebKitMediaSourceGStreamer.cpp'),
       os.path.join('Source', 'WebCore', 'platform', 'audio', 'gstreamer', 'WebKitWebAudioSourceGStreamer.cpp'),
       os.path.join('Source', 'WebCore', 'platform', 'gstreamer', 'VideoEncoderPrivateGStreamer.cpp'),
@@ -447,6 +451,8 @@ _JS_FILE_EXTENSION = 'js'
 _JSON_FILE_EXTENSION = 'json'
 
 _PYTHON_FILE_EXTENSION = 'py'
+
+_SWIFT_FILE_EXTENSION = 'swift'
 
 _TEXT_FILE_EXTENSIONS = [
     'ac',
@@ -776,6 +782,8 @@ class FileType:
     FEATUREDEFINES = 12
     BASE_XCCONFIG = 13
     XCSCHEME = 14
+    SWIFT = 15
+    SPI_ALLOWLIST = 16
 
 
 class ANSIColor:
@@ -864,6 +872,8 @@ class CheckerDispatcher(object):
             return FileType.JSON
         elif file_extension == _PYTHON_FILE_EXTENSION:
             return FileType.PYTHON
+        elif file_extension == _SWIFT_FILE_EXTENSION:
+            return FileType.SWIFT
         elif file_extension in _XML_FILE_EXTENSIONS:
             return FileType.XML
         elif os.path.basename(file_path).startswith('ChangeLog'):
@@ -887,6 +897,8 @@ class CheckerDispatcher(object):
             return FileType.BASE_XCCONFIG
         elif os.path.basename(file_path) == "General.xcconfig":  # gtest is different.
             return FileType.BASE_XCCONFIG
+        elif os.path.basename(file_path).startswith('AllowedSPI') and file_extension == 'toml':
+            return FileType.SPI_ALLOWLIST
         else:
             return FileType.NONE
 
@@ -937,6 +949,8 @@ class CheckerDispatcher(object):
                 checker = apple_additions().python_checker(file_path, handle_style_error)
             else:
                 checker = PythonChecker(file_path, handle_style_error)
+        elif file_type == FileType.SWIFT:
+            checker = SwiftChecker(file_path, handle_style_error)
         elif file_type == FileType.XML:
             checker = XMLChecker(file_path, handle_style_error)
         elif file_type == FileType.XCSCHEME:
@@ -964,6 +978,8 @@ class CheckerDispatcher(object):
             checker = FeatureDefinesChecker(file_path, handle_style_error)
         elif file_type == FileType.BASE_XCCONFIG:
             checker = BaseXcconfigChecker(file_path, handle_style_error)
+        elif file_type == FileType.SPI_ALLOWLIST:
+            checker = SPIAllowlistChecker(file_path, handle_style_error)
         else:
             raise ValueError('Invalid file type "%(file_type)s": the only valid file types '
                              "are %(NONE)s, %(CPP)s, and %(TEXT)s."

@@ -36,6 +36,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <CoreMedia/CMBufferQueue.h>
 #import <CoreMedia/CMFormatDescription.h>
+#import <map>
 #import <pal/avfoundation/MediaTimeAVFoundation.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/MainThread.h>
@@ -292,6 +293,7 @@ Expected<RetainPtr<VTDecompressionSessionRef>, OSStatus> WebCoreDecompressionSes
         if (queueSingleton().isCurrent()) {
             assertIsCurrent(queueSingleton());
 
+            m_currentImageDescription = nullptr;
             m_stereoConfigured = false;
             m_tagCollections = nullptr;
         }
@@ -361,7 +363,7 @@ static RetainPtr<CMFormatDescriptionRef> copyDescriptionExtensionValuesIfNeeded(
     return adoptCF(newImageDescription);
 }
 
-static Expected<RetainPtr<CMSampleBufferRef>, OSStatus> handleDecompressionOutput(WebCoreDecompressionSession::DecodingFlags flags, OSStatus status, VTDecodeInfoFlags, CVImageBufferRef imageBuffer, CMTaggedBufferGroupRef group, CMTime presentationTimeStamp, CMTime presentationDuration, CMVideoFormatDescriptionRef description = nullptr)
+static Expected<RetainPtr<CMSampleBufferRef>, OSStatus> handleDecompressionOutput(WebCoreDecompressionSession::DecodingFlags flags, OSStatus status, VTDecodeInfoFlags, CVImageBufferRef imageBuffer, CMTaggedBufferGroupRef group, CMTime presentationTimeStamp, CMTime presentationDuration, CMFormatDescriptionRef currentImageDescription, CMVideoFormatDescriptionRef description = nullptr)
 {
     if (isNonRecoverableError(status)) {
         RELEASE_LOG_ERROR(Media, "Video sample decompression failed with error:%d", int(status));
@@ -372,21 +374,28 @@ static Expected<RetainPtr<CMSampleBufferRef>, OSStatus> handleDecompressionOutpu
         return { };
 
     if (group) {
-        CMTaggedBufferGroupFormatDescriptionRef rawBufferGroupFormatDescription = nullptr;
-        if (auto status = PAL::CMTaggedBufferGroupFormatDescriptionCreateForTaggedBufferGroup(kCFAllocatorDefault, group, &rawBufferGroupFormatDescription); status != noErr)
-            return makeUnexpected(status);
-        RetainPtr groupFormatDescription = copyDescriptionExtensionValuesIfNeeded(adoptCF(rawBufferGroupFormatDescription), description, group);
+        RetainPtr groupFormatDescription = currentImageDescription;
+        if (!groupFormatDescription) {
+            CMTaggedBufferGroupFormatDescriptionRef rawBufferGroupFormatDescription = nullptr;
+            if (auto status = PAL::CMTaggedBufferGroupFormatDescriptionCreateForTaggedBufferGroup(kCFAllocatorDefault, group, &rawBufferGroupFormatDescription); status != noErr)
+                return makeUnexpected(status);
+            groupFormatDescription = copyDescriptionExtensionValuesIfNeeded(adoptCF(rawBufferGroupFormatDescription), description, group);
+        }
+        ASSERT(PAL::CMFormatDescriptionGetMediaType(groupFormatDescription.get()) == kCMMediaType_TaggedBufferGroup);
         CMSampleBufferRef rawGroupSampleBuffer;
         if (auto status = PAL::CMSampleBufferCreateForTaggedBufferGroup(kCFAllocatorDefault, group, presentationTimeStamp, presentationDuration, groupFormatDescription.get(), &rawGroupSampleBuffer); status != noErr)
             return makeUnexpected(status);
         return adoptCF(rawGroupSampleBuffer);
     }
 
-    CMVideoFormatDescriptionRef rawImageBufferDescription = nullptr;
-    if (auto status = PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, imageBuffer, &rawImageBufferDescription); status != noErr)
-        return makeUnexpected(status);
-    RetainPtr imageBufferDescription = copyDescriptionExtensionValuesIfNeeded(adoptCF(rawImageBufferDescription), description, nullptr);
-
+    RetainPtr imageBufferDescription = currentImageDescription;
+    if (!imageBufferDescription) {
+        CMVideoFormatDescriptionRef rawImageBufferDescription = nullptr;
+        if (auto status = PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, imageBuffer, &rawImageBufferDescription); status != noErr)
+            return makeUnexpected(status);
+        imageBufferDescription = copyDescriptionExtensionValuesIfNeeded(adoptCF(rawImageBufferDescription), description, nullptr);
+    }
+    ASSERT(PAL::CMFormatDescriptionGetMediaType(imageBufferDescription.get()) == kCMMediaType_Video);
     CMSampleTimingInfo imageBufferTiming {
         presentationDuration,
         presentationTimeStamp,
@@ -521,13 +530,13 @@ Ref<WebCoreDecompressionSession::DecodingPromise> WebCoreDecompressionSession::d
     DecodingPromise::Producer producer;
     auto promise = producer.promise();
 
-    auto handler = makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }, flags, producer = WTFMove(producer), numberOfTimesCalled = 0u, numberOfSamples, decodedSamples = std::exchange(m_lastDecodedSamples, { }), description = RetainPtr { PAL::CMSampleBufferGetFormatDescription(sample) }, tagCollections = m_tagCollections](OSStatus status, VTDecodeInfoFlags infoFlags, CVImageBufferRef imageBuffer, CMTaggedBufferGroupRef taggedBufferGroup, CMTime presentationTimeStamp, CMTime presentationDuration) mutable {
+    auto handler = makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }, flags, producer = WTFMove(producer), numberOfTimesCalled = 0u, numberOfSamples, decodedSamples = std::exchange(m_lastDecodedSamples, { }), originalDescription = RetainPtr { PAL::CMSampleBufferGetFormatDescription(sample) }, currentImageDescription = m_currentImageDescription, tagCollections = m_tagCollections](OSStatus status, VTDecodeInfoFlags infoFlags, CVImageBufferRef imageBuffer, CMTaggedBufferGroupRef taggedBufferGroup, CMTime presentationTimeStamp, CMTime presentationDuration) mutable {
         if (producer.isSettled())
             return;
         RetainPtr group = taggedBufferGroup;
         if (taggedBufferGroup) {
             if (!tagCollections) {
-                auto map = createMVHEVCStereoViewMap(description.get());
+                auto map = createMVHEVCStereoViewMap(originalDescription.get());
                 tagCollections = createTagCollectionRequiredFromVideoToolboxOutput(taggedBufferGroup, map);
                 if (!tagCollections) {
                     producer.reject(kVTCouldNotOutputTaggedBufferGroupErr);
@@ -541,10 +550,18 @@ Ref<WebCoreDecompressionSession::DecodingPromise> WebCoreDecompressionSession::d
             }
             group = createTaggedBufferGroupWithRequiredVideoTagsFromVideoToolboxOutput(taggedBufferGroup, tagCollections.get());
         }
-        auto result = handleDecompressionOutput(flags, status, infoFlags, imageBuffer, group.get(), presentationTimeStamp, presentationDuration, description.get());
+        auto result = handleDecompressionOutput(flags, status, infoFlags, imageBuffer, group.get(), presentationTimeStamp, presentationDuration, currentImageDescription.get(), originalDescription.get());
         if (!result) {
             producer.reject(result.error());
             return;
+        }
+        if (!currentImageDescription) {
+            currentImageDescription = PAL::CMSampleBufferGetFormatDescription(result->get());
+            queueSingleton().dispatch([weakThis, currentImageDescription]() mutable {
+                assertIsCurrent(queueSingleton());
+                if (RefPtr protectedThis = weakThis.get())
+                    protectedThis->m_currentImageDescription = WTFMove(currentImageDescription);
+            });
         }
         decodedSamples.append(WTFMove(*result));
         if (++numberOfTimesCalled == numberOfSamples)
@@ -624,7 +641,7 @@ Ref<MediaPromise> WebCoreDecompressionSession::initializeVideoDecoder(FourCharCo
 
                 auto presentationTime = PAL::toCMTime(MediaTime(result->timestamp, 1000000));
                 auto presentationDuration = PAL::toCMTime(MediaTime(result->duration.value_or(0), 1000000));
-                auto sampleResult = handleDecompressionOutput(protectedThis->m_pendingDecodeData->flags, noErr, 0, result->frame->pixelBuffer(), nullptr, presentationTime, presentationDuration);
+                auto sampleResult = handleDecompressionOutput(protectedThis->m_pendingDecodeData->flags, noErr, 0, result->frame->pixelBuffer(), nullptr, presentationTime, presentationDuration, nullptr);
                 if (!sampleResult)
                     protectedThis->m_lastDecodingError = sampleResult.error();
                 else

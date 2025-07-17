@@ -39,6 +39,7 @@
 #include "SVGElementTypeHelpers.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
+#include "SVGPropertyOwnerRegistry.h"
 #include "SVGStringList.h"
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>

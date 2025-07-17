@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "ElementIdentifier.h"
 #include "FloatRect.h"
+#include "NodeIdentifier.h"
 #include "Path.h"
 #include "Region.h"
 
@@ -56,7 +56,7 @@ struct InteractionRegion {
     enum class ContentHint : bool { Default, Photo };
 
     Type type;
-    ElementIdentifier elementIdentifier;
+    NodeIdentifier nodeIdentifier;
     FloatRect rectInLayerCoordinates;
     float cornerRadius { 0 };
     OptionSet<CornerMask> maskedCorners { };
@@ -74,7 +74,7 @@ struct InteractionRegion {
 inline bool operator==(const InteractionRegion& a, const InteractionRegion& b)
 {
     return a.type == b.type
-        && a.elementIdentifier == b.elementIdentifier
+        && a.nodeIdentifier == b.nodeIdentifier
         && a.contentHint == b.contentHint
         && a.rectInLayerCoordinates == b.rectInLayerCoordinates
         && a.cornerRadius == b.cornerRadius

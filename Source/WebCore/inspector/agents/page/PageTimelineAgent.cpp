@@ -30,7 +30,7 @@
 
 #include "FrameSnapshotting.h"
 #include "ImageBuffer.h"
-#include "InspectorClient.h"
+#include "InspectorBackendClient.h"
 #include "InspectorController.h"
 #include "InstrumentingAgents.h"
 #include "Page.h"
@@ -148,7 +148,7 @@ void PageTimelineAgent::internalStart(std::optional<int>&& maxCallStackDepth)
 
     InspectorTimelineAgent::internalStart(WTFMove(maxCallStackDepth));
 
-    if (auto* client = m_inspectedPage->inspectorController().inspectorClient())
+    if (auto* client = m_inspectedPage->inspectorController().inspectorBackendClient())
         client->timelineRecordingChanged(true);
 }
 
@@ -168,7 +168,7 @@ void PageTimelineAgent::internalStop()
 
     InspectorTimelineAgent::internalStop();
 
-    if (auto* client = m_inspectedPage->inspectorController().inspectorClient())
+    if (auto* client = m_inspectedPage->inspectorController().inspectorBackendClient())
         client->timelineRecordingChanged(false);
 }
 
@@ -189,19 +189,16 @@ void PageTimelineAgent::willLayout()
     pushCurrentRecord(JSON::Object::create(), TimelineRecordType::Layout, true);
 }
 
-void PageTimelineAgent::didLayout(RenderObject& root)
+void PageTimelineAgent::didLayout(const Vector<FloatQuad>& layoutAreas)
 {
     auto* entry = lastRecordEntry();
     if (!entry)
         return;
 
     ASSERT(entry->type == TimelineRecordType::Layout);
-
-    Vector<FloatQuad> quads;
-    root.absoluteQuads(quads);
-    ASSERT(quads.size() >= 1);
-    if (quads.size() >= 1)
-        TimelineRecordFactory::appendLayoutRoot(entry->data.get(), quads[0]);
+    ASSERT(!layoutAreas.isEmpty());
+    if (!layoutAreas.isEmpty())
+        TimelineRecordFactory::appendLayoutRoot(entry->data.get(), layoutAreas[0]);
 
     didCompleteCurrentRecord(TimelineRecordType::Layout);
 }

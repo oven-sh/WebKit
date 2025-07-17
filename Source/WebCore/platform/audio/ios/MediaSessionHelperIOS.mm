@@ -106,7 +106,7 @@ private:
     void startMonitoringWirelessRoutesInternal() final;
     void stopMonitoringWirelessRoutesInternal() final;
 
-    RetainPtr<WebMediaSessionHelper> m_objcObserver;
+    const RetainPtr<WebMediaSessionHelper> m_objcObserver;
 #if HAVE(MEDIAEXPERIENCE_AVSYSTEMCONTROLLER)
     std::optional<int> m_presentedApplicationPID;
 #endif
@@ -258,7 +258,7 @@ void MediaSessionHelper::setActiveAudioRouteSupportsSpatialPlayback(bool support
 MediaSessionHelperIOS::MediaSessionHelperIOS()
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    m_objcObserver = adoptNS([[WebMediaSessionHelper alloc] initWithCallback:*this]);
+    lazyInitialize(m_objcObserver, adoptNS([[WebMediaSessionHelper alloc] initWithCallback:*this]));
     setIsExternalOutputDeviceAvailable([m_objcObserver hasWirelessTargetsAvailable]);
     END_BLOCK_OBJC_EXCEPTIONS
 

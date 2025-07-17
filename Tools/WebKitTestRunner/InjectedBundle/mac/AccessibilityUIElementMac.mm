@@ -2543,8 +2543,10 @@ static NSString *descriptionForColor(CGColorRef color)
     auto string = adoptNS([[NSMutableString alloc] init]);
     [string appendFormat:@"%@", color];
     NSArray *stringComponents = [string componentsSeparatedByString:@">"];
-    if (stringComponents.count)
-        return [[stringComponents objectAtIndex:stringComponents.count - 1] stringByReplacingOccurrencesOfString:@"]" withString:@""];
+    if (stringComponents.count) {
+        NSString *bracketsRemovedString = [[stringComponents objectAtIndex:stringComponents.count - 1] stringByReplacingOccurrencesOfString:@"]" withString:@""];
+        return [bracketsRemovedString stringByReplacingOccurrencesOfString:@"headroom = 1.000000 " withString:@""];
+    }
     return nil;
 }
 

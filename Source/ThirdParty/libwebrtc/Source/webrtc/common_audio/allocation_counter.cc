@@ -18,7 +18,9 @@
 #include <vector>
 
 #include "absl/base/attributes.h"
-#include "test/gtest.h"
+
+// FIXME: Comment header to avoid building gtest.cc, which is not included as part of libwebrtc sources.
+// #include "test/gtest.h"
 
 namespace {
 #if defined(ABSL_HAVE_THREAD_LOCAL)
@@ -64,6 +66,8 @@ size_t AllocationCounter::delete_count() const {
   return g_delete_count - initial_delete_count_;
 }
 
+// FIXME: See comment related to gtest.cc.
+/*
 TEST(AllocationCounterTest, CountsHeapAllocations) {
   std::vector<int> v;
   AllocationCounter counter;
@@ -77,6 +81,7 @@ TEST(AllocationCounterTest, CountsHeapAllocations) {
   EXPECT_EQ(counter.new_count(), 1u);
   EXPECT_EQ(counter.delete_count(), 1u);
 }
+*/
 
 }  // namespace webrtc
 

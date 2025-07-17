@@ -107,7 +107,7 @@ void LibWebRTCSocketClient::signalReadPacket(webrtc::AsyncPacketSocket* socket, 
     m_connection->send(Messages::LibWebRTCNetwork::SignalReadPacket(m_identifier, data, RTCNetwork::IPAddress(address.ipaddr()), address.port(), packetTime, WebRTCNetwork::EcnMarking::kNotEct), 0);
 }
 
-void LibWebRTCSocketClient::signalSentPacket(webrtc::AsyncPacketSocket* socket, const webrtc::SentPacket& sentPacket)
+void LibWebRTCSocketClient::signalSentPacket(webrtc::AsyncPacketSocket* socket, const webrtc::SentPacketInfo& sentPacket)
 {
     ASSERT_UNUSED(socket, m_socket.get() == socket);
     m_connection->send(Messages::LibWebRTCNetwork::SignalSentPacket(m_identifier, sentPacket.packet_id, sentPacket.send_time_ms), 0);

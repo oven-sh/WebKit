@@ -92,7 +92,7 @@ class BrowserPerfDashRunner(object):
         self._available_plans = sorted(self._benchmark_runner_available_plans + self._benchmark_runner_available_plans_split_subtests + list(self._browserperfdash_runner_available_plans.keys()))
         self._parse_config_file(self._args.config_file)
         self._set_args_default_values_from_config_file()
-        self._browser_driver = BrowserDriverFactory.create(self._args.platform, self._args.browser, self._args.browser_args)
+        self._extra_browsers_settings = self._load_extra_settings_browsers_from_config_file()
         # This is the dictionary that will be sent as the HTTP POST request that browserperfdash expects
         # (as defined in https://github.com/Igalia/browserperfdash/blob/master/docs/design-document.md)
         # - The bot_* data its obtained from the config file
@@ -100,8 +100,8 @@ class BrowserPerfDashRunner(object):
         # - The test_* data is generated after each test run.
         self._result_data = {'bot_id': None,
                              'bot_password': None,
-                             'browser_id': self._args.browser,
-                             'browser_version': self._args.browser_version,
+                             'browser_id': None,
+                             'browser_version': None,
                              'local_hostname': os.uname().nodename,
                              'test_id': None,
                              'test_version': None,
@@ -124,13 +124,6 @@ class BrowserPerfDashRunner(object):
             date_str = datetime.fromtimestamp(timestamp).isoformat()
             _log.info('Will send the benchmark data as if it was generated on date: {date}'.format(date=date_str))
             self._result_data['timestamp'] = timestamp
-
-        # Get the browser version if needed
-        if self._args.query_browser_version:
-            self._result_data['browser_version'] = self._browser_driver.browser_version()
-            if not self._result_data['browser_version']:
-                raise NotImplementedError('The driver for browser {browser} does not implement a way to automatically obtain the version. Please specify the version manually.'.format(browser=self._args.browser))
-        _log.info('Browser version is: {browser_version}'.format(browser_version=self._result_data['browser_version']))
 
     # The precedence order for setting the value for the arguments is:
     # 1 - What the user defines via command line switches (current_value is not None).
@@ -160,6 +153,33 @@ class BrowserPerfDashRunner(object):
         self._args.browser = self._get_value_from_current_or_settings_or_default(self._args.browser, 'browser', default_value=default_browser(), allowed_value_list=BrowserDriverFactory.available_browsers())
         self._args.driver = self._get_value_from_current_or_settings_or_default(self._args.driver, 'driver', default_value=WebServerBenchmarkRunner.name, allowed_value_list=benchmark_runner_subclasses.keys())
 
+    def _set_args_from_extra_setting_browser_entry(self, entry):
+        if 'timeout' in entry:
+            self._args.timeoutOverride = int(entry['timeout'])
+        if 'count' in entry:
+            self._args.countOverride = int(entry['count'])
+        if 'platform' in entry:
+            self._args.platform = entry['platform']
+        if 'browser' in entry:
+            self._args.browser = entry['browser']
+        if 'driver' in entry:
+            self._args.driver = entry['driver']
+
+    def _load_extra_settings_browsers_from_config_file(self):
+        extra_browsers_settings = {}
+        allowed_values_in_extra_settings = ['timeout', 'count', 'platform', 'browser', 'driver', 'plan_list']
+        for section in self._config_parser.sections():
+            if section.startswith('settings:'):
+                extra_setting_data = {}
+                for variable_name in allowed_values_in_extra_settings:
+                    if self._config_parser.has_option(section, variable_name):
+                        extra_setting_data[variable_name] = self._config_parser.get(section, variable_name)
+                if not extra_setting_data:
+                    raise ValueError(f'The extra settings named "{section}" does not contain any value from the allowed ones: "{allowed_values_in_extra_settings}"')
+                settings_name = ':'.join(section.split(':')[1:])
+                extra_browsers_settings[settings_name] = extra_setting_data
+        return extra_browsers_settings
+
     def _parse_config_file(self, config_file):
         if not os.path.isfile(config_file):
             raise Exception('Can not open config file for uploading results at: {config_file}'.format(config_file=config_file))
@@ -168,7 +188,7 @@ class BrowserPerfDashRunner(object):
         # Validate the data
         found_one_valid_server = False
         for section in self._config_parser.sections():
-            if section == 'settings':
+            if section == 'settings' or section.startswith('settings:'):
                 continue
             found_one_valid_server = True
             for required_key in ['bot_id', 'bot_password', 'post_url']:
@@ -302,7 +322,7 @@ class BrowserPerfDashRunner(object):
     def _upload_result(self):
         upload_failed = False
         for server in self._config_parser.sections():
-            if server == 'settings':
+            if server == 'settings' or server.startswith('settings:'):
                 continue
             self._result_data['bot_id'] = self._config_parser.get(server, 'bot_id')
             self._result_data['bot_password'] = self._config_parser.get(server, 'bot_password')
@@ -435,10 +455,79 @@ class BrowserPerfDashRunner(object):
             json.dump(self._result_data, f, indent=2)
             f.write("\n")
 
+    def _run_and_upload_plans_for_browser(self, plan_list_asked, skipped):
+        results = {'worked': [], 'warned': [], 'failed': []}
+        plan_list = []
+        # Sanitize the list of plans asked to run
+        available_plans = self.available_plans()
+        for plan in plan_list_asked:
+            if plan in available_plans:
+                if plan not in plan_list:
+                    plan_list.append(plan)
+            else:
+                _log.error(f'Plan "{plan}" is not in the list of known plans: "{available_plans}"')
+                results['failed'].append(plan)
+        total_plans = len(plan_list)
+        # Define browser parameters
+        self._browser_driver = BrowserDriverFactory.create(self._args.platform, self._args.browser, self._args.browser_args)
+        # Get the browser version if needed
+        if self._args.query_browser_version:
+            self._args.browser_version = self._browser_driver.browser_version()
+            if not self._args.browser_version:
+                raise NotImplementedError(f'The driver for browser {self._args.browser} does not implement a way to automatically obtain the version. Please specify the version manually.')
+        self._result_data['browser_version'] = self._args.browser_version
+        self._result_data['browser_id'] = self._args.browser
+        # Start the benchmarks
+        _log.info(f'Starting benchmark run for browser {self._args.browser} version {self._args.browser_version} with {total_plans} plans: "{plan_list}"')
+        iteration_count = 0
+        for plan in plan_list:
+            iteration_count += 1
+            # Skipped is empty list [] unless --allplans parameter is passed
+            if plan in skipped:
+                _log.info(f'Skipping benchmark plan: {plan} because is listed on the Skipped file [benchmark {iteration_count} of {total_plans}]')
+                continue
+            _log.info(f'Starting benchmark plan: {plan} [benchmark {iteration_count} of {total_plans}]')
+            try:
+                with tempfile.NamedTemporaryFile() as temp_result_file:
+                    self._result_data['local_timestamp_teststart'] = datetime.now().strftime('%s')
+                    number_failed_subtests = self._run_plan(plan, temp_result_file.name)
+                    subtests_failed = type(number_failed_subtests) is int and number_failed_subtests > 0
+                    self._result_data['local_timestamp_testend'] = datetime.now().strftime('%s')
+                    _log.info('Finished benchmark plan: {plan_name}'.format(plan_name=plan))
+                    # Fill test info for upload
+                    self._result_data['test_id'] = plan
+                    self._result_data['test_version'] = self._get_plan_version_hash(plan)
+                    # Fill obtained test results for upload
+                    self._result_data['test_data'] = self._get_test_data_json_string(temp_result_file)
+                    _log.info(f'Uploading results for plan: {plan} and browser {self._args.browser} version {self._result_data["browser_version"]}')
+                    upload_worked = self._upload_result()
+                    if upload_worked:
+                        results['warned' if subtests_failed else 'worked'].append(plan)
+                    else:
+                        results['failed'].append(plan)
+                    if self._args.save_results_directory:
+                        self._save_to_results_directory(plan, upload_worked)
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                results['failed'].append(plan)
+                _log.exception(f'Error running benchmark plan: {plan}')
+                _log.error(e)
+        return results
+
+    def _log_results_and_calculate_retcode(self, results, settings_name):
+        retcode = 0
+        if len(results['worked']) > 0:
+            _log.info(f'[Settings: {settings_name}]: The following benchmark plans have been upload succesfully: {results["worked"]}')
+        if len(results['warned']) > 0:
+            _log.warning(f'[Settings: {settings_name}]: The following benchmark plans have been upload succesfully but had subtests failing: {results["warned"]}')
+            retcode += len(results['warned'])
+        if len(results['failed']) > 0:
+            _log.error(f'[Settings: {settings_name}]: The following benchmark plans have failed to run or to upload: {results["failed"]}')
+            retcode += len(results['failed'])
+        return retcode
+
     def run(self):
-        failed = []
-        worked = []
-        warned = []
         skipped = []
         plan_list = []
         if self._args.plan:
@@ -456,70 +545,25 @@ class BrowserPerfDashRunner(object):
             if not self._config_parser.has_option('settings', 'plan_list'):
                 raise Exception('Can\'t find a "plan_list" key inside a "settings" section on the config file.')
             plan_list_from_config_str = self._config_parser.get('settings', 'plan_list')
-            plan_list_from_config = plan_list_from_config_str.split()
-            _log.info('Read a list of {number_plans} plans from the config file: "{plan_list}"'.format(number_plans=len(plan_list_from_config), plan_list=' '.join(plan_list_from_config)))
-            available_plans = self.available_plans()
-            for plan in plan_list_from_config:
-                if plan in available_plans:
-                    if plan not in plan_list:
-                        plan_list.append(plan)
-                else:
-                    _log.error('Plan "{plan}" is not in the list of known plans: "{known_plan_list}"'.format(plan=plan, known_plan_list=' '.join(available_plans)))
-                    failed.append(plan)
-            _log.info('Running {number_plans} plans: "{plan_list}"'.format(number_plans=len(plan_list), plan_list=' '.join(plan_list)))
+            plan_list = plan_list_from_config_str.split()
 
-        if len(plan_list) < 1:
-            _log.error('No benchmarks plans available to run in directory {plan_directory}'.format(plan_directory=self._benchmark_runner_plan_directory))
-            return max(1, len(failed))
+        # Run with default browser settings
+        results_default = self._run_and_upload_plans_for_browser(plan_list, skipped)
 
-        _log.info('Starting benchmark for browser {browser}'.format(browser=self._args.browser))
+        extra_results = {}
+        if self._args.plans_from_config:
+            # Run with extra browser settings if specified
+            for extra_browser_setting in self._extra_browsers_settings:
+                extra_browser_data = self._extra_browsers_settings[extra_browser_setting]
+                extra_plan_list = plan_list if 'plan_list' not in extra_browser_data else extra_browser_data['plan_list'].split()
+                self._set_args_from_extra_setting_browser_entry(extra_browser_data)
+                extra_results[extra_browser_setting] = self._run_and_upload_plans_for_browser(extra_plan_list, skipped)
 
-        iteration_count = 0
-        for plan in plan_list:
-            iteration_count += 1
-            if plan in skipped:
-                _log.info('Skipping benchmark plan: {plan_name} because is listed on the Skipped file [benchmark {iteration} of {total}]'.format(plan_name=plan, iteration=iteration_count, total=len(plan_list)))
-                continue
-            _log.info('Starting benchmark plan: {plan_name} [benchmark {iteration} of {total}]'.format(plan_name=plan, iteration=iteration_count, total=len(plan_list)))
-            try:
-                with tempfile.NamedTemporaryFile() as temp_result_file:
-                    self._result_data['local_timestamp_teststart'] = datetime.now().strftime('%s')
-                    number_failed_subtests = self._run_plan(plan, temp_result_file.name)
-                    subtests_failed = type(number_failed_subtests) is int and number_failed_subtests > 0
-                    self._result_data['local_timestamp_testend'] = datetime.now().strftime('%s')
-                    _log.info('Finished benchmark plan: {plan_name}'.format(plan_name=plan))
-                    # Fill test info for upload
-                    self._result_data['test_id'] = plan
-                    self._result_data['test_version'] = self._get_plan_version_hash(plan)
-                    # Fill obtained test results for upload
-                    self._result_data['test_data'] = self._get_test_data_json_string(temp_result_file)
-                    _log.info(f'Uploading results for plan: {plan} and browser {self._args.browser} version {self._result_data["browser_version"]}')
-                    upload_worked = self._upload_result()
-                    if upload_worked:
-                        (warned if subtests_failed else worked).append(plan)
-                    else:
-                        failed.append(plan)
-                    if self._args.save_results_directory:
-                        self._save_to_results_directory(plan, upload_worked)
-            except KeyboardInterrupt:
-                raise
-            except Exception as e:
-                failed.append(plan)
-                _log.exception(f'Error running benchmark plan: {plan}')
-                _log.error(e)
-
+        # log summary and finish
         retcode = 0
-        if len(worked) > 0:
-            _log.info(f'The following benchmark plans have been upload succesfully: {worked}')
-
-        if len(warned) > 0:
-            _log.warning(f'The following benchmark plans have been upload succesfully but had subtests failing: {warned}')
-            retcode += len(warned)
-
-        if len(failed) > 0:
-            _log.error(f'The following benchmark plans have failed to run or to upload: {failed}')
-            retcode += len(failed)
-
+        retcode += self._log_results_and_calculate_retcode(results_default, 'default')
+        for extra_browser_setting in extra_results:
+            retcode += self._log_results_and_calculate_retcode(extra_results[extra_browser_setting], extra_browser_setting)
         return retcode
 
 

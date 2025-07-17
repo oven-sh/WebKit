@@ -73,13 +73,6 @@
 @end
 #endif
 
-// Equivalent to WTF_DECLARE_CF_TYPE_TRAIT(CMSampleBuffer);
-// Needed due to requirement of specifying the PAL namespace.
-template <>
-struct WTF::CFTypeTrait<CMSampleBufferRef> {
-    static inline CFTypeID typeID(void) { return PAL::CMSampleBufferGetTypeID(); }
-};
-
 namespace WebCore {
 
 static constexpr CMItemCount SampleQueueHighWaterMark = 30;
@@ -97,63 +90,6 @@ static bool isRendererThreadSafe(WebSampleBufferVideoRendering *renderering)
 #else
     return false;
 #endif
-}
-
-static CMTime getDecodeTime(CMBufferRef buf, void*)
-{
-    CMSampleBufferRef sample = checked_cf_cast<CMSampleBufferRef>(buf);
-    return PAL::CMSampleBufferGetDecodeTimeStamp(sample);
-}
-
-static CMTime getPresentationTime(CMBufferRef buf, void*)
-{
-    CMSampleBufferRef sample = checked_cf_cast<CMSampleBufferRef>(buf);
-    return PAL::CMSampleBufferGetPresentationTimeStamp(sample);
-}
-
-static CMTime getDuration(CMBufferRef buf, void*)
-{
-    CMSampleBufferRef sample = checked_cf_cast<CMSampleBufferRef>(buf);
-    return PAL::CMSampleBufferGetDuration(sample);
-}
-
-static CFComparisonResult compareBuffers(CMBufferRef buf1, CMBufferRef buf2, void* refcon)
-{
-    return (CFComparisonResult)PAL::CMTimeCompare(getPresentationTime(buf1, refcon), getPresentationTime(buf2, refcon));
-}
-
-static RetainPtr<CMBufferQueueRef> createBufferQueue()
-{
-    // CMBufferCallbacks contains 64-bit pointers that aren't 8-byte aligned. To suppress the linker
-    // warning about this, we prepend 4 bytes of padding when building.
-    const size_t padSize = 4;
-
-#pragma pack(push, 4)
-    struct BufferCallbacks {
-        uint8_t pad[padSize];
-        CMBufferCallbacks callbacks;
-    } callbacks {
-        { }, {
-            0,
-            nullptr,
-            &getDecodeTime,
-            &getPresentationTime,
-            &getDuration,
-            nullptr,
-            &compareBuffers,
-            nullptr,
-            nullptr,
-        }
-    };
-#pragma pack(pop)
-    static_assert(sizeof(callbacks.callbacks.version) == sizeof(uint32_t), "Version field must be 4 bytes");
-    static_assert(alignof(BufferCallbacks) == 4, "CMBufferCallbacks struct must have 4 byte alignment");
-
-    static const CMItemCount kMaximumCapacity = 120;
-
-    CMBufferQueueRef outQueue { nullptr };
-    PAL::CMBufferQueueCreate(kCFAllocatorDefault, kMaximumCapacity, &callbacks.callbacks, &outQueue);
-    return adoptCF(outQueue);
 }
 
 #define LogPerformance(...) RELEASE_LOG_DEBUG_IF(LOG_CHANNEL(MediaPerformance).level >= WTFLogLevel::Debug, MediaPerformance, __VA_ARGS__)
@@ -228,49 +164,45 @@ bool VideoMediaSampleRenderer::useStereoDecoding() const
 
 size_t VideoMediaSampleRenderer::decodedSamplesCount() const
 {
-    return m_decodedSampleQueue ? PAL::CMBufferQueueGetBufferCount(m_decodedSampleQueue.get()) : 0;
+    assertIsCurrent(dispatcher().get());
+
+    return m_decodedSampleQueue.size();
 }
 
-RetainPtr<CMSampleBufferRef> VideoMediaSampleRenderer::nextDecodedSample() const
+RefPtr<const MediaSample> VideoMediaSampleRenderer::nextDecodedSample() const
 {
+    assertIsCurrent(dispatcher().get());
+
     if (!decodedSamplesCount())
         return nullptr;
-    return static_cast<CMSampleBufferRef>(const_cast<void*>(PAL::CMBufferQueueGetHead(m_decodedSampleQueue.get())));
+    return m_decodedSampleQueue.first();
 }
 
-struct SampleCallbackData {
-    bool isFirstSample { true };
-    CMTime presentationTime = PAL::kCMTimeZero;
-};
-
-static OSStatus sampleCallback(CMBufferRef buffer, void* refcon)
+MediaTime VideoMediaSampleRenderer::nextDecodedSampleEndTime() const
 {
-    auto* data = static_cast<SampleCallbackData*>(refcon);
-    if (data->isFirstSample) {
-        data->isFirstSample = false;
-        data->presentationTime = PAL::kCMTimePositiveInfinity;
-        return 0;
-    }
-    data->presentationTime = PAL::CMSampleBufferGetPresentationTimeStamp(static_cast<CMSampleBufferRef>(const_cast<void*>(buffer)));
-    return 1;
-}
+    assertIsCurrent(dispatcher().get());
 
-CMTime VideoMediaSampleRenderer::nextDecodedSampleEndTime() const
-{
-    SampleCallbackData data;
-    PAL::CMBufferQueueCallForEachBuffer(m_decodedSampleQueue.get(), sampleCallback, &data);
-    return data.presentationTime;
+    if (m_decodedSampleQueue.size() <= 1)
+        return MediaTime::positiveInfiniteTime();
+    Ref secondSample = *std::next(m_decodedSampleQueue.begin());
+    return secondSample->presentationTime();
 }
 
 MediaTime VideoMediaSampleRenderer::lastDecodedSampleTime() const
 {
-    return PAL::toMediaTime(PAL::CMBufferQueueGetMaxPresentationTimeStamp(m_decodedSampleQueue.get()));
+    assertIsCurrent(dispatcher().get());
+
+    if (m_decodedSampleQueue.isEmpty())
+        return MediaTime::invalidTime();
+    Ref lastSample = m_decodedSampleQueue.last();
+    return lastSample->presentationTime();
 }
 
-void VideoMediaSampleRenderer::enqueueDecodedSample(RetainPtr<CMSampleBufferRef>&& sample)
+void VideoMediaSampleRenderer::enqueueDecodedSample(Ref<const MediaSample>&& sample)
 {
-    ASSERT(sample);
-    PAL::CMBufferQueueEnqueue(m_decodedSampleQueue.get(), sample.get());
+    assertIsCurrent(dispatcher().get());
+
+    m_decodedSampleQueue.append(WTFMove(sample));
 }
 
 bool VideoMediaSampleRenderer::isReadyForMoreMediaData() const
@@ -533,8 +465,6 @@ void VideoMediaSampleRenderer::decodeNextSampleIfNeeded()
 
     ASSERT(m_lastMinimumUpcomingPresentationTime.isInvalid() || sample->isNonDisplaying() || sample->presentationTime() >= std::min(sample->presentationTime(), m_lastMinimumUpcomingPresentationTime));
 
-    auto cmSample = sample->platformSample().sample.cmSampleBuffer;
-
     if (!useDecompressionSessionForProtectedFallback() && m_wasProtected != sample->isProtected()) {
         ASSERT(sample->isSync());
         RELEASE_LOG(Media, "Changing protection type (was:%d) content at:%0.2f", m_wasProtected, sample->presentationTime().toFloat());
@@ -543,7 +473,7 @@ void VideoMediaSampleRenderer::decodeNextSampleIfNeeded()
 
     m_decompressionSessionWasBlocked = blocked;
     if (blocked) {
-        decodedFrameAvailable(cmSample, flushId);
+        decodedFrameAvailable(WTFMove(sample), flushId);
         decodeNextSampleIfNeeded();
         return;
     }
@@ -553,7 +483,9 @@ void VideoMediaSampleRenderer::decodeNextSampleIfNeeded()
     if (useStereoDecoding())
         decodingFlags.add(WebCoreDecompressionSession::DecodingFlag::EnableStereo);
 
+    auto cmSample = sample->platformSample().sample.cmSampleBuffer;
     auto decodePromise = decompressionSession->decodeSample(cmSample, decodingFlags);
+
     m_isDecodingSample = true;
     decodePromise->whenSettled(dispatcher(), [weakThis = ThreadSafeWeakPtr { *this }, this, decodingFlags, flushId = flushId, startTime = MonotonicTime::now(), numberOfSamples = PAL::CMSampleBufferGetNumSamples(cmSample)](auto&& result) {
         RefPtr protectedThis = weakThis.get();
@@ -622,7 +554,7 @@ void VideoMediaSampleRenderer::decodeNextSampleIfNeeded()
         if (!decodingFlags.contains(WebCoreDecompressionSession::DecodingFlag::NonDisplaying)) {
             for (auto& decodedFrame : *result) {
                 if (decodedFrame)
-                    decodedFrameAvailable(WTFMove(decodedFrame), flushId);
+                    decodedFrameAvailable(MediaSampleAVFObjC::create(decodedFrame.get(), 0), flushId);
             }
         }
 
@@ -676,48 +608,46 @@ void VideoMediaSampleRenderer::initializeDecompressionSession()
             m_decompressionSession = WebCoreDecompressionSession::createOpenGL();
         m_isUsingDecompressionSession = true;
     }
-    if (!m_decodedSampleQueue) {
-        m_decodedSampleQueue = createBufferQueue();
+    if (!m_startupTime)
         m_startupTime = MonotonicTime::now();
-    }
 
     resetReadyForMoreMediaData();
 }
 
-void VideoMediaSampleRenderer::decodedFrameAvailable(RetainPtr<CMSampleBufferRef>&& sample, FlushId flushId)
+void VideoMediaSampleRenderer::decodedFrameAvailable(Ref<const MediaSample>&& sample, FlushId flushId)
 {
-    assignResourceOwner(sample.get());
+    assignResourceOwner(sample);
+
+    [rendererOrDisplayLayer() enqueueSampleBuffer:sample->platformSample().sample.cmSampleBuffer];
 
     if (auto timebase = this->timebase()) {
         enqueueDecodedSample(WTFMove(sample));
         maybeReschedulePurge(flushId);
     } else
-        maybeQueueFrameForDisplay(PAL::kCMTimeInvalid, sample.get(), flushId);
-    [rendererOrDisplayLayer() enqueueSampleBuffer:sample.get()];
+        maybeQueueFrameForDisplay(MediaTime::invalidTime(), sample, flushId);
 }
 
-VideoMediaSampleRenderer::DecodedFrameResult VideoMediaSampleRenderer::maybeQueueFrameForDisplay(const CMTime& currentTime, CMSampleBufferRef sample, FlushId flushId)
+VideoMediaSampleRenderer::DecodedFrameResult VideoMediaSampleRenderer::maybeQueueFrameForDisplay(const MediaTime& currentTime, const MediaSample& sample, FlushId flushId)
 {
     assertIsCurrent(dispatcher().get());
 
-    CMTime presentationTime = PAL::CMSampleBufferGetOutputPresentationTimeStamp(sample);
+    auto presentationTime = sample.presentationTime();
 
-    if (CMTIME_IS_VALID(currentTime)) {
+    if (currentTime.isValid()) {
         // Always display the first video frame available if we aren't displaying any yet, regardless of its time as it's always either:
         // 1- The first frame of the video.
         // 2- The first visible frame after a seek.
 
         if (m_lastDisplayedSample) {
-            auto comparisonResult = PAL::CMTimeCompare(presentationTime, *m_lastDisplayedSample);
-            if (comparisonResult < 0)
+            if (presentationTime < *m_lastDisplayedSample)
                 return DecodedFrameResult::TooLate;
-            if (!comparisonResult)
+            if (presentationTime == *m_lastDisplayedSample)
                 return DecodedFrameResult::AlreadyDisplayed;
         }
-        if (!m_forceLateSampleToBeDisplayed && m_isDisplayingSample && m_lastDisplayedTime && PAL::CMTimeCompare(presentationTime, *m_lastDisplayedTime) < 0)
+        if (!m_forceLateSampleToBeDisplayed && m_isDisplayingSample && m_lastDisplayedTime && presentationTime < *m_lastDisplayedTime)
             return DecodedFrameResult::TooLate;
 
-        if (m_isDisplayingSample && PAL::CMTimeCompare(presentationTime, currentTime) > 0)
+        if (m_isDisplayingSample && presentationTime > currentTime)
             return DecodedFrameResult::TooEarly;
 
         m_lastDisplayedTime = currentTime;
@@ -728,7 +658,7 @@ VideoMediaSampleRenderer::DecodedFrameResult VideoMediaSampleRenderer::maybeQueu
     m_isDisplayingSample = true;
     m_forceLateSampleToBeDisplayed = false;
 
-    notifyHasAvailableVideoFrame(PAL::toMediaTime(presentationTime), (MonotonicTime::now() - m_startupTime).seconds(), flushId);
+    notifyHasAvailableVideoFrame(presentationTime, (MonotonicTime::now() - m_startupTime).seconds(), flushId);
 
     return DecodedFrameResult::Displayed;
 }
@@ -745,9 +675,8 @@ void VideoMediaSampleRenderer::flushCompressedSampleQueue()
 void VideoMediaSampleRenderer::flushDecodedSampleQueue()
 {
     assertIsCurrent(dispatcher().get());
-    ASSERT(m_decodedSampleQueue);
 
-    PAL::CMBufferQueueReset(m_decodedSampleQueue.get());
+    m_decodedSampleQueue.clear();
     m_nextScheduledPurge.reset();
     m_lastDisplayedSample.reset();
     m_lastDisplayedTime.reset();
@@ -757,7 +686,7 @@ void VideoMediaSampleRenderer::flushDecodedSampleQueue()
 
 void VideoMediaSampleRenderer::cancelTimer()
 {
-    schedulePurgeAtTime(PAL::kCMTimeInvalid);
+    schedulePurgeAtTime(MediaTime::invalidTime());
 }
 
 void VideoMediaSampleRenderer::purgeDecodedSampleQueue(FlushId flushId)
@@ -776,14 +705,14 @@ void VideoMediaSampleRenderer::purgeDecodedSampleQueue(FlushId flushId)
 
     auto timebase = this->timebase();
     if (timebase) {
-        CMTime currentTime = PAL::CMTimebaseGetTime(timebase.get());
+        auto currentTime = PAL::toMediaTime(PAL::CMTimebaseGetTime(timebase.get()));
 
         samplesPurged = purgeDecodedSampleQueueUntilTime(currentTime);
-        if (RetainPtr nextSample = nextDecodedSample()) {
-            auto result = maybeQueueFrameForDisplay(currentTime, nextSample.get(), flushId);
+        if (RefPtr nextSample = nextDecodedSample()) {
+            auto result = maybeQueueFrameForDisplay(currentTime, *nextSample, flushId);
 #if !LOG_DISABLED
             if (LOG_CHANNEL(Media).level >= WTFLogLevel::Debug) {
-                auto presentationTime = PAL::CMSampleBufferGetOutputPresentationTimeStamp(nextSample.get());
+                auto presentationTime = nextSample->presentationTime();
                 auto presentationEndTime = nextDecodedSampleEndTime();
                 auto resultLiteral = [](DecodedFrameResult result) {
                     switch (result) {
@@ -793,7 +722,7 @@ void VideoMediaSampleRenderer::purgeDecodedSampleQueue(FlushId flushId)
                     case DecodedFrameResult::Displayed: return "displayed"_s;
                     };
                 }(result);
-                LOG(Media, "maybeQueueFrameForDisplay: currentTime:%f start:%f end:%f result:%s", PAL::CMTimeGetSeconds(currentTime), PAL::CMTimeGetSeconds(presentationTime), PAL::CMTimeGetSeconds(presentationEndTime), resultLiteral.characters());
+                LOG(Media, "maybeQueueFrameForDisplay: currentTime:%f start:%f end:%f result:%s", currentTime.toFloat(), presentationTime.toFloat(), presentationEndTime.toFloat(), resultLiteral.characters());
             }
 #else
             UNUSED_VARIABLE(result);
@@ -806,36 +735,35 @@ void VideoMediaSampleRenderer::purgeDecodedSampleQueue(FlushId flushId)
     }
 }
 
-bool VideoMediaSampleRenderer::purgeDecodedSampleQueueUntilTime(const CMTime& currentTime)
+bool VideoMediaSampleRenderer::purgeDecodedSampleQueueUntilTime(const MediaTime& currentTime)
 {
     assertIsCurrent(dispatcher().get());
 
-    if (!m_decodedSampleQueue)
+    if (m_decodedSampleQueue.isEmpty())
         return false;
 
-    CMTime nextPurgeTime = PAL::kCMTimeInvalid;
+    MediaTime nextPurgeTime = MediaTime::invalidTime();
     bool samplesPurged = false;
 
-    while (RetainPtr nextSample = nextDecodedSample()) {
-        auto presentationTime = PAL::CMSampleBufferGetOutputPresentationTimeStamp(nextSample.get());
+    while (RefPtr nextSample = nextDecodedSample()) {
+        auto presentationTime = nextSample->presentationTime();
         auto presentationEndTime = nextDecodedSampleEndTime();
 
-        if (PAL::CMTimeCompare(presentationEndTime, currentTime) >= 0) {
+        if (presentationEndTime >= currentTime) {
             nextPurgeTime = presentationEndTime;
             break;
         }
 
-        if (m_lastDisplayedSample && PAL::CMTimeCompare(*m_lastDisplayedSample, presentationTime) < 0) {
+        if (m_lastDisplayedSample && *m_lastDisplayedSample < presentationTime) {
             ++m_droppedVideoFrames; // This frame was never displayed.
-            LOG(Media, "purgeDecodedSampleQueueUntilTime: currentTime:%f start:%f end:%f result:tooLate scheduled:%f (dropped:%u)", PAL::CMTimeGetSeconds(currentTime), PAL::CMTimeGetSeconds(presentationTime), PAL::CMTimeGetSeconds(presentationEndTime), PAL::CMTimeGetSeconds(m_nextScheduledPurge.value_or(PAL::kCMTimePositiveInfinity)), m_droppedVideoFrames.load());
+            LOG(Media, "purgeDecodedSampleQueueUntilTime: currentTime:%f start:%f end:%f result:tooLate scheduled:%f (dropped:%u)", currentTime.toFloat(), presentationTime.toFloat(), presentationEndTime.toFloat(), m_nextScheduledPurge.value_or(MediaTime::positiveInfiniteTime()).toFloat(), m_droppedVideoFrames.load());
         }
 
-        RetainPtr sampleToBePurged = adoptCF(PAL::CMBufferQueueDequeueAndRetain(m_decodedSampleQueue.get()));
-        sampleToBePurged = nil;
+        m_decodedSampleQueue.removeFirst();
         samplesPurged = true;
     }
 
-    if (!CMTIME_IS_VALID(nextPurgeTime))
+    if (nextPurgeTime.isInvalid())
         return samplesPurged;
 
     schedulePurgeAtTime(nextPurgeTime);
@@ -843,15 +771,15 @@ bool VideoMediaSampleRenderer::purgeDecodedSampleQueueUntilTime(const CMTime& cu
     return samplesPurged;
 }
 
-void VideoMediaSampleRenderer::schedulePurgeAtTime(const CMTime& nextPurgeTime)
+void VideoMediaSampleRenderer::schedulePurgeAtTime(const MediaTime& nextPurgeTime)
 {
     auto [timebase, timerSource] = timebaseAndTimerSource();
     if (!timebase)
         return;
 
-    PAL::CMTimebaseSetTimerDispatchSourceNextFireTime(timebase.get(), timerSource.get(), nextPurgeTime, 0);
+    PAL::CMTimebaseSetTimerDispatchSourceNextFireTime(timebase.get(), timerSource.get(), PAL::toCMTime(nextPurgeTime), 0);
 
-    if (CMTIME_IS_VALID(nextPurgeTime)) {
+    if (nextPurgeTime.isValid()) {
         assertIsCurrent(dispatcher().get());
         m_nextScheduledPurge = nextPurgeTime;
     }
@@ -864,10 +792,10 @@ void VideoMediaSampleRenderer::maybeReschedulePurge(FlushId flushId)
     if (!decodedSamplesCount())
         return;
     auto presentationEndTime = nextDecodedSampleEndTime();
-    if (m_nextScheduledPurge && PAL::CMTimeCompare(*m_nextScheduledPurge, presentationEndTime) <= 0)
+    if (m_nextScheduledPurge && *m_nextScheduledPurge <= presentationEndTime)
         return;
 
-    if ((m_nextScheduledPurge && CMTIME_IS_POSITIVE_INFINITY(*m_nextScheduledPurge)) || CMTIME_IS_POSITIVE_INFINITY(presentationEndTime)) {
+    if ((m_nextScheduledPurge && m_nextScheduledPurge->isPositiveInfinite()) || presentationEndTime.isPositiveInfinite()) {
         purgeDecodedSampleQueue(flushId);
         return;
     }
@@ -890,7 +818,9 @@ void VideoMediaSampleRenderer::flush()
         decompressionSession->flush();
     dispatcher()->dispatch([weakThis = ThreadSafeWeakPtr { *this }]() mutable {
         if (RefPtr protectedThis = weakThis.get()) {
+            assertIsCurrent(protectedThis->dispatcher().get());
             protectedThis->flushDecodedSampleQueue();
+            protectedThis->m_notifiedFirstFrameAvailable = false;
             protectedThis->maybeBecomeReadyForMoreMediaData();
         }
     });
@@ -1027,17 +957,17 @@ auto VideoMediaSampleRenderer::copyDisplayedPixelBuffer() -> DisplayedPixelBuffe
         m_forceLateSampleToBeDisplayed = true;
         purgeDecodedSampleQueue(m_flushId);
 
-        auto nextSample = nextDecodedSample();
+        RefPtr nextSample = nextDecodedSample();
         if (!nextSample)
             return;
-        CMTime currentTime = PAL::CMTimebaseGetTime(timebase.get());
-        CMTime presentationTime = PAL::CMSampleBufferGetOutputPresentationTimeStamp(nextSample.get());
+        auto currentTime = PAL::toMediaTime(PAL::CMTimebaseGetTime(timebase.get()));
+        auto presentationTime = nextSample->presentationTime();
 
-        if (PAL::CMTimeCompare(presentationTime, currentTime) > 0 && (!m_lastDisplayedSample || PAL::CMTimeCompare(presentationTime, *m_lastDisplayedSample) > 0))
+        if (presentationTime > currentTime && (!m_lastDisplayedSample || presentationTime > *m_lastDisplayedSample))
             return;
 
-        imageBuffer = imageForSample(nextSample.get());
-        presentationTimeStamp = PAL::toMediaTime(presentationTime);
+        imageBuffer = imageForSample(nextSample->platformSample().sample.cmSampleBuffer);
+        presentationTimeStamp = presentationTime;
     });
 
     if (!imageBuffer)
@@ -1111,9 +1041,9 @@ void VideoMediaSampleRenderer::setResourceOwner(const ProcessIdentity& resourceO
     m_resourceOwner = resourceOwner;
 }
 
-void VideoMediaSampleRenderer::assignResourceOwner(CMSampleBufferRef sample)
+void VideoMediaSampleRenderer::assignResourceOwner(const MediaSample& sample)
 {
-    if (!m_resourceOwner || !sample)
+    if (!m_resourceOwner)
         return;
 
     auto assignImageBuffer = [&](CVPixelBufferRef imageBuffer) {
@@ -1124,15 +1054,23 @@ void VideoMediaSampleRenderer::assignResourceOwner(CMSampleBufferRef sample)
             IOSurface::setOwnershipIdentity(surface, m_resourceOwner);
     };
 
-    RetainPtr videoFormatDescription = PAL::CMSampleBufferGetFormatDescription(sample);
+    auto cmSample = sample.platformSample().sample.cmSampleBuffer;
+    RetainPtr videoFormatDescription = PAL::CMSampleBufferGetFormatDescription(cmSample);
     if (PAL::CMFormatDescriptionGetMediaType(videoFormatDescription.get()) == kCMMediaType_TaggedBufferGroup) {
-        RetainPtr group = PAL::CMSampleBufferGetTaggedBufferGroup(sample);
+        RetainPtr group = PAL::CMSampleBufferGetTaggedBufferGroup(cmSample);
 
         for (CFIndex index = 0; index < PAL::CMTaggedBufferGroupGetCount(group.get()); ++index)
             assignImageBuffer(PAL::CMTaggedBufferGroupGetCVPixelBufferAtIndex(group.get(), index));
         return;
     }
-    assignImageBuffer(PAL::CMSampleBufferGetImageBuffer(sample));
+    assignImageBuffer(PAL::CMSampleBufferGetImageBuffer(cmSample));
+}
+
+void VideoMediaSampleRenderer::notifyFirstFrameAvailable(Function<void(const MediaTime&, double)>&& callback)
+{
+    assertIsMainThread();
+
+    m_hasFirstFrameAvailableCallback = WTFMove(callback);
 }
 
 void VideoMediaSampleRenderer::notifyWhenHasAvailableVideoFrame(Function<void(const MediaTime&, double)>&& callback)
@@ -1140,12 +1078,27 @@ void VideoMediaSampleRenderer::notifyWhenHasAvailableVideoFrame(Function<void(co
     assertIsMainThread();
 
     m_hasAvailableFrameCallback = WTFMove(callback);
+    m_notifyWhenHasAvailableVideoFrame = !!m_hasAvailableFrameCallback;
 }
 
 void VideoMediaSampleRenderer::notifyHasAvailableVideoFrame(const MediaTime& presentationTime, double displayTime, FlushId flushId)
 {
-    assertIsCurrent(dispatcher());
+    assertIsCurrent(dispatcher().get());
 
+    if (!m_notifiedFirstFrameAvailable) {
+        LOG(Media, "VideoMediaSampleRenderer::notifyHasAvailableVideoFrame hasFirstFrameAvailable");
+        callOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, flushId, presentationTime, displayTime] {
+            if (RefPtr protectedThis = weakThis.get(); protectedThis && flushId == protectedThis->m_flushId) {
+                assertIsMainThread();
+                if (protectedThis->m_hasFirstFrameAvailableCallback)
+                    protectedThis->m_hasFirstFrameAvailableCallback(presentationTime, displayTime);
+            }
+        });
+        m_notifiedFirstFrameAvailable = true;
+    }
+    if (!m_notifyWhenHasAvailableVideoFrame)
+        return;
+    LOG(Media, "VideoMediaSampleRenderer::notifyHasAvailableVideoFrame hasAvailableFrame");
     callOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, flushId, presentationTime, displayTime] {
         if (RefPtr protectedThis = weakThis.get(); protectedThis && flushId == protectedThis->m_flushId) {
             assertIsMainThread();

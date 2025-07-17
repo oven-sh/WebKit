@@ -35,7 +35,6 @@
 #include "CSSBasicShapeValue.h"
 #include "CSSBorderImage.h"
 #include "CSSBorderImageSliceValue.h"
-#include "CSSBoxShadowPropertyValue.h"
 #include "CSSCounterValue.h"
 #include "CSSEasingFunctionValue.h"
 #include "CSSFilterPropertyValue.h"
@@ -44,10 +43,6 @@
 #include "CSSFontValue.h"
 #include "CSSFontVariationValue.h"
 #include "CSSFunctionValue.h"
-#include "CSSGridAutoRepeatValue.h"
-#include "CSSGridIntegerRepeatValue.h"
-#include "CSSGridLineNamesValue.h"
-#include "CSSGridTemplateAreasValue.h"
 #include "CSSPathValue.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSPrimitiveValueMappings.h"
@@ -61,7 +56,6 @@
 #include "CSSRegisteredCustomProperty.h"
 #include "CSSScrollValue.h"
 #include "CSSSerializationContext.h"
-#include "CSSTextShadowPropertyValue.h"
 #include "CSSTransformListValue.h"
 #include "CSSURLValue.h"
 #include "CSSValueList.h"
@@ -74,7 +68,6 @@
 #include "DocumentInlines.h"
 #include "FontCascade.h"
 #include "FontSelectionValueInlines.h"
-#include "GridPositionsResolver.h"
 #include "HTMLFrameOwnerElement.h"
 #include "Length.h"
 #include "PathOperation.h"
@@ -91,7 +84,6 @@
 #include "ScrollTimeline.h"
 #include "SkewTransformOperation.h"
 #include "StyleAppleColorFilterProperty.h"
-#include "StyleBoxShadow.h"
 #include "StyleClipPath.h"
 #include "StyleColor.h"
 #include "StyleColorScheme.h"
@@ -119,7 +111,6 @@
 #include "StyleScale.h"
 #include "StyleScrollMargin.h"
 #include "StyleScrollPadding.h"
-#include "StyleTextShadow.h"
 #include "StyleTranslate.h"
 #include "TimelineRange.h"
 #include "TransformOperationData.h"
@@ -202,11 +193,7 @@ public:
     static Ref<CSSValue> convertLineFitEdge(ExtractorState&, const TextEdge&);
     static Ref<CSSValue> convertTextBoxEdge(ExtractorState&, const TextEdge&);
     static Ref<CSSValue> convertQuotes(ExtractorState&, const QuotesData*);
-    static Ref<CSSValue> convertContainerNames(ExtractorState&, const FixedVector<ScopedName>&);
-    static Ref<CSSValue> convertViewTransitionClasses(ExtractorState&, const FixedVector<ScopedName>&);
     static Ref<CSSValue> convertViewTransitionName(ExtractorState&, const ViewTransitionName&);
-    static Ref<CSSValue> convertBoxShadow(ExtractorState&, const FixedVector<BoxShadow>&);
-    static Ref<CSSValue> convertTextShadow(ExtractorState&, const FixedVector<TextShadow>&);
     static Ref<CSSValue> convertPositionTryFallbacks(ExtractorState&, const FixedVector<PositionTryFallback>&);
     static Ref<CSSValue> convertWillChange(ExtractorState&, const WillChangeData*);
     static Ref<CSSValue> convertBlockEllipsis(ExtractorState&, const BlockEllipsis&);
@@ -219,7 +206,6 @@ public:
     static Ref<CSSValue> convertLineBoxContain(ExtractorState&, OptionSet<Style::LineBoxContain>);
     static Ref<CSSValue> convertWebkitRubyPosition(ExtractorState&, RubyPosition);
     static Ref<CSSValue> convertPosition(ExtractorState&, const LengthPoint&);
-    static Ref<CSSValue> convertContainIntrinsicSize(ExtractorState&, const ContainIntrinsicSizeType&, const std::optional<WebCore::Length>&);
     static Ref<CSSValue> convertTouchAction(ExtractorState&, OptionSet<TouchAction>);
     static Ref<CSSValue> convertTextTransform(ExtractorState&, OptionSet<TextTransform>);
     static Ref<CSSValue> convertTextDecorationLine(ExtractorState&, OptionSet<TextDecorationLine>);
@@ -235,15 +221,10 @@ public:
     static Ref<CSSValue> convertSelfOrDefaultAlignmentData(ExtractorState&, const StyleSelfAlignmentData&);
     static Ref<CSSValue> convertContentAlignmentData(ExtractorState&, const StyleContentAlignmentData&);
     static Ref<CSSValue> convertPaintOrder(ExtractorState&, PaintOrder);
-    static Ref<CSSValue> convertScrollTimelineAxes(ExtractorState&, const FixedVector<ScrollAxis>&);
-    static Ref<CSSValue> convertScrollTimelineNames(ExtractorState&, const FixedVector<AtomString>&);
-    static Ref<CSSValue> convertAnchorNames(ExtractorState&, const FixedVector<ScopedName>&);
     static Ref<CSSValue> convertPositionAnchor(ExtractorState&, const std::optional<ScopedName>&);
     static Ref<CSSValue> convertPositionArea(ExtractorState&, const PositionArea&);
     static Ref<CSSValue> convertPositionArea(ExtractorState&, const std::optional<PositionArea>&);
     static Ref<CSSValue> convertNameScope(ExtractorState&, const NameScope&);
-    static Ref<CSSValue> convertSingleViewTimelineInsets(ExtractorState&, const ViewTimelineInsets&);
-    static Ref<CSSValue> convertViewTimelineInsets(ExtractorState&, const FixedVector<ViewTimelineInsets>&);
     static Ref<CSSValue> convertPositionVisibility(ExtractorState&, OptionSet<PositionVisibility>);
 #if ENABLE(TEXT_AUTOSIZING)
     static Ref<CSSValue> convertWebkitTextSizeAdjust(ExtractorState&, const TextSizeAdjustment&);
@@ -294,7 +275,7 @@ public:
     static Ref<CSSValue> convertAnimationName(ExtractorState&, const ScopedName&, const Animation*, const AnimationList*);
     static Ref<CSSValue> convertAnimationProperty(ExtractorState&, const Animation::TransitionProperty&, const Animation*, const AnimationList*);
     static Ref<CSSValue> convertAnimationAllowsDiscreteTransitions(ExtractorState&, bool, const Animation*, const AnimationList*);
-    static Ref<CSSValue> convertAnimationDuration(ExtractorState&, MarkableDouble, const Animation*, const AnimationList*);
+    static Ref<CSSValue> convertAnimationDuration(ExtractorState&, Markable<double>, const Animation*, const AnimationList*);
     static Ref<CSSValue> convertAnimationDelay(ExtractorState&, double, const Animation*, const AnimationList*);
     static Ref<CSSValue> convertAnimationIterationCount(ExtractorState&, double, const Animation*, const AnimationList*);
     static Ref<CSSValue> convertAnimationDirection(ExtractorState&, Animation::Direction, const Animation*, const AnimationList*);
@@ -314,10 +295,6 @@ public:
     // MARK: Grid conversions
 
     static Ref<CSSValue> convertGridAutoFlow(ExtractorState&, GridAutoFlow);
-    static Ref<CSSValue> convertGridPosition(ExtractorState&, const GridPosition&);
-    static Ref<CSSValue> convertGridTrackBreadth(ExtractorState&, const GridLength&);
-    static Ref<CSSValue> convertGridTrackSize(ExtractorState&, const GridTrackSize&);
-    static Ref<CSSValue> convertGridTrackSizeList(ExtractorState&, const Vector<GridTrackSize>&);
 };
 
 // MARK: - Strong value conversions
@@ -909,28 +886,6 @@ inline Ref<CSSValue> ExtractorConverter::convertQuotes(ExtractorState&, const Qu
     return CSSValueList::createSpaceSeparated(WTFMove(list));
 }
 
-inline Ref<CSSValue> ExtractorConverter::convertContainerNames(ExtractorState& state, const FixedVector<ScopedName>& containerNames)
-{
-    if (containerNames.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueNone);
-
-    CSSValueListBuilder list;
-    for (auto& name : containerNames)
-        list.append(convert(state, name));
-    return CSSValueList::createSpaceSeparated(WTFMove(list));
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertViewTransitionClasses(ExtractorState& state, const FixedVector<ScopedName>& classList)
-{
-    if (classList.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueNone);
-
-    CSSValueListBuilder list;
-    for (auto& name : classList)
-        list.append(convert(state, name));
-    return CSSValueList::createSpaceSeparated(WTFMove(list));
-}
-
 inline Ref<CSSValue> ExtractorConverter::convertViewTransitionName(ExtractorState&, const ViewTransitionName& viewTransitionName)
 {
     if (viewTransitionName.isNone())
@@ -940,33 +895,6 @@ inline Ref<CSSValue> ExtractorConverter::convertViewTransitionName(ExtractorStat
     return CSSPrimitiveValue::createCustomIdent(viewTransitionName.customIdent());
 }
 
-inline Ref<CSSValue> ExtractorConverter::convertBoxShadow(ExtractorState& state, const FixedVector<BoxShadow>& shadows)
-{
-    if (shadows.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueNone);
-
-    CSS::BoxShadowProperty::List list;
-
-    for (const auto& shadow : makeReversedRange(shadows))
-        list.value.append(toCSS(shadow, state.style));
-
-    return CSSBoxShadowPropertyValue::create(CSS::BoxShadowProperty { WTFMove(list) });
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertTextShadow(ExtractorState& state, const FixedVector<TextShadow>& shadows)
-{
-    if (shadows.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueNone);
-
-    CSS::TextShadowProperty::List list;
-
-    for (const auto& shadow : makeReversedRange(shadows))
-        list.value.append(toCSS(shadow, state.style));
-
-    list.value.reverse();
-
-    return CSSTextShadowPropertyValue::create(CSS::TextShadowProperty { WTFMove(list) });
-}
 
 inline Ref<CSSValue> ExtractorConverter::convertPositionTryFallbacks(ExtractorState& state, const FixedVector<PositionTryFallback>& fallbacks)
 {
@@ -1128,22 +1056,6 @@ inline Ref<CSSValue> ExtractorConverter::convertPosition(ExtractorState& state, 
         convertLength(state, position.x),
         convertLength(state, position.y)
     );
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertContainIntrinsicSize(ExtractorState& state, const ContainIntrinsicSizeType& type, const std::optional<WebCore::Length>& containIntrinsicLength)
-{
-    switch (type) {
-    case ContainIntrinsicSizeType::None:
-        return CSSPrimitiveValue::create(CSSValueNone);
-    case ContainIntrinsicSizeType::Length:
-        return convertLength(state, *containIntrinsicLength);
-    case ContainIntrinsicSizeType::AutoAndLength:
-        return CSSValuePair::create(CSSPrimitiveValue::create(CSSValueAuto), convertLength(state, *containIntrinsicLength));
-    case ContainIntrinsicSizeType::AutoAndNone:
-        return CSSValuePair::create(CSSPrimitiveValue::create(CSSValueAuto), CSSPrimitiveValue::create(CSSValueNone));
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-    return CSSPrimitiveValue::create(CSSValueNone);
 }
 
 inline Ref<CSSValue> ExtractorConverter::convertTouchAction(ExtractorState&, OptionSet<TouchAction> touchActions)
@@ -1406,43 +1318,6 @@ inline Ref<CSSValue> ExtractorConverter::convertPaintOrder(ExtractorState&, Pain
     return CSSValueList::createSpaceSeparated(WTFMove(paintOrderList));
 }
 
-inline Ref<CSSValue> ExtractorConverter::convertScrollTimelineAxes(ExtractorState& state, const FixedVector<ScrollAxis>& axes)
-{
-    if (axes.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueBlock);
-
-    CSSValueListBuilder list;
-    for (auto axis : axes)
-        list.append(convert(state, axis));
-    return CSSValueList::createCommaSeparated(WTFMove(list));
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertScrollTimelineNames(ExtractorState&, const FixedVector<AtomString>& names)
-{
-    if (names.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueNone);
-
-    CSSValueListBuilder list;
-    for (auto& name : names) {
-        if (name.isNull())
-            list.append(CSSPrimitiveValue::create(CSSValueNone));
-        else
-            list.append(CSSPrimitiveValue::createCustomIdent(name));
-    }
-    return CSSValueList::createCommaSeparated(WTFMove(list));
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertAnchorNames(ExtractorState& state, const FixedVector<ScopedName>& anchorNames)
-{
-    if (anchorNames.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueNone);
-
-    CSSValueListBuilder list;
-    for (auto& anchorName : anchorNames)
-        list.append(convert(state, anchorName));
-    return CSSValueList::createCommaSeparated(WTFMove(list));
-}
-
 inline Ref<CSSValue> ExtractorConverter::convertPositionAnchor(ExtractorState& state, const std::optional<ScopedName>& positionAnchor)
 {
     if (!positionAnchor)
@@ -1616,25 +1491,6 @@ inline Ref<CSSValue> ExtractorConverter::convertNameScope(ExtractorState&, const
 
     ASSERT_NOT_REACHED();
     return CSSPrimitiveValue::create(CSSValueNone);
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertSingleViewTimelineInsets(ExtractorState& state, const ViewTimelineInsets& insets)
-{
-    ASSERT(insets.start);
-    if (insets.end && insets.start != insets.end)
-        return CSSValuePair::createNoncoalescing(CSSPrimitiveValue::create(*insets.start, state.style), CSSPrimitiveValue::create(*insets.end, state.style));
-    return CSSPrimitiveValue::create(*insets.start, state.style);
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertViewTimelineInsets(ExtractorState& state, const FixedVector<ViewTimelineInsets>& insets)
-{
-    if (insets.isEmpty())
-        return CSSPrimitiveValue::create(CSSValueAuto);
-
-    CSSValueListBuilder list;
-    for (auto& singleInsets : insets)
-        list.append(convertSingleViewTimelineInsets(state, singleInsets));
-    return CSSValueList::createCommaSeparated(WTFMove(list));
 }
 
 inline Ref<CSSValue> ExtractorConverter::convertPositionVisibility(ExtractorState&, OptionSet<PositionVisibility> positionVisibility)
@@ -2049,7 +1905,7 @@ inline Ref<CSSValue> ExtractorConverter::convertAnimationAllowsDiscreteTransitio
     return CSSPrimitiveValue::create(allowsDiscreteTransitions ? CSSValueAllowDiscrete : CSSValueNormal);
 }
 
-inline Ref<CSSValue> ExtractorConverter::convertAnimationDuration(ExtractorState&, MarkableDouble duration, const Animation* animation, const AnimationList* animationList)
+inline Ref<CSSValue> ExtractorConverter::convertAnimationDuration(ExtractorState&, Markable<double> duration, const Animation* animation, const AnimationList* animationList)
 {
     auto animationListHasMultipleExplicitTimelines = [&] {
         if (!animationList || animationList->size() <= 1)
@@ -2378,70 +2234,6 @@ inline Ref<CSSValue> ExtractorConverter::convertGridAutoFlow(ExtractorState&, Gr
     if (gridAutoFlow & static_cast<GridAutoFlow>(InternalAutoFlowAlgorithmDense))
         list.append(CSSPrimitiveValue::create(CSSValueDense));
 
-    return CSSValueList::createSpaceSeparated(WTFMove(list));
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertGridPosition(ExtractorState&, const GridPosition& position)
-{
-    if (position.isAuto())
-        return CSSPrimitiveValue::create(CSSValueAuto);
-
-    if (position.isNamedGridArea())
-        return CSSPrimitiveValue::createCustomIdent(position.namedGridLine());
-
-    bool hasNamedGridLine = !position.namedGridLine().isNull();
-    CSSValueListBuilder list;
-    if (position.isSpan()) {
-        list.append(CSSPrimitiveValue::create(CSSValueSpan));
-        if (!hasNamedGridLine || position.spanPosition() != 1)
-            list.append(CSSPrimitiveValue::createInteger(position.spanPosition()));
-    } else
-        list.append(CSSPrimitiveValue::createInteger(position.integerPosition()));
-
-    if (hasNamedGridLine)
-        list.append(CSSPrimitiveValue::createCustomIdent(position.namedGridLine()));
-    return CSSValueList::createSpaceSeparated(WTFMove(list));
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertGridTrackBreadth(ExtractorState& state, const GridLength& trackBreadth)
-{
-    if (!trackBreadth.isLength())
-        return CSSPrimitiveValue::create(trackBreadth.flex(), CSSUnitType::CSS_FR);
-
-    auto& trackBreadthLength = trackBreadth.length();
-    if (trackBreadthLength.isAuto())
-        return CSSPrimitiveValue::create(CSSValueAuto);
-    return convertLength(state, trackBreadthLength);
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertGridTrackSize(ExtractorState& state, const GridTrackSize& trackSize)
-{
-    switch (trackSize.type()) {
-    case LengthTrackSizing:
-        return convertGridTrackBreadth(state, trackSize.minTrackBreadth());
-    case FitContentTrackSizing:
-        return CSSFunctionValue::create(
-            CSSValueFitContent,
-            convertLength(state, trackSize.fitContentTrackBreadth().length())
-        );
-    default:
-        ASSERT(trackSize.type() == MinMaxTrackSizing);
-        if (trackSize.minTrackBreadth().isAuto() && trackSize.maxTrackBreadth().isFlex())
-            return CSSPrimitiveValue::create(trackSize.maxTrackBreadth().flex(), CSSUnitType::CSS_FR);
-
-        return CSSFunctionValue::create(
-            CSSValueMinmax,
-            convertGridTrackBreadth(state, trackSize.minTrackBreadth()),
-            convertGridTrackBreadth(state, trackSize.maxTrackBreadth())
-        );
-    }
-}
-
-inline Ref<CSSValue> ExtractorConverter::convertGridTrackSizeList(ExtractorState& state, const Vector<GridTrackSize>& gridTrackSizeList)
-{
-    CSSValueListBuilder list;
-    for (auto& gridTrackSize : gridTrackSizeList)
-        list.append(convertGridTrackSize(state, gridTrackSize));
     return CSSValueList::createSpaceSeparated(WTFMove(list));
 }
 

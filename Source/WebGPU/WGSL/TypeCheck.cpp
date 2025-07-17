@@ -308,10 +308,10 @@ Result<void> TypeChecker::declareBuiltins()
         [this](AST::ElaboratedTypeExpression& type) WARN_UNUSED_RETURN -> Result<const Type*> {
             auto argumentCount = type.arguments().size();
             if (argumentCount < 2) [[unlikely]]
-                TYPE_ERROR(type.span(), "'ptr' requires at least 2 template argument"_s);
+                TYPE_ERROR(type.span(), "'ptr' requires at least 2 template arguments"_s);
 
             if (argumentCount > 3) [[unlikely]]
-                TYPE_ERROR(type.span(), "'ptr' requires at most 3 template argument"_s);
+                TYPE_ERROR(type.span(), "'ptr' requires at most 3 template arguments"_s);
 
             UNWRAP(addressSpace, addressSpace(type.arguments()[0]));
             UNWRAP(elementType, resolve(type.arguments()[1]));
@@ -354,7 +354,7 @@ Result<void> TypeChecker::declareBuiltins()
         "atomic"_s,
         [this](AST::ElaboratedTypeExpression& type) WARN_UNUSED_RETURN -> Result<const Type*> {
             if (type.arguments().size() != 1) [[unlikely]]
-                TYPE_ERROR(type.span(), "'atomic' requires 1 template arguments"_s);
+                TYPE_ERROR(type.span(), "'atomic' requires 1 template argument"_s);
 
             UNWRAP(elementType, resolve(type.arguments()[0]));
 

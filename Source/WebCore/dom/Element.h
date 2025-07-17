@@ -26,7 +26,6 @@
 
 #include "AXTextStateChangeIntent.h"
 #include "ContainerNode.h"
-#include "ElementIdentifier.h"
 #include "EventOptions.h"
 #include "FocusOptions.h"
 #include "HitTestRequest.h"
@@ -131,6 +130,7 @@ enum class CommandType: uint8_t {
 };
 
 struct CheckVisibilityOptions;
+struct FocusEventData;
 struct FullscreenOptions;
 struct GetAnimationsOptions;
 struct GetHTMLOptions;
@@ -470,7 +470,7 @@ public:
     bool hasFocusableStyle() const;
     virtual bool supportsFocus() const;
     virtual bool isFocusable() const;
-    virtual bool isKeyboardFocusable(KeyboardEvent*) const;
+    virtual bool isKeyboardFocusable(const FocusEventData&) const;
     virtual bool isMouseFocusable() const;
 
     virtual bool shouldUseInputMethod();
@@ -837,9 +837,6 @@ public:
 
     ExceptionOr<Ref<WebAnimation>> animate(JSC::JSGlobalObject&, JSC::Strong<JSC::JSObject>&&, std::optional<Variant<double, KeyframeAnimationOptions>>&&);
     Vector<RefPtr<WebAnimation>> getAnimations(std::optional<GetAnimationsOptions>);
-
-    WEBCORE_EXPORT ElementIdentifier identifier() const;
-    WEBCORE_EXPORT static Element* fromIdentifier(ElementIdentifier);
 
     String description() const override;
     String debugDescription() const override;

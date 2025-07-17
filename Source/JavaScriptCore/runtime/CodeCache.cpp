@@ -56,7 +56,7 @@ void CodeCacheMap::pruneSlowCase()
 static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error)
 {
     auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable, CodeSpecializationKind constructorKind) {
-        if (constructorKind == CodeForConstruct && SourceParseModeSet(SourceParseMode::AsyncArrowFunctionMode, SourceParseMode::AsyncMethodMode, SourceParseMode::AsyncFunctionMode).contains(unlinkedExecutable->parseMode()))
+        if (constructorKind == CodeSpecializationKind::CodeForConstruct && SourceParseModeSet(SourceParseMode::AsyncArrowFunctionMode, SourceParseMode::AsyncMethodMode, SourceParseMode::AsyncFunctionMode).contains(unlinkedExecutable->parseMode()))
             return;
 
         SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
@@ -73,17 +73,17 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++) {
         auto* functionDecl = unlinkedCodeBlock->functionDecl(i);
         if (functionDecl->isConstructor()) {
-            generate(functionDecl, CodeForConstruct);
+            generate(functionDecl, CodeSpecializationKind::CodeForConstruct);
         } else {
-            generate(functionDecl, CodeForCall);
+            generate(functionDecl, CodeSpecializationKind::CodeForCall);
         }
     }
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++) {
         auto* functionExpr = unlinkedCodeBlock->functionExpr(i);
         if (functionExpr->isConstructor()) {
-            generate(functionExpr, CodeForConstruct);
+            generate(functionExpr, CodeSpecializationKind::CodeForConstruct);
         } else {
-            generate(functionExpr, CodeForCall);
+            generate(functionExpr, CodeSpecializationKind::CodeForCall);
         }
     }
 }

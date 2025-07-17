@@ -36,6 +36,10 @@
 #include <systemd/sd-journal.h>
 #endif
 
+#if OS(ANDROID)
+#include <android/log.h>
+#endif
+
 namespace WTF {
 
 template<typename T>
@@ -269,7 +273,7 @@ public:
         if (!m_enabled)
             return false;
 
-#if ENABLE(JOURNALD_LOG)
+#if ENABLE(JOURNALD_LOG) || OS(ANDROID)
         if (channel.state == WTFLogChannelState::Off)
             return false;
 #endif
@@ -356,6 +360,8 @@ private:
         WTFLog(&channel, "%s", logMessage.utf8().data());
 #elif USE(OS_LOG)
         SUPPRESS_UNRETAINED_LOCAL os_log(channel.osLogChannel, "%{public}s", logMessage.utf8().data());
+#elif OS(ANDROID)
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", channel.name, logMessage.utf8().data());
 #elif ENABLE(JOURNALD_LOG)
         sd_journal_send("WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().data(), nullptr);
 #else
@@ -385,6 +391,8 @@ private:
         UNUSED_PARAM(file);
         UNUSED_PARAM(line);
         UNUSED_PARAM(function);
+#elif OS(ANDROID)
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", channel.name, logMessage.utf8().data(), file, line, function);
 #elif ENABLE(JOURNALD_LOG)
         auto fileString = makeString("CODE_FILE="_s, unsafeSpan(file));
         auto lineString = makeString("CODE_LINE="_s, line);

@@ -47,6 +47,10 @@
 #include <stdlib.h>
 #include <wtf/ExportMacros.h>
 
+#if OS(ANDROID)
+#include <android/log.h>
+#endif
+
 #if OS(DARWIN) && !USE(BUN_JSC_ADDITIONS)
 #include <wtf/spi/darwin/ReasonSPI.h>
 #endif
@@ -98,7 +102,7 @@
 #if ENABLE(RELEASE_LOG)
 #define RELEASE_LOG_DISABLED 0
 #else
-#define RELEASE_LOG_DISABLED !(USE(OS_LOG) || ENABLE(JOURNALD_LOG))
+#define RELEASE_LOG_DISABLED !(USE(OS_LOG) || ENABLE(JOURNALD_LOG) || OS(ANDROID))
 #endif
 
 #ifndef VERBOSE_RELEASE_LOG
@@ -704,6 +708,34 @@ static constexpr bool unreachableForValue = false;
         SUPPRESS_UNCOUNTED_LOCAL os_log(LOG_CHANNEL(channel).osLogChannel, __VA_ARGS__); \
 } while (0)
 
+#elif OS(ANDROID)
+
+#define PUBLIC_LOG_STRING "s"
+#define PRIVATE_LOG_STRING "s"
+#define SENSITIVE_LOG_STRING "s"
+
+#define LOG_ANDROID_SEND(channel, priority, fmt, ...) do { \
+    auto& logChannel = LOG_CHANNEL(channel); \
+    if (logChannel.state != WTFLogChannelState::Off) \
+        __android_log_print(ANDROID_LOG_ ## priority, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] " fmt, logChannel.name, ##__VA_ARGS__); \
+} while (0)
+
+#define RELEASE_LOG(channel, ...) LOG_ANDROID_SEND(channel, VERBOSE, __VA_ARGS__)
+#define RELEASE_LOG_ERROR(channel, ...) LOG_ANDROID_SEND(channel, ERROR, __VA_ARGS__)
+#define RELEASE_LOG_FAULT(channel, ...) LOG_ANDROID_SEND(channel, FATAL, __VA_ARGS__)
+#define RELEASE_LOG_INFO(channel, ...) LOG_ANDROID_SEND(channel, INFO, __VA_ARGS__)
+#define RELEASE_LOG_DEBUG(channel, ...) LOG_ANDROID_SEND(channel, DEBUG, __VA_ARGS__)
+
+#define RELEASE_LOG_WITH_LEVEL(channel, logLevel, ...) do { \
+    if (LOG_CHANNEL(channel).level >= (logLevel)) \
+        LOG_ANDROID_SEND(channel, VERBOSE, __VA_ARGS__); \
+} while (0)
+
+#define RELEASE_LOG_WITH_LEVEL_IF(isAllowed, channel, logLevel, ...) do { \
+    if ((isAllowed) && LOG_CHANNEL(channel).level >= (logLevel)) \
+        LOG_ANDROID_SEND(channel, VERBOSE, __VA_ARGS__); \
+} while (0)
+
 #elif ENABLE(JOURNALD_LOG)
 
 #define PUBLIC_LOG_STRING "s"
@@ -952,7 +984,7 @@ void isIntegralOrPointerType(T, Types... types)
     isIntegralOrPointerType(types...);
 }
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || OS(ANDROID)
 WTF_EXPORT_PRIVATE void disableForwardingVPrintfStdErrToOSLog();
 #endif
 

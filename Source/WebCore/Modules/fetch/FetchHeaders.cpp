@@ -29,6 +29,7 @@
 #include "config.h"
 #include "FetchHeaders.h"
 
+#include "ExceptionOr.h"
 #include "HTTPParsers.h"
 #include <ranges>
 #include <wtf/text/MakeString.h>

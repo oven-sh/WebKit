@@ -58,7 +58,7 @@ bool InspectorBrowserAgent::enabled() const
     return m_inspectedPage->inspectorController().enabledBrowserAgent() == this;
 }
 
-void InspectorBrowserAgent::didCreateFrontendAndBackend(Inspector::FrontendRouter*, Inspector::BackendDispatcher*)
+void InspectorBrowserAgent::didCreateFrontendAndBackend()
 {
 }
 

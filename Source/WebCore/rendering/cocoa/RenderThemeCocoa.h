@@ -236,6 +236,8 @@ protected:
 
     Color buttonTextColor(OptionSet<StyleColorOptions>, bool) const;
     Color disabledSubmitButtonTextColor() const final;
+
+    bool mayNeedBleedAvoidance(const RenderStyle&) const final;
 #endif
 
 private:

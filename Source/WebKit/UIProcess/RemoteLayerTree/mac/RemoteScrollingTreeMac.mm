@@ -250,18 +250,19 @@ void RemoteScrollingTreeMac::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNo
 
 void RemoteScrollingTreeMac::scrollingTreeNodeDidStopAnimatedScroll(ScrollingTreeScrollingNode& node)
 {
+    auto scrollUpdate = ScrollUpdate { node.scrollingNodeID(), { }, { }, ScrollUpdateType::AnimatedScrollDidEnd };
+    addPendingScrollUpdate(WTFMove(scrollUpdate));
+
     // Happens when the this is called as a result of the scrolling tree commmit.
     if (RunLoop::isMain()) {
         if (CheckedPtr scrollingCoordinatorProxy = this->scrollingCoordinatorProxy())
-            scrollingCoordinatorProxy->scrollingTreeNodeDidStopAnimatedScroll(node.scrollingNodeID());
+            scrollingCoordinatorProxy->scrollingThreadAddedPendingUpdate();
         return;
     }
 
-    ASSERT(ScrollingThread::isCurrentThread());
-
-    RunLoop::protectedMain()->dispatch([protectedThis = Ref { *this }, nodeID = node.scrollingNodeID()] {
+    RunLoop::protectedMain()->dispatch([protectedThis = Ref { *this }] {
         if (CheckedPtr scrollingCoordinatorProxy = protectedThis->scrollingCoordinatorProxy())
-            scrollingCoordinatorProxy->scrollingTreeNodeDidStopAnimatedScroll(nodeID);
+            scrollingCoordinatorProxy->scrollingThreadAddedPendingUpdate();
     });
 }
 

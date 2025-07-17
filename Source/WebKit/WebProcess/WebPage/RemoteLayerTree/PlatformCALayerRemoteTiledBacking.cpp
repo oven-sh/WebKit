@@ -92,6 +92,12 @@ bool PlatformCALayerRemoteTiledBacking::setNeedsDisplayIfEDRHeadroomExceeds(floa
 {
     return m_tileController->setNeedsDisplayIfEDRHeadroomExceeds(headroom);
 }
+
+void PlatformCALayerRemoteTiledBacking::setTonemappingEnabled(bool enabled)
+{
+    PlatformCALayerRemote::setTonemappingEnabled(enabled);
+    m_tileController->setTonemappingEnabled(enabled);
+}
 #endif
 
 

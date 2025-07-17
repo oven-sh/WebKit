@@ -40,7 +40,7 @@ using CounterStyleMap = HashMap<AtomString, RefPtr<CSSCounterStyle>>;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSCounterStyleRegistry);
 class CSSCounterStyleRegistry {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSCounterStyleRegistry);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSCounterStyleRegistry, CSSCounterStyleRegistry);
 public:
     CSSCounterStyleRegistry() = default;
     RefPtr<CSSCounterStyle> resolvedCounterStyle(const ListStyleType&);

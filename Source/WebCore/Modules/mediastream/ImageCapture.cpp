@@ -29,6 +29,7 @@
 #if ENABLE(MEDIA_STREAM)
 
 #include "CanvasCaptureMediaStreamTrack.h"
+#include "ContextDestructionObserverInlines.h"
 #include "GraphicsContext.h"
 #include "ImageBitmapOptions.h"
 #include "ImageBuffer.h"

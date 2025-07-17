@@ -37,6 +37,7 @@
 #include "ContentSecurityPolicy.h"
 #include "EventLoop.h"
 #include "EventNames.h"
+#include "ExceptionOr.h"
 #include "HTTPStatusCodes.h"
 #include "MessageEvent.h"
 #include "ResourceError.h"
@@ -48,6 +49,7 @@
 #include "SharedBuffer.h"
 #include "TextResourceDecoder.h"
 #include "ThreadableLoader.h"
+#include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>

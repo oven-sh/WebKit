@@ -70,6 +70,9 @@
 #include "GStreamerEMEUtilities.h"
 #include "SharedBuffer.h"
 #include "WebKitCommonEncryptionDecryptorGStreamer.h"
+#if ENABLE(THUNDER)
+#include "CDMThunder.h"
+#endif
 #endif
 
 #if ENABLE(WEB_AUDIO)
@@ -1172,7 +1175,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
     ASSERT(m_isLegacyPlaybin);
 
     using TrackType = TrackPrivateBaseGStreamer::TrackType;
-    std::variant<TrackIDHashMap<Ref<AudioTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<VideoTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<InbandTextTrackPrivateGStreamer>>*> variantTracks = static_cast<TrackIDHashMap<Ref<TrackPrivateType>>*>(0);
+    Variant<TrackIDHashMap<Ref<AudioTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<VideoTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<InbandTextTrackPrivateGStreamer>>*> variantTracks = static_cast<TrackIDHashMap<Ref<TrackPrivateType>>*>(0);
     auto type(static_cast<TrackType>(variantTracks.index()));
     const char* typeName;
     bool* hasType;
@@ -1252,7 +1255,7 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
         if (!track->trackIndex() && (type == TrackType::Audio || type == TrackType::Video))
             track->setActive(true);
 
-        std::variant<AudioTrackPrivate*, VideoTrackPrivate*, InbandTextTrackPrivate*> variantTrack(&track.get());
+        Variant<AudioTrackPrivate*, VideoTrackPrivate*, InbandTextTrackPrivate*> variantTrack(&track.get());
         switch (variantTrack.index()) {
         case TrackType::Audio:
             player->addAudioTrack(*std::get<AudioTrackPrivate*>(variantTrack));
@@ -2541,6 +2544,11 @@ void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
     g_signal_connect(parsebin, "autoplug-select",
         G_CALLBACK(+[](GstElement*, GstPad*, GstCaps* caps, GstElementFactory* factory, MediaPlayerPrivateGStreamer* player) -> unsigned {
             static auto tryAutoPlug = *gstGetAutoplugSelectResult("try"_s);
+            static auto skipAutoPlug = *gstGetAutoplugSelectResult("skip"_s);
+
+            auto name = StringView::fromLatin1(gst_plugin_feature_get_name(GST_PLUGIN_FEATURE_CAST(factory)));
+            if (name == "webkitthunderparser"_s && player->m_url.protocolIsBlob())
+                return skipAutoPlug;
 
             auto* structure = gst_caps_get_structure(caps, 0);
             if (!structure)
@@ -2573,6 +2581,26 @@ void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
         }), this);
 }
 
+void MediaPlayerPrivateGStreamer::configureUriDecodebin2(GstElement* element)
+{
+    ASSERT(m_isLegacyPlaybin);
+#if ENABLE(ENCRYPTED_MEDIA) && ENABLE(THUNDER)
+    if (CDMFactoryThunder::singleton().supportedKeySystems().isEmpty())
+        return;
+
+    g_signal_connect(element, "autoplug-select", G_CALLBACK(+[](GstElement*, GstPad*, GstCaps*, GstElementFactory* factory, gpointer) -> unsigned {
+        static auto tryAutoPlug = *gstGetAutoplugSelectResult("try"_s);
+        static auto skipAutoPlug = *gstGetAutoplugSelectResult("skip"_s);
+        auto name = StringView::fromLatin1(gst_plugin_feature_get_name(GST_PLUGIN_FEATURE_CAST(factory)));
+        if (name == "webkitthunderparser"_s)
+            return skipAutoPlug;
+        return tryAutoPlug;
+    }), nullptr);
+#else
+    UNUSED_PARAM(element);
+#endif
+}
+
 void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
 {
     configureElementPlatformQuirks(element);
@@ -2592,6 +2620,11 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
 
     if (nameView.startsWith("parsebin"_s))
         configureParsebin(element);
+
+    // The legacy decodebin2 stack doesn't integrate well with parsebin, so prevent auto-plugging of
+    // the webkitthunderparser.
+    if (nameView.startsWith("uridecodebin"_s) && m_isLegacyPlaybin)
+        configureUriDecodebin2(element);
 
     // In case of playbin3 with <video ... preload="auto">, instantiate downloadbuffer element,
     // otherwise the playbin3 would instantiate a queue element instead. When playing blob URIs,
@@ -3995,7 +4028,7 @@ void MediaPlayerPrivateGStreamer::paint(GraphicsContext& context, const FloatRec
     if (!presentationSize)
         return;
 
-    auto frame = VideoFrameGStreamer::create(WTFMove(sample), { *m_videoInfo }, IntSize(*presentationSize));
+    auto frame = VideoFrameGStreamer::create(WTFMove(sample), { IntSize(*presentationSize), { *m_videoInfo } });
     frame->draw(context, rect, m_videoSourceOrientation, false);
 }
 
@@ -4011,7 +4044,16 @@ RefPtr<VideoFrame> MediaPlayerPrivateGStreamer::videoFrameForCurrentTime()
     if (!GST_IS_SAMPLE(m_sample.get()))
         return nullptr;
 
-    return VideoFrameGStreamer::createWrappedSample(m_sample);
+    auto frame = VideoFrameGStreamer::createWrappedSample(m_sample);
+    if (frame->contentHint() != VideoFrameContentHint::Canvas)
+        return frame;
+
+    auto convertedSample = frame->downloadSample(GST_VIDEO_FORMAT_BGRA);
+    if (!convertedSample)
+        return nullptr;
+
+    auto size = getVideoResolutionFromCaps(gst_sample_get_caps(m_sample.get())).value_or(FloatSize { 0, 0 });
+    return VideoFrameGStreamer::create(WTFMove(convertedSample), { IntSize(size) });
 }
 
 bool MediaPlayerPrivateGStreamer::setVideoSourceOrientation(ImageOrientation orientation)

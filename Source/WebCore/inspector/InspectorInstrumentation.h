@@ -187,7 +187,7 @@ public:
     static void didFireTimer(ScriptExecutionContext&, int timerId, bool oneShot);
     static void didInvalidateLayout(LocalFrame&);
     static void willLayout(LocalFrame&);
-    static void didLayout(LocalFrame&, RenderObject&);
+    static void didLayout(LocalFrame&, const Vector<FloatQuad>&);
     static void didScroll(Page&);
     static void willComposite(LocalFrame&);
     static void didComposite(LocalFrame&);
@@ -417,7 +417,7 @@ private:
     static void didFireTimerImpl(InstrumentingAgents&, int timerId, bool oneShot);
     static void didInvalidateLayoutImpl(InstrumentingAgents&);
     static void willLayoutImpl(InstrumentingAgents&);
-    static void didLayoutImpl(InstrumentingAgents&, RenderObject&);
+    static void didLayoutImpl(InstrumentingAgents&, const Vector<FloatQuad>&);
     static void didScrollImpl(InstrumentingAgents&);
     static void willCompositeImpl(InstrumentingAgents&);
     static void didCompositeImpl(InstrumentingAgents&);
@@ -1025,11 +1025,11 @@ inline void InspectorInstrumentation::willLayout(LocalFrame& frame)
         willLayoutImpl(*agents);
 }
 
-inline void InspectorInstrumentation::didLayout(LocalFrame& frame, RenderObject& root)
+inline void InspectorInstrumentation::didLayout(LocalFrame& frame, const Vector<FloatQuad>& layoutAreas)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
     if (auto* agents = instrumentingAgents(frame))
-        didLayoutImpl(*agents, root);
+        didLayoutImpl(*agents, layoutAreas);
 }
 
 inline void InspectorInstrumentation::didScroll(Page& page)

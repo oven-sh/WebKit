@@ -3605,7 +3605,7 @@ class GenerateCSSPropertyNames:
 
         to.write(f"struct CSSPropertySettings {{")
         with to.indent():
-            to.write(f"WTF_MAKE_STRUCT_FAST_ALLOCATED;")
+            to.write(f"WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CSSPropertySettings);")
             to.newline()
 
             to.write_lines(settings_variable_declarations)

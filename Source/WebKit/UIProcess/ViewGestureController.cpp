@@ -144,6 +144,18 @@ ViewGestureController* ViewGestureController::controllerForGesture(WebPageProxyI
     return gestureControllerIter->value.ptr();
 }
 
+RefPtr<WebBackForwardListItem> ViewGestureController::itemForSwipeDirection(SwipeDirection direction) const
+{
+    RefPtr page = m_webPageProxy.get();
+    if (!page)
+        return { };
+
+    if (direction == SwipeDirection::Back)
+        return page->backForwardList().goBackItemSkippingItemsWithoutUserGesture();
+
+    return page->backForwardList().goForwardItemSkippingItemsWithoutUserGesture();
+}
+
 ViewGestureController::GestureID ViewGestureController::takeNextGestureID()
 {
     static GestureID nextGestureID;

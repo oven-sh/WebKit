@@ -400,6 +400,11 @@ void ModelProcessModelPlayerProxy::unloadModelTimerFired()
     if (!strongManager)
         return;
 
+    if (m_loader) {
+        m_loader->cancel();
+        m_loader = nullptr;
+    }
+
     RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayerProxy::unloadModelTimerFired(): inform manager to unload model id=%" PRIu64, this, m_id.toUInt64());
     strongManager->unloadModelPlayer(m_id);
 }

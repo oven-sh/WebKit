@@ -1,4 +1,4 @@
 
 
-PASS navigate event for history.back() - cross-document
+FAIL navigate event for history.back() - cross-document assert_equals: expected (object) null but got (undefined) undefined
 

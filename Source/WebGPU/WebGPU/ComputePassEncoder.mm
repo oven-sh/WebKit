@@ -515,8 +515,7 @@ void ComputePassEncoder::setPipeline(const ComputePipeline& pipeline)
     }
 
     m_pipeline = pipeline;
-    m_computeDynamicOffsets.resize(m_pipeline->protectedPipelineLayout()->sizeOfComputeDynamicOffsets());
-    m_computeDynamicOffsets.fill(0);
+    m_computeDynamicOffsets.fill(0, m_pipeline->protectedPipelineLayout()->sizeOfComputeDynamicOffsets());
     m_maxDynamicOffsetAtIndex.fill(0);
 
     ASSERT(pipeline.computePipelineState());

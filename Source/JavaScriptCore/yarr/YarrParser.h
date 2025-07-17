@@ -163,13 +163,12 @@ private:
 
         void nextAlternative()
         {
-            m_nestedCaptureGroupNames.last().formUnion(m_activeCaptureGroupNames.last());
-            m_activeCaptureGroupNames.last().clear();
+            m_nestedCaptureGroupNames.last().addAll(std::exchange(m_activeCaptureGroupNames.last(), { }));
 
             // For nested parenthesis, we need to seed the new alternative with the already seen
             // named captures from the containing alternative.
             if (m_activeCaptureGroupNames.size() > 1)
-                m_activeCaptureGroupNames.last().formUnion(m_activeCaptureGroupNames[m_activeCaptureGroupNames.size() - 2]);
+                m_activeCaptureGroupNames.last().addAll(m_activeCaptureGroupNames[m_activeCaptureGroupNames.size() - 2]);
         }
 
         void pushParenthesis()
@@ -183,10 +182,10 @@ private:
         {
             ASSERT(m_nestedCaptureGroupNames.size() > 1);
             ASSERT(m_activeCaptureGroupNames.size() > 1);
-            m_nestedCaptureGroupNames.last().formUnion(m_activeCaptureGroupNames.last());
+            m_nestedCaptureGroupNames.last().addAll(WTFMove(m_activeCaptureGroupNames.last()));
 
             // Add all the names seen in this parenthesis to the containing alternative.
-            m_activeCaptureGroupNames[m_activeCaptureGroupNames.size() - 2].formUnion(m_nestedCaptureGroupNames.last());
+            m_activeCaptureGroupNames[m_activeCaptureGroupNames.size() - 2].addAll(WTFMove(m_nestedCaptureGroupNames.last()));
 
             m_nestedCaptureGroupNames.removeLast();
             m_activeCaptureGroupNames.removeLast();

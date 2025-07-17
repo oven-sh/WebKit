@@ -463,19 +463,15 @@ static void imageBytesForSource(WebGPU::Queue& backing, const auto& sourceDescri
         auto& channels = [&] -> const std::array<int, 4>& {
             switch (alphaInfo) {
             case kCGImageAlphaNone:               /* For example, RGB. */
+            case kCGImageAlphaPremultipliedLast:  /* For example, premultiplied RGBA */
             case kCGImageAlphaLast:               /* For example, non-premultiplied RGBA */
             case kCGImageAlphaNoneSkipLast:       /* For example, RGBX. */
-                needsPremultipliedAlpha = !needsPremultipliedAlpha;
-                [[fallthrough]];
-            case kCGImageAlphaPremultipliedLast:  /* For example, premultiplied RGBA */
                 channelLayoutIsRGB = true;
                 return isBGRA ? channelsBGRX : channelsRGBX;
+            case kCGImageAlphaPremultipliedFirst: /* For example, premultiplied ARGB */
             case kCGImageAlphaFirst:              /* For example, non-premultiplied ARGB */
             case kCGImageAlphaNoneSkipFirst:      /* For example, XRGB. */
             case kCGImageAlphaOnly:                /* No color data, alpha data only */
-                needsPremultipliedAlpha = !needsPremultipliedAlpha;
-                [[fallthrough]];
-            case kCGImageAlphaPremultipliedFirst: /* For example, premultiplied ARGB */
                 return isBGRA ? channelsXBGR : channelsXRGB;
             }
         }();

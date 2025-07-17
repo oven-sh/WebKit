@@ -61,7 +61,7 @@ public:
     TextLayout(RenderText& text, const FontCascade& fontCascade, float xPos)
         : m_fontCascade(fontCascade)
         , m_run(constructTextRun(text, xPos))
-        , m_controller(makeUnique<ComplexTextController>(m_fontCascade, m_run, true))
+        , m_controller(makeUniqueRef<ComplexTextController>(m_fontCascade, m_run, true))
     {
     }
 
@@ -87,7 +87,7 @@ private:
     // ComplexTextController has only references to its FontCascade and TextRun so they must be kept alive here.
     FontCascade m_fontCascade;
     TextRun m_run;
-    std::unique_ptr<ComplexTextController> m_controller;
+    const UniqueRef<ComplexTextController> m_controller;
 };
 
 void TextLayoutDeleter::operator()(TextLayout* layout) const

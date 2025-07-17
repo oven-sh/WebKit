@@ -1,3 +1,3 @@
 
-PASS history.back() fires the navigate event when reversing a pushState()
+FAIL history.back() fires the navigate event when reversing a pushState() assert_equals: expected (object) null but got (undefined) undefined
 

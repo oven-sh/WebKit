@@ -146,7 +146,7 @@ private:
 };
 
 class JSIPCConnection : public RefCounted<JSIPCConnection>, private IPC::Connection::Client {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSIPCConnection);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(JSIPCConnection);
 public:
     static Ref<JSIPCConnection> create(IPC::Connection::Identifier&& testedConnectionIdentifier)
@@ -245,7 +245,7 @@ private:
     // run loop invocation (in JS). This means that messages of interest do not ever enter here.
     // Due to JSIPCStreamClientConnection supporting WeakPtr and IPC::MessageReceiver forcing WeakPtr, we store this as a member.
     class MessageReceiver : public IPC::Connection::Client {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MessageReceiver);
         WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MessageReceiver);
     public:
         MessageReceiver(JSIPCStreamClientConnection& connection)

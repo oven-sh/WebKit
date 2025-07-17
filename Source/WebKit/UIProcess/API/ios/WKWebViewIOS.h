@@ -210,6 +210,8 @@ enum class TapHandlingResult : uint8_t;
 @property (nonatomic, readonly, getter=_isRetainingActiveFocusedState) BOOL _retainingActiveFocusedState;
 @property (nonatomic, readonly) WebCore::IntDegrees _deviceOrientationIgnoringOverrides;
 
+- (void)_setObscuredInsetsInternal:(UIEdgeInsets)obscuredInsets;
+
 #if HAVE(UIKIT_RESIZABLE_WINDOWS)
 @property (nonatomic, readonly) BOOL _isWindowResizingEnabled;
 #endif

@@ -324,7 +324,7 @@ void UserMediaPermissionRequestManagerProxy::grantRequest(UserMediaPermissionReq
 static bool doesPageNeedTCCD(const WebPageProxy& page)
 {
     Ref preferences = page.preferences();
-    return (!preferences->captureAudioInGPUProcessEnabled() && !preferences->captureAudioInUIProcessEnabled()) || !preferences->captureVideoInGPUProcessEnabled();
+    return !preferences->captureAudioInGPUProcessEnabled() || !preferences->captureVideoInGPUProcessEnabled();
 }
 #endif
 

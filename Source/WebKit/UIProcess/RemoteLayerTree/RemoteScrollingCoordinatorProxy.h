@@ -85,7 +85,6 @@ public:
     // Inform the web process that the scroll position changed (called from the scrolling tree)
     virtual bool scrollingTreeNodeRequestsScroll(WebCore::ScrollingNodeID, const WebCore::RequestedScrollData&);
     virtual bool scrollingTreeNodeRequestsKeyboardScroll(WebCore::ScrollingNodeID, const WebCore::RequestedKeyboardScrollData&);
-    void scrollingTreeNodeDidStopAnimatedScroll(WebCore::ScrollingNodeID);
 
     void scrollingThreadAddedPendingUpdate();
 
@@ -175,11 +174,11 @@ public:
     String scrollbarStateForScrollingNodeID(std::optional<WebCore::ScrollingNodeID>, bool isVertical);
     bool overlayScrollbarsEnabled();
 
-    void sendScrollingTreeNodeDidScroll();
+    void sendScrollingTreeNodeUpdate();
     
     void scrollingTreeNodeScrollbarVisibilityDidChange(WebCore::ScrollingNodeID, WebCore::ScrollbarOrientation, bool);
     void scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(WebCore::ScrollingNodeID, WebCore::ScrollbarOrientation, int);
-    void receivedLastScrollingTreeNodeDidScrollReply();
+    void receivedLastScrollingTreeNodeUpdateReply();
     bool isMonitoringWheelEvents();
 
 protected:
@@ -204,7 +203,6 @@ protected:
     std::optional<unsigned> m_currentHorizontalSnapPointIndex;
     std::optional<unsigned> m_currentVerticalSnapPointIndex;
     bool m_waitingForDidScrollReply { false };
-    bool m_stickyScrollingTreeNodesBeganSticking { false };
     HashSet<WebCore::PlatformLayerIdentifier> m_layersWithScrollingRelations;
 };
 

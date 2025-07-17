@@ -34,8 +34,14 @@ namespace WebKit {
 static void initializeFilterRules(Vector<String>&& source, MemoryCompactRobinHoodHashSet<String>& target)
 {
     target.reserveInitialCapacity(source.size());
-    for (auto& host : source)
+    for (auto& host : source) {
+        if (host.isEmpty()) {
+            ASSERT_NOT_REACHED();
+            continue;
+        }
+
         target.add(host);
+    }
 }
 
 ScriptTrackingPrivacyFilter::ScriptTrackingPrivacyFilter(ScriptTrackingPrivacyRules&& rules)

@@ -118,7 +118,8 @@ static NSArray<NSString *> *controlArray()
 
     WeakObjCPtr<WKPDFHUDView> weakSelf = self;
     WorkQueue::protectedMain()->dispatchAfter(Seconds { initialHideTimeInterval }, [weakSelf] {
-        [weakSelf _hideTimerFired];
+        if (RetainPtr protectedSelf = weakSelf.get())
+            [protectedSelf _hideTimerFired];
     });
     return self;
 }
@@ -241,8 +242,10 @@ static NSArray<NSString *> *controlArray()
 
 - (NSString *)_controlForEvent:(NSEvent *)event
 {
-    if (auto index = [self _controlIndexForEvent:event])
-        return controlArray()[*index];
+    if (auto index = [self _controlIndexForEvent:event]) {
+        RetainPtr array = controlArray();
+        return array.get()[*index];
+    }
     return nil;
 }
 
@@ -302,7 +305,7 @@ static NSArray<NSString *> *controlArray()
             controllerWidth = layerSeparatorControllerSize;
             controllerHeight = minIconImageHeight + (2.0 * layerImageVerticalMargin) - (2.0 * layerSeparatorVerticalMargin);
             
-            [controlLayer setBackgroundColor:[[NSColor lightGrayColor] CGColor]];
+            [controlLayer setBackgroundColor:RetainPtr { [[NSColor lightGrayColor] CGColor] }.get()];
         } else {
             RetainPtr controlImage = [self _imageForControlName:controlName];
             [controlLayer setContents:controlImage.get()];

@@ -38,6 +38,10 @@ struct StreamServerConnectionHandle;
 
 namespace WebKit {
 
+constexpr size_t logCategoryMaxSize = 32;
+constexpr size_t logSubsystemMaxSize = 32;
+constexpr size_t logStringMaxSize = 256;
+
 class LogStream final
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
 : public IPC::StreamMessageReceiver {

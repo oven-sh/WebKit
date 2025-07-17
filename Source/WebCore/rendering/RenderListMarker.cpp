@@ -422,18 +422,11 @@ void RenderListMarker::updateInlineMargins()
     mutableStyle().setMarginEnd(Style::MarginEdge::Fixed { marginEnd });
 }
 
-LayoutUnit RenderListMarker::lineHeight(bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
+LayoutUnit RenderListMarker::baselinePosition() const
 {
     if (!isImage())
-        return m_listItem->lineHeight(firstLine, direction, PositionOfInteriorLineBoxes);
-    return RenderBox::lineHeight(firstLine, direction, linePositionMode);
-}
-
-LayoutUnit RenderListMarker::baselinePosition(bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
-{
-    if (!isImage())
-        return m_listItem->baselinePosition(firstLine, direction, PositionOfInteriorLineBoxes);
-    return RenderBox::baselinePosition(firstLine, direction, linePositionMode);
+        return m_listItem->baselinePosition();
+    return RenderBox::baselinePosition();
 }
 
 bool RenderListMarker::isInside() const

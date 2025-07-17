@@ -34,6 +34,7 @@
 #include "ContentSecurityPolicy.h"
 #include "CrossOriginMode.h"
 #include "CrossOriginOpenerPolicy.h"
+#include "DocumentInlines.h"
 #include "DOMTimer.h"
 #include "DatabaseContext.h"
 #include "Document.h"

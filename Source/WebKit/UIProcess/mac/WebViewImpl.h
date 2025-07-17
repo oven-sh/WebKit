@@ -134,6 +134,9 @@ namespace WritingTools {
 enum class ReplacementBehavior : uint8_t;
 }
 
+struct FrameIdentifierType;
+using FrameIdentifier = ObjectIdentifier<FrameIdentifierType>;
+
 } // namespace WebCore
 
 @protocol WebViewImplDelegate
@@ -187,6 +190,8 @@ struct DragItem;
 struct DigitalCredentialsRequestData;
 #endif
 
+struct FrameIdentifierType;
+using FrameIdentifier = ObjectIdentifier<FrameIdentifierType>;
 }
 
 namespace WebKit {
@@ -901,7 +906,9 @@ private:
     const UniqueRef<PageClient> m_pageClient;
     const Ref<WebPageProxy> m_page;
 
+#if ENABLE(TILED_CA_DRAWING_AREA)
     DrawingAreaType m_drawingAreaType { DrawingAreaType::TiledCoreAnimation };
+#endif
 
     bool m_willBecomeFirstResponderAgain { false };
     bool m_inBecomeFirstResponder { false };
@@ -1012,13 +1019,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     // that has been already sent to WebCore.
     RetainPtr<NSEvent> m_keyDownEventBeingResent;
 
-    struct CheckedCommands : public CanMakeCheckedPtr<CheckedCommands> {
-        WTF_MAKE_FAST_ALLOCATED;
-        WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CheckedCommands);
-    public:
-        Vector<WebCore::KeypressCommand> commands;
-    };
-    CheckedPtr<CheckedCommands> m_collectedKeypressCommands;
+    std::optional<Vector<WebCore::KeypressCommand>> m_collectedKeypressCommands;
+    std::optional<NSRange> m_stagedMarkedRange;
+    Vector<CompletionHandler<void()>> m_interpretKeyEventHoldingTank;
 
     String m_lastStringForCandidateRequest;
     NSInteger m_lastCandidateRequestSequenceNumber;

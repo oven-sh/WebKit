@@ -26,6 +26,7 @@
 
 #include "AXObjectCache.h"
 #include "BorderShape.h"
+#include "ContainerNodeInlines.h"
 #include "DocumentInlines.h"
 #include "Editor.h"
 #include "Element.h"
@@ -1273,8 +1274,7 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     if ((paintPhase == PaintPhase::Outline || paintPhase == PaintPhase::SelfOutline) && hasOutline() && style().usedVisibility() == Visibility::Visible) {
         // Don't paint focus ring for anonymous block continuation because the
         // inline element having outline-style:auto paints the whole focus ring.
-        bool hasOutlineStyleAuto = style().hasAutoOutlineStyle();
-        if (!hasOutlineStyleAuto || !isContinuation())
+        if (style().outlineStyle() != OutlineStyle::Auto || !isContinuation())
             paintOutline(paintInfo, LayoutRect(paintOffset, size()));
     }
 
@@ -1366,7 +1366,7 @@ bool RenderBlock::establishesIndependentFormattingContext() const
     if (isGridItem()) {
         // Grid items establish a new independent formatting context, unless they're a subgrid
         // https://drafts.csswg.org/css-grid-2/#grid-item-display
-        if (!style.gridSubgridColumns() && !style.gridSubgridRows())
+        if (!style.gridTemplateColumns().subgrid && !style.gridTemplateRows().subgrid)
             return true;
         // Masonry makes grid items not subgrids.
         if (CheckedPtr parentGridBox = dynamicDowncast<RenderGrid>(parent()))
@@ -1913,9 +1913,9 @@ bool RenderBlock::isContainingBlockAncestorFor(RenderObject& renderer) const
 LayoutUnit RenderBlock::textIndentOffset() const
 {
     LayoutUnit cw;
-    if (style().textIndent().isPercentOrCalculated())
+    if (style().textIndent().length.isPercentOrCalculated())
         cw = contentBoxLogicalWidth();
-    return minimumValueForLength(style().textIndent(), cw);
+    return Style::evaluate(style().textIndent().length, cw);
 }
 
 LayoutUnit RenderBlock::logicalLeftOffsetForContent() const
@@ -2441,7 +2441,7 @@ void RenderBlock::computeChildPreferredLogicalWidths(RenderBox& childBox, Layout
                 LayoutUnit { childBoxStyle.logicalAspectRatio() },
                 childBoxStyle.boxSizingForAspectRatio(),
                 LayoutUnit { fixedChildBoxStyleLogicalWidth->value },
-                style().aspectRatioType(),
+                style().aspectRatio(),
                 isRenderReplaced()
             );
             minPreferredLogicalWidth = aspectRatioSize;
@@ -2474,26 +2474,14 @@ bool RenderBlock::hasLineIfEmpty() const
     return element && element->isRootEditableElement();
 }
 
-LayoutUnit RenderBlock::lineHeight(bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
+LayoutUnit RenderBlock::baselinePosition() const
 {
     // Inline blocks are replaced elements. Otherwise, just pass off to
     // the base class.  If we're being queried as though we're the root line
     // box, then the fact that we're an inline-block is irrelevant, and we behave
     // just like a block.
-    if (isBlockLevelReplacedOrAtomicInline() && linePositionMode == PositionOnContainingLine)
-        return RenderBox::lineHeight(firstLine, direction, linePositionMode);
-
-    auto& lineStyle = firstLine ? firstLineStyle() : style();
-    return LayoutUnit::fromFloatCeil(lineStyle.computedLineHeight());
-}
-
-LayoutUnit RenderBlock::baselinePosition(bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
-{
-    // Inline blocks are replaced elements. Otherwise, just pass off to
-    // the base class.  If we're being queried as though we're the root line
-    // box, then the fact that we're an inline-block is irrelevant, and we behave
-    // just like a block.
-    if (isBlockLevelReplacedOrAtomicInline() && linePositionMode == PositionOnContainingLine) {
+    if (isBlockLevelReplacedOrAtomicInline()) {
+        auto direction = containingBlock()->writingMode().isHorizontal() ? HorizontalLine : VerticalLine;
         // For "leaf" theme objects, let the theme decide what the baseline position is.
         // FIXME: Might be better to have a custom CSS property instead, so that if the theme
         // is turned off, checkboxes/radios will still have decent baselines.
@@ -2522,7 +2510,7 @@ LayoutUnit RenderBlock::baselinePosition(bool firstLine, LineDirectionMode direc
             return scrollableArea->horizontalScrollbar() || scrollableArea->scrollOffset().x();
         };
 
-        auto baselinePos = ignoreBaseline() ? std::optional<LayoutUnit>() : inlineBlockBaseline(direction);
+        auto baselinePos = ignoreBaseline() ? std::optional<LayoutUnit>() : inlineBlockBaseline();
         
         if (isRenderDeprecatedFlexibleBox()) {
             // Historically, we did this check for all baselines. But we can't
@@ -2537,12 +2525,11 @@ LayoutUnit RenderBlock::baselinePosition(bool firstLine, LineDirectionMode direc
         if (baselinePos)
             return direction == HorizontalLine ? marginTop() + baselinePos.value() : marginRight() + baselinePos.value();
 
-        return RenderBox::baselinePosition(firstLine, direction, linePositionMode);
+        return RenderBox::baselinePosition();
     }
 
-    const RenderStyle& style = firstLine ? firstLineStyle() : this->style();
-    const FontMetrics& fontMetrics = style.metricsOfPrimaryFont();
-    return LayoutUnit { fontMetrics.intAscent() + (lineHeight(firstLine, direction, linePositionMode) - fontMetrics.intHeight()) / 2 }.toInt();
+    const FontMetrics& fontMetrics = style().metricsOfPrimaryFont();
+    return LayoutUnit { fontMetrics.intAscent() + (lineHeight() - fontMetrics.intHeight()) / 2 }.toInt();
 }
 
 std::optional<LayoutUnit> RenderBlock::firstLineBaseline() const
@@ -2579,8 +2566,9 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
     return { };
 }
 
-std::optional<LayoutUnit> RenderBlock::inlineBlockBaseline(LineDirectionMode lineDirection) const
+std::optional<LayoutUnit> RenderBlock::inlineBlockBaseline() const
 {
+    auto lineDirection = containingBlock()->writingMode().isHorizontal() ? HorizontalLine : VerticalLine;
     if (shouldApplyLayoutContainment()) {
         if (isInline())
             return synthesizedBaseline(*this, *parentStyle(), lineDirection, BorderBox) + (lineDirection == HorizontalLine ? marginBottom() : marginLeft());
@@ -2595,14 +2583,14 @@ std::optional<LayoutUnit> RenderBlock::inlineBlockBaseline(LineDirectionMode lin
         if (box->isFloatingOrOutOfFlowPositioned())
             continue;
         haveNormalFlowChild = true;
-        if (auto result = box->inlineBlockBaseline(lineDirection))
+        if (auto result = box->inlineBlockBaseline())
             return LayoutUnit { (box->logicalTop() + result.value()).toInt() }; // Translate to our coordinate space.
     }
 
     if (!haveNormalFlowChild && hasLineIfEmpty()) {
         auto& fontMetrics = firstLineStyle().metricsOfPrimaryFont();
         return LayoutUnit { LayoutUnit(fontMetrics.intAscent()
-            + (lineHeight(true, lineDirection, PositionOfInteriorLineBoxes) - fontMetrics.intHeight()) / 2
+            + (lineHeight() - fontMetrics.intHeight()) / 2
             + (lineDirection == HorizontalLine ? borderTop() + paddingTop() : borderRight() + paddingRight())).toInt() };
     }
 
@@ -3228,7 +3216,15 @@ std::optional<LayoutUnit> RenderBlock::availableLogicalHeightForPercentageComput
             // Only grid is expected to be in a state where it is calculating pref width and having unknown logical width.
             if (isRenderGrid() && needsPreferredLogicalWidthsUpdate() && !style.logicalWidth().isSpecified())
                 return { };
-            return blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), LayoutUnit { style.logicalAspectRatio() }, style.boxSizingForAspectRatio(), logicalWidth(), style.aspectRatioType(), isRenderReplaced());
+            return blockSizeFromAspectRatio(
+                horizontalBorderAndPaddingExtent(),
+                verticalBorderAndPaddingExtent(),
+                LayoutUnit { style.logicalAspectRatio() },
+                style.boxSizingForAspectRatio(),
+                logicalWidth(),
+                style.aspectRatio(),
+                isRenderReplaced()
+            );
         }
 
         // A positioned element that specified both top/bottom or that specifies

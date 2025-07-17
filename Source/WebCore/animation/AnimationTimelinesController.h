@@ -27,6 +27,7 @@
 
 #include "FrameRateAligner.h"
 #include "ReducedResolutionSeconds.h"
+#include "Timer.h"
 #include "WebAnimationTypes.h"
 #include <wtf/CancellableTask.h>
 #include <wtf/CheckedRef.h>
@@ -48,7 +49,7 @@ class AcceleratedEffectStackUpdater;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AnimationTimelinesController);
 class AnimationTimelinesController final : public CanMakeCheckedPtr<AnimationTimelinesController> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AnimationTimelinesController);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AnimationTimelinesController, AnimationTimelinesController);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(AnimationTimelinesController);
 public:
     explicit AnimationTimelinesController(Document&);
@@ -96,7 +97,7 @@ private:
     TaskCancellationGroup m_pendingAnimationsProcessingTaskCancellationGroup;
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     FrameRateAligner m_frameRateAligner;
-    Markable<Seconds, Seconds::MarkableTraits> m_cachedCurrentTime;
+    Markable<Seconds> m_cachedCurrentTime;
     bool m_isSuspended { false };
 };
 

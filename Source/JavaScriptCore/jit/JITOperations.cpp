@@ -209,10 +209,10 @@ static inline UGPRPair materializeTargetCode(VM& vm, JSFunction* targetFunction)
         if (!executable->isHostFunction()) {
             JSScope* scope = targetFunction->scopeUnchecked();
             FunctionExecutable* functionExecutable = static_cast<FunctionExecutable*>(executable);
-            functionExecutable->prepareForExecution<FunctionExecutable>(vm, targetFunction, scope, CodeForCall, codeBlockSlot);
+            functionExecutable->prepareForExecution<FunctionExecutable>(vm, targetFunction, scope, CodeSpecializationKind::CodeForCall, codeBlockSlot);
             RETURN_IF_EXCEPTION(throwScope, encodeResult(nullptr, nullptr));
         }
-        return encodeResult(executable->entrypointFor(CodeForCall, MustCheckArity).taggedPtr(), codeBlockSlot);
+        return encodeResult(executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), codeBlockSlot);
     }
 }
 
@@ -3075,7 +3075,7 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
         // We cannot be in the process of asynchronous compilation and also have an optimized
         // replacement.
         RELEASE_ASSERT(!codeBlock->hasOptimizedReplacement());
-        codeBlock->setOptimizationThresholdBasedOnCompilationResult(CompilationDeferred);
+        codeBlock->setOptimizationThresholdBasedOnCompilationResult(CompilationResult::CompilationDeferred);
         OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
     }
 
@@ -3144,7 +3144,7 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
             vm, replacementCodeBlock, nullptr, Options::forceUnlinkedDFG() ? JITCompilationMode::UnlinkedDFG : JITCompilationMode::DFG, bytecodeIndex,
             WTFMove(mustHandleValues), JITToDFGDeferredCompilationCallback::create());
         
-        if (result != CompilationSuccessful) {
+        if (result != CompilationResult::CompilationSuccessful) {
             CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("compilation failed"));
             OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
         }
@@ -4390,53 +4390,25 @@ JSC_DEFINE_JIT_OPERATION(operationSetupVarargsFrame, CallFrame*, (JSGlobalObject
     OPERATION_RETURN(scope, newCallFrame);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationSwitchCharWithUnknownKeyType, char*, (JSGlobalObject* globalObject, EncodedJSValue encodedKey, size_t tableIndex, int32_t min))
+JSC_DEFINE_JIT_OPERATION(operationResolveRope, StringImpl*, (JSGlobalObject* globalObject, JSString* string))
 {
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue key = JSValue::decode(encodedKey);
-    CodeBlock* codeBlock = callFrame->codeBlock();
-
-    const SimpleJumpTable& linkedTable = codeBlock->baselineSwitchJumpTable(tableIndex);
-    ASSERT(codeBlock->unlinkedSwitchJumpTable(tableIndex).m_min == min);
-    void* result = linkedTable.m_ctiDefault.taggedPtr();
-
-    if (key.isString()) {
-        JSString* string = asString(key);
-        if (string->length() == 1) {
-            auto value = string->value(globalObject);
-            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-            result = linkedTable.ctiForValue(min, value[0]).taggedPtr();
-        }
-    }
-
-    assertIsTaggedWith<JSSwitchPtrTag>(result);
-    OPERATION_RETURN(scope, reinterpret_cast<char*>(result));
+    OPERATION_RETURN(scope, string->value(globalObject)->impl());
 }
 
-JSC_DEFINE_JIT_OPERATION(operationSwitchImmWithUnknownKeyType, char*, (VM* vmPointer, EncodedJSValue encodedKey, size_t tableIndex, int32_t min))
+JSC_DEFINE_JIT_OPERATION(operationResolveRopeString, JSString*, (JSGlobalObject* globalObject, JSRopeString* string))
 {
-    VM& vm = *vmPointer;
+    VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue key = JSValue::decode(encodedKey);
-    CodeBlock* codeBlock = callFrame->codeBlock();
 
-    const SimpleJumpTable& linkedTable = codeBlock->baselineSwitchJumpTable(tableIndex);
-    ASSERT(codeBlock->unlinkedSwitchJumpTable(tableIndex).m_min == min);
-    void* result;
-    if (key.isInt32())
-        result = linkedTable.ctiForValue(min, key.asInt32()).taggedPtr();
-    else if (key.isDouble() && key.asDouble() == static_cast<int32_t>(key.asDouble()))
-        result = linkedTable.ctiForValue(min, static_cast<int32_t>(key.asDouble())).taggedPtr();
-    else
-        result = linkedTable.m_ctiDefault.taggedPtr();
-    assertIsTaggedWith<JSSwitchPtrTag>(result);
-    OPERATION_RETURN(scope, reinterpret_cast<char*>(result));
+    string->resolveRope(globalObject);
+    OPERATION_RETURN(scope, string);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlobalObject* globalObject, EncodedJSValue encodedKey, size_t tableIndex))

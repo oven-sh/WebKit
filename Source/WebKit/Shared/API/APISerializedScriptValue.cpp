@@ -167,6 +167,11 @@ WKRetainPtr<WKTypeRef> SerializedScriptValue::deserializeWK(WebCore::SerializedS
     return valueToWKObject(context.get(), value);
 }
 
+JSRetainPtr<JSGlobalContextRef> SerializedScriptValue::deserializationContext()
+{
+    return SharedJSContextWK::singleton().ensureContext();
+}
+
 #endif // !PLATFORM(COCOA)
 
 } // API

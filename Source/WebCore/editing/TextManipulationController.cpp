@@ -28,6 +28,7 @@
 
 #include "AccessibilityObject.h"
 #include "CharacterData.h"
+#include "ContainerNodeInlines.h"
 #include "EditingInlines.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementRareData.h"

@@ -2012,6 +2012,7 @@ private:
                 write(errorInformation->column);
                 writeNullableString(errorInformation->sourceURL);
                 writeNullableString(errorInformation->stack);
+                writeNullableString(errorInformation->cause);
                 return true;
             }
             if (obj->inherits<JSMessagePort>()) {
@@ -5191,7 +5192,13 @@ private:
                 fail();
                 return JSValue();
             }
-            return ErrorInstance::create(m_lexicalGlobalObject, WTFMove(message), toErrorType(serializedErrorType), { line, column }, WTFMove(sourceURL), WTFMove(stackString));
+            String causeString;
+            if (!readNullableString(causeString)) {
+                SERIALIZE_TRACE("FAIL deserialize");
+                fail();
+                return JSValue();
+            }
+            return ErrorInstance::create(m_lexicalGlobalObject, WTFMove(message), toErrorType(serializedErrorType), { line, column }, WTFMove(sourceURL), WTFMove(stackString), WTFMove(causeString));
         }
         case ObjectReferenceTag: {
             auto index = readConstantPoolIndex(m_objectPool);
@@ -6710,7 +6717,15 @@ std::optional<ErrorInformation> extractErrorInformationFromErrorInstance(JSC::JS
     }
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    return { ErrorInformation { errorTypeString, message, line, column, sourceURL, stack } };
+    PropertyDescriptor causeDescriptor;
+    String cause;
+    if (errorInstance.getOwnPropertyDescriptor(lexicalGlobalObject, vm.propertyNames->cause, causeDescriptor) && causeDescriptor.isDataDescriptor()) {
+        EXCEPTION_ASSERT(!scope.exception());
+        cause = causeDescriptor.value().toWTFString(lexicalGlobalObject);
+    }
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    return { ErrorInformation { errorTypeString, message, line, column, sourceURL, stack, cause } };
 }
 
 } // namespace WebCore

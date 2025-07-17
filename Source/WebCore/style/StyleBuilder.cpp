@@ -266,7 +266,7 @@ void Builder::applyCustomPropertyImpl(const AtomString& name, const PropertyCasc
 
     AtomString takenName = m_state.m_inProgressCustomProperties.take(name);
     m_state.m_appliedCustomProperties.add(WTFMove(takenName));
-    m_state.m_inCycleCustomProperties.formUnion(savedInCycleProperties);
+    m_state.m_inCycleCustomProperties.addAll(WTFMove(savedInCycleProperties));
 }
 
 inline void Builder::applyCascadeProperty(const PropertyCascade::Property& property)

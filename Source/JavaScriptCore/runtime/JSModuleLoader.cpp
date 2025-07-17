@@ -364,7 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(moduleLoaderParseModule, (JSGlobalObject* globalObject,
     switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
         case SourceProviderSourceType::WebAssembly:
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSWebAssembly::instantiate(globalObject, promise, moduleKey, jsSourceCode)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSWebAssembly::instantiate(globalObject, promise, sourceCode.provider(), moduleKey, jsSourceCode)));
 #endif
         case SourceProviderSourceType::JSON: {
             // https://tc39.es/proposal-json-modules/#sec-parse-json-module

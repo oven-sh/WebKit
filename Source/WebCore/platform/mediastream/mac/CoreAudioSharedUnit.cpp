@@ -254,7 +254,7 @@ CoreAudioSharedUnit::StoredAudioUnit CoreAudioSharedUnit::takeStoredVPIOUnit()
 
 void CoreAudioSharedUnit::resetSampleRate()
 {
-    setSampleRate(m_getSampleRateCallback ? m_getSampleRateCallback() : AudioSession::protectedSharedSession()->sampleRate());
+    setSampleRate(m_getSampleRateCallback ? m_getSampleRateCallback() : AudioSession::singleton().sampleRate());
 }
 
 void CoreAudioSharedUnit::captureDeviceChanged()
@@ -269,7 +269,7 @@ void CoreAudioSharedUnit::captureDeviceChanged()
 
 size_t CoreAudioSharedUnit::preferredIOBufferSize()
 {
-    return AudioSession::protectedSharedSession()->bufferSize();
+    return AudioSession::singleton().bufferSize();
 }
 
 OSStatus CoreAudioSharedUnit::setupAudioUnit()

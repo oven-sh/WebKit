@@ -151,14 +151,32 @@ static WebCore::FloatBoxExtent coreBoxExtentsFromEdgeInsets(NSEdgeInsets insets)
 - (BOOL)_holdWindowResizeSnapshotIfNeeded
 {
 #if HAVE(NSWINDOW_SNAPSHOT_READINESS_HANDLER)
-    if (self->_windowSnapshotReadinessHandler)
+    if (_windowSnapshotReadinessHandler)
         return NO;
 
-    if (!self.window || ![self.window respondsToSelector:@selector(_holdResizeSnapshotWithReason:)])
+    if (!self.window)
+        return NO;
+
+    RefPtr page = _page;
+    if (!page)
+        return NO;
+
+    if (!page->protectedLegacyMainFrameProcess()->isResponsive())
+        return NO;
+
+    if (page->isSuspended())
+        return NO;
+
+    if (self.hidden)
         return NO;
 
     _windowSnapshotReadinessHandler = makeBlockPtr([self.window _holdResizeSnapshotWithReason:@"full screen"]);
-    return !!_windowSnapshotReadinessHandler;
+    if (!_windowSnapshotReadinessHandler)
+        return NO;
+
+    RELEASE_LOG(ViewState, "%p - [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", PID=%i] Began holding window resize snapshot for window full screen",
+        self, page->identifier().toUInt64(), page->webPageIDInMainFrameProcess().toUInt64(), page->legacyMainFrameProcessID());
+    return YES;
 #else
     return NO;
 #endif
@@ -167,14 +185,16 @@ static WebCore::FloatBoxExtent coreBoxExtentsFromEdgeInsets(NSEdgeInsets insets)
 - (void)_doWindowSnapshotReadinessUpdate
 {
 #if HAVE(NSWINDOW_SNAPSHOT_READINESS_HANDLER)
+    [self performSelector:@selector(_invalidateWindowSnapshotReadinessHandler) withObject:nil afterDelay:1];
     [self _doAfterNextPresentationUpdate:makeBlockPtr([weakSelf = WeakObjCPtr<WKWebView>(self)] {
         auto strongSelf = weakSelf.get();
         if (!strongSelf)
             return;
 
+        [NSObject cancelPreviousPerformRequestsWithTarget:strongSelf.get() selector:@selector(_invalidateWindowSnapshotReadinessHandler) object:nil];
         [strongSelf _invalidateWindowSnapshotReadinessHandler];
     }).get()];
-#endif
+#endif // HAVE(NSWINDOW_SNAPSHOT_READINESS_HANDLER)
 }
 
 - (void)setFrameSize:(NSSize)size
@@ -1601,7 +1621,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _overrideTopScrollEdgeEffectColor = adoptNS(color.copy);
 
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
-    [self _updateTopScrollPocketCaptureColor];
+    [self _doAfterAdjustingColorForTopContentInsetFromUIDelegate:[strongSelf = RetainPtr { self }] {
+        [strongSelf _updateTopScrollPocketCaptureColor];
+    }];
 #endif
 }
 

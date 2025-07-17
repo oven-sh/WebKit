@@ -1,4 +1,4 @@
 
 
-PASS <form> submission fires navigate event
+FAIL <form> submission fires navigate event assert_equals: expected (string) "Submit" but got (object) null
 

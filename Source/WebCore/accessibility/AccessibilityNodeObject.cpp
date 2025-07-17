@@ -38,6 +38,7 @@
 #include "AccessibilitySpinButton.h"
 #include "AccessibilityTable.h"
 #include "ComposedTreeIterator.h"
+#include "ContainerNodeInlines.h"
 #include "DateComponents.h"
 #include "EditingInlines.h"
 #include "ElementAncestorIteratorInlines.h"

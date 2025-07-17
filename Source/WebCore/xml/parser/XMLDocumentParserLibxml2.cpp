@@ -109,19 +109,23 @@ static inline bool shouldRenderInXMLTreeViewerMode(Document& document)
 
 #endif
 
-// xmlMalloc() is a macro that calls malloc() and thus cannot be called directly from
-// XMLMalloc::malloc() or it would cause infinite recusion.
+// xmlMalloc() and xmlFree() are macros that call malloc() and free(), respectively. Thus, they
+// cannot be called directly from XMLMalloc::malloc() and XMLMalloc::free() or they would cause
+// infinite recusion.
+
 static void* xmlMallocHelper(size_t size)
 {
     return xmlMalloc(size);
 }
 
+static void xmlFreeHelper(void* p)
+{
+    xmlFree(p);
+}
+
 struct XMLMalloc {
     static void* malloc(size_t size) { return xmlMallocHelper(size); }
-    static void free(void* p)
-    {
-        xmlFree(p);
-    }
+    static void free(void* p) { xmlFreeHelper(p); }
 };
 
 static std::span<xmlChar> unsafeSpanIncludingNullTerminator(xmlChar* string)
@@ -242,7 +246,7 @@ public:
 
 private:
     struct PendingCallback {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PendingCallback);
         virtual ~PendingCallback() = default;
         virtual void call(XMLDocumentParser* parser) = 0;
     };
@@ -639,7 +643,7 @@ bool XMLDocumentParser::supportsXMLVersion(const String& version)
 XMLDocumentParser::XMLDocumentParser(Document& document, IsInFrameView isInFrameView, OptionSet<ParserContentPolicy> policy)
     : ScriptableDocumentParser(document, policy)
     , m_isInFrameView(isInFrameView)
-    , m_pendingCallbacks(makeUnique<PendingCallbacks>())
+    , m_pendingCallbacks(makeUniqueRef<PendingCallbacks>())
     , m_currentNode(&document)
     , m_scriptStartPosition(TextPosition::belowRangePosition())
 {
@@ -647,7 +651,7 @@ XMLDocumentParser::XMLDocumentParser(Document& document, IsInFrameView isInFrame
 
 XMLDocumentParser::XMLDocumentParser(DocumentFragment& fragment, HashMap<AtomString, AtomString>&& prefixToNamespaceMap, const AtomString& defaultNamespaceURI, OptionSet<ParserContentPolicy> parserContentPolicy)
     : ScriptableDocumentParser(fragment.document(), parserContentPolicy)
-    , m_pendingCallbacks(makeUnique<PendingCallbacks>())
+    , m_pendingCallbacks(makeUniqueRef<PendingCallbacks>())
     , m_currentNode(&fragment)
     , m_scriptStartPosition(TextPosition::belowRangePosition())
     , m_parsingFragment(true)

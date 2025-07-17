@@ -25,6 +25,7 @@
 #include "config.h"
 #include "TextDecoder.h"
 
+#include "ExceptionOr.h"
 #include <pal/text/TextCodec.h>
 #include <pal/text/TextEncodingRegistry.h>
 #include <wtf/text/MakeString.h>

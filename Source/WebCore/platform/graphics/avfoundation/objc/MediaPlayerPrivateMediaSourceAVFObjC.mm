@@ -107,7 +107,7 @@ MediaPlayerPrivateMediaSourceAVFObjC::MediaPlayerPrivateMediaSourceAVFObjC(Media
     , m_readyState(MediaPlayer::ReadyState::HaveNothing)
     , m_logger(player->mediaPlayerLogger())
     , m_logIdentifier(player->mediaPlayerLogIdentifier())
-    , m_videoLayerManager(makeUnique<VideoLayerManagerObjC>(m_logger, m_logIdentifier))
+    , m_videoLayerManager(makeUniqueRef<VideoLayerManagerObjC>(m_logger, m_logIdentifier))
     , m_effectiveRateChangedListener(EffectiveRateChangedListener::create([weakThis = WeakPtr { *this }] {
         callOnMainThread([weakThis] {
             if (RefPtr protectedThis = weakThis.get())
@@ -1108,15 +1108,11 @@ Ref<VideoMediaSampleRenderer> MediaPlayerPrivateMediaSourceAVFObjC::createVideoM
         if (RefPtr protectedThis = weakThis.get())
             protectedThis->setNetworkState(MediaPlayer::NetworkState::DecodeError);
     });
-    videoRenderer->notifyWhenHasAvailableVideoFrame([weakThis = WeakPtr { *this }](const MediaTime& presentationTime, double displayTime) {
-        RefPtr protectedThis = weakThis.get();
-        if (!protectedThis)
-            return;
-
-        protectedThis->setHasAvailableVideoFrame(true);
-        if (protectedThis->m_isGatheringVideoFrameMetadata)
-            protectedThis->checkNewVideoFrameMetadata(presentationTime, displayTime);
+    videoRenderer->notifyFirstFrameAvailable([weakThis = WeakPtr { *this }](const MediaTime&, double) {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->setHasAvailableVideoFrame(true);
     });
+    setVideoFrameMetadataGatheringCallbackIfNeeded(videoRenderer);
     videoRenderer->setResourceOwner(m_resourceOwner);
     videoRenderer->setPreferences(m_loadOptions.videoMediaSampleRendererPreferences);
     return videoRenderer;
@@ -1655,11 +1651,23 @@ void MediaPlayerPrivateMediaSourceAVFObjC::audioOutputDeviceChanged()
 #endif
 }
 
+void MediaPlayerPrivateMediaSourceAVFObjC::setVideoFrameMetadataGatheringCallbackIfNeeded(VideoMediaSampleRenderer& videoRenderer)
+{
+    if (!m_isGatheringVideoFrameMetadata)
+        return;
+    videoRenderer.notifyWhenHasAvailableVideoFrame([weakThis = WeakPtr { *this }](const MediaTime& presentationTime, double displayTime) {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->checkNewVideoFrameMetadata(presentationTime, displayTime);
+    });
+}
+
 void MediaPlayerPrivateMediaSourceAVFObjC::startVideoFrameMetadataGathering()
 {
-    if (m_videoFrameMetadataGatheringObserver)
+    if (m_isGatheringVideoFrameMetadata)
         return;
     m_isGatheringVideoFrameMetadata = true;
+    if (RefPtr videoRenderer = layerOrVideoRenderer())
+        setVideoFrameMetadataGatheringCallbackIfNeeded(*videoRenderer);
 
     if (isUsingDecompressionSession())
         return;
@@ -1714,6 +1722,8 @@ void MediaPlayerPrivateMediaSourceAVFObjC::checkNewVideoFrameMetadata(MediaTime 
 void MediaPlayerPrivateMediaSourceAVFObjC::stopVideoFrameMetadataGathering()
 {
     m_isGatheringVideoFrameMetadata = false;
+    if (RefPtr videoRenderer = layerOrVideoRenderer())
+        videoRenderer->notifyWhenHasAvailableVideoFrame(nullptr);
     acceleratedRenderingStateChanged();
     m_videoFrameMetadata = { };
 

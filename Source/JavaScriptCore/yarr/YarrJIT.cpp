@@ -2186,7 +2186,7 @@ class YarrGenerator final : public YarrJITInfo {
             if (!currOp) {
                 // If we have characters, break out
                 if (foundFirstCharTerm) {
-                    opList.resize(i);
+                    opList.shrink(i);
                     break;
                 }
                 // Otherwise, we're still in the non-character prefix

@@ -33,6 +33,7 @@
 #import "Test.h"
 #import "TestNavigationDelegate.h"
 #import "TestResourceLoadDelegate.h"
+#import "TestURLSchemeHandler.h"
 #import "TestWKWebView.h"
 #import "WKWebViewConfigurationExtras.h"
 #import <Foundation/NSURLError.h>

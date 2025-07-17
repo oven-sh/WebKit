@@ -422,9 +422,9 @@ int HTMLInputElement::defaultTabIndex() const
     return 0;
 }
 
-bool HTMLInputElement::isKeyboardFocusable(KeyboardEvent* event) const
+bool HTMLInputElement::isKeyboardFocusable(const FocusEventData& focusEventData) const
 {
-    return m_inputType->isKeyboardFocusable(event);
+    return m_inputType->isKeyboardFocusable(focusEventData);
 }
 
 bool HTMLInputElement::isMouseFocusable() const
@@ -442,9 +442,9 @@ bool HTMLInputElement::isTextFormControlFocusable() const
     return HTMLTextFormControlElement::isFocusable();
 }
 
-bool HTMLInputElement::isTextFormControlKeyboardFocusable(KeyboardEvent* event) const
+bool HTMLInputElement::isTextFormControlKeyboardFocusable(const FocusEventData& focusEventData) const
 {
-    return HTMLTextFormControlElement::isKeyboardFocusable(event);
+    return HTMLTextFormControlElement::isKeyboardFocusable(focusEventData);
 }
 
 bool HTMLInputElement::isTextFormControlMouseFocusable() const

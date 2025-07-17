@@ -21,6 +21,7 @@
 #include "config.h"
 #include "RenderFileUploadControl.h"
 
+#include "ContainerNodeInlines.h"
 #include "ElementRareData.h"
 #include "FileList.h"
 #include "FontCascade.h"
@@ -207,8 +208,8 @@ void RenderFileUploadControl::paintControl(PaintInfo& paintInfo, const LayoutPoi
                     }
                 }
             }
-
-            return roundToInt(baselinePosition(true, isHorizontalWritingMode ? HorizontalLine : VerticalLine, PositionOnContainingLine));
+            // File upload button is display: none (see ::file-selector-button).
+            return roundToInt(baselinePosition());
         }();
 
         paintInfo.context().setFillColor(style().visitedDependentColorWithColorFilter(CSSPropertyColor));

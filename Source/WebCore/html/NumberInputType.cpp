@@ -32,6 +32,7 @@
 #include "config.h"
 #include "NumberInputType.h"
 
+#include "ContainerNodeInlines.h"
 #include "Decimal.h"
 #include "ElementInlines.h"
 #include "HTMLInputElement.h"

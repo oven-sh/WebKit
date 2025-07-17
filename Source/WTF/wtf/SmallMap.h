@@ -25,6 +25,9 @@
 
 #pragma once
 
+#include <utility>
+#include <variant>
+
 #include <wtf/HashMap.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>

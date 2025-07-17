@@ -174,7 +174,7 @@ class MockMediaSessionCoordinator;
 #endif
 #endif
 
-#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
+#if ENABLE(ARKIT_INLINE_PREVIEW_MAC) || ENABLE(MODEL_ELEMENT)
 class HTMLModelElement;
 #endif
 
@@ -800,6 +800,7 @@ public:
     Vector<String> mediaResponseContentRanges(HTMLMediaElement&);
     void simulateAudioInterruption(HTMLMediaElement&);
     ExceptionOr<bool> mediaElementHasCharacteristic(HTMLMediaElement&, const String&);
+    void enterViewerMode(HTMLVideoElement&);
     void beginSimulatedHDCPError(HTMLMediaElement&);
     void endSimulatedHDCPError(HTMLMediaElement&);
     ExceptionOr<bool> mediaPlayerRenderingCanBeAccelerated(HTMLMediaElement&);
@@ -818,6 +819,7 @@ public:
 
     double effectiveDynamicRangeLimitValue(const HTMLMediaElement&);
 #endif
+    ExceptionOr<double> getContextEffectiveDynamicRangeLimitValue(const HTMLCanvasElement&);
 
     ExceptionOr<void> setPageShouldSuppressHDR(bool);
 
@@ -1578,6 +1580,8 @@ public:
 
 #if ENABLE(MODEL_ELEMENT)
     void disableModelLoadDelaysForTesting();
+    String modelElementState(HTMLModelElement&);
+    bool isModelElementIntersectingViewport(HTMLModelElement&);
 #endif
 
 private:

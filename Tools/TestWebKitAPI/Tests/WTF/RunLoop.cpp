@@ -121,7 +121,7 @@ TEST(WTF_RunLoop, CallOnMainCrossThreadWhileNested)
 }
 
 class DerivedOneShotTimer : public RunLoop::Timer, public CanMakeCheckedPtr<DerivedOneShotTimer> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DerivedOneShotTimer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DerivedOneShotTimer);
 public:
     DerivedOneShotTimer(bool& testFinished)
@@ -155,7 +155,7 @@ TEST(WTF_RunLoop, OneShotTimer)
 }
 
 class DerivedRepeatingTimer : public RunLoop::Timer, public CanMakeCheckedPtr<DerivedRepeatingTimer> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DerivedRepeatingTimer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DerivedRepeatingTimer);
 public:
     DerivedRepeatingTimer(bool& testFinished)

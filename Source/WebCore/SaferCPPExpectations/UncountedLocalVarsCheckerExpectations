@@ -1,12 +1,7 @@
 Modules/applicationmanifest/ApplicationManifestParser.cpp
-Modules/async-clipboard/ClipboardItemBindingsDataSource.cpp
 Modules/cache/DOMCache.cpp
 Modules/cache/DOMCacheStorage.cpp
-Modules/encryptedmedia/MediaKeySystemRequest.cpp
-Modules/fetch/FetchBody.cpp
-Modules/fetch/FetchRequest.cpp
 Modules/gamepad/GamepadHapticActuator.cpp
-Modules/geolocation/Geolocation.cpp
 Modules/indexeddb/IDBActiveDOMObject.h
 Modules/indexeddb/IDBCursor.cpp
 Modules/indexeddb/IDBIndex.cpp
@@ -27,14 +22,9 @@ Modules/mediastream/PeerConnectionBackend.cpp
 Modules/mediastream/RTCController.cpp
 Modules/mediastream/RTCPeerConnection.cpp
 Modules/mediastream/RTCRtpScriptTransformer.cpp
-Modules/mediastream/UserMediaController.cpp
 Modules/mediastream/UserMediaRequest.cpp
-Modules/mediastream/libwebrtc/LibWebRTCMediaEndpoint.cpp
 Modules/mediastream/libwebrtc/LibWebRTCPeerConnectionBackend.cpp
 Modules/model-element/HTMLModelElement.cpp
-Modules/notifications/Notification.cpp
-Modules/speech/SpeechRecognition.cpp
-Modules/speech/SpeechSynthesis.cpp
 Modules/webaudio/AudioBasicProcessorNode.cpp
 Modules/webaudio/AudioBuffer.cpp
 Modules/webaudio/AudioBufferSourceNode.cpp
@@ -133,7 +123,6 @@ css/CSSCounterStyleDescriptors.cpp
 css/CSSFontFace.cpp
 css/CSSFontFaceSet.cpp
 css/CSSFontFaceSource.cpp
-css/CSSFontSelector.cpp
 css/CSSGroupingRule.cpp
 css/CSSImageSetValue.cpp
 css/CSSImageValue.cpp
@@ -241,9 +230,9 @@ editing/mac/EditorMac.mm
 editing/mac/FrameSelectionMac.mm
 history/CachedFrame.cpp
 history/CachedPage.cpp
-history/HistoryItem.cpp
 html/Autofill.cpp
 html/CachedHTMLCollectionInlines.h
+html/CanvasBase.cpp
 html/CollectionTraversalInlines.h
 html/FormAssociatedCustomElement.cpp
 html/FormListedElement.cpp
@@ -268,9 +257,12 @@ html/LazyLoadFrameObserver.cpp
 html/LazyLoadImageObserver.cpp
 html/MediaElementSession.cpp
 html/ModelDocument.cpp
+html/OffscreenCanvas.cpp
 html/PluginDocument.cpp
 html/ValidatedFormListedElement.cpp
+html/canvas/CanvasRenderingContext2D.cpp
 html/canvas/CanvasRenderingContext2DBase.cpp
+html/canvas/OffscreenCanvasRenderingContext2D.cpp
 html/parser/HTMLConstructionSite.cpp
 html/track/TextTrack.cpp
 inspector/CommandLineAPIHost.cpp
@@ -331,7 +323,6 @@ page/Frame.cpp
 page/FrameSnapshotting.cpp
 page/FrameTree.cpp
 page/FrameView.cpp
-page/History.cpp
 page/ImageAnalysisQueue.cpp
 page/InteractionRegion.cpp
 page/IntersectionObserver.cpp

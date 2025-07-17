@@ -245,7 +245,7 @@ RefPtr<NavigationActivation> Navigation::createForPageswapEvent(HistoryItem* new
     RefPtr<NavigationHistoryEntry> oldEntry;
     if (frame()->document() && frame()->document()->settings().navigationAPIEnabled())
         oldEntry = currentEntry();
-    else if (RefPtr currentItem = frame()->loader().protectedHistory()->currentItem())
+    else if (RefPtr currentItem = frame()->loader().history().currentItem())
         oldEntry = NavigationHistoryEntry::create(*this, *currentItem);
 
     RefPtr<NavigationHistoryEntry> newEntry;
@@ -813,7 +813,7 @@ void Navigation::abortOngoingNavigation(NavigateEvent& event)
 }
 
 struct AwaitingPromiseData : public RefCounted<AwaitingPromiseData> {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(AwaitingPromiseData);
     Function<void()> fulfilledCallback;
     Function<void(JSC::JSValue)> rejectionCallback;
     size_t remainingPromises = 0;

@@ -35,6 +35,7 @@
 #include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderListMarker.h"
+#include "RenderObjectInlines.h"
 #include "RenderSVGBlock.h"
 #include "RenderSVGForeignObject.h"
 #include "RenderStyleInlines.h"

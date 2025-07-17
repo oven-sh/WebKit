@@ -397,6 +397,10 @@
 #include "MediaStreamTrack.h"
 #endif
 
+#if ENABLE(MODEL_ELEMENT)
+#include "LazyLoadModelObserver.h"
+#endif
+
 #if USE(QUICK_LOOK)
 #include "QuickLook.h"
 #endif
@@ -473,12 +477,12 @@ static void CallbackForContainIntrinsicSize(const Vector<Ref<ResizeObserverEntry
             ASSERT(box->style().hasAutoLengthContainIntrinsicSize());
 
             auto contentBoxSize = entry->contentBoxSize().at(0);
-            if (box->style().containIntrinsicLogicalWidthHasAuto()) {
+            if (box->style().containIntrinsicLogicalWidth().hasAuto()) {
                 auto adjustedWidth = LayoutUnit { applyZoom(contentBoxSize->inlineSize(), box->style()) };
                 target->setLastRememberedLogicalWidth(adjustedWidth);
             }
 
-            if (box->style().containIntrinsicLogicalHeightHasAuto()) {
+            if (box->style().containIntrinsicLogicalHeight().hasAuto()) {
                 auto adjustedHeight = LayoutUnit { applyZoom(contentBoxSize->blockSize(), box->style()) };
                 target->setLastRememberedLogicalHeight(adjustedHeight);
             }
@@ -1227,7 +1231,7 @@ void Document::invalidateAccessKeyCacheSlowCase()
 }
 
 struct QuerySelectorAllResults {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(QuerySelectorAllResults);
 public:
     static constexpr unsigned maxSize = 8;
 
@@ -2669,6 +2673,11 @@ WakeLockManager& Document::wakeLockManager()
     if (!m_wakeLockManager)
         lazyInitialize(m_wakeLockManager, makeUniqueWithoutRefCountedCheck<WakeLockManager>(*this));
     return *m_wakeLockManager;
+}
+
+Ref<WakeLockManager> Document::protectedWakeLockManager()
+{
+    return wakeLockManager();
 }
 
 FormController& Document::formController()
@@ -6114,7 +6123,7 @@ void Document::updateAccessibilityObjectRegions()
         cache->willUpdateObjectRegions();
 
     if (CheckedPtr view = renderView())
-        view->protectedFrameView()->updateAccessibilityObjectRegions();
+        view->frameView().updateAccessibilityObjectRegions();
 #endif
 }
 
@@ -10036,48 +10045,23 @@ void Document::updateIntersectionObservations(const Vector<WeakPtr<IntersectionO
         return;
     }
 
-    Vector<WeakPtr<IntersectionObserver>> intersectionObserversToNotifyAsynchronously;
-    Vector<RefPtr<IntersectionObserver>> intersectionObserversToNotifySynchronously;
+    Vector<WeakPtr<IntersectionObserver>> intersectionObserversWithPendingNotifications;
 
     for (auto& weakObserver : intersectionObservers) {
         RefPtr observer = weakObserver.get();
         if (!observer)
             continue;
 
-        if (observer->updateObservations(*this)) {
-            switch (observer->notificationDelivery()) {
-            case IntersectionObserver::NotificationDelivery::Asynchronous:
-                intersectionObserversToNotifyAsynchronously.append(observer);
-                break;
-            case IntersectionObserver::NotificationDelivery::Synchronous:
-                intersectionObserversToNotifySynchronously.append(observer);
-                break;
-            }
-        }
+        auto needNotify = observer->updateObservations(*this);
+        if (needNotify == IntersectionObserver::NeedNotify::Yes)
+            intersectionObserversWithPendingNotifications.append(observer);
     }
 
-    if (!m_intersectionObserverUpdateTaskQueued && intersectionObserversToNotifyAsynchronously.size()) {
-        LOG_WITH_STREAM(IntersectionObserver, stream << "Document " << this << " updateIntersectionObservations - queueing task to notify JavaScript observers");
-        m_intersectionObserverUpdateTaskQueued = true;
+    if (intersectionObserversWithPendingNotifications.size())
+        LOG_WITH_STREAM(IntersectionObserver, stream << "Document " << this << " updateIntersectionObservations - notifying observers");
 
-        eventLoop().queueTask(TaskSource::IntersectionObserver, [weakThis = WeakPtr<Document, WeakPtrImplWithEventTargetData> { *this }, weakObservers = WTFMove(intersectionObserversToNotifyAsynchronously)]() mutable {
-            RefPtr protectedDocument = weakThis.get();
-
-            if (!protectedDocument)
-                return;
-
-            for (auto& weakObserver : weakObservers) {
-                if (RefPtr observer = weakObserver.get())
-                    observer->notify();
-            }
-            protectedDocument->m_intersectionObserverUpdateTaskQueued = false;
-        });
-    }
-
-    if (intersectionObserversToNotifySynchronously.size()) {
-        LOG_WITH_STREAM(IntersectionObserver, stream << "Document " << this << " updateIntersectionObservations - notifying internal observers.");
-
-        for (const auto& observer : intersectionObserversToNotifySynchronously)
+    for (auto& weakObserver : intersectionObserversWithPendingNotifications) {
+        if (RefPtr observer = weakObserver.get())
             observer->notify();
     }
 }
@@ -11106,16 +11090,16 @@ MessagePortChannelProvider& Document::messagePortChannelProvider()
 #if USE(SYSTEM_PREVIEW)
 void Document::dispatchSystemPreviewActionEvent(const SystemPreviewInfo& systemPreviewInfo, const String& message)
 {
-    RefPtr element = systemPreviewInfo.element.elementIdentifier ? Element::fromIdentifier(*systemPreviewInfo.element.elementIdentifier) : nullptr;
-    if (!is<HTMLAnchorElement>(element))
+    RefPtr node = systemPreviewInfo.element.nodeIdentifier ? Node::fromIdentifier(*systemPreviewInfo.element.nodeIdentifier) : nullptr;
+    if (!is<HTMLAnchorElement>(node))
         return;
 
-    if (&element->document() != this)
+    if (&node->document() != this)
         return;
 
     auto event = MessageEvent::create(message, securityOrigin().toString());
     UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, this);
-    element->dispatchEvent(event);
+    node->dispatchEvent(event);
 }
 #endif
 
@@ -11168,6 +11152,15 @@ LazyLoadImageObserver& Document::lazyLoadImageObserver()
         m_lazyLoadImageObserver = makeUnique<LazyLoadImageObserver>();
     return *m_lazyLoadImageObserver;
 }
+
+#if ENABLE(MODEL_ELEMENT)
+LazyLoadModelObserver& Document::lazyLoadModelObserver()
+{
+    if (!m_lazyLoadModelObserver)
+        m_lazyLoadModelObserver = makeUnique<LazyLoadModelObserver>();
+    return *m_lazyLoadModelObserver;
+}
+#endif
 
 const CrossOriginOpenerPolicy& Document::crossOriginOpenerPolicy() const
 {

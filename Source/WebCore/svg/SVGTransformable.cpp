@@ -27,6 +27,7 @@
 #include "SVGElement.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
+#include "SVGTransform.h"
 #include <wtf/text/StringParsingBuffer.h>
 #include <wtf/text/StringView.h>
 

@@ -70,6 +70,8 @@ class LibWebRTCStatsCollector;
 class MediaStreamTrack;
 class RTCSessionDescription;
 
+struct LibWebRTCMediaEndpointTransceiverState;
+
 class LibWebRTCMediaEndpoint
     : public ThreadSafeRefCounted<LibWebRTCMediaEndpoint, WTF::DestructionThread::Main>
     , private webrtc::PeerConnectionObserver
@@ -120,7 +122,7 @@ public:
 
     void suspend();
     void resume();
-    LibWebRTCProvider::SuspendableSocketFactory* rtcSocketFactory() { return m_rtcSocketFactory.get(); }
+    void disableSocketRelay();
 
     bool isNegotiationNeeded(uint32_t) const;
 
@@ -157,7 +159,8 @@ private:
 
     webrtc::scoped_refptr<LibWebRTCStatsCollector> createStatsCollector(Ref<DeferredPromise>&&);
 
-    MediaStream& mediaStreamFromRTCStreamId(const String&);
+    Vector<Ref<MediaStream>> mediaStreamsFromRTCStreamIds(const Vector<String>&);
+    PeerConnectionBackend::TransceiverStates generateTransceiverStates(const Vector<LibWebRTCMediaEndpointTransceiverState>&);
 
     void AddRef() const { ref(); }
     webrtc::RefCountReleaseStatus Release() const
@@ -200,7 +203,7 @@ private:
 
     MemoryCompactRobinHoodHashMap<String, webrtc::scoped_refptr<webrtc::MediaStreamInterface>> m_localStreams;
 
-    std::unique_ptr<LibWebRTCProvider::SuspendableSocketFactory> m_rtcSocketFactory;
+    const std::unique_ptr<LibWebRTCProvider::SuspendableSocketFactory> m_rtcSocketFactory;
 #if !RELEASE_LOG_DISABLED
     int64_t m_statsFirstDeliveredTimestamp { 0 };
     const Ref<const Logger> m_logger;

@@ -267,7 +267,7 @@ void PDFPluginStreamLoaderClient::didFinishLoading(NetscapePlugInStreamLoader* s
 #pragma mark -
 
 struct PDFIncrementalLoader::RequestData {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RequestData);
 
     HashMap<ByteRangeRequestIdentifier, ByteRangeRequest> outstandingByteRangeRequests;
     HashMap<RefPtr<WebCore::NetscapePlugInStreamLoader>, ByteRangeRequestIdentifier> streamLoaderMap;
@@ -756,8 +756,8 @@ void PDFIncrementalLoader::transitionToMainThreadDocument()
     plugin->adoptBackgroundThreadDocument(WTFMove(m_backgroundThreadDocument));
 
     // If the plugin was manually destroyed, the m_pdfThread might already be gone.
-    if (m_pdfThread) {
-        RefPtr { m_pdfThread }->waitForCompletion();
+    if (RefPtr pdfThread = m_pdfThread) {
+        pdfThread->waitForCompletion();
         m_pdfThread = nullptr;
     }
 }

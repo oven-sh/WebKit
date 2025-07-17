@@ -29,9 +29,11 @@
 #include "AbortController.h"
 #include "CommonVM.h"
 #include "Element.h"
+#include "FrameDestructionObserverInlines.h"
 #include "ExceptionCode.h"
 #include "HTMLBodyElement.h"
 #include "HistoryController.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
 #include "Navigation.h"
 #include "NavigationNavigationType.h"
@@ -123,7 +125,7 @@ void NavigateEvent::processScrollBehavior(Document& document)
     m_interceptionState = InterceptionState::Scrolled;
 
     if (m_navigationType == NavigationNavigationType::Traverse || m_navigationType == NavigationNavigationType::Reload)
-        document.frame()->loader().protectedHistory()->restoreScrollPositionAndViewState();
+        document.frame()->loader().history().restoreScrollPositionAndViewState();
     else if (!document.frame()->view()->scrollToFragment(document.url())) {
         if (!document.url().hasFragmentIdentifier())
             document.frame()->view()->scrollTo({ 0, 0 });

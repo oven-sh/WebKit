@@ -49,7 +49,7 @@ class LibWebRTCNetwork;
 class LibWebRTCSocket;
 
 class LibWebRTCSocketFactory : public CanMakeThreadSafeCheckedPtr<LibWebRTCSocketFactory> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(LibWebRTCSocketFactory);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LibWebRTCSocketFactory);
 public:
     LibWebRTCSocketFactory() = default;

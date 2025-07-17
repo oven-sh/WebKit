@@ -1699,20 +1699,22 @@ FloatRect RenderLayer::referenceBoxRectForClipPath(CSSBoxType boxType, const Lay
 
 void RenderLayer::updateTransformFromStyle(TransformationMatrix& transform, const RenderStyle& style, OptionSet<RenderStyle::TransformOperationOption> options) const
 {
-    auto referenceBoxRect = snapRectToDevicePixelsIfNeeded(renderer().transformReferenceBoxRect(style), renderer());
-    renderer().applyTransform(transform, style, referenceBoxRect, options);
-
-    // https://drafts.csswg.org/css-anchor-position-1/#anchor-pos
-    // "The positioned element is additionally visually shifted by its snapshotted scroll offset, as if by an additional translate() transform."
+    // https://drafts.csswg.org/css-anchor-position-1/#default-scroll-shift
+    // > After layout has been performed for abspos, it is additionally shifted by
+    // > the default scroll shift, as if affected by a transform
+    // > ** (before any other transforms). **
     if (m_snapshottedScrollOffsetForAnchorPositioning)
         transform.translate(m_snapshottedScrollOffsetForAnchorPositioning->width(), m_snapshottedScrollOffsetForAnchorPositioning->height());
+
+    auto referenceBoxRect = snapRectToDevicePixelsIfNeeded(renderer().transformReferenceBoxRect(style), renderer());
+    renderer().applyTransform(transform, style, referenceBoxRect, options);
 
     makeMatrixRenderable(transform, canRender3DTransforms());
 }
 
 void RenderLayer::updateTransform()
 {
-    bool hasTransform = renderer().isTransformed() || m_snapshottedScrollOffsetForAnchorPositioning;
+    bool hasTransform = isTransformed();
     bool had3DTransform = has3DTransform();
 
     std::unique_ptr<TransformationMatrix> oldTransform;
@@ -3752,21 +3754,21 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
         return isPaintingCompositedBackground;
     }();
 
-    if (shouldPaintContent && paintingInfo.subtreePaintRoot) {
-        RenderLayer* subtreeRootLayer = paintingInfo.subtreePaintRoot->enclosingLayer();
+    auto shouldExcludeBasedOnContainingBlock = [&]() {
+        if (CheckedPtr rootAsBlock = dynamicDowncast<RenderBlock>(paintingInfo.subtreePaintRoot))
+            return !rootAsBlock->isContainingBlockAncestorFor(renderer());
+        return false;
+    };
 
-        if (subtreeRootLayer) {
+    if (paintingInfo.paintBehavior.contains(PaintBehavior::DraggableSnapshot) && paintingInfo.subtreePaintRoot) {
+        if (paintingInfo.subtreePaintRoot->hasLayer()) {
+            CheckedPtr subtreeRootLayer = paintingInfo.subtreePaintRoot->enclosingLayer();
             bool isLayerInSubtree = (this == subtreeRootLayer) || isDescendantOf(*subtreeRootLayer);
 
-            if (isLayerInSubtree) {
-                if (paintingInfo.subtreePaintRoot != &renderer()) {
-                    if (CheckedPtr rootAsBlock = dynamicDowncast<RenderBlock>(paintingInfo.subtreePaintRoot)) {
-                        if (!rootAsBlock->isContainingBlockAncestorFor(renderer()))
-                            shouldPaintContent = false;
-                    }
-                }
-            } else
+            if (isLayerInSubtree && (paintingInfo.subtreePaintRoot != &renderer() && shouldExcludeBasedOnContainingBlock()))
                 shouldPaintContent = false;
+        } else if (renderer().isAbsolutelyPositioned() && paintingInfo.subtreePaintRoot != &renderer() && shouldExcludeBasedOnContainingBlock()) {
+            shouldPaintContent = false;
         }
     }
 
@@ -3932,7 +3934,7 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
         if (isPaintingCompositedForeground) {
             // Paint any child layers that have overflow.
             paintList(normalFlowLayers(), currentContext, paintingInfo, localPaintFlags);
-        
+
             // Now walk the sorted list of children with positive z-indices.
             paintList(positiveZOrderLayers(), currentContext, localPaintingInfo, localPaintFlags);
         }
@@ -6676,6 +6678,7 @@ TextStream& operator<<(TextStream& ts, PaintBehavior behavior)
     case PaintBehavior::ExcludeText: ts << "ExcludeText"_s; break;
     case PaintBehavior::FixedAndStickyLayersOnly: ts << "FixedAndStickyLayersOnly"_s; break;
     case PaintBehavior::DrawsHDRContent: ts << "DrawsHDRContent"_s; break;
+    case PaintBehavior::DraggableSnapshot: ts << "DraggableSnapshot"_s; break;
     }
 
     return ts;

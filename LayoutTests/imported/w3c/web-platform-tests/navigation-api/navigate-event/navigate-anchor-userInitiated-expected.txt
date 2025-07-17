@@ -1,4 +1,4 @@
 Click me
 
-PASS Fragment <a> click fires navigate event
+FAIL Fragment <a> click fires navigate event assert_equals: expected (object) Element node <a id="a" href="#1">Click me</a> but got (undefined) undefined
 

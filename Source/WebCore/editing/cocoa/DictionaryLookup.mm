@@ -313,7 +313,7 @@ std::optional<SimpleRange> DictionaryLookup::rangeAtHitTestResult(const HitTestR
     if (position.isNull())
         position = firstPositionInOrBeforeNode(node);
 
-    RefPtr focusedOrMainFrame = frame->page()->checkedFocusController()->focusedOrMainFrame();
+    RefPtr focusedOrMainFrame = frame->page()->focusController().focusedOrMainFrame();
     if (!focusedOrMainFrame)
         return std::nullopt;
 

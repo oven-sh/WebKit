@@ -132,7 +132,7 @@ static IMP makeAllowedLinkFilteringDataRequestHandler(NSArray<NSString *> *param
 
 class AllowedLinkFilteringDataRequestSwizzler {
     WTF_MAKE_NONCOPYABLE(AllowedLinkFilteringDataRequestSwizzler);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(AllowedLinkFilteringDataRequestSwizzler);
 public:
     AllowedLinkFilteringDataRequestSwizzler(NSArray<NSString *> *parameters)
     {
@@ -149,7 +149,7 @@ private:
 
 class QueryParameterRequestSwizzler {
     WTF_MAKE_NONCOPYABLE(QueryParameterRequestSwizzler);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(QueryParameterRequestSwizzler);
 public:
     QueryParameterRequestSwizzler(NSArray<NSString *> *parameters, NSArray<NSString *> *domains, NSArray<NSString *> *paths)
     {

@@ -54,19 +54,15 @@ protected:
 
     FloatPoint computeClippingLayerPosition() const;
     std::optional<FloatRect> findConstrainingRect() const;
-    FloatPoint computeAnchorLayerPosition() const;
+    std::pair<std::optional<FloatRect>, FloatPoint> computeConstrainingRectAndAnchorLayerPosition() const;
     void dumpProperties(WTF::TextStream&, OptionSet<ScrollingStateTreeAsTextBehavior>) const override;
 
     virtual FloatPoint layerTopLeft() const = 0;
     virtual bool hasViewportClippingLayer() const { return false; }
     const ViewportConstraints& constraints() const final { return m_constraints; }
 
-private:
-    void updateIsSticking();
+    bool isCurrentlySticking(const FloatRect& constrainingRect) const;
 
-    bool m_isSticking { false };
-
-protected:
     StickyPositionViewportConstraints m_constraints;
 };
 

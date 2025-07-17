@@ -31,6 +31,7 @@
 
 #include "ContextDestructionObserverInlines.h"
 #include "DOMException.h"
+#include "ExceptionOr.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSWebCodecsAudioDecoderSupport.h"
 #include "ScriptExecutionContextInlines.h"

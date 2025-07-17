@@ -2,7 +2,7 @@
 PASS can't bypass required members by omitting the dictionary entirely
 PASS destination is required
 PASS signal is required
-PASS all properties are reflected back
-PASS defaults are as expected
+FAIL all properties are reflected back assert_equals: expected (object) Element node <a></a> but got (undefined) undefined
+FAIL defaults are as expected assert_equals: expected (object) null but got (undefined) undefined
 PASS hasUAVisualTransition is default false
 

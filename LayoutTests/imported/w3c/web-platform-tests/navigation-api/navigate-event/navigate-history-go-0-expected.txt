@@ -1,4 +1,4 @@
 
 
-PASS history.go(0) fires the navigate event
+FAIL history.go(0) fires the navigate event assert_equals: expected (object) null but got (undefined) undefined
 

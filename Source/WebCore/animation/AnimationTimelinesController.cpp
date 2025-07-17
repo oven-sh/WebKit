@@ -340,8 +340,9 @@ void AnimationTimelinesController::cacheCurrentTime(ReducedResolutionSeconds new
     if (!m_isSuspended) {
         // In order to not have a stale cached current time, we schedule a timer to reset it
         // in the time it would take an animation frame to run under normal circumstances.
-        ASSERT(m_document->page());
-        m_cachedCurrentTimeClearanceTimer.startOneShot(RefPtr { m_document->page() }->preferredRenderingUpdateInterval());
+        RefPtr page = m_document->page();
+        auto renderingUpdateInterval = page ? page->preferredRenderingUpdateInterval() : FullSpeedAnimationInterval;
+        m_cachedCurrentTimeClearanceTimer.startOneShot(renderingUpdateInterval);
     }
 }
 

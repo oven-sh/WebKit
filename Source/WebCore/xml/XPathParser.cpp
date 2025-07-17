@@ -29,6 +29,7 @@
 #include "config.h"
 #include "XPathParser.h"
 
+#include "ExceptionOr.h"
 #include "XPathEvaluator.h"
 #include "XPathNSResolver.h"
 #include "XPathPath.h"

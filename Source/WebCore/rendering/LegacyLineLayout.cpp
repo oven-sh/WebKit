@@ -576,7 +576,7 @@ void LegacyLineLayout::layoutLineBoxes()
     }
 
     if (!legacyRootBox() && m_flow.hasLineIfEmpty())
-        m_flow.setLogicalHeight(m_flow.logicalHeight() + m_flow.lineHeight(true, m_flow.isHorizontalWritingMode() ? HorizontalLine : VerticalLine, PositionOfInteriorLineBoxes));
+        m_flow.setLogicalHeight(m_flow.logicalHeight() + m_flow.lineHeight());
 }
 
 void LegacyLineLayout::addOverflowFromInlineChildren()

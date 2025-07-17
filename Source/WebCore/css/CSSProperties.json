@@ -3689,9 +3689,8 @@
                 "inset"
             ],
             "codegen-properties": {
-                "animation-wrapper": "ShadowWrapper<BoxShadow>",
-                "style-builder-custom": "All",
-                "style-extractor-converter": "BoxShadow",
+                "animation-wrapper": "ShadowWrapper<BoxShadows>",
+                "style-converter": "StyleType<BoxShadows>",
                 "parser-function": "consumeBoxShadow",
                 "parser-grammar-unused": "none | <shadow>#",
                 "parser-grammar-unused-reason": "Needs support for the strong value representation."
@@ -3887,10 +3886,8 @@
             ],
             "codegen-properties": {
                 "accepts-quirky-length": true,
-                "animation-wrapper": "ClipWrapper",
-                "animation-wrapper-requires-override-parameters": [],
-                "style-builder-custom": "All",
-                "style-extractor-custom": true,
+                "animation-wrapper": "StyleTypeWrapper",
+                "style-converter": "StyleType<Clip>",
                 "parser-grammar": "<rect()> | auto"
             },
             "specification": {
@@ -6665,8 +6662,6 @@
                 "double"
             ],
             "codegen-properties": {
-                "style-builder-custom": "All",
-                "auto-functions": true,
                 "parser-grammar": "auto | <outline-line-style>"
             },
             "specification": {
@@ -7890,10 +7885,8 @@
             ],
             "codegen-properties": {
                 "accepts-quirky-length": true,
-                "animation-wrapper": "TextIndentWrapper",
-                "animation-wrapper-requires-override-parameters": [],
-                "style-builder-custom": "All",
-                "style-extractor-custom": true,
+                "animation-wrapper": "StyleTypeWrapper",
+                "style-converter": "StyleType<TextIndent>",
                 "parser-grammar": "<length-percentage> && hanging? && each-line?"
             },
             "specification": {
@@ -7951,9 +7944,8 @@
                 "none"
             ],
             "codegen-properties": {
-                "animation-wrapper": "ShadowWrapper<TextShadow>",
-                "style-builder-custom": "All",
-                "style-extractor-converter": "TextShadow",
+                "animation-wrapper": "ShadowWrapper<TextShadows>",
+                "style-converter": "StyleType<TextShadows>",
                 "parser-function": "consumeTextShadow",
                 "parser-grammar-unused": "none | [ <color>? && <length>{2,3} ]#",
                 "parser-grammar-unused-reason": "Needs support for the strong value representation.",
@@ -8598,10 +8590,8 @@
                 "auto"
             ],
             "codegen-properties": {
-                "animation-wrapper": "AspectRatioWrapper",
-                "animation-wrapper-requires-override-parameters": [],
-                "style-builder-custom": "All",
-                "style-extractor-custom": true,
+                "animation-wrapper": "StyleTypeWrapper",
+                "style-converter": "StyleType<AspectRatio>",
                 "parser-grammar": "auto || <ratio>"
             },
             "specification": {
@@ -8638,10 +8628,8 @@
                     "name": "contain-intrinsic-size",
                     "resolver": "vertical"
                 },
-                "animation-wrapper": "ContainIntrinsicLengthWrapper",
-                "animation-wrapper-requires-override-parameters": ["CSSPropertyContainIntrinsicHeight", "&RenderStyle::containIntrinsicHeight", "&RenderStyle::setContainIntrinsicHeight", "&RenderStyle::containIntrinsicHeightType", "&RenderStyle::setContainIntrinsicHeightType"],
-                "style-builder-custom": "All",
-                "style-extractor-custom": true,
+                "animation-wrapper": "StyleTypeWrapper",
+                "style-converter": "StyleType<ContainIntrinsicSize>",
                 "parser-grammar": "[ auto? [ none | <length [0,inf]> ] ]@(type=CSSValuePair)",
                 "parser-exported": true
             },
@@ -8662,10 +8650,8 @@
                     "name": "contain-intrinsic-size",
                     "resolver": "horizontal"
                 },
-                "animation-wrapper": "ContainIntrinsicLengthWrapper",
-                "animation-wrapper-requires-override-parameters": ["CSSPropertyContainIntrinsicWidth", "&RenderStyle::containIntrinsicWidth", "&RenderStyle::setContainIntrinsicWidth", "&RenderStyle::containIntrinsicWidthType", "&RenderStyle::setContainIntrinsicWidthType"],
-                "style-builder-custom": "All",
-                "style-extractor-custom": true,
+                "animation-wrapper": "StyleTypeWrapper",
+                "style-converter": "StyleType<ContainIntrinsicSize>",
                 "parser-grammar": "[ auto? [ none | <length [0,inf]> ] ]@(type=CSSValuePair)",
                 "parser-exported": true
              },
@@ -8749,7 +8735,7 @@
                 "none"
             ],
             "codegen-properties": {
-                "style-converter": "ContainerNames",
+                "style-converter": "StyleType<ContainerNames>",
                 "render-style-name-for-methods": "ContainerNames",
                 "parser-grammar": "none | <single-container-name>+@(no-single-item-opt)"
             },
@@ -9047,8 +9033,8 @@
             "codegen-properties": {
                 "cascade-alias": "box-shadow",
                 "skip-style-builder": true,
-                "style-extractor-converter": "BoxShadow",
-                "animation-wrapper": "ShadowWrapper<BoxShadow>",
+                "style-extractor-converter": "StyleType<BoxShadows>",
+                "animation-wrapper": "ShadowWrapper<BoxShadows>",
                 "parser-function": "consumeWebkitBoxShadow",
                 "parser-grammar-unused": "none | <shadow>#",
                 "parser-grammar-unused-reason": "Needs support for the strong value representation.",
@@ -9970,8 +9956,8 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "auto",
             "codegen-properties": {
-                "style-converter": "GridTrackSizeList",
                 "separator": " ",
+                "style-converter": "StyleType<GridTrackSizes>",
                 "parser-function": "consumeGridTrackList",
                 "parser-grammar-unused": "<track-size>+",
                 "parser-grammar-unused-reason": "Needs investigation."
@@ -9986,8 +9972,8 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "auto",
             "codegen-properties": {
-                "style-converter": "GridTrackSizeList",
                 "separator": " ",
+                "style-converter": "StyleType<GridTrackSizes>",
                 "parser-function": "consumeGridTrackList",
                 "parser-grammar-unused": "<track-size>+",
                 "parser-grammar-unused-reason": "Needs investigation."
@@ -10002,7 +9988,7 @@
             "initial": "auto",
             "codegen-properties": {
                 "render-style-name-for-methods": "GridItemColumnEnd",
-                "style-converter": "GridPosition",
+                "style-converter": "StyleType<GridPosition>",
                 "parser-function": "consumeGridLine",
                 "parser-grammar-unused": "<grid-line>",
                 "parser-grammar-unused-reason": "Needs support for ordered groups with a keyword/literal first term differentiator."
@@ -10017,7 +10003,7 @@
             "initial": "auto",
             "codegen-properties": {
                 "render-style-name-for-methods": "GridItemColumnStart",
-                "style-converter": "GridPosition",
+                "style-converter": "StyleType<GridPosition>",
                 "parser-function": "consumeGridLine",
                 "parser-grammar-unused": "<grid-line>",
                 "parser-grammar-unused-reason": "Needs support for ordered groups with a keyword/literal first term differentiator."
@@ -10048,9 +10034,8 @@
             "animation-type": "see prose",
             "initial": "none",
             "codegen-properties": {
-                "animation-wrapper": "GridTemplateWrapper",
-                "render-style-name-for-methods": "GridColumnList",
-                "style-builder-conditional-converter": "GridTrackList",
+                "animation-wrapper": "StyleTypeWrapper",
+                "style-builder-converter": "StyleType<GridTemplateList>",
                 "style-extractor-custom": true,
                 "parser-function": "consumeGridTemplatesRowsOrColumns",
                 "parser-grammar-unused": "none | <track-list> | <auto-track-list>",
@@ -10065,9 +10050,8 @@
             "animation-type": "see prose",
             "initial": "none",
             "codegen-properties": {
-                "animation-wrapper": "GridTemplateWrapper",
-                "render-style-name-for-methods": "GridRowList",
-                "style-builder-conditional-converter": "GridTrackList",
+                "animation-wrapper": "StyleTypeWrapper",
+                "style-builder-converter": "StyleType<GridTemplateList>",
                 "style-extractor-custom": true,
                 "parser-function": "consumeGridTemplatesRowsOrColumns",
                 "parser-grammar-unused": "none | <track-list> | <auto-track-list>",
@@ -10083,7 +10067,7 @@
             "initial": "auto",
             "codegen-properties": {
                 "render-style-name-for-methods": "GridItemRowEnd",
-                "style-converter": "GridPosition",
+                "style-converter": "StyleType<GridPosition>",
                 "parser-function": "consumeGridLine",
                 "parser-grammar-unused": "<grid-line>",
                 "parser-grammar-unused-reason": "Needs support for ordered groups with a keyword/literal first term differentiator."
@@ -10098,7 +10082,7 @@
             "initial": "auto",
             "codegen-properties": {
                 "render-style-name-for-methods": "GridItemRowStart",
-                "style-converter": "GridPosition",
+                "style-converter": "StyleType<GridPosition>",
                 "parser-function": "consumeGridLine",
                 "parser-grammar-unused": "<grid-line>",
                 "parser-grammar-unused-reason": "Needs support for ordered groups with a keyword/literal first term differentiator."
@@ -10144,10 +10128,7 @@
             "animation-type": "discrete",
             "initial": "none",
             "codegen-properties": {
-                "animation-wrapper": "GridTemplateAreasWrapper",
-                "animation-wrapper-requires-override-parameters": [],
-                "style-builder-custom": "All",
-                "style-extractor-custom": true,
+                "style-converter": "StyleType<GridTemplateAreas>",
                 "parser-function": "consumeGridTemplateAreas",
                 "parser-grammar-unused": "none | <string>+",
                 "parser-grammar-unused-reason": "Needs support for nested grammars in <string> values."
@@ -11066,10 +11047,7 @@
                     "-epub-text-emphasis-style",
                     "-webkit-text-emphasis-style"
                 ],
-                "animation-wrapper": "TextEmphasisStyleWrapper",
-                "animation-wrapper-requires-override-parameters": [],
-                "style-builder-custom": "All",
-                "style-extractor-custom": true,
+                "style-converter": "StyleType<TextEmphasisStyle>",
                 "parser-grammar": "none | [ [ filled | open ] || [ dot | circle | double-circle | triangle | sesame ] ] | <string>"
             },
             "specification": {
@@ -11927,7 +11905,7 @@
             "codegen-properties": {
                 "settings-flag": "scrollDrivenAnimationsEnabled",
                 "render-style-name-for-methods": "ScrollTimelineAxes",
-                "style-converter": "ScrollTimelineAxes",
+                "style-converter": "StyleType<ProgressTimelineAxes>",
                 "parser-exported": true,
                 "parser-grammar": "<axis>#"
             },
@@ -11945,7 +11923,7 @@
             "codegen-properties": {
                 "settings-flag": "scrollDrivenAnimationsEnabled",
                 "render-style-name-for-methods": "ScrollTimelineNames",
-                "style-converter": "ScrollTimelineNames",
+                "style-converter": "StyleType<ProgressTimelineNames>",
                 "parser-exported": true,
                 "parser-grammar": "<single-scroll-timeline-name>#"
             },
@@ -12118,7 +12096,7 @@
             "codegen-properties": {
                 "settings-flag": "scrollDrivenAnimationsEnabled",
                 "render-style-name-for-methods": "ViewTimelineAxes",
-                "style-converter": "ScrollTimelineAxes",
+                "style-converter": "StyleType<ProgressTimelineAxes>",
                 "parser-exported": true,
                 "parser-grammar": "<axis>#"
             },
@@ -12137,7 +12115,7 @@
             "codegen-properties": {
                 "settings-flag": "scrollDrivenAnimationsEnabled",
                 "render-style-name-for-methods": "ViewTimelineInsets",
-                "style-converter": "ViewTimelineInsets",
+                "style-converter": "StyleType<ViewTimelineInsets>",
                 "parser-grammar": "<single-view-timeline-inset-item>#@(no-single-item-opt)"
             },
             "specification": {
@@ -12154,7 +12132,7 @@
             "codegen-properties": {
                 "settings-flag": "scrollDrivenAnimationsEnabled",
                 "render-style-name-for-methods": "ViewTimelineNames",
-                "style-converter": "ScrollTimelineNames",
+                "style-converter": "StyleType<ProgressTimelineNames>",
                 "parser-exported": true,
                 "parser-grammar": "<single-scroll-timeline-name>#"
             },
@@ -12171,7 +12149,7 @@
             ],
             "codegen-properties": {
                 "settings-flag": "viewTransitionClassesEnabled",
-                "style-converter": "ViewTransitionClasses",
+                "style-converter": "StyleType<ViewTransitionClasses>",
                 "render-style-name-for-methods": "ViewTransitionClasses",
                 "parser-grammar": "none | <custom-ident excluding=none>+@(no-single-item-opt)"
             },
@@ -12207,7 +12185,7 @@
             "codegen-properties": {
                 "settings-flag": "cssAnchorPositioningEnabled",
                 "render-style-name-for-methods": "AnchorNames",
-                "style-converter": "AnchorNames",
+                "style-converter": "StyleType<AnchorNames>",
                 "parser-grammar": "none | <dashed-ident>#"
             },
             "specification": {

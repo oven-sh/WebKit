@@ -222,7 +222,7 @@ void LibWebRTCDataChannelHandler::OnBufferedAmountChange(uint64_t amount)
 
     postTask([client = m_client, amount] {
         if (client)
-            client->bufferedAmountIsDecreasing(static_cast<size_t>(amount));
+            client->bufferedAmountIsDecreasing(static_cast<uint64_t>(amount));
     });
 }
 

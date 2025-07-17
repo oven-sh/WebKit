@@ -123,7 +123,7 @@ static IMP makeFingerprintingScriptsRequestHandler(NSArray<NSString *> *hostName
 
 class FingerprintingScriptsRequestSwizzler {
     WTF_MAKE_NONCOPYABLE(FingerprintingScriptsRequestSwizzler);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FingerprintingScriptsRequestSwizzler);
 public:
     FingerprintingScriptsRequestSwizzler(NSArray<NSString *> *hosts)
     {

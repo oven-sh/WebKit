@@ -50,7 +50,7 @@ struct ScriptTrackingPrivacyRules {
 };
 
 class ScriptTrackingPrivacyFilter {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ScriptTrackingPrivacyFilter);
     WTF_MAKE_NONCOPYABLE(ScriptTrackingPrivacyFilter);
 public:
     ScriptTrackingPrivacyFilter(ScriptTrackingPrivacyRules&&);

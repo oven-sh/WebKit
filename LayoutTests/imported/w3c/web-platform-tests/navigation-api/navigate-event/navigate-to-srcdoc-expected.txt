@@ -1,4 +1,4 @@
 
 
-PASS navigate event fires appropriately (and can be canceled) for adding the srcdoc attribute
+FAIL navigate event fires appropriately (and can be canceled) for adding the srcdoc attribute assert_equals: expected (object) null but got (undefined) undefined
 

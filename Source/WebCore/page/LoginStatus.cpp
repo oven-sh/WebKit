@@ -26,6 +26,7 @@
 #include "config.h"
 #include "LoginStatus.h"
 
+#include "ExceptionOr.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringCommon.h>

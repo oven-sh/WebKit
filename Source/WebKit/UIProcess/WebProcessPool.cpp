@@ -2855,4 +2855,20 @@ String WebProcessPool::platformResourceMonitorRuleListSourceForTesting()
 
 #endif
 
+#if ENABLE(INITIALIZE_ACCESSIBILITY_ON_DEMAND)
+void WebProcessPool::initializeAccessibilityIfNecessary()
+{
+    RELEASE_LOG(Process, "WebProcessPool::initializeAccessibility");
+    if (m_hasReceivedAXRequestInUIProcess)
+        return;
+
+    for (auto& process : m_processes) {
+        auto handleArray = SandboxExtension::createHandlesForMachLookup({ }, process->auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
+        process->send(Messages::WebProcess::InitializeAccessibility(WTFMove(handleArray)), 0);
+    }
+
+    m_hasReceivedAXRequestInUIProcess = true;
+}
+#endif
+
 } // namespace WebKit

@@ -66,6 +66,7 @@
 #import "WebScreenOrientationManagerProxy.h"
 #import "WebsiteDataStore.h"
 #import <Foundation/NSURLRequest.h>
+#import <WebCore/AXObjectCache.h>
 #import <WebCore/AppHighlight.h>
 #import <WebCore/ApplePayAMSUIRequest.h>
 #import <WebCore/DictationAlternative.h>
@@ -174,6 +175,9 @@ void WebPageProxy::didCommitLayerTree(const RemoteLayerTreeTransaction& layerTre
             stopMakingViewBlankDueToLackOfRenderingUpdateIfNecessary();
             internals().lastVisibleContentRectUpdate = { };
         }
+
+        if (std::exchange(internals().needsFixedContainerEdgesUpdateAfterNextCommit, false))
+            protectedLegacyMainFrameProcess()->send(Messages::WebPage::SetNeedsFixedContainerEdgesUpdate(), webPageIDInMainFrameProcess());
     }
 
     if (RefPtr pageClient = this->pageClient())
@@ -349,10 +353,10 @@ bool WebPageProxy::scrollingUpdatesDisabledForTesting()
 
 #if ENABLE(DRAG_SUPPORT)
 
-void WebPageProxy::startDrag(const DragItem& dragItem, ShareableBitmap::Handle&& dragImageHandle, const std::optional<ElementIdentifier>& elementID)
+void WebPageProxy::startDrag(const DragItem& dragItem, ShareableBitmap::Handle&& dragImageHandle, const std::optional<NodeIdentifier>& nodeID)
 {
     if (RefPtr pageClient = this->pageClient())
-        pageClient->startDrag(dragItem, WTFMove(dragImageHandle), elementID);
+        pageClient->startDrag(dragItem, WTFMove(dragImageHandle), nodeID);
 }
 
 #endif
@@ -1754,15 +1758,30 @@ String WebPageProxy::presentingApplicationBundleIdentifier() const
     return { };
 }
 
-#if ENABLE(INITIALIZE_ACCESSIBILITY_ON_DEMAND)
-void WebPageProxy::initializeAccessibility()
+NSDictionary *WebPageProxy::getAccessibilityWebProcessDebugInfo()
 {
-    RELEASE_LOG(Process, "WebPageProxy::initializeAccessibility");
-    if (!hasRunningProcess())
-        return;
+    const Seconds messageTimeout(2);
+    auto sendResult = protectedLegacyMainFrameProcess()->sendSync(Messages::WebPage::GetAccessibilityWebProcessDebugInfo(), webPageIDInMainFrameProcess(), messageTimeout);
 
-    auto handleArray = SandboxExtension::createHandlesForMachLookup({ }, protectedLegacyMainFrameProcess()->auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
-    protectedLegacyMainFrameProcess()->send(Messages::WebPage::InitializeAccessibility(WTFMove(handleArray)), webPageIDInMainFrameProcess());
+    if (!sendResult.succeeded())
+        return @{ };
+
+    auto [result] = sendResult.takeReplyOr(WebCore::AXDebugInfo({ 0, 0 }));
+
+    return @{
+        @"axIsEnabled": [NSNumber numberWithBool:result.isAccessibilityEnabled],
+        @"axIsThreadInitialized": [NSNumber numberWithBool:result.isAccessibilityThreadInitialized],
+        @"axLiveTree": result.liveTree.createNSString().get(),
+        @"axIsolatedTree": result.isolatedTree.createNSString().get()
+    };
+}
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+void WebPageProxy::clearAccessibilityIsolatedTree()
+{
+    forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+        webProcess.send(Messages::WebPage::ClearAccessibilityIsolatedTree(), pageID);
+    });
 }
 #endif
 

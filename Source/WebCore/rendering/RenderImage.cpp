@@ -306,7 +306,7 @@ LayoutUnit RenderImage::computeReplacedLogicalHeight(std::optional<LayoutUnit> e
     return RenderReplaced::computeReplacedLogicalHeight(estimatedUsedWidth);
 }
 
-LayoutUnit RenderImage::baselinePosition(bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
+LayoutUnit RenderImage::baselinePosition() const
 {
     LayoutUnit offset;
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
@@ -315,7 +315,7 @@ LayoutUnit RenderImage::baselinePosition(bool firstLine, LineDirectionMode direc
         offset = LayoutUnit::fromFloatRound(metrics.descent);
     }
 #endif
-    return RenderBox::baselinePosition(firstLine, direction, linePositionMode) - offset;
+    return RenderBox::baselinePosition() - offset;
 }
 
 void RenderImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
@@ -897,8 +897,8 @@ void RenderImage::computeIntrinsicRatioInformation(FloatSize& intrinsicSize, Flo
 
     // Don't compute an intrinsic ratio to preserve historical WebKit behavior if we're painting alt text and/or a broken image.
     if (shouldDisplayBrokenImageIcon()) {
-        if (style().aspectRatioType() == AspectRatioType::AutoAndRatio && !isShowingAltText())
-            intrinsicRatio = FloatSize::narrowPrecision(style().aspectRatioLogicalWidth(), style().aspectRatioLogicalHeight());
+        if (style().aspectRatio().isAutoAndRatio() && !isShowingAltText())
+            intrinsicRatio = FloatSize::narrowPrecision(style().aspectRatioLogicalWidth().value, style().aspectRatioLogicalHeight().value);
         else
             intrinsicRatio = { 1.0, 1.0 };
         return;

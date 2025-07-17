@@ -137,6 +137,9 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
         case WI.CSSGrouping.Type.ContainerRule:
             return "@container";
 
+        case WI.CSSGrouping.Type.ScopeRule:
+            return "@scope";
+
         case WI.CSSGrouping.Type.StartingStyleRule:
             return "@starting-style";
         }
@@ -155,6 +158,7 @@ WI.CSSGrouping.Type = {
     LayerRule: "layer-rule",
     LayerImportRule: "layer-import-rule",
     ContainerRule: "container-rule",
+    ScopeRule: "scope-rule",
     StartingStyleRule: "starting-style-rule",
     StyleRule: "style-rule",
 };

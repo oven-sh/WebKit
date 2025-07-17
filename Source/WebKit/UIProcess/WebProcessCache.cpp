@@ -119,7 +119,7 @@ bool WebProcessCache::addProcessIfPossible(Ref<WebProcessProxy>&& process)
     m_pendingAddRequests.add(requestIdentifier, CachedProcess::create(process.copyRef()));
 
     WEBPROCESSCACHE_RELEASE_LOG("addProcessIfPossible: Checking if process is responsive before caching it", process->processID());
-    process->isResponsive([this, processPool = WTFMove(protectedProcessPool), process, requestIdentifier](bool isResponsive) {
+    process->isResponsive([this, checkedThis = CheckedPtr { this }, processPool = WTFMove(protectedProcessPool), process, requestIdentifier](bool isResponsive) {
         auto cachedProcess = m_pendingAddRequests.take(requestIdentifier);
         if (!cachedProcess)
             return;

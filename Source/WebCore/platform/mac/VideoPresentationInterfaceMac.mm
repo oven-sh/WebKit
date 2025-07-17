@@ -344,7 +344,8 @@ enum class PIPState {
     [self updatePrerollAttributes];
     if (self.isPlaybackStateEnabled) {
         [_pipViewController updatePlaybackStateUsingBlock:^(PIPMutablePlaybackState *playbackState) {
-            playbackState.contentType = PIPContentTypeVideoOnDemand;
+            // "Infinte" duration means "Live Video" by convention.
+            playbackState.contentType = std::isinf(_duration) ? PIPContentTypeLiveBroadcast : PIPContentTypeVideoOnDemand;
             playbackState.contentDuration = _duration;
             [playbackState setPlaybackRate:_rate elapsedTime:_elapsedTime timeControlStatus:_timeControlStatus];
         }];

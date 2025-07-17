@@ -278,8 +278,10 @@ AVVideoCaptureSource::~AVVideoCaptureSource()
 void AVVideoCaptureSource::verifyIsCapturing()
 {
     ASSERT(m_isRunning);
-    if (m_lastFramesCount != m_framesCount) {
-        m_lastFramesCount = m_framesCount;
+
+    uint64_t framesCount = m_framesCount;
+    if (m_lastFramesCount != framesCount) {
+        m_lastFramesCount = framesCount;
         return;
     }
 
@@ -292,6 +294,8 @@ void AVVideoCaptureSource::updateVerifyCapturingTimer()
     if (!m_isRunning || m_interrupted) {
         if (m_verifyCapturingTimer)
             m_verifyCapturingTimer->stop();
+        m_framesCount = 0;
+        m_lastFramesCount = 0;
         return;
     }
 

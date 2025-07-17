@@ -45,7 +45,7 @@ public:
     LayoutUnit minContentHeight(const ElementBox&) const;
 
 private:
-    const LayoutState& m_globalLayoutState;
+    const CheckedRef<const LayoutState> m_globalLayoutState;
 };
 
 }

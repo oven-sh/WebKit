@@ -105,7 +105,7 @@ namespace WebKit {
 using namespace WebCore;
 
 struct NetworkResourceLoader::SynchronousLoadData {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NetworkResourceLoader);
 
     SynchronousLoadData(CompletionHandler<void(const ResourceError&, const ResourceResponse, Vector<uint8_t>&&)>&& reply)
         : delayedReply(WTFMove(reply))
@@ -1302,6 +1302,12 @@ void NetworkResourceLoader::willSendRedirectedRequestInternal(ResourceRequest&& 
 #endif
         && protocolHostAndPortAreEqual(request.url(), redirectRequest.url())) {
         redirectRequest.setHTTPHeaderField(WebCore::HTTPHeaderName::Authorization, authorization);
+    }
+
+    if (request.wasSchemeOptimisticallyUpgraded()) {
+        LOADER_RELEASE_LOG("willSendRedirectedRequest: Resetting request timeout to the default value after redirect");
+
+        redirectRequest.resetTimeoutInterval();
     }
 
     if (RefPtr networkLoadChecker = m_networkLoadChecker) {

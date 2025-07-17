@@ -33,6 +33,7 @@
 #include "config.h"
 #include "SliderThumbElement.h"
 
+#include "ContainerNodeInlines.h"
 #include "CSSValueKeywords.h"
 #include "Decimal.h"
 #include "Event.h"

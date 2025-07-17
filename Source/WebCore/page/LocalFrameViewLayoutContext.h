@@ -31,6 +31,7 @@
 #include <wtf/CheckedRef.h>
 #include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
@@ -51,8 +52,10 @@ class LayoutState;
 class LayoutTree;
 }
 
+enum class LayoutOptions : uint8_t;
+
 struct UpdateScrollInfoAfterLayoutTransaction {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(UpdateScrollInfoAfterLayoutTransaction);
 
     UpdateScrollInfoAfterLayoutTransaction();
     ~UpdateScrollInfoAfterLayoutTransaction();

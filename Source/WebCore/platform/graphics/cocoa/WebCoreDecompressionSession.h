@@ -106,6 +106,7 @@ private:
     std::optional<PendingDecodeData> m_pendingDecodeData WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     Vector<RetainPtr<CMSampleBufferRef>> m_lastDecodedSamples WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     OSStatus m_lastDecodingError WTF_GUARDED_BY_CAPABILITY(queueSingleton()) { noErr };
+    RetainPtr<CMFormatDescriptionRef> m_currentImageDescription WTF_GUARDED_BY_CAPABILITY(queueSingleton());
 
     // Stereo playback support
     const bool m_stereoSupported { false };

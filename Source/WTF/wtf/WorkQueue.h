@@ -72,7 +72,7 @@ protected:
 #endif
 
 #if USE(COCOA_EVENT_LOOP)
-    OSObjectPtr<dispatch_queue_t> m_dispatchQueue;
+    const OSObjectPtr<dispatch_queue_t> m_dispatchQueue;
 #else
     RunLoop* m_runLoop;
 #endif

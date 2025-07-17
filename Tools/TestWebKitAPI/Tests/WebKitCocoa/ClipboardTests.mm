@@ -25,6 +25,7 @@
 
 #import "config.h"
 
+#import "InstanceMethodSwizzler.h"
 #import "PlatformUtilities.h"
 #import "TestCocoa.h"
 #import "TestWKWebView.h"
@@ -32,7 +33,12 @@
 #import <CoreServices/CoreServices.h>
 #import <WebCore/LegacyNSPasteboardTypes.h>
 #import <WebKit/WKPreferencesPrivate.h>
+#import <WebKit/WKWebsiteDataStoreRef.h>
 #import <WebKit/_WKFeature.h>
+
+#if PLATFORM(MAC)
+#import <pal/spi/mac/NSPasteboardSPI.h>
+#endif
 
 @interface TestWKWebView (ClipboardTests)
 
@@ -64,13 +70,8 @@
 
 @end
 
-static RetainPtr<TestWKWebView> createWebViewForClipboardTests()
+static void setClipboardConfigurationPreferences(WKWebViewConfiguration *configuration)
 {
-#if PLATFORM(IOS_FAMILY)
-    TestWebKitAPI::Util::instantiateUIApplicationIfNeeded();
-#endif
-
-    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     [[configuration preferences] _setDOMPasteAllowed:YES];
     [[configuration preferences] _setJavaScriptCanAccessClipboard:YES];
     for (_WKFeature *feature in [WKPreferences _features]) {
@@ -79,8 +80,17 @@ static RetainPtr<TestWKWebView> createWebViewForClipboardTests()
             break;
         }
     }
+}
 
-    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
+static RetainPtr<TestWKWebView> createWebViewForClipboardTests()
+{
+#if PLATFORM(IOS_FAMILY)
+    TestWebKitAPI::Util::instantiateUIApplicationIfNeeded();
+#endif
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    setClipboardConfigurationPreferences(configuration.get());
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
     [webView synchronouslyLoadTestPageNamed:@"clipboard"];
     return webView;
 }
@@ -170,6 +180,22 @@ TEST(ClipboardTests, WriteSanitizedMarkup)
 
 #if PLATFORM(MAC)
 
+static RetainPtr<TestWKWebView> createEphemeralWebViewForClipboardTests()
+{
+#if PLATFORM(IOS_FAMILY)
+    TestWebKitAPI::Util::instantiateUIApplicationIfNeeded();
+#endif
+    RetainPtr ephemeralStore = [WKWebsiteDataStore nonPersistentDataStore];
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    configuration.get().websiteDataStore = ephemeralStore.get();
+
+    setClipboardConfigurationPreferences(configuration.get());
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
+    [webView synchronouslyLoadHTMLString:@"<body>Hello world</body>"];
+    return webView;
+}
+
 TEST(ClipboardTests, ConvertTIFFToPNGWhenPasting)
 {
     auto webView = createWebViewForClipboardTests();
@@ -182,6 +208,45 @@ TEST(ClipboardTests, ConvertTIFFToPNGWhenPasting)
     EXPECT_WK_STREQ("", [webView stringByEvaluatingJavaScript:@"exception ? exception.message : ''"]);
     EXPECT_EQ(1U, [[webView objectByEvaluatingJavaScript:@"clipboardData.length"] unsignedIntValue]);
     EXPECT_TRUE([[webView stringByEvaluatingJavaScript:@"clipboardData[0]['image/png'].src"] containsString:@"blob:"]);
+}
+
+TEST(ClipboardTests, EphemeralSessionClipboardHasExpirationJavaScript)
+{
+    RetainPtr webView = createEphemeralWebViewForClipboardTests();
+
+    __block bool pasteboardHaveExpirationDate = false;
+    auto setExpirationDateSwizzler = InstanceMethodSwizzler {
+        NSPasteboard.class,
+        @selector(_setExpirationDate:),
+        imp_implementationWithBlock(^{
+            pasteboardHaveExpirationDate = true;
+            return YES;
+        })
+    };
+
+    EXPECT_TRUE([webView stringByEvaluatingJavaScript:@"document.execCommand(\"selectAll\", true); document.execCommand(\"copy\");"]);
+
+    EXPECT_TRUE(pasteboardHaveExpirationDate);
+}
+
+TEST(ClipboardTests, EphemeralSessionClipboardHasExpirationWebView)
+{
+    RetainPtr webView = createEphemeralWebViewForClipboardTests();
+
+    __block bool pasteboardHaveExpirationDate = false;
+    auto setExpirationDateSwizzler = InstanceMethodSwizzler {
+        NSPasteboard.class,
+        @selector(_setExpirationDate:),
+        imp_implementationWithBlock(^{
+            pasteboardHaveExpirationDate = true;
+            return YES;
+        })
+    };
+
+    [webView selectAll:nil];
+    [webView _synchronouslyExecuteEditCommand:@"Copy" argument:nil];
+
+    EXPECT_TRUE(pasteboardHaveExpirationDate);
 }
 
 #endif // PLATFORM(MAC)

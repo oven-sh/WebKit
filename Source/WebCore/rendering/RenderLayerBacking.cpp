@@ -2059,7 +2059,9 @@ void RenderLayerBacking::updateDrawsContent(PaintedContentsInfo& contentsInfo)
     if (contentsInfo.paintsHDRContent() || contentsInfo.rendererHasHDRContent()) {
         LOG_WITH_STREAM(HDR, stream << "RenderLayerBacking " << *this << " updateDrawContent headroom " << m_owningLayer.page().displayEDRHeadroom());
         m_graphicsLayer->setNeedsDisplayIfEDRHeadroomExceeds(m_owningLayer.page().displayEDRHeadroom());
-    }
+        m_graphicsLayer->setTonemappingEnabled(m_owningLayer.page().hdrLayersRequireTonemapping());
+    } else
+        m_graphicsLayer->setTonemappingEnabled(false);
 #endif
 }
 

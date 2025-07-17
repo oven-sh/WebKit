@@ -297,7 +297,7 @@ public:
     // Functions for InputType classes.
     void setValueInternal(const String&, TextFieldEventBehavior);
     bool isTextFormControlFocusable() const;
-    bool isTextFormControlKeyboardFocusable(KeyboardEvent*) const;
+    bool isTextFormControlKeyboardFocusable(const FocusEventData&) const;
     bool isTextFormControlMouseFocusable() const;
     bool valueAttributeWasUpdatedAfterParsing() const { return m_valueAttributeWasUpdatedAfterParsing; }
 
@@ -375,7 +375,7 @@ private:
 
     int defaultTabIndex() const final;
     bool hasCustomFocusLogic() const final;
-    bool isKeyboardFocusable(KeyboardEvent*) const final;
+    bool isKeyboardFocusable(const FocusEventData&) const final;
     bool isMouseFocusable() const final;
     bool isEnumeratable() const final;
     bool isLabelable() const final;

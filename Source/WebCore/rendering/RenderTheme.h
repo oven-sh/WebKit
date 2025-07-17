@@ -263,6 +263,8 @@ public:
 
     virtual Color disabledSubmitButtonTextColor() const { return Color::black; }
 
+    virtual bool mayNeedBleedAvoidance(const RenderStyle&) const { return true; }
+
 protected:
     ControlStyle extractControlStyleForRenderer(const RenderObject&) const;
 

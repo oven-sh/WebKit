@@ -799,6 +799,9 @@ typedef NS_ENUM(NSInteger, UIWKGestureType) {
 @property (nonatomic, weak) UIPanGestureRecognizer *gestureRecognizer;
 @property (nonatomic, assign) BOOL shouldReverseTranslation;
 @property (nonatomic, retain) _UINavigationParallaxTransition *animationController;
+#if HAVE(CONTENT_SWIPE_GESTURE_RECOGNIZER)
+@property (nonatomic, readonly) UIPanGestureRecognizer *contentSwipeGestureRecognizer;
+#endif
 @end
 
 @protocol _UINavigationInteractiveTransitionBaseDelegate <NSObject>

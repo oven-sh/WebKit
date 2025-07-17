@@ -25,6 +25,7 @@
 #include "SVGPreserveAspectRatioValue.h"
 
 #include "AffineTransform.h"
+#include "ExceptionOr.h"
 #include "FloatRect.h"
 #include "SVGParserUtilities.h"
 #include <wtf/TZoneMallocInlines.h>

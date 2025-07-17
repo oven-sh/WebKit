@@ -1324,7 +1324,7 @@ void NavigationState::NavigationClient::legacyWebCryptoMasterKey(WebPageProxy&, 
     if (!navigationState)
         return completionHandler(std::nullopt);
     if (!(navigationState->m_navigationDelegateMethods.webCryptoMasterKeyForWebView || navigationState->m_navigationDelegateMethods.webCryptoMasterKeyForWebViewCompletionHandler))
-        return completionHandler(WebCore::defaultWebCryptoMasterKey());
+        return WebCore::getDefaultWebCryptoMasterKey(WTFMove(completionHandler));
     auto navigationDelegate = navigationState->navigationDelegate();
     if (!navigationDelegate)
         return completionHandler(std::nullopt);

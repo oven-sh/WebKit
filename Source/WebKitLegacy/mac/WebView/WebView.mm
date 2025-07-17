@@ -1528,7 +1528,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
 #if !PLATFORM(IOS_FAMILY)
     pageConfiguration.validationMessageClient = makeUnique<WebValidationMessageClient>(self);
 #endif
-    pageConfiguration.inspectorClient = makeUnique<WebInspectorClient>(self);
+    pageConfiguration.inspectorBackendClient = makeUnique<WebInspectorClient>(self);
 
 #if ENABLE(DRAG_SUPPORT)
     pageConfiguration.dragClient = makeUnique<WebDragClient>(self);
@@ -1546,7 +1546,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
     _private->page->setGroupName(groupName);
 
 #if ENABLE(GEOLOCATION)
-    WebCore::provideGeolocationTo(_private->page.get(), *new WebGeolocationClient(self));
+    WebCore::provideGeolocationTo(_private->page.get(), WebGeolocationClient::create(self));
 #endif
 #if ENABLE(NOTIFICATIONS)
     WebCore::provideNotification(_private->page.get(), new WebNotificationClient(self));
@@ -1786,7 +1786,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
     pageConfiguration.dragClient = makeUnique<WebDragClient>(self);
 #endif
 
-    pageConfiguration.inspectorClient = makeUnique<WebInspectorClient>(self);
+    pageConfiguration.inspectorBackendClient = makeUnique<WebInspectorClient>(self);
     pageConfiguration.applicationCacheStorage = webApplicationCacheStorage();
     pageConfiguration.databaseProvider = WebDatabaseProvider::singleton();
     pageConfiguration.storageNamespaceProvider = _private->group->storageNamespaceProvider();

@@ -29,6 +29,10 @@
 #include "ExceptionCode.h"
 #include "RTCIceCandidateFields.h"
 #include <webrtc/api/media_types.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <webrtc/api/stats/rtcstats_objects.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+#include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
 
 namespace webrtc {
@@ -84,5 +88,9 @@ inline String fromStdString(const std::string& value)
 RTCIceCandidateFields convertIceCandidate(const webrtc::Candidate&);
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(webrtc::RTCInboundRtpStreamStats)
+    static bool isType(const webrtc::RTCStats& rtcStats) { return rtcStats.type() == webrtc::RTCInboundRtpStreamStats::kType; }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(WEB_RTC) && USE(LIBWEBRTC)

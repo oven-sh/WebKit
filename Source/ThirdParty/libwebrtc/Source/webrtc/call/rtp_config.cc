@@ -258,7 +258,8 @@ RtpStreamConfig RtpConfig::GetStreamConfig(size_t index) const {
   stream_config.raw_payload = raw_payload;
   if (!rtx.ssrcs.empty()) {
     RTC_DCHECK_EQ(ssrcs.size(), rtx.ssrcs.size());
-    auto& stream_config_rtx = stream_config.rtx.emplace();
+    auto& stream_config_rtx = stream_config.rtx.emplace(
+	    decltype(stream_config.rtx)::value_type());
     stream_config_rtx.ssrc = rtx.ssrcs[index];
     stream_config_rtx.payload_type = rtx.payload_type;
   }

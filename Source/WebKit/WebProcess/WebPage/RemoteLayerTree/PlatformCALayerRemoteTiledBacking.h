@@ -55,6 +55,7 @@ private:
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
     bool setNeedsDisplayIfEDRHeadroomExceeds(float) override;
+    void setTonemappingEnabled(bool) override;
 #endif
 
     WebCore::ContentsFormat contentsFormat() const override;

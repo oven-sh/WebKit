@@ -47,7 +47,7 @@ public:
     bool enabled() const;
 
     // InspectorAgentBase
-    void didCreateFrontendAndBackend(Inspector::FrontendRouter*, Inspector::BackendDispatcher*);
+    void didCreateFrontendAndBackend();
     void willDestroyFrontendAndBackend(Inspector::DisconnectReason);
 
     // BrowserBackendDispatcherHandler
@@ -59,7 +59,7 @@ public:
 
 private:
     const UniqueRef<Inspector::BrowserFrontendDispatcher> m_frontendDispatcher;
-    const RefPtr<Inspector::BrowserBackendDispatcher> m_backendDispatcher;
+    const Ref<Inspector::BrowserBackendDispatcher> m_backendDispatcher;
     WeakRef<WebPageProxy> m_inspectedPage;
 };
 

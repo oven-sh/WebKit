@@ -1,4 +1,7 @@
+CONSOLE MESSAGE: Error: assert_equals: expected (object) null but got (undefined) undefined
 
+
+Harness Error (FAIL), message = Error: assert_equals: expected (object) null but got (undefined) undefined
 
 PASS navigate event for navigation.back() - same-document in an iframe
 

@@ -32,6 +32,7 @@
 #include "AacEncoderConfig.h"
 #include "ContextDestructionObserverInlines.h"
 #include "DOMException.h"
+#include "ExceptionOr.h"
 #include "FlacEncoderConfig.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSWebCodecsAudioEncoderSupport.h"

@@ -1964,6 +1964,9 @@
     "imported/w3c/web-platform-tests/css/css-values/calc-size/animation/calc-size-width-interpolation.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/css/css-values/random-computed.tentative.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/css/css-values/vh-update-and-transition-in-subframe.html": [
         "slow"
     ],

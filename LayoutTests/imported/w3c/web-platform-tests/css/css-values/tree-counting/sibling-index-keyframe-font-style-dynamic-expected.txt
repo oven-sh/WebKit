@@ -1,0 +1,4 @@
+
+FAIL Initially, the sibling-index() is 3 for #target assert_equals: expected "oblique 15deg" but got "normal"
+FAIL Removing a preceding sibling of #target reduces the sibling-index() assert_equals: expected "oblique 10deg" but got "normal"
+
