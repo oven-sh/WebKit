@@ -41,7 +41,48 @@
 // beyond what you would save by the platform-agnostic "preserve return address" and "restore
 // return address" operations in CCallHelpers.
 
-#if !OS(DARWIN)
+#if OS(WINDOWS) && CPU(ARM64)
+#define FOR_EACH_GP_REGISTER(macro)                             \
+    /* Parameter/result registers. */                           \
+    macro(x0,  "x0"_s,  0, 0)                                     \
+    macro(x1,  "x1"_s,  0, 0)                                     \
+    macro(x2,  "x2"_s,  0, 0)                                     \
+    macro(x3,  "x3"_s,  0, 0)                                     \
+    macro(x4,  "x4"_s,  0, 0)                                     \
+    macro(x5,  "x5"_s,  0, 0)                                     \
+    macro(x6,  "x6"_s,  0, 0)                                     \
+    macro(x7,  "x7"_s,  0, 0)                                     \
+    /* Indirect result location register. */                    \
+    macro(x8,  "x8"_s,  0, 0)                                     \
+    /* Temporary registers. */                                  \
+    macro(x9,  "x9"_s,  0, 0)                                     \
+    macro(x10, "x10"_s, 0, 0)                                     \
+    macro(x11, "x11"_s, 0, 0)                                     \
+    macro(x12, "x12"_s, 0, 0)                                     \
+    macro(x13, "x13"_s, 0, 0)                                     \
+    macro(x14, "x14"_s, 0, 0)                                     \
+    macro(x15, "x15"_s, 0, 0)                                     \
+    /* Intra-procedure-call scratch registers (temporary). */   \
+    macro(x16, "x16"_s, 0, 0)                                     \
+    macro(x17, "x17"_s, 0, 0)                                     \
+    /* Platform Register (reserved by Windows for TEB). */      \
+    macro(x18, "x18"_s, 1, 0)                                     \
+    /* Callee-saved. */                                         \
+    macro(x19, "x19"_s, 0, 1)                                     \
+    macro(x20, "x20"_s, 0, 1)                                     \
+    macro(x21, "x21"_s, 0, 1)                                     \
+    macro(x22, "x22"_s, 0, 1)                                     \
+    macro(x23, "x23"_s, 0, 1)                                     \
+    macro(x24, "x24"_s, 0, 1)                                     \
+    macro(x25, "x25"_s, 0, 1)                                     \
+    macro(x26, "x26"_s, 0, 1)                                     \
+    macro(x27, "x27"_s, 0, 1)                                     \
+    macro(x28, "x28"_s, 0, 1)                                     \
+    /* Special. */                                              \
+    macro(fp,  "fp"_s,  0, 1)                                     \
+    macro(lr,  "lr"_s,  1, 0)                                     \
+    macro(sp,  "sp"_s,  0, 0)
+#elif !OS(DARWIN)
 #define FOR_EACH_GP_REGISTER(macro)                             \
     /* Parameter/result registers. */                           \
     macro(x0,  "x0"_s,  0, 0)                                     \

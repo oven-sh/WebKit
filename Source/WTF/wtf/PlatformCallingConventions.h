@@ -33,7 +33,8 @@
 
 /* Macros for specifing specific calling conventions. */
 
-#if OS(WINDOWS)
+#if OS(WINDOWS) && CPU(X86_64)
+// sysv_abi attribute is only meaningful on x86_64 Windows
 #define SYSV_ABI __attribute__((sysv_abi))
 #else
 #define SYSV_ABI
@@ -80,7 +81,8 @@
 
 #if ENABLE(JIT) && CALLING_CONVENTION_IS_STDCALL
 #define JIT_OPERATION_ATTRIBUTES CDECL
-#elif OS(WINDOWS)
+#elif OS(WINDOWS) && CPU(X86_64)
+// Use sysv_abi on x86_64 Windows to match JIT's calling convention
 #define JIT_OPERATION_ATTRIBUTES SYSV_ABI
 #else
 #define JIT_OPERATION_ATTRIBUTES
