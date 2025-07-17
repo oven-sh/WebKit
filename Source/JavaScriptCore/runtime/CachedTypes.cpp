@@ -2584,11 +2584,11 @@ bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
         return false;
 
     switch (m_tag) {
-    case CachedProgramCodeBlockTag:
+    case CachedCodeBlockTag::CachedProgramCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, key);
-    case CachedModuleCodeBlockTag:
+    case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, key);
-    case CachedEvalCodeBlockTag:
+    case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         return false;
     }

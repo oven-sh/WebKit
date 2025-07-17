@@ -67,7 +67,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(JSGlobalObjectInspectorController);
 #if USE(BUN_JSC_ADDITIONS)
 JSGlobalObjectInspectorController::JSGlobalObjectInspectorController(JSGlobalObject& globalObject, Ref<InjectedScriptHost>&& host)
     : m_globalObject(globalObject)
-    , m_injectedScriptManager(makeUnique<InjectedScriptManager>(*this, WTFMove(host)))
+    , m_injectedScriptManager(makeUniqueRef<InjectedScriptManager>(*this, WTFMove(host)))
     , m_executionStopwatch(Stopwatch::create())
     , m_frontendRouter(FrontendRouter::create())
     , m_backendDispatcher(BackendDispatcher::create(m_frontendRouter.copyRef()))
