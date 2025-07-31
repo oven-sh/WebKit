@@ -886,6 +886,7 @@ public:
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
     JS_EXPORT_PRIVATE void drainMicrotasks();
+    JS_EXPORT_PRIVATE void drainMicrotasks(JSGlobalObject*);
     void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTFMove(func); }
     void callOnEachMicrotaskTick()
     {

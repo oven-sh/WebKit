@@ -1373,6 +1373,34 @@ void VM::drainMicrotasks()
     finalizeSynchronousJSExecution();
 }
 
+void VM::drainMicrotasks(JSGlobalObject* globalObject)
+{
+    if (m_drainMicrotaskDelayScopeCount) [[unlikely]]
+        return;
+
+    if (executionForbidden()) [[unlikely]] {
+        m_defaultMicrotaskQueue.clear();
+        return;
+    }
+
+    m_defaultMicrotaskQueue.performMicrotaskCheckpoint(*this,
+        [&](QueuedTask& task) ALWAYS_INLINE_LAMBDA {
+            if (task.globalObject() != globalObject)
+                return QueuedTask::Result::Suspended;
+            if (RefPtr dispatcher = task.dispatcher())
+                return dispatcher->run(task);
+            runJSMicrotask(task.globalObject(), task.identifier(), task.job(), task.arguments());
+            return QueuedTask::Result::Executed;
+        });
+
+    if (hasPendingTerminationException()) [[unlikely]]
+        return;
+    didExhaustMicrotaskQueue();
+    if (hasPendingTerminationException()) [[unlikely]]
+        return;
+    finalizeSynchronousJSExecution();
+}
+
 void sanitizeStackForVM(VM& vm)
 {
     auto& thread = Thread::currentSingleton();
