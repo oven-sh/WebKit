@@ -154,6 +154,7 @@ public:
         std::swap(m_markedBefore, other.m_markedBefore);
     }
 
+    JS_EXPORT_PRIVATE bool hasTasks(JSGlobalObject*) const;
     JS_EXPORT_PRIVATE bool hasMicrotasksForFullyActiveDocument() const;
 
     DECLARE_VISIT_AGGREGATE;
@@ -176,6 +177,8 @@ public:
     {
         return m_queue.isEmpty();
     }
+
+    JS_EXPORT_PRIVATE bool isEmpty(JSGlobalObject*) const;
 
     size_t size() const { return m_queue.size(); }
 

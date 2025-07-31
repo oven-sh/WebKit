@@ -77,6 +77,20 @@ void MicrotaskQueue::enqueue(QueuedTask&& task)
     }
 }
 
+bool MarkedMicrotaskDeque::hasTasks(JSGlobalObject* globalObject) const
+{
+    for (const auto& task : m_queue) {
+        if (task.globalObject() == globalObject)
+            return true;
+    }
+    return false;
+}
+
+bool MicrotaskQueue::isEmpty(JSGlobalObject* globalObject) const
+{
+    return !m_queue.hasTasks(globalObject);
+}
+
 bool MarkedMicrotaskDeque::hasMicrotasksForFullyActiveDocument() const
 {
     for (auto& task : m_queue) {

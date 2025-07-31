@@ -1381,9 +1381,7 @@ void VM::drainMicrotasks(JSGlobalObject* globalObject)
     if (executionForbidden()) [[unlikely]]
         m_defaultMicrotaskQueue.clear();
     else {
-        // We use for instead of the do while above because we do not expect
-        // to empty the queue.
-        for (size_t i = 0; i < m_defaultMicrotaskQueue.size(); ++i) {
+        do {
             m_defaultMicrotaskQueue.performMicrotaskCheckpoint(*this,
                 [&](QueuedTask& task) ALWAYS_INLINE_LAMBDA {
                     if (task.globalObject() != globalObject)
@@ -1399,7 +1397,7 @@ void VM::drainMicrotasks(JSGlobalObject* globalObject)
             didExhaustMicrotaskQueue();
             if (hasPendingTerminationException()) [[unlikely]]
                 return;
-        }
+        } while (!m_defaultMicrotaskQueue.isEmpty(globalObject));
     }
     finalizeSynchronousJSExecution();
 }
