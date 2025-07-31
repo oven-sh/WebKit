@@ -1378,26 +1378,29 @@ void VM::drainMicrotasks(JSGlobalObject* globalObject)
     if (m_drainMicrotaskDelayScopeCount) [[unlikely]]
         return;
 
-    if (executionForbidden()) [[unlikely]] {
+    if (executionForbidden()) [[unlikely]]
         m_defaultMicrotaskQueue.clear();
-        return;
+    else {
+        // We use for instead of the do while above because we do not expect
+        // to empty the queue.
+        for (size_t i = 0; i < m_defaultMicrotaskQueue.size(); ++i) {
+            m_defaultMicrotaskQueue.performMicrotaskCheckpoint(*this,
+                [&](QueuedTask& task) ALWAYS_INLINE_LAMBDA {
+                    if (task.globalObject() != globalObject)
+                        return QueuedTask::Result::Suspended;
+                    if (RefPtr dispatcher = task.dispatcher())
+                        return dispatcher->run(task);
+
+                    runJSMicrotask(task.globalObject(), task.identifier(), task.job(), task.arguments());
+                    return QueuedTask::Result::Executed;
+                });
+            if (hasPendingTerminationException()) [[unlikely]]
+                return;
+            didExhaustMicrotaskQueue();
+            if (hasPendingTerminationException()) [[unlikely]]
+                return;
+        }
     }
-
-    m_defaultMicrotaskQueue.performMicrotaskCheckpoint(*this,
-        [&](QueuedTask& task) ALWAYS_INLINE_LAMBDA {
-            if (task.globalObject() != globalObject)
-                return QueuedTask::Result::Suspended;
-            if (RefPtr dispatcher = task.dispatcher())
-                return dispatcher->run(task);
-            runJSMicrotask(task.globalObject(), task.identifier(), task.job(), task.arguments());
-            return QueuedTask::Result::Executed;
-        });
-
-    if (hasPendingTerminationException()) [[unlikely]]
-        return;
-    didExhaustMicrotaskQueue();
-    if (hasPendingTerminationException()) [[unlikely]]
-        return;
     finalizeSynchronousJSExecution();
 }
 
