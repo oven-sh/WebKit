@@ -614,7 +614,9 @@ public:
     WeakPtr<ConsoleClient> m_consoleClient;
     std::optional<unsigned> m_stackTraceLimit;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
-    
+
+    std::unique_ptr<MicrotaskQueue> m_contextMicrotaskQueue;
+
     // Added for "bun test"
     double overridenDateNow { -1 };
 
@@ -1138,6 +1140,9 @@ public:
     static RuntimeFlags javaScriptRuntimeFlags(const JSGlobalObject*) { return RuntimeFlags(); }
 
     JS_EXPORT_PRIVATE void queueMicrotask(JSFunction* job, JSValue, JSValue, JSValue, JSValue);
+
+    JS_EXPORT_PRIVATE void createContextMicrotaskQueue();
+    JS_EXPORT_PRIVATE void drainMicrotasks();
 
     static void reportViolationForUnsafeEval(const JSGlobalObject*, const String&) { }
 

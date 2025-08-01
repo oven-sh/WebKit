@@ -168,6 +168,7 @@
 #include "JSMapInlines.h"
 #include "JSMapIteratorInlines.h"
 #include "JSMicrotask.h"
+#include "MicrotaskQueueInlines.h"
 #include "JSModuleEnvironmentInlines.h"
 #include "JSModuleLoaderInlines.h"
 #include "JSModuleNamespaceObjectInlines.h"
@@ -3329,11 +3330,56 @@ void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
 void JSGlobalObject::queueMicrotask(JSFunction* job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
     QueuedTask task { nullptr, this, job, argument0, argument1, argument2, argument3 };
+
+    if (m_contextMicrotaskQueue) {
+        m_contextMicrotaskQueue->enqueue(WTFMove(task));
+        return;
+    }
+
     if (globalObjectMethodTable()->queueMicrotaskToEventLoop) {
         globalObjectMethodTable()->queueMicrotaskToEventLoop(*this, WTFMove(task));
         return;
     }
     vm().queueMicrotask(WTFMove(task));
+}
+
+void JSGlobalObject::createContextMicrotaskQueue()
+{
+    ASSERT(!m_contextMicrotaskQueue);
+    m_contextMicrotaskQueue = makeUnique<MicrotaskQueue>(vm());
+}
+
+void JSGlobalObject::drainMicrotasks()
+{
+    if (!m_contextMicrotaskQueue)
+        return;
+        
+    auto& vm = this->vm();
+
+    // TODO: should we be checking drainMicrotaskDelayScopeCount here?
+    // intuitively i think no because the per-context queues are meant
+    // to be drained independently when requested. but i could be wrong.
+    
+    if (vm.executionForbidden()) [[unlikely]]
+        m_contextMicrotaskQueue->clear();
+    else {
+        do {
+            m_contextMicrotaskQueue->performMicrotaskCheckpoint(vm,
+                [&](QueuedTask& task) ALWAYS_INLINE_LAMBDA {
+                    if (RefPtr dispatcher = task.dispatcher())
+                        return dispatcher->run(task);
+                    
+                    runJSMicrotask(task.globalObject(), task.identifier(), task.job(), task.arguments());
+                    return QueuedTask::Result::Executed;
+                });
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return;
+            vm.didExhaustMicrotaskQueue();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return;
+        } while (!m_contextMicrotaskQueue->isEmpty());
+    }
+    vm.finalizeSynchronousJSExecution();
 }
 
 void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception* exception)

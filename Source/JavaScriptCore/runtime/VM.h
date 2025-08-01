@@ -886,7 +886,7 @@ public:
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
     JS_EXPORT_PRIVATE void drainMicrotasks();
-    JS_EXPORT_PRIVATE void drainMicrotasks(JSGlobalObject*);
+    JS_EXPORT_PRIVATE void didExhaustMicrotaskQueue();
     void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTFMove(func); }
     void callOnEachMicrotaskTick()
     {
@@ -1061,7 +1061,6 @@ private:
     void primitiveGigacageDisabled();
 
     void callPromiseRejectionCallback(Strong<JSPromise>&);
-    void didExhaustMicrotaskQueue();
 
 #if ENABLE(GC_VALIDATION)
     const ClassInfo* m_initializingObjectClass { nullptr };
