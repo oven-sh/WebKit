@@ -3356,10 +3356,6 @@ void JSGlobalObject::drainMicrotasks()
         
     auto& vm = this->vm();
 
-    // TODO: should we be checking drainMicrotaskDelayScopeCount here?
-    // intuitively i think no because the per-context queues are meant
-    // to be drained independently when requested. but i could be wrong.
-    
     if (vm.executionForbidden()) [[unlikely]]
         m_contextMicrotaskQueue->clear();
     else {
