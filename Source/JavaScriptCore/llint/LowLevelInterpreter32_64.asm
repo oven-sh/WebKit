@@ -320,7 +320,8 @@ macro doVMEntry(makeCall)
         subp cfr, CalleeRegisterSaveSize, t5
         move t5, sp
     else
-        subp cfr, CalleeRegisterSaveSize, sp
+        subp cfr, CalleeRegisterSaveSize, t5
+        move t5, sp
     end
 
     popCalleeSaves()
@@ -359,7 +360,8 @@ _llint_throw_stack_overflow_error_from_vm_entry:
         subp cfr, CalleeRegisterSaveSize, t5
         move t5, sp
     else
-        subp cfr, CalleeRegisterSaveSize, sp
+        subp cfr, CalleeRegisterSaveSize, t5
+        move t5, sp
     end
 
     popCalleeSaves()
@@ -426,7 +428,8 @@ op(llint_handle_uncaught_exception, macro()
         subp cfr, CalleeRegisterSaveSize, t3
         move t3, sp
     else
-        subp cfr, CalleeRegisterSaveSize, sp
+        subp cfr, CalleeRegisterSaveSize, t3
+        move t3, sp
     end
 
     popCalleeSaves()

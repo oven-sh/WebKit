@@ -349,7 +349,8 @@ if ARMv7
     subp cfr, ws1, ws1
     move ws1, sp
 else
-    subp cfr, ws1, sp
+    subp cfr, ws1, ws1
+    move ws1, sp
 end
 end
 

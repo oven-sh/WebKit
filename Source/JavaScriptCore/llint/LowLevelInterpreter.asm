@@ -1076,7 +1076,8 @@ macro restoreStackPointerAfterCall()
         subp cfr, t2, t2
         move t2, sp
     else
-        subp cfr, t2, sp
+        subp cfr, t2, t2
+        move t2, sp
     end
 end
 

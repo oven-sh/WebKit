@@ -303,7 +303,8 @@ macro doVMEntry(makeCall)
         storep t2, VM::topEntryFrame[vm]
     end
 
-    subp cfr, CalleeRegisterSaveSize, sp
+    subp cfr, CalleeRegisterSaveSize, t2
+    move t2, sp
 
     popCalleeSaves()
     functionEpilogue()
@@ -329,7 +330,8 @@ _llint_throw_stack_overflow_error_from_vm_entry:
 
     move ValueUndefined, r0
 
-    subp cfr, CalleeRegisterSaveSize, sp
+    subp cfr, CalleeRegisterSaveSize, t4
+    move t4, sp
     popCalleeSaves()
     functionEpilogue()
     ret
@@ -387,7 +389,8 @@ op(llint_handle_uncaught_exception, macro ()
 
     move ValueUndefined, r0
 
-    subp cfr, CalleeRegisterSaveSize, sp
+    subp cfr, CalleeRegisterSaveSize, t3
+    move t3, sp
     popCalleeSaves()
     functionEpilogue()
     ret
