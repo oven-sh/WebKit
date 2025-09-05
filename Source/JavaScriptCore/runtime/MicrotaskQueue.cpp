@@ -77,7 +77,6 @@ void MicrotaskQueue::enqueue(QueuedTask&& task)
     }
 }
 
-
 bool MarkedMicrotaskDeque::hasMicrotasksForFullyActiveDocument() const
 {
     for (auto& task : m_queue) {
