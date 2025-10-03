@@ -232,31 +232,82 @@ jobs:
           path: ${{runner.temp}}/bun-webkit.tar.gz
 
   windows:
+    name: Windows
     strategy:
       matrix:
         include:
           - runner: windows
-            build-type: Release
+            configuration: Release
             package_json_arch: "x64"
             label: bun-webkit-windows-amd64
           - runner: windows
-            build-type: Debug
+            configuration: Debug
             package_json_arch: "x64"
             label: bun-webkit-windows-amd64-debug
+          - runner: windows
+            configuration: ASAN
+            package_json_arch: "x64"
+            label: bun-webkit-windows-amd64-asan
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
+      - name: "Set LLVM version"
+        if: github.event == 'workflow_dispatch'
+        run: echo "LLVM_VERSION=${{inputs.llvm_version}}" >> $env:GITHUB_ENV
       - name: Install Scoop
         run: |
           Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
           Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
           Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
-      - name: Install LLVM and Ninja
+      - name: Install LLVM 19, Ruby, and Ninja
         run: |
+          # Install Ninja build system
           scoop install ninja
-          scoop install llvm@19.1.7
-          Join-Path (Resolve-Path ~).Path "scoop\apps\llvm\current\bin" >> $Env:GITHUB_PATH
-      - uses: cygwin/cygwin-install-action@006ad0b0946ca6d0a3ea2d4437677fa767392401
+          
+          # Install LLVM 19.x (clang-cl)
+          scoop install llvm@${{env.LLVM_VERSION}}.1.7
+          
+          # Install Ruby (required for WebKit build)
+          scoop install ruby
+          
+          # Add all tools to PATH
+          $ScoopPath = Join-Path (Resolve-Path ~).Path "scoop\shims"
+          $LLVMPath = Join-Path (Resolve-Path ~).Path "scoop\apps\llvm\current\bin"
+          $RubyPath = Join-Path (Resolve-Path ~).Path "scoop\apps\ruby\current\bin"
+          
+          echo $ScoopPath >> $Env:GITHUB_PATH
+          echo $LLVMPath >> $Env:GITHUB_PATH  
+          echo $RubyPath >> $Env:GITHUB_PATH
+      - name: Clone and Setup vcpkg
+        run: |
+          # Clone vcpkg if it doesn't exist
+          if (!(Test-Path "C:\vcpkg")) {
+            Write-Host ":: Cloning vcpkg"
+            git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+          } else {
+            Write-Host ":: vcpkg already exists, updating"
+            cd C:\vcpkg
+            git pull
+          }
+          
+          # Bootstrap vcpkg
+          Write-Host ":: Bootstrapping vcpkg"
+          C:\vcpkg\bootstrap-vcpkg.bat
+          
+          # Integrate vcpkg with MSBuild/CMake
+          Write-Host ":: Integrating vcpkg"
+          C:\vcpkg\vcpkg.exe integrate install
+          
+          # Set environment variable for the build script
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+      - name: Install ICU via vcpkg
+        run: |
+          # Install ICU using dynamic linkage (x64-windows triplet, not x64-windows-static)
+          Write-Host ":: Installing ICU via vcpkg (dynamic linkage)"
+          C:\vcpkg\vcpkg.exe install icu:x64-windows
+          
+          # Verify installation
+          C:\vcpkg\vcpkg.exe list icu
       - uses: actions/checkout@v4
         with:
           sparse-checkout-cone-mode: false
@@ -264,21 +315,49 @@ jobs:
             /*
             !LayoutTests/
             !JSTests/
-      - name: Build WebKit
+      - name: Verify Build Tools
         run: |
+          Write-Host ":: Verifying build tools"
+          
+          # Verify clang-cl version
+          clang-cl.exe --version
+          
+          # Verify Ruby
+          ruby --version
+          
+          # Verify Ninja
+          ninja --version
+          
+          # Verify vcpkg
+          C:\vcpkg\vcpkg.exe version
+          
+          # Show PATH for debugging
+          Write-Host ":: Current PATH:"
+          $env:PATH -split ';' | ForEach-Object { Write-Host "  $_" }
+      - name: Build WebKit
+        env:
+          WEBKIT_OUTPUT_DIR: "bun-webkit"
+          BUN_WEBKIT_VERSION: "${{ github.sha }}"
+          PACKAGE_JSON_LABEL: "${{matrix.label}}"
+          GITHUB_SHA: "${{ github.sha }}"
+          PACKAGE_JSON_ARCH: "${{matrix.package_json_arch}}"
+          GITHUB_REPOSITORY: "${{ github.repository }}"
+          VCPKG_ROOT: "C:\\vcpkg"
+        run: |
+          # Ensure Windows SDK tools are in PATH
           $env:Path = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\;" + $env:Path
-          $env:WEBKIT_OUTPUT_DIR = "bun-webkit"
-          $env:BUN_WEBKIT_VERSION = "${{ github.sha }}"
-          $env:CMAKE_BUILD_TYPE = "${{matrix.build-type}}"
-          $env:PACKAGE_JSON_LABEL = "${{matrix.label}}"
-          $env:GITHUB_SHA = "${{ github.sha }}"
-          $env:PACKAGE_JSON_ARCH = "${{matrix.package_json_arch}}"
-          $env:GITHUB_REPOSITORY = "${{ github.repository }}"
-          ./windows-release.ps1
+          
+          Write-Host ":: Starting WebKit build with configuration: ${{matrix.configuration}}"
+          Write-Host ":: Using vcpkg at: $env:VCPKG_ROOT"
+          Write-Host ":: Output directory: $env:WEBKIT_OUTPUT_DIR"
+          Write-Host ":: BUN_WEBKIT_VERSION: $env:BUN_WEBKIT_VERSION"
+          
+          # Run the build script
+          ./windows-release-vcpkg.ps1 -Configuration "${{matrix.configuration}}"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.label}}
-          path: bun-webkit.tar.gz
+          path: bun-webkit*.tar.gz
 
   linux-musl:
     name: Linux
@@ -442,6 +521,10 @@ jobs:
           path: ${{runner.temp}}/bun-webkit-windows-amd64-debug
       - uses: actions/download-artifact@v4
         with:
+          name: bun-webkit-windows-amd64-asan
+          path: ${{runner.temp}}/bun-webkit-windows-amd64-asan
+      - uses: actions/download-artifact@v4
+        with:
           name: bun-webkit-linux-amd64-musl
           path: ${{runner.temp}}/bun-webkit-linux-amd64-musl
       - uses: actions/download-artifact@v4
@@ -491,6 +574,7 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-musl-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug.tar.gz
+          mv ${{runner.temp}}/bun-webkit-windows-amd64-asan/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-asan.tar.gz
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
@@ -540,3 +624,4 @@ jobs:
           files: |
             ./out/bun-webkit-windows-amd64.tar.gz
             ./out/bun-webkit-windows-amd64-debug.tar.gz
+            ./out/bun-webkit-windows-amd64-asan.tar.gz
