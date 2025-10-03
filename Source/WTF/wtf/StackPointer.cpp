@@ -96,6 +96,17 @@ asm (
     ".previous" "\n"
 );
 
+#elif CPU(ARM64) && OS(WINDOWS)
+asm (
+    ".text" "\n"
+    ".balign 16" "\n"
+    ".globl " SYMBOL_STRING(currentStackPointer) "\n"
+    SYMBOL_STRING(currentStackPointer) ":" "\n"
+
+    "mov x0, sp" "\n"
+    "ret" "\n"
+);
+
 #elif CPU(ARM64)
 asm (
     ".text" "\n"

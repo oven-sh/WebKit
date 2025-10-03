@@ -149,7 +149,7 @@
 #endif
 
 /* BCPU(ARM64) */
-#if defined(__arm64__) || defined(__aarch64__)
+#if defined(__arm64__) || defined(__aarch64__) || defined(_M_ARM64)
 #define BCPU_ARM64 1
 #if defined(__arm64e__)
 #define BCPU_ARM64E 1

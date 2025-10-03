@@ -107,6 +107,8 @@ static inline void*& stackPointerImpl(PlatformRegisters& regs)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Esp);
 #elif CPU(X86_64)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Rsp);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) regs.Sp);
 #else
 #error Unknown Architecture
 #endif
@@ -233,6 +235,8 @@ static inline void*& framePointerImpl(PlatformRegisters& regs)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Ebp);
 #elif CPU(X86_64)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Rbp);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) regs.Fp);
 #else
 #error Unknown Architecture
 #endif
@@ -361,6 +365,8 @@ static inline void*& instructionPointerImpl(PlatformRegisters& regs)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Eip);
 #elif CPU(X86_64)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Rip);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) regs.Pc);
 #else
 #error Unknown Architecture
 #endif
@@ -542,6 +548,8 @@ inline void*& argumentPointer<1>(PlatformRegisters& regs)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Edx);
 #elif CPU(X86_64)
     return reinterpret_cast<void*&>((uintptr_t&) regs.Rdx);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) regs.X1);
 #else
 #error Unknown Architecture
 #endif
@@ -571,6 +579,8 @@ inline void* wasmInstancePointer(const PlatformRegisters& regs)
     return reinterpret_cast<void*>((uintptr_t) regs.Ebx);
 #elif CPU(X86_64)
     return reinterpret_cast<void*>((uintptr_t) regs.Rbx);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*>((uintptr_t) regs.X19);
 #else
 #error Unknown Architecture
 #endif
@@ -740,6 +750,9 @@ inline void*& llintInstructionPointer(PlatformRegisters& regs)
 #if CPU(ARM)
     static_assert(LLInt::LLIntPC == ARMRegisters::r8, "Wrong LLInt PC.");
     return reinterpret_cast<void*&>((uintptr_t&) regs.R8);
+#elif CPU(ARM64)
+    static_assert(LLInt::LLIntPC == ARM64Registers::x4, "Wrong LLInt PC.");
+    return reinterpret_cast<void*&>((uintptr_t&) regs.X4);
 #elif CPU(X86)
     static_assert(LLInt::LLIntPC == X86Registers::esi, "Wrong LLInt PC.");
     return reinterpret_cast<void*&>((uintptr_t&) regs.Esi);

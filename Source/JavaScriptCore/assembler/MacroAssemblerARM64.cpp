@@ -580,7 +580,9 @@ asm (
 #else
     "ret" "\n"
 #endif
+#if !OS(WINDOWS)
     ".previous" "\n"
+#endif
 );
 
 // And now, the slower version that saves the full width of FP registers:
@@ -833,7 +835,9 @@ asm (
 #else
     "ret" "\n"
 #endif
+#if !OS(WINDOWS)
     ".previous" "\n"
+#endif
 );
 
 void MacroAssembler::probe(Probe::Function function, void* arg, SavedFPWidth savedFPWidth)

@@ -243,20 +243,146 @@ jobs:
             build-type: Debug
             package_json_arch: "x64"
             label: bun-webkit-windows-amd64-debug
+          - runner: windows-11-arm
+            build-type: Release
+            package_json_arch: "arm64"
+            label: bun-webkit-windows-arm64
+          - runner: windows-11-arm
+            build-type: Debug
+            package_json_arch: "arm64"
+            label: bun-webkit-windows-arm64-debug
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
-      - name: Install Scoop
+      - name: Disable Windows Defender
+        shell: pwsh
         run: |
-          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-          Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
-      - name: Install LLVM and Ninja
+          # Stop Windows Defender services
+          Stop-Service -Name WinDefend -Force -ErrorAction SilentlyContinue
+          Stop-Service -Name WdNisSvc -Force -ErrorAction SilentlyContinue
+          
+          # Disable real-time protection via registry
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection" -Name DisableRealtimeMonitoring -Value 1 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender" -Name DisableAntiSpyware -Value 1 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender" -Name DisableAntiVirus -Value 1 -Force -ErrorAction SilentlyContinue
+          
+          # Disable via PowerShell preferences (belt and suspenders)
+          Set-MpPreference -DisableRealtimeMonitoring $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableBehaviorMonitoring $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableBlockAtFirstSeen $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableIOAVProtection $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -DisablePrivacyMode $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableScriptScanning $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableArchiveScanning $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -SignatureDisableUpdateOnStartupWithoutEngine $true -Force -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableIntrusionPreventionSystem $true -Force -ErrorAction SilentlyContinue
+          
+          # Add exclusions for the entire system drive as a last resort
+          Add-MpPreference -ExclusionPath "C:\" -Force -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "*" -Force -ErrorAction SilentlyContinue
+          
+      - name: Install dependencies for Windows
         run: |
-          scoop install ninja
-          scoop install llvm@19.1.7
-          Join-Path (Resolve-Path ~).Path "scoop\apps\llvm\current\bin" >> $Env:GITHUB_PATH
-      - uses: cygwin/cygwin-install-action@006ad0b0946ca6d0a3ea2d4437677fa767392401
+          # Detect architecture
+          $isARM64 = $env:PROCESSOR_ARCHITECTURE -eq "ARM64"
+          
+          # Install Scoop if not available
+          if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
+            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+            Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+            $env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
+            echo "$env:USERPROFILE\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          
+          # On ARM64, manually install 7zip to avoid Scoop's extraction issues
+          if ($isARM64) {
+            $7zipUrl = "https://www.7-zip.org/a/7z2501-arm64.exe"
+            $7zipExe = "$env:TEMP\7z-installer.exe"
+            Invoke-WebRequest -Uri $7zipUrl -OutFile $7zipExe
+            
+            # Extract manually
+            Start-Process -FilePath $7zipExe -ArgumentList "/S", "/D=C:\Program Files\7-Zip" -Wait
+            echo "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            
+            # Tell Scoop to use the external 7zip we just installed
+            scoop config use_external_7zip true
+            scoop config 7zip_path "C:\Program Files\7-Zip\7z.exe"
+          } else {
+            # x64 can use normal Scoop 7zip installation
+            scoop install 7zip
+          }
+          
+          # Skip aria2 on ARM64 as it may cause issues
+          if (-not $isARM64) {
+            scoop install aria2
+          }
+          
+          # Install tools via Scoop one by one for better error isolation
+          if ($isARM64) {
+            # Use ARM64-specific packages
+            scoop install cmake
+            scoop install ninja
+            scoop install python
+            scoop install perl
+            scoop install make
+            
+            # Download and extract LLVM ARM64 directly (Scoop's pre_install fails)
+            Write-Host "Downloading LLVM ARM64..."
+            $llvmVersion = "19.1.4"
+            $llvmUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvmVersion/LLVM-$llvmVersion-woa64.exe"
+            $llvmPath = "C:\LLVM"
+            
+            # Download LLVM installer
+            $llvmInstaller = "$env:TEMP\llvm-arm64.exe"
+            Invoke-WebRequest -Uri $llvmUrl -OutFile $llvmInstaller
+            
+            # Extract with 7zip (faster than installer)
+            Write-Host "Extracting LLVM (this may take a few minutes)..."
+            $extractResult = & "C:\Program Files\7-Zip\7z.exe" x $llvmInstaller -o"$llvmPath" -y 2>&1
+            Write-Host "7zip extraction completed with result: $LASTEXITCODE"
+            
+            # Verify extraction worked
+            if (Test-Path "$llvmPath\bin\clang.exe") {
+                Write-Host "LLVM extracted successfully"
+                # Add to PATH
+                echo "$llvmPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+                Write-Host "LLVM ARM64 installed and added to PATH"
+            } else {
+                Write-Host "ERROR: LLVM extraction failed - clang.exe not found"
+                exit 1
+            }
+            
+            Write-Host "ARM64 dependency installation completed, continuing..."
+          } else {
+            # Use x64 packages
+            scoop install cmake
+            scoop install ninja
+            scoop install python
+            scoop install perl
+            scoop install llvm
+            scoop install make
+          }
+          
+          Write-Host "Starting Ruby installation phase..."
+          
+          # Install Ruby manually on ARM64 (Scoop's Ruby fails on ARM64)
+          if ($isARM64) {
+            Write-Host "Skipping Ruby installation on ARM64 - using pre-installed Ruby"
+            # GitHub Actions ARM64 runners come with Ruby pre-installed
+          } else {
+            # x64 can use Scoop's Ruby
+            Write-Host "Installing Ruby via Scoop..."
+            scoop install ruby
+            Write-Host "Ruby installation completed"
+          }
+          
+          # Install vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+          cd C:\vcpkg
+          .\bootstrap-vcpkg.bat
+          $env:VCPKG_ROOT = "C:\vcpkg"
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+          
       - uses: actions/checkout@v4
         with:
           sparse-checkout-cone-mode: false
@@ -274,6 +400,14 @@ jobs:
           $env:GITHUB_SHA = "${{ github.sha }}"
           $env:PACKAGE_JSON_ARCH = "${{matrix.package_json_arch}}"
           $env:GITHUB_REPOSITORY = "${{ github.repository }}"
+          
+          # Explicitly set architecture to avoid detection issues
+          if ("${{matrix.package_json_arch}}" -eq "arm64") {
+            $env:BUILD_ARM64 = "1"
+          } else {
+            $env:BUILD_ARM64 = "0"
+          }
+          
           ./windows-release.ps1
       - uses: actions/upload-artifact@v4
         with:
@@ -442,6 +576,14 @@ jobs:
           path: ${{runner.temp}}/bun-webkit-windows-amd64-debug
       - uses: actions/download-artifact@v4
         with:
+          name: bun-webkit-windows-arm64
+          path: ${{runner.temp}}/bun-webkit-windows-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-windows-arm64-debug
+          path: ${{runner.temp}}/bun-webkit-windows-arm64-debug
+      - uses: actions/download-artifact@v4
+        with:
           name: bun-webkit-linux-amd64-musl
           path: ${{runner.temp}}/bun-webkit-linux-amd64-musl
       - uses: actions/download-artifact@v4
@@ -491,6 +633,8 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-musl-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug.tar.gz
+          mv ${{runner.temp}}/bun-webkit-windows-arm64/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64.tar.gz
+          mv ${{runner.temp}}/bun-webkit-windows-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64-debug.tar.gz
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
@@ -540,3 +684,5 @@ jobs:
           files: |
             ./out/bun-webkit-windows-amd64.tar.gz
             ./out/bun-webkit-windows-amd64-debug.tar.gz
+            ./out/bun-webkit-windows-arm64.tar.gz
+            ./out/bun-webkit-windows-arm64-debug.tar.gz

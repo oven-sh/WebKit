@@ -1431,6 +1431,17 @@ class Instruction
             $asm.puts "ldr #{operands[1].arm64Operand(:quad)}, [#{operands[1].arm64Operand(:quad)}, :got_lo12:#{operands[0].asmLabel}]"
             $asm.putStr("#endif")
 
+            # On Windows, use COFF-style addressing
+            $asm.putStr("#elif OS(WINDOWS)")
+            
+            # Windows ARM64 uses PC-relative addressing similar to Linux
+            $asm.puts "adrp #{operands[1].arm64Operand(:quad)}, #{operands[0].asmLabel}"
+            $asm.putStr("#if CPU(ADDRESS32)")
+            $asm.puts "add #{operands[1].arm64Operand(:word)}, #{operands[1].arm64Operand(:word)}, :lo12:#{operands[0].asmLabel}"
+            $asm.putStr("#else")
+            $asm.puts "add #{operands[1].arm64Operand(:quad)}, #{operands[1].arm64Operand(:quad)}, :lo12:#{operands[0].asmLabel}"
+            $asm.putStr("#endif")
+
             # Throw a compiler error everywhere else.
             $asm.putStr("#else")
             $asm.putStr("#error Missing globaladdr implementation")

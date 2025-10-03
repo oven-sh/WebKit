@@ -465,7 +465,11 @@ public:
                 BranchType m_branchType : 2 { BranchType_JMP };
             } realTypes { };
             struct CopyTypes {
+#if OS(WINDOWS)
+                uint64_t content[5];  // Increased to match RealTypes size (40 bytes) on Windows
+#else
                 uint64_t content[3];
+#endif
             } copyTypes;
             static_assert(sizeof(RealTypes) == sizeof(CopyTypes), "LinkRecord's CopyStruct size equals to RealStruct");
         } data;
@@ -3780,6 +3784,9 @@ public:
             linuxPageFlush(current, current + page);
 
         linuxPageFlush(current, end);
+#elif OS(WINDOWS)
+        // On Windows ARM64, use FlushInstructionCache
+        FlushInstructionCache(GetCurrentProcess(), code, size);
 #else
 #error "The cacheFlush support is missing on this platform."
 #endif

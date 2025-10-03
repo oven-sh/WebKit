@@ -304,7 +304,7 @@ public:
         {
         }
 
-#if OS(WINDOWS)
+#if OS(WINDOWS) && CPU(X86_64)
         template<typename ReturnType, typename... Arguments>
         explicit TrustedImmPtr(ReturnType(SYSV_ABI *value)(Arguments...))
             : m_value(reinterpret_cast<void*>(value))
