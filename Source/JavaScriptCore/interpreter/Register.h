@@ -56,6 +56,7 @@ namespace JSC {
         ALWAYS_INLINE Register& operator=(JSScope*);
         ALWAYS_INLINE Register& operator=(JSCell*);
         ALWAYS_INLINE Register& operator=(EncodedJSValue);
+        ALWAYS_INLINE Register& operator=(JSValue);
 
         int32_t i() const;
         ALWAYS_INLINE CallFrame* callFrame() const;
@@ -111,7 +112,7 @@ namespace JSC {
     ALWAYS_INLINE Register::Register()
     {
 #ifndef NDEBUG
-        *this = JSValue();
+        u.value = JSValue::encode(JSValue());
 #endif
     }
 

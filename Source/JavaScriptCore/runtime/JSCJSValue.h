@@ -217,6 +217,7 @@ public:
 
     // Numbers
     JSValue(EncodeAsDoubleTag, double);
+    explicit JSValue(float);
     explicit JSValue(double);
     explicit JSValue(char);
     explicit JSValue(unsigned char);
@@ -231,6 +232,19 @@ public:
 
     explicit operator bool() const;
     bool operator==(const JSValue&) const;
+
+    operator float() const = delete;
+    operator double() const = delete;
+    operator char() const = delete;
+    operator unsigned char() const = delete;
+    operator short() const = delete;
+    operator unsigned short() const = delete;
+    operator int() const = delete;
+    operator unsigned() const = delete;
+    operator long() const = delete;
+    operator unsigned long() const = delete;
+    operator long long() const = delete;
+    operator unsigned long long() const = delete;
 
     bool isInt32() const;
     bool isUInt32() const;

@@ -71,13 +71,19 @@ ALWAYS_INLINE Register& Register::operator=(JSCell* object)
 
 ALWAYS_INLINE Register& Register::operator=(JSScope* scope)
 {
-    *this = JSValue(scope);
+    *this = JSValue::encode(JSValue(scope));
     return *this;
 }
 
 ALWAYS_INLINE Register& Register::operator=(EncodedJSValue encodedJSValue)
 {
     u.value = encodedJSValue;
+    return *this;
+}
+
+ALWAYS_INLINE Register& Register::operator=(JSValue value)
+{
+    *this = JSValue::encode(value);
     return *this;
 }
 
