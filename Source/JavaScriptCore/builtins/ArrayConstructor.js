@@ -27,12 +27,30 @@ function of(/* items... */)
 {
     "use strict";
 
-    var length = @argumentCount();
-    var array = this !== @Array && @isConstructor(this) ? new this(length) : @newArrayWithSize(length);
-    for (var k = 0; k < length; ++k)
-        @putByValDirect(array, k, arguments[k]);
-    array.length = length;
-    return array;
+    
+    const len = @argumentCount();
+    const extended = this !== @Array && @isConstructor(this);
+    const arr = extended ? new this(len) : @newArrayWithSize(len);
+
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable) for (let o = 0; o < len; o++) @putByValDirect(arr, o, arguments[o]);
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, arguments[o]);
+            @putByValDirect(arr, o + 1, arguments[o + 1]);
+            @putByValDirect(arr, o + 2, arguments[o + 2]);
+            @putByValDirect(arr, o + 3, arguments[o + 3]);
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, arguments[o]);
+    }
+
+    return (arr.length = len, arr);
+    
 }
 
 function from(items /*, mapFn, thisArg */)
@@ -58,54 +76,242 @@ function from(items /*, mapFn, thisArg */)
             return fastResult;
     }
 
-    var iteratorMethod = items.@@iterator;
-    if (!@isUndefinedOrNull(iteratorMethod)) {
-        if (!@isCallable(iteratorMethod))
-            @throwTypeError("Array.from requires that the property of the first argument, items[Symbol.iterator], when exists, be a function");
+    const iteratorMethod = items.@@iterator;
+    if (!@isUndefinedOrNull(iteratorMethod)) return @bun_arrayFromIterator.@call(this, items, mapFn, thisArg, iteratorMethod);
+    
+    const len = @toLength(arrayLike.length);
+    const fast = @bun_isLengthObject(arrayLike);
+    const extended = this !== @Array && @isConstructor(this);
+    const arr = extended ? new this(len) : @newArrayWithSize(len);
 
-        var result = this !== @Array && @isConstructor(this) ? new this() : [];
+    if (mapFn === @undefined) {
+        if (fast) @bun_arrayFillUndefined(arr, len);
+        else @bun_arrayCopyFrom(arr, len, arrayLike);
+    }
 
-        var k = 0;
-        var iterator = iteratorMethod.@call(items);
-
-        // Since for-of loop once more looks up the @@iterator property of a given iterable,
-        // it could be observable if the user defines a getter for @@iterator.
-        // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
-        var wrapper = {
-            @@iterator: function () { return iterator; }
-        };
-
-        for (var value of wrapper) {
-            if (k >= @MAX_SAFE_INTEGER)
-                @throwTypeError("Length exceeded the maximum array length");
-            if (mapFn === @undefined)
-                @putByValDirect(result, k, value);
-            else
-                @putByValDirect(result, k, thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k));
-            k += 1;
+    else {
+        if (thisArg === @undefined) {
+            if (fast) @bun_arrayFillMapUndefined(arr, len, mapFn);
+            else @bun_arrayCopyFromMap(arr, len, arrayLike, mapFn);
         }
 
-        result.length = k;
-        return result;
+        else {
+            if (fast) @bun_arrayFillMapUndefinedThis(arr, len, mapFn, thisArg);
+            else @bun_arrayCopyFromMapThis(arr, len, arrayLike, mapFn, thisArg);
+        }
     }
 
-    var arrayLikeLength = @toLength(arrayLike.length);
-
-    var result = this !== @Array && @isConstructor(this) ? new this(arrayLikeLength) : @newArrayWithSize(arrayLikeLength);
-
-    var k = 0;
-    while (k < arrayLikeLength) {
-        var value = arrayLike[k];
-        if (mapFn === @undefined)
-            @putByValDirect(result, k, value);
-        else
-            @putByValDirect(result, k, thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k));
-        k += 1;
-    }
-
-    result.length = arrayLikeLength;
-    return result;
+    return (arr.length = len, arr);
+    
 }
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_isLengthObject(obj) {
+    "use strict";
+
+    if (@isArray(obj)) return false;
+    if (@isProxyObject(obj)) return false;
+    if (@isTypedArrayView(obj)) return false;
+
+    // @isNaturalObject would be useful
+    if (@Object.prototype !== @Object.@getPrototypeOf(obj)) return false;
+
+    // needs @objectAllKeysCount(obj)
+    const keys = @Object.@getOwnPropertyNames(obj);
+    if (1 !== keys.length || keys[0] !== 'length') return false;
+
+    return true;
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_arrayFillUndefined(arr, len) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, @undefined);
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, @undefined);
+            @putByValDirect(arr, o + 1, @undefined);
+            @putByValDirect(arr, o + 2, @undefined);
+            @putByValDirect(arr, o + 3, @undefined);
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, @undefined);
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_arrayCopyFrom(arr, len, src) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, src[o]);
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, src[o]);
+            @putByValDirect(arr, o + 1, src[o + 1]);
+            @putByValDirect(arr, o + 2, src[o + 2]);
+            @putByValDirect(arr, o + 3, src[o + 3]);
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, src[o]);
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_arrayFillMapUndefined(arr, len, map) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, map(@undefined, o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, map(@undefined, o));
+            @putByValDirect(arr, o + 1, map(@undefined, o + 1));
+            @putByValDirect(arr, o + 2, map(@undefined, o + 2));
+            @putByValDirect(arr, o + 3, map(@undefined, o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, map(@undefined, o));
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_arrayFillMapUndefinedThis(arr, len, map, thisArg) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, map.@call(thisArg, @undefined, o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, map.@call(thisArg, @undefined, o));
+            @putByValDirect(arr, o + 1, map.@call(thisArg, @undefined, o + 1));
+            @putByValDirect(arr, o + 2, map.@call(thisArg, @undefined, o + 2));
+            @putByValDirect(arr, o + 3, map.@call(thisArg, @undefined, o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, map.@call(thisArg, @undefined, o));
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_arrayCopyFromMap(arr, len, src, map) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, map(src[o], o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, map(src[o], o));
+            @putByValDirect(arr, o + 1, map(src[o + 1], o + 1));
+            @putByValDirect(arr, o + 2, map(src[o + 2], o + 2));
+            @putByValDirect(arr, o + 3, map(src[o + 3], o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, map(src[o], o));
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_arrayCopyFromMapThis(arr, len, src, map, thisArg) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, map.@call(thisArg, src[o], o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, map.@call(thisArg, src[o], o));
+            @putByValDirect(arr, o + 1, map.@call(thisArg, src[o + 1], o + 1));
+            @putByValDirect(arr, o + 2, map.@call(thisArg, src[o + 2], o + 2));
+            @putByValDirect(arr, o + 3, map.@call(thisArg, src[o + 3], o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, map.@call(thisArg, src[o], o));
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+function bun_arrayFromIterator(items, mapFn, thisArg, iteratorMethod) {
+    "use strict"
+
+    if (!@isCallable(iteratorMethod))
+        @throwTypeError("Array.from requires that the property of the first argument, items[Symbol.iterator], when exists, be a function");
+
+    const extended = this !== @Array && @isConstructor(this);
+
+    let offset = 0;
+    const arr = extended ? new this() : [];
+    const iterator = iteratorMethod.@call(items);
+
+    const wrapper = {
+        @@iterator: function () { return iterator; }
+    };
+
+    if (mapFn === @undefined) {
+        for (const value of wrapper) {
+            if (offset === @MAX_SAFE_INTEGER) @throwTypeError("Length exceeded the maximum array length");
+            @putByValDirect(arr, offset, value);
+
+            offset++;
+        }
+    }
+
+    else {
+        if (thisArg === @undefined) {
+            for (const value of wrapper) {
+                if (offset === @MAX_SAFE_INTEGER) @throwTypeError("Length exceeded the maximum array length");
+                @putByValDirect(arr, offset, mapFn(value, offset));
+
+                offset++;
+            }
+        }
+
+        else {
+            for (const value of wrapper) {
+                if (offset === @MAX_SAFE_INTEGER) @throwTypeError("Length exceeded the maximum array length");
+                @putByValDirect(arr, offset, mapFn.@call(thisArg, value, offset));
+
+                offset++;
+            }
+        }
+    }
+
+    return (arr.length = offset, arr);
+}
+
 
 function isArray(array)
 {
@@ -124,29 +330,47 @@ async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
 {
     "use strict";
 
-    var result = this !== @Array && @isConstructor(this) ? new this() : [];
+    
+    const extended = this !== @Array && @isConstructor(this);
 
-    var k = 0;
+    let offset = 0;
+    const arr = extended ? new this() : [];
 
-    // Since for-of loop once more looks up the @@iterator property of a given iterable,
-    // it could be observable if the user defines a getter for @@iterator.
-    // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
-    var wrapper = {
+    const wrapper = {
         @@asyncIterator: function () { return iterator; }
     };
 
-    for await (var value of wrapper) {
-        if (k >= @MAX_SAFE_INTEGER)
-            @throwTypeError("Length exceeded the maximum array length");
-        if (mapFn === @undefined)
-            @putByValDirect(result, k, value);
-        else
-            @putByValDirect(result, k, await (thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k)));
-        k += 1;
+    if (mapFn === @undefined) {
+        for await (const value of wrapper) {
+            if (offset === @MAX_SAFE_INTEGER) @throwTypeError("Length exceeded the maximum array length");
+            @putByValDirect(arr, offset, value);
+
+            offset++;
+        }
     }
 
-    result.length = k;
-    return result;
+    else {
+        if (thisArg === @undefined) {
+            for await (const value of wrapper) {
+                if (offset === @MAX_SAFE_INTEGER) @throwTypeError("Length exceeded the maximum array length");
+                @putByValDirect(arr, offset, await mapFn(value, offset));
+
+                offset++;
+            }
+        }
+
+        else {
+            for await (const value of wrapper) {
+                if (offset === @MAX_SAFE_INTEGER) @throwTypeError("Length exceeded the maximum array length");
+                @putByValDirect(arr, offset, await mapFn.@call(thisArg, value, offset));
+
+                offset++;
+            }
+        }
+    }
+
+    return (arr.length = offset, arr);
+    
 }
 
 @linkTimeConstant
@@ -157,23 +381,149 @@ async function defaultAsyncFromAsyncArrayLike(asyncItems, mapFn, thisArg)
 
     var arrayLike = @toObject(asyncItems, "Array.fromAsync requires an array-like object - not null or undefined");
 
-    var arrayLikeLength = @toLength(arrayLike.length);
+    
+    const len = @toLength(arrayLike.length);
+    const fast = @bun_isLengthObject(arrayLike);
+    const extended = this !== @Array && @isConstructor(this);
+    const arr = extended ? new this(len) : @newArrayWithSize(len);
 
-    var result = this !== @Array && @isConstructor(this) ? new this(arrayLikeLength) : @newArrayWithSize(arrayLikeLength);
+    if (mapFn === @undefined) {
+        if (fast) @bun_arrayFillUndefined(arr, len);
+        else await @bun_async_arrayCopyFrom(arr, len, arrayLike);
+    }
+    
+    else {
+        if (thisArg === @undefined) {
+            if (fast) await @bun_async_arrayFillMapUndefined(arr, len, mapFn);
+            else await @bun_async_arrayCopyFromMap(arr, len, arrayLike, mapFn);
+        }
 
-    var k = 0;
-    while (k < arrayLikeLength) {
-        var value = await arrayLike[k];
-        if (mapFn === @undefined)
-            @putByValDirect(result, k, value);
-        else
-            @putByValDirect(result, k, await (thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k)));
-        k += 1;
+        else {
+            if (fast) await @bun_async_arrayFillMapUndefinedThis(arr, len, mapFn, thisArg);
+            else await @bun_async_arrayCopyFromMapThis(arr, len, arrayLike, mapFn, thisArg);
+        }
     }
 
-    result.length = arrayLikeLength;
-    return result;
+    return (arr.length = len, arr);
+    
 }
+
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+async function bun_async_arrayCopyFrom(arr, len, src) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, await src[o]);
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, await src[o]);
+            @putByValDirect(arr, o + 1, await src[o + 1]);
+            @putByValDirect(arr, o + 2, await src[o + 2]);
+            @putByValDirect(arr, o + 3, await src[o + 3]);
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, await src[o]);
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+async function bun_async_arrayFillMapUndefined(arr, len, map) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, await map(@undefined, o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, await map(@undefined, o));
+            @putByValDirect(arr, o + 1, await map(@undefined, o + 1));
+            @putByValDirect(arr, o + 2, await map(@undefined, o + 2));
+            @putByValDirect(arr, o + 3, await map(@undefined, o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, await map(@undefined, o));
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+async function bun_async_arrayFillMapUndefinedThis(arr, len, map, thisArg) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, await map.@call(thisArg, @undefined, o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, await map.@call(thisArg, @undefined, o));
+            @putByValDirect(arr, o + 1, await map.@call(thisArg, @undefined, o + 1));
+            @putByValDirect(arr, o + 2, await map.@call(thisArg, @undefined, o + 2));
+            @putByValDirect(arr, o + 3, await map.@call(thisArg, @undefined, o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, await map.@call(thisArg, @undefined, o));
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+async function bun_async_arrayCopyFromMap(arr, len, src, map) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, await map(await src[o], o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, await map(await src[o], o));
+            @putByValDirect(arr, o + 1, await map(await src[o + 1], o + 1));
+            @putByValDirect(arr, o + 2, await map(await src[o + 2], o + 2));
+            @putByValDirect(arr, o + 3, await map(await src[o + 3], o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, await map(await src[o], o));
+    }
+}
+
+@linkTimeConstant
+@visibility=PrivateRecursive
+async function bun_async_arrayCopyFromMapThis(arr, len, src, map, thisArg) {
+    "use strict";
+    const unrollable = len <= 2 ** 30;
+
+    if (!unrollable)
+        for (let o = 0; o < len; o++) @putByValDirect(arr, o, await map.@call(thisArg, await src[o], o));
+
+    else {
+        const unrolled = len & ~3;
+
+        for (let o = 0; o < unrolled; o += 4) {
+            @putByValDirect(arr, o, await map.@call(thisArg, await src[o], o));
+            @putByValDirect(arr, o + 1, await map.@call(thisArg, await src[o + 1], o + 1));
+            @putByValDirect(arr, o + 2, await map.@call(thisArg, await src[o + 2], o + 2));
+            @putByValDirect(arr, o + 3, await map.@call(thisArg, await src[o + 3], o + 3));
+        }
+
+        for (let o = unrolled; o < len; o++) @putByValDirect(arr, o, await map.@call(thisArg, await src[o], o));
+    }
+}
+
 
 function fromAsync(asyncItems  /*, mapFn, thisArg */)
 {
