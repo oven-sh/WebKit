@@ -4,6 +4,7 @@ ARG CPU=native
 ARG LTO_FLAG="-flto=full -fwhole-program-vtables -fforce-emit-vtables "
 ARG LLVM_VERSION="19"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
+ARG ENABLE_SANITIZERS=""
 
 FROM alpine:3.21 as base
 
@@ -13,6 +14,7 @@ ARG CPU
 ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
+ARG ENABLE_SANITIZERS
 
 RUN apk update
 RUN apk add --no-cache cmake make clang19 clang19-static clang19-dev llvm19-dev llvm19-static musl-dev git lld libgcc gcc g++ libstdc++ build-base lld-dev llvm19-libs libc-dev xz zlib zlib-dev libxml2 libxml2-dev
@@ -41,6 +43,7 @@ ARG CPU
 ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
+ARG ENABLE_SANITIZERS
 
 RUN apk add --no-cache cpio curl tar
 
@@ -65,6 +68,7 @@ ARG CPU
 ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
+ARG ENABLE_SANITIZERS
 
 RUN apk add --no-cache cpio curl file gnupg ninja ruby unzip rsync perl python3 openssl-dev openssl linux-headers
 
@@ -80,7 +84,11 @@ COPY --from=build_icu /output /icu
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
     export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
+    export ENABLE_ASSERTS="AUTO" && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
+    if [ -n "$ENABLE_SANITIZERS" ]; then \
+        export ENABLE_ASSERTS="ON"; \
+    fi && \
     cd /webkitbuild && \
     cmake \
     -DPORT="JSCOnly" \
@@ -100,6 +108,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_C_FLAGS="$CFLAGS" \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -DICU_ROOT=/icu \
+    -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
+    -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
