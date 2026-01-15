@@ -182,6 +182,23 @@ jobs:
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+          # Baseline builds for CPUs without AVX (e.g., nehalem-era CPUs with only SSE4.2)
+          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+            label: bun-webkit-linux-amd64-baseline-lto
+            os: linux-x64-gh
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+            cpu: nehalem
+            MARCH_FLAG: "-march=nehalem"
+          - lto_flag: ""
+            label: bun-webkit-linux-amd64-baseline
+            os: linux-x64-gh
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+            cpu: nehalem
+            MARCH_FLAG: "-march=nehalem"
           - lto_flag: ""
             label: bun-webkit-linux-amd64-asan
             os: linux-x64-gh
@@ -214,9 +231,10 @@ jobs:
         env:
           RELEASE_FLAGS: ${{matrix.RELEASE_FLAGS}}
           ENABLE_SANITIZERS: ${{matrix.ENABLE_SANITIZERS}}
+          MARCH_FLAG: ${{matrix.MARCH_FLAG}}
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" bash release.sh
+          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="${{matrix.cpu || 'native'}}" cpu="${{matrix.cpu || 'native'}}" LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" MARCH_FLAG="${{matrix.MARCH_FLAG}}" bash release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -318,6 +336,21 @@ jobs:
             os: linux-x64-gh
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "MinSizeRel"
+          # Baseline musl builds for CPUs without AVX (e.g., nehalem-era CPUs with only SSE4.2)
+          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+            label: bun-webkit-linux-amd64-musl-baseline-lto
+            os: linux-x64-gh
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "MinSizeRel"
+            cpu: nehalem
+            MARCH_FLAG: "-march=nehalem"
+          - lto_flag: ""
+            label: bun-webkit-linux-amd64-musl-baseline
+            os: linux-x64-gh
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "MinSizeRel"
+            cpu: nehalem
+            MARCH_FLAG: "-march=nehalem"
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -333,9 +366,11 @@ jobs:
         with:
           install: true
       - name: Run
+        env:
+          MARCH_FLAG: ${{matrix.MARCH_FLAG}}
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} bash musl-release.sh
+          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="${{matrix.cpu || 'native'}}" cpu="${{matrix.cpu || 'native'}}" LTO_FLAG="${{matrix.lto_flag}}" MARCH_FLAG="${{matrix.MARCH_FLAG}}" temp=${{runner.temp}} bash musl-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -468,6 +503,22 @@ jobs:
         with:
           name: bun-webkit-linux-arm64-musl-lto
           path: ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-linux-amd64-baseline
+          path: ${{runner.temp}}/bun-webkit-linux-amd64-baseline
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-linux-amd64-baseline-lto
+          path: ${{runner.temp}}/bun-webkit-linux-amd64-baseline-lto
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-linux-amd64-musl-baseline
+          path: ${{runner.temp}}/bun-webkit-linux-amd64-musl-baseline
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-linux-amd64-musl-baseline-lto
+          path: ${{runner.temp}}/bun-webkit-linux-amd64-musl-baseline-lto
 
       - name: Rename files
         run: |
@@ -496,6 +547,10 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-musl-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-baseline/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-baseline.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-baseline-lto.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-baseline/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl-baseline.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
 
       - name: Set release info
         id: release_info
@@ -523,6 +578,8 @@ jobs:
             ./out/bun-webkit-linux-arm64-debug.tar.gz
             ./out/bun-webkit-linux-amd64-debug-asan.tar.gz
             ./out/bun-webkit-linux-arm64-debug-asan.tar.gz
+            ./out/bun-webkit-linux-amd64-baseline.tar.gz
+            ./out/bun-webkit-linux-amd64-baseline-lto.tar.gz
 
       - uses: softprops/action-gh-release@v1
         with:
@@ -534,6 +591,8 @@ jobs:
             ./out/bun-webkit-linux-arm64-musl-lto.tar.gz
             ./out/bun-webkit-linux-amd64-musl-debug.tar.gz
             ./out/bun-webkit-linux-arm64-musl-debug.tar.gz
+            ./out/bun-webkit-linux-amd64-musl-baseline.tar.gz
+            ./out/bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
 
       - uses: softprops/action-gh-release@v1
         with:

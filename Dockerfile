@@ -167,8 +167,8 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # Download and build ICU
 ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \
-    export CFLAGS="$CFLAGS -Os -std=c17 $LTO_FLAG" && \
-    export CXXFLAGS="$CXXFLAGS -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export CFLAGS="$CFLAGS -Os -std=c17 $LTO_FLAG $MARCH_FLAG" && \
+    export CXXFLAGS="$CXXFLAGS -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG $MARCH_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     cd /icu && \
     tar -xf /icu.tgz --strip-components=1 && \
@@ -187,8 +187,8 @@ ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
 RUN --mount=type=tmpfs,target=/webkitbuild \
-    export CFLAGS="$CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
-    export CXXFLAGS="$CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
+    export CFLAGS="$CFLAGS $LTO_FLAG $MARCH_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
+    export CXXFLAGS="$CXXFLAGS $LTO_FLAG $MARCH_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export ENABLE_ASSERTS="AUTO" && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
     if [ -n "$ENABLE_SANITIZERS" ]; then \
