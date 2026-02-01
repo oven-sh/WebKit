@@ -1,7 +1,9 @@
 name: Build WebKit (Reusable)
 
 env:
-  LLVM_VERSION: 19
+  # Use LLVM 20 for macOS - LLVM 21 has libc++ ABI compatibility issues
+  # with macOS system libc++ (missing std::__1::__hash_memory)
+  LLVM_VERSION: 20
 
 on:
   workflow_call:
@@ -21,7 +23,7 @@ on:
       llvm_version:
         description: 'LLVM version to use'
         type: string
-        default: '19'
+        default: '20'
     outputs:
       release_tag:
         description: 'The release tag that was created'
@@ -273,7 +275,7 @@ jobs:
         run: |
           "C:\Program Files\7-Zip" >> $Env:GITHUB_PATH
           scoop config use_external_7zip true
-          scoop install ninja llvm@19.1.7
+          scoop install ninja llvm@20.1.8
           Join-Path (Resolve-Path ~).Path "scoop\apps\llvm\current\bin" >> $Env:GITHUB_PATH
       - name: Install LLVM and Ninja (ARM64)
         if: matrix.platform == 'ARM64'
@@ -282,7 +284,7 @@ jobs:
           scoop config use_external_7zip true
           scoop install ninja
           # Install LLVM ARM64 from official LLVM releases
-          # Use LLVM 21 for ARM64 - has better Windows ARM64 support and fixes SEH unwind bugs
+          # Using official releases since Scoop may not have ARM64 LLVM
           $llvmVersion = "21.1.8"
           $llvmUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvmVersion/LLVM-$llvmVersion-woa64.exe"
           $llvmPath = "C:\LLVM"

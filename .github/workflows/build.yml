@@ -9,7 +9,7 @@ on:
     inputs:
       llvm_version:
         description: "LLVM version"
-        default: "19"
+        default: "20"
 
 jobs:
   build:
@@ -22,4 +22,4 @@ jobs:
       build_ref: ${{ github.sha }}
       release_tag: autobuild-${{ github.sha }}
       is_prerelease: false
-      llvm_version: ${{ inputs.llvm_version || '19' }}
+      llvm_version: ${{ inputs.llvm_version || '20' }}

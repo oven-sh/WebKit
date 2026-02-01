@@ -3,7 +3,7 @@ ARG WEBKIT_RELEASE_TYPE=Release
 ARG CPU=native
 ARG LTO_FLAG="-flto=full -fwhole-program-vtables -fforce-emit-vtables "
 ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
-ARG LLVM_VERSION="19"
+ARG LLVM_VERSION="20"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
 
@@ -71,10 +71,10 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
     --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
     --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Install LLVM 19
+# Install LLVM 20
 RUN wget https://apt.llvm.org/llvm.sh \
     && chmod +x llvm.sh \
-    && ./llvm.sh 19 all \
+    && ./llvm.sh 20 all \
     && rm llvm.sh \
     && rm -rf /var/lib/apt/lists/*
 
