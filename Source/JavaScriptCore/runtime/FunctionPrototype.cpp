@@ -90,14 +90,14 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncToString, (JSGlobalObject* globalObjec
     if (thisValue.inherits<InternalFunction>()) {
         InternalFunction* function = jsCast<InternalFunction*>(thisValue);
         Integrity::auditStructureID(function->structureID());
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, function->name(), "() {\n    [native code]\n}"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, function->name(), "() { [native code] }"_s)));
     }
 
     if (thisValue.isObject()) {
         JSObject* object = asObject(thisValue);
         Integrity::auditStructureID(object->structureID());
         if (object->isCallable())
-            RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, object->classInfo()->className, "() {\n    [native code]\n}"_s)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, object->classInfo()->className, "() { [native code] }"_s)));
     }
 
     return throwVMTypeError(globalObject, scope);
