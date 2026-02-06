@@ -1058,7 +1058,42 @@ inline JSString* tryJSSubstringImpl(VM& vm, JSGlobalObject* globalObject, JSStri
     if (offset < fiber0->length()) {
         if ((offset + length) <= fiber0->length())
             MUST_TAIL_CALL return tryJSSubstringImpl(vm, globalObject, fiber0, offset, length);
-        // Crossing multiple fibers. Giving up and resolving the rope.
+        // Crossing from fiber0 into fiber1 (and possibly fiber2).
+        // Instead of resolving the entire rope, extract substrings from each fiber
+        // and concatenate them into a new rope.
+        unsigned lengthFromFiber0 = fiber0->length() - offset;
+        unsigned remainingLength = length - lengthFromFiber0;
+
+        auto* fiber1 = rope->fiber1();
+        ASSERT(fiber1);
+
+        JSString* part0 = tryJSSubstringImpl(vm, globalObject, fiber0, offset, lengthFromFiber0);
+        if (!part0)
+            return nullptr;
+
+        if (remainingLength <= fiber1->length()) {
+            // Substring spans fiber0 and fiber1 only
+            JSString* part1 = tryJSSubstringImpl(vm, globalObject, fiber1, 0, remainingLength);
+            if (!part1)
+                return nullptr;
+            return JSRopeString::create(vm, part0, part1);
+        }
+
+        // Substring spans fiber0, fiber1, and fiber2
+        unsigned lengthFromFiber1 = fiber1->length();
+        unsigned lengthFromFiber2 = remainingLength - lengthFromFiber1;
+
+        auto* fiber2 = rope->fiber2();
+        ASSERT(fiber2);
+        ASSERT(lengthFromFiber2 <= fiber2->length());
+
+        JSString* part1 = tryJSSubstringImpl(vm, globalObject, fiber1, 0, lengthFromFiber1);
+        if (!part1)
+            return nullptr;
+        JSString* part2 = tryJSSubstringImpl(vm, globalObject, fiber2, 0, lengthFromFiber2);
+        if (!part2)
+            return nullptr;
+        return JSRopeString::create(vm, part0, part1, part2);
     } else {
         unsigned adjustedOffset = offset - fiber0->length();
         auto* fiber1 = rope->fiber1();
@@ -1066,7 +1101,21 @@ inline JSString* tryJSSubstringImpl(VM& vm, JSGlobalObject* globalObject, JSStri
         if (adjustedOffset < fiber1->length()) {
             if ((adjustedOffset + length) <= fiber1->length())
                 MUST_TAIL_CALL return tryJSSubstringImpl(vm, globalObject, fiber1, adjustedOffset, length);
-            // Crossing multiple fibers. Giving up and resolving the rope.
+            // Crossing from fiber1 into fiber2.
+            unsigned lengthFromFiber1 = fiber1->length() - adjustedOffset;
+            unsigned lengthFromFiber2 = length - lengthFromFiber1;
+
+            auto* fiber2 = rope->fiber2();
+            ASSERT(fiber2);
+            ASSERT(lengthFromFiber2 <= fiber2->length());
+
+            JSString* part1 = tryJSSubstringImpl(vm, globalObject, fiber1, adjustedOffset, lengthFromFiber1);
+            if (!part1)
+                return nullptr;
+            JSString* part2 = tryJSSubstringImpl(vm, globalObject, fiber2, 0, lengthFromFiber2);
+            if (!part2)
+                return nullptr;
+            return JSRopeString::create(vm, part1, part2);
         } else {
             adjustedOffset -= fiber1->length();
             auto* fiber2 = rope->fiber2();
@@ -1076,8 +1125,6 @@ inline JSString* tryJSSubstringImpl(VM& vm, JSGlobalObject* globalObject, JSStri
             MUST_TAIL_CALL return tryJSSubstringImpl(vm, globalObject, fiber2, adjustedOffset, length);
         }
     }
-
-    return nullptr;
 }
 
 inline JSString* jsSubstring(JSGlobalObject* globalObject, VM& vm, JSString* base, unsigned offset, unsigned length)
