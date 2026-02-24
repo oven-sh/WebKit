@@ -236,6 +236,7 @@ jobs:
 
   windows:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: windows
@@ -258,6 +259,20 @@ jobs:
             package_json_arch: "arm64"
             label: bun-webkit-windows-arm64-debug
             platform: ARM64
+          - runner: windows
+            build-type: Release
+            package_json_arch: "x64"
+            label: bun-webkit-windows-amd64-asan
+            platform: x64
+            ENABLE_SANITIZERS: "address"
+          - runner: windows
+            build-type: Debug
+            package_json_arch: "x64"
+            label: bun-webkit-windows-amd64-debug-asan
+            platform: x64
+            ENABLE_SANITIZERS: "address"
+          # Note: ARM64 Windows ASAN is not available — LLVM does not ship
+          # clang_rt.asan libraries for Windows on ARM64 (woa64) yet.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -312,6 +327,7 @@ jobs:
           $env:GITHUB_SHA = "${{ inputs.build_ref }}"
           $env:PACKAGE_JSON_ARCH = "${{matrix.package_json_arch}}"
           $env:GITHUB_REPOSITORY = "${{ github.repository }}"
+          $env:ENABLE_SANITIZERS = "${{matrix.ENABLE_SANITIZERS}}"
           ./windows-release.ps1 -Platform ${{matrix.platform}}
       - uses: actions/upload-artifact@v4
         with:
@@ -495,6 +511,14 @@ jobs:
           path: ${{runner.temp}}/bun-webkit-windows-arm64-debug
       - uses: actions/download-artifact@v4
         with:
+          name: bun-webkit-windows-amd64-asan
+          path: ${{runner.temp}}/bun-webkit-windows-amd64-asan
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-windows-amd64-debug-asan
+          path: ${{runner.temp}}/bun-webkit-windows-amd64-debug-asan
+      - uses: actions/download-artifact@v4
+        with:
           name: bun-webkit-linux-amd64-musl
           path: ${{runner.temp}}/bun-webkit-linux-amd64-musl
       - uses: actions/download-artifact@v4
@@ -547,6 +571,8 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-arm64/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64-debug.tar.gz
+          mv ${{runner.temp}}/bun-webkit-windows-amd64-asan/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-asan.tar.gz
+          mv ${{runner.temp}}/bun-webkit-windows-amd64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug-asan.tar.gz
 
       - name: Set release info
         id: release_info
@@ -605,3 +631,5 @@ jobs:
             ./out/bun-webkit-windows-amd64-debug.tar.gz
             ./out/bun-webkit-windows-arm64.tar.gz
             ./out/bun-webkit-windows-arm64-debug.tar.gz
+            ./out/bun-webkit-windows-amd64-asan.tar.gz
+            ./out/bun-webkit-windows-amd64-debug-asan.tar.gz

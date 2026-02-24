@@ -207,6 +207,30 @@ if (DEFINED ENV{ICU_ROOT})
     set(ICU_ROOT "$ENV{ICU_ROOT}" CACHE PATH "" FORCE)
 endif ()
 
+# On Windows with ICU_ROOT set, pre-populate FindICU library cache variables
+# to ensure our static ICU build is used instead of a system-installed dynamic ICU.
+# Without this, FindICU may find dynamic ICU libraries from the system PATH,
+# causing jsc.exe to depend on ICU DLLs that aren't shipped in the package.
+if (WIN32 AND DEFINED ICU_ROOT AND EXISTS "${ICU_ROOT}/lib")
+    set(_icu_lib_dir "${ICU_ROOT}/lib")
+    if (NOT ICU_DATA_LIBRARY_RELEASE)
+        find_library(ICU_DATA_LIBRARY_RELEASE NAMES sicudt icudt PATHS "${_icu_lib_dir}" NO_DEFAULT_PATH)
+    endif ()
+    if (NOT ICU_I18N_LIBRARY_RELEASE)
+        find_library(ICU_I18N_LIBRARY_RELEASE NAMES icuin sicuin PATHS "${_icu_lib_dir}" NO_DEFAULT_PATH)
+    endif ()
+    if (NOT ICU_UC_LIBRARY_RELEASE)
+        find_library(ICU_UC_LIBRARY_RELEASE NAMES icuuc sicuuc PATHS "${_icu_lib_dir}" NO_DEFAULT_PATH)
+    endif ()
+    if (ICU_DATA_LIBRARY_RELEASE AND ICU_I18N_LIBRARY_RELEASE AND ICU_UC_LIBRARY_RELEASE)
+        message(STATUS "Pre-set static ICU libraries from ICU_ROOT=${ICU_ROOT}:")
+        message(STATUS "  ICU data: ${ICU_DATA_LIBRARY_RELEASE}")
+        message(STATUS "  ICU i18n: ${ICU_I18N_LIBRARY_RELEASE}")
+        message(STATUS "  ICU uc:   ${ICU_UC_LIBRARY_RELEASE}")
+    endif ()
+    unset(_icu_lib_dir)
+endif ()
+
 find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
 
 if (APPLE)

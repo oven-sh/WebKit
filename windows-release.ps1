@@ -45,6 +45,15 @@ $output = if ($env:WEBKIT_OUTPUT_DIR) { $env:WEBKIT_OUTPUT_DIR } else { "bun-web
 $WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebKitBuild" }
 $CMAKE_BUILD_TYPE = if ($env:CMAKE_BUILD_TYPE) { $env:CMAKE_BUILD_TYPE } else { "Release" }
 $BUN_WEBKIT_VERSION = if ($env:BUN_WEBKIT_VERSION) { $env:BUN_WEBKIT_VERSION } else { $(git rev-parse HEAD) }
+$ENABLE_SANITIZERS = if ($env:ENABLE_SANITIZERS) { $env:ENABLE_SANITIZERS } else { "" }
+
+# When sanitizers are enabled, force asserts on. Otherwise leave as AUTO (CMake default).
+if ($ENABLE_SANITIZERS) {
+    Write-Host ":: Sanitizers enabled: $ENABLE_SANITIZERS"
+    $ENABLE_ASSERTS = "ON"
+} else {
+    $ENABLE_ASSERTS = "AUTO"
+}
 
 # Build ICU statically (idempotent - skips if already built)
 $ICU_STATIC_ROOT = Join-Path $WebKitBuild "icu"
@@ -62,9 +71,15 @@ $env:PATH = $PathWithPerl
 $env:CFLAGS = "/Zi"
 $env:CXXFLAGS = "/Zi"
 
-$CmakeMsvcRuntimeLibrary = "MultiThreaded"
-if ($CMAKE_BUILD_TYPE -eq "Debug") {
-    $CmakeMsvcRuntimeLibrary = "MultiThreadedDebug"
+# clang-cl's ASAN does not support debug CRT (/MTd, /MDd) — only release CRT (/MT, /MD).
+# Always use static release CRT (/MT) for ASAN builds regardless of build type.
+if ($ENABLE_SANITIZERS) {
+    $CmakeMsvcRuntimeLibrary = "MultiThreaded"
+} else {
+    $CmakeMsvcRuntimeLibrary = "MultiThreaded"
+    if ($CMAKE_BUILD_TYPE -eq "Debug") {
+        $CmakeMsvcRuntimeLibrary = "MultiThreadedDebug"
+    }
 }
 
 $NoWebassembly = if ($env:NO_WEBASSEMBLY) { $env:NO_WEBASSEMBLY } else { $false }
@@ -75,6 +90,7 @@ $WebAssemblyState = if ($NoWebassembly) { "OFF" } else { "ON" }
 if ($Platform -eq "ARM64") {
     $ClangPath = "C:/LLVM/bin/clang-cl.exe"
     $LldLinkPath = "C:/LLVM/bin/lld-link.exe"
+    $ClangLibPath = "C:/LLVM/lib/clang"
     # Note: The LLVM SEH unwind bug on Windows ARM64 (llvm/llvm-project#47432) is worked
     # around by disabling the probe functionality in MacroAssemblerARM64.cpp rather than
     # using compiler flags.
@@ -84,38 +100,68 @@ if ($Platform -eq "ARM64") {
     $ClangPath = "clang-cl"
     $LldLinkPath = "lld-link"
     $ARM64SehWorkaround = ""
+    # Discover the LLVM lib path from the scoop-installed clang-cl
+    $ClangFullPath = (Get-Command clang-cl -ErrorAction SilentlyContinue).Source
+    if ($ClangFullPath) {
+        $ClangLibPath = Join-Path (Split-Path (Split-Path $ClangFullPath)) "lib/clang"
+    } else {
+        $ClangLibPath = ""
+    }
 }
 
-cmake -S . -B $WebKitBuild `
-    -DPORT="JSCOnly" `
-    -DENABLE_STATIC_JSC=ON `
-    -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON `
-    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}" `
-    -DUSE_THIN_ARCHIVES=OFF `
-    -DENABLE_JIT=ON `
-    -DENABLE_DFG_JIT=ON `
-    -DENABLE_FTL_JIT=ON `
-    -DENABLE_WEBASSEMBLY_BBQJIT=ON `
-    -DENABLE_WEBASSEMBLY_OMGJIT=ON `
-    -DENABLE_SAMPLING_PROFILER=ON `
-    "-DENABLE_WEBASSEMBLY=${WebAssemblyState}" `
-    -DUSE_BUN_JSC_ADDITIONS=ON `
-    -DUSE_BUN_EVENT_LOOP=ON `
-    -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON `
-    "-DICU_ROOT=${ICU_STATIC_ROOT}" `
-    "-DICU_LIBRARY=${ICU_STATIC_LIBRARY}" `
-    "-DICU_INCLUDE_DIR=${ICU_STATIC_INCLUDE_DIR}" `
-    "-DCMAKE_C_COMPILER=${ClangPath}" `
-    "-DCMAKE_CXX_COMPILER=${ClangPath}" `
-    "-DCMAKE_LINKER=${LldLinkPath}" `
-    "-DCMAKE_C_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /DU_STATIC_IMPLEMENTATION ${ARM64SehWorkaround}" `
-    "-DCMAKE_CXX_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${ARM64SehWorkaround}" `
-    "-DCMAKE_C_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /DU_STATIC_IMPLEMENTATION ${ARM64SehWorkaround}" `
-    "-DCMAKE_CXX_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${ARM64SehWorkaround}" `
-    -DENABLE_REMOTE_INSPECTOR=ON `
-    "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CmakeMsvcRuntimeLibrary}" `
-    -G Ninja
-# TODO: "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
+# Discover the ASAN runtime library path for CMake
+$ClangRtLibPath = ""
+if ($ENABLE_SANITIZERS -and $ClangLibPath) {
+    # Find the versioned directory (e.g., lib/clang/21/lib/windows)
+    $versionDirs = Get-ChildItem -Path $ClangLibPath -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
+    foreach ($vdir in $versionDirs) {
+        $candidate = Join-Path $vdir.FullName "lib/windows"
+        if (Test-Path $candidate) {
+            $ClangRtLibPath = $candidate
+            Write-Host ":: Found Clang runtime lib path: $ClangRtLibPath"
+            break
+        }
+    }
+}
+
+$cmakeArgs = @(
+    "-S", ".",
+    "-B", $WebKitBuild,
+    "-DPORT=JSCOnly",
+    "-DENABLE_STATIC_JSC=ON",
+    "-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON",
+    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}",
+    "-DUSE_THIN_ARCHIVES=OFF",
+    "-DENABLE_JIT=ON",
+    "-DENABLE_DFG_JIT=ON",
+    "-DENABLE_FTL_JIT=ON",
+    "-DENABLE_WEBASSEMBLY_BBQJIT=ON",
+    "-DENABLE_WEBASSEMBLY_OMGJIT=ON",
+    "-DENABLE_SAMPLING_PROFILER=ON",
+    "-DENABLE_WEBASSEMBLY=${WebAssemblyState}",
+    "-DUSE_BUN_JSC_ADDITIONS=ON",
+    "-DUSE_BUN_EVENT_LOOP=ON",
+    "-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON",
+    "-DICU_ROOT=${ICU_STATIC_ROOT}",
+    "-DICU_LIBRARY=${ICU_STATIC_LIBRARY}",
+    "-DICU_INCLUDE_DIR=${ICU_STATIC_INCLUDE_DIR}",
+    "-DCMAKE_C_COMPILER=${ClangPath}",
+    "-DCMAKE_CXX_COMPILER=${ClangPath}",
+    "-DCMAKE_LINKER=${LldLinkPath}",
+    "-DCMAKE_C_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /DU_STATIC_IMPLEMENTATION ${ARM64SehWorkaround}",
+    "-DCMAKE_CXX_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${ARM64SehWorkaround}",
+    "-DCMAKE_C_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /DU_STATIC_IMPLEMENTATION ${ARM64SehWorkaround}",
+    "-DCMAKE_CXX_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${ARM64SehWorkaround}",
+    "-DENABLE_REMOTE_INSPECTOR=ON",
+    "-DENABLE_SANITIZERS=${ENABLE_SANITIZERS}",
+    "-DENABLE_ASSERTS=${ENABLE_ASSERTS}",
+    "-DCLANG_LIB_PATH=${ClangRtLibPath}",
+    "-G", "Ninja"
+)
+
+$cmakeArgs += "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CmakeMsvcRuntimeLibrary}"
+
+cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw "cmake failed with exit code $LASTEXITCODE" }
 
 # Workaround for what is probably a CMake bug
@@ -166,6 +212,19 @@ if ($CMAKE_BUILD_TYPE -eq "Release") {
     Copy-Item "$ICU_STATIC_LIBRARY/sicudt.lib" "$output/lib/sicudtd.lib" -Force
     Copy-Item "$ICU_STATIC_LIBRARY/icuin.lib" "$output/lib/sicuind.lib" -Force
     Copy-Item "$ICU_STATIC_LIBRARY/icuuc.lib" "$output/lib/sicuucd.lib" -Force
+}
+
+# Copy ASAN runtime DLLs to output when sanitizers are enabled
+if ($ENABLE_SANITIZERS -and $ClangRtLibPath) {
+    $asanArch = if ($Platform -eq "ARM64") { "aarch64" } else { "x86_64" }
+    $asanDll = "clang_rt.asan_dynamic-${asanArch}.dll"
+    $asanDllPath = Join-Path $ClangRtLibPath $asanDll
+    if (Test-Path $asanDllPath) {
+        Copy-Item $asanDllPath "$output/bin/$asanDll" -Force
+        Write-Host ":: Copied ASAN runtime DLL: $asanDll"
+    } else {
+        throw "ASAN runtime DLL not found at $asanDllPath"
+    }
 }
 
 Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERSION `"$BUN_WEBKIT_VERSION`""

@@ -109,7 +109,7 @@ static std::optional<size_t> NODELETE stackSize(ThreadType threadType)
 #if PLATFORM(PLAYSTATION)
     if (threadType == ThreadType::JavaScript)
         return 512 * KB;
-#elif OS(DARWIN) && (ASAN_ENABLED || ASSERT_ENABLED)
+#elif (OS(DARWIN) || OS(WINDOWS)) && (ASAN_ENABLED || ASSERT_ENABLED)
     if (threadType == ThreadType::Compiler)
         return 1 * MB; // ASan / Debug build needs more stack space.
 #elif OS(WINDOWS)

@@ -177,8 +177,8 @@ const getBuildFlags = (config: BuildConfig) => {
         "-DUSE_VISIBILITY_ATTRIBUTE=1"
       );
 
-      if (IS_MAC || IS_LINUX) {
-        // Enable address sanitizer by default on Mac/Linux debug builds
+      if (IS_MAC || IS_LINUX || IS_WINDOWS) {
+        // Enable address sanitizer by default on debug builds (all platforms)
         flags.push("-DENABLE_SANITIZERS=address");
         // To disable asan, comment the line above and uncomment:
         // flags.push("-DENABLE_MALLOC_HEAP_BREAKDOWN=ON");

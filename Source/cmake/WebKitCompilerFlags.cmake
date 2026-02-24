@@ -325,10 +325,39 @@ if (COMPILER_IS_GCC_OR_CLANG)
     # -fsanitize=* flags, because check_cxx_compiler_flag will report it's
     # unsupported, because it causes the build to fail if not used when linking.
     if (ENABLE_SANITIZERS)
-        if (MSVC AND WTF_CPU_X86_64)
-            find_library(CLANG_ASAN_LIBRARY clang_rt.asan_dynamic_runtime_thunk-x86_64 ${CLANG_LIB_PATH})
-            find_library(CLANG_ASAN_RT_LIBRARY clang_rt.asan_dynamic-x86_64 PATHS ${CLANG_LIB_PATH})
-            set(SANITIZER_LINK_FLAGS "\"${CLANG_ASAN_LIBRARY}\" \"${CLANG_ASAN_RT_LIBRARY}\"")
+        if (MSVC)
+            # Auto-discover CLANG_LIB_PATH from the compiler if not explicitly set
+            if (NOT CLANG_LIB_PATH OR CLANG_LIB_PATH STREQUAL "")
+                execute_process(
+                    COMMAND ${CMAKE_CXX_COMPILER} /clang:--print-resource-dir
+                    OUTPUT_VARIABLE _CLANG_RESOURCE_DIR
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET
+                )
+                if (_CLANG_RESOURCE_DIR)
+                    set(CLANG_LIB_PATH "${_CLANG_RESOURCE_DIR}/lib/windows")
+                endif ()
+            endif ()
+
+            if (WTF_CPU_X86_64)
+                find_library(CLANG_ASAN_LIBRARY clang_rt.asan_dynamic_runtime_thunk-x86_64 PATHS ${CLANG_LIB_PATH})
+                find_library(CLANG_ASAN_RT_LIBRARY clang_rt.asan_dynamic-x86_64 PATHS ${CLANG_LIB_PATH})
+            elseif (WTF_CPU_ARM64)
+                find_library(CLANG_ASAN_LIBRARY clang_rt.asan_dynamic_runtime_thunk-aarch64 PATHS ${CLANG_LIB_PATH})
+                find_library(CLANG_ASAN_RT_LIBRARY clang_rt.asan_dynamic-aarch64 PATHS ${CLANG_LIB_PATH})
+            endif ()
+
+            if (CLANG_ASAN_LIBRARY AND CLANG_ASAN_RT_LIBRARY)
+                # The thunk library must be linked with /WHOLEARCHIVE to force inclusion of
+                # all its symbols — particularly operator new/delete replacements and weak
+                # function stubs (__asan_new, __asan_delete, __sanitizer_register_weak_function,
+                # etc.) that would otherwise be dropped by the linker as unreferenced.
+                set(SANITIZER_LINK_FLAGS "/WHOLEARCHIVE:\"${CLANG_ASAN_LIBRARY}\" \"${CLANG_ASAN_RT_LIBRARY}\"")
+                message(STATUS "Found ASAN libraries: ${CLANG_ASAN_LIBRARY} ${CLANG_ASAN_RT_LIBRARY}")
+            else ()
+                message(FATAL_ERROR "ASAN libraries not found at CLANG_LIB_PATH=${CLANG_LIB_PATH}. "
+                    "Ensure LLVM is installed with ASAN runtime libraries for this architecture.")
+            endif ()
         else ()
             set(SANITIZER_LINK_FLAGS "-lpthread")
         endif ()
@@ -337,14 +366,28 @@ if (COMPILER_IS_GCC_OR_CLANG)
             if (${SANITIZER} MATCHES "address")
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-optimize-sibling-calls")
                 set(SANITIZER_COMPILER_FLAGS "-fsanitize=address ${SANITIZER_COMPILER_FLAGS}")
-                set(SANITIZER_LINK_FLAGS "-fsanitize=address ${SANITIZER_LINK_FLAGS}")
+                if (MSVC)
+                    # Disable MSVC STL container annotations to avoid /failifmismatch errors
+                    # when linking against static libraries not compiled with ASAN (e.g., ICU).
+                    # The STL emits annotate_string/annotate_vector pragmas when __SANITIZE_ADDRESS__
+                    # is defined, causing mismatches with non-ASAN object files.
+                    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION")
+                endif ()
+                # On MSVC (clang-cl), CMake passes linker flags directly to lld-link which
+                # doesn't understand -fsanitize=. The ASAN .lib files are already in
+                # SANITIZER_LINK_FLAGS from the find_library block above.
+                if (NOT MSVC)
+                    set(SANITIZER_LINK_FLAGS "-fsanitize=address ${SANITIZER_LINK_FLAGS}")
+                endif ()
 
             elseif (${SANITIZER} MATCHES "undefined")
                 # Please keep these options synchronized with Tools/sanitizer/ubsan.xcconfig
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls")
                 # -fsanitize=vptr is disabled because incompatible with -fno-rtti
                 set(SANITIZER_COMPILER_FLAGS "-fsanitize=undefined -fno-sanitize=vptr ${SANITIZER_COMPILER_FLAGS}")
-                set(SANITIZER_LINK_FLAGS "-fsanitize=undefined ${SANITIZER_LINK_FLAGS}")
+                if (NOT MSVC)
+                    set(SANITIZER_LINK_FLAGS "-fsanitize=undefined ${SANITIZER_LINK_FLAGS}")
+                endif ()
 
             elseif (${SANITIZER} MATCHES "thread" AND NOT MSVC)
                 set(SANITIZER_COMPILER_FLAGS "-fsanitize=thread ${SANITIZER_COMPILER_FLAGS}")
