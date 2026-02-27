@@ -350,8 +350,9 @@ static void commit_impl(void* ptr, size_t size, bool do_mprotect, pas_mmap_capab
 #endif
     }
 
-#if PAS_OS(LINUX)
-    PAS_SYSCALL(madvise(ptr, size, MADV_DODUMP));
+/* MADV_DODUMP removed: symmetric with MADV_DONTDUMP removal in decommit_impl.
+   MADV_DONTDUMP only reduces core dump size but requires kernel mmap_write_lock,
+   causing severe contention with concurrent GC threads. */
 #elif PAS_OS(WINDOWS)
     /* Sometimes the returned memInfo.RegionSize < size, and VirtualAlloc can't span regions
        We loop to make sure we get the full requested range. */
@@ -415,7 +416,9 @@ static void decommit_impl(void* ptr, size_t size,
     PAS_SYSCALL(madvise(ptr, size, MADV_FREE));
 #elif PAS_OS(LINUX)
     PAS_SYSCALL(madvise(ptr, size, MADV_DONTNEED));
-    PAS_SYSCALL(madvise(ptr, size, MADV_DONTDUMP));
+    /* MADV_DONTDUMP removed: it only reduces core dump size but requires
+       kernel mmap_write_lock, causing severe contention with concurrent
+       GC threads. MADV_DONTNEED (above) only needs mmap_read_lock. */
 #elif PAS_OS(WINDOWS)
     // DiscardVirtualMemory returns memory to the OS faster, but fails sometimes on Windows 10
     // Fall back to VirtualAlloc in those cases
