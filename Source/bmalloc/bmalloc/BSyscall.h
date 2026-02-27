@@ -26,7 +26,18 @@
 #pragma once
 
 #include <errno.h>
+#include <unistd.h>
 
+/* Retry syscalls on EAGAIN with 1ms backoff to avoid busy-spinning.
+   madvise(MADV_DONTDUMP) can return EAGAIN under kernel mmap_write_lock
+   contention, causing 100% CPU usage with concurrent GC threads.
+   Cap retries at 100 (100ms total) as a safety net — madvise failures
+   here are advisory, not fatal. See also: virtual_alloc_with_retry()
+   in libpas/pas_page_malloc.c for the Windows equivalent. */
 #define SYSCALL(x) do { \
-    while ((x) == -1 && errno == EAGAIN) { } \
+    int _syscall_tries = 0; \
+    while ((x) == -1 && errno == EAGAIN) { \
+        if (++_syscall_tries > 100) break; \
+        usleep(1000); \
+    } \
 } while (0);
