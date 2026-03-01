@@ -250,7 +250,15 @@ BufferMemoryHandle::~BufferMemoryHandle()
             // nullBasePointer's zero-sized memory is not used for MemoryMode::Signaling.
             constexpr bool readable = true;
             constexpr bool writable = true;
+#if OS(WINDOWS)
+            // On Windows, VirtualFree(MEM_RELEASE) releases memory regardless of page
+            // protection state, so the protect call is not strictly necessary. Use
+            // tryProtect to avoid crashing if the underlying reservation was already
+            // released by the allocator (e.g. libpas recycling the virtual pages).
+            OSAllocator::tryProtect(memory, BufferMemoryHandle::fastMappedBytes(), readable, writable);
+#else
             OSAllocator::protect(memory, BufferMemoryHandle::fastMappedBytes(), readable, writable);
+#endif
             BufferMemoryManager::singleton().freeFastMemory(memory);
             break;
         }
@@ -269,7 +277,15 @@ BufferMemoryHandle::~BufferMemoryHandle()
                 }
                 constexpr bool readable = true;
                 constexpr bool writable = true;
+#if OS(WINDOWS)
+                // On Windows, VirtualFree(MEM_RELEASE) releases memory regardless of page
+                // protection state, so the protect call is not strictly necessary. Use
+                // tryProtect to avoid crashing if the underlying reservation was already
+                // released by the allocator (e.g. libpas recycling the virtual pages).
+                OSAllocator::tryProtect(memory, m_mappedCapacity, readable, writable);
+#else
                 OSAllocator::protect(memory, m_mappedCapacity, readable, writable);
+#endif
                 BufferMemoryManager::singleton().freeGrowableBoundsCheckingMemory(memory, m_mappedCapacity);
                 break;
             }
