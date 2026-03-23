@@ -3655,7 +3655,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBasicBlockExecutionCount, (JSGlobalObject* glob
     return JSValue::encode(JSValue(executionCount));
 }
 
-// $vm.getFunctionRanges(sourceFunction) returns an array of { name, hasExecuted, start, end }
+// $vm.getFunctionRanges(sourceFunction) returns an array of { hasExecuted, start, end, name }
 // for all functions declared in the same source as the given function.
 JSC_DEFINE_HOST_FUNCTION(functionGetFunctionRanges, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -3669,7 +3669,9 @@ JSC_DEFINE_HOST_FUNCTION(functionGetFunctionRanges, (JSGlobalObject* globalObjec
     JSFunction* function = jsDynamicCast<JSFunction*>(functionValue);
     if (!function)
         return throwVMTypeError(globalObject, scope, "Expected argument to be a JSFunction"_s);
-    FunctionExecutable* executable = function->jsExecutable();
+    FunctionExecutable* executable = jsDynamicCast<FunctionExecutable*>(function->executable());
+    if (!executable)
+        return throwVMTypeError(globalObject, scope, "Expected argument to be a non-host JSFunction"_s);
 
     const auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(executable->sourceID());
 
