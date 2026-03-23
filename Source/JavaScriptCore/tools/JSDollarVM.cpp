@@ -3676,8 +3676,9 @@ JSC_DEFINE_HOST_FUNCTION(functionGetFunctionRanges, (JSGlobalObject* globalObjec
     JSArray* result = constructEmptyArray(globalObject, nullptr, functionRanges.size());
     RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
 
+    Structure* entryStructure = JSFinalObject::createStructure(vm, globalObject, globalObject->objectPrototype(), 4);
     for (size_t i = 0; i < functionRanges.size(); i++) {
-        JSObject* entry = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, globalObject->objectPrototype(), 4));
+        JSObject* entry = JSFinalObject::create(vm, entryStructure);
         entry->putDirect(vm, Identifier::fromString(vm, "hasExecuted"_s), jsBoolean(std::get<0>(functionRanges[i])));
         entry->putDirect(vm, Identifier::fromString(vm, "start"_s), jsNumber(std::get<1>(functionRanges[i])));
         entry->putDirect(vm, Identifier::fromString(vm, "end"_s), jsNumber(std::get<2>(functionRanges[i])));
