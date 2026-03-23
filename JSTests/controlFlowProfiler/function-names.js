@@ -36,7 +36,9 @@ assert(arrowFuncRange !== null, "Should find 'arrowFunc' in ranges");
 // Verify execution status.
 assert(namedFunctionRange.hasExecuted === true, "namedFunction should have executed");
 assert(anotherFunctionRange.hasExecuted === false, "anotherFunction should not have executed");
+assert(arrowFuncRange.hasExecuted === false, "arrowFunc should not have executed");
 
 // Verify ranges are valid (start < end).
 assert(namedFunctionRange.start < namedFunctionRange.end, "namedFunction range should be valid");
 assert(anotherFunctionRange.start < anotherFunctionRange.end, "anotherFunction range should be valid");
+assert(arrowFuncRange.start < arrowFuncRange.end, "arrowFunc range should be valid");

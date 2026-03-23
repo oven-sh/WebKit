@@ -3664,8 +3664,12 @@ JSC_DEFINE_HOST_FUNCTION(functionGetFunctionRanges, (JSGlobalObject* globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue functionValue = callFrame->argument(0);
-    RELEASE_ASSERT(functionValue.isCallable());
-    FunctionExecutable* executable = (jsDynamicCast<JSFunction*>(functionValue.asCell()->getObject()))->jsExecutable();
+    if (!functionValue.isCallable())
+        return throwVMTypeError(globalObject, scope, "Expected argument to be callable"_s);
+    JSFunction* function = jsDynamicCast<JSFunction*>(functionValue);
+    if (!function)
+        return throwVMTypeError(globalObject, scope, "Expected argument to be a JSFunction"_s);
+    FunctionExecutable* executable = function->jsExecutable();
 
     const auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(executable->sourceID());
 
@@ -3680,6 +3684,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGetFunctionRanges, (JSGlobalObject* globalObjec
         const String& name = std::get<3>(functionRanges[i]);
         entry->putDirect(vm, Identifier::fromString(vm, "name"_s), name.isEmpty() ? jsEmptyString(vm) : jsString(vm, name));
         result->putDirectIndex(globalObject, i, entry);
+        RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
     }
 
     return JSValue::encode(result);
