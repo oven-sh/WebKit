@@ -283,7 +283,8 @@ void JSModuleRecord::instantiateDeclarations(JSGlobalObject* globalObject, Modul
             if (vm.typeProfiler() || vm.controlFlowProfiler()) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
-                    unlinkedFunctionExecutable->unlinkedFunctionEnd());
+                    unlinkedFunctionExecutable->unlinkedFunctionEnd(),
+                    unlinkedFunctionExecutable->ecmaName().string());
             }
             auto* executable = unlinkedFunctionExecutable->link(vm, moduleProgramExecutable, moduleProgramExecutable->source());
             SourceParseMode parseMode = executable->parseMode();

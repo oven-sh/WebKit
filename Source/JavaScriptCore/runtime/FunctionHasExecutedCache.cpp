@@ -42,7 +42,7 @@ bool FunctionHasExecutedCache::hasExecutedAtOffset(SourceID id, unsigned offset)
     for (auto& pair : map) {
         const FunctionRange& range = pair.key.key();
         if (range.m_start <= offset && offset <= range.m_end && range.m_end - range.m_start < distance) {
-            hasExecuted = pair.value;
+            hasExecuted = pair.value.m_hasExecuted;
             distance = range.m_end - range.m_start;
         }
     }
@@ -50,7 +50,7 @@ bool FunctionHasExecutedCache::hasExecutedAtOffset(SourceID id, unsigned offset)
     return hasExecuted;
 }
 
-void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end)
+void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end, const String& functionName)
 {
     RangeMap& map = m_rangeMap.add(id, RangeMap { }).iterator->value;
     FunctionRange range;
@@ -58,7 +58,7 @@ void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start
     range.m_end = end;
     // Only insert unexecuted ranges once for a given sourceID because we may run into a situation where an executable executes, then is GCed, and then is allocated again,
     // and tries to reinsert itself, claiming it has never run, but this is false because it indeed already executed.
-    map.add(range, false);
+    map.add(range, RangeValue { false, functionName });
 }
 
 void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end)
@@ -73,12 +73,16 @@ void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start
     FunctionRange range;
     range.m_start = start;
     range.m_end = end;
-    map.set(range, true);
+    auto existingIt = map.find(range);
+    if (existingIt != map.end())
+        existingIt->value.m_hasExecuted = true;
+    else
+        map.set(range, RangeValue { true, String() });
 }
 
-Vector<std::tuple<bool, unsigned, unsigned>> FunctionHasExecutedCache::getFunctionRanges(SourceID id)
+Vector<std::tuple<bool, unsigned, unsigned, String>> FunctionHasExecutedCache::getFunctionRanges(SourceID id)
 {
-    Vector<std::tuple<bool, unsigned, unsigned>> ranges(0);
+    Vector<std::tuple<bool, unsigned, unsigned, String>> ranges(0);
     auto iterator = m_rangeMap.find(id);
     if (iterator == m_rangeMap.end())
         return ranges;
@@ -86,8 +90,8 @@ Vector<std::tuple<bool, unsigned, unsigned>> FunctionHasExecutedCache::getFuncti
     RangeMap& map = iterator->value;
     for (auto& pair : map) {
         const FunctionRange& range = pair.key.key();
-        bool hasExecuted = pair.value;
-        ranges.append(std::tuple<bool, unsigned, unsigned>(hasExecuted, range.m_start, range.m_end));
+        const RangeValue& value = pair.value;
+        ranges.append(std::make_tuple(value.m_hasExecuted, range.m_start, range.m_end, value.m_functionName));
     }
 
     return ranges;

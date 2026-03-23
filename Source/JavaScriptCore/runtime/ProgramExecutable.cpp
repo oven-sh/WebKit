@@ -230,9 +230,10 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(unlinkedFunctionExecutable->name());
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         if (vm.typeProfiler() || vm.controlFlowProfiler()) {
-            vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), 
+            vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(),
                 unlinkedFunctionExecutable->unlinkedFunctionStart(),
-                unlinkedFunctionExecutable->unlinkedFunctionEnd());
+                unlinkedFunctionExecutable->unlinkedFunctionEnd(),
+                unlinkedFunctionExecutable->ecmaName().string());
         }
     }
 

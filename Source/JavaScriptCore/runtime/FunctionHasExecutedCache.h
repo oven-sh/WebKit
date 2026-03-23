@@ -30,6 +30,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
@@ -47,13 +48,18 @@ public:
         unsigned m_end;
     };
 
+    struct RangeValue {
+        bool m_hasExecuted { false };
+        String m_functionName;
+    };
+
     bool hasExecutedAtOffset(SourceID, unsigned offset);
-    void insertUnexecutedRange(SourceID, unsigned start, unsigned end);
+    void insertUnexecutedRange(SourceID, unsigned start, unsigned end, const String& functionName = String());
     void removeUnexecutedRange(SourceID, unsigned start, unsigned end);
-    Vector<std::tuple<bool, unsigned, unsigned>> getFunctionRanges(SourceID);
+    Vector<std::tuple<bool, unsigned, unsigned, String>> getFunctionRanges(SourceID);
 
 private:
-    using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, bool>;
+    using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, RangeValue>;
     using SourceIDToRangeMap = UncheckedKeyHashMap<GenericHashKey<intptr_t>, RangeMap>;
     SourceIDToRangeMap m_rangeMap;
 };
