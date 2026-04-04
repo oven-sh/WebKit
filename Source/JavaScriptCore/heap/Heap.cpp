@@ -696,6 +696,17 @@ void Heap::deprecatedReportExtraMemorySlowCase(size_t size)
     reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size);
 }
 
+void Heap::deprecatedReportExtraMemoryFreedSlowCase(size_t size)
+{
+    // Safely reduce the counter with underflow protection
+    if (m_deprecatedExtraMemorySize >= size)
+        m_deprecatedExtraMemorySize -= size;
+    else
+        m_deprecatedExtraMemorySize = 0;
+    
+    // No need to trigger GC since we're freeing memory
+}
+
 bool Heap::overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCallType)
 {
 #if USE(MEMORY_FOOTPRINT_API)
@@ -2395,7 +2406,7 @@ void Heap::willStartCollection()
     if (m_collectionScope.value() == CollectionScope::Full) {
         m_sizeBeforeLastFullCollect = m_sizeAfterLastCollect + totalBytesAllocatedThisCycle();
         m_extraMemorySize = 0;
-        m_deprecatedExtraMemorySize = 0;
+        // m_deprecatedExtraMemorySize is now managed by caller, don't reset
 #if ENABLE(RESOURCE_USAGE)
         m_externalMemorySize = 0;
 #endif

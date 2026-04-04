@@ -444,6 +444,7 @@ public:
 
     // Use this API to report non-GC memory if you can't use the better API above.
     void deprecatedReportExtraMemory(size_t);
+    void deprecatedReportExtraMemoryFreed(size_t);
 
     JS_EXPORT_PRIVATE void reportAbandonedObjectGraph();
 
@@ -676,6 +677,7 @@ private:
     void reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(const JSCell*, size_t);
     JS_EXPORT_PRIVATE void reportExtraMemoryAllocatedSlowCase(GCDeferralContext*, const JSCell*, size_t);
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
+    JS_EXPORT_PRIVATE void deprecatedReportExtraMemoryFreedSlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
 
