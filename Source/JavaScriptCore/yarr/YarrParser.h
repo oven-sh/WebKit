@@ -537,6 +537,14 @@ private:
             if (m_state == ClassSetConstructionState::CachedCharacter) {
                 m_delegate.atomCharacterClassAtom(m_character);
                 m_state = ClassSetConstructionState::Empty;
+            } else if (m_state == ClassSetConstructionState::CachedCharacterHyphen
+                || m_state == ClassSetConstructionState::AfterCharacterClassHyphen) {
+                // A '-' is a ClassSetSyntaxCharacter in /v and is only legal
+                // between two ClassSetCharacters as part of a ClassSetRange.
+                // Reaching any other transition (nested class, set operator,
+                // end of class) while a hyphen is pending means the range
+                // has no right-hand side — reject it.
+                m_errorCode = ErrorCode::InvalidClassSetCharacter;
             }
         }
 
@@ -757,9 +765,13 @@ private:
         {
             if (m_state == ClassSetConstructionState::CachedCharacter)
                 m_delegate.atomCharacterClassAtom(m_character);
-            else if (m_state == ClassSetConstructionState::CachedCharacterHyphen) {
-                m_delegate.atomCharacterClassAtom(m_character);
-                m_delegate.atomCharacterClassAtom('-');
+            else if (m_state == ClassSetConstructionState::CachedCharacterHyphen
+                || m_state == ClassSetConstructionState::AfterCharacterClassHyphen) {
+                // A trailing '-' in /v mode (e.g. /[a-]/v, /[\d-]/v) leaves a
+                // ClassSetRange with no right-hand side. '-' is a
+                // ClassSetSyntaxCharacter that must be escaped unless it
+                // forms a full range, so this is a syntax error.
+                m_errorCode = ErrorCode::InvalidClassSetCharacter;
             } else if (m_state == ClassSetConstructionState::AfterSetOperator)
                 m_errorCode = ErrorCode::InvalidClassSetCharacter;
 
