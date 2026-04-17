@@ -118,7 +118,7 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceID(SourceID 
         }
     }
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+    const auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
     for (const auto& functionRange : functionRanges) {
         BasicBlockRange range;
         range.m_hasExecuted = std::get<0>(functionRange);

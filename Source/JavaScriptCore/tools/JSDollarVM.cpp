@@ -2196,6 +2196,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFlattenDictionaryObject);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBasicBlockExecutionRanges);
 static JSC_DECLARE_HOST_FUNCTION(functionHasBasicBlockExecuted);
 static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
+static JSC_DECLARE_HOST_FUNCTION(functionGetFunctionRanges);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
@@ -3711,6 +3712,44 @@ JSC_DEFINE_HOST_FUNCTION(functionBasicBlockExecutionCount, (JSGlobalObject* glob
     return JSValue::encode(JSValue(executionCount));
 }
 
+// $vm.getFunctionRanges(sourceFunction) returns an array of { hasExecuted, start, end, name }
+// for all functions declared in the same source as the given function.
+JSC_DEFINE_HOST_FUNCTION(functionGetFunctionRanges, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue functionValue = callFrame->argument(0);
+    if (!functionValue.isCallable())
+        return throwVMTypeError(globalObject, scope, "Expected argument to be callable"_s);
+    JSFunction* function = jsDynamicCast<JSFunction*>(functionValue);
+    if (!function)
+        return throwVMTypeError(globalObject, scope, "Expected argument to be a JSFunction"_s);
+    FunctionExecutable* executable = jsDynamicCast<FunctionExecutable*>(function->executable());
+    if (!executable)
+        return throwVMTypeError(globalObject, scope, "Expected argument to be a non-host JSFunction"_s);
+
+    const auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(executable->sourceID());
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr, functionRanges.size());
+    RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
+
+    Structure* entryStructure = JSFinalObject::createStructure(vm, globalObject, globalObject->objectPrototype(), 4);
+    for (size_t i = 0; i < functionRanges.size(); i++) {
+        JSObject* entry = JSFinalObject::create(vm, entryStructure);
+        entry->putDirect(vm, Identifier::fromString(vm, "hasExecuted"_s), jsBoolean(std::get<0>(functionRanges[i])));
+        entry->putDirect(vm, Identifier::fromString(vm, "start"_s), jsNumber(std::get<1>(functionRanges[i])));
+        entry->putDirect(vm, Identifier::fromString(vm, "end"_s), jsNumber(std::get<2>(functionRanges[i])));
+        const String& name = std::get<3>(functionRanges[i]);
+        entry->putDirect(vm, Identifier::fromString(vm, "name"_s), name.isEmpty() ? jsEmptyString(vm) : jsString(vm, name));
+        result->putDirectIndex(globalObject, i, entry);
+        RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
+    }
+
+    return JSValue::encode(result);
+}
+
 class DoNothingDebugger final : public Debugger {
     WTF_MAKE_NONCOPYABLE(DoNothingDebugger);
     WTF_MAKE_TZONE_ALLOCATED(DoNothingDebugger);
@@ -4500,6 +4539,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, "dumpBasicBlockExecutionRanges"_s, functionDumpBasicBlockExecutionRanges , 0);
     addFunction(vm, "hasBasicBlockExecuted"_s, functionHasBasicBlockExecuted, 2);
     addFunction(vm, "basicBlockExecutionCount"_s, functionBasicBlockExecutionCount, 2);
+    addFunction(vm, "getFunctionRanges"_s, functionGetFunctionRanges, 1);
 
     addFunction(vm, "enableDebuggerModeWhenIdle"_s, functionEnableDebuggerModeWhenIdle, 0);
     addFunction(vm, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
