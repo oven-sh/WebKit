@@ -47,6 +47,7 @@
 #include "FrameTracers.h"
 #include "GlobalObjectMethodTable.h"
 #include "InlineCallFrame.h"
+#include "InternalFieldTuple.h"
 #include "InterpreterInlines.h"
 #include "JITCode.h"
 #include "JSArrayInlines.h"
@@ -455,8 +456,20 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         if (promise && promise->status() == JSPromise::Status::Pending) {
             JSValue reactionsValue = promise->internalField(JSPromise::Field::ReactionsOrResult).get();
             if (reactionsValue) {
-                if (auto* reaction = jsDynamicCast<JSPromiseReaction*>(reactionsValue))
-                    return reaction->context();
+                if (auto* reaction = jsDynamicCast<JSPromiseReaction*>(reactionsValue)) {
+                    JSValue context = reaction->context();
+#if USE(BUN_JSC_ADDITIONS)
+                    // When Bun's AsyncLocalStorage has an active store,
+                    // JSPromise::resolveWithInternalMicrotaskForAsyncAwait wraps
+                    // the generator context in an InternalFieldTuple alongside the
+                    // async context. Unwrap it here so the JSGenerator* cast in
+                    // getParentGenerator succeeds and the async frame chain isn't
+                    // truncated.
+                    if (auto* tuple = jsDynamicCast<InternalFieldTuple*>(context))
+                        context = tuple->getInternalField(0);
+#endif
+                    return context;
+                }
             }
         }
         return JSValue();
