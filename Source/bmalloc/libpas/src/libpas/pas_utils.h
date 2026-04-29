@@ -47,6 +47,10 @@
 #include <stdint.h>
 #include <string.h>
 
+#if !PAS_OS(WINDOWS)
+#include <unistd.h>
+#endif
+
 #if PAS_OS(WINDOWS)
 #include <intrin.h>
 #endif
@@ -1324,8 +1328,17 @@ static inline bool pas_is_divisible_by(unsigned value, uint64_t magic_constant)
 enum cpp_initialization_t { cpp_initialization };
 #endif
 
+/* Retry syscalls on EAGAIN with 1ms backoff to avoid busy-spinning.
+   madvise(MADV_DONTDUMP) can return EAGAIN under kernel mmap_write_lock
+   contention, causing 100% CPU usage with concurrent GC threads.
+   Cap retries at 100 (100ms total) as a safety net — madvise failures
+   here are advisory, not fatal. */
 #define PAS_SYSCALL(x) do { \
-    while ((x) == -1 && errno == EAGAIN) { } \
+    int _pas_syscall_tries = 0; \
+    while ((x) == -1 && errno == EAGAIN) { \
+        if (++_pas_syscall_tries > 100) break; \
+        usleep(1000); \
+    } \
 } while (0)
 
 PAS_END_EXTERN_C;

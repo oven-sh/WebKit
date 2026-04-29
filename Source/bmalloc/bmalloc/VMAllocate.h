@@ -325,9 +325,9 @@ inline void vmDeallocatePhysicalPages(void* p, size_t vmSize)
     SYSCALL(madvise(p, vmSize, MADV_FREE));
 #else
     SYSCALL(madvise(p, vmSize, MADV_DONTNEED));
-#if BOS(LINUX)
-    SYSCALL(madvise(p, vmSize, MADV_DONTDUMP));
-#endif
+/* MADV_DONTDUMP removed: it only reduces core dump size but requires
+   kernel mmap_write_lock, causing severe contention with concurrent
+   GC threads. MADV_DONTNEED (above) only needs mmap_read_lock. */
 #endif
 }
 
@@ -342,9 +342,7 @@ inline void vmAllocatePhysicalPages(void* p, size_t vmSize)
     // Instead the kernel will commit pages as they are touched.
 #else
     SYSCALL(madvise(p, vmSize, MADV_NORMAL));
-#if BOS(LINUX)
-    SYSCALL(madvise(p, vmSize, MADV_DODUMP));
-#endif
+/* MADV_DODUMP removed: symmetric with MADV_DONTDUMP removal above. */
 #endif
 }
 #else

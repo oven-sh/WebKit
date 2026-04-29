@@ -376,8 +376,9 @@ static void commit_impl(void* ptr, size_t size, bool do_mprotect, pas_mmap_capab
 #endif
     }
 
-#if PAS_OS(LINUX)
-    PAS_SYSCALL(madvise(ptr, size, MADV_DODUMP));
+/* MADV_DODUMP removed: symmetric with MADV_DONTDUMP removal in decommit_impl.
+   MADV_DONTDUMP only reduces core dump size but requires kernel mmap_write_lock,
+   causing severe contention with concurrent GC threads. */
 #elif PAS_OS(WINDOWS)
     /* Common case: range is within one MEM_RESERVE region, so a single MEM_COMMIT
        works (matches POSIX's single madvise). Fall back to a per-region loop only
@@ -444,7 +445,9 @@ static void decommit_impl(void* ptr, size_t size,
     PAS_SYSCALL(madvise(ptr, size, MADV_FREE));
 #elif PAS_OS(LINUX)
     PAS_SYSCALL(madvise(ptr, size, MADV_DONTNEED));
-    PAS_SYSCALL(madvise(ptr, size, MADV_DONTDUMP));
+    /* MADV_DONTDUMP removed: it only reduces core dump size but requires
+       kernel mmap_write_lock, causing severe contention with concurrent
+       GC threads. MADV_DONTNEED (above) only needs mmap_read_lock. */
 #elif PAS_OS(WINDOWS)
     if (do_mprotect) {
         /* MEM_DECOMMIT releases commit charge; pages become inaccessible until
