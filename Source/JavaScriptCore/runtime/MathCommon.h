@@ -185,6 +185,12 @@ ALWAYS_INLINE int32_t toInt32(double number)
     int32_t result = 0;
     __asm__ ("fjcvtzs %w0, %d1" : "=r" (result) : "w" (number) : "cc");
     return result;
+#elif CPU(X86_64) && COMPILER(GCC_COMPATIBLE)
+    int32_t result;
+    __asm__ ("cvttsd2si %1, %0" : "=r" (result) : "x" (number));
+    if (static_cast<double>(result) != number)
+        return toIntImpl<int32_t>(number);
+    return result;
 #else
     return toIntImpl<int32_t>(number);
 #endif
