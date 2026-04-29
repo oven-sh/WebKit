@@ -387,7 +387,7 @@ static void commit_impl(void* ptr, size_t size, bool do_mprotect, pas_mmap_capab
         void *currentPtr = ptr;
         while (totalSeen < size) {
             MEMORY_BASIC_INFORMATION memInfo;
-            VirtualQuery(currentPtr, &memInfo, sizeof(memInfo));
+            PAS_ASSERT(VirtualQuery(currentPtr, &memInfo, sizeof(memInfo)));
             PAS_ASSERT(memInfo.State != 0x10000);
             PAS_ASSERT(memInfo.RegionSize > 0);
             PAS_ASSERT(virtual_alloc_with_retry(currentPtr, PAS_MIN(memInfo.RegionSize, size - totalSeen), MEM_COMMIT, PAGE_READWRITE));
@@ -456,7 +456,7 @@ static void decommit_impl(void* ptr, size_t size,
             void* currentPtr = ptr;
             while (totalSeen < size) {
                 MEMORY_BASIC_INFORMATION memInfo;
-                VirtualQuery(currentPtr, &memInfo, sizeof(memInfo));
+                PAS_ASSERT(VirtualQuery(currentPtr, &memInfo, sizeof(memInfo)));
                 PAS_ASSERT(memInfo.RegionSize > 0);
                 PAS_ASSERT(VirtualFree(currentPtr, PAS_MIN(memInfo.RegionSize, size - totalSeen), MEM_DECOMMIT));
                 currentPtr = (void*)((uintptr_t)currentPtr + memInfo.RegionSize);
@@ -464,17 +464,18 @@ static void decommit_impl(void* ptr, size_t size,
             }
         }
     } else {
-        /* do_mprotect=false callers (pas_expendable_memory) read payload directly
-           and rely on seeing zeros after decommit, like MADV_FREE. MEM_DECOMMIT
-           would make those reads AV, so use DiscardVirtualMemory which frees
-           physical RAM but keeps pages accessible. This does not release commit
-           charge, but expendable memory is bounded metadata. */
+        /* The only do_mprotect=false caller is pas_expendable_memory, which reads
+           payload directly and relies on seeing zeros after decommit, like
+           MADV_FREE. MEM_DECOMMIT would make those reads AV, so use
+           DiscardVirtualMemory which frees physical RAM but keeps pages
+           accessible. This does not release commit charge, but expendable memory
+           is bounded metadata. */
         if (DiscardVirtualMemory(ptr, size)) {
             size_t totalSeen = 0;
             void* currentPtr = ptr;
             while (totalSeen < size) {
                 MEMORY_BASIC_INFORMATION memInfo;
-                VirtualQuery(currentPtr, &memInfo, sizeof(memInfo));
+                PAS_ASSERT(VirtualQuery(currentPtr, &memInfo, sizeof(memInfo)));
                 PAS_ASSERT(memInfo.RegionSize > 0);
                 PAS_ASSERT(VirtualAlloc(currentPtr, PAS_MIN(memInfo.RegionSize, size - totalSeen), MEM_RESET, PAGE_READWRITE));
                 currentPtr = (void*)((uintptr_t)currentPtr + memInfo.RegionSize);

@@ -158,7 +158,8 @@ public:
 #if OS(WINDOWS) || PLATFORM(PLAYSTATION)
             // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
             // https://bugs.webkit.org/show_bug.cgi?id=292771
-            OSAllocator::commit(result, MarkedBlock::blockSize, true, false);
+            if (result) [[likely]]
+                OSAllocator::commit(result, MarkedBlock::blockSize, true, false);
 #endif
             return result;
 #elif USE(MIMALLOC)
