@@ -662,7 +662,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAsyncStackTrace, true, Normal, "Enable async stack traces") \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
     v(Bool, useExplicitResourceManagement, false, Normal, "Enable explicit resource management builtins and syntax."_s) \
-    v(Bool, useImportDefer, false, Normal, "Enable deferred module import."_s) \
+    v(Bool, useImportDefer, true, Normal, "Enable deferred module import."_s) \
     v(Bool, useIteratorChunking, false, Normal, "Expose the Iterator.prototype.chunks and Iterator.prototype.windows methods."_s) \
     v(Bool, useIteratorSequencing, true, Normal, "Expose the Iterator.concat method."_s) \
     v(Bool, useIteratorIncludes, false, Normal, "Expose the Iterator.includes method."_s) \

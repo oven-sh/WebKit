@@ -58,6 +58,7 @@ public:
     void initializeEnvironment(JSGlobalObject*, RefPtr<ScriptFetcher>);
     void link(JSGlobalObject*, RefPtr<ScriptFetcher>);
     JSPromise* evaluate(JSGlobalObject*);
+    bool readyForSyncExecution();
     void execute(JSGlobalObject*, JSPromise* = nullptr);
     void executeAsync(JSGlobalObject*);
     void asyncExecutionFulfilled(JSGlobalObject*);

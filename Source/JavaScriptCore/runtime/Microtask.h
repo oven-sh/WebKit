@@ -78,6 +78,7 @@ enum class InternalMicrotask : uint8_t {
     DynamicImportLoadSettled,
     DynamicImportEvaluateSettled,
     ImportModuleNamespace,
+    ImportDeferModuleNamespace,
     Opaque, // Dispatch must handle everything.
 #if USE(BUN_JSC_ADDITIONS)
     BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
@@ -100,7 +101,7 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
     if (task == InternalMicrotask::PromiseFulfillWithoutHandlerJob)
         return true;
     return static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::AsyncModuleExecutionResume)
-        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
+        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportDeferModuleNamespace);
 }
 #else
 constexpr unsigned maxMicrotaskArguments = 3;

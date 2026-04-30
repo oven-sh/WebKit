@@ -182,9 +182,9 @@ public:
     {
         return new (m_parserArena) SuperNode(location);
     }
-    ExpressionNode* createImportExpr(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
+    ExpressionNode* createImportExpr(const JSTokenLocation& location, ExpressionNode* expr, ExpressionNode* option, bool isDeferred, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
     {
-        auto* node = new (m_parserArena) ImportNode(location, expr, option);
+        auto* node = new (m_parserArena) ImportNode(location, expr, option, isDeferred);
         setExceptionLocation(node, start, divot, end);
         return node;
     }

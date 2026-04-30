@@ -27,17 +27,21 @@
 #include "JSModuleNamespaceObject.h"
 
 #include "AbstractModuleRecord.h"
+#include "BuiltinNames.h"
+#include "CyclicModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
+#include "JSPromise.h"
 
 namespace JSC {
 
 const ClassInfo JSModuleNamespaceObject::s_info = { "ModuleNamespaceObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleNamespaceObject) };
 
-JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure)
+JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, bool isDeferred)
     : Base(vm, structure)
     , m_exports()
+    , m_isDeferred(isDeferred)
 {
 }
 
@@ -72,7 +76,7 @@ void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, Abstr
         }
     }
 
-    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, m_isDeferred ? "Deferred Module"_s : "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
 #if USE(BUN_JSC_ADDITIONS)
     if (shouldPreventExtensions)
@@ -108,6 +112,70 @@ void JSModuleNamespaceObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSModuleNamespaceObject);
 
+bool JSModuleNamespaceObject::isSymbolLikeNamespaceKey(VM& vm, PropertyName propertyName)
+{
+    // IsSymbolLikeNamespaceKey(P, ns)
+    // https://tc39.es/proposal-defer-import-eval/#sec-IsSymbolLikeNamespaceKey
+    // 1. If P is a Symbol, return true.
+    // 2. If ns.[[Deferred]] is true and P is "then", return true.
+    // 3. Return false.
+    if (propertyName.isSymbol())
+        return true;
+    return m_isDeferred && propertyName == vm.propertyNames->then;
+}
+
+void JSModuleNamespaceObject::ensureDeferredNamespaceEvaluation(JSGlobalObject* globalObject)
+{
+    // GetModuleExportsList(O)
+    // https://tc39.es/proposal-defer-import-eval/#sec-GetModuleExportsList
+    // 1. If O.[[Deferred]] is true, then
+    //    a. Let m be O.[[Module]].
+    //    b. Perform ? EvaluateModuleSync(m).
+    // 2. Return O.[[Exports]].
+    //
+    // EvaluateModuleSync(module)
+    // https://tc39.es/proposal-defer-import-eval/#sec-EvaluateModuleSync
+    // 1. If ReadyForSyncExecution(module) is false, throw a TypeError exception.
+    // 2. Let promise be module.Evaluate().
+    // 3. Assert: promise.[[PromiseState]] is either fulfilled or rejected.
+    // 4. If promise.[[PromiseState]] is rejected, then ...
+
+    ASSERT(m_isDeferred);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* module = dynamicDowncast<CyclicModuleRecord>(moduleRecord());
+    if (!module) {
+        scope.release();
+        moduleRecord()->evaluateModuleSync(globalObject);
+        return;
+    }
+
+    if (module->status() == CyclicModuleRecord::Status::Evaluated) {
+        if (JSValue error = module->evaluationError()) {
+            scope.throwException(globalObject, error);
+            return;
+        }
+        return;
+    }
+
+    if (!module->readyForSyncExecution()) {
+        throwTypeError(globalObject, scope, "Cannot access deferred module: it is not ready for synchronous evaluation yet"_s);
+        return;
+    }
+
+    JSPromise* promise = module->evaluate(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    ASSERT(promise);
+    // "Assert: promise.[[PromiseState]] is either fulfilled or rejected."
+    // readyForSyncExecution() guaranteed no async deps remain, so Evaluate()
+    // must complete synchronously.
+    if (promise->status() == JSPromise::Status::Rejected) {
+        promise->markAsHandled();
+        scope.throwException(globalObject, promise->result());
+    }
+}
+
 static JSValue getValue(JSModuleEnvironment* environment, PropertyName localName, ScopeOffset& scopeOffset)
 {
     SymbolTable* symbolTable = environment->symbolTable();
@@ -132,10 +200,17 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     // step 1.
     // If the property name is a symbol, we don't look into the imported bindings.
     // It may return the descriptor with writable: true, but namespace objects does not allow it in [[Set]] / [[DefineOwnProperty]] side.
-    if (propertyName.isSymbol())
+    if (isSymbolLikeNamespaceKey(vm, propertyName))
         return Base::getOwnPropertySlot(this, globalObject, propertyName, slot);
 
     slot.setIsTaintedByOpaqueObject();
+
+    if (m_isDeferred) [[unlikely]] {
+        // https://tc39.es/proposal-defer-import-eval/#sec-module-namespace-exotic-objects-get-p-receiver
+        // Let exports be ? GetModuleExportsList(O).
+        ensureDeferredNamespaceEvaluation(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
 
     auto iterator = m_exports.find(propertyName.uid());
     if (iterator == m_exports.end()) {
@@ -236,10 +311,18 @@ bool JSModuleNamespaceObject::putByIndex(JSCell*, JSGlobalObject* globalObject, 
 
 bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-delete-p
     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
-    if (propertyName.isSymbol())
+    if (thisObject->isSymbolLikeNamespaceKey(vm, propertyName))
         return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
+
+    if (thisObject->m_isDeferred) [[unlikely]] {
+        thisObject->ensureDeferredNamespaceEvaluation(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
 
     return !thisObject->m_exports.contains(propertyName.uid());
 }
@@ -247,7 +330,12 @@ bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globa
 bool JSModuleNamespaceObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned propertyName)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
+    if (thisObject->m_isDeferred) [[unlikely]] {
+        thisObject->ensureDeferredNamespaceEvaluation(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return !thisObject->m_exports.contains(Identifier::from(vm, propertyName).impl());
 }
 
@@ -258,7 +346,16 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
 
     // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-ownpropertykeys
     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
+    if (thisObject->m_isDeferred) [[unlikely]] {
+        thisObject->ensureDeferredNamespaceEvaluation(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     for (const auto& name : thisObject->m_names) {
+        // Deferred namespace objects do not expose "then" to avoid issues
+        // with promises treating the namespace as a thenable.
+        // https://tc39.es/proposal-defer-import-eval/#sec-module-namespace-exotic-objects-ownpropertykeys
+        if (thisObject->m_isDeferred && name == vm.propertyNames->then) [[unlikely]]
+            continue;
         if (mode == DontEnumPropertiesMode::Exclude) {
             // Perform [[GetOwnProperty]] to throw ReferenceError if binding is uninitialized.
             PropertySlot slot(cell, PropertySlot::InternalMethodType::GetOwnProperty);
@@ -283,7 +380,7 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
 
     // 1. If Type(P) is Symbol, return OrdinaryDefineOwnProperty(O, P, Desc).
-    if (propertyName.isSymbol())
+    if (thisObject->isSymbolLikeNamespaceKey(vm, propertyName))
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 
     // 2. Let current be ? O.[[GetOwnProperty]](P).

@@ -180,8 +180,9 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #endif
             // 7.b. If in.[[ImportName]] is NAMESPACE-OBJECT, then
             if (in.type == ImportEntryType::Namespace) {
-                // 7.b.i. Let namespace be GetModuleNamespace(importedModule).
-                JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject);
+                // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[ModuleRequest]].[[Phase]]).
+                // https://tc39.es/proposal-defer-import-eval/#sec-source-text-module-record-initialize-environment
+                JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject, true, in.phase);
                 RETURN_IF_EXCEPTION(scope, void());
                 // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
                 // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
@@ -406,6 +407,51 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
     // 6. Assert: stack is empty.
     ASSERT(stack.isEmpty());
     // 7. Return UNUSED.
+}
+
+bool CyclicModuleRecord::readyForSyncExecution()
+{
+    // ReadyForSyncExecution(module, seen)
+    // https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution
+    //
+    // Iterative DFS over the module graph. Returns false if any module in the
+    // subgraph would require async evaluation (is EVALUATING/EVALUATING-ASYNC,
+    // or has TLA and hasn't evaluated yet).
+
+    UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+    Vector<AbstractModuleRecord*, 8> stack;
+    stack.append(this);
+
+    while (!stack.isEmpty()) {
+        AbstractModuleRecord* current = stack.takeLast();
+        if (!seen.add(current).isNewEntry)
+            continue;
+
+        // 1. If module is not a Cyclic Module Record, return true.
+        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(current);
+        if (!cyclic)
+            continue;
+        // 5. If module.[[Status]] is evaluated, return true.
+        if (cyclic->status() == Status::Evaluated)
+            continue;
+        // 6. If module.[[Status]] is evaluating or evaluating-async, return false.
+        if (cyclic->status() == Status::Evaluating || cyclic->status() == Status::EvaluatingAsync)
+            return false;
+        // 7. Assert: module.[[Status]] is linked.
+        ASSERT(cyclic->status() == Status::Linked);
+        // 8. If module.[[HasTLA]] is true, return false.
+        if (cyclic->hasTLA())
+            return false;
+        // 9. For each ModuleRequest Record request of module.[[RequestedModules]], do
+        //      a. Let requiredModule be GetImportedModule(module, request).
+        //      b. If ReadyForSyncExecution(requiredModule, seen) is false, then return false.
+        for (const ModuleRequest& request : cyclic->requestedModules()) {
+            AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(cyclic, request);
+            stack.append(requiredModule);
+        }
+    }
+    // 10. Return true.
+    return true;
 }
 
 JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)

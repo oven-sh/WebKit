@@ -2094,6 +2094,37 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         return;
     }
 
+    case InternalMicrotask::ImportDeferModuleNamespace: {
+        // import.defer(): the normal import pipeline has resolved to the
+        // evaluation-phase namespace. Swap to the deferred namespace object
+        // for the same module record.
+        // https://tc39.es/proposal-defer-import-eval/
+        // arguments[0] = resultPromise
+        // arguments[1] = JSModuleNamespaceObject or error
+        auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
+        if (static_cast<JSPromise::Status>(payload) == JSPromise::Status::Fulfilled) {
+            auto* ns = dynamicDowncast<JSModuleNamespaceObject>(arguments[1]);
+            if (ns) {
+                auto* deferred = ns->moduleRecord()->getModuleNamespace(globalObject, true, AbstractModuleRecord::ModulePhase::Defer);
+                if (scope.exception()) {
+                    resultPromise->rejectWithCaughtException(globalObject, scope);
+                    return;
+                }
+                // The deferred namespace hides "then", so fulfill (not resolve) is
+                // correct here and avoids treating it as a thenable.
+                scope.release();
+                resultPromise->fulfill(vm, globalObject, deferred);
+                return;
+            }
+            scope.release();
+            resultPromise->fulfill(vm, globalObject, arguments[1]);
+        } else {
+            scope.release();
+            resultPromise->reject(vm, globalObject, arguments[1]);
+        }
+        return;
+    }
+
     case InternalMicrotask::Opaque: {
         RELEASE_ASSERT_NOT_REACHED();
         return;

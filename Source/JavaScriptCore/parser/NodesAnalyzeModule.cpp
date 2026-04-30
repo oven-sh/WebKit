@@ -102,7 +102,8 @@ bool ImportDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
         return false;
     }
 
-    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()));
+    auto phase = m_type == ImportType::Deferred ? JSModuleRecord::ModulePhase::Defer : JSModuleRecord::ModulePhase::Evaluation;
+    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()), phase);
     for (auto* specifier : m_specifierList->specifiers()) {
         analyzer.moduleRecord()->addImportEntry(JSModuleRecord::ImportEntry {
             specifier->importedName() == analyzer.vm().propertyNames->starNamespacePrivateName
@@ -110,6 +111,7 @@ bool ImportDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
             m_moduleName->moduleName(),
             specifier->importedName(),
             specifier->localName(),
+            phase,
         });
     }
     return true;

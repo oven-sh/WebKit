@@ -231,11 +231,21 @@ RegisterID* SuperNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
 RegisterID* ImportNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     RefPtr<RegisterID> importModule = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::importModule);
-    CallArguments arguments(generator, nullptr, m_option ? 2 : 1);
+    // import.defer() passes a third argument (the phase) to @importModule so
+    // the runtime can return a deferred namespace. Plain import() keeps the
+    // historical two-argument shape to avoid perturbing existing call sites.
+    unsigned argCount = m_isDeferred ? 3 : (m_option ? 2 : 1);
+    CallArguments arguments(generator, nullptr, argCount);
     generator.emitLoad(arguments.thisRegister(), jsUndefined());
     generator.emitNode(arguments.argumentRegister(0), m_expr);
-    if (m_option)
-        generator.emitNode(arguments.argumentRegister(1), m_option);
+    if (argCount >= 2) {
+        if (m_option)
+            generator.emitNode(arguments.argumentRegister(1), m_option);
+        else
+            generator.emitLoad(arguments.argumentRegister(1), jsUndefined());
+    }
+    if (m_isDeferred)
+        generator.emitLoad(arguments.argumentRegister(2), jsNumber(static_cast<unsigned>(AbstractModuleRecord::ModulePhase::Defer)));
     return generator.emitCall(generator.finalDestination(dst, importModule.get()), importModule.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 

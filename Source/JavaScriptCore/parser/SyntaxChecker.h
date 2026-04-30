@@ -164,7 +164,7 @@ public:
     ExpressionType createLogicalNot(const JSTokenLocation&, ExpressionType) { return UnaryExpr; }
     ExpressionType createUnaryPlus(const JSTokenLocation&, ExpressionType) { return UnaryExpr; }
     ExpressionType createVoid(const JSTokenLocation&, ExpressionType) { return UnaryExpr; }
-    ExpressionType createImportExpr(const JSTokenLocation&, ExpressionType, ExpressionType, int, int, int) { return ImportExpr; }
+    ExpressionType createImportExpr(const JSTokenLocation&, ExpressionType, ExpressionType, bool, int, int, int) { return ImportExpr; }
     ExpressionType createThisExpr(const JSTokenLocation&) { return ThisExpr; }
     ExpressionType createSuperExpr(const JSTokenLocation&) { return SuperExpr; }
     ExpressionType createNewTargetExpr(const JSTokenLocation&) { return NewTargetExpr; }

@@ -93,6 +93,7 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleEnvironment);
     visitor.append(thisObject->m_moduleNamespaceObject);
+    visitor.append(thisObject->m_moduleDeferredNamespaceObject);
     visitor.append(thisObject->m_cycleRoot);
     visitor.append(thisObject->m_topLevelCapability);
     visitor.append(thisObject->m_asyncCapability);
@@ -147,9 +148,9 @@ bool AbstractModuleRecord::ModuleRequest::operator==(const ModuleRequest& other)
     return true;
 }
 
-void AbstractModuleRecord::appendRequestedModule(const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& attributes)
+void AbstractModuleRecord::appendRequestedModule(const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& attributes, ModulePhase phase)
 {
-    m_requestedModules.append({ moduleName, WTF::move(attributes) });
+    m_requestedModules.append({ moduleName, WTF::move(attributes), phase });
 }
 
 void AbstractModuleRecord::addStarExportEntry(const Identifier& moduleName)
@@ -802,7 +803,7 @@ auto AbstractModuleRecord::resolveExport(JSGlobalObject* globalObject, const Ide
     return resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl()));
 }
 
-JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, bool shouldPreventExtensions)
+JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, bool shouldPreventExtensions, ModulePhase phase)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -813,8 +814,10 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 #endif
 
     // http://www.ecma-international.org/ecma-262/6.0/#sec-getmodulenamespace
-    if (m_moduleNamespaceObject)
+    if (phase == ModulePhase::Evaluation && m_moduleNamespaceObject)
         return m_moduleNamespaceObject.get();
+    if (phase == ModulePhase::Defer && m_moduleDeferredNamespaceObject)
+        return m_moduleDeferredNamespaceObject.get();
 
     // GetModuleNamespace = GetExportedNames + ResolveExport per name. The naive
     // implementation walks the star-export graph once per name. With N names and
@@ -918,9 +921,14 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
         }
     }
 
-    JSModuleNamespaceObject* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions);
+    JSModuleNamespaceObject* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
     RETURN_IF_EXCEPTION(scope, nullptr);
- 
+
+    if (phase == ModulePhase::Defer) {
+        m_moduleDeferredNamespaceObject.set(vm, this, moduleNamespaceObject);
+        return moduleNamespaceObject;
+    }
+
     // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
     if (m_moduleEnvironment) {
         bool putResult = false;
@@ -1039,6 +1047,56 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
         throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
 }
 
+void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(Vector<AbstractModuleRecord*, 8>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
+{
+    // GatherAsynchronousTransitiveDependencies(module, seen)
+    // https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
+    //
+    // Collects the direct post-order list of asynchronous unexecuted transitive
+    // dependencies, stopping the depth-first search for a branch when an
+    // asynchronous dependency is found.
+    //
+    // The spec phrases this recursively; we use an explicit stack so that deep
+    // import graphs don't overflow the native stack before reaching
+    // innerModuleEvaluation's guarded recursion. Children are pushed in
+    // reverse so they are visited in source order.
+
+    using Status = CyclicModuleRecord::Status;
+
+    Vector<AbstractModuleRecord*, 16> stack;
+    stack.append(this);
+
+    while (!stack.isEmpty()) {
+        AbstractModuleRecord* current = stack.takeLast();
+        // 3. If seen contains module, return result.
+        if (!seen.add(current).isNewEntry)
+            continue;
+        // 5. If module is not a Cyclic Module Record, return result.
+        auto* module = dynamicDowncast<CyclicModuleRecord>(current);
+        if (!module)
+            continue;
+        // 6. If module.[[Status]] is either evaluating or evaluated, return result.
+        Status status = module->status();
+        if (status == Status::Evaluating || status == Status::EvaluatingAsync || status == Status::Evaluated)
+            continue;
+        // 7. If module.[[HasTLA]] is true, then
+        if (module->hasTLA()) {
+            // 7.a. Append module to result.
+            if (!result.contains(module))
+                result.append(module);
+            // 7.b. Return result.
+            continue;
+        }
+        // 8. For each ModuleRequest Record request of module.[[RequestedModules]], do
+        //      a. Let requiredModule be GetImportedModule(module, request).
+        //      b/c. Recurse (here: push to the explicit stack, last-in first-out).
+        const auto& requested = module->requestedModules();
+        for (size_t i = requested.size(); i > 0; --i)
+            stack.append(JSModuleLoader::getImportedModule(module, requested[i - 1]));
+    }
+    // 9. Return result.
+}
+
 unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index)
 {
     // InnerModuleEvaluation(module, stack, index)
@@ -1086,10 +1144,51 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
     ++index;
     // 10. Append module to stack.
     stack.append(module);
-    // 11. For each ModuleRequest Record request of module.[[RequestedModules]], do
+    // https://tc39.es/proposal-defer-import-eval/#sec-innermoduleevaluation
+    // Let evaluationList be a new empty List.
+    // For each ModuleRequest Record request of module.[[RequestedModules]], do
+    //   a. Let requiredModule be GetImportedModule(module, request).
+    //   b. If request.[[Phase]] is defer, then
+    //        i. Let additionalModules be GatherAsynchronousTransitiveDependencies(requiredModule).
+    //        ii. For each Module Record additionalModule of additionalModules, do
+    //              1. If evaluationList does not contain additionalModule, then
+    //                   a. Append additionalModule to evaluationList.
+    //   c. Else if evaluationList does not contain requiredModule, then
+    //        i. Append requiredModule to evaluationList.
+    //
+    // The spec dedups evaluationList, but InnerModuleEvaluation already
+    // early-returns for modules that have started evaluating, so in the
+    // no-defer case we skip the O(n²) contains() and match the pre-defer
+    // behavior exactly. Only when a defer request is present do we build a
+    // deduplicated list (so GatherAsynchronousTransitiveDependencies'
+    // results interleave correctly with evaluation-phase requests).
+    Vector<AbstractModuleRecord*, 8> evaluationList;
+    bool anyDeferred = false;
     for (const ModuleRequest& request : module->requestedModules()) {
-        // 11.a. Let requiredModule be GetImportedModule(module, request).
-        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
+        if (request.m_phase == ModulePhase::Defer) [[unlikely]] {
+            anyDeferred = true;
+            break;
+        }
+    }
+    if (anyDeferred) [[unlikely]] {
+        UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+        UncheckedKeyHashSet<AbstractModuleRecord*> inList;
+        for (const ModuleRequest& request : module->requestedModules()) {
+            AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
+            if (request.m_phase == ModulePhase::Defer) {
+                size_t before = evaluationList.size();
+                requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
+                for (size_t i = before; i < evaluationList.size(); ++i)
+                    inList.add(evaluationList[i]);
+            } else if (inList.add(requiredModule).isNewEntry)
+                evaluationList.append(requiredModule);
+        }
+    } else {
+        for (const ModuleRequest& request : module->requestedModules())
+            evaluationList.append(JSModuleLoader::getImportedModule(module, request));
+    }
+    // 11. For each Module Record requiredModule of evaluationList, do
+    for (AbstractModuleRecord* requiredModule : evaluationList) {
         checkSafeToRecurse(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, invalid);
 #if USE(BUN_JSC_ADDITIONS)
@@ -1361,7 +1460,7 @@ void AbstractModuleRecord::dump()
 
     dataLog("    Dependencies: ", m_requestedModules.size(), " modules\n");
     for (const auto& request : m_requestedModules)
-        dataLogLn("      module(", printableName(request.m_specifier), "),attributes(", RawPointer(request.m_attributes.get()), ")");
+        dataLogLn("      module(", printableName(request.m_specifier), "),phase(", request.m_phase == ModulePhase::Defer ? "defer" : "evaluation", "),attributes(", RawPointer(request.m_attributes.get()), ")");
 
     dataLog("    Import: ", m_importEntries.size(), " entries\n");
     for (const auto& pair : m_importEntries) {

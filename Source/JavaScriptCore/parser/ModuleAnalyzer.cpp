@@ -41,11 +41,19 @@ ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& m
 {
 }
 
-void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes)
+void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes, JSModuleRecord::ModulePhase phase)
 {
-    auto result = m_requestedModules.add(specifier.impl());
+    // Per https://tc39.es/proposal-defer-import-eval/#sec-modulerequests, if
+    // the same specifier is requested with both ~defer~ and ~evaluation~
+    // phases, both requests are kept. The evaluation-phase request will drive
+    // eager InnerModuleEvaluation; the defer-phase one becomes a no-op since
+    // the module will already be evaluated.
+    //
+    // We keep at most one request per (specifier, phase) pair.
+    auto& set = phase == JSModuleRecord::ModulePhase::Defer ? m_requestedModulesDefer : m_requestedModules;
+    auto result = set.add(specifier.impl());
     if (result.isNewEntry)
-        moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes));
+        moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes), phase);
 }
 
 void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const RefPtr<UniquedStringImpl>& localName, const VariableEnvironmentEntry& variable)

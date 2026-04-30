@@ -45,10 +45,10 @@ public:
         return vm.moduleNamespaceObjectSpace<mode>();
     }
 
-    static JSModuleNamespaceObject* create(JSGlobalObject* globalObject, Structure* structure, AbstractModuleRecord* moduleRecord, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&& resolutions, bool shouldPreventExtensions = true)
+    static JSModuleNamespaceObject* create(JSGlobalObject* globalObject, Structure* structure, AbstractModuleRecord* moduleRecord, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&& resolutions, bool shouldPreventExtensions = true, bool isDeferred = false)
     {
         VM& vm = getVM(globalObject);
-        JSModuleNamespaceObject* object = new (NotNull, allocateCell<JSModuleNamespaceObject>(vm)) JSModuleNamespaceObject(vm, structure);
+        JSModuleNamespaceObject* object = new (NotNull, allocateCell<JSModuleNamespaceObject>(vm)) JSModuleNamespaceObject(vm, structure, isDeferred);
         object->finishCreation(globalObject, moduleRecord, WTF::move(resolutions), shouldPreventExtensions);
         return object;
     }
@@ -78,10 +78,14 @@ public:
     WTF::TriState m_hasESModuleMarker = WTF::TriState::Indeterminate;
 #endif
 
+    bool isDeferred() const { return m_isDeferred; }
+
 private:
-    JS_EXPORT_PRIVATE JSModuleNamespaceObject(VM&, Structure*);
+    JS_EXPORT_PRIVATE JSModuleNamespaceObject(VM&, Structure*, bool isDeferred = false);
     JS_EXPORT_PRIVATE void finishCreation(JSGlobalObject*, AbstractModuleRecord*, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&&, bool shouldPreventExtensions);
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
+    void ensureDeferredNamespaceEvaluation(JSGlobalObject*);
+    bool isSymbolLikeNamespaceKey(VM&, PropertyName);
 
     struct ExportEntry {
         Identifier localName;
@@ -93,6 +97,7 @@ private:
     ExportMap m_exports;
     FixedVector<Identifier> m_names;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;
+    bool m_isDeferred { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isOverridingValue = false;
 #endif

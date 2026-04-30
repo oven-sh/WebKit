@@ -634,7 +634,7 @@ namespace JSC {
 
     class ImportNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        ImportNode(const JSTokenLocation&, ExpressionNode*, ExpressionNode*);
+        ImportNode(const JSTokenLocation&, ExpressionNode*, ExpressionNode*, bool isDeferred = false);
 
     private:
         bool isImportNode() const final { return true; }
@@ -642,6 +642,7 @@ namespace JSC {
 
         ExpressionNode* m_expr;
         ExpressionNode* m_option;
+        bool m_isDeferred { false };
     };
 
     class MetaPropertyNode : public ExpressionNode {

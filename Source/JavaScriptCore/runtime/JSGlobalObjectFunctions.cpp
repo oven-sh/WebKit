@@ -34,6 +34,7 @@
 #include "IntlDateTimeFormat.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
+#include "JSModuleNamespaceObject.h"
 #include "JSPromise.h"
 #include "JSSet.h"
 #include "Lexer.h"
@@ -809,8 +810,34 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     // We always specify parameters as undefined. Once dynamic import() starts accepting fetching parameters,
     // we should retrieve this from the arguments.
     JSValue parameters = callFrame->argument(1);
+
+    // https://tc39.es/proposal-defer-import-eval/
+    // import.defer() passes AbstractModuleRecord::ModulePhase::Defer as the third argument.
+    bool isDeferred = false;
+    if (JSValue phaseValue = callFrame->argument(2); phaseValue.isInt32())
+        isDeferred = static_cast<AbstractModuleRecord::ModulePhase>(phaseValue.asInt32()) == AbstractModuleRecord::ModulePhase::Defer;
+
     auto* importPromise = globalObject->moduleLoader()->importModule(globalObject, specifier, parameters, sourceOrigin);
     RETURN_IF_EXCEPTION(scope, JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope)));
+
+    if (isDeferred) [[unlikely]] {
+        // The normal import pipeline has loaded, linked, and (currently)
+        // evaluated the module graph. Swap the result to the deferred
+        // namespace object so the user sees [[Deferred]] semantics
+        // (Symbol.toStringTag = "Deferred Module", hidden "then", evaluation
+        // error rethrows on access).
+        //
+        // Per spec the module body itself should not run here — only its
+        // async transitive dependencies. Reaching full lazy-evaluation for
+        // the dynamic form requires threading ModulePhase through
+        // ContinueDynamicImport and the moduleLoaderImportModule hook; until
+        // then the module is evaluated as a side effect of the normal
+        // pipeline and the returned namespace is the deferred one.
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        scope.release();
+        importPromise->performPromiseThenWithInternalMicrotask(vm, globalObject, InternalMicrotask::ImportDeferModuleNamespace, promise, jsUndefined());
+        return JSValue::encode(promise);
+    }
 
     scope.release();
 

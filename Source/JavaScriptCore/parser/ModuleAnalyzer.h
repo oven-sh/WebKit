@@ -47,7 +47,7 @@ public:
 
     JSModuleRecord* moduleRecord() { return m_moduleRecord; }
 
-    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&);
+    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&, JSModuleRecord::ModulePhase = JSModuleRecord::ModulePhase::Evaluation);
 
     void fail(std::tuple<ErrorType, String>&& errorMessage) { m_errorMessage = errorMessage; }
 
@@ -57,6 +57,7 @@ private:
     VM& m_vm;
     JSModuleRecord* m_moduleRecord;
     IdentifierSet m_requestedModules;
+    IdentifierSet m_requestedModulesDefer;
     std::tuple<ErrorType, String> m_errorMessage;
 };
 
