@@ -92,6 +92,16 @@ void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const 
         // export { namespace }
         //
         // Sec 15.2.1.16.1 step 11-a-ii-2-b https://tc39.github.io/ecma262/#sec-parsemodule
+        //
+        // A deferred namespace import (import defer * as ns) binds a distinct
+        // deferred namespace object in THIS module's environment. Re-exporting
+        // it must expose that local binding, not a fresh regular namespace of
+        // the target module (proposal-defer-import-eval ParseModule 11.a.ii).
+        if (importEntry.phase == JSModuleRecord::ModulePhase::Defer) {
+            for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
+                moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromUid(m_vm, exportName.get()), Identifier::fromUid(m_vm, localName.get())));
+            return;
+        }
         for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
             moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(Identifier::fromUid(m_vm, exportName.get()), importEntry.moduleRequest));
         return;
