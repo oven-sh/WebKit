@@ -1140,13 +1140,19 @@ inline size_t StringImpl::costDuringGC()
     if (isStatic())
         return 0;
 
+    // m_refCount is read with relaxed ordering and this runs on concurrent
+    // GC marker threads (via JSString::visitChildrenImpl). Another thread may
+    // transiently bring the count to zero between the isStatic() check above
+    // and here. This is only an accounting estimate, so clamp the divisor.
+    size_t refs = std::max<size_t>(refCount(), 1);
+
     if (bufferOwnership() == BufferSubstring)
-        return divideRoundedUp<size_t>(substringBuffer()->costDuringGC(), refCount());
+        return divideRoundedUp<size_t>(substringBuffer()->costDuringGC(), refs);
 
     size_t result = m_length;
     if (!is8Bit())
         result <<= 1;
-    return divideRoundedUp<size_t>(result, refCount());
+    return divideRoundedUp<size_t>(result, refs);
 }
 
 inline void StringImpl::setIsAtom(bool isAtom)
