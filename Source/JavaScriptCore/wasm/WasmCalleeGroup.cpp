@@ -326,9 +326,12 @@ void CalleeGroup::updateCallsitesToCallUs(const AbstractLocker& locker, CodeLoca
     };
 
     // This is necessary since Callees are released under `Heap::stopThePeriphery()`, but that only stops JS compiler
-    // threads and not wasm ones. So the OMGOSREntryCallee could die between the time we collect the callsites and when
-    // we actually repatch its callsites.
+    // threads and not wasm ones. So a weakly-held BBQCallee or an OMGOSREntryCallee could die between the time we
+    // collect the callsites and when we actually repatch its callsites.
     // FIXME: These inline capacities were picked semi-randomly. We should figure out if there's a better number.
+#if ENABLE(WEBASSEMBLY_BBQJIT)
+    Vector<Ref<BBQCallee>, 4> keepAliveBBQCallees;
+#endif
     Vector<Ref<OMGOSREntryCallee>, 4> keepAliveOSREntryCallees;
     Vector<Callsite, 16> callsites;
 
@@ -365,6 +368,11 @@ void CalleeGroup::updateCallsitesToCallUs(const AbstractLocker& locker, CodeLoca
         if (bbqCallee) {
             collectCallsites(bbqCallee.get());
             ASSERT(!bbqCallee->osrEntryCallee() || m_osrEntryCallees.find(callerIndex) != m_osrEntryCallees.end());
+            // A weakly-held BBQCallee can otherwise be destroyed by the collector between the
+            // collectCallsites() above and the repatchNearCall() loop below, since wasm compiler
+            // threads are neither stopped nor conservatively scanned by GC. On platforms where the
+            // executable allocator decommits freed pages (Windows), repatchNearCall() then faults.
+            keepAliveBBQCallees.append(bbqCallee.releaseNonNull());
         }
 #endif
 #if ENABLE(WEBASSEMBLY_OMGJIT)
