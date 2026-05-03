@@ -99,6 +99,9 @@ public:
 
     void appendInverted(const CharacterClass* other)
     {
+        // When a set operation is active (e.g. `[\P{X}&&\P{Y}]`), the inverted operand
+        // must be combined via the set-op machinery rather than unioned directly into
+        // the accumulator. Match the dispatch that `append()` performs at its entry.
         auto addSortedInverted = [&](char32_t min, char32_t max,
             const Vector<char32_t>& srcMatches, const Vector<CharacterRange>& srcRanges,
             Vector<char32_t>& destMatches, Vector<CharacterRange>& destRanges) {
@@ -147,6 +150,30 @@ public:
 
             addSortedMatchOrRange(lo, max + 1);
         };
+
+        if (m_setOp != CharacterClassSetOp::Default) {
+            // Build the inverted operand into temporaries, then feed it through the
+            // normal set-op path so intersection/subtraction are honoured.
+            Vector<char32_t> invertedMatches;
+            Vector<CharacterRange> invertedRanges;
+            Vector<char32_t> invertedMatchesUnicode;
+            Vector<CharacterRange> invertedRangesUnicode;
+
+            addSortedInverted(0, 0x7f, other->m_matches, other->m_ranges, invertedMatches, invertedRanges);
+            addSortedInverted(0x80, UCHAR_MAX_VALUE, other->m_matchesUnicode, other->m_rangesUnicode, invertedMatchesUnicode, invertedRangesUnicode);
+
+            // An inverted property-of-strings operand is rejected at parse time
+            // (NegatedClassSetMayContainStrings), so in practice `other->hasStrings()`
+            // is not reachable here. If it ever is, fall back to the existing flag so
+            // the downstream error path still fires rather than silently dropping data.
+            if (other->hasStrings()) {
+                m_mayContainStrings = true;
+                m_invertedStrings = true;
+            }
+
+            performSetOpWithMatches(invertedMatches, invertedRanges, invertedMatchesUnicode, invertedRangesUnicode);
+            return;
+        }
 
         if (other->hasStrings()) {
             m_mayContainStrings = true;
