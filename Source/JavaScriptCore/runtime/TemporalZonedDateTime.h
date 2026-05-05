@@ -79,6 +79,13 @@ public:
     static std::pair<ISO8601::PlainDate, ISO8601::PlainTime> getISODateTimeFor(const TimeZone&, ISO8601::ExactTime);
     static TimeZone systemTimeZone(VM&);
 
+    // https://tc39.es/proposal-temporal/#sec-temporal-getpossibleepochnanoseconds
+    static Vector<ISO8601::ExactTime, 2> getPossibleEpochNanoseconds(const TimeZone&, ISO8601::PlainDate, ISO8601::PlainTime);
+    // https://tc39.es/proposal-temporal/#sec-temporal-disambiguatepossibleepochns
+    static std::optional<ISO8601::ExactTime> disambiguatePossibleEpochNanoseconds(JSGlobalObject*, Vector<ISO8601::ExactTime, 2>&&, const TimeZone&, ISO8601::PlainDate, ISO8601::PlainTime, TemporalDisambiguation);
+    // https://tc39.es/proposal-temporal/#sec-temporal-getepochnanosecondsfor
+    static std::optional<ISO8601::ExactTime> getEpochNanosecondsFor(JSGlobalObject*, const TimeZone&, ISO8601::PlainDate, ISO8601::PlainTime, TemporalDisambiguation);
+
 private:
     TemporalZonedDateTime(VM&, Structure*, ISO8601::ExactTime, TimeZone);
     void finishCreation(VM&);

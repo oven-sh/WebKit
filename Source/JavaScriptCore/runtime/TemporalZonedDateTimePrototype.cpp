@@ -46,6 +46,8 @@ static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToPlainDate);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToPlainTime);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToPlainDateTime);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncWithTimeZone);
+static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncStartOfDay);
+static JSC_DECLARE_CUSTOM_GETTER(temporalZonedDateTimePrototypeGetterHoursInDay);
 static JSC_DECLARE_CUSTOM_GETTER(temporalZonedDateTimePrototypeGetterCalendarId);
 static JSC_DECLARE_CUSTOM_GETTER(temporalZonedDateTimePrototypeGetterTimeZoneId);
 static JSC_DECLARE_CUSTOM_GETTER(temporalZonedDateTimePrototypeGetterEpochMilliseconds);
@@ -91,6 +93,8 @@ const ClassInfo TemporalZonedDateTimePrototype::s_info = { "Temporal.ZonedDateTi
   toPlainTime        temporalZonedDateTimePrototypeFuncToPlainTime           DontEnum|Function 0
   toPlainDateTime    temporalZonedDateTimePrototypeFuncToPlainDateTime       DontEnum|Function 0
   withTimeZone       temporalZonedDateTimePrototypeFuncWithTimeZone          DontEnum|Function 1
+  startOfDay         temporalZonedDateTimePrototypeFuncStartOfDay            DontEnum|Function 0
+  hoursInDay         temporalZonedDateTimePrototypeGetterHoursInDay          DontEnum|ReadOnly|CustomAccessor
   calendarId         temporalZonedDateTimePrototypeGetterCalendarId          DontEnum|ReadOnly|CustomAccessor
   timeZoneId         temporalZonedDateTimePrototypeGetterTimeZoneId          DontEnum|ReadOnly|CustomAccessor
   epochMilliseconds  temporalZonedDateTimePrototypeGetterEpochMilliseconds   DontEnum|ReadOnly|CustomAccessor
@@ -246,6 +250,42 @@ JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncWithTimeZone, (JSGlob
     ASSERT(timeZone);
 
     return JSValue::encode(TemporalZonedDateTime::create(vm, globalObject->zonedDateTimeStructure(), zdt->exactTime(), timeZone.value()));
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.startofday
+JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncStartOfDay, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    REQUIRE_ZDT(zdt, callFrame->thisValue(), "startOfDay");
+
+    auto date = zdt->plainDate();
+    auto exact = TemporalZonedDateTime::getEpochNanosecondsFor(globalObject, zdt->timeZone(), date, ISO8601::PlainTime(), TemporalDisambiguation::Compatible);
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(exact);
+    return JSValue::encode(TemporalZonedDateTime::create(vm, globalObject->zonedDateTimeStructure(), exact.value(), zdt->timeZone()));
+}
+
+// https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.hoursinday
+JSC_DEFINE_CUSTOM_GETTER(temporalZonedDateTimePrototypeGetterHoursInDay, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    REQUIRE_ZDT(zdt, JSValue::decode(thisValue), "hoursInDay");
+
+    auto date = zdt->plainDate();
+    auto todayStart = TemporalZonedDateTime::getEpochNanosecondsFor(globalObject, zdt->timeZone(), date, ISO8601::PlainTime(), TemporalDisambiguation::Compatible);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    ISO8601::Duration oneDay { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 };
+    auto tomorrow = TemporalCalendar::isoDateAdd(globalObject, date, oneDay, TemporalOverflow::Constrain);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto tomorrowStart = TemporalZonedDateTime::getEpochNanosecondsFor(globalObject, zdt->timeZone(), tomorrow, ISO8601::PlainTime(), TemporalDisambiguation::Compatible);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    Int128 diffNs = tomorrowStart->epochNanoseconds() - todayStart->epochNanoseconds();
+    double hours = static_cast<double>(static_cast<int64_t>(diffNs / Int128 { 1'000'000 })) / 3.6e6;
+    return JSValue::encode(jsNumber(hours));
 }
 
 // --- Getters -----------------------------------------------------------

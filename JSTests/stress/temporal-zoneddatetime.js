@@ -133,3 +133,76 @@ shouldBe(Temporal.Now.plainDateTimeISO("UTC") instanceof Temporal.PlainDateTime,
     let z = new Temporal.ZonedDateTime(12345n, "UTC");
     shouldBe(Temporal.Instant.from(z).epochNanoseconds, 12345n);
 }
+
+// --- from() with property bags + DST disambiguation --------------------
+
+{
+    // Normal wall time.
+    let z = Temporal.ZonedDateTime.from({ year: 2024, month: 3, day: 15, hour: 12, timeZone: "America/New_York" });
+    shouldBe(z.toString(), "2024-03-15T12:00:00-04:00[America/New_York]");
+}
+
+{
+    // DST spring-forward gap: 2024-03-10 02:30 doesn't exist in NY.
+    // "compatible" (default) picks the later interpretation.
+    let z = Temporal.ZonedDateTime.from({ year: 2024, month: 3, day: 10, hour: 2, minute: 30, timeZone: "America/New_York" });
+    shouldBe(z.hour, 3);
+    shouldBe(z.offset, "-04:00");
+    // "reject" throws.
+    shouldThrow(() => Temporal.ZonedDateTime.from(
+        { year: 2024, month: 3, day: 10, hour: 2, minute: 30, timeZone: "America/New_York" },
+        { disambiguation: "reject" }), RangeError);
+}
+
+{
+    // DST fall-back overlap: 2024-11-03 01:30 occurs twice in NY.
+    // "compatible"/"earlier" -> -04:00, "later" -> -05:00.
+    let a = Temporal.ZonedDateTime.from({ year: 2024, month: 11, day: 3, hour: 1, minute: 30, timeZone: "America/New_York" });
+    shouldBe(a.offset, "-04:00");
+    let b = Temporal.ZonedDateTime.from(
+        { year: 2024, month: 11, day: 3, hour: 1, minute: 30, timeZone: "America/New_York" },
+        { disambiguation: "later" });
+    shouldBe(b.offset, "-05:00");
+    shouldThrow(() => Temporal.ZonedDateTime.from(
+        { year: 2024, month: 11, day: 3, hour: 1, minute: 30, timeZone: "America/New_York" },
+        { disambiguation: "reject" }), RangeError);
+}
+
+{
+    // offset option: "reject" when offset doesn't match the time zone.
+    shouldThrow(() => Temporal.ZonedDateTime.from(
+        { year: 2024, month: 3, day: 15, hour: 12, offset: "+09:00", timeZone: "America/New_York" },
+        { offset: "reject" }), RangeError);
+    // "use" takes the provided offset literally.
+    let z = Temporal.ZonedDateTime.from(
+        { year: 2024, month: 3, day: 15, hour: 12, offset: "+00:00", timeZone: "America/New_York" },
+        { offset: "use" });
+    shouldBe(z.epochNanoseconds, BigInt(Date.UTC(2024, 2, 15, 12)) * 1000000n);
+}
+
+// startOfDay and hoursInDay, including a DST day.
+{
+    let z = Temporal.ZonedDateTime.from({ year: 2024, month: 3, day: 10, hour: 12, timeZone: "America/New_York" });
+    shouldBe(z.startOfDay().hour, 0);
+    shouldBe(z.hoursInDay, 23); // spring-forward
+    let w = Temporal.ZonedDateTime.from({ year: 2024, month: 11, day: 3, hour: 12, timeZone: "America/New_York" });
+    shouldBe(w.hoursInDay, 25); // fall-back
+    let n = new Temporal.ZonedDateTime(0n, "UTC");
+    shouldBe(n.hoursInDay, 24);
+}
+
+// Instant.prototype.toZonedDateTimeISO
+{
+    let z = Temporal.Instant.from("2024-01-01T00:00:00Z").toZonedDateTimeISO("Asia/Tokyo");
+    shouldBe(z instanceof Temporal.ZonedDateTime, true);
+    shouldBe(z.toString(), "2024-01-01T09:00:00+09:00[Asia/Tokyo]");
+}
+
+// ToTemporalTimeZoneIdentifier extracts from date-time strings.
+{
+    shouldBe(new Temporal.ZonedDateTime(0n, "UTC").withTimeZone("2021-08-19T17:30Z").timeZoneId, "UTC");
+    shouldBe(new Temporal.ZonedDateTime(0n, "UTC").withTimeZone("2021-08-19T17:30-07:00").timeZoneId, "-07:00");
+    shouldBe(new Temporal.ZonedDateTime(0n, "UTC").withTimeZone("2021-08-19T17:30[Asia/Tokyo]").timeZoneId, "Asia/Tokyo");
+    shouldThrow(() => new Temporal.ZonedDateTime(0n, "UTC").withTimeZone("2021-08-19T17:30"), RangeError);
+    shouldThrow(() => new Temporal.ZonedDateTime(0n, "UTC").withTimeZone("2021-08-19T17:30-07:00:01"), RangeError);
+}
