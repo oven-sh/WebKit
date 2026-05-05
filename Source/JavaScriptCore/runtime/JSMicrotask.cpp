@@ -861,6 +861,18 @@ static void moduleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm, st
     auto* entry = uncheckedDowncast<ModuleRegistryEntry>(arguments[2]);
     auto* modulePromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
+#if USE(BUN_JSC_ADDITIONS)
+    // hostLoadImportedModule's synchronous-replay path (JSModuleLoader.cpp
+    // branch `fetchPromise is Fulfilled`) may have already called
+    // fetchComplete + fulfilled modulePromise inline while a require(esm)
+    // was draining the synchronous queue. The normal-queue copy of this
+    // reaction — queued when moduleRegistryFetchSettled ran earlier on
+    // the normal microtask queue — would otherwise re-enter fetchComplete
+    // and trip its "m_status == Fetching" assertion. Match the same
+    // pending-modulePromise guard used in moduleRegistryFetchSettled.
+    if (modulePromise->status() != JSPromise::Status::Pending)
+        return;
+#endif
     if (status == JSPromise::Status::Fulfilled) {
         auto* moduleRecord = downcast<AbstractModuleRecord>(arguments[1]);
         entry->fetchComplete(globalObject, moduleRecord);
