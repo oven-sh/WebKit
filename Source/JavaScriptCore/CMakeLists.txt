@@ -133,6 +133,8 @@ set(JavaScriptCore_OBJECT_LUT_SOURCES
     runtime/TemporalPlainYearMonthPrototype.cpp
     runtime/TemporalTimeZoneConstructor.cpp
     runtime/TemporalTimeZonePrototype.cpp
+    runtime/TemporalZonedDateTimeConstructor.cpp
+    runtime/TemporalZonedDateTimePrototype.cpp
 
     wasm/js/JSWebAssembly.cpp
     wasm/js/WebAssemblyArrayConstructor.cpp
@@ -1735,6 +1737,9 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/TemporalTimeZone.h
     runtime/TemporalTimeZoneConstructor.h
     runtime/TemporalTimeZonePrototype.h
+    runtime/TemporalZonedDateTime.h
+    runtime/TemporalZonedDateTimeConstructor.h
+    runtime/TemporalZonedDateTimePrototype.h
     runtime/TestRunnerUtils.h
     runtime/ThrowScope.h
     runtime/ToNativeFromValue.h

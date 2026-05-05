@@ -26,7 +26,11 @@
 #include "JSObjectInlines.h"
 #include "ObjectPrototype.h"
 #include "TemporalInstant.h"
+#include "TemporalPlainDate.h"
+#include "TemporalPlainDateTime.h"
+#include "TemporalPlainTime.h"
 #include "TemporalTimeZone.h"
+#include "TemporalZonedDateTime.h"
 
 namespace JSC {
 
@@ -34,6 +38,10 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalNow);
 
 static JSC_DECLARE_HOST_FUNCTION(temporalNowFuncInstant);
 static JSC_DECLARE_HOST_FUNCTION(temporalNowFuncTimeZoneId);
+static JSC_DECLARE_HOST_FUNCTION(temporalNowFuncZonedDateTimeISO);
+static JSC_DECLARE_HOST_FUNCTION(temporalNowFuncPlainDateTimeISO);
+static JSC_DECLARE_HOST_FUNCTION(temporalNowFuncPlainDateISO);
+static JSC_DECLARE_HOST_FUNCTION(temporalNowFuncPlainTimeISO);
 
 } // namespace JSC
 
@@ -43,8 +51,12 @@ namespace JSC {
 
 /* Source for TemporalNow.lut.h
 @begin temporalNowTable
-    instant         temporalNowFuncInstant      DontEnum|Function 0
-    timeZoneId      temporalNowFuncTimeZoneId   DontEnum|Function 0
+    instant           temporalNowFuncInstant            DontEnum|Function 0
+    timeZoneId        temporalNowFuncTimeZoneId         DontEnum|Function 0
+    zonedDateTimeISO  temporalNowFuncZonedDateTimeISO   DontEnum|Function 0
+    plainDateTimeISO  temporalNowFuncPlainDateTimeISO   DontEnum|Function 0
+    plainDateISO      temporalNowFuncPlainDateISO       DontEnum|Function 0
+    plainTimeISO      temporalNowFuncPlainTimeISO       DontEnum|Function 0
 @end
 */
 
@@ -86,6 +98,71 @@ JSC_DEFINE_HOST_FUNCTION(temporalNowFuncTimeZoneId, (JSGlobalObject* globalObjec
 {
     VM& vm = globalObject->vm();
     return JSValue::encode(jsNontrivialString(vm, vm.dateCache.defaultTimeZone().toString()));
+}
+
+static std::optional<TimeZone> resolveNowTimeZone(JSGlobalObject* globalObject, JSValue argument)
+{
+    VM& vm = globalObject->vm();
+    if (argument.isUndefined())
+        return TemporalZonedDateTime::systemTimeZone(vm);
+    return TemporalZonedDateTime::toTimeZoneIdentifier(globalObject, argument);
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal.now.zoneddatetimeiso
+JSC_DEFINE_HOST_FUNCTION(temporalNowFuncZonedDateTimeISO, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto timeZone = resolveNowTimeZone(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(timeZone);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(TemporalZonedDateTime::tryCreateIfValid(globalObject, ISO8601::ExactTime::now(), timeZone.value())));
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal.now.plaindatetimeiso
+JSC_DEFINE_HOST_FUNCTION(temporalNowFuncPlainDateTimeISO, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto timeZone = resolveNowTimeZone(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(timeZone);
+
+    auto [date, time] = TemporalZonedDateTime::getISODateTimeFor(timeZone.value(), ISO8601::ExactTime::now());
+    return JSValue::encode(TemporalPlainDateTime::create(vm, globalObject->plainDateTimeStructure(), WTF::move(date), WTF::move(time)));
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal.now.plaindateiso
+JSC_DEFINE_HOST_FUNCTION(temporalNowFuncPlainDateISO, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto timeZone = resolveNowTimeZone(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(timeZone);
+
+    auto [date, time] = TemporalZonedDateTime::getISODateTimeFor(timeZone.value(), ISO8601::ExactTime::now());
+    UNUSED_VARIABLE(time);
+    return JSValue::encode(TemporalPlainDate::create(vm, globalObject->plainDateStructure(), WTF::move(date)));
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal.now.plaintimeiso
+JSC_DEFINE_HOST_FUNCTION(temporalNowFuncPlainTimeISO, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto timeZone = resolveNowTimeZone(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(timeZone);
+
+    auto [date, time] = TemporalZonedDateTime::getISODateTimeFor(timeZone.value(), ISO8601::ExactTime::now());
+    UNUSED_VARIABLE(date);
+    return JSValue::encode(TemporalPlainTime::create(vm, globalObject->plainTimeStructure(), WTF::move(time)));
 }
 
 } // namespace JSC

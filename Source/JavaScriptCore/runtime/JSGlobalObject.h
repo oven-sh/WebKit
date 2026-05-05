@@ -305,6 +305,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_plainTimeStructure;
     LazyProperty<JSGlobalObject, Structure> m_plainYearMonthStructure;
     LazyProperty<JSGlobalObject, Structure> m_timeZoneStructure;
+    LazyProperty<JSGlobalObject, Structure> m_zonedDateTimeStructure;
 
     WriteBarrier<NullGetterFunction> m_nullGetterFunction;
     WriteBarrier<NullSetterFunction> m_nullSetterFunction;
@@ -1048,6 +1049,7 @@ public:
     Structure* plainTimeStructure() { return m_plainTimeStructure.get(this); }
     Structure* plainYearMonthStructure() { return m_plainYearMonthStructure.get(this); }
     Structure* timeZoneStructure() { return m_timeZoneStructure.get(this); }
+    Structure* zonedDateTimeStructure() { return m_zonedDateTimeStructure.get(this); }
 
 #if USE(BUN_JSC_ADDITIONS)
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }

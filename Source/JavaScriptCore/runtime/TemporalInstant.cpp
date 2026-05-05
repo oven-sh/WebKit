@@ -39,6 +39,7 @@
 #include "TemporalDuration.h"
 #include "TemporalObject.h"
 #include "TemporalTimeZone.h"
+#include "TemporalZonedDateTime.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -150,9 +151,8 @@ TemporalInstant* TemporalInstant::toInstant(JSGlobalObject* globalObject, JSValu
     if (itemValue.inherits<TemporalInstant>())
         return uncheckedDowncast<TemporalInstant>(itemValue);
 
-    // FIXME: when Temporal.ZonedDateTime lands
-    // if (itemValue.inherits<TemporalZonedDateTime>())
-    //    return TemporalInstant::create(vm, globalObject->instantStructure(), uncheckedDowncast<TemporalZonedDateTime>(itemValue)->epochTime());
+    if (itemValue.inherits<TemporalZonedDateTime>())
+        return TemporalInstant::create(vm, globalObject->instantStructure(), uncheckedDowncast<TemporalZonedDateTime>(itemValue)->exactTime());
 
     String string = itemValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
