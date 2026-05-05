@@ -206,3 +206,44 @@ shouldBe(Temporal.Now.plainDateTimeISO("UTC") instanceof Temporal.PlainDateTime,
     shouldThrow(() => new Temporal.ZonedDateTime(0n, "UTC").withTimeZone("2021-08-19T17:30"), RangeError);
     shouldThrow(() => new Temporal.ZonedDateTime(0n, "UTC").withTimeZone("2021-08-19T17:30-07:00:01"), RangeError);
 }
+
+// --- add / subtract / with / withPlainTime / withCalendar --------------
+
+{
+    let z = new Temporal.ZonedDateTime(0n, "UTC");
+    shouldBe(z.add({ hours: 1 }).toString(), "1970-01-01T01:00:00+00:00[UTC]");
+    shouldBe(z.add({ days: 1 }).toString(), "1970-01-02T00:00:00+00:00[UTC]");
+    shouldBe(z.add({ months: 1 }).toString(), "1970-02-01T00:00:00+00:00[UTC]");
+    shouldBe(z.subtract({ hours: 1 }).toString(), "1969-12-31T23:00:00+00:00[UTC]");
+}
+
+{
+    // Adding 1 calendar day across a DST spring-forward keeps the same
+    // wall-clock hour but elapses only 23 hours.
+    let a = Temporal.ZonedDateTime.from({ year: 2024, month: 3, day: 9, hour: 12, timeZone: "America/New_York" });
+    let b = a.add({ days: 1 });
+    shouldBe(b.hour, 12);
+    shouldBe(b.offset, "-04:00");
+    shouldBe(Number((b.epochNanoseconds - a.epochNanoseconds) / 3600000000000n), 23);
+}
+
+{
+    let z = new Temporal.ZonedDateTime(0n, "UTC");
+    shouldBe(z.withPlainTime("15:30").toString(), "1970-01-01T15:30:00+00:00[UTC]");
+    shouldBe(z.withPlainTime().hour, 0);
+    shouldBe(z.withCalendar("iso8601").calendarId, "iso8601");
+
+    let z2 = Temporal.ZonedDateTime.from({ year: 2024, month: 6, day: 15, hour: 10, timeZone: "UTC" });
+    let z3 = z2.with({ hour: 20, minute: 30 });
+    shouldBe(z3.hour, 20);
+    shouldBe(z3.minute, 30);
+    shouldBe(z3.day, 15);
+}
+
+// PlainDateTime.prototype.toZonedDateTime
+{
+    let z = Temporal.PlainDateTime.from("2024-03-15T12:00").toZonedDateTime("Europe/Paris");
+    shouldBe(z instanceof Temporal.ZonedDateTime, true);
+    shouldBe(z.offset, "+01:00");
+    shouldBe(z.hour, 12);
+}
