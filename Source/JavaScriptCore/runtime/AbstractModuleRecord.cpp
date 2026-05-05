@@ -1199,11 +1199,36 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
 #if USE(BUN_JSC_ADDITIONS)
                 // See note above the recursive call: skip the spec-mandated
                 // wait to avoid self-deadlock and match old-loader behaviour.
-                // Only skip when the cycle root's body has already been
-                // entered (pendingAsyncDependencies == 0); otherwise the SCC
-                // is still queued behind an async dep and its bindings are
-                // TDZ, so the wait is required.
-                if (!depWasAlreadyEvaluatingAsync || cyclic->pendingAsyncDependencies().value_or(1)) {
+                // Two conditions must hold for the skip to be safe:
+                //
+                // (a) pendingAsyncDependencies == 0 — the cycle root's body
+                //     has already been entered (ExecuteModule/ExecuteAsync
+                //     has run), so bindings declared before the first await
+                //     are initialised. Otherwise the SCC is still queued
+                //     behind an async dep and its bindings are TDZ.
+                //
+                // (b) No module already recorded as an async parent of the
+                //     cycle root is on the current DFS stack. If one is, we
+                //     are in the same Evaluate() pass that popped this SCC
+                //     to EvaluatingAsync — a sibling static import, not the
+                //     dynamic-import re-entry the skip was designed for.
+                //     Issue #30259: root.ts imports await.ts (TLA leaf),
+                //     then child.ts, which also imports await.ts. At 11.c.v
+                //     on the second visit, await.ts has
+                //     pendingAsyncDependencies == 0 (no deps of its own) but
+                //     its asyncParentModules already contains root.ts, and
+                //     root.ts is still on stack — so we MUST wait, otherwise
+                //     child.ts runs before await.ts's body has progressed
+                //     past its first `await`, and imports from await.ts are
+                //     in TDZ.
+                bool asyncParentInStack = false;
+                for (const WriteBarrier<AbstractModuleRecord>& parent : cyclic->asyncParentModules()) {
+                    if (stack.contains(parent.get())) {
+                        asyncParentInStack = true;
+                        break;
+                    }
+                }
+                if (!depWasAlreadyEvaluatingAsync || cyclic->pendingAsyncDependencies().value_or(1) || asyncParentInStack) {
 #endif
                 // 11.c.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
                 module->setPendingAsyncDependencies(module->pendingAsyncDependencies().value() + 1);
