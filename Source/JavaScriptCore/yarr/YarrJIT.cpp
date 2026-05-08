@@ -4416,8 +4416,25 @@ class YarrGenerator final : public YarrJITInfo {
                             // already correctly incremented, if more than one then decrement as appropriate.
                             unsigned delta = alternative->m_minimumSize - beginOp->m_alternative->m_minimumSize;
                             ASSERT(delta);
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
+                            // matchStart was already advanced by firstCharacterAdditionalReadSize
+                            // above; keep index in lockstep so the reentry invariant
+                            // (index == matchStart + firstAlternative.minimumSize) holds. Without
+                            // this, a zero-width first alternative (e.g. \B) can succeed with
+                            // output[1] < output[0] and the match length underflows.
+                            if (m_useFirstNonBMPCharacterOptimization)
+                                m_jit.add32(m_regs.firstCharacterAdditionalReadSize, m_regs.index);
+#endif
                             if (delta != 1)
                                 m_jit.sub32(MacroAssembler::Imm32(delta - 1), m_regs.index);
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
+                            // Adding firstCharacterAdditionalReadSize means index is no longer
+                            // guaranteed to be <= length when delta == 1, so check input here
+                            // just like the else branch below.
+                            if (m_useFirstNonBMPCharacterOptimization)
+                                checkInput().linkTo(beginOp->m_reentry, &m_jit);
+                            else
+#endif
                             m_jit.jump(beginOp->m_reentry);
                         } else {
                             // If the first alternative has minimum size 0xFFFFFFFFu, then there cannot
