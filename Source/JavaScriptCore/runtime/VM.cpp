@@ -596,6 +596,23 @@ VM::~VM()
     ASSERT(currentThreadIsHoldingAPILock());
     m_apiLock->willDestroyVM(this);
     smallStrings.setIsInitialized(false);
+
+    // Install our m_atomStringTable on the current thread for the duration of
+    // shutdown. The heap sweep below (and ~CommonIdentifiers later) destroys
+    // objects whose AtomStringImpls were interned into m_atomStringTable at
+    // construction time; their destructors call AtomStringImpl::remove(), which
+    // looks up the table via Thread::currentSingleton().atomStringTable().
+    //
+    // For VMType::Default, m_atomStringTable already IS the thread's table
+    // (see the m_atomStringTable initializer), so this is a harmless no-op.
+    // For VMType::APIContextGroup (JSGlobalContextCreate/JSGlobalContextCreateInGroup),
+    // m_atomStringTable is a private table owned by this VM; without this swap,
+    // AtomStringImpl::remove() hits the wrong table, fails to find the entry,
+    // and trips the RELEASE_ASSERT:
+    //   "The string being removed is an atom in the string table of an other thread!"
+    // See https://github.com/oven-sh/bun/issues/30434.
+    AtomStringTable* previousAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
+
     heap.lastChanceToFinalize();
 
     while (!m_microtaskQueues.isEmpty())
@@ -606,6 +623,9 @@ VM::~VM()
     delete emptyList;
 
     delete propertyNames;
+
+    Thread::currentSingleton().setCurrentAtomStringTable(previousAtomStringTable);
+
     if (vmType != VMType::Default)
         delete m_atomStringTable;
 

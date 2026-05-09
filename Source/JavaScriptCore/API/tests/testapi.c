@@ -64,6 +64,7 @@
 #include "ExecutionTimeLimitTest.h"
 #include "FunctionOverridesTest.h"
 #include "FunctionToStringTests.h"
+#include "GlobalContextCreateReleaseTest.h"
 #include "GlobalContextWithFinalizerTest.h"
 #include "JSONParseTest.h"
 #include "JSObjectGetProxyTargetTest.h"
@@ -2336,6 +2337,7 @@ int main(int argc, char* argv[])
     failed |= testTypedArrayCAPI();
     failed |= testFunctionOverrides();
     failed |= testFunctionToString();
+    failed |= testGlobalContextCreateRelease();
     failed |= testGlobalContextWithFinalizer();
     failed |= testJSONParse();
     failed |= testJSObjectGetProxyTarget();

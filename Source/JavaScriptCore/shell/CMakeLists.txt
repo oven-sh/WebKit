@@ -30,6 +30,7 @@ if (DEVELOPER_MODE)
         ../API/tests/ExecutionTimeLimitTest.cpp
         ../API/tests/FunctionOverridesTest.cpp
         ../API/tests/FunctionToStringTests.cpp
+        ../API/tests/GlobalContextCreateReleaseTest.cpp
         ../API/tests/GlobalContextWithFinalizerTest.cpp
         ../API/tests/JSONParseTest.cpp
         ../API/tests/JSObjectGetProxyTargetTest.cpp
