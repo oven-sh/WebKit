@@ -861,6 +861,15 @@ static void moduleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm, st
     auto* entry = uncheckedDowncast<ModuleRegistryEntry>(arguments[2]);
     auto* modulePromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
+#if USE(BUN_JSC_ADDITIONS)
+    // hostLoadImportedModule's synchronous re-entry path may have already
+    // called fetchComplete() and fulfilled modulePromise inline while a
+    // synchronous loadModule was active, leaving this queued copy redundant.
+    // The inline path creates its own module record; the one we'd provide
+    // here is a duplicate parse of the same source that nothing references.
+    if (modulePromise->status() != JSPromise::Status::Pending)
+        return;
+#endif
     if (status == JSPromise::Status::Fulfilled) {
         auto* moduleRecord = downcast<AbstractModuleRecord>(arguments[1]);
         entry->fetchComplete(globalObject, moduleRecord);
