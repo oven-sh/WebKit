@@ -445,14 +445,7 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 7. Set module.[[TopLevelCapability]] to capability.
     module->setTopLevelCapability(vm, capability);
     // 8. Let result be Completion(InnerModuleEvaluation(module, stack, 0)).
-#if USE(BUN_JSC_ADDITIONS)
-    // Snapshot the async-order counter so the DFS can tell deps that were
-    // already EvaluatingAsync before this Evaluate() (re-entrant deadlock
-    // case, see note at 11.c.v) from siblings that transition during it.
-    module->innerModuleEvaluation(globalObject, stack, 0, vm.moduleAsyncEvaluationCount());
-#else
     module->innerModuleEvaluation(globalObject, stack, 0);
-#endif
     // 9. If result is an abrupt completion, then
     if (Exception* exception = scope.exception()) {
         JSModuleLoader::attachErrorInfo(globalObject, exception, module, moduleKey(), moduleType(), JSModuleLoader::ModuleFailure::Kind::Evaluation);

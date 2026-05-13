@@ -1225,9 +1225,6 @@ public:
     void notifyDebuggerHookInjected() { m_isDebuggerHookInjected = true; }
     bool isDebuggerHookInjected() const { return m_isDebuggerHookInjected; }
     int64_t incrementModuleAsyncEvaluationCount() { return m_moduleAsyncEvaluationCount++; }
-#if USE(BUN_JSC_ADDITIONS)
-    int64_t moduleAsyncEvaluationCount() const { return m_moduleAsyncEvaluationCount; }
-#endif
 
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
     JS_EXPORT_PRIVATE Wasm::DebugState* NODELETE debugState();

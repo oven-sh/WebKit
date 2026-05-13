@@ -227,11 +227,7 @@ public:
     WriteBarrier<Unknown> internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
 
     void evaluateModuleSync(JSGlobalObject*);
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t asyncOrderWatermark);
-#else
     unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index);
-#endif
     unsigned innerModuleLinking(JSGlobalObject*, Vector<CyclicModuleRecord*, 8>& stack, unsigned index, RefPtr<ScriptFetcher>);
 
     DECLARE_VISIT_CHILDREN;

@@ -1075,11 +1075,7 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
         throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t asyncOrderWatermark)
-#else
 unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index)
-#endif
 {
     // InnerModuleEvaluation(module, stack, index)
     // https://tc39.es/ecma262/#sec-innermoduleevaluation
@@ -1132,39 +1128,8 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
         checkSafeToRecurse(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, invalid);
-#if USE(BUN_JSC_ADDITIONS)
-        // Record whether this dep was already mid-TLA before our recursive
-        // visit. The spec (11.c.v) makes us wait on it, which is a guaranteed
-        // deadlock when we're running inside that very dep's TLA continuation
-        // (e.g. Nitro: index.mjs top-level `await fetch()` -> handler ->
-        // `import("./chunk")` -> chunk statically imports index.mjs). The
-        // pre-rewrite JS loader did not track async parents across dynamic
-        // imports, so it evaluated the chunk immediately with the parent's
-        // already-initialised bindings. Preserve that for back-compat.
-        //
-        // "Already EvaluatingAsync" alone is too broad: it also matches a
-        // sibling static import in the *same* Evaluate() pass that popped an
-        // SCC to EvaluatingAsync earlier in the walk. In that case the dep's
-        // body has not run yet (its bindings are TDZ) and skipping the wait
-        // executes the importer too early. We narrow at 11.c.v below: only
-        // skip when the cycle root's pendingAsyncDependencies is 0, i.e. its
-        // ExecuteModule/ExecuteAsyncModule has already been called and the
-        // bindings before its first await are initialised. For an SCC still
-        // queued behind an async dep the root's count is > 0. That alone is
-        // still insufficient: a TLA dep with no async deps of its own has
-        // count 0 yet may have only run to its first await within this same
-        // DFS, leaving post-await bindings TDZ (#30259). We additionally
-        // require asyncEvaluationOrder() < asyncOrderWatermark, i.e. the
-        // dep entered EvaluatingAsync in a *prior* Evaluate() call.
-        bool depWasAlreadyEvaluatingAsync = false;
-        if (auto* depCyclic = dynamicDowncast<CyclicModuleRecord>(requiredModule))
-            depWasAlreadyEvaluatingAsync = depCyclic->status() == Status::EvaluatingAsync;
         // 11.b. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
-        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, asyncOrderWatermark);
-#else
-        // 11.b. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
         unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index);
-#endif
         RETURN_IF_EXCEPTION(scope, invalid);
         index = result;
         // 11.c. If requiredModule is a Cyclic Module Record, then
@@ -1208,26 +1173,10 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             }
             // 11.c.v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
             if (cyclic->asyncEvaluationOrder().hasOrder()) {
-#if USE(BUN_JSC_ADDITIONS)
-                // See note above the recursive call: skip the spec-mandated
-                // wait to avoid self-deadlock and match old-loader behaviour.
-                // Only skip when the cycle root entered EvaluatingAsync in a
-                // *prior* Evaluate() (order < asyncOrderWatermark) — a dep
-                // that became EvaluatingAsync earlier in *this* DFS is a
-                // sibling whose post-await bindings are still TDZ (#30259) —
-                // and its body has already been entered
-                // (pendingAsyncDependencies == 0).
-                if (!depWasAlreadyEvaluatingAsync
-                    || cyclic->asyncEvaluationOrder().order() >= asyncOrderWatermark
-                    || cyclic->pendingAsyncDependencies().value_or(1)) {
-#endif
                 // 11.c.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
                 module->setPendingAsyncDependencies(module->pendingAsyncDependencies().value() + 1);
                 // 11.c.v.2. Append module to requiredModule.[[AsyncParentModules]].
                 cyclic->appendAsyncParentModule(vm, module);
-#if USE(BUN_JSC_ADDITIONS)
-                }
-#endif
             }
 #if USE(BUN_JSC_ADDITIONS)
             } // depInOuterSCC: skip 11.c.iii/iv/v entirely.
