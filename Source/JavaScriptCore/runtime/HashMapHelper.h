@@ -62,11 +62,18 @@ ALWAYS_INLINE JSValue normalizeMapKey(JSValue key)
     if (std::isnan(d))
         return jsNaN();
 
-    int i = static_cast<int>(d);
-    if (i == d) {
-        // When a key is -0, we convert it to positive zero.
-        // When a key is the double representation for an integer, we convert it to an integer.
-        return jsNumber(i);
+    // Range-check before static_cast<int>(double). Casting an out-of-range
+    // double to int is undefined behavior in C++ (the result is an unspecified
+    // value, and in LLVM IR it is poison), which LTO will exploit: the
+    // subsequent `i == d` compare can be folded to true, returning
+    // jsNumber(INT32_MIN) instead of the original double key.
+    if (d >= static_cast<double>(INT32_MIN) && d <= static_cast<double>(INT32_MAX)) {
+        int i = static_cast<int>(d);
+        if (i == d) {
+            // When a key is -0, we convert it to positive zero.
+            // When a key is the double representation for an integer, we convert it to an integer.
+            return jsNumber(i);
+        }
     }
     // This means key is definitely not negative zero, and it's definitely not a double representation of an integer.
     return key;
