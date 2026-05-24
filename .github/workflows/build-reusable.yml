@@ -59,21 +59,21 @@ jobs:
             ENABLE_MALLOC_HEAP_BREAKDOWN: "OFF"
             ENABLE_SANITIZERS: "address,undefined"
           - runner: macos-14-large
-            cpp_flags: ""
+            cpp_flags: "-mllvm -enable-merge-functions -mllvm -enable-machine-outliner=always"
             cpu: haswell
             label: bun-webkit-macos-amd64
             brew_prefix: /usr/local/opt
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: Release
           - runner: macos-14-xlarge
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=0"
+            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=0 -mllvm -enable-merge-functions -mllvm -enable-machine-outliner=always"
             cpu: native
             label: bun-webkit-macos-arm64
             brew_prefix: /opt/homebrew/opt
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: Release
           - runner: macos-14-xlarge
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
+            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1 -mllvm -enable-merge-functions -mllvm -enable-machine-outliner=always"
             cpu: native
             label: bun-webkit-macos-arm64-asan
             brew_prefix: /opt/homebrew/opt

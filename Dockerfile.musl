@@ -3,7 +3,7 @@ ARG WEBKIT_RELEASE_TYPE=Release
 ARG CPU=native
 ARG LTO_FLAG="-flto=full -fwhole-program-vtables -fforce-emit-vtables "
 ARG LLVM_VERSION="21"
-ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
+ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -gline-tables-only -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 
 FROM alpine:3.23 as base
 
