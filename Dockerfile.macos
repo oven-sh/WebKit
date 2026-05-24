@@ -189,21 +189,26 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -G Ninja \
     /webkit && \
     cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc && \
-    cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
-    cp $WEBKIT_OUT_DIR/cmakeconfig.h /output/include/cmakeconfig.h && \
-    cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf /output/include && \
-    cp -r $WEBKIT_OUT_DIR/ICU/Headers/* /output/include && \
+    # -L everywhere: WebKit's cmake stages the WTF/bmalloc framework headers
+    # as *symlinks* into the source tree when the host filesystem supports
+    # them. Copied verbatim they'd dangle outside this container (pointing at
+    # /webkit/...), so dereference every copy into /output.
+    cp -rL $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
+    cp -L $WEBKIT_OUT_DIR/cmakeconfig.h /output/include/cmakeconfig.h && \
+    cp -rL $WEBKIT_OUT_DIR/WTF/Headers/wtf /output/include && \
+    cp -rL $WEBKIT_OUT_DIR/ICU/Headers/* /output/include && \
     mkdir -p /output/include/wtf/include && \
-    cp -r /webkit/Source/WTF/icu/unicode /output/include/wtf/include && \
-    cp -r $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc /output/include && \
-    cp -f $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/* /output/include/JavaScriptCore/ && \
-    cp -f $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/* /output/include/JavaScriptCore/ && \
-    cp -f $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.h /output/include/JavaScriptCore/ && \
-    cp -f $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*/*.h /output/include/JavaScriptCore/ && \
+    cp -rL /webkit/Source/WTF/icu/unicode /output/include/wtf/include && \
+    cp -rL $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc /output/include && \
+    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/* /output/include/JavaScriptCore/ && \
+    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/* /output/include/JavaScriptCore/ && \
+    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.h /output/include/JavaScriptCore/ && \
+    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*/*.h /output/include/JavaScriptCore/ && \
     mkdir -p /output/Source/JavaScriptCore && \
-    cp -r /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
-    cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
-    cp -r $WEBKIT_OUT_DIR/bin /output/bin
+    cp -rL /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
+    cp -L /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
+    cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
+    test -z "$(find /output/include -type l -print -quit)" || { echo "ERROR: dangling symlinks in /output/include"; find /output/include -type l | head; exit 1; }
 
 FROM scratch AS artifact
 COPY --from=build_webkit /output /
