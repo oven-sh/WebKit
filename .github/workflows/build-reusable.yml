@@ -28,104 +28,6 @@ on:
         value: ${{ jobs.release.outputs.tag }}
 
 jobs:
-  macos:
-    name: macOS
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    strategy:
-      matrix:
-        include:
-          - runner: macos-14-large
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-            cpu: haswell
-            label: bun-webkit-macos-amd64-debug
-            brew_prefix: /usr/local/opt
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: Debug
-          - runner: macos-14-xlarge
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-            cpu: native
-            label: bun-webkit-macos-arm64-debug
-            brew_prefix: /opt/homebrew/opt
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: Debug
-          - runner: macos-14-xlarge
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-            cpu: native
-            label: bun-webkit-macos-arm64-debug-asan
-            brew_prefix: /opt/homebrew/opt
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: Debug
-            ENABLE_MALLOC_HEAP_BREAKDOWN: "OFF"
-            ENABLE_SANITIZERS: "address,undefined"
-          - runner: macos-14-large
-            cpp_flags: ""
-            cpu: haswell
-            label: bun-webkit-macos-amd64
-            brew_prefix: /usr/local/opt
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: Release
-          - runner: macos-14-xlarge
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=0"
-            cpu: native
-            label: bun-webkit-macos-arm64
-            brew_prefix: /opt/homebrew/opt
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: Release
-          - runner: macos-14-xlarge
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-            cpu: native
-            label: bun-webkit-macos-arm64-asan
-            brew_prefix: /opt/homebrew/opt
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: Release
-            ENABLE_SANITIZERS: "address,undefined"
-    steps:
-      - name: "Set LLVM version"
-        run: echo "LLVM_VERSION=${{ inputs.llvm_version }}" >> $GITHUB_ENV
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.build_ref }}
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !LayoutTests/
-            !JSTests/
-      - name: PATH
-        env:
-          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
-          HOMEBREW_NO_ANALYTICS_THIS_RUN: 1
-        run: |
-          echo "${{matrix.brew_prefix}}/llvm@21/bin" >> $GITHUB_PATH
-          brew install llvm@21 python icu4c ninja -f --overwrite
-          brew link llvm@21 -f --overwrite
-      - name: Run
-        env:
-          ICU_INCLUDE_DIRS: ${{matrix.brew_prefix}}/icu4c/include
-          ICU_ROOT: ${{matrix.brew_prefix}}/icu4c
-          LDFLAGS: "${{env.LDFLAGS}} "
-          CC: "${{matrix.brew_prefix}}/llvm@21/bin/clang"
-          CXX: "${{matrix.brew_prefix}}/llvm@21/bin/clang++"
-          RANLIB: "${{matrix.brew_prefix}}/llvm@21/bin/llvm-ranlib"
-          AR: "${{matrix.brew_prefix}}/llvm@21/bin/llvm-ar"
-          CMAKE_C_COMPILER: "${{matrix.brew_prefix}}/llvm@21/bin/clang"
-          CMAKE_CXX_COMPILER: "${{matrix.brew_prefix}}/llvm@21/bin/clang++"
-          CMAKE_C_FLAGS: " -fno-exceptions ${{matrix.cpp_flags}} -fvisibility=hidden -fvisibility-inlines-hidden -O3 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
-          CMAKE_CXX_FLAGS: " -fno-exceptions ${{matrix.cpp_flags}} -fvisibility=hidden -fvisibility-inlines-hidden -O3 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig -fno-c++-static-destructors "
-          CMAKE_OSX_DEPLOYMENT_TARGET: "13.0"
-          CMAKE_BUILD_TYPE: ${{matrix.CMAKE_BUILD_TYPE}}
-          PACKAGE_JSON_ARCH: ${{matrix.package_json_arch}}
-          PACKAGE_JSON_LABEL: ${{matrix.label}}
-          ENABLE_MALLOC_HEAP_BREAKDOWN: ${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}
-          ENABLE_SANITIZERS: ${{matrix.ENABLE_SANITIZERS}}
-        run: GITHUB_REPOSITORY=$GITHUB_REPOSITORY bash mac-release.bash
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{matrix.label}}
-          path: ${{runner.temp}}/bun-webkit.tar.gz
-
   linux:
     name: Linux
     runs-on: ${{matrix.os}}
@@ -422,6 +324,96 @@ jobs:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
 
+  macos-cross:
+    name: macOS (cross-compiled from Linux)
+    # Cross-compiled from a Linux host via clang --target + a pinned macOS SDK,
+    # linked with ld64.lld (see Dockerfile.macos). Replaces the native macOS
+    # runner job entirely and adds the -lto variants it never built. The ASAN
+    # variants link against the darwin sanitizer runtime mirrored at the
+    # compiler-rt-darwin-* release tag (a Linux LLVM install doesn't ship it).
+    # mac-release.bash remains for building on a real Mac locally.
+    runs-on: linux-x64-gh
+    strategy:
+      matrix:
+        include:
+          - label: bun-webkit-macos-arm64
+            macos_arch: arm64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: ""
+          - label: bun-webkit-macos-arm64-lto
+            macos_arch: arm64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - label: bun-webkit-macos-arm64-debug
+            macos_arch: arm64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Debug"
+            lto_flag: ""
+            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
+          - label: bun-webkit-macos-amd64
+            macos_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: ""
+          - label: bun-webkit-macos-amd64-lto
+            macos_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - label: bun-webkit-macos-amd64-debug
+            macos_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Debug"
+            lto_flag: ""
+            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
+          # ASAN: arm64 only — the mirrored darwin sanitizer runtime
+          # (compiler-rt-darwin release tag) is extracted from the official
+          # LLVM macOS release, which is published for arm64 only.
+          - label: bun-webkit-macos-arm64-asan
+            macos_arch: arm64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: ""
+            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
+            ENABLE_SANITIZERS: "address,undefined"
+          - label: bun-webkit-macos-arm64-debug-asan
+            macos_arch: arm64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Debug"
+            lto_flag: ""
+            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
+            ENABLE_SANITIZERS: "address,undefined"
+            ENABLE_MALLOC_HEAP_BREAKDOWN: "OFF"
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.build_ref }}
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !LayoutTests/
+            !JSTests/
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
+        with:
+          install: true
+      - name: Run
+        run: |
+          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          MACOS_ARCH="${{matrix.macos_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" CPP_FLAGS="${{matrix.cpp_flags}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" ENABLE_MALLOC_HEAP_BREAKDOWN="${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}" temp=${{runner.temp}} bash macos-cross-release.sh
+          cd ${{runner.temp}}
+          echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
+          echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["darwin"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
+          tar -czf bun-webkit.tar.gz bun-webkit
+          rm -rf bun-webkit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{matrix.label}}
+          path: ${{runner.temp}}/bun-webkit.tar.gz
+
   freebsd:
     name: FreeBSD
     # Cross-compiled from a Linux host via clang --target + base.txz sysroot,
@@ -536,7 +528,7 @@ jobs:
     timeout-minutes: 90
     needs:
       - linux
-      - macos
+      - macos-cross
       - windows
       - linux-musl
       - linux-android
@@ -610,6 +602,14 @@ jobs:
         with:
           name: bun-webkit-macos-amd64
           path: ${{runner.temp}}/bun-webkit-macos-amd64
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-macos-arm64-lto
+          path: ${{runner.temp}}/bun-webkit-macos-arm64-lto
+      - uses: actions/download-artifact@v4
+        with:
+          name: bun-webkit-macos-amd64-lto
+          path: ${{runner.temp}}/bun-webkit-macos-amd64-lto
       - uses: actions/download-artifact@v4
         with:
           name: bun-webkit-linux-amd64-lto
@@ -721,6 +721,8 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-macos-arm64/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-arm64-asan/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64.tar.gz
+          mv ${{runner.temp}}/bun-webkit-macos-arm64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-lto.tar.gz
+          mv ${{runner.temp}}/bun-webkit-macos-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-debug-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-debug-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-debug.tar.gz
@@ -824,6 +826,8 @@ jobs:
             ./out/bun-webkit-macos-arm64-debug-asan.tar.gz
             ./out/bun-webkit-macos-amd64.tar.gz
             ./out/bun-webkit-macos-amd64-debug.tar.gz
+            ./out/bun-webkit-macos-arm64-lto.tar.gz
+            ./out/bun-webkit-macos-amd64-lto.tar.gz
 
       - uses: softprops/action-gh-release@v1
         with:
