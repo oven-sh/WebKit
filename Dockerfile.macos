@@ -14,9 +14,18 @@
 #     (USE_APPLE_ICU), same as the native build. No ICU is built or bundled.
 
 ARG MACOS_ARCH="arm64"
-ARG MACOS_SDK_VERSION="15.5"
-ARG MACOS_SDK_SHA256="5096f730e9935adbd99d4bb082c3c6c01c077d966405ee4ae45705521476332e"
+# The SDK version + the Command Line Tools release that contains it, as served
+# by Apple's software-update catalog (`bun macos-cross/xmac.mjs list`). The
+# deployment target — not the SDK — controls the oldest macOS the artifacts
+# run on, so this tracks the newest SDK Apple serves. Apple's catalog is a
+# rolling window: when this release stops being served, run `list` and bump
+# both pins.
+ARG MACOS_SDK_VERSION="26.5"
+ARG MACOS_SDK_CLT_RELEASE="26.5"
 ARG MACOS_DEPLOYMENT_TARGET="13.0"
+# Bun runs the vendored xmac tool that fetches the SDK from Apple. Same R2
+# mirror .github/actions/setup-bun uses.
+ARG BUN_DOWNLOAD_URL="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG MARCH_FLAG="-mcpu=apple-m1"
@@ -45,8 +54,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG LLVM_VERSION
 ARG MACOS_ARCH
 ARG MACOS_SDK_VERSION
-ARG MACOS_SDK_SHA256
+ARG MACOS_SDK_CLT_RELEASE
 ARG MACOS_DEPLOYMENT_TARGET
+ARG BUN_DOWNLOAD_URL
 ARG COMPILER_RT_DARWIN_TAG
 ARG COMPILER_RT_DARWIN_SHA256
 
@@ -69,12 +79,28 @@ ENV CXX=clang++-${LLVM_VERSION}
 ENV AR=llvm-ar-${LLVM_VERSION}
 ENV RANLIB=llvm-ranlib-${LLVM_VERSION}
 
+# Bun — only used to run the vendored xmac tool below.
+RUN case "$(uname -m)" in arm64|aarch64) arch=aarch64;; *) arch=x64;; esac && \
+    wget -q "${BUN_DOWNLOAD_URL}/bun-linux-${arch}.zip" -O /tmp/bun.zip && \
+    unzip -q /tmp/bun.zip -d /tmp && \
+    install -m 0755 /tmp/bun-linux-${arch}/bun /usr/local/bin/bun && \
+    rm -rf /tmp/bun.zip /tmp/bun-linux-${arch} && \
+    bun --version
+
 # macOS SDK — headers, libc++, framework headers, and the .tbd linker stubs
-# for libSystem/libicucore/etc. Same pinned tarball Bun's own macOS
-# cross-compile downloads (scripts/build/macos-sdk.ts).
-ADD --checksum=sha256:${MACOS_SDK_SHA256} \
-    https://github.com/alexey-lysiuk/macos-sdk/releases/download/${MACOS_SDK_VERSION}/MacOSX${MACOS_SDK_VERSION}.tar.xz /macos-sdk.tar.xz
-RUN mkdir -p /opt && tar -xJf /macos-sdk.tar.xz -C /opt && rm /macos-sdk.tar.xz && \
+# for libSystem/libicucore/etc. Downloaded directly from Apple's public
+# software-update CDN (the Command Line Tools SDK sub-package) by xmac — the
+# same tool Bun's own macOS cross-compile uses (scripts/build/macos-sdk.ts) and
+# the same model xwin uses for the Windows SDK: every build downloads from
+# Apple itself, nothing is redistributed. Integrity is verified against the
+# SHA-1 checksums in the package's signed xar table of contents.
+COPY macos-cross/xmac.mjs /xmac.mjs
+RUN bun /xmac.mjs splat --accept-license --sdk-only \
+      --release "${MACOS_SDK_CLT_RELEASE}" --sdk "${MACOS_SDK_VERSION}" \
+      --output /tmp/xmac-out --cache-dir /tmp/xmac-cache && \
+    mkdir -p /opt && \
+    mv /tmp/xmac-out/SDKs/MacOSX${MACOS_SDK_VERSION}.sdk /opt/MacOSX${MACOS_SDK_VERSION}.sdk && \
+    rm -rf /tmp/xmac-out /tmp/xmac-cache && \
     test -f /opt/MacOSX${MACOS_SDK_VERSION}.sdk/usr/include/sys/syscall.h
 ENV MACOS_SDK=/opt/MacOSX${MACOS_SDK_VERSION}.sdk
 
