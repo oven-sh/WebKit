@@ -41,6 +41,14 @@ inline void tryCachePutToScopeGlobal(
     JSGlobalObject* globalObject, CodeBlock* codeBlock, OpPutToScope& bytecode, JSObject* scope,
     PutPropertySlot& slot, const Identifier& ident)
 {
+    // THREADS (SPEC-jit §5.5, review round 1): flag-on, scope metadata is
+    // frozen after CodeBlock linking; rewriting {getPutInfo, structureID,
+    // operand} as separate plain stores races the LLInt/Baseline fast-path
+    // readers. The owned llint/jit callers are already gated; this gate
+    // covers lol/ and future callers.
+    if (Options::useJSThreads()) [[unlikely]]
+        return;
+
     // Covers implicit globals. Since they don't exist until they first execute, we didn't know how to cache them at compile time.
     auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_getPutInfo.resolveType();
@@ -108,6 +116,14 @@ inline void tryCachePutToScopeGlobal(
 inline void tryCacheGetFromScopeGlobal(
     JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, OpGetFromScope& bytecode, JSObject* scope, PropertySlot& slot, const Identifier& ident)
 {
+    // THREADS (SPEC-jit §5.5, review round 1): flag-on, scope metadata is
+    // frozen after CodeBlock linking; rewriting {getPutInfo, structureID,
+    // operand} as separate plain stores races the LLInt/Baseline fast-path
+    // readers. The owned llint/jit callers are already gated; this gate
+    // covers lol/ and future callers.
+    if (Options::useJSThreads()) [[unlikely]]
+        return;
+
     auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_getPutInfo.resolveType();
 
@@ -235,7 +251,7 @@ inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue
             }
         }
         if (enumeratorMetadata)
-            *enumeratorMetadata |= static_cast<uint8_t>(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch);
+            WTF::atomicStore(enumeratorMetadata, static_cast<uint8_t>(WTF::atomicLoad(enumeratorMetadata, std::memory_order_relaxed) | static_cast<uint8_t>(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch)), std::memory_order_relaxed); // THREADS §5.7.7: relaxed profiling byte.
         [[fallthrough]];
     }
 

@@ -250,8 +250,14 @@ JSGlobalObject* CallFrame::globalObjectOfClosestCodeBlock(VM& vm, CallFrame* cal
     });
     if (globalObject)
         return globalObject;
-    if (vm.entryScope)
-        return vm.entryScope->globalObject();
+    // UNGIL IU obligation 1 (raw-consumer re-point; AB-22): GIL-off the
+    // per-entry record lives ONLY on the current lite — the raw VM member is
+    // never written — so this must go through the mode-split accessor. This
+    // walk runs on the executing thread, so the current lite's record is the
+    // right one. GIL-on: currentThreadEntryScope() IS vm.entryScope,
+    // byte-identical.
+    if (VMEntryScope* entryScope = vm.currentThreadEntryScope())
+        return entryScope->globalObject();
     return nullptr;
 }
 
@@ -366,7 +372,7 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
     ASSERT(!isEmptyTopLevelCallFrameForDebugger());
     ASSERT(codeBlockToKeepAliveUntilFrameIsUnwound->inherits<CodeBlock>());
 
-    EntryFrame* entryFrame = vm.topEntryFrame;
+    EntryFrame* entryFrame = vm.group3Primitives().topEntryFrame; // UNGIL §A.1.3 mode split (matches the currentThreadEntryScope() re-point below).
     CallFrame* throwOriginFrame = this;
     do {
         throwOriginFrame = throwOriginFrame->callerFrame(entryFrame);
@@ -375,8 +381,16 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
     JSGlobalObject* globalObject = nullptr;
     if (throwOriginFrame)
         globalObject = throwOriginFrame->jsCallee()->realm();
-    else
-        globalObject = vm.entryScope->globalObject();
+    else {
+        // UNGIL IU obligation 1 (raw-consumer re-point; AB-22): this is an
+        // exception-unwind path running on the throwing thread, which is
+        // entered (its lite holds the entry record GIL-off; the raw VM
+        // member is never written GIL-off and would null-deref here).
+        // GIL-on: currentThreadEntryScope() IS vm.entryScope, byte-identical.
+        VMEntryScope* entryScope = vm.currentThreadEntryScope();
+        RELEASE_ASSERT(entryScope);
+        globalObject = entryScope->globalObject();
+    }
     JSObject* zombieFrameCallee = globalObject->zombieFrameCallee();
 
     setCodeBlock(codeBlockToKeepAliveUntilFrameIsUnwound);

@@ -44,7 +44,7 @@ PropertyInlineCacheClearingWatchpoint::~PropertyInlineCacheClearingWatchpoint()
     ASSERT(!m_owner->wasDestructed());
 }
 
-void PropertyInlineCacheClearingWatchpoint::fireInternal(VM&, const FireDetail&)
+void PropertyInlineCacheClearingWatchpoint::fireInternal(VM& vm, const FireDetail&)
 {
     ASSERT(!m_owner->wasDestructed());
     if (m_owner->isPendingDestruction())
@@ -53,8 +53,10 @@ void PropertyInlineCacheClearingWatchpoint::fireInternal(VM&, const FireDetail&)
     // This will implicitly cause my own demise: stub reset removes all watchpoints.
     // That works, because deleting a watchpoint removes it from the set's list, and
     // the set's list traversal for firing is robust against the set changing.
+    // AB18-E rule: forward the firing VM& instead of letting reset() re-derive
+    // it from the owner cell (codeBlock->vm() reads the MarkedBlock header).
     ConcurrentJSLocker locker(m_owner->m_lock);
-    m_propertyCache.reset(locker, m_owner.get());
+    m_propertyCache.reset(locker, vm, m_owner.get());
 }
 
 void StructureTransitionPropertyInlineCacheClearingWatchpoint::fireInternal(VM& vm, const FireDetail&)

@@ -170,9 +170,19 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #if CPU(ADDRESS64)
             // rdar://107531050: Speculative crash mitigation
             if (importedModule == std::bit_cast<AbstractModuleRecord*>(encodedJSUndefined())) [[unlikely]] {
-                RELEASE_ASSERT(vm.exceptionForInspection(), vm.traps().maybeNeedHandling(), vm.exceptionForInspection(), importedModule);
-                RELEASE_ASSERT(vm.traps().maybeNeedHandling(), vm.traps().maybeNeedHandling(), vm.exceptionForInspection(), importedModule);
-                if (!vm.exceptionForInspection() || !vm.traps().maybeNeedHandling()) {
+                // UNGIL obligation-10 audit follow-up (review round): the
+                // NeedExceptionHandling bit moved to the throwing thread's
+                // per-lite trap word GIL-off (VM::setException ->
+                // trapsForCurrentThread()), so this reader must consult the
+                // SAME storage domain exceptionForInspection() resolves
+                // (group3Primitives()) — the raw vm.traps() word no longer
+                // receives the bit GIL-off and the RELEASE_ASSERT below
+                // would fire spuriously on a spawned thread with a pending
+                // exception. GIL-on / flag-off: trapsForCurrentThread()
+                // aliases vm.traps(), byte-identical.
+                RELEASE_ASSERT(vm.exceptionForInspection(), vm.trapsForCurrentThread().maybeNeedHandling(), vm.exceptionForInspection(), importedModule);
+                RELEASE_ASSERT(vm.trapsForCurrentThread().maybeNeedHandling(), vm.trapsForCurrentThread().maybeNeedHandling(), vm.exceptionForInspection(), importedModule);
+                if (!vm.exceptionForInspection() || !vm.trapsForCurrentThread().maybeNeedHandling()) {
                     throwSyntaxError(globalObject, scope, makeString("Importing module '"_s, String(in.moduleRequest.impl()), "' is not found."_s));
                     return;
                 }

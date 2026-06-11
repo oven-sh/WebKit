@@ -35,7 +35,7 @@ namespace JSC {
 
 void MicrotaskCall::initialize(VM& vm, JSFunction* function)
 {
-    m_addressForCall = nullptr;
+    WTF::atomicStore(&m_addressForCall, static_cast<void*>(nullptr), std::memory_order_relaxed); // THREADS: see unlinkOrUpgradeImpl.
     m_functionExecutable = function->jsExecutable();
     relink(vm, function);
 }
@@ -45,29 +45,43 @@ void MicrotaskCall::relink(VM& vm, JSFunction* function)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Unlink from any prior CodeBlock before we reset state.
-    if (isOnList())
-        remove();
+    // AB17c F4 (precondition 11), amended TSAN r11 (reports 30/31): call the
+    // locked remove UNCONDITIONALLY — the previous unlocked isOnList()
+    // pre-check read the node words while a sibling Thread's locked drain
+    // (removeOnDestruction / linkIncomingCall) rewrote them; per the
+    // CallLinkInfoBase::removeOnDestruction contract, only the under-lock
+    // isOnList() re-check is authoritative. Not-on-list is a cheap no-op
+    // under the lock (and stays the unlocked check GIL-on).
+    removeOnDestruction();
 
     auto* newCodeBlock = vm.interpreter.prepareForMicrotaskCall(*this, function);
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
-    m_codeBlock = newCodeBlock;
-    m_numParameters = newCodeBlock->numParameters();
+    // codeBlock/numParameters already published by prepareForMicrotaskCall
+    // before the entry address; restore them here too for the non-entry users.
+    WTF::atomicStore(&m_codeBlock, newCodeBlock, std::memory_order_relaxed);
+    WTF::atomicStore(&m_numParameters, newCodeBlock->numParameters(), std::memory_order_relaxed);
 }
 
 void MicrotaskCall::unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)
 {
+    // AB17c F4 (precondition 11): locked remove gilOff (shared sentinel list).
     if (isOnList())
-        remove();
+        removeOnDestruction();
 
-    if (newCodeBlock && m_codeBlock == oldCodeBlock) {
+    // THREADS: another Thread's mutator can be reading these words lock-free in
+    // tryCallWithArguments while the install drain rewrites them. Write the
+    // codeBlock/numParameters FIRST, then release-publish the entry address —
+    // a reader that acquires the new entry therefore sees a codeBlock at least
+    // as new (a stale-null entry just makes the reader relink).
+    if (newCodeBlock && WTF::atomicLoad(&m_codeBlock, std::memory_order_relaxed) == oldCodeBlock) {
         newCodeBlock->m_shouldAlwaysBeInlined = false;
-        m_addressForCall = newCodeBlock->jitCode()->addressForCall();
-        m_codeBlock = newCodeBlock;
-        m_numParameters = newCodeBlock->numParameters();
+        WTF::atomicStore(&m_codeBlock, newCodeBlock, std::memory_order_relaxed);
+        WTF::atomicStore(&m_numParameters, newCodeBlock->numParameters(), std::memory_order_relaxed);
+        WTF::atomicStore(&m_addressForCall, newCodeBlock->jitCode()->addressForCall(), std::memory_order_release);
         newCodeBlock->linkIncomingCall(nullptr, this);
         return;
     }
-    m_addressForCall = nullptr;
+    WTF::atomicStore(&m_addressForCall, static_cast<void*>(nullptr), std::memory_order_relaxed);
 }
 
 } // namespace JSC

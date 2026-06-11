@@ -46,6 +46,10 @@ UDateTimePatternGenerator* IntlCache::cacheSharedPatternGenerator(const CString&
 
 Vector<char16_t, 32> IntlCache::getBestDateTimePattern(const CString& locale, std::span<const char16_t> skeleton, UErrorCode& status)
 {
+    // THREADS: hold m_lock across the ICU generator USE too — a sibling
+    // Thread's cacheSharedPatternGenerator would udatpg_close the generator
+    // under us otherwise (see the m_lock comment in the header).
+    Locker locker { m_lock };
     // Always use ICU date format generator, rather than our own pattern list and matcher.
     auto sharedGenerator = getSharedPatternGenerator(locale, status);
     if (U_FAILURE(status))
@@ -59,6 +63,7 @@ Vector<char16_t, 32> IntlCache::getBestDateTimePattern(const CString& locale, st
 
 Vector<char16_t, 32> IntlCache::getFieldDisplayName(const CString& locale, UDateTimePatternField field, UDateTimePGDisplayWidth width, UErrorCode& status)
 {
+    Locker locker { m_lock }; // THREADS: see getBestDateTimePattern.
     auto sharedGenerator = getSharedPatternGenerator(locale, status);
     if (U_FAILURE(status))
         return { };
@@ -77,6 +82,11 @@ String IntlCache::canonicalizeUnicodeLocaleID(const String& languageTag)
     if (languageTag.isEmpty() || languageTag.length() > maxCachedTagLength || !languageTag.containsOnlyASCII())
         return JSC::canonicalizeUnicodeLocaleID(languageTag.utf8());
 
+    // THREADS (TSAN r14, REAL locking gap): the map is shared by every
+    // Thread; see the m_lock comment in the header. The ICU canonicalization
+    // below deliberately runs under the lock too — it is rare (cold miss)
+    // and keeps the find/insert atomic.
+    Locker locker { m_lock };
     auto cached = m_cachedCanonicalizedLocaleIDs.find(languageTag);
     if (cached != m_cachedCanonicalizedLocaleIDs.end())
         return cached->value;

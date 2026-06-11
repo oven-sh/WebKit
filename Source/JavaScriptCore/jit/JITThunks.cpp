@@ -229,11 +229,18 @@ void JITThunks::finalize(Handle<Unknown> handle, void*)
     auto* nativeExecutable = static_cast<NativeExecutable*>(handle.get().asCell());
     auto hostFunctionKey = std::make_tuple(nativeExecutable->function(), nativeExecutable->constructor(), nativeExecutable->implementationVisibility(), nativeExecutable->name());
     {
+        Locker locker { m_lock };
         AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
-        // Because this finalizer is called, this means that we still have dead Weak<> in m_nativeExecutableSet.
-        ASSERT(iterator != m_nativeExecutableSet.end());
-        ASSERT(iterator->unsafeImpl()->state() == WeakImpl::State::Finalized);
+        // Because this finalizer is called, we normally still have our dead Weak<> in
+        // m_nativeExecutableSet. With N mutators, the slot may already have been overridden
+        // (dead-weak override in hostFunctionStub) before this callback runs; in that case
+        // the entry found by key belongs to a different, live NativeExecutable and must not
+        // be removed.
+        if (iterator == m_nativeExecutableSet.end())
+            return;
+        if (iterator->unsafeImpl()->state() != WeakImpl::State::Finalized)
+            return;
         m_nativeExecutableSet.remove(iterator);
     }
 }
@@ -250,6 +257,7 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
 
     auto hostFunctionKey = std::make_tuple(function, constructor, implementationVisibility, name);
     {
+        Locker locker { m_lock };
         AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
         if (iterator != m_nativeExecutableSet.end()) {
@@ -273,11 +281,20 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
     
     NativeExecutable* nativeExecutable = NativeExecutable::create(vm, forCall.releaseNonNull(), function, WTF::move(forConstruct), constructor, implementationVisibility, name);
     {
+        Locker locker { m_lock };
         AssertNoGC assertNoGC;
         auto addResult = m_nativeExecutableSet.add<NativeExecutableTranslator>(nativeExecutable);
         if (!addResult.isNewEntry) {
-            // Override the existing Weak<NativeExecutable> with the new one since it is dead.
-            ASSERT(!*addResult.iterator);
+            // Two cases:
+            // 1. Another lite raced us between our initial lookup and this add and inserted a
+            //    live entry for the same key. That thread won: return its executable and let
+            //    ours die (it is unreferenced and will simply be collected).
+            // 2. The existing Weak<NativeExecutable> is dead (but not yet finalized): override
+            //    it with the new one, as before.
+            if (auto* existing = addResult.iterator->get()) {
+                ASSERT(existing != nativeExecutable);
+                return existing;
+            }
             *addResult.iterator = Weak<NativeExecutable>(nativeExecutable, this);
             ASSERT(*addResult.iterator);
 #if ASSERT_ENABLED

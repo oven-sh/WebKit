@@ -30,6 +30,7 @@
 #include "DirectArguments.h"
 #include "ExceptionHelpers.h"
 #include "FunctionCodeBlock.h"
+#include "IterationModeMetadata.h"
 #include "JSCellButterfly.h"
 #include "JSGlobalProxy.h"
 #include "JSPropertyNameEnumerator.h"
@@ -38,6 +39,7 @@
 #include "StackAlignment.h"
 #include "TypeError.h"
 #include "VMInlines.h"
+#include <wtf/Atomics.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC {
@@ -50,6 +52,29 @@ namespace JSC {
 // from any optimizing JIT, like the DFG).
 
 namespace CommonSlowPaths {
+
+// THREADS §5.7.7 (racy-profiling tolerance): op_iterator_open/op_iterator_next mode
+// metadata (IterationModeMetadata::seenModes) is racily merged by the LLInt/baseline
+// try-fast slow paths (iteratorOpenTryFastImpl/iteratorNextTryFastImpl) and the DFG/FTL
+// operation (operationIteratorNextTryFast) on any of N mutators, and racily read by
+// compiler threads (DFG ByteCodeParser snapshots it when parsing the op). Merges are
+// tolerate-don't-synchronize: a racing merge may lose a bit, which only makes profiling
+// more conservative (the unseen mode compiles as Generic). Every store publishes
+// loadedValue|mode, so the maxNumberOfFastIterationModes popcount bound on the published
+// word still holds, and canUseFastIterationMode re-checks on every slow-path entry.
+// Plain mixed-thread accesses are C++ UB, so all C++ accesses go through these
+// relaxed-atomic helpers. Relaxed 16-bit load/store compile to plain moves on
+// x86-64/arm64: flag-off codegen unchanged.
+ALWAYS_INLINE uint16_t loadIterationModeSeenModesConcurrently(const IterationModeMetadata& metadata)
+{
+    return WTF::atomicLoad(const_cast<uint16_t*>(&metadata.seenModes), std::memory_order_relaxed);
+}
+
+ALWAYS_INLINE void mergeIterationModeSeenModesConcurrently(IterationModeMetadata& metadata, IterationMode mode)
+{
+    uint16_t seenModes = WTF::atomicLoad(&metadata.seenModes, std::memory_order_relaxed);
+    WTF::atomicStore(&metadata.seenModes, static_cast<uint16_t>(seenModes | static_cast<uint16_t>(mode)), std::memory_order_relaxed);
+}
 
 ALWAYS_INLINE int numberOfStackPaddingSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
 {
@@ -82,7 +107,7 @@ inline JSValue opEnumeratorGetByVal(JSGlobalObject* globalObject, JSValue baseVa
             }
         }
         if (enumeratorMetadata)
-            *enumeratorMetadata |= static_cast<uint8_t>(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch);
+            WTF::atomicStore(enumeratorMetadata, static_cast<uint8_t>(WTF::atomicLoad(enumeratorMetadata, std::memory_order_relaxed) | static_cast<uint8_t>(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch)), std::memory_order_relaxed); // THREADS §5.7.7: relaxed profiling byte.
         [[fallthrough]];
     }
 
@@ -245,6 +270,9 @@ inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSCellButte
         ASSERT(globalObject->isHavingABadTime());
 
         result->switchToSlowPutArrayStorage(vm);
+        // THREADS-INTEGRATE(objectmodel) §10.7 [assert-only]: freshly created
+        // CoW-backed array (JSCellButterfly payload, never segmented — I35).
+        ASSERT(!result->mayBeSegmentedButterfly());
         ASSERT(result->butterfly() != immutableButterfly->toButterfly());
         ASSERT(!result->butterfly()->arrayStorage()->m_sparseMap.get());
         ASSERT(result->structureID() == structure->id());

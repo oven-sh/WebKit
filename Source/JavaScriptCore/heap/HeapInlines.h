@@ -37,6 +37,23 @@
 
 namespace JSC {
 
+// SharedGC (T9) vm() AUDIT LEGEND (SPEC-heap.md §3 deviation 3 / T9).
+// The server Heap is by-value inside the main VM (phase 1: the shared server
+// IS the main VM's vm.heap), so Heap::vm() is plain pointer arithmetic that
+// yields "the main mutator VM" from ANY thread, including VM-less standalone
+// (§12.1) clients and a VM-less §10.2 conductor. Every vm() use in heap/** is
+// classified by a "SharedGC (T9)" tag into one of:
+//   - main-VM-only: assumes the calling thread is the main VM's mutator
+//     (API lock, entryScope, legacy !ISS m_worldState protocol). Sound today
+//     and under the GIL (JSLock migration, I2); once ISS these sites are
+//     either unreachable (legacy protocol quiesced, I15) or re-audited (T5b).
+//   - per-client iteration: touches per-CLIENT state and must use
+//     clientSet().forEach() / currentThreadClient() when shared.
+//   - conductor-context OK: sound when executed by the §10.2 conductor
+//     (incl. VM-less) — uses only VM-global/server-coupled state of the one
+//     main VM, or is self-guarded (e.g. sanitizeStackForVM returns unless the
+//     CALLING thread holds the main VM's API lock).
+// Untagged uses reached only through tagged helpers inherit the helper's tag.
 ALWAYS_INLINE VM& Heap::vm() const
 {
     return *std::bit_cast<VM*>(std::bit_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, heap));
@@ -163,24 +180,35 @@ inline void Heap::releaseSoon(std::unique_ptr<JSCGLibWrapperObject>&& object)
 }
 #endif
 
+// SharedGC (§5.4/I17): when the server is shared, DeferGC depth is
+// per-client — deferralDepthSlot() routes to the calling thread's client
+// counter (or the server counter pre-ISS / on client-less threads), so one
+// client's decrement can never close another client's DeferGC scope.
 inline void Heap::incrementDeferralDepth()
 {
-    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
-    m_deferralDepth++;
+    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped || worldIsStoppedForAllClients());
+    deferralDepthSlot()++;
 }
 
 inline void Heap::decrementDeferralDepth()
 {
-    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
-    m_deferralDepth--;
+    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped || worldIsStoppedForAllClients());
+    unsigned& depth = deferralDepthSlot();
+    ASSERT(depth);
+    depth--;
 }
 
 inline void Heap::decrementDeferralDepthAndGCIfNeeded()
 {
-    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
-    m_deferralDepth--;
-    
-    if (m_didDeferGCWork || Options::forceDidDeferGCWork()) [[unlikely]] {
+    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped || worldIsStoppedForAllClients());
+    unsigned& depth = deferralDepthSlot();
+    ASSERT(depth);
+    depth--;
+
+    // SharedGC (review round 4): per-client hint once ISS (didDeferGCWorkSlot
+    // routes like deferralDepthSlot) — one client closing its scope can
+    // neither observe nor swallow another client's pending hint.
+    if (didDeferGCWorkSlot() || Options::forceDidDeferGCWork()) [[unlikely]] {
         decrementDeferralDepthAndGCIfNeededSlow();
         
         // Here are the possible relationships between m_deferralDepth and m_didDeferGCWork.
@@ -208,6 +236,17 @@ inline void Heap::decrementDeferralDepthAndGCIfNeeded()
 
 inline void Heap::acquireAccess()
 {
+    // SharedGC (§10A): once ISS, JSLock::didAcquireLock's call here forwards
+    // to the main client's acquireHeapAccess() (AHA), re-stamping the §10A.1
+    // TLS slot and the access owner first (JSLock migration). Must precede
+    // the m_worldState CAS: the legacy bits are superseded when shared.
+    if (isSharedServer()) [[unlikely]] {
+        acquireAccessForwardedToMainClient();
+        return;
+    }
+
+    // SharedGC (T9): main-VM-only — below the ISS forward, so !ISS legacy
+    // path; the caller is the main VM's mutator (JSLock wiring).
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
@@ -218,6 +257,14 @@ inline void Heap::acquireAccess()
 
 inline void Heap::stopIfNecessary()
 {
+    // SharedGC (§10A): shared-mode stop polling goes through SINFAC; the
+    // legacy m_worldState machinery is quiesced once ISS (I15).
+    if (isSharedServer()) [[unlikely]] {
+        stopIfNecessaryForAllClients();
+        return;
+    }
+
+    // SharedGC (T9): main-VM-only — !ISS legacy path (see acquireAccess()).
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
@@ -238,6 +285,22 @@ namespace GCClient {
 
 ALWAYS_INLINE VM& Heap::vm() const
 {
+    // SPEC-heap.md §12.1/T9: standalone clients (markStandalone()) are not
+    // embedded in a VM, so the OBJECT_OFFSETOF arithmetic below would produce
+    // garbage. markStandalone() arms this assert.
+    //
+    // SharedGC (T9) audit of GCClient::Heap::vm() callers in heap/**:
+    //   - Heap.cpp runSharedGCElection() (follower trap poll): guarded by
+    //     `!client->m_isStandalone` before calling client->vm() — OK.
+    //   - GCClient::IsoSubspace: no vm() use at all (ctor takes only the
+    //     server BlockDirectory; allocateForClient() routes through
+    //     client.server()) — standalone-safe by construction.
+    //   - VM-taking entry points (CompleteSubspace::allocate(VM&),
+    //     GCClient::IsoSubspace::allocate(VM&), `vm.clientHeap` accesses in
+    //     Heap.cpp attach/forwarding) go VM->client, never client->vm(), so
+    //     they cannot run on a standalone client.
+    // No unguarded vm() call on a possibly-standalone client remains.
+    RELEASE_ASSERT(!m_isStandalone);
     return *std::bit_cast<VM*>(std::bit_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, clientHeap));
 }
 

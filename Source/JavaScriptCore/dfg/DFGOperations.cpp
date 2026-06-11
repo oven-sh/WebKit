@@ -1686,7 +1686,7 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpExecNonGlobalOrSticky, EncodedJSValue, (
     if (!array)
         OPERATION_RETURN(scope, JSValue::encode(jsNull()));
 
-    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, result, /* oneCharacterMatch */ false);
+    threadRegExpGlobalData(globalObject).recordMatch(vm, globalObject, regExp, string, result, /* oneCharacterMatch */ false);
     OPERATION_RETURN(scope, JSValue::encode(array));
 }
 
@@ -1718,7 +1718,7 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpMatchFastGlobalString, EncodedJSValue, (
 
     if (regExp->hasValidAtom()) {
         if (string->isSubstring()) {
-            auto& cache = globalObject->regExpGlobalData().substringGlobalAtomCache();
+            auto& cache = threadRegExpGlobalData(globalObject).substringGlobalAtomCache();
             OPERATION_RETURN(scope, JSValue::encode(cache.collectMatches(globalObject, string->asRope(), regExp)));
         }
         OPERATION_RETURN(scope, JSValue::encode(collectGlobalAtomMatches(globalObject, string, regExp)));
@@ -1998,7 +1998,7 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpSearchString, UCPUStrictInt32, (JSGlobal
     auto strView = string->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
 
-    MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
+    MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
 
     OPERATION_RETURN(scope, result ? toUCPUStrictInt32(result.start) : toUCPUStrictInt32(-1));
 }
@@ -2022,7 +2022,7 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpSearch, UCPUStrictInt32, (JSGlobalObject
     auto strView = string->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
 
-    MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
+    MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
 
     OPERATION_RETURN(scope, result ? toUCPUStrictInt32(result.start) : toUCPUStrictInt32(-1));
 }
@@ -6304,13 +6304,22 @@ JSC_DEFINE_JIT_OPERATION(operationLinkDirectCall, void, (DirectCallLinkInfo* cal
         OPERATION_RETURN_IF_EXCEPTION(scope);
 
         unsigned argumentStackSlots = callLinkInfo->maxArgumentCountIncludingThis();
+        ArityCheckMode arity;
         if (argumentStackSlots < static_cast<size_t>(codeBlock->numParameters()))
-            codePtr = functionExecutable->entrypointFor(kind, ArityCheckMode::MustCheckArity);
+            arity = ArityCheckMode::MustCheckArity;
         else
-            codePtr = functionExecutable->entrypointFor(kind, ArityCheckMode::ArityCheckNotRequired);
+            arity = ArityCheckMode::ArityCheckNotRequired;
+        if (vm.gilOff()) [[unlikely]] {
+            // ANNEX CBI item 3 (AB17c F4): derive the entrypoint THROUGH the
+            // CodeBlock snapshot (matched pair), not through the
+            // executable's independently-republished m_jitCodeFor* mirror —
+            // see bytecode/RepatchInlines.h linkFor.
+            codePtr = codeBlock->jitCode()->addressForCall(arity);
+        } else
+            codePtr = functionExecutable->entrypointFor(kind, arity);
     }
 
-    linkDirectCall(*callLinkInfo, codeBlock, codePtr);
+    linkDirectCall(vm, *callLinkInfo, codeBlock, codePtr);
     OPERATION_RETURN(scope);
 }
 
@@ -6421,6 +6430,18 @@ static void triggerFTLReplacementCompile(VM& vm, CodeBlock* codeBlock, JITCode* 
         return;
     }
 
+    // THREADS §5.7.2 (SPEC-jit Task 12): serialize the DFG->FTL replacement trigger; only
+    // the winner of the 0->1 CAS runs newReplacement()+compile(). Losers defer and stay in
+    // DFG. Duplicates racing through the latch-free window are cancelled by
+    // JITWorklist::enqueue's dedup backstop (§5.7.3).
+    CodeBlock::TierUpEdgeLocker tierUpLocker(codeBlock, CodeBlock::TierUpEdge::DFGToFTL);
+    if (!tierUpLocker.won()) [[unlikely]] {
+        CODEBLOCK_LOG_EVENT(codeBlock, "delayFTLCompile", ("tier-up already in flight"));
+        jitCode->setOptimizationThresholdBasedOnCompilationResult(
+            codeBlock, CompilationResult::CompilationDeferred);
+        return;
+    }
+
     CODEBLOCK_LOG_EVENT(codeBlock, "triggerFTLReplacement", ());
     // We need to compile the code.
     compile(
@@ -6455,14 +6476,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerTierUpNow, void, (VM* vmPointe
         triggerFTLReplacementCompile(vm, codeBlock, jitCode);
 
     if (codeBlock->hasOptimizedReplacement()) {
-        if (jitCode->tierUpEntryTriggers.isEmpty()) {
+        // Belt-and-braces: the key set is structurally immutable post-link, so isEmpty()/size()
+        // are constants; the lock just keeps this site consistent with the "all post-link C++
+        // access is locked" rule.
+        bool triggersEmpty;
+        unsigned triggersSize;
+        {
+            // DFG-1, flag-gated (I22): flag-off stays today's unlocked
+            // single-mutator read; the key set is structurally immutable
+            // post-link either way.
+            std::optional<Locker<Lock>> threadsLocker;
+            if (Options::useJSThreads()) [[unlikely]]
+                threadsLocker.emplace(jitCode->m_tierUpTriggersLock);
+            triggersEmpty = jitCode->tierUpEntryTriggers.isEmpty();
+            triggersSize = jitCode->tierUpEntryTriggers.size();
+        }
+        if (triggersEmpty) {
             CODEBLOCK_LOG_EVENT(codeBlock, "delayFTLCompile", ("replacement in place, delaying indefinitely"));
             // There is nothing more we can do, the only way this will be entered
             // is through the function entry point.
             jitCode->dontOptimizeAnytimeSoon(codeBlock);
             return;
         }
-        if (jitCode->osrEntryBlock() && jitCode->tierUpEntryTriggers.size() == 1) {
+        if (jitCode->osrEntryBlock() && triggersSize == 1) {
             CODEBLOCK_LOG_EVENT(codeBlock, "delayFTLCompile", ("trigger in place, delaying indefinitely"));
             // There is only one outer loop and its trigger must have been set
             // when the plan completed.
@@ -6485,26 +6521,35 @@ static char* tierUpCommon(VM& vm, CallFrame* callFrame, BytecodeIndex originByte
     JITCode* jitCode = codeBlock->jitCode()->dfg();
     
     bool triggeredSlowPathToStartCompilation = false;
-    auto tierUpEntryTriggers = jitCode->tierUpEntryTriggers.find(originBytecodeIndex);
-    if (tierUpEntryTriggers != jitCode->tierUpEntryTriggers.end()) {
-        switch (tierUpEntryTriggers->value) {
-        case JITCode::TriggerReason::DontTrigger:
-            // The trigger isn't set, we entered because the counter reached its
-            // threshold.
-            break;
+    {
+        // DFG-1, flag-gated (I22): see triggerTierUpNow above.
+        std::optional<Locker<Lock>> threadsLocker;
+        if (Options::useJSThreads()) [[unlikely]]
+            threadsLocker.emplace(jitCode->m_tierUpTriggersLock);
+        auto triggerEntry = jitCode->tierUpEntryTriggers.find(originBytecodeIndex);
+        if (triggerEntry != jitCode->tierUpEntryTriggers.end()) {
+            // THREADS: relaxed atomic accesses on the single-byte trigger; the compiler
+            // thread's carve-out store (compilationDidBecomeReadyAsynchronously) bypasses
+            // m_tierUpTriggersLock by design (DFGJITCode.h contract).
+            switch (WTF::atomicLoad(&triggerEntry->value, std::memory_order_relaxed)) {
+            case JITCode::TriggerReason::DontTrigger:
+                // The trigger isn't set, we entered because the counter reached its
+                // threshold.
+                break;
 
-        case JITCode::TriggerReason::CompilationDone:
-            // The trigger was set because compilation completed. Don't unset it
-            // so that further DFG executions OSR enter as well.
-            break;
+            case JITCode::TriggerReason::CompilationDone:
+                // The trigger was set because compilation completed. Don't unset it
+                // so that further DFG executions OSR enter as well.
+                break;
 
-        case JITCode::TriggerReason::StartCompilation:
-            // We were asked to enter as soon as possible and start compiling an
-            // entry for the current bytecode location. Unset this trigger so we
-            // don't continually enter.
-            tierUpEntryTriggers->value = JITCode::TriggerReason::DontTrigger;
-            triggeredSlowPathToStartCompilation = true;
-            break;
+            case JITCode::TriggerReason::StartCompilation:
+                // We were asked to enter as soon as possible and start compiling an
+                // entry for the current bytecode location. Unset this trigger so we
+                // don't continually enter.
+                WTF::atomicStore(&triggerEntry->value, JITCode::TriggerReason::DontTrigger, std::memory_order_relaxed);
+                triggeredSlowPathToStartCompilation = true;
+                break;
+            }
         }
     }
 
@@ -6610,6 +6655,10 @@ static char* tierUpCommon(VM& vm, CallFrame* callFrame, BytecodeIndex originByte
         // a progressively inner loop if it takes too long for control to reach an outer loop.
 
         auto tryTriggerOuterLoopToCompile = [&] {
+            // DFG-1, flag-gated (I22): see triggerTierUpNow above.
+            std::optional<Locker<Lock>> threadsLocker;
+            if (Options::useJSThreads()) [[unlikely]]
+                threadsLocker.emplace(jitCode->m_tierUpTriggersLock);
             auto tierUpHierarchyEntry = jitCode->tierUpInLoopHierarchy.find(originBytecodeIndex);
             if (tierUpHierarchyEntry == jitCode->tierUpInLoopHierarchy.end())
                 return false;
@@ -6624,7 +6673,9 @@ static char* tierUpCommon(VM& vm, CallFrame* callFrame, BytecodeIndex originByte
             for (auto iter = tierUpHierarchyEntry->value.rbegin(), end = tierUpHierarchyEntry->value.rend(); iter != end; ++iter) {
                 BytecodeIndex osrEntryCandidate = *iter;
 
-                if (jitCode->tierUpEntryTriggers.get(osrEntryCandidate) == JITCode::TriggerReason::StartCompilation) {
+                auto candidateTrigger = jitCode->tierUpEntryTriggers.find(osrEntryCandidate);
+                RELEASE_ASSERT(candidateTrigger != jitCode->tierUpEntryTriggers.end()); // tierUpInLoopHierarchy values are guaranteed OSR-entry trigger sites (DFGJITCode.h:322).
+                if (WTF::atomicLoad(&candidateTrigger->value, std::memory_order_relaxed) == JITCode::TriggerReason::StartCompilation) { // THREADS: see relaxed-trigger note in tierUpCommon.
                     // This means that we already asked this loop to compile. If we've reached here, it
                     // means program control has not yet reached that loop. So it's taking too long to compile.
                     // So we move on to asking the inner loop of this loop to compile itself.
@@ -6634,7 +6685,7 @@ static char* tierUpCommon(VM& vm, CallFrame* callFrame, BytecodeIndex originByte
                 // This is where we ask the outer to loop to immediately compile itself if program
                 // control reaches it.
                 dataLogLnIf(Options::verboseOSR(), "Inner-loop ", originBytecodeIndex, " in ", *codeBlock, " setting parent loop ", osrEntryCandidate, "'s trigger and backing off.");
-                jitCode->tierUpEntryTriggers.set(osrEntryCandidate, JITCode::TriggerReason::StartCompilation);
+                WTF::atomicStore(&candidateTrigger->value, JITCode::TriggerReason::StartCompilation, std::memory_order_relaxed);
                 return true;
             }
 
@@ -6655,13 +6706,36 @@ static char* tierUpCommon(VM& vm, CallFrame* callFrame, BytecodeIndex originByte
     // We aren't compiling and haven't compiled anything for OSR entry. So, try to compile
     // something.
 
-    auto triggerIterator = jitCode->tierUpEntryTriggers.find(originBytecodeIndex);
-    if (triggerIterator == jitCode->tierUpEntryTriggers.end()) {
+    // THREADS (DFG-1): do the lookup under m_tierUpTriggersLock and let the iterator be
+    // destroyed inside the locked scope; only the raw value address escapes (stable
+    // post-link: keys are never added/removed => no rehash). We must not hold the lock
+    // across the TierUpEdgeLocker/compile() below (leaf ordering), and we must not keep a
+    // live CHECK_HASHTABLE_ITERATORS-registered iterator across them either.
+    JITCode::TriggerReason* triggerAddress = nullptr;
+    {
+        // DFG-1, flag-gated (I22): see triggerTierUpNow above.
+        std::optional<Locker<Lock>> threadsLocker;
+        if (Options::useJSThreads()) [[unlikely]]
+            threadsLocker.emplace(jitCode->m_tierUpTriggersLock);
+        auto triggerIterator = jitCode->tierUpEntryTriggers.find(originBytecodeIndex);
+        if (triggerIterator != jitCode->tierUpEntryTriggers.end())
+            triggerAddress = &(triggerIterator->value);
+    }
+    if (!triggerAddress) {
         jitCode->setOptimizationThresholdBasedOnCompilationResult(codeBlock, CompilationResult::CompilationDeferred);
         return nullptr;
     }
 
-    JITCode::TriggerReason* triggerAddress = &(triggerIterator->value);
+    // THREADS §5.7.2 (SPEC-jit Task 12): serialize the DFG->FTLForOSREntry trigger; only
+    // the winner of the 0->1 CAS runs reconstruct()+newReplacement()+compile(). Losers
+    // defer and stay in DFG; the JITWorklist dedup backstop (§5.7.3) covers the
+    // latch-free window.
+    CodeBlock::TierUpEdgeLocker tierUpLocker(codeBlock, CodeBlock::TierUpEdge::DFGToFTLForOSREntry);
+    if (!tierUpLocker.won()) [[unlikely]] {
+        CODEBLOCK_LOG_EVENT(codeBlock, "delayFTLCompile", ("OSR-entry tier-up already in flight"));
+        jitCode->setOptimizationThresholdBasedOnCompilationResult(codeBlock, CompilationResult::CompilationDeferred);
+        return nullptr;
+    }
 
     Operands<std::optional<JSValue>> mustHandleValues;
     unsigned streamIndex = jitCode->bytecodeIndexToStreamIndex.get(originBytecodeIndex);
@@ -6717,7 +6791,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerTierUpNowInLoop, void, (VM* vm
 
     dataLogLnIf(Options::verboseOSR(), *codeBlock, ": Entered triggerTierUpNowInLoop with executeCounter = ", codeBlock->dfgJITData()->tierUpCounter());
 
-    if (jitCode->tierUpInLoopHierarchy.contains(bytecodeIndex))
+    bool inLoopHierarchy;
+    {
+        Locker locker { jitCode->m_tierUpTriggersLock };
+        inLoopHierarchy = jitCode->tierUpInLoopHierarchy.contains(bytecodeIndex);
+    }
+    if (inLoopHierarchy)
         tierUpCommon(vm, callFrame, bytecodeIndex, false);
     else if (shouldTriggerFTLCompile(codeBlock, jitCode))
         triggerFTLReplacementCompile(vm, codeBlock, jitCode);

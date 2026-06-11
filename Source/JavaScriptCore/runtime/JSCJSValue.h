@@ -27,6 +27,7 @@
 #include "PureNaN.h"
 #include <atomic>
 #include <cmath>
+#include <wtf/Atomics.h>
 #include <wtf/Forward.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/HashTraits.h>
@@ -1275,7 +1276,33 @@ private:
     JSValue m_value;
 };
 
-#if USE(JSVALUE64) || !ENABLE(CONCURRENT_JS)
+#if USE(JSVALUE64)
+
+// JS value words are intentionally racy under shared-heap threading (object-model
+// ground truth): other mutators may load/store them concurrently. Plain C++
+// accesses to such words are data races (UB); these accessors use relaxed atomics,
+// which are codegen-identical to plain 64-bit loads/stores, so single-threaded
+// (flag-off) behavior and code generation are unchanged.
+
+ALWAYS_INLINE JSValue JSValue::decodeConcurrent(const EncodedJSValue* encodedJSValue)
+{
+    return JSValue::decode(std::bit_cast<const WTF::Atomic<EncodedJSValue>*>(encodedJSValue)->loadRelaxed());
+}
+
+ALWAYS_INLINE void updateEncodedJSValueConcurrent(EncodedJSValue& dest, EncodedJSValue value)
+{
+    std::bit_cast<WTF::Atomic<EncodedJSValue>*>(&dest)->storeRelaxed(value);
+}
+
+ALWAYS_INLINE void clearEncodedJSValueConcurrent(EncodedJSValue& dest)
+{
+    std::bit_cast<WTF::Atomic<EncodedJSValue>*>(&dest)->storeRelaxed(JSValue::encode(JSValue()));
+}
+
+#elif !ENABLE(CONCURRENT_JS)
+
+// 32-bit, no concurrency: a 64-bit atomic may not be lock-free here, and there are
+// no concurrent observers, so plain accesses are both correct and codegen-identical.
 
 ALWAYS_INLINE JSValue JSValue::decodeConcurrent(const EncodedJSValue* encodedJSValue)
 {

@@ -29,8 +29,25 @@
 #include "JSGlobalObject.h"
 #include "RegExp.h"
 #include "RegExpGlobalData.h"
+#include "RegExpInlines.h"
 
 namespace JSC {
+
+// UNGIL AUD1.K2/SD19 consumer re-point (TSAN wave 1, regexp-shared family):
+// THE accessor for the RegExp legacy-statics match-result stream. Flag-off /
+// GIL-on this is exactly globalObject->regExpGlobalData() behind a read-only
+// Config-page test (the gilOffWithProcessGate idiom RegExpInlines.h's
+// per-match paths already use — no out-of-line call, no semantic change);
+// gilOff it resolves the CURRENT thread's per-(global, lite) stream via the
+// slow path in JSGlobalObject.cpp, making record()'s multi-word update and
+// the lazy reify flip single-thread-private (SD19: RegExp.$1-$9 etc.
+// observe only the current thread's matches).
+ALWAYS_INLINE RegExpGlobalData& threadRegExpGlobalData(JSGlobalObject* globalObject)
+{
+    if (!getVM(globalObject).gilOffWithProcessGate()) [[likely]]
+        return globalObject->regExpGlobalData();
+    return threadRegExpGlobalDataSlow(globalObject);
+}
 
 ALWAYS_INLINE void RegExpCachedResult::record(VM& vm, JSObject* owner, RegExp* regExp, JSString* input, MatchResult result, bool oneCharacterMatch)
 {
@@ -57,16 +74,16 @@ ALWAYS_INLINE MatchResult RegExpGlobalData::performMatch(JSGlobalObject* owner, 
     ASSERT(owner);
     VM& vm = owner->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    int position = regExp->match(owner, input, startOffset, regExp->ovectorSpan());
+    int position = regExp->match(owner, input, startOffset, regExp->ovectorSpan(vm));
     RETURN_IF_EXCEPTION(scope, MatchResult::failed());
 
     if (ovector)
-        *ovector = regExp->ovectorSpan().data();
+        *ovector = regExp->ovectorSpan(vm).data();
 
     if (position == -1)
         return MatchResult::failed();
 
-    auto ovectorSpan = regExp->ovectorSpan();
+    auto ovectorSpan = regExp->ovectorSpan(vm);
     ASSERT(!ovectorSpan.empty());
     ASSERT(ovectorSpan[0] == position);
     ASSERT(ovectorSpan[1] >= position);
@@ -102,7 +119,7 @@ inline MatchResult RegExpGlobalData::matchResult() const
 
 inline void RegExpGlobalData::resetResultFromCache(JSGlobalObject* owner, RegExp* regExp, JSString* string, MatchResult matchResult, std::span<const int> ovector)
 {
-    auto dest = regExp->ovectorSpan();
+    auto dest = regExp->ovectorSpan(getVM(owner));
     ASSERT(dest.size() >= ovector.size());
     std::ranges::copy(ovector, dest.begin());
     m_cachedResult.record(getVM(owner), owner, regExp, string, matchResult, /* oneCharacterMatch */ false);

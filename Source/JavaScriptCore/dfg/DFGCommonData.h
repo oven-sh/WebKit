@@ -44,6 +44,7 @@
 #include "PropertyInlineCache.h"
 #include "RecordedStatuses.h"
 #include "YarrJIT.h"
+#include <wtf/Atomics.h>
 #include <wtf/Bag.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/StringSearch.h>
@@ -90,11 +91,11 @@ public:
     void shrinkToFit();
     
     bool invalidateLinkedCode(); // Returns true if we did invalidate, or false if the code block was already invalidated.
-    bool hasInstalledVMTrapsBreakpoints() const { return m_isStillValid && m_hasVMTrapsBreakpointsInstalled; }
+    bool hasInstalledVMTrapsBreakpoints() const { return m_isStillValid.load(std::memory_order_relaxed) && m_hasVMTrapsBreakpointsInstalled.load(std::memory_order_relaxed); }
     void installVMTrapBreakpoints(CodeBlock* owner);
 
     bool isUnlinked() const { return m_isUnlinked; }
-    bool isStillValid() const { return m_isStillValid; }
+    bool isStillValid() const { return m_isStillValid.load(std::memory_order_relaxed); }
 
     CatchEntrypointData* catchOSREntryDataForBytecodeIndex(BytecodeIndex bytecodeIndex)
     {
@@ -139,7 +140,14 @@ public:
     Bag<DirectCallLinkInfo> m_directCallLinkInfos;
     Yarr::YarrBoyerMooreData m_boyerMooreData;
     
-    ScratchBuffer* catchOSREntryBuffer;
+    ScratchBuffer* catchOSREntryBuffer { nullptr };
+    // UNGIL §A.1.6 (ANNEX A16, U-T4b): gilOff-mode compilations leave
+    // catchOSREntryBuffer null and store a process-wide ScratchBufferRegistry
+    // index here instead — the JITCode-RESIDENT buffer becomes a per-lite
+    // registry index, so concurrent catch OSR entries on one CodeBlock each
+    // resolve their OWN thread's buffer (VMLite::scratchBufferAtIndex).
+    // UINT_MAX = unset (every GIL-on / flag-off compilation).
+    unsigned catchOSREntryBufferBakedIndex { std::numeric_limits<unsigned>::max() };
     RefPtr<Profiler::Compilation> compilation;
     
 #if USE(JSVALUE32_64)
@@ -150,9 +158,21 @@ public:
     unsigned requiredRegisterCountForExit { std::numeric_limits<unsigned>::max() };
 
 private:
-    bool m_isUnlinked { false };
-    bool m_isStillValid { true };
-    bool m_hasVMTrapsBreakpointsInstalled { false };
+    bool m_isUnlinked { false }; // Immutable after construction; plain reads are fine.
+    // TSAN family 5 code-lifecycle (docs/threads/TSAN-TRIAGE.md §3.5; r3
+    // residual "hasInstalledVMTrapsBreakpoints x invalidateLinkedCode"):
+    // these two flags are ADVISORY single-byte state read off-owner — the
+    // VMTraps signal-sender thread (CodeBlock::hasInstalledVMTrapsBreakpoints)
+    // and jettison/GC paths (isStillValid) load them while
+    // invalidateLinkedCode (STW window per SPEC-jit I2/§5.3) and
+    // installVMTrapBreakpoints (under pcCodeBlockMapLock) store them. The
+    // authoritative state transitions are still serialized by the STW window
+    // / pcCodeBlockMapLock; the relaxed Atomic only makes the cross-thread
+    // word accesses defined. Relaxed single-byte atomics compile to the same
+    // plain byte mov flag-off — no semantic or codegen change when
+    // useJSThreads is off.
+    Atomic<bool> m_isStillValid { true };
+    Atomic<bool> m_hasVMTrapsBreakpointsInstalled { false };
 };
 
 CodeBlock* codeBlockForVMTrapPC(void* pc);

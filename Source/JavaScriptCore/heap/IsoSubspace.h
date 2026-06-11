@@ -38,6 +38,7 @@ namespace JSC {
 class IsoCellSet;
 
 namespace GCClient {
+class Heap;
 class IsoSubspace;
 }
 
@@ -88,6 +89,15 @@ public:
     Allocator allocatorFor(size_t, AllocatorForMode);
 
     void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
+    // SharedGC (SPEC-heap.md §12.1 seam; THREADS T4): same LocalAllocator as
+    // allocate(VM&) — iso allocators are already per-client; the seam only
+    // skips the VM coupling. Defined in IsoSubspaceInlines.h.
+    void* allocateForClient(GCClient::Heap&, size_t, GCDeferralContext*, AllocationFailureMode);
+
+    // SharedGC (§5.3; T4): registered lookup-only in the owning client's
+    // GCThreadLocalCache m_perDirectory at materialization (covers iso for
+    // the §10A.1 ownership predicate and §5.3 teardown).
+    LocalAllocator& localAllocator() LIFETIME_BOUND { return m_localAllocator; }
 
 private:
     LocalAllocator m_localAllocator;

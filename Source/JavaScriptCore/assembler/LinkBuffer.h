@@ -40,6 +40,7 @@
 #include <JavaScriptCore/MacroAssembler.h>
 #include <JavaScriptCore/MacroAssemblerCodeRef.h>
 #include <JavaScriptCore/SourceProvider.h>
+#include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
@@ -473,8 +474,11 @@ private:
     std::unique_ptr<IRDumpDebugInfo> m_irDumpDebugInfo;
     std::unique_ptr<SourceCodeDumpDebugInfo> m_sourceCodeDebugInfo;
 
-    static size_t s_profileCummulativeLinkedSizes[numberOfProfiles];
-    static size_t s_profileCummulativeLinkedCounts[numberOfProfiles];
+    // Cumulative profiling counters updated from concurrent compiler threads. These are
+    // advisory statistics (dump/clear only); relaxed atomics keep the updates data-race-free
+    // without imposing any ordering.
+    static Atomic<size_t> s_profileCummulativeLinkedSizes[numberOfProfiles];
+    static Atomic<size_t> s_profileCummulativeLinkedCounts[numberOfProfiles];
 };
 
 #define FINALIZE_CODE_IF(condition, linkBufferReference, resultPtrTag, simpleName, ...) \

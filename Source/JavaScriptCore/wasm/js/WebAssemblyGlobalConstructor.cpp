@@ -47,6 +47,10 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyGlobal, (JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, throwScope)) [[unlikely]]
+        return { };
+
     JSObject* newTarget = asObject(callFrame->newTarget());
     Structure* webAssemblyGlobalStructure = JSC_GET_DERIVED_STRUCTURE(vm, webAssemblyGlobalStructure, newTarget, callFrame->jsCallee());
     RETURN_IF_EXCEPTION(throwScope, { });

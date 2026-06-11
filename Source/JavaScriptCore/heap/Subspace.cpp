@@ -125,6 +125,13 @@ Ref<SharedTask<MarkedBlock::Handle*()>> Subspace::parallelNotEmptyMarkedBlockSou
 
 void Subspace::sweepBlocks()
 {
+    // SharedGC (T8/I5b): per-subspace synchronous sweeps (IsoSubspace::sweep,
+    // Heap::sweepInFinalize) run on the conductor inside the stop window once
+    // shared, or under MSPL, or legacy single-mutator (I10).
+    {
+        JSC::Heap& heap = m_space.heap();
+        ASSERT_UNUSED(heap, !heap.isSharedServer() || heap.worldIsStoppedForAllClients() || heap.mutatorSlowPathLock().isHeld());
+    }
     forEachDirectory(
         [&] (BlockDirectory& directory) {
             directory.sweep();

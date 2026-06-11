@@ -108,6 +108,14 @@ public:
     JSString* addJSString(VM&, int);
     JSString* addJSString(VM&, double);
 
+    // UNGIL AUD1 / K4.II.1 (BINDING): a GIL-off per-thread instance holds no
+    // GC cells — it is not reachable from any visitAggregate walk, so a
+    // cached JSString* would dangle after the first GC that does not see it.
+    // The String halves of the caches are still shared-free (per-thread), so
+    // only the JSString memoization is disabled; addJSString allocates a
+    // fresh JSString from the cached String instead.
+    void disableJSStringCaching() { m_jsStringCachingDisabled = true; }
+
     void clearOnGarbageCollection()
     {
         for (auto& entry : m_intCache)
@@ -163,6 +171,7 @@ private:
     std::array<CacheEntryWithJSString<int>, cacheSize> m_intCache { };
     std::array<CacheEntry<unsigned>, cacheSize> m_unsignedCache { };
     std::unique_ptr<DoubleCache> m_doubleCache;
+    bool m_jsStringCachingDisabled { false }; // K4.II.1: set only on GIL-off per-thread instances.
 };
 
 } // namespace JSC

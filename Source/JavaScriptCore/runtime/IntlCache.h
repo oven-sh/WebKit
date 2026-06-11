@@ -27,6 +27,7 @@
 
 #include <unicode/udatpg.h>
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/CString.h>
@@ -48,7 +49,7 @@ public:
     String canonicalizeUnicodeLocaleID(const String& languageTag);
 
 private:
-    UDateTimePatternGenerator* getSharedPatternGenerator(const CString& locale, UErrorCode& status)
+    UDateTimePatternGenerator* getSharedPatternGenerator(const CString& locale, UErrorCode& status) WTF_REQUIRES_LOCK(m_lock)
     {
         if (m_cachedDateTimePatternGenerator) {
             if (locale == m_cachedDateTimePatternGeneratorLocale)
@@ -57,11 +58,19 @@ private:
         return cacheSharedPatternGenerator(locale, status);
     }
 
-    UDateTimePatternGenerator* cacheSharedPatternGenerator(const CString& locale, UErrorCode&);
+    UDateTimePatternGenerator* cacheSharedPatternGenerator(const CString& locale, UErrorCode&) WTF_REQUIRES_LOCK(m_lock);
 
-    std::unique_ptr<UDateTimePatternGenerator, ICUDeleter<udatpg_close>> m_cachedDateTimePatternGenerator;
-    CString m_cachedDateTimePatternGeneratorLocale;
-    UncheckedKeyHashMap<String, String> m_cachedCanonicalizedLocaleIDs;
+    // GIL-off (TSAN r14, REAL locking gap): the IntlCache is per-VM and
+    // shared by every Thread (VM-lite siblings share the parent VM's cache);
+    // the locale-ID HashMap raced find/add/rehash across Threads (rehash vs
+    // a sibling's find is a use-after-free shape), and the shared ICU
+    // pattern generator + its CString locale key have the same exposure.
+    // One lock guards all three public entry points — these are Intl slow
+    // paths, contention is irrelevant.
+    Lock m_lock;
+    std::unique_ptr<UDateTimePatternGenerator, ICUDeleter<udatpg_close>> m_cachedDateTimePatternGenerator WTF_GUARDED_BY_LOCK(m_lock);
+    CString m_cachedDateTimePatternGeneratorLocale WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<String, String> m_cachedCanonicalizedLocaleIDs WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace JSC

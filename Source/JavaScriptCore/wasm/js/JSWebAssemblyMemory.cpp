@@ -301,7 +301,7 @@ void JSWebAssemblyMemory::growSuccessCallback(VM& vm, PageCount oldPageCount, Pa
             if (m_buffer->isFixedLength())
                 disassociateArrayBuffer(vm);
             else if (!m_buffer->isShared())
-                m_buffer->refreshAfterWasmMemoryGrow(m_memory.ptr());
+                m_buffer->refreshAfterWasmMemoryGrow(vm, m_memory.ptr());
         } else {
             // historical behavior before the SAB feature:
             // clear out the old array buffer because it might now be pointing to stale memory.

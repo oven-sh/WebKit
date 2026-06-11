@@ -35,6 +35,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "BaselineJITCode.h"
 #include "JITOperations.h"
 #include "JSArrayBufferView.h"
+#include "JSCConfig.h"
 #include "JSCJSValueInlines.h"
 #include "JSDataView.h"
 #include "LinkBuffer.h"
@@ -43,6 +44,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "SuperSampler.h"
 #include "ThunkGenerators.h"
 #include "UnlinkedCodeBlock.h"
+#include <atomic>
+#include <mutex>
+
+#if OS(DARWIN) && ENABLE(FAST_TLS_JIT)
+#include <wtf/FastTLS.h>
+#endif
 
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyInstance.h"
@@ -54,7 +61,190 @@ namespace JSC {
 
 namespace AssemblyHelpersInternal {
 constexpr bool dumpVerbose = false;
+
+// SPEC-jit section 5.5 (Task 8): frozen butterfly-tag encoding
+// (SPEC-objectmodel section 2). Mirrored locally to keep this file
+// independent of the object-model workstream's header; the values are FROZEN.
+[[maybe_unused]] constexpr uint64_t butterflyTagPointerMask = 0x0000ffffffffffffULL;
+[[maybe_unused]] constexpr uint64_t butterflyTagFloor = 1ULL << 48; // any word >= this carries tag bits
+
+// Flag-on guard for the LEGACY (no slow-path list) property accessors: these
+// remain reachable only from emissions whose butterflies are provably
+// tag-free (gated transition/delete/megamorphic forms - see the Task 8 site
+// inventory in docs/threads/INTEGRATE-jit.md) and from DFG/FTL emitters that
+// Tasks 9/10 convert. A tagged or segmented word traps here instead of being
+// misread as a pointer (I14 enforcement-by-construction; flag-off this emits
+// nothing). Flag-on callers with a slow path must use
+// CCallHelpers::loadProperty/storeProperty(..., slowCases) or the
+// loadButterflyForRead/ForWrite choke points.
+static void emitLegacyButterflyTagTrap(AssemblyHelpers& jit, GPRReg butterflyGPR)
+{
+#if USE(JSVALUE64)
+    if (Options::useJSThreads()) [[unlikely]] {
+        auto untagged = jit.branch64(AssemblyHelpers::Below, butterflyGPR, AssemblyHelpers::TrustedImm64(static_cast<int64_t>(butterflyTagFloor)));
+        jit.breakpoint();
+        untagged.link(&jit);
+    }
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(butterflyGPR);
+#endif
 }
+
+// Typed-array wasteful-mode butterflies are never segmented and never carry
+// the SW regime (their butterfly only routes to the ArrayBuffer); flag-on the
+// tag must still be masked before dereference (I14(a)).
+static void emitTypedArrayButterflyTagMask(AssemblyHelpers& jit, GPRReg butterflyGPR)
+{
+#if USE(JSVALUE64)
+    if (Options::useJSThreads()) [[unlikely]]
+        jit.and64(AssemblyHelpers::TrustedImm64(static_cast<int64_t>(butterflyTagPointerMask)), butterflyGPR);
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(butterflyGPR);
+#endif
+}
+
+}
+
+// ===========================================================================
+// UNGIL §A.1.1 (SPEC-ungil A.1.1; UNGIL-HANDOUT U-T3): loadVMLite — the
+// one-load read of the current thread's VMLite* (the §A.1.3 GIL-off Group-3
+// base; vmstate L4). Per-OS mechanics mirror SPEC-jit annex App. R5 exactly
+// (the loadButterflyTIDTag precedent, jit/CCallHelpers.cpp /
+// jit/ConcurrentButterflyOperations.cpp):
+//
+// - ELF (Linux glibc+musl, x86-64/arm64): one load off the thread register
+//   at the initial-exec TLS offset of g_jscCurrentVMLite (the JIT/LLInt-
+//   visible mirror of VMLite.cpp's `t_currentVMLite`, defined in
+//   runtime/VM.cpp; VMLite::setCurrent keeps it coherent — the same
+//   post-TLS-write discipline as the App. R5 CS3 TID-tag hook). IE-model
+//   offsets are link-time thread-invariant; we still latch the first
+//   computed value and RELEASE_ASSERT constancy at every emission (DFG/FTL
+//   emit from multiple compiler threads, so this re-checks the App. R5
+//   constancy property for free).
+// - Darwin: Mach-O TLV has no constant offset, so the mirror lives in a
+//   pthread TSD slot whose key is published through the M4a-style JSCConfig
+//   slot (g_jscConfig.vmLiteTLSKey, beside butterflyTIDTagTLSKey;
+//   JSC_CONFIG_HAS_VMLITE_TLS_KEY). pthread_key_create + per-thread
+//   pthread_setspecific are the VMLite::setCurrent side's duty, exactly as
+//   for the TID tag.
+// - Other (Windows): unsupported flag-on per App. R5 — no new story owed.
+//
+// REMATERIALIZATION is the correctness carrier (§A.1.2): every site needing
+// the lite may simply re-emit this load; prologue temps and the
+// VMEntryRecord::m_vmLite slot are optimizations only.
+//
+// Flag-off / GIL-on identity: nothing calls this emitter except gilOff-mode
+// compilations (§A.1.3 COMPILED-FOR-VM-mode rule, U-T4a/U-T4b) — flag-off
+// golden disasm is unchanged by this definition existing.
+// ===========================================================================
+
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+
+// Defined in runtime/VM.cpp (initial-exec model there too); declared with the
+// same language linkage + TLS model so the address-of below resolves to the
+// thread-invariant TPOFF the baked immediate relies on.
+extern "C" __attribute__((tls_model("initial-exec"))) thread_local VMLite* g_jscCurrentVMLite;
+
+namespace {
+
+ALWAYS_INLINE uintptr_t currentThreadPointerForVMLiteTLS()
+{
+    uintptr_t threadPointer;
+#if CPU(X86_64)
+    // x86-64 ELF TLS ABI (glibc and musl): the TCB self-pointer lives at
+    // %fs:0, so this single load yields the thread pointer the JIT's
+    // fs-prefixed loads are relative to.
+    asm volatile("movq %%fs:0, %0" : "=r"(threadPointer));
+#elif CPU(ARM64)
+    asm volatile("mrs %0, tpidr_el0" : "=r"(threadPointer));
+#endif
+    return threadPointer;
+}
+
+intptr_t currentVMLiteELFTLSOffset()
+{
+    intptr_t offset = static_cast<intptr_t>(
+        reinterpret_cast<uintptr_t>(&g_jscCurrentVMLite) - currentThreadPointerForVMLiteTLS());
+    // Both per-arch loadFromELFTLS64 emitters encode the offset as a
+    // (sign-extended) disp32.
+    RELEASE_ASSERT(offset == static_cast<intptr_t>(static_cast<int32_t>(offset)));
+    static std::once_flag onceFlag;
+    static intptr_t latchedOffset;
+    std::call_once(onceFlag, [&] {
+        latchedOffset = offset;
+    });
+    // App. R5 constancy property, re-verified per emission (and hence across
+    // every compiler thread that ever emits this load).
+    RELEASE_ASSERT(latchedOffset == offset);
+    return offset;
+}
+
+} // anonymous namespace
+
+#endif // OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+
+// Free-function form: self-contained in this TU (compiles in any tree
+// slice). The member spelling `jit.loadVMLite(reg)` — the surface U-T4a/b
+// emission calls, mirroring CCallHelpers::loadButterflyTIDTag — forwards
+// here once AssemblyHelpers.h (owned by the emission task per the U-T3/U-T4
+// file split) declares it and defines JSC_ASSEMBLYHELPERS_HAS_LOAD_VMLITE
+// beside the declaration (the JSC_CONFIG_HAS_BUTTERFLY_TID_TAG_TLS_KEY
+// inversion pattern).
+void loadVMLite(AssemblyHelpers&, GPRReg); // self-declaration (no header owns this form yet)
+void loadVMLite(AssemblyHelpers& jit, GPRReg destGPR)
+{
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+    // ARM64 note (mirrors loadFromTLS64): the offset is materialized through
+    // destGPR itself for encodable offsets; load64 falls back to the data
+    // temp for unencodable ones, so destGPR must not be the data temp.
+    jit.loadFromELFTLS64(currentVMLiteELFTLSOffset(), destGPR);
+#elif OS(DARWIN) && ENABLE(FAST_TLS_JIT)
+#if defined(JSC_CONFIG_HAS_VMLITE_TLS_KEY)
+    // TSD slots are uniform, so direct-offset reads via fastTLSOffsetForKey
+    // are valid for dynamically created keys (App. R5 Darwin mechanics). The
+    // key is created (and the per-thread copy maintained) by the
+    // VMLite::setCurrent side before any gilOff-mode compilation can run —
+    // U0c fixes the mode pre-codegen, and a gilOff compilation implies a
+    // registered, installed lite existed.
+    uint32_t key = g_jscConfig.vmLiteTLSKey;
+    RELEASE_ASSERT(key);
+    jit.loadFromTLS64(fastTLSOffsetForKey(key), destGPR);
+#else
+    // OPEN OBLIGATION (App. R5 Darwin mechanics, normative; escalated at
+    // the U-T3 amendment): the JSCConfig vmLiteTLSKey slot (+
+    // JSC_CONFIG_HAS_VMLITE_TLS_KEY beside it), its pthread_key_create at
+    // the P5-init point that creates the TID-tag key, and the
+    // VMLite::setCurrent-side per-thread pthread_setspecific are NOT YET
+    // LANDED — runtime/JSCConfig.h and runtime/VMLite.cpp are outside this
+    // slice's writable file set, and no IU obligation row yet names an
+    // owner. They MUST land (with an IU row) before any task emits this
+    // path on Darwin. Until then gilOff-mode compilation (the only caller)
+    // fail-stops here rather than emitting a wrong load.
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(destGPR);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+#else
+    // App. R5: no JIT-visible TLS mechanism on this platform; useJSThreads
+    // (and a fortiori gilOffProcess) is unsupported here, so emission must
+    // never get this far.
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(destGPR);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+#if defined(JSC_ASSEMBLYHELPERS_HAS_LOAD_VMLITE)
+// Member surface (declared in AssemblyHelpers.h by the emission-task slice;
+// the macro is defined beside the declaration). §A.1.2: callers may
+// rematerialize freely — this is one TLS-relative load, no side effects.
+void AssemblyHelpers::loadVMLite(GPRReg destGPR)
+{
+    JSC::loadVMLite(*this, destGPR);
+}
+#endif
 
 AssemblyHelpers::Jump AssemblyHelpers::branchIfFastTypedArray(GPRReg baseGPR)
 {
@@ -280,6 +470,26 @@ void AssemblyHelpers::jitAssertCodeBlockMatchesCurrentCalleeCodeBlockOnCallFrame
 {
     if (!Options::useJITAsserts())
         return;
+    // UNGIL FIX-2 (gilOff mode-split): with N mutators,
+    // executable->codeBlockFor(kind) is a moving publish slot — tier-up
+    // republish (ScriptExecutable::installCode, IT-8) and post-jettison
+    // reinstall legitimately advance it while activations dispatched through
+    // a coherent-but-stale CallLinkRecord are still entering or executing the
+    // OLD CodeBlock (deferred invalidation, SPEC-jit I21: resumed mutators
+    // keep executing replaced code until their next invalidation point).
+    // "callFrame->codeBlock == the executable's CURRENTLY published
+    // codeBlock" is therefore not an invariant gilOff, and the load emitted
+    // below is unordered against the installer's fences anyway. Benign by
+    // design => do not emit the check. Emission-time gate on the sticky
+    // Config-page byte (same gate as ~CallLinkInfo): the gate is evaluated
+    // while GENERATING code, so flag-off/GIL-on emitted code is
+    // byte-identical and the V5b flag-off bench rule is untouched.
+    // Accepted loss (review record): this was the only check that could catch
+    // a same-tier WRONG-FUNCTION CodeBlock in the frame slot; the retained
+    // canaries at jitAssertCodeBlockOnCallFrameWithType and
+    // jitAssertCodeBlockOnCallFrameIsOptimizingJIT only see tier mismatches.
+    if (g_jscConfig.gilOffProcess) [[unlikely]]
+        return;
     if (block.codeType() != FunctionCode)
         return;
     auto kind = block.isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
@@ -316,12 +526,45 @@ void AssemblyHelpers::jitAssertCodeBlockOnCallFrameIsOptimizingJIT(GPRReg scratc
 
 #endif // ASSERT_ENABLED
 
+// UNGIL §A.1.3 (U-T4): see the declaration comment in AssemblyHelpers.h.
+AssemblyHelpers::Address AssemblyHelpers::materializeGILOffExceptionSlot()
+{
+#if CPU(ARM64)
+    // Cache-invalidating accessor for the same reason as prepareCallOperation:
+    // loadVMLite writes the temp via mrs+ldr without updating
+    // m_cachedMemoryTempRegister.
+    GPRReg scratchGPR = getCachedMemoryTempRegisterIDAndInvalidate();
+#elif CPU(X86_64)
+    GPRReg scratchGPR = scratchRegister(); // r11, already clobbered by the GIL-on AbsoluteAddress form.
+#else
+    // SPEC-jit annex App. R5: no gilOff support here; loadVMLite fail-stops
+    // at emission before this address is used.
+    GPRReg scratchGPR = GPRInfo::nonArgGPR0;
+#endif
+    loadVMLite(scratchGPR);
+    return Address(scratchGPR, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_m_exception()));
+}
+
+void AssemblyHelpers::loadException(VM& vm, GPRReg destGPR)
+{
+    if (vm.gilOff()) [[unlikely]] {
+        loadVMLite(destGPR);
+        loadPtr(Address(destGPR, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_m_exception())), destGPR);
+    } else
+        loadPtr(vm.addressOfException(), destGPR);
+}
+
 void AssemblyHelpers::jitReleaseAssertNoException(VM& vm)
 {
     Jump noException;
 #if USE(JSVALUE64)
-    noException = branchTest64(Zero, AbsoluteAddress(vm.addressOfException()));
+    if (vm.gilOff()) [[unlikely]]
+        noException = branchTestPtr(Zero, materializeGILOffExceptionSlot());
+    else
+        noException = branchTest64(Zero, AbsoluteAddress(vm.addressOfException()));
 #elif USE(JSVALUE32_64)
+    // GIL-off is unsupported on 32-bit platforms (jit App. R5); loadVMLite
+    // fail-stops at emission, so the absolute form stays correct here.
     noException = branch32(Equal, AbsoluteAddress(vm.addressOfException()), TrustedImm32(0));
 #endif
     abortWithReason(JITUncaughtExceptionAfterCall);
@@ -365,7 +608,7 @@ void AssemblyHelpers::callExceptionFuzz(VM& vm, GPRReg exceptionReg)
     }
 
     if (exceptionReg != InvalidGPRReg)
-        loadPtr(vm.addressOfException(), exceptionReg);
+        loadException(vm, exceptionReg);
 }
 
 AssemblyHelpers::Jump AssemblyHelpers::emitJumpIfException(VM& vm)
@@ -385,7 +628,11 @@ AssemblyHelpers::Jump AssemblyHelpers::emitExceptionCheck(VM& vm, ExceptionCheck
     if (exceptionReg != InvalidGPRReg) {
 #if ASSERT_ENABLED
         JIT_COMMENT(*this, "Exception validation");
-        Jump ok = branchPtr(Equal, AbsoluteAddress(vm.addressOfException()), exceptionReg);
+        Jump ok;
+        if (vm.gilOff()) [[unlikely]]
+            ok = branchPtr(Equal, materializeGILOffExceptionSlot(), exceptionReg);
+        else
+            ok = branchPtr(Equal, AbsoluteAddress(vm.addressOfException()), exceptionReg);
         breakpoint();
         ok.link(this);
 #endif
@@ -393,7 +640,10 @@ AssemblyHelpers::Jump AssemblyHelpers::emitExceptionCheck(VM& vm, ExceptionCheck
         result = branchTestPtr(kind == NormalExceptionCheck ? NonZero : Zero, exceptionReg);
     } else {
         JIT_COMMENT(*this, "Exception check from vm");
-        result = branchTestPtr(kind == NormalExceptionCheck ? NonZero : Zero, AbsoluteAddress(vm.addressOfException()));
+        if (vm.gilOff()) [[unlikely]]
+            result = branchTestPtr(kind == NormalExceptionCheck ? NonZero : Zero, materializeGILOffExceptionSlot());
+        else
+            result = branchTestPtr(kind == NormalExceptionCheck ? NonZero : Zero, AbsoluteAddress(vm.addressOfException()));
     }
 
     if (width == NormalJumpWidth)
@@ -445,6 +695,7 @@ void AssemblyHelpers::loadProperty(GPRReg object, GPRReg offset, JSValueRegs res
     Jump isInline = branch32(LessThan, offset, TrustedImm32(firstOutOfLineOffset));
 
     loadPtr(Address(object, JSObject::butterflyOffset()), result.payloadGPR());
+    AssemblyHelpersInternal::emitLegacyButterflyTagTrap(*this, result.payloadGPR()); // SPEC-jit section 5.5 Task 8
     neg32(offset);
     signExtend32ToPtr(offset, offset);
     Jump ready = jump();
@@ -472,6 +723,7 @@ void AssemblyHelpers::storeProperty(JSValueRegs value, GPRReg object, GPRReg off
     Jump isInline = branch32(LessThan, offset, TrustedImm32(firstOutOfLineOffset));
 
     loadPtr(Address(object, JSObject::butterflyOffset()), scratch);
+    AssemblyHelpersInternal::emitLegacyButterflyTagTrap(*this, scratch); // SPEC-jit section 5.5 Task 8
     neg32(offset);
     signExtend32ToPtr(offset, offset);
     Jump ready = jump();
@@ -491,6 +743,17 @@ void AssemblyHelpers::storeProperty(JSValueRegs value, GPRReg object, GPRReg off
 #if USE(JSVALUE64)
 AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): the megamorphic fast path reads the
+        // VM-global MegamorphicCache without synchronization and dereferences
+        // the butterfly without the TID/SW predicate; flag-on every
+        // megamorphic access defers to the generic operation (Task 8
+        // inventory; revisit with vmstate's shared-cache story).
+        JumpList slowCases;
+        slowCases.append(jump());
+        return slowCases;
+    }
+
     // uidGPR can be InvalidGPRReg if uid is non-nullptr.
 
     if (!uid)
@@ -586,6 +849,13 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
 
 std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers::storeMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): see loadMegamorphicProperty above.
+        JumpList slowCases;
+        slowCases.append(jump());
+        return { WTF::move(slowCases), JumpList() };
+    }
+
     // uidGPR can be InvalidGPRReg if uid is non-nullptr.
 
     if (!uid)
@@ -683,6 +953,18 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
 
 AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): see loadMegamorphicProperty above.
+        // This emitter was missed by the Task 8 sweep: it reads the shared
+        // HasEntry words (incl. the RefPtr'd uid slot) with no
+        // synchronization. With MegamorphicCache fills disabled flag-on
+        // (MegamorphicCache.h) a hit is impossible anyway; bail like the
+        // load/store emitters.
+        JumpList slowCases;
+        slowCases.append(jump());
+        return slowCases;
+    }
+
     // uidGPR can be InvalidGPRReg if uid is non-nullptr.
 
     if (!uid)
@@ -1876,7 +2158,7 @@ void AssemblyHelpers::getArityPadding(VM& vm, unsigned numberOfParameters, GPRRe
     and32(TrustedImm32(~1U), scratchGPR0);
     lshiftPtr(TrustedImm32(3), scratchGPR0);
     subPtr(stackPointerRegister, scratchGPR0, scratchGPR1);
-    stackOverflow.append(branchPtr(GreaterThan, AbsoluteAddress(vm.addressOfSoftStackLimit()), scratchGPR1));
+    stackOverflow.append(branchPtrAgainstSoftStackLimit(vm, Above, scratchGPR1)); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
 }
 
 #if USE(JSVALUE64)
@@ -1900,6 +2182,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfResizableOrGrowableSharedType
     //     ResizableNonSharedAutoLengthWastefulTypedArray
 
     loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+    AssemblyHelpersInternal::emitTypedArrayButterflyTagMask(*this, scratch2GPR); // SPEC-jit section 5.5 Task 8 (I14(a))
     loadPtr(Address(scratch2GPR, Butterfly::offsetOfArrayBuffer()), scratch2GPR);
 
     auto isGrowableShared = branchTest32(NonZero, scratchGPR, TrustedImm32(isGrowableSharedMode));
@@ -1974,6 +2257,7 @@ std::tuple<AssemblyHelpers::Jump, AssemblyHelpers::JumpList> AssemblyHelpers::lo
         loadPtr(Address(baseGPR, JSDataView::offsetOfBuffer()), scratch2GPR);
     else {
         loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        AssemblyHelpersInternal::emitTypedArrayButterflyTagMask(*this, scratch2GPR); // SPEC-jit section 5.5 Task 8 (I14(a))
         loadPtr(Address(scratch2GPR, Butterfly::offsetOfArrayBuffer()), scratch2GPR);
     }
 

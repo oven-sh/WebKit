@@ -699,7 +699,15 @@ private:
 
                 if (data.variants.size() != 1)
                     break;
-                
+
+                // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Task 9: no
+                // inlined transition sequences flag-on (E4 is not emitted by
+                // the DFG/FTL); keep the MultiPutByOffset for the FTL's
+                // gated lowering instead of folding to the raw
+                // AllocatePropertyStorage/.../PutStructure sequence.
+                if (Options::useJSThreads() && data.variants[0].kind() == PutByVariant::Transition) [[unlikely]]
+                    break;
+
                 emitPutByOffset(
                     indexInBlock, node, baseValue, data.variants[0], data.identifierNumber);
                 changed = true;
@@ -2590,6 +2598,16 @@ private:
 
         if (status.numVariants() > 1 && !m_graph.m_plan.isFTL())
             return;
+
+        if (Options::useJSThreads()) [[unlikely]] {
+            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Tasks 9/10: no
+            // inlined transition sequences flag-on - the generic PutById
+            // performs the transition through the OM's C++ paths (R3).
+            for (const PutByVariant& variant : status.variants()) {
+                if (variant.kind() == PutByVariant::Transition)
+                    return;
+            }
+        }
 
         changed = true;
 

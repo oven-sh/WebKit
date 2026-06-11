@@ -41,6 +41,7 @@
 #include "PropertyInlineCache.h"
 #include "SlowPathCall.h"
 #include "ThunkGenerators.h"
+#include <wtf/Atomics.h>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC {
@@ -603,10 +604,17 @@ void JIT::emit_op_get_by_id(const JSInstruction* currentInstruction)
     VirtualRegister resultVReg = bytecode.m_dst;
     VirtualRegister baseVReg = bytecode.m_base;
     const Identifier* ident = &(m_unlinkedCodeBlock->identifier(bytecode.m_property));
-    GetByIdModeMetadata modeMetadata = bytecode.metadata(m_profiledCodeBlock).m_modeMetadata;
+    // TSAN ic-stubinfo (SPEC-jit §4.3 / §5.7 racy-profiling tolerance): this
+    // runs on a baseline JIT compiler thread while the still-executing LLInt
+    // slow path rewrites the metadata with relaxed atomic stores
+    // (clearToDefaultModeWithoutCache / setDefaultModeCacheConcurrently). A
+    // plain 16-byte struct copy here is a racy plain read = UB; take the
+    // blessed relaxed snapshot of the only byte we consume. A stale mode is
+    // just a profiling hint (it only picks the initial CacheType).
+    GetByIdMode profiledMode = bytecode.metadata(m_profiledCodeBlock).m_modeMetadata.loadModeConcurrently();
 
     CacheType cacheType = CacheType::GetByIdSelf;
-    if (modeMetadata.mode == GetByIdMode::ProtoLoad)
+    if (profiledMode == GetByIdMode::ProtoLoad)
         cacheType = CacheType::GetByIdPrototype;
 
     using BaselineJITRegisters::GetById::baseJSR;
@@ -933,7 +941,12 @@ void JIT::emitSlow_op_has_private_brand(const JSInstruction*, Vector<SlowCaseEnt
 void JIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpResolveScope>();
-    ResolveType profiledResolveType = bytecode.metadata(m_profiledCodeBlock).m_resolveType;
+    // TSAN ic-stubinfo residual (§5.7 racy-profiling tolerance): the LLInt
+    // slow path (slow_path_resolve_scope) repatches m_resolveType concurrently
+    // with this compiler-thread read; snapshot it with a relaxed atomic load.
+    // A stale value only picks a (still-correct) fast-path shape guarded by
+    // the runtime resolveType re-check below.
+    ResolveType profiledResolveType = WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_resolveType, std::memory_order_relaxed);
     VirtualRegister dst = bytecode.m_dst;
     VirtualRegister scope = bytecode.m_scope;
 
@@ -955,7 +968,8 @@ void JIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     else if (profiledResolveType == ClosureVar) {
         emitGetVirtualRegisterPayload(scope, scopeGPR);
         static_assert(scopeGPR == returnValueGPR);
-        unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
+        // Relaxed snapshot for the same reason as m_resolveType above.
+        unsigned localScopeDepth = WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth, std::memory_order_relaxed);
         if (localScopeDepth < 8) {
             for (unsigned index = 0; index < localScopeDepth; ++index)
                 loadPtr(Address(returnValueGPR, JSScope::offsetOfNext()), returnValueGPR);
@@ -1035,7 +1049,8 @@ void JIT::emitSlow_op_resolve_scope(const JSInstruction* currentInstruction, Vec
 
     auto bytecode = currentInstruction->as<OpResolveScope>();
     VirtualRegister scope = bytecode.m_scope;
-    ResolveType profiledResolveType = bytecode.metadata(m_profiledCodeBlock).m_resolveType;
+    // Relaxed snapshot; see emit_op_resolve_scope.
+    ResolveType profiledResolveType = WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_resolveType, std::memory_order_relaxed);
     uint32_t bytecodeOffset = m_bytecodeIndex.offset();
 
     using BaselineJITRegisters::ResolveScope::metadataGPR;
@@ -1249,7 +1264,11 @@ void JIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
     auto bytecode = currentInstruction->as<OpGetFromScope>();
     VirtualRegister dst = bytecode.m_dst;
     VirtualRegister scope = bytecode.m_scope;
-    ResolveType profiledResolveType = bytecode.metadata(m_profiledCodeBlock).m_getPutInfo.resolveType();
+    // TSAN ic-stubinfo residual: LLInt's tryCacheGetFromScopeGlobal rewrites
+    // m_getPutInfo concurrently with this compiler-thread read; take a relaxed
+    // atomic snapshot of the one word we consume (profiling hint only).
+    GetPutInfo profiledGetPutInfo = WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_getPutInfo, std::memory_order_relaxed);
+    ResolveType profiledResolveType = profiledGetPutInfo.resolveType();
 
     uint32_t bytecodeOffset = m_bytecodeIndex.offset();
     ASSERT(BytecodeIndex(m_bytecodeIndex.offset()) == m_bytecodeIndex);
@@ -1291,7 +1310,8 @@ void JIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
             emitGetVirtualRegisterPayload(scope, scopeGPR);
             addSlowCase(branch32(NotEqual, Address(scopeGPR, JSCell::structureIDOffset()), scratch1GPR));
             loadPtr(operandAddress, scratch1GPR);
-            loadPtr(Address(scopeGPR, JSObject::butterflyOffset()), scopeGPR);
+            // SPEC-jit section 5.5 (Task 8): READ choke point (conservative form).
+            addSlowCase(loadButterflyForRead(scopeGPR, scopeGPR, ConcurrentButterflyShape::MaybeArrayStorage));
             negPtr(scratch1GPR);
             loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)), returnValueJSR);
             break;
@@ -1351,7 +1371,8 @@ void JIT::emitSlow_op_get_from_scope(const JSInstruction* currentInstruction, Ve
 
     auto bytecode = currentInstruction->as<OpGetFromScope>();
     VirtualRegister scope = bytecode.m_scope;
-    ResolveType profiledResolveType = bytecode.metadata(m_profiledCodeBlock).m_getPutInfo.resolveType();
+    // Relaxed snapshot; see emit_op_get_from_scope.
+    ResolveType profiledResolveType = WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_getPutInfo, std::memory_order_relaxed).resolveType();
     uint32_t bytecodeOffset = m_bytecodeIndex.offset();
 
     using BaselineJITRegisters::GetFromScope::metadataGPR;
@@ -1438,7 +1459,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
                 isOutOfLine.link(&jit);
             }
 
-            jit.loadPtr(Address(scopeGPR, JSObject::butterflyOffset()), scopeGPR);
+            // SPEC-jit section 5.5 (Task 8): READ choke point (conservative form).
+            slowCase.append(jit.loadButterflyForRead(scopeGPR, scopeGPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
             jit.negPtr(scratch1GPR);
             jit.loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)), returnValueJSR);
             break;
@@ -1572,7 +1594,10 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
     VirtualRegister scope = bytecode.m_scope;
     VirtualRegister value = bytecode.m_value;
 
-    ResolveType profiledResolveType = bytecode.metadata(m_profiledCodeBlock).m_getPutInfo.resolveType();
+    // TSAN ic-stubinfo residual: LLInt's tryCachePutToScopeGlobal rewrites
+    // m_getPutInfo concurrently with this compiler-thread read; relaxed
+    // atomic snapshot (profiling hint only).
+    ResolveType profiledResolveType = WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_getPutInfo, std::memory_order_relaxed).resolveType();
 
     constexpr GPRReg metadataGPR = regT5;
     using Metadata = OpPutToScope::Metadata;
@@ -1610,7 +1635,9 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
                 return branchPtr(Equal, scopeGPR, scratch1GPR2);
             }));
 
-            loadPtr(Address(scopeGPR, JSObject::butterflyOffset()), scratch1GPR2);
+            // SPEC-jit section 5.5 (Task 8): WRITE choke point (scratch1GPR1
+            // is the TID-tag scratch here, reloaded with the operand after).
+            addSlowCase(loadButterflyForWrite(scopeGPR, scratch1GPR2, scratch1GPR1, ConcurrentButterflyShape::MaybeArrayStorage));
             loadPtr(operandAddress, scratch1GPR1);
             negPtr(scratch1GPR1);
             storeValue(valueJSR, BaseIndex(scratch1GPR2, scratch1GPR1, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
@@ -1722,7 +1749,8 @@ void JIT::emitSlow_op_put_to_scope(const JSInstruction* currentInstruction, Vect
     linkAllSlowCases(iter);
 
     auto bytecode = currentInstruction->as<OpPutToScope>();
-    ResolveType profiledResolveType = bytecode.metadata(m_profiledCodeBlock).m_getPutInfo.resolveType();
+    // Relaxed snapshot; see emit_op_put_to_scope.
+    ResolveType profiledResolveType = WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_getPutInfo, std::memory_order_relaxed).resolveType();
     if (profiledResolveType == ModuleVar) {
         // If any linked CodeBlock saw a ModuleVar, then all linked CodeBlocks are guaranteed
         // to also see ModuleVar.
@@ -1827,6 +1855,12 @@ void JIT::emit_op_put_internal_field(const JSInstruction* currentInstruction)
     static_assert(noOverlap(regT2, jsRegT10));
     emitGetVirtualRegisterPayload(base, regT2);
     emitGetVirtualRegister(value, jsRegT10);
+    // SPEC-ungil §N.5 (r15 F1): gilOffProcess, internal-field stores are
+    // store-RELEASE in every tier — the suspend-state store is the generator
+    // resume-claim UNCLAIM and must publish the preceding frame saves to a
+    // rival claimant's acquire CAS. Compile-time keyed: zero flag-off delta.
+    if (VM::isGILOffProcess()) [[unlikely]]
+        storeFence();
     storeValue(jsRegT10, Address(regT2, JSInternalFieldObjectImpl<>::offsetOfInternalField(index)));
     emitWriteBarrier(base, value, ShouldFilterValue);
 }
@@ -1939,7 +1973,9 @@ void JIT::emit_op_enumerator_next(const JSInstruction* currentInstruction)
     GPRReg baseGPR = regT2;
 
     // This is the most common mode set we tend to see, so special case it if we profile it in the LLInt.
-    if (bytecode.metadata(m_profiledCodeBlock).m_enumeratorMetadata == JSPropertyNameEnumerator::OwnStructureMode) {
+    // TSAN ic-stubinfo residual: LLInt's enumerator slow paths OR bits into
+    // m_enumeratorMetadata concurrently; relaxed snapshot (profiling hint only).
+    if (WTF::atomicLoad(&bytecode.metadata(m_profiledCodeBlock).m_enumeratorMetadata, std::memory_order_relaxed) == JSPropertyNameEnumerator::OwnStructureMode) {
         GPRReg enumeratorGPR = regT3;
         GPRReg scratch1GPR = regT4;
         emitGetVirtualRegister(enumerator, enumeratorGPR);
@@ -2086,12 +2122,16 @@ void JIT::emit_op_enumerator_get_by_val(const JSInstruction* currentInstruction)
     sub32(Address(scratch1GPR, JSPropertyNameEnumerator::cachedInlineCapacityOffset()), scratch2GPR);
     neg32(scratch2GPR);
     signExtend32ToPtr(scratch2GPR, scratch2GPR);
-    loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch1GPR);
+    // SPEC-jit section 5.5 (Task 8): READ choke point; predicate failures
+    // take the structure-mismatch route into the generic get_by_val IC.
+    JumpList threadedButterflySlowCases;
+    threadedButterflySlowCases.append(loadButterflyForRead(baseGPR, scratch1GPR, ConcurrentButterflyShape::MaybeArrayStorage));
     constexpr intptr_t offsetOfFirstProperty = offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue));
     load64(BaseIndex(scratch1GPR, scratch2GPR, TimesEight, offsetOfFirstProperty), resultGPR);
     doneCases.append(jump());
 
     structureMismatch.link(this);
+    threadedButterflySlowCases.link(this);
     store8ToMetadata(TrustedImm32(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch), bytecode, OpEnumeratorGetByVal::Metadata::offsetOfEnumeratorMetadata());
 
     isNotOwnStructureMode.link(this);
@@ -2180,13 +2220,22 @@ void JIT::emit_op_enumerator_put_by_val(const JSInstruction* currentInstruction)
 
     // Otherwise it's out of line
     outOfLineAccess.link(this);
-    sub32(Address(scratch1GPR, JSPropertyNameEnumerator::cachedInlineCapacityOffset()), scratch2GPR);
-    neg32(scratch2GPR);
-    signExtend32ToPtr(scratch2GPR, scratch2GPR);
-    constexpr intptr_t offsetOfFirstProperty = offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue));
-    loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch1GPR);
-    store64(valueGPR, BaseIndex(scratch1GPR, scratch2GPR, TimesEight, offsetOfFirstProperty));
-    doneCases.append(jump());
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): the out-of-line store needs the
+        // WRITE choke point, but every spare GPR here must survive onto the
+        // generic put_by_val IC path; route out-of-line own-structure puts
+        // through the mismatch/generic route instead (the IC carries the
+        // predicate). Inline stores above are cell-internal and stay fast.
+        structureMismatch.append(jump());
+    } else {
+        sub32(Address(scratch1GPR, JSPropertyNameEnumerator::cachedInlineCapacityOffset()), scratch2GPR);
+        neg32(scratch2GPR);
+        signExtend32ToPtr(scratch2GPR, scratch2GPR);
+        constexpr intptr_t offsetOfFirstProperty = offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue));
+        loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch1GPR);
+        store64(valueGPR, BaseIndex(scratch1GPR, scratch2GPR, TimesEight, offsetOfFirstProperty));
+        doneCases.append(jump());
+    }
 
     structureMismatch.link(this);
     store8ToMetadata(TrustedImm32(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch), bytecode, OpEnumeratorPutByVal::Metadata::offsetOfEnumeratorMetadata());

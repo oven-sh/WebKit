@@ -39,6 +39,8 @@ types [
     :IndexingType,
     :IterationModeMetadata,
     :JSCell,
+    # SPEC-jit Task 6 (§4.3): single-word {StructureID, int32_t offset} LLInt cache.
+    :LLIntCachedIdAndOffset,
     :JSGlobalLexicalEnvironment,
     :JSGlobalObject,
     :JSModuleEnvironment,
@@ -593,6 +595,33 @@ op :get_private_name,
         property: WriteBarrier[JSCell],
     }
 
+# SPEC-jit Task 6 (§4.3, D7, I13): the LLInt try_get_by_id/get_by_id_direct
+# caches are UNCONDITIONALLY repacked into one 8-byte-aligned
+# LLIntCachedIdAndOffset word ({structureID, offset}); this raises their
+# metadata alignment from 4 to 8, so they live in this (Alignment: 8) region —
+# UnlinkedMetadataTable::finalize() asserts decreasing alignment order.
+op :get_by_id_direct,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: unsigned,
+        valueProfile: unsigned, # not used in llint
+    },
+    metadata: {
+        cache: LLIntCachedIdAndOffset,
+    }
+
+op :try_get_by_id,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: unsigned,
+        valueProfile: unsigned,
+    },
+    metadata: {
+        cache: LLIntCachedIdAndOffset,
+    }
+
 # Alignment: 4
 op :get_by_val_with_this,
     args: {
@@ -734,29 +763,8 @@ op :enumerator_get_by_val,
         enumeratorMetadata: EnumeratorMetadata,
     }
 
-op :get_by_id_direct,
-    args: {
-        dst: VirtualRegister,
-        base: VirtualRegister,
-        property: unsigned,
-        valueProfile: unsigned, # not used in llint
-    },
-    metadata: {
-        structureID: StructureID,
-        offset: unsigned,
-    }
-
-op :try_get_by_id,
-    args: {
-        dst: VirtualRegister,
-        base: VirtualRegister,
-        property: unsigned,
-        valueProfile: unsigned,
-    },
-    metadata: {
-        structureID: StructureID,
-        offset: unsigned,
-    }
+# NOTE (SPEC-jit Task 6): get_by_id_direct and try_get_by_id moved to the
+# Alignment: 8 region above (their metadata is now one aligned 64-bit word).
 
 # Alignment: 1
 op :jneq_ptr,

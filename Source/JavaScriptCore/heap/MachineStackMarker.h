@@ -51,6 +51,12 @@ public:
     // Only needs to be called by clients that can use the same heap from multiple threads.
     bool addCurrentThread() { return Ref { m_threadGroup }->addCurrentThread() == ThreadGroupAddResult::NewlyAdded; }
 
+    // SharedGC (SPEC-heap.md §10.6/I4(b), T6): true iff the calling thread is
+    // registered for conservative scanning (its stack and registers are part
+    // of the I12 root set). Used by debug cross-checks in the shared-mode
+    // heap-access protocol; takes the thread-group lock, so debug-only use.
+    bool includesCurrentThread();
+
     WordLock& getLock() { return m_threadGroup->getLock(); }
     const ListHashSet<Ref<Thread>>& threads(const AbstractLocker& locker) const { return m_threadGroup->threads(locker); }
 

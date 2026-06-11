@@ -1,0 +1,172 @@
+=== ConservativeRoots.cpp insertions (round 4) ===
+// FIXME(fix-shared-heap-corruption): TEMPORARY round-4 experiment (TLC-R4-2
+// stage 2, coverage-vs-acceptance bisect) — strip with the rest of the
+// instrumentation. When Heap.cpp arms this (BUGHUNT_RESCUE2=1), every
+// candidate cell address that fell inside a tracked MarkedBlock but FAILED
+// the isLiveCell acceptance gate is recorded here; Heap::endMarking()
+// intersects the set with the NA-cells it rescues. A rescued NA cell present
+// here was SCANNED-BUT-REJECTED (acceptance miss); absent means its address
+// appeared in no scanned word (coverage miss).
+Lock g_bughuntConsRejectLock;
+HashSet<void*>* g_bughuntConsRejectedWords { nullptr };
+// Every raw scanned word (post removeArrayPtrTag, PRE bloom-filter/set
+// checks). Separates "word never in any scanned image" (stack-coverage miss)
+// from "word present but filtered before the gate" (block publication miss).
+HashSet<void*>* g_bughuntConsScannedWords { nullptr };
+
+    // FIXME(fix-shared-heap-corruption): TEMPORARY round-4 — see
+    // g_bughuntConsScannedWords above.
+    if (g_bughuntConsScannedWords) [[unlikely]] {
+        // Skip the HashTable empty/deleted sentinel values (0 and -1).
+        if (pointer && pointer != std::bit_cast<char*>(uintptr_t(-1))) {
+            Locker locker { g_bughuntConsRejectLock };
+            g_bughuntConsScannedWords->add(pointer);
+        // FIXME(fix-shared-heap-corruption): TEMPORARY round-4 — see
+        // g_bughuntConsRejectedWords above.
+        if (!isLive && g_bughuntConsRejectedWords) [[unlikely]] {
+            Locker locker { g_bughuntConsRejectLock };
+            g_bughuntConsRejectedWords->add(pointer);
+        }
+        if (isLive)
+            markFoundGCPointer(pointer, cellKind);
+        // Only return early if we are marking a non-butterfly, since butterflies without indexed properties could point past the end of their allocation.
+        // If we do, and there is another live butterfly immediately following the first, we will mark the latter one here but we still need to
+        // mark the former.
+        return isLive && !mayHaveIndexingHeader(cellKind);
+    };
+
+    if (isJSCellKind(cellKind)) {
+        if (MarkedBlock::isAtomAligned(pointer)) [[likely]] {
+            if (tryPointer(pointer))
+                return;
+        }
+    }
+
+    // We could point into the middle of an object.
+    char* alignedPointer = static_cast<char*>(candidate->handle().cellAlign(pointer));
+    if (tryPointer(alignedPointer))
+        return;
+
+    // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
+    // case, this is pointing to the object to the right of the one we should be marking.
+    if (candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
+        tryPointer(alignedPointer - candidate->cellSize());
+}
+
+template<typename MarkHook>
+// V7-3 (TSAN): the spans handed to this function are either (a) the
+// MachineStackMarker copy buffer — fastMalloc memory that bmalloc may have
+// recycled, without TSAN-visible synchronization, from allocations freed by
+// the very threads whose stacks were just copied, so its shadow state still
+// carries their writes — or (b) the conductor's own stack/registers. The
+// `*it` word loads below are conservative-scan byte inspection of that
+// memory and are exempt from the data-race model for the same reason as
+// copyMemory (worst case: spurious retention). NOTE: no_sanitize_thread
+// applies to this function's own body only; genericAddPointer is
+// instrumented at IR-generation time before inlining (LLVM keeps
+// sanitize_thread-mismatched callees outlined and instrumented), so the
+// heap-metadata reads it performs (block sets, versions, isLiveCell)
+// remain under TSAN — only the raw span dereference is suppressed.
+SUPPRESS_ASAN SUPPRESS_TSAN
+void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHook)
+{
+    if (begin > end)
+        std::swap(begin, end);
+
+    RELEASE_ASSERT(isPointerAligned(begin));
+    RELEASE_ASSERT(isPointerAligned(end));
+    // Make a local copy of filters to show the compiler it won't alias, and can be register-allocated.
+    TinyBloomFilter<uintptr_t> jsGCFilter = m_heap.objectSpace().blocks().filter();
+#if ENABLE(WEBASSEMBLY)
+    TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter = m_heap.boxedWasmCalleeFilter();
+#else
+    TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter;
+#endif
+
+    HeapVersion markingVersion = m_heap.objectSpace().markingVersion();
+    HeapVersion newlyAllocatedVersion = m_heap.objectSpace().newlyAllocatedVersion();
+#if ENABLE(WEBASSEMBLY)
+    if (boxedWasmCalleeFilter.bits()) {
+        constexpr bool lookForWasmCallees = true;
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it)
+            genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+    } else {
+#else
+    {
+#endif
+        constexpr bool lookForWasmCallees = false;
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it)
+            genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+    }
+}
+
+class DummyMarkHook {
+public:
+    void NODELETE mark(void*) { }
+    void NODELETE markKnownJSCell(JSCell*) { }
+};
+
+void ConservativeRoots::add(void* begin, void* end)
+{
+    DummyMarkHook dummy;
+    genericAddSpan(begin, end, dummy);
+}
+
+class CompositeMarkHook {
+public:
+    CompositeMarkHook(JITStubRoutineSet& stubRoutines, CodeBlockSet& codeBlocks, const AbstractLocker& locker)
+        : m_stubRoutines(stubRoutines)
+        , m_codeBlocks(codeBlocks)
+        , m_codeBlocksLocker(locker)
+    {
+    }
+    
+    void mark(void* address)
+    {
+        m_stubRoutines.mark(address);
+    }
+    
+    void markKnownJSCell(JSCell* cell)
+    {
+        if (cell->type() == CodeBlockType)
+            m_codeBlocks.mark(m_codeBlocksLocker, uncheckedDowncast<CodeBlock>(cell));
+    }
+
+private:
+    JITStubRoutineSet& m_stubRoutines;
+    CodeBlockSet& m_codeBlocks;
+    const AbstractLocker& m_codeBlocksLocker;
+};
+
+void ConservativeRoots::add(
+    void* begin, void* end, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks)
+{
+    Locker locker { codeBlocks.getLock() };
+    CompositeMarkHook markHook(jitStubRoutines, codeBlocks, locker);
+    genericAddSpan(begin, end, markHook);
+}
+
+} // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+=== Heap.cpp gather-arm + extern (round 4) ===
+1068:    // 2) — arm the rejected-candidate recorder for this gather. Accumulates
+1069-    // across multiple gathers in one cycle; drained at endMarking.
+1070-    {
+1071-        static const bool rescue2Enabled = !!getenv("BUGHUNT_RESCUE2");
+1072-        if (rescue2Enabled && isSharedServer()) [[unlikely]] {
+1073-            Locker locker { g_bughuntConsRejectLock };
+1074-            if (!g_bughuntConsRejectedWords)
+1075-                g_bughuntConsRejectedWords = new HashSet<void*>;
+1076-            if (!g_bughuntConsScannedWords)
+1077-                g_bughuntConsScannedWords = new HashSet<void*>;
+1078-        }
+1079-    }
+1080-    m_machineThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks, m_currentThreadState, m_currentThread);
+1038-// FIXME(fix-shared-heap-corruption): TEMPORARY round-4 (TLC-R4-2 stage 2) —
+1039:// defined in ConservativeRoots.cpp; armed below when BUGHUNT_RESCUE2=1.
+1040-extern Lock g_bughuntConsRejectLock;
+1041-extern HashSet<void*>* g_bughuntConsRejectedWords;
+1042-extern HashSet<void*>* g_bughuntConsScannedWords;
+1043-

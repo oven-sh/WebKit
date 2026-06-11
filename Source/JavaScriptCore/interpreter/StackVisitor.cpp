@@ -44,17 +44,20 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 {
     CallFrame* topFrame = nullptr;
     if (startFrame) {
-        ASSERT(!vm.topCallFrame || static_cast<void*>(vm.topCallFrame) != vm.topEntryFrame);
+        // UNGIL §A.1.3 mode split: hoist ONE primitives reference so every read
+        // in this constructor sees the same (current thread's) carrier.
+        const VMLitePrimitives& primitives = vm.group3Primitives();
+        ASSERT(!primitives.topCallFrame || static_cast<void*>(primitives.topCallFrame) != primitives.topEntryFrame);
 
-        m_frame.m_entryFrame = vm.topEntryFrame;
-        topFrame = vm.topCallFrame;
+        m_frame.m_entryFrame = primitives.topEntryFrame;
+        topFrame = primitives.topCallFrame;
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
             if (skipFirstFrame || topFrame->isZombieFrame()) {
                 m_previousReturnPC = topFrame->rawReturnPC();
                 topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
-                m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
-                if (startFrame == vm.topCallFrame)
+                m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != primitives.topEntryFrame);
+                if (startFrame == primitives.topCallFrame)
                     startFrame = topFrame;
             }
         }

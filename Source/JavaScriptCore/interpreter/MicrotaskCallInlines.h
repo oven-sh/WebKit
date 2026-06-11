@@ -61,15 +61,17 @@ ALWAYS_INLINE JSValue MicrotaskCall::tryCallWithArguments(VM& vm, JSFunction* fu
     constexpr unsigned argumentCountIncludingThis = 1 + sizeof...(args);
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
     static_assert(argumentCountIncludingThis <= 7);
-    if (m_numParameters <= argumentCountIncludingThis) [[likely]] {
-        auto* entry = m_addressForCall;
+    if (WTF::atomicLoad(&m_numParameters, std::memory_order_relaxed) <= argumentCountIncludingThis) [[likely]] {
+        // THREADS: acquire the entry, then read the codeBlock — pairs with
+        // unlinkOrUpgradeImpl's write order (codeBlock before release entry).
+        auto* entry = WTF::atomicLoad(&m_addressForCall, std::memory_order_acquire);
         if (!entry) [[unlikely]] {
             DeferTraps deferTraps(vm);
             relink(vm, function);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
-            entry = m_addressForCall;
+            entry = WTF::atomicLoad(&m_addressForCall, std::memory_order_acquire);
         }
-        auto* codeBlock = m_codeBlock;
+        auto* codeBlock = WTF::atomicLoad(&m_codeBlock, std::memory_order_relaxed);
         if constexpr (!sizeof...(args))
             RELEASE_AND_RETURN(scope, JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, codeBlock, function, thisValue, context)));
         else if constexpr (sizeof...(args) == 1)

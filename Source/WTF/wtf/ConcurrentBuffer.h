@@ -58,44 +58,57 @@ public:
     // Growing is not concurrent. This assumes you are holding some other lock before you do this.
     void growExact(size_t newSize)
     {
-        auto* array = m_array;
-        if (array && newSize <= array->size)
+        auto* array = arrayConcurrently();
+        if (array && newSize <= array->sizeConcurrently())
             return;
         auto newArray = createArray(newSize);
         // This allows us to do ConcurrentBuffer<std::unique_ptr<>>.
         // asMutableByteSpan() avoids triggering -Wclass-memaccess.
         if (array)
             memcpySpan(asMutableByteSpan(newArray->span()), asByteSpan(array->span()));
-        for (auto& item : newArray->span().subspan(array ? array->size : 0))
+        for (auto& item : newArray->span().subspan(array ? array->sizeConcurrently() : 0))
             new (&item) T();
-        WTF::storeStoreFence();
-        m_array = newArray.get();
+        // THREADS/TSAN: release-publish the new array to concurrent readers
+        // (subsumes the first storeStoreFence; old arrays stay alive).
+        WTF::atomicStore(&m_array, newArray.get(), std::memory_order_release);
         WTF::storeStoreFence();
         m_allArrays.append(WTF::move(newArray));
     }
     
     void grow(size_t newSize)
     {
-        size_t size = m_array ? m_array->size : 0;
+        Array* array = arrayConcurrently();
+        size_t size = array ? array->sizeConcurrently() : 0;
         if (newSize <= size)
             return;
         growExact(std::max(newSize, size * 2));
     }
     
     struct Array {
-        size_t size; // This is an immutable size.
+        size_t size; // Immutable after createArray's relaxed store; read with relaxed atomics (recycled-allocation TSAN pairing).
         T data[1];
 
-        std::span<T> span() LIFETIME_BOUND { return unsafeMakeSpan(data, size); }
-        std::span<const T> span() const LIFETIME_BOUND { return unsafeMakeSpan(data, size); }
+        size_t sizeConcurrently() const { return WTF::atomicLoad(const_cast<size_t*>(&size), std::memory_order_relaxed); }
+        std::span<T> span() LIFETIME_BOUND { return unsafeMakeSpan(data, sizeConcurrently()); }
+        std::span<const T> span() const LIFETIME_BOUND { return unsafeMakeSpan(data, sizeConcurrently()); }
     };
 
     using ArrayPtr = std::unique_ptr<Array, NonDestructingDeleter<Array, ConcurrentBufferMalloc>>;
     
-    Array* array() const LIFETIME_BOUND { return m_array; }
+    Array* array() const LIFETIME_BOUND { return arrayConcurrently(); }
+    // THREADS/TSAN: lock-free readers race growExact's release publish by
+    // design. TSAN r13: acquire under TSAN ONLY so the fresh Array block's
+    // pre-publication writes (malloc / slot moves / size store) get an HB
+    // edge in TSAN's model; production keeps relaxed (dependency-ordered
+    // consume protocol; §13.4 gate shape).
+#if TSAN_ENABLED
+    Array* arrayConcurrently() const LIFETIME_BOUND { return WTF::atomicLoad(const_cast<Array**>(&m_array), std::memory_order_acquire); }
+#else
+    Array* arrayConcurrently() const LIFETIME_BOUND { return WTF::atomicLoad(const_cast<Array**>(&m_array), std::memory_order_relaxed); }
+#endif
     
-    T& operator[](size_t index) LIFETIME_BOUND { return m_array->span()[index]; }
-    const T& operator[](size_t index) const LIFETIME_BOUND { return m_array->span()[index]; }
+    T& operator[](size_t index) LIFETIME_BOUND { return arrayConcurrently()->span()[index]; }
+    const T& operator[](size_t index) const LIFETIME_BOUND { return arrayConcurrently()->span()[index]; }
     
 private:
     static ArrayPtr createArray(size_t size)
@@ -105,7 +118,7 @@ private:
         objectSize += static_cast<size_t>(OBJECT_OFFSETOF(Array, data));
         auto* ptr = static_cast<Array*>(ConcurrentBufferMalloc::malloc(objectSize));
         auto result = ArrayPtr(ptr, { });
-        result->size = size;
+        WTF::atomicStore(&result->size, size, std::memory_order_relaxed);
         return result;
     }
     

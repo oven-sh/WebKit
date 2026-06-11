@@ -27,6 +27,7 @@
 
 #include "GetVM.h"
 #include "HeapCellInlines.h"
+#include "JSCellInlines.h"
 #include "JSGlobalObject.h"
 #include "JSString.h"
 #include "KeyAtomStringCacheInlines.h"
@@ -55,7 +56,10 @@ bool JSString::equal(JSGlobalObject* globalObject, JSString* other) const
 {
     if (isRope() || other->isRope())
         return equalSlowCase(globalObject, other);
-    return WTF::equal(*valueInternal().impl(), *other->valueInternal().impl());
+    // TSAN family rope-stringimpl: read both published impls through the
+    // annotated relaxed load — a plain valueInternal().impl() read of m_fiber
+    // races a concurrent resolver/atomizer republish on another thread.
+    return WTF::equal(*getValueImpl(), *other->getValueImpl());
 }
 
 ALWAYS_INLINE bool JSString::equalInline(JSGlobalObject* globalObject, JSString* other) const
@@ -156,7 +160,7 @@ JSString* JSString::tryReplaceOneCharImpl(JSGlobalObject* globalObject, char16_t
 
 JSString* JSString::tryReplaceOneChar(JSGlobalObject* globalObject, char16_t search, JSString* replacement)
 {
-    uint8_t* stackLimit = std::bit_cast<uint8_t*>(globalObject->vm().softStackLimit());
+    uint8_t* stackLimit = std::bit_cast<uint8_t*>(globalObject->vm().softStackLimitForCurrentThreadSlow());
     bool found = false;
     if (JSString* result = tryReplaceOneCharImpl(globalObject, search, replacement, stackLimit, found); result && found)
         return result;
@@ -381,12 +385,49 @@ inline JSString* repeatCharacter(JSGlobalObject* globalObject, CharacterType cha
 
 inline void JSRopeString::convertToNonRope(String&& string) const
 {
-    // Concurrent compiler threads can access String held by JSString. So we always emit
-    // store-store barrier here to ensure concurrent compiler threads see initialized String.
-    ASSERT(JSString::isRope());
-    WTF::storeStoreFence();
-    new (&uninitializedValueInternal()) String(WTF::move(string));
+    // Concurrent compiler threads can access String held by JSString, and lock-free
+    // mutator readers snapshot m_fiber through fiberConcurrently() while we republish
+    // it here, so the publish must be an annotated atomic store.
+    //
+    // TSAN family rope-stringimpl (TSAN-TRIAGE §11.17, the release-atomic
+    // companion to swapToAtomString): resolution-republication is PUBLICATION,
+    // not stale-tolerable data — the resolved StringImpl's contents (buffer,
+    // length, hash) must happen-before any reader that observes the new
+    // m_fiber bits, so this is a RELEASE store, not relaxed. The release
+    // ordering replaces (and subsumes) the storeStoreFence the plain
+    // placement-new publication used; the store itself is the same single
+    // pointer-sized store and ownership transfer (String holds exactly one
+    // RefPtr<StringImpl>, leaked into the cell, reclaimed by the JSString
+    // destructor via valueInternal()).
     static_assert(sizeof(String) == sizeof(RefPtr<StringImpl>), "JSString's String initialization must be done in one pointer move.");
+    if (vm().gilOff()) [[unlikely]] {
+        // GIL-off: multiple mutators can race to resolve the same rope, so this
+        // transition must be idempotent. Serialize the one-pointer publish on
+        // the cell lock; a loser observes the winner's publish under the lock,
+        // drops its own String (the argument destructs on return), and treats
+        // "already resolved by another thread" as success. All heavy work
+        // (buffer fill, atomization, atom-table locking) stays outside the
+        // cell lock. notifyNeedsDestruction is hoisted out of the critical
+        // section so no cellLock -> directory-bitvector-lock order edge is
+        // introduced; the destructible bit is monotone toward true, so the
+        // winner flipping it after unlocking is sound (see
+        // MarkedBlock::Handle::setIsDestructible).
+        {
+            Locker locker { cellLock() };
+            if (!(fiberConcurrently() & isRopeInPointer))
+                return; // Lost the race; the winner's value is already published.
+            WTF::atomicStore(&m_fiber, std::bit_cast<uintptr_t>(string.releaseImpl().leakRef()), std::memory_order_release);
+        }
+        // We do not clear the trailing fibers and length information (fiber1 and fiber2) because we could be reading the length concurrently.
+        ASSERT(!JSString::isRope());
+        notifyNeedsDestruction();
+        return;
+    }
+    ASSERT(JSString::isRope());
+    // GIL-on / flag-off: single mutator; release store == plain store + the
+    // old storeStoreFence on every supported target (same shape accepted for
+    // swapToAtomString), so flag-off behavior is unchanged.
+    WTF::atomicStore(&m_fiber, std::bit_cast<uintptr_t>(string.releaseImpl().leakRef()), std::memory_order_release);
     // We do not clear the trailing fibers and length information (fiber1 and fiber2) because we could be reading the length concurrently.
     ASSERT(!JSString::isRope());
     notifyNeedsDestruction();
@@ -645,22 +686,39 @@ inline JSString* jsAtomString(JSGlobalObject* globalObject, VM& vm, JSString* st
         return vm.keyAtomStringCache.make(vm, buffer, createFromNonRope);
     }
 
-    JSRopeString* ropeString = uncheckedDowncast<JSRopeString>(string);
+    // GIL-off: snapshot the fiber word once. Another mutator may publish a
+    // resolved impl into m_fiber at any time after the isRope() check above,
+    // and re-reading fiber0()/isSubstring()/is8Bit() after that publish would
+    // misread the published StringImpl* as a JSString* and flag bits. The
+    // snapshot must precede the downcast (§N.2 reader arm): uncheckedDowncast's
+    // debug is<JSRopeString> check re-reads m_fiber and can observe the
+    // republish, so cast on the snapshot decision instead.
+    uintptr_t fiberBits = string->fiberConcurrently();
+    JSRopeString* ropeString = static_cast<JSRopeString*>(string);
+    if (vm.gilOff() && !(fiberBits & JSString::isRopeInPointer)) [[unlikely]] {
+        // Already resolved by another mutator; take the non-rope path.
+        RELEASE_AND_RETURN(scope, jsAtomString(globalObject, vm, string));
+    }
 
     auto createFromRope = [&](VM& vm, auto& buffer) {
         auto impl = AtomStringImpl::add(buffer);
         size_t sizeToReport = impl->hasOneRef() ? impl->cost() : 0;
+        StringImpl* expectedImpl = impl.get();
         ropeString->convertToNonRope(String { WTF::move(impl) });
-        vm.heap.reportExtraMemoryAllocated(ropeString, sizeToReport);
+        // GIL-off: convertToNonRope is idempotent; on a lost publish race our
+        // impl was dropped, so do not report memory the cell does not hold.
+        // GIL-on: the comparison is always true.
+        if (ropeString->valueInternal().impl() == expectedImpl)
+            vm.heap.reportExtraMemoryAllocated(ropeString, sizeToReport);
         return ropeString;
     };
 
-    if (!ropeString->isSubstring()) {
-        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
-        JSString* fiber0 = ropeString->fiber0();
+    if (!(fiberBits & JSRopeString::isSubstringInPointer)) {
+        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
+        JSString* fiber0 = std::bit_cast<JSString*>(fiberBits & JSRopeString::stringMask);
         JSString* fiber1 = ropeString->fiber1();
         JSString* fiber2 = ropeString->fiber2();
-        if (ropeString->is8Bit()) {
+        if (fiberBits & JSRopeString::is8BitInPointer) {
             std::array<Latin1Character, KeyAtomStringCache::maxStringLengthForCache> characters;
             JSRopeString::resolveToBuffer(fiber0, fiber1, fiber2, std::span { characters }.first(length), stackLimit);
             WTF::HashTranslatorCharBuffer<Latin1Character> buffer { std::span { characters }.first(length) };
@@ -713,7 +771,7 @@ inline JSString* jsAtomString(JSGlobalObject* globalObject, VM& vm, JSString* s1
     // This is quite unfortunate, but duplicating this part here is the key of performance improvement in JetStream2/WSL,
     // which stress this jsAtomString significantly.
     auto resolveWith2Fibers = [&](JSString* fiber0, JSString* fiber1, auto buffer) {
-        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
+        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
         if (fiber0->isRope()) {
             if (fiber1->isRope())
                 return JSRopeString::resolveToBufferSlow(fiber0, fiber1, nullptr, buffer, stackLimit);
@@ -798,7 +856,7 @@ inline JSString* jsAtomString(JSGlobalObject* globalObject, VM& vm, JSString* s1
 
     auto resolveWith3Fibers = [&](JSString* fiber0, JSString* fiber1, JSString* fiber2, auto buffer) {
         if (fiber0->isRope() || fiber1->isRope() || fiber2->isRope())
-            return JSRopeString::resolveToBufferSlow(fiber0, fiber1, fiber2, buffer, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+            return JSRopeString::resolveToBufferSlow(fiber0, fiber1, fiber2, buffer, std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow()));
 
         StringView view0 = fiber0->valueInternal().impl();
         view0.getCharacters(buffer);
@@ -830,7 +888,12 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
         return vm.smallStrings.emptyString();
 
     if (s->isSubstring()) {
-        JSRopeString* baseRope = uncheckedDowncast<JSRopeString>(s);
+        // §N.2 reader arm: the substring decision came from the snapshot
+        // inside isSubstring(); uncheckedDowncast's debug check re-reads
+        // m_fiber and races a concurrent resolver's republish. The dependent
+        // reads (substringBase/substringOffset) live in m_compactFibers,
+        // which resolution never clears, so they stay valid either way.
+        JSRopeString* baseRope = static_cast<JSRopeString*>(s);
         ASSERT(!baseRope->substringBase()->isRope());
         s = baseRope->substringBase();
         offset += baseRope->substringOffset();
@@ -863,17 +926,27 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
 template<typename CharacterType>
 void JSString::resolveToBuffer(std::span<CharacterType> destination)
 {
-    if (isRope()) {
-        auto* rope = uncheckedDowncast<JSRopeString>(this);
-        if (rope->isSubstring()) {
+    // GIL-off (SPEC-ungil §N.2 reader arm): one m_fiber snapshot decides
+    // rope/substring AND supplies fiber0. Re-reading isSubstring()/fiber0()
+    // after a concurrent resolver republishes m_fiber would misread the
+    // published StringImpl* as flag bits and a JSString* fiber;
+    // uncheckedDowncast's debug is<JSRopeString> check re-reads m_fiber the
+    // same way. fiber1/fiber2 and the substring base/offset live in
+    // m_compactFibers, which resolution never clears. GIL-on / flag-off:
+    // byte-identical to the direct reads it replaces.
+    uintptr_t fiberBits = fiberConcurrently();
+    if (fiberBits & isRopeInPointer) {
+        auto* rope = static_cast<JSRopeString*>(this);
+        if (fiberBits & JSRopeString::isSubstringInPointer) {
             StringView view = *rope->substringBase()->valueInternal().impl();
             unsigned offset = rope->substringOffset();
             view.substring(offset, rope->length()).getCharacters(destination);
             return;
         }
 
-        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm().softStackLimit());
-        return JSRopeString::resolveToBuffer(rope->fiber0(), rope->fiber1(), rope->fiber2(), destination, stackLimit);
+        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm().softStackLimitForCurrentThreadSlow());
+        auto* fiber0 = std::bit_cast<JSString*>(fiberBits & JSRopeString::stringMask);
+        return JSRopeString::resolveToBuffer(fiber0, rope->fiber1(), rope->fiber2(), destination, stackLimit);
     }
     StringView(valueInternal().impl()).getCharacters(destination);
 }

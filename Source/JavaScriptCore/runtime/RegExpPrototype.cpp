@@ -164,7 +164,14 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncTest, (JSGlobalObject* globalObject, Cal
             return throwVMTypeError(globalObject, scope, "Builtin RegExp exec can only be called on a RegExp object"_s);
         auto strValue = str->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!strValue->isNull() && regExp->getLastIndex().isNumber()) [[likely]]
+        // TSAN family rope-stringimpl (r11 reports 16/19): probe the cell
+        // through the annotated relaxed fiber load (isRope) instead of a
+        // plain String::isNull read of m_fiber, which races the recycled-cell
+        // constructor stores / a concurrent swapToAtomString republish.
+        // Equivalent: after a successful value() the cell is non-rope and its
+        // impl is non-null (the OOM path threw and returned above).
+        UNUSED_VARIABLE(strValue);
+        if (!str->isRope() && regExp->getLastIndex().isNumber()) [[likely]]
             RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(regExp->test(globalObject, str))));
     }
 
@@ -472,7 +479,7 @@ JSValue regExpSearchFast(JSGlobalObject* globalObject, RegExpObject* regExpObjec
     auto strView = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
-    MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
+    MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
     return result ? jsNumber(result.start) : jsNumber(-1);
 }
 
@@ -570,7 +577,7 @@ void genericSplit(
         
         // a. Perform ? Set(splitter, "lastIndex", q, true).
         // b. Let z be ? RegExpExec(splitter, S).
-        MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regexp, inputString, input, matchPosition, &ovector);
+        MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regexp, inputString, input, matchPosition, &ovector);
         int mpos = result.start;
         RETURN_IF_EXCEPTION(scope, void());
 
@@ -686,7 +693,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
         // d. Return A.
         JSArray* result = constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, { });
-        auto matchResult = globalObject->regExpGlobalData().performMatch(globalObject, regexp, inputString, input, 0);
+        auto matchResult = threadRegExpGlobalData(globalObject).performMatch(globalObject, regexp, inputString, input, 0);
         RETURN_IF_EXCEPTION(scope, { });
         if (!matchResult) {
             result->putDirectIndex(globalObject, 0, inputString);
@@ -733,7 +740,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
         RETURN_IF_EXCEPTION(scope, { });
 
         if (lastMatchResult)
-            globalObject->regExpGlobalData().recordMatch(vm, globalObject, regexp, inputString, lastMatchResult, false);
+            threadRegExpGlobalData(globalObject).recordMatch(vm, globalObject, regexp, inputString, lastMatchResult, false);
 
         if (resultLength >= limit)
             return result;

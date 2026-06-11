@@ -36,6 +36,8 @@
 #include "PropertyInlineCacheSummary.h"
 #include "RegisterSet.h"
 #include "Structure.h"
+#include <atomic>
+#include <wtf/Atomics.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -51,6 +53,8 @@ struct UnlinkedPropertyInlineCache;
 class AccessCase;
 class AccessGenerationResult;
 class PolymorphicAccess;
+
+enum class DisarmClearingWatchpoints : bool; // Defined in RetiredJITArtifacts.h.
 
 #define JSC_FOR_EACH_PROPERTY_INLINE_CACHE_ACCESS_TYPE(macro) \
     macro(GetById) \
@@ -122,6 +126,89 @@ static constexpr unsigned numberOfAccessTypes = 0 JSC_FOR_EACH_PROPERTY_INLINE_C
 
 enum class PropertyInlineCacheType : uint8_t { Handler, Repatching };
 
+// TSAN ic-stubinfo family (SPEC-jit §5.7.7 / D3): single-byte advisory IC
+// state flag. These used to be `bool : 1` bitfields packed into one byte
+// together with the const m_icType bit, but they are written from IC slow
+// paths on ANY thread with no lock held (operation*GaveUp sets tookSlowPath,
+// considerRepatchingCache* sets everConsidered/sawNonCell), so every bitfield
+// write was a read-modify-write of the shared byte: it raced with itself
+// (lost updates of NEIGHBORING flags) and paired with every lock-free reader
+// of another bit in the byte — including isHandlerIC(), the
+// "isHandlerIC vs operation*GaveUp" TSAN signature. Each flag is now its own
+// relaxed atomic byte: same plain-mov codegen flag-off (semantics unchanged),
+// no cross-flag lost updates (whole-byte store), and the concurrent accesses
+// are defined. §5.7.7 blesses the value-level racing: every consumer treats
+// these as advisory profiling hints.
+//
+// ACKNOWLEDGED FOOTPRINT COST (TSAN-TRIAGE §3.4 wave-2 amendment): the nine
+// advisory flags + m_icType previously occupied 10 BITS (2 bytes); as one
+// byte each they occupy 10 bytes, growing sizeof(PropertyInlineCache) by
+// ~8 bytes per IC. These are trailing members: no OBJECT_OFFSETOF/JIT-emitted
+// offset references any of them, and no sizeof-sensitive consumer exists
+// in-tree, so the cost is memory only (tens of KB on IC-heavy workloads).
+// Accepted for clarity; if the footprint ever matters, the nine mutable
+// flags can be re-co-packed into one shared Atomic<uint8_t> accessed with
+// relaxed load/store bit ops (cross-flag lost updates are §5.7.7-blessed —
+// the old bitfield code already lost them); only m_icType must stay out of
+// the racy byte, because it is const and read lock-free by isHandlerIC().
+// TSAN ic-stubinfo ctor publication (TSAN-TRIAGE §10.4, campaign convention
+// mirroring Structure.h §9.1 concurrentRelaxedLoad/Store): UNCONDITIONAL
+// relaxed atomics over plain storage. A single-byte/single-word relaxed
+// atomic load/store is the identical mov flag-off (no codegen change), and
+// unlike std::atomic/WTF::Atomic members it lets CONSTRUCTION also be a
+// relaxed atomic store: the std::atomic constructor initializes with a PLAIN
+// store, which TSAN pairs against concurrent relaxed readers when an IC is
+// (re)initialized in recycled memory or published without a synchronizing
+// edge (the "DataOnly IC ctor publication" reports at the countdown bytes).
+template<typename T>
+ALWAYS_INLINE T icConcurrentRelaxedLoad(const T& field)
+{
+    static_assert(std::is_trivially_copyable_v<T>);
+    T result;
+    __atomic_load(const_cast<T*>(&field), &result, __ATOMIC_RELAXED);
+    return result;
+}
+
+template<typename T>
+ALWAYS_INLINE void icConcurrentRelaxedStore(T& field, std::type_identity_t<T> value)
+{
+    static_assert(std::is_trivially_copyable_v<T>);
+    __atomic_store(&field, &value, __ATOMIC_RELAXED);
+}
+
+// Racy advisory IC state cell (SPEC-jit §5.7.7): every access — including the
+// constructor's initialization — is a relaxed atomic on plain storage, so
+// concurrent value-level racing is defined while flag-off codegen stays the
+// plain mov the previous fields compiled to. Lost updates are tolerated by
+// design (§5.7.7); JIT-emitted plain accesses via OBJECT_OFFSETOF are
+// unchanged (same size, same offset; the §0 JIT-blindness tradeoff).
+template<typename T>
+class ICRacyCell {
+public:
+    ICRacyCell(T value = T())
+    {
+        icConcurrentRelaxedStore(m_value, value);
+    }
+
+    ALWAYS_INLINE operator T() const { return icConcurrentRelaxedLoad(m_value); }
+
+    ALWAYS_INLINE ICRacyCell& operator=(T value)
+    {
+        icConcurrentRelaxedStore(m_value, value);
+        return *this;
+    }
+
+    ALWAYS_INLINE T loadRelaxed() const { return icConcurrentRelaxedLoad(m_value); }
+    ALWAYS_INLINE void storeRelaxed(T value) { icConcurrentRelaxedStore(m_value, value); }
+
+private:
+    T m_value;
+};
+
+using ICRacyStateBool = ICRacyCell<bool>;
+static_assert(sizeof(ICRacyStateBool) == 1);
+static_assert(sizeof(ICRacyCell<uint8_t>) == 1);
+
 struct UnlinkedPropertyInlineCache;
 struct BaselineUnlinkedPropertyInlineCache;
 
@@ -143,9 +230,23 @@ public:
 
     AccessGenerationResult addAccessCase(const GCSafeConcurrentJSLocker&, JSGlobalObject*, CodeBlock*, ECMAMode, CacheableIdentifier, RefPtr<AccessCase>);
 
-    void reset(const ConcurrentJSLockerBase&, CodeBlock*);
+    // AB18-E rule: the VM& is the caller's (the retiring mutator's), never
+    // re-derived from a cell inside — reset() retires the displaced inlined
+    // handler chain, and deriving the retire VM via codeBlock->vm()
+    // (MarkedBlock header) is the exact stale-owner pattern that produced the
+    // DirectCallLinkInfo::retireRecord UAF (CallLinkInfo.cpp:805).
+    void reset(const ConcurrentJSLockerBase&, VM&, CodeBlock*);
 
-    void deref();
+    // Drops the IC's generated-dispatch state at jettison/destruction time.
+    // With useJSThreads (SPEC-jit section 5.1/section 4.4, I9) the dropped
+    // artifacts are routed through RetiredJITArtifacts instead of being freed
+    // inline, hence the VM& (for the heap's safepoint epoch).
+    // DisarmClearingWatchpoints (AB18-F amendment, thread-closeout final
+    // review): pass Yes ONLY when the owner CodeBlock is dying (~CodeBlock);
+    // pass No when the retired chains stay installed on a live owner
+    // (jettison, post-reset), so a later watched-set fire still resets the
+    // IC for straggler frames — see the enum comment in RetiredJITArtifacts.h.
+    void deref(VM&, DisarmClearingWatchpoints);
     void aboutToDie();
 
     void NODELETE initializePredefinedRegisters();
@@ -163,7 +264,21 @@ public:
 
     static PropertyInlineCacheSummary summary(const ConcurrentJSLocker&, VM&, const PropertyInlineCache*);
 
-    CacheableIdentifier identifier() const { return m_identifier; }
+    // TSAN ic-stubinfo ctor publication (TSAN-TRIAGE §10.4 "x identifier"):
+    // m_identifier is written once at IC initialization (initializeFrom*
+    // below; the IC lives inside a Baseline/DFG JITData published to racing
+    // mutators via CodeBlock::m_jitData with a storeStoreFence TSAN cannot
+    // see) and read lock-free from IC slow paths on any thread. Same
+    // ICRacyCell discipline as m_globalObject: relaxed atomics over the
+    // trivially-copyable one-word value — identical mov codegen flag-off,
+    // defined under the reported cross-thread pairing. Real publication
+    // ordering remains the owning CodeBlock's install protocol (F1/I5).
+    // KNOWN RESIDUAL WRITER (file owned by another workstream): the plain
+    // assignment in jit/JITInlineCacheGenerator.h (setUpStubInfo) still
+    // pairs plain-vs-atomic; convert it to setIdentifierConcurrently() when
+    // that file is in scope.
+    CacheableIdentifier identifier() const { return icConcurrentRelaxedLoad(m_identifier); }
+    void setIdentifierConcurrently(CacheableIdentifier value) { icConcurrentRelaxedStore(m_identifier, value); }
 
     bool NODELETE containsPC(void* pc) const;
 
@@ -259,38 +374,50 @@ private:
         // have already buffered something on its behalf. That's what the m_bufferedStructures set is
         // for.
 
+        // TSAN ic-stubinfo (SPEC-jit §5.7.7): the countdown/cool-down counters
+        // below are advisory u8 profiling state mutated from IC slow paths on
+        // any thread with no lock held; all accesses are relaxed atomics so
+        // they are defined under concurrency, and lost updates are tolerated
+        // by design. Single-threaded (and flag-off) the load/modify/store
+        // sequences below are exactly the old plain-field logic.
         everConsidered = true;
-        if (!countdown) {
+        uint8_t countdownValue = countdown.loadRelaxed();
+        if (!countdownValue) {
             // Check if we have been doing repatching too frequently. If so, then we should cool off
             // for a while.
-            WTF::incrementWithSaturation(repatchCount);
-            if (repatchCount > Options::repatchCountForCoolDown()) {
+            uint8_t newRepatchCount = repatchCount.loadRelaxed();
+            WTF::incrementWithSaturation(newRepatchCount);
+            repatchCount.storeRelaxed(newRepatchCount);
+            if (newRepatchCount > Options::repatchCountForCoolDown()) {
                 // We've been repatching too much, so don't do it now.
-                repatchCount = 0;
+                repatchCount.storeRelaxed(0);
                 // The amount of time we require for cool-down depends on the number of times we've
                 // had to cool down in the past. The relationship is exponential. The max value we
                 // allow here is 2^256 - 2, since the slow paths may increment the count to indicate
                 // that they'd like to temporarily skip patching just this once.
-                countdown = WTF::leftShiftWithSaturation(
+                countdown.storeRelaxed(WTF::leftShiftWithSaturation(
                     static_cast<uint8_t>(Options::initialCoolDownCount()),
-                    numberOfCoolDowns,
-                    static_cast<uint8_t>(std::numeric_limits<uint8_t>::max() - 1));
-                WTF::incrementWithSaturation(numberOfCoolDowns);
+                    numberOfCoolDowns.loadRelaxed(),
+                    static_cast<uint8_t>(std::numeric_limits<uint8_t>::max() - 1)));
+                uint8_t newNumberOfCoolDowns = numberOfCoolDowns.loadRelaxed();
+                WTF::incrementWithSaturation(newNumberOfCoolDowns);
+                numberOfCoolDowns.storeRelaxed(newNumberOfCoolDowns);
 
                 // We may still have had something buffered. Trigger generation now.
-                bufferingCountdown = 0;
+                bufferingCountdown.storeRelaxed(0);
                 return true;
             }
 
             // We don't want to return false due to buffering indefinitely.
-            if (!bufferingCountdown) {
+            uint8_t bufferingCountdownValue = bufferingCountdown.loadRelaxed();
+            if (!bufferingCountdownValue) {
                 // Note that when this returns true, it's possible that we will not even get an
                 // AccessCase because this may cause Repatch.cpp to simply do an in-place
                 // repatching.
                 return true;
             }
 
-            bufferingCountdown--;
+            bufferingCountdown.storeRelaxed(bufferingCountdownValue - 1);
 
             if (!structure)
                 return true;
@@ -308,7 +435,7 @@ private:
             {
                 Locker locker { m_bufferedStructuresLock };
                 if (std::holds_alternative<std::monostate>(m_bufferedStructures)) {
-                    if (m_identifier)
+                    if (identifier())
                         m_bufferedStructures = Vector<StructureID>();
                     else
                         m_bufferedStructures = Vector<std::tuple<StructureID, CacheableIdentifier>>();
@@ -324,7 +451,7 @@ private:
                         isNewlyAdded = true;
                     },
                     [&](Vector<std::tuple<StructureID, CacheableIdentifier>>& structures) {
-                        ASSERT(!m_identifier);
+                        ASSERT(!identifier());
                         for (auto& [bufferedStructureID, bufferedCacheableIdentifier] : structures) {
                             if (bufferedStructureID == structureID && bufferedCacheableIdentifier == impl)
                                 return;
@@ -337,7 +464,7 @@ private:
                 vm.writeBarrier(codeBlock);
             return isNewlyAdded;
         }
-        countdown--;
+        countdown.storeRelaxed(countdownValue - 1);
         return false;
     }
 
@@ -359,23 +486,64 @@ private:
 protected:
     PropertyInlineCache(PropertyInlineCacheType icType, AccessType accessType, CodeOrigin codeOrigin)
         : codeOrigin(codeOrigin)
+        // SPEC-jit section 4.2: zero-initialize the packed unit; all-zero is
+        // the "no inlined fast path" state ({0, StructureID()} never matches).
+        , m_packedSelfWord(0)
         , accessType(accessType)
-        , bufferingCountdown(Options::initialRepatchBufferingCountdown())
+        , bufferingCountdown { static_cast<uint8_t>(Options::initialRepatchBufferingCountdown()) }
         , m_icType(icType)
     {
+        // TSAN ic-stubinfo ctor publication (§10.4): make the LAST
+        // constructor-time write to m_identifier a relaxed atomic store so a
+        // concurrent relaxed reader (identifier()) of a just-published or
+        // recycled IC pairs atomic-vs-atomic, mirroring the ICRacyCell
+        // members' rationale. The preceding implicit zero-init is overwritten
+        // program-order before the IC can escape this thread.
+        icConcurrentRelaxedStore(m_identifier, CacheableIdentifier());
     }
 
     PropertyInlineCache(PropertyInlineCacheType icType)
         : PropertyInlineCache(icType, AccessType::GetById, { })
     { }
 
-    void initializeWithUnitHandler(CodeBlock*, Ref<InlineCacheHandler>&&);
-    void prependHandler(CodeBlock*, Ref<InlineCacheHandler>&&, bool isMegamorphic);
-    void rewireStubAsJumpInAccess(CodeBlock*, Ref<InlineCacheHandler>&&);
+    // AB18-G (extends the AB18-E rule structurally): every entry point that
+    // can displace-and-retire a handler chain takes the VM& from the caller's
+    // operation context; no retire path re-derives it via codeBlock->vm()
+    // (MarkedBlock header read — the stale-owner pattern behind the
+    // DirectCallLinkInfo::retireRecord UAF).
+    void initializeWithUnitHandler(VM&, CodeBlock*, Ref<InlineCacheHandler>&&);
+    void prependHandler(VM&, CodeBlock*, Ref<InlineCacheHandler>&&, bool isMegamorphic);
+    void rewireStubAsJumpInAccess(VM&, CodeBlock*, Ref<InlineCacheHandler>&&);
 
 public:
     static constexpr ptrdiff_t offsetOfByIdSelfOffset() { return OBJECT_OFFSETOF(PropertyInlineCache, byIdSelfOffset); }
     static constexpr ptrdiff_t offsetOfInlineAccessBaseStructureID() { return OBJECT_OFFSETOF(PropertyInlineCache, m_inlineAccessBaseStructureID); }
+    static constexpr ptrdiff_t offsetOfPackedInlineAccessSelfWord() { return OBJECT_OFFSETOF(PropertyInlineCache, m_packedSelfWord); }
+
+    // SPEC-jit section 4.2 (Task 4) accessors for the inlined fast-path unit.
+    //
+    // setInlineAccessSelfState: flag-off, exactly today's per-field stores
+    // (WriteBarrierStructureID::set + plain offset store). Flag-on: build the
+    // word -> one relaxed 64-bit store via m_packedSelfWord ->
+    // vm.writeBarrier(codeBlock). Flag-on callers must be serialized as
+    // today's writers are (CodeBlock::m_lock or pre-publication init).
+    //
+    // clearInlineAccessSelfState: flag-off = m_inlineAccessBaseStructureID
+    // .clear() (byIdSelfOffset left stale, as today - it is unreachable once
+    // the id half is zero). Flag-on: one all-zero 64-bit store; barrier-free.
+    void setInlineAccessSelfState(VM&, CodeBlock*, Structure*, PropertyOffset);
+    void clearInlineAccessSelfState();
+
+    // The 64-bit memory image of {byIdSelfOffset = offset,
+    // m_inlineAccessBaseStructureID = structureID} on this target.
+    static uint64_t packedInlineAccessSelfWord(StructureID structureID, PropertyOffset offset)
+    {
+#if CPU(LITTLE_ENDIAN)
+        return (static_cast<uint64_t>(structureID.bits()) << 32) | static_cast<uint32_t>(offset);
+#else
+        return (static_cast<uint64_t>(static_cast<uint32_t>(offset)) << 32) | structureID.bits();
+#endif
+    }
     static constexpr ptrdiff_t offsetOfInlineHolder() { return OBJECT_OFFSETOF(PropertyInlineCache, m_inlineHolder); }
     static constexpr ptrdiff_t offsetOfDoneLocation() { return OBJECT_OFFSETOF(PropertyInlineCache, doneLocation); }
     static constexpr ptrdiff_t offsetOfCountdown() { return OBJECT_OFFSETOF(PropertyInlineCache, countdown); }
@@ -388,7 +556,8 @@ public:
 
     JSGlobalObject* globalObject() const { return m_globalObject; }
 
-    void resetStubAsJumpInAccess(CodeBlock*);
+    // AB18-G: VM& comes from the caller (AB18-E rule), see reset().
+    void resetStubAsJumpInAccess(VM&, CodeBlock*);
 
     GPRReg thisGPR() const { return m_extraGPR; }
     GPRReg prototypeGPR() const { return m_extraGPR; }
@@ -418,14 +587,54 @@ public:
 #endif
 
     CodeOrigin codeOrigin { };
-    PropertyOffset byIdSelfOffset;
-    WriteBarrierStructureID m_inlineAccessBaseStructureID;
+    // SPEC-jit section 4.2 (Task 4): the inlined fast-path pair
+    // {byIdSelfOffset, m_inlineAccessBaseStructureID} forms one 8-byte-aligned
+    // unit. The repack is UNCONDITIONAL (D7): the per-field names keep exactly
+    // their pre-repack offsets (byIdSelfOffset at +0, the structure id at +4),
+    // so flag-off code - C++ and JIT emitters alike - is unchanged modulo
+    // nothing (same offsets, same shapes; I1). With Options::useJSThreads()
+    // the pair is accessed ONLY through m_packedSelfWord:
+    //   - JIT'd readers issue ONE relaxed 64-bit load, compare the id half and
+    //     use the offset half of that same load, so a valid structure id can
+    //     never be observed alongside a mismatched offset (I6); compare-then-
+    //     reload of independent fields is unsound on ARM64 (F2: compare/branch
+    //     does not order subsequent loads).
+    //   - Writers (serialized by CodeBlock::m_lock / IC initialization)
+    //     publish with one 64-bit store and then issue
+    //     vm.writeBarrier(codeBlock), preserving the GC write barrier the
+    //     WriteBarrierStructureID::set() path provided (section 4.2).
+    //   - Invalidation is one all-zero 64-bit store {0, StructureID()};
+    //     structure id 0 never matches, so this is barrier-free and ABA-safe.
+    // GC code (visitWeak/propagateTransitions) keeps reading the id half via
+    // inlineAccessBaseStructureID/inlineAccessBaseStructure() as today.
+    // m_inlineHolder stays outside the unit: holder-bearing inlined forms
+    // cannot pack and are disabled flag-on (section 4.2; setInlinedHandler).
+    union alignas(8) {
+        struct {
+            PropertyOffset byIdSelfOffset;
+            WriteBarrierStructureID m_inlineAccessBaseStructureID;
+        };
+        std::atomic<uint64_t> m_packedSelfWord;
+    };
     JSCell* m_inlineHolder { nullptr };
     CacheableIdentifier m_identifier;
     CodeLocationLabel<JSInternalPtrTag> doneLocation;
     CodeLocationLabel<JITStubRoutinePtrTag> slowPathStartLocation;
 
-    JSGlobalObject* m_globalObject { nullptr };
+    // TSAN ic-stubinfo (TSAN-TRIAGE §10.4): written by IC initialization
+    // (initializeFromUnlinkedPropertyInlineCache /
+    // initializeFromDFGUnlinkedPropertyInlineCache /
+    // JITInlineCacheGenerator's finalize) and read lock-free by IC slow
+    // paths on any thread via globalObject(). ICRacyCell routes the
+    // constructor init, every writer assignment (including the ones in
+    // jit/JITInlineCacheGenerator.h, which assign through operator=), and
+    // the reader through relaxed atomics: identical pointer-mov codegen,
+    // defined under the cross-thread pairing TSAN reported
+    // ("initializeFromDFGUnlinkedPropertyInlineCache x globalObject").
+    // Real publication ordering is the storeStoreFence/install protocol of
+    // the owning CodeBlock (F1/I5); JIT'd readers via offsetOfGlobalObject
+    // are unchanged (same size/offset).
+    ICRacyCell<JSGlobalObject*> m_globalObject { nullptr };
 private:
     // Handler chain: used by both modes. Handler IC uses this as the main dispatch chain
     // (accessed from JIT via offsetOfHandler()). Repatching IC uses it in
@@ -465,24 +674,60 @@ public:
     CacheType preconfiguredCacheType { CacheType::Unset };
     // We repatch only when this is zero. If not zero, we decrement.
     // Setting 1 for a totally clear stub, we'll patch it after the first execution.
-    uint8_t countdown { 1 };
-    uint8_t repatchCount { 0 };
-    uint8_t numberOfCoolDowns { 0 };
-    uint8_t bufferingCountdown;
+    //
+    // TSAN ic-stubinfo (SPEC-jit §5.7.7): these four cool-down bytes are
+    // advisory profiling state mutated from IC slow paths on any thread with
+    // no lock held (considerRepatchingCacheImpl); they are relaxed atomics so
+    // the cross-thread accesses are defined, with lost updates tolerated.
+    // Same size and offset as the previous plain uint8_t fields
+    // (offsetOfCountdown unchanged); JIT'd fast-path accesses to countdown
+    // stay plain by design (§5.7.1 analogue: TSAN does not see JIT'd code,
+    // and the value race is blessed). ICRacyCell (not WTF::Atomic) so that
+    // CONSTRUCTION is also a relaxed store — the WTF::Atomic constructor
+    // initializes with a plain store, which TSAN paired against concurrent
+    // relaxed readers (TSAN-TRIAGE §10.4 "DataOnly IC ctor publication").
+    ICRacyCell<uint8_t> countdown { 1 };
+    ICRacyCell<uint8_t> repatchCount { 0 };
+    ICRacyCell<uint8_t> numberOfCoolDowns { 0 };
+    ICRacyCell<uint8_t> bufferingCountdown;
 private:
     Lock m_bufferedStructuresLock;
 public:
-    bool resetByGC : 1 { false };
-    bool tookSlowPath : 1 { false };
-    bool everConsidered : 1 { false };
-    bool prototypeIsKnownObject : 1 { false }; // Only relevant for InstanceOf.
-    bool sawNonCell : 1 { false };
-    bool propertyIsString : 1 { false };
-    bool propertyIsInt32 : 1 { false };
-    bool propertyIsSymbol : 1 { false };
-    bool canBeMegamorphic : 1 { false };
-    const PropertyInlineCacheType m_icType : 1;
+    // See ICRacyStateBool above: advisory flags, each its own relaxed atomic
+    // byte (previously one shared bitfield byte whose RMW writes raced with
+    // every reader of every other bit, m_icType included).
+    ICRacyStateBool resetByGC { false };
+    ICRacyStateBool tookSlowPath { false };
+    ICRacyStateBool everConsidered { false };
+    ICRacyStateBool prototypeIsKnownObject { false }; // Only relevant for InstanceOf.
+    ICRacyStateBool sawNonCell { false };
+    ICRacyStateBool propertyIsString { false };
+    ICRacyStateBool propertyIsInt32 { false };
+    ICRacyStateBool propertyIsSymbol { false };
+    ICRacyStateBool canBeMegamorphic { false };
+    // No longer a bitfield: this const discriminator used to share its byte
+    // with the mutable flags above, so every racy flag write also "wrote" the
+    // m_icType bit, pairing with lock-free isHandlerIC() readers in TSAN.
+    // It is written once at construction and immutable afterwards.
+    const PropertyInlineCacheType m_icType;
 };
+
+static_assert(sizeof(WTF::Atomic<uint8_t>) == 1);
+
+// SPEC-jit section 4.2 layout proof (Task 4): the repacked unit is exactly one
+// aligned 64-bit word and the per-field views sit at their pre-repack offsets
+// (offset half at +0, structure-id half at +4 on little-endian), so flag-off
+// emission and C++ accesses are unchanged (I1) and the flag-on single 64-bit
+// load/store cannot tear the pair (I6/F3).
+static_assert(sizeof(PropertyOffset) == 4);
+static_assert(sizeof(WriteBarrierStructureID) == 4);
+static_assert(sizeof(std::atomic<uint64_t>) == 8);
+static_assert(alignof(std::atomic<uint64_t>) == 8);
+static_assert(std::atomic<uint64_t>::is_always_lock_free);
+static_assert(std::is_trivially_destructible_v<WriteBarrierStructureID>);
+static_assert(PropertyInlineCache::offsetOfByIdSelfOffset() == PropertyInlineCache::offsetOfPackedInlineAccessSelfWord());
+static_assert(PropertyInlineCache::offsetOfInlineAccessBaseStructureID() == PropertyInlineCache::offsetOfPackedInlineAccessSelfWord() + 4);
+static_assert(!(PropertyInlineCache::offsetOfPackedInlineAccessSelfWord() % 8));
 
 // HandlerPropertyInlineCache
 // ==========================
@@ -601,6 +846,12 @@ public:
     void initializeFromUnlinkedPropertyInlineCache(VM&, CodeBlock*, const BaselineUnlinkedPropertyInlineCache&);
     void initializeFromDFGUnlinkedPropertyInlineCache(CodeBlock*, const DFG::UnlinkedPropertyInlineCache&);
 
+    // FTL handler-IC sites (useHandlerICInFTL): the generator recorded
+    // identifier/registers/locations at compile and link time; this installs the
+    // shared slow-path handler as the initial chain head. Main thread only, and
+    // must run before the owning code is installed (FTL::JITFinalizer::finalize).
+    void initializeHandlerForOptimizingJIT(CodeBlock*);
+
     void setInlinedHandler(CodeBlock*, Ref<InlineCacheHandler>&&);
     void clearInlinedHandler(CodeBlock*);
 
@@ -686,11 +937,19 @@ class RepatchingPropertyInlineCache final : public PropertyInlineCache {
 public:
     RepatchingPropertyInlineCache()
         : PropertyInlineCache(PropertyInlineCacheType::Repatching)
-    { }
+    {
+        // SPEC-jit I3: with shared-memory threads enabled, every property IC is
+        // a handler IC (pure data dispatch); repatching ICs would patch machine
+        // code in place under concurrent execution (sections 5.2/5.3).
+        RELEASE_ASSERT(!Options::useJSThreads());
+    }
 
     RepatchingPropertyInlineCache(AccessType accessType, CodeOrigin codeOrigin)
         : PropertyInlineCache(PropertyInlineCacheType::Repatching, accessType, codeOrigin)
-    { }
+    {
+        // SPEC-jit I3: see above.
+        RELEASE_ASSERT(!Options::useJSThreads());
+    }
 
     // This is either the start of the inline IC for *byId caches, or the location of patchable jump for 'instanceof' caches.
     CodeLocationLabel<JITStubRoutinePtrTag> startLocation;

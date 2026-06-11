@@ -146,7 +146,18 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
     if (maxFrameSize > Options::reservedZoneSize()) [[unlikely]]
         stackOverflow.append(branchPtr(Above, regT1, callFrameRegister));
 #endif
-    stackOverflow.append(branchPtr(GreaterThan, AbsoluteAddress(m_vm->addressOfSoftStackLimit()), regT1));
+    // UNGIL §A.2.2 (AB-17): per-lite soft-stack-limit reroute. GIL-off, the
+    // limit is per-thread state; the helper loads the current lite's chained
+    // word. GIL-on/flag-off it emits the legacy AbsoluteAddress(VM word)
+    // compare byte-for-byte. Scratch: the helper uses only the per-arch
+    // macro-assembler reserved temp (same clobber set as the legacy form);
+    // regT1 is the candidate, same as the Baseline prologue (JIT.cpp). Note
+    // LOL is additionally forced off under GIL-off at option canonicalization
+    // (Options.cpp U0 block) until the tier is audited for the full §A.1.3
+    // COMPILED-FOR-VM rule — this reroute is belt-and-braces so the "every
+    // generated-code soft-limit read rerouted" invariant holds by
+    // construction even if that coercion is later lifted.
+    stackOverflow.append(branchPtrAgainstSoftStackLimit(*m_vm, Above, regT1)); // Unsigned, matching the landed AbsoluteAddress form.
 
     move(regT1, stackPointerRegister);
     checkStackPointerAlignment();

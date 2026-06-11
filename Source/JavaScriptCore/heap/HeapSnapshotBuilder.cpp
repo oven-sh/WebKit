@@ -65,6 +65,11 @@ void HeapSnapshotBuilder::buildSnapshot()
     if (m_snapshotType == SnapshotType::GCDebuggingSnapshot)
         m_profiler.clearSnapshots();
 
+    // SharedGC (T9): main-VM-only — all m_profiler.vm() uses in this file:
+    // the heap profiler is owned by the main VM (see HeapProfiler::vm(),
+    // HeapProfiler.h) and snapshot building runs on its mutator under the
+    // API lock; the embedded collectNow(Sync) runs the §10.2 election once
+    // shared.
     PreventCollectionScope preventCollectionScope(m_profiler.vm().heap);
 
     m_snapshot = makeUnique<HeapSnapshot>(m_profiler.mostRecentSnapshot());

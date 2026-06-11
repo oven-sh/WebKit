@@ -1214,9 +1214,38 @@ public:
         // the helper functions are not setting topCallFrame when they should
         // be doing so. Note: the previous value in topcallFrame was not valid
         // anyway since it was not being updated by JIT'ed code by design.
-
-        for (unsigned i = 0; i < sizeof(void*) / 4; i++)
-            store32(TrustedImm32(0xbadbeef), reinterpret_cast<char*>(&vm().topCallFrame) + i * 4);
+        //
+        // UNGIL §A.1.3 (emission side, obligation-10 audit follow-up): the
+        // word to trash is the one the operation prologue republishes —
+        // GIL-off that is the CURRENT thread's per-lite word (the
+        // prepareCallOperation/FrameTracers.h storage), NOT the baked raw
+        // VM-block address: scribbling the shared VM word from N DFG threads
+        // is a cross-thread store into inert spare storage that trips the
+        // §J.2 GILParkSavedExecutionState "raw words unchanged across the
+        // park" premise asserts (LockObject.cpp). Same scratch discipline as
+        // prepareCallOperation below (per-arch reserved temp only). GIL-on /
+        // flag-off: the landed absolute-address loop, byte-identical.
+        if (vm().gilOff()) [[unlikely]] {
+#if CPU(ARM64)
+            // Cache-invalidating accessor: see prepareCallOperation.
+            GPRReg liteGPR = getCachedMemoryTempRegisterIDAndInvalidate();
+#elif CPU(X86_64)
+            GPRReg liteGPR = scratchRegister();
+#else
+            // SPEC-jit annex App. R5: no gilOff support on this platform;
+            // loadVMLite fail-stops at emission before this store is reached.
+            GPRReg liteGPR = GPRInfo::nonArgGPR0;
+#endif
+            loadVMLite(liteGPR);
+            // Two 32-bit immediate stores, mirroring the GIL-on loop's value
+            // pattern (no 64-bit immediate materialization — on X86_64 that
+            // would clobber the very scratch holding the lite base).
+            for (unsigned i = 0; i < sizeof(void*) / 4; i++)
+                store32(TrustedImm32(0xbadbeef), Address(liteGPR, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topCallFrame() + i * 4)));
+        } else {
+            for (unsigned i = 0; i < sizeof(void*) / 4; i++)
+                store32(TrustedImm32(0xbadbeef), reinterpret_cast<char*>(&vm().topCallFrame) + i * 4);
+        }
 #endif
         prepareCallOperation(vm());
     }
@@ -1497,6 +1526,34 @@ public:
     void compileReallocatePropertyStorage(Node*);
     void compileNukeStructureAndSetButterfly(Node*);
     void compileGetButterfly(Node*);
+#if USE(JSVALUE64)
+    // SPEC-jit section 5.5 / Task 9: threaded (Options::useJSThreads())
+    // butterfly access emission for the DFG tier. The plan captures the
+    // TTL-elision decisions (E1/E2, registered through
+    // DesiredWatchpoints::considerButterfly*ThreadLocal; fire => jettison) and
+    // the AS-rule shape classification derived from the abstract
+    // interpreter's structure set for the base edge.
+    struct ThreadedButterflyPlan {
+        bool elideSegmentedCheck { false }; // E1: every speculated structure's transitionThreadLocal set valid+watched+registered
+        bool elideSharedWriteCheck { false }; // E2: ditto writeThreadLocal (writes: SW branch + AS SW test omitted; TID compare NEVER, D9)
+        CCallHelpers::ConcurrentButterflyShape shape { CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage };
+    };
+    ThreadedButterflyPlan planThreadedButterflyAccess(Edge base);
+    // R7/F7 ordering: ARM64 re-loads the structureID and makes the butterfly
+    // load address-dependent on it (no-op x86-64); scratch clobbered.
+    void emitButterflyLoadWithStructureDependency(GPRReg baseGPR, GPRReg destGPR, GPRReg scratchGPR);
+    // Frozen section 5.5 predicates, elision-aware. Both load the tagged
+    // butterfly of baseGPR into destGPR (ARM64: address-dependent on a
+    // re-loaded structureID, R7/F7), append every predicate failure to the
+    // returned JumpList, and ALWAYS mask the tag (E3/D6/I14(a)).
+    // Read: no TID check; scratchGPR is required (F7 + MaybeArrayStorage
+    // indexing-byte test); dest/scratch/base pairwise distinct.
+    // Write: fused owner-TID compare always emitted (D9); tidScratchGPR
+    // required; indexingScratchGPR may be InvalidGPRReg (conservative:
+    // every non-owner write goes slow).
+    JITCompiler::JumpList emitThreadedButterflyLoadForRead(GPRReg baseGPR, GPRReg destGPR, GPRReg scratchGPR, const ThreadedButterflyPlan&);
+    JITCompiler::JumpList emitThreadedButterflyLoadForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg tidScratchGPR, GPRReg indexingScratchGPR, const ThreadedButterflyPlan&);
+#endif
     void compileCallDOMGetter(Node*);
     void compileCallDOM(Node*);
     void compileCheckJSCast(Node*);

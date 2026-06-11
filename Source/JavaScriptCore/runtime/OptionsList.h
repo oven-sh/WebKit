@@ -422,11 +422,14 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useZombieMode, false, Normal, "debugging option to scribble over dead objects with 0xbadbeef0"_s) \
     v(Bool, useImmortalObjects, false, Normal, "debugging option to keep all objects alive forever"_s) \
     v(Bool, sweepSynchronously, false, Normal, "debugging option to sweep all dead objects synchronously at GC end before resuming mutator"_s) \
+    v(Bool, validateFreeListStructure, false, Normal, "structurally validate LocalAllocator FreeLists (bounds/alignment/cycle within the owning MarkedBlock) at refill and stopAllocating; bounds-checks before every decode so corruption is reported, never dereferenced"_s) \
     v(Unsigned, maxSingleAllocationSize, 0, Configurable, "debugging option to limit individual allocations to a max size (0 = limit not set, N = limit size in bytes)"_s) \
     \
     v(GCLogLevel, logGC, GCLogging::None, Normal, "debugging option to log GC activity (0 = None, 1 = Basic, 2 = Verbose)"_s) \
     v(Bool, useGC, true, Normal, nullptr) \
     v(Bool, useGlobalGC, false, Normal, nullptr) \
+    v(Bool, useSharedGCHeap, false, Normal, "Multiple GCClient::Heaps (threads) share one server JSC::Heap"_s) \
+    v(Bool, verboseSharedGCHeap, false, Normal, nullptr) \
     v(Bool, gcAtEnd, false, Normal, "If true, the jsc CLI will do a GC before exiting"_s) \
     v(Bool, forceGCSlowPaths, false, Normal, "If true, we will force all JIT fast allocations down their slow paths."_s) \
     v(Bool, forceDidDeferGCWork, false, Normal, "If true, we will force all DeferGC destructions to perform a GC."_s) \
@@ -496,6 +499,9 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Unsigned, seedOfVMRandomForFuzzer, 0, Normal, "0 means not fuzzing this; use a cryptographically random seed"_s) \
     v(Bool, useRandomizingFuzzerAgent, false, Normal, nullptr) \
+    v(Unsigned, randomYieldPeriod, 0, Normal, "If non-zero, the RaceAmplifier injects a randomized sched_yield/short sleep on average once every this many visits per thread to instrumented slow-path sites. 0 disables (default; zero cost when off)."_s) \
+    v(Unsigned, randomYieldSeed, 0, Normal, "Seed for the RaceAmplifier's per-thread PRNGs. 0 (default) picks a cryptographically random seed and dataLogs it so the run can be replayed with --randomYieldSeed=<seed>."_s) \
+    v(Unsigned, randomYieldMaxMicroseconds, 100, Normal, "Upper bound, in microseconds, for the short sleeps the RaceAmplifier injects (about 1 in 4 perturbations sleep; the rest sched_yield)."_s) \
     v(Unsigned, seedOfRandomizingFuzzerAgent, 1, Normal, nullptr) \
     v(Bool, dumpFuzzerAgentPredictions, false, Normal, nullptr) \
     v(Bool, useDoublePredictionFuzzerAgent, false, Normal, nullptr) \
@@ -675,6 +681,24 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useIteratorJoin, false, Normal, "Expose the Iterator.prototype.join method."_s) \
     v(Bool, useJSONSourceTextAccess, true, Normal, "Expose JSON source text access feature."_s) \
     v(Bool, useJSPI, true, Normal, "Enable the implementation of JavaScript Promise Integration."_s) \
+    v(Bool, useJSThreads, false, Normal, "enable shared-memory Thread/Lock/Condition/ThreadLocal API"_s) \
+    v(Bool, useThreadedLLIntICs, true, Normal, "kill switch: threaded LLInt metadata caches under useJSThreads"_s) \
+    v(Bool, useThreadedBaselineICs, true, Normal, "kill switch: threaded Baseline/stub ICs under useJSThreads"_s) \
+    v(Bool, useThreadedDFG, true, Normal, "kill switch: threaded DFG support under useJSThreads"_s) \
+    v(Bool, useThreadedFTL, true, Normal, "kill switch: threaded FTL support under useJSThreads"_s) \
+    v(Bool, validateButterflyTagDiscipline, false, Normal, "validate that every generated butterfly access masks or proves the tag (SPEC-jit I14)"_s) \
+    v(Bool, useJSThreadsUnlockHandlerICInFTL, false, Normal, "unlock the FTL handler-IC force-disable for bring-up (SPEC-jit M2a)"_s) \
+    v(Bool, forceSegmentedButterflies, false, Normal, "stress: every butterfly allocation/transition publishes a segmented butterfly (SPEC-objectmodel sec 9.6)"_s) \
+    v(Bool, forceButterflySWBit, false, Normal, "stress: treat every butterfly write as a foreign shared write (SW DCAS + writeThreadLocal fire; SPEC-objectmodel sec 9.6)"_s) \
+    v(Bool, verifyConcurrentButterfly, false, Normal, "debug-assert every concurrent-butterfly tag decode (I2/I3), the butterfly() flatness contract, and run the ConcurrentButterfly self-tests"_s) \
+    v(Unsigned, maxJSThreads, 32766, Normal, nullptr) \
+    v(Unsigned, jsThreadGILTimeSliceMs, 0, Normal, "reserved, inert in phase 1 (SPEC-api Deviation 9)"_s) \
+    v(Unsigned, jsThreadStackSizeKB, 0, Normal, nullptr) \
+    v(Bool, useThreadGIL, false, Normal, "serialize all JS Thread execution under a global lock (default flipped OFF at UNGIL U-T14; U0 option validation forces it back ON unless useVMLite, useSharedAtomStringTable, useSharedGCHeap AND useThreadGILOffUnsafe are all enabled)"_s) \
+    v(Bool, useThreadGILOffUnsafe, false, Normal, "DEVELOPMENT ONLY: permit the GIL-off (N-parallel-mutator) configuration even though the UNGIL activation checklist (INTEGRATE-ungil.md AB list) is not fully landed; without this flag U0 option validation forces useThreadGIL=1"_s) \
+    v(Bool, useSharedAtomStringTable, false, Normal, "process-global shared atom string table"_s) \
+    v(Bool, useVMLite, false, Normal, "per-thread VMLite carriers (Phase A: inert)"_s) \
+    v(Bool, useStructureAllocationLock, false, Normal, "serialize Structure cell allocation + ID-creating transitions"_s) \
     v(Bool, useMoreCurrencyDisplayChoices, false, Normal, "Enable more currencyDisplay choices for Intl.NumberFormat"_s) \
     v(Bool, usePromiseIsPromise, false, Normal, nullptr) \
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \

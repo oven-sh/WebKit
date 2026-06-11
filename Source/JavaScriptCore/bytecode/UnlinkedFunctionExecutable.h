@@ -39,6 +39,7 @@
 #include "RegExp.h"
 #include "SourceCode.h"
 #include "VariableEnvironment.h"
+#include <atomic>
 #include <wtf/FixedVector.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -100,7 +101,7 @@ public:
         ensureRareData().m_classSource = source;
     }
 
-    bool isInStrictContext() const { return m_lexicallyScopedFeatures & StrictModeLexicallyScopedFeature; }
+    bool isInStrictContext() const { return lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature; }
     FunctionMode functionMode() const { return static_cast<FunctionMode>(m_functionMode); }
     ConstructorKind constructorKind() const { return static_cast<ConstructorKind>(m_constructorKind); }
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
@@ -138,6 +139,11 @@ public:
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
+        // KNOWN RESIDUAL (TSAN family codeblock-init, 1 report): these are
+        // bit-fields (the class is size-capped at 96 bytes, so they cannot be
+        // dedicated atomically-accessed bytes); recordParse on the parsing
+        // thread can race isInStrictContext() readers on other threads. The
+        // ScriptExecutable copies of these fields ARE dedicated + atomic.
         m_features = features;
         m_lexicallyScopedFeatures = lexicallyScopedFeatures;
         m_hasCapturedVariables = hasCapturedVariables;
@@ -199,8 +205,8 @@ public:
     
     bool isArrowFunction() const { return isArrowFunctionParseMode(parseMode()); }
 
-    bool singletonHasBeenInvalidated() const { return m_singletonHasBeenInvalidated; }
-    void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
+    bool singletonHasBeenInvalidated() const { return m_singletonHasBeenInvalidated.load(std::memory_order_relaxed); }
+    void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated.store(true, std::memory_order_relaxed); }
 
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }
     EvalContextType evalContextType() const { return static_cast<EvalContextType>(m_evalContextType); }
@@ -308,7 +314,6 @@ private:
     unsigned m_unlinkedFunctionEnd : 31;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_parameterCount : 30;
-    unsigned m_singletonHasBeenInvalidated : 1;
     unsigned m_privateBrandRequirement : 1;
     CodeFeatures m_features : bitWidthOfCodeFeatures;
     uint16_t m_constructorKind : 2;
@@ -319,6 +324,24 @@ private:
     uint8_t m_derivedContextType : 2;
     uint8_t m_inlineAttribute : 1;
     uint8_t m_evalContextType : 2;
+    // GIL-off (TSAN family codeblock-init): this advisory monotonic bit used to live
+    // in the packed bit-field word shared with m_parameterCount /
+    // m_privateBrandRequirement; cross-thread setSingletonHasBeenInvalidated()
+    // (e.g. JSFunction::create on a spawned thread) performed a plain read-modify-write
+    // of that word, racing the plain bit-field reads. Hoisted out of the bit-field into
+    // its own atomic byte, accessed relaxed (JIT spec §5.7.7 advisory datum; same shape
+    // as Thread::m_gcThreadType). ALL accesses must go through the relaxed
+    // singletonHasBeenInvalidated()/setSingletonHasBeenInvalidated() accessors: an
+    // implicit contextual read of a std::atomic<bool> is a seq_cst load, which on
+    // ARM64 codegens to ldar (an acquire-ordered load, NOT a plain ldrb) — a new
+    // ordered load on a flag-off path would violate the flag-off-codegen rule.
+    // Relaxed loads/stores compile to plain byte loads/stores on all supported
+    // targets, so flag-off codegen is unchanged. (Declared here, in the tail
+    // padding byte before the 8-aligned union, to keep sizeof <= 96; the member's
+    // default initializer covers construction, so ctor init-lists must not mention
+    // it — doing so in its old position would be a -Wreorder-ctor warning, which is
+    // a build break under -Werror configs.)
+    std::atomic<bool> m_singletonHasBeenInvalidated { false };
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;

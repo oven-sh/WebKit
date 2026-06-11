@@ -1,0 +1,25 @@
+{
+  "date": "2026-06-10T05:46:15Z",
+  "host": {
+    "cores": 64,
+    "kernel": "6.12.68-92.122.amzn2023.x86_64"
+  },
+  "versions": {
+    "jsc": "/root/WebKit/WebKitBuild/Release/bin/jsc [mtime+size: 1781068898 378642200] flags: --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1",
+    "go": "go version go1.24.13 linux/amd64",
+    "java": "openjdk version \"21.0.10\" 2026-01-20 LTS"
+  },
+  "exceptions": [
+    "js: OPEN ENGINE BUG (not a flag exception): shared-GC-heap corruption under the pinned GIL-off flag set at W>=4 — GC-dependent under-marking; live cells swept and re-allocated (repro: js/repro-bigint-shared-ingest.js, 0/4 corrupt with --useGC=0, 4/4 with GC on). js W>=4 cells are recorded as failed per SPEC §6; js W>=2 runs with wrong checksums are quarantined as failed instead of aborting the batch. go/java cells and the js W=1 baseline are unaffected."
+  ],
+  "constants": {
+    "N_BASE": 28000,
+    "V": 65536,
+    "K": 128,
+    "N_QUERIES": 28000,
+    "seed": "0x5CA1AB1E0BADF00D"
+  },
+  "gate_delay_s": 30,
+  "settle_delay_s": 525,
+  "settle_excess_s": 60
+}

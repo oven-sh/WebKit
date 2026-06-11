@@ -180,7 +180,7 @@ JSValue RegExpObject::matchGlobal(JSGlobalObject* globalObject, JSString* string
 
     if (regExp->hasValidAtom()) {
         if (string->isSubstring()) {
-            auto& cache = globalObject->regExpGlobalData().substringGlobalAtomCache();
+            auto& cache = threadRegExpGlobalData(globalObject).substringGlobalAtomCache();
             RELEASE_AND_RETURN(scope, cache.collectMatches(globalObject, string->asRope(), regExp));
         }
         RELEASE_AND_RETURN(scope, collectGlobalAtomMatches(globalObject, string, regExp));

@@ -39,6 +39,9 @@
 #include "Printer.h"
 #include "ScriptExecutable.h"
 #include "UnlinkedCodeBlock.h"
+#include <atomic>
+#include <wtf/Atomics.h>
+#include <wtf/ThreadSanitizerSupport.h>
 
 #if ENABLE(DFG_JIT)
 #include "DFGCodeOriginPool.h"
@@ -355,13 +358,21 @@ public:
 
         ConcurrentJSLocker locker(m_lock);
         WTF::storeStoreFence(); // This is probably not needed because the lock will also do something similar, but it's good to be paranoid.
+        // TSAN code-lifecycle (section 3.5): m_jitCode is the publication
+        // point GIL-off (see setupWithUnlinkedBaselineCode); the assignment is
+        // a release exchange via ConcurrentJITCodePtr, pairing with the
+        // consume-ordered lock-free readers (jitType / jitCode / the
+        // JIT-emitted jitCodeOffset loads).
         m_jitCode = WTF::move(code);
     }
 
-    RefPtr<JSC::JITCode> jitCode() { return m_jitCode; }
+    RefPtr<JSC::JITCode> jitCode() { return m_jitCode.get(); }
     static constexpr ptrdiff_t jitCodeOffset() { return OBJECT_OFFSETOF(CodeBlock, m_jitCode); }
     JITType jitType() const
     {
+        // Concurrent consume load (TSAN section 3.5): racing setJITCode
+        // publishes are release exchanges, so the m_jitType read behind this
+        // pointer is ordered.
         auto* jitCode = m_jitCode.get();
         JITType result = JSC::JITCode::jitTypeFor(jitCode);
         return result;
@@ -377,7 +388,7 @@ public:
 #if ENABLE(JIT)
     DFG::CapabilityLevel computeCapabilityLevel();
     DFG::CapabilityLevel capabilityLevel();
-    DFG::CapabilityLevel capabilityLevelState() { return static_cast<DFG::CapabilityLevel>(m_capabilityLevelState); }
+    DFG::CapabilityLevel capabilityLevelState() { return m_capabilityLevelState; }
 
     CodeBlock* NODELETE optimizedReplacement(JITType typeToReplace);
     CodeBlock* optimizedReplacement(); // the typeToReplace is my JITType
@@ -390,6 +401,36 @@ public:
     ScriptExecutable* ownerExecutable() const LIFETIME_BOUND { return m_ownerExecutable.get(); }
     
     VM& vm() const { return *m_vm; }
+
+    // TSAN §18 mop-up (residual-2 "CodeBlock VM* const m_vm"), NARROWED at the
+    // thread-closeout final review: the HAPPENS_AFTER pairs with the
+    // HAPPENS_BEFORE in the CodeBlock constructor body — m_vm is a const
+    // member (cannot become an atomic); a CodeBlock cell recycled across
+    // Threads is re-constructed while a stale prober (the slow_path_enter
+    // cluster: m_vm / m_scopeRegister / m_couldBeTainted reads) still reads
+    // the words. The real edge is the sweep/freelist hand-out protocol, which
+    // TSAN cannot fully model. The annotation deliberately lives on THIS
+    // dedicated probe accessor and not on plain vm(): vm() executes on every
+    // C++ slow path engine-wide (BEGIN_NO_SET_PC), and an AFTER there would
+    // acquire the constructing thread's full vector clock continuously,
+    // building a near-global false happens-before web that blinds TSAN to
+    // unrelated genuine races. Use this ONLY at blessed stale-probe sites
+    // (currently slow_path_enter). No-op outside TSAN.
+    // RE-SCOPED at the post-closeout review (TSAN-TRIAGE §17.2 row 17): the
+    // "re-constructed while a stale prober still reads the words" wording
+    // describes TSAN's vector-clock view, NOT a real temporal overlap — a
+    // slow_path_enter prober executes with this CodeBlock in its frame's
+    // CallFrameSlot::codeBlock, so the conservative scan pins the cell and
+    // it cannot be swept (let alone recycled) while such a prober exists.
+    // The missing edge TSAN flags is read-before-sweep ordered only by the
+    // sweep/freelist hand-out protocol it cannot model. Do NOT cite this
+    // annotation as evidence that dead-cell field reads survive recycling;
+    // the row-17 End-phase unlink owns that hazard.
+    VM& vmConcurrentProbe() const
+    {
+        TSAN_ANNOTATE_HAPPENS_AFTER(this);
+        return *m_vm;
+    }
 
     VirtualRegister thisRegister() const { return m_unlinkedCode->thisRegister(); }
 
@@ -440,6 +481,13 @@ public:
 
     ValueProfile* NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
     ValueProfile& NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
+    // THREADS §5.7.4/§5.7.7: `specFailValue`, when non-null, points at a lazyValueProfiles()
+    // speculation-failure bucket slot that is racily written by OSR-exit/JIT'd code and racily
+    // read+cleared by DFG compiler threads (on 64-bit valueProfileLock() is NoLockingNecessaryTag,
+    // so the locker does not serialize compiler threads). The slot is only ever accessed through
+    // ValueProfileBase::computeUpdatedPredictionForExtraValue, which uses relaxed atomics
+    // (64-bit) / the tag-payload concurrent protocol (32-bit); racy-profiling tolerance applies
+    // (a lost sample only weakens speculation; emitted guards validate).
     SpeculatedType valueProfilePredictionForBytecodeIndex(const ConcurrentJSLocker&, BytecodeIndex, JSValue* specFailValue = nullptr);
 
     template<typename Functor> void forEachValueProfile(const Functor&);
@@ -671,8 +719,6 @@ public:
 
     const BaselineExecutionCounter& baselineExecuteCounter();
 
-    unsigned optimizationDelayCounter() const { return m_optimizationDelayCounter; }
-
     // Check if the optimization threshold has been reached, and if not,
     // adjust the heuristics accordingly. Returns true if the threshold has
     // been reached.
@@ -726,11 +772,78 @@ public:
     void forceOptimizationSlowPathConcurrently();
 
     void setOptimizationThresholdBasedOnCompilationResult(CompilationResult);
-    
-    BytecodeIndex NODELETE bytecodeIndexForExit(BytecodeIndex) const;
-    uint32_t osrExitCounter() const { return m_osrExitCounter; }
 
-    void countOSRExit() { m_osrExitCounter++; }
+    // THREADS §5.7.2 (SPEC-jit Task 12): tier-up trigger serialization. Under N mutators
+    // (Options::useJSThreads()) several threads can hit the same threshold slow path
+    // (operationOptimize, the LLInt tier-up slow paths, and the owned DFG->FTL triggers
+    // in dfg/DFGOperations.cpp) at the same time. Each tier-up edge carries a one-bit
+    // in-flight latch (one bit per edge in the m_tierUpInFlight byte): a slow path may
+    // create/enqueue a replacement only after winning the 0->1 transition of its edge's
+    // bit (fetch_or, equivalent to the original per-edge byte CAS). The latch is cleared when the
+    // winning slow path's enqueue attempt completes (success or failure); duplicate
+    // plans that slip through the latch-free window afterwards are cancelled by the
+    // JITWorklist dedup backstop (§5.7.3). Unconditional: with a single mutator the CAS
+    // always wins, so flag-off behavior is unchanged (I1 concerns emitted code only).
+    enum class TierUpEdge : uint8_t {
+        LLIntToBaseline = 0,
+        BaselineToDFG = 1,
+        DFGToFTL = 2,
+        DFGToFTLForOSREntry = 3,
+    };
+    static constexpr unsigned numberOfTierUpEdges = 4;
+
+    bool tryBeginTierUp(TierUpEdge edge)
+    {
+        static_assert(numberOfTierUpEdges <= 8);
+        uint8_t mask = static_cast<uint8_t>(1u << static_cast<unsigned>(edge));
+        return !(m_tierUpInFlight.fetch_or(mask, std::memory_order_acq_rel) & mask);
+    }
+
+    void endTierUp(TierUpEdge edge)
+    {
+        uint8_t mask = static_cast<uint8_t>(1u << static_cast<unsigned>(edge));
+        ASSERT(m_tierUpInFlight.load(std::memory_order_relaxed) & mask);
+        m_tierUpInFlight.fetch_and(static_cast<uint8_t>(~mask), std::memory_order_release);
+    }
+
+    // RAII over the latch; won() == false means another mutator owns this edge right now,
+    // so the caller must defer (stay in tier) and return.
+    class TierUpEdgeLocker {
+    public:
+        TierUpEdgeLocker(CodeBlock* codeBlock, TierUpEdge edge)
+            : m_codeBlock(codeBlock)
+            , m_edge(edge)
+            , m_won(codeBlock->tryBeginTierUp(edge))
+        {
+        }
+
+        TierUpEdgeLocker(const TierUpEdgeLocker&) = delete;
+        TierUpEdgeLocker& operator=(const TierUpEdgeLocker&) = delete;
+
+        ~TierUpEdgeLocker()
+        {
+            if (m_won)
+                m_codeBlock->endTierUp(m_edge);
+        }
+
+        bool won() const { return m_won; }
+
+    private:
+        CodeBlock* const m_codeBlock;
+        const TierUpEdge m_edge;
+        const bool m_won;
+    };
+
+    BytecodeIndex NODELETE bytecodeIndexForExit(BytecodeIndex) const;
+    // THREADS §5.7.1: relaxed atomic read — the counter is concurrently bumped by
+    // countOSRExit() below and by JIT'd plain adds; a stale read only biases the
+    // reoptimization heuristic (I12).
+    uint32_t osrExitCounter() const { return WTF::atomicLoad(const_cast<uint32_t*>(&m_osrExitCounter), std::memory_order_relaxed); }
+
+    // THREADS §5.7.1 (SPEC-jit Task 12): exit counters are racily bumped from OSR-exit
+    // C++ paths on any of N mutators (JIT'd bumps via offsetOfOSRExitCounter stay plain
+    // adds, allowed); relaxed atomic add from C++, lost counts benign (I12).
+    void countOSRExit() { WTF::atomicExchangeAdd(&m_osrExitCounter, static_cast<uint32_t>(1), std::memory_order_relaxed); }
 
     static constexpr ptrdiff_t offsetOfOSRExitCounter() { return OBJECT_OFFSETOF(CodeBlock, m_osrExitCounter); }
 
@@ -755,6 +868,13 @@ public:
     void optimizeAfterWarmUpIgnoreQuickTierUp() { }
     unsigned numberOfDFGCompiles() { return 0; }
 #endif
+
+    // THREADS §5.7.1 (TSAN-TRIAGE family 2): advisory delay counter, raced when N mutators
+    // reach shouldOptimizeNowFromBaseline() on a shared CodeBlock; relaxed atomic
+    // load/add, lost counts benign. Declared outside ENABLE(JIT) because
+    // shouldOptimizeNowFromBaseline() is compiled unconditionally.
+    unsigned optimizationDelayCounter() const { return WTF::atomicLoad(const_cast<uint16_t*>(&m_optimizationDelayCounter), std::memory_order_relaxed); }
+    void incrementOptimizationDelayCounter() { WTF::atomicExchangeAdd(&m_optimizationDelayCounter, static_cast<uint16_t>(1), std::memory_order_relaxed); }
 
     bool shouldOptimizeNowFromBaseline();
     void updateAllNonLazyValueProfilePredictions(const ConcurrentJSLocker&);
@@ -812,7 +932,36 @@ public:
     // concurrent compilation threads finish what they're doing.
     mutable ConcurrentJSLock m_lock;
 
-    bool m_shouldAlwaysBeInlined { true }; // Not a bitfield because the JIT wants to store to it.
+    // THREADS §5.7.7 (racy-profiling tolerance; TSAN-TRIAGE family 2 exec-counter): the
+    // single-byte advisory tier-up/inlining flags on CodeBlock are written and read
+    // concurrently by N mutators (operationOptimize, executeCallImpl, noticeIncomingCall,
+    // prepareForMicrotaskCall, the DFG/FTL threshold paths, ...) with no lock. Plain
+    // bool/bit-field accesses are UB; this wrapper keeps the exact assignment/read syntax
+    // of a plain bool while making every C++ access a relaxed atomic byte load/store. A
+    // lost or stale flag only biases an optimization heuristic — never soundness.
+    // Flag-off: a relaxed byte load/store compiles to the same plain byte moves as
+    // before, so flag-off semantics and codegen are unchanged. JIT-emitted plain stores
+    // through offsetOfShouldAlwaysBeInlined stay plain (documented §0 TSAN JIT-blindness
+    // tradeoff in docs/threads/TSAN-TRIAGE.md).
+    class RelaxedAtomicBool {
+    public:
+        constexpr RelaxedAtomicBool() = default;
+        constexpr RelaxedAtomicBool(bool value)
+            : m_value(value)
+        { }
+        RelaxedAtomicBool& operator=(bool value)
+        {
+            m_value.store(value, std::memory_order_relaxed);
+            return *this;
+        }
+        operator bool() const { return m_value.load(std::memory_order_relaxed); }
+
+    private:
+        std::atomic<bool> m_value { false };
+    };
+
+    // Not a bitfield because the JIT wants to store to it. RelaxedAtomicBool: see above.
+    RelaxedAtomicBool m_shouldAlwaysBeInlined { true };
 
 #if USE(JSVALUE64)
     // 64bit environment does not need a lock for ValueProfile operations.
@@ -824,13 +973,48 @@ public:
     static constexpr ptrdiff_t offsetOfShouldAlwaysBeInlined() { return OBJECT_OFFSETOF(CodeBlock, m_shouldAlwaysBeInlined); }
 
 #if ENABLE(JIT)
-    unsigned m_capabilityLevelState : 2; // DFG::CapabilityLevel
+    // TSAN family 5 code-lifecycle (capabilityLevelState x installCode):
+    // m_capabilityLevelState was a 2-bit field packed into the same storage
+    // byte as the m_isJettisoned bit below, so installCode's
+    // `genericCodeBlock->m_isJettisoned = false` (reachable from any lite's
+    // prepareForExecution / worklist finalize) was a read-modify-write of the
+    // byte a sibling's operationOptimize -> capabilityLevel() concurrently
+    // read — plain accesses to a shared word are UB. Both flags move out of
+    // the bit-field into their own bytes with relaxed atomic accesses
+    // (JIT spec §5.7 racy-profiling tolerance: a stale capability level or
+    // jettison flag only biases a tiering decision; soundness-bearing
+    // consumers re-check under the compilation lock / world-stopped). The
+    // RelaxedAtomic wrappers keep the exact assignment/read syntax of the
+    // plain fields, so CodeBlock.cpp / ScriptExecutable.cpp call sites are
+    // textually unchanged. Flag-off: a relaxed byte load/store compiles to
+    // the same plain byte moves as before; semantics and codegen unchanged.
+    class RelaxedAtomicCapabilityLevel {
+    public:
+        constexpr RelaxedAtomicCapabilityLevel(DFG::CapabilityLevel value)
+            : m_value(static_cast<uint8_t>(value))
+        { }
+        RelaxedAtomicCapabilityLevel& operator=(DFG::CapabilityLevel value)
+        {
+            m_value.store(static_cast<uint8_t>(value), std::memory_order_relaxed);
+            return *this;
+        }
+        operator DFG::CapabilityLevel() const { return static_cast<DFG::CapabilityLevel>(m_value.load(std::memory_order_relaxed)); }
+
+    private:
+        std::atomic<uint8_t> m_value;
+    };
+    RelaxedAtomicCapabilityLevel m_capabilityLevelState;
 #endif
 
-    bool m_didFailJITCompilation : 1;
-    bool m_didFailFTLCompilation : 1;
-    bool m_hasBeenCompiledWithFTL : 1;
-    bool m_isJettisoned : 1;
+    // m_didFailJITCompilation / m_didFailFTLCompilation / m_hasBeenCompiledWithFTL moved out
+    // of this bit-field cluster: they are advisory flags raced between mutator slow paths and
+    // the DFG/FTL threshold paths (TSAN-TRIAGE family 2), so they must live in their own
+    // bytes as relaxed atomics. They are declared next to m_tierUpInFlight below to reuse the
+    // bytes freed by compressing that latch array (keeps sizeof(CodeBlock) unchanged).
+    // m_isJettisoned: not a bit-field anymore — written by ScriptExecutable::installCode
+    // (any lite) while siblings read the neighboring m_capabilityLevelState byte; see the
+    // TSAN family 5 comment above.
+    RelaxedAtomicBool m_isJettisoned { false };
 
     bool m_visitChildrenSkippedDueToOldAge { false };
 
@@ -983,6 +1167,27 @@ private:
     unsigned m_bytecodeCost { 0 };
     VirtualRegister m_scopeRegister;
     mutable CodeBlockHash m_hash;
+#if ENABLE(JIT)
+    // THREADS §5.7.2 (SPEC-jit Task 12): one in-flight bit per tier-up edge (see
+    // TierUpEdge above). Zero-initialized; touched solely by the threshold slow paths
+    // via tryBeginTierUp/endTierUp (fetch_or/fetch_and keep the per-edge 0->1 CAS
+    // semantics). Compressed from one byte per edge to one bit per edge so the three
+    // relocated advisory flags below reuse the freed bytes — the 32-bit field cluster
+    // keeps its exact size (sizeof(CodeBlock) <= 224 assert below).
+    std::atomic<uint8_t> m_tierUpInFlight { 0 };
+#endif
+public:
+    // THREADS §5.7.7 (TSAN-TRIAGE family 2): advisory compilation-outcome flags, raced
+    // between mutator threshold slow paths (shouldTriggerFTLCompile, operationOptimize)
+    // and the DFG/FTL compilation-result paths (setOptimizationThresholdBasedOnCompilationResult,
+    // DFG::JITFinalizer, BaselineJITPlan). Intentionally public (assigned directly from
+    // those paths, as before). Moved out of the bit-field cluster above into their own
+    // relaxed-atomic bytes; see RelaxedAtomicBool. Default-initialized to false (no
+    // longer in the constructor init lists).
+    RelaxedAtomicBool m_didFailJITCompilation;
+    RelaxedAtomicBool m_didFailFTLCompilation;
+    RelaxedAtomicBool m_hasBeenCompiledWithFTL;
+private:
 
     WriteBarrier<UnlinkedCodeBlock> m_unlinkedCode;
     WriteBarrier<ScriptExecutable> m_ownerExecutable;
@@ -996,7 +1201,12 @@ private:
     uint16_t m_reoptimizationRetryCounter { 0 };
     float m_previousCounter { 0 };
     StructureWatchpointMap m_llintGetByIdWatchpointMap;
-    RefPtr<JSC::JITCode> m_jitCode;
+    // TSAN code-lifecycle (section 3.5): published jit-code pointer, replaced
+    // in place by setJITCode while read lock-free from foreign lites and
+    // compiler/GC threads. ConcurrentJITCodePtr keeps the RefPtr single
+    // pointer layout (jitCodeOffset consumers unaffected) but makes every
+    // access an atomic. See jit/JITCode.h.
+    ConcurrentJITCodePtr m_jitCode;
 #if ENABLE(JIT)
 public:
     void* m_jitData { nullptr };

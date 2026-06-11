@@ -117,6 +117,12 @@ static std::atomic<Thread*> targetThread { nullptr };
 
 void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 {
+    // sem_post can set errno on failure and sigsuspend always returns -1 with
+    // errno set to EINTR, so the handler must preserve the interrupted thread's
+    // errno across every exit path (POSIX requires signal handlers not to
+    // modify errno; TSAN reports "signal handler spoils errno" otherwise).
+    int savedErrno = errno;
+
     // Touching a global variable atomic types from signal handlers is allowed.
     Thread* thread = targetThread.load();
 
@@ -127,6 +133,7 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
         // When signal comes, first, the system calls signal handler. And later, sigsuspend will be resumed. Signal handler invocation always precedes.
         // So, the problem never happens that suspended.store(true, ...) will be executed before the handler is called.
         // http://pubs.opengroup.org/onlinepubs/009695399/functions/sigsuspend.html
+        errno = savedErrno;
         return;
     }
 
@@ -140,6 +147,7 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
         // In this case, we back off the suspension and retry a bit later.
         thread->m_platformRegisters = nullptr;
         globalSemaphoreForSuspendResume->post();
+        errno = savedErrno;
         return;
     }
 
@@ -171,6 +179,8 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 
     // Allow resume caller to see that this thread is resumed.
     globalSemaphoreForSuspendResume->post();
+
+    errno = savedErrno;
 }
 
 #endif // !OS(DARWIN)

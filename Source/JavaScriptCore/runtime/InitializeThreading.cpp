@@ -49,6 +49,7 @@
 #include <bmalloc/BPlatform.h>
 #include <mutex>
 #include <wtf/Threading.h>
+#include <wtf/text/SharedAtomStringTable.h>
 #include <wtf/threads/Signals.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
@@ -111,6 +112,13 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
             StructureAlignedMemoryAllocator::initializeStructureAddressSpace();
         }
         Options::finalize();
+
+        // SPEC-vmstate §3 R1: read once, latched, immutable after. §4.8/§8
+        // ordering contract: no other thread may atomize before
+        // JSC::initialize returns (binds embedder and internal service
+        // threads; breaches fail-stop at thread death via I17).
+        if (Options::useSharedAtomStringTable())
+            WTF::enableSharedAtomStringTable();
 
 #if BUSE(LIBPAS)
         if (Options::libpasScavengeContinuously())

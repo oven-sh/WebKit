@@ -33,8 +33,9 @@
 namespace JSC {
 
 template<typename KeyArg, typename ValueArg, typename HashArg, typename KeyTraitsArg>
-inline WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::WeakGCMap(VM& vm)
+inline WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::WeakGCMap(VM& vm, WeakGCMapLocking locking)
     : m_vm(vm)
+    , m_locking(locking)
 {
     vm.heap.registerWeakGCHashTable(this);
 }
@@ -64,12 +65,28 @@ inline typename WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::const_iterat
 template<typename KeyArg, typename ValueArg, typename HashArg, typename KeyTraitsArg>
 inline bool WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::contains(const KeyType& key) const
 {
+    if (m_locking == WeakGCMapLocking::Yes) {
+        // Do the lookup under the lock without exposing an iterator past it.
+        Locker locker { m_lock };
+        auto it = m_map.find(key);
+        return it != m_map.end() && !!it->value;
+    }
     return find(key) != m_map.end();
 }
 
 template<typename KeyArg, typename ValueArg, typename HashArg, typename KeyTraitsArg>
 NEVER_INLINE void WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::pruneStaleEntries()
 {
+    // Called on the GC side. Taking the leaf lock here is permitted in the
+    // GC window (SPEC-ungil §LK WS(ii): finalize-side may take class-2 cache
+    // leaves in-window).
+    if (m_locking == WeakGCMapLocking::Yes) {
+        Locker locker { m_lock };
+        m_map.removeIf([](const typename HashMapType::KeyValuePairType& entry) {
+            return !entry.value;
+        });
+        return;
+    }
     m_map.removeIf([](const typename HashMapType::KeyValuePairType& entry) {
         return !entry.value;
     });

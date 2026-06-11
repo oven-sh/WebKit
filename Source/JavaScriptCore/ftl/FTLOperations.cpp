@@ -59,12 +59,25 @@
 #include "ResourceExhaustion.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Assertions.h>
+#include <wtf/Lock.h>
 
 IGNORE_WARNINGS_BEGIN("frame-address")
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace FTL {
+
+// UNGIL U-T4b: gilOff, N threads can traverse the SAME not-yet-generated lazy
+// slow path's patchable jump concurrently; LazySlowPath::generate must run
+// exactly once (it RELEASE_ASSERTs !m_stub and publishes m_stub). Sibling of
+// ftlOSRExitGenerationLock (FTLOSRExitCompiler.cpp) with the same rank: held
+// across stub generation, so it is OUTER to codeBlock->m_lock,
+// LinkBuffer/executable-allocator locks, and (if a generator allocates
+// scratch) the ScratchBufferRegistry -> VMLiteRegistry -> per-lite
+// scratchBufferLock chain. Acquired only from the generation thunk's
+// operation call with no other JSC lock held; never nested with
+// ftlOSRExitGenerationLock; GIL-on never takes it (flag-off identity).
+static Lock ftlLazySlowPathGenerationLock;
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalObject* globalObject, ExitTimeObjectMaterialization* materialization, EncodedJSValue* encodedValue, EncodedJSValue* values))
 {
@@ -954,6 +967,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLLazySlowPath, void*, (CallF
     JITCode* jitCode = codeBlock->jitCode()->ftl();
 
     LazySlowPath& lazySlowPath = *jitCode->lazySlowPaths[index];
+
+    if (vm.gilOff()) [[unlikely]] {
+        // UNGIL U-T4b: generate exactly once under the generation lock;
+        // losers (and every later traversal of the deliberately-unpatched
+        // jump — see FTLLazySlowPath.cpp, the gilOff repatch skip) reuse the
+        // winner's stub via the thunk's tail call to our return value.
+        Locker locker { ftlLazySlowPathGenerationLock };
+        if (!lazySlowPath.stub())
+            lazySlowPath.generate(codeBlock);
+        return lazySlowPath.stub().code().taggedPtr();
+    }
+
     lazySlowPath.generate(codeBlock);
 
     return lazySlowPath.stub().code().taggedPtr();

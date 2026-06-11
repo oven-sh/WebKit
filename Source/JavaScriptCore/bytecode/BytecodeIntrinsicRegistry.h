@@ -209,6 +209,7 @@ enum class LinkTimeConstant : int32_t;
     macro(InternalMicrotaskAsyncGeneratorBodyCallNormal) \
     macro(InternalMicrotaskAsyncGeneratorBodyCallReturn) \
     macro(InternalMicrotaskAsyncGeneratorResumeNext) \
+    macro(gilOffProcess) \
 
 
 #define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro) \

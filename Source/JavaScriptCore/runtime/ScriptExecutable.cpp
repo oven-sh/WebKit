@@ -37,15 +37,106 @@
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "JSThreadsSafepoint.h"
 #include "LLIntEntrypoint.h"
 #include "ModuleProgramCodeBlock.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
 #include "VMInlines.h"
+#include "VMTraps.h"
+#include <wtf/Atomics.h>
+#include <wtf/RecursiveLockAdapter.h>
+#include <wtf/Threading.h>
 
 namespace JSC {
 
 const ClassInfo ScriptExecutable::s_info = { "ScriptExecutable"_s, &ExecutableBase::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ScriptExecutable) };
+
+// UNGIL IT-8 (concurrent compilation/replacement): GIL-off lites of one VM
+// share Executables, UnlinkedCodeBlocks and installed CodeBlocks, but
+// CodeBlock creation/installation and tier-up finalization were written for a
+// single mutator. Bring-up-grade serialization: one process-wide recursive
+// lock, taken only under vm.gilOffWithProcessGate() (flag-off cost is one
+// predicted-untaken branch at compilation-rate sites — not transition-rate, so
+// bench-gate rung (iii) is unaffected either way). Recursive because
+// prepareForExecutionImpl holds it across its installCode call and
+// DFG::Plan::finalize holds it across the callback's installCode. Per the
+// VM.h sticky-shared-server comment there is at most one gilOff VM per
+// process, so the process-wide lock couples no GIL-on workers. Replace with
+// per-Executable striping / install-CAS once GIL-off is accepted.
+//
+// Declared locally (not in a header) by bytecompiler/BytecodeGenerator.cpp and
+// dfg/DFGPlan.cpp; keep the three declarations in sync.
+RecursiveLock& gilOffCompilationLock()
+{
+    static RecursiveLock lock;
+    return lock;
+}
+
+// UNGIL §A.3 thread-granular conductor predicates (VMManager.cpp; same-library
+// seam redeclarations per the U-T5 record — see JSThreadsSafepoint.cpp).
+// Consumed by installCode's shouldLock predicate below.
+bool jsThreadsThreadGranularWorldIsStopped();
+bool jsThreadsCurrentThreadIsStopConductor();
+
+namespace {
+
+// Stop-protocol-safe acquisition (W1/D9 convention, AB-17 status block in
+// VMEntryScope.cpp): a lite blocked in a raw lock() is invisible to the
+// GIL-off per-lite stop fan. If the lock holder parks at a safepoint inside
+// the locked region while we block raw, the collector waits on us forever and
+// the holder never resumes — deadlock. So contended acquisition spins on
+// tryLock() and services ONLY NeedStopTheWorld between attempts: that parks
+// us for the stop cycle (keeping the stop fan live) and can neither throw nor
+// run JS, so it is safe at every call site including jettison-driven
+// installCode, where throwing is not allowed.
+//
+// FIX (stw-watchdog-timeout, root cause B): the trap-service poll alone is
+// NOT park-capable on every reachable path — several callers spin here
+// inside their own DeferTraps scope (linkFor / virtualForWithFunction /
+// Interpreter::executeCall hold one across prepareForExecution), and
+// handleTraps correctly no-ops under the deferring thread's own flag. A §A.3
+// thread-granular window requested while the lock holder is itself the
+// conductor (it can reach a Class-A/relabel stop from CodeBlock
+// finishCreation under this lock) then wedged: the spinner held heap access
+// for the whole spin and the conductor's access-based predicate could never
+// converge — the 30s watchdog fail-stop. The FIX-2 park poll
+// (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld) parks on the §A.3
+// stop word DIRECTLY — access release + NVS ticket + gated re-acquire, no
+// trap machinery, no jettison, cannot throw — so it is deferral-immune and
+// legal in exactly the places this spin is. On a true return the parked
+// episode ended (the window closed); retrying tryLock IS the required
+// re-validation.
+class GILOffCompilationLocker {
+    WTF_MAKE_NONCOPYABLE(GILOffCompilationLocker);
+public:
+    GILOffCompilationLocker(VM& vm, bool shouldLock)
+        : m_shouldLock(shouldLock)
+    {
+        if (!m_shouldLock) [[likely]]
+            return;
+        RecursiveLock& lock = gilOffCompilationLock();
+        if (lock.tryLock()) [[likely]]
+            return;
+        while (!lock.tryLock()) {
+            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+                continue; // Parked across a §A.3 window: re-validate (retry tryLock) before sleeping again.
+            handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
+            Thread::yield();
+        }
+    }
+
+    ~GILOffCompilationLocker()
+    {
+        if (m_shouldLock) [[unlikely]]
+            gilOffCompilationLock().unlock();
+    }
+
+private:
+    bool m_shouldLock;
+};
+
+} // anonymous namespace
 
 ScriptExecutable::ScriptExecutable(Structure* structure, VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType evalContextType, Intrinsic intrinsic)
     : ExecutableBase(vm, structure)
@@ -73,16 +164,21 @@ void ScriptExecutable::destroy(JSCell* cell)
 
 void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
 {
+    // TSAN code-lifecycle (section 3.5): retract the published pointers with
+    // atomic release stores. The m_jitCodeFor* assignments go through
+    // ConcurrentJITCodePtr (release exchange); the arity mirrors and the
+    // CodeBlock WriteBarrier slots are stored atomically here because foreign
+    // lites read them lock-free (entrypointFor / codeBlockFor relaxed loads).
     m_jitCodeForCall = nullptr;
     m_jitCodeForConstruct = nullptr;
-    m_jitCodeForCallWithArityCheck = CodePtr<JSEntryPtrTag>();
-    m_jitCodeForConstructWithArityCheck = CodePtr<JSEntryPtrTag>();
+    concurrentCodePtrStore(m_jitCodeForCallWithArityCheck, CodePtr<JSEntryPtrTag>());
+    concurrentCodePtrStore(m_jitCodeForConstructWithArityCheck, CodePtr<JSEntryPtrTag>());
 
     switch (type()) {
     case FunctionExecutableType: {
         FunctionExecutable* executable = static_cast<FunctionExecutable*>(this);
-        executable->m_codeBlockForCall.clear();
-        executable->m_codeBlockForConstruct.clear();
+        WTF::atomicStore(executable->m_codeBlockForCall.slot(), static_cast<CodeBlock*>(nullptr), std::memory_order_release);
+        WTF::atomicStore(executable->m_codeBlockForConstruct.slot(), static_cast<CodeBlock*>(nullptr), std::memory_order_release);
         break;
     }
     case EvalExecutableType: {
@@ -120,6 +216,40 @@ void ScriptExecutable::installCode(CodeBlock* codeBlock)
 
 void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType codeType, CodeSpecializationKind kind, Profiler::JettisonReason reason)
 {
+    // UNGIL IT-8 (R1a/R1c): installs arrive from any lite (mutator-side
+    // jettison, worklist drain via DFG::Plan::finalize's callback,
+    // prepareForExecutionImpl); the m_codeBlock* / m_jitCodeFor* store
+    // sequence must not interleave with a sibling's install, nor with a
+    // sibling reading these fields under the same lock in
+    // prepareForExecutionImpl. Deliberately NOT locked:
+    //  - JettisonDueToWeakReference / JettisonDueToOldAge: GC-end installs
+    //    (Heap finalizeUnconditionalFinalizers -> CodeBlock::
+    //    finalizeUnconditionally -> jettison) run in collector context with
+    //    mutators suspended — already race-free, and acquiring here while a
+    //    suspended mutator holds the lock would deadlock the collection.
+    //  - any world-stopped context, same argument.
+    // Recursive lock: the nested acquisition from prepareForExecutionImpl /
+    // Plan::finalize is a cheap re-acquire.
+    bool isGCDrivenInstall = reason == Profiler::JettisonReason::JettisonDueToWeakReference
+        || reason == Profiler::JettisonReason::JettisonDueToOldAge;
+    //  - the CONDUCTOR of an open §A.3 thread-granular window (Class-A fire
+    //    queue drain -> jettison -> nested stopTheWorldAndRun runs `work`
+    //    inline -> installCode): every other mutator of this VM is parked for
+    //    the window, so the install cannot interleave with a sibling's — and
+    //    acquiring here can deadlock: a mutator parked INSIDE the locked
+    //    region (prepareForExecutionImpl's holder parks at the FIX-2 site in
+    //    putDirectInternal from CodeBlock::finishCreation) can never release
+    //    the lock until the window closes, while the conductor's spin keeps
+    //    the window open — the 30s watchdog fail-stop (stack-limits-per-thread
+    //    flake, vmstate identity round). Conductor-only: a non-conductor
+    //    thread observing the window (pre-park race) must still queue on the
+    //    lock — same licensing rule as stopTheWorldAndRun's R1.h
+    //    foreign-thread guard.
+    // (Short-circuit keeps the §A.3 predicate calls off the flag-off/GIL-on path.)
+    GILOffCompilationLocker compilationLocker(vm,
+        vm.gilOffWithProcessGate() && !isGCDrivenInstall && !vm.heap.worldIsStopped()
+        && !(jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor()));
+
     if (genericCodeBlock) {
         CODEBLOCK_LOG_EVENT(genericCodeBlock, "installCode", ());
         switch (reason) {
@@ -133,17 +263,83 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
             break;
         }
     }
-    
+
+    // UNGIL IT-8 (R1c, clear direction): the lock-free fast gate
+    // (ScriptExecutable::prepareForExecution in CodeBlock.h: hasJITCodeFor
+    // then codeBlockFor, plain loads) and call-link reads of m_jitCodeFor*
+    // never take the compilation lock, so field-store ORDER is the only
+    // writer-side guarantee we can give them. On clear, retract the gating
+    // jit-code pointer FIRST (before the CodeBlock-slot stores in the
+    // switch(codeType) below clear the CodeBlock pointer), so a sibling that still observes a non-null
+    // jit-code pointer also still observes the matching CodeBlock. The
+    // switch(kind) further down stores nullptr again — harmless.
+    //
+    // AB17c F4 widening (INSTALL direction too): the virtual-call readers
+    // (LLInt virtualThunkFor, JIT virtual/bound/remote thunks, and the C++
+    // entrypointFor consumers) read (m_jitCodeFor*WithArityCheck,
+    // m_codeBlockFor*) as two independent loads; with the old order
+    // (CodeBlock replaced first, jit-code mirrors stored after) a reader
+    // could pair a STALE arity-check entrypoint with the NEW CodeBlock
+    // (observed: baseline prologue argument-profiling against a DFG
+    // CodeBlock => null m_argumentValueProfiles => crash, --useFTLJIT=0).
+    // Nulling the gate first — ordered by the fence below — means a reader
+    // holding a stale non-null entrypoint can detect the install by
+    // re-reading the arity-check slot AFTER its CodeBlock load (the thunks'
+    // threaded revalidation branch; the slot stays null until
+    // entrypointFor lazily re-derives it from the NEW jit code), and a
+    // reader that sees the null gate slow-paths outright. Reader-side
+    // ordering on weak-memory targets remains the recorded IT-8 KNOWN
+    // RESIDUAL; x86-64 TSO is sound with this store order.
+    // TSAN code-lifecycle (section 3.5): both the retract stores here and the
+    // publish stores below go through atomic accessors (ConcurrentJITCodePtr
+    // release exchange for the RefPtr words — this is what replaced the bare
+    // RefPtr::operator= std::exchange that TSAN flagged at this site — and
+    // concurrentCodePtrStore release for the arity mirrors), pairing with the
+    // consume-ordered lock-free readers (hasJITCodeFor / entrypointFor /
+    // call-link thunks).
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        switch (kind) {
+        case CodeSpecializationKind::CodeForCall:
+            m_jitCodeForCall = nullptr;
+            concurrentCodePtrStore(m_jitCodeForCallWithArityCheck, CodePtr<JSEntryPtrTag>());
+            break;
+        case CodeSpecializationKind::CodeForConstruct:
+            m_jitCodeForConstruct = nullptr;
+            concurrentCodePtrStore(m_jitCodeForConstructWithArityCheck, CodePtr<JSEntryPtrTag>());
+            break;
+        }
+        WTF::storeStoreFence();
+    }
+
     CodeBlock* oldCodeBlock = nullptr;
-    
+
     switch (codeType) {
     case GlobalCode: {
         ProgramExecutable* executable = uncheckedDowncast<ProgramExecutable>(this);
         ProgramCodeBlock* codeBlock = static_cast<ProgramCodeBlock*>(genericCodeBlock);
-        
+
         ASSERT(kind == CodeSpecializationKind::CodeForCall);
-        
-        oldCodeBlock = executable->replaceCodeBlockWith(vm, codeBlock);
+
+        // TSAN code-lifecycle (section 3.5, WRITER side, r4 residual
+        // `CodeBlock::replacement x GlobalExecutable::replaceCodeBlockWith`):
+        // publish the CodeBlock WriteBarrier slot with an atomic release
+        // store, exactly like the FunctionCode case below. The previous path
+        // — GlobalExecutable::replaceCodeBlockWith ->
+        // WriteBarrierBase<CodeBlock>::setMayBeNull -> setEarlyValue ->
+        // RawPtrTraits std::exchange — was a plain store racing the atomic
+        // readers (CodeBlock::replacement's relaxed load, the
+        // prepareForExecution fast gate); the FunctionCode writer got this
+        // fix in wave 3, the GlobalCode/ModuleCode/EvalCode writers did not.
+        // A release store to a pointer-sized slot is codegen-equivalent to
+        // the plain store on our targets, so flag-off semantics are
+        // unchanged; the GC write barrier setMayBeNull performed is
+        // reproduced verbatim below. The oldCodeBlock read is relaxed-atomic
+        // for the same atomic/atomic pairing (installs to this slot are
+        // serialized by the compilation lock / world-stopped contexts above,
+        // but the slot is concurrently read lock-free).
+        oldCodeBlock = WTF::atomicLoad(executable->m_codeBlock.slot(), std::memory_order_relaxed);
+        WTF::atomicStore(executable->m_codeBlock.slot(), static_cast<CodeBlock*>(codeBlock), std::memory_order_release);
+        vm.writeBarrier(executable, static_cast<JSCell*>(codeBlock));
         break;
     }
 
@@ -153,37 +349,81 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
 
         ASSERT(kind == CodeSpecializationKind::CodeForCall);
 
-        oldCodeBlock = executable->replaceCodeBlockWith(vm, codeBlock);
+        // TSAN code-lifecycle: atomic release publication; see GlobalCode above.
+        oldCodeBlock = WTF::atomicLoad(executable->m_codeBlock.slot(), std::memory_order_relaxed);
+        WTF::atomicStore(executable->m_codeBlock.slot(), static_cast<CodeBlock*>(codeBlock), std::memory_order_release);
+        vm.writeBarrier(executable, static_cast<JSCell*>(codeBlock));
         break;
     }
 
     case EvalCode: {
         EvalExecutable* executable = uncheckedDowncast<EvalExecutable>(this);
         EvalCodeBlock* codeBlock = static_cast<EvalCodeBlock*>(genericCodeBlock);
-        
+
         ASSERT(kind == CodeSpecializationKind::CodeForCall);
-        
-        oldCodeBlock = executable->replaceCodeBlockWith(vm, codeBlock);
+
+        // TSAN code-lifecycle: atomic release publication; see GlobalCode above.
+        oldCodeBlock = WTF::atomicLoad(executable->m_codeBlock.slot(), std::memory_order_relaxed);
+        WTF::atomicStore(executable->m_codeBlock.slot(), static_cast<CodeBlock*>(codeBlock), std::memory_order_release);
+        vm.writeBarrier(executable, static_cast<JSCell*>(codeBlock));
         break;
     }
         
     case FunctionCode: {
         FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
         FunctionCodeBlock* codeBlock = static_cast<FunctionCodeBlock*>(genericCodeBlock);
-        
-        oldCodeBlock = executable->replaceCodeBlockWith(vm, kind, codeBlock);
+
+        // TSAN code-lifecycle (section 3.5, WRITER side): publish the
+        // CodeBlock WriteBarrier slot with an atomic release store, pairing
+        // with the consume-ordered lock-free readers (codeBlockForCall /
+        // codeBlockForConstruct in FunctionExecutable.h,
+        // CodeBlock::replacement, the prepareForExecution fast gate) and
+        // matching clearCode's release retract above. The previous path —
+        // FunctionExecutable::replaceCodeBlockWith ->
+        // WriteBarrierBase<CodeBlock>::setMayBeNull -> setEarlyValue ->
+        // RawPtrTraits std::exchange — was a plain store racing those atomic
+        // readers (the wave-3 95-report writer gap). A release store to a
+        // pointer-sized slot is codegen-equivalent to the plain store on our
+        // targets, so flag-off semantics are unchanged; the GC write barrier
+        // that setEarlyValue performed is reproduced verbatim below (and the
+        // unconditional vm.writeBarrier(this) at the end of installCode
+        // covers this executable as well).
+        oldCodeBlock = executable->codeBlockFor(kind);
+        WriteBarrier<CodeBlock>& codeBlockSlot = kind == CodeSpecializationKind::CodeForCall
+            ? executable->m_codeBlockForCall
+            : executable->m_codeBlockForConstruct;
+        WTF::atomicStore(codeBlockSlot.slot(), static_cast<CodeBlock*>(codeBlock), std::memory_order_release);
+        vm.writeBarrier(executable, static_cast<JSCell*>(codeBlock));
         break;
     }
     }
 
+    // UNGIL IT-8 (R1c, install direction): publish the CodeBlock pointer
+    // stores above strictly BEFORE the jit-code pointer that gates the
+    // lock-free fast path, so a sibling that observes a non-null jit-code
+    // pointer observes the matching CodeBlock. TSAN code-lifecycle update
+    // (section 3.5): the reader's two loads (hasJITCodeFor then codeBlockFor)
+    // are now consume-ordered ATOMICS (no more plain-load UB), but they are
+    // still two independent loads of different slots with no cross-slot
+    // acquire in production builds, so the IT-8 KNOWN RESIDUAL stands
+    // unchanged in substance: ARM64 load-load reordering can still pair a
+    // fresh jit-code observation with a stale CodeBlock read. (Under TSAN the
+    // loads are acquire, so the checker sees the writer-side ordering — i.e.
+    // TSAN is deliberately BLIND to this residual from here on.)
+    // Recorded as TSAN-TRIAGE §7.2: x86-64-sound (TSO), ARM64-suspect;
+    // designated coverage is the object-model protocol amplifier, and the
+    // closing fix is on the IT-8 follow-up worklist.
+    if (genericCodeBlock && vm.gilOffWithProcessGate()) [[unlikely]]
+        WTF::storeStoreFence();
+
     switch (kind) {
     case CodeSpecializationKind::CodeForCall:
-        m_jitCodeForCall = genericCodeBlock ? genericCodeBlock->jitCode() : nullptr;
-        m_jitCodeForCallWithArityCheck = nullptr;
+        m_jitCodeForCall = genericCodeBlock ? genericCodeBlock->jitCode() : RefPtr<JSC::JITCode>();
+        concurrentCodePtrStore(m_jitCodeForCallWithArityCheck, CodePtr<JSEntryPtrTag>());
         break;
     case CodeSpecializationKind::CodeForConstruct:
-        m_jitCodeForConstruct = genericCodeBlock ? genericCodeBlock->jitCode() : nullptr;
-        m_jitCodeForConstructWithArityCheck = nullptr;
+        m_jitCodeForConstruct = genericCodeBlock ? genericCodeBlock->jitCode() : RefPtr<JSC::JITCode>();
+        concurrentCodePtrStore(m_jitCodeForConstructWithArityCheck, CodePtr<JSEntryPtrTag>());
         break;
     }
 
@@ -219,8 +459,8 @@ bool ScriptExecutable::hasClearableCode() const
 {
     if (m_jitCodeForCall
         || m_jitCodeForConstruct
-        || m_jitCodeForCallWithArityCheck
-        || m_jitCodeForConstructWithArityCheck)
+        || concurrentCodePtrLoad(m_jitCodeForCallWithArityCheck)
+        || concurrentCodePtrLoad(m_jitCodeForConstructWithArityCheck))
         return true;
 
     if (structure()->classInfoForCells() == FunctionExecutable::info()) {
@@ -397,6 +637,34 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
         return;
     }
 
+    // UNGIL IT-8 (R1): the caller's hasJITCodeFor() gate (CodeBlock.h
+    // prepareForExecution) runs BEFORE this lock, so a sibling lite may have
+    // generated and installed this executable's code while we waited. Adopt
+    // the installed CodeBlock instead of re-generating: the re-generation
+    // path RELEASE_ASSERTs !codeBlockFor(kind) (newCodeBlockFor) and would
+    // clobber a CodeBlock the sibling is already running. Ordering notes:
+    //  - lock taken AFTER DeferGCForAWhile, so the locked region cannot
+    //    trigger a collection at its own allocation sites;
+    //  - the failNextNewCodeBlock test-flag check stays ABOVE the lock and
+    //    the adopt path, preserving its flag-off/GIL-on semantics (the flag
+    //    is consumed only when this thread would actually create a new
+    //    CodeBlock — an adopting thread leaves it armed).
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
+    if (vm.gilOffWithProcessGate() && hasJITCodeFor(kind)) [[unlikely]] {
+        if (classInfo() == FunctionExecutable::info())
+            resultCodeBlock = uncheckedDowncast<FunctionExecutable>(this)->codeBlockFor(kind);
+        else if (classInfo() == EvalExecutable::info())
+            resultCodeBlock = uncheckedDowncast<EvalExecutable>(this)->codeBlock();
+        else if (classInfo() == ProgramExecutable::info())
+            resultCodeBlock = uncheckedDowncast<ProgramExecutable>(this)->codeBlock();
+        else {
+            RELEASE_ASSERT(classInfo() == ModuleProgramExecutable::info());
+            resultCodeBlock = uncheckedDowncast<ModuleProgramExecutable>(this)->codeBlock();
+        }
+        RELEASE_ASSERT(resultCodeBlock);
+        return;
+    }
+
     CodeBlock* codeBlock = newCodeBlockFor(kind, function, scope);
     RETURN_IF_EXCEPTION(throwScope, void());
 
@@ -408,7 +676,10 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 
     bool installedUnlinkedBaselineCode = false;
 #if ENABLE(JIT)
-    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
+    // §12.2: snapshot under the UnlinkedCodeBlock lock — a bare RefPtr load can
+    // race a concurrent plan-finalize install on another mutator (see the
+    // contract comment in UnlinkedCodeBlock.h). Cold codeBlock-creation path.
+    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->unlinkedBaselineCodeConcurrently()) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
         installedUnlinkedBaselineCode = true;
     }

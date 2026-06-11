@@ -316,10 +316,16 @@ void JSValue::dumpInContextAssumingStructure(
             out.print("BigInt[heap-allocated]: addr=", RawPointer(asCell()), ", length=", uncheckedDowncast<JSBigInt>(asCell())->length(), ", sign=", uncheckedDowncast<JSBigInt>(asCell())->sign());
         else if (structure->classInfoForCells()->isSubClassOf(JSObject::info())) {
             out.print("Object: ", RawPointer(asCell()));
-            auto* butterfly = asObject(asCell())->butterfly();
-            out.print(" with butterfly ", RawPointer(butterfly));
-            if (butterfly)
-                out.print("(base=", RawPointer(butterfly->base(structure)), ")");
+            // THREADS-INTEGRATE(objectmodel) §10.7: on tagged words print the
+            // raw tagged word instead of dereferencing as flat.
+            if (asObject(asCell())->mayBeSegmentedButterfly()) [[unlikely]]
+                out.print(" with tagged butterfly word ", asObject(asCell())->taggedButterflyWord());
+            else {
+                auto* butterfly = asObject(asCell())->butterfly();
+                out.print(" with butterfly ", RawPointer(butterfly));
+                if (butterfly)
+                    out.print("(base=", RawPointer(butterfly->base(structure)), ")");
+            }
             out.print(" (Structure ", inContext(*structure, context), ")");
         } else {
             out.print("Cell: ", RawPointer(asCell()));
@@ -421,9 +427,9 @@ String JSValue::toWTFStringSlowCase(JSGlobalObject* globalObject) const
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isInt32())
-        return vm.numericStrings.add(asInt32());
+        return vm.liveNumericStrings().add(asInt32());
     if (isDouble())
-        return vm.numericStrings.add(asDouble());
+        return vm.liveNumericStrings().add(asDouble());
     if (isTrue())
         return vm.propertyNames->trueKeyword.string();
     if (isFalse())

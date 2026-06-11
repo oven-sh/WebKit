@@ -35,6 +35,19 @@ public:
 
     static void remove(AtomStringImpl*);
 
+    // SPEC-vmstate §4.4.5 — shared-atom-table mode only. Called from
+    // StringImpl::derefSharedZero() when an atom's refcount reaches 0
+    // (0 is final, so the caller uniquely owns the string). Locks
+    // shardForHash(string->existingHash()), finds the entry by existingHash +
+    // POINTER equality (never characters: a racing add may have replaced the
+    // dying entry with a fresh atom for the same characters), removes it only
+    // on a pointer match, unlocks, then destroys the string (bypassing the
+    // destructor's legacy isAtom() removal arm: isAtom is cleared under the
+    // shard lock pre-destroy; the destructor never touches the table in shared
+    // mode). Removal is conditional — no unconditional
+    // RELEASE_ASSERT(wasRemoved) (invariant I6).
+    WTF_EXPORT_PRIVATE static void removeDeadAtom(AtomStringImpl*);
+
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> add(std::span<const Latin1Character>);
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> add(std::span<const char16_t>);
     ALWAYS_INLINE static RefPtr<AtomStringImpl> add(std::span<const char> characters);
@@ -55,6 +68,12 @@ public:
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> add(CFStringRef);
 #endif
 
+    // SPEC-vmstate §4.3, rule A1: when the process-global shared atom table is
+    // enabled (WTF::sharedAtomStringTableEnabled()), the provider's
+    // AtomStringTable is IGNORED and the add routes to the shared table's
+    // shards (via addSlowCase(AtomStringTable&, StringImpl&)). Honoring it
+    // would split atomization into divergent per-VM and global atom universes,
+    // breaking atom pointer-equality (invariant I1).
     template<typename StringTableProvider>
     ALWAYS_INLINE static RefPtr<AtomStringImpl> addWithStringTableProvider(StringTableProvider&, StringImpl*);
 
@@ -73,6 +92,9 @@ private:
 
     WTF_EXPORT_PRIVATE static Ref<AtomStringImpl> addSlowCase(StringImpl&);
     WTF_EXPORT_PRIVATE static Ref<AtomStringImpl> addSlowCase(Ref<StringImpl>&&);
+    // In shared-atom-table mode the AtomStringTable argument is ignored and
+    // the add routes to the shared table's shards (rule A1; see
+    // addWithStringTableProvider above). Legacy mode honors the argument.
     WTF_EXPORT_PRIVATE static Ref<AtomStringImpl> addSlowCase(AtomStringTable&, StringImpl&);
 
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> lookUpSlowCase(StringImpl&);
@@ -127,6 +149,13 @@ ALWAYS_INLINE Ref<AtomStringImpl> AtomStringImpl::add(StringImpl& string)
     }
 #if USE(BUN_JSC_ADDITIONS)
     // TODO: remove once atomic strings are process-wide.
+    // ADVISORY check (round-4 TOCTOU closure): canBecomeAtom() is an unlocked
+    // read, so a concurrent setNeverAtomize() can land after it. That race is
+    // NOT closed here — it is closed at publication: the shared-mode in-place
+    // atomization claims atom-hood via StringImpl::trySetIsAtomIfAtomizable()
+    // (same atomic word as setNeverAtomize()'s CAS, total-ordered) and
+    // addSlowCase falls back to this same copying path if it loses. This
+    // early check only steers the common case before any locking.
     if (!string.canBecomeAtom()) [[unlikely]] {
         if (string.is8Bit())
             return *add(string.span8());
@@ -144,6 +173,8 @@ ALWAYS_INLINE Ref<AtomStringImpl> AtomStringImpl::add(Ref<StringImpl>&& string)
     }
 #if USE(BUN_JSC_ADDITIONS)
     // TODO: remove once atomic strings are process-wide.
+    // ADVISORY unlocked check — see the add(StringImpl&) overload above; the
+    // setNeverAtomize() race is closed at publication, not here.
     if (!string->canBecomeAtom()) [[unlikely]] {
         if (string->is8Bit())
             return *add(string->span8());
@@ -153,6 +184,9 @@ ALWAYS_INLINE Ref<AtomStringImpl> AtomStringImpl::add(Ref<StringImpl>&& string)
     return addSlowCase(WTF::move(string));
 }
 
+// Shared-atom-table mode ignores the AtomStringTable argument (rule A1):
+// addSlowCase(AtomStringTable&, StringImpl&) routes to the shared shards, and
+// the canBecomeAtom() bail below routes through add(span) which does too.
 ALWAYS_INLINE Ref<AtomStringImpl> AtomStringImpl::add(AtomStringTable& stringTable, StringImpl& string)
 {
     if (auto* atom = dynamicDowncast<AtomStringImpl>(string)) {
@@ -161,6 +195,8 @@ ALWAYS_INLINE Ref<AtomStringImpl> AtomStringImpl::add(AtomStringTable& stringTab
     }
 #if USE(BUN_JSC_ADDITIONS)
     // TODO: remove once atomic strings are process-wide.
+    // ADVISORY unlocked check — see the add(StringImpl&) overload above; the
+    // setNeverAtomize() race is closed at publication, not here.
     if (!string.canBecomeAtom()) [[unlikely]] {
         if (string.is8Bit())
             return *add(string.span8());

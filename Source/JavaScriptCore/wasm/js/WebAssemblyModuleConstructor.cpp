@@ -291,6 +291,10 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyModule, (JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
+
     if (!globalObject->webAssemblyEnabled()) [[unlikely]]
         return JSValue::encode(throwException(globalObject, scope, createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage())));
 

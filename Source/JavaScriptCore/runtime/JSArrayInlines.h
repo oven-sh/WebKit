@@ -146,6 +146,12 @@ ALWAYS_INLINE bool JSArray::holesMustForwardToPrototype() const
 
 inline bool JSArray::canFastCopy(JSArray* otherArray) const
 {
+    // SPEC-objectmodel round 4 NOTE: this predicate only excludes ArrayStorage
+    // SHAPES - it deliberately does NOT probe the flag-on butterfly regime.
+    // Every owned consumer (appendMemcpy, fastSlice) carries its own flag-on
+    // single-snapshot probe (segmented / shared / foreign / null dispositions)
+    // at its memcpy site; unowned ArrayPrototype consumers are covered by the
+    // §10.7 integrator guard list (INTEGRATE-objectmodel §44).
     if (hasAnyArrayStorage(indexingType()) || hasAnyArrayStorage(otherArray->indexingType()))
         return false;
     if (holesMustForwardToPrototype() || otherArray->holesMustForwardToPrototype())
@@ -233,6 +239,47 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ensureWritable(vm);
+
+#if USE(JSVALUE64)
+    // SPEC-objectmodel Task 8 (§4.4) + review round 3 (§3 foreign-first-write
+    // protocol, I12/I21): the flat in-place fast paths below mutate a FLAT
+    // word (element store + plain setPublicLength) and are sound only for the
+    // word's exclusive owner - (currentTID, 0). Everything else routes through
+    // the §9.5 indexed driver, which carries the gates the fast paths elide:
+    //   - segmented words: spine-addressed stores, CAS-max length bumps (the
+    //     flat accessors would garbage-decode the spine);
+    //   - foreign SW=0 words: ensureSharedWriteBit fires F1 and flips SW
+    //     BEFORE the store (otherwise writeThreadLocal(S) stays valid while a
+    //     foreign write lands - unsounding E2/E4 elision - and an owner T1
+    //     copying resize could silently drop the store, I21);
+    //   - flat SW=1 words: the publicLength bump must be the monotone CAS-max
+    //     (updatePublicLengthAfterDenseStoreConcurrent inside the driver) -
+    //     a read-then-plain-store racing another pusher regresses the
+    //     winner's bump and hides its element (the round-2 racing-growers
+    //     fix, reintroduced here in round 2's audit gap);
+    //   - AS words with a foreign SW=0 writer: the §4.6 per-event SW stop.
+    // Residue (shape transition on a shared word, sparse territory) takes the
+    // generic putByIndex protocol.
+    if (Options::useJSThreads()) [[unlikely]] {
+        uint64_t word = taggedButterflyWord();
+        if (isSegmentedButterfly(word)
+            || ((word & butterflyPointerMask)
+                && (butterflySharedWrite(word) || butterflyWriterIsForeign(word)))) {
+            unsigned oldLength = length();
+            if (oldLength > MAX_ARRAY_INDEX) [[unlikely]] {
+                methodTable()->putByIndex(this, globalObject, oldLength, value, true);
+                if (!scope.exception())
+                    throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
+                return;
+            }
+            if (putIndexConcurrent(vm, oldLength, value))
+                return;
+            scope.release();
+            methodTable()->putByIndex(this, globalObject, oldLength, value, true);
+            return;
+        }
+    }
+#endif
 
     Butterfly* butterfly = this->butterfly();
 
@@ -351,6 +398,37 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     }
 
     case ArrayWithArrayStorage: {
+#if USE(JSVALUE64)
+        // SPEC-objectmodel I31/L5 (Task 8): flag-on, every runtime AS access
+        // is cell-locked; the in-vector fast push re-reads the storage under
+        // the lock (AS-COPY republishes) - its element/length/
+        // m_numValuesInVector stores are the in-place stores §4.6 sanctions
+        // under the lock. The beyond-vector paths run unlocked here; their
+        // mutation sites (increaseVectorLength, sparse map) lock themselves.
+        if (Options::useJSThreads()) [[unlikely]] {
+            {
+                Locker locker { cellLock() };
+                ArrayStorage* lockedStorage = this->butterfly()->arrayStorage();
+                unsigned lockedLength = lockedStorage->length();
+                if (lockedLength < lockedStorage->vectorLength()) {
+                    lockedStorage->m_vector[lockedLength].set(vm, this, value);
+                    lockedStorage->setLength(lockedLength + 1);
+                    ++lockedStorage->m_numValuesInVector;
+                    return;
+                }
+            }
+            ArrayStorage* unlockedStorage = this->butterfly()->arrayStorage();
+            if (unlockedStorage->length() > MAX_ARRAY_INDEX) [[unlikely]] {
+                methodTable()->putByIndex(this, globalObject, unlockedStorage->length(), value, true);
+                if (!scope.exception())
+                    throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
+                return;
+            }
+            scope.release();
+            putByIndexBeyondVectorLengthWithArrayStorage(globalObject, unlockedStorage->length(), value, true, unlockedStorage);
+            return;
+        }
+#endif
         ArrayStorage* storage = butterfly->arrayStorage();
 
         // Fast case - push within vector, always update m_length & m_numValuesInVector.

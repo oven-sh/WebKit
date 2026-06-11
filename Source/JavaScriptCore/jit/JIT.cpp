@@ -778,7 +778,7 @@ RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffor
     if (maxFrameSize > Options::reservedZoneSize()) [[unlikely]]
         stackOverflow.append(branchPtr(Above, regT1, callFrameRegister));
 #endif
-    stackOverflow.append(branchPtr(GreaterThan, AbsoluteAddress(m_vm->addressOfSoftStackLimit()), regT1));
+    stackOverflow.append(branchPtrAgainstSoftStackLimit(*m_vm, Above, regT1)); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
 
     move(regT1, stackPointerRegister);
     checkStackPointerAlignment();

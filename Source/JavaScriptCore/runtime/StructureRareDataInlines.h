@@ -118,8 +118,16 @@ inline uintptr_t StructureRareData::cachedPropertyNameEnumeratorAndFlag() const
 
 inline void StructureRareData::setCachedPropertyNameEnumerator(VM& vm, Structure* baseStructure, JSPropertyNameEnumerator* enumerator, StructureChain* chain)
 {
+    // AUD1.N4(2)/(3): callers hold the owning Structure's m_lock
+    // (Structure::setCachedPropertyNameEnumerator), which serializes
+    // installers against each other. Foreign fast-path readers load
+    // m_cachedPropertyNameEnumeratorAndFlag single-word UNLOCKED, so the
+    // JIT-read flag word is fence-published LAST, after the watchpoint
+    // vector it summarizes — same shape as setCachedPropertyNames below and
+    // the cacheSpecialPropertySlow install (StructureRareData.cpp).
     m_cachedPropertyNameEnumeratorWatchpoints = FixedVector<StructureChainInvalidationWatchpoint>();
     bool validatedViaWatchpoint = tryCachePropertyNameEnumeratorViaWatchpoint(vm, baseStructure, chain);
+    WTF::storeStoreFence();
     m_cachedPropertyNameEnumeratorAndFlag = ((validatedViaWatchpoint ? 0 : cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag) | std::bit_cast<uintptr_t>(enumerator));
     vm.writeBarrier(this, enumerator);
 }
@@ -200,17 +208,22 @@ inline bool StructureRareData::tryCachePropertyNameEnumeratorViaWatchpoint(VM&, 
         return false;
 
     unsigned size = 0;
-    for (auto* current = chain->head(); *current; ++current) {
+    // THREADS/TSAN: relaxed lane loads (see StructureChain::loadLaneConcurrently).
+    for (auto* current = chain->head();; ++current) {
+        StructureID structureID = StructureChain::loadLaneConcurrently(current);
+        if (!structureID)
+            break;
         ++size;
-        StructureID structureID = *current;
         Structure* structure = structureID.decode();
         if (!structure->propertyNameEnumeratorShouldWatch())
             return false;
     }
     m_cachedPropertyNameEnumeratorWatchpoints = FixedVector<StructureChainInvalidationWatchpoint>(size);
     unsigned index = 0;
-    for (auto* current = chain->head(); *current; ++current) {
-        StructureID structureID = *current;
+    for (auto* current = chain->head(); index < size; ++current) {
+        StructureID structureID = StructureChain::loadLaneConcurrently(current);
+        if (!structureID)
+            break;
         Structure* structure = structureID.decode();
         m_cachedPropertyNameEnumeratorWatchpoints[index].install(this, structure);
         ++index;

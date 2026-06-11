@@ -27,6 +27,7 @@
 
 #include "Opcode.h"
 #include "ValueProfile.h"
+#include <wtf/Atomics.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
@@ -98,8 +99,13 @@ public:
 
     unsigned numValueProfiles() const { return m_numValueProfiles; }
 
-    TriState didOptimize() const { return m_didOptimize; }
-    void setDidOptimize(TriState didOptimize) { m_didOptimize = didOptimize; }
+    // THREADS §5.7 (racy-profiling tolerance): advisory optimize-outcome hint, written on
+    // jettison/optimization slow paths that can run on any of N mutators and read by
+    // concurrent tier-up decisions. Relaxed atomics on a dedicated byte (not the adjacent
+    // bitfield, so a racing store cannot scribble m_isLinked and friends); a stale value
+    // at worst skews a heuristic, never breaks soundness.
+    TriState didOptimize() const { return WTF::atomicLoad(const_cast<TriState*>(&m_didOptimize), std::memory_order_relaxed); }
+    void setDidOptimize(TriState didOptimize) { WTF::atomicStore(&m_didOptimize, didOptimize, std::memory_order_relaxed); }
 
 private:
     enum EmptyTag { Empty };
@@ -169,7 +175,9 @@ private:
     bool m_isFinalized : 1;
     bool m_isLinked : 1;
     bool m_is32Bit : 1;
-    TriState m_didOptimize : 2 { TriState::Indeterminate };
+    // Dedicated byte, not part of the bitfield above: accessed cross-thread with relaxed
+    // atomics (THREADS §5.7); see didOptimize()/setDidOptimize().
+    TriState m_didOptimize { TriState::Indeterminate };
     unsigned m_numValueProfiles { 0 };
     uint8_t* m_rawBuffer;
 };

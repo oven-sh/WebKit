@@ -88,20 +88,23 @@ void repatchCheckPrivateBrand(JSGlobalObject*, CodeBlock*, JSObject*, CacheableI
 void repatchSetPrivateBrand(JSGlobalObject*, CodeBlock*, JSObject*, Structure*, CacheableIdentifier, PropertyInlineCache&);
 void repatchInstanceOf(JSGlobalObject*, CodeBlock*, JSValue, JSValue prototype, PropertyInlineCache&, bool wasFound);
 void linkMonomorphicCall(VM&, JSCell*, CallLinkInfo&, CodeBlock*, JSObject* callee, CodePtr<JSEntryPtrTag>);
-void linkDirectCall(DirectCallLinkInfo&, CodeBlock*, CodePtr<JSEntryPtrTag>);
+void linkDirectCall(VM&, DirectCallLinkInfo&, CodeBlock*, CodePtr<JSEntryPtrTag>);
 void linkPolymorphicCall(VM&, JSCell*, CallFrame*, CallLinkInfo&, CallVariant);
-void resetGetBy(CodeBlock*, PropertyInlineCache&, GetByKind);
-void resetPutBy(CodeBlock*, PropertyInlineCache&, PutByKind);
-void resetDelBy(CodeBlock*, PropertyInlineCache&, DelByKind);
-void resetInBy(CodeBlock*, PropertyInlineCache&, InByKind);
-void resetHasPrivateBrand(CodeBlock*, PropertyInlineCache&);
-void resetInstanceOf(CodeBlock*, PropertyInlineCache&);
-void resetCheckPrivateBrand(CodeBlock*, PropertyInlineCache&);
-void resetSetPrivateBrand(CodeBlock*, PropertyInlineCache&);
+// AB18-G: the VM& is the caller's operation-context VM (AB18-E rule). These
+// route into PropertyInlineCache::resetStubAsJumpInAccess, a retire path,
+// which must never re-derive the VM through codeBlock->vm().
+void resetGetBy(VM&, CodeBlock*, PropertyInlineCache&, GetByKind);
+void resetPutBy(VM&, CodeBlock*, PropertyInlineCache&, PutByKind);
+void resetDelBy(VM&, CodeBlock*, PropertyInlineCache&, DelByKind);
+void resetInBy(VM&, CodeBlock*, PropertyInlineCache&, InByKind);
+void resetHasPrivateBrand(VM&, CodeBlock*, PropertyInlineCache&);
+void resetInstanceOf(VM&, CodeBlock*, PropertyInlineCache&);
+void resetCheckPrivateBrand(VM&, CodeBlock*, PropertyInlineCache&);
+void resetSetPrivateBrand(VM&, CodeBlock*, PropertyInlineCache&);
 
-void repatchGetBySlowPathCall(CodeBlock*, PropertyInlineCache&, GetByKind);
-void repatchPutBySlowPathCall(CodeBlock*, PropertyInlineCache&, PutByKind);
-void repatchInBySlowPathCall(CodeBlock*, PropertyInlineCache&, InByKind);
+void repatchGetBySlowPathCall(VM&, CodeBlock*, PropertyInlineCache&, GetByKind);
+void repatchPutBySlowPathCall(VM&, CodeBlock*, PropertyInlineCache&, PutByKind);
+void repatchInBySlowPathCall(VM&, CodeBlock*, PropertyInlineCache&, InByKind);
 
 void ftlThunkAwareRepatchCall(CodeBlock*, CodeLocationCall<JSInternalPtrTag>, CodePtr<CFunctionPtrTag> newCalleeFunction);
 CodePtr<JSEntryPtrTag> jsToWasmICCodePtr(CodeSpecializationKind, JSObject* callee);

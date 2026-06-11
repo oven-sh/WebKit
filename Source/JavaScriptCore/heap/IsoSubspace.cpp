@@ -38,7 +38,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(IsoSubspace);
 
 IsoSubspace::IsoSubspace(CString name, JSC::Heap& heap, const HeapCellType& heapCellType, size_t size, uint8_t numberOfLowerTierPreciseCells, std::unique_ptr<AlignedMemoryAllocator>&& allocator)
     : Subspace(SubspaceKind::IsoSubspace, name, heap)
-    , m_directory(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size))
+    , m_directory(heap, WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size))
     , m_allocator(allocator ? WTF::move(allocator) : makeUnique<FastMallocAlignedMemoryAllocator>())
 {
     m_remainingLowerTierPreciseCount = numberOfLowerTierPreciseCells;
@@ -82,6 +82,12 @@ void IsoSubspace::didBeginSweepingToFreeList(MarkedBlock::Handle* block)
 
 void* IsoSubspace::tryAllocateLowerTierPrecise(size_t size)
 {
+    // SharedGC (§5.2/§5.6/I16): mutates the precise registry and the
+    // lower-tier free list; when the server is shared this runs inside
+    // LocalAllocator::allocateSlowCase's MSPL section (the sole mutator-path
+    // caller) — assert rather than re-lock (MSPL is not recursive).
+    ASSERT(!m_space.heap().isSharedServer() || m_space.heap().mutatorSlowPathLock().isHeld() || m_space.heap().worldIsStoppedForAllClients());
+
     auto revive = [&] (PreciseAllocation* allocation) {
         // Lower-tier cells never report capacity. This is intentional since it will not be freed until VM dies.
         // Whether we will do GC or not does not affect on the used memory by lower-tier cells. So we should not
@@ -121,6 +127,15 @@ void IsoSubspace::destroyLowerTierPreciseFreeList()
 
 namespace GCClient {
 
+// SharedGC (T9) audit vs the GCClient::Heap::vm() standalone assert
+// (HeapInlines.h): GCClient::IsoSubspace never touches its owning client's
+// vm() — this ctor binds only the server-side BlockDirectory, allocate(VM&)
+// is the VM-coupled entry (a VM exists by definition there), and
+// allocateForClient() (§12.1 seam, IsoSubspaceInlines.h) reaches the server
+// via client.server(). Standalone (markStandalone()) clients can therefore
+// materialize and use iso LocalAllocators without tripping the vm()
+// RELEASE_ASSERT; the §10A.1 m_perDirectory registration (T4) is likewise
+// vm()-free.
 IsoSubspace::IsoSubspace(JSC::IsoSubspace& server)
     : m_localAllocator(&server.m_directory)
 {

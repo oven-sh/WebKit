@@ -114,12 +114,12 @@ ALWAYS_INLINE JSValue Interpreter::executeCachedCall(CachedCall& cachedCall)
     // We don't handle `NonDebuggerAsyncEvents` explicitly here. This is a JS function (since this is CachedCall),
     // so the called JS function always handles it.
 
-    auto* entry = cachedCall.m_addressForCall;
+    auto* entry = WTF::atomicLoad(&cachedCall.m_addressForCall, std::memory_order_acquire); // THREADS: pairs with the drain's release publish.
     if (!entry) [[unlikely]] {
         DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
         cachedCall.relink();
         RETURN_IF_EXCEPTION(throwScope, throwScope.exception());
-        entry = cachedCall.m_addressForCall;
+        entry = WTF::atomicLoad(&cachedCall.m_addressForCall, std::memory_order_acquire);
     }
 
     // Execute the code:
@@ -146,7 +146,7 @@ ALWAYS_INLINE JSValue Interpreter::tryCallWithArguments(CachedCall& cachedCall, 
     // We don't handle `NonDebuggerAsyncEvents` explicitly here. This is a JS function (since this is CachedCall),
     // so the called JS function always handles it.
 
-    auto* entry = cachedCall.m_addressForCall;
+    auto* entry = WTF::atomicLoad(&cachedCall.m_addressForCall, std::memory_order_acquire); // THREADS: pairs with the drain's release publish.
     if (!entry) [[unlikely]]
         return { };
 
@@ -187,7 +187,7 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Stac
     CPURegister* frame = reinterpret_cast<CPURegister*>(callFrame->registers());
 
     unsigned registerCount = currentCalleeSaves->registerCount();
-    VMEntryRecord* record = vmEntryRecord(m_vm.topEntryFrame);
+    VMEntryRecord* record = vmEntryRecord(m_vm.group3Primitives().topEntryFrame); // UNGIL §A.1.3 mode split: callee-save restore must target the THROWING thread's entry record.
     for (unsigned i = 0; i < registerCount; i++) {
         RegisterAtOffset currentEntry = currentCalleeSaves->at(i);
         if (dontCopyRegisters.contains(currentEntry.reg(), IgnoreVectors))

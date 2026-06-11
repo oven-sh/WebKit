@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "Options.h"
 #include "PrototypeKey.h"
 #include "WeakGCMap.h"
 #include <wtf/Lock.h>
@@ -41,10 +42,22 @@ class VM;
 typedef uint8_t IndexingType;
 
 // Tracks the canonical structure an object should be allocated with when inheriting from a given prototype.
+//
+// Threading (TSAN-TRIAGE §6.34/§8.34, family structure-cache): under
+// Options::useJSThreads() with the GIL off, N mutator threads reach
+// createEmptyStructure() concurrently (per SPEC-ungil §K, per-global caches
+// are NOT blessed racy), so m_structures opts into the locking WeakGCMap
+// configuration (WeakGCMapLocking::Yes, the same SPEC-ungil §LK.7 class-2
+// cache leaf lock that closed family 32). Every map operation —
+// get/addIfAbsent/set/clear and GC-side pruneStaleEntries — then serializes
+// on the map's internal leaf lock, so no thread can walk a table that a
+// concurrent set/rehash is freeing. Flag-off, the map is non-locking and the
+// pre-existing m_lock discipline (mutation + concurrent-compiler-thread reads
+// under m_lock; lock-free main-thread fast-path lookup) is unchanged.
 class StructureCache {
 public:
     explicit StructureCache(VM& vm)
-        : m_structures(vm)
+        : m_structures(vm, Options::useJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
     {
     }
 
@@ -54,6 +67,14 @@ public:
     JS_EXPORT_PRIVATE Structure* emptyStructureForPrototypeFromBaseStructure(JSGlobalObject*, JSObject*, Structure*);
     JS_EXPORT_PRIVATE Structure* emptyObjectStructureConcurrently(JSObject* prototype, unsigned inlineCapacity);
 
+    // WeakGCMap::forEach intentionally takes no internal lock (Func may
+    // allocate, which is forbidden under a §LK leaf lock), so GIL-off this is
+    // only safe from exclusive contexts. The sole caller is the haveABadTime
+    // path (JSGlobalObject.cpp BadTimeFinder), which runs with the heap
+    // deferred and, GIL-off, inside the §K.5 Class-4 stop (AB-10 LANDED:
+    // haveABadTime routes its whole body through
+    // JSThreadsSafepoint::stopTheWorldAndRun when gilOff) — no sibling
+    // mutator can be inside get()/addIfAbsent() concurrently.
     template<typename Func>
     void forEach(Func func)
     {

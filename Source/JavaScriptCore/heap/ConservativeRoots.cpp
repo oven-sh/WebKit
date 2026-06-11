@@ -183,7 +183,20 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 }
 
 template<typename MarkHook>
-SUPPRESS_ASAN
+// V7-3 (TSAN): the spans handed to this function are either (a) the
+// MachineStackMarker copy buffer — fastMalloc memory that bmalloc may have
+// recycled, without TSAN-visible synchronization, from allocations freed by
+// the very threads whose stacks were just copied, so its shadow state still
+// carries their writes — or (b) the conductor's own stack/registers. The
+// `*it` word loads below are conservative-scan byte inspection of that
+// memory and are exempt from the data-race model for the same reason as
+// copyMemory (worst case: spurious retention). NOTE: no_sanitize_thread
+// applies to this function's own body only; genericAddPointer is
+// instrumented at IR-generation time before inlining (LLVM keeps
+// sanitize_thread-mismatched callees outlined and instrumented), so the
+// heap-metadata reads it performs (block sets, versions, isLiveCell)
+// remain under TSAN — only the raw span dereference is suppressed.
+SUPPRESS_ASAN SUPPRESS_TSAN
 void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHook)
 {
     if (begin > end)

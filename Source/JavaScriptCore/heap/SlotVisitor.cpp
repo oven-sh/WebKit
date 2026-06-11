@@ -40,6 +40,7 @@
 #include "SlotVisitorInlines.h"
 #include "StopIfNecessaryTimer.h"
 #include "VM.h"
+#include <wtf/Atomics.h>
 #include <wtf/ListDump.h>
 #include <wtf/Lock.h>
 #include <wtf/StdLibExtras.h>
@@ -109,6 +110,11 @@ void SlotVisitor::didStartMarking()
         }
     }
 
+    // SharedGC (T9): conductor-context OK — all vm() uses in this file
+    // (heapProfiler here, Integrity::auditCell, assertValidCell) run in
+    // marker context (conductor or its parallel helpers, world stopped once
+    // shared); see the tag at AbstractSlotVisitor::vm()
+    // (AbstractSlotVisitorInlines.h).
     if (HeapProfiler* heapProfiler = vm().heapProfiler())
         m_heapAnalyzer = heapProfiler->activeHeapAnalyzer();
 
@@ -118,7 +124,7 @@ void SlotVisitor::didStartMarking()
 void SlotVisitor::reset()
 {
     AbstractSlotVisitor::reset();
-    m_bytesVisited = 0;
+    WTF::atomicStore(&m_bytesVisited, static_cast<size_t>(0), std::memory_order_relaxed);
     m_heapAnalyzer = nullptr;
     RELEASE_ASSERT(!m_currentCell);
 }
@@ -291,8 +297,8 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
 
     container.noteMarked();
     
-    m_visitCount++;
-    m_bytesVisited += container.cellSize();
+    WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + 1, std::memory_order_relaxed); // Single-writer counters; see AbstractSlotVisitor::visitCount().
+    WTF::atomicStore(&m_bytesVisited, WTF::atomicLoad(&m_bytesVisited, std::memory_order_relaxed) + container.cellSize(), std::memory_order_relaxed);
 
     m_collectorStack.append(cell);
 }
@@ -322,10 +328,10 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     container.assertValidCell(vm(), cell);
     container.noteMarked();
     
-    m_visitCount++;
+    WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + 1, std::memory_order_relaxed); // Single-writer counter; see AbstractSlotVisitor::visitCount().
 
     size_t cellSize = container.cellSize();
-    m_bytesVisited += cellSize;
+    WTF::atomicStore(&m_bytesVisited, WTF::atomicLoad(&m_bytesVisited, std::memory_order_relaxed) + cellSize, std::memory_order_relaxed);
     m_nonCellVisitCount += cellSize;
 }
 
@@ -461,7 +467,11 @@ void SlotVisitor::donateKnownParallel()
 
 void SlotVisitor::updateMutatorIsStopped(const AbstractLocker&)
 {
-    m_mutatorIsStopped = (m_heap.worldIsStopped() & m_canOptimizeForStoppedMutator);
+    // Written under m_rightToRun (or with the world stopped); read lock-free
+    // by the collector poll in hasAcknowledgedThatTheMutatorIsResumed(). The
+    // load-bearing happens-before is the m_rightToRun handshake; the relaxed
+    // atomic makes the lock-free poll well-defined.
+    WTF::atomicStore(&m_mutatorIsStopped, m_heap.worldIsStopped() && m_canOptimizeForStoppedMutator, std::memory_order_relaxed);
 }
 
 void SlotVisitor::updateMutatorIsStopped()
@@ -473,12 +483,12 @@ void SlotVisitor::updateMutatorIsStopped()
 
 bool SlotVisitor::hasAcknowledgedThatTheMutatorIsResumed() const
 {
-    return !m_mutatorIsStopped;
+    return !WTF::atomicLoad(const_cast<bool*>(&m_mutatorIsStopped), std::memory_order_relaxed);
 }
 
 bool SlotVisitor::mutatorIsStoppedIsUpToDate() const
 {
-    return m_mutatorIsStopped == (m_heap.worldIsStopped() & m_canOptimizeForStoppedMutator);
+    return WTF::atomicLoad(const_cast<bool*>(&m_mutatorIsStopped), std::memory_order_relaxed) == (m_heap.worldIsStopped() && m_canOptimizeForStoppedMutator);
 }
 
 void SlotVisitor::optimizeForStoppedMutator()

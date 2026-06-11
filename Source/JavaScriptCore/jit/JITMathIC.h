@@ -34,6 +34,7 @@
 #include "JITMulGenerator.h"
 #include "JITNegGenerator.h"
 #include "JITSubGenerator.h"
+#include "JSCConfig.h"
 #include "LinkBuffer.h"
 #include "Repatch.h"
 #include <wtf/TZoneMalloc.h>
@@ -125,6 +126,28 @@ public:
 
     void generateOutOfLine(CodeBlock* codeBlock, CodePtr<CFunctionPtrTag> callReplacement)
     {
+        // GIL-off: regeneration publishes by LinkBuffer-memcpy over the live inline
+        // region (linkJumpToOutOfLineSnippet) and by relinking the live slow-path
+        // near-call (replaceCall) while other mutators may be executing — or have
+        // their PC inside — this CodeBlock's installed code. Neither patch is
+        // single-copy-atomic to a concurrent instruction fetcher (x86_64 rel32
+        // stores carry no alignment guarantee and Intel CMC rules require
+        // observer-side serialization nobody provides), and SPEC-jit I2/P3 forbid
+        // patching reachable machine code outside an R1 STW closure. A second
+        // regeneration would additionally drop the previous out-of-line snippet's
+        // ExecutableMemoryHandle while threads can still be inside it (the
+        // ic-publish UAF family). So with >1 possible mutator we do not patch at
+        // all: return before touching any code and let every trip through this IC
+        // take the already-correct C++ slow path, which computes the result
+        // independently of regeneration (operationValue*ProfiledOptimize). Pure
+        // GIL-off math-slow-path throughput cost; flag-off and GIL-on processes
+        // derive gilOffProcess == 0 and are byte-for-byte unchanged. If a GIL-off
+        // bench later shows this matters, the optimized variant (branch-retarget
+        // publish inside STW + retired-code epoch release) is the chartered
+        // follow-up, not a flake fix.
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            return;
+
         auto linkJumpToOutOfLineSnippet = [&] () {
             CCallHelpers jit(codeBlock);
             jit.jumpThunk(CodeLocationLabel<JITStubRoutinePtrTag>(m_code.code()));

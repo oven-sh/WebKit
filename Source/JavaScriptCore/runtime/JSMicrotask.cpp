@@ -153,7 +153,14 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
 
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
         if ((sizeof...(args) + 1) >= newCodeBlock->numParameters()) [[likely]] {
-            auto* entry = functionExecutable->generatedJITCodeAddressForCall();
+            // ANNEX CBI item 3 (AB17c F4): gilOff, derive through the
+            // CodeBlock snapshot (matched pair; mirror may be transiently
+            // null during a live installCode).
+            void* entry;
+            if (vm.gilOff()) [[unlikely]]
+                entry = newCodeBlock->jitCode()->addressForCall();
+            else
+                entry = functionExecutable->generatedJITCodeAddressForCall();
             auto* callee = asObject(functionObject.asCell());
             if constexpr (!sizeof...(args))
                 return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, newCodeBlock, callee, thisValue, context));
@@ -177,7 +184,10 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         calleeGlobalObject = functionScope->realm();
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = functionExecutable->generatedJITCodeForCall();
+            if (vm.gilOff()) [[unlikely]]
+                jitCode = *newCodeBlock->jitCode(); // CBI item 3 (AB17c F4)
+            else
+                jitCode = functionExecutable->generatedJITCodeForCall();
         }
     } else {
         ASSERT(callData.type == CallData::Type::Native);

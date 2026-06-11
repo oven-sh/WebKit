@@ -26,24 +26,44 @@
 #pragma once
 
 #include <array>
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
 class JSString;
 class VM;
 
+// UNGIL V7 (Race C, LANDED): this per-VM 512-slot open-address cache is hit
+// by every lite under GIL-off (JSStringInlines.h toIdentifier /
+// jsSubstringOfResolved key paths), so the slots are Atomic<JSString*> and
+// make() operates on a single SNAPSHOT of the slot. The snapshot is
+// load-bearing for correctness, not just for TSAN: the slot is verified by
+// hash+equal and then RETURNED, and a concurrent miss-store from another
+// lite between verification and return swaps in a different atom that hashes
+// to the same bucket (observed in vivo: "p8"/"p17" both map to slot
+// hash%512==357; returning a post-verification re-load of the slot made
+// o["p"+17] resolve key "p8" — the butterfly-stress silent value corruption).
+// Therefore make() MUST return the verified snapshot, never re-read the slot
+// after verification. tryGetValueImpl() on the snapshot is null-checked
+// (rope-bit fiber => nullptr). Publication is store-release / load-acquire so
+// a consumer that wins the snapshot sees the producer's fully-initialized
+// JSString and atom StringImpl. clear() uses relaxed stores: it runs only at
+// GC-finalize stop-the-world, which already orders it against all mutators.
 class KeyAtomStringCache {
 public:
     static constexpr auto maxStringLengthForCache = 64;
     static constexpr auto capacity = 512;
-    using Cache = std::array<JSString*, capacity>;
+    using Cache = std::array<WTF::Atomic<JSString*>, capacity>;
 
     template<typename Buffer, typename Func>
     JSString* make(VM&, Buffer&, const Func&);
 
     ALWAYS_INLINE void clear()
     {
-        m_cache.fill({ });
+        // Runs world-stopped (GC finalize); relaxed is sufficient — the STW
+        // handshake orders these stores against every mutator's loads.
+        for (auto& slot : m_cache)
+            slot.store(nullptr, std::memory_order_relaxed);
     }
 
 private:

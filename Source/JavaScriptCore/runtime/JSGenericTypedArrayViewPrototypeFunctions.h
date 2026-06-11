@@ -241,7 +241,8 @@ static ALWAYS_INLINE void typedArrayViewForEachImpl(JSGlobalObject* globalObject
             JSValue element = jsUndefined();
             auto nativeValue = ViewClass::Adaptor::toNativeFromUndefined();
             if (!thisObject->isDetached()) [[likely]] {
-                nativeValue = (hasStableVector ? array : thisObject->typedVector())[index];
+                // TSAN-TRIAGE §3.24: relaxed lane load (blessed value race).
+                nativeValue = typedArrayLaneLoadRelaxed((hasStableVector ? array : thisObject->typedVector()) + index);
                 element = ViewClass::Adaptor::toJSValue(globalObject, nativeValue);
                 RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
             }
@@ -256,7 +257,8 @@ static ALWAYS_INLINE void typedArrayViewForEachImpl(JSGlobalObject* globalObject
         JSValue element = jsUndefined();
         auto nativeValue = ViewClass::Adaptor::toNativeFromUndefined();
         if (!thisObject->isDetached() && thisObject->inBounds(index)) [[likely]] {
-            nativeValue = thisObject->typedVector()[index];
+            // TSAN-TRIAGE §3.24: relaxed lane load (blessed value race).
+            nativeValue = typedArrayLaneLoadRelaxed(thisObject->typedVector() + index);
             element = ViewClass::Adaptor::toJSValue(globalObject, nativeValue);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
         }
@@ -354,7 +356,21 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncCopyWithin(VM& vm, JS
         }
 
         typename ViewClass::ElementType* array = thisObject->typedVector();
-        memmove(array + to, array + from, count * thisObject->elementSize);
+        if (vm.gilOffWithProcessGate()) [[unlikely]] {
+            // TSAN-TRIAGE §3.24: GIL-off, lanes may be raced by other JS
+            // threads; replace the bulk memmove (plain C++ accesses) with
+            // relaxed lane copies, preserving memmove overlap semantics via
+            // the copy direction. Flag-off/GIL-on keeps the byte-identical
+            // memmove (one predicted-false Config-page test).
+            if (to <= from) {
+                for (size_t i = 0; i < count; ++i)
+                    typedArrayLaneStoreRelaxed(array + to + i, typedArrayLaneLoadRelaxed(array + from + i));
+            } else {
+                for (size_t i = count; i--;)
+                    typedArrayLaneStoreRelaxed(array + to + i, typedArrayLaneLoadRelaxed(array + from + i));
+            }
+        } else
+            memmove(array + to, array + from, count * thisObject->elementSize);
     }
 
     return JSValue::encode(callFrame->thisValue());
@@ -692,6 +708,19 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobal
     size_t count = end - start;
     typename ViewClass::ElementType* underlyingVector = thisObject->typedVector();
     ASSERT_UNUSED(count, count <= length);
+
+    // TSAN-TRIAGE §3.24 (typedarray-sab; SPEC-objectmodel §4.7 analog): GIL-off,
+    // these lanes may be read/written concurrently by other JS threads (the
+    // value race is blessed: aligned, tear-free per lane), but the bulk
+    // memset/memset_pattern/std::fill paths below are plain C++ accesses — UB
+    // under that race and the reported "fill" arm of the family. Route GIL-off
+    // fills through relaxed lane stores. Flag-off/GIL-on keeps the
+    // byte-identical bulk paths (one predicted-false Config-page test).
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        for (size_t index = start; index < end; ++index)
+            typedArrayLaneStoreRelaxed(underlyingVector + index, nativeValue);
+        return JSValue::encode(thisObject);
+    }
 
 #if OS(DARWIN)
     if constexpr (ViewClass::elementSize == 8) {

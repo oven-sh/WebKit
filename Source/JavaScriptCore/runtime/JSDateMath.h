@@ -46,9 +46,11 @@
 #include "DateInstanceCache.h"
 #include "JSCTimeZone.h"
 #include "JSExportMacros.h"
+#include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
 #include <wtf/DateMath.h>
 #include <wtf/GregorianDateTime.h>
+#include <wtf/Lock.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -94,7 +96,10 @@ public:
     bool hasTimeZoneChange()
     {
 #if PLATFORM(COCOA) || USE(BUN_JSC_ADDITIONS)
-        return m_cachedTimezoneID != lastTimeZoneID;
+        // Relaxed is sufficient: this is a monotonic staleness check. A stale read just
+        // means we take (or skip) the slow path one call late; resetIfNecessarySlow()
+        // re-reads lastTimeZoneID under m_lock before publishing m_cachedTimezoneID.
+        return m_cachedTimezoneID.load(std::memory_order_relaxed) != lastTimeZoneID.load(std::memory_order_relaxed);
 #else
         return true; // always force a time zone check.
 #endif
@@ -105,8 +110,9 @@ public:
 #if PLATFORM(COCOA) || USE(BUN_JSC_ADDITIONS)
         if (!hasTimeZoneChange()) [[likely]]
             return;
-        m_cachedTimezoneID = lastTimeZoneID;
 #endif
+        // m_cachedTimezoneID is published by resetIfNecessarySlow() under m_lock, so
+        // concurrent GIL-off callers cannot tear or reorder it against the cache resets.
         resetIfNecessarySlow();
     }
 
@@ -180,7 +186,12 @@ private:
     };
 
     void timeZoneCacheSlow();
+    // Assumes m_lock is held when gilOffProcess (see JSDateMath.cpp DateCacheLocker).
+    std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCacheAssumingLock(int32_t days);
+    // Assumes m_lock is held when gilOffProcess.
     LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType = TimeType::UTCTime);
+    // Takes m_lock itself (for callers running outside a locked public entry point).
+    LocalTimeOffset localTimeOffsetTakingLock(int64_t millisecondsFromEpoch, TimeType);
 
     LocalTimeOffset calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType);
 
@@ -192,9 +203,18 @@ private:
     String m_cachedDateString;
     double m_cachedDateStringValue;
     DateInstanceCache m_dateInstanceCache;
-    uint64_t m_cachedTimezoneID { 0 };
+    WTF::Atomic<uint64_t> m_cachedTimezoneID { 0 };
     String m_timeZoneStandardDisplayNameCache;
     String m_timeZoneDSTDisplayNameCache;
+
+    // GIL-off (g_jscConfig.gilOffProcess): vm.dateCache is shared by N mutator threads,
+    // so all mutable state above is serialized on this leaf lock (SPEC-ungil §K.2;
+    // TSAN-TRIAGE §3.29). GIL-on / flag-off: never taken — the GIL is the serializer,
+    // so flag-off behavior and cost are unchanged. Lock ordering: m_lock is a leaf
+    // except for the WTF-internal timeZoneCacheLock taken inside
+    // retrieveTimeZoneInformation() (m_lock -> timeZoneCacheLock only; never reversed).
+    // Nothing GC-allocates, throws, or parks while holding m_lock.
+    Lock m_lock;
 };
 
 ALWAYS_INLINE bool isUTCEquivalent(StringView timeZone)

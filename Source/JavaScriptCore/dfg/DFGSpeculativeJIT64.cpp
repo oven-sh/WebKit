@@ -1018,7 +1018,7 @@ void SpeculativeJIT::emitCall(Node* node)
             auto emitCallTarget = [&]() {
                 emitFunctionPrologue();
                 emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
-                storePtr(GPRInfo::callFrameRegister, &vm().topCallFrame);
+                emitPublishTopCallFrameForHostCall(vm()); // UNGIL §A.1.3 mode split (direct native call: the callee and its throws read the per-lite word GIL-off).
                 if (calleeScope)
                     move(CCallHelpers::TrustedImmPtr(calleeScope), GPRInfo::argumentGPR0);
                 else {
@@ -1031,7 +1031,12 @@ void SpeculativeJIT::emitCall(Node* node)
                     CCallHelpers::callOperation<OperationPtrTag>(vmEntryHostFunction);
                 } else
                     CCallHelpers::callOperation<HostFunctionPtrTag>(nativeFunction);
-                loadPtr(vm().addressOfException(), GPRInfo::regT2);
+                // UNGIL §A.1.3 (U-T4): mode-keyed — GIL-off the host wrote the
+                // CURRENT lite's exception word; the raw VM-block read always
+                // sees null and silently misses the throw (same bug family as
+                // the nativeForGenerator thunk check). GIL-on/flag-off
+                // loadException emits the legacy AbsoluteAddress load.
+                loadException(vm(), GPRInfo::regT2);
                 branchTestPtr(NonZero, GPRInfo::regT2).linkThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), this);
                 emitFunctionEpilogue();
             };
@@ -1063,7 +1068,13 @@ void SpeculativeJIT::emitCall(Node* node)
             return;
         }
 
-        auto* callLinkInfo = jitCode()->common.m_directCallLinkInfos.add(m_currentNode->origin.semantic, DirectCallLinkInfo::UseDataIC::No, m_graph.m_codeBlock, executable);
+        // SPEC-jit section 5.8 (Task 7): with shared-memory threads, direct
+        // calls must be data ICs (UseDataIC::No fast paths patch machine code
+        // in place, forbidden under concurrent execution; I2/I3). The slow
+        // cases the data-IC fast path returns are already handled below.
+        // THREADS-INTEGRATE(jit)
+        auto directCallUseDataIC = Options::useJSThreads() ? DirectCallLinkInfo::UseDataIC::Yes : DirectCallLinkInfo::UseDataIC::No;
+        auto* callLinkInfo = jitCode()->common.m_directCallLinkInfos.add(m_currentNode->origin.semantic, directCallUseDataIC, m_graph.m_codeBlock, executable);
         callLinkInfo->setCallType(callType);
         callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
 
@@ -1098,7 +1109,11 @@ void SpeculativeJIT::emitCall(Node* node)
 
             slowPath = label();
             slowCases.link(this);
-            if (isX86())
+            // Data-IC slow cases arrive via a branch, not the patched near
+            // call, so there is no return address to pop; the pop only
+            // services the !isDataIC() (code-patching) entry. A
+            // DirectCallLinkInfo is one or the other. THREADS-INTEGRATE(jit)
+            if (isX86() && !callLinkInfo->isDataIC())
                 pop(selectScratchGPR(calleeGPR));
 
             callOperation(operationLinkDirectCall, CCallHelpers::TrustedImmPtr(callLinkInfo), calleeGPR);
@@ -3002,6 +3017,21 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
 void SpeculativeJIT::compileRegExpTestInline(Node* node)
 {
+    if (vm().gilOff()) [[unlikely]] {
+        // UNGIL A16 EXTENSION (AUD1.K2/SD19, U-T4b) — FAIL-STOP TRIPWIRE
+        // (sibling of compileRecordRegExpCachedResult): the inline success
+        // path below stores the SHARED in-object RegExpCachedResult stream
+        // (lastRegExp/lastInput/result.start/result.end + reify flip) —
+        // a torn multi-word cross-thread race with an OOB-substring
+        // consequence in leftContext(), uninstrumentable by TSAN. gilOff
+        // compiles must never reach here: DFGStrengthReductionPhase refuses
+        // convertTestToTestInline() when gilOff, so RegExpTest lowers to the
+        // re-pointed operation instead. GIL-on/flag-off emission below is
+        // byte-for-byte unchanged.
+        DFG_CRASH(m_graph, node, "RegExpTestInline gilOff emission requires the lite-resident m_regExpGlobalData copy (A16-ext, not landed)");
+        return;
+    }
+
     RegExp* regExp = uncheckedDowncast<RegExp>(node->cellOperand2()->value());
 
     auto jitCodeBlock = regExp->getRegExpJITCodeBlock();
@@ -3265,7 +3295,38 @@ void SpeculativeJIT::compile(Node* node)
     if constexpr (validateDFGDoesGC) {
         if (Options::validateDoesGC()) {
             bool expectDoesGC = doesGC(m_graph, node);
-            store64(TrustedImm64(DoesGCCheck::encode(expectDoesGC, node->index(), node->op())), vm().addressOfDoesGC());
+            if (vm().gilOff()) [[unlikely]] {
+                // UNGIL AB18-C: this code is cached on a shared CodeBlock and
+                // runs on whichever thread executes it — resolve the CURRENT
+                // thread's lite per use (§A.1.2) and write its doesGC slot.
+                // Scratch discipline: the per-arch reserved macro-assembler
+                // temp, the same register set the GIL-on absolute store64
+                // already clobbers (prepareCallOperation idiom), so no node's
+                // register-allocation assumptions change.
+#if CPU(ARM64)
+                // Cache-invalidating accessor: see AssemblyHelpers::prepareCallOperation.
+                GPRReg scratchGPR = getCachedMemoryTempRegisterIDAndInvalidate();
+#elif CPU(X86_64)
+                GPRReg scratchGPR = scratchRegister(); // r11, already clobbered by the GIL-on absolute store.
+#else
+                // SPEC-jit annex App. R5: no gilOff support on this platform;
+                // loadVMLite fail-stops at emission before the stores are reached.
+                GPRReg scratchGPR = GPRInfo::nonArgGPR0;
+#endif
+                loadVMLite(scratchGPR);
+                // Two imm32 stores, NOT store64(TrustedImm64, Address(scratchGPR)):
+                // on x86_64 a non-sign-extendable imm64 (nodeIndex lives in the
+                // high 32 bits, so that is almost every node) is materialized
+                // THROUGH scratchRegister(), clobbering the lite base — a wild
+                // store. imm32-to-mem needs no scratch on x86_64, and on ARM64
+                // the immediate goes through the data temp, not the base.
+                // Tearing is immaterial: the slot is owner-thread-only.
+                DoesGCCheck check;
+                check.u.encoded = DoesGCCheck::encode(expectDoesGC, node->index(), node->op());
+                store32(TrustedImm32(check.u.other), Address(scratchGPR, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.other))));
+                store32(TrustedImm32(check.u.nodeIndex), Address(scratchGPR, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.nodeIndex))));
+            } else
+                store64(TrustedImm64(DoesGCCheck::encode(expectDoesGC, node->index(), node->op())), vm().addressOfDoesGC());
         }
     }
 
@@ -8494,6 +8555,13 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
             neg32(scratchGPR);
             signExtend32ToPtr(scratchGPR, scratchGPR);
             loadPtr(Address(baseRegs.payloadGPR(), JSObject::butterflyOffset()), storageGPR);
+            // I14: flag-on the butterfly word is TID-tagged; mask before the
+            // out-of-line property store. FIXME: mask-only is sound while the
+            // GIL serializes mutators; the frozen WRITE predicate for this
+            // site (owner-TID compare, never elided per D9) is deferred to
+            // the choke-routing pass (INTEGRATE-jit.md).
+            if (Options::useJSThreads()) [[unlikely]]
+                maskButterflyTag(storageGPR);
             constexpr intptr_t offsetOfFirstProperty = offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue));
             storeValue(valueRegs, BaseIndex(storageGPR, scratchGPR, TimesEight, offsetOfFirstProperty));
             doneCases.append(jump());

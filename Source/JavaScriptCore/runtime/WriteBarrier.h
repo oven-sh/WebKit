@@ -29,6 +29,7 @@
 #include "HandleTypes.h"
 #include "StructureID.h"
 #include <type_traits>
+#include <wtf/Atomics.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/RawPtrTraits.h>
 #include <wtf/RawValueTraits.h>
@@ -81,16 +82,17 @@ enum WriteBarrierEarlyInitTag { WriteBarrierEarlyInit };
 // We have a separate base class with no constructors for use in Unions.
 template <typename T, typename Traits> class WriteBarrierBase {
     using StorageType = typename Traits::StorageType;
+    static_assert(std::is_pointer_v<StorageType>, "Concurrent (relaxed-atomic) slot accesses below assume a plain pointer-sized word");
 
 public:
     void set(VM&, const JSCell* owner, T* value);
-    
+
     // This is meant to be used like operator=, but is called copyFrom instead, in
     // order to kindly inform the C++ compiler that its advice is not appreciated.
     void copyFrom(const WriteBarrierBase& other)
     {
         // FIXME add version with different Traits once needed.
-        Traits::exchange(m_cell, other.m_cell);
+        storeCell(other.cell());
     }
 
     void setMayBeNull(VM&, const JSCell* owner, T* value);
@@ -126,7 +128,7 @@ public:
         return unwrapped;
     }
 
-    void clear() { Traits::exchange(m_cell, nullptr); }
+    void clear() { storeCell(nullptr); }
 
     // Slot cannot be used when pointers aren't stored as-is.
     template<typename BarrierT, typename BarrierTraits, std::enable_if_t<std::is_same<BarrierTraits, RawPtrTraits<BarrierT>>::value, void*> = nullptr>
@@ -148,13 +150,21 @@ public:
 #if ENABLE(WRITE_BARRIER_PROFILING)
         WriteBarrierCounters::usesWithoutBarrierFromCpp.count();
 #endif
-        Traits::exchange(this->m_cell, value);
+        storeCell(value);
     }
 
     T* unvalidatedGet() const { return Traits::unwrap(cell()); }
 
 private:
-    StorageType cell() const { return m_cell; }
+    // JS cell slots are intentionally racy under shared-heap threading (object-model
+    // ground truth, same ruling as WriteBarrierBase<Unknown> below): all reads and
+    // writes of m_cell go through relaxed atomics — codegen-identical to plain
+    // pointer accesses flag-off, but defined behavior for the blessed cross-thread
+    // races flag-on. slot() remains the escape hatch for the GC visitors, which
+    // have their own protocol.
+    StorageType cell() const { return WTF::atomicLoad(const_cast<StorageType*>(&m_cell), std::memory_order_relaxed); }
+
+    void storeCell(StorageType value) { WTF::atomicStore(&m_cell, value, std::memory_order_relaxed); }
 
     StorageType m_cell;
 };
@@ -162,22 +172,23 @@ private:
 template <> class WriteBarrierBase<Unknown, RawValueTraits<Unknown>> {
 public:
     void set(VM&, const JSCell* owner, JSValue);
+
+    // JS value slots are intentionally racy under shared-heap threading (object-model
+    // ground truth): all reads/writes of m_value must go through the concurrent
+    // accessors (relaxed atomics on 64-bit — codegen-identical to plain accesses
+    // flag-off), never plain C++ loads/stores.
     void setWithoutWriteBarrier(JSValue value)
     {
-        m_value = JSValue::encode(value);
+        updateEncodedJSValueConcurrent(m_value, JSValue::encode(value));
     }
 
     JSValue get() const
     {
-#if USE(JSVALUE64) || !ENABLE(CONCURRENT_JS)
-        return JSValue::decode(m_value);
-#else
         return JSValue::decodeConcurrent(&m_value);
-#endif
     }
-    void clear() { m_value = JSValue::encode(JSValue()); }
-    void setUndefined() { m_value = JSValue::encode(jsUndefined()); }
-    void setStartingValue(JSValue value) { m_value = JSValue::encode(value); }
+    void clear() { clearEncodedJSValueConcurrent(m_value); }
+    void setUndefined() { updateEncodedJSValueConcurrent(m_value, JSValue::encode(jsUndefined())); }
+    void setStartingValue(JSValue value) { updateEncodedJSValueConcurrent(m_value, JSValue::encode(value)); }
     bool isNumber() const { return get().isNumber(); }
     bool isInt32() const { return get().isInt32(); }
     inline bool isObject() const; // Defined in WriteBarrierInlines.h
@@ -366,11 +377,16 @@ public:
 #if ENABLE(WRITE_BARRIER_PROFILING)
         WriteBarrierCounters::usesWithoutBarrierFromCpp.count();
 #endif
+        // TSAN family 7 (cell-header, §8.7 residual): this slot is read by
+        // concurrent readers via StructureID::relaxedLoad; the writer must
+        // pair with a relaxed store. TSAN-build-only atomic — non-TSAN builds
+        // compile to the identical plain 32-bit store (flag-off codegen
+        // unchanged).
         if (!value) {
-            m_structureID = { };
+            StructureID::relaxedStore(&m_structureID, StructureID());
             return;
         }
-        m_structureID = StructureID::encode(value);
+        StructureID::relaxedStore(&m_structureID, StructureID::encode(value));
     }
 
     Structure* unvalidatedGet() const
@@ -381,7 +397,11 @@ public:
         return nullptr;
     }
 
-    StructureID value() const { return m_structureID; }
+    // GIL-off (TSAN r15): relaxed atomic read pairing the relaxed writers
+    // (setWithoutWriteBarrier / setEarlyValue / GC clear) — lock-free
+    // cross-Thread readers (e.g. cachedPolyProtoStructure) race them by
+    // design and revalidate. Identical plain 32-bit load outside TSAN.
+    StructureID value() const { return StructureID::relaxedLoad(&m_structureID); }
 
 private:
     StructureID m_structureID;

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSExportMacros.h"
+#include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
 #include <wtf/MathExtras.h>
 #include <wtf/PrintStream.h>
@@ -50,19 +51,25 @@ struct FreeCell {
         return { static_cast<int32_t>(static_cast<uint32_t>(descrambledBits)), static_cast<uint32_t>(descrambledBits >> 32u) };
     }
 
+    // THREADS: the free-list link words are written by the sweeping/allocating
+    // thread while STALE concurrent readers (another mutator's relaxed-atomic
+    // cell-header/butterfly-word loads through the SPEC-objectmodel concurrent
+    // accessors) may still touch the dead cell's memory; staleness is tolerated
+    // by the object-model GTs, but the writes must be atomic so the race is
+    // defined. Relaxed stores; plain mov codegen.
     ALWAYS_INLINE void makeLast(uint32_t lengthInBytes, uint64_t secret)
     {
-        scrambledBits = scramble(1, lengthInBytes, secret); // We use a set LSB to indicate a sentinel pointer.
+        WTF::atomicStore(&scrambledBits, scramble(1, lengthInBytes, secret), std::memory_order_relaxed); // We use a set LSB to indicate a sentinel pointer.
     }
 
     ALWAYS_INLINE void setNext(FreeCell* next, uint32_t lengthInBytes, uint64_t secret)
     {
-        scrambledBits = scramble((next - this) * sizeof(FreeCell), lengthInBytes, secret);
+        WTF::atomicStore(&scrambledBits, scramble((next - this) * sizeof(FreeCell), lengthInBytes, secret), std::memory_order_relaxed);
     }
 
     ALWAYS_INLINE std::tuple<int32_t, uint32_t> decode(uint64_t secret)
     {
-        return descramble(scrambledBits, secret);
+        return descramble(WTF::atomicLoad(&scrambledBits, std::memory_order_relaxed), secret);
     }
 
     static ALWAYS_INLINE void advance(uint64_t secret, FreeCell*& interval, char*& intervalStart, char*& intervalEnd)
@@ -98,6 +105,16 @@ public:
     void forEach(const Func&) const;
     
     unsigned originalSize() const { return m_originalSize; }
+    // Diagnostic walk (Options::validateFreeListStructure): every pointer is
+    // bounds/alignment-checked BEFORE decode; never dereferences out-of-bounds.
+    // Returns false (after dataLog provenance: site, failing field, value) on
+    // the first structural violation. Caller RELEASE_ASSERTs.
+    JS_EXPORT_PRIVATE bool isStructurallySoundWithin(const char* site, char* payloadBegin, char* payloadEnd, size_t cellSize, size_t maxIntervals) const;
+    // Per-flush-path provenance tag (dirflush / tlcflush / tlcSAFG / other),
+    // thread-local; included in isStructurallySoundWithin's failure report so
+    // first-failure provenance identifies the flush path.
+    JS_EXPORT_PRIVATE static void setStructureValidationContext(const char*);
+    JS_EXPORT_PRIVATE static const char* structureValidationContext();
 
     static bool isSentinel(FreeCell* cell) { return std::bit_cast<uintptr_t>(cell) & 1; }
     static constexpr ptrdiff_t offsetOfNextInterval() { return OBJECT_OFFSETOF(FreeList, m_nextInterval); }

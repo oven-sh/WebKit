@@ -112,6 +112,10 @@ inline JSC::Heap* AbstractSlotVisitor::heap() const
     return &m_heap;
 }
 
+// SharedGC (T9): conductor-context OK — visitors run on the conductor or its
+// parallel marker helpers inside the stop window once shared (I5; marker
+// helpers per §10B(6)/I11); m_heap is the server, so vm() = main VM
+// (deviation 3). Heap-snapshot visitors run under PreventCollectionScope.
 inline VM& AbstractSlotVisitor::vm()
 {
     return m_heap.vm();
@@ -132,7 +136,7 @@ inline bool AbstractSlotVisitor::addOpaqueRoot(void* ptr)
         return false;
     if (m_needsExtraOpaqueRootHandling) [[unlikely]]
         didAddOpaqueRoot(ptr);
-    m_visitCount++;
+    WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + 1, std::memory_order_relaxed); // Single-writer counter; see visitCount().
     return true;
 }
 
@@ -226,7 +230,7 @@ ALWAYS_INLINE ReferrerToken AbstractSlotVisitor::referrer() const
 
 ALWAYS_INLINE void AbstractSlotVisitor::reset()
 {
-    m_visitCount = 0;
+    WTF::atomicStore(&m_visitCount, static_cast<size_t>(0), std::memory_order_relaxed);
 }
 
 } // namespace JSC

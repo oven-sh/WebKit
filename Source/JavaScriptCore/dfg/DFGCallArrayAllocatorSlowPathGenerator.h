@@ -56,6 +56,14 @@ private:
         linkFrom(jit);
         jit->callOperationWithSilentSpill(m_plans.span(), m_function, m_resultGPR, SpeculativeJIT::TrustedImmPtr(&jit->vm()), m_structure, m_size, m_storageGPR);
         jit->loadPtr(MacroAssembler::Address(m_resultGPR, JSObject::butterflyOffset()), m_storageGPR);
+        // I14: flag-on, the C++ slow path installs the butterfly TID-TAGGED
+        // (JSObject::setButterflyConcurrent), and the continuation in
+        // emitAllocateRawObject dereferences m_storageGPR raw (storage fills,
+        // out-of-line init). Strip the tag. Same-thread allocation: the tagged
+        // word was stored by a call this thread just made, so no ordering is
+        // needed - mask only.
+        if (Options::useJSThreads()) [[unlikely]]
+            jit->maskButterflyTag(m_storageGPR);
         jumpTo(jit);
     }
 

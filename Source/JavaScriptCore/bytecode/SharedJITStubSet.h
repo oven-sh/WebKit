@@ -27,6 +27,7 @@
 
 #include "DOMJITGetterSetter.h"
 #include "PropertyInlineCache.h"
+#include <wtf/Lock.h>
 
 namespace JSC {
 
@@ -130,13 +131,24 @@ public:
         }
     };
 
+    // Review round 2 (R2-2): every accessor takes the set's own m_lock. The
+    // set is per-VM, but its routines are shared across CodeBlocks and its
+    // mutators are NOT all serialized by one CodeBlock lock: IC-miss slow
+    // paths of different CodeBlocks (phase-B: different mutator threads in
+    // one VM), GC-End removeDeadOwners, and observeZeroRefCountImpl (runs on
+    // whatever thread drops the last ref — handler-chain retirement included)
+    // all reach here. An unsynchronized HashSet/HashMap rehash race is heap
+    // corruption. All paths are slow paths; an uncontended WTF::Lock is one
+    // CAS.
     void add(Hash::Key&& key)
     {
+        Locker locker { m_lock };
         m_stubs.add(WTF::move(key));
     }
 
     void remove(PolymorphicAccessJITStubRoutine* stub)
     {
+        Locker locker { m_lock };
         auto iter = m_stubs.find<PointerTranslator>(stub);
         if (iter != m_stubs.end())
             m_stubs.remove(iter);
@@ -144,6 +156,7 @@ public:
 
     RefPtr<PolymorphicAccessJITStubRoutine> find(const Searcher& searcher)
     {
+        Locker locker { m_lock };
         auto entry = m_stubs.find<SharedJITStubSet::Searcher::Translator>(searcher);
         if (entry != m_stubs.end())
             return entry->m_wrapped;
@@ -160,6 +173,7 @@ public:
     void setSlowPathHandler(AccessType, Ref<InlineCacheHandler>);
 
 private:
+    mutable Lock m_lock; // R2-2: guards every container below.
     UncheckedKeyHashSet<Hash::Key, Hash, Hash::KeyTraits> m_stubs;
     UncheckedKeyHashMap<StatelessCacheKey, Ref<PolymorphicAccessJITStubRoutine>> m_statelessStubs;
     UncheckedKeyHashMap<DOMJITCacheKey, MacroAssemblerCodeRef<JITStubRoutinePtrTag>> m_domJITCodes;

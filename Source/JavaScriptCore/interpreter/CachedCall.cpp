@@ -56,7 +56,7 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         return;
     }
 
-    if (vm.disallowVMEntryCount) [[unlikely]] {
+    if (vm.disallowVMEntryCountSlot()) [[unlikely]] {
         VM::checkVMEntryPermission();
         throwStackOverflowError(globalObject, scope);
         return;
@@ -68,10 +68,19 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         return;
     }
 
+    // THREADS (TSAN r11 report 32): prepareForCachedCall links this node onto
+    // the new CodeBlock's incoming-call list BEFORE m_protoCallFrame is
+    // initialized below, so a locked jettison drain on a sibling Thread can
+    // read the proto frame's codeBlock slot first. Zero it so the drain's
+    // `codeBlock() == oldCodeBlock` probe can never match uninitialized
+    // stack garbage (a mismatch just clears the entry, which the owner's
+    // relink path tolerates); the slot accesses themselves are relaxed
+    // atomics (ProtoCallFrameInlines.h).
+    m_protoCallFrame.setCodeBlock(nullptr);
     auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, function);
     if (scope.exception()) [[unlikely]]
         return;
-    m_numParameters = newCodeBlock->numParameters();
+    WTF::atomicStore(&m_numParameters, newCodeBlock->numParameters(), std::memory_order_relaxed);
     m_protoCallFrame.init(newCodeBlock, function->realm(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
 }
 

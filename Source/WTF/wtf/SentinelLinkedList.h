@@ -287,8 +287,8 @@ template <typename T, typename RawNode> inline bool SentinelLinkedList<T, RawNod
     if (!node->isOnList())
         return false;
     
-    for (T* iter = begin(); iter != end(); iter = iter->next()) {
-        if (iter == node)
+    for (iterator iter = begin(); iter != end(); ++iter) {
+        if (&*iter == node)
             return true;
     }
     

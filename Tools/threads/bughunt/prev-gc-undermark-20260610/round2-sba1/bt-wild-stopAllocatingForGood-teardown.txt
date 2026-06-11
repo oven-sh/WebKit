@@ -1,0 +1,18 @@
+Program terminated with signal SIGABRT, Aborted.
+#0  0x00007f6b6728d02c in __pthread_kill_implementation () from /lib64/libc.so.6
+[Current thread is 1 (Thread 0x7f6b674a3640 (LWP 3588027))]
+#0  0x00007f6b6728d02c in __pthread_kill_implementation () from /lib64/libc.so.6
+#1  0x00007f6b6723fb86 in raise () from /lib64/libc.so.6
+#2  0x00007f6b67229873 in abort () from /lib64/libc.so.6
+#3  0x00007f6b676daff0 in std::__glibcxx_assert_fail(char const*, int, char const*, char const*) () from /lib64/libstdc++.so.6
+#4  0x00005633f17180f9 in std::array<unsigned long, 16ul>::operator[] (this=<optimized out>, __n=27076766) at /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/array:208
+#5  WTF::BitSet<1024ul, unsigned long>::clear (this=<optimized out>, n=140099271141264) at WTF/Headers/wtf/BitSet.h:274
+#6  JSC::MarkedBlock::clearNewlyAllocated (this=<optimized out>, p=<optimized out>) at JavaScriptCore/PrivateHeaders/JavaScriptCore/MarkedBlock.h:667
+#7  JSC::MarkedBlock::Handle::stopAllocating(JSC::FreeList const&)::$_1::operator()(JSC::HeapCell*) const (cell=<optimized out>, this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/heap/MarkedBlock.cpp:258
+#8  JSC::FreeList::forEach<JSC::MarkedBlock::Handle::stopAllocating(JSC::FreeList const&)::$_1>(JSC::MarkedBlock::Handle::stopAllocating(JSC::FreeList const&)::$_1 const&) const (this=0x7f6b5d1210f8, func=...) at JavaScriptCore/PrivateHeaders/JavaScriptCore/FreeListInlines.h:70
+#9  JSC::MarkedBlock::Handle::stopAllocating (this=0x7f6b5d872d60, freeList=...) at /root/WebKit/Source/JavaScriptCore/heap/MarkedBlock.cpp:252
+#10 0x00005633f1718271 in JSC::LocalAllocator::stopAllocating (this=0x7f6b5d1210e0) at /root/WebKit/Source/JavaScriptCore/heap/LocalAllocator.cpp:127
+#11 JSC::LocalAllocator::stopAllocatingForGood (this=0x7f6b5d1210e0) at /root/WebKit/Source/JavaScriptCore/heap/LocalAllocator.cpp:156
+#12 0x00005633f16ce0f9 in JSC::GCClient::GCThreadLocalCache::stopAllocatingForGood (this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp:263
+#13 0x00005633f16e8eed in JSC::GCClient::Heap::lastChanceToFinalize (this=0x7f6b5b2e0000) at /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:5838
+#14 JSC::GCClient::Heap::~Heap (this=0x7f6b5b2e0000) at /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:5812

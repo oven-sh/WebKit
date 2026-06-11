@@ -44,6 +44,14 @@ ForOSREntryJITCode* ForOSREntryJITCode::ftlForOSREntry()
 
 void ForOSREntryJITCode::initializeEntryBuffer(VM& vm, unsigned numCalleeLocals)
 {
+    if (vm.gilOff()) [[unlikely]] {
+        // UNGIL §A.1.6 (ANNEX A16, U-T4b): JITCode-RESIDENT buffer -> per-lite
+        // registry index. The install fan + registration backfill guarantee a
+        // buffer exists at (lite, index) for every lite of this VM before any
+        // code compiled against the index can run.
+        m_entryBufferBakedIndex = vm.allocateBakedScratchBufferIndex(numCalleeLocals * sizeof(EncodedJSValue));
+        return;
+    }
     m_entryBuffer = vm.scratchBufferForSize(numCalleeLocals * sizeof(EncodedJSValue));
 }
 

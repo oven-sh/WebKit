@@ -278,6 +278,19 @@ const VMTrapsAsyncEvents = constexpr VMTraps::AsyncEvents
 const VMTrapAwareSoftStackLimitOffset = VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_trapAwareSoftStackLimit
 const VMCLoopStackLimitOffset = VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_cloopStackLimit
 const VMSoftStackLimitOffset = VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_softStackLimit
+# UNGIL sec A.2.2 (AB-17 item 3) -- ACTIVE: GIL-off, stack limits live in the
+# CURRENT thread's VMLite (L2 append threadContext); the shared prologue
+# stack check (trap-aware word) and the doVMEntry/arity checks (plain word)
+# reach them via these chained offsets, selected per site by the landed
+# Group-3 discriminator. Landed atomically with the VMTraps per-lite stop fan
+# (VMTraps.h activation checklist item 3c), the servicing dispatch (item 3b),
+# the Baseline/DFG/FTL/thunk/varargs/Yarr emission-site reroutes, and the C++
+# accessor reroute (softStackLimitForCurrentThread) -- the fan is what keeps
+# VM-wide trap requests (termination, GC safepoints) poking the per-lite
+# words these sites now read.
+const VMLiteTrapAwareSoftStackLimitOffset = VMLite::threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_trapAwareSoftStackLimit
+const VMLiteSoftStackLimitOffset = VMLite::threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_softStackLimit
+const VMLiteCLoopStackLimitOffset = VMLite::threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_cloopStackLimit
 
 # Registers
 
@@ -475,6 +488,206 @@ macro validateOpcodeConfig(scratchReg)
     if ARM64E
         leap _os_script_config_storage, scratchReg
         loadp [scratchReg], scratchReg
+    end
+end
+
+# =============================================================================
+# UNGIL SPEC-ungil sec.A.1.3 (obligation 9b, U-T3) -- closes ledger blocker AB-1:
+# the LLInt arm of the two-level Group-3 storage discriminator.
+#
+# Level (i): one byte test on the JSCConfig gilOffProcess byte -- the only
+# flag-off/GIL-on executed-code delta per Group-3 site (delta-(a) budget;
+# golden-disasm gate re-baselined once per sec.A.1.3). AB-17 sec.A.2.2 added
+# three expansion sites under this same per-site budget (shared prologue
+# stack check, doVMEntry entry check, functionArityCheck); LLInt sites are
+# asm and NOT capturable by the golden-disasm gate (its own header carves
+# LLInt out) -- their flag-off-cost evidence channel is the --useJIT=0 bench
+# gate; see the AB-17 round-4 amendment in VMEntryScope.cpp for the current
+# (host-noise-blocked) measurement record. The byte is written only
+# by the Config-finalization latch (runtime/; derivation-identical to
+# VM::isGILOffProcess()) -- never from a VM ctor, which would race
+# Config::finalize() freezing the page.
+#
+# Level (ii): load the CURRENT thread's VMLite* via the same ELF initial-exec
+# TLS mechanics as loadButterflyTIDTagToT6 (SPEC-jit App. R5; symbol
+# g_jscCurrentVMLite, defined tls_model("initial-exec") in runtime/VM.cpp)
+# and test its gilOff byte. Null lite (a plain/loser-VM thread with no lite
+# installed) or gilOff == 0 (a second, GIL-on VM in a gilOffProcess -- U0b)
+# => fall through, VM-block Group-3 storage stays authoritative. gilOff == 1
+# => jump to gilOffLabel with the scratch register holding the VMLite*,
+# which IS the VMLitePrimitives base: static_assert(OBJECT_OFFSETOF(VMLite,
+# primitives) == 0) in runtime/VMLite.h.
+#
+# The level-(ii) lite-vs-frame coherence invariant this relies on (the
+# installed TLS lite's VM == the VM addressed by the executing frame's
+# Group-3 sites, across cross-VM re-entry / M4 JSLock install-restore) is a
+# C++-side obligation: it must be debug-asserted at the M4 lite install and
+# VM-entry sites in runtime/ (outside this LLInt cluster; flagged in the
+# apply report).
+#
+# SCRATCH DISCIPLINE (UNGIL review round -- the previous draft fatally
+# clobbered t6 == a0 unconditionally): the scratch register is chosen
+# PER SITE and the macro touches ONLY that register (plus x16, offlineasm's
+# own transient temp, on ARM64). Liveness table for every expansion site
+# (x86-64 SysV: t6=rdi=a0, t3=rcx=a3, t5=r10, never an arg; ARM64: t6=x6=a6,
+# t3=x3=a3, t5=x5=a5, t9=x9, never an arg):
+#   T6 sites (post-call / unwind entries; rdi & x6 are caller-saved arg regs,
+#   dead after any call, and no args are live at trampoline/catch entries):
+#     branchIfException (all 6 expansions sit just after callSlowPath/cCall2),
+#     nativeCallTrampoline + internalFunctionCallTrampoline POST-call checks,
+#     llint_op_catch entry, llint_throw_from_slow_path_trampoline (after
+#     callSlowPath), llint_handle_uncaught_exception entry,
+#     llint_get_host_call_return_value entry, the *Group3 callee-saves
+#     buffer wrappers (expanded only at the above entries),
+#     _llint_throw_stack_overflow_error_from_vm_entry (after cCall2; t5 is
+#     the live data scratch there, so t6 carries the lite base).
+#   T3 sites (PRE-call publication; a0/a1/a2 live, t3 not yet live --
+#   checkStackPointerAlignment uses it as a pure scratch afterwards):
+#     nativeCallTrampoline + internalFunctionCallTrampoline topCallFrame
+#     stores, _sanitizeStackForVMImpl (a0 = VM live; a1/a2 are the
+#     macro-local scratches).
+#   T5 sites (doVMEntry; a0/a1/a2 = entry/vm/protoCallFrame live throughout,
+#   t3/t4 are the block-local scratches, t5 dead at all three insertion
+#   points -- the C_LOOP arm writes t5 only AFTER the prologue site):
+#     doVMEntry prev-save, top-store, post-call restore.
+#   vmEntry fast paths (vmEntryToJavaScriptWithNArguments; a0..a7 + stack
+#   args live): x86-64 uses t5 (r10, free until the header/arg copies),
+#   ARM64 uses t9 (x9; t8/t9 are not yet live at the Setup/SetTopCallFrame
+#   discriminator points).
+# =============================================================================
+
+# TLS loaders: only ever expanded under GILOFF_TLS (Linux x86-64/arm64, ELF
+# initial-exec; the GOT slot holds the thread-invariant tp-relative offset).
+macro loadCurrentVMLiteToT6()
+    if C_LOOP
+        # cloop backend is C++: read the same per-thread lite through the
+        # frozen L4 accessor (VMLite.cpp t_currentVMLite, which
+        # g_jscCurrentVMLite mirrors via the VM.cpp CS3 contract -- sole
+        # writer VMLite::setCurrent, mirror store immediately after).
+        # NOTE: annotation MUST stay on the same physical line as cloopDo
+        # (see the m_trapBits precedent at the traps poll site).
+        cloopDo // t6 = JSC::VMLite::currentIfExists();
+    elsif X86_64
+        emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %rdi"   # t6 == rdi
+        emit "movq %fs:(%rdi), %rdi"                          # lite = *(tp + offset)
+    elsif ARM64 or ARM64E
+        emit "adrp x16, :gottprel:g_jscCurrentVMLite"
+        emit "ldr x16, [x16, #:gottprel_lo12:g_jscCurrentVMLite]"
+        emit "mrs x6, tpidr_el0"                              # t6 == x6
+        emit "ldr x6, [x6, x16]"
+    end
+end
+
+macro loadCurrentVMLiteToT3()
+    if C_LOOP
+        cloopDo // t3 = JSC::VMLite::currentIfExists();
+    elsif X86_64
+        emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %rcx"   # t3 == rcx
+        emit "movq %fs:(%rcx), %rcx"
+    elsif ARM64 or ARM64E
+        emit "adrp x16, :gottprel:g_jscCurrentVMLite"
+        emit "ldr x16, [x16, #:gottprel_lo12:g_jscCurrentVMLite]"
+        emit "mrs x3, tpidr_el0"                              # t3 == x3
+        emit "ldr x3, [x3, x16]"
+    end
+end
+
+macro loadCurrentVMLiteToT5()
+    if C_LOOP
+        cloopDo // t5 = JSC::VMLite::currentIfExists();
+    elsif X86_64
+        emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %r10"   # t5 == r10
+        emit "movq %fs:(%r10), %r10"
+    elsif ARM64 or ARM64E
+        emit "adrp x16, :gottprel:g_jscCurrentVMLite"
+        emit "ldr x16, [x16, #:gottprel_lo12:g_jscCurrentVMLite]"
+        emit "mrs x5, tpidr_el0"                              # t5 == x5
+        emit "ldr x5, [x5, x16]"
+    end
+end
+
+macro loadCurrentVMLiteToT9()
+    if ARM64 or ARM64E
+        emit "adrp x16, :gottprel:g_jscCurrentVMLite"
+        emit "ldr x16, [x16, #:gottprel_lo12:g_jscCurrentVMLite]"
+        emit "mrs x9, tpidr_el0"                              # t9 == x9
+        emit "ldr x9, [x9, x16]"
+    end
+end
+
+# Core discriminator. Touches ONLY `scratch` (and x16 on ARM64). On the
+# fall-through path Group-3 state lives in the VM block; on the taken path
+# `scratch` holds the VMLitePrimitives base (== the VMLite*).
+macro gilOffGroup3Check(loadLiteTLS, scratch, gilOffLabel)
+    if GILOFF_TLS
+        leap _g_config, scratch
+        bbeq JSCConfigOffset + JSC::Config::gilOffProcess[scratch], 0, .group3VMStorage
+        loadLiteTLS()
+        btpz scratch, .group3VMStorage                    # no lite: plain-VM thread
+        bbeq VMLite::gilOff[scratch], 0, .group3VMStorage # level (ii): second-VM GIL-on intact
+        jmp gilOffLabel
+    .group3VMStorage:
+    elsif JSVALUE64
+        # AB-1 tripwire: no LLInt-visible TLS on this platform -- a set
+        # gilOffProcess byte must fail-stop (mirrors the JIT tiers' Darwin
+        # RELEASE_ASSERT, AB-2) rather than silently split-brain.
+        leap _g_config, scratch
+        bbeq JSCConfigOffset + JSC::Config::gilOffProcess[scratch], 0, .group3VMStorage
+        break
+    .group3VMStorage:
+    end
+end
+
+macro branchIfGilOffGroup3ToT6(gilOffLabel)
+    gilOffGroup3Check(loadCurrentVMLiteToT6, t6, gilOffLabel)
+end
+
+macro branchIfGilOffGroup3ToT3(gilOffLabel)
+    gilOffGroup3Check(loadCurrentVMLiteToT3, t3, gilOffLabel)
+end
+
+macro branchIfGilOffGroup3ToT5(gilOffLabel)
+    gilOffGroup3Check(loadCurrentVMLiteToT5, t5, gilOffLabel)
+end
+
+# LANDED with the sec A.2.2 prologue stack-check reroute (AB-17 item 3):
+# expanded via branchIfGilOffGroup3ToT2 at the shared prologue stack-check
+# site (the sole expansion). t2 (rdx / x2) is dead there (the existing code
+# clobbers it with CodeBlock::m_vm immediately) and no args are live; do NOT
+# reuse at any other site without re-checking scratch discipline. State of
+# the world: the VMTraps.h ACTIVATION CHECKLIST -- STATUS block.
+macro loadCurrentVMLiteToT2()
+    if C_LOOP
+        cloopDo // t2 = JSC::VMLite::currentIfExists();
+    elsif X86_64
+        emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %rdx"   # t2 == rdx
+        emit "movq %fs:(%rdx), %rdx"
+    elsif ARM64 or ARM64E
+        emit "adrp x16, :gottprel:g_jscCurrentVMLite"
+        emit "ldr x16, [x16, #:gottprel_lo12:g_jscCurrentVMLite]"
+        emit "mrs x2, tpidr_el0"                              # t2 == x2
+        emit "ldr x2, [x2, x16]"
+    end
+end
+
+# Prologue stack-check site only (t2 dead there; see the scratch-discipline
+# note above before reusing at any other site).
+macro branchIfGilOffGroup3ToT2(gilOffLabel)
+    gilOffGroup3Check(loadCurrentVMLiteToT2, t2, gilOffLabel)
+end
+
+# vmEntryToJavaScriptWithNArguments fast paths: a0..a7 (+ stack args) are
+# live, so the lite base register is per-arch -- t5 (r10) on x86-64, t9 (x9)
+# on ARM64. Only expanded inside the `(ARM64* or X86_64) and ADDRESS64 and
+# not C_LOOP` fast-entry block below.
+# GUARD: this macro expands EMPTY under C_LOOP (no arch arm matches), i.e. a
+# silent no-discriminator. It must NEVER be expanded outside the existing
+# `not C_LOOP` fast-entry block; add a C_LOOP arm first if that ever changes.
+macro vmEntryBranchIfGilOffGroup3(gilOffLabel)
+    if X86_64
+        gilOffGroup3Check(loadCurrentVMLiteToT5, t5, gilOffLabel)
+    elsif ARM64 or ARM64E
+        gilOffGroup3Check(loadCurrentVMLiteToT9, t9, gilOffLabel)
     end
 end
 
@@ -1178,6 +1391,45 @@ macro restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(vm, temp)
     end
 end
 
+# UNGIL sec.A.1.3 (AB-1): Group-3-aware variants of the two VM-entry-frame
+# callee-saves buffer macros above. GIL-off, VM::topEntryFrame in the VM
+# block is stale (host C++ publishes through VMLitePrimitives), so the
+# unwind paths must read the lite's copy. Used ONLY at the 64-bit
+# exception/unwind entries (op_catch, throw trampoline, uncaught-exception
+# handler) where t6 is dead; the original macros stay untouched for the
+# IPInt/32_64 call sites (different liveness, no gilOff support there --
+# 32-bit elaborations of the discriminator are empty). `temp` must not be t6
+# (call sites pass t0/t2). Clobbers t6 in addition to `temp`.
+macro copyCalleeSavesToVMEntryFrameCalleeSavesBufferGroup3(vm, temp)
+    if ARM64 or ARM64E or X86_64 or ARMv7 or RISCV64
+        branchIfGilOffGroup3ToT6(.liteTopEntryFrame)
+        loadp VM::topEntryFrame[vm], temp
+        if GILOFF_TLS
+            jmp .haveTopEntryFrame
+        .liteTopEntryFrame:
+            loadp VMLitePrimitives::topEntryFrame[t6], temp
+        .haveTopEntryFrame:
+        end
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(temp)
+    end
+end
+
+macro restoreCalleeSavesFromVMEntryFrameCalleeSavesBufferGroup3(vm, temp)
+    if ARM64 or ARM64E or X86_64 or ARMv7 or RISCV64
+        branchIfGilOffGroup3ToT6(.liteTopEntryFrame)
+        loadp VM::topEntryFrame[vm], temp
+        if GILOFF_TLS
+            jmp .haveTopEntryFrame
+        .liteTopEntryFrame:
+            loadp VMLitePrimitives::topEntryFrame[t6], temp
+        .haveTopEntryFrame:
+        end
+        vmEntryRecord(temp, temp)
+        leap VMEntryRecord::calleeSaveRegistersBuffer[temp], temp
+        restoreCalleeSavesFromBuffer(temp)
+    end
+end
+
 macro preserveReturnAddressAfterCall(destinationRegister)
     if C_LOOP or ARMv7 or ARM64 or ARM64E or RISCV64
         # In C_LOOP case, we're only preserving the bytecode vPC.
@@ -1698,8 +1950,21 @@ macro prologue(osrSlowPath, traceSlowPath)
 if not ADDRESS64
     bpa t0, cfr, .needStackCheck
 end
+    # UNGIL sec A.2.2 (AB-17 item 3): GIL-off, the TRAP-AWARE soft limit this
+    # check consumes is per-thread state on the CURRENT lite (poked by the
+    # per-lite stop fan, VMTraps.h checklist item 3c). The discriminator's
+    # fall-through keeps today's VM-word form byte-for-byte (modulo the
+    # landed delta-(a) config byte test); the taken path leaves the VMLite*
+    # in t2 (dead here -- the fall-through clobbers it with CodeBlock::m_vm
+    # immediately).
+    branchIfGilOffGroup3ToT2(.stackCheckLiteStorage)
     loadp CodeBlock::m_vm[t1], t2
     bpbeq VMTrapAwareSoftStackLimitOffset[t2], t0, .stackHeightOK
+if GILOFF_TLS
+    jmp .needStackCheck
+.stackCheckLiteStorage:
+    bpbeq VMLiteTrapAwareSoftStackLimitOffset[t2], t0, .stackHeightOK
+end
 
 .needStackCheck:
     # Stack height check failed - need to call a slow_path.
@@ -1867,6 +2132,10 @@ if ((ARM64E or ARM64) or X86_64) and ADDRESS64 and not C_LOOP
         functionPrologue()
         pushCalleeSaves()
         vmEntryRecord(cfr, sp)
+        # UNGIL sec.A.1.3 (AB-1): a0..a7 + stack args live; lite base is t5
+        # (r10) on x86-64, t9 (x9) on ARM64 -- see the liveness table at the
+        # discriminator definition.
+        vmEntryBranchIfGilOffGroup3(.liteSetup)
         if ARM64 or ARM64E
             storepairq a1, a5, VMEntryRecord::m_vm[sp]
             loadpairq VM::topCallFrame[a1], t8, t9 # topCallFrame and topEntryFrame
@@ -1878,6 +2147,25 @@ if ((ARM64E or ARM64) or X86_64) and ADDRESS64 and not C_LOOP
             storeq t0, VMEntryRecord::m_prevTopCallFrame[sp]
             loadq VM::topEntryFrame[a1], t0
             storeq t0, VMEntryRecord::m_prevTopEntryFrame[sp]
+        end
+        if GILOFF_TLS
+            jmp .setupDone
+        .liteSetup:
+            if X86_64
+                storeq a1, VMEntryRecord::m_vm[sp]
+                storeq a5, VMEntryRecord::m_context[sp]
+                loadq VMLitePrimitives::topCallFrame[t5], t0
+                storeq t0, VMEntryRecord::m_prevTopCallFrame[sp]
+                loadq VMLitePrimitives::topEntryFrame[t5], t0
+                storeq t0, VMEntryRecord::m_prevTopEntryFrame[sp]
+            elsif ARM64 or ARM64E
+                storepairq a1, a5, VMEntryRecord::m_vm[sp]
+                loadq VMLitePrimitives::topCallFrame[t9], t8
+                storeq t8, VMEntryRecord::m_prevTopCallFrame[sp]
+                loadq VMLitePrimitives::topEntryFrame[t9], t8
+                storeq t8, VMEntryRecord::m_prevTopEntryFrame[sp]
+            end
+        .setupDone:
         end
     end
 
@@ -1895,12 +2183,28 @@ if ((ARM64E or ARM64) or X86_64) and ADDRESS64 and not C_LOOP
     end
 
     macro vmEntryToJavaScriptSetTopCallFrame()
+        # UNGIL sec.A.1.3 (AB-1): t5/t9 are dead again here (the header/arg
+        # copies above are done); same lite base choice as Setup.
+        vmEntryBranchIfGilOffGroup3(.liteSetTopCallFrame)
         if ARM64 or ARM64E
             move sp, t8
             storepairq t8, cfr, VM::topCallFrame[a1] # topCallFrame and topEntryFrame
         else
             storeq sp, VM::topCallFrame[a1]
             storeq cfr, VM::topEntryFrame[a1]
+        end
+        if GILOFF_TLS
+            jmp .setTopCallFrameDone
+        .liteSetTopCallFrame:
+            if X86_64
+                storeq sp, VMLitePrimitives::topCallFrame[t5]
+                storeq cfr, VMLitePrimitives::topEntryFrame[t5]
+            elsif ARM64 or ARM64E
+                move sp, t8
+                storeq t8, VMLitePrimitives::topCallFrame[t9]
+                storeq cfr, VMLitePrimitives::topEntryFrame[t9]
+            end
+        .setTopCallFrameDone:
         end
     end
 
@@ -2137,8 +2441,17 @@ if not C_LOOP
         const address = a1
         const scratch = a2
 
+        # UNGIL sec.A.1.3 (AB-1): m_lastStackTop is Group-3 state. a0 = VM is
+        # live (t6 == a0 on x86-64!), a1/a2 are the locals -- use t3.
+        branchIfGilOffGroup3ToT3(.sanitizeLiteLastStackTop)
         move VM::m_lastStackTop, scratch
         addp scratch, a0
+        if GILOFF_TLS
+            jmp .sanitizeHaveLastStackTopSlot
+        .sanitizeLiteLastStackTop:
+            leap VMLitePrimitives::m_lastStackTop[t3], a0
+        .sanitizeHaveLastStackTopSlot:
+        end
         loadp [a0], address
         move sp, scratch
         storep scratch, [a0]
@@ -2638,7 +2951,23 @@ end)
 macro checkTraps(dispatch)
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
-    loadi VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
+    if C_LOOP
+        # m_trapBits is updated with atomic RMWs from other threads
+        # (VMTraps::fireTrap, e.g. the watchdog timer thread). On hardware
+        # backends the plain aligned 32-bit load below is the intended racy
+        # poll, but in the CLoop it lowers to a plain C++ read, which is a
+        # data race under TSAN against fireTrap's exchangeOr. Match the C++
+        # readers (VMTraps::needHandling/maybeNeedHandling use loadRelaxed)
+        # by polling with a relaxed atomic load.
+        # NOTE: the "// ..." annotation below is emitted verbatim into
+        # LLIntAssembly.h by the cloop offlineasm backend (cloopDo) and MUST
+        # stay on the same physical line as cloopDo, or no load is emitted
+        # and t0 silently keeps the pointer value. Do not reformat.
+        leap VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
+        cloopDo // t0 = WTF::atomicLoad(std::bit_cast<uint32_t*>(t0.i8p()), std::memory_order_relaxed);
+    else
+        loadi VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
+    end
     andi VMTrapsAsyncEvents, t0
     btpnz t0, .handleTraps
 .afterHandlingTraps:
@@ -2712,9 +3041,17 @@ end, dispatchAfterRegularCallIgnoreResult)
 macro branchIfException(exceptionTarget)
     loadp CodeBlock[cfr], t3
     loadp CodeBlock::m_vm[t3], t3
+    # UNGIL sec.A.1.3 (AB-1): all six expansions sit just after a
+    # callSlowPath/cCall2, so t6 (rdi/x6, caller-saved arg reg) is dead.
+    branchIfGilOffGroup3ToT6(.checkLiteException)
     btpz VM::m_exception[t3], .noException
     jmp exceptionTarget
-.noException:    
+    if GILOFF_TLS
+    .checkLiteException:
+        btpz VMLitePrimitives::m_exception[t6], .noException
+        jmp exceptionTarget
+    end
+.noException:
 end
 
 
@@ -2892,9 +3229,29 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
     move 0, t0
     bbneq JSCell::m_type[t5], FunctionExecutableType, .callCode
     loadp offsetOfCodeBlock[t5], t0
+if JSVALUE64
+    # ANNEX CBI item 3 (AB17c F4): the (arity-check entrypoint, codeBlock)
+    # pair above is two independent racy loads against a live tier-up
+    # installCode on another thread; a stale entrypoint paired with the new
+    # codeBlock crashes in the callee prologue. The gilOff writer
+    # (ScriptExecutable::installCode) retracts the arity-check mirror FIRST
+    # (fence-ordered), so re-reading it AFTER the codeBlock load and
+    # comparing with the first read (kept in t1) detects any interleaved
+    # install; mismatch restores the slowCase register contract (t0 =
+    # callee, reloaded from the callee frame) and takes the slow path,
+    # which derives a matched pair through one codeBlock snapshot
+    # (virtualForWithFunction). Flag-off: one not-taken branch.
+    ifJSThreadsBranch(t3, .threadsRevalidatePair)
+end
 .callCode:
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
+if JSVALUE64
+.threadsRevalidatePair:
+    bpeq offsetOfJITCodeWithArityCheck[t5], t1, .callCode
+    loadp Callee - PrologueStackPointerDelta[sp], t0
+    jmp slowCase
+end
 .notJSFunction:
     bbneq JSCell::m_type[t0], InternalFunctionType, slowCase
     jmp internalFunctionTrampoline

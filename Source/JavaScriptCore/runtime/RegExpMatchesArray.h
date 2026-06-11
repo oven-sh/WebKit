@@ -79,6 +79,10 @@ ALWAYS_INLINE JSArray* createRegExpMatchesArrayForPlainRegExp(VM& vm, JSGlobalOb
     array->putDirectOffset(vm, RegExpMatchesArrayInputPropertyOffset, input);
     array->putDirectOffset(vm, RegExpMatchesArrayGroupsPropertyOffset, jsUndefined());
 
+    // THREADS-INTEGRATE(objectmodel) §10.7 [assert-only]: fresh thread-private
+    // array — flat by construction (the §9.6 stress hook exempts
+    // uninitialized-restricted windows).
+    ASSERT(!array->mayBeSegmentedButterfly());
     ASSERT(!array->butterfly()->indexingHeader()->preCapacity(matchStructure));
     auto capacity = matchStructure->outOfLineCapacity();
     auto size = matchStructure->outOfLineSize();
@@ -103,7 +107,7 @@ ALWAYS_INLINE JSArray* createRegExpMatchesArray(VM& vm, JSGlobalObject* globalOb
     if constexpr (validateDFGDoesGC)
         vm.verifyCanGC();
 
-    auto subpatternResults = regExp->ovectorSpan();
+    auto subpatternResults = regExp->ovectorSpan(vm);
     int position = regExp->matchInline<Yarr::MatchFrom::VMThread>(globalObject, vm, inputValue, startOffset, subpatternResults);
     if (position == -1) {
         result = MatchResult::failed();

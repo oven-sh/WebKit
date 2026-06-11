@@ -50,7 +50,18 @@ public:
     }
 
     static StructureChain* create(VM&, JSObject*);
-    StructureID* head() LIFETIME_BOUND { return m_vector.get(); }
+    // THREADS/TSAN: relaxed atomic read of the vector word (set with relaxed
+    // atomics via AuxiliaryBarrier on possibly recycled cell memory).
+    StructureID* head() LIFETIME_BOUND { return WTF::atomicLoad(const_cast<StructureChain*>(this)->m_vector.slot(), std::memory_order_relaxed); }
+
+    // Relaxed atomic lane load — finishCreation writes the lanes with relaxed
+    // atomic stores on possibly recycled auxiliary memory; stale/zero reads
+    // take the walkers' decline/sentinel exits.
+    static StructureID loadLaneConcurrently(const StructureID* lane)
+    {
+        static_assert(sizeof(StructureID) == sizeof(uint32_t));
+        return std::bit_cast<StructureID>(WTF::atomicLoad(reinterpret_cast<uint32_t*>(const_cast<StructureID*>(lane)), std::memory_order_relaxed));
+    }
     DECLARE_VISIT_CHILDREN;
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);

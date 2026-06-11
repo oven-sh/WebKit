@@ -43,12 +43,73 @@
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "OperandsInlines.h"
 #include "ProbeContext.h"
+#include "VMLite.h"
+#include <limits>
+#include <wtf/Lock.h>
+#include <wtf/ScopedLambda.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-namespace JSC { namespace FTL {
+namespace JSC {
+
+// UNGIL U-T3 emitter (defined in jit/AssemblyHelpers.cpp). Self-declaration,
+// mirroring that TU's own pattern — no header owns this form yet.
+void loadVMLite(AssemblyHelpers&, GPRReg);
+
+namespace FTL {
 
 using namespace DFG;
+
+// UNGIL U-T4b: gilOff, N threads can fire the SAME not-yet-compiled exit
+// concurrently; exit.m_code must be published exactly once.
+// Coarse process-wide lock — exit-stub compilation is a once-per-exit slow
+// path. Lock RANK (NOT a leaf — it is held across the whole of compileStub):
+// OUTERMOST of everything compileStub acquires, i.e. OUTER to
+// codeBlock->m_lock (ConcurrentJSLocker, getArrayProfile),
+// ScratchBufferRegistry::m_lock -> VMLiteRegistry lock -> per-lite
+// scratchBufferLock (via VM::allocateBakedScratchBufferIndex, §LK.6 chain),
+// and LinkBuffer/executable-allocator locks. It is acquired ONLY from the
+// exit-generation thunk's operation call with no other JSC lock held, and
+// must never be taken while holding any of the above. GIL-on never takes it
+// (flag-off identity). Sibling with the same rank:
+// ftlLazySlowPathGenerationLock (FTLOperations.cpp); the two are never
+// nested. Rank recorded in INTEGRATE-ungil.md (U-T4b entry).
+static Lock ftlOSRExitGenerationLock;
+
+// UNGIL §A.1.6 (ANNEX A16, U-T4b): addressing of the exit's scratch memory,
+// in both modes. GIL-on (baked == false): today's baked absolute pointers,
+// byte-for-byte. gilOff (baked == true): the stub bakes only a process-wide
+// ScratchBufferRegistry INDEX; the CURRENT lite's dataBuffer() is
+// materialized into a GPR right before each use (loadVMLite -> segment ->
+// [index] -> +offsetof(m_buffer); rematerialization per §A.1.2) and all
+// scratch addressing is (base GPR + static offset). By convention
+// GPRInfo::regT3 holds the data base across compileRecovery calls — the
+// caller materializes it and compileRecovery never clobbers it.
+struct ExitScratchAddressing {
+    bool baked { false };
+    unsigned bakedIndex { std::numeric_limits<unsigned>::max() };
+    EncodedJSValue* scratch { nullptr }; // GIL-on dataBuffer(); null when baked.
+    ptrdiff_t materializationPointersOffset { 0 };
+    ptrdiff_t materializationArgumentsOffset { 0 };
+    ptrdiff_t registerScratchOffset { 0 };
+    ptrdiff_t unwindScratchOffset { 0 };
+
+    char* registerScratch() const
+    {
+        ASSERT(!baked);
+        return std::bit_cast<char*>(scratch) + registerScratchOffset;
+    }
+    EncodedJSValue* materializationPointer(unsigned slot) const
+    {
+        ASSERT(!baked);
+        return std::bit_cast<EncodedJSValue*>(std::bit_cast<char*>(scratch) + materializationPointersOffset) + slot;
+    }
+    void materializeDataBase(AssemblyHelpers& jit, GPRReg dest) const
+    {
+        ASSERT(baked);
+        materializeBakedScratchBufferDataPointer(jit, bakedIndex, dest);
+    }
+};
 
 static void reboxAccordingToFormat(
     DataFormat format, AssemblyHelpers& jit, GPRReg value, GPRReg scratch1, GPRReg scratch2)
@@ -101,11 +162,14 @@ static void reboxAccordingToFormat(
     }
 }
 
+// Baked mode (addressing.baked): the caller guarantees GPRInfo::regT3 holds
+// the current lite's exit-buffer dataBuffer() at entry; this function only
+// reads regT3 (writes regT0; rebox uses regT0-regT2 and fpRegT0).
 static void compileRecovery(
     CCallHelpers& jit, const ExitValue& value,
     const FixedVector<B3::ValueRep>& valueReps,
-    char* registerScratch,
-    const UncheckedKeyHashMap<ExitTimeObjectMaterialization*, EncodedJSValue*>& materializationToPointer)
+    const ExitScratchAddressing& addressing,
+    const UncheckedKeyHashMap<ExitTimeObjectMaterialization*, unsigned>& materializationToSlot)
 {
     switch (value.kind()) {
     case ExitValueDead: {
@@ -113,32 +177,44 @@ static void compileRecovery(
         jit.move(MacroAssembler::TrustedImm64(deadValue), GPRInfo::regT0);
         break;
     }
-            
+
     case ExitValueConstant:
         jit.move(MacroAssembler::TrustedImm64(JSValue::encode(value.constant())), GPRInfo::regT0);
         break;
-            
+
     case ExitValueArgument:
-        Location::forValueRep(valueReps[value.exitArgument().argument()]).restoreInto(
-            jit, registerScratch, GPRInfo::regT0);
+        if (addressing.baked) [[unlikely]] {
+            Location::forValueRep(valueReps[value.exitArgument().argument()]).restoreInto(
+                jit, GPRInfo::regT3, addressing.registerScratchOffset, GPRInfo::regT0);
+        } else {
+            Location::forValueRep(valueReps[value.exitArgument().argument()]).restoreInto(
+                jit, addressing.registerScratch(), GPRInfo::regT0);
+        }
         break;
-            
+
     case ExitValueInJSStack:
     case ExitValueInJSStackAsInt32:
     case ExitValueInJSStackAsInt52:
     case ExitValueInJSStackAsDouble:
         jit.load64(AssemblyHelpers::addressFor(value.virtualRegister()), GPRInfo::regT0);
         break;
-            
+
     case ExitValueMaterializeNewObject:
-        jit.loadPtr(materializationToPointer.get(value.objectMaterialization()), GPRInfo::regT0);
+        if (addressing.baked) [[unlikely]] {
+            jit.loadPtr(
+                CCallHelpers::Address(
+                    GPRInfo::regT3,
+                    static_cast<int32_t>(addressing.materializationPointersOffset + materializationToSlot.get(value.objectMaterialization()) * sizeof(EncodedJSValue))),
+                GPRInfo::regT0);
+        } else
+            jit.loadPtr(addressing.materializationPointer(materializationToSlot.get(value.objectMaterialization())), GPRInfo::regT0);
         break;
-            
+
     default:
         RELEASE_ASSERT_NOT_REACHED();
         break;
     }
-        
+
     reboxAccordingToFormat(
         value.dataFormat(), jit, GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2);
 }
@@ -161,9 +237,25 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
 
     // The first thing we need to do is restablish our frame in the case of an exception.
     if (exit.isGenericUnwindHandler()) {
-        RELEASE_ASSERT(vm.callFrameForCatch); // The first time we hit this exit, like at all other times, this field should be non-null.
-        jit.restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
-        jit.loadPtr(vm.addressOfCallFrameForCatch(), MacroAssembler::framePointerRegister);
+        if (vm.gilOff()) [[unlikely]] {
+            // UNGIL §A.1.3 (U-T4b): callFrameForCatch and topEntryFrame are
+            // per-lite Group-3 state gilOff. Host-side, this stub compiles on
+            // the exiting thread (its lite is current) — read through the
+            // mode-split accessor; emitted-side, the stub is shared by every
+            // thread that exits here — resolve the CURRENT lite.
+            RELEASE_ASSERT(vm.group3Primitives().callFrameForCatch); // The first time we hit this exit, like at all other times, this field should be non-null.
+            restoreCalleeSavesFromCurrentVMLiteEntryFrameCalleeSavesBuffer(jit);
+            loadVMLite(jit, MacroAssembler::framePointerRegister);
+            jit.loadPtr(
+                CCallHelpers::Address(
+                    MacroAssembler::framePointerRegister,
+                    static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_callFrameForCatch())),
+                MacroAssembler::framePointerRegister);
+        } else {
+            RELEASE_ASSERT(vm.callFrameForCatch); // The first time we hit this exit, like at all other times, this field should be non-null.
+            jit.restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
+            jit.loadPtr(vm.addressOfCallFrameForCatch(), MacroAssembler::framePointerRegister);
+        }
         jit.addPtr(CCallHelpers::TrustedImm32(codeBlock->stackPointerOffset() * sizeof(Register)),
             MacroAssembler::framePointerRegister, CCallHelpers::stackPointerRegister);
 
@@ -193,33 +285,65 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
         sizeof(EncodedJSValue) * (exit.m_descriptor->m_values.size() + numMaterializations + maxMaterializationNumArguments) +
         requiredScratchMemorySizeInBytes() +
         codeBlock->jitCode()->calleeSaveRegisters()->sizeOfAreaInBytes();
-    ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(scratchBufferSize);
-    EncodedJSValue* scratch = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
-    EncodedJSValue* materializationPointers = scratch + exit.m_descriptor->m_values.size();
-    EncodedJSValue* materializationArguments = materializationPointers + numMaterializations;
-    char* registerScratch = std::bit_cast<char*>(materializationArguments + maxMaterializationNumArguments);
-    uint64_t* unwindScratch = std::bit_cast<uint64_t*>(registerScratch + requiredScratchMemorySizeInBytes());
-    
-    UncheckedKeyHashMap<ExitTimeObjectMaterialization*, EncodedJSValue*> materializationToPointer;
-    unsigned materializationCount = 0;
-    for (ExitTimeObjectMaterialization* materialization : exit.m_descriptor->m_materializations) {
-        materializationToPointer.add(
-            materialization, materializationPointers + materializationCount++);
+
+    // UNGIL §A.1.6 (ANNEX A16, U-T4b): see ExitScratchAddressing. gilOff,
+    // this stub is shared by every thread that takes the exit, so the scratch
+    // memory is reached through a baked registry INDEX (per-lite buffers)
+    // instead of baked absolute pointers. GIL-on is byte-for-byte today's
+    // emission.
+    ExitScratchAddressing addressing;
+    addressing.baked = vm.gilOff();
+    addressing.materializationPointersOffset = sizeof(EncodedJSValue) * exit.m_descriptor->m_values.size();
+    addressing.materializationArgumentsOffset = addressing.materializationPointersOffset + sizeof(EncodedJSValue) * numMaterializations;
+    addressing.registerScratchOffset = addressing.materializationArgumentsOffset + sizeof(EncodedJSValue) * maxMaterializationNumArguments;
+    addressing.unwindScratchOffset = addressing.registerScratchOffset + requiredScratchMemorySizeInBytes();
+
+    ScratchBuffer* scratchBuffer = nullptr;
+    if (addressing.baked) [[unlikely]]
+        addressing.bakedIndex = vm.allocateBakedScratchBufferIndex(scratchBufferSize);
+    else {
+        scratchBuffer = vm.scratchBufferForSize(scratchBufferSize);
+        addressing.scratch = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
     }
+
+    // GIL-on absolute views; null (and unused) in baked mode.
+    EncodedJSValue* scratch = addressing.scratch;
+    EncodedJSValue* materializationPointers = nullptr;
+    EncodedJSValue* materializationArguments = nullptr;
+    char* registerScratch = nullptr;
+    uint64_t* unwindScratch = nullptr;
+    if (!addressing.baked) {
+        materializationPointers = scratch + exit.m_descriptor->m_values.size();
+        materializationArguments = materializationPointers + numMaterializations;
+        registerScratch = std::bit_cast<char*>(materializationArguments + maxMaterializationNumArguments);
+        unwindScratch = std::bit_cast<uint64_t*>(registerScratch + requiredScratchMemorySizeInBytes());
+    }
+
+    UncheckedKeyHashMap<ExitTimeObjectMaterialization*, unsigned> materializationToSlot;
+    unsigned materializationCount = 0;
+    for (ExitTimeObjectMaterialization* materialization : exit.m_descriptor->m_materializations)
+        materializationToSlot.add(materialization, materializationCount++);
 
     auto recoverValue = [&] (const ExitValue& value) {
         compileRecovery(
             jit, value,
             exit.m_valueReps,
-            registerScratch, materializationToPointer);
+            addressing, materializationToSlot);
     };
-    
+
     // Note that we come in here, the stack used to be as B3 left it except that someone called pushToSave().
     // We don't care about the value they saved. But, we do appreciate the fact that they did it, because we use
     // that slot for saveAllRegisters().
 
-    saveAllRegisters(jit, registerScratch);
-    
+    if (addressing.baked) [[unlikely]] {
+        saveAllRegisters(jit, scopedLambda<void(AssemblyHelpers&, GPRReg)>(
+            [&] (AssemblyHelpers& jit, GPRReg baseGPR) {
+                addressing.materializeDataBase(jit, baseGPR);
+                jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(addressing.registerScratchOffset)), baseGPR);
+            }));
+    } else
+        saveAllRegisters(jit, registerScratch);
+
     if constexpr (validateDFGDoesGC) {
         if (Options::validateDoesGC()) {
             // We're about to exit optimized code. So, there's no longer any optimized
@@ -230,7 +354,24 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             // to set it here because compileFTLOSRExit() is only called on the first time
             // we exit from this site, but all subsequent exits will take this compiled
             // ramp without calling compileFTLOSRExit() first.
-            jit.store64(CCallHelpers::TrustedImm64(DoesGCCheck::encode(true, DoesGCCheck::Special::FTLOSRExit)), vm.addressOfDoesGC());
+            if (vm.gilOff()) [[unlikely]] {
+                // UNGIL AB18-C: repeated exits never re-enter
+                // compileFTLOSRExit, so a baked &m_doesGC store would leave
+                // the exiting thread's lite slot holding the last per-node
+                // expectation — write the CURRENT thread's lite slot (same
+                // rationale as the DFGOSRExit.cpp ramp split). regT0 is dead
+                // here: saveAllRegisters captured the live state above and
+                // the popToRestore below overwrites it. Two imm32 stores for
+                // uniformity with the per-node split (this Special encoding
+                // fits imm32 only by encoding accident; imm64-through-scratch
+                // is a wild store on x86_64).
+                DoesGCCheck check;
+                check.u.encoded = DoesGCCheck::encode(true, DoesGCCheck::Special::FTLOSRExit);
+                loadVMLite(jit, GPRInfo::regT0);
+                jit.store32(CCallHelpers::TrustedImm32(check.u.other), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.other))));
+                jit.store32(CCallHelpers::TrustedImm32(check.u.nodeIndex), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.nodeIndex))));
+            } else
+                jit.store64(CCallHelpers::TrustedImm64(DoesGCCheck::encode(true, DoesGCCheck::Special::FTLOSRExit)), vm.addressOfDoesGC());
         }
     }
 
@@ -257,7 +398,11 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     
     // Do some value profiling.
     if (exit.m_descriptor->m_profileDataFormat != DataFormatNone) {
-        Location::forValueRep(exit.m_valueReps[0]).restoreInto(jit, registerScratch, GPRInfo::regT0);
+        if (addressing.baked) [[unlikely]] {
+            addressing.materializeDataBase(jit, GPRInfo::regT3);
+            Location::forValueRep(exit.m_valueReps[0]).restoreInto(jit, GPRInfo::regT3, addressing.registerScratchOffset, GPRInfo::regT0);
+        } else
+            Location::forValueRep(exit.m_valueReps[0]).restoreInto(jit, registerScratch, GPRInfo::regT0);
         reboxAccordingToFormat(exit.m_descriptor->m_profileDataFormat, jit, GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2);
         
         if (exit.m_kind == BadCache || exit.m_kind == BadIndexingType) {
@@ -325,6 +470,8 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             // recover the values of all of its fields and then we
             // call a function to actually allocate the beast.
             // We only recover the fields that are needed for the allocation.
+            if (addressing.baked) [[unlikely]]
+                addressing.materializeDataBase(jit, GPRInfo::regT3); // compileRecovery's base; rematerialized per materialization (calls below clobber it).
             for (unsigned propertyIndex = materialization->properties().size(); propertyIndex--;) {
                 const ExitPropertyValue& property = materialization->properties()[propertyIndex];
                 if (!property.location().neededForMaterialization())
@@ -332,18 +479,35 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
 
                 ASSERT(property.value().kind() != ExitValueDead);
                 recoverValue(property.value());
-                jit.storePtr(GPRInfo::regT0, materializationArguments + propertyIndex);
+                if (addressing.baked) [[unlikely]]
+                    jit.storePtr(GPRInfo::regT0, CCallHelpers::Address(GPRInfo::regT3, static_cast<int32_t>(addressing.materializationArgumentsOffset + propertyIndex * sizeof(EncodedJSValue))));
+                else
+                    jit.storePtr(GPRInfo::regT0, materializationArguments + propertyIndex);
             }
-            
+
             static_assert(FunctionTraits<decltype(operationMaterializeObjectInOSR)>::arity < GPRInfo::numberOfArgumentRegisters, "This call assumes that we don't pass arguments on the stack.");
-            jit.setupArguments<decltype(operationMaterializeObjectInOSR)>(
-                CCallHelpers::TrustedImmPtr(codeBlock->globalObjectFor(materialization->origin())),
-                CCallHelpers::TrustedImmPtr(materialization),
-                CCallHelpers::TrustedImmPtr(materializationArguments));
+            if (addressing.baked) [[unlikely]] {
+                jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(addressing.materializationArgumentsOffset)), GPRInfo::regT3);
+                jit.setupArguments<decltype(operationMaterializeObjectInOSR)>(
+                    CCallHelpers::TrustedImmPtr(codeBlock->globalObjectFor(materialization->origin())),
+                    CCallHelpers::TrustedImmPtr(materialization),
+                    GPRInfo::regT3);
+            } else {
+                jit.setupArguments<decltype(operationMaterializeObjectInOSR)>(
+                    CCallHelpers::TrustedImmPtr(codeBlock->globalObjectFor(materialization->origin())),
+                    CCallHelpers::TrustedImmPtr(materialization),
+                    CCallHelpers::TrustedImmPtr(materializationArguments));
+            }
             jit.prepareCallOperation(vm);
             jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeObjectInOSR)), GPRInfo::nonArgGPR0);
             jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
-            jit.storePtr(GPRInfo::returnValueGPR, materializationToPointer.get(materialization));
+            if (addressing.baked) [[unlikely]] {
+                addressing.materializeDataBase(jit, GPRInfo::regT1);
+                jit.storePtr(
+                    GPRInfo::returnValueGPR,
+                    CCallHelpers::Address(GPRInfo::regT1, static_cast<int32_t>(addressing.materializationPointersOffset + materializationToSlot.get(materialization) * sizeof(EncodedJSValue))));
+            } else
+                jit.storePtr(GPRInfo::returnValueGPR, addressing.materializationPointer(materializationToSlot.get(materialization)));
 
             // Let everyone know that we're done.
             toMaterialize.remove(materialization);
@@ -359,17 +523,33 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     // with the correct values. This time we can recover all the
     // fields, including those that are only needed for the allocation.
     for (ExitTimeObjectMaterialization* materialization : exit.m_descriptor->m_materializations) {
+        if (addressing.baked) [[unlikely]]
+            addressing.materializeDataBase(jit, GPRInfo::regT3); // compileRecovery's base; rematerialized per materialization (the call below clobbers it).
         for (unsigned propertyIndex = materialization->properties().size(); propertyIndex--;) {
             recoverValue(materialization->properties()[propertyIndex].value());
-            jit.storePtr(GPRInfo::regT0, materializationArguments + propertyIndex);
+            if (addressing.baked) [[unlikely]]
+                jit.storePtr(GPRInfo::regT0, CCallHelpers::Address(GPRInfo::regT3, static_cast<int32_t>(addressing.materializationArgumentsOffset + propertyIndex * sizeof(EncodedJSValue))));
+            else
+                jit.storePtr(GPRInfo::regT0, materializationArguments + propertyIndex);
         }
 
         static_assert(FunctionTraits<decltype(operationPopulateObjectInOSR)>::arity < GPRInfo::numberOfArgumentRegisters, "This call assumes that we don't pass arguments on the stack.");
-        jit.setupArguments<decltype(operationPopulateObjectInOSR)>(
-            CCallHelpers::TrustedImmPtr(codeBlock->globalObjectFor(materialization->origin())),
-            CCallHelpers::TrustedImmPtr(materialization),
-            CCallHelpers::TrustedImmPtr(materializationToPointer.get(materialization)),
-            CCallHelpers::TrustedImmPtr(materializationArguments));
+        if (addressing.baked) [[unlikely]] {
+            addressing.materializeDataBase(jit, GPRInfo::regT2);
+            jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(addressing.materializationPointersOffset + materializationToSlot.get(materialization) * sizeof(EncodedJSValue))), GPRInfo::regT2);
+            jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(addressing.materializationArgumentsOffset)), GPRInfo::regT3);
+            jit.setupArguments<decltype(operationPopulateObjectInOSR)>(
+                CCallHelpers::TrustedImmPtr(codeBlock->globalObjectFor(materialization->origin())),
+                CCallHelpers::TrustedImmPtr(materialization),
+                GPRInfo::regT2,
+                GPRInfo::regT3);
+        } else {
+            jit.setupArguments<decltype(operationPopulateObjectInOSR)>(
+                CCallHelpers::TrustedImmPtr(codeBlock->globalObjectFor(materialization->origin())),
+                CCallHelpers::TrustedImmPtr(materialization),
+                CCallHelpers::TrustedImmPtr(addressing.materializationPointer(materializationToSlot.get(materialization))),
+                CCallHelpers::TrustedImmPtr(materializationArguments));
+        }
         jit.prepareCallOperation(vm);
         jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationPopulateObjectInOSR)), GPRInfo::nonArgGPR0);
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
@@ -380,7 +560,10 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     
     {
         std::optional<GPRReg> undefinedGPR;
-        jit.move(CCallHelpers::TrustedImmPtr(scratch), GPRInfo::regT3);
+        if (addressing.baked) [[unlikely]]
+            addressing.materializeDataBase(jit, GPRInfo::regT3); // Lives across the loop; compileRecovery/restoreInto never clobber it.
+        else
+            jit.move(CCallHelpers::TrustedImmPtr(scratch), GPRInfo::regT3);
         CCallHelpers::CopySpooler spooler(jit, CCallHelpers::framePointerRegister, GPRInfo::regT3, GPRInfo::regT0, GPRInfo::regT1);
         for (unsigned index = exit.m_descriptor->m_values.size(); index--;) {
             auto& value = exit.m_descriptor->m_values[index];
@@ -416,7 +599,10 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
                 }
 
                 case ExitValueArgument:
-                    Location::forValueRep(exit.m_valueReps[value.exitArgument().argument()]).restoreInto(jit, registerScratch, GPRInfo::regT0);
+                    if (addressing.baked) [[unlikely]]
+                        Location::forValueRep(exit.m_valueReps[value.exitArgument().argument()]).restoreInto(jit, GPRInfo::regT3, addressing.registerScratchOffset, GPRInfo::regT0);
+                    else
+                        Location::forValueRep(exit.m_valueReps[value.exitArgument().argument()]).restoreInto(jit, registerScratch, GPRInfo::regT0);
                     jit.store64(GPRInfo::regT0, CCallHelpers::Address(GPRInfo::regT3, index * sizeof(EncodedJSValue)));
                     break;
 
@@ -429,7 +615,10 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
                     break;
 
                 case ExitValueMaterializeNewObject:
-                    jit.loadPtr(materializationToPointer.get(value.objectMaterialization()), GPRInfo::regT0);
+                    if (addressing.baked) [[unlikely]]
+                        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT3, static_cast<int32_t>(addressing.materializationPointersOffset + materializationToSlot.get(value.objectMaterialization()) * sizeof(EncodedJSValue))), GPRInfo::regT0);
+                    else
+                        jit.loadPtr(addressing.materializationPointer(materializationToSlot.get(value.objectMaterialization())), GPRInfo::regT0);
                     jit.store64(GPRInfo::regT0, CCallHelpers::Address(GPRInfo::regT3, index * sizeof(EncodedJSValue)));
                     break;
 
@@ -446,8 +635,13 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     }
 
     // The scratch buffer can become the sole retainer of saved on-stack values, so set the
-    // active length for the GC.
-    if (scratchBuffer) {
+    // active length for the GC. (Baked mode: per-lite buffers are GC-scanned
+    // through the registry walk via each lite's ownership list, jit R2 — the
+    // active length lives at offset 0 of the resolved ScratchBuffer.)
+    if (addressing.baked) [[unlikely]] {
+        materializeBakedScratchBufferPointer(jit, addressing.bakedIndex, GPRInfo::regT0);
+        jit.storePtr(CCallHelpers::TrustedImm32(scratchBufferSize), CCallHelpers::Address(GPRInfo::regT0));
+    } else if (scratchBuffer) {
         jit.move(CCallHelpers::TrustedImmPtr(scratchBuffer->addressOfActiveLength()), GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(scratchBufferSize), CCallHelpers::Address(GPRInfo::regT0));
     }
@@ -464,7 +658,11 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
         constexpr GPRReg srcBufferGPR = GPRInfo::regT2;
         constexpr GPRReg destBufferGPR = GPRInfo::regT3;
         jit.move(CCallHelpers::framePointerRegister, srcBufferGPR);
-        jit.move(CCallHelpers::TrustedImmPtr(unwindScratch), destBufferGPR);
+        if (addressing.baked) [[unlikely]] {
+            addressing.materializeDataBase(jit, destBufferGPR);
+            jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(addressing.unwindScratchOffset)), destBufferGPR);
+        } else
+            jit.move(CCallHelpers::TrustedImmPtr(unwindScratch), destBufferGPR);
         CCallHelpers::CopySpooler spooler(CCallHelpers::CopySpooler::BufferRegs::AllowModification, jit, srcBufferGPR, destBufferGPR, GPRInfo::regT0, GPRInfo::regT1);
         for (unsigned i = codeBlock->jitCode()->calleeSaveRegisters()->registerCount(); i--;) {
             RegisterAtOffset entry = codeBlock->jitCode()->calleeSaveRegisters()->at(i);
@@ -520,7 +718,11 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             ASSERT(!allFTLCalleeSaves.contains(GPRInfo::regT1, IgnoreVectors));
             ASSERT(!allFTLCalleeSaves.contains(FPRInfo::fpRegT0, IgnoreVectors));
             ASSERT(!allFTLCalleeSaves.contains(FPRInfo::fpRegT1, IgnoreVectors));
-            jit.move(CCallHelpers::TrustedImmPtr(registerScratch), GPRInfo::regT3);
+            if (addressing.baked) [[unlikely]] {
+                addressing.materializeDataBase(jit, GPRInfo::regT3);
+                jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(addressing.registerScratchOffset)), GPRInfo::regT3);
+            } else
+                jit.move(CCallHelpers::TrustedImmPtr(registerScratch), GPRInfo::regT3);
             {
                 // Load from registerScratch buffer to callee-save registers.
                 CCallHelpers::LoadRegSpooler spooler(jit, GPRInfo::regT3);
@@ -559,7 +761,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             // but we can get their values that were preserved by using the unwind data. We've already
             // copied all unwind-able preserved registers into the unwind scratch buffer, so we can get
             // the values to restore from there.
-            ASSERT((std::bit_cast<uintptr_t>(unwindScratch) - std::bit_cast<uintptr_t>(registerScratch)) == requiredScratchMemorySizeInBytes());
+            ASSERT(static_cast<size_t>(addressing.unwindScratchOffset - addressing.registerScratchOffset) == requiredScratchMemorySizeInBytes());
             jit.addPtr(CCallHelpers::TrustedImm32(requiredScratchMemorySizeInBytes()), GPRInfo::regT3); // Change registerScratch to unwindScratch.
             {
                 // Load from unwindScratch buffer to callee-save registers.
@@ -607,8 +809,14 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     }
 
     if (exit.m_codeOrigin.inlineStackContainsActiveCheckpoint()) {
-        EncodedJSValue* tmpScratch = scratch + exit.m_descriptor->m_values.tmpIndex(0);
-        jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
+        if (addressing.baked) [[unlikely]] {
+            addressing.materializeDataBase(jit, GPRInfo::regT2);
+            jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(sizeof(EncodedJSValue) * exit.m_descriptor->m_values.tmpIndex(0))), GPRInfo::regT2);
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), GPRInfo::regT2);
+        } else {
+            EncodedJSValue* tmpScratch = scratch + exit.m_descriptor->m_values.tmpIndex(0);
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
+        }
         jit.prepareCallOperation(vm);
         jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeOSRExitSideState)), GPRInfo::nonArgGPR0);
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
@@ -619,7 +827,10 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     {
         constexpr GPRReg srcBufferGPR = GPRInfo::regT2;
         constexpr GPRReg destBufferGPR = GPRInfo::regT3;
-        jit.move(CCallHelpers::TrustedImmPtr(scratch), srcBufferGPR);
+        if (addressing.baked) [[unlikely]]
+            addressing.materializeDataBase(jit, srcBufferGPR);
+        else
+            jit.move(CCallHelpers::TrustedImmPtr(scratch), srcBufferGPR);
         jit.move(GPRInfo::callFrameRegister, destBufferGPR);
         CCallHelpers::CopySpooler spooler(CCallHelpers::CopySpooler::BufferRegs::AllowModification, jit, srcBufferGPR, destBufferGPR, GPRInfo::regT0, GPRInfo::regT1);
         for (unsigned index = exit.m_descriptor->m_values.size(); index--;) {
@@ -637,7 +848,10 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
         spooler.finalizeGPR();
     }
 
-    if (scratchBuffer) {
+    if (addressing.baked) [[unlikely]] {
+        materializeBakedScratchBufferPointer(jit, addressing.bakedIndex, GPRInfo::regT0);
+        jit.storePtr(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(GPRInfo::regT0));
+    } else if (scratchBuffer) {
         jit.move(CCallHelpers::TrustedImmPtr(scratchBuffer->addressOfActiveLength()), GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(GPRInfo::regT0));
     }
@@ -670,8 +884,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         vm.setDoesGCExpectation(true, DoesGCCheck::Special::FTLOSRExit);
     }
 
-    if (vm.callFrameForCatch)
-        RELEASE_ASSERT(vm.callFrameForCatch == callFrame);
+    // UNGIL §A.1.3: read through the mode-split accessor — gilOff the live
+    // callFrameForCatch is the current lite's, not the inert VM block's.
+    if (vm.group3Primitives().callFrameForCatch)
+        RELEASE_ASSERT(vm.group3Primitives().callFrameForCatch == callFrame);
     
     CodeBlock* codeBlock = callFrame->codeBlock();
     
@@ -704,11 +920,28 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         }
     }
 
+    if (vm.gilOff()) [[unlikely]] {
+        // UNGIL U-T4b: N threads can race to compile the SAME exit. Compile
+        // exactly once under the generation lock; losers reuse the winner's
+        // stub. We deliberately do NOT repatch the exit jump in this mode:
+        // other mutators may be concurrently EXECUTING that jump, and
+        // MacroAssembler::repatchJump rewrites an unaligned rel32 on x86_64
+        // with no atomicity guarantee (torn fetch -> wild jump); ISB1 only
+        // licenses patching performed inside a stop. The jump keeps pointing
+        // at the generation thunk, which calls back here and tail-calls our
+        // return value — the protocol stays data-only. Exits are rare and
+        // trigger reoptimization, so the extra thunk round-trips are noise.
+        Locker locker { ftlOSRExitGenerationLock };
+        if (!exit.m_code)
+            compileStub(vm, exitID, jitCode, exit, codeBlock);
+        return exit.m_code.code().taggedPtr();
+    }
+
     compileStub(vm, exitID, jitCode, exit, codeBlock);
 
     MacroAssembler::repatchJump(
         exit.codeLocationForRepatch(codeBlock), CodeLocationLabel<OSRExitPtrTag>(exit.m_code.code()));
-    
+
     return exit.m_code.code().taggedPtr();
 }
 

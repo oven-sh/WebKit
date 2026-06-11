@@ -31,6 +31,7 @@
 #include "Error.h"
 #include "IteratorOperations.h"
 #include "JSGlobalObject.h"
+#include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyTag.h"
 #include "WebAssemblyTagPrototype.h"
 
@@ -45,6 +46,10 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTag, (JSGlobalObject* globalObjec
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
     
     if (callFrame->argumentCount() < 1)
         return throwVMTypeError(globalObject, scope, "WebAssembly.Tag constructor expects the tag type as the first argument."_s);

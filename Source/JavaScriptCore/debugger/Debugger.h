@@ -51,6 +51,16 @@ class VM;
 
 enum class ProfilingReason : uint8_t;
 
+// UNGIL §A.2.7 (SD13, BINDING; v1 GIL-off only — GIL-on/flag-off unchanged):
+// the pause state in this class is SINGULAR (one m_currentCallFrame /
+// m_isPaused / m_reasonForPause per Debugger) and stays on the landed
+// single-threaded carrier protocol. The debugger trap bit is exempt from the
+// rule-3 VM-wide fan-out (carrier-only delivery,
+// VMTraps::CarrierOnlyServicedEvents); every per-execution entry hook
+// early-returns on a spawned Thread (Debugger.cpp isSpawnedJSThreadGILOff);
+// spawned-thread breakpoints are defined no-ops; attach/detach and the
+// CodeBlock-wide recompile/registration walks run under a §A.3 stop so
+// spawned threads cannot execute mid-walk. N-thread debugging is post-ungil.
 class Debugger : public DoublyLinkedListNode<Debugger> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(Debugger, JS_EXPORT_PRIVATE);
 public:

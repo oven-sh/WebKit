@@ -41,7 +41,13 @@ inline Structure* StructureCache::createEmptyStructure(JSGlobalObject* globalObj
 {
     RELEASE_ASSERT(!!prototype); // We use nullptr inside the UncheckedKeyHashMap for prototype to mean poly proto, so user's of this API must provide non-null prototypes.
 
-    // We don't need to lock here because only the main thread can get here, and only the main thread can mutate the cache
+    // Flag-off: we don't need to lock the lookup because only the main thread
+    // can get here, and only the main thread can mutate the cache. GIL-off
+    // (Options::useJSThreads()): N mutator threads get here concurrently, and
+    // m_structures is a locking WeakGCMap (WeakGCMapLocking::Yes), so this
+    // get() and the addIfAbsent() publish below serialize on the map's
+    // internal leaf lock against concurrent set/rehash and GC pruning — no
+    // thread can walk (PrototypeKey::operator==) a table a rehash is freeing.
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
     VM& vm = globalObject->vm();
     PrototypeKey key { makePolyProtoStructure ? nullptr : prototype, executable, inlineCapacity, classInfo };
@@ -65,6 +71,28 @@ inline Structure* StructureCache::createEmptyStructure(JSGlobalObject* globalObj
         structure = Structure::create(
             vm, globalObject, prototype, typeInfo, classInfo, indexingType, inlineCapacity);
     }
+    if (Options::useJSThreads()) [[unlikely]] {
+        // First-wins publish (the WeakGCMap canonicalization protocol; cf.
+        // VM::symbolImplToSymbolMap): between our miss above and here another
+        // thread may have created and published a structure for this key, and
+        // a plain last-wins set() would let the cache hand out two distinct
+        // "canonical" empty structures for the same prototype. addIfAbsent()
+        // re-checks under the map's internal leaf lock and returns the
+        // first-published structure; if we lose, our freshly created
+        // structure is dropped (unreferenced, collected by GC) and the
+        // winner's invariants are re-checked exactly like the hit path above.
+        // The Weak handle is constructed inside addIfAbsent() before its lock
+        // is taken (SPEC-ungil §LK WS(i)).
+        Structure* canonical = m_structures.addIfAbsent(key, structure);
+        if (canonical != structure) {
+            if (makePolyProtoStructure)
+                RELEASE_ASSERT(canonical->hasPolyProto());
+            else
+                RELEASE_ASSERT(canonical->hasMonoProto());
+        }
+        return canonical;
+    }
+
     Locker locker { m_lock };
     m_structures.set(key, structure);
     return structure;

@@ -63,8 +63,13 @@ void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref
     Base::finishCreation(vm);
     m_jitCodeForCall = WTF::move(callThunk);
     m_jitCodeForConstruct = WTF::move(constructThunk);
-    m_jitCodeForCallWithArityCheck = m_jitCodeForCall->addressForCall(ArityCheckMode::MustCheckArity);
-    m_jitCodeForConstructWithArityCheck = m_jitCodeForConstruct->addressForCall(ArityCheckMode::MustCheckArity);
+    // THREADS (TSAN r15, mc-hand-restrict-claim): release-publish through the
+    // dedicated concurrent accessor — these mirrors are probed lock-free by
+    // sibling Threads via concurrentCodePtrLoad (entrypointFor / virtual-call
+    // thunk slow paths), including stale probes of a recycled cell; the plain
+    // init stores raced those probes. Same store instruction.
+    concurrentCodePtrStore(m_jitCodeForCallWithArityCheck, m_jitCodeForCall->addressForCall(ArityCheckMode::MustCheckArity));
+    concurrentCodePtrStore(m_jitCodeForConstructWithArityCheck, m_jitCodeForConstruct->addressForCall(ArityCheckMode::MustCheckArity));
     m_name = name;
 
     assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForCall->addressForCall(ArityCheckMode::ArityCheckNotRequired).taggedPtr());

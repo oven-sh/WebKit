@@ -470,7 +470,26 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
 
         if (exit.isExceptionHandler()) {
             jit.move(CCallHelpers::TrustedImmPtr(&currentInstruction), GPRInfo::regT2);
-            jit.storePtr(GPRInfo::regT2, &std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow));
+            if (vm.gilOff()) [[unlikely]] {
+                // UNGIL §A.1.3 (U-T4b): targetInterpreterPCForThrow is
+                // per-lite Group-2/3 state — this exit ramp is shared by
+                // every thread, so resolve the CURRENT lite instead of
+                // baking &vm's slot. Payload-only store into the variant,
+                // exactly like the GIL-on arm (the lite's field is the same
+                // default-engaged JSOrWasmInstruction; layout is identical
+                // by the M6 equivalence asserts).
+                GPRReg scratch = AssemblyHelpers::selectScratchGPR(GPRInfo::regT2, LLInt::Registers::pcGPR);
+                loadVMLite(jit, scratch);
+                const ptrdiff_t variantPayloadOffset =
+                    reinterpret_cast<char*>(&std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow))
+                    - reinterpret_cast<char*>(&vm.targetInterpreterPCForThrow);
+                jit.storePtr(
+                    GPRInfo::regT2,
+                    AssemblyHelpers::Address(
+                        scratch,
+                        static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_targetInterpreterPCForThrow() + variantPayloadOffset)));
+            } else
+                jit.storePtr(GPRInfo::regT2, &std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow));
         }
 
         jit.move(CCallHelpers::TrustedImmPtr(codeBlockForExit->metadataTable()), LLInt::Registers::metadataTableGPR);
@@ -497,10 +516,33 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
 
     if (exit.isExceptionHandler()) {
         ASSERT(!RegisterSet::vmCalleeSaveRegisters().contains(LLInt::Registers::pcGPR, IgnoreVectors));
-        jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR));
+        if (vm.gilOff()) [[unlikely]] {
+            // UNGIL §A.1.3 (U-T4b): topEntryFrame and callFrameForCatch are
+            // per-lite Group-3 state — resolve the CURRENT lite (this shared
+            // ramp runs on whichever thread exits). Same scratch budget as
+            // the GIL-on arm: only selectScratchGPR(pcGPR) is clobbered.
+            GPRReg scratch = AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR);
+            loadVMLite(jit, scratch);
+            jit.loadPtr(
+                AssemblyHelpers::Address(
+                    scratch,
+                    static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topEntryFrame())),
+                scratch);
+            jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(scratch); // Clobbers scratch.
 
-        // Since we're jumping to op_catch, we need to set callFrameForCatch.
-        jit.storePtr(GPRInfo::callFrameRegister, vm.addressOfCallFrameForCatch());
+            // Since we're jumping to op_catch, we need to set callFrameForCatch.
+            loadVMLite(jit, scratch);
+            jit.storePtr(
+                GPRInfo::callFrameRegister,
+                AssemblyHelpers::Address(
+                    scratch,
+                    static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_callFrameForCatch())));
+        } else {
+            jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR));
+
+            // Since we're jumping to op_catch, we need to set callFrameForCatch.
+            jit.storePtr(GPRInfo::callFrameRegister, vm.addressOfCallFrameForCatch());
+        }
     }
 
     jit.addPtr(AssemblyHelpers::TrustedImm32(JIT::stackPointerOffsetFor(codeBlockForExit) * sizeof(Register)), GPRInfo::callFrameRegister, AssemblyHelpers::stackPointerRegister);

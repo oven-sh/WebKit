@@ -44,6 +44,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "JSThreadsSafepoint.h"
 #include "Options.h"
 #include "PrivateFieldPutKind.h"
 #include "StrongInlines.h"
@@ -58,8 +59,10 @@
 #include "VMTrapsInlines.h"
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
+#include <wtf/RecursiveLockAdapter.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/Threading.h>
 #include <wtf/text/WTFString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -68,6 +71,53 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeGenerator);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ForInContext);
+
+// UNGIL IT-8: defined in runtime/ScriptExecutable.cpp (the process-wide
+// recursive compilation lock for GIL-off lites of the shared VM). Declared
+// locally to avoid a header edit during bring-up; keep in sync with the
+// definition and with dfg/DFGPlan.cpp.
+RecursiveLock& gilOffCompilationLock();
+
+namespace {
+
+// Stop-protocol-safe acquisition — same shape as the locker in
+// runtime/ScriptExecutable.cpp (see the rationale there): contended
+// acquisition spins on tryLock() servicing only NeedStopTheWorld, so a
+// waiting lite stays visible to the GIL-off stop fan and never throws.
+// FIX (stw-watchdog-timeout, root cause B): the FIX-2 park poll first —
+// deferral-immune §A.3 parking (callers may spin here inside their own
+// DeferTraps scope, under which handleTraps correctly no-ops); see the
+// ScriptExecutable.cpp locker comment.
+class GILOffCompilationLocker {
+    WTF_MAKE_NONCOPYABLE(GILOffCompilationLocker);
+public:
+    GILOffCompilationLocker(VM& vm, bool shouldLock)
+        : m_shouldLock(shouldLock)
+    {
+        if (!m_shouldLock) [[likely]]
+            return;
+        RecursiveLock& lock = gilOffCompilationLock();
+        if (lock.tryLock()) [[likely]]
+            return;
+        while (!lock.tryLock()) {
+            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+                continue; // Parked across a §A.3 window: re-validate (retry tryLock).
+            handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
+            Thread::yield();
+        }
+    }
+
+    ~GILOffCompilationLocker()
+    {
+        if (m_shouldLock) [[unlikely]]
+            gilOffCompilationLock().unlock();
+    }
+
+private:
+    bool m_shouldLock;
+};
+
+} // anonymous namespace
 
 template<typename CallOp>
 struct VarArgsOp;
@@ -3381,6 +3431,17 @@ RefPtr<TDZEnvironmentLink> BytecodeGenerator::getVariablesUnderTDZ()
         return m_TDZStack.last().second;
     }
 
+    // UNGIL IT-8 (R1b residual): m_vm.m_compactVariableMap is VM-shared and
+    // its get() performs a plain HashMap insert. Function codegen reaches
+    // here already holding the compilation lock (prepareForExecutionImpl —
+    // recursive re-acquire, cheap), but program/eval/module codegen via
+    // CodeCache and direct eval do NOT route through prepareForExecutionImpl,
+    // so two lites can race this map without it. Serialize the map mutation
+    // itself. KNOWN RESIDUAL (recorded for the next IT-8 round): other
+    // VM-shared codegen sinks not in this file's scope (CodeCache's
+    // m_sourceCode map, ProgramExecutable::initializeGlobalProperties)
+    // remain unserialized.
+    GILOffCompilationLocker compilationLocker(m_vm, m_vm.gilOffWithProcessGate());
     for (auto& entry : m_TDZStack) {
         if (!entry.second) {
             auto& map = entry.first;

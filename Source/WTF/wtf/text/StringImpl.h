@@ -24,10 +24,12 @@
 
 #include <wtf/Compiler.h>
 
+#include <atomic>
 #include <limits.h>
 #include <unicode/uchar.h>
 #include <unicode/ustring.h>
 #include <wtf/ASCIICType.h>
+#include <wtf/Atomics.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/CompactPtr.h>
 #include <wtf/DebugHeap.h>
@@ -147,6 +149,14 @@ struct StringStats {
 
 #endif
 
+// Process-global shared-atom-table latch (SPEC-vmstate §4). Defined in
+// AtomStringTable.cpp; set exactly once by WTF::enableSharedAtomStringTable()
+// and immutable after. The canonical accessor is sharedAtomStringTableEnabled()
+// (SharedAtomStringTable.h); the variable is redeclared here so the deref()
+// fast path can read the latch inline (relaxed load, SPEC-vmstate F4) without
+// pulling the table header into this very hot header.
+WTF_EXPORT_PRIVATE extern std::atomic<bool> g_sharedAtomStringTableEnabled;
+
 class STRING_IMPL_ALIGNMENT StringImplShape  {
     WTF_MAKE_NONCOPYABLE(StringImplShape);
 public:
@@ -170,8 +180,22 @@ protected:
         const char* m_data8Char;
         const char16_t* m_data16Char;
     };
-    mutable unsigned m_hashAndFlags;
+    // SPEC-vmstate §4.5: atomic so concurrent flag publication (setIsAtom()
+    // under a shared-atom-table shard lock, lazy setHash(), cost reporting) is
+    // well-defined when the process-global shared atom-string table is enabled.
+    // All accesses are relaxed. Plain stores are permitted only on provably
+    // unpublished strings (constructors, translator pre-insert); flag mutations
+    // on possibly-published strings MUST use idempotent fetch_or/fetch_and so
+    // racing writers never drop each other's bits.
+    mutable std::atomic<unsigned> m_hashAndFlags;
+
+    unsigned hashAndFlags() const { return m_hashAndFlags.load(std::memory_order_relaxed); }
 };
+
+// JIT'd code reads m_hashAndFlags as a plain 32-bit load at
+// StringImpl::flagsOffset(); the atomic must not change size or representation.
+static_assert(sizeof(std::atomic<unsigned>) == sizeof(unsigned));
+static_assert(std::atomic<unsigned>::is_always_lock_free);
 
 // FIXME: Use of StringImpl and const is rather confused.
 // The actual string inside a StringImpl is immutable, so you can't modify a string using a StringImpl&.
@@ -316,11 +340,20 @@ public:
     WTF_EXPORT_PRIVATE static Ref<StringImpl> adopt(StringBuffer<char16_t>&&);
     WTF_EXPORT_PRIVATE static Ref<StringImpl> adopt(StringBuffer<Latin1Character>&&);
 
-    unsigned length() const { return m_length; }
+    // TSAN family rope-stringimpl: a stale lock-free reader (concurrent
+    // compiler / GC thread holding a racy snapshot per the object-model
+    // ground truth) can probe a recycled allocation while a new StringImpl's
+    // constructor stores m_length, so the read must be an annotated relaxed
+    // atomic load. Identical plain-load codegen on every supported target;
+    // JIT'd code keeps reading the word at lengthMemoryOffset(). The
+    // const_cast (rather than making the field mutable) keeps the constexpr
+    // ConstructWithConstExpr constructors able to read m_length at compile
+    // time; the load never writes, so static/rodata instances are fine.
+    unsigned length() const { return WTF::atomicLoad(const_cast<unsigned*>(&m_length), std::memory_order_relaxed); }
     static constexpr ptrdiff_t lengthMemoryOffset() { return OBJECT_OFFSETOF(StringImpl, m_length); }
-    bool isEmpty() const { return !m_length; }
+    bool isEmpty() const { return !length(); }
 
-    bool is8Bit() const { return m_hashAndFlags & s_hashFlag8BitBuffer; }
+    bool is8Bit() const { return hashAndFlags() & s_hashFlag8BitBuffer; }
     ALWAYS_INLINE std::span<const Latin1Character> span8() const LIFETIME_BOUND { ASSERT(is8Bit()); return unsafeMakeSpan(m_data8, length()); }
     ALWAYS_INLINE std::span<const char16_t> span16() const LIFETIME_BOUND { ASSERT(!is8Bit() || isEmpty()); return unsafeMakeSpan(m_data16, length()); }
 
@@ -331,8 +364,8 @@ public:
 
     WTF_EXPORT_PRIVATE size_t NODELETE sizeInBytes() const;
 
-    bool isSymbol() const { return m_hashAndFlags & s_hashFlagStringKindIsSymbol; }
-    bool isAtom() const { return m_hashAndFlags & s_hashFlagStringKindIsAtom; }
+    bool isSymbol() const { return hashAndFlags() & s_hashFlagStringKindIsSymbol; }
+    bool isAtom() const { return hashAndFlags() & s_hashFlagStringKindIsAtom; }
     void setIsAtom(bool);
     
     bool isExternal() const { return bufferOwnership() == BufferExternal; }
@@ -356,10 +389,74 @@ public:
     WTF_EXPORT_PRIVATE CString utf8(ConversionMode = LenientConversion) const;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // TODO: remove once atomic strings are process-wide.
-    bool canBecomeAtom() const { return !(m_hashAndFlags & s_hashFlagNeverAtomize); }
-    void setNeverAtomize() { ASSERT(!isAtom()); m_hashAndFlags |= s_hashFlagNeverAtomize; }
+    // ADVISORY in shared-atom-table mode: this is an unlocked read, so a true
+    // result can be stale by the time the caller acts on it (setNeverAtomize()
+    // takes no lock). Correctness never rests on this check — the in-place
+    // atomization path claims atom-hood with trySetIsAtomIfAtomizable(), whose
+    // RMW on the same atomic word total-orders against setNeverAtomize()'s CAS
+    // (SPEC-vmstate §4.5; round-4 TOCTOU closure). This check only steers the
+    // common case to the copying path early.
+    bool canBecomeAtom() const { return !(hashAndFlags() & s_hashFlagNeverAtomize); }
+
+    // Marks the string never-atomizable (e.g. an ExternalStringImpl whose
+    // buffer the embedder may free early via releaseBufferEarly()) UNLESS it
+    // is already an atom. Returns true if the flag was set: the string is not
+    // in any atom table now and never will be parked in one (every in-place
+    // atomization claims atom-hood via trySetIsAtomIfAtomizable(), which
+    // refuses once this flag is visible in the same atomic word). Returns
+    // false if the string is already an atom — the flag is NOT set, and the
+    // caller MUST NOT free or release the character buffer early: the string
+    // is (or is becoming) table-resident and probes read its characters under
+    // the table/shard lock. In shared-atom-table mode losing this race to a
+    // concurrent in-place atomization is legal (the two RMWs on
+    // m_hashAndFlags are total-ordered; exactly one side wins — SPEC-vmstate
+    // §4.5/§4.4.4); the embedder must check the return value before any early
+    // buffer release (cross-WS item 17, INTEGRATE-vmstate.md). In legacy mode
+    // a false return still means the historical caller bug (marking a live
+    // atom), now reported instead of asserted-then-corrupted.
+    bool setNeverAtomize()
+    {
+        unsigned old = hashAndFlags();
+        while (true) {
+            if (old & s_hashFlagStringKindIsAtom) {
+                // Legacy mode (per-thread tables): no legal cross-thread race
+                // exists, so an already-atom argument is the historical caller
+                // bug — keep the old ASSERT(!isAtom()) fail-stop for it.
+                // Shared mode: a lost race is legal; report via the return.
+                ASSERT(g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed));
+                return false;
+            }
+            // CAS (not fetch_or): the bit must not be set once the isAtom bit
+            // is observed in the same word, and racing flag publication
+            // (setHash, cost bit, a winning trySetIsAtomIfAtomizable) just
+            // refreshes `old` and retries — no flag bits are ever dropped.
+            if (m_hashAndFlags.compare_exchange_weak(old, old | s_hashFlagNeverAtomize, std::memory_order_relaxed))
+                return true;
+        }
+    }
 #endif
+
+    // SPEC-vmstate §4.4.4, shared-atom-table publication (round-4 TOCTOU
+    // closure): atomically set the isAtom bit unless s_hashFlagNeverAtomize is
+    // already set in the same atomic word. Returns false — leaving the string
+    // a non-atom — if it lost the race with a concurrent setNeverAtomize();
+    // the caller (addOwnedStringToSharedStringTable) must then back its table
+    // insert out and fall back to a copying atomization. Because this RMW and
+    // setNeverAtomize()'s CAS target the same std::atomic, they are
+    // total-ordered: exactly one side wins, with no window in which a
+    // NeverAtomize (early-buffer-releasable) string can end up table-resident.
+    bool trySetIsAtomIfAtomizable()
+    {
+        ASSERT(!isStatic());
+        ASSERT(!isSymbol());
+        unsigned old = hashAndFlags();
+        while (true) {
+            if (old & s_hashFlagNeverAtomize)
+                return false;
+            if (m_hashAndFlags.compare_exchange_weak(old, old | s_hashFlagStringKindIsAtom, std::memory_order_relaxed))
+                return true;
+        }
+    }
 
 private:
     // The high bits of 'hash' are always empty, but we prefer to store our flags
@@ -367,7 +464,7 @@ private:
     // So, we shift left and right when setting and getting our hash code.
     void setHash(unsigned) const;
 
-    unsigned rawHash() const { return m_hashAndFlags >> s_flagCount; }
+    unsigned rawHash() const { return hashAndFlags() >> s_flagCount; }
 
 public:
     bool hasHash() const { return !!rawHash(); }
@@ -388,6 +485,14 @@ public:
 
     void ref();
     void deref();
+
+    // SPEC-vmstate §4.4.2 — shared-atom-table hit path. Takes a reference only
+    // if the refcount is non-zero: refcount 0 is final (§4.4), so a dying
+    // string is never revived (a hit on it is treated as a miss / dead entry by
+    // the caller). Statics always succeed (they rest at masked refcount 0 and
+    // never die). When used on a table entry, MUST be called under the owning
+    // shard's lock; the returned reference is adopted in-lock.
+    bool tryRefAtom();
 
     class StaticStringImpl : private StringImplShape {
         WTF_MAKE_NONCOPYABLE(StaticStringImpl);
@@ -543,7 +648,7 @@ public:
     ALWAYS_INLINE static StringStats& stringStats() { return m_stringStats; }
 #endif
 
-    BufferOwnership bufferOwnership() const { return static_cast<BufferOwnership>(m_hashAndFlags & s_hashMaskBufferOwnership); }
+    BufferOwnership bufferOwnership() const { return static_cast<BufferOwnership>(hashAndFlags() & s_hashMaskBufferOwnership); }
 
     template<typename T> static constexpr size_t headerSize() { return tailOffset<T>(); }
     
@@ -587,6 +692,9 @@ private:
     template<typename CharacterType> static Expected<Ref<StringImpl>, UTF8ConversionError> reallocateInternal(Ref<StringImpl>&&, unsigned, CharacterType*&);
     template<typename CharacterType> static Ref<StringImpl> createInternal(std::span<const CharacterType>);
     WTF_EXPORT_PRIVATE NEVER_INLINE unsigned hashSlowCase() const;
+    // Shared-atom-table mode only (SPEC-vmstate §4.4.3): zero-transition tail
+    // of deref(); routes live-table atoms through AtomStringImpl::removeDeadAtom().
+    WTF_EXPORT_PRIVATE NEVER_INLINE void derefSharedZero();
     Ref<StringImpl> convertToUppercaseWithoutLocaleUpconvert();
 
     // The bottom bit in the ref count indicates a static (immortal) string.
@@ -882,22 +990,37 @@ SUPPRESS_NODELETE inline bool deprecatedIsNotSpaceOrNewline(char16_t character)
     return !deprecatedIsSpaceOrNewline(character);
 }
 
+// TSAN family rope-stringimpl: a freed StringImpl's memory can be recycled by
+// the allocator while a stale lock-free reader (concurrent compiler / GC
+// thread holding a racy snapshot per the object-model ground truth) still
+// probes m_refCount/m_hashAndFlags. The std::atomic member-initializer is a
+// plain (non-atomic) construction store, so the atomic members of the
+// runtime-constructed shapes are initialized with annotated relaxed stores in
+// the body instead — identical codegen, defined behavior against stale
+// readers. The ConstructWithConstExpr constructors below are compile-time
+// (static/literal storage, never recycled) and must stay constexpr
+// member-inits.
 inline StringImplShape::StringImplShape(uint32_t refCount, std::span<const Latin1Character> data, unsigned hashAndFlags)
-    : m_refCount(refCount)
-    , m_length(data.size())
-    , m_data8(data.data())
-    , m_hashAndFlags(hashAndFlags)
+    : m_data8(data.data())
 {
+    // TSAN family rope-stringimpl: m_length joins m_refCount/m_hashAndFlags as
+    // an annotated relaxed constructor store (see the comment above) so a
+    // stale lock-free reader's StringImpl::length() on this recycled
+    // allocation is defined. Identical plain-store codegen.
     RELEASE_ASSERT(data.size() <= MaxLength);
+    m_refCount.store(refCount, std::memory_order_relaxed);
+    atomicStore(&m_length, static_cast<unsigned>(data.size()), std::memory_order_relaxed);
+    m_hashAndFlags.store(hashAndFlags, std::memory_order_relaxed);
 }
 
 inline StringImplShape::StringImplShape(uint32_t refCount, std::span<const char16_t> data, unsigned hashAndFlags)
-    : m_refCount(refCount)
-    , m_length(data.size())
-    , m_data16(data.data())
-    , m_hashAndFlags(hashAndFlags)
+    : m_data16(data.data())
 {
+    // TSAN family rope-stringimpl: see the Latin1 constructor above.
     RELEASE_ASSERT(data.size() <= MaxLength);
+    m_refCount.store(refCount, std::memory_order_relaxed);
+    atomicStore(&m_length, static_cast<unsigned>(data.size()), std::memory_order_relaxed);
+    m_hashAndFlags.store(hashAndFlags, std::memory_order_relaxed);
 }
 
 constexpr StringImplShape::StringImplShape(uint32_t refCount, ASCIILiteral literal, unsigned hashAndFlags, ConstructWithConstExprTag)
@@ -1131,11 +1254,14 @@ inline size_t StringImpl::cost() const
     // We ensure this by pre-setting the s_hashFlagDidReportCost bit in all instances of
     // StaticStringImpl. As a result, StaticStringImpl instances will always return a cost of
     // 0 here and avoid modifying m_hashAndFlags.
-    if (m_hashAndFlags & s_hashFlagDidReportCost)
+    if (hashAndFlags() & s_hashFlagDidReportCost)
         return 0;
 
-    m_hashAndFlags |= s_hashFlagDidReportCost;
-    size_t result = m_length;
+    // fetch_or: possibly published (SPEC-vmstate §4.5). A racing pair may both
+    // report the cost (benign, same as the pre-atomic code), but neither can
+    // drop a concurrently published flag bit.
+    m_hashAndFlags.fetch_or(s_hashFlagDidReportCost, std::memory_order_relaxed);
+    size_t result = length();
     if (!is8Bit())
         result <<= 1;
     return result;
@@ -1149,7 +1275,10 @@ inline size_t StringImpl::costDuringGC()
     if (bufferOwnership() == BufferSubstring)
         return divideRoundedUp<size_t>(substringBuffer()->costDuringGC(), refCount());
 
-    size_t result = m_length;
+    // TSAN family rope-stringimpl: GC-thread cost accounting can race a
+    // recycled allocation's constructor store of m_length; read through the
+    // annotated relaxed accessor.
+    size_t result = length();
     if (!is8Bit())
         result <<= 1;
     return divideRoundedUp<size_t>(result, refCount());
@@ -1159,10 +1288,13 @@ inline void StringImpl::setIsAtom(bool isAtom)
 {
     ASSERT(!isStatic());
     ASSERT(!isSymbol());
+    // SPEC-vmstate §4.5: RMW because the string may already be published
+    // (e.g. setIsAtom(true) under a shared-atom-table shard lock while another
+    // thread lazily publishes the hash via setHash()).
     if (isAtom)
-        m_hashAndFlags |= s_hashFlagStringKindIsAtom;
+        m_hashAndFlags.fetch_or(s_hashFlagStringKindIsAtom, std::memory_order_relaxed);
     else
-        m_hashAndFlags &= ~s_hashFlagStringKindIsAtom;
+        m_hashAndFlags.fetch_and(~s_hashFlagStringKindIsAtom, std::memory_order_relaxed);
 }
 
 inline void StringImpl::setHash(unsigned hash) const
@@ -1171,17 +1303,22 @@ inline void StringImpl::setHash(unsigned hash) const
     // in the low bits because it makes them slightly more efficient to access.
     // So, we shift left and right when setting and getting our hash code.
 
-    ASSERT(!hasHash());
     ASSERT(!isStatic());
     // Multiple clients assume that StringHasher is the canonical string hash function.
     ASSERT(hash == (is8Bit() ? StringHasher::computeHashAndMaskTop8Bits(span8()) : StringHasher::computeHashAndMaskTop8Bits(span16())));
     ASSERT(!(hash & (s_flagMask << (8 * sizeof(hash) - s_flagCount)))); // Verify that enough high bits are empty.
 
     hash <<= s_flagCount;
-    ASSERT(!(hash & m_hashAndFlags)); // Verify that enough low bits are empty after shift.
     ASSERT(hash); // Verify that 0 is a valid sentinel hash value.
 
-    m_hashAndFlags |= hash; // Store hash with flags in low bits.
+    // SPEC-vmstate §4.5: lazy-hash publication may race with itself (every
+    // writer computes the identical hash from the immutable characters, so
+    // fetch_or is value-idempotent) and with concurrent flag publication
+    // (fetch_or never drops flag bits a racing writer just set; a plain
+    // read-modify-write would). Store hash with flags in low bits.
+    unsigned old = m_hashAndFlags.fetch_or(hash, std::memory_order_relaxed);
+    // If a racing setHash() got here first, it must have stored the same hash.
+    ASSERT_UNUSED(old, !(old & ~s_flagMask) || (old & ~s_flagMask) == hash);
 }
 
 inline void StringImpl::ref()
@@ -1196,6 +1333,27 @@ inline void StringImpl::ref()
     m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed);
 }
 
+ALWAYS_INLINE bool StringImpl::tryRefAtom()
+{
+    uint32_t value = m_refCount.load(std::memory_order_relaxed);
+    if (value & s_refCountFlagIsStaticString) {
+        // Statics rest at masked refcount 0 and never die: plain ref(), no
+        // zero check, no CAS (SPEC-vmstate §4.4.2).
+        ref();
+        return true;
+    }
+    while (true) {
+        if (!(value & ~s_refCountFlagIsStaticString))
+            return false; // Refcount 0 is final (§4.4): never revive a dying string.
+        // Relaxed is sufficient: table-hit callers hold the shard lock that
+        // ordered the entry's publication (SPEC-vmstate F1).
+        if (m_refCount.compare_exchange_weak(value, value + s_refCountIncrement, std::memory_order_relaxed)) {
+            STRING_STATS_REF_STRING(*this);
+            return true;
+        }
+    }
+}
+
 inline void StringImpl::deref()
 {
     STRING_STATS_DEREF_STRING(*this);
@@ -1205,9 +1363,62 @@ inline void StringImpl::deref()
         return;
 #endif
 
+    // Relaxed latch read is sound even on threads created before the latch:
+    // the §4.8 contract (SPEC-vmstate; normative text in
+    // SharedAtomStringTable.h) requires a pre-latch thread to synchronize-with
+    // the initializing thread before its next ref/deref of ANY WTF::String —
+    // explicitly including strings it already owned pre-latch, because
+    // AtomStringImpl::addSlowCase can atomize a co-owned StringImpl in place
+    // into a shard after the latch. With that edge, write-read coherence
+    // forbids this load from reading a stale 'false'; threads created after
+    // the latch get the edge from thread creation itself. Full argument: F4
+    // comment at sharedAtomStringTableEnabled() in SharedAtomStringTable.h.
+    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]] {
+        // Shared-atom-table mode (SPEC-vmstate §4.4.3 / F3): the release
+        // decrement plus the acquire fence on the zero transition order every
+        // other thread's prior accesses to this string before its destruction
+        // (deliberately NOT seq_cst). Refcount 0 is final: tryRefAtom() fails
+        // at 0, so no table hit can revive the string and exactly one thread
+        // reaches the zero transition and destroys it.
+#if TSAN_ENABLED
+        // TSAN r12 (reports 1/2/5): TSAN does not model
+        // std::atomic_thread_fence, so the acquire fence below is invisible
+        // and the destroying thread's free() pairs against other threads'
+        // release decrements. acq_rel RMW under TSAN only; production keeps
+        // release + acquire-fence-on-zero (identical ordering guarantees).
+        auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_acq_rel);
+#else
+        auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_release);
+#endif
+        if (oldRefCount != s_refCountIncrement)
+            return;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        derefSharedZero();
+        return;
+    }
+
+    // Legacy mode (per-thread atom tables): today's relaxed path, kept
+    // verbatim — no flag-off RMW upgrade (SPEC-vmstate R3(b)).
     auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed);
     if (oldRefCount != s_refCountIncrement)
         return;
+
+    // §4.8 ref/deref backstop (debug-only, zero release cost). This arm was
+    // selected because the latch load above read false; if a re-read on the
+    // zero transition now reads true, the latch flipped without this thread
+    // having the happens-before edge the §4.8 contract requires before any
+    // ref/deref by a pre-latch thread — a stale-latch breach caught in
+    // flight. This matters because the release-mode failure is SILENT, not
+    // fail-stop: if this string was meanwhile atomized in place into a shard
+    // (addSlowCase atomizes co-owned strings), destroy() below would skip
+    // removeDeadAtom and leave a dangling shard entry (UAF on the next
+    // same-bucket probe). I17's ~AtomStringTable RELEASE_ASSERT backstops
+    // only the ATOMIZE half of the contract (a pre-latch atomizer leaves a
+    // non-empty per-thread table); this assert is the only detector for the
+    // ref/deref half — heuristic (catches breaches whose deref overlaps or
+    // follows the flip), with cross-WS item 15 (Bun embedder audit,
+    // INTEGRATE-vmstate.md) as the release-mode mitigation.
+    ASSERT(!g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed));
 
     StringImpl::destroy(this);
 }
@@ -1394,7 +1605,7 @@ template<typename CharacterType, typename Predicate> ALWAYS_INLINE Ref<StringImp
     if (from.empty())
         return *this;
 
-    StringBuffer<CharacterType> data(m_length);
+    StringBuffer<CharacterType> data(length());
     auto to = data.span();
     unsigned outc = from.data() - characters.data();
 

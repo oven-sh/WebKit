@@ -168,6 +168,9 @@ JSArrayBufferView::JSArrayBufferView(VM& vm, ConstructionContext& context)
     , m_byteOffset(context.byteOffset())
     , m_mode(context.mode())
 {
+    // THREADS-INTEGRATE(objectmodel) §10.7 (audited, no guard): this is
+    // ConstructionContext::butterfly() — a context-owned fresh allocation for
+    // the view under construction, not a JSObject's tagged word. Statically flat.
     setButterfly(vm, context.butterfly());
     m_vector.setWithoutBarrier(context.vector());
 }

@@ -25,44 +25,65 @@
 
 #pragma once
 
+#include <wtf/Atomics.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC {
 
+// Concurrency (TSAN triage 3.16, SPEC-objectmodel §5): add() (e.g. Structure
+// transition-table insert under the owner's lock) races with lock-free
+// ruleOut() from concurrent transition lookup / getConcurrently(). Bloom
+// false positives/negatives only steer callers to a re-validating slow path,
+// so stale values are fine — but a torn plain load/store of m_bits would be
+// UB. m_bits is therefore a relaxed WTF::Atomic word: same layout, relaxed
+// loads/stores compile to plain loads/stores, and add() uses a relaxed
+// fetch_or per the triage ruling (insert is the rare path). No ordering is
+// implied. JIT code reads the word directly via offsetOfBits(), which is
+// unchanged because Atomic<Bits> wraps a single std::atomic<Bits>.
 template <typename Bits = uintptr_t>
 class TinyBloomFilter {
 public:
     TinyBloomFilter() = default;
     TinyBloomFilter(Bits);
+    TinyBloomFilter(const TinyBloomFilter& other) { m_bits.storeRelaxed(other.m_bits.loadRelaxed()); }
+    TinyBloomFilter& operator=(const TinyBloomFilter& other)
+    {
+        m_bits.storeRelaxed(other.m_bits.loadRelaxed());
+        return *this;
+    }
 
     void add(Bits);
     void add(TinyBloomFilter&);
     bool ruleOut(Bits) const; // True for 0.
     void reset();
-    Bits bits() const { return m_bits; }
+    Bits bits() const { return m_bits.loadRelaxed(); }
 
-    static constexpr ptrdiff_t offsetOfBits() { return OBJECT_OFFSETOF(TinyBloomFilter, m_bits); }
+    static constexpr ptrdiff_t offsetOfBits()
+    {
+        static_assert(sizeof(WTF::Atomic<Bits>) == sizeof(Bits));
+        return OBJECT_OFFSETOF(TinyBloomFilter, m_bits);
+    }
 
 private:
-    Bits m_bits { 0 };
+    WTF::Atomic<Bits> m_bits { 0 };
 };
 
 template <typename Bits>
 inline TinyBloomFilter<Bits>::TinyBloomFilter(Bits bits)
-    : m_bits(bits)
+    : m_bits { bits }
 {
 }
 
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::add(Bits bits)
 {
-    m_bits |= bits;
+    m_bits.exchangeOr(bits, std::memory_order_relaxed);
 }
 
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::add(TinyBloomFilter& other)
 {
-    m_bits |= other.m_bits;
+    m_bits.exchangeOr(other.m_bits.loadRelaxed(), std::memory_order_relaxed);
 }
 
 template <typename Bits>
@@ -71,7 +92,7 @@ inline bool TinyBloomFilter<Bits>::ruleOut(Bits bits) const
     if (!bits)
         return true;
 
-    if ((bits & m_bits) != bits)
+    if ((bits & m_bits.loadRelaxed()) != bits)
         return true;
 
     return false;
@@ -80,7 +101,7 @@ inline bool TinyBloomFilter<Bits>::ruleOut(Bits bits) const
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::reset()
 {
-    m_bits = 0;
+    m_bits.storeRelaxed(0);
 }
 
 } // namespace JSC

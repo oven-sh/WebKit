@@ -27,6 +27,7 @@
 
 #include "ConcurrentJSLock.h"
 #include "Structure.h"
+#include <wtf/Atomics.h>
 #include <wtf/OptionSet.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -219,17 +220,40 @@ public:
 
     void clear()
     {
-        m_lastSeenStructureID = { };
-        m_speculationFailureStructureID = { };
-        m_arrayProfileFlags = { };
-        m_observedArrayModes = { };
+        // THREADS §5.7.5: relaxed word-atomic stores; clear can race with profiling
+        // writers on other mutators, and a lost observation is benign (I12).
+        WTF::atomicStore(&m_lastSeenStructureID, StructureID(), std::memory_order_relaxed);
+        WTF::atomicStore(&m_speculationFailureStructureID, StructureID(), std::memory_order_relaxed);
+        static_assert(sizeof(m_arrayProfileFlags) == sizeof(uint32_t));
+        WTF::atomicStore(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), 0u, std::memory_order_relaxed);
+        WTF::atomicStore(&m_observedArrayModes, static_cast<ArrayModes>(0), std::memory_order_relaxed);
+    }
+
+    // THREADS §5.7.5 (SPEC-jit Task 12): mode/flag merges are monotone ORs racily performed
+    // by mutator slow paths on any of N threads and racily read by compiler threads; a lost
+    // bit is benign — profiles select, guards validate (I12). C++ merges use relaxed atomic
+    // OR and every C++ read is a relaxed atomic load; JIT'd fast-path merges may stay plain
+    // per §5.7.1 (fields keep their plain declared types so JIT offsets/codegen are
+    // unchanged). The structure-ID words (m_lastSeenStructureID,
+    // m_speculationFailureStructureID) are advisory per §5.7.7 — C++ accesses go through
+    // relaxed word-atomics; JIT'd stores stay plain.
+    void addArrayProfileFlagsConcurrently(OptionSet<ArrayProfileFlag> flags)
+    {
+        static_assert(sizeof(m_arrayProfileFlags) == sizeof(uint32_t));
+        WTF::atomicExchangeOr(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), flags.toRaw(), std::memory_order_relaxed);
+    }
+
+    OptionSet<ArrayProfileFlag> arrayProfileFlagsConcurrently() const
+    {
+        static_assert(sizeof(m_arrayProfileFlags) == sizeof(uint32_t));
+        return OptionSet<ArrayProfileFlag>::fromRaw(WTF::atomicLoad(reinterpret_cast<uint32_t*>(const_cast<OptionSet<ArrayProfileFlag>*>(&m_arrayProfileFlags)), std::memory_order_relaxed));
     }
 
     static constexpr uint64_t s_smallTypedArrayMaxLength = std::numeric_limits<int32_t>::max();
-    void setMayBeLargeTypedArray() { m_arrayProfileFlags.add(ArrayProfileFlag::MayBeLargeTypedArray); }
-    bool mayBeLargeTypedArray(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeLargeTypedArray); }
+    void setMayBeLargeTypedArray() { addArrayProfileFlagsConcurrently(ArrayProfileFlag::MayBeLargeTypedArray); }
+    bool mayBeLargeTypedArray(const ConcurrentJSLocker&) const { return arrayProfileFlagsConcurrently().contains(ArrayProfileFlag::MayBeLargeTypedArray); }
 
-    bool mayBeResizableOrGrowableSharedTypedArray(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeResizableOrGrowableSharedTypedArray); }
+    bool mayBeResizableOrGrowableSharedTypedArray(const ConcurrentJSLocker&) const { return arrayProfileFlagsConcurrently().contains(ArrayProfileFlag::MayBeResizableOrGrowableSharedTypedArray); }
 
     StructureID* addressOfSpeculationFailureStructureID() LIFETIME_BOUND { return &m_speculationFailureStructureID; }
     ArrayModes* addressOfArrayModes() LIFETIME_BOUND { return &m_observedArrayModes; }
@@ -239,24 +263,26 @@ public:
     static constexpr ptrdiff_t offsetOfArrayProfileFlags() { return OBJECT_OFFSETOF(ArrayProfile, m_arrayProfileFlags); }
     static constexpr ptrdiff_t offsetOfArrayModes() { return OBJECT_OFFSETOF(ArrayProfile, m_observedArrayModes); }
 
-    void setOutOfBounds() { m_arrayProfileFlags.add(ArrayProfileFlag::OutOfBounds); }
+    void setOutOfBounds() { addArrayProfileFlagsConcurrently(ArrayProfileFlag::OutOfBounds); }
     
-    void observeStructureID(StructureID structureID) { m_lastSeenStructureID = structureID; }
-    void observeStructure(Structure* structure) { m_lastSeenStructureID = structure->id(); }
+    // THREADS §5.7.5/§5.7.7: relaxed word-atomic last-writer-wins stores; the word is
+    // advisory to every consumer (I12).
+    void observeStructureID(StructureID structureID) { WTF::atomicStore(&m_lastSeenStructureID, structureID, std::memory_order_relaxed); }
+    void observeStructure(Structure* structure) { WTF::atomicStore(&m_lastSeenStructureID, structure->id(), std::memory_order_relaxed); }
 
     void NODELETE computeUpdatedPrediction(CodeBlock*);
     void computeUpdatedPrediction(CodeBlock*, Structure* lastSeenStructure);
     
-    void observeArrayMode(ArrayModes mode) { m_observedArrayModes |= mode; }
+    void observeArrayMode(ArrayModes mode) { WTF::atomicExchangeOr(&m_observedArrayModes, mode, std::memory_order_relaxed); } // THREADS §5.7.5
     void NODELETE observeIndexedRead(JSCell*, unsigned index);
 
-    ArrayModes observedArrayModes(const ConcurrentJSLocker&) const { return m_observedArrayModes; }
-    bool mayInterceptIndexedAccesses(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayInterceptIndexedAccesses);; }
-    
-    bool mayStoreToHole(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayStoreHole); }
-    bool outOfBounds(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::OutOfBounds); }
-    
-    bool usesOriginalArrayStructures(const ConcurrentJSLocker&) const { return !m_arrayProfileFlags.contains(ArrayProfileFlag::UsesNonOriginalArrayStructures); }
+    ArrayModes observedArrayModes(const ConcurrentJSLocker&) const { return WTF::atomicLoad(const_cast<ArrayModes*>(&m_observedArrayModes), std::memory_order_relaxed); }
+    bool mayInterceptIndexedAccesses(const ConcurrentJSLocker&) const { return arrayProfileFlagsConcurrently().contains(ArrayProfileFlag::MayInterceptIndexedAccesses); }
+
+    bool mayStoreToHole(const ConcurrentJSLocker&) const { return arrayProfileFlagsConcurrently().contains(ArrayProfileFlag::MayStoreHole); }
+    bool outOfBounds(const ConcurrentJSLocker&) const { return arrayProfileFlagsConcurrently().contains(ArrayProfileFlag::OutOfBounds); }
+
+    bool usesOriginalArrayStructures(const ConcurrentJSLocker&) const { return !arrayProfileFlagsConcurrently().contains(ArrayProfileFlag::UsesNonOriginalArrayStructures); }
 
     CString briefDescription(CodeBlock*);
     CString briefDescriptionWithoutUpdating();
@@ -279,14 +305,26 @@ public:
 
     void update(ArrayProfile& arrayProfile)
     {
-        ArrayModes newModes = arrayProfile.m_observedArrayModes | m_observedArrayModes;
-        m_observedArrayModes = newModes;
-        arrayProfile.m_observedArrayModes = newModes;
+        // THREADS §5.7.5 (SPEC-jit Task 12): the unlinked profile lives on the shared
+        // UnlinkedCodeBlock and can be merged with several linked profiles by several
+        // mutators racily. Both merge directions are relaxed atomic ORs (monotone; lost
+        // bits benign, I12). The trailing unlinked-flag store is a word-atomic
+        // last-writer-wins snapshot (DidPerformFirstRunPruning intentionally dropped);
+        // a stale snapshot only loses advisory bits.
+        static_assert(sizeof(m_arrayProfileFlags) == sizeof(uint32_t));
 
-        arrayProfile.m_arrayProfileFlags.add(m_arrayProfileFlags);
-        auto unlinkedArrayProfileFlags = arrayProfile.m_arrayProfileFlags;
+        ArrayModes linkedModes = WTF::atomicLoad(&arrayProfile.m_observedArrayModes, std::memory_order_relaxed);
+        ArrayModes newModes = linkedModes | WTF::atomicLoad(&m_observedArrayModes, std::memory_order_relaxed);
+        WTF::atomicExchangeOr(&m_observedArrayModes, newModes, std::memory_order_relaxed);
+        WTF::atomicExchangeOr(&arrayProfile.m_observedArrayModes, newModes, std::memory_order_relaxed);
+
+        auto unlinkedFlagsSnapshot = OptionSet<ArrayProfileFlag>::fromRaw(
+            WTF::atomicLoad(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), std::memory_order_relaxed));
+        arrayProfile.addArrayProfileFlagsConcurrently(unlinkedFlagsSnapshot);
+        auto unlinkedArrayProfileFlags = OptionSet<ArrayProfileFlag>::fromRaw(
+            WTF::atomicLoad(reinterpret_cast<uint32_t*>(&arrayProfile.m_arrayProfileFlags), std::memory_order_relaxed));
         unlinkedArrayProfileFlags.remove(ArrayProfileFlag::DidPerformFirstRunPruning); // We do not propagate DidPerformFirstRunPruning.
-        m_arrayProfileFlags = unlinkedArrayProfileFlags;
+        WTF::atomicStore(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), unlinkedArrayProfileFlags.toRaw(), std::memory_order_relaxed);
     }
 
 private:

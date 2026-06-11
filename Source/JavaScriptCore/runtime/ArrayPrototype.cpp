@@ -448,7 +448,9 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncJoin, (JSGlobalObject* globalObject, Call
         if (isJSArray(thisValue) && separatorValue.isString()) [[likely]] {
             JSArray* array = asArray(thisValue);
             JSString* separatorString = asString(separatorValue);
-            if (!separatorString->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
+            // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word —
+            // this fast path derefs butterfly() as flat; fall to generic join.
+            if (!array->mayBeSegmentedButterfly() && !separatorString->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
                 auto* butterfly = array->butterfly();
                 unsigned length = butterfly->publicLength();
                 JSOnlyStringsAndInt32sJoiner joiner(StringView { });
@@ -623,6 +625,9 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
 
     thisObject->ensureWritable(vm);
 
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — every arm
+    // below derefs butterfly() as flat; skip to the generic reverse loop.
+    if (thisObject->mayBeSegmentedButterfly()) [[unlikely]] { /* generic */ } else
     switch (thisObject->indexingType()) {
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_INT32_INDEXING_TYPES: {
@@ -820,7 +825,9 @@ static ALWAYS_INLINE std::tuple<uint64_t, IndexingType, std::span<EncodedJSValue
 
     uint64_t undefinedCount = 0;
 
-    if (isJSArray(thisObject) && !holesMustForwardToPrototype(thisObject)) [[likely]] {
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — bail to
+    // the caller's generic sort.
+    if (isJSArray(thisObject) && !thisObject->mayBeSegmentedButterfly() && !holesMustForwardToPrototype(thisObject)) [[likely]] {
         IndexingType indexingType = thisObject->indexingType();
         switch (indexingType) {
         case ALL_INT32_INDEXING_TYPES: {
@@ -1228,7 +1235,11 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
 
     bool canDoFastPath = array->canDoFastIndexedAccess()
         && array->getArrayLength() == length64 // The effects in getting `index` could have changed the length of this array.
-        && static_cast<uint32_t>(index64) == index64;
+        && static_cast<uint32_t>(index64) == index64
+        // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — the
+        // shape switch below derefs butterfly() as flat; return the "not
+        // fast" sentinel so callers run generic indexOf.
+        && !array->mayBeSegmentedButterfly();
     if (!canDoFastPath)
         return JSValue();
 
@@ -1353,8 +1364,11 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncIndexOf, (JSGlobalObject* globalObject, C
 
     if (isJSArray(thisObject)) [[likely]] {
         JSArray* array = asArray(thisObject);
-        Butterfly* butterfly = array->butterfly();
-        if (isCopyOnWrite(array->indexingMode()) && JSCellButterfly::isOnlyAtomStringsStructure(vm, butterfly) && searchElement.isString()) {
+        // THREADS-INTEGRATE(objectmodel) §10.7: guard the direct length/
+        // butterfly peek (CoW words are flat-decodable — I35 — but the load
+        // must not be reached on a tagged word).
+        Butterfly* butterfly = array->mayBeSegmentedButterfly() ? nullptr : array->butterfly();
+        if (butterfly && isCopyOnWrite(array->indexingMode()) && JSCellButterfly::isOnlyAtomStringsStructure(vm, butterfly) && searchElement.isString()) {
             auto search = asString(searchElement)->toAtomString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
 
@@ -1477,6 +1491,10 @@ static JSArray* tryConcatAppendOneNonArray(JSGlobalObject* globalObject, VM& vm,
 
     ASSERT(!isJSArray(second));
     ASSERT(!first->mayInterceptIndexedAccesses());
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — this fast
+    // path derefs butterfly() as flat (source AND result). Bail to generic.
+    if (first->mayBeSegmentedButterfly()) [[unlikely]]
+        return nullptr;
     Butterfly* firstButterfly = first->butterfly();
     unsigned firstArraySize = firstButterfly->publicLength();
 
@@ -1532,6 +1550,10 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
     ASSERT(!globalObject->isHavingABadTime());
     ASSERT(firstArray->canFastCopy(secondArray));
 
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word on either
+    // side — this fast path derefs both butterflies as flat. Bail to generic.
+    if (firstArray->mayBeSegmentedButterfly() || secondArray->mayBeSegmentedButterfly()) [[unlikely]]
+        return nullptr;
     Butterfly* firstButterfly = firstArray->butterfly();
     Butterfly* secondButterfly = secondArray->butterfly();
 

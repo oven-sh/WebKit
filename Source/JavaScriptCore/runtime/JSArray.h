@@ -207,6 +207,20 @@ private:
     bool unshiftCountWithArrayStorage(JSGlobalObject*, unsigned startIndex, unsigned count, ArrayStorage*);
     bool unshiftCountSlowCase(const AbstractLocker&, VM&, DeferGC&, bool, unsigned);
 
+#if USE(JSVALUE64)
+    // SPEC-objectmodel §4.6 AS-COPY (Task 8; GT10 sites JSArray.cpp:1650/:1818,
+    // I31): flag-on, shift/unshift never relay out ArrayStorage innards in
+    // place - the whole operation runs under the cell lock (every AS access is
+    // cell-locked flag-on, reads included), allocates a fresh AS butterfly
+    // (under O1's pre-lock DeferGC exemption) with the elements already
+    // shifted/unshifted, and publishes it with casButterfly, tag (including
+    // SW) preserved verbatim (T3/I17). The superseded storage is never written
+    // again, so stale readers see a frozen snapshot (I7). false => the
+    // caller's generic fallback. Defined in JSArray.cpp.
+    bool shiftCountWithArrayStorageConcurrent(VM&, unsigned startIndex, unsigned count);
+    bool unshiftCountWithArrayStorageConcurrent(JSGlobalObject*, unsigned startIndex, unsigned count);
+#endif
+
     bool setLengthWithArrayStorage(JSGlobalObject*, unsigned newLength, bool throwException, ArrayStorage*);
     void setLengthWritable(JSGlobalObject*, bool writable);
 };

@@ -57,7 +57,9 @@ ExternalStringImpl::ExternalStringImpl(std::span<const Latin1Character> characte
 {
     ASSERT(m_free);
     m_freeCtx = ctx;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
+    // Plain relaxed store: this object is still under construction, hence
+    // provably unpublished (SPEC-vmstate §4.5).
+    m_hashAndFlags.store((m_hashAndFlags.load(std::memory_order_relaxed) & ~s_hashMaskBufferOwnership) | BufferExternal, std::memory_order_relaxed);
 }
 
 
@@ -67,7 +69,9 @@ ExternalStringImpl::ExternalStringImpl(std::span<const char16_t> characters, voi
 {
     ASSERT(m_free);
     m_freeCtx = ctx;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
+    // Plain relaxed store: this object is still under construction, hence
+    // provably unpublished (SPEC-vmstate §4.5).
+    m_hashAndFlags.store((m_hashAndFlags.load(std::memory_order_relaxed) & ~s_hashMaskBufferOwnership) | BufferExternal, std::memory_order_relaxed);
 }
 
 ExternalStringImpl::ExternalStringImpl(std::span<const Latin1Character> characters, ExternalStringImplFreeFunction&& free)
@@ -76,7 +80,9 @@ ExternalStringImpl::ExternalStringImpl(std::span<const Latin1Character> characte
 {
     ASSERT(m_free);
     m_freeCtx = nullptr;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
+    // Plain relaxed store: this object is still under construction, hence
+    // provably unpublished (SPEC-vmstate §4.5).
+    m_hashAndFlags.store((m_hashAndFlags.load(std::memory_order_relaxed) & ~s_hashMaskBufferOwnership) | BufferExternal, std::memory_order_relaxed);
     m_refCount |= s_refCountFlagIsStaticString;
 }
 
@@ -86,7 +92,9 @@ ExternalStringImpl::ExternalStringImpl(std::span<const char16_t> characters, Ext
 {
     ASSERT(m_free);
     m_freeCtx = nullptr;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
+    // Plain relaxed store: this object is still under construction, hence
+    // provably unpublished (SPEC-vmstate §4.5).
+    m_hashAndFlags.store((m_hashAndFlags.load(std::memory_order_relaxed) & ~s_hashMaskBufferOwnership) | BufferExternal, std::memory_order_relaxed);
     m_refCount |= s_refCountFlagIsStaticString;
 }
 

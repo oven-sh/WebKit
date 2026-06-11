@@ -145,6 +145,11 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
 {
     static constexpr bool verbose = false;
 
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — this fast
+    // path derefs butterfly() as flat. Fall to the generic path.
+    if (source->mayBeSegmentedButterfly()) [[unlikely]]
+        return false;
+
     Structure* targetStructure = target->structure();
     Structure* sourceStructure = source->structure();
 
@@ -230,6 +235,11 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
 ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* globalObject, JSObject* source)
 {
     static constexpr bool verbose = false;
+
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — this fast
+    // path derefs butterfly() as flat. Fall to the generic path.
+    if (source->mayBeSegmentedButterfly()) [[unlikely]]
+        return nullptr;
 
     Structure* sourceStructure = source->structure();
 

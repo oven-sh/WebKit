@@ -1,0 +1,73 @@
+# WD-3 scratch patch record (EXPERIMENTER round 2, 2026-06-10).
+# Hand-written record of the temporary edits used to build
+# WebKitBuild/Release/bin/jsc-bughunt-wd3. All edits REVERTED after the
+# campaign; this file is the record. NOT FOR LANDING.
+#
+# Purpose: the H1 fix (pre-locker fire in tryCachePutBy) had already landed
+# in-tree, so WD-3 ("the 30s abort is a true positive; progress accounting
+# has no defect") needed (a) the stock defect restored env-gated, and
+# (b) the watchdog fail path to print the completed-SectionA.3-window count
+# at requestStart-arm vs at abort, so each abort log itself proves whether
+# any window completed inside the failed 30s budget.
+
+--- a/Source/JavaScriptCore/bytecode/Repatch.cpp
++++ b/Source/JavaScriptCore/bytecode/Repatch.cpp
+@@ after #include "Repatch.h"
++#include <cstdlib> // BUGHUNT WD-3 (NOT FOR LANDING): getenv.
+@@ before tryCachePutBy
++// BUGHUNT WD-3 (NOT FOR LANDING): JSC_BUGHUNT_WD3_STOCK=1 restores the
++// pre-fix defect (Class-A replacement fire UNDER codeBlock->m_lock).
++static bool bughuntWD3StockFire()
++{
++    static const bool value = !!getenv("JSC_BUGHUNT_WD3_STOCK");
++    return value;
++}
+@@ pre-locker fire block (Options::useJSThreads() branch)
+-        if (baseValue.isCell() && slot.isCacheablePut() && ...
++        if (!bughuntWD3StockFire() && baseValue.isCell() && slot.isCacheablePut() && ...
+@@ locked ExistingProperty branch
+         if (!Options::useJSThreads()) [[likely]]
+             oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
++        else if (bughuntWD3StockFire()) {
++            // stock defect: Class-A fire HERE, under codeBlock->m_lock.
++            oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
++        } else {
+             ... existing refuse-to-publish branch ...
+
+--- a/Source/JavaScriptCore/bytecode/JSThreadsSafepoint.h
++++ b/Source/JavaScriptCore/bytecode/JSThreadsSafepoint.h
+@@ after watchdogAssertStopProgress declaration
++JS_EXPORT_PRIVATE void bughuntNoteWindowsAtArm(uint64_t completedWindows);
++JS_EXPORT_PRIVATE uint64_t bughuntCompletedWindowCount(); // impl in VMManager.cpp
+
+--- a/Source/JavaScriptCore/bytecode/JSThreadsSafepoint.cpp
++++ b/Source/JavaScriptCore/bytecode/JSThreadsSafepoint.cpp
+@@ before watchdogAssertStopProgress
++static thread_local uint64_t t_bughuntWindowsAtArm { 0 };
++void bughuntNoteWindowsAtArm(uint64_t completedWindows) { t_bughuntWindowsAtArm = completedWindows; }
+@@ inside watchdogAssertStopProgress, immediately after the 30s check fails
++    dataLogLn("BUGHUNT-WD3 windowsAtArm=", t_bughuntWindowsAtArm,
++        " windowsAtAbort=", bughuntCompletedWindowCount(),
++        " budgetElapsed=", (MonotonicTime::now() - requestStart).seconds(), "s");
+
+--- a/Source/JavaScriptCore/runtime/VMManager.cpp
++++ b/Source/JavaScriptCore/runtime/VMManager.cpp
+@@ after s_jsThreadsCompletedWindowCount definition
++uint64_t JSThreadsSafepoint::bughuntCompletedWindowCount()
++{
++    return s_jsThreadsCompletedWindowCount.load(std::memory_order_relaxed);
++}
+@@ all four requestStart (re-)arm sites (initial, arbitration progress re-arm,
+@@ post-arbitration per-leg, post-GCL per-leg)
++        JSThreadsSafepoint::bughuntNoteWindowsAtArm(<current counter value>);
+
+# Campaign result (wd3-stock.out, repro.js N=4, JSC_BUGHUNT_WD3_STOCK=1):
+#   20 runs: 9 PASS, 11 WATCHDOG-ABORT (~55%).
+#   All 11 abort logs: windowsAtArm == windowsAtAbort (frozen for the full
+#   30s budget), Pending Class-A fire context non-nil (WatchpointSet
+#   Class-A fire), >=1 NON-QUIESCENT lite named.
+#   All 11 cores (bts/wd3-core.*.bt): conductor in watchdogAssertStopProgress
+#   <- stopTheWorldAndRun <- fireAllUnderClassAStop <- fireAllSlow <-
+#   didCachePropertyReplacement <- tryCachePutBy (under-lock fire), plus
+#   >=1 sibling in WTF::Lock::lockSlow at the tryCachePutBy/GetBy locker.
+# Control (same binary, env unset, fix shape active): PASS.

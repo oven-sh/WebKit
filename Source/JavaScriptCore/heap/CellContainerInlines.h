@@ -33,6 +33,8 @@
 
 namespace JSC {
 
+// SharedGC (T9): conductor-context OK — thread-agnostic round-trip to the
+// server's main VM (deviation 3); see HeapCell::vm() (HeapCellInlines.h).
 inline VM& CellContainer::vm() const
 {
     if (isPreciseAllocation())

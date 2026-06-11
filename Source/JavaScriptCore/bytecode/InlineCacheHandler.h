@@ -32,6 +32,7 @@
 #include "JITStubRoutine.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
 #include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 
 namespace JSC {
 
@@ -52,7 +53,12 @@ enum class CacheType : int8_t {
     StringLength,
 };
 
-class InlineCacheHandler : public RefCounted<InlineCacheHandler> {
+// SPEC-jit section 4.5: refcount is UNCONDITIONALLY thread-safe (not flag-
+// gated; pure C++ state, I1 unaffected). Cross-thread mutation happens when
+// (a) a native slow path Ref-protects a handler across a safepoint (I15) on
+// any mutator, and (b) a retired chain's final deref runs at epoch expiry on
+// the GC conductor (section 4.4). Covers InlineCacheHandlerWithJSCall too.
+class InlineCacheHandler : public ThreadSafeRefCounted<InlineCacheHandler> {
     WTF_MAKE_NONCOPYABLE(InlineCacheHandler);
     WTF_MAKE_TZONE_ALLOCATED(InlineCacheHandler);
     friend class InlineCacheCompiler;
@@ -67,6 +73,25 @@ public:
     CodePtr<JITStubRoutinePtrTag> jumpTarget() const { return m_jumpTarget; }
 
     void aboutToDie();
+
+    // THREADS (AB18-F): disarm the owner-clearing watchpoint of a DISPLACED
+    // handler at retire time. Flag-on, RetiredJITArtifacts::retireHandlerChain
+    // leaks (or epoch-defers) displaced chains instead of destroying them
+    // inline, so without this the watchpoint stays installed on a live
+    // WatchpointSet with m_owner pointing at a CodeBlock that can be swept
+    // long before the chain is freed — a later fire then dereferences the
+    // dead cell (sig-1 UAF family). Flag-off, publishHandlerChainHead's
+    // inline oldHead->deref() destroys the same watchpoint at the same
+    // program point. Flag-on the destruction's list unlink is serialized by
+    // g_watchpointMembershipLock inside ~Watchpoint (AB18-G): the
+    // WatchpointSet it unlinks from belongs to a stub that SharedJITStubSet
+    // can hand to OTHER CodeBlocks' ICs, whose compile paths concurrently
+    // add() to the same set under different per-CodeBlock locks — without
+    // the membership lock this remove-vs-add pair corrupts the sentinel
+    // list. JIT'd readers racing through the displaced chain never touch
+    // m_watchpoint.
+    void disarmClearingWatchpointOnRetire();
+
     bool containsPC(void* pc) const
     {
         if (!m_stubRoutine)

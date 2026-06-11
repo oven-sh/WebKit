@@ -36,13 +36,16 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CompressedLazyValueProfileHolder::LazyValue
 
 void CompressedLazyValueProfileHolder::computeUpdatedPredictions(const ConcurrentJSLocker& locker, CodeBlock* codeBlock)
 {
-    if (!m_data)
+    // THREADS/TSAN: acquire-load the lazily published holder (compiler threads
+    // race the mutator's initializeData(); see that function).
+    LazyValueProfileHolder* data = dataConcurrently();
+    if (!data)
         return;
 
-    for (auto& profile : m_data->operandValueProfiles)
+    for (auto& profile : data->operandValueProfiles)
         profile.computeUpdatedPrediction(locker);
 
-    for (auto& pair : m_data->speculationFailureValueProfileBuckets) {
+    for (auto& pair : data->speculationFailureValueProfileBuckets) {
         ValueProfile& profile = codeBlock->valueProfileForBytecodeIndex(pair.first);
         profile.computeUpdatedPredictionForExtraValue(locker, pair.second);
     }
@@ -53,9 +56,11 @@ void CompressedLazyValueProfileHolder::initializeData()
     ASSERT(!isCompilationThread());
     ASSERT(!m_data);
     auto data = makeUnique<LazyValueProfileHolder>();
-    // Make sure the initialization of the holder happens before we expose the data to compiler threads.
-    WTF::storeStoreFence();
-    m_data = WTF::move(data);
+    // Release-publish the fully constructed holder; compiler threads acquire-load
+    // it through dataConcurrently() (replaces the storeStoreFence + plain
+    // unique_ptr assignment, which TSAN cannot pair).
+    static_assert(sizeof(m_data) == sizeof(LazyValueProfileHolder*));
+    WTF::atomicStore(std::bit_cast<LazyValueProfileHolder**>(&m_data), data.release(), std::memory_order_release);
 }
 
 LazyOperandValueProfile* CompressedLazyValueProfileHolder::addOperandValueProfile(const LazyOperandValueProfileKey& key)
@@ -95,9 +100,9 @@ JSValue* CompressedLazyValueProfileHolder::addSpeculationFailureValueProfile(Byt
 UncheckedKeyHashMap<BytecodeIndex, JSValue*> CompressedLazyValueProfileHolder::speculationFailureValueProfileBucketsMap()
 {
     UncheckedKeyHashMap<BytecodeIndex, JSValue*> result;
-    if (m_data) {
-        result.reserveInitialCapacity(m_data->speculationFailureValueProfileBuckets.size());
-        for (auto& pair : m_data->speculationFailureValueProfileBuckets)
+    if (auto* data = dataConcurrently()) {
+        result.reserveInitialCapacity(data->speculationFailureValueProfileBuckets.size());
+        for (auto& pair : data->speculationFailureValueProfileBuckets)
             result.add(pair.first, &pair.second);
     }
 
@@ -108,10 +113,11 @@ void LazyOperandValueProfileParser::initialize(CompressedLazyValueProfileHolder&
 {
     ASSERT(m_map.isEmpty());
 
-    if (!holder.m_data)
+    auto* data = holder.dataConcurrently(); // THREADS/TSAN: compiler thread vs mutator's lazy publish.
+    if (!data)
         return;
 
-    for (auto& profile : holder.m_data->operandValueProfiles)
+    for (auto& profile : data->operandValueProfiles)
         m_map.add(profile.key(), &profile);
 }
 

@@ -44,6 +44,60 @@ class RegExp;
 // Following a successful match, m_result, m_lastInput and m_lastRegExp
 // can be used to reify the results from the match, following reification
 // m_reifiedResult and m_reifiedInput hold the cached results.
+//
+// =============================================================================
+// UNGIL AUD1.K2 / annex N7 RESOLVED-7 / SD19 (BINDING; U-T8b) — per-lite
+// carrier. This struct is a multi-word cache {m_result (2 words),
+// m_lastInput, m_lastRegExp} rewritten on EVERY global-flag match — by
+// DFG/FTL INLINE (RecordRegExpCachedResult consumes offsetOfResult/
+// offsetOfLastInput/offsetOfLastRegExp below) — plus a lazy reify flip
+// {m_reified + 4 reified barriers}. It is NOT lockable without putting a
+// §LK acquisition on every successful match, so the ruling is §K.1 per-lite:
+//
+//   - GIL-OFF (RUNTIME RE-POINT LANDED — TSAN wave 1: every C++ consumer of
+//     the match-result stream (RegExpConstructor.cpp, RegExpPrototype.cpp,
+//     RegExpObject.cpp / RegExpObjectInlines.h, StringPrototype.cpp /
+//     StringPrototypeInlines.h, RegExpSubstringGlobalAtomCache.cpp,
+//     DFGOperations.cpp slow paths) now routes through
+//     threadRegExpGlobalData(globalObject) (declared in JSGlobalObject.h),
+//     so record()'s five plain stores + the reify flip are single-thread-
+//     private GIL-off. vm.m_executingRegExp landed with the same wave:
+//     YarrMatchingContextHolder ctor/dtor route to the CURRENT lite's
+//     Group-4 slot (VMLite::executingRegExp) GIL-off.
+//     JIT SIDE (gated; A16-ext jit slice still open for the OPTIMIZED
+//     emission): gilOff DFG/FTL compilation can no longer write the SHARED
+//     in-object stream. DFGStrengthReductionPhase refuses foldToConstant()
+//     (which inserts RecordRegExpCachedResult) and convertTestToTestInline()
+//     when gilOff, so the generic nodes lower to the re-pointed C++
+//     operations; DFGSpeculativeJIT.cpp, DFGSpeculativeJIT64.cpp and
+//     FTLLowerDFGToB3.cpp all carry fail-stop tripwires
+//     (RecordRegExpCachedResult + RegExpTestInline) behind that gate.
+//     CLASSIFICATION (why a gate, not a deprioritized residual): an
+//     unguarded inline record interleaving with another thread's
+//     record()/lastResult() cross-pairs (m_lastInput, m_result.start/end);
+//     leftContext() then computes jsSubstring(0, m_result.start) with a
+//     start past the input's length — MEMORY-SAFETY (OOB substring /
+//     torn multi-word), NOT merely stale legacy statics, and invisible to
+//     TSAN because JIT code is uninstrumented. The A16-ext lite-resident L2
+//     slot re-point restores the inline fast path gilOff):
+//     each entered thread owns a PRIVATE RegExpGlobalData stream
+//     (carrying one RegExpCachedResult) — the per-lite side table in
+//     JSGlobalObject.cpp (threadRegExpGlobalData), GC-rooted via the
+//     global's visitChildren registry walk and freed by the lite-teardown
+//     purge (~VMLite -> purgePerLiteRealmStateForLite). SEMANTICS (SD19,
+//     GIL-off only): RegExp.$1-$9 / lastMatch / leftContext / rightContext /
+//     input observe ONLY matches performed by the CURRENT thread.
+//   - Every member access on a given copy is then single-thread-private:
+//     the reify flip and all stores stay PLAIN (no atomics needed) — per
+//     AUD1.K2's "the reify flip stays single-thread-private => plain
+//     stores".
+//   - TIERS: gilOff-mode compilation must emit
+//     loadVMLite -> liteRegExpGlobalData -> field for every offsetOf*
+//     consumer (AUD1.K4 / A16 ext; jit slice — see the activation checklist
+//     in VMLite.cpp). FLAG-OFF/GIL-ON: the baked global-object-relative
+//     address (offsetOfCachedResult chain) stays byte-identical; the
+//     offsetOf* accessors below therefore MUST NOT change meaning or layout.
+// =============================================================================
 class RegExpCachedResult {
 public:
     inline void record(VM&, JSObject* owner, RegExp*, JSString* input, MatchResult, bool oneCharacterMatch);

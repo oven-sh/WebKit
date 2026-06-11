@@ -28,6 +28,8 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "BaselineJITCode.h"
+#include "DFGJITCode.h"
 #include "FTLState.h"
 #include "JSCPtrTag.h"
 
@@ -36,6 +38,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace FTL {
 
 using namespace B3;
+
+// Handler-IC stubs are shared across tiers and address the per-tier JIT data
+// through BaselineJITData's offsets (see FTLJITCode.h). Keep all three layouts
+// in sync.
+static_assert(JITData::offsetOfGlobalObject() == BaselineJITData::offsetOfGlobalObject());
+static_assert(JITData::offsetOfStackOffset() == BaselineJITData::offsetOfStackOffset());
+static_assert(JITData::offsetOfGlobalObject() == DFG::JITData::offsetOfGlobalObject());
+static_assert(JITData::offsetOfStackOffset() == DFG::JITData::offsetOfStackOffset());
 
 JITCode::JITCode()
     : JSC::JITCode(JITType::FTLJIT)

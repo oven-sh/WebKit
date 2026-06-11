@@ -158,6 +158,28 @@ bool DesiredWatchpoints::consider(Structure* structure)
     return true;
 }
 
+bool DesiredWatchpoints::considerButterflyTransitionThreadLocal(Structure* structure)
+{
+    // E1 (SPEC-jit section 5.5). The structure is expected to be registered
+    // (RegisteredStructure), hence kept alive by the plan's weak references.
+    // state() is a racy compile-thread read; conservative (a stale IsWatched
+    // is caught by reallyAdd's hasBeenInvalidated revalidation on the main
+    // thread, which fails the compilation).
+    if (!structure->transitionThreadLocalIsValidAndWatched())
+        return false;
+    addLazily(structure->transitionThreadLocalWatchpointSet());
+    return true;
+}
+
+bool DesiredWatchpoints::considerButterflyWriteThreadLocal(Structure* structure)
+{
+    // E2 (SPEC-jit section 5.5); same protocol as E1 above.
+    if (!structure->writeThreadLocalIsValidAndWatched())
+        return false;
+    addLazily(structure->writeThreadLocalWatchpointSet());
+    return true;
+}
+
 void DesiredWatchpoints::countWatchpoints(CodeBlock* codeBlock, DesiredIdentifiers& identifiers, CommonData* commonData)
 {
     WatchpointCollector collector(*commonData);

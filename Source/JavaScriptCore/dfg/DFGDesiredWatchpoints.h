@@ -256,8 +256,33 @@ public:
     void addLazily(const ObjectPropertyCondition&);
 
     void addLazily(DesiredGlobalProperty&&);
-    
+
     bool consider(Structure*);
+
+    // SPEC-jit section 5.5 / Task 9: butterfly TTL elision (E1/E2, D9-corrected).
+    //
+    //   E1 (considerButterflyTransitionThreadLocal): while the structure's
+    //   transitionThreadLocal set is valid+watched, no instance of the
+    //   structure can have a segmented butterfly, so the segmented-dispatch
+    //   check (reads AND writes) may be elided.
+    //   E2 (considerButterflyWriteThreadLocal): while the structure's
+    //   writeThreadLocal set is valid+watched, no instance ever had the SW
+    //   bit set, so writes may elide ONLY the SW branch (predicate case (3))
+    //   and the AS SW test. The fused owner-TID compare and the case-(4)
+    //   fallback are ALWAYS emitted (D9: they are the sole F1/shared-write
+    //   detection point), and reads keep the tag mask (E3/D6).
+    //
+    // Each helper returns true and registers the set iff it is currently
+    // valid+watched (compile-thread read; revalidated under reallyAdd(), so a
+    // set fired between compilation and linking fails the compilation). The
+    // registered watchpoint is a CodeBlockJettisoningWatchpoint: a fire
+    // jettisons this code block, and under Options::useJSThreads() Class-A
+    // fires run world-stopped (SPEC-jit section 5.3/5.6), so elided code is
+    // never live concurrently with an invalidating transition. Flag-off the
+    // sets start at ClearWatchpoint and these return false (nothing emitted,
+    // I1).
+    bool considerButterflyTransitionThreadLocal(Structure*); // E1
+    bool considerButterflyWriteThreadLocal(Structure*); // E2
 
     void countWatchpoints(CodeBlock*, DesiredIdentifiers&, CommonData*);
     

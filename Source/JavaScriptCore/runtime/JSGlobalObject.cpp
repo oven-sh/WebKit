@@ -34,6 +34,7 @@
 
 #include "AggregateError.h"
 #include "SuppressedError.h"
+#include "ThreadObject.h"
 #include "InternalFieldTuple.h"
 #include "AggregateErrorConstructorInlines.h"
 #include "SuppressedErrorConstructorInlines.h"
@@ -189,6 +190,7 @@
 #include "JSSetInlines.h"
 #include "JSSetIteratorInlines.h"
 #include "JSStringIteratorInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "JSTypedArrayConstructors.h"
 #include "JSTypedArrayPrototypes.h"
 #include "JSTypedArrayViewConstructor.h"
@@ -287,6 +289,8 @@
 #include "TemporalTimeZone.h"
 #include "TemporalTimeZonePrototype.h"
 #include "TopExceptionScope.h"
+#include "VMLite.h"
+#include "VMLiteInlines.h" // UNGIL §E.1/I11 (U-T9): per-lite microtask enqueue reroute.
 #include "VMTrapsInlines.h"
 #include "WaiterListManager.h"
 #include "WasmCapabilities.h"
@@ -330,6 +334,8 @@
 #include "runtime/VM.h"
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/FixedVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/text/MakeString.h>
 
@@ -364,6 +370,8 @@ static JSC_DECLARE_HOST_FUNCTION(rejectPromise);
 static JSC_DECLARE_HOST_FUNCTION(fulfillPromise);
 static JSC_DECLARE_HOST_FUNCTION(markPromiseAsHandledHostFunction);
 static JSC_DECLARE_HOST_FUNCTION(isPromiseStatePending);
+static JSC_DECLARE_HOST_FUNCTION(claimGeneratorResume);
+static JSC_DECLARE_HOST_FUNCTION(publishGeneratorResume);
 static JSC_DECLARE_HOST_FUNCTION(resolvePromiseWithFirstResolvingFunctionCallCheck);
 static JSC_DECLARE_HOST_FUNCTION(rejectPromiseWithFirstResolvingFunctionCallCheck);
 static JSC_DECLARE_HOST_FUNCTION(fulfillPromiseWithFirstResolvingFunctionCallCheck);
@@ -671,6 +679,147 @@ namespace JSC {
 
 const ClassInfo JSGlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &globalObjectTable, nullptr, CREATE_METHOD_TABLE(JSGlobalObject) };
 
+// =============================================================================
+// UNGIL §E.1b.4 (U-T8e): host-hook disposition table — EVERY
+// globalObjectMethodTable / host-callback slot JS-reachable on a spawned TS,
+// with its GIL-off disposition. This block is the doc-of-record enumeration
+// (transcribed to INTEGRATE-ungil.md §(v) at landing); GIL-on/flag-off
+// (useJSThreads=false) behavior is unchanged for every row.
+//
+// Disposition vocabulary: {inline-safe, carrier-queued, refused-with-error,
+// unreachable-on-spawned (proof)}. "inline-safe" = the hook runs on the
+// acting (possibly spawned) thread under that thread's entry token; for
+// embedder-INSTALLED hooks an inline-safe row additionally imposes the
+// §F.6 embedder contract (hook must be thread-safe / pure; Bun-side audit
+// U-T14). "carrier-queued" = the SD15 mechanism (VM.cpp, this change).
+// "ENFORCEMENT OPEN (U-T9, <site>)" marks refused rows whose call sites are
+// outside U-T8e's owned files; this table gates U-T9, which lands them.
+//
+// --- GlobalObjectMethodTable slots (GlobalObjectMethodTable.h:58-90) -------
+//
+// supportsRichSourceInfo — INLINE-SAFE. Pure const predicate (default
+//   JSGlobalObject.h:1228 returns true). Spawned-reachable via error-stack
+//   capture and the JSONP path (Interpreter.cpp:1056/:1059). Installed
+//   overrides: §F.6 pure/thread-safe contract.
+// shouldInterruptScript — UNREACHABLE-ON-SPAWNED. Proof: NO in-tree consumer
+//   in the JSCOnly port (grep: only the table initializers in jsc.cpp /
+//   JSAPIGlobalObject.cpp reference it); the WebCore-era consumer is the
+//   watchdog client, and watchdog enforcement is carrier-only by SD14
+//   (W1 carrier service episode; W3 timer-thread arm skips the callback).
+// javaScriptRuntimeFlags — INLINE-SAFE (pure; default JSGlobalObject.h:1234).
+//   Consulted only at global-object finishCreation (this file, both
+//   JSGlobalObject::finishCreation overloads);
+//   on a spawned TS that is reachable only through
+//   deriveShadowRealmGlobalObject, itself REFUSED below.
+// shouldInterruptScriptBeforeTimeout — UNREACHABLE-ON-SPAWNED (same proof as
+//   shouldInterruptScript).
+// moduleLoaderImportModule — REFUSED-WITH-ERROR (v1 ruling): dynamic import()
+//   evaluated on a spawned TS rejects with a TypeError before the hook is
+//   consulted. Rationale: installed loaders (jsc shell, Bun) drive
+//   embedder-side fetch/IO with main-loop affinity and per-VM loader maps;
+//   no SPEC-ungil section audits a spawned-initiated module graph, and the
+//   spawned entry point is a plain function (api §5.2), so refusal loses no
+//   chartered capability. ENFORCEMENT OPEN (U-T9, JSModuleLoader.cpp:492 —
+//   importModule's hook branch; reject the internal promise when
+//   vm.gilOff() && ThreadManager::isJSThreadCurrent()).
+// moduleLoaderResolve — UNREACHABLE-ON-SPAWNED GIVEN the importModule
+//   refusal. Proof: loader pipeline steps (resolve/fetch/meta/evaluate,
+//   JSModuleLoader.cpp:508/:534/:548/:557) run only inside a module graph
+//   load, which a spawned TS can no longer initiate; pipeline microtasks of
+//   carrier-initiated graphs are registered on the carrier and their loader
+//   promises are settled by the embedder — a spawned-thread settle of an
+//   embedder loader promise would migrate the continuation (SD10) onto the
+//   spawned TS, which the §F.6(b) embedder contract forbids for loader
+//   promises (recorded as an F.6 checklist row; Bun audit U-T14).
+// moduleLoaderFetch — UNREACHABLE-ON-SPAWNED (same proof).
+// moduleLoaderCreateImportMetaProperties — UNREACHABLE-ON-SPAWNED (same
+//   proof; import.meta materializes during carrier-driven evaluation).
+// moduleLoaderEvaluate — UNREACHABLE-ON-SPAWNED (same proof).
+// promiseRejectionTracker — CARRIER-QUEUED (SD15; the §E.1b.4 BINDING
+//   ruling). Machinery landed by THIS task in VM.cpp: spawned Reject/Handle
+//   events append {promise Strong, operation} records to a leaf-lock handoff
+//   queue (no JS, no allocation beyond the record); records are flushed and
+//   EXECUTED at the §F.1 carrier drain point (VM::didExhaustMicrotaskQueue)
+//   under the carrier's token; ordering vs carrier-side events unspecified;
+//   never lost while the carrier drains; no-carrier-ever-drains leaks are
+//   declared (bounded by ~VM purge). The DEFAULT hook below is gated TODAY
+//   through VM::promiseRejected; the four installed-hook call sites
+//   (JSPromise.cpp:405/:464/:502/:637) are re-pointed by U-T9 at
+//   notifyPromiseRejectionTrackerCrossThreadAware (VM.cpp seam).
+// reportUncaughtExceptionAtEventLoop — INLINE-SAFE for the default (no-op,
+//   below at JSGlobalObject::reportUncaughtExceptionAtEventLoop). Spawned-
+//   reachable: a spawned drain's microtask throw reports on the draining
+//   thread (MicrotaskQueue.cpp:66) — SD10-consistent (continuations and
+//   their failures surface on the settling thread). The DWT site
+//   (DeferredWorkTimer.cpp:157) is registrant-routed per §E.7.5 and so runs
+//   on the registrant. Installed hooks: §F.6 thread-safe contract (Bun
+//   routing audit U-T14; if Bun requires carrier affinity it reuses the SD15
+//   record/flush shape — mechanism generalizes, no new spec needed).
+// currentScriptExecutionOwner — INLINE-SAFE (default JSGlobalObject.h:1137
+//   returns the global; pure). Spawned-reachable sites:
+//   DeferredWorkTimer.cpp:197 (addPendingWork, spawned internal arm §E.7),
+//   JSFinalizationRegistry.cpp:62.
+// scriptExecutionStatus — INLINE-SAFE (default JSGlobalObject.h:1138 returns
+//   Running; pure). Spawned-reachable at DWT dispatch
+//   (DeferredWorkTimer.cpp:129). Installed overrides: §F.6 contract.
+// reportViolationForUnsafeEval — INLINE-SAFE (default no-op,
+//   JSGlobalObject.h:1139). Spawned-reachable via eval()/Function()
+//   (Interpreter.cpp:159, FunctionConstructor.cpp:204,
+//   DirectEvalExecutable.cpp:44, IndirectEvalExecutable.cpp:45,
+//   JSGlobalObjectFunctions.cpp:491). Installed (CSP/trusted-types): §F.6.
+// defaultLanguage — INLINE-SAFE (base slot null => JSC fallback). Spawned-
+//   reachable via Intl (IntlObject.cpp:844). Installed overrides must return
+//   an isolated String (§F.6).
+// compileStreaming / instantiateStreaming — INLINE on the acting thread when
+//   installed (presence-gated, JSWebAssembly.cpp:124/:126; invoked from the
+//   draining thread's microtask, JSMicrotask.cpp:1499-1500/:1512-1513, so
+//   spawned-reachable under SD10). The streaming result settles a promise
+//   whose DWT ticket follows §E.7.5 REGISTRANT routing — a spawned
+//   registrant's settlement never routes via carrier drains. Base table /
+//   Bun: slot null => UNREACHABLE (the non-streaming fallback runs instead).
+//   jsc-shell impls enqueue onto the Wasm worklist (thread-safe).
+// deriveShadowRealmGlobalObject — REFUSED-WITH-ERROR (v1 ruling): `new
+//   ShadowRealm()` on a spawned TS throws a TypeError before the hook runs.
+//   Rationale: fresh-realm creation (JSGlobalObject::init) mutates VM-wide
+//   caches/watchpoint sets whose §K/§N rulings audited EXISTING-global
+//   access, not off-carrier realm BOOT; deferring to v1 keeps the audit
+//   honest (earlier enablement is always legal post-audit). ENFORCEMENT OPEN
+//   (U-T9, ShadowRealmObject.cpp:65 — gate ahead of the hook call).
+// codeForEval — INLINE-SAFE (default JSGlobalObject.h:1140 nullString; pure).
+//   Spawned-reachable sites Interpreter.cpp:135,
+//   JSGlobalObjectFunctions.cpp:469. Installed (trusted types): §F.6.
+// canCompileStrings — INLINE-SAFE (default JSGlobalObject.h:1141 true; pure).
+//   Sites Interpreter.cpp:149, FunctionConstructor.cpp:192,
+//   JSGlobalObjectFunctions.cpp:482. Installed: §F.6.
+// trustedScriptStructure — INLINE-SAFE (default JSGlobalObject.h:1142 null).
+//   Consulted once at realm init (this file, JSGlobalObject::init's
+//   m_trustedScriptStructure stamp), carrier-side given the
+//   shadow-realm refusal; the cached read afterwards is an ordinary GC slot.
+//
+// --- Adjacent host-callback slots (not in the method table, same audit) ----
+//
+// ConsoleClient (m_consoleClient, per-global WeakPtr) — INLINE on the acting
+//   thread. Spawned-reachable via console.*; base default null => console
+//   falls back to dataLog (serialized internally). Installed clients
+//   (inspector, Bun): §F.6 thread-safe contract; Bun audit U-T14.
+// Debugger (m_debugger) — UNREACHABLE-ON-SPAWNED by SD13 (spawned
+//   breakpoints no-op GIL-off; §A.2.7 walks happen under a §A.3 stop).
+// CrossTaskToken::createMicrotaskDispatcher / JSMicrotaskDispatcher
+//   (JSGlobalObject::queueMicrotask, this file) — INLINE at enqueue on the
+//   acting thread; the per-lite queue reroute itself is §E.1b/I11 (U-T9).
+// VM Bun hooks m_onComputeErrorInfo / m_onComputeErrorInfoJSValue /
+//   m_computeLineColumnWithSourcemap (VM.h) — INLINE on the throwing thread
+//   (Error.stack capture is spawned-reachable); §F.6 contract, Bun audit
+//   U-T14.
+// VM::m_onEachMicrotaskTick (VM.h:1538) — INLINE on the draining thread
+//   (spawned drains included); §F.6 contract, Bun audit U-T14.
+// DeferredWorkTimer onAddPendingWork/onScheduleWorkSoon/onCancelPendingWork/
+//   onCrossThreadWorkEnqueued — ruled by §E.7 (hookManaged: main/embedder
+//   registrants only; spawned tickets always take the internal arm), owned
+//   by U-T9; listed here for enumeration closure only.
+// Watchdog embedder callback — carrier-only by SD14 (W1/W3); owned by U-T2's
+//   traps/watchdog work; listed for closure.
+// =============================================================================
 const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
 {
     static constexpr GlobalObjectMethodTable table = {
@@ -802,6 +951,116 @@ JSC_DEFINE_HOST_FUNCTION(isPromiseStatePending, (JSGlobalObject*, CallFrame* cal
 {
     auto* promise = dynamicDowncast<JSPromise>(callFrame->uncheckedArgument(0));
     return JSValue::encode(jsBoolean(promise->status() == JSPromise::Status::Pending));
+}
+
+// SPEC-ungil §N.5 (BINDING; annex N7 row R7): GIL-off resume-claim twin
+// primitives for builtins/GeneratorPrototype.js + JSIteratorHelperPrototype.js
+// (the §N.5 @atomicInternalFieldClaim / @atomicInternalFieldPublish pair,
+// landed as host hooks behind the @gilOffProcess constant branch; flag-off
+// and GIL-on keep the landed inline sequence verbatim).
+//
+// SHAPE NOTE (supersession recorded in SPEC-ungil-history.md, "§N.5 LANDED
+// SHAPE" entry): this is NOT the r17 F5 lowering shape. r17 F5 prescribes
+// uniform bytecode (intrinsics emitted unconditionally in all modes) with
+// the LOWERING keyed at LLInt/Baseline on the JSCConfig gilOffProcess byte
+// and at DFG/FTL via AtomicInternalFieldClaim/Publish NODES lowering to an
+// inline CAS / release store. What landed instead keys the EMISSION (the
+// @gilOffProcess bytecode constant branch) and reaches these host hooks as
+// ordinary calls in every tier. Flag-off identity holds (the constant-false
+// branch keeps GIL-on/flag-off on the landed inline sequence); the gilOff
+// host-call cost is recorded-not-gated (§B.5), with the r17 F5 intrinsic/
+// node form the named perf contingency. Mode-keyed bytecode is sound only
+// because the derivation is process-immutable AND the disk bytecode cache
+// version is partitioned on it (JSCBytecodeCacheVersion.cpp).
+//
+// The landed resume head's check-then-store (read state; throw on Executing;
+// store Executing) is two separate accesses — GIL-off, two threads racing
+// .next() can both pass the check and both resume into one suspended frame
+// (the MC-PRIM P5 / MC-TEAR S6 hit). The ruling makes the whole head ONE
+// claim: a single-word CAS SuspendedX -> ClaimToken on the State internal
+// field. Claim FAILURE dispatches on the RE-READ (no SD): any executing
+// observation is returned as the canonical Executing so the caller throws
+// the existing "Generator is executing" TypeError (§N.5: NOT an SD);
+// Completed is terminal, never claimed, dispatched read-only by the caller.
+//
+// The claim word carries OWNER IDENTITY (a per-thread token < Executing),
+// not the plain Executing sentinel, because the resume epilogue must decide
+// "did MY resume run to completion?" by CASing ITS OWN token -> Completed:
+// after the body unclaims at a yield (the suspend-state store, ordered after
+// the frame save by BytecodeGeneratorification's gilOffProcess reorder), a
+// second thread can immediately claim — a plain "state == Executing" re-read
+// would confuse the rival's claim with our own completion and fabricate a
+// done:true carrying the yielded value (the torn-completion arm of
+// mc-prim-generator-resume-claim).
+//
+// Memory order: the claim's acquire pairs with the previous resumer's frame
+// publication — the release half is real in every tier: gilOffProcess,
+// op_put_internal_field emits a store-store fence before the field store
+// (r15 F1 "UNCLAIM transitions are store-RELEASE in ALL tiers"; LLInt
+// LowLevelInterpreter64.asm, Baseline JITPropertyAccess.cpp, DFG/FTL
+// compilePutInternalField), so the yield-side SuspendedX store publishes the
+// OpPutToScope frame saves on weak-memory targets. The winner therefore
+// reads a fully published frame; at-most-one-claimant then keeps every
+// interior store while claimed plain (§N.5).
+// States and tokens are int32 JSValues — no cell is ever stored, so no write
+// barrier is needed.
+static ALWAYS_INLINE EncodedJSValue generatorClaimTokenForCurrentThread()
+{
+    // Tokens occupy (-inf, Executing): claimGeneratorResume only ever claims
+    // values >= 0 (Init / suspend points), so a foreign token can never be
+    // claimed, and any value <= Executing reads as "executing". WTF::Thread
+    // uids are unique for the process lifetime (never recycled); the 2^30
+    // truncation can only collide two SIMULTANEOUSLY-LIVE threads whose uids
+    // differ by a multiple of 2^30 — over a billion thread creations with
+    // both endpoints alive — accepted (and the collision outcome is the
+    // pre-token done-ambiguity, not a new unsafety class).
+    int32_t token = static_cast<int32_t>(JSGenerator::State::Executing) - 1 - static_cast<int32_t>(Thread::currentSingleton().uid() & 0x3FFFFFFFu);
+    return JSValue::encode(jsNumber(token));
+}
+
+JSC_DEFINE_HOST_FUNCTION(claimGeneratorResume, (JSGlobalObject*, CallFrame* callFrame))
+{
+    // The builtin callers gate on @isGenerator / the iterator-helper
+    // generator field before calling.
+    auto* generator = uncheckedDowncast<JSGenerator>(asObject(callFrame->uncheckedArgument(0)));
+    auto& slot = generator->internalField(static_cast<unsigned>(JSGenerator::Field::State));
+    auto* word = std::bit_cast<Atomic<EncodedJSValue>*>(&slot);
+    static const EncodedJSValue executingBits = JSValue::encode(jsNumber(static_cast<int32_t>(JSGenerator::State::Executing)));
+    static const EncodedJSValue completedBits = JSValue::encode(jsNumber(static_cast<int32_t>(JSGenerator::State::Completed)));
+    const EncodedJSValue tokenBits = generatorClaimTokenForCurrentThread();
+    for (;;) {
+        EncodedJSValue observed = word->load(std::memory_order_acquire);
+        if (observed == completedBits)
+            return observed;
+        // The State field only ever holds int32 jsNumbers (states + tokens).
+        int32_t observedState = JSValue::decode(observed).asInt32();
+        if (observedState <= static_cast<int32_t>(JSGenerator::State::Executing))
+            return executingBits; // Executing or a claim token: report the canonical Executing.
+        // SuspendedX (Init or a suspend point): claim it with our token.
+        // compareExchangeWeak may fail spuriously; re-read and re-dispatch (a
+        // racing claimant may have won — the next iteration bails).
+        if (word->compareExchangeWeak(observed, tokenBits, std::memory_order_acq_rel))
+            return observed;
+    }
+}
+
+// The §N.5 UNCLAIM/publish half for the resume epilogue: CAS
+// ourToken -> Completed. Success means the body never unclaimed (no suspend
+// store overwrote our token), i.e. THIS resume ran the generator to
+// completion (or threw) => done:true. Failure means the body suspended (the
+// yield's post-save state store was the unclaim; the field now holds
+// SuspendedY, a rival's token, or Completed) => done:false for OUR resume.
+// The release on success orders the body's result publication before any
+// later claimant's acquire.
+JSC_DEFINE_HOST_FUNCTION(publishGeneratorResume, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* generator = uncheckedDowncast<JSGenerator>(asObject(callFrame->uncheckedArgument(0)));
+    auto& slot = generator->internalField(static_cast<unsigned>(JSGenerator::Field::State));
+    auto* word = std::bit_cast<Atomic<EncodedJSValue>*>(&slot);
+    static const EncodedJSValue completedBits = JSValue::encode(jsNumber(static_cast<int32_t>(JSGenerator::State::Completed)));
+    const EncodedJSValue tokenBits = generatorClaimTokenForCurrentThread();
+    EncodedJSValue witnessed = word->compareExchangeStrong(tokenBits, completedBits, std::memory_order_acq_rel);
+    return JSValue::encode(jsBoolean(witnessed == tokenBits));
 }
 
 JSC_DEFINE_HOST_FUNCTION(resolvePromiseWithFirstResolvingFunctionCallCheck, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1006,8 +1265,249 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
 {
 }
 
+// =============================================================================
+// UNGIL §K.1 per-lite realm duplicates (U-T8b; ANNEX AUD1.K2/SD19 + ALS1.3).
+//
+// Two JSGlobalObject-resident members are ruled §K.1 per-lite (annex K4):
+//
+//  - m_regExpGlobalData (AUD1.K2, K4 §0 U2, N7 RESOLVED-7; SD19): multi-word
+//    RegExp legacy-statics cache rewritten on every global-flag match,
+//    DFG/FTL-inlined (RecordRegExpCachedResult). GIL-off each entered thread
+//    owns a PRIVATE stream; RegExp.$1-$9/lastMatch/leftContext/rightContext/
+//    input observe only the CURRENT thread's matches (SD19, GIL-off only).
+//  - m_asyncContextData (ALS1.3, PRE-RULED class 1): the ALS cursor is
+//    swap-written by every job run and by Bun's enter/exit hooks; "current
+//    async context" is thread-local by definition, so the cursor reroutes
+//    per-lite. (The REROUTE of the JSPromise.cpp/JSMicrotask.cpp/
+//    JSPromisePrototype.cpp capture/restore sites is U-T9's ALS1 work; this
+//    block lands the storage + accessor + rooting + teardown those sites
+//    consume. Captured-tuple carry across threads is ALS1.1/SD10 —
+//    unaffected.)
+//
+// STORAGE: VMLite carries no L2 slot for either yet (VMLite.h is outside
+// every U-T8-wave writable set — see the A16-extension activation checklist
+// in VMLite.cpp; the JIT-addressable slot lands with the emission slice).
+// Until then the per-lite copies live in this leaf-locked side table keyed
+// (global, lite). That satisfies the three §K.1 structural duties NOW:
+//  - REGISTRY-WALK ROOTING (§A.1.3 GC-roots rule; K4 binding consequence 3):
+//    visitChildrenImpl walks this global's entries under the table lock (the
+//    M11 precedent — markers hold no other lock there) and visits the
+//    cell-holding copies.
+//  - ~VM / LITE-TEARDOWN WALK: every lite teardown path funnels through
+//    ~VMLite (walk-freed, TLS-destructor-freed, deferred — see VM.cpp's
+//    EXIT1.9 machinery), which calls purgePerLiteRealmStateForLite below —
+//    per-lite copies die with their lite, and the EXIT1.9 ~VM fence
+//    guarantees all non-main lites are gone before VM members die.
+//    Per-global entries die in ~JSGlobalObject.
+//  - CURRENT-LITE ACCESSORS: threadRegExpGlobalData / threadAsyncContextData
+//    route gilOff non-main-carrier threads to their copy; everything else
+//    (flag-off, GIL-on, the main carrier) keeps the in-object member
+//    BYTE-IDENTICALLY — the main carrier's stream IS the in-object one,
+//    matching AUD1.K2's "flag-off keeps the baked global-object-relative
+//    address" (the future lite slot for the main carrier aliases the
+//    member).
+//
+// Lock discipline: the table lock is a §LK.7 leaf; ALL cell allocation and
+// record()/create() initialization happens OUTSIDE it (alloc-outside shape,
+// §E.1b / WS1.2); losers' buffers are destroyed after release.
+//
+// RE-POINT STATUS: the AUD1.K2 runtime-consumer re-point LANDED (TSAN wave
+// 1) — every C++ consumer of the match-result stream (RegExpConstructor.cpp,
+// RegExpPrototype.cpp, RegExpObject paths, StringPrototype paths,
+// RegExpSubstringGlobalAtomCache.cpp, DFGOperations.cpp slow paths) calls
+// threadRegExpGlobalData (declared in JSGlobalObject.h). JIT SIDE: gilOff
+// compilations can no longer emit the shared-stream stores —
+// DFGStrengthReductionPhase refuses the RecordRegExpCachedResult /
+// RegExpTestInline conversions when gilOff (the generic nodes lower to the
+// re-pointed operations) and DFG + FTL both fail-stop if such a node is ever
+// reached gilOff. The residual was a MEMORY-SAFETY gap (torn multi-word
+// record -> OOB substring in leftContext()), not stale legacy statics — see
+// RegExpCachedResult.h's banner. STILL OPEN (perf only): the A16-ext jit
+// slice re-points the inline emission at the lite-resident copy so gilOff
+// regains the inline fast path. ALS1.3 STATUS (U-T9): the CAPTURE-side
+// re-point LANDED (JSPromise.cpp's five registration sites call
+// threadAsyncContextData) but the accessor's per-lite routing is GATED OFF
+// (perLiteAsyncContextCursorEnabled below) until the RESTORE-side brackets
+// (JSMicrotask.cpp save/write/run/write-back) and the then() prototype
+// fast-path capture (JSPromisePrototype.cpp) — both TUs outside U-T9's owned
+// set — land their re-point; a capture-only reroute would split the cursor
+// regime (see the gate comment). Single flip enables the whole annex.
+// =============================================================================
+
+void jsThreadsAssertNoWriteAfterFirstCrossThreadEntry(VM*); // Defined in VMLite.cpp (K4 §VIII machinery); identical self-declaration.
+void purgePerLiteRealmStateForLite(VMLite&); // Defined below; ~VMLite (VMLite.cpp) self-declares and calls it.
+
+namespace {
+
+struct PerLiteRealmState {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PerLiteRealmState);
+    std::unique_ptr<RegExpGlobalData> regExpGlobalData;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<InternalFieldTuple> asyncContextData;
+#endif
+};
+
+struct PerLiteRealmTable {
+    Lock lock; // §LK.7 leaf: nothing is acquired under it; markers take it bare (M11 shape).
+    HashMap<std::pair<JSGlobalObject*, VMLite*>, std::unique_ptr<PerLiteRealmState>> map WTF_GUARDED_BY_LOCK(lock);
+};
+
+PerLiteRealmTable& perLiteRealmTable()
+{
+    static NeverDestroyed<PerLiteRealmTable> table;
+    return table;
+}
+
+// Routing predicate: non-null iff the CURRENT thread must use a per-lite
+// copy — gilOff VM, an installed same-VM lite that is not the main carrier.
+// Everything else (flag-off, GIL-on, main carrier, unentered probes) keeps
+// the in-object member, preserving flag-off identity.
+//
+// MAIN-CARRIER KEY (GIL-removal review round): GIL-off, m_mainVMLite is
+// NEVER installed (A36 — every thread, the main one included, gets a
+// per-(thread,VM) carrier from JSLock's TLS maps), so `lite ==
+// vm.mainVMLite()` alone never matched and the banner's "the main carrier's
+// stream IS the in-object one" claim was unsatisfiable. The gilOff main
+// carrier is the MAIN THREAD's carrier — the ownerHasNoTlsDtor==true lite
+// (A36 r32 registration clause; it also borrows &vm.clientHeap, F1B) — and
+// it keeps the in-object member, matching VM::queueMicrotask/
+// drainMicrotasks' identical re-key.
+ALWAYS_INLINE VMLite* perLiteRealmRoutingLite(VM& vm)
+{
+    if (!vm.gilOff()) [[likely]]
+        return nullptr;
+    VMLite* lite = VMLite::currentIfExists();
+    if (!lite || lite == vm.mainVMLite() || lite->ownerHasNoTlsDtor || lite->vm != &vm)
+        return nullptr;
+    return lite;
+}
+
+} // anonymous namespace
+
+// Declared in JSGlobalObject.h; consumers call the ALWAYS_INLINE
+// threadRegExpGlobalData() wrapper (RegExpGlobalDataInlines.h), which routes
+// here only when gilOffWithProcessGate() is true (the AUD1.K2 consumer
+// re-point; flag-off match paths stay call-free).
+RegExpGlobalData& threadRegExpGlobalDataSlow(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    VMLite* lite = perLiteRealmRoutingLite(vm);
+    if (!lite) [[likely]]
+        return globalObject->regExpGlobalData();
+
+    auto& table = perLiteRealmTable();
+    std::pair<JSGlobalObject*, VMLite*> key { globalObject, lite };
+    {
+        Locker locker { table.lock };
+        auto it = table.map.find(key);
+        if (it != table.map.end() && it->value->regExpGlobalData)
+            return *it->value->regExpGlobalData;
+    }
+    // Alloc-outside: mirror the ctor-time seeding of the in-object stream
+    // (init()'s cachedResult().record with the empty string) so $1-$9 read
+    // as empty strings, not garbage, before this thread's first match.
+    // jsEmptyString is smallStrings — allocation-free — but record() runs
+    // barriers; none of it may run under the leaf lock.
+    auto fresh = makeUniqueWithoutFastMallocCheck<RegExpGlobalData>();
+    fresh->cachedResult().record(vm, globalObject, nullptr, jsEmptyString(vm), MatchResult(0, 0), /* oneCharacterMatch */ false);
+    Locker locker { table.lock };
+    auto result = table.map.ensure(key, [] { return makeUnique<PerLiteRealmState>(); });
+    auto& state = *result.iterator->value;
+    if (!state.regExpGlobalData)
+        state.regExpGlobalData = WTF::move(fresh);
+    return *state.regExpGlobalData; // A losing `fresh` dies at scope exit, after the locker releases.
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+InternalFieldTuple* threadAsyncContextData(JSGlobalObject*); // Self-declaration (U-T9/ALS1.3 lifts it beside m_asyncContextData's consumers).
+
+// ALS1.3 STAGING GATE (U-T9): the per-lite reroute below stays DISABLED until
+// the RESTORE-side brackets (JSMicrotask.cpp save/write/run/write-back) and
+// the then() fast-path capture (JSPromisePrototype.cpp) — both TUs outside
+// U-T9's owned file set — are re-pointed at this accessor. Enabling only the
+// CAPTURE half would SPLIT the regime: a spawned thread's job-run brackets
+// swap-write the SHARED in-object cursor while its registration-time captures
+// read a never-bracket-written per-lite copy — the bracket value is missed
+// entirely (ALS1.4 cannot pass) on top of the cross-thread clobber ALS1.3
+// exists to fix. Until the restore slice lands, EVERY thread coherently uses
+// the shared cursor (the landed pre-ALS1 regime; the documented clobber class
+// remains, unamplified). Flip this constant WITH the restore-side re-point.
+static constexpr bool perLiteAsyncContextCursorEnabled = false;
+
+InternalFieldTuple* threadAsyncContextData(JSGlobalObject* globalObject)
+{
+    if constexpr (!perLiteAsyncContextCursorEnabled)
+        return globalObject->m_asyncContextData.get();
+
+    VM& vm = globalObject->vm();
+    VMLite* lite = perLiteRealmRoutingLite(vm);
+    if (!lite) [[likely]]
+        return globalObject->m_asyncContextData.get();
+
+    auto& table = perLiteRealmTable();
+    std::pair<JSGlobalObject*, VMLite*> key { globalObject, lite };
+    {
+        Locker locker { table.lock };
+        auto it = table.map.find(key);
+        if (it != table.map.end() && it->value->asyncContextData)
+            return it->value->asyncContextData.get();
+    }
+    // A fresh thread starts with the EMPTY async context (undefined cursor)
+    // — ALS1.3 per-lite semantics. Allocated outside the leaf lock; kept
+    // alive across the gap by this frame's conservative root.
+    InternalFieldTuple* tuple = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsUndefined(), jsUndefined());
+    Locker locker { table.lock };
+    auto result = table.map.ensure(key, [] { return makeUnique<PerLiteRealmState>(); });
+    auto& state = *result.iterator->value;
+    if (!state.asyncContextData)
+        state.asyncContextData.set(vm, globalObject, tuple); // Loser's tuple is unreferenced garbage; the GC reclaims it.
+    return state.asyncContextData.get();
+}
+#endif // USE(BUN_JSC_ADDITIONS)
+
+// Lite-teardown half of the ~VM walk (K4 binding consequence 3): called from
+// ~VMLite for EVERY lite (all teardown paths funnel there). Entries are
+// detached under the leaf lock and destroyed after release.
+void purgePerLiteRealmStateForLite(VMLite& lite)
+{
+    auto& table = perLiteRealmTable();
+    Vector<std::unique_ptr<PerLiteRealmState>, 4> doomed;
+    {
+        Locker locker { table.lock };
+        table.map.removeIf([&](auto& entry) {
+            if (entry.key.second != &lite)
+                return false;
+            doomed.append(WTF::move(entry.value));
+            return true;
+        });
+    }
+    // `doomed` dies here, outside the lock (WS1.2 destroy-after-release shape).
+}
+
+// Global-death half: a global can die (GC sweep) while its VM and lites live
+// on; its per-lite entries must not outlive it (their barriers name it as
+// owner and visitChildren stops visiting them).
+static void purgePerLiteRealmStateForGlobal(JSGlobalObject* globalObject)
+{
+    auto& table = perLiteRealmTable();
+    Vector<std::unique_ptr<PerLiteRealmState>, 4> doomed;
+    {
+        Locker locker { table.lock };
+        table.map.removeIf([&](auto& entry) {
+            if (entry.key.first != globalObject)
+                return false;
+            doomed.append(WTF::move(entry.value));
+            return true;
+        });
+    }
+}
+
 JSGlobalObject::~JSGlobalObject()
 {
+    // UNGIL §K.1 (U-T8b): drop this global's per-lite realm duplicates
+    // before the member they shadow (m_regExpGlobalData) is torn down.
+    purgePerLiteRealmStateForGlobal(this);
+
     clearWeakTickets();
 #if ENABLE(REMOTE_INSPECTOR)
     protect(inspectorController())->globalObjectDestroyed();
@@ -1025,6 +1525,11 @@ void JSGlobalObject::destroy(JSCell* cell)
 
 void JSGlobalObject::setGlobalThis(VM& vm, JSObject* globalThis)
 {
+    // UNGIL annex K4 §VIII.9 (U-T8b): m_globalThis is immutable-after-init —
+    // written by finishCreation/resetPrototype before the global is shared
+    // across threads. Debug fail-stop on a write after the VM's first
+    // cross-thread entry (no-op flag-off/GIL-on and in release builds).
+    jsThreadsAssertNoWriteAfterFirstCrossThreadEntry(&vm);
     m_globalThis.set(vm, this, globalThis);
 }
 
@@ -1120,7 +1625,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void JSGlobalObject::init(VM& vm)
 {
-    ASSERT(vm.traps().isDeferringTermination());
+    ASSERT(vm.trapsForCurrentThread().isDeferringTermination()); // Per-thread deferral keying (DeferTermination.h).
     ASSERT(vm.currentThreadIsHoldingAPILock());
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
@@ -1624,6 +2129,28 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     if (Options::useSharedArrayBuffer())
         putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
+    if (Options::useJSThreads()) {
+        // Shared-memory Thread API (docs/threads/SPEC-api.md 9.2-2).
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "Thread"_s), createThreadProperty(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "Lock"_s), createLockProperty(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "Condition"_s), createConditionProperty(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "ThreadLocal"_s), createThreadLocalProperty(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "ConcurrentAccessError"_s), createConcurrentAccessErrorProperty(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+
+        // THREADS (AUD1.N3 / §K.3 LZ1 interim): the ClonedArguments and
+        // DirectArguments slow paths consult these two lazy properties from
+        // ANY thread (strict-callee poison accessor and @@iterator
+        // materialization). Until the park-capable LZ1 waiter lands in
+        // LazyPropertyInlines.h, LazyProperty::get() can return null to a
+        // thread that catches a foreign mutator mid-first-touch — so force
+        // the first touch HERE, on the owning thread, before this global can
+        // escape to a Thread(). Every later get() is then a plain non-null
+        // load (no wait loop, no livelock risk), and the values become
+        // per-realm singletons every racing arguments materializer agrees on.
+        m_arrayProtoValuesFunction.get(this);
+        m_throwTypeErrorArgumentsCalleeGetterSetter.get(this);
+    }
+
     if (Options::useExplicitResourceManagement()) {
         putDirectWithoutTransition(vm, vm.propertyNames->SuppressedError, m_suppressedErrorStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
         putDirectWithoutTransition(vm, vm.propertyNames->DisposableStack, m_disposableStackStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -2052,6 +2579,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::isPromiseStatePending)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, "isPromiseStatePending"_s, isPromiseStatePending, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::claimGeneratorResume)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "claimGeneratorResume"_s, claimGeneratorResume, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::publishGeneratorResume)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "publishGeneratorResume"_s, publishGeneratorResume, ImplementationVisibility::Private));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::resolvePromiseWithFirstResolvingFunctionCallCheck)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "resolvePromiseWithFirstResolvingFunctionCallCheck"_s, resolvePromiseWithFirstResolvingFunctionCallCheck, ImplementationVisibility::Private, ResolvePromiseWithFirstResolvingFunctionCallCheckIntrinsic));
@@ -2894,6 +3427,55 @@ void JSGlobalObject::haveABadTime(VM& vm)
     if (isHavingABadTime())
         return;
 
+    // UNGIL SPEC-ungil §K.5 class-4 (ANNEX HBT as amended by HBT2-HBT4) —
+    // AB-10 CLOSED: GIL-off, the WHOLE body from here to the end of the
+    // conversion walk runs as ONE §A.3 thread-granular stop with the calling
+    // mutator as conductor. It fires the HaveABadTime watchpoint and then
+    // iterates and rewrites OTHER threads' live objects (forEachLiveCell +
+    // SlowPutArrayStorage conversion) — silent heap/structure corruption if
+    // sibling mutators run (a sibling could allocate/store through a fast
+    // indexing mode after the watchpoint fired but before the walk saw its
+    // array). Routing through JSThreadsSafepoint::stopTheWorldAndRun gives
+    // the HBT4-ordered conductor sequence (release access -> §A.3.3
+    // arbitration -> GCL -> fan -> predicate wait), the HBT3.2 in-window
+    // re-acquisition of the conductor's OWN client access (which is what
+    // licenses the Class-4 allocating body: ArrayStorage conversion, Vector
+    // growth, slow-put structure creation), and the HBT2.2 no-GC-in-window
+    // I14 bracket (GC initiation inside the window defers; the function-
+    // scoped DeferGC below dies inside the closure and its exit check
+    // re-runs on the conductor after resume).
+    //
+    // HBT item 1/2: arbitration losers park and retry; the post-arbitration
+    // isHavingABadTime() re-check inside the closure makes double entry for
+    // the SAME global idempotent (another thread may have completed the same
+    // transition while we waited); DIFFERENT globals' calls serialize through
+    // the same arbitration, each running its own complete stop. A nested call
+    // from inside an already-open window (R1.h) runs inline under the
+    // conductor's witness. The CONCURRENT-COMPILER half is unchanged: the
+    // jit I2/R1 watchpoint/jettison protocol covers compiler threads, which
+    // do not park under §A.3.
+    //
+    // GIL-on/flag-off: unchanged — the GIL is the serializer; no stop is
+    // requested (one predicted-false byte test).
+    if (vm.gilOff()) [[unlikely]] {
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+            // ANNEX HBT item 2: conductor re-checks isHavingABadTime() after
+            // winning arbitration — a sibling may have completed this
+            // global's transition while we waited.
+            if (isHavingABadTime())
+                return;
+            haveABadTimeImpl(vm);
+        }));
+        return;
+    }
+
+    haveABadTimeImpl(vm);
+}
+
+void JSGlobalObject::haveABadTimeImpl(VM& vm)
+{
+    ASSERT(!isHavingABadTime());
+
     DeferGC deferGC(vm);
 
     // Consider the following objects and prototype chains:
@@ -3263,6 +3845,26 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_typedArrayProto.visit(visitor);
     thisObject->m_typedArraySuperConstructor.visit(visitor);
     thisObject->m_regExpGlobalData.visitAggregate(visitor);
+
+    {
+        // UNGIL §K.1 registry-walk rooting (U-T8b; AUD1.K2 + ALS1.3): the
+        // per-lite duplicates of m_regExpGlobalData / m_asyncContextData hold
+        // cells owned by this global and MUST be scanned whenever the global
+        // is (K4 binding consequence 3). Leaf lock; markers hold no other
+        // lock here (the M11 m_microtaskQueues precedent). Entries for other
+        // globals are skipped — they are visited with their own owner.
+        auto& table = perLiteRealmTable();
+        Locker locker { table.lock };
+        for (auto& entry : table.map) {
+            if (entry.key.first != thisObject)
+                continue;
+            if (entry.value->regExpGlobalData)
+                entry.value->regExpGlobalData->visitAggregate(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+            visitor.append(entry.value->asyncContextData);
+#endif
+        }
+    }
 
     {
         if (thisObject->m_weakTickets) {
@@ -3768,6 +4370,14 @@ void JSGlobalObject::setIsITML()
 
 void JSGlobalObject::setName(const String& name)
 {
+    // UNGIL annex K4 §VIII.9 (U-T8b): m_name is immutable-after-init —
+    // embedder configuration written before the global is shared across
+    // threads. A post-entry write would race foreign readers on a
+    // non-atomic two-word refcounted String (torn pointer + non-atomic
+    // ref). Debug fail-stop after the VM's first cross-thread entry
+    // (no-op flag-off/GIL-on and in release builds), same wiring as
+    // setGlobalThis.
+    jsThreadsAssertNoWriteAfterFirstCrossThreadEntry(&vm());
     m_name = name;
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -3818,6 +4428,33 @@ void JSGlobalObject::queueMicrotask(VM& vm, QueuedTask&& task)
         queueMicrotaskSlow(vm, WTF::move(task));
         return;
     }
+    // UNGIL §E.1/I11 (U-T9): GIL-off, a SPAWNED thread's enqueue is ALWAYS
+    // per-lite — the realm-bound m_microtaskQueue aliases the VM default
+    // queue, which only the carrier may drain; routing there would let two
+    // threads enqueue/drain one queue (I11/U22 break, r22). The X1.7 host
+    // hook (queueMicrotaskToEventLoop) is consulted only on carrier paths;
+    // its default forwards here and reroutes identically. Flag-off/GIL-on/
+    // main carrier: the landed enqueue, byte-identical.
+    if (VMLite* lite = perLiteRealmRoutingLite(vm)) [[unlikely]] {
+        lite->enqueueMicrotaskToDefaultQueue(WTF::move(task));
+        return;
+    }
+    // UNGIL §E.1/§E.4 (TSAN family 30, wave-2 amendment): mirror
+    // VM::queueMicrotask's third arm. perLiteRealmRoutingLite() returns null
+    // not only for the owning main carrier but also when the calling thread
+    // has NO current lite (pre-carrier window) or a FOREIGN lite
+    // (lite->vm != &vm, cross-VM reentry) — and gilOff the realm-bound queue
+    // aliases the VM default queue, which only the main thread's carrier may
+    // touch plainly. Such an enqueue must go through the queue's
+    // lock-guarded foreign inbox (release(enqueuer)/acquire(drain splice)
+    // publishes the task's words before the carrier dequeues/runs/frees
+    // them); a plain enqueue here is the corruption-grade unsynchronized
+    // Deque write racing the carrier's drain. Flag-off/GIL-on: gilOff() is
+    // false, branch not taken, landed enqueue byte-identical.
+    if (vm.gilOff() && !WTF::isMainThread()) [[unlikely]] {
+        microtaskQueue().enqueueFromForeignThread(WTF::move(task));
+        return;
+    }
     microtaskQueue().enqueue(WTF::move(task));
 }
 
@@ -3845,6 +4482,21 @@ void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
         if (microtaskQueue().isPerformingMicrotaskCheckpoint() && incumbentRealmIs(vm, this)) [[unlikely]]
             return;
     }
+    // UNGIL §E.1/I11 (U-T9): the slow path's dispatcher decoration ran
+    // INLINE on the acting thread (the U-T8e CrossTaskToken disposition);
+    // the storage routing is the same per-lite reroute as the fast path.
+    if (VMLite* lite = perLiteRealmRoutingLite(vm)) [[unlikely]] {
+        lite->enqueueMicrotaskToDefaultQueue(WTF::move(task));
+        return;
+    }
+    // Same foreign-inbox arm as the fast path above (UNGIL §E.1/§E.4,
+    // family 30 wave-2 amendment): a gilOff enqueue from a non-owner thread
+    // (no-lite window or foreign-VM lite) must not touch the owner's plain
+    // Deque.
+    if (vm.gilOff() && !WTF::isMainThread()) [[unlikely]] {
+        microtaskQueue().enqueueFromForeignThread(WTF::move(task));
+        return;
+    }
     microtaskQueue().enqueue(WTF::move(task));
 }
 
@@ -3861,6 +4513,15 @@ void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue)
     m_microtaskQueue = WTF::move(queue);
 }
 
+// UNGIL §E.1b.4/SD15 (U-T8e): the DEFAULT tracker. Disposition CARRIER-QUEUED
+// — but the gating lives in VM::promiseRejected (VM.cpp), the hook's only
+// effectful arm: a spawned caller's Reject event becomes a handoff record
+// there, and the carrier flush re-enters this hook on the carrier, where
+// promiseRejected appends to the carrier-confined
+// m_aboutToBeNotifiedRejectedPromises vector. Handle is a no-op for the
+// default tracker on any thread (didExhaustMicrotaskQueue re-checks
+// isHandled() at report time, so a late Handle is absorbed). This function
+// therefore stays bit-identical on every thread and in flag-off mode.
 void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
 {
     switch (operation) {
@@ -3874,6 +4535,10 @@ void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPro
     }
 }
 
+// UNGIL §E.1b.4 (U-T8e): disposition INLINE-SAFE — the default is a no-op on
+// any thread. Spawned drains report on the draining thread (SD10-consistent);
+// installed hooks carry the §F.6 thread-safe contract (see the disposition
+// table at baseGlobalObjectMethodTable).
 void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*)
 {
 }
@@ -3986,7 +4651,16 @@ FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionCon
     if (!defaultCodeGenerationMode().isEmpty())
         return nullptr;
 
-    auto* executable = m_executableForCachedFunctionExecutableForFunctionConstructor.get();
+    // Copy the cell pointer out of the Weak slot under the leaf lock: a concurrent
+    // cachedFunctionExecutableForFunctionConstructor() performs Weak::set, which swaps and
+    // deallocates the previous WeakImpl; a lock-free Weak::get here could dereference that
+    // freed WeakImpl (TSAN triage §8.36). Once copied to the stack the cell itself is kept
+    // alive by conservative scanning, so all further inspection happens outside the lock.
+    FunctionExecutable* executable;
+    {
+        Locker locker { m_functionConstructorExecutableCacheLock };
+        executable = m_executableForCachedFunctionExecutableForFunctionConstructor.get();
+    }
     if (!executable)
         return nullptr;
 
@@ -4033,7 +4707,20 @@ void JSGlobalObject::cachedFunctionExecutableForFunctionConstructor(FunctionExec
     auto* unlinkedExecutable = executable->unlinkedExecutable();
     if (unlinkedExecutable->features() & NoEvalCacheFeature)
         return;
-    m_executableForCachedFunctionExecutableForFunctionConstructor.set(vm(), executable);
+    // SPEC-ungil §LK WS row (i): Weak CREATION (MSPL under ISS) is forbidden
+    // under leaf locks — the WeakImpl allocation can hit a heap slow path
+    // that parks at a safepoint, and a second mutator blocked on this lock
+    // would then be safepoint-blind (the ab17b watchdog-timeout family).
+    // Construct the Weak BEFORE the lock, publish under it with a pointer
+    // swap only, and let the displaced Weak's WeakSet::deallocate run AFTER
+    // the lock is released.
+    Weak<FunctionExecutable> newWeak(executable);
+    {
+        Locker locker { m_functionConstructorExecutableCacheLock };
+        m_executableForCachedFunctionExecutableForFunctionConstructor.swap(newWeak);
+    }
+    // `newWeak` now holds the displaced previous Weak (possibly empty) and
+    // deallocates it here, outside the lock.
 }
 
 #if ENABLE(REMOTE_INSPECTOR)

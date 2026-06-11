@@ -344,9 +344,16 @@ public:
 
     BytecodeLivenessAnalysis& livenessAnalysis(CodeBlock* codeBlock)
     {
-        if (m_liveness)
-            return *m_liveness;
+        // THREADS/TSAN: acquire-load the lazily published analysis (two compiler
+        // threads / mutators can race livenessAnalysisSlow's locked publish).
+        if (BytecodeLivenessAnalysis* liveness = livenessConcurrently())
+            return *liveness;
         return livenessAnalysisSlow(codeBlock);
+    }
+
+    BytecodeLivenessAnalysis* livenessConcurrently() const
+    {
+        return WTF::atomicLoad(std::bit_cast<BytecodeLivenessAnalysis**>(const_cast<std::unique_ptr<BytecodeLivenessAnalysis>*>(&m_liveness)), std::memory_order_acquire);
     }
 
 #if ENABLE(DFG_JIT)
@@ -445,6 +452,18 @@ private:
 public:
     ConcurrentJSLock m_lock;
 #if ENABLE(JIT)
+    // UNGIL: with the GIL off, N mutators can finalize baseline plans of the same
+    // UnlinkedCodeBlock concurrently (CodeBlock::setupWithUnlinkedBaselineCode), so the
+    // shareable baseline code install is first-wins under m_lock, and any read that can
+    // race the install must snapshot through unlinkedBaselineCodeConcurrently() instead of
+    // touching m_unlinkedBaselineCode directly — a bare RefPtr load racing the install is a
+    // torn-pointer / ref-count hazard, not advisory profiling. Once installed, the value is
+    // never replaced or cleared for the lifetime of this UnlinkedCodeBlock. Both paths are
+    // cold (tier-up / plan creation), so the lock is fine. Definitions live in CodeBlock.cpp
+    // next to the installer (BaselineJITCode is incomplete here). Flag-off the lock is
+    // uncontended and behavior is unchanged.
+    RefPtr<BaselineJITCode> unlinkedBaselineCodeConcurrently();
+    void installUnlinkedBaselineCodeIfAbsent(Ref<BaselineJITCode>&&);
     RefPtr<BaselineJITCode> m_unlinkedBaselineCode;
 #endif
 private:

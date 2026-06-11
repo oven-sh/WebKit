@@ -7421,6 +7421,27 @@ public:
     }
 #endif
 
+#if OS(LINUX)
+    // ELF initial-exec TLS load: one %fs-prefixed 64-bit load at a constant
+    // (typically negative) offset from the thread pointer, baked as an
+    // immediate at emission. The offset comes from
+    // JSC::butterflyTIDTagELFTLSOffset() (jit/ConcurrentButterflyOperations.h),
+    // which RELEASE_ASSERTs it is thread-invariant (SPEC-jit-annex App. R5;
+    // SPEC-jit R5/Task 1b). The disp32 is sign-extended by the hardware, so
+    // negative TPOFFs encode correctly.
+    void loadFromELFTLS64(intptr_t offset, RegisterID dst)
+    {
+        RELEASE_ASSERT(offset == static_cast<intptr_t>(static_cast<int32_t>(offset)));
+        m_assembler.fs();
+        m_assembler.movq_mr(static_cast<uint32_t>(static_cast<int32_t>(offset)), dst);
+    }
+
+    static bool loadFromELFTLS64NeedsMacroScratchRegister()
+    {
+        return false;
+    }
+#endif
+
     void truncateDoubleToUint32(FPRegisterID src, RegisterID dest)
     {
         if (supportsAVX())

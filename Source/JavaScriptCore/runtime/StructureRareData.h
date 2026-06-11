@@ -28,9 +28,12 @@
 #include "ClassInfo.h"
 #include "JSCast.h"
 #include "JSTypeInfo.h"
+#include "Options.h"
 #include "PropertyOffset.h"
 #include "PropertySlot.h"
+#include <wtf/Atomics.h>
 #include <wtf/FixedVector.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -80,10 +83,27 @@ public:
 
     Structure* previousID() const
     {
-        return m_previous.get();
+        // TSAN family structure-fields: read lock-free from Structure::
+        // previousID() while clearPreviousID()/the allocateRareData refresh
+        // loop write the word (flag-on). One relaxed atomic 32-bit load of
+        // the StructureID word — identical codegen to m_previous.get()'s
+        // single-read-to-local pattern (webkit.org/b/110854), now also
+        // C++-defined against the concurrent writers.
+        static_assert(sizeof(WriteBarrierStructureID) == sizeof(uint32_t));
+        StructureID id = std::bit_cast<StructureID>(WTF::atomicLoad(reinterpret_cast<uint32_t*>(const_cast<WriteBarrierStructureID*>(&m_previous)), std::memory_order_relaxed));
+        if (!id)
+            return nullptr;
+        return id.decode();
     }
     void setPreviousID(VM&, Structure*);
     void clearPreviousID();
+    void clearPreviousIDConcurrently()
+    {
+        // Relaxed atomic twin of clearPreviousID() for the flag-on CAS path
+        // in Structure::clearPreviousID (Structure.h): previousID() readers
+        // are lock-free relative to this writer.
+        WTF::atomicStore(reinterpret_cast<uint32_t*>(&m_previous), 0u, std::memory_order_relaxed);
+    }
 
     JSValue cachedSpecialProperty(CachedSpecialPropertyKey) const;
     void cacheSpecialProperty(JSGlobalObject*, VM&, Structure* baseStructure, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
@@ -93,15 +113,65 @@ public:
     void setCachedPropertyNameEnumerator(VM&, Structure*, JSPropertyNameEnumerator*, StructureChain*);
     void clearCachedPropertyNameEnumerator();
 
+    // TSAN family structure-fields (AUD1.N4(3)): flag-on teardown/replacement
+    // of the enumerator cache outside a stop-the-world window. Callers hold
+    // the owning Structure's m_lock. The StructureChainInvalidationWatchpoint
+    // FixedVector is MOVED to m_retiredCachedPropertyNameEnumeratorWatchpoints
+    // instead of freed — the watchpoints stay reachable through watched
+    // structures' transition watchpoint sets until the GC retires them in
+    // finalizeUnconditionally (mutators stopped). Defined in
+    // StructureRareData.cpp.
+    void retireCachedPropertyNameEnumeratorWatchpoints();
+    void clearCachedPropertyNameEnumeratorRetiringWatchpoints();
+
     JSCellButterfly* cachedPropertyNames(CachedPropertyNamesKind) const;
     JSCellButterfly* cachedPropertyNamesIgnoringSentinel(CachedPropertyNamesKind) const;
     JSCellButterfly* cachedPropertyNamesConcurrently(CachedPropertyNamesKind) const;
     void setCachedPropertyNames(VM&, CachedPropertyNamesKind, JSCellButterfly*);
 
-    Box<InlineWatchpointSet> copySharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
+    // TSAN family structure-fields (§10.9 item (4), "Box reassign" key):
+    // flag-on the poly-proto Box's single pointer word is PUBLISH-ONCE — the
+    // setter CAS-installs from null with winner-keeps (loser's Box is
+    // deref'd locally; it was never published, so nothing a foreign reader
+    // can hold is ever displaced or freed under it — no GC-deferred retire
+    // needed once replacement cannot happen). The copy accessor loads the
+    // word with a relaxed atomic before taking its (thread-safe) ref.
+    // Flag-off arms are bit-identical to the old plain code. Residual
+    // (recorded for the triage doc): sharedPolyProtoWatchpoint() still
+    // returns a const reference, so foreign call sites (LLIntSlowPaths.cpp,
+    // InlineCacheCompiler.cpp — other slices' files) dereference the word
+    // with a plain load; closing that pair needs a by-value accessor (a
+    // flag-off codegen change at those call sites) or caller-side edits.
+    Box<InlineWatchpointSet> copySharedPolyProtoWatchpoint() const
+    {
+        if (!Options::useJSThreads()) [[likely]]
+            return m_polyProtoWatchpoint;
+        return copySharedPolyProtoWatchpointConcurrently();
+    }
     const Box<InlineWatchpointSet>& sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
-    void setSharedPolyProtoWatchpoint(Box<InlineWatchpointSet>&& sharedPolyProtoWatchpoint) { m_polyProtoWatchpoint = WTF::move(sharedPolyProtoWatchpoint); }
-    bool hasSharedPolyProtoWatchpoint() const { return static_cast<bool>(m_polyProtoWatchpoint); }
+    void setSharedPolyProtoWatchpoint(Box<InlineWatchpointSet>&& sharedPolyProtoWatchpoint)
+    {
+        if (!Options::useJSThreads()) [[likely]] {
+            m_polyProtoWatchpoint = WTF::move(sharedPolyProtoWatchpoint);
+            return;
+        }
+        setSharedPolyProtoWatchpointConcurrently(WTF::move(sharedPolyProtoWatchpoint));
+    }
+    bool hasSharedPolyProtoWatchpoint() const { return !!sharedPolyProtoWatchpointWord(); }
+
+    // Identity-only raw view of the poly-proto Box's pointer word, for
+    // callers that need null/equality checks without taking a ref
+    // (Structure::shouldConvertToPolyProto). Relaxed atomic single-word load
+    // — identical codegen to the plain load it replaces, defined against the
+    // flag-on CAS installer.
+    uintptr_t sharedPolyProtoWatchpointWord() const
+    {
+        static_assert(sizeof(Box<InlineWatchpointSet>) == sizeof(uintptr_t));
+        return WTF::atomicLoad(reinterpret_cast<uintptr_t*>(const_cast<Box<InlineWatchpointSet>*>(&m_polyProtoWatchpoint)), std::memory_order_relaxed);
+    }
+
+    JS_EXPORT_PRIVATE Box<InlineWatchpointSet> copySharedPolyProtoWatchpointConcurrently() const;
+    JS_EXPORT_PRIVATE void setSharedPolyProtoWatchpointConcurrently(Box<InlineWatchpointSet>&&);
 
     static JSCellButterfly* cachedPropertyNamesSentinel() { return std::bit_cast<JSCellButterfly*>(static_cast<uintptr_t>(1)); }
 
@@ -132,6 +202,13 @@ public:
     static constexpr uintptr_t cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag = 1;
     static constexpr uintptr_t cachedPropertyNameEnumeratorMask = ~static_cast<uintptr_t>(1);
 
+    // Flag-off (single mutator inside the VM): exact, plain counter. Flag-on
+    // (useJSThreads) the counter is ADVISORY ONLY: it is incremented under
+    // Structure::m_lock at set creation, but the fire path never consults it
+    // — Structure::firePropertyReplacementWatchpointSet instead rescans
+    // m_replacementWatchpointSets under m_lock before clearing
+    // isWatchingReplacement (see the T3-residual comment there). Do not add
+    // flag-on callers that trust this counter.
     unsigned incrementActiveReplacementWatchpointSet()
     {
         return ++m_activeReplacementWatchpointSet;
@@ -160,10 +237,44 @@ private:
 
     bool tryCachePropertyNameEnumeratorViaWatchpoint(VM&, Structure*, StructureChain*);
 
+    // TSAN family structure-fields (§8.9 clause 3, the 32 enumerator-cache
+    // keys): this word is written under the owning Structure's m_lock by the
+    // install path (StructureRareDataInlines.h setCachedPropertyNameEnumerator)
+    // and by the clear paths, but read single-word LOCK-FREE by foreign fast
+    // paths, the LLInt (loadp m_cachedPropertyNameEnumeratorAndFlag) and the
+    // JIT; the plain C++ reads/writes in StructureRareDataInlines.h raced the
+    // relaxed atomic clear in clearCachedPropertyNameEnumeratorRetiringWatchpoints.
+    // The wrapper routes EVERY C++ access through relaxed atomics (identical
+    // mov/ldr/str codegen) without touching the inlines header (another
+    // slice's file): layout is a single uintptr_t word, so the LLInt/JIT
+    // offset reads are unchanged.
+    class RelaxedAtomicUintPtr {
+    public:
+        // §10.9 fixShape (1): construct through a relaxed atomic store too —
+        // an NSDMI/default-member-init is a plain store that TSAN pairs
+        // against the lock-free readers of recycled rare-data cells.
+        // Identical single-store codegen.
+        RelaxedAtomicUintPtr() { WTF::atomicStore(&m_word, static_cast<uintptr_t>(0), std::memory_order_relaxed); }
+        operator uintptr_t() const { return WTF::atomicLoad(const_cast<uintptr_t*>(&m_word), std::memory_order_relaxed); }
+        RelaxedAtomicUintPtr& operator=(uintptr_t value)
+        {
+            WTF::atomicStore(&m_word, value, std::memory_order_relaxed);
+            return *this;
+        }
+
+    private:
+        uintptr_t m_word;
+    };
+    static_assert(sizeof(RelaxedAtomicUintPtr) == sizeof(uintptr_t));
+
     // FIXME: We should have some story for clearing these property names caches in GC.
     // https://bugs.webkit.org/show_bug.cgi?id=192659
-    uintptr_t m_cachedPropertyNameEnumeratorAndFlag { 0 };
+    RelaxedAtomicUintPtr m_cachedPropertyNameEnumeratorAndFlag;
     FixedVector<StructureChainInvalidationWatchpoint> m_cachedPropertyNameEnumeratorWatchpoints;
+    // GC-retirement parking lot for replaced/cleared enumerator watchpoint
+    // vectors (flag-on only; always empty flag-off). Drained in
+    // finalizeUnconditionally. See retireCachedPropertyNameEnumeratorWatchpoints().
+    Vector<FixedVector<StructureChainInvalidationWatchpoint>> m_retiredCachedPropertyNameEnumeratorWatchpoints;
     WriteBarrier<JSCellButterfly> m_cachedPropertyNames[numberOfCachedPropertyNames] { };
 
     typedef UncheckedKeyHashMap<PropertyOffset, RefPtr<WatchpointSet>, WTF::IntHash<PropertyOffset>, WTF::UnsignedWithZeroKeyHashTraits<PropertyOffset>> PropertyWatchpointMap;

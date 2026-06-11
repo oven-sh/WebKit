@@ -85,15 +85,20 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
     } else
         catchRoutine = LLInt::handleUncaughtException(vm).code().taggedPtr();
 
-    ASSERT(std::bit_cast<uintptr_t>(callFrame) < std::bit_cast<uintptr_t>(vm.topEntryFrame));
+    // UNGIL §A.1.3 mode split: GIL-off publishes via the lite; the raw VM word is inert.
+    // One hoisted carrier for the whole assert + Group-2 catch handoff publish, matching
+    // the lite-side LLInt consumers (llint_op_catch reads VMLitePrimitives::callFrameForCatch
+    // / targetMachinePCForThrow from the lite GIL-off).
+    VMLitePrimitives& primitives = vm.group3Primitives();
+    ASSERT(std::bit_cast<uintptr_t>(callFrame) < std::bit_cast<uintptr_t>(primitives.topEntryFrame));
 
     assertIsTaggedWith<ExceptionHandlerPtrTag>(catchRoutine);
-    vm.callFrameForCatch = callFrame;
-    vm.targetMachinePCForThrow = catchRoutine;
-    vm.targetMachinePCAfterCatch = dispatchAndCatchRoutine;
-    vm.targetInterpreterPCForThrow = catchPCForInterpreter;
-    vm.targetInterpreterMetadataPCForThrow = catchMetadataPCForInterpreter;
-    vm.targetTryDepthForThrow = tryDepthForThrow;
+    primitives.callFrameForCatch = callFrame;
+    primitives.targetMachinePCForThrow = catchRoutine;
+    primitives.targetMachinePCAfterCatch = dispatchAndCatchRoutine;
+    primitives.targetInterpreterPCForThrow = catchPCForInterpreter;
+    primitives.targetInterpreterMetadataPCForThrow = catchMetadataPCForInterpreter;
+    primitives.targetTryDepthForThrow = tryDepthForThrow;
     
     RELEASE_ASSERT(catchRoutine);
 }

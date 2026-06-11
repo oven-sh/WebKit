@@ -27,6 +27,7 @@
 
 #include "JITStubRoutine.h"
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Range.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -66,12 +67,29 @@ public:
     template<typename Visitor> void traceMarkedStubRoutines(Visitor&);
     
 private:
+    void addImpl(GCAwareJITStubRoutine*);
     void markSlow(uintptr_t address);
-    
+
     struct Routine {
         uintptr_t startAddress;
         GCAwareJITStubRoutine* routine;
     };
+    // THREADS (AB18-F; flag-gated in AB18-G): serializes add() only, and only
+    // under Options::useJSThreads() (flag-off has exactly one mutator; the
+    // standing ab17c rule forbids new unconditional flag-off work). Under
+    // useJSThreads/useVMLite every thread shares this one Heap, and
+    // makeGCAware() runs on mutator IC-miss slow paths holding only
+    // per-CodeBlock locks — two mutators missing on different CodeBlocks
+    // reach add() concurrently, and an unlocked Vector::append is a
+    // torn-size/lost-entry corruption. Every other member function
+    // (clearMarks / prepareForConservativeScan / markSlow /
+    // traceMarkedStubRoutines / deleteUnmarkedJettisonedStubRoutines /
+    // destructor) runs with mutators stopped (GC phases / VM death) and
+    // deliberately stays lock-free. PRECONDITION recorded for SPEC-congc:
+    // that lock-free claim holds only while every GC phase touching this set
+    // stays STW; N-mutator concurrent marking must either keep these phases
+    // inside a stop or extend m_lock's coverage.
+    Lock m_lock;
     Vector<Routine> m_routines;
     Vector<GCAwareJITStubRoutine*> m_immutableCodeRoutines;
     Range<uintptr_t> m_range { 0, 0 };

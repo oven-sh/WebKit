@@ -66,6 +66,7 @@
 #include "JSSet.h"
 #include "JSString.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "JSThreadsSafepoint.h"
 #include "LLIntData.h"
 #include "LLIntEntrypoint.h"
 #include "LLIntExceptions.h"
@@ -78,6 +79,7 @@
 #include "ProgramCodeBlock.h"
 #include "PropertyInlineCache.h"
 #include "ReduceWhitespace.h"
+#include "RetiredJITArtifacts.h"
 #include "SlotVisitorInlines.h"
 #include "SourceProvider.h"
 #include "StackVisitor.h"
@@ -87,6 +89,7 @@
 #include <wtf/Forward.h>
 #include <wtf/SimpleStats.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/ThreadSanitizerSupport.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 #if ENABLE(ASSEMBLER)
@@ -304,9 +307,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
-    , m_didFailJITCompilation(false)
-    , m_didFailFTLCompilation(false)
-    , m_hasBeenCompiledWithFTL(false)
     , m_isJettisoned(false)
     , m_numCalleeLocals(other.m_numCalleeLocals)
     , m_numVars(other.m_numVars)
@@ -342,6 +342,15 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
+    // TSAN §18 mop-up (residual-2 "CodeBlock VM* const m_vm" /
+    // m_couldBeTainted): publication choke point for the recycled-cell
+    // class — pairs with the HAPPENS_AFTER in CodeBlock::vmConcurrentProbe()
+    // (NOT plain vm(); narrowed at the thread-closeout final review). The const
+    // member and the size-capped bit-fields cannot become atomics; the real
+    // edge is the sweep/freelist hand-out protocol (TSAN-blind), and stale
+    // probes are blessed by the wave-7 staleness adjudication. No-op
+    // outside TSAN.
+    TSAN_ANNOTATE_HAPPENS_BEFORE(this);
 }
 
 void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
@@ -361,9 +370,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
-    , m_didFailJITCompilation(false)
-    , m_didFailFTLCompilation(false)
-    , m_hasBeenCompiledWithFTL(false)
     , m_isJettisoned(false)
     , m_numCalleeLocals(unlinkedCodeBlock->numCalleeLocals())
     , m_numVars(unlinkedCodeBlock->numVars())
@@ -392,6 +398,15 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
+    // TSAN §18 mop-up (residual-2 "CodeBlock VM* const m_vm" /
+    // m_couldBeTainted): publication choke point for the recycled-cell
+    // class — pairs with the HAPPENS_AFTER in CodeBlock::vmConcurrentProbe()
+    // (NOT plain vm(); narrowed at the thread-closeout final review). The const
+    // member and the size-capped bit-fields cannot become atomics; the real
+    // edge is the sweep/freelist hand-out protocol (TSAN-blind), and stale
+    // probes are blessed by the wave-7 staleness adjudication. No-op
+    // outside TSAN.
+    TSAN_ANNOTATE_HAPPENS_BEFORE(this);
 }
 
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process
@@ -577,7 +592,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
             ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_resolveType, InitializationMode::NotInitialization);
 
-            metadata.m_resolveType = op.type;
+            WTF::atomicStore(&metadata.m_resolveType, static_cast<ResolveType>(op.type), std::memory_order_relaxed); // THREADS: lock-free readers load this atomically.
             metadata.m_localScopeDepth = op.depth;
             if (op.lexicalEnvironment) {
                 if (op.type == ModuleVar) {
@@ -615,8 +630,20 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), ClosureVar, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
             if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
                 metadata.m_watchpointSet = op.watchpointSet;
-            else if (op.structure)
-                metadata.m_structureID.set(vm, this, op.structure);
+            else if (op.structure) {
+                // SPEC-jit §5.5 (review round 1): flag-on, the GlobalProperty
+                // structure cache is never armed (m_structureID stays null, so
+                // loadScopeWithStructureCheck always misses and the access
+                // stays on the C++ slow path). Two reasons: (1) the global
+                // object's structure is routinely a cacheable DICTIONARY,
+                // whose accesses must take the structure lock (THREAD.md);
+                // (2) runtime re-caching is disabled flag-on (metadata frozen
+                // post-link; see LLIntSlowPaths/JITOperations), and arming
+                // only the link-time snapshot is not worth carrying the
+                // dictionary/R7 audit burden. Conservative: sound, slower.
+                if (!Options::useJSThreads()) [[likely]]
+                    metadata.m_structureID.set(vm, this, op.structure);
+            }
             metadata.m_operand = op.operand;
             break;
         }
@@ -654,8 +681,12 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             else if (op.type == ClosureVar || op.type == ClosureVarWithVarInjectionChecks) {
                 if (op.watchpointSet)
                     op.watchpointSet->invalidate(vm, PutToScopeFireDetail(this, ident));
-            } else if (op.structure)
-                metadata.m_structureID.set(vm, this, op.structure);
+            } else if (op.structure) {
+                // SPEC-jit §5.5 (review round 1): GlobalProperty cache never
+                // armed flag-on; see op_get_from_scope above.
+                if (!Options::useJSThreads()) [[likely]]
+                    metadata.m_structureID.set(vm, this, op.structure);
+            }
             metadata.m_operand = op.operand;
             break;
         }
@@ -796,17 +827,23 @@ void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
 
 void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 {
-    setJITCode(jitCode.copyRef());
-
-    {
-        const auto& jitCodeMap = this->jitCodeMap();
-        for (size_t i = 0; i < numberOfExceptionHandlers(); ++i) {
-            HandlerInfo& handler = exceptionHandler(i);
-            // FIXME: <rdar://problem/39433318>.
-            handler.nativeCode = jitCodeMap.find(BytecodeIndex(handler.target)).retagged<ExceptionHandlerPtrTag>();
-        }
-    }
-
+    // UNGIL §5.7.2 (AB18-B): m_jitCode is the publication point GIL-off — the moment it is
+    // stored, jitType() reads BaselineJIT and racing mutators may OSR into the entrypoint
+    // (jitCompileAndSetHeuristics "already compiled" branch) before m_jitData exists, making
+    // the prologue's tier-up counter write land at null+0x10..0x18. Initialize BaselineJITData
+    // first, THEN retarget exception handlers, THEN setJITCode last (its lock +
+    // storeStoreFence is the release pairing with the consumer-side loadLoadFence in
+    // LLIntSlowPaths).
+    //
+    // UNGIL §5.7.2 (AB18-B sibling): handler.nativeCode is itself a publication point GIL-off.
+    // The moment a HandlerInfo is retargeted from the LLInt catch entry to the baseline catch
+    // entry, a racing mutator unwinding an LLInt frame of this CodeBlock (genericUnwind reads
+    // handler.m_nativeCode with no lock) lands in baseline op_catch, whose register-replenish
+    // loads CodeBlock::offsetOfJITData() — so m_jitData must be visible BEFORE any retargeted
+    // handler.nativeCode is. The storeStoreFence below is the release pairing with the
+    // consumer-side loadFence emitted at the head of the gilOff baseline op_catch leg
+    // (JIT::emit_op_catch). GIL-on / flag-off this reorder is behavior-neutral: install is
+    // serialized against all mutators, and storeStoreFence is a compiler-only fence on x86.
     {
         ASSERT(!m_jitData);
         auto baselineJITData = BaselineJITData::create(jitCode->m_unlinkedPropertyInlineCaches.size(), jitCode->m_constantPool.size(), this);
@@ -832,6 +869,22 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
             }
             }
         }
+#if TSAN_ENABLED
+        // TSAN §4.4 retired-artifact audit (TSAN-RESULTS residual 1, closed
+        // 2026-06-09): release-publish each PropertyInlineCache under its own
+        // address as the sync key. Pairs with the TSAN_ANNOTATE_HAPPENS_AFTER
+        // in ICSlowPathCallFrameTracer (JITOperations.cpp): a sibling lite
+        // entering this freshly linked baseline code receives the cache
+        // pointer from JIT'd code (consume publication through m_jitData +
+        // storeStoreFence, invisible to TSAN), and its lockless slow-path
+        // reads (callSiteIndex, countdown bytes, m_bufferedStructures) would
+        // otherwise pair against this thread's allocation/ctor writes of the
+        // still-live BaselineJITData block (leaked flag-on in ~CodeBlock per
+        // SPEC-jit §5.3/I7 — never freed, so no UAF is maskable here). No-op
+        // outside TSAN builds.
+        for (auto& propertyCache : baselineJITData->propertyInlineCaches())
+            TSAN_ANNOTATE_HAPPENS_BEFORE(&propertyCache);
+#endif
         setBaselineJITData(WTF::move(baselineJITData));
 
         // Set optimization thresholds only after instructions is initialized and JITData is initialized, since these
@@ -839,6 +892,25 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         // And the data is stored in JITData.
         optimizeAfterWarmUp();
     }
+
+    WTF::storeStoreFence(); // Publish m_jitData before any retargeted handler.nativeCode (see AB18-B sibling comment above).
+    {
+        const auto& jitCodeMap = jitCode->m_jitCodeMap;
+        for (size_t i = 0; i < numberOfExceptionHandlers(); ++i) {
+            HandlerInfo& handler = exceptionHandler(i);
+            // FIXME: <rdar://problem/39433318>.
+            // GIL-off (TSAN residual 2): relaxed atomic retarget — a sibling
+            // Thread can be unwinding through an LLInt frame of this
+            // CodeBlock and read handler.nativeCode concurrently (CatchInfo,
+            // Interpreter.cpp); old and new entries are both valid targets
+            // and m_jitData was fence-published above (AB18-B).
+            auto newNativeCode = jitCodeMap.find(BytecodeIndex(handler.target)).retagged<ExceptionHandlerPtrTag>();
+            static_assert(sizeof(handler.nativeCode) == sizeof(uintptr_t));
+            WTF::atomicStore(std::bit_cast<uintptr_t*>(&handler.nativeCode), std::bit_cast<uintptr_t>(newNativeCode), std::memory_order_relaxed);
+        }
+    }
+
+    setJITCode(jitCode.copyRef());
 
     switch (codeType()) {
     case GlobalCode:
@@ -848,13 +920,36 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         break;
     case FunctionCode:
         // We could have already set it to false because we detected an uninlineable call.
-        // Don't override that observation.
-        m_shouldAlwaysBeInlined &= canInline(capabilityLevel()) && DFG::mightInlineFunction(JITType::FTLJIT, this);
+        // Don't override that observation. (Explicit load+store instead of &=:
+        // m_shouldAlwaysBeInlined is a relaxed atomic byte now — see CodeBlock.h.)
+        if (m_shouldAlwaysBeInlined)
+            m_shouldAlwaysBeInlined = canInline(capabilityLevel()) && DFG::mightInlineFunction(JITType::FTLJIT, this);
         break;
     }
 
-    if (jitCode->m_isShareable && !unlinkedCodeBlock()->m_unlinkedBaselineCode && Options::useBaselineJITCodeSharing())
-        unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
+    // UNGIL: N mutators can finalize baseline plans of the same UnlinkedCodeBlock
+    // concurrently, so the shareable-code publish is first-wins under the
+    // UnlinkedCodeBlock's ConcurrentJSLock (see UnlinkedCodeBlock.h). The emptiness check
+    // must happen inside the lock — checking m_unlinkedBaselineCode here unlocked is the
+    // write-write RefPtr race this replaces. Cold path (once per baseline finalization).
+    if (jitCode->m_isShareable && Options::useBaselineJITCodeSharing())
+        unlinkedCodeBlock()->installUnlinkedBaselineCodeIfAbsent(WTF::move(jitCode));
+}
+
+// Out-of-line members of UnlinkedCodeBlock: defined here (rather than UnlinkedCodeBlock.h)
+// because RefPtr<BaselineJITCode> ref/deref needs the complete BaselineJITCode type, which
+// UnlinkedCodeBlock.h only forward-declares. See the contract comment in UnlinkedCodeBlock.h.
+RefPtr<BaselineJITCode> UnlinkedCodeBlock::unlinkedBaselineCodeConcurrently()
+{
+    ConcurrentJSLocker locker(m_lock);
+    return m_unlinkedBaselineCode;
+}
+
+void UnlinkedCodeBlock::installUnlinkedBaselineCodeIfAbsent(Ref<BaselineJITCode>&& jitCode)
+{
+    ConcurrentJSLocker locker(m_lock);
+    if (!m_unlinkedBaselineCode)
+        m_unlinkedBaselineCode = WTF::move(jitCode);
 }
 #endif // ENABLE(JIT)
 
@@ -886,10 +981,26 @@ CodeBlock::~CodeBlock()
         }
 #endif
         if (m_metadata) {
-            m_metadata->forEach<OpCatch>([&](auto& metadata) {
-                if (metadata.m_buffer)
-                    ValueProfileAndVirtualRegisterBuffer::destroy(std::exchange(metadata.m_buffer, nullptr));
-            });
+            // TSAN-TRIAGE §17.2 row 18: flag-on, the OpCatch
+            // ValueProfileAndVirtualRegisterBuffer must be LEAKED with the
+            // metadata it lives in. The buffer is a PUBLISHED artifact
+            // (release-published in ensureCatchLivenessIsComputedForBytecodeIndexSlow,
+            // acquire readers in llint_slow_path_profile_catch,
+            // operationTryOSREnterAtCatchAndValueProfile, and
+            // validate/finalizeUnconditionally below), reachable from exactly
+            // the leaked metadata the row-16 ref-escape at the END of this
+            // destructor keeps alive for straggler baseline prologues. A
+            // straggler that throws and lands in op_catch reads
+            // metadata.m_buffer — freeing it here inline is the same
+            // published-artifact-bypass class as row 16, retained-leak
+            // defense-in-depth class as rows 7/8 (non-CLI vectors). Flag-off,
+            // destroy inline, byte-identical to upstream.
+            if (!Options::useJSThreads()) [[likely]] {
+                m_metadata->forEach<OpCatch>([&](auto& metadata) {
+                    if (metadata.m_buffer)
+                        ValueProfileAndVirtualRegisterBuffer::destroy(std::exchange(metadata.m_buffer, nullptr));
+                });
+            }
         }
     }
 
@@ -960,20 +1071,89 @@ CodeBlock::~CodeBlock()
     }
     forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
         propertyCache.aboutToDie();
-        propertyCache.deref();
+        // DisarmClearingWatchpoints::Yes: this CodeBlock is dying, so the
+        // armed PropertyInlineCacheClearingWatchpoints (whose m_owner is this
+        // sweepable cell) must be disarmed now — flag-off, destruction at
+        // this same program point destroys the same watchpoints (AB18-F).
+        propertyCache.deref(vm, DisarmClearingWatchpoints::Yes);
         return IterationStatus::Continue;
     });
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
         if (auto* jitData = dfgJITData()) {
-            m_jitData = nullptr;
-            delete jitData;
+            // SPEC-jit section 5.3 / I7: flag-on, leak alongside m_jitCode
+            // (retired at the end of this destructor) - the leaked optimized
+            // machine code can still be entered by a parked sibling thread
+            // and may reach this JITData. THREADS-INTEGRATE(jit)
+            //
+            // Closeout review (TSAN-TRIAGE §17.2 row 7): flag-on, m_jitData
+            // must ALSO stay intact, mirroring the baseline AB18-B arm
+            // below. The exact straggler this leak exists for re-binds the
+            // field from the cell on every fresh entry and on unlinked
+            // OSR-exit dispatch:
+            //   compileSetupRegistersForEntry: loadPtr(Address(...,
+            //       CodeBlock::offsetOfJITData())) (DFGJITCompiler.cpp),
+            //   followed by compileEntryExecutionFlag's store8 to
+            //       JITData::offsetOfNeverExecutedEntry, and the exit-vector
+            //       farJump in the unlinked dispatch path.
+            // Nulling the field here turned that straggler into a near-null
+            // store8/load (fail-stop at best, a wild access once the cell
+            // slot is recycled) and made the leaked JITData unreachable —
+            // contradicting the rationale for leaking it. Flag-off, null
+            // then delete, byte-identical to upstream.
+            if (!Options::useJSThreads()) [[likely]] {
+                m_jitData = nullptr;
+                delete jitData;
+            } else {
+                // Disarm the privately-owned jettisoning watchpoints before
+                // leaking the shell: leaked-but-armed watchpoints keep
+                // m_owner pointing at this now-destructed CodeBlock cell,
+                // and a post-death fire trips fireInternal's
+                // ASSERT(!m_owner->wasDestructed()) on Debug or can jettison
+                // an unrelated live CodeBlock occupying the reused MarkedBlock
+                // slot on Release. Destroying them here is exactly as safe as
+                // the flag-off `delete jitData` above, which destroys the
+                // same watchpoints at the same point in the destructor.
+                jitData->clearWatchpoints();
+            }
         }
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
-            m_jitData = nullptr;
-            delete jitData;
+            // UNGIL §5.7.2 (AB18-B): flag-on, leak the BaselineJITData AND keep
+            // m_jitData intact, mirroring the DFG arm above (SPEC-jit §5.3 / I7).
+            // The shared unlinked baseline machine code is retired epoch-deferred,
+            // not freed by this sweep, and a sibling lite that loaded
+            // {entrypoint, codeBlock} from a CallLinkInfo / ScriptExecutable before
+            // unlinkOrUpgradeIncomingCalls() above can still be entering the
+            // prologue, which does
+            //   loadPairPtr(Address(codeBlock, CodeBlock::offsetOfJITData()), ...)
+            // (JIT.cpp:651-653) on THIS cell. Nulling the field here is what turns
+            // that straggler into the near-null tier-up/constant-pool write at
+            // null+0x8..0x18; deleting it turns the same window into a UAF. Unlike
+            // the DFG arm, the field itself must survive because baseline reloads
+            // it at every entry and OSR-exit/loop-entry re-materialization.
+            //
+            // No clearWatchpoints() analogue is needed here: BaselineJITData owns
+            // no privately-owned jettisoning watchpoints (unlike DFG::JITData),
+            // and its property inline caches were already neutralized via
+            // aboutToDie()/deref(vm) above, which routes stubs through
+            // RetiredJITArtifacts flag-on. The asymmetry with the DFG arm is
+            // deliberate.
+            //
+            // Known residuals (accepted, same class as the DFG-arm leak):
+            // (a) a straggler executing an IC site (not just the prologue) can
+            //     still touch retired stub memory; (b) CLOSED — the prologue's
+            //     loadPairPtr also loads m_metadata; the identical flag-on leak
+            //     now lands at the END of this destructor (see the
+            //     MetadataTable ref-escape below, TSAN-TRIAGE §17.2 row 16);
+            //     (c) the "machine code stays valid" premise holds only for
+            //     shared baseline code — a non-shareable BaselineJITCode is
+            //     freed with the m_jitCode member ref regardless of jitData.
+            if (!Options::useJSThreads()) [[likely]] {
+                m_jitData = nullptr;
+                delete jitData;
+            }
         }
     }
 #endif // ENABLE(JIT)
@@ -1026,6 +1206,45 @@ CodeBlock::~CodeBlock()
         }
         cc.set(CrashChecker::Destructed, 0xdd);
     }
+
+#if ENABLE(DFG_JIT)
+    // SPEC-jit section 5.3 / I7: flag-on, this CodeBlock's optimized machine
+    // code must not be freed by this sweep. Jettison defers code deletion to
+    // "the GC sweep after R2's conservative scan", but under the phase-1 GIL
+    // stub that scan covers only the GIL-holding thread: a sibling spawned
+    // thread parked with the GIL dropped can still resume into this code
+    // through a call-link/IC entrypoint (ASAN SEGV with pc in an unmapped
+    // module from llint_op_call, JSTests/threads/jit/tid-tag-3-threads.js
+    // et al.). Route the release through RetiredJITArtifacts, which leaks it
+    // until the heap workstream's N-stack scan lands. Flag-off this is the
+    // same inline ref drop as today. THREADS-INTEGRATE(jit)
+    if (Options::useJSThreads() && m_jitCode && JSC::JITCode::isOptimizingJIT(m_jitCode->jitType())) [[unlikely]]
+        RetiredJITArtifacts::retireOptimizedJITCode(vm, m_jitCode.take());
+#endif
+
+    // UNGIL §5.7.2 (AB18-B residual (b), CLOSED at thread-closeout final
+    // review): flag-on, the linked MetadataTable must be LEAKED, mirroring the
+    // m_jitData arms above. Without this, the member RefPtr's release at the
+    // end of this destructor runs MetadataTable::destroy on the last-ref drop,
+    // which (1) frees the metadata memory a sibling straggler's baseline
+    // prologue still reaches via loadPairPtr(offsetOfMetadataTable,
+    // offsetOfJITData) — the SAME straggler the AB18-B jitData leak above
+    // exists for — and (2) runs ~DataOnlyCallLinkInfo for every PUBLISHED
+    // call-op CLI embedded in the table (BytecodeList.rb embeds
+    // DataOnlyCallLinkInfo in op_call et al.), whose gilOff arm
+    // inline-deletes the §5.8 record a straggler mid-call-op can still hold
+    // (TSAN-TRIAGE §17.2 row 16 — row 13's "owning code unreachable" premise
+    // does not cover CLIs torn down by their owner's OWN destructor while
+    // stragglers exist). Escaping one ref keeps the table, the embedded CLIs
+    // and their records alive; the m_metadata field bits in this dead cell
+    // stay intact for prologue reloads (the member RefPtr dtor only derefs,
+    // it does not null the slot), same discipline as m_jitData. The leaked
+    // CLIs remain on callees' m_incomingCalls lists — already the accepted
+    // state for the leaked DFG CommonData / BaselineJITData CallLinkInfos
+    // (§17.2 rows 7/8/11); the locked drains tolerate dead-owner nodes (see
+    // DirectCallLinkInfo::retireRecord's AB18-E comment).
+    if (Options::useJSThreads() && m_metadata) [[unlikely]]
+        m_metadata->ref();
 }
 
 bool CodeBlock::isConstantOwnedByUnlinkedCodeBlock(VirtualRegister reg) const
@@ -1152,7 +1371,7 @@ size_t CodeBlock::estimatedSize(JSCell* cell, VM& vm)
     size_t extraMemoryAllocated = 0;
     if (thisObject->m_metadata)
         extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC();
-    RefPtr<JSC::JITCode> jitCode = thisObject->m_jitCode;
+    RefPtr<JSC::JITCode> jitCode = thisObject->m_jitCode.get();
     if (jitCode && !jitCode->isShared())
         extraMemoryAllocated += jitCode->size();
     return Base::estimatedSize(cell, vm) + extraMemoryAllocated;
@@ -1535,21 +1754,23 @@ void CodeBlock::finalizeLLIntInlineCaches()
         });
 
         m_metadata->forEach<OpTryGetById>([&] (auto& metadata) {
-            StructureID oldStructureID = metadata.m_structureID;
+            StructureID oldStructureID = metadata.m_cache.structureID;
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing try_get_by_id LLInt property access.");
-            metadata.m_structureID = StructureID();
-            metadata.m_offset = 0;
+            // SPEC-jit §4.3 (Task 6): the cache pair is invalidated with one
+            // all-zero 64-bit store (F3); flag-off this is equivalent to the
+            // old two-field clear.
+            metadata.m_cache.clear();
         });
 
         m_metadata->forEach<OpGetByIdDirect>([&] (auto& metadata) {
-            StructureID oldStructureID = metadata.m_structureID;
+            StructureID oldStructureID = metadata.m_cache.structureID;
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing get_by_id_direct LLInt property access.");
-            metadata.m_structureID = StructureID();
-            metadata.m_offset = 0;
+            // SPEC-jit §4.3 (Task 6): one all-zero 64-bit store (F3).
+            metadata.m_cache.clear();
         });
 
         m_metadata->forEach<OpGetPrivateName>([&] (auto& metadata) {
@@ -1574,8 +1795,15 @@ void CodeBlock::finalizeLLIntInlineCaches()
                 && (!chain || vm.heap.isMarked(chain)))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing LLInt put transition.");
-            metadata.m_oldStructureID = StructureID();
-            metadata.m_offset = 0;
+            if (Options::useJSThreads()) [[unlikely]] {
+                // SPEC-jit §4.3 (Task 6): flag-on, {m_oldStructureID, m_offset} is
+                // the surviving replace cache, read by the LLInt as ONE 64-bit
+                // word; invalidate it with one all-zero store (F3).
+                clearLLIntIdAndOffsetPairConcurrently(&metadata.m_oldStructureID);
+            } else {
+                metadata.m_oldStructureID = StructureID();
+                metadata.m_offset = 0;
+            }
             metadata.m_newStructureID = StructureID();
             metadata.m_structureChain.clear();
         });
@@ -1802,6 +2030,12 @@ void CodeBlock::finalizeUnconditionally(VM& vm, CollectionScope)
 
         if (auto* jitData = dfgJITData())
             jitData->finalizeUnconditionally();
+#if ENABLE(FTL_JIT)
+        // FTL handler-IC sites (useHandlerICInFTL) share a dummy ArrayProfile
+        // hanging off the FTL JITCode; clear it like the DFG's.
+        if (jitType() == JITType::FTLJIT)
+            m_jitCode->ftl()->finalizeHandlerICDataUnconditionally();
+#endif
     }
 #endif // ENABLE(DFG_JIT)
 
@@ -2119,7 +2353,7 @@ void CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex byte
     auto& instruction = instructions().at(bytecodeIndex);
     OpCatch op = instruction->as<OpCatch>();
     auto& metadata = op.metadata(this);
-    if (!!metadata.m_buffer)
+    if (!!WTF::atomicLoad(&metadata.m_buffer, std::memory_order_relaxed)) // THREADS: racy publish check; the slow path re-checks under no lock (idempotent, second buffer leaks at worst — pre-existing).
         return;
 
     ensureCatchLivenessIsComputedForBytecodeIndexSlow(op, bytecodeIndex);
@@ -2157,7 +2391,7 @@ void CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&
     // the compiler thread reads fully initialized data.
     WTF::storeStoreFence();
 
-    op.metadata(this).m_buffer = profiles;
+    WTF::atomicStore(&op.metadata(this).m_buffer, profiles, std::memory_order_release); // THREADS: lock-free compiler/mutator readers load-acquire/relaxed this slot.
 }
 
 void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSiteIndex)
@@ -2223,6 +2457,18 @@ void CodeBlock::linkIncomingCall(JSCell* caller, CallLinkInfoBase* incoming)
 {
     if (caller)
         noticeIncomingCall(caller);
+    // AB17c F4 (precondition 11): not every pusher is a locked Repatch
+    // linker — CachedCall / MicrotaskCall relinks and the Interpreter's
+    // cached-call setup push from a live mutator with no lock held. gilOff,
+    // serialize the push here (recursive lock: the locked linkers also call
+    // through this function).
+    // AB17d (bench I3 follow-up): gilOffWithProcessGate keeps the flag-off
+    // predicate load off the contended VM line (Config-page byte tests).
+    if (vm().gilOffWithProcessGate()) [[unlikely]] {
+        Locker locker { CallLinkInfo::s_callLinkSerializationLock };
+        m_incomingCalls.push(incoming);
+        return;
+    }
     m_incomingCalls.push(incoming);
 }
 
@@ -2230,6 +2476,40 @@ void CodeBlock::unlinkOrUpgradeIncomingCalls(VM& vm, CodeBlock* newCodeBlock)
 {
 IGNORE_GCC_WARNINGS_BEGIN("dangling-pointer")
     SentinelLinkedList<CallLinkInfoBase, BasicRawSentinelNode<CallLinkInfoBase>> toBeRemoved;
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        // AB18-C (amended AB17d): m_incomingCalls is pushed by the
+        // Repatch.cpp linkers (linkMonomorphicCall / linkDirectCall /
+        // linkPolymorphicCallImpl) under
+        // CallLinkInfo::s_callLinkSerializationLock (precondition 11), and
+        // the per-node unlinkOrUpgradeImpl and the destruction-context
+        // removers (CallLinkInfoBase::removeOnDestruction) serialize on the
+        // SAME (recursive) lock. The previous shape took the lock for
+        // takeFrom() ONLY and drained with unlocked isEmpty()/begin() reads.
+        // That left two holes: (a) nodes parked in toBeRemoved remain
+        // isOnList(), so a lazy-sweep mutator destroying a caller's
+        // CallLinkInfo legitimately remove()s it — under the lock — from
+        // THIS thread's local list, racing the unlocked isEmpty()/begin()
+        // (torn sentinel head reads); and (b) begin() could return a node
+        // the sweeper then frees before unlinkOrUpgradeImpl re-acquired the
+        // lock — the under-lock isOnList() re-check dereferences freed
+        // memory and cannot save that interleaving. Hold the lock across
+        // the ENTIRE {takeFrom, isEmpty, begin, unlinkOrUpgrade} drain: a
+        // destruction-context remover now either removes the node before we
+        // observe it or blocks until the node is off this list, and the
+        // nested unlinkOrUpgradeImpl / linkIncomingCall acquisitions are
+        // admissible because the lock is recursive (CallLinkInfo.h). The
+        // unlink/upgrade path performs no GC-heap allocation, so holders
+        // still never initiate a collection (no-park invariant preserved);
+        // the jettison caller runs world-stopped and is uncontended.
+        Locker locker { CallLinkInfo::s_callLinkSerializationLock };
+        toBeRemoved.takeFrom(m_incomingCalls);
+        // Note that upgrade may relink CallLinkInfo into newCodeBlock, and it is possible that |this| and newCodeBlock are the same.
+        // This happens when newCodeBlock is installed by upgrading LLInt to Baseline. In that case, |this|'s m_incomingCalls will
+        // be accumulated correctly.
+        while (!toBeRemoved.isEmpty())
+            toBeRemoved.begin()->unlinkOrUpgrade(vm, this, newCodeBlock);
+        return;
+    }
     toBeRemoved.takeFrom(m_incomingCalls);
 
     // Note that upgrade may relink CallLinkInfo into newCodeBlock, and it is possible that |this| and newCodeBlock are the same.
@@ -2263,6 +2543,53 @@ CodeBlock* CodeBlock::replacement()
 
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
+}
+
+// UNGIL FIX-2: see the declaration comment in runtime/FunctionExecutable.h.
+// Coherent by construction: ONE load of the publish slot, then everything is
+// address-dependent off that pointer (no second read of the executable's
+// m_jitCodeFor* mirrors, so no window for a sibling's installCode to swap the
+// pair underneath us). The only mutable hop is CodeBlock::m_jitCode, which
+// only ever upgrades IN PLACE on the same CodeBlock (LLInt thunk -> Baseline,
+// setupWithUnlinkedBaselineCode -> setJITCode); both the old and the new
+// value are valid code for THIS CodeBlock, so a race on that swap still
+// yields a matched (CodeBlock, entrypoint) pair.
+//
+// Lifetime, stated precisely (load-bearing fact, not hand-waving): the
+// unlocked RefPtr copy in jitCode() races setJITCode's locked in-place
+// replace. The reason load-pointer-then-ref() cannot ref freed memory is
+// that the ONLY in-place m_jitCode replace is shared-LLInt-thunk -> tier
+// code, and the displaced JITCode is isShared() (process-immortal), so the
+// writer dropping its ref never destroys it. The gilOff RELEASE_ASSERT below
+// trips loudly if a future tier is added to the in-place path whose displaced
+// JITCode is NOT shared (which would otherwise be a silent UAF; the assert
+// ideally belongs in CodeBlock::setJITCode on the displaced value — kept here
+// only because this change's write scope excludes CodeBlock.h).
+//
+// The returned entrypoint is kept alive by jitCodeKeeperOut, which the caller
+// must hold until the consuming call/install completes; the RefPtr taken here
+// is handed out, not dropped at return.
+FunctionCodeBlock* FunctionExecutable::codeBlockWithEntrypointFor(CodeSpecializationKind kind, ArityCheckMode arityCheck, CodePtr<JSEntryPtrTag>& entrypointOut, RefPtr<JSC::JITCode>& jitCodeKeeperOut)
+{
+    entrypointOut = nullptr;
+    jitCodeKeeperOut = nullptr;
+    FunctionCodeBlock* codeBlock = codeBlockFor(kind);
+    if (!codeBlock)
+        return nullptr;
+    if (RefPtr<JSC::JITCode> jitCode = codeBlock->jitCode()) {
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            // Detect a violated immortality premise: if the CodeBlock's
+            // m_jitCode was replaced in place, the value we copied must be
+            // either the current one or the displaced shared LLInt thunk. A
+            // non-shared JITCode that is no longer the CodeBlock's current
+            // code means a non-shared in-place replace exists — the premise
+            // documented above is broken and this read path is a UAF risk.
+            RELEASE_ASSERT(jitCode->isShared() || jitCode == codeBlock->jitCode());
+        }
+        entrypointOut = jitCode->addressForCall(arityCheck);
+        jitCodeKeeperOut = WTF::move(jitCode);
+    }
+    return codeBlock;
 }
 
 #if ENABLE(JIT)
@@ -2300,6 +2627,27 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 
     VM& vm = *m_vm;
 
+    // SPEC-jit section 5.3 (Task 5): with shared-memory threads enabled,
+    // jettison runs only (a) on the JSThreads conductor inside a
+    // JSThreadsSafepoint::stopTheWorldAndRun closure, or (b) during GC with the
+    // world stopped. This function is the single choke point: rather than
+    // asserting at every trigger, we become the conductor HERE, so every
+    // jettison source — reoptimization (triggerReoptimizationNow/OSR exit),
+    // watchpoint fires (until Task 11 centralizes Class-A fires, whose
+    // section 5.6 step-5 jettisons then nest via R1.h), VM traps, and the
+    // debugger — gets stop-the-world semantics for free. The closure captures
+    // by reference and allocates nothing in the JS heap (R1.i closure rule /
+    // OM O4); stopTheWorldAndRun supplies the R1.i GC-serialization bracket
+    // and the F5 instruction-stream barrier on resume. A caller that is
+    // already world-stopped (GC-driven weak-reference jettisons from the
+    // end-phase finalizers, nested fires) runs inline without re-requesting
+    // (R1.h). Sole exception (I8): the old-age sweep, which only retires cold
+    // code the GC already proved unreachable and never invalidates
+    // still-reachable optimized code, runs un-stopped exactly as today.
+    auto doJettison = [&] {
+
+    RELEASE_ASSERT(!Options::useJSThreads() || reason == Profiler::JettisonDueToOldAge || JSThreadsSafepoint::worldIsStopped(vm));
+
     m_isJettisoned = true;
 
 #if ENABLE(DFG_JIT)
@@ -2319,9 +2667,40 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 
 #if ENABLE(JIT)
     {
+        // SPEC-jit section 5.1/I9: jettison-time IC deref() routes any dropped
+        // dispatch state through RetiredJITArtifacts when useJSThreads is on
+        // (mutators resumed after this stop keep executing this code - and may
+        // dispatch through its ICs - until their next invalidation point, I21),
+        // and never frees it inline. Handler chains are deliberately left
+        // installed here; they die with the CodeBlock after R2's conservative
+        // scan proves no mutator stack references them.
+        //
+        // M4 LOCK-ACQUISITION CAVEAT (review round 3, R3-5): this m_lock
+        // acquisition runs INSIDE the stop-the-world closure. Under the pre-M4
+        // stub (single mutator) it trivially succeeds; under M4's real parking
+        // it deadlocks the conductor — silently, AFTER the stop watchdog's
+        // window (the watchdog only guards reaching Mode::Stopped) — if a
+        // REMOTE mutator parked while holding this same CodeBlock's m_lock.
+        // The caller contract ("requester holds no section-7 lock") does not
+        // cover locks the CLOSURE acquires that a to-be-parked mutator may
+        // hold. Chosen rule (recorded in the manifest's M4 reminders): flag-on,
+        // ConcurrentJSLock critical sections must be PARK-FREE — M4's park
+        // hook must RELEASE_ASSERT that the parking thread holds no
+        // ConcurrentJSLock (GCSafeConcurrentJSLocker regions like addAccessCase
+        // tolerate GC stops today, so this is a NEW flag-on obligation that
+        // must be enforced, not assumed). The earlier claim that this closure
+        // shape "carries over verbatim" to M4 is amended accordingly.
         ConcurrentJSLocker locker(m_lock);
         forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
-            propertyCache.deref();
+            // DisarmClearingWatchpoints::No (AB18-F amendment): the handler
+            // chains stay INSTALLED here and this CodeBlock stays alive —
+            // disarming would let a post-jettison watched-set fire skip the
+            // IC reset, leaving straggler baseline frames (which have no
+            // invalidation points) dispatching a stale handler: silent wrong
+            // values. The flag-off equivalent at this program point destroys
+            // nothing, and the ~CodeBlock re-retire of the same chains
+            // performs the disarm at death (see RetiredJITArtifacts.h).
+            propertyCache.deref(vm, DisarmClearingWatchpoints::No);
             return IterationStatus::Continue;
         });
     }
@@ -2432,6 +2811,23 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     // Regardless of whether it is used or replaced or upgraded already or not, since this is already jettisoned,
     // there is no reason to keep it linked. Unlink incoming calls.
     unlinkOrUpgradeIncomingCalls(vm, nullptr);
+
+    }; // doJettison
+
+    if (Options::useJSThreads() && reason != Profiler::JettisonDueToOldAge) [[unlikely]] {
+        // SPEC-jit section 5.3/I8: run the whole jettison world-stopped. If the
+        // world is already stopped (GC window, outer fire closure), this runs
+        // inline (R1.h); otherwise we conduct a stop. Code-deletion still waits
+        // on R2's conservative scan: ExecutableMemoryHandles are released only
+        // by the GC sweep, never here.
+        // Watchdog context (review round): without this, a wedged jettison
+        // stop crashed with a nil context and the timeout triage could not
+        // distinguish jettison from the other context-less requesters.
+        JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "CodeBlock jettison");
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>(doJettison));
+        return;
+    }
+    doJettison();
 }
 
 JSGlobalObject* CodeBlock::globalObjectFor(CodeOrigin codeOrigin)
@@ -2558,8 +2954,13 @@ void CodeBlock::noticeIncomingCall(JSCell* caller)
 unsigned CodeBlock::reoptimizationRetryCounter() const
 {
 #if ENABLE(JIT)
-    ASSERT(m_reoptimizationRetryCounter <= Options::reoptimizationRetryCounterMax());
-    return m_reoptimizationRetryCounter;
+    // THREADS: relaxed atomics — reoptimization counting is an optimization
+    // heuristic (JIT SPEC §5.7 racy-profiling tolerance); concurrent
+    // countReoptimization() callers may race this read and lost updates only
+    // perturb tiering thresholds.
+    uint16_t counter = WTF::atomicLoad(const_cast<uint16_t*>(&m_reoptimizationRetryCounter), std::memory_order_relaxed);
+    ASSERT(counter <= Options::reoptimizationRetryCounterMax());
+    return counter;
 #else
     return 0;
 #endif // ENABLE(JIT)
@@ -2581,9 +2982,10 @@ size_t CodeBlock::calleeSaveSpaceAsVirtualRegisters(const RegisterAtOffsetList& 
 
 void CodeBlock::countReoptimization()
 {
-    m_reoptimizationRetryCounter++;
-    if (m_reoptimizationRetryCounter > Options::reoptimizationRetryCounterMax())
-        m_reoptimizationRetryCounter = Options::reoptimizationRetryCounterMax();
+    // THREADS: relaxed load/store (heuristic counter; see reoptimizationRetryCounter()).
+    uint16_t counter = WTF::atomicLoad(&m_reoptimizationRetryCounter, std::memory_order_relaxed);
+    counter = static_cast<uint16_t>(std::min<unsigned>(counter + 1u, Options::reoptimizationRetryCounterMax()));
+    WTF::atomicStore(&m_reoptimizationRetryCounter, counter, std::memory_order_relaxed);
 }
 
 unsigned CodeBlock::numberOfDFGCompiles()
@@ -2592,10 +2994,10 @@ unsigned CodeBlock::numberOfDFGCompiles()
     if (Options::testTheFTL()) {
         if (m_didFailFTLCompilation)
             return 1000000;
-        return (m_hasBeenCompiledWithFTL ? 1 : 0) + m_reoptimizationRetryCounter;
+        return (m_hasBeenCompiledWithFTL ? 1 : 0) + WTF::atomicLoad(&m_reoptimizationRetryCounter, std::memory_order_relaxed);
     }
     CodeBlock* replacement = this->replacement();
-    return ((replacement && JSC::JITCode::isOptimizingJIT(replacement->jitType())) ? 1 : 0) + m_reoptimizationRetryCounter;
+    return ((replacement && JSC::JITCode::isOptimizingJIT(replacement->jitType())) ? 1 : 0) + WTF::atomicLoad(&m_reoptimizationRetryCounter, std::memory_order_relaxed);
 }
 
 const BaselineExecutionCounter& CodeBlock::baselineExecuteCounter()
@@ -2751,7 +3153,7 @@ void CodeBlock::optimizeAfterWarmUpImpl()
         if constexpr (check == QuickTierUpCheck::Apply) {
             if (unlinkedCodeBlock()->isQuickDFGTierUp()) {
                 threshold = static_cast<int32_t>(threshold * Options::quickDFGTierUpThresholdFactor());
-                dataLogLnIf(Options::verboseOSR(), *this, ": Quick DFG tier-up enabled and code is stable, bytecodeCost=", bytecodeCost(), ", codeType=", codeType(), ", adjustedThreshold=", threshold, ", finalThreshold=", adjustedCounterValue(threshold), " optimizationDelayCounter=", m_optimizationDelayCounter);
+                dataLogLnIf(Options::verboseOSR(), *this, ": Quick DFG tier-up enabled and code is stable, bytecodeCost=", bytecodeCost(), ", codeType=", codeType(), ", adjustedThreshold=", threshold, ", finalThreshold=", adjustedCounterValue(threshold), " optimizationDelayCounter=", optimizationDelayCounter());
             }
         }
         jitData->executeCounter().setNewThreshold(adjustedCounterValue(threshold), this);
@@ -2801,6 +3203,18 @@ void CodeBlock::setOptimizationThresholdBasedOnCompilationResult(CompilationResu
     CodeBlock* replacement = this->replacement();
     bool hasReplacement = (replacement && replacement != this);
     if ((result == CompilationResult::CompilationSuccessful) != hasReplacement) {
+        // UNGIL §5.7.2 (AB18-B): GIL-off, CompilationDeferred is delivered by a mutator that
+        // lost the tier-up race (operationOptimize's Compiling branch, or the TierUpEdgeLocker
+        // loser at JITOperations.cpp). Another mutator can complete and install the DFG
+        // replacement in the window between the caller's worklist-state observation and this
+        // call. Treat "Deferred but replacement installed" as a concurrently-delivered
+        // CompilationSuccessful: arm the counter so the next slow-path entry picks up the
+        // replacement (calls are relinked to it anyway; this covers loop OSR).
+        if (vm().gilOff() && result == CompilationResult::CompilationDeferred && hasReplacement
+            && JSC::JITCode::isOptimizingJIT(replacement->jitType())) [[unlikely]] {
+            optimizeNextInvocation();
+            return;
+        }
         dataLog(*this, ": we have result = ", result, " but ");
         if (replacement == this)
             dataLog("we are our own replacement.\n");
@@ -3055,8 +3469,8 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const Co
 
     if (m_metadata) {
         m_metadata->forEach<OpCatch>([&](auto& metadata) {
-            if (metadata.m_buffer) {
-                metadata.m_buffer->forEach([&](ValueProfileAndVirtualRegister& profile) {
+            if (auto* catchProfileBuffer = WTF::atomicLoad(&metadata.m_buffer, std::memory_order_acquire)) { // THREADS: pairs with the release publish.
+                catchProfileBuffer->forEach([&](ValueProfileAndVirtualRegister& profile) {
                     profile.computeUpdatedPrediction(locker);
                 });
             }
@@ -3133,7 +3547,7 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
 {
     dataLogLnIf(Options::verboseOSR(), "Considering optimizing ", *this, "...");
 
-    if (m_optimizationDelayCounter >= Options::maximumOptimizationDelay())
+    if (optimizationDelayCounter() >= Options::maximumOptimizationDelay())
         return true;
     
     unsigned numberOfLiveNonArgumentValueProfiles;
@@ -3170,7 +3584,7 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
         requiredFullnessRate *= Options::relaxedProfileCoverageFactorForQuickDFGTierUp();
     }
 
-    if (livenessRate >= requiredLivenessRate && fullnessRate >= requiredFullnessRate && static_cast<unsigned>(m_optimizationDelayCounter) + 1 >= Options::minimumOptimizationDelay())
+    if (livenessRate >= requiredLivenessRate && fullnessRate >= requiredFullnessRate && optimizationDelayCounter() + 1 >= Options::minimumOptimizationDelay())
         return true;
 
 #if ENABLE(DFG_JIT)
@@ -3183,7 +3597,7 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
         auto* baselineJITCode = static_cast<BaselineJITCode*>(jitCode);
         double previousLivenessRate = baselineJITCode->livenessRate();
         double previousFullnessRate = baselineJITCode->fullnessRate();
-        if (static_cast<unsigned>(m_optimizationDelayCounter) + 1 >= Options::minimumOptimizationDelay()) {
+        if (optimizationDelayCounter() + 1 >= Options::minimumOptimizationDelay()) {
             if (static_cast<int32_t>(this->bytecodeCost()) >= Options::valueProfileFillingRateMonitoringBytecodeCost()) {
                 if (previousLivenessRate && previousFullnessRate) {
                     if (previousLivenessRate == livenessRate && previousFullnessRate == fullnessRate)
@@ -3199,8 +3613,8 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
     auto* codeBlock = this;
     CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("insufficient profiling (", livenessRate,  " / ", fullnessRate, ") for ", numberOfNonArgumentValueProfiles(), " ", totalNumberOfValueProfiles()));
 
-    ASSERT(m_optimizationDelayCounter < std::numeric_limits<uint8_t>::max());
-    m_optimizationDelayCounter++;
+    ASSERT(optimizationDelayCounter() < std::numeric_limits<uint8_t>::max());
+    incrementOptimizationDelayCounter();
     optimizeAfterWarmUp();
     return false;
 }
@@ -3707,9 +4121,12 @@ void CodeBlock::jitNextInvocation()
 
 CodePtr<JSEntryPtrTag> CodeBlock::addressForCallConcurrently(const ConcurrentJSLocker&, ArityCheckMode arityCheck) const
 {
-    if (!m_jitCode)
+    // TSAN code-lifecycle (section 3.5): single concurrent load, then
+    // everything is address-dependent off that pointer.
+    auto* jitCode = m_jitCode.get();
+    if (!jitCode)
         return nullptr;
-    return m_jitCode->addressForCall(arityCheck);
+    return jitCode->addressForCall(arityCheck);
 }
 
 unsigned CodeBlock::bytecodeCost() const

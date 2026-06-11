@@ -275,6 +275,10 @@ public:
     
     FrozenValue* freeze(JSValue); // We use weak freezing by default.
     FrozenValue* freezeStrong(JSValue); // Shorthand for freeze(value)->strengthenTo(StrongValue).
+    // Compiler-thread-safe freeze for callers that already hold a validated
+    // {value, Structure} snapshot (structureID().decontaminate() checked):
+    // performs no second decode of the racy cell header. See DFGGraph.cpp.
+    FrozenValue* freezeWithValidatedStructure(JSValue, Structure*);
     
     void convertToConstant(Node* node, FrozenValue* value);
     void convertToConstant(Node* node, JSValue value);

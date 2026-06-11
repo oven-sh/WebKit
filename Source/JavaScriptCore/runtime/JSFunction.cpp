@@ -107,8 +107,10 @@ JSFunction* JSFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned le
 
 JSFunction::JSFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure)
     : Base(vm, globalObject, structure)
-    , m_executableOrRareData(std::bit_cast<uintptr_t>(executable))
 {
+    // THREADS/TSAN: relaxed store — recycled cell memory may still be probed
+    // by stale readers' relaxed loads of this word.
+    WTF::atomicStore(&m_executableOrRareData, std::bit_cast<uintptr_t>(executable), std::memory_order_relaxed);
     assertTypeInfoFlagInvariants();
     ASSERT(structure->realm() == globalObject);
 }
@@ -144,7 +146,7 @@ void JSFunction::finishCreation(VM& vm, NativeExecutable*, unsigned length, cons
 
 FunctionRareData* JSFunction::allocateRareData(VM& vm)
 {
-    uintptr_t executableOrRareData = m_executableOrRareData;
+    uintptr_t executableOrRareData = executableOrRareDataConcurrently();
     ASSERT(!(executableOrRareData & rareDataTag));
     FunctionRareData* rareData = FunctionRareData::create(vm, std::bit_cast<ExecutableBase*>(executableOrRareData));
     executableOrRareData = std::bit_cast<uintptr_t>(rareData) | rareDataTag;
@@ -153,7 +155,7 @@ FunctionRareData* JSFunction::allocateRareData(VM& vm)
     // We want to ensure that it sees it properly allocated
     WTF::storeStoreFence();
 
-    m_executableOrRareData = executableOrRareData;
+    WTF::atomicStore(&m_executableOrRareData, executableOrRareData, std::memory_order_release); // THREADS: publish rare data (subsumes the fence above for TSAN pairing).
     vm.writeBarrier(this, rareData);
 
     return rareData;
@@ -185,7 +187,7 @@ JSObject* JSFunction::prototypeForConstruction(VM& vm, JSGlobalObject* globalObj
 
 FunctionRareData* JSFunction::allocateAndInitializeRareData(JSGlobalObject* globalObject, size_t inlineCapacity)
 {
-    uintptr_t executableOrRareData = m_executableOrRareData;
+    uintptr_t executableOrRareData = executableOrRareDataConcurrently();
     ASSERT(!(executableOrRareData & rareDataTag));
     ASSERT(canUseAllocationProfiles());
     VM& vm = globalObject->vm();
@@ -198,7 +200,7 @@ FunctionRareData* JSFunction::allocateAndInitializeRareData(JSGlobalObject* glob
     // We want to ensure that it sees it properly allocated
     WTF::storeStoreFence();
 
-    m_executableOrRareData = executableOrRareData;
+    WTF::atomicStore(&m_executableOrRareData, executableOrRareData, std::memory_order_release); // THREADS: publish rare data (subsumes the fence above for TSAN pairing).
     vm.writeBarrier(this, rareData);
 
     return rareData;
@@ -206,7 +208,7 @@ FunctionRareData* JSFunction::allocateAndInitializeRareData(JSGlobalObject* glob
 
 FunctionRareData* JSFunction::initializeRareData(JSGlobalObject* globalObject, size_t inlineCapacity)
 {
-    uintptr_t executableOrRareData = m_executableOrRareData;
+    uintptr_t executableOrRareData = executableOrRareDataConcurrently();
     ASSERT(executableOrRareData & rareDataTag);
     ASSERT(canUseAllocationProfiles());
     VM& vm = globalObject->vm();
@@ -305,7 +307,7 @@ void JSFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.appendUnbarriered(std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(thisObject->m_executableOrRareData) & ~rareDataTag));
+    visitor.appendUnbarriered(std::bit_cast<JSCell*>(thisObject->executableOrRareDataConcurrently() & ~rareDataTag));
 }
 
 DEFINE_VISIT_CHILDREN(JSFunction);

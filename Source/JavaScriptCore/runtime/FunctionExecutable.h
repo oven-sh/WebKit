@@ -78,9 +78,21 @@ public:
         return !!codeBlockForCall();
     }
 
+    // TSAN code-lifecycle (TSAN-TRIAGE.md section 3.5): m_codeBlockForCall /
+    // m_codeBlockForConstruct are published by a concurrent installCode
+    // (replaceCodeBlockWith) and retracted by clearCode while read lock-free
+    // here (prepareForExecution fast gate, CodeBlock::replacement). Read the
+    // WriteBarrier slot with a consume-ordered atomic load (relaxed in
+    // production — identical codegen to the plain load; acquire under TSAN
+    // only, see jit/JITCode.h). The writer side lives in
+    // ScriptExecutable.cpp: installCode publishes with an atomic release
+    // store and clearCode retracts with one (both via the slot, preserving
+    // the GC write barrier); the legacy replaceCodeBlockWith plain-store
+    // path is no longer called — see the note at its declaration below.
     FunctionCodeBlock* codeBlockForCall() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForCall.get());
+        CodeBlock* codeBlock = WTF::atomicLoad(const_cast<WriteBarrier<CodeBlock>&>(m_codeBlockForCall).slot(), JITCodePointerConsumeOrder);
+        return std::bit_cast<FunctionCodeBlock*>(codeBlock);
     }
 
     bool isGeneratedForConstruct() const
@@ -90,7 +102,9 @@ public:
 
     FunctionCodeBlock* codeBlockForConstruct() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForConstruct.get());
+        // See codeBlockForCall above.
+        CodeBlock* codeBlock = WTF::atomicLoad(const_cast<WriteBarrier<CodeBlock>&>(m_codeBlockForConstruct).slot(), JITCodePointerConsumeOrder);
+        return std::bit_cast<FunctionCodeBlock*>(codeBlock);
     }
         
     bool isGeneratedFor(CodeSpecializationKind kind)
@@ -109,6 +123,27 @@ public:
         return codeBlockForConstruct();
     }
 
+    // UNGIL FIX-2 (publish/observe pairing — ANNEX CBI item 3, generalized):
+    // gilOff, dispatch publication must derive the entrypoint from the SAME
+    // CodeBlock object it transfers into CallFrameSlot::codeBlock. Pairing a
+    // separately (re-)read m_jitCodeForCall/m_jitCodeForConstruct mirror with
+    // codeBlockFor(kind) tears across a concurrent installCode (IT-8 store
+    // sequence: retract gate -> fence -> publish CodeBlock -> fence -> publish
+    // mirror) and enters one tier's machine code with another tier's CodeBlock
+    // in the frame slot — AHInvalidCodeBlock at the callee-prologue asserts
+    // with useJITAsserts, wrong JITData / null argument-profile storage in
+    // release.
+    //
+    // Returns the snapshot CodeBlock (nullptr if none is installed).
+    // entrypointOut is null iff no dispatchable code exists, in which case the
+    // caller must take its slow path. jitCodeKeeperOut receives the owning
+    // JITCode ref for the returned entrypoint: the CALLER must hold it until
+    // the call/install that consumes entrypointOut has completed — the
+    // entrypoint is a raw CodePtr with no other keeper, and a concurrent
+    // jettison + sweep may otherwise free the machine code between return and
+    // use. Defined in bytecode/CodeBlock.cpp.
+    FunctionCodeBlock* codeBlockWithEntrypointFor(CodeSpecializationKind, ArityCheckMode, CodePtr<JSEntryPtrTag>& entrypointOut, RefPtr<JSC::JITCode>& jitCodeKeeperOut);
+
     FunctionCodeBlock* baselineCodeBlockFor(CodeSpecializationKind);
         
     FunctionCodeBlock* profiledCodeBlockFor(CodeSpecializationKind kind)
@@ -116,6 +151,15 @@ public:
         return baselineCodeBlockFor(kind);
     }
 
+    // TSAN code-lifecycle (section 3.5, writer side): DO NOT add callers.
+    // This is the legacy plain-store writer (WriteBarrierBase::setMayBeNull
+    // -> setEarlyValue -> RawPtrTraits std::exchange, defined inline in
+    // FunctionExecutableInlines.h) and it races the consume-ordered atomic
+    // readers above. Its only historical caller, ScriptExecutable::
+    // installCode, now publishes the m_codeBlockFor* slot with an atomic
+    // release store directly (ScriptExecutable.cpp, FunctionCode case). Any
+    // new writer must use the same atomic publication. The declaration is
+    // kept only so the inline definition still compiles.
     FunctionCodeBlock* replaceCodeBlockWith(VM&, CodeSpecializationKind, CodeBlock*);
 
     RefPtr<TypeSet> returnStatementTypeSet() 
@@ -168,8 +212,8 @@ public:
     void setOverrideLineNumber(int overrideLineNumber)
     {
         if (overrideLineNumber == overrideLineNumberNotFound) {
-            if (m_rareData) [[unlikely]]
-                m_rareData->m_overrideLineNumber = std::nullopt;
+            if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+                rareData->m_overrideLineNumber = std::nullopt;
             return;
         }
         ensureRareData().m_overrideLineNumber = overrideLineNumber;
@@ -177,22 +221,22 @@ public:
 
     std::optional<int> overrideLineNumber() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_overrideLineNumber;
+        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+            return rareData->m_overrideLineNumber;
         return std::nullopt;
     }
 
     int lineCount() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_lineCount;
+        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+            return rareData->m_lineCount;
         return m_unlinkedExecutable->lineCount();
     }
 
     int endColumn() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_endColumn;
+        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+            return rareData->m_endColumn;
         return m_unlinkedExecutable->linkedEndColumn(m_source.startColumn().oneBasedInt());
     }
 
@@ -208,22 +252,22 @@ public:
 
     unsigned functionEnd() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_functionEnd;
+        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+            return rareData->m_functionEnd;
         return m_unlinkedExecutable->unlinkedFunctionEnd();
     }
 
     unsigned functionStart() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_functionStart;
+        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+            return rareData->m_functionStart;
         return m_unlinkedExecutable->unlinkedFunctionStart();
     }
 
     unsigned parametersStartOffset() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_parametersStartOffset;
+        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+            return rareData->m_parametersStartOffset;
         return m_unlinkedExecutable->parametersStartOffset();
     }
 
@@ -246,8 +290,8 @@ public:
     // Cached poly proto structure for the result of constructing this executable.
     Structure* cachedPolyProtoStructure()
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_cachedPolyProtoStructureID.get();
+        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
+            return rareData->m_cachedPolyProtoStructureID.get();
         return nullptr;
     }
     void setCachedPolyProtoStructure(VM& vm, Structure* structure)
@@ -257,12 +301,34 @@ public:
 
     InlineWatchpointSet& ensurePolyProtoWatchpoint()
     {
-        if (!m_polyProtoWatchpoint)
-            m_polyProtoWatchpoint = Box<InlineWatchpointSet>::create(IsWatched);
-        return *m_polyProtoWatchpoint;
+        // GIL-off (TSAN r11 report 22, REAL create-once race — same shape as
+        // FunctionExecutable::ensureRareDataSlow): two Threads racing the
+        // unserialized create assigned the RefPtr twice; the losing
+        // assignment destroyed a set the winner may already have handed out
+        // (registered watchpoints on a dead set = UAF shape), and the plain
+        // pointer write raced concurrent readers. Fast path: one acquire
+        // probe of the single pointer word (Box is exactly one RefPtr);
+        // creation is serialized under cellLock() in the slow path, which
+        // release-publishes the same word. Once non-null the word is
+        // immutable, so the plain deref below is ordered by the acquire.
+        static_assert(sizeof(Box<InlineWatchpointSet>) == sizeof(uintptr_t));
+        if (WTF::atomicLoad(std::bit_cast<uintptr_t*>(&m_polyProtoWatchpoint), std::memory_order_acquire)) [[likely]]
+            return *m_polyProtoWatchpoint;
+        return ensurePolyProtoWatchpointSlow();
     }
 
-    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
+    JS_EXPORT_PRIVATE InlineWatchpointSet& ensurePolyProtoWatchpointSlow();
+
+    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const
+    {
+        // See ensurePolyProtoWatchpoint: snapshot the word with an acquire
+        // load so the copy cannot race the locked creator's release publish;
+        // non-null is immutable, so the ordered plain RefPtr copy is safe
+        // (Box's payload is ThreadSafeRefCounted).
+        if (!WTF::atomicLoad(const_cast<uintptr_t*>(std::bit_cast<const uintptr_t*>(&m_polyProtoWatchpoint)), std::memory_order_acquire))
+            return nullptr;
+        return m_polyProtoWatchpoint;
+    }
 
     ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return m_topLevelExecutable.get(); }
 
@@ -273,9 +339,9 @@ public:
     JSString* toString(JSGlobalObject*);
     JSString* asStringConcurrently() const
     {
-        if (!m_rareData)
+        if (!rareDataConcurrently())
             return nullptr;
-        return m_rareData->m_asString.get();
+        return rareDataConcurrently()->m_asString.get();
     }
 
     static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(FunctionExecutable, m_rareData); }
@@ -321,9 +387,17 @@ private:
 
     RareData& ensureRareData()
     {
-        if (m_rareData) [[likely]]
-            return *m_rareData;
+        // THREADS: acquire-load the lazily published rare data — two Threads
+        // can race here; creation is serialized under cellLock() in the slow
+        // path (a plain double-create would delete the loser's RareData while
+        // the winner's caller is already using it).
+        if (RareData* rareData = rareDataConcurrently()) [[likely]]
+            return *rareData;
         return ensureRareDataSlow();
+    }
+    RareData* rareDataConcurrently() const
+    {
+        return WTF::atomicLoad(std::bit_cast<RareData**>(const_cast<std::unique_ptr<RareData>*>(&m_rareData)), std::memory_order_acquire);
     }
     RareData& ensureRareDataSlow();
 

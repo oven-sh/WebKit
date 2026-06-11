@@ -24,6 +24,7 @@
 #include "ConcurrentJSLock.h"
 #include "MatchResult.h"
 #include "RegExpKey.h"
+#include <wtf/Atomics.h>
 #include "Structure.h"
 #include "Yarr.h"
 #include <JavaScriptCore/YarrErrorCode.h>
@@ -67,7 +68,10 @@ public:
 
     const String& pattern() const LIFETIME_BOUND { return m_patternString; }
 
-    bool isValid() const { return !Yarr::hasError(m_constructionErrorCode); }
+    // THREADS: relaxed atomic — recompile paths re-run the YarrPattern parse into a
+    // LOCAL error code under cellLock() and publish the result with a relaxed store,
+    // so lock-free readers here never see a mid-parse transient.
+    bool isValid() const { return !Yarr::hasError(WTF::atomicLoad(const_cast<Yarr::ErrorCode*>(&m_constructionErrorCode), std::memory_order_relaxed)); }
     ASCIILiteral errorMessage() const { return Yarr::errorMessage(m_constructionErrorCode); }
     JSObject* errorToThrow(JSGlobalObject* globalObject) { return Yarr::errorToThrow(globalObject, m_constructionErrorCode); }
     void reset()
@@ -98,9 +102,20 @@ public:
         return (numSubpatterns() + 1) * 2;
     }
 
+    // AUD1.N2 (annex N7 RESOLVED-2, BINDING): offsetVectorSize() needs NO
+    // gilOff reroute — m_ovector's single resize is in finishCreation
+    // (pre-publication; RegExpCache's lock provides the release/acquire edge
+    // to other threads' lookups), so the size is immutable once the cell is
+    // visible cross-thread.
     int offsetVectorSize() const { return m_ovector.size(); }
 
-    std::span<int> ovectorSpan() { return m_ovector.mutableSpan(); }
+    // AUD1.N2 routing (1): the per-match scratch span. GIL-off this routes to
+    // the per-thread match buffer (RegExp.cpp banner; the cell-resident
+    // m_ovector must never be a match target cross-thread); flag-off/GIL-on
+    // it is byte-identically the cell vector. Takes VM& so any missed caller
+    // is a compile error instead of a silent shared-scratch race. Defined in
+    // RegExpInlines.h (needs the complete VM type for the gilOff() test).
+    inline std::span<int> ovectorSpan(VM&);
 
     bool hasNamedCaptures() const
     {
@@ -169,7 +184,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     bool hasValidAtom() const { return !m_atom.isNull(); }
     const String& atom() const LIFETIME_BOUND { return m_atom; }
-    Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
+    Yarr::SpecificPattern specificPattern() const { return WTF::atomicLoad(const_cast<Yarr::SpecificPattern*>(&m_specificPattern), std::memory_order_relaxed); } // THREADS: advisory matcher hint; racy vs cellLock'd recompile by design.
 
 private:
     friend class RegExpCache;
@@ -192,6 +207,13 @@ private:
 
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
+
+    // AUD1.N2 residual (A): lock-held compile bodies, so the GIL-off
+    // compileIfNecessary* arms can run {hasCodeFor check, compile} under one
+    // cellLock hold (RegExp.cpp). GIL-on goes through compile()/
+    // compileMatchOnly() above, unchanged.
+    void compileHoldingCellLock(const AbstractLocker&, VM*, Yarr::CharSize, std::optional<StringView> sampleString);
+    void compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM*, Yarr::CharSize, std::optional<StringView> sampleString);
 
 #if ENABLE(YARR_JIT_DEBUG)
     void matchCompareWithInterpreter(StringView, int startOffset, int* offsetVector, int jitResult);
@@ -239,5 +261,10 @@ private:
     unsigned m_rtMatchFoundCount { 0 };
 #endif
 };
+
+// AUD1.N2: the GIL-off per-thread (== per-lite for scratch; ISB1 storage
+// deviation) match buffer, grown to the regexp's offsetVectorSize().
+// Defined in RegExp.cpp; reached through ovectorSpan(VM&) only.
+JS_EXPORT_PRIVATE std::span<int> regExpGilOffPerThreadMatchOvector(RegExp&);
 
 } // namespace JSC

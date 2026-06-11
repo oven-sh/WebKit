@@ -30,9 +30,10 @@
 
 namespace JSC {
 
-inline bool DeferredWorkTimer::TicketData::isTargetObject()
-{
-    return m_dependencies.last()->isObject();
-}
+// TicketData::isTargetObject() is defined out-of-line in
+// DeferredWorkTimer.cpp (JS_EXPORT_PRIVATE): the inline target() in the
+// header odr-uses it from an ASSERT, so debug TUs that include
+// DeferredWorkTimer.h without this Inlines header need a real definition
+// to link (this broke the macOS debug cross-build).
 
 } // namespace JSC

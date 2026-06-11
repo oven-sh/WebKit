@@ -44,8 +44,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-size_t LinkBuffer::s_profileCummulativeLinkedSizes[LinkBuffer::numberOfProfiles];
-size_t LinkBuffer::s_profileCummulativeLinkedCounts[LinkBuffer::numberOfProfiles];
+Atomic<size_t> LinkBuffer::s_profileCummulativeLinkedSizes[LinkBuffer::numberOfProfiles];
+Atomic<size_t> LinkBuffer::s_profileCummulativeLinkedCounts[LinkBuffer::numberOfProfiles];
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IRDumpDebugInfo);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SourceCodeDumpDebugInfo);
@@ -575,8 +575,16 @@ void LinkBuffer::performFinalization()
     m_completed = true;
 #endif
     
-    s_profileCummulativeLinkedSizes[static_cast<unsigned>(m_profile)] += m_size;
-    s_profileCummulativeLinkedCounts[static_cast<unsigned>(m_profile)]++;
+    // Advisory dump-only statistics (SPEC-jit §5.7.7 class): relaxed
+    // load + relaxed store, not an atomic RMW — a locked add per LinkBuffer
+    // finalization buys nothing for counters whose lost updates are
+    // tolerated, and keeps the codegen as plain as the fields were before.
+    {
+        auto& sizeCounter = s_profileCummulativeLinkedSizes[static_cast<unsigned>(m_profile)];
+        sizeCounter.store(sizeCounter.load(std::memory_order_relaxed) + m_size, std::memory_order_relaxed);
+        auto& countCounter = s_profileCummulativeLinkedCounts[static_cast<unsigned>(m_profile)];
+        countCounter.store(countCounter.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    }
     MacroAssembler::cacheFlush(code(), m_size);
 }
 
@@ -630,8 +638,8 @@ void LinkBuffer::dumpCode(void* code, size_t size)
 void LinkBuffer::clearProfileStatistics()
 {
     for (unsigned i = 0; i < numberOfProfiles; ++i) {
-        s_profileCummulativeLinkedSizes[i] = 0;
-        s_profileCummulativeLinkedCounts[i] = 0;
+        s_profileCummulativeLinkedSizes[i].store(0, std::memory_order_relaxed);
+        s_profileCummulativeLinkedCounts[i].store(0, std::memory_order_relaxed);
     }
 }
 
@@ -674,9 +682,9 @@ void LinkBuffer::dumpProfileStatistics(std::optional<PrintStream*> outStream)
 
     for (unsigned i = 0; i < numberOfProfiles; ++i) {
         sortedStats[i].profile = static_cast<Profile>(i);
-        sortedStats[i].size = s_profileCummulativeLinkedSizes[i];
-        sortedStats[i].count = s_profileCummulativeLinkedCounts[i];
-        totalOfAllProfilesSize += s_profileCummulativeLinkedSizes[i];
+        sortedStats[i].size = s_profileCummulativeLinkedSizes[i].load(std::memory_order_relaxed);
+        sortedStats[i].count = s_profileCummulativeLinkedCounts[i].load(std::memory_order_relaxed);
+        totalOfAllProfilesSize += sortedStats[i].size;
     }
     sortedStats[static_cast<unsigned>(Profile::Total)].size = totalOfAllProfilesSize;
     std::sort(&sortedStats[0], &sortedStats[numberOfProfilesExcludingTotal],

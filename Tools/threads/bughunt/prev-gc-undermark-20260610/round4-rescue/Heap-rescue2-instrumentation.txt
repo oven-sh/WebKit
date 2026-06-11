@@ -1,0 +1,143 @@
+        // FIXME(fix-shared-heap-corruption): TEMPORARY round-4 experiment
+        // (TLC-R4-2 "unpublished-cohort root miss") — strip with the rest of
+        // the instrumentation. KIND-AGNOSTIC sound rescue: at end of marking,
+        // BEFORE MarkedSpace::endMarking() retires the newlyAllocated version
+        // and BlockDirectory::endMarking() clears the allocated bits, walk
+        // EVERY block of EVERY cell kind (JSCell, JSCellWithIndexingHeader,
+        // Auxiliary — this is the defect that limited the round-1 rescue,
+        // which filtered cellKind() == JSCell) and force-mark every cell that
+        // is sweep-live without a version-current mark bit (leg NA:
+        // version-current newlyAllocated; leg ALLOC: directory allocated bit)
+        // through the REAL mark path: Heap::testAndSetMarked(markingVersion)
+        // does aboutToMark (version repair + setIsMarkingNotEmpty when marks
+        // were stale), then cellContainer().noteMarked(); we additionally set
+        // isMarkingNotEmpty explicitly under the bitvector lock so the
+        // IsEmpty empty-judge can never rehand the block's whole payload. No
+        // tracing — mark bits + markingNotEmpty suffice to block both the
+        // mark-respecting sweep and the IsEmpty rehand-out. Per-kind rescue
+        // counters verify probe liveness; snapshot-membership counters
+        // pre-stage the (a) scan-coverage vs (b) acceptance-gate bisection:
+        // a rescued cell present in the gathered conservative-root snapshot
+        // was scanned-and-accepted (its lack of a mark is the documented
+        // NA-skip), while NA-only blocks with ZERO snapshot hits hold cohorts
+        // no thread's copied stack words referenced. BUGHUNT_RESCUE2=1.
+        static const bool rescue2Enabled = !!getenv("BUGHUNT_RESCUE2");
+        if (rescue2Enabled) [[unlikely]] {
+            static unsigned cycleCounter = 0;
+            unsigned cycle = ++cycleCounter;
+            HeapVersion markingVersion = m_objectSpace.markingVersion();
+            HashSet<HeapCell*> snapshotSet;
+            for (HeapCell* root : snapshot)
+                snapshotSet.add(root);
+            unsigned rescuedByKind[3] = { 0, 0, 0 };
+            unsigned rescuedNA = 0, rescuedAlloc = 0, rescuedInSnapshot = 0;
+            unsigned naOnlyBlocks = 0, naOnlyBlocksSnapHit = 0, naOnlyBlocksLogged = 0;
+            // Stage-2 bisect: NA-leg rescues whose address was scanned but
+            // REJECTED by the isLive gate during this cycle's gathers.
+            unsigned rescuedNARejected = 0;
+            // Stage-2 bisect refinement: NA-leg rescues whose cell range
+            // [cell, cell+cellSize) contains ANY raw scanned word — i.e. the
+            // scan SAW a pointer into the cell but filtered it before the
+            // gate (block publication miss). Zero here + zero rejHits means
+            // the cohort address was in NO thread's copied stack/register
+            // image at all (coverage miss).
+            unsigned rescuedNAScanned = 0;
+            HashSet<void*>* rejectedWords = nullptr;
+            HashSet<void*>* scannedWords = nullptr;
+            {
+                Locker locker { g_bughuntConsRejectLock };
+                rejectedWords = g_bughuntConsRejectedWords;
+                scannedWords = g_bughuntConsScannedWords;
+            }
+            m_objectSpace.forEachBlock(
+                [&] (MarkedBlock::Handle* handle) {
+                    MarkedBlock& block = handle->block();
+                    bool naCurrent = !block.isNewlyAllocatedStale();
+                    bool allocBit = handle->isAllocated();
+                    if (!naCurrent && !allocBit)
+                        return;
+                    bool marksStale = block.areMarksStale(markingVersion);
+                    unsigned naPop = 0, markPop = 0, blockRescues = 0, blockSnapshotHits = 0, blockRejHits = 0, blockScanHits = 0;
+                    handle->forEachCell(
+                        [&] (size_t, HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
+                            if (!marksStale && block.isMarkedRaw(cell)) {
+                                markPop++;
+                                return IterationStatus::Continue;
+                            }
+                            bool isNA = naCurrent && block.isNewlyAllocated(cell);
+                            if (isNA)
+                                naPop++;
+                            else if (!allocBit)
+                                return IterationStatus::Continue; // genuinely dead
+                            // Sweep-live without a mark: rescue via the real path.
+                            Heap::testAndSetMarked(markingVersion, cell);
+                            if (isJSCellKind(kind))
+                                static_cast<JSCell*>(cell)->setCellState(CellState::PossiblyBlack);
+                            cell->cellContainer().noteMarked();
+                            rescuedByKind[static_cast<unsigned>(kind)]++;
+                            (isNA ? rescuedNA : rescuedAlloc)++;
+                            blockRescues++;
+                            if (snapshotSet.contains(cell)) {
+                                rescuedInSnapshot++;
+                                blockSnapshotHits++;
+                            }
+                            if (isNA && rejectedWords && rejectedWords->contains(cell)) {
+                                rescuedNARejected++;
+                                blockRejHits++;
+                            }
+                            if (isNA && scannedWords) {
+                                size_t cellSize = handle->cellSize();
+                                char* base = std::bit_cast<char*>(cell);
+                                for (size_t off = 0; off < cellSize; off += sizeof(void*)) {
+                                    if (scannedWords->contains(base + off)) {
+                                        rescuedNAScanned++;
+                                        blockScanHits++;
+                                        break;
+                                    }
+                                }
+                            }
+                            return IterationStatus::Continue;
+                        });
+                    if (blockRescues) {
+                        BlockDirectory* directory = handle->directory();
+                        Locker bitLocker { directory->bitvectorLock() };
+                        directory->setIsMarkingNotEmpty(handle, true);
+                    }
+                    if (naPop && !markPop) {
+                        naOnlyBlocks++;
+                        if (blockSnapshotHits)
+                            naOnlyBlocksSnapHit++;
+                        if (naOnlyBlocksLogged < 8) {
+                            naOnlyBlocksLogged++;
+                            dataLogLn(
+                                "BUGHUNT-R4-NABLOCK cycle=", cycle,
+                                " block=", RawPointer(&block),
+                                " kind=", static_cast<unsigned>(handle->cellKind()),
+                                " cellSize=", handle->directory()->cellSize(),
+                                " naPop=", naPop,
+                                " rescues=", blockRescues,
+                                " snapshotHits=", blockSnapshotHits,
+                                " rejHits=", blockRejHits,
+                                " scanHits=", blockScanHits);
+                        }
+                    }
+                });
+            dataLogLn(
+                "BUGHUNT-R4-CYCLE cycle=", cycle, " scope=", *m_collectionScope,
+                " rescuedJSCell=", rescuedByKind[0],
+                " rescuedJSCellIH=", rescuedByKind[1],
+                " rescuedAux=", rescuedByKind[2],
+                " rescuedNA=", rescuedNA, " rescuedALLOC=", rescuedAlloc,
+                " inSnapshot=", rescuedInSnapshot,
+                " naOnlyBlocks=", naOnlyBlocks,
+                " naOnlyBlocksSnapHit=", naOnlyBlocksSnapHit,
+                " rescuedNARejected=", rescuedNARejected,
+                " rescuedNAScanned=", rescuedNAScanned,
+                " rejectedWords=", rejectedWords ? rejectedWords->size() : 0,
+                " scannedWords=", scannedWords ? scannedWords->size() : 0,
+                " snapshotRoots=", snapshot.size());
+            if (rejectedWords)
+                rejectedWords->clear();
+            if (scannedWords)
+                scannedWords->clear();
+        }

@@ -196,6 +196,7 @@ private:
         OP_PUSH_EAX                     = 0x50,
         OP_POP_EAX                      = 0x58,
         OP_MOVSXD_GvEv                  = 0x63,
+        PRE_FS                          = 0x64,
         PRE_GS                          = 0x65,
         PRE_OPERAND_SIZE                = 0x66,
         PRE_SSE_66                      = 0x66,
@@ -4116,7 +4117,17 @@ public:
     {
         m_formatter.prefix(PRE_GS);
     }
-    
+
+    // Causes the memory access in the next instruction to be offset by %fs. On ELF/Linux
+    // x86-64, %fs is the thread pointer, so pairing this with a 32-bit absolute address
+    // load yields an initial-exec TLS load: the "address" is the (sign-extended, typically
+    // negative) TPOFF of the thread_local. Used for g_jscButterflyTIDTag (SPEC-jit-annex
+    // App. R5, Task 1b).
+    void fs()
+    {
+        m_formatter.prefix(PRE_FS);
+    }
+
     void cmpxchgb_rm(RegisterID src, int offset, RegisterID base)
     {
         m_formatter.twoByteOp8(OP2_CMPXCHGb, src, base, offset);

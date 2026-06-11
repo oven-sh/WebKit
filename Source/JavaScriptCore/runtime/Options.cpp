@@ -26,6 +26,7 @@
 #include "config.h"
 #include "Options.h"
 
+#include "ConcurrentButterflyOperations.h"
 #include "CPU.h"
 #include "JITOperationValidation.h"
 #include "LLIntCommon.h"
@@ -763,6 +764,123 @@ void Options::notifyOptionsChanged()
 {
     AllowUnfinalizedAccessScope scope;
 
+    // SPEC-vmstate §3 R2 (M_opts2): useJSThreads=1 MUST imply all three
+    // vmstate flags. (The prep-stub `useThreads` alias was removed by
+    // INTEGRATE-api 9.2-1, so its normalization line is dropped per
+    // INTEGRATE-vmstate cross-WS item 14.)
+    if (Options::useJSThreads()) {
+        Options::useSharedAtomStringTable() = true;
+        Options::useVMLite() = true;
+        Options::useStructureAllocationLock() = true;
+    }
+
+    // UNGIL §0 U0 (config gate; landed at U-T14 with the default flip):
+    // GIL-off ("useJSThreads && !useThreadGIL") additionally requires the
+    // full trio {useVMLite, useSharedAtomStringTable, useSharedGCHeap}. A
+    // GIL-off shape without the trio is REFUSED at option validation by
+    // forcing useThreadGIL=1 (ANNEX U0C: gilOffProcess is OPTION-derived
+    // from this conjunction at Config finalization). This normalization is
+    // what keeps VM::isGILOffProcess() (VM.cpp) and every landed
+    // `useJSThreads() && !useThreadGIL()` derivation (ArrayBuffer.cpp,
+    // VMInspector.cpp, SamplingProfiler.h, Watchdog.h, JSLock.cpp)
+    // mutually equivalent. The M_opts2 normalization above already forces
+    // useVMLite/useSharedAtomStringTable under useJSThreads, so in practice
+    // this gates on the shared GC server. Flag-off (useJSThreads=0) is
+    // byte-identical: the condition is unreachable. The U19 GIL-on oracle
+    // (useJSThreads=1, useThreadGIL=1) is unaffected: an explicit
+    // useThreadGIL=1 never enters this branch.
+    if (Options::useJSThreads() && !Options::useThreadGIL()
+        && !(Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap()))
+        Options::useThreadGIL() = true;
+
+    // UNGIL activation-checklist refusal (review finding against the U-T14
+    // close ruling): the trio opt-in alone is NOT a sufficient gate for
+    // GIL-off, because useJSThreads=1 auto-forces useVMLite and
+    // useSharedAtomStringTable above — so `--useJSThreads=1
+    // --useSharedGCHeap=1` (two flags) would construct a live gilOff process
+    // while blocker-grade activation items remain open with NO in-code
+    // fail-stop on every path (AB-1 LLInt Group-3 split-brain is silently
+    // UNSOUND; VM::updateStackLimits still clobbers the single VM-level soft
+    // stack limit under N-parallel entry — VMTraps.h checklist item (3); the
+    // per-lite trap words still alias the VM word — VMLite.cpp §A.2.1). Per
+    // the house rule (fail-stop/refusal over silent corruption), the U0
+    // validation REFUSES the gilOff shape outright unless the explicit
+    // development escape hatch useThreadGILOffUnsafe is ALSO set. This keeps
+    // every "enable the trio" experiment on the GIL'd oracle (the J.1
+    // ordering) until the AB list (INTEGRATE-ungil.md AB-1..AB-15) is
+    // discharged, at which point this clause is deleted and the trio opt-in
+    // again derives gilOff directly.
+    if (Options::useJSThreads() && !Options::useThreadGIL() && !Options::useThreadGILOffUnsafe()) {
+        dataLogLn("JSC: refusing GIL-off configuration (UNGIL activation checklist incomplete); forcing useThreadGIL=1. Set useThreadGILOffUnsafe=1 to override for development.");
+        Options::useThreadGIL() = true;
+    }
+
+    // UNGIL §A.2.2 (AB-17 follow-up): the LOL tier has not been audited for
+    // the §A.1.3 COMPILED-FOR-VM rule (per-lite Group-3 state, butterfly TID
+    // tags, etc. beyond the now-rerouted prologue soft-stack-limit check in
+    // LOLJIT.cpp). Per the house rule (fail-stop/refusal over silent
+    // corruption), force it off under the GIL-off shape rather than let an
+    // unaudited tier compile spawned-thread code. Flag-off and GIL-on are
+    // unaffected; delete this once LOL passes the §A.1.3 audit.
+    if (Options::useJSThreads() && !Options::useThreadGIL() && Options::useLOLJIT()) {
+        dataLogLn("JSC: disabling useLOLJIT under GIL-off (LOL tier not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17).");
+        Options::useLOLJIT() = false;
+    }
+
+    // UNGIL §A.1.3 (AB-17 round-5 amendment): the wasm tiers have not been
+    // audited for COMPILED-FOR-VM either — the wasm<->JS glue still emits
+    // raw VM-block exception-word checks (VM::exceptionOffset() loads in
+    // WasmToJS.cpp, JSToWasm.cpp, WebAssemblyBuiltinTrampoline.cpp) that are
+    // inert spare storage GIL-off, so a throwing callee of a CARRIER-executed
+    // wasm<->JS call would be silently missed (the AB-15 SD7 refusal in
+    // VMEntryScope.cpp only covers SPAWNED threads calling carrier-created
+    // exports). Per the house rule (fail-stop/refusal over silent
+    // corruption), force wasm off under the GIL-off shape — LOLJIT precedent
+    // above. Flag-off and GIL-on are unaffected; delete this once the wasm
+    // glue is rerouted through the mode-keyed exception-slot pattern
+    // (AssemblyHelpers::loadException / materializeGILOffExceptionSlot) and
+    // passes the §A.1.3 audit.
+    if (Options::useJSThreads() && !Options::useThreadGIL() && Options::useWasm()) {
+        dataLogLn("JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).");
+        Options::useWasm() = false;
+    }
+
+    // ANNEX U0C write-once latch backstop (U-T14 amend, reviewer round 2):
+    // gilOffProcess is OPTION-derived and IMMUTABLE for the process. The
+    // real latch — the JSCConfig gilOffProcess byte — is U-T3's open
+    // obligation 9b (INTEGRATE-ungil.md; see AB-1). Until it lands, this
+    // shadow latch closes the divergence window between
+    // construction-latched consumers (VM::m_gilOff, Watchdog::m_gilOff)
+    // and the live-read short forms (ArrayBuffer.cpp gilOffThreadsProcess,
+    // VMInspector.cpp isGILOffProcessForInspection, SamplingProfiler.h,
+    // JSLock.cpp, VM::isGILOffProcess): Options::setOptions /
+    // setOption(verify=true) re-run this function and could otherwise flip
+    // the derivation mid-process (including this very U0 normalization
+    // forcing useThreadGIL 0 -> 1), silently splitting the lock-arm /
+    // detach-table selection across consumers. Options::finalize() runs at
+    // the tail of JSC::initialize() (InitializeThreading.cpp), strictly
+    // before any VM can be constructed, so refusing post-finalization
+    // CHANGES of the derivation is exactly "latched at Config
+    // finalization" minus the JSCConfig storage. Pre-finalization calls
+    // (Options::initialize, the jsc-shell CommandLine::parseArguments
+    // setOption loop, embedder setOptions before JSC::initialize) re-latch
+    // freely. Flag-off and U19 GIL-on: the derivation is constant (false),
+    // so the assert is unreachable; codegen shape unaffected (host C++
+    // only). When the JSCConfig byte lands (U-T3), it subsumes this latch
+    // and the statics below should be replaced by it, keeping the
+    // RELEASE_ASSERT.
+    {
+        bool gilOffProcessDerivation = Options::useJSThreads() && !Options::useThreadGIL()
+            && Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap();
+        static bool s_gilOffProcessLatch = false;
+        static bool s_gilOffProcessLatchIsSet = false;
+        if (!g_jscConfig.options.isFinalized || !s_gilOffProcessLatchIsSet) {
+            s_gilOffProcessLatch = gilOffProcessDerivation;
+            s_gilOffProcessLatchIsSet = true;
+        } else
+            RELEASE_ASSERT(gilOffProcessDerivation == s_gilOffProcessLatch);
+    }
+
     unsigned thresholdForGlobalLexicalBindingEpoch = Options::thresholdForGlobalLexicalBindingEpoch();
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
@@ -811,7 +929,38 @@ void Options::notifyOptionsChanged()
     Options::useRandomizingExecutableIslandAllocation() = false;
 #endif
 
-    Options::useHandlerICInFTL() = false; // Currently, it is not completed. Disable forcefully.
+    if (!Options::useJSThreadsUnlockHandlerICInFTL())
+        Options::useHandlerICInFTL() = false; // Currently, it is not completed. Disable forcefully.
+
+    // SPEC-jit M2b.
+    if (Options::useJSThreads()) {
+        Options::useHandlerICInFTL() = true;   // §5.2/D1: FTL must not patch property-IC code in place.
+        Options::usePollingTraps() = true;     // I21: cooperative polls only; async breakpoint patching = I2 violation.
+        Options::useConcurrentJIT() = true;    // Task 12: sync-compile bypasses the JITWorklist dedup backstop (§5.7.3).
+
+        // D8 / Task-8 item 6: flag-on requires 64-bit pointers and a JIT-visible TLS
+        // mechanism for the R5 tag (ELF initial-exec TLS on Linux x86-64/arm64, or
+        // Darwin FAST_TLS via the M4a key slot).
+#if !CPU(ADDRESS64) || !(OS(LINUX) && (CPU(X86_64) || CPU(ARM64))) && !(OS(DARWIN) && ENABLE(FAST_TLS_JIT))
+        { dataLogLn("useJSThreads is unsupported on this platform (SPEC-jit D8)"); CRASH(); }
+#endif
+        // Task-8 item 5: the JSValue gigacage does not exist in this tree
+        // (Gigacage::Kind has only Primitive), so the cage-vs-tag-mask concern
+        // is vacuously satisfied; no assert is emitted here on purpose.
+
+        // SPEC-jit P5/App. R5 (M2c): the main thread must run butterfly-TID-tag
+        // init before any flag-on JIT leg emits loadButterflyTIDTag (both
+        // per-platform offset/key queries RELEASE_ASSERT prior init), and
+        // before Config::finalize on Darwin (the pthread key is mirrored into
+        // g_jscConfig). Idempotent; main-thread tag is 0. Spawned threads run
+        // the same call on their spawn path (INTEGRATE-api 9.2-8).
+        JSC::initializeButterflyTIDTagForCurrentThread();
+    }
+    // Spec'd invariant check (defense against a later pass re-disabling it):
+    if (Options::useJSThreads() && !Options::useHandlerICInFTL()) {
+        dataLogLn("FATAL: useJSThreads requires useHandlerICInFTL (SPEC-jit M2b).");
+        CRASH();
+    }
     Options::forceUnlinkedDFG() = false; // Currently, IC is rapidly changing. We disable this until we get the final form of Data IC.
 
     if (!Options::allowDoubleShape())

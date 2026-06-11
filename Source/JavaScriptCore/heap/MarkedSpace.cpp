@@ -34,6 +34,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+// UNGIL §A.3 (AB-10) cross-TU seams — defined in runtime/VMManager.cpp;
+// declaration pattern matches heap/Heap.cpp:151, heap/LocalAllocator.cpp:45
+// and heap/BlockDirectory.cpp:45. Signatures must stay byte-identical.
+bool jsThreadsThreadGranularWorldIsStopped(); // §A.3.2 post-quiescence depth.
+bool jsThreadsCurrentThreadIsStopConductor(); // §A.3.3 tenure check.
+
 std::array<unsigned, MarkedSpace::numSizeClasses> MarkedSpace::s_sizeClassForSizeStep;
 
 namespace {
@@ -193,6 +199,10 @@ MarkedSpace::~MarkedSpace()
 
 void MarkedSpace::freeMemory()
 {
+    // SharedGC (T8): server teardown — Heap::lastChanceToFinalize holds MSPL
+    // across this (a stale sticky-ISS flag may outlive the last secondary
+    // client until the §10D revert poll).
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld());
     forEachBlock(
         [&] (MarkedBlock::Handle* block) {
             freeBlock(block);
@@ -208,6 +218,9 @@ void MarkedSpace::freeMemory()
 
 void MarkedSpace::lastChanceToFinalize()
 {
+    // SharedGC (T8): server teardown — under MSPL (Heap::lastChanceToFinalize)
+    // or stopped; the per-block bit writes inside are I5b writers.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld());
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.lastChanceToFinalize();
@@ -220,6 +233,11 @@ void MarkedSpace::lastChanceToFinalize()
 
 void MarkedSpace::sweepBlocks()
 {
+    // SharedGC (T8/I5b): synchronous full sweeps touch every directory's bits
+    // and free blocks; once shared they must hold MSPL (Heap::
+    // sweepSynchronously takes it) or run while the world is stopped for all
+    // clients.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld());
     heap().sweeper().stopSweeping();
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
@@ -230,6 +248,15 @@ void MarkedSpace::sweepBlocks()
 
 void MarkedSpace::registerPreciseAllocation(PreciseAllocation* allocation, bool isNewAllocation)
 {
+    // SharedGC (§5.6/I16): once the server is shared, the precise registry
+    // (m_preciseAllocations, m_preciseAllocationSet, indexInSpace stamps) is
+    // mutated only under MSPL or while the world is stopped for all clients.
+    // Mutator-path callers covered (T3b audit): CompleteSubspace::
+    // tryAllocateSlow and PreciseSubspace::tryAllocate take MSPL themselves;
+    // IsoSubspace::tryAllocateLowerTierPrecise runs inside LocalAllocator::
+    // allocateSlowCase's MSPL section (§5.2).
+    ASSERT(!heap().isSharedServer() || heap().mutatorSlowPathLock().isHeld() || heap().worldIsStoppedForAllClients());
+
     // FIXME: This is a bit of a mess we should really consolidate setting all the bits to here.
     allocation->setIndexInSpace(m_preciseAllocations.size());
     allocation->m_hasValidCell = true;
@@ -242,12 +269,16 @@ void MarkedSpace::registerPreciseAllocation(PreciseAllocation* allocation, bool 
         // Existing code's ordering is calling `didAllocate` and increasing capacity.
         size_t size = allocation->cellSize();
         heap().didAllocate(size);
-        m_capacity += size;
+        m_capacity.fetch_add(size, std::memory_order_relaxed); // §5.4/F3.
     }
 }
 
 void MarkedSpace::sweepPreciseAllocations()
 {
+    // SharedGC (I5/I16): in shared mode, precise-allocation sweeping runs only
+    // on the conductor while the world is stopped (mutator-concurrent
+    // sweeping is a deviation-4 disabled feature).
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     RELEASE_ASSERT(m_preciseAllocationsNurseryOffset == m_preciseAllocations.size());
     unsigned srcIndex = m_preciseAllocationsNurseryOffsetForSweep;
     unsigned dstIndex = srcIndex;
@@ -260,7 +291,7 @@ void MarkedSpace::sweepPreciseAllocations()
             if (allocation->isLowerTierPrecise())
                 static_cast<IsoSubspace*>(allocation->subspace())->sweepLowerTierPreciseCell(allocation);
             else {
-                m_capacity -= allocation->cellSize();
+                m_capacity.fetch_sub(allocation->cellSize(), std::memory_order_relaxed); // §5.4/F3.
                 allocation->destroy();
             }
             continue;
@@ -275,6 +306,10 @@ void MarkedSpace::sweepPreciseAllocations()
 void MarkedSpace::prepareForAllocation()
 {
     ASSERT(!Thread::mayBeGCThread() || heap().worldIsStopped());
+    // SharedGC (I5, T8): prepare iteration (per-allocator resets, cursor
+    // resets, eden-bit clears) and the m_newActiveWeakSets splice below run
+    // only on the conductor while the world is stopped for all clients.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     for (Subspace* subspace : m_subspaces)
         subspace->prepareForAllocation();
 
@@ -289,6 +324,11 @@ void MarkedSpace::prepareForAllocation()
 
 void MarkedSpace::enablePreciseAllocationTracking()
 {
+    // SharedGC (§5.6/I16, T3b audit): called from the mutator (e.g. the
+    // sampling profiler); when shared it both reads the precise vector and
+    // installs the set that registerPreciseAllocation subsequently adds to —
+    // take MSPL so it cannot interleave with another client's registration.
+    MutatorSlowPathLocker mutatorSlowPathLocker(heap());
     m_preciseAllocationSet = UncheckedKeyHashSet<HeapCell*> { };
     for (auto* allocation : m_preciseAllocations)
         m_preciseAllocationSet->add(allocation->cell());
@@ -296,6 +336,9 @@ void MarkedSpace::enablePreciseAllocationTracking()
 
 void MarkedSpace::reapWeakSets()
 {
+    // SharedGC (I5/§5.2(2), T8): active-weak-set iteration is conductor-side
+    // while the world is stopped for all clients.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     auto visit = [&] (WeakSet* weakSet) {
         weakSet->reap();
     };
@@ -309,6 +352,21 @@ void MarkedSpace::reapWeakSets()
 void MarkedSpace::stopAllocating()
 {
     ASSERT(!isIterating());
+    // SharedGC (§5.2(4)/I5, T8): the directory iteration below flushes EVERY
+    // client's LocalAllocators (they are all linked into the shared
+    // directories' m_localAllocators lists) — this is the §10 step-5 flush
+    // when called from stopThePeriphery() on the conductor. The MSPL
+    // disjunct below is the teardown carve-out (§5.3): MSPL alone does NOT
+    // license flushing while other client threads run — their inline/LLInt
+    // fast paths pop their FreeLists without any lock (I2). Outside teardown,
+    // shared-mode callers must be the conductor while WSAC.
+    // UNGIL §K.5 class-4 (AB-10): a §A.3 thread-granular window's CONDUCTOR
+    // is also licensed — its §A.3.2 predicate parks every other entered
+    // mutator at poll sites outside MSPL/BVL holds (the AB18-D argument at
+    // LocalAllocator.cpp:assertSharedAllocatorMutationIsSafe), so no client
+    // FreeList fast path can be in flight; haveABadTime's conversion-walk
+    // HeapIterationScope reaches here from inside that window.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld() || (jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor()));
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.stopAllocating();
@@ -319,6 +377,10 @@ void MarkedSpace::stopAllocating()
 void MarkedSpace::stopAllocatingForGood()
 {
     ASSERT(!isIterating());
+    // SharedGC (§5.2(4)/§5.3 teardown, T8): server teardown holds MSPL
+    // (Heap::lastChanceToFinalize); per-client teardown goes through
+    // GCThreadLocalCache::stopAllocatingForGood (also under MSPL).
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld());
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.stopAllocatingForGood();
@@ -328,6 +390,9 @@ void MarkedSpace::stopAllocatingForGood()
 
 void MarkedSpace::prepareForConservativeScan()
 {
+    // SharedGC (I5/I16, T8): sorts and re-stamps the precise vector tail;
+    // conductor-only while stopped for all clients once shared.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     if (m_conservativeScanIsPrepared)
         return;
     m_conservativeScanIsPrepared = true;
@@ -352,6 +417,8 @@ void MarkedSpace::prepareForConservativeScan()
 
 void MarkedSpace::prepareForMarking()
 {
+    // SharedGC (I5, T8): marking-start work is conductor-only once shared.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     if (heap().collectionScope() == CollectionScope::Eden)
         m_preciseAllocationsOffsetForThisCollection = m_preciseAllocationsNurseryOffset;
     else
@@ -360,6 +427,13 @@ void MarkedSpace::prepareForMarking()
 
 void MarkedSpace::resumeAllocating()
 {
+    // SharedGC (§5.2(4), T8): resume is conductor-side (still inside the stop
+    // window — §10 step 8 strictly precedes the VMM resume) or a
+    // MSPL-holding iterator's didFinishIterating.
+    // UNGIL §K.5 class-4 (AB-10): the §A.3 conductor disjunct mirrors
+    // stopAllocating() above — didFinishIterating from haveABadTime's
+    // in-window HeapIterationScope resumes here before the window closes.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld() || (jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor()));
     m_conservativeScanIsPrepared = false;
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
@@ -371,6 +445,10 @@ void MarkedSpace::resumeAllocating()
 
 bool MarkedSpace::isPagedOut()
 {
+    // SharedGC (T8 audit): iterates m_blocks lock-free. Reached from the
+    // full-GC activity callback (never fired once shared, §5.4) and from
+    // collection bookkeeping on the conductor.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     SimpleStats pagedOutPagesStats;
 
     forEachDirectory(
@@ -401,13 +479,21 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
 
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {
-    m_capacity -= MarkedBlock::blockSize;
+    m_capacity.fetch_sub(MarkedBlock::blockSize, std::memory_order_relaxed); // §5.4/F3.
     m_blocks.remove(&block->block());
     delete block;
 }
 
 void MarkedSpace::shrink()
 {
+    // SharedGC (T8, MC-SAFE S4): frees empty blocks (registry + weak-set
+    // unlinks + physical fastFree of the block). WORLD-STOPPED ONLY once
+    // shared: MSPL is not a sufficient shield because sibling mutators
+    // perform lock-free reads that may transiently touch dead-verdicted
+    // cells (fiberConcurrently et al.); physical reclamation rides the
+    // world-stopped reclaim point (SPEC-heap §11; same world-stopped-only
+    // rule as sweepPreciseAllocations' I5/I16 deviation-4 precedent).
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.shrink();
@@ -417,6 +503,9 @@ void MarkedSpace::shrink()
 
 void MarkedSpace::beginMarking()
 {
+    // SharedGC (I5, T8): marking-start (version bumps, mark-bit summary
+    // clears, precise flips) is conductor-only while stopped for all clients.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     switch (heap().collectionScope().value()) {
     case CollectionScope::Eden: {
         m_edenVersion = nextVersion(m_edenVersion);
@@ -459,6 +548,10 @@ void MarkedSpace::beginMarking()
 
 void MarkedSpace::endMarking()
 {
+    // SharedGC (I5, T8): end-of-marking bit flips (BlockDirectory::endMarking
+    // recomputes empty/canAllocate lock-free) are conductor-only while
+    // stopped for all clients.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     if (nextVersion(m_newlyAllocatedVersion) == initialVersion) [[unlikely]] {
         forEachBlock(
             [&] (MarkedBlock::Handle* handle) {
@@ -488,6 +581,13 @@ void MarkedSpace::endMarking()
 void MarkedSpace::willStartIterating()
 {
     ASSERT(!isIterating());
+    // SharedGC (T8): once shared, a HeapIterationScope is legal only while
+    // the world is stopped for all clients (conductor / JSThreadsStopScope
+    // holders that enqueue a GC, §10C) or during teardown when no other
+    // client thread can run (under MSPL for the I5b bit reads). It is NOT
+    // legal from a mutator while other clients run: the stopAllocating()
+    // below would flush their live FreeLists out from under their lock-free
+    // fast paths (I2). Its assert is the audit gate.
     stopAllocating();
     m_isIterating = true;
 }
@@ -529,11 +629,23 @@ size_t MarkedSpace::size()
 
 size_t MarkedSpace::capacity()
 {
-    return m_capacity;
+    return m_capacity.load(std::memory_order_relaxed); // §5.4/F3: exact at safepoints (I7).
 }
 
 void MarkedSpace::addActiveWeakSet(WeakSet* weakSet)
 {
+    // SharedGC (§5.2(2), T8 audit; review round 4): sole caller is
+    // WeakSet::addAllocator, reached only from WeakSet::allocate — which now
+    // holds MSPL itself when shared (the weak-mutation protocol,
+    // WeakSetInlines.h), covering this sentinel-list append along with the
+    // rest of the per-WeakSet state. Taking MSPL HERE would self-deadlock
+    // (WTF::Lock is not recursive), so this became assert-only. All other
+    // accesses to this list are conductor-side while the world is stopped
+    // for all clients (prepareForAllocation's takeFrom, reapWeakSets,
+    // visiting) or block-free paths already under MSPL/WSAC
+    // (WeakSet::remove via shrink/free).
+    ASSERT(!heap().isSharedServer() || heap().mutatorSlowPathLock().isHeld() || heap().worldIsStoppedForAllClients());
+
     // We conservatively assume that the WeakSet should belong in the new set. In fact, some weak
     // sets might contain new weak handles even though they are tied to old objects. This slightly
     // increases the amount of scanning that an eden collection would have to do, but the effect
@@ -546,12 +658,19 @@ void MarkedSpace::didAddBlock(MarkedBlock::Handle* block)
     // WARNING: This function is called before block is fully initialized. The block will not know
     // its cellSize() or attributes(). The latter implies that you can't ask things like
     // needsDestruction().
-    m_capacity += MarkedBlock::blockSize;
+    // SharedGC (§5.2): mutator-path calls (BlockDirectory::tryAllocateBlock)
+    // hold MSPL when shared; m_blocks (a MarkedBlockSet with its own internal
+    // bloom-filter/set) additions are thereby serialized against each other.
+    m_capacity.fetch_add(MarkedBlock::blockSize, std::memory_order_relaxed); // §5.4/F3.
     m_blocks.add(&block->block());
 }
 
 void MarkedSpace::didAllocateInBlock(MarkedBlock::Handle* block)
 {
+    // SharedGC (§5.2(2)): mutator calls arrive inside LocalAllocator::
+    // allocateSlowCase's MSPL section; all other m_newActiveWeakSets accesses
+    // are conductor-side while the world is stopped for all clients (I5).
+    ASSERT(!heap().isSharedServer() || heap().mutatorSlowPathLock().isHeld() || heap().worldIsStoppedForAllClients());
     if (block->weakSet().isOnList()) {
         block->weakSet().remove();
         m_newActiveWeakSets.append(&block->weakSet());
@@ -560,6 +679,9 @@ void MarkedSpace::didAllocateInBlock(MarkedBlock::Handle* block)
 
 void MarkedSpace::snapshotUnswept()
 {
+    // SharedGC (I5, T8): sweep scheduling (unswept snapshots) is
+    // conductor-only while stopped for all clients.
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     if (heap().collectionScope() == CollectionScope::Eden) {
         forEachDirectory(
             [&] (BlockDirectory& directory) -> IterationStatus {
@@ -595,6 +717,17 @@ void MarkedSpace::dumpBits(PrintStream& out)
             directory.dumpBits(out);
             return IterationStatus::Continue;
         });
+}
+
+unsigned MarkedSpace::reserveThreadLocalCacheIndices(const AbstractLocker&)
+{
+    // SharedGC (§5.3; T4): monotonic, never reused; caller holds
+    // m_directoryLock (the locker token).
+    unsigned base = m_nextTlcIndexBase;
+    unsigned next = base + static_cast<unsigned>(numSizeClasses);
+    RELEASE_ASSERT(next > base); // Overflow would alias TLC slots across subspaces.
+    m_nextTlcIndexBase = next;
+    return base;
 }
 
 void MarkedSpace::addBlockDirectory(const AbstractLocker&, BlockDirectory* directory)

@@ -83,14 +83,46 @@ static void linkSlowFor(VM& vm, CallLinkInfo& callLinkInfo)
 
 void linkMonomorphicCall(VM& vm, JSCell* owner, CallLinkInfo& callLinkInfo, CodeBlock* calleeCodeBlock, JSObject* callee, CodePtr<JSEntryPtrTag> codePtr)
 {
-    ASSERT(!callLinkInfo.stub());
-
     CodeBlock* callerCodeBlock = dynamicDowncast<CodeBlock>(owner); // WebAssembly -> JS stubs don't have a valid CodeBlock.
     ASSERT(owner);
 
     if (Options::forceICFailure()) [[unlikely]]
         return;
 
+    if (vm.gilOff()) [[unlikely]] {
+        // AB18-D (amended per review): N mutators can take the same call
+        // site's slow path concurrently (both saw Mode::Init + seenOnce()).
+        // The Init->Monomorphic transition — and, per precondition 11
+        // (INTEGRATE-jit), every other call-link transition writer — is
+        // serialized on the single process-wide link lock; per-CodeBlock
+        // locking was rejected in review (it covered one writer pair out of
+        // six and risked caller/callee ABBA between mutually-recursive
+        // CodeBlocks). The loser keeps the winner's publication and just
+        // returns: linkFor computed codePtr for THIS call independently of
+        // the IC, so the current call still lands on a correct target.
+        // Taking the callee push under the SAME lock also serializes it
+        // against every other locked push/remove (the SentinelLinkedList
+        // prev/next corruption signature); the isOnList() re-check makes a
+        // racing upgrade-relink idempotent rather than a double push.
+        Locker locker { CallLinkInfo::s_callLinkSerializationLock };
+        if (callLinkInfo.isLinked() || callLinkInfo.stub())
+            return; // Lost the race; the winner's link stands.
+        callLinkInfo.setMonomorphicCallee(vm, owner, callee, calleeCodeBlock, codePtr);
+        callLinkInfo.setLastSeenCallee(vm, owner, callee);
+
+        if (shouldDumpDisassemblyFor(callerCodeBlock))
+            dataLog("Linking call in ", FullCodeOrigin(callerCodeBlock, callLinkInfo.codeOrigin()), " to ", pointerDump(calleeCodeBlock), ", entrypoint at ", codePtr, "\n");
+
+        if (calleeCodeBlock && !callLinkInfo.isOnList())
+            calleeCodeBlock->linkIncomingCall(owner, &callLinkInfo);
+
+        if (callLinkInfo.specializationKind() == CodeSpecializationKind::CodeForCall)
+            return;
+        linkSlowFor(vm, callLinkInfo);
+        return;
+    }
+
+    ASSERT(!callLinkInfo.stub());
     ASSERT(!callLinkInfo.isLinked());
     callLinkInfo.setMonomorphicCallee(vm, owner, callee, calleeCodeBlock, codePtr);
     callLinkInfo.setLastSeenCallee(vm, owner, callee);
@@ -122,11 +154,19 @@ CodePtr<JSEntryPtrTag> jsToWasmICCodePtr(CodeSpecializationKind kind, JSObject* 
     return nullptr;
 }
 
-void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkInfo& callLinkInfo, CallVariant newVariant)
+static void linkPolymorphicCallImpl(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkInfo& callLinkInfo, CallVariant newVariant)
 {
-    // During execution of linkPolymorphicCall, we strongly assume that we never do GC.
-    // GC jettisons CodeBlocks, changes CallLinkInfo etc. and breaks assumption done before and after this call.
-    DeferGCForAWhile deferGCForAWhile(vm);
+    // Precondition-11 loser path: gilOff we run under
+    // s_callLinkSerializationLock (taken in linkPolymorphicCall), but a
+    // racing slow-path entrant may have already moved this site to Virtual
+    // while we waited on the lock. Virtual is terminal, and its m_callee
+    // slot holds the raw always-call sentinel (polymorphicCalleeMask), so
+    // the callee() read below would hand a non-cell word (0x1) to the
+    // WriteBarrier cell validation. Same lost-the-race bail shape as
+    // linkMonomorphicCall: the winner's virtual link stands, and the
+    // current call was dispatched independently of the IC, so just return.
+    if (vm.gilOff() && callLinkInfo.mode() == CallLinkInfo::Mode::Virtual) [[unlikely]]
+        return;
 
     if (!newVariant || Options::forceICFailure()) {
         callLinkInfo.setVirtualCall(vm);
@@ -217,7 +257,24 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
 
         CodePtr<JSEntryPtrTag> codePtr;
         if (variant.executable()) {
-            ASSERT(variant.executable()->hasJITCodeForCall());
+            // gilOff, ScriptExecutable::installCode retracts the
+            // m_jitCodeForCall mirror FIRST (retract-first store order,
+            // runtime/ScriptExecutable.cpp) under a lock domain that
+            // s_callLinkSerializationLock does not cover, so the mirror read
+            // in hasJITCodeForCall() can be transiently null even though the
+            // variant genuinely has code. The per-variant CodeBlock snapshot
+            // taken above is the authoritative witness — the value path below
+            // already derives the entrypoint through it (ANNEX CBI item 3,
+            // AB17c F4). So under gilOff, assert the witness each downstream
+            // deref actually relies on: the snapshot's jitCode() for script
+            // executables (codeBlock non-null — non-host variants with a null
+            // snapshot already bailed to setVirtualCall above), and the
+            // mirror for hosts, which publish m_jitCodeForCall once at
+            // construction and never retract, so the mirror check stays
+            // race-free and meaningful for them.
+            ASSERT(vm.gilOff()
+                ? (codeBlock ? !!codeBlock->jitCode() : variant.executable()->hasJITCodeForCall())
+                : variant.executable()->hasJITCodeForCall());
 
             codePtr = jsToWasmICCodePtr(callLinkInfo.specializationKind(), variant.function());
             if (!codePtr) {
@@ -228,7 +285,20 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
                         arityCheck = ArityCheckMode::MustCheckArity;
 
                 }
-                codePtr = variant.executable()->generatedJITCodeForCall()->addressForCall(arityCheck);
+                if (vm.gilOff() && codeBlock) [[unlikely]] {
+                    // ANNEX CBI item 3 (AB17c F4): derive the entrypoint
+                    // THROUGH the per-variant CodeBlock snapshot taken
+                    // above. The executable's m_jitCodeForCall mirror is
+                    // (a) transiently NULL during a live installCode (the
+                    // retract-first store order) — generatedJITCodeForCall
+                    // unconditionally derefs it — and (b) independently
+                    // republished, so reading it here could pair a target
+                    // from one tier with slot.m_codeBlock from another.
+                    // Host functions (codeBlock == nullptr) keep the mirror
+                    // read: their jitCode is set once at creation.
+                    codePtr = codeBlock->jitCode()->addressForCall(arityCheck);
+                } else
+                    codePtr = variant.executable()->generatedJITCodeForCall()->addressForCall(arityCheck);
                 slot.m_arityCheckMode = arityCheck;
             }
         } else {
@@ -274,7 +344,30 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
 
     // If there had been a previous stub routine, that one will die as soon as the GC runs and sees
     // that it's no longer on stack.
-    callLinkInfo.setStub(WTF::move(stubRoutine));
+    callLinkInfo.setStub(vm, WTF::move(stubRoutine));
+}
+
+void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkInfo& callLinkInfo, CallVariant newVariant)
+{
+    // During execution of linkPolymorphicCall, we strongly assume that we never do GC.
+    // GC jettisons CodeBlocks, changes CallLinkInfo etc. and breaks assumption done before and after this call.
+    DeferGCForAWhile deferGCForAWhile(vm);
+
+    if (vm.gilOff()) [[unlikely]] {
+        // AB18-D (amended per review): this is a transition writer too — it
+        // reads the current stub/callee, then setStub/setVirtualCall rewrite
+        // the mirrors, swap m_stub, publish a record, and remove() this node
+        // from a callee's m_incomingCalls. All of that must be in the
+        // precondition-11 writer set, serialized on the same link lock as
+        // linkMonomorphicCall — the reviewed proposal locked only the
+        // Init->Monomorphic pair. Holding the lock across stub creation is
+        // acceptable: rare slow path, GC is deferred above, and the lock
+        // nests nothing (single process-wide lock; holders never park).
+        Locker locker { CallLinkInfo::s_callLinkSerializationLock };
+        linkPolymorphicCallImpl(vm, owner, callFrame, callLinkInfo, newVariant);
+        return;
+    }
+    linkPolymorphicCallImpl(vm, owner, callFrame, callLinkInfo, newVariant);
 }
 
 #if ENABLE(JIT)
@@ -321,6 +414,15 @@ void ftlThunkAwareRepatchCall(CodeBlock* codeBlock, CodeLocationCall<JSInternalP
     MacroAssembler::repatchCall(call, newCalleeFunction.retagged<OperationPtrTag>());
 }
 
+// TSAN ic-stubinfo (SPEC-jit §5.1/D3): IC state is mutable multi-field data;
+// every writer must hold the owner CodeBlock's m_lock. This primitive
+// REQUIRES the caller to hold codeBlock->m_lock already — the tryCache*
+// bodies and the reset* family (reached from PropertyInlineCache::reset,
+// whose callers all hold the lock) satisfy that. Callers on the lock-free
+// GaveUp/megamorphic-demotion tails must use repatchSlowPathCallLocking
+// below instead: without the lock, two slow paths demoting the same shared
+// IC concurrently (or racing a locked Optimize-revert writer in tryCache*)
+// make m_slowOperation a plain-store data race.
 static void repatchSlowPathCall(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, CodePtr<CFunctionPtrTag> newCalleeFunction)
 {
     if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(propertyCache)) {
@@ -328,6 +430,15 @@ static void repatchSlowPathCall(CodeBlock* codeBlock, PropertyInlineCache& prope
         return;
     }
     ftlThunkAwareRepatchCall(codeBlock, downcast<RepatchingPropertyInlineCache>(propertyCache).m_slowPathCallLocation, newCalleeFunction);
+}
+
+// See above: the lock-acquiring shape for the repatch* tails, which run AFTER
+// tryCache* released the locker. The store itself does not allocate, so a
+// plain ConcurrentJSLocker suffices (no GC-safe bracket needed).
+static void repatchSlowPathCallLocking(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, CodePtr<CFunctionPtrTag> newCalleeFunction)
+{
+    ConcurrentJSLocker locker(codeBlock->m_lock);
+    repatchSlowPathCall(codeBlock, propertyCache, newCalleeFunction);
 }
 
 enum InlineCacheAction {
@@ -348,6 +459,19 @@ static InlineCacheAction actionForCell(VM& vm, JSCell* cell)
     if (structure->isUncacheableDictionary()) {
         if (structure->hasBeenFlattenedBefore())
             return GiveUpOnCache;
+        if (vm.gilOff()) [[unlikely]] {
+            // O2/GT11 (stw-watchdog-timeout root cause, transition-vs-write):
+            // every tryCache* caller holds codeBlock->m_lock (rank 6b) here,
+            // and flag-on flattenDictionaryObject routes through
+            // flattenDictionaryStructureUnderStop — a §10.6 per-event stop.
+            // Requesting a stop while holding a lock that other mutators
+            // block on WITH heap access held (ConcurrentJSLocker has no
+            // access-release bracket) wedges the conductor's quiescence
+            // predicate into the 30s watchdog. Skip the inline flatten: the
+            // IC stays uncached this round and the access keeps taking the
+            // slow path — a perf forgone, never a correctness change.
+            return RetryCacheLater;
+        }
         // Flattening could have changed the offset, so return early for another try.
         asObject(cell)->flattenDictionaryObject(vm);
         return RetryCacheLater;
@@ -371,7 +495,7 @@ ALWAYS_INLINE static void fireWatchpointsAndClearStubIfNeeded(VM& vm, PropertyIn
 
         {
             GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
-            propertyCache.reset(locker, codeBlock);
+            propertyCache.reset(locker, vm, codeBlock);
         }
     }
 }
@@ -582,6 +706,45 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
             if (action != AttemptToCache)
                 return action;
 
+            if (vm.gilOff() && !slot.isUnset() && (slot.isCacheableValue() || slot.isCacheableGetter())) [[unlikely]] {
+                // OM-1 (gilOff() mode-split) — GetBy analog of the
+                // tryCachePutBy Replace/Setter revalidation: the slow-path
+                // operation filled `slot` {slotBase, cachedOffset} DURING
+                // getOwnPropertySlot, but the guarding structure is read NOW.
+                // GIL-off, another mutator can transition base or the holder
+                // between those points (delete / dictionary flatten shift
+                // named offsets), so publishing (structure-now, offset-then)
+                // keys an IC that loads a sibling slot on every future hit
+                // (named-property corruption), or treats a data slot as a
+                // GetterSetter and calls through a non-callable cell. Bind
+                // the offset to the structure the IC will actually be keyed
+                // on: for self access that is `structure` itself (its
+                // uid->offset table is immutable for non-dictionaries, so
+                // this hard-closes the tear including A->B->A); for proto
+                // hits it is the holder's current structure, which is also
+                // what generateConditionsForPrototypePropertyHit asserts
+                // against. getConcurrently is the structure-lock walk; the
+                // codeBlock-lock -> structure-lock order here is the existing
+                // concurrent-JIT order (same as the landed PutBy OM-1 guard).
+                // Require the entry's kind to match the slot's. Cacheable
+                // dictionaries mutate their table in place under the same
+                // structureID, invisible to the IC guard; refuse those.
+                JSObject* slotBaseObject = slot.slotBase();
+                if (!slotBaseObject)
+                    return RetryCacheLater;
+                Structure* validationStructure = slot.slotBase() == baseValue ? structure : slotBaseObject->structure();
+                if (validationStructure->isDictionary())
+                    return RetryCacheLater;
+                unsigned attributes;
+                PropertyOffset tableOffset = validationStructure->getConcurrently(propertyName.uid(), attributes);
+                if (tableOffset != slot.cachedOffset())
+                    return RetryCacheLater;
+                if (slot.isCacheableGetter() != !!(attributes & PropertyAttribute::Accessor))
+                    return RetryCacheLater;
+                if (attributes & PropertyAttribute::CustomAccessorOrValue)
+                    return RetryCacheLater;
+            }
+
             // Optimize self access.
             if (propertyCache.cacheType() == CacheType::Unset
                 && slot.isCacheableValue()
@@ -619,6 +782,18 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                 if (structure->isDictionary()) {
                     if (structure->hasBeenFlattenedBefore())
                         return GiveUpOnCache;
+                    if (vm.gilOff()) [[unlikely]] {
+                        // O2/GT11 (AB17e: sibling site of the actionForCell
+                        // gate): we hold codeBlock->m_lock (rank 6b) with
+                        // heap access, and flag-on flattenDictionaryStructure
+                        // ALWAYS routes through the §10.6 per-event stop —
+                        // requesting a stop here wedges the conductor's
+                        // quiescence predicate into the 30s watchdog. Rule:
+                        // gilOff, NEVER flatten from any IC-caching path;
+                        // flattening happens only from unlocked runtime
+                        // sites. Perf forgone, never a correctness change.
+                        return RetryCacheLater;
+                    }
                     structure->flattenDictionaryStructure(vm, uncheckedDowncast<JSObject>(baseCell));
                     return RetryCacheLater; // We may have changed property offsets.
                 }
@@ -656,7 +831,18 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                             conditionSet = generateConditionsForPrototypePropertyHit(
                                 vm, codeBlock, globalObject, structure, slot.slotBase(),
                                 propertyName.uid());
-                            RELEASE_ASSERT(!conditionSet.isValid() || conditionSet.slotBaseCondition().offset() == offset);
+                            if (vm.gilOff()) [[unlikely]] {
+                                // OM-1: generateConditionsForPrototypePropertyHit
+                                // re-walks the holder AFTER the revalidation guard
+                                // above, so GIL-off a racing transition can leave
+                                // the freshly generated condition's offset
+                                // disagreeing with the slot's. That is a benign
+                                // publish-time race, not a corrupted invariant —
+                                // refuse the cache attempt instead of crashing.
+                                if (conditionSet.isValid() && conditionSet.slotBaseCondition().offset() != offset)
+                                    return RetryCacheLater;
+                            } else
+                                RELEASE_ASSERT(!conditionSet.isValid() || conditionSet.slotBaseCondition().offset() == offset);
                         } else {
                             conditionSet = generateConditionsForPrototypePropertyHitCustom(
                                 vm, codeBlock, globalObject, structure, slot.slotBase(),
@@ -767,16 +953,16 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
     case PromoteToMegamorphic: {
         switch (kind) {
         case GetByKind::ById:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByIdMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByIdMegamorphic);
             break;
         case GetByKind::ByIdWithThis:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByIdWithThisMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByIdWithThisMegamorphic);
             break;
         case GetByKind::ByVal:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByValMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByValMegamorphic);
             break;
         case GetByKind::ByValWithThis:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByValWithThisMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByValWithThisMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -785,7 +971,7 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
         break;
     }
     case GiveUpOnCache:
-        repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
+        repatchSlowPathCallLocking(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
         break;
     case RetryCacheLater:
     case AttemptToCache:
@@ -794,9 +980,13 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
 }
 
 // Mainly used to transition from megamorphic case to generic case.
-void repatchGetBySlowPathCall(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, GetByKind kind)
+void repatchGetBySlowPathCall(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache, GetByKind kind)
 {
-    resetGetBy(codeBlock, propertyCache, kind);
+    // TSAN ic-stubinfo (SPEC-jit §5.1/D3): IC-state writers hold the owner
+    // CodeBlock's m_lock; this megamorphic->generic demotion is reached from
+    // JIT slow paths with no lock held.
+    ConcurrentJSLocker locker(codeBlock->m_lock);
+    resetGetBy(vm, codeBlock, propertyCache, kind);
     repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
 }
 
@@ -938,16 +1128,16 @@ void repatchArrayGetByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
     case PromoteToMegamorphic: {
         switch (kind) {
         case GetByKind::ById:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByIdMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByIdMegamorphic);
             break;
         case GetByKind::ByIdWithThis:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByIdWithThisMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByIdWithThisMegamorphic);
             break;
         case GetByKind::ByVal:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByValMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByValMegamorphic);
             break;
         case GetByKind::ByValWithThis:
-            repatchSlowPathCall(codeBlock, propertyCache, operationGetByValWithThisMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationGetByValWithThisMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -956,7 +1146,7 @@ void repatchArrayGetByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
         break;
     }
     case GiveUpOnCache:
-        repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
+        repatchSlowPathCallLocking(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
         break;
     case RetryCacheLater:
     case AttemptToCache:
@@ -998,9 +1188,11 @@ static CodePtr<CFunctionPtrTag> NODELETE appropriatePutByGaveUpFunction(PutByKin
 }
 
 // Mainly used to transition from megamorphic case to generic case.
-void repatchPutBySlowPathCall(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, PutByKind kind)
+void repatchPutBySlowPathCall(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache, PutByKind kind)
 {
-    resetPutBy(codeBlock, propertyCache, kind);
+    // TSAN ic-stubinfo (SPEC-jit §5.1/D3): see repatchGetBySlowPathCall.
+    ConcurrentJSLocker locker(codeBlock->m_lock);
+    resetPutBy(vm, codeBlock, propertyCache, kind);
     repatchSlowPathCall(codeBlock, propertyCache, appropriatePutByGaveUpFunction(kind));
 }
 
@@ -1042,6 +1234,51 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
     VM& vm = globalObject->vm();
     AccessGenerationResult result;
     Identifier ident = Identifier::fromUid(vm, propertyName.uid());
+
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit App. 5.6(c) / Task-11 bucket (iii): the (oldStructure, offset)
+        // replacement-set fire in the ExistingProperty branch below is a direct
+        // Class-A fireAll and must NOT run under CodeBlock::m_lock (section-7):
+        // the requester parks inside the stop protocol (arbitration tryLock loop
+        // or quiescence-predicate wait) while sibling mutators blind-wait on
+        // m_lock in tryCacheGetBy/tryCachePutBy with heap access held, so the
+        // conductor's predicate can never be satisfied (30s STW-watchdog abort;
+        // bughunt H1-lockheld-classA-fire-repatch-1360). Fire HERE, before the
+        // locker, exactly like the LLInt (LLIntSlowPaths.cpp:1384/1398/1705),
+        // scope (CommonSlowPathsInlines.h:105) and megamorphic
+        // (JITOperations.cpp:1277/2135) put caches: the fire COMPLETES (world-
+        // stopped jettison of every consumer that constant-folded this
+        // property) strictly before any Replace IC is published under the
+        // lock, so the M6.1 fireAllSlow ORDERING CAVEAT ("fact published
+        // before fire") never applies to this site. Firing for an attempt
+        // that later refuses to cache (forceICFailure, length/lastIndex
+        // special cases, CoW indexing) is sound: the set is invalidate-only
+        // and one-shot per (structure, offset).
+        if (baseValue.isCell() && slot.isCacheablePut() && slot.type() == PutPropertySlot::ExistingProperty && isValidOffset(slot.cachedOffset())) {
+            JSCell* replaceBase = baseValue.asCell();
+            if (replaceBase->type() == GlobalProxyType)
+                replaceBase = uncheckedDowncast<JSGlobalProxy>(replaceBase)->target();
+            if (slot.base() == replaceBase && oldStructure->propertyAccessesAreCacheable()) {
+                bool offsetStillValid = true;
+                if (vm.gilOff()) [[unlikely]] {
+                    // Mirror of the OM-1 revalidation in the locked region
+                    // below: never fire (or cache) a (structure, offset) pair
+                    // the structure's own table does not vouch for, and
+                    // refuse dictionaries (in-place table mutation under the
+                    // same structureID).
+                    if (oldStructure->isDictionary())
+                        offsetStillValid = false;
+                    else {
+                        unsigned attributes;
+                        PropertyOffset tableOffset = oldStructure->getConcurrently(propertyName.uid(), attributes);
+                        offsetStillValid = tableOffset == slot.cachedOffset() && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue | PropertyAttribute::ReadOnly));
+                    }
+                }
+                if (offsetStillValid)
+                    oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
+            }
+        }
+    }
     {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
 
@@ -1113,6 +1350,27 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
             }
         }
 
+        if (vm.gilOff()) [[unlikely]] {
+            // OM-1 (gilOff() mode-split): the slow-path operation snapshotted
+            // oldStructure BEFORE running the put, and the PutPropertySlot was
+            // filled in DURING the put. GIL-off, another mutator can transition
+            // baseCell between those points and now, so (oldStructure,
+            // slot.cachedOffset()) may describe two different shapes. Publishing
+            // that torn pair keys an IC on oldStructure that stores/loads at a
+            // foreign offset: oldStructure-shaped objects then take wrong-offset
+            // hits (named-property corruption; non-object "setter" cells reaching
+            // JSC::call). Revalidate here, under the codeBlock lock, and refuse
+            // to cache anything structure-keyed when the cell no longer wears
+            // oldStructure. The cacheable NewProperty transition legitimately
+            // leaves the cell in newStructure; let it fall through to the
+            // useJSThreads GiveUpOnCache below (SPEC-jit 5.5 Task 8) so hot
+            // transition sites still get the gave-up repatch instead of
+            // retrying forever.
+            bool isCacheableTransition = slot.base() == baseValue && slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty;
+            if (!isCacheableTransition && !newCase && !isProxyObject && baseValue.asCell()->structure() != oldStructure)
+                return RetryCacheLater;
+        }
+
         if (!newCase && slot.base() == baseValue && slot.isCacheablePut()) {
             if (slot.type() == PutPropertySlot::ExistingProperty) {
                 // This assert helps catch bugs if we accidentally forget to disable caching
@@ -1121,9 +1379,47 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 // to disable caching, we may come down this path. The Replace IC does not
                 // know how to model these types of structure transitions (or any structure
                 // transition for that matter).
-                RELEASE_ASSERT(baseValue.asCell()->structure() == oldStructure);
+                if (vm.gilOff()) [[unlikely]] {
+                    // OM-1: structure equality was re-checked above, but an
+                    // A->B->A interleaving can still leave slot.cachedOffset()
+                    // computed against an intermediate shape. Bind the offset to
+                    // oldStructure's own table (getConcurrently: structure-lock
+                    // walk; codeBlock-lock -> structure-lock is the existing
+                    // concurrent-JIT order) before publishing a Replace case or
+                    // firing the replacement watchpoint at that offset. The kind
+                    // must match too: a same-offset entry that is an Accessor /
+                    // Custom / ReadOnly property must not take a data-Replace IC
+                    // (it would clobber a GetterSetter box or a read-only slot).
+                    // Cacheable dictionaries mutate their table in place under
+                    // the SAME structureID, which the IC's structure guard
+                    // cannot see; refuse those outright.
+                    if (oldStructure->isDictionary())
+                        return RetryCacheLater;
+                    unsigned attributes;
+                    PropertyOffset tableOffset = oldStructure->getConcurrently(propertyName.uid(), attributes);
+                    if (tableOffset != slot.cachedOffset() || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue | PropertyAttribute::ReadOnly)))
+                        return RetryCacheLater;
+                } else
+                    RELEASE_ASSERT(baseValue.asCell()->structure() == oldStructure);
 
-                oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
+                if (!Options::useJSThreads()) [[likely]]
+                    oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
+                else {
+                    // App. 5.6(c): the Class-A fire for this (structure, offset)
+                    // ran before the locker scope (pre-lock block above) — never
+                    // fire under codeBlock->m_lock. If the set is not invalidated
+                    // here, the pre-lock guard and this branch disagreed (the
+                    // base/structure changed in the unlocked window); REFUSE to
+                    // publish a Replace case against a still-watched set and let
+                    // the next slow-path call retry — publishing would let IC
+                    // stores mutate the property without a fire while constant-
+                    // folding consumers are still live. (codeBlock-lock ->
+                    // structure-lock is the established order, so the set query
+                    // is legal here.)
+                    WatchpointSet* replacementSet = oldStructure->propertyReplacementWatchpointSet(slot.cachedOffset());
+                    if (!replacementSet || !replacementSet->hasBeenInvalidated())
+                        return RetryCacheLater;
+                }
 
                 if (propertyCache.cacheType() == CacheType::Unset
                     && InlineAccess::canGenerateSelfPropertyReplace(propertyCache, slot.cachedOffset())
@@ -1143,6 +1439,15 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
             } else {
                 ASSERT(!isGlobalProxy);
                 ASSERT(slot.type() == PutPropertySlot::NewProperty);
+
+                // SPEC-jit section 5.5 (Task 8): generated transitions are
+                // illegal under useJSThreads until the structures'
+                // transitionThreadLocal/writeThreadLocal watchpoint sets land
+                // (OM E4: compile-time TTL validity + runtime PA/TID tests).
+                // Until then every transition takes the generic locked OM
+                // path; see docs/threads/INTEGRATE-jit.md, Task 8.
+                if (Options::useJSThreads()) [[unlikely]]
+                    return GiveUpOnCache;
 
                 if (!oldStructure->isObject())
                     return GiveUpOnCache;
@@ -1247,6 +1552,24 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 RefPtr<PolyProtoAccessChain> prototypeAccessChain;
                 PropertyOffset offset = slot.cachedOffset();
 
+                if (vm.gilOff() && slot.base() == baseValue) [[unlikely]] {
+                    // OM-1: same A->B->A tear as the Replace path, for the
+                    // self-Setter case. The published Setter AccessCase is keyed
+                    // on oldStructure and loads-then-calls the cell at `offset`;
+                    // a torn offset (or a same-offset DATA property) makes the
+                    // IC call a non-callable cell (the counter-lock
+                    // "cell->isObjectSlow() in asObject from JSC::call"
+                    // signature). Bind the offset to oldStructure's own table
+                    // and require the entry to actually be an Accessor. The
+                    // prototype-Setter branch below recomputes the offset
+                    // against oldStructure's chain itself and needs no extra
+                    // check here.
+                    unsigned attributes;
+                    PropertyOffset tableOffset = oldStructure->getConcurrently(propertyName.uid(), attributes);
+                    if (tableOffset != offset || !(attributes & PropertyAttribute::Accessor))
+                        return RetryCacheLater;
+                }
+
                 if (slot.base() != baseValue) {
                     auto cacheStatus = prepareChainForCaching(globalObject, baseCell, propertyName.uid(), slot.base());
                     if (!cacheStatus)
@@ -1344,16 +1667,16 @@ void repatchPutBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
     case PromoteToMegamorphic: {
         switch (putByKind) {
         case PutByKind::ByIdStrict:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByIdStrictMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByIdStrictMegamorphic);
             break;
         case PutByKind::ByIdSloppy:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByIdSloppyMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByIdSloppyMegamorphic);
             break;
         case PutByKind::ByValStrict:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByValStrictMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByValStrictMegamorphic);
             break;
         case PutByKind::ByValSloppy:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByValSloppyMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByValSloppyMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -1362,7 +1685,7 @@ void repatchPutBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
         break;
     }
     case GiveUpOnCache:
-        repatchSlowPathCall(codeBlock, propertyCache, appropriatePutByGaveUpFunction(putByKind));
+        repatchSlowPathCallLocking(codeBlock, propertyCache, appropriatePutByGaveUpFunction(putByKind));
         break;
     case RetryCacheLater:
     case AttemptToCache:
@@ -1486,16 +1809,16 @@ void repatchArrayPutByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
     case PromoteToMegamorphic: {
         switch (putByKind) {
         case PutByKind::ByIdStrict:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByIdStrictMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByIdStrictMegamorphic);
             break;
         case PutByKind::ByIdSloppy:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByIdSloppyMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByIdSloppyMegamorphic);
             break;
         case PutByKind::ByValStrict:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByValStrictMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByValStrictMegamorphic);
             break;
         case PutByKind::ByValSloppy:
-            repatchSlowPathCall(codeBlock, propertyCache, operationPutByValSloppyMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationPutByValSloppyMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -1504,7 +1827,7 @@ void repatchArrayPutByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
         break;
     }
     case GiveUpOnCache:
-        repatchSlowPathCall(codeBlock, propertyCache, appropriatePutByGaveUpFunction(putByKind));
+        repatchSlowPathCallLocking(codeBlock, propertyCache, appropriatePutByGaveUpFunction(putByKind));
         break;
     case RetryCacheLater:
     case AttemptToCache:
@@ -1521,6 +1844,12 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
 
         if (forceICFailure(globalObject))
+            return GiveUpOnCache;
+
+        // SPEC-jit section 5.5 (Task 8): deletes are transitions with slot
+        // clearing; flag-on they require the locked/quarantined OM path, so
+        // delete ICs are never created (generic operation handles them).
+        if (Options::useJSThreads()) [[unlikely]]
             return GiveUpOnCache;
 
         ASSERT(oldStructure);
@@ -1587,16 +1916,16 @@ void repatchDeleteBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, DeleteP
         LOG_IC((ICEvent::DelByReplaceWithGeneric, baseValue.classInfoOrNull()));
         switch (kind) {
         case DelByKind::ByIdStrict:
-            repatchSlowPathCall(codeBlock, propertyCache, operationDeleteByIdStrictGaveUp);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationDeleteByIdStrictGaveUp);
             break;
         case DelByKind::ByIdSloppy:
-            repatchSlowPathCall(codeBlock, propertyCache, operationDeleteByIdSloppyGaveUp);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationDeleteByIdSloppyGaveUp);
             break;
         case DelByKind::ByValStrict:
-            repatchSlowPathCall(codeBlock, propertyCache, operationDeleteByValStrictGaveUp);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationDeleteByValStrictGaveUp);
             break;
         case DelByKind::ByValSloppy:
-            repatchSlowPathCall(codeBlock, propertyCache, operationDeleteByValSloppyGaveUp);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationDeleteByValSloppyGaveUp);
             break;
         }
     }
@@ -1629,9 +1958,11 @@ inline CodePtr<CFunctionPtrTag> NODELETE appropriateInByGaveUpFunction(InByKind 
 }
 
 // Mainly used to transition from megamorphic case to generic case.
-void repatchInBySlowPathCall(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, InByKind kind)
+void repatchInBySlowPathCall(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache, InByKind kind)
 {
-    resetInBy(codeBlock, propertyCache, kind);
+    // TSAN ic-stubinfo (SPEC-jit §5.1/D3): see repatchGetBySlowPathCall.
+    ConcurrentJSLocker locker(codeBlock->m_lock);
+    resetInBy(vm, codeBlock, propertyCache, kind);
     repatchSlowPathCall(codeBlock, propertyCache, appropriateInByGaveUpFunction(kind));
 }
 
@@ -1761,10 +2092,10 @@ void repatchInBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSObject* b
     case PromoteToMegamorphic: {
         switch (kind) {
         case InByKind::ById:
-            repatchSlowPathCall(codeBlock, propertyCache, operationInByIdMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationInByIdMegamorphic);
             break;
         case InByKind::ByVal:
-            repatchSlowPathCall(codeBlock, propertyCache, operationInByValMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationInByValMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -1774,7 +2105,7 @@ void repatchInBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSObject* b
     }
     case GiveUpOnCache:
         LOG_IC((ICEvent::InReplaceWithGeneric, baseObject->classInfo()));
-        repatchSlowPathCall(codeBlock, propertyCache, appropriateInByGaveUpFunction(kind));
+        repatchSlowPathCallLocking(codeBlock, propertyCache, appropriateInByGaveUpFunction(kind));
         break;
     case RetryCacheLater:
     case AttemptToCache:
@@ -1819,7 +2150,7 @@ void repatchHasPrivateBrand(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
     SuperSamplerScope superSamplerScope(false);
 
     if (tryCacheHasPrivateBrand(globalObject, codeBlock, baseObject, brandID, wasFound, propertyCache) == GiveUpOnCache)
-        repatchSlowPathCall(codeBlock, propertyCache, operationHasPrivateBrandGaveUp);
+        repatchSlowPathCallLocking(codeBlock, propertyCache, operationHasPrivateBrandGaveUp);
 }
 
 static InlineCacheAction tryCacheCheckPrivateBrand(
@@ -1861,7 +2192,7 @@ void repatchCheckPrivateBrand(JSGlobalObject* globalObject, CodeBlock* codeBlock
     SuperSamplerScope superSamplerScope(false);
 
     if (tryCacheCheckPrivateBrand(globalObject, codeBlock, baseObject, brandID, propertyCache) == GiveUpOnCache)
-        repatchSlowPathCall(codeBlock, propertyCache, operationCheckPrivateBrandGaveUp);
+        repatchSlowPathCallLocking(codeBlock, propertyCache, operationCheckPrivateBrandGaveUp);
 }
 
 static InlineCacheAction tryCacheSetPrivateBrand(
@@ -1876,7 +2207,13 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
         if (forceICFailure(globalObject))
             return GiveUpOnCache;
-        
+
+        // SPEC-jit section 5.5 (Task 8): SetBrand is a structure-only
+        // transition (OM N2); flag-on it requires the locked header-CAS
+        // path, so the IC form is never created.
+        if (Options::useJSThreads()) [[unlikely]]
+            return GiveUpOnCache;
+
         ASSERT(oldStructure);
 
         if (oldStructure->isDictionary())
@@ -1885,7 +2222,7 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         InlineCacheAction action = actionForCell(vm, base);
         if (action != AttemptToCache)
             return action;
-        
+
         Structure* newStructure = Structure::setBrandTransitionFromExistingStructureConcurrently(oldStructure, brandID.uid());
         if (!newStructure)
             return RetryCacheLater;
@@ -1915,7 +2252,7 @@ void repatchSetPrivateBrand(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
     SuperSamplerScope superSamplerScope(false);
 
     if (tryCacheSetPrivateBrand(globalObject, codeBlock, baseObject, oldStructure,  brandID, propertyCache) == GiveUpOnCache)
-        repatchSlowPathCall(codeBlock, propertyCache, operationSetPrivateBrandGaveUp);
+        repatchSlowPathCallLocking(codeBlock, propertyCache, operationSetPrivateBrandGaveUp);
 }
 
 static InlineCacheAction tryCacheInstanceOf(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue valueValue, JSValue prototypeValue, PropertyInlineCache& propertyCache, bool wasFound)
@@ -2110,10 +2447,10 @@ void repatchArrayInByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSV
     case PromoteToMegamorphic: {
         switch (kind) {
         case InByKind::ById:
-            repatchSlowPathCall(codeBlock, propertyCache, operationInByIdMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationInByIdMegamorphic);
             break;
         case InByKind::ByVal:
-            repatchSlowPathCall(codeBlock, propertyCache, operationInByValMegamorphic);
+            repatchSlowPathCallLocking(codeBlock, propertyCache, operationInByValMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -2122,7 +2459,7 @@ void repatchArrayInByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSV
         break;
     }
     case GiveUpOnCache:
-        repatchSlowPathCall(codeBlock, propertyCache, appropriateInByGaveUpFunction(kind));
+        repatchSlowPathCallLocking(codeBlock, propertyCache, appropriateInByGaveUpFunction(kind));
         break;
     case RetryCacheLater:
     case AttemptToCache:
@@ -2136,24 +2473,52 @@ void repatchInstanceOf(
 {
     SuperSamplerScope superSamplerScope(false);
     if (tryCacheInstanceOf(globalObject, codeBlock, valueValue, prototypeValue, propertyCache, wasFound) == GiveUpOnCache)
-        repatchSlowPathCall(codeBlock, propertyCache, operationInstanceOfGaveUp);
+        repatchSlowPathCallLocking(codeBlock, propertyCache, operationInstanceOfGaveUp);
 }
 
-void linkDirectCall(DirectCallLinkInfo& callLinkInfo, CodeBlock* calleeCodeBlock, CodePtr<JSEntryPtrTag> codePtr)
+void linkDirectCall(VM& vm, DirectCallLinkInfo& callLinkInfo, CodeBlock* calleeCodeBlock, CodePtr<JSEntryPtrTag> codePtr)
 {
     // DirectCall is only used from DFG / FTL.
-    callLinkInfo.setCallTarget(uncheckedDowncast<FunctionCodeBlock>(calleeCodeBlock), CodeLocationLabel<JSEntryPtrTag>(codePtr));
+    // AB18-D: direct linking publishes a record and pushes onto the callee's
+    // m_incomingCalls, so it is in the precondition-11 writer set. The VM is
+    // the linking mutator's, passed down from the operation (AB18-E: never
+    // derived from the owner cell — on the drain paths the owner can be a
+    // dead cell, and even here taking it from a cell would be one stale
+    // pattern more to audit).
+    if (vm.gilOff()) [[unlikely]] {
+        Locker locker { CallLinkInfo::s_callLinkSerializationLock };
+        // AB18-F loser-path fix: two mutators direct-linking the same call
+        // site concurrently must not double-push the node (SentinelLinkedList
+        // corruption) — but the loser may also have resolved a DIFFERENT
+        // calleeCodeBlock than the winner (a tier-up install can land between
+        // the two racers' prepareForExecution resolutions). If we left the
+        // node on the OLD callee's m_incomingCalls while publishing the new
+        // target, jettisoning the new callee could never unlink this caller
+        // (it is not on the new callee's list), so the call site would keep
+        // dispatching into jettisoned code. Under the lock, isOnList() implies
+        // the node sits on codeBlock()'s list, so delist on mismatch and
+        // relink below. Same-callee losers keep the old behavior: skip the
+        // re-push; the second setCallTarget republishes an identical record,
+        // which is benign.
+        if (callLinkInfo.isOnList() && callLinkInfo.codeBlock() != calleeCodeBlock)
+            callLinkInfo.remove();
+        callLinkInfo.setCallTarget(vm, uncheckedDowncast<FunctionCodeBlock>(calleeCodeBlock), CodeLocationLabel<JSEntryPtrTag>(codePtr));
+        if (calleeCodeBlock && !callLinkInfo.isOnList())
+            calleeCodeBlock->linkIncomingCall(callLinkInfo.owner(), &callLinkInfo);
+        return;
+    }
+    callLinkInfo.setCallTarget(vm, uncheckedDowncast<FunctionCodeBlock>(calleeCodeBlock), CodeLocationLabel<JSEntryPtrTag>(codePtr));
     if (calleeCodeBlock)
         calleeCodeBlock->linkIncomingCall(callLinkInfo.owner(), &callLinkInfo);
 }
 
-void resetGetBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, GetByKind kind)
+void resetGetBy(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache, GetByKind kind)
 {
     repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByOptimizeFunction(kind));
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
-void resetPutBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, PutByKind kind)
+void resetPutBy(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache, PutByKind kind)
 {
     CodePtr<CFunctionPtrTag> optimizedFunction;
     switch (kind) {
@@ -2196,10 +2561,10 @@ void resetPutBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, PutByK
     }
 
     repatchSlowPathCall(codeBlock, propertyCache, optimizedFunction);
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
-void resetDelBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, DelByKind kind)
+void resetDelBy(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache, DelByKind kind)
 {
     switch (kind) {
     case DelByKind::ByIdStrict:
@@ -2215,37 +2580,37 @@ void resetDelBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, DelByK
         repatchSlowPathCall(codeBlock, propertyCache, operationDeleteByValSloppyOptimize);
         break;
     }
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
-void resetInBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, InByKind kind)
+void resetInBy(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache, InByKind kind)
 {
     repatchSlowPathCall(codeBlock, propertyCache, appropriateInByOptimizeFunction(kind));
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
-void resetHasPrivateBrand(CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
+void resetHasPrivateBrand(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
 {
     repatchSlowPathCall(codeBlock, propertyCache, operationHasPrivateBrandOptimize);
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
-void resetInstanceOf(CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
+void resetInstanceOf(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
 {
     repatchSlowPathCall(codeBlock, propertyCache, operationInstanceOfOptimize);
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
-void resetCheckPrivateBrand(CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
+void resetCheckPrivateBrand(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
 {
     repatchSlowPathCall(codeBlock, propertyCache, operationCheckPrivateBrandOptimize);
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
-void resetSetPrivateBrand(CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
+void resetSetPrivateBrand(VM& vm, CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
 {
     repatchSlowPathCall(codeBlock, propertyCache, operationSetPrivateBrandOptimize);
-    propertyCache.resetStubAsJumpInAccess(codeBlock);
+    propertyCache.resetStubAsJumpInAccess(vm, codeBlock);
 }
 
 #endif

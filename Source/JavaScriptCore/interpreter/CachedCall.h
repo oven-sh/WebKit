@@ -48,7 +48,18 @@ public:
 
     ~CachedCall()
     {
-        m_addressForCall = nullptr;
+        // AB17e F4 (object-lifetime closure): delist FIRST, before the member
+        // teardown below. A locked drain
+        // (CodeBlock::unlinkOrUpgradeIncomingCalls) can be
+        // mid-unlinkOrUpgradeImpl on this node (reading m_addressForCall /
+        // m_protoCallFrame) when this stack object dies; removeOnDestruction
+        // acquires the link lock unconditionally gilOff, so we either delist
+        // before any drain observes the node or block until the drain loop
+        // ends. ~CallLinkInfoBase's own gilOff delist would run only AFTER
+        // this store — too late.
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            removeOnDestruction();
+        WTF::atomicStore(&m_addressForCall, static_cast<void*>(nullptr), std::memory_order_relaxed); // THREADS: see unlinkOrUpgradeImpl.
     }
 
     ALWAYS_INLINE JSValue call()
@@ -74,17 +85,27 @@ public:
 
     void unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)
     {
+        // AB17c F4 (precondition 11): this node shares the incoming-calls
+        // sentinel lists with the locked linkers; gilOff the removal must
+        // serialize on the link lock (removeOnDestruction is the gated
+        // locked-remove helper; the relink push below goes through
+        // CodeBlock::linkIncomingCall, which locks its push gilOff).
         if (isOnList())
-            remove();
+            removeOnDestruction();
 
+        // THREADS: the owning thread reads these words lock-free in
+        // executeCachedCall/tryCallWithArguments while the install drain on
+        // another Thread rewrites them; write the codeBlock FIRST, then
+        // release-publish the entry (reader acquires the entry, then reads the
+        // codeBlock — never a new entry with a stale codeBlock).
         if (newCodeBlock && m_protoCallFrame.codeBlock() == oldCodeBlock) {
             newCodeBlock->m_shouldAlwaysBeInlined = false;
-            m_addressForCall = newCodeBlock->jitCode()->addressForCall();
             m_protoCallFrame.setCodeBlock(newCodeBlock);
+            WTF::atomicStore(&m_addressForCall, newCodeBlock->jitCode()->addressForCall(), std::memory_order_release);
             newCodeBlock->linkIncomingCall(nullptr, this);
             return;
         }
-        m_addressForCall = nullptr;
+        WTF::atomicStore(&m_addressForCall, static_cast<void*>(nullptr), std::memory_order_relaxed);
     }
 
     void relink();

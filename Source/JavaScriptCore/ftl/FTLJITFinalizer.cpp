@@ -32,8 +32,10 @@
 #include "DFGPlan.h"
 #include "FTLState.h"
 #include "ProfilerDatabase.h"
+#include "PropertyInlineCache.h"
 #include "ThunkGenerators.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/ThreadSanitizerSupport.h>
 
 namespace JSC { namespace FTL {
 
@@ -61,6 +63,35 @@ bool JITFinalizer::finalize()
     CodeBlock* codeBlock = m_plan.codeBlock();
     m_jitCode->setSize(m_codeSize);
     codeBlock->setJITCode(*m_jitCode);
+
+    if (Options::useHandlerICInFTL()) {
+        // Handler-IC sites baked a pointer to this JITCode's JITData into the
+        // generated code; fill it in now that the codeBlock knows its FTL frame
+        // shape. Note: codeBlock->stackPointerOffset() is only correct after
+        // setJITCode() above (it consults the installed jitType/jitCode).
+        m_jitCode->initializeHandlerICJITData(codeBlock->globalObject(), codeBlock->stackPointerOffset() * sizeof(Register));
+
+        // Each handler IC dispatches through its m_handler chain on the very
+        // first execution, so install the shared slow-path handler as the
+        // initial (terminal) node. This must run on the main thread (it touches
+        // VM::m_sharedJITStubs) and before the code is installed/executable —
+        // both hold here: plan finalization is a main-thread operation and
+        // installCode() runs after finalize() returns.
+        for (auto* propertyCache : m_jitCode->common.m_handlerPropertyInlineCaches)
+            propertyCache->initializeHandlerForOptimizingJIT(codeBlock);
+        RELEASE_ASSERT(m_jitCode->common.m_repatchingPropertyInlineCaches.isEmpty());
+#if TSAN_ENABLED
+        // TSAN §4.4 retired-artifact audit (TSAN-RESULTS residual 1, closed
+        // 2026-06-09): same release-publish annotation as the DFG/Baseline
+        // install points (DFGJITFinalizer.cpp / CodeBlock.cpp) — pairs with
+        // the TSAN_ANNOTATE_HAPPENS_AFTER in ICSlowPathCallFrameTracer. The
+        // FTL handler ICs are reached by sibling lites via pointers baked
+        // into the installed code; lifetime is the leaked-flag-on JITCode
+        // (retireOptimizedJITCode) per SPEC-jit §5.3/I7. No-op outside TSAN.
+        for (auto* propertyCache : m_jitCode->common.m_handlerPropertyInlineCaches)
+            TSAN_ANNOTATE_HAPPENS_BEFORE(propertyCache);
+#endif
+    }
 
     if (Options::dumpFTLCodeSize()) [[unlikely]] {
         auto* baselineCodeBlock = codeBlock->baselineAlternative();

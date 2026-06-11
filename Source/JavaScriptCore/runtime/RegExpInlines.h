@@ -41,6 +41,22 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+// AUD1.N2 routing (1) — the keystone reroute. GIL-off the per-match scratch
+// lives OFF the cell (per-thread buffer, RegExp.cpp banner); flag-off/GIL-on
+// this is the old ovectorSpan() behind the Config-page gate. The matchInline
+// ASSERT below (and the RELEASE_ASSERTs in RegExp::match/matchConcurrently)
+// backstop any future caller that bypasses this routing. AB17e: unified on
+// gilOffWithProcessGate (was raw vm.gilOff()) so the per-match flag-off
+// predicate matches compileIfNecessary's in this same file — same value by
+// the equivalence invariant (VM.h), loads only the read-only Config page
+// flag-off.
+ALWAYS_INLINE std::span<int> RegExp::ovectorSpan(VM& vm)
+{
+    if (vm.gilOffWithProcessGate()) [[unlikely]]
+        return regExpGilOffPerThreadMatchOvector(*this);
+    return m_ovector.mutableSpan();
+}
+
 #if REGEXP_FUNC_TEST_DATA_GEN
 class RegExpFunctionalTestCollector {
     // This class is not thread safe.
@@ -102,6 +118,28 @@ ALWAYS_INLINE bool RegExp::hasCodeFor(Yarr::CharSize charSize)
 
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    // AUD1.N2 residual (A): GIL-off, the lock-free hasCodeFor/m_state fast
+    // path has no acquire edge to the cellLock'd publication of
+    // m_regExpBytecode / m_regExpJITCode / m_atom — a foreign reader can see
+    // m_state == ByteCode with m_regExpBytecode still null (observed null
+    // deref, Yarr::interpret). Run {check, compile} under ONE cellLock hold;
+    // the lock acquire also orders this thread's subsequent unlocked
+    // m_state/bytecode/atom reads in matchInline after the winning compile.
+    // CompilerThread callers never reach this (matchInline gates on
+    // matchFrom; matchConcurrently already holds the cellLock). Flag-off/
+    // GIL-on: byte-identically the historical lock-free path.
+    // AB17d (bench I3 follow-up): Config-page gate — this predicate runs on
+    // every mutator RegExp match flag-off.
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        Locker locker { cellLock() };
+        if (hasCodeFor(charSize))
+            return;
+        if (m_state == ParseError)
+            return;
+        compileHoldingCellLock(locker, &vm, charSize, sampleString);
+        return;
+    }
+
     if (hasCodeFor(charSize))
         return;
 
@@ -119,7 +157,13 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
     m_rtMatchTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
-    compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
+    // AUD1.N2 residual (A): only the mutator compiles here. CompilerThread
+    // entries come from matchConcurrently, which verified hasCodeFor UNDER
+    // the cellLock it still holds — calling compileIfNecessary would
+    // self-deadlock on its GIL-off locked arm and was a guaranteed no-op
+    // anyway (GIL-on behavior unchanged: same no-op, now skipped).
+    if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+        compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {
         if (matchFrom == Yarr::MatchFrom::CompilerThread)
@@ -137,6 +181,10 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
         return throwError();
 
     ASSERT(ovector.size() >= static_cast<size_t>(offsetVectorSize()));
+    // AUD1.N2: GIL-off, the cell-resident m_ovector must never be a match
+    // target on any inlined entry path (JIT thunks included) — they are
+    // covered by ovectorSpan(VM&) routing at their span origin.
+    ASSERT(!vm.gilOff() || ovector.empty() || ovector.data() != m_ovector.mutableSpan().data());
     int* offsetVector = ovector.data();
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
@@ -231,6 +279,18 @@ ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
 
 ALWAYS_INLINE void RegExp::compileIfNecessaryMatchOnly(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    // AUD1.N2 residual (A) — same shape and rationale as compileIfNecessary
+    // (AB17e: unified on the Config-page gate like its sibling above).
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        Locker locker { cellLock() };
+        if (hasMatchOnlyCodeFor(charSize))
+            return;
+        if (m_state == ParseError)
+            return;
+        compileMatchOnlyHoldingCellLock(locker, &vm, charSize, sampleString);
+        return;
+    }
+
     if (hasMatchOnlyCodeFor(charSize))
         return;
 
@@ -248,7 +308,10 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
     m_rtMatchOnlyTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
-    compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
+    // AUD1.N2 residual (A): mutator-only compile — same rationale as the
+    // span-overload matchInline above (matchConcurrently holds the cellLock).
+    if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+        compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {
         if (matchFrom == Yarr::MatchFrom::CompilerThread)

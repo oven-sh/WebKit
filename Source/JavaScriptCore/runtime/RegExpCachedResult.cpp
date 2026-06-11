@@ -28,6 +28,7 @@
 
 #include "RegExpCache.h"
 #include "RegExpMatchesArray.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -87,6 +88,15 @@ JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* 
         m_reifiedResult.setWithoutWriteBarrier(result);
         m_reifiedLeftContext.clear();
         m_reifiedRightContext.clear();
+        // GIL-OFF (AUD1.K2/SD19 bring-up): per-lite streams are single-thread-
+        // private once consumers route via threadRegExpGlobalData. During the
+        // staged-landing window the main carrier's in-object stream remains
+        // JIT-writable (DFG/FTL RecordRegExpCachedResult is not yet re-pointed;
+        // it writes record fields and never reads m_reified), so this fence is
+        // belt-and-suspenders: never let the m_reified flip become visible
+        // before m_reifiedResult.
+        if (vm.gilOffWithProcessGate()) [[unlikely]]
+            WTF::storeStoreFence();
         m_reified = true;
         vm.writeBarrier(owner);
     }

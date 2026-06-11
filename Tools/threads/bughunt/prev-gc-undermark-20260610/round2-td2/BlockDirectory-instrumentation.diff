@@ -1,0 +1,37 @@
+--- Source/JavaScriptCore/heap/BlockDirectory.cpp	2026-06-10 09:25:38.333906443 +0000
++++ Tools/threads/bughunt/round2-td2/BlockDirectory.cpp	2026-06-10 09:25:29.003903000 +0000
+@@ -39,6 +39,8 @@
+ 
+ namespace JSC {
+ 
++void bughuntSetFLContext(const char*); // BUGHUNT TD-R2-2 (defined in LocalAllocator.cpp)
++
+ // UNGIL §A.3 (U-T5) cross-TU seams — defined in runtime/VMManager.cpp;
+ // declaration pattern matches heap/Heap.cpp:151 and
+ // bytecode/JSThreadsSafepoint.cpp:71/77. Signatures must stay byte-identical.
+@@ -253,10 +255,12 @@
+     // stopAllocatingForGood below.
+     {
+         Locker locker { m_localAllocatorsLock };
++        bughuntSetFLContext("dirflush"); // BUGHUNT TD-R2-2: conductor step-5 flush
+         m_localAllocators.forEach(
+             [&] (LocalAllocator* allocator) {
+                 allocator->stopAllocating();
+             });
++        bughuntSetFLContext("other"); // BUGHUNT TD-R2-2
+     }
+ 
+ #if ASSERT_ENABLED
+@@ -301,10 +305,12 @@
+     // SharedGC (review round 2): locked traversal — see stopAllocating().
+     // One critical section covers the per-allocator stop AND the unlink.
+     Locker locker { m_localAllocatorsLock };
++    bughuntSetFLContext("dirSAFG"); // BUGHUNT TD-R2-2
+     m_localAllocators.forEach(
+         [&] (LocalAllocator* allocator) {
+             allocator->stopAllocatingForGood();
+         });
++    bughuntSetFLContext("other"); // BUGHUNT TD-R2-2
+ 
+     while (!m_localAllocators.isEmpty())
+         m_localAllocators.begin()->remove();

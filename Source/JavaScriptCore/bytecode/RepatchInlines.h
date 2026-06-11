@@ -200,7 +200,20 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
             arity = ArityCheckMode::MustCheckArity;
         else
             arity = ArityCheckMode::ArityCheckNotRequired;
-        codePtr = functionExecutable->entrypointFor(kind, arity);
+        if (vm.gilOff()) [[unlikely]] {
+            // ANNEX CBI item 3 (AB17c F4): entrypointFor reads the
+            // executable's m_jitCodeFor* mirror — a SECOND racy word beside
+            // the m_codeBlockFor* slot prepareForExecution snapshotted
+            // above. A live tier-up installCode on another thread between
+            // the two reads pairs the OLD entrypoint with the NEW CodeBlock
+            // (observed: baseline prologue argument-profiling against a DFG
+            // CodeBlock => null m_argumentValueProfiles => crash) or vice
+            // versa. Derive the entrypoint THROUGH the one CodeBlock
+            // snapshot (address-dependent, jit F2) — a stale-but-matched
+            // pair is always executable.
+            codePtr = codeBlock->jitCode()->addressForCall(arity);
+        } else
+            codePtr = functionExecutable->entrypointFor(kind, arity);
     }
 
     switch (callLinkInfo->mode()) {
@@ -262,6 +275,14 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
         CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
         functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, scope, kind, *codeBlockSlot);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
+
+        if (vm.gilOff()) [[unlikely]] {
+            // ANNEX CBI item 3 (AB17c F4): same matched-pair rule as
+            // linkFor above — derive the entrypoint through the CodeBlock
+            // snapshot just stored to the callee frame, not through the
+            // executable's independently-republished m_jitCodeFor* mirror.
+            return (*codeBlockSlot)->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr();
+        }
     }
 
     // FIXME: Support wasm IC.

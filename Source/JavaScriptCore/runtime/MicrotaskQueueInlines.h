@@ -106,7 +106,7 @@ inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const In
     if (vm.executionForbidden()) [[unlikely]]
         clear();
     else {
-        if (vm.disallowVMEntryCount) [[unlikely]] {
+        if (vm.disallowVMEntryCountSlot()) [[unlikely]] {
             VM::checkVMEntryPermission();
             return;
         }

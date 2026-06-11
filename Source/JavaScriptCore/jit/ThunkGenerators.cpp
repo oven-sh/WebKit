@@ -47,7 +47,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> handleExceptionGenerator(VM& vm)
 {
     CCallHelpers jit;
 
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::argumentGPR0);
 
     jit.move(CCallHelpers::TrustedImmPtr(&vm), GPRInfo::argumentGPR0);
     jit.prepareCallOperation(vm);
@@ -134,7 +134,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallGenerator(VM& vm)
 
     jit.emitFunctionPrologue();
 
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::argumentGPR0);
     jit.setupArguments<decltype(operationLookupExceptionHandler)>(CCallHelpers::TrustedImmPtr(&vm));
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);
@@ -156,7 +156,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallSlowPathGenerator(VM
     // even though we won't use it.
     jit.preserveReturnAddressAfterCall(GPRInfo::nonPreservedNonReturnGPR);
 
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::argumentGPR0);
 
     jit.setupArguments<decltype(operationLookupExceptionHandler)>(CCallHelpers::TrustedImmPtr(&vm));
     jit.prepareCallOperation(vm);
@@ -183,7 +183,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwStackOverflowAtPrologueGenerator(VM& 
     jit.prepareCallOperation(vm);
     jit.callOperation<OperationPtrTag>(operationThrowStackOverflowError);
 
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::argumentGPR0);
 
     jit.move(CCallHelpers::TrustedImmPtr(&vm), GPRInfo::argumentGPR0);
     jit.prepareCallOperation(vm);
@@ -269,6 +269,27 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> virtualThunkFor(VM& vm, CallMode mo
         CCallHelpers::Address(GPRInfo::regT0, FunctionExecutable::offsetOfCodeBlockFor(kind)),
         GPRInfo::regT5);
     jit.storePtr(GPRInfo::regT5, CCallHelpers::calleeFrameCodeBlockBeforeTailCall());
+    if (Options::useJSThreads()) [[unlikely]] {
+        // ANNEX CBI item 3 (AB17c F4; AB17d amendment): the (arity-check
+        // entrypoint, CodeBlock) pair above is two independent racy loads
+        // against a live tier-up installCode on another thread. AB17d
+        // closed the value-recurrence/ABA hole in the original slot-
+        // recompare scheme at the source: gilOff-process, entrypointFor
+        // NEVER refills the arity mirror (ExecutableBase.h), and
+        // installCode/clearCode only ever store null to it, so for a
+        // SCRIPT executable the slot is permanently null gilOff and the
+        // non-null gate above already routed every script callee to the
+        // slow path (virtualForWithFunction), which derives a matched pair
+        // through one CodeBlock snapshot. Host executables set the slot
+        // once at construction and never retract — no install can race.
+        // The recompare below is therefore belt-and-braces for any future
+        // writer, not the load-bearing defense. Flag-off: thunk bytes
+        // unchanged.
+        slowCase.append(jit.branchPtr(
+            CCallHelpers::NotEqual,
+            CCallHelpers::Address(GPRInfo::regT0, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)),
+            GPRInfo::regT4));
+    }
 
     // Make a tail call. This will return back to JIT code.
     auto dispatchLabel = jit.label();
@@ -478,7 +499,17 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> nativeForGenerator(VM& vm, ThunkFun
     }
 
     jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
-    jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
+    if (vm.gilOff()) [[unlikely]] {
+        // UNGIL §A.1.3 (U-T4): this thunk is cached per-VM but shared by
+        // every thread entering this VM — resolve the CURRENT lite instead
+        // of baking &vm's Group-3 word (COMPILED-FOR-VM mode rule; same
+        // pattern as DFGOSRExitCompilerCommon.cpp's gilOff arms).
+        // argumentGPR0 is dead here: every later use writes it before
+        // reading (debugger hook / scopeChain / globalObject loads).
+        jit.loadVMLite(GPRInfo::argumentGPR0);
+        jit.storePtr(GPRInfo::callFrameRegister, CCallHelpers::Address(GPRInfo::argumentGPR0, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topCallFrame())));
+    } else
+        jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
 
     if (includeDebuggerHook == IncludeDebuggerHook::Yes) {
         jit.move(JSInterfaceJIT::framePointerRegister, GPRInfo::argumentGPR0);
@@ -512,7 +543,17 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> nativeForGenerator(VM& vm, ThunkFun
 
     // Check for an exception
 #if USE(JSVALUE64)
-    jit.loadPtr(vm.addressOfException(), JSInterfaceJIT::regT2);
+    // UNGIL §A.1.3 (U-T4): GIL-off the host function published any exception
+    // through the CURRENT lite's VMLitePrimitives::m_exception (the VM-block
+    // word is inert spare storage and always reads null), so this check MUST
+    // be mode-keyed — the raw AbsoluteAddress form silently misses the
+    // exception, execution continues past the call site, and the pending
+    // exception surfaces at the next C++ poll OUTSIDE the active try range
+    // (observed: JSTests/threads/smoke.js exception-rethrow block GIL-off).
+    // loadException emits the legacy AbsoluteAddress load byte-for-byte
+    // GIL-on/flag-off. regT2 is dead here (it is being defined) and is not
+    // the per-arch reserved temp loadVMLite uses.
+    jit.loadException(vm, JSInterfaceJIT::regT2);
     JSInterfaceJIT::Jump exceptionHandler = jit.branchTestPtr(JSInterfaceJIT::NonZero, JSInterfaceJIT::regT2);
 #else
     JSInterfaceJIT::Jump exceptionHandler = jit.branch32(
@@ -528,8 +569,21 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> nativeForGenerator(VM& vm, ThunkFun
     // Handle an exception
     exceptionHandler.link(&jit);
 
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
-    jit.storePtr(JSInterfaceJIT::callFrameRegister, &vm.topCallFrame);
+    if (vm.gilOff()) [[unlikely]] {
+        // UNGIL §A.1.3 (U-T4): topEntryFrame and topCallFrame are per-lite
+        // Group-3 state GIL-off (doVMEntry publishes topEntryFrame through
+        // the lite; the VM-block words are inert spare storage — see
+        // SlowPathFrameTracer). Rematerialize the lite per §A.1.2 because
+        // copyCalleeSavesToEntryFrameCalleeSavesBuffer clobbers its GPR.
+        jit.loadVMLite(GPRInfo::argumentGPR0);
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::argumentGPR0, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topEntryFrame())), GPRInfo::argumentGPR0);
+        jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(GPRInfo::argumentGPR0); // Clobbers argumentGPR0.
+        jit.loadVMLite(GPRInfo::argumentGPR0);
+        jit.storePtr(JSInterfaceJIT::callFrameRegister, CCallHelpers::Address(GPRInfo::argumentGPR0, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topCallFrame())));
+    } else {
+        jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+        jit.storePtr(JSInterfaceJIT::callFrameRegister, &vm.topCallFrame);
+    }
 
     jit.move(CCallHelpers::TrustedImmPtr(&vm), JSInterfaceJIT::argumentGPR0);
     jit.move(JSInterfaceJIT::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationVMHandleException)), JSInterfaceJIT::regT3);
@@ -1409,10 +1463,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     
     jit.negPtr(GPRInfo::regT2);
     jit.addPtr(CCallHelpers::stackPointerRegister, GPRInfo::regT2);
-    CCallHelpers::Jump haveStackSpace = jit.branchPtr(CCallHelpers::LessThanOrEqual, CCallHelpers::AbsoluteAddress(vm.addressOfSoftStackLimit()), GPRInfo::regT2);
+    CCallHelpers::Jump haveStackSpace = jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::BelowOrEqual, GPRInfo::regT2); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
 
     // Throw Stack Overflow exception
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::regT3);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::regT3);
     jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, JSCallee::offsetOfScopeChain()), GPRInfo::regT3);
     jit.setupArguments<decltype(operationThrowStackOverflowErrorFromThunk)>(GPRInfo::regT3);
     jit.prepareCallOperation(vm);
@@ -1489,10 +1543,22 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
             GPRInfo::regT1, FunctionExecutable::offsetOfCodeBlockForCall()),
         GPRInfo::regT3);
     jit.storePtr(GPRInfo::regT3, CCallHelpers::calleeFrameCodeBlockBeforeCall());
+    CCallHelpers::Jump staleEntrypoint;
+    if (Options::useJSThreads()) [[unlikely]] {
+        // ANNEX CBI item 3 (AB17c F4): re-validate the arity-check
+        // entrypoint AFTER the codeBlock load (see virtualThunkFor); a
+        // mismatch (live tier-up install interleaved) routes to the
+        // materialize path, which derives a matched pair through one
+        // CodeBlock snapshot (materializeTargetCode, JITOperations.cpp).
+        staleEntrypoint = jit.branchPtr(
+            CCallHelpers::NotEqual,
+            CCallHelpers::Address(GPRInfo::regT1, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)),
+            GPRInfo::regT2);
+    }
 
     isNative.link(&jit);
     auto dispatch = jit.label();
-    
+
     emitPointerValidation(jit, GPRInfo::regT2, JSEntryPtrTag);
     jit.call(GPRInfo::regT2, JSEntryPtrTag);
 
@@ -1500,6 +1566,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.ret();
 
     codeNotExists.link(&jit);
+    if (staleEntrypoint.isSet())
+        staleEntrypoint.link(&jit);
 
     CCallHelpers::JumpList exceptionChecks;
 
@@ -1518,7 +1586,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.jump().linkTo(dispatch, &jit);
 
     exceptionChecks.link(&jit);
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::argumentGPR0);
     jit.setupArguments<decltype(operationLookupExceptionHandler)>(CCallHelpers::TrustedImmPtr(&vm));
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);
@@ -1573,10 +1641,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
 
     jit.negPtr(GPRInfo::regT2);
     jit.addPtr(CCallHelpers::stackPointerRegister, GPRInfo::regT2);
-    CCallHelpers::Jump haveStackSpace = jit.branchPtr(CCallHelpers::LessThanOrEqual, CCallHelpers::AbsoluteAddress(vm.addressOfSoftStackLimit()), GPRInfo::regT2);
+    CCallHelpers::Jump haveStackSpace = jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::BelowOrEqual, GPRInfo::regT2); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
 
     // Throw Stack Overflow exception
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::regT3);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::regT3);
     jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, JSCallee::offsetOfScopeChain()), GPRInfo::regT3);
     jit.setupArguments<decltype(operationThrowStackOverflowErrorFromThunk)>(GPRInfo::regT3);
     jit.prepareCallOperation(vm);
@@ -1667,6 +1735,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     // that operationMaterializeRemoteFunctionTargetCode should be able to re-materialize the JIT code (except for any OOME) because we only
     // went down this code path after we found a non-null JIT code (in the noCode check) above i.e. it should be possible to materialize the JIT code.
     // FIXME: Windows x64 is not supported since operationMaterializeRemoteFunctionTargetCode returns UGPRPair.
+    auto materializePath = jit.label();
     jit.setupArguments<decltype(operationMaterializeRemoteFunctionTargetCode)>(GPRInfo::regT0);
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeRemoteFunctionTargetCode)), GPRInfo::nonArgGPR0);
@@ -1684,6 +1753,16 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
             GPRInfo::regT1, FunctionExecutable::offsetOfCodeBlockForCall()),
         GPRInfo::regT3);
     jit.storePtr(GPRInfo::regT3, CCallHelpers::calleeFrameCodeBlockBeforeCall());
+    if (Options::useJSThreads()) [[unlikely]] {
+        // ANNEX CBI item 3 (AB17c F4): re-validate the arity-check
+        // entrypoint AFTER the codeBlock load (see virtualThunkFor /
+        // boundFunctionCallGenerator); mismatch re-materializes a matched
+        // pair through one CodeBlock snapshot.
+        jit.branchPtr(
+            CCallHelpers::NotEqual,
+            CCallHelpers::Address(GPRInfo::regT1, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)),
+            GPRInfo::regT2).linkTo(materializePath, &jit);
+    }
 
     isNative.link(&jit);
     materialized.link(&jit);
@@ -1719,7 +1798,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.ret();
 
     exceptionChecks.link(&jit);
-    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::argumentGPR0);
     jit.setupArguments<decltype(operationLookupExceptionHandler)>(CCallHelpers::TrustedImmPtr(&vm));
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);

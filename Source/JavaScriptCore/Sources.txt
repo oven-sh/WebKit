@@ -270,6 +270,7 @@ bytecode/InstanceOfVariant.cpp
 bytecode/InstructionStream.cpp
 bytecode/IntrinsicGetterAccessCase.cpp
 bytecode/JumpTable.cpp
+bytecode/JSThreadsSafepoint.cpp
 bytecode/LLIntPrototypeLoadAdaptiveStructureWatchpoint.cpp
 bytecode/LazyValueProfile.cpp
 bytecode/LinkTimeConstant.cpp
@@ -290,6 +291,7 @@ bytecode/PutByIdFlags.cpp
 bytecode/PutByStatus.cpp
 bytecode/PutByVariant.cpp
 bytecode/RecordedStatuses.cpp
+bytecode/RetiredJITArtifacts.cpp
 bytecode/ReduceWhitespace.cpp
 bytecode/Repatch.cpp
 bytecode/SetPrivateBrandStatus.cpp
@@ -538,12 +540,15 @@ heap/GCActivityCallback.cpp
 heap/GCConductor.cpp
 heap/GCLogging.cpp
 heap/GCRequest.cpp
+heap/GCSafepointEpoch.cpp
 heap/GCSegmentedArray.cpp
+heap/GCThreadLocalCache.cpp
 heap/GigacageAlignedMemoryAllocator.cpp
 heap/HandleSet.cpp
 heap/Heap.cpp
 heap/HeapCell.cpp
 heap/HeapCellType.cpp
+heap/HeapClientSet.cpp
 heap/HeapFinalizerCallback.cpp
 heap/HeapHelperPool.cpp
 heap/HeapProfiler.cpp
@@ -568,6 +573,7 @@ heap/MutatorScheduler.cpp
 heap/MutatorState.cpp
 heap/PreciseSubspace.cpp
 heap/RootMarkReason.cpp
+heap/SharedHeapTestHarness.cpp
 heap/SimpleMarkingConstraint.cpp
 heap/SlotVisitor.cpp
 heap/SpaceTimeMutatorScheduler.cpp
@@ -647,6 +653,7 @@ jit/CallFrameShuffleData.cpp
 jit/CallFrameShuffler.cpp
 jit/CallFrameShuffler32_64.cpp
 jit/CallFrameShuffler64.cpp
+jit/ConcurrentButterflyOperations.cpp
 jit/ExecutableAllocationFuzz.cpp
 jit/ExecutableAllocator.cpp
 jit/ExecutableMemoryHandle.cpp
@@ -792,6 +799,8 @@ runtime/CommonSlowPaths.cpp
 runtime/CompilationResult.cpp
 runtime/Completion.cpp
 runtime/ConcatKeyAtomStringCache.cpp
+runtime/ConcurrentButterfly.cpp
+runtime/ConditionObject.cpp
 runtime/ConfigFile.cpp
 runtime/ConsoleClient.cpp
 runtime/ConsoleObject.cpp
@@ -1000,6 +1009,7 @@ runtime/JSWrapperObject.cpp
 runtime/LazyClassStructure.cpp
 runtime/LeafExecutable.cpp
 runtime/LiteralParser.cpp
+runtime/LockObject.cpp
 runtime/Lookup.cpp
 runtime/MapConstructor.cpp
 runtime/MapIteratorPrototype.cpp
@@ -1047,6 +1057,7 @@ runtime/PropertyTable.cpp
 runtime/ProxyConstructor.cpp
 runtime/ProxyObject.cpp
 runtime/ProxyRevoke.cpp
+runtime/RaceAmplifier.cpp
 runtime/RandomizingFuzzerAgent.cpp
 runtime/ShadowRealmObject.cpp
 runtime/ShadowRealmConstructor.cpp
@@ -1129,6 +1140,10 @@ runtime/TemporalTimeZone.cpp
 runtime/TemporalTimeZoneConstructor.cpp
 runtime/TemporalTimeZonePrototype.cpp
 runtime/TestRunnerUtils.cpp
+runtime/ThreadAtomics.cpp
+runtime/ThreadLocalObject.cpp
+runtime/ThreadManager.cpp
+runtime/ThreadObject.cpp
 runtime/ThrowScope.cpp
 runtime/TypeLocationCache.cpp
 runtime/TypeProfiler.cpp
@@ -1139,6 +1154,8 @@ runtime/TypedArrayType.cpp
 runtime/TypeofType.cpp
 runtime/VM.cpp
 runtime/VMEntryScope.cpp
+runtime/VMLite.cpp
+runtime/VMLiteShared.cpp
 runtime/VMManager.cpp
 runtime/VMTraps.cpp
 runtime/VarOffset.cpp

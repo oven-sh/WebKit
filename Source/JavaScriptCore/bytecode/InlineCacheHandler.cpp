@@ -243,6 +243,16 @@ void InlineCacheHandler::aboutToDie()
     m_watchpoint.reset();
 }
 
+void InlineCacheHandler::disarmClearingWatchpointOnRetire()
+{
+    // See the header comment (AB18-F/AB18-G). Destroying the watchpoint
+    // removes it from its WatchpointSet's list; the unlink is serialized
+    // against concurrent add()s from other mutators (reusing the same
+    // SharedJITStubSet stub for a different CodeBlock's IC) by
+    // g_watchpointMembershipLock inside ~Watchpoint.
+    m_watchpoint.reset();
+}
+
 bool InlineCacheHandler::visitWeak(VM& vm)
 {
     bool isValid = true;

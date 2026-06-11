@@ -38,8 +38,39 @@
 #include "LinkBuffer.h"
 #include "MacroAssembler.h"
 #include "ProbeContext.h"
+#include "VMLite.h"
 
-namespace JSC { namespace DFG {
+namespace JSC {
+
+// UNGIL U-T3 emitter (defined in jit/AssemblyHelpers.cpp). Self-declaration,
+// mirroring FTLOSRExitCompiler.cpp's pattern — no header owns this form yet.
+void loadVMLite(AssemblyHelpers&, GPRReg);
+
+namespace DFG {
+
+// UNGIL §A.1.6 (ANNEX A16) — U-T4a, DFG half of the FTL U-T4b fix
+// (FTLSaveRestore.cpp materializeBakedScratchBufferDataPointer; duplicated
+// locally so DFG does not depend on an ENABLE(FTL_JIT) TU). Resolves the
+// CURRENT lite's ScratchBuffer for a process-wide ScratchBufferRegistry
+// index and leaves its dataBuffer() pointer in `dest`. Clobbers only `dest`;
+// the loads are address-dependent against the release-publishing install
+// (VMLite::ensureScratchBufferAtIndex).
+static void materializePerLiteScratchBufferDataPointer(CCallHelpers& jit, unsigned bakedIndex, GPRReg dest)
+{
+    ASSERT(bakedIndex < VMLite::maxScratchSegments * VMLite::scratchSegmentSize);
+    loadVMLite(jit, dest);
+    jit.loadPtr(
+        CCallHelpers::Address(
+            dest,
+            static_cast<int32_t>(VMLite::offsetOfScratchSegments() + static_cast<ptrdiff_t>(bakedIndex >> VMLite::scratchSegmentShift) * sizeof(void*))),
+        dest);
+    jit.loadPtr(
+        CCallHelpers::Address(
+            dest,
+            static_cast<int32_t>(static_cast<ptrdiff_t>(bakedIndex & (VMLite::scratchSegmentSize - 1)) * sizeof(void*))),
+        dest);
+    jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, m_buffer))), dest);
+}
 
 MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 {
@@ -48,13 +79,28 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
     // This needs to happen before we use the scratch buffer because this function also uses the scratch buffer.
     adjustFrameAndStackInOSRExitCompilerThunk<DFG::JITCode>(jit, vm, JITType::DFGJIT);
 
-#if USE(JSVALUE64)
-    jit.store32(GPRInfo::numberTagRegister, &vm.osrExitIndex);
-#endif
+    // UNGIL §A.1.3/§A.1.6 (U-T4a — the DFG half of FTL's U-T4b fix): this
+    // thunk is shared by every thread of the VM. gilOff, (a) osrExitIndex /
+    // osrExitJumpDestination are per-lite Group-3 words (a baked &vm store
+    // would let two concurrently exiting threads clobber each other's exit
+    // index — the loser recovers the WRONG exit's values), and (b) the full
+    // register dump below must go to the CURRENT lite's buffer (a baked
+    // buffer address lets two concurrently exiting threads interleave their
+    // register files — the loser reloads the other thread's registers, which
+    // surfaced as cross-object property values in
+    // JSTests/threads/jit/spawned-thread-butterfly-stress.js). GIL-on /
+    // flag-off keeps today's baked-absolute emission byte-for-byte.
+    const bool perLiteMode = vm.gilOff();
 
     size_t scratchSize = sizeof(EncodedJSValue) * (GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters);
-    ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(scratchSize);
-    EncodedJSValue* buffer = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+    unsigned bakedIndex = std::numeric_limits<unsigned>::max();
+    EncodedJSValue* buffer = nullptr;
+    if (perLiteMode) [[unlikely]]
+        bakedIndex = vm.allocateBakedScratchBufferIndex(scratchSize);
+    else {
+        ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(scratchSize);
+        buffer = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+    }
 
 #if CPU(ARM64)
     constexpr GPRReg bufferGPR = CCallHelpers::memoryTempRegister;
@@ -69,8 +115,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 
     if constexpr (firstGPR) {
         // We're using the firstGPR as the bufferGPR, and need to save it manually.
+        // (Platforms taking this leg have no gilOff support — App. R5 — so the
+        // baked-absolute store is the only mode here.)
         RELEASE_ASSERT(GPRInfo::numberOfRegisters >= 1);
         RELEASE_ASSERT(bufferGPR == GPRInfo::toRegister(0));
+        RELEASE_ASSERT(!perLiteMode);
 #if USE(JSVALUE64)
         jit.store64(bufferGPR, buffer);
 #else
@@ -78,7 +127,21 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 #endif
     }
 
-    jit.move(CCallHelpers::TrustedImmPtr(buffer), bufferGPR);
+#if USE(JSVALUE64)
+    // The trampoline put the exit index in numberTagRegister; publish it for
+    // operationCompileOSRExit. gilOff: the CURRENT lite's Group-3 word —
+    // bufferGPR is the per-arch reserved assembler temp, free this early.
+    if (perLiteMode) [[unlikely]] {
+        loadVMLite(jit, bufferGPR);
+        jit.store32(GPRInfo::numberTagRegister, CCallHelpers::Address(bufferGPR, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_osrExitIndex())));
+    } else
+        jit.store32(GPRInfo::numberTagRegister, &vm.osrExitIndex);
+#endif
+
+    if (perLiteMode) [[unlikely]]
+        materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR);
+    else
+        jit.move(CCallHelpers::TrustedImmPtr(buffer), bufferGPR);
 
     CCallHelpers::StoreRegSpooler storeSpooler(jit, bufferGPR);
 
@@ -99,7 +162,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.callOperation<OperationPtrTag>(operationCompileOSRExit);
 
-    jit.move(CCallHelpers::TrustedImmPtr(buffer), bufferGPR);
+    if (perLiteMode) [[unlikely]]
+        materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR);
+    else
+        jit.move(CCallHelpers::TrustedImmPtr(buffer), bufferGPR);
     CCallHelpers::LoadRegSpooler loadSpooler(jit, bufferGPR);
 
     for (unsigned i = firstGPR; i < GPRInfo::numberOfRegisters; ++i) {
@@ -124,7 +190,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 #endif
     }
 
-    jit.farJump(MacroAssembler::AbsoluteAddress(&vm.osrExitJumpDestination), OSRExitPtrTag);
+    // gilOff: operationCompileOSRExit published the destination through the
+    // exiting thread's lite; every real register is restored, so only the
+    // reserved temp (bufferGPR) may be clobbered for the indirection.
+    if (perLiteMode) [[unlikely]] {
+        loadVMLite(jit, bufferGPR);
+        jit.farJump(CCallHelpers::Address(bufferGPR, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_osrExitJumpDestination())), OSRExitPtrTag);
+    } else
+        jit.farJump(MacroAssembler::AbsoluteAddress(&vm.osrExitJumpDestination), OSRExitPtrTag);
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::DFGThunk);
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, nullptr, "DFG OSR exit generation thunk");
@@ -165,7 +238,21 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrEntryThunkGenerator(VM& vm)
 
     jit.jitAssertCodeBlockOnCallFrameIsOptimizingJIT(GPRInfo::regT2);
 
-    jit.restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
+    if (vm.gilOff()) [[unlikely]] {
+        // UNGIL §A.1.3 (U-T4b): topEntryFrame is per-lite Group-3 state
+        // GIL-off (doVMEntry publishes through the lite; the VM-block word is
+        // inert spare storage). This per-VM thunk is shared by every thread
+        // OSR-entering this VM, so resolve the CURRENT lite instead of baking
+        // &vm.topEntryFrame. regT3 is dead here (the scratch-buffer copy loop
+        // is done; only regT1 [target PC] and callFrameRegister are live), so
+        // a caller-save base with the plain skip list restores every VM
+        // callee save — same shape as the DFGOSRExit.cpp GenericUnwind
+        // gilOff arm. ARM64: regT3 is not the data temp (loadVMLite contract).
+        jit.loadVMLite(GPRInfo::regT3);
+        jit.loadPtr(MacroAssembler::Address(GPRInfo::regT3, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topEntryFrame())), GPRInfo::regT3);
+        jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBufferImpl(GPRInfo::regT3, RegisterSet::stackRegisters());
+    } else
+        jit.restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
     jit.emitMaterializeTagCheckRegisters();
 #if USE(JSVALUE64)
     jit.emitGetFromCallFrameHeaderPtr(CallFrameSlot::codeBlock, GPRInfo::jitDataRegister);

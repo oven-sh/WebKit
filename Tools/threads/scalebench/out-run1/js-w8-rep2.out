@@ -1,0 +1,7 @@
+Exception: TypeError: Invalid argument type in ToBigInt operation
+BigInt@[native code]
+postingsChecksum@/root/WebKit/Tools/threads/scalebench/js/bench.js:322:31
+workerBody@/root/WebKit/Tools/threads/scalebench/js/bench.js:571:51
+global code@/root/WebKit/Tools/threads/scalebench/js/bench.js:614:11
+load@[native code]
+global code@/root/WebKit/Tools/threads/scalebench/bench.js:5:5

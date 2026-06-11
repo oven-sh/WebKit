@@ -101,7 +101,14 @@ private:
     void materializeSpecials(JSGlobalObject*);
     void materializeSpecialsIfNecessary(JSGlobalObject*);
     
-    WriteBarrier<JSFunction> m_callee; // Set to nullptr when we materialize all of our special properties.
+    // Set to nullptr when we materialize all of our special properties.
+    // THREADS (AUD1.N3 RESOLVED-4): this word doubles as the
+    // not-yet-materialized flag. Under useJSThreads() it is cleared with
+    // release ordering AFTER the OM puts in materializeSpecials() (puts ->
+    // storeStoreFence -> clear); foreign readers must snapshot it ONCE per
+    // access and loadLoadFence on the null (materialized) path before
+    // reading the materialized properties.
+    WriteBarrier<JSFunction> m_callee;
 };
 
 } // namespace JSC

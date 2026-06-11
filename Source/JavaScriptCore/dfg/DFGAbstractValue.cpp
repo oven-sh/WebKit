@@ -200,10 +200,38 @@ bool AbstractValue::mergeOSREntryValue(Graph& graph, JSValue value, VariableAcce
             return false;
     }
 
+    // SPEC-objectmodel M5/M7 (threads): this runs on a DFG/FTL COMPILER
+    // thread while mutators keep running. A mustHandleValue is a raw stack
+    // snapshot captured at the OSR-entry trigger; by the time CFA merges it
+    // here, the referenced cell can be racing a transition (transiently
+    // nuked StructureID — M8 keeps every flag-on transition on the fenced
+    // nuke protocol) or can be a dead/just-recycled cell whose header reads
+    // as StructureID 0 (sweep/zap or a fresh allocation before its header
+    // store). Decoding either through JSCell::structure() is the
+    // decontaminate() assert / garbage-Structure-registration crash
+    // (probe: per-thread hot generators + tier churn, --useJSThreads alone).
+    // Per the M5 convention (exact-decode paths use structureID() raw and
+    // bail on races), refuse to widen the abstract value with such a cell:
+    // returning false only skips the OSR-entry widening for this value —
+    // runtime OSR entry validates concrete values against the proven
+    // AbstractValue anyway, so declining is always sound.
+    Structure* structure = nullptr;
+    if (!!value && value.isCell()) {
+        StructureID structureID = value.asCell()->structureID().decontaminate();
+        if (!structureID)
+            return false;
+        structure = structureID.decode();
+    }
+
     AbstractValue oldMe = *this;
-    
+
     if (isClear()) {
-        FrozenValue* frozenValue = graph.freeze(value);
+        // Decode ONCE: freeze() would re-read the cell header on this
+        // compiler thread (FrozenValue::freeze -> asCell()->structure()),
+        // re-opening the very race the decontaminate() validation above
+        // closed (a transition/recycle landing between the validation and
+        // the re-decode). Thread the validated snapshot through instead.
+        FrozenValue* frozenValue = graph.freezeWithValidatedStructure(value, structure);
         if (frozenValue->pointsToHeap()) {
             m_structure = graph.registerStructure(frozenValue->structure());
             m_arrayModes = arrayModesFromStructure(frozenValue->structure());
@@ -211,15 +239,15 @@ bool AbstractValue::mergeOSREntryValue(Graph& graph, JSValue value, VariableAcce
             m_structure.clear();
             m_arrayModes = 0;
         }
-        
+
         m_type = speculationFromValue(value);
         m_value = value;
     } else {
         mergeSpeculation(m_type, speculationFromValue(value));
-        if (!!value && value.isCell()) {
-            RegisteredStructure structure = graph.registerStructure(value.asCell()->structure());
-            mergeArrayModes(m_arrayModes, arrayModesFromStructure(structure.get()));
-            m_structure.merge(RegisteredStructureSet(structure));
+        if (structure) {
+            RegisteredStructure registeredStructure = graph.registerStructure(structure);
+            mergeArrayModes(m_arrayModes, arrayModesFromStructure(registeredStructure.get()));
+            m_structure.merge(RegisteredStructureSet(registeredStructure));
         }
         if (m_value != value)
             m_value = JSValue();

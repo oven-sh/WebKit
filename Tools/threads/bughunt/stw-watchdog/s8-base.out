@@ -1,0 +1,11 @@
+run 1: rc=0 32.4s PASS
+run 2: rc=0 38.6s PASS
+run 3: rc=0 32.0s PASS
+run 4: rc=0 32.6s PASS
+run 5: rc=0 30.3s PASS
+run 6: rc=0 33.3s PASS
+run 7: rc=0 30.2s PASS
+run 8: rc=0 37.9s PASS
+run 9: rc=0 34.6s PASS
+run 10: rc=0 39.2s PASS
+SUMMARY tag=s8-base N=8 scale=1 runs=10 pass=10 abort134=0 segv=0 timeout=0 other=0

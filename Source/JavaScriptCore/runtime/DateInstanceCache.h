@@ -33,6 +33,15 @@
 
 namespace JSC {
 
+// Concurrency (jarred/threads, SPEC-ungil §N.3 / §K.2, TSAN-TRIAGE §3.29):
+// GIL-off (g_jscConfig.gilOffProcess) this whole cache — and DateInstanceData
+// creation/sharing/fill-in — is UNREACHABLE: DateInstance::calculateGregorianDateTime*
+// bypass the per-instance cache (DateInstance.cpp) and never call
+// DateCache::cachedDateInstanceData, and DateCache::cachedDateInstanceData /
+// resetIfNecessarySlow (the only paths into add()/reset()) additionally serialize on
+// the DateCache leaf lock. So DateInstanceData stays GIL-on-only state: the plain
+// (non-atomic) RefCounted refcount and the multi-word cached GregorianDateTime fields
+// remain valid under the GIL, and the JIT-visible field offsets below are unchanged.
 class DateInstanceData : public RefCounted<DateInstanceData> {
 public:
     static Ref<DateInstanceData> create() { return adoptRef(*new DateInstanceData); }

@@ -266,11 +266,14 @@ BytecodeLivenessAnalysis& UnlinkedCodeBlock::livenessAnalysisSlow(CodeBlock* cod
         if (!m_liveness) {
             // There is a chance two compiler threads raced to the slow path.
             // Grabbing the lock above defends against computing liveness twice.
-            m_liveness = makeUnique<BytecodeLivenessAnalysis>(codeBlock);
+            // THREADS/TSAN: release-publish so lock-free fast-path readers
+            // (livenessConcurrently) see the analysis fully constructed.
+            auto liveness = makeUnique<BytecodeLivenessAnalysis>(codeBlock);
+            WTF::atomicStore(std::bit_cast<BytecodeLivenessAnalysis**>(&m_liveness), liveness.release(), std::memory_order_release);
         }
     }
-    
-    return *m_liveness;
+
+    return *livenessConcurrently();
 }
 
 int UnlinkedCodeBlock::outOfLineJumpOffset(JSInstructionStream::Offset bytecodeOffset)

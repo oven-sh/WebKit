@@ -5824,6 +5824,16 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
 
     case CheckTraps:
+        // UNGIL §K.5 / SPEC-jit I21 (AB-10 closure): flag-on, the polling
+        // CheckTraps is a park site — the §A.3 window that runs while this
+        // thread is parked may rewrite any heap fact (haveABadTime butterfly
+        // conversion, Class-A transitions). Mirror of the DFGClobberize.h
+        // CheckTraps write(Heap): abstract heap facts must not survive the
+        // poll.
+        if (Options::useJSThreads()) [[unlikely]]
+            clobberWorld();
+        break;
+
     case LogShadowChickenPrologue:
     case LogShadowChickenTail:
     case ProfileType:

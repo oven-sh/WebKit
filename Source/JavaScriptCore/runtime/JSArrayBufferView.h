@@ -27,6 +27,7 @@
 
 #include "AuxiliaryBarrier.h"
 #include "JSObject.h"
+#include <wtf/Atomics.h>
 #include <wtf/TaggedArrayStoragePtr.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -172,6 +173,54 @@ enum class CopyType {
     Unobservable,
 };
 
+// TSAN-TRIAGE §3.24 (typedarray-sab; SPEC-ungil §A, SPEC-objectmodel §4.7
+// analog): the view metadata words (m_length / m_byteOffset / m_mode) are read
+// concurrently — by other mutators on shared views, by compiler threads, and
+// by GC — while the owning thread constructs the view, detaches it, or runs
+// slowDownAndWasteMemory(). The VALUE race is blessed: readers follow the
+// read-*Raw-then-revalidate protocol (UG §A; IdempotentArrayBufferByteLength
+// getters), visitChildren snapshots under cellLock, and slowDownAndWasteMemory
+// publishes with an explicit storeStoreFence before the m_mode flip. But a
+// plain C++ access racing another plain (or atomic) access is still UB/a TSAN
+// report, so EVERY access to these fields — including the writes in
+// JSArrayBufferView.cpp, which flow through this wrapper's converting
+// constructor and operator= — is a RELAXED atomic. Relaxed loads/stores of
+// these word-sized fields compile to the same plain MOV/STR on x86-64/arm64,
+// so flag-off (useJSThreads=false) semantics and codegen are unchanged. Any
+// ordering stronger than relaxed is supplied by the surrounding publication
+// protocol (cellLock, storeStoreFence, safepoints), never by this wrapper.
+template<typename T>
+class RacyArrayBufferViewField {
+public:
+    ALWAYS_INLINE RacyArrayBufferViewField() { WTF::atomicStore(&m_value, T(), std::memory_order_relaxed); }
+    ALWAYS_INLINE RacyArrayBufferViewField(T value) { WTF::atomicStore(&m_value, value, std::memory_order_relaxed); }
+
+    ALWAYS_INLINE RacyArrayBufferViewField& operator=(T value)
+    {
+        WTF::atomicStore(&m_value, value, std::memory_order_relaxed);
+        return *this;
+    }
+
+#if TSAN_ENABLED
+    // Forced out of line under TSAN ONLY, so the relaxed probe symbolizes as
+    // a RacyArrayBufferViewField frame and the narrow suppression anchor
+    // (race:JSC::RacyArrayBufferViewField, Tools/tsan/suppressions.txt)
+    // matches. Fully inlined, the probe's frame degrades to the enclosing
+    // host function (seen in r11 as typedArrayViewProtoGetterFuncLength),
+    // which forced a rule-3/4-violating function-level suppression over a
+    // whole user-facing builtin. Production builds keep ALWAYS_INLINE below.
+    NEVER_INLINE operator T() const { return WTF::atomicLoad(const_cast<T*>(&m_value), std::memory_order_relaxed); }
+#else
+    ALWAYS_INLINE operator T() const { return WTF::atomicLoad(const_cast<T*>(&m_value), std::memory_order_relaxed); }
+#endif
+
+private:
+    T m_value;
+};
+
+static_assert(sizeof(RacyArrayBufferViewField<size_t>) == sizeof(size_t));
+static_assert(sizeof(RacyArrayBufferViewField<TypedArrayMode>) == sizeof(TypedArrayMode));
+
 // When WebCore uses a JSArrayBufferView, it expects to be able to get the native
 // ArrayBuffer and little else. This requires slowing down and wasting memory,
 // and then accessing things via the Butterfly. When JS uses a JSArrayBufferView
@@ -262,6 +311,8 @@ public:
     inline bool isShared();
     JS_EXPORT_PRIVATE ArrayBuffer* unsharedBuffer();
     inline ArrayBuffer* possiblySharedBuffer();
+    // Public (upstream: protected) for the threads-mode Atomics detach re-check, SPEC-ungil annex N6 arm 1.
+    ArrayBuffer* existingBufferInButterfly();
     JSArrayBuffer* unsharedJSBuffer(JSGlobalObject* globalObject);
     JSArrayBuffer* possiblySharedJSBuffer(JSGlobalObject* globalObject);
     inline RefPtr<ArrayBufferView> unsharedImpl();
@@ -278,9 +329,25 @@ public:
         return JSC::canUseArrayBufferViewRawFieldsDirectly(m_mode);
     }
 
-    bool hasVector() const { return !!m_vector; }
-    void* vector() const LIFETIME_BOUND { return m_vector.getMayBeNull(); }
-    void* vectorWithoutPACValidation() const LIFETIME_BOUND { return m_vector.getUnsafe(); }
+    // TSAN-TRIAGE §3.24 (typedarray-sab): the m_vector caged word is written
+    // with relaxed atomic stores (CagedBarrierPtr -> AuxiliaryBarrier
+    // setWithoutBarrier/clear; refreshVector, detachFromArrayBuffer,
+    // slowDownAndWasteMemory) while other threads read it lock-free. The
+    // CagedBarrierPtr read accessors go through AuxiliaryBarrier::get(), a
+    // plain load — the other half of the reported pair. All readers here load
+    // the word with a single relaxed atomic load and re-wrap it; stale words
+    // are legal (readers re-validate per UG §A; visitChildren snapshots under
+    // cellLock). Relaxed loads are plain MOVs/LDRs: flag-off codegen unchanged.
+    ALWAYS_INLINE CagedPtr<Gigacage::Primitive, void> vectorCagedConcurrently() const
+    {
+        static_assert(sizeof(VectorPtr) == sizeof(void*), "m_vector must be a single caged pointer word");
+        void* bits = WTF::atomicLoad(reinterpret_cast<void**>(const_cast<VectorPtr*>(&m_vector)), std::memory_order_relaxed);
+        return CagedPtr<Gigacage::Primitive, void>(bits);
+    }
+
+    bool hasVector() const { return !!vectorCagedConcurrently().getUnsafe(); }
+    void* vector() const LIFETIME_BOUND { return vectorCagedConcurrently().getMayBeNull(); }
+    void* vectorWithoutPACValidation() const LIFETIME_BOUND { return vectorCagedConcurrently().getUnsafe(); }
 
     std::span<const uint8_t> span() const LIFETIME_BOUND { return { static_cast<const uint8_t*>(vector()), byteLength() }; }
     
@@ -370,12 +437,10 @@ protected:
     friend class LLIntOffsetsExtractor;
     friend class ArrayBuffer;
 
-    ArrayBuffer* existingBufferInButterfly();
-
     VectorPtr m_vector;
-    size_t m_length;
-    size_t m_byteOffset { 0 };
-    TypedArrayMode m_mode;
+    RacyArrayBufferViewField<size_t> m_length;
+    RacyArrayBufferViewField<size_t> m_byteOffset { 0 };
+    RacyArrayBufferViewField<TypedArrayMode> m_mode;
 };
 
 inline JSArrayBufferView* validateTypedArray(JSGlobalObject*, JSValue);

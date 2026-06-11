@@ -430,15 +430,26 @@ public:
 
     operator bool() const
     {
-        return !!(*m_word & m_mask);
+        // Relaxed atomic load: lock-free readers (e.g. JSC's BlockDirectory bit
+        // views) may race a locked writer's RMW on the same word. Codegen is a
+        // plain load on x86-64/arm64; this only removes the plain-access UB and
+        // makes the access TSAN-visible.
+        return !!(atomicLoad(m_word, std::memory_order_relaxed) & m_mask);
     }
 
     FastBitReference& operator=(bool value)
     {
+        // Relaxed atomic load + store (deliberately NOT an atomic RMW): writers
+        // of a given word are serialized by the owner's lock (e.g.
+        // BlockDirectory's m_bitvectorLock), so lost updates are impossible;
+        // atomicity is only needed so concurrent lock-free readers of the word
+        // are not a data race. Plain mov codegen on x86-64/arm64.
+        uint32_t word = atomicLoad(m_word, std::memory_order_relaxed);
         if (value)
-            *m_word |= m_mask;
+            word |= m_mask;
         else
-            *m_word &= ~m_mask;
+            word &= ~m_mask;
+        atomicStore(m_word, word, std::memory_order_relaxed);
         return *this;
     }
 

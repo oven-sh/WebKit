@@ -36,6 +36,8 @@
 #include "JSCJSValueInlines.h"
 #include "RegisterAtOffsetList.h"
 #include "VMInlines.h"
+#include "VMLite.h"
+#include <limits>
 #include <wtf/CommaPrinter.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -304,7 +306,7 @@ void* prepareOSREntry(VM& vm, CallFrame* callFrame, CodeBlock* codeBlock, Byteco
     auto dontSaveRegisters = RegisterSet::stackRegisters();
 
     unsigned registerCount = registerSaveLocations->registerCount();
-    VMEntryRecord* record = vmEntryRecord(vm.topEntryFrame);
+    VMEntryRecord* record = vmEntryRecord(vm.group3Primitives().topEntryFrame); // UNGIL §A.1.3 mode split (U-T4): the OSR-entering thread's callee saves live in ITS doVMEntry record; the raw VM word is inert spare storage GIL-off.
     for (unsigned i = 0; i < registerCount; i++) {
         RegisterAtOffset currentEntry = registerSaveLocations->at(i);
         ASSERT(dontSaveRegisters.contains(currentEntry.reg(), IgnoreVectors) == dontSaveRegisters.contains(currentEntry.reg(), Width128));
@@ -404,7 +406,19 @@ CodePtr<ExceptionHandlerPtrTag> prepareCatchOSREntry(VM& vm, CallFrame* callFram
     auto instruction = baselineCodeBlock->instructions().at(callFrame->bytecodeIndex());
     ASSERT(instruction->is<OpCatch>());
     ValueProfileAndVirtualRegisterBuffer* buffer = instruction->as<OpCatch>().metadata(baselineCodeBlock).m_buffer;
-    JSValue* dataBuffer = reinterpret_cast<JSValue*>(dfgCommon->catchOSREntryBuffer->dataBuffer());
+    ScratchBuffer* catchOSREntryBuffer = dfgCommon->catchOSREntryBuffer;
+    if (dfgCommon->catchOSREntryBufferBakedIndex != std::numeric_limits<unsigned>::max()) [[unlikely]] {
+        // UNGIL §A.1.6 (ANNEX A16, U-T4b): a gilOff-mode compilation stored a
+        // per-lite registry index instead of a baked buffer. This runs on the
+        // entering thread with its lite installed, and the compiled code's
+        // ExtractCatchLocal/ClearCatchLocals read back through the SAME
+        // lite's table, so concurrent catch OSR entries on one CodeBlock use
+        // disjoint per-thread buffers. The install/backfill contract makes
+        // the resolved buffer non-null before this code can be reached.
+        catchOSREntryBuffer = VMLite::current().scratchBufferAtIndex(dfgCommon->catchOSREntryBufferBakedIndex);
+        RELEASE_ASSERT(catchOSREntryBuffer);
+    }
+    JSValue* dataBuffer = reinterpret_cast<JSValue*>(catchOSREntryBuffer->dataBuffer());
     unsigned index = 0;
     buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
         if (!VirtualRegister(profile.m_operand).isLocal())
@@ -414,7 +428,7 @@ CodePtr<ExceptionHandlerPtrTag> prepareCatchOSREntry(VM& vm, CallFrame* callFram
     });
 
     // The active length of catchOSREntryBuffer will be zeroed by ClearCatchLocals node.
-    dfgCommon->catchOSREntryBuffer->setActiveLength(sizeof(JSValue) * index);
+    catchOSREntryBuffer->setActiveLength(sizeof(JSValue) * index);
     vm.requestEntryScopeService(VM::EntryScopeService::ClearScratchBuffers);
 
     // At this point, we're committed to triggering an OSR entry immediately after we return. Hence, it is safe to modify stack here.

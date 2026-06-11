@@ -38,6 +38,7 @@
 #include <JavaScriptCore/InternalFieldTuple.h>
 #endif
 #include <wtf/FixedVector.h>
+#include <wtf/Lock.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/WeakPtr.h>
 
@@ -679,7 +680,16 @@ public:
     RuntimeFlags m_runtimeFlags;
     WeakPtr<ConsoleClient> m_consoleClient;
     std::optional<unsigned> m_stackTraceLimit;
-    Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
+    // Leaf lock guarding the Weak slot below (TSAN triage §8.36 function-ctor-cache).
+    // This per-global Function-constructor source cache is a pure cache, not blessed
+    // racy by SPEC-ungil §K: with useThreadGIL=false, N threads can run
+    // new Function(...) against the same global concurrently, and Weak::set
+    // (swap + WeakImpl deallocate of the old impl) racing a lock-free Weak::get is a
+    // torn/freed WeakImpl* read (UAF). The lock covers only the slot read/write; the
+    // FunctionExecutable* loaded under the lock stays alive via the caller's stack
+    // reference (conservative scan), so the cell can be inspected outside the lock.
+    Lock m_functionConstructorExecutableCacheLock;
+    Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor WTF_GUARDED_BY_LOCK(m_functionConstructorExecutableCacheLock);
     
     // Added for "bun test"
     double overridenDateNow { -1 };
@@ -1196,6 +1206,14 @@ public:
         
     void haveABadTime(VM&);
 
+private:
+    // The landed haveABadTime body (watchpoint fire + structure flip + heap
+    // conversion walk). GIL-off this runs ONLY inside the §K.5 Class-4
+    // thread-granular stop requested by haveABadTime (SPEC-ungil ANNEX
+    // HBT/HBT2-HBT4; AB-10).
+    void haveABadTimeImpl(VM&);
+
+public:
     void notifyArrayBufferDetaching()
     {
         if (!m_arrayBufferDetachWatchpointSet->isStillValid())
@@ -1386,6 +1404,20 @@ ALWAYS_INLINE VM& getVM(JSGlobalObject* globalObject)
 {
     return globalObject->vm();
 }
+
+// UNGIL §K.1 per-lite realm duplicate of m_regExpGlobalData (AUD1.K2/SD19;
+// banner + definition in JSGlobalObject.cpp). Resolves the CURRENT thread's
+// RegExp legacy-statics stream: the in-object member for flag-off / GIL-on /
+// the gilOff main carrier (byte-identical to regExpGlobalData()), and the
+// per-(global, lite) copy for gilOff non-main-carrier threads. ALL runtime
+// (C++) consumers of the match-result stream MUST route through the
+// ALWAYS_INLINE threadRegExpGlobalData() wrapper in RegExpGlobalDataInlines.h
+// (AUD1.K2 consumer re-point; the wrapper's flag-off fast path is a
+// read-only Config-page test so flag-off match paths stay call-free); this
+// out-of-line slow path runs only when gilOffWithProcessGate() is true. The
+// DFG/FTL inline RecordRegExpCachedResult emission is the A16-ext jit slice
+// and still targets the in-object stream.
+JS_EXPORT_PRIVATE RegExpGlobalData& threadRegExpGlobalDataSlow(JSGlobalObject*);
 
 } // namespace JSC
 

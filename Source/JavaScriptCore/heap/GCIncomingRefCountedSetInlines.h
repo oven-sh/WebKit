@@ -32,13 +32,14 @@ namespace JSC {
 
 template<typename T>
 GCIncomingRefCountedSet<T>::GCIncomingRefCountedSet()
-    : m_bytes(0)
+    : m_bytes { 0 }
 {
 }
 
 template<typename T>
 void GCIncomingRefCountedSet<T>::lastChanceToFinalize()
 {
+    Locker locker { m_lock };
     for (size_t i = m_vector.size(); i--;)
         m_vector[i]->filterIncomingReferences([] (JSCell*) { return false; });
 }
@@ -46,13 +47,19 @@ void GCIncomingRefCountedSet<T>::lastChanceToFinalize()
 template<typename T>
 bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object)
 {
+    // Serializes both the set's vector append and the object's own
+    // incoming-reference storage mutation (addIncomingReference). Readers of
+    // that per-object storage outside this set's API (ArrayBuffer detach /
+    // wasm-grow walks) snapshot under this same lock via
+    // Heap::arrayBufferIncomingReferencesLock() (see GCIncomingRefCounted.h).
+    Locker locker { m_lock };
     if (!object->addIncomingReference(cell)) {
         ASSERT(object->isDeferred());
         ASSERT(object->numberOfIncomingReferences());
         return false;
     }
     m_vector.append(object);
-    m_bytes += object->gcSizeEstimateInBytes();
+    m_bytes.storeRelaxed(m_bytes.loadRelaxed() + object->gcSizeEstimateInBytes());
     ASSERT(object->isDeferred());
     ASSERT(object->numberOfIncomingReferences());
     return true;
@@ -61,6 +68,10 @@ bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object)
 template<typename T>
 void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
 {
+    // GC end-phase runs stopped-world today, but take the lock anyway: it is
+    // uncontended there, and it keeps the invariant "all access to m_vector
+    // and per-object incoming-reference storage is under m_lock" auditable.
+    Locker locker { m_lock };
     size_t preciseBytes = 0;
     m_vector.removeAllMatching([&](T* object) {
         size_t size = object->gcSizeEstimateInBytes();
@@ -74,7 +85,7 @@ void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
     });
     // Update m_bytes to the precise value when Full-GC happens since Eden-GC only expects that Eden region is collected.
     if (collectionScope == CollectionScope::Full)
-        m_bytes = preciseBytes;
+        m_bytes.storeRelaxed(preciseBytes);
 }
 
 } // namespace JSC

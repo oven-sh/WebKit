@@ -87,12 +87,12 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
     }
 
     case op_try_get_by_id:
-        structureID = instruction->as<OpTryGetById>().metadata(profiledBlock).m_structureID;
+        structureID = instruction->as<OpTryGetById>().metadata(profiledBlock).m_cache.structureID;
         identifier = &(profiledBlock->identifier(instruction->as<OpTryGetById>().m_property));
         break;
 
     case op_get_by_id_direct:
-        structureID = instruction->as<OpGetByIdDirect>().metadata(profiledBlock).m_structureID;
+        structureID = instruction->as<OpGetByIdDirect>().metadata(profiledBlock).m_cache.structureID;
         identifier = &(profiledBlock->identifier(instruction->as<OpGetByIdDirect>().m_property));
         break;
 

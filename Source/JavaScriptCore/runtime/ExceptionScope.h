@@ -74,7 +74,11 @@ public:
 protected:
     ExceptionScope(VM&, ExceptionEventLocation);
     ExceptionScope(const ExceptionScope&) = delete;
-    ExceptionScope(ExceptionScope&&) = default;
+    // No move: this is a scope-locked RAII type whose dtor does a
+    // non-idempotent chain pop now guarded by strict-LIFO RELEASE_ASSERTs —
+    // a moved-from scope would double-pop and trip them. Guaranteed copy
+    // elision covers the DECLARE_*_SCOPE factory-macro initializations.
+    ExceptionScope(ExceptionScope&&) = delete;
     ~ExceptionScope();
 
     JS_EXPORT_PRIVATE CString unexpectedExceptionMessage();
@@ -83,6 +87,13 @@ protected:
     ExceptionScope* m_previousScope;
     ExceptionEventLocation m_location;
     unsigned m_recursionDepth;
+    // Obligation-10 straddle enforcement (TopCallFrameSetter precedent,
+    // FrameTracers.h): the chain write-back is NOT idempotent, so the dtor
+    // RELEASE_ASSERTs it resolved the SAME storage the ctor pushed onto.
+    // EXCEPTION_SCOPE_VERIFICATION builds are assert-class builds — the
+    // member is free in shipping configurations (this whole class shape is
+    // compiled out there).
+    VMExceptionScopeVerificationState* m_verificationStateAtConstruction;
 };
 
 #else // not ENABLE(EXCEPTION_SCOPE_VERIFICATION)
@@ -108,7 +119,7 @@ protected:
         : m_vm(vm)
     { }
     ExceptionScope(const ExceptionScope&) = delete;
-    ExceptionScope(ExceptionScope&&) = default;
+    ExceptionScope(ExceptionScope&&) = delete; // Scope-locked RAII; see verification-build variant.
 
     ALWAYS_INLINE CString unexpectedExceptionMessage() { return { }; }
 
@@ -128,10 +139,15 @@ bool ExceptionScope::tryClearException()
     return true;
 }
 
+/* UNGIL obligation-10 audit: the NeedExceptionHandling bit lives in the
+   CURRENT thread's trap word GIL-off (VM::trapsForCurrentThread() — the
+   same storage domain as the per-lite m_exception word), so both the
+   bit<->word assert and the poll gate read the current thread's view.
+   Flag-off/GIL-on both compile to the same single VM-word reads as before. */
 #define RETURN_IF_EXCEPTION(scope__, value__) do { \
         SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm(); \
-        EXCEPTION_ASSERT(!!(scope__).exception() == vm.traps().needHandling(JSC::VMTraps::NeedExceptionHandling)); \
-        if (vm.traps().maybeNeedHandling()) [[unlikely]] { \
+        EXCEPTION_ASSERT(!!(scope__).exception() == vm.trapsForCurrentThread().needHandling(JSC::VMTraps::NeedExceptionHandling)); \
+        if (vm.trapsMaybeNeedHandlingForCurrentThread()) [[unlikely]] { \
             if (vm.hasExceptionsAfterHandlingTraps()) \
                 return value__; \
         } \

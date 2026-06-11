@@ -167,7 +167,7 @@ void RegExp::finishCreation(VM& vm)
     }
 
     m_atom = WTF::move(pattern.m_atom);
-    m_specificPattern = pattern.m_specificPattern;
+    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
     m_numSubpatterns = pattern.m_numSubpatterns;
     if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty()) {
@@ -229,17 +229,23 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     if (m_regExpBytecode)
         return;
 
-    Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
-    if (hasError(m_constructionErrorCode)) {
+    // THREADS: parse into a LOCAL error code so concurrent lock-free isValid()
+    // readers never observe the YarrPattern ctor's transient writes; publish the
+    // final value with a relaxed store (single byte, advisory).
+    Yarr::ErrorCode constructionErrorCode = WTF::atomicLoad(&m_constructionErrorCode, std::memory_order_relaxed);
+    Yarr::YarrPattern pattern(m_patternString, m_flags, constructionErrorCode);
+    WTF::atomicStore(&m_constructionErrorCode, constructionErrorCode, std::memory_order_relaxed);
+    if (hasError(constructionErrorCode)) {
         m_state = ParseError;
         return;
     }
     ASSERT(m_numSubpatterns == pattern.m_numSubpatterns);
 
     m_atom = WTF::move(pattern.m_atom);
-    m_specificPattern = pattern.m_specificPattern;
+    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
-    m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
+    m_regExpBytecode = byteCodeCompilePattern(vm, pattern, constructionErrorCode);
+    WTF::atomicStore(&m_constructionErrorCode, constructionErrorCode, std::memory_order_relaxed);
     if (!m_regExpBytecode) {
         m_state = ParseError;
         return;
@@ -249,16 +255,30 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
-    
-    Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
-    if (hasError(m_constructionErrorCode)) {
+    compileHoldingCellLock(locker, vm, charSize, sampleString);
+}
+
+// AUD1.N2 residuals (A)/(B) (RegExp.cpp banner below): lock-held body so the
+// GIL-off compileIfNecessary arm (RegExpInlines.h) can run check + compile
+// under ONE cellLock hold (no unlock window between hasCodeFor and compile —
+// the residual-(A) visibility gap). GIL-on callers reach it through
+// compile() above, byte-identically the old code.
+void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
+{
+    // THREADS: parse into a LOCAL error code so concurrent lock-free isValid()
+    // readers never observe the YarrPattern ctor's transient writes; publish the
+    // final value with a relaxed store (single byte, advisory).
+    Yarr::ErrorCode constructionErrorCode = WTF::atomicLoad(&m_constructionErrorCode, std::memory_order_relaxed);
+    Yarr::YarrPattern pattern(m_patternString, m_flags, constructionErrorCode);
+    WTF::atomicStore(&m_constructionErrorCode, constructionErrorCode, std::memory_order_relaxed);
+    if (hasError(constructionErrorCode)) {
         m_state = ParseError;
         return;
     }
     ASSERT(m_numSubpatterns == pattern.m_numSubpatterns);
 
     m_atom = WTF::move(pattern.m_atom);
-    m_specificPattern = pattern.m_specificPattern;
+    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
@@ -288,21 +308,139 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
-    m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
+    // AUD1.N2 residual (B): GIL-off, never replace live bytecode — a CharSize
+    // upgrade reaches here with m_regExpBytecode already set, and the Yarr
+    // interpreter may be running that pattern on another thread (it holds
+    // vm->m_regExpAllocatorLock, NOT this cellLock). Bytecode is
+    // charsize-agnostic, so keeping the existing pattern is semantically
+    // identical; flag-off/GIL-on keeps the historical replace.
+    if (vm->gilOff() && m_regExpBytecode) [[unlikely]]
+        return;
+    m_regExpBytecode = byteCodeCompilePattern(vm, pattern, constructionErrorCode);
+    WTF::atomicStore(&m_constructionErrorCode, constructionErrorCode, std::memory_order_relaxed);
     if (!m_regExpBytecode) {
         m_state = ParseError;
         return;
     }
 }
 
+// =============================================================================
+// UNGIL annex N7 RESOLVED-2 (AUD1.N2, BINDING; U-T8b) — per-thread match
+// scratch. PRIORITY: memory-unsafe today under any GIL-off interleaving.
+//
+// The cell-resident m_ovector is per-MATCH scratch handed out raw via
+// ovectorSpan() (RegExp.h:103) and written by every mutator-side match with
+// NO lock (compile state, by contrast, IS cell-locked in this branch — the
+// §N default, N7 row R13). Two threads exec()ing one shared RegExp race a
+// resize against a capture-walk: realloc UAF + torn capture reads — the OM
+// annex 15.7 SparseArrayValueMap defect class.
+//
+// RULING (consumed verbatim): the per-match scratch moves OFF the cell
+// GIL-off — a per-lite buffer (§K.1 class; cell-locking the match was
+// REJECTED: §N forbids parking under a cell lock across long-running Yarr
+// JIT execution). regExpGilOffPerThreadMatchOvector() below is that buffer
+// (per-CPU-THREAD thread_local — the ISB1 storage-deviation precedent in
+// VMLite.cpp: a thread serves one installed lite at a time, so per-thread IS
+// per-lite for scratch; lift to a VMLite L2 slot when VMLite.h's owner needs
+// a JIT-addressable home). The buffer is GC-invisible (plain ints), grow-only
+// per thread, and stable across the post-match ovectorSpan() re-reads the
+// consumers do (RegExpGlobalDataInlines.h:60-105, RegExpMatchesArray.h:110,
+// StringPrototypeInlines.h:812) BECAUSE those re-reads happen on the
+// matching thread before its next match.
+//
+// ROUTING (the AUD1.N2 routing half — AB18-B; lands with this change's
+// companion RegExp.h edit, which is the keystone signature change):
+//   (1) RegExp.h ovectorSpan(VM&) routes gilOff callers to this buffer
+//       (`vm.gilOff() ? regExpGilOffPerThreadMatchOvector(*this) :
+//       m_ovector.mutableSpan()`), keeping the cell vector for flag-off/
+//       GIL-on byte-identically. The signature change turns any missed
+//       caller into a compile error instead of a silent race.
+//       offsetVectorSize() needs NO reroute: m_ovector's single resize is
+//       in finishCreation (pre-publication; RegExpCache's lock provides the
+//       release/acquire edge to other threads' lookups), so the size is
+//       immutable once the cell is visible cross-thread.
+//   (2) DFG/FTL RegExpExec/RegExpMatchFast thunks land in matchInline and
+//       inherit the caller-passed span — covered by (1)'s routing at their
+//       ovectorSpan() call sites; a debug ASSERT in the matchInline span
+//       overload (RegExpInlines.h) backstops this family.
+// The gilOff RELEASE_ASSERTs in RegExp::match / matchConcurrently below are
+// KEPT as cheap routing invariants: the per-thread buffer can never alias
+// m_ovector, so any future un-rerouted caller fail-stops instead of running
+// the shared-scratch race. Flag-off/GIL-on identical — the predicate is
+// vm.m_gilOff, false in both, one predicted-false byte test. This lands
+// GATE-2 (VMLite.cpp): gilOff global matches no longer fail-stop, so the
+// SD19 regexp corpus arms can run.
+//
+// RESIDUALS (chartered follow-ups per AB18-B review — distinct mechanisms
+// sharing the same trigger (shared deduped RegExp* under gilOff)):
+//   (A) LANDED (AB17c family 2): compileIfNecessary/compileIfNecessaryMatchOnly
+//       run {hasCodeFor check, compile} under ONE cellLock hold GIL-off
+//       ("gilOff first-check under cellLock" option) via the
+//       compile*HoldingCellLock bodies; matchInline gates the compile call on
+//       MatchFrom::VMThread (CompilerThread entries hold the cellLock in
+//       matchConcurrently — was a no-op, now skipped, avoiding self-deadlock).
+//       Flag-off/GIL-on path byte-identical.
+//   (B) LANDED (AB17c family 2): recheck-under-lock comes with (A)'s single
+//       hold; both bytecode fallbacks publish-once GIL-off (never replace a
+//       live BytecodePattern — bytecode is charsize-agnostic, so a CharSize
+//       upgrade keeps the existing pattern). deleteCode() vs a concurrent
+//       interpreter remains the deleteAllCode-only window: deleteAllCode is a
+//       debugger/inspector/shell stop-the-world-shaped operation, chartered
+//       with the code-lifecycle family, NOT here.
+//   (C) MINIMAL SLICE LANDED (AB17c family 2): gilOff bypass at both
+//       StringPrototypeInlines.h call sites (get returns null, set skipped) —
+//       pure value cache, a miss is only a perf event. The real per-lite
+//       split stays with the K4.II.7 owner.
+// =============================================================================
+
+// Declared in RegExp.h (JS_EXPORT_PRIVATE); reached through ovectorSpan(VM&)
+// — the routing (1) reroute in RegExpInlines.h — only.
+std::span<int> regExpGilOffPerThreadMatchOvector(RegExp& regExp)
+{
+    // Grow-only per thread; sized like the cell vector so every
+    // offsetVectorSize() contract (matchInline's >= assert, named-capture
+    // tail) holds unchanged. thread_local with a non-trivial destructor is
+    // deliberate: the buffer dies with the thread (no ~VM walk entry needed —
+    // it holds no cells and no VM state).
+    //
+    // LIFETIME INVARIANT (new with per-thread routing): the returned span is
+    // invalidated by this thread's NEXT match of ANY regexp (the cell-resident
+    // vector was only clobbered by the SAME regexp's next match). Audited
+    // consumers all read before the next match on this thread: performMatch's
+    // post-match re-reads have no intervening match, StringReplaceCache::set
+    // copies the span at set time, and RegExp.$n lazy reification RE-RUNS the
+    // match rather than reading a stale span. Any new consumer must not hold
+    // this span across a JS-callback or second-match boundary.
+    static thread_local Vector<int> buffer;
+    size_t needed = static_cast<size_t>(regExp.offsetVectorSize());
+    if (buffer.size() < needed)
+        buffer.grow(needed);
+    return buffer.mutableSpan().first(needed);
+}
+
 int RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffset, std::span<int> ovector)
 {
+    // AUD1.N2 routing invariant (routing (1) lands with this change's
+    // RegExp.h half): GIL-off, ovectorSpan(VM&) hands out the per-thread
+    // scratch, so no mutator-side match may ever target the cell-resident
+    // vector. Kept as RELEASE_ASSERT: any future un-rerouted caller
+    // fail-stops instead of running the shared-scratch race. Flag-off/
+    // GIL-on cost unchanged: one predicted-false byte test.
+    if (globalObject->vm().gilOff()) [[unlikely]]
+        RELEASE_ASSERT(ovector.empty() || ovector.data() != m_ovector.mutableSpan().data());
     return matchInline(globalObject, globalObject->vm(), s, startOffset, ovector);
 }
 
 bool RegExp::matchConcurrently(
     VM& vm, StringView s, unsigned startOffset, int& position, std::span<int> ovector)
 {
+    // AUD1.N2 routing invariant: compiler-thread callers
+    // (DFGStrengthReductionPhase) pass caller-local vectors; the cell
+    // scratch must never be the target here either (same banner and same
+    // kept-RELEASE_ASSERT rationale as RegExp::match).
+    if (vm.gilOff()) [[unlikely]]
+        RELEASE_ASSERT(ovector.empty() || ovector.data() != m_ovector.mutableSpan().data());
+
     Locker locker { cellLock() };
 
     if (!hasCodeFor(s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16))
@@ -317,16 +455,26 @@ bool RegExp::matchConcurrently(
 void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
-    
-    Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
-    if (hasError(m_constructionErrorCode)) {
+    compileMatchOnlyHoldingCellLock(locker, vm, charSize, sampleString);
+}
+
+// Lock-held body — same shape and rationale as compileHoldingCellLock above.
+void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
+{
+    // THREADS: parse into a LOCAL error code so concurrent lock-free isValid()
+    // readers never observe the YarrPattern ctor's transient writes; publish the
+    // final value with a relaxed store (single byte, advisory).
+    Yarr::ErrorCode constructionErrorCode = WTF::atomicLoad(&m_constructionErrorCode, std::memory_order_relaxed);
+    Yarr::YarrPattern pattern(m_patternString, m_flags, constructionErrorCode);
+    WTF::atomicStore(&m_constructionErrorCode, constructionErrorCode, std::memory_order_relaxed);
+    if (hasError(constructionErrorCode)) {
         m_state = ParseError;
         return;
     }
     ASSERT(m_numSubpatterns == pattern.m_numSubpatterns);
 
     m_atom = WTF::move(pattern.m_atom);
-    m_specificPattern = pattern.m_specificPattern;
+    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
@@ -356,7 +504,12 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
-    m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
+    // AUD1.N2 residual (B): publish-once GIL-off — same rationale as the
+    // compileHoldingCellLock fallback above.
+    if (vm->gilOff() && m_regExpBytecode) [[unlikely]]
+        return;
+    m_regExpBytecode = byteCodeCompilePattern(vm, pattern, constructionErrorCode);
+    WTF::atomicStore(&m_constructionErrorCode, constructionErrorCode, std::memory_order_relaxed);
     if (!m_regExpBytecode) {
         m_state = ParseError;
         return;
@@ -387,7 +540,7 @@ void RegExp::deleteCode()
         return;
     m_state = NotCompiled;
     m_atom = String();
-    m_specificPattern = Yarr::SpecificPattern::None;
+    WTF::atomicStore(&m_specificPattern, Yarr::SpecificPattern::None, std::memory_order_relaxed); // THREADS: see specificPattern().
 #if ENABLE(YARR_JIT)
     if (m_regExpJITCode)
         m_regExpJITCode->clear(locker);

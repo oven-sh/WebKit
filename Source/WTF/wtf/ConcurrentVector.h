@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <wtf/Atomics.h>
 #include <wtf/ConcurrentBuffer.h>
 #include <wtf/Noncopyable.h>
 
@@ -104,13 +105,27 @@ public:
     // This may return a size that is bigger than the underlying storage, since this does not fence
     // manipulations of size. So if you access at size()-1, you may crash because this hasn't
     // allocated storage for that index yet.
-    size_t size() const { return m_size; }
+    // THREADS/TSAN: m_size, m_numSegments and the segment-pointer slots are
+    // accessed with relaxed/release atomics — this container's contract is
+    // single writer + concurrent lock-free readers (appendConcurrently), so the
+    // races are by design; the atomics make them defined and TSAN-visible.
+    // Codegen on x86-64/arm64 is unchanged for the loads/plain stores.
+    // TSAN r13: acquire under TSAN ONLY — pairs with appendConcurrently's
+    // release store so the element-construction writes (placement-new /
+    // memset) become HB-visible to readers; production keeps relaxed (the
+    // contract is dependency/fence-ordered, which TSAN cannot model). Same
+    // gate shape as JSString::fiberConcurrently (TSAN-TRIAGE §13.4).
+#if TSAN_ENABLED
+    size_t size() const { return WTF::atomicLoad(const_cast<size_t*>(&m_size), std::memory_order_acquire); }
+#else
+    size_t size() const { return WTF::atomicLoad(const_cast<size_t*>(&m_size), std::memory_order_relaxed); }
+#endif
 
     bool isEmpty() const { return !size(); }
 
     T& at(size_t index) LIFETIME_BOUND
     {
-        ASSERT_WITH_SECURITY_IMPLICATION(index < m_size);
+        ASSERT_WITH_SECURITY_IMPLICATION(index < size());
         return segmentFor(index)->entries[subscriptFor(index)];
     }
 
@@ -157,15 +172,16 @@ public:
     {
         ASSERT_WITH_SECURITY_IMPLICATION(!isEmpty());
         T result = WTF::move(last());
-        --m_size;
+        WTF::atomicStore(&m_size, size() - 1, std::memory_order_relaxed);
         return result;
     }
 
     template<typename... Args>
     void append(Args&&... args)
     {
-        ++m_size;
-        if (!segmentExistsFor(m_size - 1))
+        size_t newSize = size() + 1;
+        WTF::atomicStore(&m_size, newSize, std::memory_order_relaxed);
+        if (!segmentExistsFor(newSize - 1))
             allocateSegment();
         new (NotNull, &last()) T(std::forward<Args>(args)...);
     }
@@ -181,29 +197,31 @@ public:
     template<typename... Args>
     void appendConcurrently(Args&&... args)
     {
-        if (!segmentExistsFor(m_size))
+        size_t oldSize = size();
+        if (!segmentExistsFor(oldSize))
             allocateSegment();
-        T* slot = &segmentFor(m_size)->entries[subscriptFor(m_size)];
+        T* slot = &segmentFor(oldSize)->entries[subscriptFor(oldSize)];
         new (NotNull, slot) T(std::forward<Args>(args)...);
-        WTF::storeStoreFence();
-        ++m_size;
+        // Release store publishes the constructed element to concurrent readers
+        // (subsumes the storeStoreFence the plain ++ used).
+        WTF::atomicStore(&m_size, oldSize + 1, std::memory_order_release);
     }
 
     void removeLast()
     {
         last().~T();
-        --m_size;
+        WTF::atomicStore(&m_size, size() - 1, std::memory_order_relaxed);
     }
 
-    void grow(size_t size)
+    void grow(size_t newSize)
     {
-        if (size == m_size)
+        size_t oldSize = size();
+        if (newSize == oldSize)
             return;
-        ASSERT(size > m_size);
-        ensureSegmentsFor(size);
-        size_t oldSize = m_size;
-        m_size = size;
-        for (size_t i = oldSize; i < m_size; ++i)
+        ASSERT(newSize > oldSize);
+        ensureSegmentsFor(newSize);
+        WTF::atomicStore(&m_size, newSize, std::memory_order_relaxed);
+        for (size_t i = oldSize; i < newSize; ++i)
             new (NotNull, &at(i)) T();
     }
 
@@ -214,7 +232,7 @@ public:
 
     Iterator end() LIFETIME_BOUND
     {
-        return Iterator(*this, m_size);
+        return Iterator(*this, size());
     }
 
 private:
@@ -226,12 +244,21 @@ private:
 
     bool segmentExistsFor(size_t index)
     {
-        return index / SegmentSize < m_numSegments;
+        return index / SegmentSize < WTF::atomicLoad(&m_numSegments, std::memory_order_relaxed);
     }
 
     Segment* segmentFor(size_t index)
     {
-        return m_segments[index / SegmentSize].get();
+        // Relaxed atomic read of the unique_ptr slot — allocateSegment() on the
+        // writer thread publishes it with a release store before bumping
+        // m_numSegments/m_size.
+        // TSAN r13: acquire under TSAN ONLY (see size() above) so the fresh
+        // segment's pre-publication writes get an HB edge in TSAN's model.
+#if TSAN_ENABLED
+        return WTF::atomicLoad(std::bit_cast<Segment**>(&m_segments[index / SegmentSize]), std::memory_order_acquire);
+#else
+        return WTF::atomicLoad(std::bit_cast<Segment**>(&m_segments[index / SegmentSize]), std::memory_order_relaxed);
+#endif
     }
 
     size_t subscriptFor(size_t index)
@@ -241,7 +268,7 @@ private:
 
     void ensureSegmentsFor(size_t size)
     {
-        size_t segmentCount = (m_size + SegmentSize - 1) / SegmentSize;
+        size_t segmentCount = (this->size() + SegmentSize - 1) / SegmentSize;
         size_t neededSegmentCount = (size + SegmentSize - 1) / SegmentSize;
 
         for (size_t i = segmentCount ? segmentCount - 1 : 0; i < neededSegmentCount; ++i)
@@ -250,15 +277,20 @@ private:
 
     void ensureSegment(size_t segmentIndex)
     {
-        ASSERT_WITH_SECURITY_IMPLICATION(segmentIndex <= m_numSegments);
-        if (segmentIndex == m_numSegments)
+        size_t numSegments = WTF::atomicLoad(&m_numSegments, std::memory_order_relaxed);
+        ASSERT_WITH_SECURITY_IMPLICATION(segmentIndex <= numSegments);
+        if (segmentIndex == numSegments)
             allocateSegment();
     }
 
     void allocateSegment()
     {
-        m_segments.grow(m_numSegments + 1);
-        m_segments[m_numSegments++] = makeUnique<Segment>();
+        size_t numSegments = WTF::atomicLoad(&m_numSegments, std::memory_order_relaxed);
+        m_segments.grow(numSegments + 1);
+        // Release-publish the fresh segment pointer, then the count, so a
+        // concurrent reader that passes segmentExistsFor() sees the pointer.
+        WTF::atomicStore(std::bit_cast<Segment**>(&m_segments[numSegments]), makeUnique<Segment>().release(), std::memory_order_release);
+        WTF::atomicStore(&m_numSegments, numSegments + 1, std::memory_order_release);
     }
 
     size_t m_size { 0 };

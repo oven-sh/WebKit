@@ -43,6 +43,9 @@ void IncrementalSweeper::scheduleTimer()
     setTimeUntilFire(sweepTimeSlice * sweepTimeMultiplier);
 }
 
+// SharedGC (T9): main-VM-only — the sweeper is a timer on the main VM's run
+// loop; once ISS doWorkUntil() early-returns (T8/I5b below), so the main-VM
+// binding is inert when shared.
 IncrementalSweeper::IncrementalSweeper(JSC::Heap* heap)
     : Base(heap->vm())
     , m_currentDirectory(nullptr)
@@ -51,6 +54,18 @@ IncrementalSweeper::IncrementalSweeper(JSC::Heap* heap)
 
 void IncrementalSweeper::doWorkUntil(VM& vm, MonotonicTime deadline)
 {
+    // SharedGC (T8/I5b, deviation 4): mutator-concurrent sweeping is disabled
+    // once the server is shared. The sweeper runs on one client's run loop
+    // while other clients allocate: its block->sweep() path performs
+    // lock-free BlockDirectoryBits reads (isDestructible/isEmpty under
+    // assertIsMutatorOrMutatorIsStopped) that race another client's
+    // addBlock m_bits resize, and its freeBlock() mutates the precise/block
+    // registries. Once isSharedServer(), unswept blocks are swept in-lock by
+    // allocation slow paths (§5.2, MSPL) or synchronously by the conductor;
+    // option off / pre-sticky this is byte-for-byte today's behavior (I10).
+    if (vm.heap.isSharedServer()) [[unlikely]]
+        return;
+
     if (!m_currentDirectory)
         m_currentDirectory = vm.heap.objectSpace().firstDirectory();
 
@@ -60,6 +75,14 @@ void IncrementalSweeper::doWorkUntil(VM& vm, MonotonicTime deadline)
 
 void IncrementalSweeper::doWork(VM& vm)
 {
+    // SharedGC (T8/I5b, deviation 4): see doWorkUntil(). The timer may still
+    // be armed from a pre-sticky schedule; cancel it and stand down.
+    if (vm.heap.isSharedServer()) [[unlikely]] {
+        m_currentDirectory = nullptr;
+        cancelTimer();
+        return;
+    }
+
     if (m_lastOpportunisticTaskDidFinishSweeping) {
         m_lastOpportunisticTaskDidFinishSweeping = false;
         scheduleTimer();
@@ -70,6 +93,8 @@ void IncrementalSweeper::doWork(VM& vm)
 
 void IncrementalSweeper::doSweep(VM& vm, MonotonicTime deadline, SweepTrigger trigger)
 {
+    ASSERT(!vm.heap.isSharedServer()); // SharedGC (T8): gated in doWork/doWorkUntil.
+
     std::optional<TraceScope> traceScope;
     if (Options::useTracePoints()) [[unlikely]]
         traceScope.emplace(IncrementalSweepStart, IncrementalSweepEnd, vm.heap.size(), vm.heap.capacity());
@@ -126,6 +151,7 @@ bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
 
 void IncrementalSweeper::startSweeping(JSC::Heap& heap)
 {
+    ASSERT(!heap.isSharedServer()); // SharedGC (T8): gated in Heap::notifyIncrementalSweeper.
     scheduleTimer();
     m_currentDirectory = heap.objectSpace().firstDirectory();
 }

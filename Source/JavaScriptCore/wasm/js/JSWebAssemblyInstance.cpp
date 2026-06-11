@@ -136,6 +136,10 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
         CompleteSubspace* subspace = JSWebAssemblyArray::subspaceFor<JSWebAssemblyArray, SubspaceAccess::OnMainThread>(vm);
         CompleteSubspace* structSubspace = JSWebAssemblyStruct::subspaceFor<JSWebAssemblyStruct, SubspaceAccess::OnMainThread>(vm);
         RELEASE_ASSERT(subspace == structSubspace);
+        // THREADS-INTEGRATE(heap) manifest 11: wasm-GC + shared heap is
+        // unsupported in phase 1 (§5.5 never-populate rule —
+        // prepareAllAllocators would materialize server LocalAllocators).
+        RELEASE_ASSERT(!Options::useSharedGCHeap());
         subspace->prepareAllAllocators();
         memcpySpan(allocators(), subspace->allocatorsForSizeSteps());
     }
@@ -306,6 +310,14 @@ size_t JSWebAssemblyInstance::allocationSize(const Wasm::ModuleInformation& info
 JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* instanceStructure, JSGlobalObject* globalObject, const Identifier& moduleKey, JSWebAssemblyModule* jsModule, JSObject* importObject, CreationMode creationMode, RefPtr<SourceProvider>&& provider)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    // UNGIL §I supersession, defense-in-depth (review round; see the matching
+    // assert in JSWebAssemblyModule::create): wasm execution requires an
+    // instance, and no instance may exist on a gilOff VM — the wasm-tier
+    // exception checks are not per-lite. A bypass of the
+    // throwIfWebAssemblyRefusedOnSpawnedThread gate dies loudly here at
+    // instantiation instead of silently losing/missing exceptions.
+    RELEASE_ASSERT(!vm.gilOff());
 
     const ModuleInformation& moduleInformation = jsModule->moduleInformation();
 

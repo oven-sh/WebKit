@@ -37,7 +37,9 @@
 #include "ExecutionCounter.h"
 #include "JITCode.h"
 #include "JumpTable.h"
+#include <atomic>
 #include <wtf/CompactPointerTuple.h>
+#include <wtf/Lock.h>
 #include <wtf/SegmentedVector.h>
 
 namespace JSC {
@@ -214,6 +216,16 @@ public:
         m_dummyArrayProfile.clear();
     }
 
+    // Destroys (and thereby disarms) the privately-owned jettisoning
+    // watchpoints. Mirrors DFGCommonData::clearWatchpoints(). Used when the
+    // owning CodeBlock leaks this JITData under useJSThreads (SPEC-jit 5.3 /
+    // I7): the leaked shell must not keep armed watchpoints whose m_owner
+    // points at a destructed CodeBlock cell.
+    void clearWatchpoints()
+    {
+        m_watchpoints = FixedVector<CodeBlockJettisoningWatchpoint>();
+    }
+
 private:
 
     bool tryInitialize(VM&, CodeBlock*, const JITCode&);
@@ -325,11 +337,36 @@ public:
     // Map each bytecode of CheckTierUpAndOSREnter to its trigger forcing OSR Entry.
     // This can never be modified after it has been initialized since the addresses of the triggers
     // are used by the JIT.
+    //
+    // THREADS (DFG-1): GIL-off, N mutators reach the tier-up slow paths concurrently on the
+    // same CodeBlock. m_tierUpTriggersLock guards every post-link C++ access (find/iterate/
+    // value-write) to tierUpEntryTriggers and to tierUpInLoopHierarchy. JIT'd code keeps
+    // reading the embedded TriggerReason bytes lock-free; that stays sound because keys are
+    // never added or removed after link (no rehash => stable value addresses) and the payload
+    // is a single byte. Post-link updates must go through locked find()+in-place value write —
+    // never set()/add() — so structural mutation is impossible by construction.
+    //
+    // Post-link C++ writers that address triggers by BytecodeIndex must go through
+    // setTierUpEntryTrigger() (locked find() + in-place value write; RELEASE_ASSERTs the key
+    // exists, so structural mutation/rehash is impossible by construction). Releasing
+    // m_tierUpTriggersLock also supplies the release edge ordering setOSREntryBlock before
+    // the CompilationDone publication on weak memory. Carve-out: the compiler thread's raw
+    // single-byte store through m_forcedOSREntryTrigger in
+    // ToFTLForOSREntryDeferredCompilationCallback::compilationDidBecomeReadyAsynchronously is
+    // permitted — stable post-link address, single-byte payload, same contract as the
+    // JIT-embedded lock-free reads.
+    //
+    // The former KNOWN GAP is closed (DFG-1, this round): DFGToFTLForOSREntryDeferredCompilationCallback
+    // ::compilationDidComplete was converted to setTierUpEntryTrigger() (locked find() +
+    // in-place value write), so the locked-writer set is complete — no post-link structural
+    // writer of tierUpEntryTriggers remains and the no-rehash guarantee holds.
     UncheckedKeyHashMap<BytecodeIndex, TriggerReason> tierUpEntryTriggers;
+    void setTierUpEntryTrigger(BytecodeIndex, TriggerReason);
+    Lock m_tierUpTriggersLock;
 
     WriteBarrier<CodeBlock> m_osrEntryBlock;
-    unsigned osrEntryRetry { 0 };
-    bool abandonOSREntry { false };
+    std::atomic<unsigned> osrEntryRetry { 0 };
+    std::atomic<bool> abandonOSREntry { false };
 #endif // ENABLE(FTL_JIT)
 };
 

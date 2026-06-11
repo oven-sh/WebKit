@@ -244,7 +244,19 @@ macro doVMEntry(makeCall)
         move t5, vm
         jmp _llint_throw_stack_overflow_error_from_vm_entry
     else
+        # UNGIL sec A.2.2 (AB-17 item 3): structural reroute only -- no
+        # 32-bit platform has LLInt-visible TLS (GILOFF_TLS), so the
+        # discriminator assembles to nothing here (GIL-off is unsupported on
+        # 32-bit, jit App. R5; a set gilOffProcess byte fail-stops via the
+        # AB-1 tripwire on JSVALUE64 builds).
+        branchIfGilOffGroup3ToT5(.liteEntryStackCheck)
         bpbeq t3, VMSoftStackLimitOffset[vm], _llint_throw_stack_overflow_error_from_vm_entry
+        if GILOFF_TLS
+            jmp .entryStackCheckDone
+        .liteEntryStackCheck:
+            bpbeq t3, VMLiteSoftStackLimitOffset[t5], _llint_throw_stack_overflow_error_from_vm_entry
+        .entryStackCheckDone:
+        end
     end
 
 .stackHeightOK:
@@ -716,7 +728,16 @@ macro functionArityCheck(opcodeName, doneLabel)
     if C_LOOP
         bpbeq VMCLoopStackLimitOffset[t0], t5, .stackHeightOK
     else
+        # UNGIL sec A.2.2 (AB-17 item 3): structural reroute only (see the
+        # doVMEntry note above -- assembles to nothing on 32-bit).
+        branchIfGilOffGroup3ToT3(.liteArityStackCheck)
         bpbeq VMSoftStackLimitOffset[t0], t5, .stackHeightOK
+        if GILOFF_TLS
+            jmp .arityStackCheckSlow
+        .liteArityStackCheck:
+            bpbeq VMLiteSoftStackLimitOffset[t3], t5, .stackHeightOK
+        .arityStackCheckSlow:
+        end
     end
 
     prepareStateForCCall()
@@ -1455,9 +1476,9 @@ end
 llintOpWithMetadata(op_try_get_by_id, OpTryGetById, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
     get(m_base, t0)
-    loadi OpTryGetById::Metadata::m_structureID[t5], t1
+    loadi OpTryGetById::Metadata::m_cache.structureID[t5], t1
     loadConstantOrVariablePayload(size, t0, CellTag, t3, .opTryGetByIdSlow)
-    loadi OpTryGetById::Metadata::m_offset[t5], t2
+    loadi OpTryGetById::Metadata::m_cache.offset[t5], t2
     bineq JSCell::m_structureID[t3], t1, .opTryGetByIdSlow
     loadPropertyAtVariableOffset(t2, t3, t0, t1)
     valueProfile(size, OpTryGetById, m_valueProfile, t0, t1, t5)
@@ -1471,9 +1492,9 @@ end)
 llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
     get(m_base, t0)
-    loadi OpGetByIdDirect::Metadata::m_structureID[t5], t1
+    loadi OpGetByIdDirect::Metadata::m_cache.structureID[t5], t1
     loadConstantOrVariablePayload(size, t0, CellTag, t3, .opGetByIdDirectSlow)
-    loadi OpGetByIdDirect::Metadata::m_offset[t5], t2
+    loadi OpGetByIdDirect::Metadata::m_cache.offset[t5], t2
     bineq JSCell::m_structureID[t3], t1, .opGetByIdDirectSlow
     loadPropertyAtVariableOffset(t2, t3, t0, t1)
     valueProfile(size, OpGetByIdDirect, m_valueProfile, t0, t1, t5)

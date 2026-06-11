@@ -306,6 +306,11 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     JSStringJoiner joiner(separator);
 
     unsigned i = 0;
+    // THREADS-INTEGRATE(objectmodel) §10.7 (entry 7, site 2): tagged/segmented
+    // word — every arm of the switch below derefs butterfly() as flat. Skip
+    // straight to the generic join slow path.
+    if (thisObject->mayBeSegmentedButterfly()) [[unlikely]]
+        goto generalCase;
     switch (thisObject->indexingType()) {
     case ALL_INT32_INDEXING_TYPES: {
         auto& butterfly = *thisObject->butterfly();

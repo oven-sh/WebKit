@@ -40,7 +40,7 @@ class TopExceptionScope : public ExceptionScope {
 public:
     JS_EXPORT_PRIVATE TopExceptionScope(VM&, ExceptionEventLocation);
     TopExceptionScope(const TopExceptionScope&) = delete;
-    TopExceptionScope(TopExceptionScope&&) = default;
+    TopExceptionScope(TopExceptionScope&&) = delete; // Scope-locked RAII; see ExceptionScope.
 
     JS_EXPORT_PRIVATE ~TopExceptionScope();
 
@@ -59,7 +59,7 @@ public:
         : ExceptionScope(vm)
     { }
     TopExceptionScope(const TopExceptionScope&) = delete;
-    TopExceptionScope(TopExceptionScope&&) = default;
+    TopExceptionScope(TopExceptionScope&&) = delete; // Scope-locked RAII; see ExceptionScope.
 
     ALWAYS_INLINE void clearException();
     ALWAYS_INLINE bool clearExceptionExceptTermination();

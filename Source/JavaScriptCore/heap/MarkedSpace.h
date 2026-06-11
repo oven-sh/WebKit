@@ -26,6 +26,7 @@
 #include "MarkedBlockSet.h"
 #include "PreciseAllocation.h"
 #include <array>
+#include <atomic>
 #include <wtf/HashSet.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
@@ -174,6 +175,13 @@ public:
     
     Lock& directoryLock() LIFETIME_BOUND { return m_directoryLock; }
     void addBlockDirectory(const AbstractLocker&, BlockDirectory*);
+
+    // SharedGC (SPEC-heap.md §5.3; THREADS T4): monotonic TLC slot
+    // reservation — each CompleteSubspace reserves numSizeClasses contiguous
+    // slots in every client's GCThreadLocalCache flat table at its first
+    // directory creation. Guarded by m_directoryLock (rank 7b; the locker
+    // token), NOT MSPL — directoryLock-only, so JIT threads may trigger it.
+    unsigned reserveThreadLocalCacheIndices(const AbstractLocker& directoryLocker);
     
     // When this is true it means that we have flipped but the mark bits haven't converged yet.
     bool isMarking() const { return m_isMarking; }
@@ -204,6 +212,20 @@ private:
 
     Vector<Subspace*> m_subspaces;
 
+    // SharedGC (§5.6/I16; T3b reader audit): once the server is shared, the
+    // precise registry below (both containers, plus indexInSpace stamps) is
+    // mutated only under the server MSPL (mutator paths:
+    // CompleteSubspace::tryAllocateSlow / reallocatePreciseAllocationNonVirtual,
+    // PreciseSubspace::tryAllocate, IsoSubspace::tryAllocateLowerTierPrecise
+    // inside LocalAllocator::allocateSlowCase's MSPL section,
+    // enablePreciseAllocationTracking) or while the world is stopped for all
+    // clients (sweepPreciseAllocations, prepareForAllocation/prepareForMarking
+    // snapshots). Readers: the conservative scan and preciseAllocationSet()
+    // lookups (HeapUtil) and the for-this-collection snapshot run
+    // conductor-side world-stopped (I5); forEachLiveCell/forEachDeadCell/
+    // objectCount()/size() iterate only inside a HeapIterationScope (world
+    // stopped or today's single mutator); freeMemory()/lastChanceToFinalize()
+    // are teardown. !isSharedServer(): today's single-mutator rules (I10).
     std::optional<UncheckedKeyHashSet<HeapCell*>> m_preciseAllocationSet;
     Vector<PreciseAllocation*> m_preciseAllocations;
     unsigned m_preciseAllocationsNurseryOffset { 0 };
@@ -213,7 +235,7 @@ private:
     PreciseAllocation** m_preciseAllocationsForThisCollectionBegin { nullptr };
     PreciseAllocation** m_preciseAllocationsForThisCollectionEnd { nullptr };
 
-    size_t m_capacity { 0 };
+    std::atomic<size_t> m_capacity { 0 }; // SharedGC (§5.4): relaxed both sides (F3); exact at safepoints (I7).
     HeapVersion m_markingVersion { initialVersion };
     HeapVersion m_newlyAllocatedVersion { initialVersion };
     HeapVersion m_edenVersion { initialVersion };
@@ -221,6 +243,7 @@ private:
     bool m_isMarking { false };
     bool m_conservativeScanIsPrepared { false };
     Lock m_directoryLock;
+    unsigned m_nextTlcIndexBase { 0 }; // SharedGC (§5.3; T4): guarded by m_directoryLock.
     MarkedBlockSet m_blocks;
     
     SentinelLinkedList<WeakSet, BasicRawSentinelNode<WeakSet>> m_activeWeakSets;

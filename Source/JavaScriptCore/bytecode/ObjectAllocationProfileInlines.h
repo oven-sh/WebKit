@@ -53,7 +53,9 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
 
         if (Structure* structure = executable->cachedPolyProtoStructure()) {
             RELEASE_ASSERT(structure->typeInfo().type() == FinalObjectType);
-            m_allocator = Allocator();
+            // THREADS: relaxed store; concurrent readers (create_this fast/slow
+            // paths on other mutators) tolerate a stale profile (SPEC-jit §5.7).
+            WTF::atomicStore(&m_allocator, Allocator(), std::memory_order_relaxed);
             m_structure.set(vm, owner, structure);
             static_cast<Derived*>(this)->setPrototype(vm, owner, prototype);
             return;
@@ -113,7 +115,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
 
     if (isPolyProto) {
         ASSERT(structure->hasPolyProto());
-        m_allocator = Allocator();
+        WTF::atomicStore(&m_allocator, Allocator(), std::memory_order_relaxed); // THREADS: see clear().
         executable->setCachedPolyProtoStructure(vm, structure);
     } else {
         if (executable) {
@@ -129,7 +131,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
             }
         }
 
-        m_allocator = allocator;
+        WTF::atomicStore(&m_allocator, allocator, std::memory_order_relaxed); // THREADS: see clear().
     }
 
     // Ensure that if another thread sees the structure and prototype, it will see it properly created.

@@ -78,10 +78,31 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
     } while (stackMisalignment % stackAlignmentBytes());
     jit.subPtr(MacroAssembler::TrustedImm32(numberOfRequiredPops * pushToSaveByteOffset), stackPointerRegister);
 
-    ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(requiredScratchMemorySizeInBytes());
-    char* buffer = static_cast<char*>(scratchBuffer->dataBuffer());
-    
-    saveAllRegisters(jit, buffer);
+    // UNGIL §A.1.6 (ANNEX A16, U-T4b): the generation thunk is shared by all
+    // threads of this VM. gilOff, two threads firing exits concurrently would
+    // clobber each other's full register dump in a baked buffer, so the
+    // gilOff-mode thunk bakes a process-wide ScratchBufferRegistry INDEX and
+    // resolves the CURRENT lite's buffer per use (loadVMLite -> segment ->
+    // [index]; rematerialized per §A.1.2). GIL-on/flag-off keeps the baked
+    // address byte-for-byte.
+    const bool bakedIndexMode = vm.gilOff();
+    unsigned bakedIndex = std::numeric_limits<unsigned>::max();
+    char* buffer = nullptr;
+    if (bakedIndexMode) [[unlikely]]
+        bakedIndex = vm.allocateBakedScratchBufferIndex(requiredScratchMemorySizeInBytes());
+    else {
+        ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(requiredScratchMemorySizeInBytes());
+        buffer = static_cast<char*>(scratchBuffer->dataBuffer());
+    }
+    auto materializeBufferBase = scopedLambda<void(AssemblyHelpers&, GPRReg)>(
+        [&] (AssemblyHelpers& jit, GPRReg dest) {
+            materializeBakedScratchBufferDataPointer(jit, bakedIndex, dest);
+        });
+
+    if (bakedIndexMode) [[unlikely]]
+        saveAllRegisters(jit, materializeBufferBase);
+    else
+        saveAllRegisters(jit, buffer);
 
     jit.loadPtr(CCallHelpers::Address(framePointerRegister), GPRInfo::argumentGPR0);
     jit.peek(
@@ -118,7 +139,10 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
     UNUSED_PARAM(resultTag);
 #endif
 
-    restoreAllRegisters(jit, buffer);
+    if (bakedIndexMode) [[unlikely]]
+        restoreAllRegisters(jit, materializeBufferBase);
+    else
+        restoreAllRegisters(jit, buffer);
 
     jit.ret();
     

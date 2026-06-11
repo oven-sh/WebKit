@@ -29,6 +29,7 @@
 #pragma once
 
 #include "CPU.h"
+#include <wtf/Atomics.h>
 #include <wtf/Forward.h>
 
 namespace JSC {
@@ -550,6 +551,21 @@ inline bool mergeSpeculation(T& left, SpeculatedType right)
     bool result = newSpeculation != static_cast<SpeculatedType>(left);
     left = newSpeculation;
     return result;
+}
+
+// THREADS §5.7.4/§5.7.7: relaxed-atomic variant of mergeSpeculation for prediction words
+// that are racily merged from multiple mutators and racily read by compiler threads.
+// The merge is tolerate-don't-synchronize: a racing merge may be lost (profiles only
+// ever SELECT speculation; emitted guards validate), but every access must be a relaxed
+// atomic so the race is defined behavior and TSAN-clean. Relaxed 64-bit load/store
+// compile to plain moves on x86-64/arm64, so flag-off codegen is unchanged.
+template<typename T>
+inline bool mergeSpeculationConcurrently(T& left, SpeculatedType right)
+{
+    T oldSpeculation = WTF::atomicLoad(&left, std::memory_order_relaxed);
+    T newSpeculation = static_cast<T>(mergeSpeculations(static_cast<SpeculatedType>(oldSpeculation), right));
+    WTF::atomicStore(&left, newSpeculation, std::memory_order_relaxed);
+    return static_cast<SpeculatedType>(newSpeculation) != static_cast<SpeculatedType>(oldSpeculation);
 }
 
 inline bool speculationChecked(SpeculatedType actual, SpeculatedType desired)

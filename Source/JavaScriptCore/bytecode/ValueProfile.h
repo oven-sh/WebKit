@@ -33,6 +33,7 @@
 #include "Structure.h"
 #include "VirtualRegister.h"
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StringPrintStream.h>
 
@@ -50,26 +51,84 @@ struct ValueProfileBase {
     static constexpr unsigned numberOfSpecFailBuckets = numberOfSpecFailBucketsArgument;
     static constexpr unsigned totalNumberOfBuckets = numberOfBuckets + numberOfSpecFailBuckets;
     
+    // THREADS §5.7.4/§5.7.7: profiles can be constructed in storage a concurrent reader is
+    // still probing (lazily appended profile vectors observed by compiler threads, allocator
+    // reuse). All ctor initialization of the racy words (buckets, prediction) goes through
+    // the same relaxed-atomic helpers as every other C++ access so the ctor is never the
+    // plain side of a report against an atomic reader. Relaxed = plain moves on
+    // x86-64/arm64: flag-off codegen unchanged.
     ValueProfileBase()
     {
         clearBuckets();
+        storePredictionConcurrently(SpecNone);
     }
-    
+
     EncodedJSValue* specFailBucket(unsigned i)
     {
         ASSERT(numberOfBuckets + i < totalNumberOfBuckets);
         return m_buckets + numberOfBuckets + i;
     }
 
+    // THREADS §5.7.4 (SPEC-jit Task 12): profile buckets are racily written by JIT'd/LLInt
+    // fast paths (plain aligned 64-bit stores, allowed to stay plain) on any of N mutators,
+    // racily written by C++ slow paths, and racily read by compiler threads (G8: not
+    // lock-guarded on 64-bit, NoLockingNecessaryTag). Tolerance contract (I12): every
+    // access is one aligned 64-bit load/store — word-atomic, never torn — and profiles
+    // only ever SELECT speculation; emitted guards validate. C++ accesses go through these
+    // relaxed-atomic helpers so the race is explicit and TSAN-clean. On 32-bit the
+    // JSCJSValue.h tag/payload protocol is kept.
+#if USE(JSVALUE64)
+    EncodedJSValue loadBucketConcurrently(unsigned i) const
+    {
+        ASSERT(i < totalNumberOfBuckets);
+        return WTF::atomicLoad(const_cast<EncodedJSValue*>(&m_buckets[i]), std::memory_order_relaxed);
+    }
+
+    void storeBucketConcurrently(unsigned i, EncodedJSValue value)
+    {
+        ASSERT(i < totalNumberOfBuckets);
+        WTF::atomicStore(&m_buckets[i], value, std::memory_order_relaxed);
+    }
+#else
+    // 32-bit: keep JSCJSValue.h's tag/payload protocol (plain when !ENABLE(CONCURRENT_JS)).
+    EncodedJSValue loadBucketConcurrently(unsigned i) const
+    {
+        ASSERT(i < totalNumberOfBuckets);
+        return JSValue::encode(JSValue::decodeConcurrent(&m_buckets[i]));
+    }
+
+    void storeBucketConcurrently(unsigned i, EncodedJSValue value)
+    {
+        ASSERT(i < totalNumberOfBuckets);
+        updateEncodedJSValueConcurrent(m_buckets[i], value);
+    }
+#endif
+
     void clearBuckets()
     {
         for (unsigned i = 0; i < totalNumberOfBuckets; ++i)
-            clearEncodedJSValueConcurrent(m_buckets[i]);
+            storeBucketConcurrently(i, JSValue::encode(JSValue()));
     }
-    
+
+    // THREADS §5.7.4/§5.7.7: the prediction word is racily merged by mutators (slow-path
+    // profile updates, UnlinkedValueProfile::update) and racily read by compiler threads.
+    // Merges are tolerate-don't-synchronize (a racing merge may be lost; profiles only
+    // SELECT speculation and emitted guards validate), but plain mixed-thread accesses
+    // are C++ UB, so all C++ accesses go through these relaxed-atomic helpers. Relaxed
+    // load/store compile to plain moves on x86-64/arm64: flag-off codegen unchanged.
+    SpeculatedType predictionConcurrently() const
+    {
+        return WTF::atomicLoad(const_cast<SpeculatedType*>(&m_prediction), std::memory_order_relaxed);
+    }
+
+    void storePredictionConcurrently(SpeculatedType prediction)
+    {
+        WTF::atomicStore(&m_prediction, prediction, std::memory_order_relaxed);
+    }
+
     const ClassInfo* classInfo(unsigned bucket) const
     {
-        JSValue value = JSValue::decodeConcurrent(&m_buckets[bucket]);
+        JSValue value = JSValue::decode(loadBucketConcurrently(bucket));
         if (!!value) {
             if (!value.isCell())
                 return nullptr;
@@ -77,12 +136,12 @@ struct ValueProfileBase {
         }
         return nullptr;
     }
-    
+
     unsigned numberOfSamples() const
     {
         unsigned result = 0;
         for (unsigned i = 0; i < totalNumberOfBuckets; ++i) {
-            if (!!JSValue::decodeConcurrent(&m_buckets[i]))
+            if (!!JSValue::decode(loadBucketConcurrently(i)))
                 result++;
         }
         return result;
@@ -93,7 +152,7 @@ struct ValueProfileBase {
         return numberOfSamples() + isSampledBefore();
     }
 
-    bool isSampledBefore() const { return m_prediction != SpecNone; }
+    bool isSampledBefore() const { return predictionConcurrently() != SpecNone; }
     
     CString briefDescription(const ConcurrentJSLocker& locker)
     {
@@ -104,12 +163,12 @@ struct ValueProfileBase {
         return out.toCString();
     }
     
-    void dump(PrintStream& out)
+    SUPPRESS_TSAN void dump(PrintStream& out)
     {
-        out.print("sampled before = ", isSampledBefore(), " live samples = ", numberOfSamples(), " prediction = ", SpeculationDump(m_prediction));
+        out.print("sampled before = ", isSampledBefore(), " live samples = ", numberOfSamples(), " prediction = ", SpeculationDump(predictionConcurrently()));
         bool first = true;
         for (unsigned i = 0; i < totalNumberOfBuckets; ++i) {
-            JSValue value = JSValue::decode(m_buckets[i]);
+            JSValue value = JSValue::decode(loadBucketConcurrently(i));
             if (!!value) {
                 if (first) {
                     out.printf(": ");
@@ -125,31 +184,62 @@ struct ValueProfileBase {
     {
         SpeculatedType merged = SpecNone;
         for (unsigned i = 0; i < totalNumberOfBuckets; ++i) {
-            JSValue value = JSValue::decodeConcurrent(&m_buckets[i]);
+            JSValue value = JSValue::decode(loadBucketConcurrently(i));
             if (!value)
                 continue;
-            
+
             mergeSpeculation(merged, speculationFromValue(value));
 
-            updateEncodedJSValueConcurrent(m_buckets[i], JSValue::encode(JSValue()));
+            storeBucketConcurrently(i, JSValue::encode(JSValue()));
         }
 
-        mergeSpeculation(m_prediction, merged);
-        
-        return m_prediction;
+        mergeSpeculationConcurrently(m_prediction, merged);
+
+        return predictionConcurrently();
     }
 
+    // THREADS §5.7.4/§5.7.7: `value` aliases a CompressedLazyValueProfileHolder
+    // speculation-failure bucket slot. That slot is racily written by OSR-exit/JIT'd code
+    // (plain aligned 64-bit stores, allowed to stay plain) and racily read+cleared here by
+    // DFG compiler threads — on 64-bit valueProfileLock() is NoLockingNecessaryTag, so two
+    // compiler threads can race on the same slot. Tolerance contract: a racing sample may
+    // be lost; profiles only SELECT speculation and emitted guards validate. All C++
+    // accesses to the slot go through relaxed atomics (64-bit) or the JSCJSValue.h
+    // tag/payload concurrent protocol (32-bit) so the race is explicit and TSAN-clean.
+    // Relaxed = plain moves on x86-64/arm64: flag-off codegen unchanged.
     void computeUpdatedPredictionForExtraValue(const ConcurrentJSLocker&, JSValue& value)
     {
-        if (value)
-            mergeSpeculation(m_prediction, speculationFromValue(value));
-        value = JSValue();
+#if USE(JSVALUE64)
+        static_assert(sizeof(JSValue) == sizeof(EncodedJSValue));
+        EncodedJSValue* slot = std::bit_cast<EncodedJSValue*>(&value);
+        JSValue observed = JSValue::decode(WTF::atomicLoad(slot, std::memory_order_relaxed));
+        if (observed)
+            mergeSpeculationConcurrently(m_prediction, speculationFromValue(observed));
+        WTF::atomicStore(slot, JSValue::encode(JSValue()), std::memory_order_relaxed);
+#else
+        static_assert(sizeof(JSValue) == sizeof(EncodedJSValue));
+        EncodedJSValue* slot = std::bit_cast<EncodedJSValue*>(&value);
+        JSValue observed = JSValue::decodeConcurrent(slot);
+        if (observed)
+            mergeSpeculationConcurrently(m_prediction, speculationFromValue(observed));
+        updateEncodedJSValueConcurrent(*slot, JSValue::encode(JSValue()));
+#endif
     }
 
     EncodedJSValue m_buckets[totalNumberOfBuckets];
 
-    SpeculatedType m_prediction { SpecNone };
+    // THREADS §5.7.4/§5.7.7: initialized in the constructor via storePredictionConcurrently
+    // (relaxed store), never via a plain default-member-init, so every C++ access — including
+    // construction — is atomic.
+    SpeculatedType m_prediction;
 };
+
+#if USE(JSVALUE64)
+// THREADS §5.7.4: word-atomicity of bucket accesses relies on naturally aligned 8-byte words.
+static_assert(sizeof(EncodedJSValue) == 8);
+static_assert(alignof(ValueProfileBase<1, 0>) >= alignof(EncodedJSValue));
+static_assert(alignof(ValueProfileBase<0, 1>) >= alignof(EncodedJSValue));
+#endif
 
 struct MinimalValueProfile : public ValueProfileBase<0, 1> {
     MinimalValueProfile(): ValueProfileBase<0, 1>() { }
@@ -189,11 +279,19 @@ public:
     template <typename Function>
     void forEach(Function function)
     {
-        for (unsigned i = 0; i < m_size; ++i)
+        unsigned size = this->size();
+        for (unsigned i = 0; i < size; ++i)
             function(data()[i]);
     }
 
-    unsigned size() const { return m_size; }
+    // THREADS §5.7.4/§5.7.7: this buffer lives in op_catch metadata and is probed by
+    // compiler threads (ByteCodeParser/OSR entry) while mutators allocate/destroy
+    // buffers through the shared allocator. Like the ValueProfileBase ctor above, all
+    // C++ accesses to m_size — including the constructor's initialization into
+    // just-malloc'd (possibly allocator-reused) memory — go through relaxed atomics so
+    // construction is never the plain side of a report against a concurrent reader.
+    // Relaxed = plain moves on x86-64/arm64: flag-off codegen unchanged.
+    unsigned size() const { return WTF::atomicLoad(const_cast<unsigned*>(&m_size), std::memory_order_relaxed); }
     ValueProfileAndVirtualRegister* data() const LIFETIME_BOUND
     {
         return std::bit_cast<ValueProfileAndVirtualRegister*>(this + 1);
@@ -204,18 +302,20 @@ public:
 private:
 
     ValueProfileAndVirtualRegisterBuffer(unsigned size)
-        : m_size(size)
     {
+        // THREADS §5.7.4/§5.7.7: initialize m_size via a relaxed store (see size() above).
+        WTF::atomicStore(&m_size, size, std::memory_order_relaxed);
         // FIXME: ValueProfile has more stuff than we need. We could optimize these value profiles
         // to be more space efficient.
         // https://bugs.webkit.org/show_bug.cgi?id=175413
-        for (unsigned i = 0; i < m_size; ++i)
+        for (unsigned i = 0; i < size; ++i)
             new (&data()[i]) ValueProfileAndVirtualRegister();
     }
 
     ~ValueProfileAndVirtualRegisterBuffer()
     {
-        for (unsigned i = 0; i < m_size; ++i)
+        unsigned size = this->size();
+        for (unsigned i = 0; i < size; ++i)
             data()[i].~ValueProfileAndVirtualRegister();
     }
 
@@ -224,24 +324,38 @@ private:
 
 class UnlinkedValueProfile {
 public:
-    UnlinkedValueProfile() = default;
+    // THREADS §5.7.4/§5.7.7: like ValueProfileBase, initialize the racy prediction word
+    // through a relaxed store so construction is never the plain side of a race with a
+    // concurrent relaxed reader. Relaxed = plain move on x86-64/arm64: flag-off codegen
+    // unchanged.
+    UnlinkedValueProfile()
+    {
+        WTF::atomicStore(&m_prediction, SpecNone, std::memory_order_relaxed);
+    }
 
+    // THREADS §5.7.4/§5.7.7: racy bidirectional merge between the linked profile's
+    // prediction and this unlinked prediction (shared across all CodeBlocks linked from
+    // the same UnlinkedCodeBlock, so it races with itself across threads too). Lost
+    // merges are tolerated; every access must be a relaxed atomic. Relaxed = plain
+    // moves on x86-64/arm64, so flag-off codegen is unchanged.
     void update(ValueProfile& profile)
     {
-        SpeculatedType newType = profile.m_prediction | m_prediction;
-        profile.m_prediction = newType;
-        m_prediction = newType;
+        SpeculatedType newType = profile.predictionConcurrently() | WTF::atomicLoad(&m_prediction, std::memory_order_relaxed);
+        profile.storePredictionConcurrently(newType);
+        WTF::atomicStore(&m_prediction, newType, std::memory_order_relaxed);
     }
 
     void update(ArgumentValueProfile& profile)
     {
-        SpeculatedType newType = profile.m_prediction | m_prediction;
-        profile.m_prediction = newType;
-        m_prediction = newType;
+        SpeculatedType newType = profile.predictionConcurrently() | WTF::atomicLoad(&m_prediction, std::memory_order_relaxed);
+        profile.storePredictionConcurrently(newType);
+        WTF::atomicStore(&m_prediction, newType, std::memory_order_relaxed);
     }
 
 private:
-    SpeculatedType m_prediction { SpecNone };
+    // THREADS §5.7.4/§5.7.7: initialized in the constructor via relaxed store; all other
+    // accesses are relaxed atomics (see update()).
+    SpeculatedType m_prediction;
 };
 
 } // namespace JSC

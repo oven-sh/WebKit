@@ -32,6 +32,7 @@
 #include "DFGNode.h"
 #include "DFGNullAbstractState.h"
 #include "JSCJSValueInlines.h"
+#include "Options.h"
 
 namespace JSC { namespace DFG {
 
@@ -104,14 +105,12 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case PutStructure:
     case StoreBarrier:
     case FencedStoreBarrier:
-    case PutByOffset:
     case PutClosureVar:
     case PutInternalField:
     case PutGlobalVariable:
     case GetInternalField:
     case RecordRegExpCachedResult:
     case NukeStructureAndSetButterfly:
-    case GetButterfly:
     case GetIndexedPropertyStorage:
     case FilterCallLinkStatus:
     case FilterGetByStatus:
@@ -132,6 +131,16 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case LogShadowChickenTail:
     case PerformPromiseThen:
     case PerformPromiseThenOneHandler:
+        break;
+
+    case GetButterfly:
+    case PutByOffset:
+        // SPEC-jit section 5.5 / Task 9: under Options::useJSThreads() these
+        // emit the frozen TID/SW butterfly predicates and OSR-exit on
+        // predicate failure (segmented dispatch, SW=1 ArrayStorage, write
+        // case-(4) fallback). Flag-off they do not exit, exactly as before.
+        if (Options::useJSThreads()) [[unlikely]]
+            result = Exits;
         break;
 
     case Switch: {

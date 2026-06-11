@@ -1,0 +1,7 @@
+-- rc=139
+-- rc=139
+-- rc=139
+MISMATCH thread=0 iter=1719 wantLen=2 gotLen=3 wantCode=97 gotCodes=[97,97,0] srcArrayNow=[97,97]
+-- rc=134
+-- rc=139
+-- rc=134

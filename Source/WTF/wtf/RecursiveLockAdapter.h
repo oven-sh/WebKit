@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/Atomics.h>
 #include <wtf/CurrentThread.h>
 #include <wtf/Lock.h>
 
@@ -41,15 +42,15 @@ public:
     void lock() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         auto currentThreadUID = currentThreadID();
-        if (currentThreadUID == m_ownerThreadUID) {
+        if (currentThreadUID == m_ownerThreadUID.load(std::memory_order_relaxed)) {
             m_recursionCount++;
             return;
         }
-        
+
         m_lock.lock();
-        ASSERT(!m_ownerThreadUID);
+        ASSERT(!m_ownerThreadUID.load(std::memory_order_relaxed));
         ASSERT(!m_recursionCount);
-        m_ownerThreadUID = currentThreadUID;
+        m_ownerThreadUID.store(currentThreadUID, std::memory_order_release);
         m_recursionCount = 1;
     }
     
@@ -60,7 +61,7 @@ public:
     {
         if (--m_recursionCount)
             return;
-        m_ownerThreadUID = 0;
+        m_ownerThreadUID.store(0, std::memory_order_release);
         m_lock.unlock();
     }
     
@@ -70,17 +71,17 @@ public:
     bool tryLock() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         auto currentThreadUID = currentThreadID();
-        if (currentThreadUID == m_ownerThreadUID) {
+        if (currentThreadUID == m_ownerThreadUID.load(std::memory_order_relaxed)) {
             m_recursionCount++;
             return true;
         }
-        
+
         if (!m_lock.tryLock())
             return false;
-        
-        ASSERT(!m_ownerThreadUID);
+
+        ASSERT(!m_ownerThreadUID.load(std::memory_order_relaxed));
         ASSERT(!m_recursionCount);
-        m_ownerThreadUID = currentThreadUID;
+        m_ownerThreadUID.store(currentThreadUID, std::memory_order_release);
         m_recursionCount = 1;
         return true;
     }
@@ -90,10 +91,10 @@ public:
         return m_lock.isLocked();
     }
 
-    bool isOwner() const { return m_ownerThreadUID == currentThreadID(); }
+    bool isOwner() const { return m_ownerThreadUID.load(std::memory_order_relaxed) == currentThreadID(); }
     
 private:
-    uint32_t m_ownerThreadUID { 0 };
+    Atomic<uint32_t> m_ownerThreadUID { 0 };
     unsigned m_recursionCount { 0 };
     LockType m_lock;
 };

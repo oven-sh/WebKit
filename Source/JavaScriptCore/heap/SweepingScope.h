@@ -32,19 +32,22 @@ namespace JSC {
 class SweepingScope {
 public:
     SweepingScope(JSC::Heap& heap)
-        : m_heap(heap)
-        , m_oldState(m_heap.m_mutatorState)
+        // SharedGC (review round 2): per-THREAD slot (cached reference), not
+        // the single server field — see JSC::Heap::mutatorStateSlot(). The
+        // save/restore would otherwise lose updates across clients.
+        : m_mutatorState(heap.mutatorStateSlot())
+        , m_oldState(m_mutatorState)
     {
-        m_heap.m_mutatorState = MutatorState::Sweeping;
+        m_mutatorState = MutatorState::Sweeping;
     }
-    
+
     ~SweepingScope()
     {
-        m_heap.m_mutatorState = m_oldState;
+        m_mutatorState = m_oldState;
     }
 
 private:
-    JSC::Heap& m_heap;
+    MutatorState& m_mutatorState;
     MutatorState m_oldState;
 };
 

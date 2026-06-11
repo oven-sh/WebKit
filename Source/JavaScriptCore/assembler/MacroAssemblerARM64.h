@@ -6437,6 +6437,28 @@ public:
         return true;
     }
 #endif // ENABLE(FAST_TLS_JIT)
+
+#if OS(LINUX)
+    // ELF initial-exec TLS load: TPIDR_EL0 + ldr at a constant offset, baked
+    // as an immediate at emission. The offset comes from
+    // JSC::butterflyTIDTagELFTLSOffset() (jit/ConcurrentButterflyOperations.h),
+    // RELEASE_ASSERTed thread-invariant (SPEC-jit-annex App. R5; SPEC-jit
+    // R5/Task 1b). The offset is materialized through dst itself, so no
+    // macro scratch register is needed for encodable offsets; load64 falls
+    // back to the data temp for unencodable ones, hence dst must not be the
+    // data temp (mirrors loadFromTLS64 above).
+    void loadFromELFTLS64(intptr_t offset, RegisterID dst)
+    {
+        RELEASE_ASSERT(offset == static_cast<intptr_t>(static_cast<int32_t>(offset)));
+        m_assembler.mrs_TPIDR_EL0(dst);
+        load64(Address(dst, static_cast<int32_t>(offset)), dst);
+    }
+
+    static bool loadFromELFTLS64NeedsMacroScratchRegister()
+    {
+        return true;
+    }
+#endif // OS(LINUX)
     
     // SIMD
 

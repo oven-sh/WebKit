@@ -272,6 +272,7 @@ public:
     JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnStop(StopTheWorldCallback);
     JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnResume(PostResumeCallback);
     JS_EXPORT_PRIVATE static void NODELETE setMemoryDebuggerCallback(StopTheWorldCallback);
+    JS_EXPORT_PRIVATE static void setGCParkCallbacks(void (*willPark)(VM&), void (*didResume)(VM&));
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE static void setJSDebuggerCallback(StopTheWorldCallback);
 #endif

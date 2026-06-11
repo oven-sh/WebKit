@@ -136,8 +136,25 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
         memcpy(buffer + valueProfileSize + sizeof(LinkingData), m_rawBuffer + valueProfileSize + sizeof(LinkingData), offsetTableSize);
     }
     // FIXME: Is this needed since we'll clear the data in the CodeBlock Constructor... Plus I could see caching value profiles being profitable.
+#if TSAN_ENABLED
+    // THREADS/TSAN-gated (TSAN-TRIAGE family codeblock-init): the value-profile
+    // lanes live on MetadataTableMalloc memory that compiler threads probe with
+    // relaxed atomics under the racy-profiling tolerance; on a recycled buffer
+    // a plain memset is the undefined side of that pair. Word-wise relaxed
+    // stores keep it defined; production keeps memset.
+    {
+        auto zeroRacy = [](uint8_t* base, size_t size) {
+            // Byte-wise (alignment-agnostic); TSAN-only path, perf irrelevant.
+            for (size_t i = 0; i < size; ++i)
+                WTF::atomicStore(base + i, static_cast<uint8_t>(0), std::memory_order_relaxed);
+        };
+        zeroRacy(buffer, valueProfileSize);
+        zeroRacy(buffer + valueProfileSize + sizeof(LinkingData) + offsetTableSize, totalSize - offsetTableSize - valueProfileSize);
+    }
+#else
     memset(buffer, 0, valueProfileSize);
     memset(buffer + valueProfileSize + sizeof(LinkingData) + offsetTableSize, 0, totalSize - offsetTableSize - valueProfileSize);
+#endif
     return adoptRef(*new (buffer + valueProfileSize + sizeof(LinkingData)) MetadataTable(*this));
 }
 

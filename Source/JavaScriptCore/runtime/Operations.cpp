@@ -137,6 +137,20 @@ size_t normalizePrototypeChain(JSGlobalObject* globalObject, JSCell* base, bool&
         if (structure->isDictionary()) {
             if (structure->hasBeenFlattenedBefore())
                 return InvalidPrototypeChain;
+            if (vm.gilOff()) [[unlikely]] {
+                // O2/GT11 (AB17e: sibling site of the Repatch.cpp
+                // actionForCell gate): normalizePrototypeChain is called from
+                // LLInt put caching paths under codeBlock->m_lock (rank 6b,
+                // GCSafeConcurrentJSLocker) with heap access held, and
+                // flag-on flattenDictionaryStructure ALWAYS routes through
+                // the §10.6 per-event stop — requesting a stop while holding
+                // a lock other mutators block on wedges the conductor's
+                // quiescence predicate into the 30s watchdog. Rule: gilOff,
+                // NEVER flatten from any IC-caching/chain-prep path — report
+                // the chain uncacheable instead. Perf forgone, never a
+                // correctness change.
+                return InvalidPrototypeChain;
+            }
             structure->flattenDictionaryStructure(vm, asObject(current));
         }
 

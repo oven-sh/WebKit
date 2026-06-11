@@ -36,19 +36,38 @@ namespace JSC {
     
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
     
+// UNGIL obligation 10 mode split: the chain anchor is per-lite GIL-off
+// (VM::exceptionScopeVerificationState()), so a spawned thread's scope chain
+// links only through its OWN frames — never into the carrier's stack (the
+// deterministic GIL-off ExceptionScope::stackPosition()
+// stack-use-after-return). GIL-on/flag-off: the VM copy, bit-identical.
+// The linked-list write-back is NOT idempotent: ctor and dtor MUST resolve
+// the same storage, so scopes live strictly inside a stable (thread, lite)
+// window (see VMExceptionScopeVerificationState.h).
 ExceptionScope::ExceptionScope(VM& vm, ExceptionEventLocation location)
     : m_vm(vm)
-    , m_previousScope(vm.m_topExceptionScope)
+    , m_previousScope(vm.exceptionScopeVerificationState().m_topExceptionScope)
     , m_location(location)
     , m_recursionDepth(m_previousScope ? m_previousScope->m_recursionDepth + 1 : 0)
 {
-    m_vm.m_topExceptionScope = this;
+    auto& verificationState = m_vm.exceptionScopeVerificationState();
+    m_verificationStateAtConstruction = &verificationState;
+    verificationState.m_topExceptionScope = this;
 }
 
 ExceptionScope::~ExceptionScope()
 {
-    RELEASE_ASSERT(m_vm.m_topExceptionScope);
-    m_vm.m_topExceptionScope = m_previousScope;
+    auto& verificationState = m_vm.exceptionScopeVerificationState();
+    // Straddle enforcement (review round): the write-back is non-idempotent,
+    // so a scope whose lifetime straddles a t_currentVMLite install/uninstall
+    // would pop a DIFFERENT chain than the ctor pushed — cross-linking two
+    // chains silently (the exact cross-stack-linkage / stackPosition() UAR
+    // class obligation 10 closes). Assert storage identity (TopCallFrameSetter
+    // precedent), and the strict LIFO invariant: this scope IS the top of the
+    // chain it pushed onto.
+    RELEASE_ASSERT(&verificationState == m_verificationStateAtConstruction);
+    RELEASE_ASSERT(verificationState.m_topExceptionScope == this);
+    verificationState.m_topExceptionScope = m_previousScope;
 }
 
 CString ExceptionScope::unexpectedExceptionMessage()

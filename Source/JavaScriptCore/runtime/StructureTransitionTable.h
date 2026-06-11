@@ -279,33 +279,67 @@ public:
         }
     }
 
+    // SPEC-objectmodel Task 3b (SPEC-vmstate §5.3): allocating insertions
+    // (single-slot -> TransitionMap inflation, map node allocation) run under
+    // SharedVMState::StructureAllocationLocker, acquired by the CALLER
+    // OUTSIDE the owning Structure's m_lock per the §6 lock order
+    // (SAL rank 7a < JSCellLock 10a < Structure::m_lock 10b). The SAL is
+    // non-recursive, so add() must not take it itself; the definition in
+    // Structure.cpp asserts the caller is inside the SAL region whenever
+    // Options::useStructureAllocationLock() is on (flag off, the locker is a
+    // single predictable branch — vmstate I10 — and no assertion applies).
     void add(VM&, JSCell* owner, Structure*);
     bool contains(PointerKey, unsigned attributes, TransitionKind) const;
     Structure* get(PointerKey, unsigned attributes, TransitionKind) const;
 
+    // SPEC-objectmodel L6/I37 (Task 3c): lookup keyed EXACTLY as add() would
+    // key `candidate` (Hash::createKeyFromStructure), for the flag-on
+    // dual-check that every insert site performs under the owning Structure's
+    // m_lock before calling add(). Two mutators racing the same transition
+    // both miss their (locked) lookup, both build a candidate, and the loser
+    // must adopt the winner's published Structure instead of clobbering it in
+    // the table (no lost/duplicated transitions). Defined in
+    // StructureInlines.h next to get().
+    Structure* getMatching(Structure* candidate) const;
+
     Structure* trySingleTransition() const;
+
+    // SPEC-objectmodel F4 chain-fire support (Task 3): invokes the functor on
+    // every live transition target in this table. Callers in the multi-slot
+    // case must satisfy WeakGCMap::forEach's contract (GC deferred) and, per
+    // §6 L6, mutator-side walks hold the owning Structure's m_lock.
+    // Defined in StructureInlines.h.
+    template<typename Functor> void forEachTransition(const Functor&) const;
 
     void finalizeUnconditionally(VM&, CollectionScope);
 
 private:
     friend class SingleSlotTransitionWeakOwner;
 
+    // THREADS/TSAN: one relaxed snapshot of the word — written atomically
+    // (setMap's release store; setSingleTransition; TsanDeferredCtorMember's
+    // relaxed ctor store on recycled cell memory) while lock-free readers
+    // probe it. Same single mov as the upstream plain load; the hot lookup
+    // paths below decode the snapshot instead of re-loading.
+    intptr_t dataConcurrently() const { return WTF::atomicLoad(const_cast<intptr_t*>(&m_data), std::memory_order_relaxed); }
+
     bool isUsingSingleSlot() const
     {
-        return m_data & UsingSingleSlotFlag;
+        return dataConcurrently() & UsingSingleSlotFlag;
     }
 
     TransitionMap* map() const
     {
         ASSERT(!isUsingSingleSlot());
-        return std::bit_cast<TransitionMap*>(m_data);
+        return std::bit_cast<TransitionMap*>(dataConcurrently());
     }
 
     void setMap(TransitionMap* map)
     {
         ASSERT(isUsingSingleSlot());
-        // This implicitly clears the flag that indicates we're using a single transition
-        m_data = std::bit_cast<intptr_t>(map);
+        // This implicitly clears the flag that indicates we're using a single transition.
+        // Release store: publishes the fully constructed map to lock-free probers.
+        WTF::atomicStore(&m_data, std::bit_cast<intptr_t>(map), std::memory_order_release);
         ASSERT(!isUsingSingleSlot());
     }
 

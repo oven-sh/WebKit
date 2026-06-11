@@ -33,8 +33,18 @@
 #include "DFGJITCode.h"
 #include "FTLJITCode.h"
 #include "RegisterSet.h"
+#include "VMLite.h"
+#include <limits>
 
-namespace JSC { namespace DFG {
+namespace JSC {
+
+// UNGIL U-T3 emitter (defined in jit/AssemblyHelpers.cpp). Self-declaration,
+// mirroring that TU's own pattern — no header owns this form yet (the
+// AssemblyHelpers.h member surface is macro-gated on
+// JSC_ASSEMBLYHELPERS_HAS_LOAD_VMLITE, which the header-owning task defines).
+void loadVMLite(AssemblyHelpers&, GPRReg);
+
+namespace DFG {
 
 void handleExitCounts(VM&, CCallHelpers&, const OSRExitBase&);
 void reifyInlinedCallFrames(CCallHelpers&, const OSRExitBase&);
@@ -42,7 +52,7 @@ void adjustAndJumpToTarget(VM&, CCallHelpers&, const OSRExitBase&);
 CCallHelpers::Address calleeSaveSlot(InlineCallFrame*, CodeBlock* baselineCodeBlock, GPRReg calleeSave);
 
 template <typename JITCodeType>
-void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM& vm, JITType jitType)
+void adjustFrameAndStackInOSRExitCompilerThunk(AssemblyHelpers& jit, VM& vm, JITType jitType)
 {
     ASSERT(jitType == JITType::DFGJIT || jitType == JITType::FTLJIT);
 
@@ -59,11 +69,43 @@ void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM& vm, JITT
     if (isFTLOSRExit)
         scratchSize += sizeof(void*);
 
-    ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(scratchSize);
-    char* buffer = static_cast<char*>(scratchBuffer->dataBuffer());
+    // UNGIL §A.1.6 (ANNEX A16, U-T4b): this thunk is shared by every thread
+    // of its VM. gilOff, a baked buffer address would let two concurrently
+    // exiting threads clobber each other's preserved registers, so the
+    // gilOff-mode thunk bakes a process-wide ScratchBufferRegistry INDEX and
+    // emits the frozen `loadVMLite -> segment -> [index]` sequence per use
+    // (rematerialization per §A.1.2; clobbers only the dest GPR, which is
+    // saved at each use site below). GIL-on/flag-off keeps the baked address
+    // byte-for-byte.
+    const bool bakedIndexMode = vm.gilOff();
+    unsigned bakedIndex = std::numeric_limits<unsigned>::max();
+    char* buffer = nullptr;
+    if (bakedIndexMode) [[unlikely]]
+        bakedIndex = vm.allocateBakedScratchBufferIndex(scratchSize);
+    else {
+        ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(scratchSize);
+        buffer = static_cast<char*>(scratchBuffer->dataBuffer());
+    }
+    auto materializeBufferBase = [&] (GPRReg dest) {
+        loadVMLite(jit, dest);
+        jit.loadPtr(
+            MacroAssembler::Address(
+                dest,
+                static_cast<int32_t>(VMLite::offsetOfScratchSegments() + static_cast<ptrdiff_t>(bakedIndex >> VMLite::scratchSegmentShift) * sizeof(void*))),
+            dest);
+        jit.loadPtr(
+            MacroAssembler::Address(
+                dest,
+                static_cast<int32_t>(static_cast<ptrdiff_t>(bakedIndex & (VMLite::scratchSegmentSize - 1)) * sizeof(void*))),
+            dest);
+        jit.addPtr(MacroAssembler::TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, m_buffer))), dest);
+    };
 
     jit.pushToSave(GPRInfo::regT1);
-    jit.move(MacroAssembler::TrustedImmPtr(buffer), GPRInfo::regT1);
+    if (bakedIndexMode) [[unlikely]]
+        materializeBufferBase(GPRInfo::regT1);
+    else
+        jit.move(MacroAssembler::TrustedImmPtr(buffer), GPRInfo::regT1);
 
     unsigned storeOffset = 0;
     registersToPreserve.forEach([&](Reg reg) {
@@ -81,7 +123,17 @@ void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM& vm, JITT
     jit.popToRestore(GPRInfo::regT1);
 
     // We need to reset FP in the case of an exception.
-    jit.loadPtr(vm.addressOfCallFrameForCatch(), GPRInfo::regT0);
+    if (bakedIndexMode) [[unlikely]] {
+        // UNGIL §A.1.3: callFrameForCatch is per-lite Group-3 state gilOff —
+        // resolve the CURRENT thread's lite instead of baking &vm's slot.
+        loadVMLite(jit, GPRInfo::regT0);
+        jit.loadPtr(
+            MacroAssembler::Address(
+                GPRInfo::regT0,
+                static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_callFrameForCatch())),
+            GPRInfo::regT0);
+    } else
+        jit.loadPtr(vm.addressOfCallFrameForCatch(), GPRInfo::regT0);
     MacroAssembler::Jump didNotHaveException = jit.branchTestPtr(MacroAssembler::Zero, GPRInfo::regT0);
     jit.move(GPRInfo::regT0, GPRInfo::callFrameRegister);
     didNotHaveException.link(&jit);
@@ -109,7 +161,10 @@ void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM& vm, JITT
     }
     jit.pushToSave(GPRInfo::regT1);
 
-    jit.move(MacroAssembler::TrustedImmPtr(buffer), GPRInfo::regT1);
+    if (bakedIndexMode) [[unlikely]]
+        materializeBufferBase(GPRInfo::regT1);
+    else
+        jit.move(MacroAssembler::TrustedImmPtr(buffer), GPRInfo::regT1);
     if (isFTLOSRExit) {
         // FTL OSRExits are entered via FTLExitThunkGenerator code with does
         // pushToSaveImmediateWithoutTouchRegisters. We need to load that top

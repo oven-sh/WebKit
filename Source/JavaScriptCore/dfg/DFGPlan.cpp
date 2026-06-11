@@ -78,11 +78,15 @@
 #include "DFGVarargsForwardingPhase.h"
 #include "DFGVirtualRegisterAllocationPhase.h"
 #include "JSCJSValueInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "OperandsInlines.h"
 #include "ProfilerDatabase.h"
 #include "StructureID.h"
 #include "TrackedReferences.h"
 #include "VMInlines.h"
+#include "VMTraps.h"
+#include <wtf/RecursiveLockAdapter.h>
+#include <wtf/Threading.h>
 
 #if ENABLE(FTL_JIT)
 #include "FTLCapabilities.h"
@@ -93,7 +97,56 @@
 #include "FTLState.h"
 #endif
 
-namespace JSC { namespace DFG {
+namespace JSC {
+
+// UNGIL IT-8: defined in runtime/ScriptExecutable.cpp (the process-wide
+// recursive compilation lock for GIL-off lites of the shared VM). Declared
+// locally to avoid a header edit during bring-up; keep in sync with the
+// definition and with bytecompiler/BytecodeGenerator.cpp.
+RecursiveLock& gilOffCompilationLock();
+
+namespace DFG {
+
+namespace {
+
+// Stop-protocol-safe acquisition — same shape as the locker in
+// runtime/ScriptExecutable.cpp (see the rationale there): contended
+// acquisition spins on tryLock() servicing only NeedStopTheWorld, so a
+// waiting lite stays visible to the GIL-off stop fan and never throws.
+// FIX (stw-watchdog-timeout, root cause B): the FIX-2 park poll first —
+// deferral-immune §A.3 parking (callers may spin here inside their own
+// DeferTraps scope, under which handleTraps correctly no-ops); see the
+// ScriptExecutable.cpp locker comment.
+class GILOffCompilationLocker {
+    WTF_MAKE_NONCOPYABLE(GILOffCompilationLocker);
+public:
+    GILOffCompilationLocker(VM& vm, bool shouldLock)
+        : m_shouldLock(shouldLock)
+    {
+        if (!m_shouldLock) [[likely]]
+            return;
+        RecursiveLock& lock = gilOffCompilationLock();
+        if (lock.tryLock()) [[likely]]
+            return;
+        while (!lock.tryLock()) {
+            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+                continue; // Parked across a §A.3 window: re-validate (retry tryLock).
+            handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
+            Thread::yield();
+        }
+    }
+
+    ~GILOffCompilationLocker()
+    {
+        if (m_shouldLock) [[unlikely]]
+            gilOffCompilationLock().unlock();
+    }
+
+private:
+    bool m_shouldLock;
+};
+
+} // anonymous namespace
 
 namespace {
 
@@ -573,6 +626,31 @@ CompilationResult Plan::finalize()
     // GC is deferred when this function is called.
     ASSERT(m_vm->heap.isDeferred());
 
+    // UNGIL IT-8 (R2, re-derived): plan ENQUEUE dedup is already closed by
+    // the landed tier-up edge 0->1 CAS plus the JITWorklist::enqueue dedup
+    // backstop, so dual Plans per JITCompilationKey are not the live race.
+    // What this lock closes is finalization vs. sibling-lite installs: the
+    // region below installs watchpoints into the baseline CodeBlock
+    // (reallyAdd), shrinks its tables (shrinkToFit), and installs the
+    // replacement via the callback's installCode — all of which must not
+    // interleave with a sibling running prepareForExecutionImpl or a
+    // mutator-side jettison on the same executable (both serialized under the
+    // same lock in ScriptExecutable.cpp; the nested installCode acquisition
+    // is a recursive re-acquire). A sibling-won install now resolves to an
+    // ordered CompilationInvalidated instead of a torn replacement/
+    // alternative pair. Called from worklist drain / synchronous enqueue with
+    // NO worklist lock held, on a mutator, never in collector context — so
+    // the acquisition cannot invert with the worklist lock or block a
+    // collection (heap is deferred here, and the wait loop stays
+    // stop-visible regardless). KNOWN RESIDUAL (out of scope here): the
+    // COMPILER THREAD builds the graph from baseline profiling/IC state that
+    // sibling mutators mutate with plain stores; neither party takes this
+    // lock during compileInThread, so torn-profile flavors of the
+    // counter-atomics.js isLiveNode family may survive — needs ConcurrentJS
+    // locker coverage of the profiling sinks (or a stop-point snapshot) in a
+    // follow-up leg.
+    GILOffCompilationLocker compilationLocker(*m_vm, m_vm->gilOffWithProcessGate());
+
     CompilationResult result = [&] {
         if (m_finalizer->isFailed()) {
             CODEBLOCK_LOG_EVENT(m_codeBlock, "dfgFinalize", ("failed"));
@@ -651,6 +729,19 @@ bool Plan::iterateCodeBlocksForGC(AbstractSlotVisitor& visitor, NOESCAPE const F
     if (m_profiledDFGCodeBlock)
         func(m_profiledDFGCodeBlock);
     return true;
+}
+
+void Plan::iterateCodeBlocksForFinalizeRoots(NOESCAPE const Function<void(CodeBlock*)>& func)
+{
+    // Unconditional finalize-claim roots (UNGIL AB18-R1-B, see JITPlan.h):
+    // finalize() touches the compiled CodeBlock, its baseline alternative
+    // (compilationDidComplete -> setOptimizationThresholdBasedOnCompilationResult)
+    // and the profiled DFG block after park points that admit a sibling
+    // shared GC.
+    Base::iterateCodeBlocksForFinalizeRoots(func);
+    func(m_codeBlock->alternative());
+    if (m_profiledDFGCodeBlock)
+        func(m_profiledDFGCodeBlock);
 }
 
 bool Plan::checkLivenessAndVisitChildren(AbstractSlotVisitor& visitor)

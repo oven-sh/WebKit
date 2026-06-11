@@ -37,6 +37,7 @@
 #include "JSAsyncDisposableStack.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncGenerator.h"
+#include "JSCConfig.h"
 #include "JSDisposableStack.h"
 #include "JSGenerator.h"
 #include "JSGlobalObject.h"
@@ -146,6 +147,22 @@ BytecodeIntrinsicRegistry::BytecodeIntrinsicRegistry(VM& vm)
     m_InternalMicrotaskAsyncGeneratorBodyCallNormal.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorBodyCallNormal)));
     m_InternalMicrotaskAsyncGeneratorBodyCallReturn.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorBodyCallReturn)));
     m_InternalMicrotaskAsyncGeneratorResumeNext.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorResumeNext)));
+    // SPEC-ungil §N.5 (r17 F5 mode-keyed lowering): builtins branch on this
+    // process-wide constant to pick the landed inline sequence (flag-off,
+    // GIL-on) vs the atomic claim host op (GIL-off). Derived from the
+    // FINALIZED Options, not the g_jscConfig.gilOffProcess byte: this
+    // registry is constructed early in the VM ctor, BEFORE the ctor reaches
+    // JSC::Config::finalize() which latches that byte (reading it here
+    // returns 0 for the first VM). Options::finalize() runs at the tail of
+    // JSC::initialize(), strictly before any VM exists, and the
+    // notifyOptionsChanged() latch (runtime/Options.cpp) forbids the
+    // derivation from flipping afterwards — so this is the same immutable
+    // process-wide value, available at registry-construction time. The
+    // derivation MUST stay identical to JSCConfig.h Config::finalize() and
+    // VM::isGILOffProcess().
+    bool gilOffProcess = Options::useJSThreads() && !Options::useThreadGIL()
+        && Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap();
+    m_gilOffProcess.set(m_vm, jsBoolean(gilOffProcess));
 }
 
 std::optional<BytecodeIntrinsicRegistry::Entry> BytecodeIntrinsicRegistry::lookup(const Identifier& ident) const

@@ -78,6 +78,19 @@ void JITInlineCacheGenerator::finalize(
     LinkBuffer& fastPath, LinkBuffer& slowPath, CodeLocationLabel<JITStubRoutinePtrTag> start)
 {
     ASSERT(m_propertyCache);
+    if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(*m_propertyCache)) {
+        // FTL handler-IC site (useHandlerICInFTL): there is no inline slab and no
+        // patchable slow-path call; record where the IC continues and where its
+        // out-of-line slow path (the late path emitted by the FTL lowering)
+        // begins. The slow-path handler thunk dispatches to slowPathStartLocation
+        // only when re-entering the IC's miss path is required; the initial
+        // handler itself is installed on the main thread at plan finalization
+        // (HandlerPropertyInlineCache::initializeHandlerForOptimizingJIT).
+        UNUSED_PARAM(start);
+        handlerIC->doneLocation = fastPath.locationOf<JSInternalPtrTag>(m_done);
+        handlerIC->slowPathStartLocation = slowPath.locationOf<JITStubRoutinePtrTag>(m_slowPathBegin);
+        return;
+    }
     auto& repatchingIC = downcast<RepatchingPropertyInlineCache>(*m_propertyCache);
     repatchingIC.startLocation = start;
     m_propertyCache->doneLocation = fastPath.locationOf<JSInternalPtrTag>(m_done);
@@ -107,7 +120,8 @@ void JITByIdGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& slowPath)
 {
     ASSERT(m_propertyCache);
     JITInlineCacheGenerator::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 void JITByIdGenerator::generateFastCommon(CCallHelpers& jit, size_t inlineICSize)
@@ -137,13 +151,72 @@ JITGetByIdGenerator::JITGetByIdGenerator(
     }, propertyCache);
 }
 
-static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg propertyCacheGPR, JSValueRegs baseJSR, GPRReg scratch1GPR, JSValueRegs resultJSR, CacheType cacheType)
+#if USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+// SPEC-jit section 4.2 (Task 4), flag-on single-load reader of the inlined
+// fast-path unit. Emits:
+//
+//     load64  [propertyCache + packedSelfWord], wordGPR   // {offset, id} - ONE load
+//     load32  [base + structureID], scratch1GPR
+//     lshift64 scratch1GPR, #32
+//     xor64   wordGPR, scratch1GPR        // high 32 = id ^ cellID; low 32 = offset
+//     move    scratch1GPR, wordGPR
+//     urshift64 wordGPR, #32
+//     branchTest64 NonZero, wordGPR -> miss
+//     // hit: scratch1GPR == zero-extended offset from the SAME 64-bit load
+//
+// Both halves come from one relaxed 64-bit load, so a concurrent single-word
+// publish/invalidate (PropertyInlineCache::setInlineAccessSelfState/
+// clearInlineAccessSelfState) can never be observed as a valid structure id
+// paired with a mismatched offset (I6). The flag-off compare-then-reload form
+// below is unsound under concurrency on ARM64: a compare/branch does not order
+// the subsequent offset load (F2). wordGPR is clobbered; on a hit, scratch1GPR
+// holds the offset. Flag-on is 64-bit little-endian only (SPEC-jit D8): the id
+// is the high half of the packed word.
+static CCallHelpers::Jump emitPackedInlineAccessCheckThreaded(CCallHelpers& jit, GPRReg propertyCacheGPR, GPRReg baseGPR, GPRReg scratch1GPR, GPRReg wordGPR)
+{
+    ASSERT(Options::useJSThreads());
+    ASSERT(wordGPR != InvalidGPRReg && wordGPR != scratch1GPR && wordGPR != baseGPR && wordGPR != propertyCacheGPR);
+    jit.load64(CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfPackedInlineAccessSelfWord()), wordGPR);
+    jit.load32(CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
+    jit.lshift64(CCallHelpers::TrustedImm32(32), scratch1GPR);
+    jit.xor64(wordGPR, scratch1GPR);
+    jit.move(scratch1GPR, wordGPR);
+    jit.urshift64(CCallHelpers::TrustedImm32(32), wordGPR);
+    return jit.branchTest64(CCallHelpers::NonZero, wordGPR, wordGPR);
+}
+#endif // USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+
+static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg propertyCacheGPR, JSValueRegs baseJSR, GPRReg scratch1GPR, GPRReg scratch2GPR, JSValueRegs resultJSR, CacheType cacheType)
 {
     CCallHelpers::JumpList slowCases;
     CCallHelpers::JumpList doneCases;
+    UNUSED_PARAM(scratch2GPR);
 
     switch (cacheType) {
     case CacheType::GetByIdSelf: {
+#if USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+        if (Options::useJSThreads()) [[unlikely]] {
+            // Single 64-bit load of {byIdSelfOffset, structureID} (section 4.2/I6).
+            // scratch2GPR (never resultJSR: it may alias baseJSR) holds the word.
+            slowCases.append(emitPackedInlineAccessCheckThreaded(jit, propertyCacheGPR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR));
+            // SPEC-jit section 5.5 (Task 8): out-of-line loads go through the
+            // butterfly READ choke point (scratch2GPR = storage scratch;
+            // resultJSR may alias baseJSR). Predicate failures dispatch to
+            // the handler chain like any other miss.
+            // R7/F7 (review round 1): on the hit path scratch1GPR holds
+            // (cellSID<<32 ^ packedWord) >> 0 with a provably-zero high half,
+            // i.e. the zero-extended offset, and it is DATA-DEPENDENT on the
+            // cell structureID load inside emitPackedInlineAccessCheckThreaded.
+            // Passing it as structureIDGPR makes the ARM64 butterfly load
+            // address-dependent on the structureID load (the OM pairs this
+            // with its butterfly-before-structureID store fence), closing the
+            // fresh-{sid,offset}-word + stale-butterfly OOB window this site
+            // previously had (it passed InvalidGPRReg).
+            jit.loadProperty(baseJSR.payloadGPR(), scratch1GPR, resultJSR, scratch2GPR, slowCases, scratch1GPR);
+            doneCases.append(jit.jump());
+            break;
+        }
+#endif
         jit.load32(CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()), scratch1GPR);
         slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch1GPR, CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfInlineAccessBaseStructureID())));
         jit.load32(CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfByIdSelfOffset()), scratch1GPR);
@@ -152,6 +225,16 @@ static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
         break;
     }
     case CacheType::GetByIdPrototype: {
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit section 4.2 (Task 4): holder-bearing inlined forms are
+            // disabled flag-on - m_inlineHolder cannot pack into the 64-bit
+            // unit, and a separate holder load could pair a fresh
+            // {offset, structureID} word with a stale holder.
+            // HandlerPropertyInlineCache::setInlinedHandler never installs
+            // this shape under the flag, so emit no inline fast path here:
+            // every access dispatches through the handler chain below (F2).
+            break;
+        }
         jit.load32(CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()), scratch1GPR);
         slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch1GPR, CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfInlineAccessBaseStructureID())));
         jit.load32(CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfByIdSelfOffset()), scratch1GPR);
@@ -161,6 +244,20 @@ static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
         break;
     }
     case CacheType::ArrayLength: {
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit section 5.5 (Task 8): apply the READ choke point to
+            // the length load (ArrayLength is reachable for AS arrays, so the
+            // conservative SW=1 => handler-dispatch form is used).
+            jit.load8(CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::indexingTypeAndMiscOffset()), scratch1GPR);
+            slowCases.append(jit.branchTest32(CCallHelpers::Zero, scratch1GPR, CCallHelpers::TrustedImm32(IsArray)));
+            slowCases.append(jit.branchTest32(CCallHelpers::Zero, scratch1GPR, CCallHelpers::TrustedImm32(IndexingShapeMask)));
+            slowCases.append(jit.loadButterflyForRead(baseJSR.payloadGPR(), scratch1GPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
+            jit.load32(CCallHelpers::Address(scratch1GPR, ArrayStorage::lengthOffset()), scratch1GPR);
+            slowCases.append(jit.branch32(CCallHelpers::LessThan, scratch1GPR, CCallHelpers::TrustedImm32(0)));
+            jit.boxInt32(scratch1GPR, resultJSR);
+            doneCases.append(jit.jump());
+            break;
+        }
         jit.load8(CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::indexingTypeAndMiscOffset()), scratch1GPR);
         slowCases.append(jit.branchTest32(CCallHelpers::Zero, scratch1GPR, CCallHelpers::TrustedImm32(IsArray)));
         slowCases.append(jit.branchTest32(CCallHelpers::Zero, scratch1GPR, CCallHelpers::TrustedImm32(IndexingShapeMask)));
@@ -197,8 +294,9 @@ void JITGetByIdGenerator::generateDataICFastPath(CCallHelpers& jit)
     using BaselineJITRegisters::GetById::resultJSR;
     using BaselineJITRegisters::GetById::propertyCacheGPR;
     using BaselineJITRegisters::GetById::scratch1GPR;
+    using BaselineJITRegisters::GetById::scratch2GPR;
 
-    generateGetByIdInlineAccessBaselineDataIC(jit, propertyCacheGPR, baseJSR, scratch1GPR, resultJSR, m_cacheType);
+    generateGetByIdInlineAccessBaselineDataIC(jit, propertyCacheGPR, baseJSR, scratch1GPR, scratch2GPR, resultJSR, m_cacheType);
 
     m_done = jit.label();
 }
@@ -229,8 +327,9 @@ void JITGetByIdWithThisGenerator::generateDataICFastPath(CCallHelpers& jit)
     using BaselineJITRegisters::GetByIdWithThis::resultJSR;
     using BaselineJITRegisters::GetByIdWithThis::propertyCacheGPR;
     using BaselineJITRegisters::GetByIdWithThis::scratch1GPR;
+    using BaselineJITRegisters::GetByIdWithThis::scratch2GPR;
 
-    generateGetByIdInlineAccessBaselineDataIC(jit, propertyCacheGPR, baseJSR, scratch1GPR, resultJSR, CacheType::GetByIdSelf);
+    generateGetByIdInlineAccessBaselineDataIC(jit, propertyCacheGPR, baseJSR, scratch1GPR, scratch2GPR, resultJSR, CacheType::GetByIdSelf);
 
     m_done = jit.label();
 }
@@ -246,8 +345,37 @@ JITPutByIdGenerator::JITPutByIdGenerator(
     }, propertyCache);
 }
 
-static void generatePutByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg propertyCacheGPR, JSValueRegs baseJSR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR)
+// scratch3GPR: a true scratch distinct from base/value/propertyCache/scratch1,
+// used only by the useJSThreads single-load form (section 4.2); pass
+// InvalidGPRReg when unavailable (flag-off / JSVALUE32_64).
+static void generatePutByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg propertyCacheGPR, JSValueRegs baseJSR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
+    UNUSED_PARAM(scratch3GPR);
+#if USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Single 64-bit load of {byIdSelfOffset, structureID} (section 4.2/I6).
+        // scratch2GPR may alias baseJSR (Baseline passes base as the
+        // storeProperty scratch), so the packed word lives in scratch3GPR.
+        auto doNotInlineAccess = emitPackedInlineAccessCheckThreaded(jit, propertyCacheGPR, baseJSR.payloadGPR(), scratch1GPR, scratch3GPR);
+        // SPEC-jit section 5.5 (Task 8): inline-offset stores are
+        // cell-internal and need no predicate; out-of-line stores need the
+        // WRITE choke point, but this register file leaves no GPR pair for
+        // {storage, TID tag} with baseJSR preserved on the miss path - so
+        // out-of-line offsets dispatch to the putByIdReplaceHandler (which
+        // carries the full predicate). Inventory: INTEGRATE-jit.md Task 8.
+        CCallHelpers::JumpList notInline;
+        notInline.append(jit.branch32(CCallHelpers::GreaterThanOrEqual, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset)));
+        jit.storeProperty(valueJSR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+        auto done = jit.jump();
+        doNotInlineAccess.link(&jit);
+        notInline.link(&jit);
+        emitICStatsChainFlushProbe(jit, propertyCacheGPR);
+        jit.loadPtr(CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfHandler()), GPRInfo::handlerGPR);
+        jit.call(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfCallTarget()), JITStubRoutinePtrTag);
+        done.link(&jit);
+        return;
+    }
+#endif
     jit.load32(CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()), scratch1GPR);
     auto doNotInlineAccess = jit.branch32(CCallHelpers::NotEqual, scratch1GPR, CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfInlineAccessBaseStructureID()));
     jit.load32(CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfByIdSelfOffset()), scratch1GPR);
@@ -268,9 +396,17 @@ void JITPutByIdGenerator::generateDataICFastPath(CCallHelpers& jit)
     using BaselineJITRegisters::PutById::propertyCacheGPR;
     using BaselineJITRegisters::PutById::scratch1GPR;
 
+#if USE(JSVALUE64)
+    // Dead at the IC site: handler stubs may clobber it (BaselineJITRegisters
+    // "Required for HandlerIC" assert), so no live value can be in it here.
+    constexpr GPRReg scratch3GPR = BaselineJITRegisters::PutById::scratch2GPR;
+#else
+    constexpr GPRReg scratch3GPR = InvalidGPRReg;
+#endif
+
     m_start = jit.label();
     // The second scratch can be the same to baseJSR. In Baseline JIT, we clobber the baseJSR to save registers.
-    generatePutByIdInlineAccessBaselineDataIC(jit, propertyCacheGPR, baseJSR, valueJSR, scratch1GPR, baseJSR.payloadGPR());
+    generatePutByIdInlineAccessBaselineDataIC(jit, propertyCacheGPR, baseJSR, valueJSR, scratch1GPR, baseJSR.payloadGPR(), scratch3GPR);
     m_done = jit.label();
 }
 
@@ -308,7 +444,8 @@ void JITDelByValGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& slowPath)
 {
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 JITDelByIdGenerator::JITDelByIdGenerator(CodeBlock* codeBlock, CompileTimePropertyInlineCache propertyCache, JITType jitType, CodeOrigin codeOrigin, CallSiteIndex callSiteIndex, AccessType accessType, const RegisterSet& usedRegisters, CacheableIdentifier propertyName, JSValueRegs base, JSValueRegs result, GPRReg propertyCacheGPR)
@@ -338,7 +475,8 @@ void JITDelByIdGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& slowPath)
 {
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 JITInByValGenerator::JITInByValGenerator(CodeBlock* codeBlock, CompileTimePropertyInlineCache propertyCache, JITType jitType, CodeOrigin codeOrigin, CallSiteIndex callSiteIndex, AccessType accessType, const RegisterSet& usedRegisters, JSValueRegs base, JSValueRegs property, JSValueRegs result, GPRReg arrayProfileGPR, GPRReg propertyCacheGPR)
@@ -370,7 +508,8 @@ void JITInByValGenerator::finalize(
     ASSERT(m_start.isSet());
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 JITInByIdGenerator::JITInByIdGenerator(
@@ -386,6 +525,12 @@ JITInByIdGenerator::JITInByIdGenerator(
 
 static void generateInByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg propertyCacheGPR, JSValueRegs baseJSR, GPRReg scratch1GPR, JSValueRegs resultJSR)
 {
+    // SPEC-jit section 4.2 note: this inline fast path reads ONLY the
+    // structure-id half of the packed unit (offsetOfInlineAccessBaseStructureID
+    // == packed word + 4) and uses no offset, so there is no id/offset pair to
+    // tear (I6 is about the pair). A racing single-word publish/invalidate is
+    // observed as either the old id or the new id, both of which were valid
+    // published "structure has the property" facts - sound flag-on as-is.
     jit.load32(CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()), scratch1GPR);
     auto skipInlineAccess = jit.branch32(CCallHelpers::NotEqual, scratch1GPR, CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfInlineAccessBaseStructureID()));
     jit.boxBoolean(true, resultJSR);
@@ -446,7 +591,8 @@ void JITInstanceOfGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& slowPath
 {
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 JITGetByValGenerator::JITGetByValGenerator(CodeBlock* codeBlock, CompileTimePropertyInlineCache propertyCache, JITType jitType, CodeOrigin codeOrigin, CallSiteIndex callSiteIndex, AccessType accessType, const RegisterSet& usedRegisters, JSValueRegs base, JSValueRegs property, JSValueRegs result, GPRReg arrayProfileGPR, GPRReg propertyCacheGPR)
@@ -484,7 +630,8 @@ void JITGetByValGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& slowPath)
 {
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 JITGetByValWithThisGenerator::JITGetByValWithThisGenerator(CodeBlock* codeBlock, CompileTimePropertyInlineCache propertyCache, JITType jitType, CodeOrigin codeOrigin, CallSiteIndex callSiteIndex, AccessType accessType, const RegisterSet& usedRegisters, JSValueRegs base, JSValueRegs property, JSValueRegs thisRegs, JSValueRegs result, GPRReg arrayProfileGPR, GPRReg propertyCacheGPR)
@@ -524,7 +671,8 @@ void JITGetByValWithThisGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& sl
 {
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 JITPutByValGenerator::JITPutByValGenerator(CodeBlock* codeBlock, CompileTimePropertyInlineCache propertyCache, JITType jitType, CodeOrigin codeOrigin, CallSiteIndex callSiteIndex, AccessType accessType, const RegisterSet& usedRegisters, JSValueRegs base, JSValueRegs property, JSValueRegs value, GPRReg arrayProfileGPR, GPRReg propertyCacheGPR)
@@ -556,7 +704,8 @@ void JITPutByValGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& slowPath)
 {
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 JITPrivateBrandAccessGenerator::JITPrivateBrandAccessGenerator(CodeBlock* codeBlock, CompileTimePropertyInlineCache propertyCache, JITType jitType, CodeOrigin codeOrigin, CallSiteIndex callSiteIndex, AccessType accessType, const RegisterSet& usedRegisters, JSValueRegs base, JSValueRegs brand, GPRReg propertyCacheGPR)
@@ -587,7 +736,8 @@ void JITPrivateBrandAccessGenerator::finalize(LinkBuffer& fastPath, LinkBuffer& 
 {
     ASSERT(m_propertyCache);
     Base::finalize(fastPath, slowPath, fastPath.locationOf<JITStubRoutinePtrTag>(m_start));
-    ASSERT(is<RepatchingPropertyInlineCache>(*m_propertyCache));
+    // Note: m_propertyCache may be either kind here; the base finalize dispatches
+    // on it (handler ICs are used by FTL sites under useHandlerICInFTL).
 }
 
 } // namespace JSC

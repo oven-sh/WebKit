@@ -45,6 +45,16 @@ const ClassInfo JSWebAssemblyModule::s_info = { "WebAssembly.Module"_s, &Base::s
 
 JSWebAssemblyModule* JSWebAssemblyModule::create(VM& vm, Structure* structure, Ref<Wasm::Module>&& result)
 {
+    // UNGIL §I supersession, defense-in-depth (review round): the wasm tiers
+    // still read/write the inert VM-block exception word GIL-off (WasmToJS /
+    // JSToWasm / IPInt), so wasm must be unreachable on a gilOff VM. The
+    // throwIfWebAssemblyRefusedOnSpawnedThread gate at the 14 ctor/compile/
+    // call surfaces is the primary line; this fail-stop catches any surface
+    // that bypasses the helper (a future API entry point, cross-VM module
+    // transfer under useSharedGCHeap, a new constructor path) at module
+    // minting instead of silently losing exceptions. GIL-on: one cold-path
+    // branch at module creation, never taken.
+    RELEASE_ASSERT(!vm.gilOff());
     auto* module = new (NotNull, allocateCell<JSWebAssemblyModule>(vm)) JSWebAssemblyModule(vm, structure, WTF::move(result));
     module->finishCreation(vm);
     return module;

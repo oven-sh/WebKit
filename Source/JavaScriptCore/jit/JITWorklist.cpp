@@ -35,9 +35,20 @@
 #include "JITWorklistThread.h"
 #include "SlotVisitorInlines.h"
 #include "VMInlines.h"
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
+
+// UNGIL AB18-R1-A: the finalize-claim table is now the m_finalizingPlans
+// member (see JITWorklist.h) — promoted from the original file-local key set
+// because the GC must walk the claimed plans' CodeBlocks (AB18-R1-B), and the
+// GC iteration templates live in JITWorklistInlines.h.
+
+// UNGIL §A.3.2 client-scoped park pairing (Heap.cpp; same forward-declaration
+// shape as Lookup.cpp / VMManager.cpp).
+void gcClientWillParkForThreadGranularStop();
+void gcClientDidResumeFromThreadGranularStop();
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(JITWorklist);
 
@@ -184,7 +195,44 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
 
     auto tier = static_cast<unsigned>(plan->tier());
 
-    ASSERT(m_plans.find(plan->key()) == m_plans.end());
+    // THREADS §5.7.3 (SPEC-jit Task 12): dedup backstop, replacing the old
+    // ASSERT(m_plans.find(plan->key()) == m_plans.end()). Under N mutators two threads
+    // can race through a tier-up trigger's latch-free window (CodeBlock::TierUpEdge,
+    // §5.7.2) with plans for the same key; admitting both would corrupt m_totalLoad and
+    // the queues, and double-finalize the compilation. The duplicate is cancelled here
+    // under *m_lock and reported as CompilationDeferred. NOT flag-gated: with a single
+    // mutator this path is unreachable (the old assert's invariant holds), so flag-off
+    // behavior is unchanged.
+    // UNGIL AB18-R1-A: a plan disappears from m_plans in removeAllReadyPlansForVM
+    // BEFORE its finalize() installs the code, so m_plans alone cannot dedup a racer
+    // that enqueues inside the removal->install window. m_finalizingPlans keeps the
+    // key claimed across that window (GIL-off only; invariantly empty otherwise).
+    bool isDuplicate = m_plans.contains(plan->key()) || m_finalizingPlans.contains(plan->key());
+    if (!isDuplicate && plan->vm()->gilOff() && plan->tier() == JITPlan::Tier::Baseline) [[unlikely]] {
+        // UNGIL AB18-R1-A: authoritative KEY-LEVEL re-check under *m_lock. Baseline
+        // publication is per-UnlinkedCodeBlock (CodeBlock::setupWithUnlinkedBaselineCode,
+        // CodeBlock.cpp:875), and tier-up latches (CodeBlock::TierUpEdge) are per LINKED
+        // CodeBlock — so with N lites, distinct linked CodeBlocks sharing one
+        // UnlinkedCodeBlock (= one JITCompilationKey) can each win their own latch and
+        // race a plan for the same key after the finalize claim is released. Ordering:
+        // the read takes the §12.2 synchronized snapshot under the UnlinkedCodeBlock
+        // lock (unlinkedBaselineCodeConcurrently) — a bare RefPtr load racing the
+        // locked install would be a C++ data race / torn-pointer hazard even though
+        // the claim-set ordering argues visibility. A CodeBlock whose key already has
+        // baseline code picks it up via the LLIntSlowPaths shared-code fast path on its
+        // next slow-path entry instead of recompiling; admitting the plan would trip
+        // RELEASE_ASSERT(!JITCode::isJIT(...)) in JIT::compileAndLinkWithoutFinalizing
+        // (JIT.cpp:808), which is KEPT as the invariant check. The jitType() re-check is
+        // same-CodeBlock belt-and-suspenders. GIL-on / flag-off: branch unreachable.
+        if (plan->codeBlock()->unlinkedCodeBlock()->unlinkedBaselineCodeConcurrently()
+            || JITCode::isJIT(plan->codeBlock()->jitType()))
+            isDuplicate = true;
+    }
+    if (isDuplicate) [[unlikely]] {
+        dataLogLnIf(Options::verboseCompilationQueue(), *this, ": Cancelling duplicate plan for ", plan->key());
+        plan->cancel(); // cancel() also ends the signpost (SignpostDetail::Canceled).
+        return CompilationResult::CompilationDeferred;
+    }
     m_plans.add(plan->key(), plan.copyRef());
     m_totalLoad += planLoad(plan);
     m_queues[tier].append(WTF::move(plan));
@@ -260,6 +308,16 @@ auto JITWorklist::completeAllReadyPlansForVM(VM& vm, JITCompilationKey requested
         plan->finalize();
         plan->endSignpost();
     }
+    if (vm.gilOff() && !myReadyPlans.isEmpty()) [[unlikely]] {
+        // UNGIL AB18-R1-A: release the finalize claims only now, after
+        // finalize() installed (or failed) the code. *m_lock's release/acquire
+        // pairing makes the installed code (the per-key unlinked baseline
+        // publication and the linked jitType) visible to any enqueue() that
+        // subsequently misses both m_plans and m_finalizingPlans.
+        Locker locker { *m_lock };
+        for (auto& plan : myReadyPlans)
+            m_finalizingPlans.remove(plan->key());
+    }
     return resultingState;
 }
 
@@ -275,36 +333,65 @@ void JITWorklist::waitUntilAllPlansForVMAreReady(VM& vm)
     // There can be the case where we already released heap access, for example when the VM is being
     // destroyed as a result of JSLock::unlock unlocking the last reference to the VM.
     // So we use a Release access scope that checks if we currently have access before releasing and later restoring.
-    ReleaseHeapAccessIfNeededScope releaseHeapAccessScope(vm.heap);
+    //
+    // UNGIL (R4-1 sweep; stw-watchdog-timeout root cause B): GIL-off the
+    // release must be CLIENT-scoped, not vm.heap — under useSharedGCHeap a
+    // client VM's vm.heap is the shared SERVER, whose hasAccess() is
+    // owner-sensitive (mainClientHasHeapAccess), so on a spawned thread the
+    // ReleaseHeapAccessIfNeededScope computes hadHeapAccess == false and
+    // releases NOTHING while this thread's own per-thread GCClient::Heap
+    // stays access-held for the entire unbounded wait below. The §A.3.2
+    // conductor predicate samples exactly that per-lite client access and
+    // can never converge — the 30s watchdog / nil-Class-A-context /
+    // jettison-requester signature (reachable via completeAllPlansForVM /
+    // cancelAllPlansForVM from prepareToDiscardCode, deleteAllCode, and
+    // Heap::completeAllJITPlans). Same fix shape as
+    // lockStaticPropertyReificationLockContended (Lookup.cpp): release the
+    // CALLER's own client, wait, re-acquire through the gated AHA
+    // (F8/§A.3.2b) AFTER dropping m_lock — a conductor's work closure may
+    // itself take m_lock (cancelAllPlansForVM jettisons), so re-acquiring
+    // access while holding it could deadlock against an open window.
+    // GIL-on / flag-off: the landed scope, byte-identical.
+    bool gilOff = vm.gilOff();
+    std::optional<ReleaseHeapAccessIfNeededScope> releaseHeapAccessScope;
+    if (gilOff) [[unlikely]]
+        gcClientWillParkForThreadGranularStop();
+    else
+        releaseHeapAccessScope.emplace(vm.heap);
 
-    // Wait for all of the plans for the given VM to complete. The idea here
-    // is that we want all of the caller VM's plans to be done. We don't care
-    // about any other VM's plans, and we won't attempt to wait on those.
-    // After we release this lock, we know that although other VMs may still
-    // be adding plans, our VM will not be.
-    Locker locker { *m_lock };
+    {
+        // Wait for all of the plans for the given VM to complete. The idea here
+        // is that we want all of the caller VM's plans to be done. We don't care
+        // about any other VM's plans, and we won't attempt to wait on those.
+        // After we release this lock, we know that although other VMs may still
+        // be adding plans, our VM will not be.
+        Locker locker { *m_lock };
 
-    if (Options::verboseCompilationQueue()) {
-        dump(locker, WTF::dataFile());
-        dataLog(": Waiting for all in VM to complete.\n");
-    }
-
-    for (;;) {
-        bool allAreCompiled = true;
-        for (const auto& entry : m_plans) {
-            if (entry.value->vm() != &vm)
-                continue;
-            if (entry.value->stage() != JITPlanStage::Ready) {
-                allAreCompiled = false;
-                break;
-            }
+        if (Options::verboseCompilationQueue()) {
+            dump(locker, WTF::dataFile());
+            dataLog(": Waiting for all in VM to complete.\n");
         }
 
-        if (allAreCompiled)
-            break;
+        for (;;) {
+            bool allAreCompiled = true;
+            for (const auto& entry : m_plans) {
+                if (entry.value->vm() != &vm)
+                    continue;
+                if (entry.value->stage() != JITPlanStage::Ready) {
+                    allAreCompiled = false;
+                    break;
+                }
+            }
 
-        m_planCompiledOrCancelled.wait(*m_lock);
+            if (allAreCompiled)
+                break;
+
+            m_planCompiledOrCancelled.wait(*m_lock);
+        }
     }
+
+    if (gilOff) [[unlikely]]
+        gcClientDidResumeFromThreadGranularStop();
 }
 
 void JITWorklist::completeAllPlansForVM(VM& vm)
@@ -312,6 +399,23 @@ void JITWorklist::completeAllPlansForVM(VM& vm)
     if (!vm.numberOfActiveJITPlans())
         return;
 
+    // Soundness of the gilOff access-released wait below while this DeferGC
+    // is live (review-round record):
+    //  (a) Per-client deferral slots assert `client->hasHeapAccess() ||
+    //      worldIsStoppedForAllClients()` (AB-21), but those asserts run only
+    //      at slot TOUCHES — DeferGC's ctor (before the release) and dtor
+    //      (after gcClientDidResumeFromThreadGranularStop's gated
+    //      re-acquire). The wait body touches no deferral slot: it samples
+    //      m_plans under *m_lock and blocks on m_planCompiledOrCancelled.
+    //  (b) Releasing access does license the shared-server GC and §A.3
+    //      windows to run during the wait; DeferGC only defers THIS client's
+    //      collection participation, which is exactly the per-client
+    //      semantics — an access-released client never blocks the server.
+    //      A window's cancelAllPlansForVM mutates m_plans only under the
+    //      same *m_lock the wait loop samples under, so the wait re-derives
+    //      a coherent snapshot per wakeup; completeAllReadyPlansForVM runs
+    //      after re-acquire, access-held, with DeferGC still active — the
+    //      state it actually protects.
     DeferGC deferGC(vm);
     waitUntilAllPlansForVMAreReady(vm);
     completeAllReadyPlansForVM(vm);
@@ -333,6 +437,13 @@ void JITWorklist::cancelAllPlansForVM(VM& vm)
     for (auto& plan : myReadyPlans) {
         ASSERT(plan->stage() == JITPlanStage::Ready);
         plan->endSignpost(JITPlan::SignpostDetail::Canceled);
+    }
+    if (vm.gilOff() && !myReadyPlans.isEmpty()) [[unlikely]] {
+        // UNGIL AB18-R1-A: these plans are dropped without finalize(); release
+        // their claims so the key is not wedged for future compiles.
+        Locker locker { *m_lock };
+        for (auto& plan : myReadyPlans)
+            m_finalizingPlans.remove(plan->key());
     }
 }
 
@@ -389,6 +500,17 @@ void JITWorklist::visitWeakReferences(Visitor& visitor)
                 continue;
             entry.value->checkLivenessAndVisitChildren(visitor);
         }
+        // UNGIL AB18-R1-B: also visit the children (mustHandleValues etc.) of
+        // plans claimed for finalize. The liveness gate inside converges: the
+        // unconditional iterateCodeBlocksForFinalizeRoots walk (Jw constraint,
+        // GreyedByMarking) marks the claimed CodeBlock, whose visitChildren
+        // marks its owner executable, satisfying the gate on a later
+        // constraint execution within the same marking fixpoint.
+        for (auto& entry : m_finalizingPlans) {
+            if (entry.value->vm() != vm)
+                continue;
+            entry.value->checkLivenessAndVisitChildren(visitor);
+        }
     }
     // This loop doesn't need locking because:
     // (1) no new threads can be added to m_threads. Hence, it is immutable and needs no locks.
@@ -432,6 +554,15 @@ JITWorklist::State JITWorklist::removeAllReadyPlansForVM(VM& vm, Vector<Ref<JITP
         if (plan->key() == requestedKey)
             isCompiled = true;
         m_plans.remove(plan->key());
+        if (vm.gilOff()) [[unlikely]] {
+            // UNGIL AB18-R1-A: the install happens in plan->finalize(), outside
+            // *m_lock, AFTER this removal. Keep the key claimed so enqueue's
+            // dedup backstop (§5.7.3) keeps rejecting duplicate plans through
+            // the removal->install window. Released by the claiming caller
+            // after finalize() completes. GIL-on: single mutator, the window
+            // has no observer; set stays empty.
+            m_finalizingPlans.add(plan->key(), plan.ptr());
+        }
         myReadyPlans.append(WTF::move(plan));
         return true;
     });
@@ -440,7 +571,12 @@ JITWorklist::State JITWorklist::removeAllReadyPlansForVM(VM& vm, Vector<Ref<JITP
         if (isCompiled)
             return Compiled;
 
-        if (m_plans.contains(requestedKey))
+        // UNGIL AB18-R1-A: a key claimed for finalize is still Compiling from the
+        // requester's perspective. NOTE this report is advisory only for cross-lite
+        // observers — they early-return NotKnown on !vm.numberOfActiveJITPlans()
+        // before ever taking *m_lock; the enqueue dedup backstop is the actual
+        // line of defense for the cross-lite race.
+        if (m_plans.contains(requestedKey) || m_finalizingPlans.contains(requestedKey))
             return Compiling;
     }
     return NotKnown;

@@ -257,6 +257,13 @@ private:
     MacroAssemblerCodeRef<JITThunkPtrTag> m_commonThunks[numberOfCommonThunkIDs] { };
     CTIStubMap m_ctiStubMap;
     WeakNativeExecutableSet m_nativeExecutableSet;
+    // Guards m_ctiStubMap and m_nativeExecutableSet (lookup, add-or-return-winner,
+    // dead-weak override, and the finalize() removal). Held only inside AssertNoGC
+    // regions containing pure hash operations and Weak<> construction — never across
+    // allocation, GC polls, or thunk generation — so no thread can be parked at a
+    // world-stop while owning it. With N mutators sharing one JITThunks, raw
+    // NativeExecutable* values returned after unlock rely on conservative scanning of
+    // all lite stacks; weak reaping must remain safepointed.
     WTF::RecursiveLock m_lock;
 };
 

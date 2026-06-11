@@ -164,3 +164,34 @@
 #else
 #define OFFLINE_ASM_HAVE_FAST_TLS 0
 #endif
+
+// SPEC-jit App. R5 (Task 8): ELF initial-exec TLS relocations for the
+// per-thread butterfly TID tag (g_jscButterflyTIDTag) are emitted only on
+// Linux; elsewhere (Darwin until the M4a JSCConfig key slot lands, Windows,
+// C_LOOP) the LLInt threaded WRITE fast paths fall back to the slow path.
+#if OS(LINUX)
+#define OFFLINE_ASM_LINUX 1
+#else
+#define OFFLINE_ASM_LINUX 0
+#endif
+
+// UNGIL §A.1.3 / AB-1 (obligation 9b, U-T3): the LLInt Group-3
+// storage-selection branches need an LLInt-visible TLS read of
+// g_jscCurrentVMLite. Same per-OS surface as SPEC-jit App. R5
+// (loadButterflyTIDTagToT6 / jit/AssemblyHelpers.cpp loadVMLite): ELF
+// initial-exec relocations on Linux x86-64/arm64. The C_LOOP backend IS
+// C++, so its "TLS loader" is a cloopDo call to VMLite::currentIfExists()
+// — the same thread_local the IE-model symbol mirrors (VM.cpp CS3
+// contract: VMLite::setCurrent is the sole writer, mirror store
+// immediately after) — so JSVALUE64 CLoop qualifies on any OS. Elsewhere
+// (Darwin hardware LLInt until the vmLiteTLSKey M4a slot lands, Windows
+// hardware LLInt, 32-bit cloop) a SET gilOffProcess byte fail-stops in
+// the LLInt (`break`) instead of silently reading VM-block Group-3 state
+// — the in-LLInt tripwire AB-1 records as absent (mirrors the JIT tiers'
+// Darwin RELEASE_ASSERT, AB-2).
+#if (OS(LINUX) && (CPU(X86_64) || CPU(ARM64)) && !ENABLE(C_LOOP) && USE(JSVALUE64)) \
+    || (ENABLE(C_LOOP) && USE(JSVALUE64))
+#define OFFLINE_ASM_GILOFF_TLS 1
+#else
+#define OFFLINE_ASM_GILOFF_TLS 0
+#endif

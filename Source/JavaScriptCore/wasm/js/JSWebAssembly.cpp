@@ -140,6 +140,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyCompileFunc, (JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
+
     if (!globalObject->webAssemblyEnabled()) [[unlikely]] {
         auto error = createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage());
         RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::rejectedPromise(globalObject, error)));
@@ -339,6 +343,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyInstantiateFunc, (JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
+
     if (!globalObject->webAssemblyEnabled()) [[unlikely]] {
         auto error = createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage());
         RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::rejectedPromise(globalObject, error)));
@@ -379,6 +387,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyPromisingFunc, (JSGlobalObject* globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
+
     JSValue arg = callFrame->argument(0);
 
     auto* wrapped = dynamicDowncast<WebAssemblyFunctionBase>(arg);
@@ -400,6 +412,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyValidateFunc, (JSGlobalObject* globalObject,
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
 
     // FIXME: We might want to throw an OOM exception here if we detect that something will OOM.
     // https://bugs.webkit.org/show_bug.cgi?id=166015
@@ -443,6 +459,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyCompileStreamingFunc, (JSGlobalObject* globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
+
     if (!globalObject->webAssemblyEnabled()) [[unlikely]] {
         auto error = createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage());
         RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::rejectedPromise(globalObject, error)));
@@ -484,6 +504,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyInstantiateStreamingFunc, (JSGlobalObject* g
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // SD7 (SPEC-ungil §I): wasm is refused on spawned JS Threads, both GIL modes.
+    if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+        return { };
 
     if (!globalObject->webAssemblyEnabled()) [[unlikely]] {
         auto error = createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage());

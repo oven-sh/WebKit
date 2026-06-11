@@ -748,9 +748,26 @@ public:
 
     void jumpToExceptionHandler(VM& vm)
     {
-        // genericUnwind() leaves the handler CallFrame* in vm->callFrameForCatch,
-        // and the address of the handler in vm->targetMachinePCForThrow.
-        loadPtr(&vm.targetMachinePCForThrow, GPRInfo::regT1);
+        // genericUnwind() leaves the handler CallFrame* in callFrameForCatch,
+        // and the address of the handler in targetMachinePCForThrow.
+        if (vm.gilOff()) [[unlikely]] {
+            // UNGIL §A.1.3 (U-T4, emission side): GIL-off, targetMachinePCForThrow
+            // is per-lite Group-2 state — genericUnwind publishes the catch target
+            // only through the throwing thread's VMLitePrimitives (JITExceptions.cpp
+            // mode split); the raw VM-block word is inert and stays null, so the
+            // GIL-on absolute load would farJump to 0. Mode is selected at codegen
+            // time on the compiled-for VM (same keying as loadTopEntryFrame /
+            // prepareCallOperation and the op_catch gilOff leg, JITOpcodes.cpp).
+            // regT1 is dead here (immediately consumed by the farJump) and is not
+            // the ARM64 data temp, satisfying the loadVMLite destGPR contract; the
+            // emitted sequence may also touch the macro-assembler reserved temps
+            // (e.g. ARM64 data temp on the unencodable-TLS-offset fallback), same
+            // as the landed loadTopEntryFrame pattern — no call site may hold
+            // those live across this helper in either mode.
+            loadVMLite(GPRInfo::regT1);
+            loadPtr(Address(GPRInfo::regT1, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_targetMachinePCForThrow())), GPRInfo::regT1);
+        } else
+            loadPtr(&vm.targetMachinePCForThrow, GPRInfo::regT1);
         farJump(GPRInfo::regT1, ExceptionHandlerPtrTag);
     }
 
@@ -923,6 +940,92 @@ public:
 #error "Unsupported configuration"
 #endif
     }
+
+    // =====================================================================
+    // SPEC-jit section 5.5 (Task 8): TID/SW butterfly choke points for
+    // Baseline / IC guards / shared handler thunks.
+    //
+    // Flag on (Options::useJSThreads()), EVERY generated butterfly access in
+    // this tier goes through loadButterflyForRead / loadButterflyForWrite
+    // (choke-point rule, I14). Flag off they emit exactly today's single
+    // loadPtr (I1). Returned jumps must be routed to the caller's slow /
+    // fail path (the generic operation performs the access through the
+    // object-model's regime-aware C++ paths - the LLInt/Baseline
+    // instantiation of the R3 slow-path rule; the dedicated
+    // operationSegmentedButterfly* / operationSharedArrayStorage* shims in
+    // jit/ConcurrentButterflyOperations.h are the DFG/FTL tail-call form,
+    // Tasks 9/10).
+    //
+    // Frozen predicates (SPEC-jit section 5.5; OM section 2/3 + AS-rule):
+    //   Read:  load tagged; top16 == 0xffff (segmented) => slow;
+    //          SW=1 AND ArrayStorage-shaped => slow (locked R3 regime);
+    //          else mask the tag (ALWAYS kept, D6/I14) and proceed.
+    //          No TID check on reads.
+    //   Write: load tagged; (1) segmented => slow;
+    //          (2) tag bits == per-thread R5 tag => owner: mask + store
+    //              (fused compare, NEVER elided, D9);
+    //          (3) SW=1 AND not ArrayStorage => mask + store;
+    //          (4) else => slow (the generic op fires F1 / takes the cell
+    //              lock itself; never ensure-SW-then-store inline for AS,
+    //              I20).
+    //
+    // Shape parameter: ICs that pin the structure know the indexing shape
+    // statically (AS-rule clause (c)); shape-unknown call sites pass
+    // MaybeArrayStorage and either supply indexingScratchGPR (the SW branch
+    // then loads the indexing byte, per the generic-path rule) or get the
+    // conservative form (SW=1 => slow for reads, non-owner => slow for
+    // writes), which is sound (a superset of the required slow routing).
+    // Site-by-site dispositions: docs/threads/INTEGRATE-jit.md, Task 8
+    // inventory.
+    //
+    // structureIDGPR (optional): R7/F7 ordering - when the fast path
+    // structure-checks and then loads the butterfly separately, pass the
+    // register holding the just-compared structureID; on ARM64 the butterfly
+    // load is made address-dependent on it (eor+add), a no-op on x86-64.
+    // Requires destGPR != baseGPR and destGPR != structureIDGPR when used.
+    //
+    // I16: no safepoint poll may be emitted between these loads and the
+    // dependent access; the helpers emit none.
+    // =====================================================================
+
+    enum class ConcurrentButterflyShape : uint8_t {
+        KnownNonArrayStorage, // structure-pinned, indexing shape not AS/SlowPutAS
+        KnownArrayStorage, // structure- or shape-pinned AS/SlowPutAS
+        MaybeArrayStorage, // shape unknown at emission
+    };
+
+    // Loads the (possibly tagged) butterfly of baseGPR into destGPR and emits
+    // the read predicate. destGPR may equal baseGPR ONLY when no indexing
+    // byte load is required (indexingScratchGPR == InvalidGPRReg or shape !=
+    // MaybeArrayStorage).
+    JumpList loadButterflyForRead(GPRReg baseGPR, GPRReg destGPR, ConcurrentButterflyShape, GPRReg indexingScratchGPR = InvalidGPRReg, GPRReg structureIDGPR = InvalidGPRReg);
+
+    // Write form. tidScratchGPR is required flag-on (clobbered); it must be
+    // distinct from baseGPR/destGPR.
+    JumpList loadButterflyForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg tidScratchGPR, ConcurrentButterflyShape, GPRReg indexingScratchGPR = InvalidGPRReg, GPRReg structureIDGPR = InvalidGPRReg);
+
+    // R5: one-load read of the current thread's pre-shifted TID tag
+    // (g_jscButterflyTIDTag), offset baked at emission (App. R5).
+    void loadButterflyTIDTag(GPRReg destGPR);
+
+    // The always-kept tag mask (I14(a)): dest &= low-48-bits.
+    void maskButterflyTag(GPRReg destGPR);
+
+    // Property-storage accessors with the section 5.5 predicates applied to
+    // the out-of-line branch (the inline branch is cell-internal and needs
+    // none). These are the threaded counterparts of
+    // AssemblyHelpers::loadProperty/storeProperty; flag-off they emit
+    // identical code modulo register choice. Predicate failures are appended
+    // to slowCases.
+    // storageScratch must be distinct from object and offset (it holds the
+    // tagged butterfly word; flag-on the result registers may alias object,
+    // e.g. ARM64 GetById where resultJSR == baseJSR, so the storage cannot
+    // live in result.payloadGPR()). On a slow-case jump object/offset-operand
+    // registers other than offset, storageScratch are preserved.
+    void loadProperty(GPRReg object, GPRReg offset, JSValueRegs result, GPRReg storageScratch, JumpList& slowCases, GPRReg structureIDGPR = InvalidGPRReg);
+    void storeProperty(JSValueRegs value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg tidScratch, JumpList& slowCases, GPRReg structureIDGPR = InvalidGPRReg);
+    using AssemblyHelpers::loadProperty;
+    using AssemblyHelpers::storeProperty;
 
     // These operations clobber all volatile registers. They assume that there is room on the top of
     // stack to marshall call arguments.

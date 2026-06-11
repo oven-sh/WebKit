@@ -53,7 +53,10 @@ void ToFTLForOSREntryDeferredCompilationCallback::compilationDidBecomeReadyAsync
         "Optimizing compilation of ", *codeBlock, " (for ", *profiledDFGCodeBlock,
         ") did become ready.");
 
-    *m_forcedOSREntryTrigger = JITCode::TriggerReason::CompilationDone;
+    // THREADS: relaxed atomic store on the single-byte trigger (the DFGJITCode.h
+    // carve-out: stable post-link address, advisory payload). The mutator-side
+    // readers in tierUpCommon use matching relaxed loads; plain byte store codegen.
+    WTF::atomicStore(m_forcedOSREntryTrigger, JITCode::TriggerReason::CompilationDone, std::memory_order_relaxed);
 }
 
 void ToFTLForOSREntryDeferredCompilationCallback::compilationDidComplete(
@@ -69,7 +72,11 @@ void ToFTLForOSREntryDeferredCompilationCallback::compilationDidComplete(
     case CompilationResult::CompilationSuccessful: {
         jitCode->setOSREntryBlock(codeBlock->vm(), profiledDFGCodeBlock, codeBlock);
         BytecodeIndex osrEntryBytecode = codeBlock->jitCode()->ftlForOSREntry()->bytecodeIndex();
-        jitCode->tierUpEntryTriggers.set(osrEntryBytecode, JITCode::TriggerReason::CompilationDone);
+        // THREADS (DFG-1): publish CompilationDone via the locked in-place setter, never set()/add().
+        // The key was inserted at link time (DFGJITCompiler.cpp:64), so this is a value write only;
+        // releasing m_tierUpTriggersLock inside setTierUpEntryTrigger() also orders the
+        // setOSREntryBlock() above before the CompilationDone publication seen by tierUpCommon.
+        jitCode->setTierUpEntryTrigger(osrEntryBytecode, JITCode::TriggerReason::CompilationDone);
         break;
     }
     case CompilationResult::CompilationFailed:

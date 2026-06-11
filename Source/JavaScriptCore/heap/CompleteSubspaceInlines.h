@@ -35,9 +35,33 @@ ALWAYS_INLINE void* CompleteSubspace::allocate(VM& vm, size_t cellSize, GCDeferr
     if constexpr (validateDFGDoesGC)
         vm.verifyCanGC();
 
+    // SharedGC (§5.3; T4): with the option on, route through the calling
+    // thread's client TLC (the server allocator table is never populated,
+    // §5.5). SPEC-ungil §B / I4: GIL-off, the CURRENT thread's client — not
+    // unconditionally vm.clientHeap — owns the LocalAllocators this thread
+    // may pop from (Heap::allocationClientForCurrentThread is identity
+    // GIL-on/flag-off). Option off: today's code (I10; the branch is the
+    // only delta).
+    if (Options::useSharedGCHeap()) [[unlikely]]
+        return allocateForClient(Heap::allocationClientForCurrentThread(vm, vm.clientHeap), cellSize, deferralContext, failureMode);
+
     if (Allocator allocator = allocatorFor(cellSize, AllocatorForMode::AllocatorIfExists))
         return allocator.allocate(vm.heap, allocator.cellSize(), deferralContext, failureMode);
     return allocateSlow(vm, cellSize, deferralContext, failureMode);
+}
+
+ALWAYS_INLINE void* CompleteSubspace::allocateForClient(GCClient::Heap& client, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
+{
+    // SharedGC (§12.1 seam; T4): per-client TLC routing; no VM-coupled
+    // preludes (standalone harness clients have no VM). §5.5 keeps this a
+    // C++ FreeList pop: the per-(client, directory) LocalAllocator lives in
+    // the caller's GCThreadLocalCache.
+    ASSERT(Options::useSharedGCHeap());
+    if (cellSize <= MarkedSpace::largeCutoff) {
+        if (Allocator allocator = client.threadLocalCache().allocatorForSizeStep(*this, MarkedSpace::sizeClassToIndex(cellSize)))
+            return allocator.allocate(client.server(), allocator.cellSize(), deferralContext, failureMode);
+    }
+    return allocateSlowForClient(client, cellSize, deferralContext, failureMode);
 }
 
 } // namespace JSC

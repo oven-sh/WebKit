@@ -27,6 +27,7 @@
 #include "IsoCellSet.h"
 
 #include "MarkedBlockInlines.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -58,14 +59,20 @@ Ref<SharedTask<MarkedBlock::Handle*()>> IsoCellSet::parallelNotEmptyMarkedBlockS
         
         MarkedBlock::Handle* run() final
         {
-            if (m_done)
+            // m_done is read here without m_lock by design (fast path); the
+            // transition to true happens under m_lock below. Relaxed atomic
+            // makes the monotonic-flag race well-defined.
+            if (m_done.load(std::memory_order_relaxed))
                 return nullptr;
+            // SharedGC (T8 audit, I5b): parallel constraint/marking helper —
+            // runs only inside the stop window once shared (deviation 4), so
+            // this lock-free bit scan sees a stable m_bits.
             m_directory.assertIsMutatorOrMutatorIsStopped();
             Locker locker { m_lock };
             auto bits = m_directory.markingNotEmptyBitsView() & m_set.m_blocksWithBits;
             m_index = bits.findBit(m_index, true);
             if (m_index >= m_directory.m_blocks.size()) {
-                m_done = true;
+                m_done.store(true, std::memory_order_relaxed);
                 return nullptr;
             }
             return m_directory.m_blocks[m_index++];
@@ -76,7 +83,7 @@ Ref<SharedTask<MarkedBlock::Handle*()>> IsoCellSet::parallelNotEmptyMarkedBlockS
         BlockDirectory& m_directory;
         size_t m_index { 0 };
         Lock m_lock;
-        bool m_done { false };
+        Atomic<bool> m_done { false };
     };
     
     return adoptRef(*new Task(*this));
@@ -88,8 +95,28 @@ NEVER_INLINE WTF::BitSet<MarkedBlock::atomsPerBlock>* IsoCellSet::addSlow(unsign
     auto& bitsPtrRef = m_bits[blockIndex];
     auto* bits = bitsPtrRef.get();
     if (!bits) {
-        bitsPtrRef = makeUnique<WTF::BitSet<MarkedBlock::atomsPerBlock>>();
-        bits = bitsPtrRef.get();
+        // GIL-off (TSAN family gc-marking-residual, wave-5 residual): the read
+        // side (isoCellSetBitsPointerConcurrently, IsoCellSetInlines.h) was
+        // converted to an atomic load in wave 4, but this lazy-segment
+        // publication was still a PLAIN unique_ptr assignment ordered only by
+        // a storeStoreFence — a one-sided data race against the concurrent
+        // atomic readers, and the fence is invisible to TSAN, so the freshly
+        // zero-initialized BitSet words had no modeled happens-before edge
+        // either (the "x BitSet load" report). Publish with a RELEASE store
+        // into the unique_ptr's pointer word; it pairs with the consume load
+        // on the read side to order the BitSet's construction before any
+        // concurrent bit access. All mutation of m_bits[] slots remains
+        // serialized by m_bitvectorLock, so releasing the unique_ptr into the
+        // slot transfers ownership without a competing writer.
+        static_assert(sizeof(std::unique_ptr<WTF::BitSet<MarkedBlock::atomsPerBlock>>) == sizeof(WTF::BitSet<MarkedBlock::atomsPerBlock>*));
+        auto newBits = makeUnique<WTF::BitSet<MarkedBlock::atomsPerBlock>>();
+        bits = newBits.get();
+        WTF::atomicStore(std::bit_cast<WTF::BitSet<MarkedBlock::atomsPerBlock>**>(&bitsPtrRef), newBits.release(), std::memory_order_release);
+        // Keep the fence: it orders the pointer publication above before the
+        // m_blocksWithBits publication below (the sweepToFreeList protocol
+        // reads m_blocksWithBits, loadLoadFences, then expects m_bits to be
+        // non-null). A release store only orders EARLIER stores; it does not
+        // stop this later store from being reordered before it.
         WTF::storeStoreFence();
         m_blocksWithBits[blockIndex] = true;
     }

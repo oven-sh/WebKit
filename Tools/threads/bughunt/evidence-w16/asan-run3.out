@@ -1,0 +1,24 @@
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==2959966==ERROR: AddressSanitizer: SEGV on unknown address 0x7ff9831fde80 (pc 0x7fe98dea5928 bp 0x7ffc41756bd0 sp 0x7ffc41756388 T0)
+==2959966==The signal is caused by a WRITE memory access.
+AddressSanitizer:DEADLYSIGNAL
+    #0 0x7fe98dea5928 in __memcpy_sse2_unaligned_erms (/lib64/libc.so.6+0xa5928) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+    #1 0x55e597e5e72b in __asan_memcpy /home/runner/work/llvm-project/llvm-project/compiler-rt/lib/asan/asan_interceptors_memintrinsics.cpp:63:3
+    #2 0x55e59b16a7f0 in JSC::JSCellButterfly::copyToArguments(JSC::JSGlobalObject*, JSC::JSValue*, unsigned int, unsigned int) /root/WebKit/Source/JavaScriptCore/runtime/JSCellButterfly.cpp:63:33
+    #3 0x55e59a2fbcc6 in JSC::loadVarargs(JSC::JSGlobalObject*, JSC::JSValue*, JSC::JSValue, unsigned int, unsigned int) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:340:51
+    #4 0x55e59a2fccda in JSC::setupVarargsFrame(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::CallFrame*, JSC::JSValue, unsigned int, unsigned int) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:369:5
+    #5 0x55e59a2fcdc9 in JSC::setupVarargsFrameAndSetThis(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::CallFrame*, JSC::JSValue, JSC::JSValue, unsigned int, unsigned int) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:379:5
+    #6 0x55e59a6c671e in JSC::UGPRPair JSC::LLInt::varargsSetup<JSC::OpCallVarargs, (JSC::LLInt::SetArgumentsWith)0>(JSC::CallFrame*, JSC::BaseInstruction<JSC::JSOpcodeTraits> const*, JSC::CodeSpecializationKind) /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2456:9
+    #7 0x55e59a6c620e in llint_slow_path_call_varargs /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2473:12
+    #8 0x55e59c6bb37d in llint_op_call_varargs LowLevelInterpreter.cpp
+
+==2959966==Register values:
+rax = 0x00007ff9831fde80  rbx = 0x0000000000000000  rcx = 0xfffe000000000061  rdx = 0x0000000000000008  
+rdi = 0x00007ff9831fde80  rsi = 0xfffe000000000061  rbp = 0x00007ffc41756bd0  rsp = 0x00007ffc41756388  
+ r8 = 0x00000fff3063fbd0   r9 = 0x00007ff9831fde87  r10 = 0x00000fff3063fbd0  r11 = 0x00000fffb0637bd0  
+r12 = 0x00000fffb0637bd0  r13 = 0xffffffffffffffc7  r14 = 0xfffe000000000000  r15 = 0xfffe000000000002  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV (/lib64/libc.so.6+0xa5928) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609) in __memcpy_sse2_unaligned_erms
+==2959966==ABORTING

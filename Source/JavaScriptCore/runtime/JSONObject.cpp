@@ -232,7 +232,7 @@ JSValue PropertyNameForFunctionCall::value(VM& vm) const
         else {
             if (m_number <= 9)
                 return vm.smallStrings.singleCharacterString(m_number + '0');
-            m_value = jsNontrivialString(vm, vm.numericStrings.add(m_number));
+            m_value = jsNontrivialString(vm, vm.liveNumericStrings().add(m_number));
         }
     }
     return m_value;
@@ -903,7 +903,7 @@ inline FastStringifier<CharType, bufferMode>::FastStringifier(JSGlobalObject& gl
     else {
         m_dynamicBuffer.grow(dynamicBufferInlineCapacity);
         m_capacity = dynamicBufferInlineCapacity;
-        m_stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimit());
+        m_stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimitForCurrentThreadSlow());
     }
 }
 
@@ -1504,6 +1504,12 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
 template<typename CharType, BufferMode bufferMode>
 NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendInt32Array(JSArray& array)
 {
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — bail via
+    // the existing recordFailure path (general stringifier).
+    if (array.mayBeSegmentedButterfly()) [[unlikely]] {
+        recordFailure("segmented butterfly"_s);
+        return;
+    }
     auto* butterfly = array.butterfly();
     unsigned length = butterfly->publicLength();
     if (length > butterfly->vectorLength()) [[unlikely]] {
@@ -1547,7 +1553,7 @@ inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& g
 static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
 {
     VM& vm = globalObject.vm();
-    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
+    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
     if (std::bit_cast<uint8_t*>(currentStackPointer()) >= stackLimit) [[likely]] {
         std::optional<FailureReason> failureReason;
         failureReason = std::nullopt;

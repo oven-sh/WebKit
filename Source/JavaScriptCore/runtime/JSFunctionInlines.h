@@ -74,8 +74,9 @@ inline JSFunction* JSFunction::createWithInvalidatedReallocationWatchpoint(VM& v
 
 inline JSFunction::JSFunction(VM& vm, FunctionExecutable* executable, JSScope* scope, Structure* structure)
     : Base(vm, scope, structure)
-    , m_executableOrRareData(std::bit_cast<uintptr_t>(executable))
 {
+    // THREADS/TSAN: relaxed store (see JSFunction.cpp constructor note).
+    WTF::atomicStore(&m_executableOrRareData, std::bit_cast<uintptr_t>(executable), std::memory_order_relaxed);
     assertTypeInfoFlagInvariants();
 }
 

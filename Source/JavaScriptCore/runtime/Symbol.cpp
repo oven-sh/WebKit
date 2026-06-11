@@ -65,7 +65,18 @@ void Symbol::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    vm.symbolImplToSymbolMap.set(&m_privateName.uid(), this);
+    // First-wins, never clobber (TSAN-TRIAGE §3.32 / wave-2 amendment): with
+    // useJSThreads, two threads can race Symbol::create(VM&, SymbolImpl&) on
+    // the SAME registered uid (Symbol.for through the shared atom table +
+    // locked WTF SymbolRegistry). The map's internal lock makes each
+    // operation data-race-free, but an unconditional set() here would let
+    // the losing allocation replace the winner's canonical cell — leaving
+    // the winner's thread holding a Symbol that is no longer canonical
+    // (s1 !== s2 while o[s1] === o[s2]). addIfAbsent keeps the first live
+    // published cell; Symbol::create re-reads to return the canonical one.
+    // For freshly minted uids (every other creation path) the uid is unique
+    // to this cell, so add-if-absent is behaviorally identical to set().
+    vm.symbolImplToSymbolMap.addIfAbsent(&m_privateName.uid(), this);
 }
 
 JSValue Symbol::toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const
@@ -170,6 +181,16 @@ Symbol* Symbol::create(VM& vm, SymbolImpl& uid)
 
     Symbol* symbol = new (NotNull, allocateCell<Symbol>(vm)) Symbol(vm, uid);
     symbol->finishCreation(vm);
+    // The registration inside finishCreation is first-wins (see the comment
+    // there): if another thread published a cell for this uid between our
+    // miss above and our publish, THAT cell is canonical and must be the one
+    // we hand out — property lookup keys on the uid, so returning our loser
+    // cell would make Symbol.for("x") !== Symbol.for("x") cross-thread while
+    // both still address the same properties. Re-read and return the
+    // canonical cell; our allocation simply dies. Single-threaded (and
+    // flag-off) this get() returns the cell we just registered.
+    if (Symbol* canonical = vm.symbolImplToSymbolMap.get(&uid))
+        return canonical;
     return symbol;
 }
 

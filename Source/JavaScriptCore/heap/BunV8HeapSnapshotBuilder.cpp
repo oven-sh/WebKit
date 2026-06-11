@@ -107,6 +107,9 @@ BunV8HeapSnapshotBuilder::~BunV8HeapSnapshotBuilder() = default;
 
 String BunV8HeapSnapshotBuilder::json()
 {
+    // SharedGC (T9): main-VM-only — all m_profiler.vm() uses in this file:
+    // profiler owned by the main VM, snapshotting runs on its mutator under
+    // the API lock (see HeapProfiler::vm(), HeapProfiler.h).
     VM& vm = m_profiler.vm();
     PreventCollectionScope preventCollectionScope(vm.heap);
     {

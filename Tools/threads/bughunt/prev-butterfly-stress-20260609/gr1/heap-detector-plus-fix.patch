@@ -1,0 +1,96 @@
+--- /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp	2026-06-09 05:08:55.734418768 +0000
++++ Heap.cpp.fixarm	2026-06-09 04:58:28.853817407 +0000
+@@ -141,6 +141,20 @@
+ 
+ namespace JSC {
+ 
++// BUGHUNT-GR1 (scratch instrumentation, revert before landing): shadow
++// accounting for Heap::m_mutatorMarkStack (the remembered set). The only
++// physical append site is Heap::addToRememberedSet; drains are
++// MarkStackMergingConstraint::executeImplImpl (transferTo) and the two
++// clear() sites below. If appends - drained != size() at a drain point
++// (world stopped), an append was lost or duplicated by the unsynchronized
++// GCSegmentedArray::postIncTop / expand on the shared stack.
++std::atomic<size_t> g_bhRemsetAppends { 0 };
++std::atomic<size_t> g_bhRemsetDrained { 0 };
++std::atomic<size_t> g_bhRemsetOverlaps { 0 };
++std::atomic<size_t> g_bhRemsetAnomalies { 0 };
++std::atomic<size_t> g_bhRemsetShadowMismatches { 0 };
++std::atomic<int> g_bhRemsetInAppend { 0 };
++
+ // ===== UNGIL §A.3 (U-T5) cross-TU seams =====
+ // Defined in runtime/VMManager.cpp (window state + ticket park) and
+ // runtime/VMLite.cpp (ANNEX ISB1 stop-generation sync). Their headers
+@@ -475,6 +489,13 @@
+         m_barrierThreshold = tautologicalThreshold;
+     }
+ 
++    // BUGHUNT-GR1 FIX ARM (candidate fix under test): with N GIL-off mutators,
++    // Heap::addToRememberedSet appends to this shared stack concurrently;
++    // GCSegmentedArray::postIncTop/expand are not multi-producer safe.
++    // Serialize appends via the (previously unwired) per-instance lock.
++    if (Options::useJSThreads())
++        m_mutatorMarkStack->setMultiProducerAccess();
++
+     m_worldState.store(0);
+ 
+     // §11 (T7): the epoch is a by-value member; wire its server back-pointer
+@@ -525,6 +546,14 @@
+         [&] (SlotVisitor& visitor) {
+             visitor.clearMarkStacks();
+         });
++    // BUGHUNT-GR1: account the teardown clear as a drain (no mismatch check
++    // here: with VMLite, lite Heap teardowns would compare global counters
++    // against a lite's empty stack — a cross-heap false positive). Print the
++    // per-process summary instead.
++    {
++        g_bhRemsetDrained.fetch_add(m_mutatorMarkStack->size(), std::memory_order_relaxed);
++        dataLogLn("[BUGHUNT-GR1] SUMMARY: appends=", g_bhRemsetAppends.load(), " drained=", g_bhRemsetDrained.load(), " overlaps=", g_bhRemsetOverlaps.load(), " anomalies=", g_bhRemsetAnomalies.load(), " shadowMismatches=", g_bhRemsetShadowMismatches.load(), " gcVersion=", m_gcVersion, " allocThisCycle=", totalBytesAllocatedThisCycle(), " maxEdenSize=", m_maxEdenSize);
++    }
+     m_mutatorMarkStack->clear();
+     m_raceMarkStack->clear();
+ 
+@@ -1477,7 +1506,24 @@
+     // get scanned again. If we lose then someone else will barrier the object again. That would
+     // be unfortunate but not the end of the world.
+     cell->setCellState(CellState::PossiblyGrey);
+-    m_mutatorMarkStack->append(cell);
++    // BUGHUNT-GR1: detect concurrent entry + per-append size delta, and feed
++    // the shadow append counter checked at the drain points.
++    {
++        int prev = g_bhRemsetInAppend.fetch_add(1, std::memory_order_acq_rel);
++        size_t before = m_mutatorMarkStack->size();
++        m_mutatorMarkStack->append(cell);
++        size_t after = m_mutatorMarkStack->size();
++        g_bhRemsetInAppend.fetch_sub(1, std::memory_order_acq_rel);
++        g_bhRemsetAppends.fetch_add(1, std::memory_order_relaxed);
++        if (prev) {
++            g_bhRemsetOverlaps.fetch_add(1, std::memory_order_relaxed);
++            dataLogLn("[BUGHUNT-GR1] OVERLAP: concurrent addToRememberedSet append (", prev + 1, " threads in append)");
++        }
++        if (after != before + 1) {
++            g_bhRemsetAnomalies.fetch_add(1, std::memory_order_relaxed);
++            dataLogLn("[BUGHUNT-GR1] ANOMALY: remset append delta=", static_cast<long long>(after) - static_cast<long long>(before), " (before=", before, " after=", after, " overlapped=", prev, ")");
++        }
++    }
+ }
+ 
+ void Heap::sweepSynchronously()
+@@ -1818,6 +1864,17 @@
+     if (isFullGC) {
+         m_opaqueRoots.clear();
+         m_collectorSlotVisitor->clearMarkStacks();
++        // BUGHUNT-GR1: account the full-GC discard as a drain and check the shadow.
++        {
++            size_t size = m_mutatorMarkStack->size();
++            size_t appends = g_bhRemsetAppends.load(std::memory_order_relaxed);
++            size_t drained = g_bhRemsetDrained.load(std::memory_order_relaxed);
++            if (appends - drained != size) {
++                g_bhRemsetShadowMismatches.fetch_add(1, std::memory_order_relaxed);
++                dataLogLn("[BUGHUNT-GR1] SHADOW-MISMATCH at full-GC clear: appends=", appends, " drained=", drained, " expected-pending=", appends - drained, " actual-size=", size);
++            }
++            g_bhRemsetDrained.fetch_add(size, std::memory_order_relaxed);
++        }
+         m_mutatorMarkStack->clear();
+     } else
+         m_bytesAllocatedBeforeLastEdenCollect = totalBytesAllocatedThisCycle();

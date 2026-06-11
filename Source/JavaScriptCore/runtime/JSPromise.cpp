@@ -48,6 +48,43 @@
 
 namespace JSC {
 
+// =============================================================================
+// UNGIL §E.1b (ANNEX E1B + r16 F3/SD15 + ANNEX ALS1; U-T9) — same-library
+// seams, self-declared identically to their defining TUs (no header changes;
+// the currentThreadHoldsEntryToken pattern, JSLock.cpp):
+//
+//  - notifyPromiseRejectionTrackerCrossThreadAware (VM.cpp, U-T8e): the SD15
+//    invocation gate. Carrier / GIL-on / flag-off: invokes the methodTable
+//    hook inline, bit-identical to the landed call sites. Spawned GIL-off:
+//    appends a tracker record {promise Strong, operation} to the handoff
+//    queue, flushed + EXECUTED at the §F.1 carrier drain points (a report
+//    may arrive a drain late; never lost while the carrier drains — SD15).
+//    This file's four tracker call sites are re-pointed at it (U-T9 closes
+//    the U-T8e "call-site status" note).
+//  - threadAsyncContextData (JSGlobalObject.cpp, U-T8b storage / U-T9
+//    consumption, ALS1.3): the ALS cursor, rerouted PER-LITE GIL-off
+//    ("current async context" is thread-local by definition); flag-off /
+//    GIL-on / main carrier it returns the in-object m_asyncContextData
+//    BYTE-IDENTICALLY. Capture stays PER-REACTION at registration time; the
+//    captured tuple is an ordinary shared-heap cell carried BY THE JOB, so
+//    SD10 thread-migrating continuations PRESERVE ALS (ALS1.1) — the §E.1b
+//    enqueue edges (I11 own-queue / §E.4 ThreadTask append under inboxLock)
+//    carry release/acquire, so the settling thread reads an initialized
+//    tuple (ALS1.2). RESTORE-side reroute (JSMicrotask.cpp save/write/run/
+//    write-back brackets; JSPromisePrototype.cpp then() fast-path capture)
+//    is RECORDED OPEN — both TUs are outside U-T9's owned file set — so the
+//    accessor's per-lite routing is GATED OFF at its definition
+//    (perLiteAsyncContextCursorEnabled, JSGlobalObject.cpp): a capture-only
+//    reroute would split the regime (spawned brackets writing the SHARED
+//    cursor while captures read a never-bracket-written per-lite copy). The
+//    capture sites in THIS file are re-pointed at the seam now; flipping the
+//    one constant together with the restore-side slice lands ALS1.3 whole.
+// =============================================================================
+void notifyPromiseRejectionTrackerCrossThreadAware(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
+#if USE(BUN_JSC_ADDITIONS)
+InternalFieldTuple* threadAsyncContextData(JSGlobalObject*);
+#endif
+
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
 
 JSPromise* JSPromise::create(VM& vm, Structure* structure)
@@ -178,9 +215,35 @@ JSPromise* JSPromise::rejectedPromiseWithCaughtException(JSGlobalObject* globalO
     return rejectedPromise(globalObject, exception->value());
 }
 
+// UNGIL ANNEX E1B (U-T9): GIL-off, JSPromise internal-state transitions run
+// under the promise's JSCellLock (10a) — internal fields are NOT §9.5 slots.
+// The first-resolving claim below is the settle-side entry: two concurrent
+// resolvers race the claim under the cell lock; exactly one proceeds. NO GC
+// allocation and no JS runs inside any cell-lock hold in this file (OM I20).
+// GIL-on/flag-off: the landed unlocked claim, byte-identical.
+//
+// Audit note (the §E.1b.2 "every other promise internal-field writer" U-T9
+// audit): PromiseOperations.js / PromiseConstructor.js contain no
+// @putPromiseInternalField sites — the native-restructure paths in this file
+// (claims, performPromiseThen* publish loops, fulfillPromise/rejectPromise
+// extraction) plus the embedder-binding direct twiddles (JSC__JSPromise__*,
+// which construct PRE-SHARING promises) are the complete writer set;
+// non-promise internal-field types are §N (U-T13's twin-intrinsic work).
+
 void JSPromise::resolve(JSGlobalObject* globalObject, VM& vm, JSValue value)
 {
     ASSERT(!value.inherits<Exception>());
+    if (vm.gilOff()) [[unlikely]] {
+        {
+            Locker locker { cellLock() };
+            uint16_t currentFlags = flags();
+            if (currentFlags & isFirstResolvingFunctionCalledFlag)
+                return;
+            setFlags(currentFlags | isFirstResolvingFunctionCalledFlag);
+        }
+        resolvePromise(globalObject, vm, value);
+        return;
+    }
     if (!isFirstResolvingFunctionCalled()) {
         setFlags(flags() | isFirstResolvingFunctionCalledFlag);
         resolvePromise(globalObject, vm, value);
@@ -190,6 +253,17 @@ void JSPromise::resolve(JSGlobalObject* globalObject, VM& vm, JSValue value)
 void JSPromise::reject(VM& vm, JSValue value)
 {
     ASSERT(!value.inherits<Exception>());
+    if (vm.gilOff()) [[unlikely]] {
+        {
+            Locker locker { cellLock() };
+            uint16_t currentFlags = flags();
+            if (currentFlags & isFirstResolvingFunctionCalledFlag)
+                return;
+            setFlags(currentFlags | isFirstResolvingFunctionCalledFlag);
+        }
+        rejectPromise(vm, value);
+        return;
+    }
     if (!isFirstResolvingFunctionCalled()) {
         setFlags(flags() | isFirstResolvingFunctionCalledFlag);
         rejectPromise(vm, value);
@@ -199,6 +273,17 @@ void JSPromise::reject(VM& vm, JSValue value)
 void JSPromise::fulfill(VM& vm, JSValue value)
 {
     ASSERT(!value.inherits<Exception>());
+    if (vm.gilOff()) [[unlikely]] {
+        {
+            Locker locker { cellLock() };
+            uint16_t currentFlags = flags();
+            if (currentFlags & isFirstResolvingFunctionCalledFlag)
+                return;
+            setFlags(currentFlags | isFirstResolvingFunctionCalledFlag);
+        }
+        fulfillPromise(vm, value);
+        return;
+    }
     if (!isFirstResolvingFunctionCalled()) {
         setFlags(flags() | isFirstResolvingFunctionCalledFlag);
         fulfillPromise(vm, value);
@@ -207,6 +292,17 @@ void JSPromise::fulfill(VM& vm, JSValue value)
 
 void JSPromise::pipeFrom(VM& vm, JSPromise* from)
 {
+    if (vm.gilOff()) [[unlikely]] {
+        {
+            Locker locker { cellLock() };
+            uint16_t currentFlags = flags();
+            if (currentFlags & isFirstResolvingFunctionCalledFlag)
+                return;
+            setFlags(currentFlags | isFirstResolvingFunctionCalledFlag);
+        }
+        from->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFulfillWithoutHandlerJob, this, jsUndefined());
+        return;
+    }
     if (isFirstResolvingFunctionCalled())
         return;
     setFlags(flags() | isFirstResolvingFunctionCalledFlag);
@@ -222,6 +318,19 @@ void JSPromise::performPromiseThenExported(VM& vm, JSGlobalObject* globalObject,
 void JSPromise::rejectAsHandled(VM& vm, JSValue value)
 {
     // Setting isHandledFlag before calling reject since this removes round-trip between JSC and PromiseRejectionTracker, and it does not show an user-observable behavior.
+    if (vm.gilOff()) [[unlikely]] {
+        // E1B: claim + markAsHandled in ONE cell-lock RMW (a lost claim must
+        // not set isHandled on a promise someone else is settling).
+        {
+            Locker locker { cellLock() };
+            uint16_t currentFlags = flags();
+            if (currentFlags & isFirstResolvingFunctionCalledFlag)
+                return;
+            setFlags(currentFlags | isFirstResolvingFunctionCalledFlag | isHandledFlag);
+        }
+        rejectPromise(vm, value);
+        return;
+    }
     if (!isFirstResolvingFunctionCalled()) {
         markAsHandled();
         reject(vm, value);
@@ -344,10 +453,11 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
     bool rejectedCallable = onRejected.isCallable();
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Capture async context for promise reaction
+    // Capture async context for promise reaction (ALS1: PER-REACTION, at
+    // registration time, from the CURRENT — GIL-off per-lite — cursor).
     // Wrap in InternalFieldTuple: [userContext (undefined), asyncContext]
     JSValue context = jsUndefined();
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
+    if (auto* asyncContextData = threadAsyncContextData(globalObject)) {
         JSValue asyncContext = asyncContextData->getInternalField(0);
         if (!asyncContext.isUndefined()) {
             auto* tuple = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
@@ -357,6 +467,117 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
         }
     }
 #endif
+
+    if (vm.gilOff()) [[unlikely]] {
+        // ANNEX E1B concurrent then()/resolve(): snapshot under the cell
+        // lock, ALLOCATE OUTSIDE it (OM I20), re-check + publish under it;
+        // a raced snapshot drops the allocation and retries. The inline-
+        // reaction install fast path is NOT taken GIL-off (the heap reaction
+        // is always built; a PRE-EXISTING inline reaction is spilled here,
+        // outside the lock, and published together with the new head).
+        while (true) {
+            uint16_t snapshotFlags;
+            JSCell* payload;
+            JSValue slotValue;
+            bool wonHandleClaim = false;
+            {
+                Locker locker { cellLock() };
+                snapshotFlags = flags();
+                payload = payloadCell();
+                slotValue = m_slot.get();
+                // SD15 MULTIPLICITY (U-T9): the unhandled observation and the
+                // isHandled claim are ATOMIC under the cell lock — two threads
+                // concurrently then()ing a rejected shared promise must emit
+                // at most ONE Handle event (the annex relaxes tracker ORDERING
+                // only, never per-promise multiplicity; a duplicate Handle
+                // under-counts refcount-style trackers). Rejected is terminal,
+                // so claiming here cannot leak into a Pending retry.
+                if (static_cast<Status>(snapshotFlags & stateMask) == Status::Rejected && !(snapshotFlags & isHandledFlag)) {
+                    setFlags(snapshotFlags | isHandledFlag); // markAsHandled, fused with the claim.
+                    wonHandleClaim = true;
+                }
+            }
+            auto snapshotStatus = static_cast<Status>(snapshotFlags & stateMask);
+            if (snapshotStatus == Status::Rejected) {
+                JSValue settled = slotValue; // settlementValue(), from the coherent locked snapshot.
+                if (wonHandleClaim)
+                    notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
+                if (rejectedCallable)
+#if USE(BUN_JSC_ADDITIONS)
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
+#else
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
+#endif
+                else
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+                return;
+            }
+            if (snapshotStatus == Status::Fulfilled) {
+                JSValue settled = slotValue;
+                if (fulfilledCallable)
+#if USE(BUN_JSC_ADDITIONS)
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
+#else
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled);
+#endif
+                else
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, jsUndefined());
+                return;
+            }
+
+            // Pending: build the spill (if any) + the new head, outside the lock.
+            auto snapshotKind = static_cast<InlineReactionKind>((snapshotFlags & inlineReactionKindMask) >> inlineReactionKindShift);
+            JSPromiseReaction* existing = nullptr;
+            switch (snapshotKind) {
+            case InlineReactionKind::InternalMicrotask: {
+                InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+                existing = JSSlimPromiseReaction::create(vm, payload ? JSValue(payload) : jsUndefined(), task, slotValue, nullptr);
+                break;
+            }
+            case InlineReactionKind::FulfillHandler:
+            case InlineReactionKind::RejectHandler:
+                existing = JSSlimPromiseReaction::create(vm, uncheckedDowncast<JSPromise>(payload), slotValue, snapshotKind == InlineReactionKind::FulfillHandler, nullptr);
+                break;
+            case InlineReactionKind::None:
+                existing = uncheckedDowncast<JSPromiseReaction>(payload);
+                break;
+            }
+
+            bool onlyFulfill = fulfilledCallable && !rejectedCallable;
+            bool onlyReject = !fulfilledCallable && rejectedCallable;
+            JSPromiseReaction* reaction;
+#if USE(BUN_JSC_ADDITIONS)
+            if (!context.isUndefined()) {
+                reaction = JSFullPromiseReaction::create(vm, promiseOrCapability,
+                    fulfilledCallable ? onFulfilled : jsUndefined(),
+                    rejectedCallable ? onRejected : jsUndefined(),
+                    context, existing);
+            } else
+#endif
+            if (onlyFulfill)
+                reaction = JSSlimPromiseReaction::create(vm, promiseOrCapability, onFulfilled, true, existing);
+            else if (onlyReject)
+                reaction = JSSlimPromiseReaction::create(vm, promiseOrCapability, onRejected, false, existing);
+            else if (fulfilledCallable) {
+                ASSERT(rejectedCallable);
+                reaction = JSFullPromiseReaction::create(vm, promiseOrCapability, onFulfilled, onRejected, jsUndefined(), existing);
+            } else
+                reaction = JSSlimPromiseReaction::create(vm, promiseOrCapability, InternalMicrotask::PromiseResolveWithoutHandlerJob, jsUndefined(), existing);
+
+            {
+                Locker locker { cellLock() };
+                if (flags() == snapshotFlags && payloadCell() == payload && m_slot.get() == slotValue) {
+                    if (snapshotKind != InlineReactionKind::None)
+                        clearSlot(); // the spilled inline reaction now owns its context/handler.
+                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | isHandledFlag, reaction);
+                    return;
+                }
+            }
+            // Raced (a concurrent then() or settle moved the state): the
+            // dropped allocations are unreferenced garbage; retry against
+            // the fresh snapshot.
+        }
+    }
 
     switch (status()) {
     case JSPromise::Status::Pending: {
@@ -402,7 +623,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
     case JSPromise::Status::Rejected: {
         JSValue settled = settlementValue();
         if (!isHandled())
-            globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Handle);
+            notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
         if (rejectedCallable)
 #if USE(BUN_JSC_ADDITIONS)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
@@ -436,8 +657,9 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
     bool rejectedCallable = onRejected.isCallable();
 
     // Wrap userContext and asyncContext in InternalFieldTuple: [userContext, asyncContext]
+    // (ALS1: registration-time capture from the — GIL-off per-lite — cursor.)
     JSValue context = userContext;
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
+    if (auto* asyncContextData = threadAsyncContextData(globalObject)) {
         JSValue asyncContext = asyncContextData->getInternalField(0);
         // Always create a tuple if there's a user context or async context
         if (!userContext.isUndefinedOrNull() || !asyncContext.isUndefined()) {
@@ -445,6 +667,79 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
             tuple->putInternalField(vm, 0, userContext);   // userContext
             tuple->putInternalField(vm, 1, asyncContext);  // asyncContext
             context = tuple;
+        }
+    }
+
+    if (vm.gilOff()) [[unlikely]] {
+        // ANNEX E1B: same snapshot/alloc-outside/re-check loop as
+        // performPromiseThen (Pending arm always heap-allocates here).
+        while (true) {
+            uint16_t snapshotFlags;
+            JSCell* payload;
+            JSValue slotValue;
+            bool wonHandleClaim = false;
+            {
+                Locker locker { cellLock() };
+                snapshotFlags = flags();
+                payload = payloadCell();
+                slotValue = m_slot.get();
+                // SD15 multiplicity: atomic observe+claim — see performPromiseThen.
+                if (static_cast<Status>(snapshotFlags & stateMask) == Status::Rejected && !(snapshotFlags & isHandledFlag)) {
+                    setFlags(snapshotFlags | isHandledFlag);
+                    wonHandleClaim = true;
+                }
+            }
+            auto snapshotStatus = static_cast<Status>(snapshotFlags & stateMask);
+            if (snapshotStatus == Status::Rejected) {
+                JSValue settled = slotValue;
+                if (wonHandleClaim)
+                    notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
+                if (rejectedCallable)
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
+                else
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+                return;
+            }
+            if (snapshotStatus == Status::Fulfilled) {
+                JSValue settled = slotValue;
+                if (fulfilledCallable)
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
+                else
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, jsUndefined());
+                return;
+            }
+
+            auto snapshotKind = static_cast<InlineReactionKind>((snapshotFlags & inlineReactionKindMask) >> inlineReactionKindShift);
+            JSPromiseReaction* existing = nullptr;
+            switch (snapshotKind) {
+            case InlineReactionKind::InternalMicrotask: {
+                InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+                existing = JSSlimPromiseReaction::create(vm, payload ? JSValue(payload) : jsUndefined(), task, slotValue, nullptr);
+                break;
+            }
+            case InlineReactionKind::FulfillHandler:
+            case InlineReactionKind::RejectHandler:
+                existing = JSSlimPromiseReaction::create(vm, uncheckedDowncast<JSPromise>(payload), slotValue, snapshotKind == InlineReactionKind::FulfillHandler, nullptr);
+                break;
+            case InlineReactionKind::None:
+                existing = uncheckedDowncast<JSPromiseReaction>(payload);
+                break;
+            }
+
+            auto* reaction = JSFullPromiseReaction::create(vm, promiseOrCapability,
+                fulfilledCallable ? onFulfilled : jsUndefined(),
+                rejectedCallable ? onRejected : jsUndefined(),
+                context, existing);
+
+            {
+                Locker locker { cellLock() };
+                if (flags() == snapshotFlags && payloadCell() == payload && m_slot.get() == slotValue) {
+                    if (snapshotKind != InlineReactionKind::None)
+                        clearSlot();
+                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | isHandledFlag, reaction);
+                    return;
+                }
+            }
         }
     }
 
@@ -461,7 +756,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
     case JSPromise::Status::Rejected: {
         JSValue settled = settlementValue();
         if (!isHandled())
-            globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Handle);
+            notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
         if (rejectedCallable)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
         else
@@ -484,6 +779,71 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
 void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotask task, JSCell* cell, JSValue context)
 {
     JSValue cellValue = cell ? JSValue(cell) : jsUndefined();
+
+    if (vm.gilOff()) [[unlikely]] {
+        // ANNEX E1B: same snapshot/alloc-outside/re-check loop; the inline
+        // microtask-reaction install fast path is not taken GIL-off.
+        JSGlobalObject* globalObject = realm();
+        while (true) {
+            uint16_t snapshotFlags;
+            JSCell* payload;
+            JSValue slotValue;
+            bool wonHandleClaim = false;
+            {
+                Locker locker { cellLock() };
+                snapshotFlags = flags();
+                payload = payloadCell();
+                slotValue = m_slot.get();
+                // SD15 multiplicity: atomic observe+claim — see performPromiseThen.
+                if (static_cast<Status>(snapshotFlags & stateMask) == Status::Rejected && !(snapshotFlags & isHandledFlag)) {
+                    setFlags(snapshotFlags | isHandledFlag);
+                    wonHandleClaim = true;
+                }
+            }
+            auto snapshotStatus = static_cast<Status>(snapshotFlags & stateMask);
+            if (snapshotStatus != Status::Pending) {
+                JSValue settled = slotValue;
+                if (wonHandleClaim)
+                    notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
+#if USE(BUN_JSC_ADDITIONS)
+                if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                    vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context });
+                } else
+#endif
+                globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context);
+                return;
+            }
+
+            auto snapshotKind = static_cast<InlineReactionKind>((snapshotFlags & inlineReactionKindMask) >> inlineReactionKindShift);
+            JSPromiseReaction* existing = nullptr;
+            switch (snapshotKind) {
+            case InlineReactionKind::InternalMicrotask: {
+                InternalMicrotask existingTask = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+                existing = JSSlimPromiseReaction::create(vm, payload ? JSValue(payload) : jsUndefined(), existingTask, slotValue, nullptr);
+                break;
+            }
+            case InlineReactionKind::FulfillHandler:
+            case InlineReactionKind::RejectHandler:
+                existing = JSSlimPromiseReaction::create(vm, uncheckedDowncast<JSPromise>(payload), slotValue, snapshotKind == InlineReactionKind::FulfillHandler, nullptr);
+                break;
+            case InlineReactionKind::None:
+                existing = uncheckedDowncast<JSPromiseReaction>(payload);
+                break;
+            }
+
+            auto* reaction = JSSlimPromiseReaction::create(vm, cellValue, task, context, existing);
+            {
+                Locker locker { cellLock() };
+                if (flags() == snapshotFlags && payloadCell() == payload && m_slot.get() == slotValue) {
+                    if (snapshotKind != InlineReactionKind::None)
+                        clearSlot();
+                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | isHandledFlag, reaction);
+                    return;
+                }
+            }
+        }
+    }
+
     switch (status()) {
     case JSPromise::Status::Pending: {
         if (inlineReactionKind() == InlineReactionKind::None && !payloadCell()) [[likely]] {
@@ -499,7 +859,7 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
         JSGlobalObject* globalObject = realm();
         JSValue settled = settlementValue();
         if (!isHandled())
-            globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Handle);
+            notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
 #if USE(BUN_JSC_ADDITIONS)
         if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
             markAsHandled();
@@ -615,8 +975,64 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
 
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
 {
-    ASSERT(status() == Status::Pending);
     JSGlobalObject* globalObject = realm();
+    if (vm.gilOff()) [[unlikely]] {
+        // ANNEX E1B: swap status + extract the reaction state under the cell
+        // lock; ALL enqueues (and the SD15 tracker event) run post-unlock.
+        // A racer that already settled wins silently (the host-function
+        // direct callers — resolvePromise/rejectPromise host fns — carry no
+        // first-resolving claim, so non-Pending is reachable here GIL-off).
+        uint16_t snapshotFlags;
+        JSCell* payload;
+        JSValue slotValue;
+        {
+            Locker locker { cellLock() };
+            snapshotFlags = flags();
+            if ((snapshotFlags & stateMask) != static_cast<uint16_t>(Status::Pending))
+                return;
+            payload = payloadCell();
+            slotValue = m_slot.get();
+            uint16_t settledFlags = (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | static_cast<uint16_t>(Status::Rejected);
+            setSlot(vm, argument);
+            setPackedCell(vm, settledFlags, nullptr);
+        }
+        auto kind = static_cast<InlineReactionKind>((snapshotFlags & inlineReactionKindMask) >> inlineReactionKindShift);
+        switch (kind) {
+        case InlineReactionKind::InternalMicrotask: {
+            ASSERT(snapshotFlags & isHandledFlag);
+            InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+            JSValue cellValue = payload ? JSValue(payload) : jsUndefined();
+#if USE(BUN_JSC_ADDITIONS)
+            if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue });
+                return;
+            }
+#endif
+            globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue);
+            return;
+        }
+        case InlineReactionKind::FulfillHandler:
+        case InlineReactionKind::RejectHandler: {
+            ASSERT(snapshotFlags & isHandledFlag);
+            JSPromise* resultPromise = uncheckedDowncast<JSPromise>(payload);
+            if (kind == InlineReactionKind::RejectHandler)
+                globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), resultPromise, slotValue, argument);
+            else
+                globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), resultPromise, argument, jsUndefined());
+            return;
+        }
+        case InlineReactionKind::None: {
+            if (!(snapshotFlags & isHandledFlag))
+                notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Reject);
+            if (JSPromiseReaction* reactions = uncheckedDowncast<JSPromiseReaction>(payload))
+                triggerPromiseReactions(vm, globalObject, Status::Rejected, reactions, argument);
+            return;
+        }
+        }
+        return;
+    }
+
+    ASSERT(status() == Status::Pending);
     uint16_t currentFlags = flags();
     auto kind = static_cast<InlineReactionKind>((currentFlags & inlineReactionKindMask) >> inlineReactionKindShift);
     switch (kind) {
@@ -634,7 +1050,7 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
         setPackedCell(vm, settledFlags, nullptr);
 
         if (!isHandled())
-            globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+            notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Reject);
 
         if (!reactions)
             return;
@@ -646,8 +1062,60 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
 
 void JSPromise::fulfillPromise(VM& vm, JSValue argument)
 {
+    JSGlobalObject* globalObjectForGILOff = realm();
+    if (vm.gilOff()) [[unlikely]] {
+        // ANNEX E1B — mirror of rejectPromise's locked extraction (no
+        // tracker event on the fulfill edge).
+        uint16_t snapshotFlags;
+        JSCell* payload;
+        JSValue slotValue;
+        {
+            Locker locker { cellLock() };
+            snapshotFlags = flags();
+            if ((snapshotFlags & stateMask) != static_cast<uint16_t>(Status::Pending))
+                return;
+            payload = payloadCell();
+            slotValue = m_slot.get();
+            uint16_t settledFlags = (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | static_cast<uint16_t>(Status::Fulfilled);
+            setSlot(vm, argument);
+            setPackedCell(vm, settledFlags, nullptr);
+        }
+        auto snapshotKind = static_cast<InlineReactionKind>((snapshotFlags & inlineReactionKindMask) >> inlineReactionKindShift);
+        switch (snapshotKind) {
+        case InlineReactionKind::InternalMicrotask: {
+            ASSERT(snapshotFlags & isHandledFlag);
+            InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+            JSValue cellValue = payload ? JSValue(payload) : jsUndefined();
+#if USE(BUN_JSC_ADDITIONS)
+            if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue });
+                return;
+            }
+#endif
+            globalObjectForGILOff->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue);
+            return;
+        }
+        case InlineReactionKind::FulfillHandler:
+        case InlineReactionKind::RejectHandler: {
+            ASSERT(snapshotFlags & isHandledFlag);
+            JSPromise* resultPromise = uncheckedDowncast<JSPromise>(payload);
+            if (snapshotKind == InlineReactionKind::FulfillHandler)
+                globalObjectForGILOff->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), resultPromise, slotValue, argument);
+            else
+                globalObjectForGILOff->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), resultPromise, argument, jsUndefined());
+            return;
+        }
+        case InlineReactionKind::None: {
+            if (JSPromiseReaction* reactions = uncheckedDowncast<JSPromiseReaction>(payload))
+                triggerPromiseReactions(vm, globalObjectForGILOff, Status::Fulfilled, reactions, argument);
+            return;
+        }
+        }
+        return;
+    }
+
     ASSERT(status() == Status::Pending);
-    JSGlobalObject* globalObject = realm();
+    JSGlobalObject* globalObject = globalObjectForGILOff;
     uint16_t currentFlags = flags();
     auto kind = static_cast<InlineReactionKind>((currentFlags & inlineReactionKindMask) >> inlineReactionKindShift);
     switch (kind) {
@@ -690,7 +1158,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
 #if USE(BUN_JSC_ADDITIONS)
             // Capture async context for thenable resolution
             JSValue asyncContext = jsUndefined();
-            if (auto* asyncContextData = globalObject->m_asyncContextData.get())
+            if (auto* asyncContextData = threadAsyncContextData(globalObject)) // ALS1 (U-T9): per-lite cursor GIL-off; in-object member otherwise.
                 asyncContext = asyncContextData->getInternalField(0);
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, asyncContext);
 #else
@@ -722,7 +1190,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
 #if USE(BUN_JSC_ADDITIONS)
     // Capture async context for thenable resolution
     JSValue asyncContext = jsUndefined();
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get())
+    if (auto* asyncContextData = threadAsyncContextData(globalObject)) // ALS1 (U-T9): per-lite cursor GIL-off; in-object member otherwise.
         asyncContext = asyncContextData->getInternalField(0);
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, asyncContext);
 #else
@@ -993,7 +1461,8 @@ void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* global
     // This allows AsyncFunctionResume and related microtasks to restore the async context when
     // resuming the async function.
     JSValue wrappedContext = context;
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
+    // ALS1 (U-T9): per-lite cursor GIL-off; in-object member otherwise.
+    if (auto* asyncContextData = threadAsyncContextData(globalObject)) {
         JSValue asyncContext = asyncContextData->getInternalField(0);
         if (!asyncContext.isUndefined()) {
             auto* tuple = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), context, asyncContext);

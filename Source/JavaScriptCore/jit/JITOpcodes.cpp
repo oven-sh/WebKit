@@ -28,6 +28,7 @@
 #if ENABLE(JIT)
 #include "JIT.h"
 
+#include "AssemblyHelpersSpoolers.h"
 #include "BaselineJITRegisters.h"
 #include "BasicBlockLocation.h"
 #include "BinarySwitch.h"
@@ -701,8 +702,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_throw_handlerGenerator(VM& vm)
     {
         constexpr GPRReg scratchGPR = globalObjectGPR;
         static_assert(noOverlap(scratchGPR, thrownValueJSR, bytecodeOffsetGPR), "Should not clobber incoming parameters");
-        jit.loadPtr(&vm.topEntryFrame, scratchGPR);
-        jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(scratchGPR);
+        // UNGIL §A.1.3 (U-T4a): topEntryFrame is per-lite Group-3 state
+        // GIL-off; the raw VM word is inert (null). This shared thunk runs
+        // on whichever thread throws — loadTopEntryFrame resolves the
+        // CURRENT lite. Same scratch, same clobber set as the GIL-on arm.
+        jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, scratchGPR);
     }
 #endif
 
@@ -1202,11 +1206,37 @@ void JIT::emit_op_catch(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpCatch>();
 
-    restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm().topEntryFrame);
+    if (m_vm->gilOff()) [[unlikely]] {
+        // UNGIL §A.1.3 (U-T4a): topEntryFrame and callFrameForCatch are
+        // per-lite Group-3 state (genericUnwind publishes catch state through
+        // group3Primitives() — Interpreter.cpp mode split). All registers are
+        // dead at catch entry, so a caller-save base (regT3) with the plain
+        // skip list restores every VM callee save; no scratch-restore dance
+        // needed. Rematerialize the lite (§A.1.2) after the restore clobbers
+        // regT3's use as the buffer base.
+        //
+        // UNGIL §5.7.2 (AB18-B sibling): a racing mutator can land here from an
+        // LLInt frame the instant setupWithUnlinkedBaselineCode retargets
+        // handler.nativeCode (genericUnwind reads it with no lock). The jitData
+        // replenish below loads CodeBlock::offsetOfJITData(), so this entry must
+        // observe the m_jitData store that the installer publishes BEFORE the
+        // handler retarget (storeStoreFence in setupWithUnlinkedBaselineCode).
+        // loadFence is the acquire pairing; GIL-off leg only, so flag-off/GIL-on
+        // codegen is byte-identical to pre-split.
+        loadFence();
+        loadVMLite(regT3);
+        loadPtr(Address(regT3, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topEntryFrame())), regT3);
+        restoreCalleeSavesFromVMEntryFrameCalleeSavesBufferImpl(regT3, RegisterSet::stackRegisters());
+        loadVMLite(regT3);
+        loadPtr(Address(regT3, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_callFrameForCatch())), callFrameRegister);
+        storePtr(TrustedImmPtr(nullptr), Address(regT3, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_callFrameForCatch())));
+    } else {
+        restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm().topEntryFrame);
 
-    move(TrustedImmPtr(m_vm), regT3);
-    loadPtr(Address(regT3, VM::callFrameForCatchOffset()), callFrameRegister);
-    storePtr(TrustedImmPtr(nullptr), Address(regT3, VM::callFrameForCatchOffset()));
+        move(TrustedImmPtr(m_vm), regT3);
+        loadPtr(Address(regT3, VM::callFrameForCatchOffset()), callFrameRegister);
+        storePtr(TrustedImmPtr(nullptr), Address(regT3, VM::callFrameForCatchOffset()));
+    }
 
     addPtr(TrustedImm32(stackPointerOffsetFor(m_unlinkedCodeBlock) * sizeof(Register)), callFrameRegister, stackPointerRegister);
 
@@ -1585,7 +1615,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
 
         skipOptimize.append(jit.branchAdd32(Signed, TrustedImm32(Options::executionCounterIncrementForEntry()), Address(GPRInfo::jitDataRegister, BaselineJITData::offsetOfJITExecuteCounter())));
 
-        jit.copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
+        jit.copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(vm);
         jit.prepareCallOperation(vm);
 
         constexpr GPRReg vmPointerArgGPR { GPRInfo::argumentGPR0 };
@@ -1771,7 +1801,7 @@ void JIT::emitSlow_op_loop_hint(const JSInstruction* currentInstruction, Vector<
     if (canBeOptimized()) {
         linkAllSlowCases(iter);
 
-        copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(vm().topEntryFrame);
+        copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(vm());
 
         callOperationNoExceptionCheck(operationOptimize, TrustedImmPtr(&vm()), m_bytecodeIndex.asBits());
         Jump noOptimizedEntry = branchTestPtr(Zero, returnValueGPR);
@@ -2194,6 +2224,72 @@ void JIT::emit_op_get_prototype_of(const JSInstruction* currentInstruction)
 
     emitValueProfilingSite(bytecode, jsRegT32);
     emitPutVirtualRegister(bytecode.m_dst, jsRegT32);
+}
+
+// UNGIL §A.1.3 (U-T4a): VM&-keyed twin of the EntryFrame*& overload in
+// AssemblyHelpers.cpp. The only delta is the buffer-base materialization:
+// loadTopEntryFrame(vm, destBufferGPR) (per-lite GIL-off, VM-block word
+// GIL-on) instead of baking loadPtr(&topEntryFrame). Defined here beside its
+// only callers (op_enter handler thunk, emitSlow_op_loop_hint); FIXME: fold
+// into AssemblyHelpers.cpp alongside the EntryFrame*& overload.
+void AssemblyHelpers::copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(VM& vm, const RegisterSet& usedRegisters)
+{
+#if NUMBER_OF_CALLEE_SAVES_REGISTERS > 0
+    // Copy saved calleeSaves on stack or unsaved calleeSaves in register to vm calleeSave buffer
+    ScratchRegisterAllocator allocator(usedRegisters);
+    GPRReg destBufferGPR = allocator.allocateScratchGPR();
+    GPRReg temp1 = allocator.allocateScratchGPR();
+    FPRReg fpTemp1 = allocator.allocateScratchFPR();
+    GPRReg temp2 = allocator.allocateScratchGPR();
+    FPRReg fpTemp2 = allocator.allocateScratchFPR();
+    RELEASE_ASSERT(!allocator.didReuseRegisters());
+
+    loadTopEntryFrame(vm, destBufferGPR);
+    addPtr(TrustedImm32(EntryFrame::calleeSaveRegistersBufferOffset()), destBufferGPR);
+
+    CopySpooler spooler(*this, framePointerRegister, destBufferGPR, temp1, temp2, fpTemp1, fpTemp2);
+
+    RegisterAtOffsetList* allCalleeSaves = RegisterSet::vmCalleeSaveRegisterOffsets();
+    const RegisterAtOffsetList* currentCalleeSaves = &RegisterAtOffsetList::llintBaselineCalleeSaveRegisters();
+    auto dontCopyRegisters = RegisterSet::stackRegisters();
+    unsigned registerCount = allCalleeSaves->registerCount();
+
+    unsigned i = 0;
+    for (; i < registerCount; i++) {
+        RegisterAtOffset entry = allCalleeSaves->at(i);
+        if (dontCopyRegisters.contains(entry.reg(), IgnoreVectors))
+            continue;
+        RegisterAtOffset* currentFrameEntry = currentCalleeSaves->find(entry.reg());
+
+        if (!entry.reg().isGPR())
+            break;
+        if (currentFrameEntry)
+            spooler.loadGPR(currentFrameEntry->offset());
+        else
+            spooler.copyGPR(entry.reg().gpr());
+        spooler.storeGPR(entry.offset());
+    }
+    spooler.finalizeGPR();
+
+    for (; i < registerCount; i++) {
+        RegisterAtOffset entry = allCalleeSaves->at(i);
+        if (dontCopyRegisters.contains(entry.reg(), IgnoreVectors))
+            continue;
+        RegisterAtOffset* currentFrameEntry = currentCalleeSaves->find(entry.reg());
+
+        RELEASE_ASSERT(entry.reg().isFPR());
+        if (currentFrameEntry)
+            spooler.loadFPR(currentFrameEntry->offset());
+        else
+            spooler.copyFPR(entry.reg().fpr());
+        spooler.storeFPR(entry.offset());
+    }
+    spooler.finalizeFPR();
+
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(usedRegisters);
+#endif
 }
 
 } // namespace JSC

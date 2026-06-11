@@ -178,14 +178,15 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
 
 std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
 {
-    if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
-        auto* entryFrame = vm.topEntryFrame;
+    const VMLitePrimitives& primitives = vm.group3Primitives(); // UNGIL §A.1.3 mode split.
+    if (startCallFrame && primitives.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
+        auto* entryFrame = primitives.topEntryFrame;
         auto* callerFrame = startCallFrame->callerFrame(entryFrame);
         if (callerFrame)
             startCallFrame = callerFrame;
     }
     FindFirstCallerFrameWithCodeblockFunctor functor(startCallFrame);
-    StackVisitor::visit(vm.topCallFrame, vm, functor);
+    StackVisitor::visit(primitives.topCallFrame, vm, functor);
     return { functor.codeBlock(), functor.bytecodeIndex() };
 }
 

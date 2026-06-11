@@ -34,6 +34,7 @@
 #include "VM.h"
 #include "JITStubRoutineSet.h"
 #include "JSCellInlines.h"
+#include "Options.h"
 #include "SharedJITStubSet.h"
 #include <wtf/RefPtr.h>
 
@@ -60,6 +61,27 @@ void GCAwareJITStubRoutine::observeZeroRefCountImpl()
         // this guy. In that case the GC informs us that we're jettisoned already
         // and that we should delete ourselves as soon as the ref count reaches
         // zero.
+        //
+        // TSAN ic-stubinfo §4.4 free audit (TSAN-TRIAGE §10.4): flag-on, a
+        // GC-aware routine that is already jettisoned but sees a SECOND zero
+        // crossing (somebody ref'd and deref'd it after jettison — e.g. a
+        // transient Ref taken on a repatch/visitWeak path) must NOT be freed
+        // inline here: the routine's data (cases, owners, watchpoints) and
+        // its machine code are still reachable from a sibling mutator inside
+        // its safepoint-free window (G2/I16), and freeing stub data inline is
+        // exactly the class this audit closes — everything must ride
+        // RetiredJITArtifacts or the GC-deferred deleteFromGC path. While the
+        // routine is GC-aware it is still owned by the heap's
+        // JITStubRoutineSet, whose jettisoned-routine sweep deletes it via
+        // deleteFromGC() once the conservative scan proves it off-stack; so
+        // deferring here cannot leak relative to flag-off, it only re-routes
+        // the free through the sanctioned GC-deferred path. The
+        // !m_isGCAware arm keeps the inline delete on both flags: such a
+        // routine was never registered with (and is unreachable from) the GC
+        // machinery, is pre-publication/single-owner, and nobody else would
+        // ever free it. Flag-off behavior is unchanged.
+        if (Options::useJSThreads() && m_isGCAware) [[unlikely]]
+            return;
 IGNORE_GCC_WARNINGS_BEGIN("sequence-point")
         delete this;
 IGNORE_GCC_WARNINGS_END
@@ -90,7 +112,12 @@ bool GCAwareJITStubRoutine::removeDeadOwners(VM& vm)
 
 #if ENABLE(JIT)
     if (m_isInSharedJITStubSet) {
-        auto& owners = static_cast<PolymorphicAccessJITStubRoutine*>(this)->m_owners;
+        auto* routine = static_cast<PolymorphicAccessJITStubRoutine*>(this);
+        // R2-2: same lock as addOwner/removeOwner. This path runs at GC End
+        // (world stopped), so the lock is uncontended; taken anyway so every
+        // m_owners mutation is under one discipline.
+        Locker locker { routine->m_ownersLock };
+        auto& owners = routine->m_owners;
         owners.removeAllIf([&](auto pair) {
             return !vm.heap.isMarked(pair.key);
         });
@@ -313,6 +340,17 @@ Ref<PolymorphicAccessJITStubRoutine> createICJITStubRoutine(
 Ref<PolymorphicAccessJITStubRoutine> createPreCompiledICJITStubRoutine(const MacroAssemblerCodeRef<JITStubRoutinePtrTag>& code, VM& vm, JSCell* owner)
 {
     auto stub = adoptRef(*new PolymorphicAccessJITStubRoutine(JITStubRoutine::Type::PolymorphicAccessJITStubRoutineType, code, vm, { }, { }, owner, true));
+    // THREADS (AB18, resolves RetiredJITArtifacts FIXME (a)): flag-on, register
+    // with the GC at CREATION — single-threaded per routine and pre-publication —
+    // so RetiredJITArtifacts::retireHandlerChain never has to lazily promote a
+    // published routine (two mutators retiring chains that share one stateless
+    // precompiled stub would race the !isGCAware()/makeGCAware() pair and
+    // double-append to JITStubRoutineSet => double jettison/delete). Flag-off
+    // keeps the create-without-makeGCAware optimization (data-only handlers on
+    // shared immutable CTI thunks) and the race-free single-mutator lazy
+    // promotion in retireHandlerChain.
+    if (Options::useJSThreads()) [[unlikely]]
+        stub->makeGCAware(vm);
     return stub;
 }
 

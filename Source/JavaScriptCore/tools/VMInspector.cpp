@@ -33,8 +33,10 @@
 #include "JSCInlines.h"
 #include "JSWebAssemblyModule.h"
 #include "MarkedSpaceInlines.h"
+#include "Options.h"
 #include "StackVisitor.h"
 #include "VMEntryRecord.h"
+#include "VMLite.h"
 #include "VMManager.h"
 #include <wtf/Expected.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -42,6 +44,56 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+// =============================================================================
+// SPEC-ungil §A.1.7 IU rows for this file (U-T8d; full per-field table in
+// SamplingProfiler.h — the §IM anchor). VMInspector is a stateless static
+// facade (K4.V.15: already-safe; dump entry points are debugger/REPL); the
+// only rerouted-Group-3 READS in this file are:
+//
+//   - vmForCallFrame (below): VM::m_stackPointerAtVMEntry / m_stackLimit,
+//     scanned across ALL VMs. GIL-off those words are per-lite (§A.1.4), so
+//     scanning other VMs'/threads' copies observes another thread's storage.
+//     Disposition: (iii) — GIL-off the match is restricted to the CURRENT
+//     thread's installed carrier lite (an on-thread read of its own
+//     primitives); any other case is REFUSED with a defined error (ii).
+//
+//   - dumpRegisters (below): VM::topCallFrame / VM::topEntryFrame.
+//     Disposition: (iii) — GIL-off these resolve through the CURRENT
+//     thread's installed lite primitives; unreachable otherwise because
+//     vmForCallFrame above already refused.
+//
+// Everything else is (iii) by construction: codeBlockForMachinePC skips any
+// VM whose API lock the current thread does not hold; gc/edenGC/
+// isValidCodeBlock/codeBlockForFrame/dumpCallFrame/dumpStack gate on
+// ensureCurrentThreadOwnsJSLock and take their frames as caller-supplied
+// parameters; the remaining helpers read no Group-3 field.
+//
+// Residual (NOT a Group-3 field read; K4.V.15 row, consumed verbatim): the
+// dump paths also iterate heap state (isValidCell -> forEachLiveCell,
+// dumpCellMemory, forEachCodeBlock*) and walk the current thread's own
+// frames via StackVisitor. The frame walks are on-thread over this thread's
+// stack (rooted by its own conservative scan); the SHARED-heap live-cell
+// iteration, however, is not safe against N concurrently-allocating
+// mutators without a stop — GIL-off, dumpRegisters below therefore skips
+// the isValidCell scan (and the cell deref it guards) instead of touching
+// the shared heap, degrading the diagnostic rather than racing it. A
+// stop-the-world dump mode is heap-WS machinery (§A.3 / heap §10), not this
+// facade's.
+//
+// Predicate keying note (§A.1.3 r27): isGILOffProcessForInspection() keys on
+// the PROCESS-level {useJSThreads, !useThreadGIL} pair (the gilOffProcess
+// derivation), not per-VM vm.m_gilOff. For these refusal-class tooling
+// dispositions the process-level key is the conservative, strictly stronger
+// side (a GIL-on VM inside a GIL-off process is also restricted to
+// current-lite resolution). Flag-off and phase-1 (useThreadGIL=true)
+// behavior is bit-identical: the predicate is false and every path below is
+// the pre-existing one.
+// =============================================================================
+static bool isGILOffProcessForInspection()
+{
+    return Options::useJSThreads() && !Options::useThreadGIL();
+}
 
 #if ENABLE(JIT)
 static bool NODELETE ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
@@ -59,6 +111,24 @@ static bool NODELETE ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_AN
 // Returns null if the callFrame doesn't actually correspond to any active VM.
 VM* VMInspector::vmForCallFrame(CallFrame* callFrame)
 {
+    if (isGILOffProcessForInspection()) [[unlikely]] {
+        // §A.1.7 disposition (iii)/(ii): GIL-off, m_stackPointerAtVMEntry /
+        // m_stackLimit live in VMLitePrimitives (§A.1.4) — the cross-VM scan
+        // below would read other threads' rerouted words. Resolve via the
+        // CURRENT thread's installed carrier only (an on-thread read of its
+        // own lite); refuse with a defined error otherwise.
+        VMLite* lite = VMLite::currentIfExists();
+        if (!lite || !lite->vm) {
+            dataLogLn("ERROR: GIL-off vmForCallFrame requires a VMLite installed on the current thread; cross-thread resolution is refused (SPEC-ungil §A.1.7 (ii)).");
+            return nullptr;
+        }
+        void* stackBottom = lite->primitives.m_stackPointerAtVMEntry; // high memory
+        void* stackTop = lite->primitives.m_stackLimit; // low memory
+        if (stackBottom > callFrame && callFrame > stackTop)
+            return lite->vm;
+        return nullptr;
+    }
+
     return VMManager::findMatchingVM([&] (VM& vm) -> bool {
         void* stackBottom = vm.stackPointerAtVMEntry(); // high memory
         void* stackTop = vm.stackLimit(); // low memory
@@ -97,7 +167,7 @@ auto VMInspector::codeBlockForMachinePC(void* machinePC) -> Expected<CodeBlock*,
             return IterationStatus::Continue;
 
         if (!vm.currentThreadIsHoldingAPILock())
-            return IterationStatus::Continue;
+            return IterationStatus::Continue; // §A.1.7 (iii): only VMs entered by the CURRENT thread are walked; no Group-3 field is read here.
 
         // It is safe to call Heap::forEachCodeBlockIgnoringJITPlans here because:
         // 1. CodeBlocks are added to the CodeBlockSet from the main thread before
@@ -154,6 +224,10 @@ bool VMInspector::currentThreadOwnsJSLock(VM* vm)
     return vm->currentThreadIsHoldingAPILock();
 }
 
+// §A.1.7 disposition (iii) anchor: every dump/iteration entry point below
+// that reads frames gates on this (or takes its frames as caller-supplied
+// parameters), so those reads are proven on-thread — the caller holds the
+// VM's API lock on the current thread in both modes.
 static bool ensureCurrentThreadOwnsJSLock(VM* vm)
 {
     if (VMInspector::currentThreadOwnsJSLock(vm))
@@ -327,17 +401,44 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     VM& vm = *vmPtr;
 
     auto valueAsString = [&] (JSValue v) -> CString {
-        if (!v.isCell() || VMInspector::isValidCell(&vm.heap, reinterpret_cast<JSCell*>(JSValue::encode(v))))
+        if (!v.isCell())
+            return toCString(v);
+        if (isGILOffProcessForInspection()) [[unlikely]] {
+            // K4.V.15 residual (header note): isValidCell() iterates the
+            // SHARED heap (forEachLiveCell) and toCString derefs the cell —
+            // neither is safe with other mutators running and no stop.
+            // Print raw bits only (the caller already prints the encoded
+            // word); GIL-on/flag-off behavior below is unchanged.
+            return ""_s;
+        }
+        if (VMInspector::isValidCell(&vm.heap, reinterpret_cast<JSCell*>(JSValue::encode(v))))
             return toCString(v);
         return ""_s;
     };
 
-    CallFrame* topCallFrame = vm.topCallFrame;
+    // §A.1.7 disposition (iii): GIL-off, topCallFrame/topEntryFrame are
+    // rerouted to VMLitePrimitives (§A.1.3 Group 1); read the CURRENT
+    // thread's installed lite. vmForCallFrame above already proved (GIL-off)
+    // that `vm` is the current lite's VM and refused every other case, so a
+    // null lite is impossible here. GIL-on/flag-off: the pre-existing VM
+    // member reads, unchanged.
+    CallFrame* topCallFrame;
+    EntryFrame* topEntryFrameForDump;
+    if (isGILOffProcessForInspection()) [[unlikely]] {
+        VMLite& lite = VMLite::current();
+        RELEASE_ASSERT(lite.vm == &vm);
+        topCallFrame = lite.primitives.topCallFrame;
+        topEntryFrameForDump = lite.primitives.topEntryFrame;
+    } else {
+        topCallFrame = vm.topCallFrame;
+        topEntryFrameForDump = vm.topEntryFrame;
+    }
+
     CallFrame* nextCallFrame = nullptr;
     EntryFrame* entryFrame = nullptr;
 
     // Check if frame is an entryFrame.
-    entryFrame = vm.topEntryFrame;
+    entryFrame = topEntryFrameForDump;
     while (entryFrame) {
         if (entryFrame == std::bit_cast<EntryFrame*>(callFrame)) {
             dataLogLn("CallFrame ", RawPointer(callFrame), " is an EntryFrame.");
@@ -538,7 +639,9 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
     }
 
     unsigned slotIndex = 1;
-    if (cell->isObject()) {
+    // THREADS-INTEGRATE(objectmodel) §10.7: never deref a possibly-segmented
+    // word as a flat butterfly in this diagnostic walk.
+    if (cell->isObject() && !static_cast<JSObject*>(const_cast<JSCell*>(cell))->mayBeSegmentedButterfly()) {
         JSObject* obj = static_cast<JSObject*>(const_cast<JSCell*>(cell));
         Butterfly* butterfly = obj->butterfly();
         size_t butterflySize = obj->butterflyTotalSize();

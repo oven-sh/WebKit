@@ -102,7 +102,15 @@ ALWAYS_INLINE MacroAssembler::Call JIT::appendCallWithExceptionCheck(const CodeP
     using ResultType = typename FunctionTraits<OperationType>::ResultType;
     if constexpr (isExceptionOperationResult<ResultType>) {
 #if ASSERT_ENABLED
-        Jump ok = branchPtr(Equal, AbsoluteAddress(vm().addressOfException()), operationExceptionRegister<ResultType>());
+        // UNGIL §A.1.3 (U-T4): mode-keyed validation — GIL-off the live word
+        // is the CURRENT lite's (the raw VM-block word always reads null and
+        // this breakpoint would fire spuriously). Same pattern as
+        // AssemblyHelpers::emitExceptionCheck's validation arm.
+        Jump ok;
+        if (vm().gilOff()) [[unlikely]]
+            ok = branchPtr(Equal, materializeGILOffExceptionSlot(), operationExceptionRegister<ResultType>());
+        else
+            ok = branchPtr(Equal, AbsoluteAddress(vm().addressOfException()), operationExceptionRegister<ResultType>());
         breakpoint();
         ok.link(this);
 #endif
@@ -120,7 +128,12 @@ ALWAYS_INLINE void JIT::appendCallWithExceptionCheck(Address function)
     using ResultType = typename FunctionTraits<OperationType>::ResultType;
     if constexpr (isExceptionOperationResult<ResultType>) {
 #if ASSERT_ENABLED
-        Jump ok = branchPtr(Equal, AbsoluteAddress(vm().addressOfException()), operationExceptionRegister<ResultType>());
+        // UNGIL §A.1.3 (U-T4): mode-keyed validation (see the overload above).
+        Jump ok;
+        if (vm().gilOff()) [[unlikely]]
+            ok = branchPtr(Equal, materializeGILOffExceptionSlot(), operationExceptionRegister<ResultType>());
+        else
+            ok = branchPtr(Equal, AbsoluteAddress(vm().addressOfException()), operationExceptionRegister<ResultType>());
         breakpoint();
         ok.link(this);
 #endif

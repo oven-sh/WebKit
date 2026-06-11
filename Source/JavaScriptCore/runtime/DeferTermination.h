@@ -40,12 +40,22 @@ public:
     DeferTermination(VM& vm)
         : m_vm(vm)
     {
-        m_vm.traps().deferTermination(deferAction);
+        // FIX (stw-watchdog-timeout round, deferral family): deferral is a
+        // property of the DEFERRING THREAD's stack — GIL-off the count lives
+        // in the current thread's per-lite VMTraps instance
+        // (trapsForCurrentThread(); same reroute as DeferTraps, see
+        // VMTrapsInlines.h). The shared VM-level count raced N threads'
+        // increments (the m_deferTerminationCount == 1 assert in
+        // deferTerminationSlow) and one thread's deferral masked
+        // NeedTermination for every sibling. The dtor resolves the SAME
+        // instance on the same thread (RAII stack scope). GIL-on / flag-off:
+        // trapsForCurrentThread() == vm.traps(), byte-identical.
+        m_vm.trapsForCurrentThread().deferTermination(deferAction);
     }
-    
+
     ~DeferTermination()
     {
-        m_vm.traps().undoDeferTermination(deferAction);
+        m_vm.trapsForCurrentThread().undoDeferTermination(deferAction);
     }
 
 private:

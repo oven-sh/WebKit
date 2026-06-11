@@ -27,6 +27,7 @@
 
 #include "AbstractSlotVisitor.h"
 #include "HandleTypes.h"
+#include <wtf/Atomics.h>
 #include <wtf/Forward.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/MonotonicTime.h>
@@ -129,7 +130,7 @@ public:
     void NODELETE reset();
     void clearMarkStacks();
 
-    size_t bytesVisited() const { return m_bytesVisited; }
+    size_t bytesVisited() const { return WTF::atomicLoad(const_cast<size_t*>(&m_bytesVisited), std::memory_order_relaxed); } // Single-writer counter; cross-thread readers tolerate staleness (see AbstractSlotVisitor::visitCount()).
 
     void donate();
     void drain(MonotonicTime timeout = MonotonicTime::infinity());
@@ -163,7 +164,7 @@ public:
 
     HeapVersion markingVersion() const { return m_markingVersion; }
 
-    bool mutatorIsStopped() const final { return m_mutatorIsStopped; }
+    bool mutatorIsStopped() const final { return WTF::atomicLoad(const_cast<bool*>(&m_mutatorIsStopped), std::memory_order_relaxed); }
     
     Lock& rightToRun() LIFETIME_BOUND WTF_RETURNS_LOCK(m_rightToRun) { return m_rightToRun; }
     

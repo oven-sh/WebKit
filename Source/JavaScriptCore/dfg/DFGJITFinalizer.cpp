@@ -34,6 +34,7 @@
 #include "HeapInlines.h"
 #include "ProfilerDatabase.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/ThreadSanitizerSupport.h>
 
 namespace JSC { namespace DFG {
 
@@ -68,6 +69,29 @@ bool JITFinalizer::finalize()
     auto data = m_plan.tryFinalizeJITData(m_jitCode.get());
     if (!data) [[unlikely]]
         return false;
+#if TSAN_ENABLED
+    // TSAN §4.4 retired-artifact audit (TSAN-RESULTS residual 1, closed
+    // 2026-06-09): release-publish each HandlerPropertyInlineCache under its
+    // own address as the sync key. Pairs with the
+    // TSAN_ANNOTATE_HAPPENS_AFTER in ICSlowPathCallFrameTracer
+    // (JITOperations.cpp): completeAllReadyPlansForVM can finalize a plan for
+    // a CodeBlock another lite is hot in; that lite receives the cache
+    // pointer from the freshly installed DFG code (consume publication
+    // through m_jitData + storeStoreFence, invisible to TSAN), and its
+    // lockless slow-path reads (callSiteIndex, m_bufferedStructures variant /
+    // StructureID vector buffers) would otherwise pair against this thread's
+    // allocation/ctor writes of the still-live JITData ButterflyArray block
+    // (leaked flag-on in ~CodeBlock per SPEC-jit §5.3/I7 — never freed, so no
+    // UAF is maskable here). No-op outside TSAN builds.
+    for (auto& propertyCache : data->propertyInlineCaches())
+        TSAN_ANNOTATE_HAPPENS_BEFORE(&propertyCache);
+    // Same audit, CallLinkInfo arm: the JITData's OptimizingCallLinkInfos
+    // reach the call slow paths materialized by the installed DFG code;
+    // pairs with the TSAN_ANNOTATE_HAPPENS_AFTER in
+    // CallLinkInfo::ownerForSlowPath (CallLinkInfo.h).
+    for (auto& callLinkInfo : data->callLinkInfos())
+        TSAN_ANNOTATE_HAPPENS_BEFORE(&callLinkInfo);
+#endif
     codeBlock->setDFGJITData(WTF::move(data));
 
 #if ENABLE(FTL_JIT)

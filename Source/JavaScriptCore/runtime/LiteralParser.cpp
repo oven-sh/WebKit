@@ -1323,7 +1323,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursivelyEntry(VM& vm)
         return parse(vm, StartParseExpression, nullptr);
     TokenType type = m_lexer.currentToken()->type;
     if (type == TokLBrace || type == TokLBracket)
-        return parseRecursively<ParserMode::StrictJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+        return parseRecursively<ParserMode::StrictJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow()));
     return parsePrimitiveValue(vm);
 }
 
@@ -1340,7 +1340,7 @@ JSValue LiteralParser<CharType, reviverMode>::evalRecursivelyEntry(VM& vm)
 
         JSValue result;
         if (type == TokLBrace || type == TokLBracket)
-            result = parseRecursively<ParserMode::SloppyJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+            result = parseRecursively<ParserMode::SloppyJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow()));
         else
             result = parsePrimitiveValue(vm);
 
@@ -1358,7 +1358,7 @@ JSValue LiteralParser<CharType, reviverMode>::evalRecursivelyEntry(VM& vm)
     }
 
     if (type == TokLBracket)
-        return parseRecursively<ParserMode::SloppyJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+        return parseRecursively<ParserMode::SloppyJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow()));
     return parsePrimitiveValue(vm);
 }
 
@@ -1485,6 +1485,16 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
             if (std::holds_alternative<ExistingProperty>(property)) {
                 auto& [newStructure, offset] = std::get<ExistingProperty>(property);
 
+                // THREADS-INTEGRATE(objectmodel) §10.7: parser-created object
+                // is (currentTID,0) flat unless forceSegmentedButterflies —
+                // on a tagged word bail to the regime-aware generic putDirect
+                // (the transition's property name is recoverable from the
+                // cached target structure).
+                if (object->mayBeSegmentedButterfly()) [[unlikely]] {
+                    object->putDirect(vm, Identifier::fromUid(vm, newStructure->transitionPropertyName()), value);
+                    goto literalParserPropertyStored;
+                }
+
                 Butterfly* newButterfly = object->butterfly();
                 if (structure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
                     ASSERT(newStructure != structure);
@@ -1519,6 +1529,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                     object->putDirect(vm, ident, value);
             }
 
+literalParserPropertyStored:
             type = m_lexer.currentToken()->type;
             if (type == TokComma) {
                 type = m_lexer.next();
@@ -1955,7 +1966,7 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
         JSValue value;
         if (type == TokLBrace || type == TokLBracket) {
             if (Options::useRecursiveJSONParse()) [[likely]]
-                value = parseRecursively<StrictJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+                value = parseRecursively<StrictJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow()));
             else
                 value = parse(vm, StartParseExpression, nullptr);
         } else

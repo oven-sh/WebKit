@@ -28,8 +28,10 @@
 #include "HeapIterationScope.h"
 #include "JSAsyncFunctionGenerator.h"
 #include "JSCInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "MarkedSpaceInlines.h"
 #include "Microtask.h"
+#include "ThreadManager.h"
 #include "VMEntryScopeInlines.h"
 #include "VMTrapsInlines.h"
 #include <wtf/ForbidHeapAllocation.h>
@@ -43,6 +45,46 @@
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Debugger);
+
+// UNGIL §A.2.7 (SD13; r11 F3 — the pause state below is singular, one
+// m_currentCallFrame/m_isPaused per Debugger): v1 GIL-off the debugger trap
+// bit is EXEMPT from the rule-3 fan-out and the entry hooks early-return on a
+// spawned Thread — spawned-thread breakpoints are defined no-ops; pause keeps
+// the landed single-threaded carrier protocol; N-thread debugging is
+// post-ungil. GIL-on (useThreadGIL, phase 1) and flag-off are unchanged.
+// Keying: vm.gilOff() (TERM1.4 — spawned threads exist only in the m_gilOff
+// VM, so the per-VM and process-level keyings coincide on every reachable
+// path) plus ThreadManager::isJSThreadCurrent() (the C++ twin of the §I
+// VMLite::isSpawned byte; a spawned thread installs its ThreadState before
+// its first entry, so no install race window admits it here).
+static ALWAYS_INLINE bool isSpawnedJSThreadGILOff(VM& vm)
+{
+    if (!vm.gilOff()) [[likely]]
+        return false;
+    return ThreadManager::isJSThreadCurrent();
+}
+
+// UNGIL §A.2.7 (SD13): attach/detach and the CodeBlock-wide
+// recompile/registration walks run under a §A.3 stop so spawned threads
+// cannot execute (or compile against) the walked code mid-walk. GIL-on /
+// flag-off this runs the functor inline (no stop) — byte-identical behavior.
+// JSThreadsSafepoint::stopTheWorldAndRun is the R1 veneer U-T5 re-points at
+// the real thread-granular sequence; its caller contract (entered mutator,
+// no SPEC-jit §7 lock held, no JS-heap allocation inside the closure) holds
+// at every site below: each walk only flips CodeBlock debugger metadata or
+// reads heap cells, with fastMalloc-only bookkeeping.
+template<typename Functor>
+static ALWAYS_INLINE void runDebuggerWalkWithSpawnedThreadsStopped(VM& vm, const Functor& functor)
+{
+    if (vm.gilOff()) [[unlikely]] {
+        // Watchdog context (review round): name this requester class in the
+        // 30s stop-watchdog crash log instead of a nil Class-A context.
+        JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(&vm, "Debugger STW walk");
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambdaRef<void()>(functor));
+        return;
+    }
+    functor();
+}
 
 class DebuggerPausedScope {
     WTF_FORBID_HEAP_ALLOCATION;
@@ -159,6 +201,20 @@ Debugger::~Debugger()
 
     m_vm.removeDebugger(*this);
 
+    // §A.2.7: same contract as detach — the m_debugger flips run under a
+    // §A.3 stop GIL-off. The lock is taken only on the GIL-off branch
+    // (stopTheWorldAndRun's requesting path requires the entered-mutator
+    // contract); GIL-on / flag-off the loop below is byte-identical to the
+    // landed destructor.
+    if (m_vm.gilOff() && !m_globalObjects.isEmpty()) [[unlikely]] {
+        JSLockHolder locker(m_vm);
+        runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+            for (auto* globalObject : m_globalObjects)
+                globalObject->setDebugger(nullptr);
+        });
+        return;
+    }
+
     for (auto* globalObject : m_globalObjects)
         globalObject->setDebugger(nullptr);
 }
@@ -166,8 +222,22 @@ Debugger::~Debugger()
 void Debugger::attach(JSGlobalObject* globalObject)
 {
     ASSERT(!globalObject->debugger());
-    globalObject->setDebugger(this);
-    m_globalObjects.add(globalObject);
+    {
+        // §A.2.7: "attach/detach + CodeBlock-wide recompile/registration
+        // walks run under a §A.3 stop". The JSGlobalObject::m_debugger flip
+        // is a plain pointer store that spawned threads load on hot
+        // unguarded paths (globalObject->debugger() in exception
+        // notification / debug-hook predicates) BEFORE reaching the SD13
+        // early-returns, so the flip itself must run with spawned threads
+        // stopped — the stop's park/resume ordering publishes the new value
+        // to every resumed mutator. GIL-on / flag-off: inline, and the lock
+        // acquisition is recursive-safe (behavior unchanged).
+        JSLockHolder locker(m_vm);
+        runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+            globalObject->setDebugger(this);
+            m_globalObjects.add(globalObject); // fastMalloc-only bookkeeping.
+        });
+    }
 
     m_vm.setShouldBuildPCToCodeOriginMapping();
 
@@ -175,16 +245,20 @@ void Debugger::attach(JSGlobalObject* globalObject)
     UncheckedKeyHashSet<RefPtr<SourceProvider>> sourceProviders;
     {
         JSLockHolder locker(m_vm);
-        HeapIterationScope iterationScope(m_vm.heap);
-        m_vm.heap.objectSpace().forEachLiveCell(iterationScope, [&] (HeapCell* heapCell, HeapCell::Kind kind) {
-            if (isJSCellKind(kind)) {
-                auto* cell = static_cast<JSCell*>(heapCell);
-                if (auto* function = dynamicDowncast<JSFunction>(cell)) {
-                    if (function->scope()->realm() == globalObject && function->executable()->isFunctionExecutable() && !function->isHostOrBuiltinFunction())
-                        sourceProviders.add(uncheckedDowncast<FunctionExecutable>(function->executable())->source().provider());
+        // §A.2.7: GIL-off, spawned threads must not allocate/run JS mid-walk
+        // (the closure only reads cells and does fastMalloc bookkeeping).
+        runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+            HeapIterationScope iterationScope(m_vm.heap);
+            m_vm.heap.objectSpace().forEachLiveCell(iterationScope, [&] (HeapCell* heapCell, HeapCell::Kind kind) {
+                if (isJSCellKind(kind)) {
+                    auto* cell = static_cast<JSCell*>(heapCell);
+                    if (auto* function = dynamicDowncast<JSFunction>(cell)) {
+                        if (function->scope()->realm() == globalObject && function->executable()->isFunctionExecutable() && !function->isHostOrBuiltinFunction())
+                            sourceProviders.add(uncheckedDowncast<FunctionExecutable>(function->executable())->source().provider());
+                    }
                 }
-            }
-            return IterationStatus::Continue;
+                return IterationStatus::Continue;
+            });
         });
     }
     for (auto& sourceProvider : sourceProviders)
@@ -200,22 +274,39 @@ void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
 
-    if (m_isPaused && m_currentCallFrame && (!vm.isEntered() || vm.entryScope->globalObject() == globalObject)) {
+    // UNGIL §A.1.5: keyed on the DETACHING thread's entry scope (the pause
+    // protocol is carrier-singular, SD13). GIL-on this is the landed
+    // !vm.isEntered() || vm.entryScope->globalObject() == globalObject check
+    // verbatim (isEntered() == !!entryScope there).
+    VMEntryScope* currentEntryScope = vm.currentThreadEntryScope();
+    if (m_isPaused && m_currentCallFrame && (!currentEntryScope || currentEntryScope->globalObject() == globalObject)) {
         m_currentCallFrame = nullptr;
         resetAsyncPauseState();
         continueProgram();
     }
 
     ASSERT(m_globalObjects.contains(globalObject));
-    m_globalObjects.remove(globalObject);
+
+    // §A.2.7: the detach state transition — membership removal + the
+    // m_debugger flip — runs under a §A.3 stop GIL-off (see attach above for
+    // the rationale: the flip races spawned threads' unguarded
+    // globalObject->debugger() loads, and a stale pointer could otherwise
+    // admit a spawned thread into a Debugger method mid-detach). The flip is
+    // hoisted ABOVE the requests-clear walk so that, after the stop's
+    // resume, no spawned thread can register fresh CodeBlocks against this
+    // debugger while the walk below clears the old requests (the walk's
+    // functor keys on the globalObject, not the debugger pointer, so the
+    // hoist does not change what it clears — GIL-on behavior identical).
+    runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+        m_globalObjects.remove(globalObject);
+        globalObject->setDebugger(nullptr);
+    });
 
     // If the globalObject is destructing, then its CodeBlocks will also be
     // destructed. There is no need to do the debugger requests clean up, and
     // it is not safe to access those CodeBlocks at this time anyway.
     if (reason != GlobalObjectIsDestructing)
         clearDebuggerRequests(globalObject);
-
-    globalObject->setDebugger(nullptr);
 
     if (m_globalObjects.isEmpty())
         clearParsedData();
@@ -258,11 +349,22 @@ void Debugger::setSteppingMode(SteppingMode mode)
 
     m_steppingMode = mode;
     SetSteppingModeFunctor functor(this, mode);
-    m_vm.heap.forEachCodeBlock(functor);
+    // §A.2.7: CodeBlock-wide registration walk under a §A.3 stop GIL-off.
+    runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+        m_vm.heap.forEachCodeBlock(functor);
+    });
 }
 
 void Debugger::registerCodeBlock(CodeBlock* codeBlock)
 {
+    // SD13: a CodeBlock installed by a spawned thread is not registered with
+    // the (carrier-singular) debugger — spawned-thread breakpoints are
+    // defined no-ops in v1, and applying them here would race the carrier's
+    // pause/breakpoint state. The carrier-side walks (setSteppingMode /
+    // toggleBreakpoint, under a §A.3 stop) own breakpoint application.
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]]
+        return;
+
     applyBreakpoints(codeBlock);
     if (isStepping())
         codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
@@ -278,6 +380,9 @@ void Debugger::forEachRegisteredCodeBlock(NOESCAPE const Function<void(CodeBlock
 
 void Debugger::didCreateNativeExecutable(NativeExecutable& nativeExecutable)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didCreateNativeExecutable(nativeExecutable);
     });
@@ -285,6 +390,9 @@ void Debugger::didCreateNativeExecutable(NativeExecutable& nativeExecutable)
 
 void Debugger::willCallNativeExecutable(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.willCallNativeExecutable(callFrame);
     });
@@ -336,6 +444,14 @@ void Debugger::setProfilingClient(ProfilingClient* client)
 
 void Debugger::sourceParsed(JSGlobalObject* globalObject, SourceProvider* sourceProvider, int errorLine, const String& errorMessage)
 {
+    // SD13 (§A.2.7): scripts parsed by a spawned Thread are not announced to
+    // the carrier-singular observers in v1 (the dispatch may run inspector
+    // JS and mutates singular debugger state). Inspector subclass overrides
+    // inherit this via the base-call convention; the interpreter-side hook
+    // dispatch is also carrier-gated once the §I byte check lands.
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]]
+        return;
+
     // Preemptively check whether we can dispatch so that we don't do any unnecessary allocations.
     if (!canDispatchFunctionToObservers())
         return;
@@ -470,12 +586,21 @@ void Debugger::toggleBreakpoint(Breakpoint& breakpoint, Debugger::BreakpointStat
     m_vm.heap.completeAllJITPlans();
 
     ToggleBreakpointFunctor functor(this, breakpoint, enabledOrNot);
-    m_vm.heap.forEachCodeBlock(functor);
+    // §A.2.7: CodeBlock-wide registration walk under a §A.3 stop GIL-off.
+    runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+        m_vm.heap.forEachCodeBlock(functor);
+    });
 }
 
 void Debugger::recompileAllJSFunctions()
 {
-    m_vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
+    // §A.2.7: the CodeBlock-wide recompile runs under a §A.3 stop GIL-off so
+    // spawned threads cannot execute code being de-optimized mid-walk.
+    // (Flag-on jettisons already route through stopTheWorldAndRun; the R1.h
+    // already-stopped path makes the nesting inline.)
+    runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+        m_vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
+    });
 }
 
 DebuggerParseData& Debugger::debuggerParseData(SourceID sourceID, SourceProvider* provider)
@@ -692,7 +817,10 @@ void Debugger::clearBreakpoints()
     m_specialBreakpoint = nullptr;
 
     ClearCodeBlockDebuggerRequestsFunctor functor(this);
-    m_vm.heap.forEachCodeBlock(functor);
+    // §A.2.7: CodeBlock-wide registration walk under a §A.3 stop GIL-off.
+    runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+        m_vm.heap.forEachCodeBlock(functor);
+    });
 }
 
 bool Debugger::evaluateBreakpointCondition(Breakpoint& breakpoint, JSGlobalObject* globalObject)
@@ -804,7 +932,10 @@ void Debugger::clearDebuggerRequests(JSGlobalObject* globalObject)
     m_vm.heap.completeAllJITPlans();
 
     ClearDebuggerRequestsFunctor functor(globalObject);
-    m_vm.heap.forEachCodeBlock(functor);
+    // §A.2.7: CodeBlock-wide registration walk under a §A.3 stop GIL-off.
+    runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+        m_vm.heap.forEachCodeBlock(functor);
+    });
 }
 
 void Debugger::clearParsedData()
@@ -961,6 +1092,10 @@ void Debugger::updateCallFrameInternal(CallFrame* callFrame)
 void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
 {
     VM& vm = m_vm;
+    // SD13 spawned-unreachability lint (§A.2.7): every caller is one of the
+    // guarded entry hooks, so the (singular) pause machinery can never run
+    // on a spawned Thread GIL-off.
+    ASSERT(!isSpawnedJSThreadGILOff(vm));
     DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1172,6 +1307,13 @@ private:
 
 void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception, bool hasCatchHandler)
 {
+    // SD13 (§A.2.7): every per-execution debugger entry hook early-returns on
+    // a spawned Thread GIL-off — the pause state below is singular
+    // (m_currentCallFrame/m_isPaused/m_reasonForPause) and owned by the
+    // landed carrier protocol; spawned breakpoints/pauses are defined no-ops.
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]]
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1210,6 +1352,9 @@ void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSV
 
 void Debugger::atStatement(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1221,6 +1366,9 @@ void Debugger::atStatement(CallFrame* callFrame)
 
 void Debugger::atExpression(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1239,6 +1387,9 @@ void Debugger::atExpression(CallFrame* callFrame)
 
 void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1270,6 +1421,9 @@ void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
 
 void Debugger::didAwait(CallFrame*, JSValue generatorValue)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1289,6 +1443,9 @@ void Debugger::didAwait(CallFrame*, JSValue generatorValue)
 
 void Debugger::callEvent(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1303,6 +1460,9 @@ void Debugger::callEvent(CallFrame* callFrame)
 
 void Debugger::returnEvent(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1332,6 +1492,9 @@ void Debugger::returnEvent(CallFrame* callFrame)
 
 void Debugger::unwindEvent(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1352,6 +1515,9 @@ void Debugger::unwindEvent(CallFrame* callFrame)
 
 void Debugger::willExecuteProgram(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1360,6 +1526,9 @@ void Debugger::willExecuteProgram(CallFrame* callFrame)
 
 void Debugger::didExecuteProgram(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1417,6 +1586,9 @@ void Debugger::resetAsyncPauseState()
 
 void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     if (m_isPaused)
         return;
 
@@ -1431,6 +1603,9 @@ void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
 
 void Debugger::didQueueMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didQueueMicrotask(globalObject, identifier);
     });
@@ -1438,6 +1613,9 @@ void Debugger::didQueueMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifi
 
 void Debugger::willRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.willRunMicrotask(globalObject, identifier);
     });
@@ -1445,6 +1623,9 @@ void Debugger::willRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifie
 
 void Debugger::didRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops.
+        return;
+
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didRunMicrotask(globalObject, identifier);
     });

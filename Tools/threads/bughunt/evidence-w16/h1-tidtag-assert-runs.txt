@@ -1,0 +1,14 @@
+Instrumented build: WebKitBuild/Release/bin/jsc-bughunt-h1tag
+(diff: Tools/threads/bughunt/h1-tidtag-instrumentation.diff — thread_local copy of
+(calleeFrame,length) stored at LLIntSlowPaths.cpp:2429-30, RELEASE_ASSERT equality
+at the varargsSetup reload :2453-54; source reverted after, pristine jsc rebuilt)
+
+Command: jsc-bughunt-h1tag <PINNED> --useJIT=0 -e "globalThis.REPRO_THREADS=$W; globalThis.REPRO_ITERS=300000;" Tools/threads/bughunt/repro.js
+
+W=2:  BUGHUNT H1 FOREIGN VARARGS SLOTS: thread=0x7f01e7924640 storedFrame=0x7f01e7923780 reloadedFrame=0x7ffcbbb4bc90 storedLen=3 reloadedLen=2   (assert fired in <1s)
+W=4:  BUGHUNT H1 FOREIGN VARARGS SLOTS: thread=0x7f9281d17640 storedFrame=0x7f9281d16780 reloadedFrame=0x7f92819fe780 storedLen=3 reloadedLen=4   (assert fired in <1s)
+W=16: BUGHUNT H1 FOREIGN VARARGS SLOTS: thread=0x7f6b8137e640 storedFrame=0x7f6b8137d750 reloadedFrame=0x7f6b8977d790 storedLen=9 reloadedLen=2   (assert fired in <1s)
+
+Decode: every mismatch is a FOREIGN frame pointer (W=2: spawned thread stored its own
+thread-stack frame 0x7f01e7923780, reloaded the MAIN-stack frame 0x7ffcbbb4bc90) and a
+foreign per-thread-encoded length (repro encodes len=2+(t%8) per thread).

@@ -29,6 +29,7 @@
 #include "JITCode.h"
 #include "JITCodeMap.h"
 #include "PropertyInlineCache.h"
+#include <wtf/Atomics.h>
 #include <wtf/ButterflyArray.h>
 #include <wtf/CompactPointerTuple.h>
 
@@ -94,10 +95,10 @@ public:
 
     CodeLocationLabel<JSInternalPtrTag> getCallLinkDoneLocationForBytecodeIndex(BytecodeIndex) const;
 
-    double livenessRate() const { return m_livenessRate; }
-    void setLivenessRate(double rate) { m_livenessRate = rate; }
-    double fullnessRate() const { return m_fullnessRate; }
-    void setFullnessRate(double rate) { m_fullnessRate = rate; }
+    double livenessRate() const { return m_livenessRate.loadRelaxed(); }
+    void setLivenessRate(double rate) { m_livenessRate.storeRelaxed(rate); }
+    double fullnessRate() const { return m_fullnessRate.loadRelaxed(); }
+    void setFullnessRate(double rate) { m_fullnessRate.storeRelaxed(rate); }
 
     FixedVector<BaselineUnlinkedCallLinkInfo> m_unlinkedCalls;
     FixedVector<BaselineUnlinkedPropertyInlineCache> m_unlinkedPropertyInlineCaches;
@@ -107,10 +108,15 @@ public:
     JITConstantPool m_constantPool;
     std::unique_ptr<PCToCodeOriginMap> m_pcToCodeOriginMap;
 private:
+    // GIL-off (TSAN family codeblock-init): these advisory profiling rates are
+    // written under value-profile updating on whichever thread runs it and read
+    // cross-thread by tier-up heuristics. Racy-profiling tolerance per JIT spec
+    // §5.7.7 — word-sized advisory data, so relaxed atomics; stale values are fine
+    // and flag-off semantics are unchanged (same loads/stores at ISA level).
     // The percentage of ValueProfiles that had some profiling data in them.
-    double m_livenessRate { 0 };
+    Atomic<double> m_livenessRate { 0 };
     // The percentage of ValueProfile buckets that had a value in them.
-    double m_fullnessRate { 0 };
+    Atomic<double> m_fullnessRate { 0 };
 public:
     bool m_isShareable { true };
 };

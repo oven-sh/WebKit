@@ -31,6 +31,7 @@
 
 #include "ArityCheckMode.h"
 #include "MacroAssemblerCodeRef.h"
+#include "Options.h"
 #include "WasmCallee.h"
 #include "WebAssemblyFunctionBase.h"
 #include <wtf/Noncopyable.h>
@@ -76,6 +77,20 @@ public:
     CodePtr<JSEntryPtrTag> jsCallICEntrypoint()
     {
 #if ENABLE(JIT)
+        // UNGIL SD7/§I item (2) interim (AB-15): until the generated-code arm
+        // lands (VMLite::isSpawned JSToWasm prologue check), refuse the warm
+        // JS->wasm IC entrypoint entirely under useJSThreads — every call
+        // takes the cold callWebAssemblyFunction path, where the SD7
+        // spawned-thread refusal trips deterministically. Without this, a
+        // spawned Thread WARM-calling a carrier-created export would run
+        // wasm whose stack checks compare CARRIER-published limits (wasm
+        // soft-limit reads are VM-level/carrier-only by AB-17 §A.2.2
+        // premise (b)) against the spawned thread's stack pointer — silent
+        // missed-overflow corruption instead of fail-stop. Flag-off cost:
+        // zero (one option load on an IC-miss-only path).
+        if (Options::useJSThreads()) [[unlikely]]
+            return nullptr;
+
         if (m_taintedness >= SourceTaintedOrigin::IndirectlyTainted)
             return nullptr;
 

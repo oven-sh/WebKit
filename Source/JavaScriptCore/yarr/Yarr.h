@@ -49,7 +49,31 @@ static constexpr unsigned offsetNoMatch = std::numeric_limits<unsigned>::max();
 
 // The below limit restricts the number of "recursive" match calls in order to
 // avoid spending exponential time on complex regular expressions.
+//
+// JSThreads (§A.3) stop-latency dependence: the Yarr bytecode interpreter has
+// NO CheckTraps/safepoint poll sites (audited: zero in yarr/). With
+// useJSThreads, a mutator inside Yarr::Interpreter::matchDisjunction holds
+// heap access and is counted non-quiescent by the §A.3.2 conductor predicate
+// (VMManager.cpp allEnteredThreadsAreQuiescent) until it returns. The ONLY
+// bound on that region is this counter: remainingMatchCount is initialized to
+// matchLimit (YarrInterpreter.cpp:2285), decremented once per matchDisjunction
+// entry (YarrInterpreter.cpp:1776), and the interpreter returns
+// JSRegExpResult::ErrorHitLimit when it reaches zero (YarrInterpreter.cpp:1778).
+// The Yarr JIT enforces the same bound with its own check (YarrJIT.cpp loads
+// matchLimit into remainingMatchCount and bails when exhausted). Measured
+// worst-case release wall at this value: ~1.8s interpreter / ~0.9s JIT —
+// comfortably under the 30s stop-the-world watchdog
+// (watchdogAssertStopProgress, bytecode/JSThreadsSafepoint.cpp). Raising
+// this limit (or adding an unbounded match mode) without adding a poll site
+// in matchDisjunction can starve the watchdog into a Class-A abort. The
+// static_assert below is a deliberate ratchet: bumping matchLimit requires
+// consciously revisiting the JSThreads quiescence bound.
 static constexpr unsigned matchLimit = 100000000;
+static_assert(matchLimit <= 100000000,
+    "matchLimit bounds the only poll-free heap-access region reachable under "
+    "JSThreads stop-the-world (§A.3.2); raising it requires adding a safepoint "
+    "poll in Yarr::Interpreter::matchDisjunction or re-deriving the <30s "
+    "stop-latency bound against the STW watchdog budget.");
 
 enum class MatchFrom { VMThread, CompilerThread };
 
