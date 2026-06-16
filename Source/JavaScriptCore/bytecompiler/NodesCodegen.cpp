@@ -6099,6 +6099,7 @@ void ArrayPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs) 
     RefPtr<RegisterID> iterator = generator.newTemporary();
     RefPtr<RegisterID> nextOrIndex = generator.newTemporary();
     {
+        generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
         RefPtr<RegisterID> iteratorSymbol = generator.emitGetById(generator.newTemporary(), iterable.get(), generator.propertyNames().iteratorSymbol);
         CallArguments args(generator, nullptr, 0);
         generator.move(args.thisRegister(), iterable.get());

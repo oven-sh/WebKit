@@ -3497,10 +3497,12 @@ RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNo
         unsigned i = 0;
         for (ElementNode* node = elements; node; node = node->next()) {
             if (node->value()->isSpreadExpression()) {
-                ExpressionNode* expression = static_cast<SpreadExpressionNode*>(node->value())->expression();
+                auto* spread = static_cast<SpreadExpressionNode*>(node->value());
+                ExpressionNode* expression = spread->expression();
                 RefPtr<RegisterID> tmp = newTemporary();
                 emitNode(tmp.get(), expression);
 
+                emitExpressionInfo(spread->divot(), spread->divotStart(), spread->divotEnd());
                 OpSpread::emit(this, argv[i].get(), tmp.get());
             } else {
                 ExpressionNode* expression = node->value();
@@ -3781,8 +3783,10 @@ RegisterID* BytecodeGenerator::emitCall(RegisterID* dst, RegisterID* func, Expec
             if (expression->isArrayLiteral()) {
                 auto* elements = static_cast<ArrayNode*>(expression)->elements();
                 if (elements && !elements->next() && elements->value()->isSpreadExpression()) {
-                    ExpressionNode* expression = static_cast<SpreadExpressionNode*>(elements->value())->expression();
+                    auto* spread = static_cast<SpreadExpressionNode*>(elements->value());
+                    ExpressionNode* expression = spread->expression();
                     RefPtr<RegisterID> argumentRegister = tempDestination(emitNode(callArguments.argumentRegister(0), expression));
+                    emitExpressionInfo(spread->divot(), spread->divotStart(), spread->divotEnd());
                     OpSpread::emit(this, argumentRegister.get(), argumentRegister.get());
 
                     return emitCallVarargs<typename VarArgsOp<CallOp>::type>(dst, func, callArguments.thisRegister(), argumentRegister.get(), newTemporary(), 0, divot, divotStart, divotEnd, debuggableCall);
@@ -3993,11 +3997,14 @@ RegisterID* BytecodeGenerator::emitConstructImpl(RegisterID* dst, RegisterID* fu
             if (expression->isArrayLiteral()) {
                 auto* elements = static_cast<ArrayNode*>(expression)->elements();
                 if (elements && !elements->next() && elements->value()->isSpreadExpression()) {
-                    ExpressionNode* expression = static_cast<SpreadExpressionNode*>(elements->value())->expression();
+                    auto* spread = static_cast<SpreadExpressionNode*>(elements->value());
+                    ExpressionNode* expression = spread->expression();
                     RefPtr<RegisterID> argumentRegister = tempDestination(emitNode(callArguments.argumentRegister(0), expression));
 
-                    if (!isDefaultDerivedConstructorCall)
+                    if (!isDefaultDerivedConstructorCall) {
+                        emitExpressionInfo(spread->divot(), spread->divotStart(), spread->divotEnd());
                         OpSpread::emit(this, argumentRegister.get(), argumentRegister.get());
+                    }
 
                     move(callArguments.thisRegister(), lazyThis);
                     return emitCallVarargs<typename VarArgsOp<ConstructOp>::type>(dst, func, callArguments.thisRegister(), argumentRegister.get(), newTemporary(), 0, divot, divotStart, divotEnd, DebuggableCall::No);
@@ -4980,6 +4987,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
     RefPtr<RegisterID> nextOrIndex = newTemporary();
     RefPtr<RegisterID> iterator = newTemporary();
     {
+        emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
         RefPtr<RegisterID> iteratorSymbol = emitGetById(newTemporary(), iterable.get(), propertyNames().iteratorSymbol);
         CallArguments args(*this, nullptr, 0);
         move(args.thisRegister(), iterable.get());
@@ -5408,6 +5416,7 @@ void BytecodeGenerator::emitIteratorNext(RegisterID* done, RegisterID* value, Re
 
 RegisterID* BytecodeGenerator::emitGetGenericIterator(RegisterID* argument, ThrowableExpressionData* node)
 {
+    emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
     RefPtr<RegisterID> iterator = emitGetById(newTemporary(), argument, propertyNames().iteratorSymbol);
     emitCallIterator(iterator.get(), argument, node);
 
@@ -5467,6 +5476,7 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
 
 RegisterID* BytecodeGenerator::emitGetAsyncIterator(RegisterID* argument, ThrowableExpressionData* node)
 {
+    emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
     RefPtr<RegisterID> iterator = emitGetById(newTemporary(), argument, propertyNames().asyncIteratorSymbol);
     Ref<Label> asyncIteratorNotFound = newLabel();
     Ref<Label> asyncIteratorFound = newLabel();
