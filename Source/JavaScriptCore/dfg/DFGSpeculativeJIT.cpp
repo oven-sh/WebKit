@@ -18448,7 +18448,7 @@ void SpeculativeJIT::compileDateNow(Node* node)
 {
     flushRegisters();
     FPRResult result(this);
-    callOperationWithoutExceptionCheck(operationDateNow, result.fpr());
+    callOperationWithoutExceptionCheck(operationDateNow, result.fpr(), LinkableConstant::globalObject(*this, node));
     doubleResult(result.fpr(), node);
 }
 

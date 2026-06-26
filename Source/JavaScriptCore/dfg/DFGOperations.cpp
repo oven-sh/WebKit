@@ -6057,9 +6057,10 @@ JSC_DEFINE_JIT_OPERATION(operationGetPrototypeOf, EncodedJSValue, (JSGlobalObjec
     OPERATION_RETURN(scope, JSValue::encode(value.getPrototype(globalObject)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDateNow, double, (void))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDateNow, double, (JSGlobalObject* globalObject))
 {
-    return jsCurrentTime();
+    auto ms = globalObject->overridenDateNow;
+    return ms < 0 ? jsCurrentTime() : ms;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationDateGetFullYear, EncodedJSValue, (VM* vmPointer, DateInstance* date))

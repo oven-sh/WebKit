@@ -474,7 +474,7 @@ JSC_DECLARE_JIT_OPERATION(operationNewObjectWithButterflyWithIndexingHeaderAndVe
 
 JSC_DECLARE_JIT_OPERATION(operationLinkDirectCall, void, (DirectCallLinkInfo*, JSFunction*));
 
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationDateNow, double, (void));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationDateNow, double, (JSGlobalObject*));
 JSC_DECLARE_JIT_OPERATION(operationDateGetFullYear, EncodedJSValue, (VM*, DateInstance*));
 JSC_DECLARE_JIT_OPERATION(operationDateGetUTCFullYear, EncodedJSValue, (VM*, DateInstance*));
 JSC_DECLARE_JIT_OPERATION(operationDateGetMonth, EncodedJSValue, (VM*, DateInstance*));

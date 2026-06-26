@@ -21701,7 +21701,8 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileDateNow()
     {
-        setDouble(vmCall(Double, operationDateNow));
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_node->origin.semantic);
+        setDouble(vmCall(Double, operationDateNow, weakPointer(globalObject)));
     }
 
     void compileDateGet()
