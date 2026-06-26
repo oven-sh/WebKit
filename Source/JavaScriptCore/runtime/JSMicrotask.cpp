@@ -206,25 +206,20 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     return JSValue::decode(vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame));
 }
 
-static void promiseResolveThenableJobFastSlow(JSGlobalObject* globalObject, JSPromise* promise, JSPromise* promiseToResolve)
+// PromiseResolveThenableJob steps b-c (ECMA-262 27.2.2.2): call `then` with the
+// resolving functions, and route an abrupt completion of that call to
+// reject(error). `then` here is the original %Promise.prototype.then% — this
+// path is only reached when promise's `then` is fast and non-observable — so it
+// is invoked through JSPromise::then; SpeciesConstructor or NewPromiseCapability
+// throwing inside it is the abrupt completion.
+static void promiseResolveThenableJobFastSlowCallThen(JSGlobalObject* globalObject, JSPromise* promise, JSFunction* resolve, JSFunction* reject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // PromiseResolveThenableJob step a: create resolving functions first so an
-    // abrupt completion of the inlined `then` (SpeciesConstructor or
-    // NewPromiseCapability throwing) routes to reject(error) per step c.
-    // https://bugs.webkit.org/show_bug.cgi?id=NNNNNN
-    auto [resolve, reject] = promiseToResolve->createResolvingFunctions(vm, globalObject);
-
-    JSObject* constructor = promiseSpeciesConstructor(globalObject, promise);
-    if (!scope.exception()) [[likely]] {
-        auto capability = JSPromise::createNewPromiseCapability(globalObject, constructor);
-        if (!scope.exception()) [[likely]] {
-            promise->performPromiseThen(vm, globalObject, resolve, reject, capability);
-            return;
-        }
-    }
+    promise->then(globalObject, resolve, reject);
+    if (!scope.exception()) [[likely]]
+        return;
 
     JSValue error = scope.exception()->value();
     if (!scope.clearExceptionExceptTermination()) [[unlikely]]
@@ -238,33 +233,17 @@ static void promiseResolveThenableJobFastSlow(JSGlobalObject* globalObject, JSPr
     EXCEPTION_ASSERT(scope.exception() || true);
 }
 
+static void promiseResolveThenableJobFastSlow(JSGlobalObject* globalObject, JSPromise* promise, JSPromise* promiseToResolve)
+{
+    // Step a: createResolvingFunctions is pure allocation and cannot throw.
+    auto [resolve, reject] = promiseToResolve->createResolvingFunctions(globalObject->vm(), globalObject);
+    promiseResolveThenableJobFastSlowCallThen(globalObject, promise, resolve, reject);
+}
+
 static void promiseResolveThenableJobWithInternalMicrotaskFastSlow(JSGlobalObject* globalObject, JSPromise* promise, InternalMicrotask task, JSValue context)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    // See promiseResolveThenableJobFastSlow above.
-    auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context);
-
-    JSObject* constructor = promiseSpeciesConstructor(globalObject, promise);
-    if (!scope.exception()) [[likely]] {
-        auto capability = JSPromise::createNewPromiseCapability(globalObject, constructor);
-        if (!scope.exception()) [[likely]] {
-            promise->performPromiseThen(vm, globalObject, resolve, reject, capability);
-            return;
-        }
-    }
-
-    JSValue error = scope.exception()->value();
-    if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-        return;
-
-    MarkedArgumentBuffer arguments;
-    arguments.append(error);
-    ASSERT(!arguments.hasOverflowed());
-    auto callData = JSC::getCallDataInline(reject);
-    call(globalObject, reject, callData, jsUndefined(), arguments);
-    EXCEPTION_ASSERT(scope.exception() || true);
+    auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(globalObject->vm(), globalObject, task, context);
+    promiseResolveThenableJobFastSlowCallThen(globalObject, promise, resolve, reject);
 }
 
 static void promiseResolveThenableJob(JSGlobalObject* globalObject, JSValue promise, JSValue then, JSValue resolve, JSValue reject)
