@@ -36,7 +36,6 @@
 #include <JavaScriptCore/TemporalCoreTypes.h>
 #include <JavaScriptCore/TemporalObject.h>
 #include <optional>
-#include <utility>
 #include <wtf/Int128.h>
 
 namespace JSC {
@@ -90,7 +89,24 @@ std::optional<double> JS_EXPORT_PRIVATE balanceDuration(ISO8601::Duration&, Temp
 
 Int128 JS_EXPORT_PRIVATE timeDurationFromComponents(double hours, double minutes, double seconds, double milliseconds, double microseconds, double nanoseconds);
 
-std::pair<int64_t, Int128> JS_EXPORT_PRIVATE splitTimeDuration(Int128 timeDuration);
+// splitTimeDuration's result. Deliberately not a std::pair<int64_t, Int128>:
+// Microsoft's STL compiles its headers under #pragma pack(push, 8)
+// (_CRT_PACKING), which caps member alignment at 8, so std::pair places
+// `second` at offset 8, and std::get<1>() (which a structured binding on a
+// pair goes through) returns a fully aligned Int128& bound to that
+// under-aligned member. The 16-byte-aligned loads the code generator emits
+// through such a reference then fault on Windows. A struct declared here
+// lays Int128 out at its natural 16-byte alignment, and a structured binding
+// on an aggregate names the members directly instead of going through
+// std::get.
+struct SplitTimeDuration {
+    int64_t overflowDays;
+    Int128 subdayNs;
+};
+// Fails if an enclosing #pragma pack capped the Int128 member's alignment.
+static_assert(alignof(SplitTimeDuration) == alignof(Int128));
+
+SplitTimeDuration JS_EXPORT_PRIVATE splitTimeDuration(Int128 timeDuration);
 
 ISO8601::PlainTime JS_EXPORT_PRIVATE plainTimeFromSubdayNs(Int128 ns);
 

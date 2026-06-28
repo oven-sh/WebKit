@@ -331,9 +331,20 @@ ISO8601::InternalDuration diffISODateTime(const ISO8601::PlainDate& d1, const IS
     return ISO8601::InternalDuration::combineDateAndTimeDuration(datePart, timeDuration);
 }
 
+// roundTime's result. Not a std::pair<Int128, Int128>: Microsoft's STL lays
+// std::pair out under #pragma pack(push, 8), which under-aligns its Int128
+// members relative to the 16-byte-aligned loads the code generator emits
+// through the references std::get hands out. See SplitTimeDuration in
+// DurationArithmetic.h for the full explanation.
+struct RoundedTime {
+    Int128 quantity;
+    Int128 baseOffset;
+};
+static_assert(alignof(RoundedTime) == alignof(Int128));
+
 // RoundTime steps 1–6 (quantity only) — temporal_rs: IsoTime::round (src/iso.rs)
 // https://tc39.es/proposal-temporal/#sec-temporal-roundtime
-static std::pair<Int128, Int128> roundTime(const ISO8601::PlainTime& t, TemporalUnit unit)
+static RoundedTime roundTime(const ISO8601::PlainTime& t, TemporalUnit unit)
 {
     using ET = ISO8601::ExactTime;
     const Int128 lH = Int128(t.hour());

@@ -183,7 +183,7 @@ Int128 timeDurationFromComponents(double hours, double minutes, double seconds, 
 }
 
 // splitTimeDuration — internal; splits a timeDuration (ns) into (overflowDays, subdayNs) using floor division.
-std::pair<int64_t, Int128> splitTimeDuration(Int128 timeDuration)
+SplitTimeDuration splitTimeDuration(Int128 timeDuration)
 {
     constexpr Int128 nsPerDay = ISO8601::ExactTime::nsPerDay;
     int64_t overflowDays = static_cast<int64_t>(timeDuration / nsPerDay);
