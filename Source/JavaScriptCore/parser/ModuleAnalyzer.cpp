@@ -43,7 +43,8 @@ ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& m
 
 void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes, AbstractModuleRecord::ModulePhase phase)
 {
-    ModuleMapKey key { specifier.impl(), attributes ? attributes->type() : ScriptFetchParameters::Type::JavaScript };
+    ScriptFetchParameters::Type type = attributes ? attributes->type() : ScriptFetchParameters::Type::JavaScript;
+    ModuleMapKey key = makeModuleMapKey(specifier.impl(), type, attributes.get());
     if (m_requestedModules[phase].add(key).isNewEntry)
         moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes), phase);
 }

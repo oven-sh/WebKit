@@ -124,6 +124,11 @@ ScriptFetchParameters::Type AbstractModuleRecord::ModuleRequest::type(ScriptFetc
     return fallback;
 }
 
+ModuleMapKey AbstractModuleRecord::ModuleRequest::moduleMapKey() const
+{
+    return makeModuleMapKey(m_specifier.impl(), type(), m_attributes.get());
+}
+
 AbstractModuleRecord::LoadedModuleRequest::LoadedModuleRequest(VM& vm, ModuleRequest moduleRequest, AbstractModuleRecord* loadedModule, JSCell* owner)
     : ModuleRequest(WTF::move(moduleRequest))
     , m_module(vm, owner, loadedModule)
@@ -141,8 +146,15 @@ bool AbstractModuleRecord::ModuleRequest::operator==(const ModuleRequest& other)
     if (!!m_attributes != !!other.m_attributes)
         return false;
 
-    if (m_attributes)
-        return m_attributes->type() == other.m_attributes->type();
+    if (m_attributes) {
+        if (m_attributes->type() != other.m_attributes->type())
+            return false;
+#if USE(BUN_JSC_ADDITIONS)
+        // ModuleRequestsEqual compares the whole attribute list, and for Bun's
+        // host-defined types the `type` attribute string is the discriminant.
+        return m_attributes->hostDefinedImportType() == other.m_attributes->hostDefinedImportType();
+#endif
+    }
 
     return true;
 }
@@ -221,7 +233,23 @@ auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
 
 AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
 {
-    if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), moduleRequestType }); iter != m_loadedModules.end())
+#if USE(BUN_JSC_ADDITIONS)
+    // Import and export entries record only the attribute Type, not the host-defined
+    // attribute string that completes a HostDefined ModuleMapKey, so recover the full
+    // key from this record's own requested modules. They are in source order, so when
+    // one specifier is requested with several host-defined types the binding resolves
+    // to the first of them, which is what the old specifier-keyed lookup resolved to.
+    if (moduleRequestType == ScriptFetchParameters::Type::HostDefined) {
+        for (const ModuleRequest& request : m_requestedModules) {
+            if (request.m_specifier.impl() != moduleName.impl() || request.type() != moduleRequestType)
+                continue;
+            if (auto iter = m_loadedModules.find(request.moduleMapKey()); iter != m_loadedModules.end())
+                return iter->value.m_module.get();
+        }
+        return nullptr;
+    }
+#endif
+    if (auto iter = m_loadedModules.find(makeModuleMapKey(moduleName.impl(), moduleRequestType, nullptr)); iter != m_loadedModules.end())
         return iter->value.m_module.get();
     return nullptr;
 }
@@ -237,11 +265,10 @@ void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const
     // getImportedModule(), so records that are linked outside the loader (Bun's
     // node:vm SourceTextModule) need this map populated too. Reuse the original
     // ModuleRequest (specifier + attributes) so a `with { type: "json" }` /
-    // HostDefined import lands in the same (specifier, type) bucket that
-    // getImportedModule()'s typed lookup will use.
+    // HostDefined import lands in the same bucket that getImportedModule()'s
+    // typed lookup will use.
     Locker locker { cellLock() };
-    ModuleMapKey key { request.m_specifier.impl(), request.type() };
-    m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });
+    m_loadedModules.set(request.moduleMapKey(), LoadedModuleRequest { vm, request, record, this });
 }
 
 auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
