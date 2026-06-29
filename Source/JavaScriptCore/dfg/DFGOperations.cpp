@@ -6059,8 +6059,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetPrototypeOf, EncodedJSValue, (JSGlobalObjec
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDateNow, double, (JSGlobalObject* globalObject))
 {
-    auto ms = globalObject->overridenDateNow;
-    return ms < 0 ? jsCurrentTime() : ms;
+    return globalObject->jsDateNow();
 }
 
 JSC_DEFINE_JIT_OPERATION(operationDateGetFullYear, EncodedJSValue, (VM* vmPointer, DateInstance* date))

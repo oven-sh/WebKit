@@ -153,8 +153,7 @@ JSC_DEFINE_HOST_FUNCTION(callDate, (JSGlobalObject* globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
     GregorianDateTime ts;
-    auto ms = globalObject->overridenDateNow;
-    vm.dateCache.msToGregorianDateTime(ms < 0 ? WallTime::now().secondsSinceEpoch().milliseconds() : static_cast<double>(ms), TimeType::LocalTime, ts);
+    vm.dateCache.msToGregorianDateTime(globalObject->jsDateNow(), TimeType::LocalTime, ts);
     return JSValue::encode(jsNontrivialString(vm, formatDateTime(ts, DateTimeFormat::DateAndTime, false, vm.dateCache)));
 }
 
@@ -167,16 +166,14 @@ JSC_DEFINE_HOST_FUNCTION(dateParse, (JSGlobalObject* globalObject, CallFrame* ca
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(timeClip(vm.dateCache.parseDate(globalObject, vm, dateStr)))));
 }
 
-JSValue dateNowImpl(JSC::JSGlobalObject *globalObject)
+JSValue dateNowImpl(JSC::JSGlobalObject* globalObject)
 {
-    auto ms = globalObject->overridenDateNow;
-    return jsNumber(ms < 0 ? jsCurrentTime() : ms);
+    return jsNumber(globalObject->jsDateNow());
 }
 
 JSC_DEFINE_HOST_FUNCTION(dateNow, (JSGlobalObject* globalObject, CallFrame*))
 {
-    auto ms = globalObject->overridenDateNow;
-    return JSValue::encode(jsNumber(ms < 0 ? jsCurrentTime() : ms));
+    return JSValue::encode(jsNumber(globalObject->jsDateNow()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(dateUTC, (JSGlobalObject* globalObject, CallFrame* callFrame))

@@ -682,14 +682,19 @@ public:
     std::optional<unsigned> m_stackTraceLimit;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
     
-    // Added for "bun test"
-    double overridenDateNow { -1 };
+    // Added for "bun test". NaN (the default) means no override is active.
+    // Using NaN as the sentinel keeps jsDateNow() non-NaN by construction,
+    // which the DFG relies on (DateNow is proven SpecDoubleReal), and allows
+    // pre-epoch (negative) timestamps to be overridden.
+    double overridenDateNow { PNaN };
 
-    double jsDateNow() const {
-        if (overridenDateNow > -1)
-            return overridenDateNow;
-        
-        return WTF::jsCurrentTime();
+    // Every reader of the current JS time, in every tier, must go through
+    // this helper: Date.now() (dateNow / operationDateNow), new Date()
+    // (constructDate), Date() (callDate), and Intl (dateNowImpl).
+    double jsDateNow() const
+    {
+        double ms = overridenDateNow;
+        return std::isnan(ms) ? WTF::jsCurrentTime() : ms;
     }
 
     TrustedTypesEnforcement m_trustedTypesEnforcement { TrustedTypesEnforcement::None };
