@@ -28,6 +28,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <wtf/CheckedArithmetic.h>
 
 namespace TestWebKitAPI {
 
@@ -1362,5 +1363,72 @@ TEST(WTF_Int128, VsNativeInt128)
 }
 
 #endif
+
+// Tests for the active WTF::Int128 / WTF::UInt128 types, whichever implementation
+// they resolve to. See wtf/Int128.h and webkit.org/b/318085.
+
+static_assert(sizeof(Int128) == 16);
+static_assert(sizeof(UInt128) == 16);
+static_assert(std::is_trivially_copyable_v<Int128>);
+static_assert(std::is_trivially_copyable_v<UInt128>);
+
+// std::get() hands out references the code generator assumes to be fully aligned.
+static_assert(alignof(std::pair<int64_t, Int128>) == alignof(Int128));
+static_assert(alignof(std::pair<Int128, Int128>) == alignof(Int128));
+static_assert(alignof(std::pair<UInt128, UInt128>) == alignof(UInt128));
+
+static_assert(std::numeric_limits<Int128>::is_specialized);
+static_assert(std::numeric_limits<Int128>::is_signed);
+static_assert(std::numeric_limits<Int128>::is_integer);
+static_assert(std::numeric_limits<Int128>::digits == 127);
+static_assert(std::numeric_limits<UInt128>::is_specialized);
+static_assert(!std::numeric_limits<UInt128>::is_signed);
+static_assert(std::numeric_limits<UInt128>::digits == 128);
+
+TEST(WTF_Int128, ActiveTypeNumericLimits)
+{
+    Int128 max = std::numeric_limits<Int128>::max();
+    Int128 min = std::numeric_limits<Int128>::min();
+    EXPECT_GT(max, Int128 { 0 });
+    EXPECT_LT(min, Int128 { 0 });
+    EXPECT_TRUE(min == -max - 1);
+    EXPECT_TRUE(static_cast<uint64_t>(max >> 64) == 0x7fff'ffff'ffff'ffffULL);
+    EXPECT_TRUE(std::numeric_limits<UInt128>::max() == ~UInt128 { 0 });
+}
+
+TEST(WTF_Int128, ActiveTypeBoundsChecks)
+{
+    EXPECT_TRUE(WTF::isInBounds<Int128>(static_cast<int64_t>(-1)));
+    EXPECT_TRUE(WTF::isInBounds<Int128>(std::numeric_limits<int64_t>::min()));
+    EXPECT_TRUE(WTF::isInBounds<Int128>(std::numeric_limits<int64_t>::max()));
+    EXPECT_FALSE(WTF::isInBounds<int64_t>(std::numeric_limits<Int128>::max()));
+
+    Checked<Int128, RecordOverflow> negative = static_cast<int64_t>(-86400);
+    EXPECT_FALSE(negative.hasOverflowed());
+    EXPECT_TRUE(negative.value() == Int128 { -86400 });
+
+    Checked<Int128, RecordOverflow> sum = std::numeric_limits<Int128>::max();
+    sum += Int128 { 1 };
+    EXPECT_TRUE(sum.hasOverflowed());
+
+    Checked<Int128, RecordOverflow> product = std::numeric_limits<Int128>::max();
+    product *= Int128 { 2 };
+    EXPECT_TRUE(product.hasOverflowed());
+}
+
+TEST(WTF_Int128, ActiveTypeArithmetic)
+{
+    Int128 nsPerDay = static_cast<Int128>(86'400'000'000'000LL);
+    EXPECT_TRUE(static_cast<int64_t>(nsPerDay / 2) == 43'200'000'000'000LL);
+    EXPECT_TRUE(static_cast<int64_t>(-nsPerDay % 7) == -(86'400'000'000'000LL % 7));
+    EXPECT_TRUE(Int128 { -1 } < Int128 { 0 });
+    EXPECT_EQ(static_cast<int64_t>(Int128 { -42 }), -42);
+    EXPECT_TRUE(static_cast<double>(Int128 { 1 } << 100) == 0x1p100);
+    EXPECT_TRUE(static_cast<UInt128>(Int128 { -1 }) == std::numeric_limits<UInt128>::max());
+
+    UInt128 product = static_cast<UInt128>(std::numeric_limits<uint64_t>::max()) * static_cast<UInt128>(std::numeric_limits<uint64_t>::max());
+    EXPECT_EQ(static_cast<uint64_t>(product), 1u);
+    EXPECT_TRUE(static_cast<uint64_t>(product >> 64) == std::numeric_limits<uint64_t>::max() - 1);
+}
 
 } // namespace TestWebKitAPI

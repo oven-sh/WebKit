@@ -1230,14 +1230,11 @@ constexpr Int128Impl operator>>(Int128Impl lhs, int amount) {
                                << (64 - amount)));
 }
 
+// HAVE(INT128_T) is unset when the standard library does not support __int128_t
+// (e.g. the Microsoft STL); see the CMake __int128_t check and webkit.org/b/318085.
 #if HAVE(INT128_T)
-#if COMPILER(MSVC) // Workaround for a clang-cl bug <https://webkit.org/b/274765>
-typedef __uint128_t UInt128 __attribute__((aligned(16)));
-typedef __int128_t Int128 __attribute__((aligned(16)));
-#else
 using UInt128 = __uint128_t;
 using Int128 = __int128_t;
-#endif
 #else
 using UInt128 = UInt128Impl;
 using Int128 = Int128Impl;
