@@ -1124,6 +1124,11 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
                 entry->setEvaluationError(globalObject, error);
             else
                 entry->setFetchError(globalObject, error);
+        } else {
+            // This microtask reacts to the embedder fetch promise, so a rejection
+            // here is a fetch failure even when the host rejected with a non-Error
+            // value (matching moduleRegistryFetchSettled's unconditional setFetchError).
+            entry->setFetchError(globalObject, errorValue);
         }
         intermediatePromise->reject(vm, errorValue);
     }
