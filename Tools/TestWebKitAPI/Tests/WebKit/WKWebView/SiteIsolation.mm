@@ -4961,6 +4961,47 @@ TEST(SiteIsolation, NavigateFrameWithSiblingsBackForward)
     EXPECT_WK_STREQ([webView _test_waitForAlert], "c");
 }
 
+TEST(SiteIsolation, IntentionalAboutBlankIframeBackForwardNotSkipped)
+{
+    // Regression test for the URL-heuristic gap in isStaleInitialAboutBlankIframeTarget
+    // (https://bugs.webkit.org/show_bug.cgi?id=317458). A child frame that navigates
+    // *intentionally* to about:blank after its first real load produces a legitimate,
+    // traversable back/forward entry — distinct from the frame's initial empty document.
+    // A URL-string guard would wrongly skip the traversal into that entry; the
+    // authoritative isInitialAboutBlank flag lets it through.
+    HTTPServer server({
+        { "/example"_s, { "<iframe src='https://webkit.org/a'></iframe>"_s } },
+        { "/a"_s, { "<script> alert('a'); </script>"_s } },
+        { "/c"_s, { "<script> alert('c'); </script>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/example"]]];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "a");
+
+    auto childURLIs = [webView = RetainPtr { webView }] (NSString *expected) {
+        for (int i = 0; i < 100; ++i) {
+            RetainPtr value = [webView objectByEvaluatingJavaScript:@"location.href" inFrame:[webView firstChildFrame]];
+            if ([value isKindOfClass:[NSString class]] && [(NSString *)value.get() isEqualToString:expected])
+                return true;
+            TestWebKitAPI::Util::runFor(0.05_s);
+        }
+        return false;
+    };
+
+    // Intentional about:blank navigation in the child frame, after its first real load.
+    [webView evaluateJavaScript:@"location.href = 'about:blank'" inFrame:[webView firstChildFrame] completionHandler:nil];
+    EXPECT_TRUE(childURLIs(@"about:blank"));
+
+    // Navigate the child to a real URL so the live frame is on a real document.
+    [webView evaluateJavaScript:@"location.href = 'https://webkit.org/c'" inFrame:[webView firstChildFrame] completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "c");
+
+    // Going back must traverse the child back to the intentional about:blank entry,
+    // not leave it stranded on /c. With the old URL heuristic this was skipped.
+    [webView goBack];
+    EXPECT_TRUE(childURLIs(@"about:blank"));
+}
+
 TEST(SiteIsolation, RedirectToCSP)
 {
     HTTPServer server({

@@ -74,8 +74,8 @@ public:
 
     template<typename T> void setX(T x) { m_frameRect.setX(x); }
     template<typename T> void setY(T y) { m_frameRect.setY(y); }
-    template<typename T> void setWidth(T width) { m_frameRect.setWidth(width); }
-    template<typename T> void setHeight(T height) { m_frameRect.setHeight(height); }
+    template<typename T> void setBorderBoxWidth(T width) { m_frameRect.setWidth(width); }
+    template<typename T> void setBorderBoxHeight(T height) { m_frameRect.setHeight(height); }
 
     inline LayoutUnit logicalLeft() const;
     inline LayoutUnit logicalRight() const;

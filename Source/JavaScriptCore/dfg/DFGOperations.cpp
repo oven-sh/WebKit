@@ -847,6 +847,40 @@ ALWAYS_INLINE EncodedJSValue getByValCellInt(JSGlobalObject* globalObject, VM& v
     return JSValue::encode(JSValue(base).get(globalObject, static_cast<unsigned>(index)));
 }
 
+ALWAYS_INLINE EncodedJSValue getByValArrayStorageInt(JSGlobalObject* globalObject, VM& vm, JSObject* base, int32_t index)
+{
+    ASSERT(hasAnyArrayStorage(base->indexingType()));
+    if (index >= 0) [[likely]] {
+        unsigned i = static_cast<unsigned>(index);
+        ArrayStorage* storage = base->butterfly()->arrayStorage();
+        SparseArrayValueMap* map = storage->m_sparseMap.get();
+        // Only the standard ArrayStorage layout is handled here: indices < vectorLength live in the
+        // vector, overflow indices live in a non-sparse-mode map with no per-entry attributes. When the
+        // map is in sparse mode (frozen/sealed/read-only/accessor arrays), values for in-vector indices
+        // may have migrated into the map and entries carry attributes, so defer to the generic path.
+        if (!map || !map->sparseMode()) [[likely]] {
+            if (i < storage->vectorLength()) {
+                JSValue value = storage->m_vector[i].get();
+                if (value)
+                    return JSValue::encode(value);
+            } else if (map) {
+                SparseArrayValueMap::iterator it = map->find(i);
+                if (it != map->notFound()) {
+                    if (it->value.attributes()) [[unlikely]] // accessor / special: needs the full slot path.
+                        return JSValue::encode(JSValue(base).get(globalObject, i));
+                    return JSValue::encode(it->value.getNonSparseMode());
+                }
+            }
+
+            // Missing own indexed property: undefined unless the prototype chain can intercept it.
+            if (!base->structure()->holesMustForwardToPrototype(base))
+                return JSValue::encode(jsUndefined());
+        }
+    }
+    // Negative index, sparse/dictionary mode, accessor entry, or intercepting prototype chain.
+    return getByValCellInt(globalObject, vm, base, index);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationGetByValObjectInt, EncodedJSValue, (JSGlobalObject* globalObject, JSObject* base, int32_t index))
 {
     VM& vm = globalObject->vm();
@@ -855,6 +889,16 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValObjectInt, EncodedJSValue, (JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     OPERATION_RETURN(scope, getByValCellInt(globalObject, vm, base, index));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationGetByValArrayStorageInt, EncodedJSValue, (JSGlobalObject* globalObject, JSObject* base, int32_t index))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, getByValArrayStorageInt(globalObject, vm, base, index));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValStringInt, EncodedJSValue, (JSGlobalObject* globalObject, JSString* base, int32_t index))

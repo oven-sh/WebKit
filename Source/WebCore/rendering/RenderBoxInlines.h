@@ -210,9 +210,9 @@ inline const LayoutRect RenderBox::scrollablePaddingAreaOverflowRect() const
 inline void RenderBox::setLogicalHeight(LayoutUnit size)
 {
     if (writingMode().isHorizontal())
-        setHeight(size);
+        setBorderBoxHeight(size);
     else
-        setWidth(size);
+        setBorderBoxWidth(size);
 }
 
 inline void RenderBox::setLogicalLeft(LayoutUnit left)
@@ -234,9 +234,9 @@ inline void RenderBox::setLogicalTop(LayoutUnit top)
 inline void RenderBox::setLogicalWidth(LayoutUnit size)
 {
     if (writingMode().isHorizontal())
-        setWidth(size);
+        setBorderBoxWidth(size);
     else
-        setHeight(size);
+        setBorderBoxHeight(size);
 }
 
 inline bool RenderBox::hasStretchedLogicalHeight(StretchingMode mode) const

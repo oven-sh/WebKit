@@ -231,9 +231,15 @@ private:
     protect(*_userContentControllerProxy)->removeAllUserMessageHandlers();
 }
 
-- (void)addBuffer:(WKJSScriptingBuffer *)buffer name:(NSString *)name contentWorld:(WKContentWorld *)world
+- (void)addBuffer:(id)buffer name:(NSString *)name contentWorld:(WKContentWorld *)world
 {
-    protect(*_userContentControllerProxy)->addJSBuffer(Ref { *buffer->_buffer }, Ref { *world->_contentWorld }, name);
+    RetainPtr<WKJSScriptingBuffer> bufferToAdd;
+    if (RetainPtr data = dynamic_objc_cast<NSData>(buffer))
+        bufferToAdd = adoptNS([[WKJSScriptingBuffer alloc] initWithData:data.get()]);
+    else
+        bufferToAdd = dynamic_objc_cast<WKJSScriptingBuffer>(buffer);
+
+    protect(*_userContentControllerProxy)->addJSBuffer(Ref { *bufferToAdd->_buffer }, Ref { *world->_contentWorld }, name);
 }
 
 - (void)removeBufferWithName:(NSString *)name contentWorld:(WKContentWorld *)world

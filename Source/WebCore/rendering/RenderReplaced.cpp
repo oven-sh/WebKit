@@ -158,7 +158,7 @@ void RenderReplaced::layout()
 
     LayoutRect oldContentRect = replacedContentRect();
     
-    setHeight(minimumReplacedHeight());
+    setBorderBoxHeight(minimumReplacedHeight());
 
     updateLogicalWidth();
     updateLogicalHeight();

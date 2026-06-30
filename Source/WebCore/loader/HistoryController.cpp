@@ -886,6 +886,8 @@ void HistoryController::initializeItem(HistoryItem& item, RefPtr<DocumentLoader>
 
     item.setShouldOpenExternalURLsPolicy(documentLoader->shouldOpenExternalURLsPolicyToPropagate());
 
+    item.setIsInitialAboutBlank(documentLoader->isInitialAboutBlank());
+
     // Save form state if this is a POST
     item.setFormInfoFromRequest(documentLoader->request());
 }

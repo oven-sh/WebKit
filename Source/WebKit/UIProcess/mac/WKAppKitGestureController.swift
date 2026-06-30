@@ -28,6 +28,7 @@ import WebKit_Internal
 import AppKit
 import AppKit_Private.NSPanGestureRecognizer_Private
 private import CxxStdlib
+private import WebCore_Private
 
 final class WKPanGestureRecognizer: NSPanGestureRecognizer {
     private weak var webView: WKWebView?

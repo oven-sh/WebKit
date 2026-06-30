@@ -136,6 +136,7 @@ set(TestWTF_SOURCES
     Tests/WTF/StringView.cpp
     Tests/WTF/SynchronizedFixedQueue.cpp
     Tests/WTF/TextBreakIterator.cpp
+    Tests/WTF/TinyLRUCache.cpp
     Tests/WTF/ThreadGroup.cpp
     Tests/WTF/ThreadMessages.cpp
     Tests/WTF/Threading.cpp

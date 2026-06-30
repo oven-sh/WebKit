@@ -362,7 +362,7 @@ public:
     void windowDidChangeOcclusionState();
     void windowWillClose();
     void NODELETE windowWillEnterOrExitFullScreen();
-    void windowDidEnterOrExitFullScreen();
+    void windowDidEnterOrExitFullScreen(bool windowIsInFullScreen);
     void screenDidChangeColorSpace();
     bool shouldDelayWindowOrderingForEvent(NSEvent *);
     bool windowResizeMouseLocationIsInVisibleScrollerThumb(CGPoint);

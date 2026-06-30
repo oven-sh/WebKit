@@ -115,7 +115,7 @@ struct RenderFlexibleBox::LineState {
         : crossAxisOffset(crossAxisOffset)
         , crossAxisExtent(crossAxisExtent)
         , baselineAlignmentState(baselineAlignmentState)
-        , flexLayoutItems(flexLayoutItems)
+        , flexLayoutItems(WTF::move(flexLayoutItems))
     {
     }
     

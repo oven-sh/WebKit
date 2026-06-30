@@ -7709,6 +7709,11 @@ static NSString *nameForAction(_WKTextExtractionAction action)
     });
 }
 
+- (void)_getSelectorPathData:(WKJSHandle *)node completionHandler:(void (^)(NSData *))completionHandler
+{
+    [self _getSelectorPathDataForNode:(_WKJSHandle *)node completionHandler:completionHandler];
+}
+
 - (void)_getNodeForSelectorPathData:(NSData *)data completionHandler:(void (^)(_WKJSHandle *))completion
 {
     RefPtr frame = _page->mainFrame();

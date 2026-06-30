@@ -1423,7 +1423,7 @@ void RenderTableCell::paintCollapsedBorders(PaintInfo& paintInfo, const LayoutPo
         return;
 
     LayoutRect localRepaintRect = paintInfo.rect;
-    LayoutRect paintRect = LayoutRect(paintOffset + location(), frameRect().size());
+    LayoutRect paintRect = LayoutRect(paintOffset + location(), borderBoxSize());
     if (paintRect.y() - table()->outerBorderTop() >= localRepaintRect.maxY())
         return;
 
@@ -1643,7 +1643,7 @@ void RenderTableCell::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoin
     if (!table->collapseBorders() && style().emptyCells() == EmptyCell::Hide && !firstChild())
         return;
 
-    LayoutRect paintRect = LayoutRect(paintOffset, frameRect().size());
+    LayoutRect paintRect = LayoutRect(paintOffset, borderBoxSize());
     adjustBorderBoxRectForPainting(paintRect);
 
     BackgroundPainter backgroundPainter { *this, paintInfo };
@@ -1675,7 +1675,7 @@ void RenderTableCell::paintMask(PaintInfo& paintInfo, const LayoutPoint& paintOf
     if (!tableElt->collapseBorders() && style().emptyCells() == EmptyCell::Hide && !firstChild())
         return;
    
-    LayoutRect paintRect = LayoutRect(paintOffset, frameRect().size());
+    LayoutRect paintRect = LayoutRect(paintOffset, borderBoxSize());
     adjustBorderBoxRectForPainting(paintRect);
 
     paintMaskImages(paintInfo, paintRect);

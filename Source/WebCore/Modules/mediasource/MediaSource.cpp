@@ -264,7 +264,6 @@ void MediaSource::setPrivateAndOpen(Ref<MediaSourcePrivate>&& mediaSourcePrivate
     ASSERT(!m_private);
 
     setPrivate(WTF::move(mediaSourcePrivate));
-    protect(m_private)->setTimeFudgeFactor(currentTimeFudgeFactor());
 
     open();
 }
@@ -403,13 +402,6 @@ ExceptionOr<void> MediaSource::clearLiveSeekableRange()
     Ref msp = *m_private;
     msp->clearLiveSeekableRange();
     return { };
-}
-
-const MediaTime& MediaSource::currentTimeFudgeFactor()
-{
-    // Allow hasCurrentTime() to be off by as much as the length of two 24fps video frames
-    static NeverDestroyed<MediaTime> fudgeFactor(2002, 24000);
-    return fudgeFactor;
 }
 
 bool MediaSource::contentTypeShouldGenerateTimestamps(const ContentType& contentType)
