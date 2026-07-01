@@ -172,7 +172,10 @@ void IPIntPlan::completeInStreaming()
 void IPIntPlan::didCompileFunctionInStreaming()
 {
     Locker locker { m_lock };
-    moveToState(EntryPlan::State::Compiled);
+    // If a function failed to compile, the plan was already failed and moved to
+    // Completed on that worklist thread. Don't move it backwards to Compiled.
+    if (hasWork())
+        moveToState(EntryPlan::State::Compiled);
 }
 
 void IPIntPlan::didFailInStreaming(String&& message)
