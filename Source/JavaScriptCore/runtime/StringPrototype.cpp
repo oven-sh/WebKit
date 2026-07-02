@@ -691,7 +691,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplaceAll, (JSGlobalObject* globalObjec
         RegExpObject* regExpObject = dynamicDowncast<RegExpObject>(searchValue);
         if (regExpObject && regExpObject->isSymbolReplaceFastAndNonObservable()) [[likely]] {
             if (!regExpObject->regExp()->global()) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must contain the global (g) flag"_s);
             JSString* string = thisValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (regExpObject->isSymbolReplaceFastAndNonObservable()) [[likely]]
@@ -709,7 +709,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplaceAll, (JSGlobalObject* globalObjec
             String flags = flagsValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!flags.contains('g')) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must contain the global (g) flag"_s);
         }
 
         JSObject* searchObject = asObject(searchValue);
@@ -1537,7 +1537,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatchAll, (JSGlobalObject* globalObject,
     if (regexpValue.isObject()) {
         if (auto* regExpObject = dynamicDowncast<RegExpObject>(regexpValue); regExpObject && regExpObject->isSymbolMatchAllFastAndNonObservable()) [[likely]] {
             if (!regExpObject->regExp()->global()) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, "String.prototype.matchAll argument must not be a non-global regular expression"_s);
+                return throwVMTypeError(globalObject, scope, "String.prototype.matchAll argument must contain the global (g) flag"_s);
 
             JSString* thisString = thisValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
@@ -1578,7 +1578,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatchAll, (JSGlobalObject* globalObject,
             String flags = flagsValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!flags.contains('g')) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, "String.prototype.matchAll argument must not be a non-global regular expression"_s);
+                return throwVMTypeError(globalObject, scope, "String.prototype.matchAll argument must contain the global (g) flag"_s);
         }
 
         JSValue matcher = asObject(regexpValue)->get(globalObject, vm.propertyNames->matchAllSymbol);
