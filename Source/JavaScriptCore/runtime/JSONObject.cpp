@@ -1424,6 +1424,12 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             ++m_depth;
         const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
         structure.forEachProperty(m_vm, [&](const auto& entry) -> bool {
+            // SerializeJSONProperty looks up toJSON with GetV, so an own toJSON applies even when
+            // it is not enumerable. It has to be found before DontEnum properties are skipped.
+            if (entry.key() == m_vm.propertyNames->toJSON) [[unlikely]] {
+                recordFailure("object has toJSON"_s);
+                return false;
+            }
             if (entry.attributes() & PropertyAttribute::DontEnum)
                 return true;
             auto& name = *entry.key();
