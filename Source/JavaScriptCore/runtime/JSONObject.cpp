@@ -1544,6 +1544,16 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
         }
         auto& structure = *array.structure();
         if (!m_globalObject.isOriginalArrayStructure(&structure)) [[unlikely]] {
+            // An original array structure has Array.prototype, which mayHaveToJSON checked above.
+            // Any other prototype can carry a toJSON, so it has to go to the general stringifier.
+            if (structure.hasPolyProto()) [[unlikely]] {
+                recordFailure("hasPolyProto"_s);
+                return;
+            }
+            if (structure.storedPrototype() != m_globalObject.arrayPrototype()) [[unlikely]] {
+                recordFailure("non-standard array prototype"_s);
+                return;
+            }
             structure.forEachProperty(m_vm, [&](const PropertyTableEntry& entry) -> bool {
                 if (entry.key() == m_vm.propertyNames->toJSON) [[unlikely]] {
                     recordFailure("array has toJSON"_s);
