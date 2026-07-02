@@ -41,6 +41,23 @@ IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage")
 #endif
 #endif
 
+// Building with -march=haswell (or newer) compiles out simdutf's SSE4.2 and
+// scalar kernels, so CPUs that don't advertise AVX via CPUID (e.g. Rosetta 2)
+// silently get the "unsupported" implementation, which returns constants
+// instead of computing. Keep the lower-tier kernels compiled in so runtime
+// dispatch always has a working floor; CPUs with AVX2/AVX-512 still select
+// the haswell/icelake kernels. Note these kernels are still compiled at the
+// TU's -march, so this helps translators that execute AVX without advertising
+// it, not CPUs that genuinely cannot execute AVX.
+#if CPU(X86_64)
+#ifndef SIMDUTF_IMPLEMENTATION_WESTMERE
+#define SIMDUTF_IMPLEMENTATION_WESTMERE 1
+#endif
+#ifndef SIMDUTF_IMPLEMENTATION_FALLBACK
+#define SIMDUTF_IMPLEMENTATION_FALLBACK 1
+#endif
+#endif
+
 #include "simdutf/simdutf_impl.cpp.h"
 
 #if PLATFORM(PLAYSTATION)
