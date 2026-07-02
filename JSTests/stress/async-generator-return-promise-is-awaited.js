@@ -27,6 +27,13 @@ run("all", () => { async function* g() { return Promise.all([Promise.resolve("b"
 run("race", () => { async function* g() { return Promise.race([Promise.resolve("c")]); } return g(); });
 run("asyncIIFE", () => { async function* g() { return (async () => "d")(); } return g(); });
 
+// A spread argument (op_tail_call_varargs), Function.prototype.apply, and
+// method-form async generators go through the same tail-call gate.
+run("spread", () => { async function* g() { return Promise.resolve(...["i"]); } return g(); });
+run("apply", () => { async function* g() { return Promise.resolve.apply(Promise, ["j"]); } return g(); });
+run("objectMethod", () => { const o = { async *g() { return Promise.resolve("k"); } }; return o.g(); });
+run("classMethod", () => { class C { async *g() { return Promise.resolve("l"); } } return new C().g(); });
+
 // Rejected operand must turn into a rejected next() promise.
 run("reject", () => { async function* g() { return Promise.reject("boom"); } return g(); });
 
@@ -44,13 +51,17 @@ results.sort();
 shouldBe(results.join("\n"),
   [
     "all:value=b:done=true",
+    "apply:value=j:done=true",
     "asyncIIFE:value=d:done=true",
+    "classMethod:value=l:done=true",
     "explicitAwait:value=g:done=true",
     "newPromise:value=h:done=true",
+    "objectMethod:value=k:done=true",
     "plain:value=f:done=true",
     "race:value=c:done=true",
     "reject:reject=boom",
     "resolve:value=a:done=true",
+    "spread:value=i:done=true",
     "thenable:value=e:done=true",
   ].join("\n"));
 
