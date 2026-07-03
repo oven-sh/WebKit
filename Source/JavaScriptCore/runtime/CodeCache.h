@@ -280,4 +280,15 @@ RefPtr<CachedBytecode> serializeBytecode(VM&, UnlinkedCodeBlock*, const SourceCo
 SourceCodeKey sourceCodeKeyForSerializedProgram(VM&, const SourceCode&);
 SourceCodeKey sourceCodeKeyForSerializedModule(VM&, const SourceCode&);
 
+#if USE(BUN_JSC_ADDITIONS)
+// The function-shaped counterparts of the two pairs above, for serializing a builtin
+// with encodeFunctionExecutable(). recursivelyGenerate...() eagerly compiles `executable`
+// and every function nested beneath it, which is what makes the whole tree serializable;
+// `parentSource` is the source the executable was created from, not its own linked
+// sub-range. sourceCodeKeyForSerializedFunctionExecutable() builds the key both the
+// encoder and the decoder must agree on.
+JS_EXPORT_PRIVATE UnlinkedFunctionCodeBlock* recursivelyGenerateUnlinkedCodeBlockForFunctionExecutable(VM&, UnlinkedFunctionExecutable*, const SourceCode& parentSource, ParserError&);
+JS_EXPORT_PRIVATE SourceCodeKey sourceCodeKeyForSerializedFunctionExecutable(VM&, const SourceCode&, const String& name);
+#endif
+
 } // namespace JSC

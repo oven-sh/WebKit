@@ -128,6 +128,21 @@ JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const Unli
 
 JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
+#if USE(BUN_JSC_ADDITIONS)
+// Serialize an UnlinkedFunctionExecutable together with the tree of
+// UnlinkedFunctionCodeBlocks already generated beneath it, as a self-validating
+// top-level cache entry. `key` must use SourceCodeType::FunctionType, and the
+// SourceCode it carries is the executable's parent source.
+//
+// This exists for the JS builtins, whose top-level compilation unit is a builtin
+// function rather than a program or a module. decodeFunctionExecutable() returns
+// nullptr when the entry is stale or does not match `key`; the caller is then
+// expected to compile from source as usual.
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionExecutable(VM&, const SourceCodeKey&, const UnlinkedFunctionExecutable*, BytecodeCacheError&);
+
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeFunctionExecutable(VM&, const SourceCodeKey&, Ref<CachedBytecode>);
+#endif
+
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 
 } // namespace JSC
