@@ -20,6 +20,14 @@ root.res
 en.res
 en_*.res
 
+# The zone-tree root/en bundles are opened during JSC's eager time-zone warm-up
+# in VM::VM() (TimeZoneNamesImpl(defaultLocale) + the zone-tree root). The
+# patterns above are single-segment and never matched them, so every process
+# paid a ZSTD_DCtx + dictionary init to inflate ~4.5 KB at startup.
+zone/root.res
+zone/en.res
+zone/en_*.res
+
 # ko.res is the one locale-pattern file large enough (70 KB) to decode in
 # ~100 us; the next-largest (ff_Adlm, zh, ru) are <40 KB and stay compressed.
 ko.res

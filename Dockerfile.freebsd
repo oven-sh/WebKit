@@ -78,6 +78,7 @@ ARG ICU_VERSION
 ARG ICU_RELEASE_TAG
 ARG ICU_SHA256
 ADD --checksum=sha256:${ICU_SHA256} https://github.com/unicode-org/icu/releases/download/${ICU_RELEASE_TAG}/icu4c-${ICU_VERSION}-src.tgz /icu.tgz
+COPY icu/remove-items.txt /icu-bun/remove-items.txt
 
 # Host build (tools only — no LTO, fast).
 RUN mkdir -p /icu-host && cd /icu-host \
@@ -90,9 +91,11 @@ RUN mkdir -p /icu-host && cd /icu-host \
 # Target build.
 #
 # Before configure, filter data/in/icudt75l.dat (using the host icupkg) to drop
-# converters/translit/rbnf/stringprep/confusables/unames. Bun has zero
+# converters/translit/rbnf/stringprep/confusables/unames — Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU is removed in
-# src/bun.js/bindings/TextEncodingRegistry.cpp). Cuts libicudata.a by ~7.4 MB.
+# src/bun.js/bindings/TextEncodingRegistry.cpp) — plus the individually-
+# unreachable items in icu/remove-items.txt. Cuts libicudata.a by ~7.6 MB.
+# The `test` asserts every listed name still exists in the upstream .dat.
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${FREEBSD_SYSROOT}" && \
@@ -100,7 +103,10 @@ RUN --mount=type=tmpfs,target=/icu \
     export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} -fuse-ld=lld" && \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
-    /icu-host/source/bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > data/in/rm.lst && \
+    /icu-host/source/bin/icupkg -l data/in/icudt75l.dat > data/in/all.lst && \
+    grep -vE '^#|^$' /icu-bun/remove-items.txt > data/in/rm-named.lst && \
+    test "$(grep -Fxc -f data/in/rm-named.lst data/in/all.lst)" = "$(grep -c . data/in/rm-named.lst)" && \
+    { grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' data/in/all.lst; grep -Fx -f data/in/rm-named.lst data/in/all.lst; } > data/in/rm.lst && \
     /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     { ./configure --host=${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION} \

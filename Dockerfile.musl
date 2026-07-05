@@ -58,7 +58,10 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 #
 # After the first `make` (which produces bin/icupkg), filter data/in/icudt75l.dat
 # to drop converters/translit/rbnf/stringprep/confusables/unames — Bun has zero
-# ucnv_/utrans_/usprep_/uspoof_ consumers — then rebuild.
+# ucnv_/utrans_/usprep_/uspoof_ consumers — plus the individually-unreachable
+# items in icu/remove-items.txt, then rebuild. The `test` asserts every listed
+# name still exists in the upstream .dat so an ICU upgrade can't silently
+# re-ship one (or leave a stale name behind).
 #
 # Finally, repack the filtered .dat with per-item zstd (icu/compress-data.ts).
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
@@ -76,7 +79,10 @@ RUN --mount=type=tmpfs,target=/icu \
     cd source && \
     ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \
     make -j$(nproc) && \
-    bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > data/in/rm.lst && \
+    bin/icupkg -l data/in/icudt75l.dat > data/in/all.lst && \
+    grep -vE '^#|^$' /icu-bun/remove-items.txt > data/in/rm-named.lst && \
+    test "$(grep -Fxc -f data/in/rm-named.lst data/in/all.lst)" = "$(grep -c . data/in/rm-named.lst)" && \
+    { grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' data/in/all.lst; grep -Fx -f data/in/rm-named.lst data/in/all.lst; } > data/in/rm.lst && \
     bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \

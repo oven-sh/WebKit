@@ -217,14 +217,19 @@ RUN mkdir -p /icu-host && cd /icu-host && \
 # rule-based number formats, stringprep profiles, confusables, and character
 # names. Bun has zero ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU
 # is removed in bun's TextEncodingRegistry.cpp), and this is what keeps the
-# native sicudt.lib at ~24 MB instead of ~32 MB. pkgdata packages
-# data/in/icudt*l.dat verbatim in a cross build, so filtering it here is
-# equivalent to the native flow.
+# native sicudt.lib at ~24 MB instead of ~32 MB. Also drops the individually-
+# unreachable items in icu/remove-items.txt (the `test` asserts every listed
+# name still exists in the upstream .dat, so an ICU upgrade can't silently
+# re-ship one). pkgdata packages data/in/icudt*l.dat verbatim in a cross
+# build, so filtering it here is equivalent to the native flow.
 RUN set -eu && \
     DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
     FILTERED="${DAT%.dat}-filtered.dat" && \
-    /icu-host/bin/icupkg -l "$DAT" | \
-      grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > /tmp/icu-rm.lst && \
+    /icu-host/bin/icupkg -l "$DAT" > /tmp/icu-all.lst && \
+    grep -vE '^#|^$' /icu-bun/remove-items.txt > /tmp/icu-rm-named.lst && \
+    test "$(grep -Fxc -f /tmp/icu-rm-named.lst /tmp/icu-all.lst)" = "$(grep -c . /tmp/icu-rm-named.lst)" && \
+    { grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' /tmp/icu-all.lst; \
+      grep -Fx -f /tmp/icu-rm-named.lst /tmp/icu-all.lst; } > /tmp/icu-rm.lst && \
     test -s /tmp/icu-rm.lst && \
     /icu-host/bin/icupkg --auto_toc_prefix -r /tmp/icu-rm.lst "$DAT" "$FILTERED" && \
     mv "$FILTERED" "$DAT" && \
