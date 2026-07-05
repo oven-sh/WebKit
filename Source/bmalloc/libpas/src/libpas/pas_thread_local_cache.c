@@ -558,7 +558,7 @@ void pas_thread_local_cache_ensure_committed(pas_thread_local_cache* thread_loca
         pas_lock_assert_held(&thread_local_cache->node->scavenger_lock);
 
         /* Asymmetric, paired with decommit_allocator_range. The page never lost its commit
-           charge; this is a no-op on Windows and a MADV_DODUMP on Linux. */
+           charge, so this is a no-op on Windows and on Linux. */
         pas_page_malloc_commit_without_mprotect(
             (char*)thread_local_cache + (page_index << pas_page_malloc_alignment_shift()),
             pas_page_malloc_alignment(),

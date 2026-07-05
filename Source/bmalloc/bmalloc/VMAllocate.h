@@ -324,10 +324,11 @@ inline void vmDeallocatePhysicalPages(void* p, size_t vmSize)
 #elif BOS(FREEBSD)
     SYSCALL(madvise(p, vmSize, MADV_FREE));
 #else
+    // MADV_DONTDUMP is deliberately not paired with MADV_DONTNEED here: toggling
+    // VM_DONTDUMP over sub-ranges splits the VMA, and the resulting fragmentation
+    // drives the process into vm.max_map_count. Pages dropped by MADV_DONTNEED are
+    // no longer resident, so the core dump skips them either way.
     SYSCALL(madvise(p, vmSize, MADV_DONTNEED));
-#if BOS(LINUX)
-    SYSCALL(madvise(p, vmSize, MADV_DONTDUMP));
-#endif
 #endif
 }
 
@@ -342,9 +343,6 @@ inline void vmAllocatePhysicalPages(void* p, size_t vmSize)
     // Instead the kernel will commit pages as they are touched.
 #else
     SYSCALL(madvise(p, vmSize, MADV_NORMAL));
-#if BOS(LINUX)
-    SYSCALL(madvise(p, vmSize, MADV_DODUMP));
-#endif
 #endif
 }
 #else

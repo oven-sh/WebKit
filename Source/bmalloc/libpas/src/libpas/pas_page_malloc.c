@@ -384,8 +384,8 @@ static void commit_impl(void* ptr, size_t size, bool do_mprotect, bool is_symmet
     }
 
 #if PAS_OS(LINUX)
+    /* No MADV_DODUMP: see the note in decommit_impl. */
     PAS_ASSERT(!is_symmetric);
-    PAS_SYSCALL(madvise(ptr, size, MADV_DODUMP));
 #elif PAS_OS(WINDOWS)
     if (is_symmetric) {
         /*
@@ -472,9 +472,14 @@ static void decommit_impl(void* ptr, size_t size,
     PAS_ASSERT(!is_symmetric);
     PAS_SYSCALL(madvise(ptr, size, MADV_FREE));
 #elif PAS_OS(LINUX)
+    /*
+     * MADV_DONTDUMP is deliberately not paired with MADV_DONTNEED here: toggling
+     * VM_DONTDUMP over sub-ranges splits the VMA, and the resulting fragmentation
+     * drives the process into vm.max_map_count. Pages dropped by MADV_DONTNEED are
+     * no longer resident, so the core dump skips them either way.
+     */
     PAS_ASSERT(!is_symmetric);
     PAS_SYSCALL(madvise(ptr, size, MADV_DONTNEED));
-    PAS_SYSCALL(madvise(ptr, size, MADV_DONTDUMP));
 #elif PAS_OS(WINDOWS)
     if (is_symmetric) {
         /*
