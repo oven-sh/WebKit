@@ -3,9 +3,18 @@
 //
 // Reads items from an ICU CmnD package using ICU's own `icupkg` (no manual
 // parsing of the input), compresses each as an individual zstd frame with a
-// shared trained dictionary, and writes a new package keeping the same header
-// and TOC layout. Items matching --skip globs stay uncompressed (those that
-// would be too expensive to decompress on first use — see keep-raw.txt).
+// shared trained dictionary, and writes a new package. Items matching --skip
+// globs stay uncompressed (those that would be too expensive to decompress on
+// first use — see keep-raw.txt).
+//
+// The output package uses the compact TOC ("CmnD" formatVersion 2, read by
+// icu/ucmndata-toc.patch): item bodies and their DataHeaders are unchanged,
+// but the 8-byte-per-entry {nameOffset,dataOffset} table + full-name pool is
+// replaced by a directory table, a global 16-way front-coded pool of unique
+// basenames, a u16 name id per entry, and a sentinel-terminated offset
+// column. A stock ICU rejects the package instead of misreading it, so
+// `icupkg -l` cannot be used on the OUTPUT; verifyPackageV2() below replays
+// the reader's exact lookup algorithm over every item (and misses) instead.
 //
 // Output is a libicudata.a containing:
 //   icudt<NN>_dat           the repacked package
@@ -238,20 +247,200 @@ function firstDiff(a: Buffer, b: Buffer): number {
   return n;
 }
 
-/** Minimal sanity check on the output TOC (count + first/last names). Can't
- *  use `icupkg -l` here — it validates item bodies and rejects zstd frames. */
-function verifyPackage(dat: Buffer, header: Header, expected: readonly string[]): void {
-  const toc: number = header.bytes.length;
-  const count: number = dat.readUInt32LE(toc);
-  if (count !== expected.length) die(`verify: count ${count} != ${expected.length}`);
-  const nameAt = (i: number): string => {
-    const off = toc + dat.readUInt32LE(toc + 4 + i * 8);
-    return dat.toString("latin1", off, dat.indexOf(0, off));
-  };
-  for (const i of [0, count - 1]) {
-    const want = `${header.tocPrefix}/${expected[i]}`;
-    if (nameAt(i) !== want) die(`verify: name[${i}] '${nameAt(i)}' != '${want}'`);
+// ---------------------------------------------------------------------------
+// Compact TOC ("CmnD" formatVersion 2) — the reader is icu/ucmndata-toc.patch.
+//
+// Layout after the (verbatim, formatVersion-bumped) DataHeader; every offset
+// is relative to the TOC start, exactly like formatVersion 1:
+//
+//   u32[12] header: count, treeCount, nameCount, bucketCount, maxNameLength,
+//                   dataOffsetsOff, nameIdsOff, treesOff, bucketDirOff, 0,0,0
+//   u32 dataOffsets[count+1]   ([count] is a sentinel; length = next - this)
+//   u16 nameIds[count]         (ascending within each tree)
+//   { u32 dirNameOffset; u32 firstEntry; u32 entryCount; } trees[treeCount]
+//   u32 bucketDir[bucketCount] (start offset of each front-coded block)
+//   name pool: per block, head\0 then up to 15 x { u8 lcp; suffix\0 };
+//              then the tree directory strings ("icudt75l/", "icudt75l/coll/")
+//   item bodies, each 16-aligned, in (tree, basename) order
+// ---------------------------------------------------------------------------
+
+const V2_HEADER_WORDS = 12;
+const V2_BLOCK = 16;
+/** Must match CMN2_NAME_BUFFER_SIZE in icu/ucmndata-toc.patch. */
+const V2_NAME_BUFFER = 64;
+
+interface V2Entry { dir: string; base: string; item: Item; }
+
+/** "coll/zh.res" -> dir "icudt75l/coll/", base "zh.res". */
+function splitV2(header: Header, items: readonly Item[]): V2Entry[] {
+  return items.map((item): V2Entry => {
+    const i = item.bare.lastIndexOf("/");
+    return { dir: `${header.tocPrefix}/${i < 0 ? "" : item.bare.slice(0, i + 1)}`, base: i < 0 ? item.bare : item.bare.slice(i + 1), item };
+  });
+}
+
+function lcpLen(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
+}
+
+function align4(n: number): number { return (n + 3) & ~3; }
+
+function writePackageV2(header: Header, items: readonly Item[]): Buffer {
+  const split: V2Entry[] = splitV2(header, items);
+  for (const s of split)
+    for (let i = 0; i < s.base.length; i++)
+      if (s.base.charCodeAt(i) <= 0x20 || s.base.charCodeAt(i) > 0x7e) die(`non-ASCII item name: ${s.dir}${s.base}`);
+
+  // Global pool of unique basenames. JS string sort on ASCII == the reader's
+  // byte-wise strcmp order.
+  const names: string[] = [...new Set(split.map((s) => s.base))].sort();
+  const nameId = new Map<string, number>(names.map((n, i) => [n, i]));
+  const maxNameLength: number = Math.max(...names.map((n) => n.length));
+  if (maxNameLength >= V2_NAME_BUFFER) die(`verify2: basename longer than the reader's ${V2_NAME_BUFFER}-byte buffer`);
+  if (names.length > 0xffff) die(`too many distinct basenames for a u16 id: ${names.length}`);
+
+  // Entries sorted by (tree, basename): contiguous per tree, ids ascending.
+  const entries: V2Entry[] = split
+    .slice()
+    .sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : nameId.get(a.base)! - nameId.get(b.base)!));
+  const dirs: string[] = [...new Set(entries.map((e) => e.dir))];
+
+  // Name pool: 16-way front-coded blocks, then the tree directory strings.
+  const bucketCount: number = Math.ceil(names.length / V2_BLOCK);
+  const pool: number[] = [];
+  const bucketRel: number[] = [];
+  for (let b = 0; b < bucketCount; b++) {
+    bucketRel.push(pool.length);
+    const end = Math.min(names.length, (b + 1) * V2_BLOCK);
+    for (let i = b * V2_BLOCK; i < end; i++) {
+      const isHead = i === b * V2_BLOCK;
+      const lcp = isHead ? 0 : lcpLen(names[i - 1], names[i]);
+      if (!isHead) pool.push(lcp);
+      const tail = names[i].slice(isHead ? 0 : lcp);
+      for (let k = 0; k < tail.length; k++) pool.push(tail.charCodeAt(k));
+      pool.push(0);
+    }
   }
+  const dirRel = new Map<string, number>();
+  for (const d of dirs) {
+    dirRel.set(d, pool.length);
+    for (let k = 0; k < d.length; k++) pool.push(d.charCodeAt(k));
+    pool.push(0);
+  }
+
+  // Region offsets, relative to the TOC start.
+  const count: number = entries.length;
+  const dataOffsetsOff: number = 4 * V2_HEADER_WORDS;
+  const nameIdsOff: number = dataOffsetsOff + 4 * (count + 1);
+  const treesOff: number = align4(nameIdsOff + 2 * count);
+  const bucketDirOff: number = treesOff + 12 * dirs.length;
+  const poolOff: number = bucketDirOff + 4 * bucketCount;
+  const tocStart: number = header.bytes.length;
+
+  // Item bodies, each 16-aligned relative to the file start.
+  let dataOff: number = poolOff + pool.length;
+  const dataOffsets: number[] = [];
+  const bodies: Buffer[] = [];
+  for (const e of entries) {
+    const pad = (16 - ((tocStart + dataOff) % 16)) % 16;
+    if (pad) { bodies.push(Buffer.alloc(pad, 0xaa)); dataOff += pad; }
+    dataOffsets.push(dataOff);
+    bodies.push(e.item.body);
+    dataOff += e.item.body.length;
+  }
+  dataOffsets.push(dataOff);
+
+  const toc: Buffer = Buffer.alloc(poolOff + pool.length);
+  let o = 0;
+  for (const v of [count, dirs.length, names.length, bucketCount, maxNameLength, dataOffsetsOff, nameIdsOff, treesOff, bucketDirOff, 0, 0, 0]) { toc.writeUInt32LE(v, o); o += 4; }
+  for (let i = 0; i <= count; i++) toc.writeUInt32LE(dataOffsets[i], dataOffsetsOff + 4 * i);
+  for (let i = 0; i < count; i++) toc.writeUInt16LE(nameId.get(entries[i].base)!, nameIdsOff + 2 * i);
+  let first = 0;
+  dirs.forEach((d, t) => {
+    const n = entries.filter((e) => e.dir === d).length;
+    toc.writeUInt32LE(poolOff + dirRel.get(d)!, treesOff + 12 * t);
+    toc.writeUInt32LE(first, treesOff + 12 * t + 4);
+    toc.writeUInt32LE(n, treesOff + 12 * t + 8);
+    first += n;
+  });
+  bucketRel.forEach((r, b) => toc.writeUInt32LE(poolOff + r, bucketDirOff + 4 * b));
+  Buffer.from(pool).copy(toc, poolOff);
+
+  // Same DataHeader bytes as the input, with formatVersion[0] bumped to 2 so
+  // a stock ICU fails closed (U_INVALID_FORMAT_ERROR) instead of misreading.
+  const outHeader: Buffer = Buffer.from(header.bytes);
+  outHeader[16] = 2;
+  return Buffer.concat([outHeader, toc, ...bodies]);
+}
+
+/** Replay the reader's exact lookup algorithm (icu/ucmndata-toc.patch) for
+ *  every item name, plus deliberate misses, and require the exact body bytes
+ *  back. This replaces the `icupkg -l` check, which cannot read the new TOC. */
+function verifyPackageV2(dat: Buffer, header: Header, items: readonly Item[]): void {
+  const tocStart: number = header.bytes.length;
+  if (dat[16] !== 2) die(`verify2: output formatVersion[0] is ${dat[16]}, expected 2`);
+  const u32 = (rel: number): number => dat.readUInt32LE(tocStart + rel);
+  const cstr = (rel: number): string => dat.toString("latin1", tocStart + rel, dat.indexOf(0, tocStart + rel));
+  const [count, treeCount, nameCount, bucketCount, maxNameLength, dataOffsetsOff, nameIdsOff, treesOff, bucketDirOff] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 32].map(u32);
+  if (maxNameLength >= V2_NAME_BUFFER) die("verify2: maxNameLength does not fit the reader's buffer");
+
+  const lookup = (full: string): { off: number; len: number } | null => {
+    const slash = full.lastIndexOf("/");
+    const dirLen = slash < 0 ? 0 : slash + 1;
+    let tree = -1;
+    for (let t = 0; t < treeCount; t++) if (cstr(u32(treesOff + 12 * t)) === full.slice(0, dirLen)) { tree = t; break; }
+    if (tree < 0) return null;
+    const base = full.slice(dirLen);
+    let lo = 0, hi = bucketCount;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (cstr(u32(bucketDirOff + 4 * m)) <= base) lo = m + 1; else hi = m; }
+    const b = lo - 1;
+    if (b < 0) return null;
+    let p = tocStart + u32(bucketDirOff + 4 * b);
+    let cur = dat.toString("latin1", p, dat.indexOf(0, p));
+    p += cur.length + 1;
+    let nameIdFound = -1;
+    const inBlock = Math.min(V2_BLOCK, nameCount - b * V2_BLOCK);
+    for (let k = 0; k < inBlock; k++) {
+      if (k > 0) {
+        const lcp = dat[p++];
+        const suffix = dat.toString("latin1", p, dat.indexOf(0, p));
+        p += suffix.length + 1;
+        cur = cur.slice(0, lcp) + suffix;
+      }
+      if (cur === base) { nameIdFound = b * V2_BLOCK + k; break; }
+      if (cur > base) break;
+    }
+    if (nameIdFound < 0) return null;
+    let start = u32(treesOff + 12 * tree + 4);
+    let limit = start + u32(treesOff + 12 * tree + 8);
+    while (start < limit) {
+      const i = (start + limit) >> 1;
+      const id = dat.readUInt16LE(tocStart + nameIdsOff + 2 * i);
+      if (id < nameIdFound) start = i + 1;
+      else if (id > nameIdFound) limit = i;
+      else return { off: u32(dataOffsetsOff + 4 * i), len: u32(dataOffsetsOff + 4 * (i + 1)) - u32(dataOffsetsOff + 4 * i) };
+    }
+    return null;
+  };
+
+  let checked = 0;
+  for (const it of items) {
+    const full = `${header.tocPrefix}/${it.bare}`;
+    const r = lookup(full);
+    if (!r) die(`verify2: '${full}' not found`);
+    // The reader's length spans up to the next item's (16-aligned) start.
+    if (r.len < it.body.length) die(`verify2: '${full}' length ${r.len} < ${it.body.length}`);
+    if (!it.body.equals(dat.subarray(tocStart + r.off, tocStart + r.off + it.body.length))) die(`verify2: '${full}' body mismatch`);
+    checked++;
+  }
+  for (const miss of [`${header.tocPrefix}/nope.res`, `${header.tocPrefix}/zzz/root.res`, "no-slash", `${header.tocPrefix}/`, `${header.tocPrefix}/coll/`])
+    if (lookup(miss) !== null) die(`verify2: false positive for '${miss}'`);
+  if (checked !== count || checked !== items.length) die(`verify2: checked ${checked} != count ${count}`);
+  console.error(`[icu-compress] verify2 OK: ${checked}/${count} lookups return the exact item bodies; first item at TOC+${u32(dataOffsetsOff)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,8 +521,8 @@ function main(): void {
     return { bare, body };
   });
 
-  const pkg: Buffer = writePackage(header, items);
-  verifyPackage(pkg, header, names);
+  const pkg: Buffer = writePackageV2(header, items);
+  verifyPackageV2(pkg, header, items);
   const outDat: string = join(work, `${header.tocPrefix}.dat`);
   writeFileSync(outDat, pkg);
 

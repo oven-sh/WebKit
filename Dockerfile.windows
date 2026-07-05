@@ -202,9 +202,12 @@ COPY icu/ /icu-bun/
 ADD --checksum=sha256:${ICU_SHA256} \
     https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION_UNDERSCORE}-src.tgz /icu-src.tgz
 # The udata.cpp patch adds the weak per-item decompression hook (see the
-# stage comment above); it lands in the cross-built sicuuc.lib.
+# stage comment above); the ucmndata.cpp patch adds the compact-TOC reader
+# ("CmnD" formatVersion 2, written by compress-data.ts). Both land in the
+# cross-built sicuuc.lib.
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \
-    patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
+    patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch && \
+    patch -p1 -d /icu-src < /icu-bun/ucmndata-toc.patch
 
 # Stage 1: host build — only the tools matter.
 RUN mkdir -p /icu-host && cd /icu-host && \
