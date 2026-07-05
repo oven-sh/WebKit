@@ -55,7 +55,10 @@ RUN ( apt-get update || \
 ARG ZSTD_VERSION=1.5.7
 RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
     && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
+    && make -C /tmp/zstd-${ZSTD_VERSION}/lib libzstd.a -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
+    && cp /tmp/zstd-${ZSTD_VERSION}/lib/libzstd.a /usr/local/lib/ \
+    && cp /tmp/zstd-${ZSTD_VERSION}/lib/zstd.h /usr/local/include/ \
     && rm -rf /tmp/zstd-${ZSTD_VERSION} \
     && zstd --version
 
@@ -206,6 +209,11 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # Finally, repack the filtered .dat with per-item zstd (icu/compress-data.ts).
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
 # The repacked libicudata.a also embeds the trained zstd dictionary.
+#
+# icu/test-package.cpp then links the patched libicuuc/libicui18n and the
+# repacked libicudata.a and exercises every data family a JS engine reaches
+# (compact TOC lookups, the per-item zstd hook, collation, segmentation,
+# formatting, the removed items). A nonzero exit fails the image.
 COPY icu/ /icu-bun/
 ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \
@@ -228,7 +236,11 @@ RUN --mount=type=tmpfs,target=/icu \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
-    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt75l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
+    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt75l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg && \
+    $CXX -O1 -std=c++20 -fuse-ld=lld -DLINKED_DATA /icu-bun/test-package.cpp \
+      -I/icu/source/common -I/icu/source/i18n -I/usr/local/include \
+      /output/lib/libicui18n.a /output/lib/libicuuc.a /output/lib/libicudata.a \
+      /usr/local/lib/libzstd.a -lpthread -ldl -lm -o /tmp/test-package && /tmp/test-package
 
 # Copy WebKit source and build
 COPY . /webkit

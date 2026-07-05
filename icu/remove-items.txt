@@ -39,12 +39,13 @@ currencyNumericCodes.res
 # and TimeZoneNames::createTZDBInstance. JSC never parses dates through ICU.
 zone/tzdbNames.res
 
-# NOTE: brkitr/line*.brk and brkitr/title.brk (UBRK_LINE / UBRK_TITLE rules,
-# ~49 KB shipped) are also unreachable — Intl.Segmenter exposes only
-# character|word|sentence — but they are referenced by name from
-# brkitr/{root,ja,ko,zh,zh_Hant}.res `boundaries` tables, and `icupkg -r`
-# enforces referential integrity, so removing them requires rewriting those
-# bundles in the same step. They are NOT in this list.
+# NOTE: brkitr/line*.brk and brkitr/title.brk (UBRK_LINE / UBRK_TITLE rules)
+# are also unreachable — Intl.Segmenter exposes only character|word|sentence —
+# but they are referenced by name from brkitr/{root,ja,ko,zh,zh_Hant}.res
+# `boundaries` tables and `icupkg -r` enforces referential integrity, so they
+# CANNOT go in this list. compress-data.ts drops them instead, after
+# icu/rewrite-items.ts removes those boundary entries (and their %%DEPENDENCY
+# references) from the brkitr bundles.
 
 # Per-tree available-locale indexes, opened only by
 # ures_openAvailableLocales(tree) / ures_getKeywordValues(tree). JSC enumerates
