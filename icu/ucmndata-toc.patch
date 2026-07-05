@@ -13,7 +13,7 @@ consumes a stock formatVersion-1 package and is the only writer).
 
 --- a/source/common/ucmndata.cpp
 +++ b/source/common/ucmndata.cpp
-@@ -211,6 +211,107 @@
+@@ -211,6 +211,132 @@
      return -1;
  }
  
@@ -49,11 +49,31 @@ consumes a stock formatVersion-1 package and is the only writer).
 +    uint32_t nameIdsOff;      /* -> uint16_t[count], ascending within a tree */
 +    uint32_t treesOff;        /* -> UDataOffsetTOC2Tree[treeCount] */
 +    uint32_t bucketDirOff;    /* -> uint32_t[bucketCount] block start offsets */
-+    uint32_t reserved[3];
++    uint32_t nameBlockSize;   /* names per front-coded block (the writer uses 16) */
++    uint32_t reserved[2];
 +} UDataOffsetTOC2;
 +
 +/* Fixed decode buffer; the writer asserts maxNameLength fits. */
 +enum { CMN2_NAME_BUFFER_SIZE = 64 };
++
++/**
++ * Copy the NUL-terminated string at `src` into buf starting at `pos`.
++ * Returns false (without writing past the buffer) if it does not fit --
++ * a corrupt package must fail the lookup, not overrun the stack.
++ */
++static UBool
++cmn2CopyName(char *buf, int32_t pos, const char *src) {
++    int32_t i=pos;
++    for(;;) {
++        if(i>=CMN2_NAME_BUFFER_SIZE) {
++            return false;
++        }
++        if((buf[i]=*src++)==0) {
++            return true;
++        }
++        ++i;
++    }
++}
 +
 +/**
 + * Index of the last bucket whose (verbatim, NUL-terminated) head string
@@ -84,32 +104,37 @@ consumes a stock formatVersion-1 package and is the only writer).
 +    const uint32_t *bucketDir=(const uint32_t *)(base+toc->bucketDirOff);
 +    const uint8_t *p;
 +    int32_t b, k, inBlock;
-+    if(toc->maxNameLength>=CMN2_NAME_BUFFER_SIZE) {
++    int32_t blockSize=(int32_t)toc->nameBlockSize;
++    if(toc->maxNameLength>=CMN2_NAME_BUFFER_SIZE || blockSize<=0) {
 +        return -1;  /* not a package this reader can handle */
 +    }
 +    b=cmn2FloorBucket(s, base, bucketDir, (int32_t)toc->bucketCount);
 +    if(b<0) {
 +        return -1;
 +    }
-+    inBlock=(int32_t)toc->nameCount-b*16;
-+    if(inBlock>16) {
-+        inBlock=16;
++    inBlock=(int32_t)toc->nameCount-b*blockSize;
++    if(inBlock>blockSize) {
++        inBlock=blockSize;
 +    }
 +    p=(const uint8_t *)base+bucketDir[b];
 +    /* the head is stored verbatim */
-+    uprv_strcpy(buf, (const char *)p);
++    if(!cmn2CopyName(buf, 0, (const char *)p)) {
++        return -1;
++    }
 +    p+=uprv_strlen(buf)+1;
 +    if(0==uprv_strcmp(buf, s)) {
-+        return b*16;
++        return b*blockSize;
 +    }
 +    for(k=1; k<inBlock; ++k) {
 +        int32_t cmp;
 +        uint8_t lcp=*p++;
-+        uprv_strcpy(buf+lcp, (const char *)p);
-+        p+=uprv_strlen((const char *)p)+1;
++        if(lcp>=CMN2_NAME_BUFFER_SIZE || !cmn2CopyName(buf, lcp, (const char *)p)) {
++            return -1;
++        }
++        p+=uprv_strlen(buf+lcp)+1;
 +        cmp=uprv_strcmp(buf, s);
 +        if(cmp==0) {
-+            return b*16+k;
++            return b*blockSize+k;
 +        }
 +        if(cmp>0) {
 +            break;   /* names in a block are sorted */
@@ -121,7 +146,7 @@ consumes a stock formatVersion-1 package and is the only writer).
  U_CDECL_BEGIN
  static uint32_t U_CALLCONV
  offsetTOCEntryCount(const UDataMemory *pData) {
-@@ -269,6 +370,78 @@
+@@ -269,6 +395,78 @@
  }
  
  
@@ -200,7 +225,7 @@ consumes a stock formatVersion-1 package and is the only writer).
  static uint32_t U_CALLCONV pointerTOCEntryCount(const UDataMemory *pData) {
      const PointerTOC *toc = (PointerTOC *)pData->toc;
      return (uint32_t)((toc != nullptr) ? (toc->count) : 0);
-@@ -310,8 +483,9 @@
+@@ -310,8 +508,9 @@
  U_CDECL_END
  
  
@@ -212,7 +237,7 @@ consumes a stock formatVersion-1 package and is the only writer).
  
  
  
-@@ -348,6 +522,16 @@
+@@ -348,6 +547,16 @@
          udm->vFuncs = &CmnDFuncs;
          udm->toc=(const char *)udm->pHeader+udata_getHeaderSize(udm->pHeader);
      }

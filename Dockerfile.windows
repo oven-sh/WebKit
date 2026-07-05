@@ -190,7 +190,10 @@ ARG NODE_VERSION=24.16.0
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
     curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp && \
     make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
+    make -C /tmp/zstd-${ZSTD_VERSION}/lib libzstd.a -j$(nproc) CC=clang-${LLVM_VERSION} && \
     cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
+    cp /tmp/zstd-${ZSTD_VERSION}/lib/libzstd.a /usr/local/lib/ && \
+    cp /tmp/zstd-${ZSTD_VERSION}/lib/zstd.h /usr/local/include/ && \
     rm -rf /tmp/zstd-${ZSTD_VERSION} && \
     zstd --version && \
     curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
@@ -231,8 +234,8 @@ RUN set -eu && \
     /icu-host/bin/icupkg -l "$DAT" > /tmp/icu-all.lst && \
     grep -vE '^#|^$' /icu-bun/remove-items.txt > /tmp/icu-rm-named.lst && \
     test "$(grep -Fxc -f /tmp/icu-rm-named.lst /tmp/icu-all.lst)" = "$(grep -c . /tmp/icu-rm-named.lst)" && \
-    { grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' /tmp/icu-all.lst; \
-      grep -Fx -f /tmp/icu-rm-named.lst /tmp/icu-all.lst; } > /tmp/icu-rm.lst && \
+    grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' /tmp/icu-all.lst > /tmp/icu-rm.lst && \
+    grep -Fx -f /tmp/icu-rm-named.lst /tmp/icu-all.lst >> /tmp/icu-rm.lst && \
     test -s /tmp/icu-rm.lst && \
     /icu-host/bin/icupkg --auto_toc_prefix -r /tmp/icu-rm.lst "$DAT" "$FILTERED" && \
     mv "$FILTERED" "$DAT" && \
@@ -287,7 +290,13 @@ RUN mkdir -p /icu-out/lib /icu-out/include && \
     DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
     node --experimental-strip-types /icu-bun/compress-data.ts "$DAT" /icu-out/lib/sicudt.lib \
       --skip /icu-bun/keep-raw.txt --icupkg /icu-host/bin/icupkg \
-      --cc "clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc" --ar llvm-ar --obj-format coff && \
+      --cc "clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc" --ar llvm-ar --obj-format coff \
+      --emit-dat /tmp/icu-verify && \
+    clang++ -O1 -std=c++20 -fuse-ld=lld /icu-bun/test-package.cpp \
+      -I/icu-src/source/common -I/icu-src/source/i18n -I/usr/local/include \
+      /icu-host/lib/libicui18n.a /icu-host/lib/libicuuc.a /icu-host/stubdata/libicudata.a \
+      /usr/local/lib/libzstd.a -lpthread -ldl -lm -o /tmp/test-package && \
+    /tmp/test-package /tmp/icu-verify/icudt${ICU_MAJOR}l.dat /tmp/icu-verify/zstd.dict && \
     SIZE=$(stat -c%s /icu-out/lib/sicudt.lib) && echo "sicudt.lib: ${SIZE} bytes" && \
     test "$SIZE" -gt 8000000 && test "$SIZE" -lt 16000000 && \
     llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R icudt${ICU_MAJOR}_dat" && \

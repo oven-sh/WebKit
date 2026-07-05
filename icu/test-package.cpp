@@ -15,7 +15,10 @@
 // The bun_icu_maybe_decompress definition mirrors Bun's
 // src/jsc/bindings/bun_icu_decompress.cpp (the weak hook installed by
 // icu/udata-decompress-hook.patch): per-item zstd frames, one shared trained
-// dictionary, decoded once and cached for the process lifetime.
+// dictionary, decoded once and cached for the process lifetime. One deliberate
+// difference: Bun returns the raw pointer on any zstd error (graceful
+// degradation at runtime); this gate aborts instead, because a frame the
+// shipped decoder cannot decode must fail the image build.
 #include <unicode/putil.h>
 #include <unicode/ubrk.h>
 #include <unicode/ucol.h>
@@ -50,7 +53,7 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length) 
   memcpy(&magic, p, 4);
   if (magic != ZSTD_MAGICNUMBER) return p;
   std::lock_guard<std::mutex> lock(gLock);
-  size_t bound = *length > 0 ? (size_t)*length : (1u << 21);
+  size_t bound = *length > 0 ? (size_t)*length : (1u << 20);
   unsigned long long dlen = ZSTD_getFrameContentSize(p, bound);
   auto it = gCache->find(p);
   if (it != gCache->end()) { *length = (int32_t)dlen; return it->second; }
@@ -157,11 +160,14 @@ int main(int argc, char** argv) {
       u_uastrcpy(b, "h");
       int32_t xn = u_unescape("\\u4e2d\\u6587", xs, 16), yn = u_unescape("\\u4e2d\\u56fd", ys, 16);
       printf("ucol %s :: %d %d %d\n", L, (int)ucol_strcoll(c, a, -1, b, -1), (int)ucol_strcoll(c, xs, xn, ys, yn), (int)ucol_getStrength(c));
-      // The tailoring rule text is stubbed to one code unit, never emptied:
-      // JSC keys its ASCII fast path on ucol_getRules() being non-empty.
+      // The tailoring rule source is stubbed to one code unit, never emptied:
+      // JSC keys its ASCII collation fast path on ucol_getRules() being
+      // non-empty (IntlCollator.cpp), so an empty stub would silently change
+      // Intl.Collator ordering for every tailored locale. Enforce it.
       int32_t rl = 0;
       ucol_getRules(c, &rl);
       printf("ucol %s rules-nonempty :: %d\n", L, rl > 0);
+      if (rl <= 0 && 0 != strcmp(L, "root")) { printf("FAIL %s: tailoring rules are empty\n", L); return 1; }
       ucol_close(c);
     }
   }
@@ -224,6 +230,24 @@ int main(int argc, char** argv) {
       r = ures_openDirect(nullptr, name, &e);
       chk(e, name);
       ures_close(r);
+    }
+    // The whole item classes the Dockerfiles filter out (converters,
+    // transliteration, rbnf, character names) and the individually-removed
+    // normalizers must be absent; the kept normalizer must not be.
+    struct { const char* type; const char* name; UBool present; } probes[] = {
+      { "nrm", "nfkc", true },   { "nrm", "nfkc_cf", false },
+      { "icu", "cnvalias", false }, { "cnv", "ibm-437_P100-1995", false },
+      { "res", "translit/root", false }, { "icu", "unames", false },
+    };
+    for (auto& pr : probes) {
+      e = U_ZERO_ERROR;
+      UDataMemory* d = udata_open(nullptr, pr.type, pr.name, &e);
+      if (!!U_SUCCESS(e) != !!pr.present) {
+        printf("FAIL %s.%s: expected %s, got %s\n", pr.name, pr.type, pr.present ? "present" : "absent", u_errorName(e));
+        return 1;
+      }
+      printf("item %s.%s %s :: ok\n", pr.name, pr.type, pr.present ? "present" : "absent");
+      if (d) udata_close(d);
     }
   }
   printf("ICU_PACKAGE_TEST_OK\n");

@@ -27,7 +27,7 @@
 //
 // Node stdlib only; erasable-TypeScript-only.
 
-import { ResBundle, type Pool } from "./resbundle.ts";
+import { ResBundle, dumpResolved, type Pool } from "./resbundle.ts";
 
 /** Root-tree CLDR locale bundles ("root.res", "de.res", "zh_Hant_TW.res", ...) */
 function isRootTreeLocale(bare: string): boolean {
@@ -39,6 +39,11 @@ const isLineOrTitle = (k: string): boolean => k === "line" || k.startsWith("line
 export interface Rewrite {
   out: Buffer;
   notes: string[];
+  /** resolved view of the ORIGINAL bundle (for the caller's proof step) */
+  beforeDump: unknown;
+  /** brkitr rule-file names ("line_cj.brk", ...) whose references this
+   *  rewrite removed; the packer may only drop items named here. */
+  removedBrkRefs: string[];
 }
 
 /**
@@ -49,14 +54,16 @@ export function rewriteItem(bare: string, buf: Buffer, pool: Pool | null): Rewri
   if (buf.toString("latin1", 12, 16) !== "ResB") return null;
   if (bare.endsWith("/pool.res") || bare === "pool.res" || bare === "res_index.res" || bare.endsWith("/res_index.res")) return null;
   const notes: string[] = [];
+  const removedBrkRefs: string[] = [];
   const b = new ResBundle(buf, pool);
+  const beforeDump = dumpResolved(b);
 
   if (bare === "supplementalData.res") {
     if (b.deleteTableKeys([], ["subdivisionContainment"])) notes.push("-subdivisionContainment");
     const idv = b.find(["idValidity"]);
     if (idv !== null) {
       const dead = b.keysOf(idv).filter((k) => k !== "region");
-      if (b.deleteTableKeys(["idValidity"], dead)) notes.push(`-idValidity/{${dead.join(",")}}`);
+      if (b.deleteTableKeys(["idValidity"], dead)) notes.push("-idValidity");
     }
   }
 
@@ -64,25 +71,43 @@ export function rewriteItem(bare: string, buf: Buffer, pool: Pool | null): Rewri
     const drop = ["characterLabel", "personNames"];
     if (bare !== "root.res") drop.push("parse");
     const hit = drop.filter((k) => b.find([k]) !== null);
-    if (hit.length && b.deleteTableKeys([], hit)) notes.push("-" + hit.join(",-"));
+    if (hit.length && b.deleteTableKeys([], hit)) for (const k of hit) notes.push("-" + k);
   }
 
   if (bare.startsWith("brkitr/") && bare.endsWith(".res")) {
     const bnd = b.find(["boundaries"]);
     if (bnd !== null) {
-      const dead = b.keysOf(bnd).filter(isLineOrTitle);
-      if (dead.length && b.deleteTableKeys(["boundaries"], dead)) notes.push(`-boundaries/{${dead.length}}`);
+      const keys = b.keysOf(bnd);
+      const dead = keys.filter(isLineOrTitle);
+      // Record the rule-file names these entries referenced; only files named
+      // here may be dropped from the package (see dropAfterRewrite).
+      for (const k of dead) {
+        const v = b.find(["boundaries", k]);
+        const file = v === null ? null : b.stringValue(v);
+        if (file) removedBrkRefs.push(file);
+      }
+      if (dead.length && b.deleteTableKeys(["boundaries"], dead)) notes.push("-boundaries/line*");
       // If every boundary entry is gone, drop the (now empty) table itself.
-      if (b.keysOf(bnd).every(isLineOrTitle)) b.deleteTableKeys([], ["boundaries"]);
+      if (dead.length === keys.length) b.deleteTableKeys([], ["boundaries"]);
     }
-    // %%DEPENDENCY is genrb's array of referenced item names; the line*/title
-    // rule files are no longer referenced. It only ever lists .brk files here,
-    // so drop the whole key when all its entries are line*/title.
+    // %%DEPENDENCY is genrb's array of referenced item names (only ever .brk
+    // files here). Remove the entries for the dropped line*/title rule files
+    // so no dangling reference survives; if that empties the array, drop the
+    // key itself.
     const depRes = b.find(["%%DEPENDENCY"]);
     if (depRes !== null) {
       const vals = b.arrayStrings(depRes);
-      if (vals !== null && vals.every((v) => isLineOrTitle(v.replace(/\.brk$/, "")))) {
-        if (b.deleteTableKeys([], ["%%DEPENDENCY"])) notes.push("-%%DEPENDENCY");
+      if (vals !== null) {
+        const dead = vals.map((v, i) => [v, i] as const).filter(([v]) => isLineOrTitle(v.replace(/\.brk$/, "")));
+        if (dead.length) {
+          removedBrkRefs.push(...dead.map(([v]) => v));
+          if (dead.length === vals.length) {
+            if (b.deleteTableKeys([], ["%%DEPENDENCY"])) notes.push("-%%DEPENDENCY");
+          } else {
+            b.deleteArrayElements(depRes, dead.map(([, i]) => i));
+            notes.push("~%%DEPENDENCY");
+          }
+        }
       }
     }
   }
@@ -102,23 +127,58 @@ export function rewriteItem(bare: string, buf: Buffer, pool: Pool | null): Rewri
         // fast-path predicate); one code unit is enough.
         if (text && text.length > 1) { b.replaceString(seq, " "); stubbed++; }
       }
-      if (stubbed) notes.push(`~Sequence x${stubbed}`);
+      if (stubbed) notes.push("~Sequence");
     }
   }
 
   b.dedup();
   const out = b.serialize();
-  if (out.length === buf.length && out.equals(buf)) return null;
+  if (out.length === buf.length && out.equals(buf) && !notes.length) return null;
   if (out.length > buf.length) throw new Error(`${bare}: rewrite grew ${buf.length} -> ${out.length}`);
-  notes.push(`${buf.length}->${out.length}`);
-  return { out, notes };
+  return { out, notes, beforeDump, removedBrkRefs };
 }
 
-/** Item names to drop from the package entirely once the brkitr references
- *  to them are rewritten away (icupkg's dependency check would otherwise
- *  refuse; see icu/remove-items.txt for the reachability proof). */
-export function dropAfterRewrite(names: readonly string[]): Set<string> {
-  return new Set(names.filter((n) => /^brkitr\/(line[^/]*|title)\.brk$/.test(n)));
+/**
+ * The UBRK_LINE / UBRK_TITLE rule files to drop from the package once the
+ * brkitr bundles' references to them are rewritten away (icupkg's dependency
+ * check is why they cannot go in remove-items.txt; see the reachability proof
+ * there). `removedRefs` is the union of rule-file names whose references the
+ * rewrites actually removed: every line/title .brk in the package must be in
+ * it, so a future ICU that renames a boundary key (making the rewrite a
+ * silent no-op) fails the build instead of shipping a dangling reference.
+ */
+export function dropAfterRewrite(names: readonly string[], removedRefs: ReadonlySet<string>): Set<string> {
+  const drop = new Set(names.filter((n) => /^brkitr\/(line[^/]*|title)\.brk$/.test(n)));
+  for (const n of drop) {
+    const base = n.slice("brkitr/".length);
+    if (!removedRefs.has(base)) throw new Error(`dropAfterRewrite: no rewrite removed the reference to ${n}; refusing to drop it`);
+  }
+  return drop;
+}
+
+/**
+ * Edits that MUST have fired, given the items exist in the package. This is
+ * the same staleness guard the Dockerfiles apply to remove-items.txt: an ICU
+ * upgrade that renames a key would otherwise turn a rewrite into a silent
+ * no-op that verifies vacuously.
+ */
+const REQUIRED_EDITS: readonly [item: string, note: string][] = [
+  ["supplementalData.res", "-subdivisionContainment"],
+  ["supplementalData.res", "-idValidity"],
+  ["root.res", "-characterLabel"],
+  ["root.res", "-personNames"],
+  ["brkitr/root.res", "-boundaries/line*"],
+  ["coll/root.res", "-UCARules"],
+  ["coll/zh.res", "~Sequence"],
+];
+
+export function assertExpectedRewrites(notesByItem: ReadonlyMap<string, readonly string[]>, present: ReadonlySet<string>): void {
+  const missing: string[] = [];
+  for (const [item, note] of REQUIRED_EDITS) {
+    if (!present.has(item)) { missing.push(`${item} (item not in package)`); continue; }
+    if (!(notesByItem.get(item) ?? []).some((n) => n === note || n.startsWith(note))) missing.push(`${item} ${note}`);
+  }
+  if (missing.length) throw new Error(`expected rewrites did not fire (stale key names after an ICU upgrade?): ${missing.join("; ")}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +202,11 @@ export function expectedDump(bare: string, dump: unknown): unknown {
   if (bare.startsWith("brkitr/") && bare.endsWith(".res") && d.boundaries) {
     for (const k of Object.keys(d.boundaries)) if (isLineOrTitle(k)) delete d.boundaries[k];
     if (Object.keys(d.boundaries).length === 0) delete d.boundaries;
-    if (Array.isArray(d["%%DEPENDENCY"]) && d["%%DEPENDENCY"].every((x: any) => isLineOrTitle(String(x?.s ?? "").replace(/\.brk$/, "")))) delete d["%%DEPENDENCY"];
+    if (Array.isArray(d["%%DEPENDENCY"])) {
+      const kept = d["%%DEPENDENCY"].filter((x: any) => !isLineOrTitle(String(x?.s ?? "").replace(/\.brk$/, "")));
+      if (kept.length === 0) delete d["%%DEPENDENCY"];
+      else d["%%DEPENDENCY"] = kept;
+    }
   }
   if (bare === "coll/root.res") delete d.UCARules;
   if (bare.startsWith("coll/") && d.collations) {

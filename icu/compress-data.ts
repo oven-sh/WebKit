@@ -33,7 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { ResBundle, dumpResolved, loadPool, type Pool } from "./resbundle.ts";
-import { dropAfterRewrite, expectedDump, rewriteItem } from "./rewrite-items.ts";
+import { assertExpectedRewrites, dropAfterRewrite, expectedDump, rewriteItem } from "./rewrite-items.ts";
 
 const args = parseArgs({
   allowPositionals: true,
@@ -46,6 +46,11 @@ const args = parseArgs({
     // Archiver. llvm-ar takes the same "rcs out members" argv shape as binutils ar
     // and handles COFF members, so the Windows cross build passes --ar llvm-ar.
     ar: { type: "string", default: "ar" },
+    // Directory to also write the final .dat + trained dictionary into, for
+    // out-of-band verification (the Windows image runs icu/test-package.cpp
+    // against them with a HOST-built patched ICU, since it cannot execute its
+    // cross-compiled artifacts).
+    "emit-dat": { type: "string", default: "" },
     // Object format for the embedded-data assembly. "elf" (default) matches the
     // Linux/musl artifacts; "coff" is used by the Windows cross build (no ELF-only
     // `.type` directives, data goes in `.rdata`, and --cc should be a clang
@@ -67,6 +72,7 @@ const AR: string = args.values.ar;
 const OBJ_FORMAT: string = args.values["obj-format"];
 if (OBJ_FORMAT !== "elf" && OBJ_FORMAT !== "coff") die(`--obj-format must be "elf" or "coff", got "${OBJ_FORMAT}"`);
 const SKIP_FILE: string = args.values.skip;
+const EMIT_DAT_DIR: string = args.values["emit-dat"];
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,6 +122,9 @@ function readHeader(dat: string): Header {
   const headerSize: number = raw.readUInt16LE(0);
   if (raw[2] !== 0xda || raw[3] !== 0x27) die(`${dat}: not an ICU data file (no 0xda27 magic)`);
   if (raw.toString("latin1", 12, 16) !== "CmnD") die(`${dat}: not a CmnD package`);
+  // UDataInfo.formatVersion[0] (byte 16). The input must be a stock v1
+  // package; the output sets it to 2 (see writePackageV2).
+  if (raw[V2_FORMAT_VERSION_BYTE] !== 1) die(`${dat}: input formatVersion ${raw[V2_FORMAT_VERSION_BYTE]}, expected 1`);
   // First TOC name gives the prefix: header | u32 count | {u32,u32}[count] | "<prefix>/..."\0
   const count: number = raw.readUInt32LE(headerSize);
   const firstName: number = headerSize + raw.readUInt32LE(headerSize + 4);
@@ -177,10 +186,9 @@ function compressFile(path: string, dict: string, level: number, tmpOut: string)
 //   char names[]                                 // NUL-terminated, in TOC order
 //   item bodies[]                                // each 16-byte aligned
 //
-// We rebuild this verbatim with the (possibly compressed) bodies. icupkg -a
-// would do this for us, but it validates each item's 0xda27 magic and rejects
-// zstd frames — so writing the TOC ourselves is unavoidable. The output is
-// verified by re-listing it with `icupkg -l` below.
+// This v1 writer exists only for assertRoundTrip(): reproducing the INPUT
+// byte-for-byte proves the offset/padding math this file relies on. The
+// OUTPUT package uses the compact v2 TOC (writePackageV2 / verifyPackageV2).
 // ---------------------------------------------------------------------------
 
 function writePackage(header: Header, items: readonly Item[]): Buffer {
@@ -270,6 +278,9 @@ const V2_HEADER_WORDS = 12;
 const V2_BLOCK = 16;
 /** Must match CMN2_NAME_BUFFER_SIZE in icu/ucmndata-toc.patch. */
 const V2_NAME_BUFFER = 64;
+/** DataHeader byte offset of UDataInfo.formatVersion[0]: u16 headerSize,
+ *  u8 magic1, u8 magic2, then UDataInfo{u16,u16,u8 x4,u8 dataFormat[4]}. */
+const V2_FORMAT_VERSION_BYTE = 16;
 
 interface V2Entry { dir: string; base: string; item: Item; }
 
@@ -357,12 +368,14 @@ function writePackageV2(header: Header, items: readonly Item[]): Buffer {
 
   const toc: Buffer = Buffer.alloc(poolOff + pool.length);
   let o = 0;
-  for (const v of [count, dirs.length, names.length, bucketCount, maxNameLength, dataOffsetsOff, nameIdsOff, treesOff, bucketDirOff, 0, 0, 0]) { toc.writeUInt32LE(v, o); o += 4; }
+  for (const v of [count, dirs.length, names.length, bucketCount, maxNameLength, dataOffsetsOff, nameIdsOff, treesOff, bucketDirOff, V2_BLOCK, 0, 0]) { toc.writeUInt32LE(v, o); o += 4; }
   for (let i = 0; i <= count; i++) toc.writeUInt32LE(dataOffsets[i], dataOffsetsOff + 4 * i);
   for (let i = 0; i < count; i++) toc.writeUInt16LE(nameId.get(entries[i].base)!, nameIdsOff + 2 * i);
+  const perDir = new Map<string, number>();
+  for (const e of entries) perDir.set(e.dir, (perDir.get(e.dir) ?? 0) + 1);
   let first = 0;
   dirs.forEach((d, t) => {
-    const n = entries.filter((e) => e.dir === d).length;
+    const n = perDir.get(d)!;
     toc.writeUInt32LE(poolOff + dirRel.get(d)!, treesOff + 12 * t);
     toc.writeUInt32LE(first, treesOff + 12 * t + 4);
     toc.writeUInt32LE(n, treesOff + 12 * t + 8);
@@ -374,7 +387,7 @@ function writePackageV2(header: Header, items: readonly Item[]): Buffer {
   // Same DataHeader bytes as the input, with formatVersion[0] bumped to 2 so
   // a stock ICU fails closed (U_INVALID_FORMAT_ERROR) instead of misreading.
   const outHeader: Buffer = Buffer.from(header.bytes);
-  outHeader[16] = 2;
+  outHeader[V2_FORMAT_VERSION_BYTE] = 2;
   return Buffer.concat([outHeader, toc, ...bodies]);
 }
 
@@ -383,12 +396,14 @@ function writePackageV2(header: Header, items: readonly Item[]): Buffer {
  *  back. This replaces the `icupkg -l` check, which cannot read the new TOC. */
 function verifyPackageV2(dat: Buffer, header: Header, items: readonly Item[]): void {
   const tocStart: number = header.bytes.length;
-  if (dat[16] !== 2) die(`verify2: output formatVersion[0] is ${dat[16]}, expected 2`);
+  if (dat[V2_FORMAT_VERSION_BYTE] !== 2) die(`verify2: output formatVersion[0] is ${dat[V2_FORMAT_VERSION_BYTE]}, expected 2`);
   const u32 = (rel: number): number => dat.readUInt32LE(tocStart + rel);
   const cstr = (rel: number): string => dat.toString("latin1", tocStart + rel, dat.indexOf(0, tocStart + rel));
-  const [count, treeCount, nameCount, bucketCount, maxNameLength, dataOffsetsOff, nameIdsOff, treesOff, bucketDirOff] =
-    [0, 4, 8, 12, 16, 20, 24, 28, 32].map(u32);
+  const [count, treeCount, nameCount, bucketCount, maxNameLength, dataOffsetsOff, nameIdsOff, treesOff, bucketDirOff, nameBlockSize] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 32, 36].map(u32);
   if (maxNameLength >= V2_NAME_BUFFER) die("verify2: maxNameLength does not fit the reader's buffer");
+  if (count !== items.length) die(`verify2: item count ${count} != ${items.length}`);
+  if (nameBlockSize !== V2_BLOCK) die(`verify2: nameBlockSize ${nameBlockSize} != ${V2_BLOCK}`);
 
   const lookup = (full: string): { off: number; len: number } | null => {
     const slash = full.lastIndexOf("/");
@@ -441,7 +456,7 @@ function verifyPackageV2(dat: Buffer, header: Header, items: readonly Item[]): v
   }
   for (const miss of [`${header.tocPrefix}/nope.res`, `${header.tocPrefix}/zzz/root.res`, "no-slash", `${header.tocPrefix}/`, `${header.tocPrefix}/coll/`])
     if (lookup(miss) !== null) die(`verify2: false positive for '${miss}'`);
-  if (checked !== count || checked !== items.length) die(`verify2: checked ${checked} != count ${count}`);
+  if (checked !== count) die(`verify2: checked ${checked} != count ${count}`);
   console.error(`[icu-compress] verify2 OK: ${checked}/${count} lookups return the exact item bodies; first item at TOC+${u32(dataOffsetsOff)}`);
 }
 
@@ -483,6 +498,12 @@ function main(): void {
 
   const header: Header = readHeader(inDat);
   const allNames: string[] = listItems(inDat, ICUPKG);
+  // The Dockerfiles' coarse category filter (converters/translit/rbnf/
+  // stringprep/confusables/unames) must already have run on this input; its
+  // grep fails the build when it matches nothing, and this guards the other
+  // direction so the two cannot silently drift apart.
+  const leftover = allNames.filter((n) => /\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit\/|^rbnf\/|^unames\.icu$/.test(n));
+  if (leftover.length) die(`input still contains ${leftover.length} converter/translit/rbnf items (was icupkg -r skipped?): ${leftover.slice(0, 4).join(", ")}...`);
   const itemsDir: string = join(work, "items");
   extractItems(inDat, itemsDir, ICUPKG);
 
@@ -498,34 +519,65 @@ function main(): void {
   const poolFor = (bare: string): Pool | null => {
     const tree = bare.includes("/") ? bare.slice(0, bare.lastIndexOf("/")) : "";
     if (!poolCache.has(tree)) {
-      try { poolCache.set(tree, loadPool(readFileSync(join(itemsDir, tree, "pool.res")))); }
-      catch { poolCache.set(tree, null); }
+      const p = join(itemsDir, tree, "pool.res");
+      try {
+        poolCache.set(tree, loadPool(readFileSync(p)));
+      } catch (e) {
+        // Only "this tree has no pool bundle" is benign; a corrupt pool must fail.
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") die(`loading ${p}: ${(e as Error).message}`);
+        poolCache.set(tree, null);
+      }
     }
     return poolCache.get(tree)!;
   };
   let rewritten = 0;
+  const rewriteNotes = new Map<string, readonly string[]>();
+  const removedBrkRefs = new Set<string>();
   for (const bare of allNames) {
     const p = join(itemsDir, bare);
     const orig = readFileSync(p);
-    const r = rewriteItem(bare, orig, poolFor(bare));
-    if (!r) continue;
-    // Prove the rewrite: the output's resolved resource tree must equal the
-    // input's with exactly the intended edits (see expectedDump).
-    const want = JSON.stringify(expectedDump(bare, dumpResolved(new ResBundle(orig, poolFor(bare)))));
-    const got = JSON.stringify(dumpResolved(new ResBundle(r.out, poolFor(bare))));
-    if (want !== got) die(`rewrite verification failed for ${bare} (${r.notes.join(",")})`);
-    writeFileSync(p, r.out);
+    let r: ReturnType<typeof rewriteItem>;
+    try {
+      r = rewriteItem(bare, orig, poolFor(bare));
+      if (!r) continue;
+      // Prove the rewrite: the output's resolved resource tree must equal the
+      // input's with exactly the intended edits (see expectedDump).
+      const want = JSON.stringify(expectedDump(bare, r.beforeDump));
+      const got = JSON.stringify(dumpResolved(new ResBundle(r.out, poolFor(bare))));
+      if (want !== got) throw new Error(`rewrite verification failed (${r.notes.join(",")})`);
+    } catch (e) {
+      die(`rewriting ${bare}: ${(e as Error).message}`);
+    }
+    writeFileSync(p, r!.out);
     rewritten++;
+    rewriteNotes.set(bare, r!.notes);
+    for (const f of r!.removedBrkRefs) removedBrkRefs.add(f);
   }
-  // Items that are only referenced by the rewritten-away brkitr line/title
-  // boundary entries; icupkg cannot drop them (it enforces referential
-  // integrity on the unrewritten input), so they are dropped here.
-  const dropped = dropAfterRewrite(allNames);
+  // Guard against an ICU upgrade renaming a key out from under a rewrite (the
+  // rewrite would no-op and verify vacuously), then drop the brkitr rule files
+  // whose references were provably removed. icupkg cannot drop those (it
+  // enforces referential integrity on the unrewritten input).
+  try {
+    assertExpectedRewrites(rewriteNotes, new Set(allNames));
+  } catch (e) {
+    die((e as Error).message);
+  }
+  let dropped!: Set<string>;
+  try {
+    dropped = dropAfterRewrite(allNames, removedBrkRefs);
+  } catch (e) {
+    die((e as Error).message);
+  }
   const names: string[] = allNames.filter((n) => !dropped.has(n));
   console.error(`[icu-compress] rewrote ${rewritten} bundles, dropped ${dropped.size} unreferenced brkitr rule files`);
 
   const skip: RegExp[] = loadSkipGlobs(SKIP_FILE);
   const keepRaw = (bare: string): boolean => skip.some((r) => r.test(bare));
+  // Every keep-raw glob must still match something. A stale glob (after an
+  // ICU rename) would silently stop protecting a startup-hot item — the exact
+  // regression the zone/ entries exist to prevent.
+  const deadGlobs = skip.filter((r) => !names.some((n) => r.test(n)));
+  if (deadGlobs.length) die(`keep-raw globs match no item: ${deadGlobs.join(" ")}`);
 
   // Train the dictionary only on items we will actually compress — including
   // kept-raw items wastes dict capacity and slows decode of the rest.
@@ -562,6 +614,11 @@ function main(): void {
   writeFileSync(outDat, pkg);
 
   emitArchive(outDat, dictPath, header.pkg, outA, CC, work);
+  if (EMIT_DAT_DIR) {
+    mkdirSync(EMIT_DAT_DIR, { recursive: true });
+    writeFileSync(join(EMIT_DAT_DIR, `${header.tocPrefix}.dat`), pkg);
+    writeFileSync(join(EMIT_DAT_DIR, "zstd.dict"), readFileSync(dictPath));
+  }
 
   console.error(
     `[icu-compress] ${names.length} items: ${comp} compressed, ${kept} raw  ` +

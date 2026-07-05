@@ -90,7 +90,8 @@ RUN --mount=type=tmpfs,target=/icu \
     bin/icupkg -l data/in/icudt75l.dat > data/in/all.lst && \
     grep -vE '^#|^$' /icu-bun/remove-items.txt > data/in/rm-named.lst && \
     test "$(grep -Fxc -f data/in/rm-named.lst data/in/all.lst)" = "$(grep -c . data/in/rm-named.lst)" && \
-    { grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' data/in/all.lst; grep -Fx -f data/in/rm-named.lst data/in/all.lst; } > data/in/rm.lst && \
+    grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' data/in/all.lst > data/in/rm.lst && \
+    grep -Fx -f data/in/rm-named.lst data/in/all.lst >> data/in/rm.lst && \
     bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \

@@ -44,7 +44,6 @@ interface Node {
   slotVals: number[];
   /** table key offsets as stored (16-bit: key units; 32/Table32: per format) */
   keyOffs: number[];
-  hash: string;
 }
 
 /** A live UTF-16 string in the LOCAL 16-bit area. */
@@ -64,6 +63,7 @@ export function loadPool(buf: Buffer): Pool {
   const hs = buf.readUInt16LE(0);
   const bd = buf.subarray(hs);
   const il = bd.readUInt32LE(4) & 0xff;
+  if (il <= 6) throw new Error("pool bundle has no 16-bit-units area (indexLength <= 6)");
   const keysTop = bd.readInt32LE(4 + 4 * 1);
   const t16Top = bd.readInt32LE(4 + 4 * 6);
   return { keyChars: bd.subarray((1 + il) * 4, keysTop * 4), p16: bd.subarray(keysTop * 4, t16Top * 4) };
@@ -127,6 +127,7 @@ export class ResBundle {
   /** edits */
   private replaced = new Map<number, Buffer>(); // local string start unit -> new encoded units
   private deletedFrom = new Map<number, Set<string>>(); // table res -> keys to drop
+  private deletedElems = new Map<number, Set<number>>(); // array res -> element indexes to drop
   private dedupEnabled = false;
 
   constructor(buf: Buffer, pool: Pool | null) {
@@ -156,6 +157,8 @@ export class ResBundle {
 
   private P16(u: number): number { return this.p16.readUInt16LE(u * 2); }
 
+  /** Key of a Table/Table16 entry (RES_GET_KEY16: local below localKeyLimit,
+   *  else pool at ko - localKeyLimit). */
   readKey(ko: number): string {
     if (this.lkl && ko < this.lkl) { let e = ko; while (this.body[e]) e++; return this.body.toString("latin1", ko, e); }
     const po = ko - this.lkl;
@@ -163,6 +166,20 @@ export class ResBundle {
     while (this.pool!.keyChars[e]) e++;
     return this.pool!.keyChars.toString("latin1", po, e);
   }
+  /** Key of a Table32 entry (RES_GET_KEY32: sign bit selects the pool). */
+  private readKey32(ko: number): string {
+    if (ko >= 0) { let e = ko; while (this.body[e]) e++; return this.body.toString("latin1", ko, e); }
+    const po = ko & 0x7fffffff;
+    let e = po;
+    while (this.pool!.keyChars[e]) e++;
+    return this.pool!.keyChars.toString("latin1", po, e);
+  }
+  /** Key text for a stored key offset, honoring the table's key encoding. */
+  private keyText(n: Node, ko: number): string {
+    return n.type === T_TABLE32 ? this.readKey32(ko) : this.readKey(ko);
+  }
+  /** Key text of entry i of a table node. */
+  keyName(n: Node, i: number): string { return this.keyText(n, n.keyOffs[i]); }
 
   /** Track a LOCAL string-v2 by its (pool-adjusted) offset; returns its text. */
   private noteStr(off: number): string {
@@ -178,6 +195,14 @@ export class ResBundle {
   private noteStr16(v: number): string {
     return v < this.psil16 ? readSv2(this.pool!.p16, v)[0] : this.noteStr(v - this.psil16 + this.psil);
   }
+  /** Post-edit text of a res16 string value (16-bit container member). */
+  private str16After(v: number): string {
+    if (v >= this.psil16) {
+      const rep = this.replaced.get(v - this.psil16);
+      if (rep) return readSv2(rep, 0)[0];
+    }
+    return this.noteStr16(v);
+  }
   /** String values of an ARRAY/ARRAY16 of strings, else null. */
   arrayStrings(res: number): string[] | null {
     const n = this.nodes.get(res);
@@ -186,6 +211,14 @@ export class ResBundle {
   }
 
   private H(s: string): string { return createHash("sha256").update(s, "utf8").digest("base64"); }
+  /** Collision-free composition of container children: every part is reduced
+   *  to a fixed-width digest so raw string values (which could contain the
+   *  join separators) never appear in a parent's hashed representation. */
+  private HC(tag: string, parts: readonly string[]): string {
+    const h = createHash("sha256").update(tag, "utf8");
+    for (const p of parts) h.update(createHash("sha256").update(p, "utf8").digest());
+    return "H" + h.digest("base64");
+  }
 
   private walk(res: number): string {
     const memo = this.byWord.get(res);
@@ -194,8 +227,8 @@ export class ResBundle {
     const body = this.body, BU = (o: number) => body.readUInt32LE(o), BU16 = (o: number) => body.readUInt16LE(o);
     let h: string;
     let node: Node | null = null;
-    const leaf = (area: 16 | 32, start: number, end: number, hh: string): void => {
-      node = { res, type, off, area, start, end, slots: [], slotVals: [], keyOffs: [], hash: hh };
+    const leaf = (area: 16 | 32, start: number, end: number): void => {
+      node = { res, type, off, area, start, end, slots: [], slotVals: [], keyOffs: [] };
     };
     switch (type) {
       case T_STRING_V2: h = "S" + this.noteStr(off); break;
@@ -205,21 +238,21 @@ export class ResBundle {
         const bo = off * 4, len = body.readInt32LE(bo);
         h = (type === T_ALIAS ? "L" : "s") + body.toString("utf16le", bo + 4, bo + 4 + len * 2);
         // extent: length word + (len+1) UChars, in whole u32 units
-        leaf(32, off, off + 1 + ((2 * (len + 1) + 3) >> 2), h);
+        leaf(32, off, off + 1 + ((2 * (len + 1) + 3) >> 2));
         break;
       }
       case T_BINARY: {
         if (!off) { h = "B"; break; }
         const bo = off * 4, len = body.readInt32LE(bo);
         h = "B" + createHash("sha256").update(body.subarray(bo + 4, bo + 4 + len)).digest("base64");
-        leaf(32, off, off + 1 + ((len + 3) >> 2), h);
+        leaf(32, off, off + 1 + ((len + 3) >> 2));
         break;
       }
       case T_INTVECTOR: {
         if (!off) { h = "V"; break; }
         const bo = off * 4, len = body.readInt32LE(bo);
         h = "V" + body.toString("base64", bo + 4, bo + 4 + len * 4);
-        leaf(32, off, off + 1 + len, h);
+        leaf(32, off, off + 1 + len);
         break;
       }
       case T_TABLE: {
@@ -231,8 +264,8 @@ export class ResBundle {
           slots.push(so); vals.push(v); keyOffs.push(BU16(bo + 2 + 2 * i));
           parts.push(this.readKey(keyOffs[i]) + "\x02" + this.walk(v));
         }
-        h = "H" + this.H("T{" + parts.join("\x01") + "}");
-        node = { res, type, off, area: 32, start: off, end: off + (2 + 2 * n + pad + 4 * n) / 4, slots, slotVals: vals, keyOffs, hash: h };
+        h = this.HC("T", parts);
+        node = { res, type, off, area: 32, start: off, end: off + (2 + 2 * n + pad + 4 * n) / 4, slots, slotVals: vals, keyOffs };
         break;
       }
       case T_TABLE32: {
@@ -242,10 +275,10 @@ export class ResBundle {
         for (let i = 0; i < n; i++) {
           const so = bo + 4 + 4 * n + 4 * i, v = BU(so);
           slots.push(so); vals.push(v); keyOffs.push(body.readInt32LE(bo + 4 + 4 * i));
-          parts.push(this.readKey(keyOffs[i]) + "\x02" + this.walk(v));
+          parts.push(this.readKey32(keyOffs[i]) + "\x02" + this.walk(v));
         }
-        h = "H" + this.H("T{" + parts.join("\x01") + "}");
-        node = { res, type, off, area: 32, start: off, end: off + 1 + 2 * n, slots, slotVals: vals, keyOffs, hash: h };
+        h = this.HC("T", parts);
+        node = { res, type, off, area: 32, start: off, end: off + 1 + 2 * n, slots, slotVals: vals, keyOffs };
         break;
       }
       case T_TABLE16: {
@@ -257,8 +290,8 @@ export class ResBundle {
           slots.push(so); vals.push(v); keyOffs.push(this.P16(off + 1 + i));
           parts.push(this.readKey(keyOffs[i]) + "\x02S" + this.noteStr16(v));
         }
-        h = "H" + this.H("T{" + parts.join("\x01") + "}");
-        node = { res, type, off, area: 16, start: off, end: off + 1 + 2 * n, slots, slotVals: vals, keyOffs, hash: h };
+        h = this.HC("T", parts);
+        node = { res, type, off, area: 16, start: off, end: off + 1 + 2 * n, slots, slotVals: vals, keyOffs };
         break;
       }
       case T_ARRAY: {
@@ -266,8 +299,8 @@ export class ResBundle {
         const bo = off * 4, n = body.readInt32LE(bo);
         const slots: number[] = [], vals: number[] = [], parts: string[] = [];
         for (let i = 0; i < n; i++) { const so = bo + 4 + 4 * i, v = BU(so); slots.push(so); vals.push(v); parts.push(this.walk(v)); }
-        h = "H" + this.H("A[" + parts.join("\x01") + "]");
-        node = { res, type, off, area: 32, start: off, end: off + 1 + n, slots, slotVals: vals, keyOffs: [], hash: h };
+        h = this.HC("A", parts);
+        node = { res, type, off, area: 32, start: off, end: off + 1 + n, slots, slotVals: vals, keyOffs: [] };
         break;
       }
       case T_ARRAY16: {
@@ -275,8 +308,8 @@ export class ResBundle {
         const n = this.P16(off);
         const slots: number[] = [], vals: number[] = [], parts: string[] = [];
         for (let i = 0; i < n; i++) { const so = (off + 1 + i) * 2, v = this.p16.readUInt16LE(so); slots.push(so); vals.push(v); parts.push("S" + this.noteStr16(v)); }
-        h = "H" + this.H("A[" + parts.join("\x01") + "]");
-        node = { res, type, off, area: 16, start: off, end: off + 1 + n, slots, slotVals: vals, keyOffs: [], hash: h };
+        h = this.HC("A", parts);
+        node = { res, type, off, area: 16, start: off, end: off + 1 + n, slots, slotVals: vals, keyOffs: [] };
         break;
       }
       default:
@@ -296,7 +329,7 @@ export class ResBundle {
       if (!n || (n.type !== T_TABLE && n.type !== T_TABLE32 && n.type !== T_TABLE16)) return null;
       let next: number | null = null;
       for (let i = 0; i < n.keyOffs.length; i++) {
-        if (this.readKey(n.keyOffs[i]) === key) {
+        if (this.keyName(n, i) === key) {
           next = n.type === T_TABLE16 ? ((T_STRING_V2 << 28) | (n.slotVals[i] < this.psil16 ? n.slotVals[i] : n.slotVals[i] - this.psil16 + this.psil)) >>> 0 : n.slotVals[i];
           break;
         }
@@ -309,7 +342,7 @@ export class ResBundle {
   keysOf(tableRes: number): string[] {
     const n = this.nodes.get(tableRes);
     if (!n) return [];
-    return n.keyOffs.map((k) => this.readKey(k));
+    return n.keyOffs.map((_, i) => this.keyName(n, i));
   }
   stringValue(res: number): string | null {
     const t = res >>> 28;
@@ -339,6 +372,17 @@ export class ResBundle {
     }
     return hit.length;
   }
+  /** Delete elements (by index) from the ARRAY/ARRAY16 at `res`. */
+  deleteArrayElements(res: number, indexes: readonly number[]): void {
+    const n = this.nodes.get(res);
+    if (!n || (n.type !== T_ARRAY && n.type !== T_ARRAY16)) throw new Error("deleteArrayElements: not an array");
+    const set = this.deletedElems.get(res) ?? new Set<number>();
+    for (const i of indexes) {
+      if (i < 0 || i >= n.slotVals.length) throw new Error(`deleteArrayElements: index ${i} out of range`);
+      set.add(i);
+    }
+    this.deletedElems.set(res, set);
+  }
   /** Replace a string-v2 value (must be LOCAL and not shorter than the replacement). */
   replaceString(res: number, text: string): void {
     if (res >>> 28 !== T_STRING_V2) throw new Error("replaceString: not a string-v2");
@@ -365,10 +409,14 @@ export class ResBundle {
     const effKeyOffs = new Map<number, number[]>();
     for (const n of this.nodes.values()) {
       const del = this.deletedFrom.get(n.res);
-      if (!del) continue;
-      const keep = n.keyOffs.map((ko, i) => [ko, n.slotVals[i]] as const).filter(([ko]) => !del.has(this.readKey(ko)));
-      effKeyOffs.set(n.res, keep.map((x) => x[0]));
-      effSlotVals.set(n.res, keep.map((x) => x[1]));
+      if (del) {
+        const keep = n.keyOffs.map((ko, i) => [ko, n.slotVals[i], i] as const).filter(([, , i]) => !del.has(this.keyName(n, i)));
+        effKeyOffs.set(n.res, keep.map((x) => x[0]));
+        effSlotVals.set(n.res, keep.map((x) => x[1]));
+        continue;
+      }
+      const delIdx = this.deletedElems.get(n.res);
+      if (delIdx) effSlotVals.set(n.res, n.slotVals.filter((_, i) => !delIdx.has(i)));
     }
     const childVals = (n: Node): number[] => effSlotVals.get(n.res) ?? n.slotVals;
     const childKeys = (n: Node): number[] => effKeyOffs.get(n.res) ?? n.keyOffs;
@@ -391,10 +439,10 @@ export class ResBundle {
         const isTab = t === T_TABLE || t === T_TABLE32 || t === T_TABLE16;
         const parts: string[] = [];
         for (let i = 0; i < vals.length; i++) {
-          const cs = n.type === T_TABLE16 || n.type === T_ARRAY16 ? "S" + this.noteStr16(vals[i]) : rehash(vals[i]);
-          parts.push(isTab ? this.readKey(keys[i]) + "\x02" + cs : cs);
+          const cs = n.type === T_TABLE16 || n.type === T_ARRAY16 ? "S" + this.str16After(vals[i]) : rehash(vals[i]);
+          parts.push(isTab ? this.keyText(n, keys[i]) + "\x02" + cs : cs);
         }
-        h = "H" + this.H((isTab ? "T{" : "A[") + parts.join("\x01") + (isTab ? "}" : "]"));
+        h = this.HC(isTab ? "T" : "A", parts);
       } else h = this.byWord.get(res)!;
       hash2.set(res, h);
       return h;
@@ -432,7 +480,6 @@ export class ResBundle {
     };
     const newRoot = visit(this.rootRes);
     const remap = (w: number): number => {
-      const t = w >>> 28;
       if (!this.nodes.has(w)) return w;
       const a = alias.get(w);
       return a === undefined ? w : a;
@@ -482,6 +529,7 @@ export class ResBundle {
         if (n.type === T_TABLE) end = n.off + (2 + 2 * m + ((m & 1) === 0 ? 2 : 0) + 4 * m) / 4;
         else if (n.type === T_TABLE32) end = n.off + 1 + 2 * m;
         else if (n.type === T_TABLE16) end = n.off + 1 + 2 * m;
+        else if (n.type === T_ARRAY || n.type === T_ARRAY16) end = n.off + 1 + m;
         (n.area === 16 ? dead16 : dead32).push({ start: end, end: n.end }); // shrunk tail
       }
       (isLive ? (n.area === 16 ? live16 : live32) : (n.area === 16 ? dead16 : dead32)).push({ start: n.start, end });
@@ -493,6 +541,20 @@ export class ResBundle {
         if (rep) dead16.push({ start: s.start + rep.length / 2, end: s.end });
       } else {
         dead16.push({ start: s.start, end: s.end });
+      }
+    }
+    // genrb suffix-shares strings (string B stored as the tail of string A),
+    // so replacement writes must not land inside a string that stays live and
+    // unreplaced: writing R's stub at R.start would corrupt an enclosing A's
+    // tail, and a string starting inside R's written range would lose its
+    // head. (Two overlapping strings that are BOTH replaced are fine: each
+    // stub lands at its own start and the shared tail is dead.)
+    for (const [lu, enc] of this.replaced) {
+      const wEnd = lu + enc.length / 2;
+      for (const [su2, s2] of this.strs) {
+        if (su2 === lu) continue;
+        if (su2 > lu && su2 < wEnd) throw new Error(`replaceString: string @${su2} starts inside the replaced range @${lu}`);
+        if (su2 < lu && s2.end > lu && liveStr.has(su2) && !this.replaced.has(su2)) throw new Error(`replaceString: target @${lu} is inside live unreplaced string @${su2}`);
       }
     }
     const holes16 = subtract(dead16, union(live16));
@@ -514,14 +576,43 @@ export class ResBundle {
       };
     };
     const r16 = mkReloc(holes16);
-    const r32 = mkReloc(holes32raw);
+    // genrb aligns every URES_BINARY payload (off*4 + 4) to 16 bytes within
+    // the bundle body; readers reinterpret those bytes as wider types (the
+    // collation images as int64). Every live binary must therefore keep its
+    // payload alignment, which means the total leftward shift of the 32-bit
+    // area at that point must be a whole number of 16-byte quanta:
+    //  (a) the 16-bit area shrinks by a multiple of 4 u32 units (pad with up
+    //      to 7 dead u16s), and
+    //  (b) every 32-bit hole that precedes a live binary is shrunk to keep
+    //      the cumulative removed-word count = 0 (mod 4); the give-back words
+    //      simply remain in place as dead padding.
+    const pad16 = r16.total % 8;
     const old16units = len16;
-    let new16units = old16units - r16.total;
-    const pad16 = new16units & 1 ? 1 : 0;
-    new16units += pad16;
+    const new16units = old16units - r16.total + pad16;
     const d16u32 = (old16units - new16units) / 2;
+    const liveBinOffs = [...this.nodes.values()]
+      .filter((n) => live.has(n.res) && n.type === T_BINARY && n.off !== 0)
+      .map((n) => n.off)
+      .sort((a, b) => a - b);
+    {
+      let cum = 0;
+      let bi = 0;
+      for (const h of holes32raw) {
+        while (bi < liveBinOffs.length && liveBinOffs[bi] < h.start) bi++;
+        const size = h.end - h.start;
+        if (bi < liveBinOffs.length) {
+          const keep = ((cum + size) >> 2 << 2) - cum; // largest 0..size with (cum+keep) % 4 == 0
+          h.start = h.end - Math.max(0, keep);
+        }
+        cum += h.end - h.start;
+      }
+    }
+    const holes32 = holes32raw.filter((h) => h.end > h.start);
+    const r32 = mkReloc(holes32);
     const newT16Top = this.t16Top - d16u32;
     const newResTop = this.resTop - d16u32 - r32.total;
+    // The invariant the two adjustments above exist to preserve.
+    for (const off of liveBinOffs) if ((off - (r32.f(off) - d16u32)) % 4 !== 0) throw new Error(`binary at ${off} would lose its 16-byte payload alignment`);
 
     const relocStrOff = (off: number): number => (off === 0 || off < this.psil ? off : r16.f(off - this.psil) + this.psil);
     const relocWord = (w0: number): number => {
@@ -563,7 +654,7 @@ export class ResBundle {
     let cur16 = 0;
     for (const h of holes16) { c16.push(src16.subarray(cur16 * 2, h.start * 2)); cur16 = h.end; }
     c16.push(src16.subarray(cur16 * 2));
-    if (pad16) c16.push(Buffer.from([0xaa, 0xaa]));
+    if (pad16) c16.push(Buffer.alloc(pad16 * 2, 0xaa));
     const out16 = Buffer.concat(c16);
     if (out16.length !== new16units * 2) throw new Error(`16-bit area size ${out16.length} != ${new16units * 2}`);
     // 5c. 32-bit area
@@ -586,6 +677,9 @@ export class ResBundle {
           W32(n.off, m);
           for (let i = 0; i < m; i++) W32(n.off + 1 + i, keys[i]);
           for (let i = 0; i < m; i++) W32(n.off + 1 + m + i, relocWord(vals[i]));
+        } else if (n.type === T_ARRAY) {
+          W32(n.off, m);
+          for (let i = 0; i < m; i++) W32(n.off + 1 + i, relocWord(vals[i]));
         }
       } else {
         for (let i = 0; i < n.slots.length; i++) src32.writeUInt32LE(relocWord(n.slotVals[i]), n.slots[i] - base32 * 4);
@@ -593,7 +687,7 @@ export class ResBundle {
     }
     const c32: Buffer[] = [];
     let cur32 = base32;
-    for (const h of holes32raw) { c32.push(src32.subarray((cur32 - base32) * 4, (h.start - base32) * 4)); cur32 = h.end; }
+    for (const h of holes32) { c32.push(src32.subarray((cur32 - base32) * 4, (h.start - base32) * 4)); cur32 = h.end; }
     c32.push(src32.subarray((cur32 - base32) * 4));
     const out32 = Buffer.concat(c32);
     if (out32.length !== (newResTop - newT16Top) * 4) throw new Error(`32-bit area size ${out32.length} != ${(newResTop - newT16Top) * 4}`);
@@ -610,7 +704,6 @@ export class ResBundle {
 // resource tree. Two bundles with equal dumps are indistinguishable to
 // ures_* readers. Used to prove every rewrite (identity or intended edit).
 export function dumpResolved(b: ResBundle): unknown {
-  const seen = new Set<number>();
   const go = (res: number): unknown => {
     const t = res >>> 28, off = res & 0x0fffffff;
     if (t === T_INT) return { int: (off << 4) >> 4 };
@@ -619,13 +712,12 @@ export function dumpResolved(b: ResBundle): unknown {
     if (t === T_BINARY) { const bo = off * 4, len = off ? b.body.readInt32LE(bo) : 0; return { bin: off ? createHash("sha256").update(b.body.subarray(bo + 4, bo + 4 + len)).digest("hex") : "" }; }
     if (t === T_INTVECTOR) { const bo = off * 4, len = off ? b.body.readInt32LE(bo) : 0; const v: number[] = []; for (let i = 0; i < len; i++) v.push(b.body.readInt32LE(bo + 4 + 4 * i)); return { iv: v }; }
     if (off === 0) return t === T_ARRAY || t === T_ARRAY16 ? [] : {}; // empty container
-    if (off !== 0 && seen.has(res)) { /* shared subtree: expand again (value semantics) */ }
     const n = b.nodes.get(res);
     if (!n) throw new Error("dump: unknown node type " + t);
     if (n.type === T_TABLE || n.type === T_TABLE32 || n.type === T_TABLE16) {
       const o: Record<string, unknown> = {};
       for (let i = 0; i < n.keyOffs.length; i++) {
-        const k = b.readKey(n.keyOffs[i]);
+        const k = b.keyName(n, i);
         o[k] = n.type === T_TABLE16 ? { s: b.stringValue(((T_STRING_V2 << 28) | (n.slotVals[i] < b.psil16 ? n.slotVals[i] : n.slotVals[i] - b.psil16 + b.psil)) >>> 0) } : go(n.slotVals[i]);
       }
       return o;

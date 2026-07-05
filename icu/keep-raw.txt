@@ -3,10 +3,14 @@
 # scale decode), it's loaded by JSC/VM init, or it's shared by every call to a
 # subsystem (root/pool/DUCET). Everything not matched here is per-item zstd'd
 # and decompressed on first lookup by Bun's bun_icu_maybe_decompress.
+#
+# compress-data.ts fails the build if any glob here matches nothing, so an ICU
+# upgrade that renames an item cannot silently un-protect it.
 
-# Unicode property tries / normalization — JSC init (lexer, regex \p{}) and
-# String.normalize/URL IDNA read these.
-*.icu
+# Normalization tries: String.prototype.normalize (nfkc.nrm) and URL/IDNA
+# (uts46.nrm). JSC's own init needs none of the package (its lexer/regex
+# tables are compiled-in C arrays), but these are small and hot enough after
+# the first use to keep at rest.
 *.nrm
 
 # Shared string pools — every locale bundle in a tree references its tree's
@@ -43,8 +47,6 @@ numberingSystems.res
 plurals.res
 pluralRanges.res
 dayPeriods.res
-genderList.res
-likelySubtags.res
 metadata.res
 units.res
 langInfo.res
