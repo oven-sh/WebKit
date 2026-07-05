@@ -1,0 +1,465 @@
+Adds a front-coded representation for pool-bundle value strings (pool .res
+formatVersion 4), written by oven-sh/WebKit's icu/compress-data.ts +
+icu/frontcode.ts. A formatVersion-3 pool bundle's 16-bit area is the tree's
+shared string blob, read on the locale lookup path of every member bundle;
+55% of it is prefixes shared with the lexicographic neighbor, redundancy
+that ships raw today (the pools are keep-raw: compressing them would cost a
+per-process decode).
+
+Format and invariants: see the header of icu/frontcode.ts. The reader adds
+one branch to the two functions that resolve pool string offsets
+(res_getStringNoTrace, isNoInheritanceMarker): offsets below the pool's
+verbatim limit (the traced startup / first-Intl hot set plus anything a
+member must address with a small poolStringIndex16Limit) take exactly
+today's path; higher offsets are ids into the front-coded region, decoded
+one 16-string block at a time, on first access, into a side arena provided
+by Bun's data archive (weak symbols, with their exact sizes; a package that
+claims a slice the archive did not allocate is rejected). Without the
+archive (ICU tools) the tables are uprv_malloc'ed once per pool.
+Materialized strings use the stock string-v2 encoding and, like the
+strings they replace, live for the whole process (consumers hold read-only
+aliases into resource strings well past ures_flushCache). Every
+header-derived offset and length is validated against the region the
+pool's own indexes declare before it is used; a stock ICU rejects a
+formatVersion-4 pool with U_INVALID_FORMAT_ERROR.
+
+bun_icu_fc_materialized_blocks counts block decodes; icu/test-package.cpp
+fails the image build if the startup / first-Intl phase materializes any
+block (i.e. icu/pin-strings-<icu major>.txt no longer covers that path).
+
+--- a/source/common/uresdata.h
++++ b/source/common/uresdata.h
+@@ -380,6 +380,8 @@
+  * - Vectors of 32-bit words stored as type Integer Vector.
+  */
+ 
++struct BunFCPool;
++
+ /*
+  * Structure for a single, memory-mapped ResourceBundle.
+  */
+@@ -397,6 +399,16 @@
+     UBool isPoolBundle;
+     UBool usesPoolBundle;
+     UBool useNativeStrcmp;
++    /*
++     * Bun: front-coded pool string region ("FCS1", pool formatVersion 4).
++     * On the pool bundle bunFC describes its own region (owned, freed by
++     * res_unload); on a member bundle it borrows the pool's, which ICU
++     * keeps alive for as long as any member is open. bunFCVerbatimLimit is
++     * 0 when there is no front-coded region: pool string offsets at or
++     * above it are front-coded string ids.
++     */
++    const struct BunFCPool *bunFC;
++    int32_t bunFCVerbatimLimit;
+ } ResourceData;
+ 
+ struct UResourceDataEntry;   // forward declared for ResoureDataValue below; actually defined in uresimp.h
+--- a/source/common/uresdata.cpp
++++ b/source/common/uresdata.cpp
+@@ -31,6 +31,7 @@
+ #include "ucol_swp.h"
+ #include "udataswp.h"
+ #include "uinvchar.h"
++#include "umutex.h"
+ #include "uresdata.h"
+ #include "uresimp.h"
+ #include "utracimp.h"
+@@ -55,6 +56,283 @@
+ /* empty resources, returned when the resource offset is 0 */
+ static const uint16_t gEmpty16=0;
+ 
++/*
++ * Bun: front-coded pool bundle strings ("FCS1", pool formatVersion 4).
++ *
++ * A formatVersion-4 pool bundle stores its shared value strings as
++ *   units [0, verbatimLimit)   stock string-v2 encoding (the traced hot set)
++ *   units [verbatimLimit, ..)  a byte-packed region of lexicographically
++ *                              sorted strings in blocks of 16: WTF-8 tails
++ *                              front-coded against the previous entry.
++ * A pool string offset at or above verbatimLimit is verbatimLimit+id. On
++ * first access a block is decoded into a process-immortal side arena in
++ * today's string-v2 encoding (explicit length marker), so the existing
++ * marker parse consumes materialized strings unchanged; later accesses are
++ * one pointer load. The pinned verbatim set never materializes anything.
++ *
++ * The block-pointer table and the arena are provided, exactly sized, by
++ * Bun's ICU data archive through the weak symbols below; when they are
++ * absent (ICU tools or tests reading such a package from a file) they are
++ * allocated once per pool with uprv_malloc and freed by res_unload.
++ */
++#define BUN_FC_MAGIC 0x46435331
++#define BUN_FC_BLOCK 16
++#define BUN_FC_MAX_STRING_BYTES 480
++
++struct BunFCPool {
++    const uint8_t *blockOff;   /* uint32_t[dirCount]: byte offsets into blob */
++    const uint8_t *arenaOff;   /* uint32_t[dirCount]: unit offsets into arena */
++    const uint8_t *blob;
++    const uint8_t *blobLimit;
++    int32_t stringCount;
++    int32_t dirCount;
++    int32_t maxStringBytes;
++    char16_t **slots;          /* dirCount block pointers, zero-initialized */
++    char16_t *arena;
++    int32_t arenaUnits;
++};
++
++extern "C" {
++/* Emitted into the data archive object by icu/compress-data.ts, together
++ * with their exact sizes so a package can never claim a slice the archive
++ * did not allocate. */
++extern char16_t *bun_icu_fc_slots[] __attribute__((weak));
++extern char16_t bun_icu_fc_arena[] __attribute__((weak));
++extern const uint32_t bun_icu_fc_slot_count __attribute__((weak));
++extern const uint32_t bun_icu_fc_arena_unit_count __attribute__((weak));
++/* Diagnostic: blocks materialized so far. icu/test-package.cpp asserts it is
++ * still 0 after the startup + first-Intl workload (i.e. the pinned verbatim
++ * set in icu/pin-strings-<icu major>.txt still covers that path). */
++int32_t bun_icu_fc_materialized_blocks = 0;
++}
++
++static icu::UMutex gBunFCLock;
++
++static uint32_t
++bunFCReadU32(const uint8_t *p) {
++    uint32_t v;
++    uprv_memcpy(&v, p, 4);
++    return v;
++}
++
++/*
++ * Parse and validate the FCS1 header at unit `verbatimLimit` of a pool
++ * bundle's 16-bit area. Every header-derived size is validated against the
++ * real area length before it is used.
++ */
++static BunFCPool *
++bunFCInit(const uint16_t *p16BitUnits, int32_t p16Length, int32_t verbatimLimit, UErrorCode *errorCode) {
++    if(U_FAILURE(*errorCode)) {
++        return nullptr;
++    }
++    if(verbatimLimit<1 || (verbatimLimit&1)!=0 || verbatimLimit>p16Length-16) {
++        *errorCode=U_INVALID_FORMAT_ERROR;
++        return nullptr;
++    }
++    const uint8_t *h=(const uint8_t *)(p16BitUnits+verbatimLimit);
++    const uint8_t *areaLimit=(const uint8_t *)(p16BitUnits+p16Length);
++    if(bunFCReadU32(h)!=BUN_FC_MAGIC) {
++        *errorCode=U_INVALID_FORMAT_ERROR;
++        return nullptr;
++    }
++    int32_t stringCount=(int32_t)bunFCReadU32(h+4);
++    int32_t dirCount=(int32_t)bunFCReadU32(h+8);
++    int32_t arenaUnits=(int32_t)bunFCReadU32(h+12);
++    int32_t blobBytes=(int32_t)bunFCReadU32(h+16);
++    int32_t maxStringBytes=(int32_t)bunFCReadU32(h+20);
++    uint32_t slotBase=bunFCReadU32(h+24);
++    uint32_t arenaBase=bunFCReadU32(h+28);
++    if(stringCount<=0 || dirCount<=0 || stringCount>0x1000000 ||
++        dirCount!=(stringCount+BUN_FC_BLOCK-1)/BUN_FC_BLOCK ||
++        maxStringBytes<=0 || maxStringBytes>BUN_FC_MAX_STRING_BYTES ||
++        arenaUnits<dirCount*BUN_FC_BLOCK || blobBytes<=0 ||
++        (h+32+8*(int64_t)dirCount+blobBytes)>areaLimit) {
++        *errorCode=U_INVALID_FORMAT_ERROR;
++        return nullptr;
++    }
++    /*
++     * Validate both directories up front: block offsets are strictly
++     * increasing within the blob and arena slices are strictly increasing,
++     * each at least the 16-unit entry table, and contained in arenaUnits.
++     * The materializer can then never write outside its block's slice and
++     * no two blocks can overlap (the reader side is lock-free).
++     */
++    {
++        const uint8_t *dirB=h+32;
++        const uint8_t *dirA=h+32+4*dirCount;
++        uint32_t prevB=0;
++        for(int32_t i=0; i<dirCount; ++i) {
++            uint32_t bo=bunFCReadU32(dirB+4*i);
++            uint32_t ao=bunFCReadU32(dirA+4*i);
++            uint32_t aoEnd=(i+1<dirCount) ? bunFCReadU32(dirA+4*(i+1)) : (uint32_t)arenaUnits;
++            if(bo>=(uint32_t)blobBytes || (i>0 && bo<=prevB) ||
++                ao>=aoEnd || (aoEnd-ao)<BUN_FC_BLOCK || aoEnd>(uint32_t)arenaUnits) {
++                *errorCode=U_INVALID_FORMAT_ERROR;
++                return nullptr;
++            }
++            prevB=bo;
++        }
++    }
++    BunFCPool *fc=(BunFCPool *)uprv_malloc(sizeof(BunFCPool));
++    if(fc==nullptr) {
++        *errorCode=U_MEMORY_ALLOCATION_ERROR;
++        return nullptr;
++    }
++    uprv_memset(fc, 0, sizeof(BunFCPool));
++    fc->blockOff=h+32;
++    fc->arenaOff=h+32+4*dirCount;
++    fc->blob=h+32+8*dirCount;
++    fc->blobLimit=fc->blob+blobBytes;
++    fc->stringCount=stringCount;
++    fc->dirCount=dirCount;
++    fc->maxStringBytes=maxStringBytes;
++    fc->arenaUnits=arenaUnits;
++    if(bun_icu_fc_slots!=nullptr && bun_icu_fc_arena!=nullptr &&
++        &bun_icu_fc_slot_count!=nullptr && &bun_icu_fc_arena_unit_count!=nullptr &&
++        slotBase<=bun_icu_fc_slot_count && (uint32_t)dirCount<=bun_icu_fc_slot_count-slotBase &&
++        arenaBase<=bun_icu_fc_arena_unit_count && (uint32_t)arenaUnits<=bun_icu_fc_arena_unit_count-arenaBase) {
++        fc->slots=bun_icu_fc_slots+slotBase;
++        fc->arena=bun_icu_fc_arena+arenaBase;
++    } else {
++        fc->slots=(char16_t **)uprv_malloc((size_t)dirCount*sizeof(char16_t *));
++        fc->arena=(char16_t *)uprv_malloc((size_t)arenaUnits*2);
++        if(fc->slots==nullptr || fc->arena==nullptr) {
++            uprv_free(fc->slots);
++            uprv_free(fc->arena);
++            uprv_free(fc);
++            *errorCode=U_MEMORY_ALLOCATION_ERROR;
++            return nullptr;
++        }
++        uprv_memset(fc->slots, 0, (size_t)dirCount*sizeof(char16_t *));
++    }
++    return fc;
++}
++
++static UBool
++bunFCReadVarint(const uint8_t **pp, const uint8_t *limit, int32_t *value) {
++    int32_t v=0;
++    int32_t shift=0;
++    const uint8_t *p=*pp;
++    for(;;) {
++        /* at most 4 bytes: values stay below 2^28 and can never be negative */
++        if(p>=limit || shift>=28) {
++            return false;
++        }
++        uint8_t b=*p++;
++        v|=(int32_t)(b&0x7f)<<shift;
++        if((b&0x80)==0) {
++            break;
++        }
++        shift+=7;
++    }
++    *pp=p;
++    *value=v;
++    return true;
++}
++
++/*
++ * Decode block b into the arena and publish its pointer. Idempotent; runs
++ * under gBunFCLock. Returns nullptr only for a corrupt region.
++ */
++static char16_t *
++bunFCMaterialize(const BunFCPool *fc, int32_t b) {
++    umtx_lock(&gBunFCLock);
++    char16_t *base=__atomic_load_n(&fc->slots[b], __ATOMIC_ACQUIRE);
++    if(base==nullptr) {
++        uint8_t scratch[BUN_FC_MAX_STRING_BYTES];
++        char16_t units[BUN_FC_MAX_STRING_BYTES];
++        int32_t first=b*BUN_FC_BLOCK;
++        int32_t n=fc->stringCount-first;
++        if(n>BUN_FC_BLOCK) {
++            n=BUN_FC_BLOCK;
++        }
++        char16_t *blockBase=fc->arena+bunFCReadU32(fc->arenaOff+4*b);
++        /* this block's arena slice ends where the next one starts (validated
++           monotone and contained by bunFCInit) */
++        char16_t *blockLimit=fc->arena+((b+1<fc->dirCount) ? bunFCReadU32(fc->arenaOff+4*(b+1)) : (uint32_t)fc->arenaUnits);
++        uint16_t *entryOff=(uint16_t *)blockBase;
++        char16_t *out=blockBase+BUN_FC_BLOCK;
++        const uint8_t *p=fc->blob+bunFCReadU32(fc->blockOff+4*b);
++        int32_t scratchLen=0;
++        UBool ok=true;
++        for(int32_t k=0; k<n && ok; ++k) {
++            int32_t lcp=0, tail=0;
++            if(k!=0 && !bunFCReadVarint(&p, fc->blobLimit, &lcp)) {
++                ok=false;
++                break;
++            }
++            if(!bunFCReadVarint(&p, fc->blobLimit, &tail)) {
++                ok=false;
++                break;
++            }
++            if(lcp<0 || tail<0 || lcp>scratchLen || (lcp+tail)>fc->maxStringBytes || tail>(int32_t)(fc->blobLimit-p)) {
++                ok=false;
++                break;
++            }
++            uprv_memcpy(scratch+lcp, p, (size_t)tail);
++            p+=tail;
++            scratchLen=lcp+tail;
++            /* WTF-8 -> UTF-16 code units (3-byte forms at most; the encoder
++               writes one sequence per UTF-16 code unit) */
++            int32_t len=0;
++            for(int32_t i=0; i<scratchLen && ok;) {
++                uint8_t c=scratch[i];
++                if(c<0x80) {
++                    units[len++]=c;
++                    i+=1;
++                } else if(c<0xe0) {
++                    if(i+2>scratchLen || c<0xc0) { ok=false; break; }
++                    units[len++]=(char16_t)(((c&0x1f)<<6)|(scratch[i+1]&0x3f));
++                    i+=2;
++                } else {
++                    if(i+3>scratchLen || c>=0xf0) { ok=false; break; }
++                    units[len++]=(char16_t)(((c&0x0f)<<12)|((scratch[i+1]&0x3f)<<6)|(scratch[i+2]&0x3f));
++                    i+=3;
++                }
++            }
++            if(!ok) {
++                break;
++            }
++            /* string-v2 with an explicit length marker (len<=maxStringBytes<0x3ef) */
++            if(out+1+len+1>blockLimit) {
++                ok=false;
++                break;
++            }
++            entryOff[k]=(uint16_t)(out-blockBase);
++            *out++=(char16_t)(0xdc00|len);
++            uprv_memcpy(out, units, (size_t)len*2);
++            out+=len;
++            *out++=0;
++        }
++        if(ok) {
++            base=blockBase;
++            ++bun_icu_fc_materialized_blocks;
++            __atomic_store_n(&fc->slots[b], base, __ATOMIC_RELEASE);
++        } else {
++            base=nullptr;
++        }
++    }
++    umtx_unlock(&gBunFCLock);
++    return base;
++}
++
++/* Units of front-coded string `id` (string-v2 encoded), or nullptr. */
++static const char16_t *
++bunFCGetString(const BunFCPool *fc, int32_t id) {
++    if(fc==nullptr || (uint32_t)id>=(uint32_t)fc->stringCount) {
++        return nullptr;
++    }
++    int32_t b=id/BUN_FC_BLOCK;
++    char16_t *base=__atomic_load_n(&fc->slots[b], __ATOMIC_ACQUIRE);
++    if(base==nullptr) {
++        base=bunFCMaterialize(fc, b);
++        if(base==nullptr) {
++            return nullptr;
++        }
++    }
++    return base+((const uint16_t *)base)[id%BUN_FC_BLOCK];
++}
++
+ static const struct {
+     int32_t length;
+     int32_t res;
+@@ -149,7 +427,7 @@
+         pInfo->dataFormat[1]==0x65 &&
+         pInfo->dataFormat[2]==0x73 &&
+         pInfo->dataFormat[3]==0x42 &&
+-        (1<=pInfo->formatVersion[0] && pInfo->formatVersion[0]<=3));
++        (1<=pInfo->formatVersion[0] && pInfo->formatVersion[0]<=4));
+ }
+ 
+ /* semi-public functions ---------------------------------------------------- */
+@@ -164,6 +442,8 @@
+     pResData->pRoot=(const int32_t *)inBytes;
+     pResData->rootRes=(Resource)*pResData->pRoot;
+     pResData->p16BitUnits=&gEmpty16;
++    pResData->bunFC=nullptr;
++    pResData->bunFCVerbatimLimit=0;
+ 
+     /* formatVersion 1.1 must have a root item and at least 5 indexes */
+     if(length>=0 && (length/4)<((formatVersion[0]==1 && formatVersion[1]==0) ? 1 : 1+5)) {
+@@ -227,6 +507,23 @@
+         ) {
+             pResData->p16BitUnits=(const uint16_t *)(pResData->pRoot+indexes[URES_INDEX_KEYS_TOP]);
+         }
++        if(formatVersion[0]>=4) {
++            /* Bun: front-coded pool string region (see BunFCPool above).
++               indexes[8] is the verbatim/front-coded boundary unit. */
++            if(!pResData->isPoolBundle || indexLength<=URES_INDEX_POOL_CHECKSUM+1) {
++                *errorCode=U_INVALID_FORMAT_ERROR;
++                res_unload(pResData);
++                return;
++            }
++            int32_t p16Length=2*(indexes[URES_INDEX_16BIT_TOP]-indexes[URES_INDEX_KEYS_TOP]);
++            int32_t verbatimLimit=indexes[URES_INDEX_POOL_CHECKSUM+1];
++            pResData->bunFC=bunFCInit(pResData->p16BitUnits, p16Length, verbatimLimit, errorCode);
++            if(pResData->bunFC==nullptr) {
++                res_unload(pResData);
++                return;
++            }
++            pResData->bunFCVerbatimLimit=verbatimLimit;
++        }
+     }
+ 
+     if(formatVersion[0]==1 || U_CHARSET_FAMILY==U_ASCII_FAMILY) {
+@@ -274,6 +571,23 @@
+ 
+ U_CFUNC void
+ res_unload(ResourceData *pResData) {
++    if(pResData->bunFC!=nullptr) {
++        /*
++         * Owned only by the pool bundle; members borrow its pointer. The
++         * slots/arena are deliberately NOT freed: consumers alias resource
++         * string memory (UnicodeString read-only aliases) far beyond
++         * ures_flushCache(), and for stock data that memory is the immortal
++         * common-data mapping. Materialized strings keep the same
++         * process-lifetime contract (the archive-provided tables are .bss;
++         * the uprv_malloc fallback leaks once per pool per flush, in ICU
++         * tools only).
++         */
++        if(pResData->isPoolBundle) {
++            uprv_free(const_cast<BunFCPool *>(pResData->bunFC));
++        }
++        pResData->bunFC=nullptr;
++        pResData->bunFCVerbatimLimit=0;
++    }
+     if(pResData->data!=nullptr) {
+         udata_close(pResData->data);
+         pResData->data=nullptr;
+@@ -315,7 +629,18 @@
+     if(RES_GET_TYPE(res)==URES_STRING_V2) {
+         int32_t first;
+         if((int32_t)offset<pResData->poolStringIndexLimit) {
+-            p=(const char16_t *)pResData->poolBundleStrings+offset;
++            int32_t fcLimit=pResData->bunFCVerbatimLimit;
++            if(fcLimit!=0 && (int32_t)offset>=fcLimit) {
++                p=bunFCGetString(pResData->bunFC, (int32_t)offset-fcLimit);
++                if(p==nullptr) {
++                    if(pLength) {
++                        *pLength=0;
++                    }
++                    return nullptr;
++                }
++            } else {
++                p=(const char16_t *)pResData->poolBundleStrings+offset;
++            }
+         } else {
+             p=(const char16_t *)pResData->p16BitUnits+(offset-pResData->poolStringIndexLimit);
+         }
+@@ -366,7 +691,15 @@
+     } else if (RES_GET_TYPE(res) == URES_STRING_V2) {
+         const char16_t *p;
+         if((int32_t)offset<pResData->poolStringIndexLimit) {
+-            p=(const char16_t *)pResData->poolBundleStrings+offset;
++            int32_t fcLimit=pResData->bunFCVerbatimLimit;
++            if(fcLimit!=0 && (int32_t)offset>=fcLimit) {
++                p=bunFCGetString(pResData->bunFC, (int32_t)offset-fcLimit);
++                if(p==nullptr) {
++                    return false;
++                }
++            } else {
++                p=(const char16_t *)pResData->poolBundleStrings+offset;
++            }
+         } else {
+             p=(const char16_t *)pResData->p16BitUnits+(offset-pResData->poolStringIndexLimit);
+         }
+--- a/source/common/uresbund.cpp
++++ b/source/common/uresbund.cpp
+@@ -591,6 +591,8 @@
+                     if(r->fData.pRoot[1 + URES_INDEX_POOL_CHECKSUM] == poolIndexes[URES_INDEX_POOL_CHECKSUM]) {
+                         r->fData.poolBundleKeys = (const char *)(poolIndexes + (poolIndexes[URES_INDEX_LENGTH] & 0xff));
+                         r->fData.poolBundleStrings = r->fPool->fData.p16BitUnits;
++                        r->fData.bunFC = r->fPool->fData.bunFC;
++                        r->fData.bunFCVerbatimLimit = r->fPool->fData.bunFCVerbatimLimit;
+                     } else {
+                         r->fBogus = *status = U_INVALID_FORMAT_ERROR;
+                     }

@@ -3,10 +3,14 @@
 # scale decode), it's loaded by JSC/VM init, or it's shared by every call to a
 # subsystem (root/pool/DUCET). Everything not matched here is per-item zstd'd
 # and decompressed on first lookup by Bun's bun_icu_maybe_decompress.
+#
+# compress-data.ts fails the build if any glob here matches nothing, so an ICU
+# upgrade that renames an item cannot silently un-protect it.
 
-# Unicode property tries / normalization — JSC init (lexer, regex \p{}) and
-# String.normalize/URL IDNA read these.
-*.icu
+# Normalization tries: String.prototype.normalize (nfkc.nrm) and URL/IDNA
+# (uts46.nrm). JSC's own init needs none of the package (its lexer/regex
+# tables are compiled-in C arrays), but these are small and hot enough after
+# the first use to keep at rest.
 *.nrm
 
 # Shared string pools — every locale bundle in a tree references its tree's
@@ -19,6 +23,14 @@ pool.res
 root.res
 en.res
 en_*.res
+
+# The zone-tree root/en bundles are opened during JSC's eager time-zone warm-up
+# in VM::VM() (TimeZoneNamesImpl(defaultLocale) + the zone-tree root). The
+# patterns above are single-segment and never matched them, so every process
+# paid a ZSTD_DCtx + dictionary init to inflate ~4.5 KB at startup.
+zone/root.res
+zone/en.res
+zone/en_*.res
 
 # ko.res is the one locale-pattern file large enough (70 KB) to decode in
 # ~100 us; the next-largest (ff_Adlm, zh, ru) are <40 KB and stay compressed.
@@ -35,8 +47,6 @@ numberingSystems.res
 plurals.res
 pluralRanges.res
 dayPeriods.res
-genderList.res
-likelySubtags.res
 metadata.res
 units.res
 langInfo.res

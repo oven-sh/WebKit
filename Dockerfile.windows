@@ -190,7 +190,10 @@ ARG NODE_VERSION=24.16.0
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
     curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp && \
     make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
+    make -C /tmp/zstd-${ZSTD_VERSION}/lib libzstd.a -j$(nproc) CC=clang-${LLVM_VERSION} && \
     cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
+    cp /tmp/zstd-${ZSTD_VERSION}/lib/libzstd.a /usr/local/lib/ && \
+    cp /tmp/zstd-${ZSTD_VERSION}/lib/zstd.h /tmp/zstd-${ZSTD_VERSION}/lib/zstd_errors.h /usr/local/include/ && \
     rm -rf /tmp/zstd-${ZSTD_VERSION} && \
     zstd --version && \
     curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
@@ -202,9 +205,13 @@ COPY icu/ /icu-bun/
 ADD --checksum=sha256:${ICU_SHA256} \
     https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION_UNDERSCORE}-src.tgz /icu-src.tgz
 # The udata.cpp patch adds the weak per-item decompression hook (see the
-# stage comment above); it lands in the cross-built sicuuc.lib.
+# stage comment above); the ucmndata.cpp patch adds the compact-TOC reader
+# ("CmnD" formatVersion 2, written by compress-data.ts). Both land in the
+# cross-built sicuuc.lib.
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \
-    patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
+    patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch && \
+    patch -p1 -d /icu-src < /icu-bun/ucmndata-toc.patch && \
+    patch -p1 -d /icu-src < /icu-bun/uresdata-frontcode.patch
 
 # Stage 1: host build — only the tools matter.
 RUN mkdir -p /icu-host && cd /icu-host && \
@@ -217,14 +224,19 @@ RUN mkdir -p /icu-host && cd /icu-host && \
 # rule-based number formats, stringprep profiles, confusables, and character
 # names. Bun has zero ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU
 # is removed in bun's TextEncodingRegistry.cpp), and this is what keeps the
-# native sicudt.lib at ~24 MB instead of ~32 MB. pkgdata packages
-# data/in/icudt*l.dat verbatim in a cross build, so filtering it here is
-# equivalent to the native flow.
+# native sicudt.lib at ~24 MB instead of ~32 MB. Also drops the individually-
+# unreachable items in icu/remove-items.txt (the `test` asserts every listed
+# name still exists in the upstream .dat, so an ICU upgrade can't silently
+# re-ship one). pkgdata packages data/in/icudt*l.dat verbatim in a cross
+# build, so filtering it here is equivalent to the native flow.
 RUN set -eu && \
     DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
     FILTERED="${DAT%.dat}-filtered.dat" && \
-    /icu-host/bin/icupkg -l "$DAT" | \
-      grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > /tmp/icu-rm.lst && \
+    /icu-host/bin/icupkg -l "$DAT" > /tmp/icu-all.lst && \
+    grep -vE '^#|^$' /icu-bun/remove-items.txt | awk -F: -v M=${ICU_MAJOR} 'NF==1{print;next} ($1+0)<=M{print $2}' > /tmp/icu-rm-named.lst && \
+    test "$(grep -Fxc -f /tmp/icu-rm-named.lst /tmp/icu-all.lst)" = "$(grep -c . /tmp/icu-rm-named.lst)" && \
+    grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' /tmp/icu-all.lst > /tmp/icu-rm.lst && \
+    grep -Fx -f /tmp/icu-rm-named.lst /tmp/icu-all.lst >> /tmp/icu-rm.lst && \
     test -s /tmp/icu-rm.lst && \
     /icu-host/bin/icupkg --auto_toc_prefix -r /tmp/icu-rm.lst "$DAT" "$FILTERED" && \
     mv "$FILTERED" "$DAT" && \
@@ -279,7 +291,13 @@ RUN mkdir -p /icu-out/lib /icu-out/include && \
     DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
     node --experimental-strip-types /icu-bun/compress-data.ts "$DAT" /icu-out/lib/sicudt.lib \
       --skip /icu-bun/keep-raw.txt --icupkg /icu-host/bin/icupkg \
-      --cc "clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc" --ar llvm-ar --obj-format coff && \
+      --cc "clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc" --ar llvm-ar --obj-format coff \
+      --emit-dat /tmp/icu-verify && \
+    clang++ -O1 -std=c++20 -fuse-ld=lld /icu-bun/test-package.cpp \
+      -I/icu-src/source/common -I/icu-src/source/i18n -I/usr/local/include \
+      /icu-host/lib/libicui18n.a /icu-host/lib/libicuuc.a /icu-host/stubdata/libicudata.a \
+      /usr/local/lib/libzstd.a -lpthread -ldl -lm -o /tmp/test-package && \
+    /tmp/test-package /tmp/icu-verify/icudt${ICU_MAJOR}l.dat /tmp/icu-verify/zstd.dict && \
     SIZE=$(stat -c%s /icu-out/lib/sicudt.lib) && echo "sicudt.lib: ${SIZE} bytes" && \
     test "$SIZE" -gt 8000000 && test "$SIZE" -lt 16000000 && \
     llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R icudt${ICU_MAJOR}_dat" && \

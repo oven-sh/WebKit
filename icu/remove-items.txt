@@ -1,0 +1,63 @@
+# ICU data items removed from icudt<NN>l.dat, beyond the coarse category filter
+# (converters/translit/rbnf/stringprep/confusables/unames) applied in the
+# Dockerfiles. Every item here was shown to be unreachable by enumerating every
+# ICU call site that can open it and finding no caller in JSC, WTF, or Bun.
+# The Dockerfiles assert each name still exists in the upstream .dat, so an ICU
+# upgrade that renames one fails the build instead of silently re-shipping it.
+#
+# Names are as `icupkg -l` prints them (no package prefix). Lines starting with
+# '#' and blank lines are ignored. An item that only exists from some ICU
+# major onward is written `<major>:<name>` (e.g. `74:nfkc_scf.nrm`); the
+# Dockerfiles filter those against the ICU major they build (Windows is on
+# ICU 73, everything else on 75).
+
+# NFKC_Casefold / NFKC_SimpleCasefold normalizers. Loaded only by
+# unorm2_getNFKC(Simple)CasefoldInstance and two UCHAR_* properties; no JSC,
+# WTF, or Bun caller. String.prototype.normalize uses nfc.nrm + nfkc.nrm;
+# URL/IDNA (UTS46) has its own uts46.nrm.
+nfkc_cf.nrm
+74:nfkc_scf.nrm
+
+# Indic layout properties (InPC / InSC / vo), loaded by uprops.cpp only for
+# u_getIntPropertyValue on those properties. Not a Yarr \p{} property; no caller.
+ulayout.icu
+
+# Emoji binary properties (UCHAR_EMOJI..UCHAR_RGI_EMOJI) via u_hasBinaryProperty.
+# Yarr's \p{Emoji*}/\p{RGI_Emoji} sets are build-time generated tables, and
+# Bun.stringWidth uses its own static tables; no runtime caller.
+uemoji.icu
+
+# ugender_* API. No caller.
+genderList.res
+
+# genrb build marker (the string "icustd" appears nowhere in ICU's sources) and
+# the deprecated u_getDataVersion. Never opened.
+icustd.res
+icuver.res
+
+# ucurr_getNumericCode only. No caller.
+currencyNumericCodes.res
+
+# TZDB (abbreviation-parsing) time-zone names, used only by TimeZoneFormat::parse
+# and TimeZoneNames::createTZDBInstance. JSC never parses dates through ICU.
+zone/tzdbNames.res
+
+# NOTE: brkitr/line*.brk and brkitr/title.brk (UBRK_LINE / UBRK_TITLE rules)
+# are also unreachable — Intl.Segmenter exposes only character|word|sentence —
+# but they are referenced by name from brkitr/{root,ja,ko,zh,zh_Hant}.res
+# `boundaries` tables and `icupkg -r` enforces referential integrity, so they
+# CANNOT go in this list. compress-data.ts drops them instead, after
+# icu/rewrite-items.ts removes those boundary entries (and their %%DEPENDENCY
+# references) from the brkitr bundles.
+
+# Per-tree available-locale indexes, opened only by
+# ures_openAvailableLocales(tree) / ures_getKeywordValues(tree). JSC enumerates
+# the root tree (uloc_*, via the root res_index.res, which stays) and the coll
+# tree (ucol_getAvailable / ucol_getKeywordValues, so coll/res_index.res stays).
+# Nothing enumerates these six.
+brkitr/res_index.res
+curr/res_index.res
+lang/res_index.res
+region/res_index.res
+unit/res_index.res
+zone/res_index.res

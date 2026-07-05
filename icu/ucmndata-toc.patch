@@ -1,0 +1,256 @@
+Adds a second table-of-contents format for ICU .dat packages ("CmnD"
+formatVersion 2), produced by oven-sh/WebKit's icu/compress-data.ts. Item
+bodies and their DataHeaders are unchanged from formatVersion 1; only the
+TOC is re-encoded: full item names are factored into a directory-prefix
+table plus one global pool of unique basenames (16-way front-coded), and a
+sentinel data offset gives every item an explicit length. This removes the
+redundant per-item "pkg/tree/" prefixes and the 7 copies of every locale
+basename that recur across the locale trees (~81% of the TOC).
+
+A stock ICU rejects formatVersion 2 with U_INVALID_FORMAT_ERROR instead of
+misreading it; ICU's own tools never see this format (compress-data.ts
+consumes a stock formatVersion-1 package and is the only writer).
+
+--- a/source/common/ucmndata.cpp
++++ b/source/common/ucmndata.cpp
+@@ -211,6 +211,132 @@
+     return -1;
+ }
+ 
++/*-----------------------------------------------------------------------------*
++ *                                                                             *
++ *  Compact offset TOC ("CmnD" formatVersion 2).                               *
++ *                                                                             *
++ *  Bun-specific packaging (icu/compress-data.ts in oven-sh/WebKit). Item      *
++ *  bodies and their DataHeaders are identical to formatVersion 1; only the    *
++ *  table of contents differs. Full item names "pkg/tree/base" are factored    *
++ *  into a directory-prefix table and one global pool of unique basenames      *
++ *  (16-way front-coded). Entries are sorted by (tree, basename) and store a   *
++ *  u16 id into that pool; a trailing sentinel data offset makes every item's  *
++ *  length explicit, including the last one.                                   *
++ *                                                                             *
++ *  All offsets are relative to the start of the TOC, as in formatVersion 1.   *
++ *                                                                             *
++ *-----------------------------------------------------------------------------*/
++
++typedef struct {
++    uint32_t dirNameOffset;   /* NUL-terminated "pkg/" or "pkg/tree/" */
++    uint32_t firstEntry;
++    uint32_t entryCount;
++} UDataOffsetTOC2Tree;
++
++typedef struct {
++    uint32_t count;           /* number of items */
++    uint32_t treeCount;
++    uint32_t nameCount;       /* unique basenames in the pool */
++    uint32_t bucketCount;     /* = (nameCount + 15) / 16 */
++    uint32_t maxNameLength;   /* longest basename, excluding the NUL */
++    uint32_t dataOffsetsOff;  /* -> uint32_t[count + 1]; [count] is a sentinel */
++    uint32_t nameIdsOff;      /* -> uint16_t[count], ascending within a tree */
++    uint32_t treesOff;        /* -> UDataOffsetTOC2Tree[treeCount] */
++    uint32_t bucketDirOff;    /* -> uint32_t[bucketCount] block start offsets */
++    uint32_t nameBlockSize;   /* names per front-coded block (the writer uses 16) */
++    uint32_t reserved[2];
++} UDataOffsetTOC2;
++
++/* Fixed decode buffer; the writer asserts maxNameLength fits. */
++enum { CMN2_NAME_BUFFER_SIZE = 64 };
++
++/**
++ * Copy the NUL-terminated string at `src` into buf starting at `pos`.
++ * Returns false (without writing past the buffer) if it does not fit --
++ * a corrupt package must fail the lookup, not overrun the stack.
++ */
++static UBool
++cmn2CopyName(char *buf, int32_t pos, const char *src) {
++    int32_t i=pos;
++    for(;;) {
++        if(i>=CMN2_NAME_BUFFER_SIZE) {
++            return false;
++        }
++        if((buf[i]=*src++)==0) {
++            return true;
++        }
++        ++i;
++    }
++}
++
++/**
++ * Index of the last bucket whose (verbatim, NUL-terminated) head string
++ * compares <= s, or -1 if s sorts before every head.
++ */
++static int32_t
++cmn2FloorBucket(const char *s, const char *base, const uint32_t *bucketDir, int32_t bucketCount) {
++    int32_t start=0;
++    int32_t limit=bucketCount;
++    while(start<limit) {
++        int32_t i=(start+limit)/2;
++        if(uprv_strcmp(base+bucketDir[i], s)<=0) {
++            start=i+1;
++        } else {
++            limit=i;
++        }
++    }
++    return start-1;
++}
++
++/**
++ * Look up a basename in the front-coded pool. Returns its id, or -1.
++ * Block layout: head\0 then up to 15 x { uint8 lcp; suffix\0 }.
++ */
++static int32_t
++cmn2FindName(const char *s, const char *base, const UDataOffsetTOC2 *toc) {
++    char buf[CMN2_NAME_BUFFER_SIZE];
++    const uint32_t *bucketDir=(const uint32_t *)(base+toc->bucketDirOff);
++    const uint8_t *p;
++    int32_t b, k, inBlock;
++    int32_t blockSize=(int32_t)toc->nameBlockSize;
++    if(toc->maxNameLength>=CMN2_NAME_BUFFER_SIZE || blockSize<=0) {
++        return -1;  /* not a package this reader can handle */
++    }
++    b=cmn2FloorBucket(s, base, bucketDir, (int32_t)toc->bucketCount);
++    if(b<0) {
++        return -1;
++    }
++    inBlock=(int32_t)toc->nameCount-b*blockSize;
++    if(inBlock>blockSize) {
++        inBlock=blockSize;
++    }
++    p=(const uint8_t *)base+bucketDir[b];
++    /* the head is stored verbatim */
++    if(!cmn2CopyName(buf, 0, (const char *)p)) {
++        return -1;
++    }
++    p+=uprv_strlen(buf)+1;
++    if(0==uprv_strcmp(buf, s)) {
++        return b*blockSize;
++    }
++    for(k=1; k<inBlock; ++k) {
++        int32_t cmp;
++        uint8_t lcp=*p++;
++        if(lcp>=CMN2_NAME_BUFFER_SIZE || !cmn2CopyName(buf, lcp, (const char *)p)) {
++            return -1;
++        }
++        p+=uprv_strlen(buf+lcp)+1;
++        cmp=uprv_strcmp(buf, s);
++        if(cmp==0) {
++            return b*blockSize+k;
++        }
++        if(cmp>0) {
++            break;   /* names in a block are sorted */
++        }
++    }
++    return -1;
++}
++
+ U_CDECL_BEGIN
+ static uint32_t U_CALLCONV
+ offsetTOCEntryCount(const UDataMemory *pData) {
+@@ -269,6 +395,78 @@
+ }
+ 
+ 
++static uint32_t U_CALLCONV
++offsetTOC2EntryCount(const UDataMemory *pData) {
++    const UDataOffsetTOC2 *toc = (const UDataOffsetTOC2 *)pData->toc;
++    return toc!=nullptr ? toc->count : 0;
++}
++
++static const DataHeader * U_CALLCONV
++offsetTOC2LookupFn(const UDataMemory *pData,
++                   const char *tocEntryName,
++                   int32_t *pLength,
++                   UErrorCode *pErrorCode) {
++    (void)pErrorCode;
++    const UDataOffsetTOC2 *toc = (const UDataOffsetTOC2 *)pData->toc;
++    const char *base;
++    const char *slash;
++    const UDataOffsetTOC2Tree *trees, *tree;
++    const uint32_t *dataOffsets;
++    const uint16_t *nameIds;
++    int32_t dirLength, nameId, t, start, limit;
++    if(toc==nullptr) {
++        return pData->pHeader;
++    }
++    base=(const char *)toc;
++
++    /* split "pkg/tree/base.ext" into its directory prefix and basename */
++    slash=uprv_strrchr(tocEntryName, '/');
++    dirLength= slash==nullptr ? 0 : (int32_t)(slash+1-tocEntryName);
++
++    trees=(const UDataOffsetTOC2Tree *)(base+toc->treesOff);
++    tree=nullptr;
++    for(t=0; t<(int32_t)toc->treeCount; ++t) {
++        const char *dirName=base+trees[t].dirNameOffset;
++        if(0==uprv_strncmp(dirName, tocEntryName, dirLength) && dirName[dirLength]==0) {
++            tree=trees+t;
++            break;
++        }
++    }
++    if(tree==nullptr) {
++#ifdef UDATA_DEBUG
++        fprintf(stderr, "%s: Not found (no such tree).\n", tocEntryName);
++#endif
++        return nullptr;
++    }
++
++    nameId=cmn2FindName(tocEntryName+dirLength, base, toc);
++    if(nameId>=0) {
++        /* entries of a tree are sorted by nameId: integer binary search */
++        nameIds=(const uint16_t *)(base+toc->nameIdsOff);
++        start=(int32_t)tree->firstEntry;
++        limit=start+(int32_t)tree->entryCount;
++        while(start<limit) {
++            int32_t i=(start+limit)/2;
++            if((int32_t)nameIds[i]<nameId) {
++                start=i+1;
++            } else if((int32_t)nameIds[i]>nameId) {
++                limit=i;
++            } else {
++                dataOffsets=(const uint32_t *)(base+toc->dataOffsetsOff);
++#ifdef UDATA_DEBUG
++                fprintf(stderr, "%s: Found.\n", tocEntryName);
++#endif
++                *pLength=(int32_t)(dataOffsets[i+1]-dataOffsets[i]);
++                return (const DataHeader *)(base+dataOffsets[i]);
++            }
++        }
++    }
++#ifdef UDATA_DEBUG
++    fprintf(stderr, "%s: Not found.\n", tocEntryName);
++#endif
++    return nullptr;
++}
++
+ static uint32_t U_CALLCONV pointerTOCEntryCount(const UDataMemory *pData) {
+     const PointerTOC *toc = (PointerTOC *)pData->toc;
+     return (uint32_t)((toc != nullptr) ? (toc->count) : 0);
+@@ -310,8 +508,9 @@
+ U_CDECL_END
+ 
+ 
+-static const commonDataFuncs CmnDFuncs = {offsetTOCLookupFn,  offsetTOCEntryCount};
+-static const commonDataFuncs ToCPFuncs = {pointerTOCLookupFn, pointerTOCEntryCount};
++static const commonDataFuncs CmnDFuncs  = {offsetTOCLookupFn,  offsetTOCEntryCount};
++static const commonDataFuncs CmnD2Funcs = {offsetTOC2LookupFn, offsetTOC2EntryCount};
++static const commonDataFuncs ToCPFuncs  = {pointerTOCLookupFn, pointerTOCEntryCount};
+ 
+ 
+ 
+@@ -348,6 +547,16 @@
+         udm->vFuncs = &CmnDFuncs;
+         udm->toc=(const char *)udm->pHeader+udata_getHeaderSize(udm->pHeader);
+     }
++    else if (udm->pHeader->info.dataFormat[0]==0x43 &&
++        udm->pHeader->info.dataFormat[1]==0x6d &&
++        udm->pHeader->info.dataFormat[2]==0x6e &&
++        udm->pHeader->info.dataFormat[3]==0x44 &&
++        udm->pHeader->info.formatVersion[0]==2
++        ) {
++        /* dataFormat="CmnD", compact TOC (Bun packaging) */
++        udm->vFuncs = &CmnD2Funcs;
++        udm->toc=(const char *)udm->pHeader+udata_getHeaderSize(udm->pHeader);
++    }
+     else if(udm->pHeader->info.dataFormat[0]==0x54 &&
+         udm->pHeader->info.dataFormat[1]==0x6f &&
+         udm->pHeader->info.dataFormat[2]==0x43 &&
