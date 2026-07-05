@@ -24,6 +24,7 @@
 // strip-types and bun).
 
 import { createHash } from "node:crypto";
+import { fcResolve } from "./frontcode.ts";
 
 // Resource types (URES_*)
 const T_STRING = 0, T_BINARY = 1, T_TABLE = 2, T_ALIAS = 3, T_TABLE32 = 4, T_TABLE16 = 5;
@@ -57,6 +58,8 @@ interface Str16 {
 export interface Pool {
   keyChars: Buffer;
   p16: Buffer;
+  /** formatVersion-4 (front-coded) pools: units >= fcVerbatimLimit are string ids */
+  fcVerbatimLimit?: number;
 }
 
 export function loadPool(buf: Buffer): Pool {
@@ -66,11 +69,16 @@ export function loadPool(buf: Buffer): Pool {
   if (il <= 6) throw new Error("pool bundle has no 16-bit-units area (indexLength <= 6)");
   const keysTop = bd.readInt32LE(4 + 4 * 1);
   const t16Top = bd.readInt32LE(4 + 4 * 6);
-  return { keyChars: bd.subarray((1 + il) * 4, keysTop * 4), p16: bd.subarray(keysTop * 4, t16Top * 4) };
+  const p: Pool = { keyChars: bd.subarray((1 + il) * 4, keysTop * 4), p16: bd.subarray(keysTop * 4, t16Top * 4) };
+  if (buf[16] === 4) {
+    if (il <= 8) throw new Error("formatVersion-4 pool without the verbatimLimit index");
+    p.fcVerbatimLimit = bd.readInt32LE(4 + 4 * 8);
+  }
+  return p;
 }
 
 /** Read one string-v2 at unit index `li` of area `u`: [text, unitExtent]. */
-function readSv2(u: Buffer, li: number): [string, number] {
+export function readSv2(u: Buffer, li: number): [string, number] {
   let o = li * 2;
   const first = u.readUInt16LE(o);
   let nlen = 0;
@@ -182,9 +190,15 @@ export class ResBundle {
   keyName(n: Node, i: number): string { return this.keyText(n, n.keyOffs[i]); }
 
   /** Track a LOCAL string-v2 by its (pool-adjusted) offset; returns its text. */
+  /** Resolve a pool string offset (fv3: unit offset; fv4: verbatim offset or id). */
+  poolString(off: number): string {
+    const pool = this.pool!;
+    if (pool.fcVerbatimLimit !== undefined && off >= pool.fcVerbatimLimit) return fcResolve(pool.p16, pool.fcVerbatimLimit, off);
+    return readSv2(pool.p16, off)[0]; // verbatim region or a stock fv3 pool
+  }
   private noteStr(off: number): string {
     if (off === 0) return "";
-    if (off < this.psil) return readSv2(this.pool!.p16, off)[0];
+    if (off < this.psil) return this.poolString(off);
     const lu = off - this.psil;
     const got = this.strs.get(lu);
     if (got) return got.text;
@@ -193,7 +207,7 @@ export class ResBundle {
     return text;
   }
   private noteStr16(v: number): string {
-    return v < this.psil16 ? readSv2(this.pool!.p16, v)[0] : this.noteStr(v - this.psil16 + this.psil);
+    return v < this.psil16 ? this.poolString(v) : this.noteStr(v - this.psil16 + this.psil);
   }
   /** Post-edit text of a res16 string value (16-bit container member). */
   private str16After(v: number): string {
@@ -396,6 +410,30 @@ export class ResBundle {
     this.replaced.set(lu, enc);
   }
   dedup(): void { this.dedupEnabled = true; }
+  /**
+   * Collect every referenced pool string offset -> text (32-bit string-v2
+   * words below poolStringIndexLimit, and res16 values below
+   * poolStringIndex16Limit). `res16` marks the ones that must stay 16-bit
+   * addressable after a pool rewrite.
+   */
+  collectPoolRefs(out: Map<number, string>, res16: Set<number>): void {
+    if (!this.pool || !this.psil) return;
+    for (const n of this.nodes.values()) {
+      if (n.type === T_TABLE16 || n.type === T_ARRAY16) {
+        for (const v of n.slotVals) if (v < this.psil16) { out.set(v, this.poolString(v)); res16.add(v); }
+      } else if (CONTAINERS.has(n.type)) {
+        for (const v of n.slotVals) {
+          if (v >>> 28 === T_STRING_V2) {
+            const off = v & 0x0fffffff;
+            if (off !== 0 && off < this.psil) out.set(off, this.poolString(off));
+          }
+        }
+      }
+    }
+  }
+  /** Renumber every pool string reference at serialize time (old offset -> new). */
+  setPoolRemap(f: (off: number) => number): void { this.poolRemapFn = f; }
+  private poolRemapFn: ((off: number) => number) | null = null;
 
   // --------------------------------------------------------------- serialize
   /**
@@ -614,7 +652,13 @@ export class ResBundle {
     // The invariant the two adjustments above exist to preserve.
     for (const off of liveBinOffs) if ((off - (r32.f(off) - d16u32)) % 4 !== 0) throw new Error(`binary at ${off} would lose its 16-byte payload alignment`);
 
-    const relocStrOff = (off: number): number => (off === 0 || off < this.psil ? off : r16.f(off - this.psil) + this.psil);
+    const remapPool = (off: number): number => {
+      if (!this.poolRemapFn) return off;
+      const n2 = this.poolRemapFn(off);
+      if (n2 === undefined || n2 >= this.psil) throw new Error(`pool remap: ${off} -> ${n2} out of range`);
+      return n2;
+    };
+    const relocStrOff = (off: number): number => (off === 0 ? 0 : off < this.psil ? remapPool(off) : r16.f(off - this.psil) + this.psil);
     const relocWord = (w0: number): number => {
       const w = remap(w0);
       const t = w >>> 28, off = w & 0x0fffffff;
@@ -623,7 +667,15 @@ export class ResBundle {
       if (t === T_STRING_V2) return (((t << 28) | relocStrOff(off)) >>> 0);
       return (((t << 28) | (r32.f(off) - d16u32)) >>> 0);
     };
-    const relocRes16 = (v: number): number => (v < this.psil16 ? v : r16.f(v - this.psil16) + this.psil16);
+    const relocRes16 = (v: number): number => {
+      if (v < this.psil16) {
+        if (!this.poolRemapFn) return v;
+        const n2 = this.poolRemapFn(v);
+        if (n2 === undefined || n2 >= this.psil16) throw new Error(`pool remap: res16 ${v} -> ${n2} exceeds poolStringIndex16Limit ${this.psil16}`);
+        return n2;
+      }
+      return r16.f(v - this.psil16) + this.psil16;
+    };
 
     // 5. build the output areas.
     // 5a. header + indexes + local keys (verbatim; patch root + tops)

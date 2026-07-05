@@ -1,0 +1,71 @@
+DEVELOPMENT ONLY -- never applied by the Dockerfiles.
+
+Applies on top of icu/uresdata-frontcode.patch and instruments the two pool
+string readers so icu/pin-strings.txt can be regenerated:
+
+  BUN_ICU_TRACE_POOL=<file>  append "<poolPtr>\t<offset>\t<utf8 text>" for
+                             every pool string read through the verbatim
+                             (non-front-coded) path
+  BUN_ICU_TRACE_FC=<file>    append a line per materialized block
+
+Recipe (see also the header of icu/pin-strings.txt): build ICU with the
+three icu/*.patch files plus this one; link Bun against that libicuuc and a
+package whose pools are NOT front-coded (--pins none produces one); run
+  BUN_ICU_TRACE_POOL=/tmp/t.startup  bun -e ''
+  BUN_ICU_TRACE_POOL=/tmp/t.firstuse bun <first use of every common Intl API>
+and turn the union of the traces into pin lines (tree \t JSON(text)).
+--- a/source/common/uresdata.cpp
++++ b/source/common/uresdata.cpp
+@@ -104,6 +104,44 @@
+ 
+ static icu::UMutex gBunFCLock;
+ 
++/* ---- BUN LOCAL TRACE (not shipped): BUN_ICU_TRACE_POOL=<file> ---- */
++#include <stdio.h>
++#include <stdlib.h>
++static void bunTracePoolString(const void *poolPtr, int32_t offset, const char16_t *p) {
++    static FILE *gF = (FILE *)(intptr_t)-1;
++    if (gF == (FILE *)(intptr_t)-1) {
++        const char *path = getenv("BUN_ICU_TRACE_POOL");
++        gF = path ? fopen(path, "a") : nullptr;
++    }
++    if (!gF || !p) return;
++    int32_t first = *p, len, nlen = 0;
++    if (first >= 0xdc00 && first <= 0xdfff) {
++        if (first < 0xdfef) { len = first & 0x3ff; nlen = 1; }
++        else if (first < 0xdfff) { len = ((first - 0xdfef) << 16) | p[1]; nlen = 2; }
++        else { len = ((int32_t)p[1] << 16) | p[2]; nlen = 3; }
++    } else { len = u_strlen(p); }
++    fprintf(gF, "%p\t%d\t", poolPtr, (int)offset);
++    for (int32_t i = 0; i < len; i++) {
++        uint32_t c = p[nlen + i];
++        if (c < 0x80) fputc((int)c, gF);
++        else if (c < 0x800) { fputc(0xc0 | (c >> 6), gF); fputc(0x80 | (c & 0x3f), gF); }
++        else { fputc(0xe0 | (c >> 12), gF); fputc(0x80 | ((c >> 6) & 0x3f), gF); fputc(0x80 | (c & 0x3f), gF); }
++    }
++    fputc('\n', gF);
++    fflush(gF);
++}
++static void bunTraceFCBlock(int32_t b) {
++    static FILE *gF2 = (FILE *)(intptr_t)-1;
++    if (gF2 == (FILE *)(intptr_t)-1) {
++        const char *path = getenv("BUN_ICU_TRACE_FC");
++        gF2 = path ? fopen(path, "a") : nullptr;
++    }
++    if (!gF2) return;
++    fprintf(gF2, "block %d\n", (int)b);
++    fflush(gF2);
++}
++/* ---- end trace ---- */
++
+ static uint32_t
+ bunFCReadU32(const uint8_t *p) {
+     uint32_t v;
+@@ -601,6 +639,7 @@
+                 }
+             } else {
+                 p=(const char16_t *)pResData->poolBundleStrings+offset;
++                bunTracePoolString(pResData->poolBundleStrings, (int32_t)offset, p);
+             }
+         } else {
+             p=(const char16_t *)pResData->p16BitUnits+(offset-pResData->poolStringIndexLimit);

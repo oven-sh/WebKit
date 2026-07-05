@@ -32,8 +32,9 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { ResBundle, dumpResolved, loadPool, type Pool } from "./resbundle.ts";
+import { ResBundle, dumpResolved, loadPool, readSv2, type Pool } from "./resbundle.ts";
 import { assertExpectedRewrites, dropAfterRewrite, expectedDump, rewriteItem } from "./rewrite-items.ts";
+import { fcResolve, foldRefs, rebuildPoolItem, type FCEntry } from "./frontcode.ts";
 
 const args = parseArgs({
   allowPositionals: true,
@@ -46,6 +47,10 @@ const args = parseArgs({
     // Archiver. llvm-ar takes the same "rcs out members" argv shape as binutils ar
     // and handles COFF members, so the Windows cross build passes --ar llvm-ar.
     ar: { type: "string", default: "ar" },
+    // The traced hot set of pool strings that stay verbatim (never
+    // materialized): icu/pin-strings.txt. "none" only for regenerating the
+    // trace itself.
+    pins: { type: "string", default: "" },
     // Directory to also write the final .dat + trained dictionary into, for
     // out-of-band verification (the Windows image runs icu/test-package.cpp
     // against them with a HOST-built patched ICU, since it cannot execute its
@@ -73,6 +78,7 @@ const OBJ_FORMAT: string = args.values["obj-format"];
 if (OBJ_FORMAT !== "elf" && OBJ_FORMAT !== "coff") die(`--obj-format must be "elf" or "coff", got "${OBJ_FORMAT}"`);
 const SKIP_FILE: string = args.values.skip;
 const EMIT_DAT_DIR: string = args.values["emit-dat"];
+const PIN_FILE: string = args.values.pins || new URL("./pin-strings.txt", import.meta.url).pathname;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -149,6 +155,30 @@ function loadSkipGlobs(file: string): RegExp[] {
     .map((l) => l.replace(/#.*$/, "").trim())
     .filter(Boolean)
     .map(globToRegExp);
+}
+
+/**
+ * icu/pin-strings.txt: `<tree>\t<JSON string>` per line — the pool strings
+ * the startup / first-Intl trace reads, kept verbatim (never materialized).
+ */
+function loadPinnedTexts(file: string): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  if (file === "none") return out;
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    die(`pin list ${file} is missing (pass --pins none only to regenerate the trace)`);
+  }
+  for (const line of text!.split("\n")) {
+    if (!line || line.startsWith("#")) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 0) die(`pin list: malformed line ${JSON.stringify(line)}`);
+    const tree = line.slice(0, tab);
+    if (!out.has(tree)) out.set(tree, new Set());
+    out.get(tree)!.add(JSON.parse(line.slice(tab + 1)));
+  }
+  return out;
 }
 
 /** keep-raw.txt globs use only `*` (single path segment). */
@@ -464,7 +494,7 @@ function verifyPackageV2(dat: Buffer, header: Header, items: readonly Item[]): v
 // Archive — embed package + dict as read-only-data symbols
 // ---------------------------------------------------------------------------
 
-function emitArchive(datPath: string, dictPath: string, pkg: string, outA: string, cc: string, work: string): void {
+function emitArchive(datPath: string, dictPath: string, pkg: string, outA: string, cc: string, work: string, fc: { slots: number; arenaUnits: number } | null): void {
   // ELF: .rodata + `.type ..., @object` (proper object type/size in the symbol
   // table). COFF: the conventional read-only section is .rdata, and `.type` is
   // an ELF-only directive — COFF symbols carry no object type.
@@ -481,6 +511,23 @@ function emitArchive(datPath: string, dictPath: string, pkg: string, outA: strin
     "",
     ".balign 4", ".global bun_icu_zstd_dict_size", ...type("bun_icu_zstd_dict_size"),
     "bun_icu_zstd_dict_size:", ".long .Ldict_end - bun_icu_zstd_dict", "",
+    // Side tables for the front-coded pool strings (uresdata-frontcode.patch):
+    // zero-initialized common symbols, sized exactly by the packer, costing
+    // no file bytes. `.comm` places them in .bss for both ELF and COFF, but
+    // the alignment operand is bytes on ELF and log2(bytes) on COFF.
+    ...(fc
+      ? [
+          `.comm bun_icu_fc_slots, ${fc.slots * 8}, ${coff ? 4 : 16}`,
+          `.comm bun_icu_fc_arena, ${fc.arenaUnits * 2}, ${coff ? 4 : 16}`,
+          // their exact sizes, so the reader can reject a package whose
+          // header claims a slice this archive never allocated
+          ".balign 4", ".global bun_icu_fc_slot_count", ...type("bun_icu_fc_slot_count"),
+          `bun_icu_fc_slot_count: .long ${fc.slots}`,
+          ".global bun_icu_fc_arena_unit_count", ...type("bun_icu_fc_arena_unit_count"),
+          `bun_icu_fc_arena_unit_count: .long ${fc.arenaUnits}`,
+          "",
+        ]
+      : []),
   ].join("\n"));
   const obj = join(work, `${pkg}l_dat.o`);
   run([...cc.split(/\s+/), "-c", asm, "-o", obj]);
@@ -571,6 +618,71 @@ function main(): void {
   const names: string[] = allNames.filter((n) => !dropped.has(n));
   console.error(`[icu-compress] rewrote ${rewritten} bundles, dropped ${dropped.size} unreferenced brkitr rule files`);
 
+  // ---------------------------------------------------------------------------
+  // Front-code the pool bundles (formatVersion 4; icu/frontcode.ts, read by
+  // icu/uresdata-frontcode.patch): each pooled tree's shared value strings
+  // become a verbatim (pinned + tightly-addressed) region plus a front-coded
+  // region, and every member's pool references are renumbered. Proven here,
+  // for every member: the fully-resolved view is unchanged, and every
+  // front-coded string round-trips through the reference decoder.
+  const pinned = loadPinnedTexts(PIN_FILE);
+  const treeOf = (bare: string): string => (bare.includes("/") ? bare.slice(0, bare.lastIndexOf("/") + 1) : "");
+  let fcSlots = 0, fcArenaUnits = 0, fcSaved = 0;
+  for (const poolName of names.filter((n) => n === "pool.res" || n.endsWith("/pool.res"))) {
+    const tree = treeOf(poolName);
+    const poolPath = join(itemsDir, poolName);
+    const poolBuf = readFileSync(poolPath);
+    const oldPool = loadPool(poolBuf);
+    const members = names.filter((n) => n !== poolName && n.endsWith(".res") && treeOf(n) === tree);
+    const refs = new Map<number, string>();
+    const entries = new Map<string, FCEntry>();
+    for (const m of members) {
+      const b = new ResBundle(readFileSync(join(itemsDir, m)), oldPool);
+      if (!(b.psil > 0)) continue;
+      const mr = new Map<number, string>(), m16 = new Set<number>();
+      b.collectPoolRefs(mr, m16);
+      foldRefs(entries, mr, m16, b.psil, b.psil16);
+      for (const [k, v] of mr) refs.set(k, v);
+    }
+    if (!entries.size) continue;
+    const pins = pinned.get(tree) ?? new Set<string>();
+    // Pinned strings that no longer exist (an ICU upgrade, or a different
+    // ICU major on this platform) only cost coverage; test-package's
+    // startup-phase materialization gate is what enforces freshness.
+    const missing = [...pins].filter((t) => !entries.has(t));
+    if (missing.length) console.error(`[icu-compress] warning: ${missing.length}/${pins.size} pinned strings not present in tree "${tree}" of this ICU version`);
+    const fp = rebuildPoolItem(poolBuf, refs, entries, pins, fcSlots, fcArenaUnits);
+    // A tree whose every referenced string is pinned or constrained has
+    // nothing to front-code; it must stay formatVersion 3 (an fv4 pool with
+    // no front-coded region is invalid by design — the reader fails closed).
+    if (fp.stringCount === 0) {
+      console.error(`[icu-compress] ${poolName}: nothing to front-code, left as-is`);
+      continue;
+    }
+    fcSlots += fp.blockCount;
+    fcArenaUnits += fp.arenaUnits;
+    const newPool = loadPool(fp.out);
+    for (const [o, n] of fp.remap) {
+      const got = n < fp.verbatimLimit ? readSv2(newPool.p16, n)[0] : fcResolve(newPool.p16, fp.verbatimLimit, n);
+      if (got !== refs.get(o)) die(`${poolName}: front-coded string round-trip failed`);
+    }
+    for (const m of members) {
+      const src = readFileSync(join(itemsDir, m));
+      const b2 = new ResBundle(src, oldPool);
+      if (!(b2.psil > 0)) continue;
+      b2.setPoolRemap((off: number) => fp.remap.get(off)!);
+      const out: Buffer = b2.serialize();
+      const before = JSON.stringify(dumpResolved(new ResBundle(src, oldPool)));
+      const after = JSON.stringify(dumpResolved(new ResBundle(out, newPool)));
+      if (before !== after) die(`pool renumbering changed the resolved view of ${m}`);
+      writeFileSync(join(itemsDir, m), out);
+    }
+    writeFileSync(poolPath, fp.out);
+    fcSaved += fp.savedBytes;
+    console.error(`[icu-compress] ${poolName}: ${fp.stringCount} strings front-coded, ${fp.pinnedCount} pinned verbatim, -${fp.savedBytes} B`);
+  }
+  if (fcSlots) console.error(`[icu-compress] pool front-coding: -${fcSaved} B; side tables ${fcSlots * 8 + fcArenaUnits * 2} B of .bss`);
+
   const skip: RegExp[] = loadSkipGlobs(SKIP_FILE);
   const keepRaw = (bare: string): boolean => skip.some((r) => r.test(bare));
   // Every keep-raw glob must still match something. A stale glob (after an
@@ -613,7 +725,7 @@ function main(): void {
   const outDat: string = join(work, `${header.tocPrefix}.dat`);
   writeFileSync(outDat, pkg);
 
-  emitArchive(outDat, dictPath, header.pkg, outA, CC, work);
+  emitArchive(outDat, dictPath, header.pkg, outA, CC, work, fcSlots ? { slots: fcSlots, arenaUnits: fcArenaUnits } : null);
   if (EMIT_DAT_DIR) {
     mkdirSync(EMIT_DAT_DIR, { recursive: true });
     writeFileSync(join(EMIT_DAT_DIR, `${header.tocPrefix}.dat`), pkg);

@@ -28,6 +28,7 @@
 #include <unicode/uloc.h>
 #include <unicode/unorm2.h>
 #include <unicode/unum.h>
+#include <unicode/upluralrules.h>
 #include <unicode/ures.h>
 #include <unicode/ustring.h>
 #include <zstd.h>
@@ -41,6 +42,8 @@
 extern "C" const unsigned char bun_icu_zstd_dict[];
 extern "C" const unsigned int bun_icu_zstd_dict_size;
 #endif
+// Defined in the patched uresdata.cpp (icu/uresdata-frontcode.patch).
+extern "C" int32_t bun_icu_fc_materialized_blocks;
 
 static ZSTD_DDict* gDict;
 static ZSTD_DCtx* gCtx;
@@ -81,6 +84,21 @@ static void pu(const char* label, const UChar* s, int32_t len) {
   u_strToUTF8(b, sizeof b, &n, s, len, &e);
   printf("%s :: %.*s\n", label, U_FAILURE(e) ? 0 : n, b);
 }
+// Like pu(), but the output is part of the gate: `want` is the exact UTF-8.
+// These flow through front-coded pool strings, so a decoder bug cannot pass.
+// The texts are CLDR data — update them when ICU/CLDR is upgraded.
+static void puEq(const char* label, const UChar* s, int32_t len, const char* want) {
+  char b[1024];
+  UErrorCode e = U_ZERO_ERROR;
+  int32_t n = 0;
+  u_strToUTF8(b, sizeof b, &n, s, len, &e);
+  if (U_FAILURE(e)) n = 0;
+  printf("%s :: %.*s\n", label, n, b);
+  if ((int32_t)strlen(want) != n || memcmp(b, want, (size_t)n) != 0) {
+    printf("FAIL %s: expected %s\n", label, want);
+    exit(1);
+  }
+}
 static void* readAll(const char* path, long* outLen) {
   FILE* f = fopen(path, "rb");
   if (!f) { perror(path); exit(2); }
@@ -114,6 +132,40 @@ int main(int argc, char** argv) {
   }
   uloc_setDefault("en_US", &st);
 
+  {
+    // Startup + first-common-Intl phase: everything a fresh JS runtime does
+    // (default-locale date/number/collator/plural construction and one use
+    // of each) must be covered by the pinned verbatim pool strings in
+    // icu/pin-strings.txt, i.e. it must not materialize a single
+    // front-coded block. This is the gate that keeps the pin list fresh.
+    UErrorCode e = U_ZERO_ERROR;
+    UChar buf[128];
+    UDateFormat* df = udat_open(UDAT_MEDIUM, UDAT_MEDIUM, "en_US", u"UTC", -1, nullptr, 0, &e);
+    udat_format(df, 1751700000000.0, buf, 128, nullptr, &e);
+    udat_close(df);
+    UNumberFormat* nf = unum_open(UNUM_DECIMAL, nullptr, 0, "en_US", nullptr, &e);
+    unum_formatDouble(nf, 12345.678, buf, 128, nullptr, &e);
+    unum_close(nf);
+    UNumberFormat* cf = unum_open(UNUM_CURRENCY, nullptr, 0, "en_US", nullptr, &e);
+    unum_formatDouble(cf, 9.99, buf, 128, nullptr, &e);
+    unum_close(cf);
+    UCollator* c = ucol_open("en_US", &e);
+    UChar a1[] = u"a", b1[] = u"b";
+    ucol_strcoll(c, a1, 1, b1, 1);
+    ucol_close(c);
+    UPluralRules* pr = uplrules_openForType("en_US", UPLURAL_TYPE_CARDINAL, &e);
+    uplrules_select(pr, 2.0, buf, 128, &e);
+    uplrules_close(pr);
+    chk(e, "startup-phase formatting");
+    printf("startup-phase fc materializations :: %d\n", (int)bun_icu_fc_materialized_blocks);
+    if (bun_icu_fc_materialized_blocks != 0) {
+      printf("FAIL the startup / first-Intl path materialized %d front-coded blocks;\n"
+             "     icu/pin-strings.txt no longer covers it (regenerate the trace)\n",
+             (int)bun_icu_fc_materialized_blocks);
+      return 1;
+    }
+  }
+
   printf("uloc_countAvailable>400 :: %d\n", uloc_countAvailable() > 400);
   {
     UErrorCode e = U_ZERO_ERROR;
@@ -122,7 +174,7 @@ int main(int argc, char** argv) {
     UChar b[256];
     int32_t n = uldn_localeDisplayName(dn, "zh_Hant_TW", b, 256, &e);
     chk(e, "uldn_localeDisplayName");
-    pu("uldn de(zh_Hant_TW)", b, n);
+    puEq("uldn de(zh_Hant_TW)", b, n, "Chinesisch (Traditionell, Taiwan)");
     uldn_close(dn);
   }
   {
@@ -134,7 +186,7 @@ int main(int argc, char** argv) {
     UChar b[128];
     int32_t n = unum_formatDouble(nf, 1234.5, b, 128, nullptr, &e);
     chk(e, "unum_formatDouble");
-    pu("unum ja EUR", b, n);
+    puEq("unum ja EUR", b, n, "€1,234.50");
     unum_close(nf);
   }
   {
@@ -146,7 +198,7 @@ int main(int argc, char** argv) {
     UChar b[256];
     int32_t n = udat_format(df, 1720107045000.0, b, 256, nullptr, &e);
     chk(e, "udat_format");
-    pu("udat de full NY", b, n);
+    puEq("udat de full NY", b, n, "Donnerstag, 4. Juli 2024 um 11:30:45 Nordamerikanische Ostk\u00fcsten-Sommerzeit");
     udat_close(df);
   }
   {
@@ -249,6 +301,13 @@ int main(int argc, char** argv) {
       printf("item %s.%s %s :: ok\n", pr.name, pr.type, pr.present ? "present" : "absent");
       if (d) udata_close(d);
     }
+  }
+  // The wide sweep above must have exercised the front-coded pool path;
+  // a zero here would mean the startup gate is vacuous.
+  printf("fc materialized blocks total :: %d\n", (int)bun_icu_fc_materialized_blocks);
+  if (bun_icu_fc_materialized_blocks <= 0) {
+    printf("FAIL the front-coded pool string path was never exercised\n");
+    return 1;
   }
   printf("ICU_PACKAGE_TEST_OK\n");
   return 0;

@@ -211,6 +211,7 @@ ADD --checksum=sha256:${ICU_SHA256} \
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \
     patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch && \
     patch -p1 -d /icu-src < /icu-bun/ucmndata-toc.patch && \
+    patch -p1 -d /icu-src < /icu-bun/uresdata-frontcode.patch
 
 # Stage 1: host build — only the tools matter.
 RUN mkdir -p /icu-host && cd /icu-host && \
