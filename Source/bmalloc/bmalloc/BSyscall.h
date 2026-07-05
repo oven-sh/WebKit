@@ -25,8 +25,25 @@
 
 #pragma once
 
+#include "BPlatform.h"
 #include <errno.h>
 
+#if !BOS(WINDOWS)
+#include <time.h>
+#endif
+
+// Linux reports a failed VMA split from madvise() as EAGAIN (mm/madvise.c turns
+// -ENOMEM into -EAGAIN). Once a process is at vm.max_map_count that failure is
+// permanent, so an uncapped retry loop spins on the syscall until it is killed.
+#define BSYSCALL_MAX_EAGAIN_RETRIES 100u
+#define BSYSCALL_EAGAIN_BACKOFF_NSEC 1000000L
+
 #define SYSCALL(x) do { \
-    while ((x) == -1 && errno == EAGAIN) { } \
+    unsigned bmallocSyscallRetries = 0; \
+    while ((x) == -1 && errno == EAGAIN) { \
+        struct timespec bmallocSyscallBackoff = { 0, BSYSCALL_EAGAIN_BACKOFF_NSEC }; \
+        if (++bmallocSyscallRetries > BSYSCALL_MAX_EAGAIN_RETRIES) \
+            break; \
+        nanosleep(&bmallocSyscallBackoff, nullptr); \
+    } \
 } while (0);

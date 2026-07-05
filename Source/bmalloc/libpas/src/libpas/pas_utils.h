@@ -49,6 +49,8 @@
 
 #if PAS_OS(WINDOWS)
 #include <intrin.h>
+#else
+#include <time.h>
 #endif
 
 PAS_IGNORE_CLANG_WARNINGS_BEGIN("qualifier-requires-header")
@@ -1324,8 +1326,20 @@ static inline bool pas_is_divisible_by(unsigned value, uint64_t magic_constant)
 enum cpp_initialization_t { cpp_initialization };
 #endif
 
+/* Linux reports a failed VMA split from madvise() as EAGAIN (mm/madvise.c turns
+   -ENOMEM into -EAGAIN). Once a process is at vm.max_map_count that failure is
+   permanent, so an uncapped retry loop spins on the syscall until it is killed. */
+#define PAS_MAX_EAGAIN_SYSCALL_RETRIES 100u
+#define PAS_EAGAIN_SYSCALL_BACKOFF_NSEC 1000000L
+
 #define PAS_SYSCALL(x) do { \
-    while ((x) == -1 && errno == EAGAIN) { } \
+    unsigned pas_syscall_retries = 0; \
+    while ((x) == -1 && errno == EAGAIN) { \
+        struct timespec pas_syscall_backoff = { 0, PAS_EAGAIN_SYSCALL_BACKOFF_NSEC }; \
+        if (++pas_syscall_retries > PAS_MAX_EAGAIN_SYSCALL_RETRIES) \
+            break; \
+        nanosleep(&pas_syscall_backoff, NULL); \
+    } \
 } while (0)
 
 PAS_END_EXTERN_C;
