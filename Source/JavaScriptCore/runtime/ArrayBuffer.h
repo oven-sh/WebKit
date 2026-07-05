@@ -45,6 +45,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class Heap;
+
 class VM;
 class ArrayBuffer;
 class ArrayBufferView;
@@ -194,6 +196,7 @@ public:
         swap(m_sizeInBytes, other.m_sizeInBytes);
         swap(m_maxByteLength, other.m_maxByteLength);
         swap(m_hasMaxByteLength, other.m_hasMaxByteLength);
+        swap(m_gcPacingChargedHeap, other.m_gcPacingChargedHeap);
     }
 
     ArrayBufferContents detach()
@@ -215,6 +218,7 @@ private:
         m_sizeInBytes = 0;
         m_maxByteLength = 0;
         m_hasMaxByteLength = false;
+        m_gcPacingChargedHeap = nullptr;
     }
 
     friend class ArrayBuffer;
@@ -237,10 +241,15 @@ private:
     size_t m_sizeInBytes { 0 };
     size_t m_maxByteLength { 0 };
     bool m_hasMaxByteLength { false };
+    // The Heap whose allocation pacing was charged for these bytes (Heap::addReference).
+    // Moves (detach/transfer) carry it so same-heap transfers are not charged twice;
+    // fresh or copied contents start unset, and another heap charges them normally.
+    JSC::Heap* m_gcPacingChargedHeap { nullptr };
 };
 
 class ArrayBuffer final : public GCIncomingRefCounted<ArrayBuffer> {
 public:
+
     JS_EXPORT_PRIVATE static Ref<ArrayBuffer> create(size_t numElements, unsigned elementByteSize);
     JS_EXPORT_PRIVATE static Ref<ArrayBuffer> create(ArrayBuffer&);
     JS_EXPORT_PRIVATE static Ref<ArrayBuffer> create(std::span<const uint8_t> = { });
@@ -280,6 +289,10 @@ public:
     JS_EXPORT_PRIVATE RefPtr<ArrayBuffer> slice(double begin) const;
     JS_EXPORT_PRIVATE RefPtr<ArrayBuffer> sliceWithClampedIndex(size_t begin, size_t end) const;
     
+    // Called when this buffer leaves the heap's incoming-reference set (all wrappers
+    // died): the next wrapper must charge GC pacing again.
+    void willBeRemovedFromIncomingReferenceSet() { m_contents.m_gcPacingChargedHeap = nullptr; }
+
     inline void pin();
     inline void unpin();
     inline bool isDetachable() const;
@@ -322,6 +335,11 @@ private:
     static inline size_t NODELETE clampValue(double x, size_t left, size_t right);
 
     void notifyDetaching(VM&);
+
+    // GC pacing bookkeeping (Heap::addReference only).
+    friend class Heap;
+    Heap* gcPacingChargedHeap() const { return m_contents.m_gcPacingChargedHeap; }
+    void setGCPacingChargedHeap(Heap* heap) { m_contents.m_gcPacingChargedHeap = heap; }
 
     ArrayBufferContents m_contents;
     InlineWatchpointSet m_detachingWatchpointSet { IsWatched };

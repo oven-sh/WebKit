@@ -770,6 +770,15 @@ void Heap::addReference(JSCell* cell, ArrayBuffer* buffer)
 {
     if (m_arrayBuffers.addReference(cell, buffer)) {
         collectIfNecessaryOrDefer();
+        // Contents this heap is already accounting for (they arrived via
+        // ArrayBuffer::transferTo from a buffer that is still in the incoming-reference
+        // set) were charged when that buffer was first referenced; charging them again
+        // doubles the GC rate of transfer-heavy code (BYOB streams, postMessage transfer
+        // lists). The mark is per heap and reset when its buffer leaves the set, so
+        // another heap, or a later re-wrap after this heap forgot the bytes, is charged.
+        if (buffer->gcPacingChargedHeap() == this)
+            return;
+        buffer->setGCPacingChargedHeap(this);
         didAllocate(buffer->gcSizeEstimateInBytes());
     }
 }
