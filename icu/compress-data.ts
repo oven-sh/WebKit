@@ -48,8 +48,8 @@ const args = parseArgs({
     // and handles COFF members, so the Windows cross build passes --ar llvm-ar.
     ar: { type: "string", default: "ar" },
     // The traced hot set of pool strings that stay verbatim (never
-    // materialized): icu/pin-strings.txt. "none" only for regenerating the
-    // trace itself.
+    // materialized): icu/pin-strings-<icu major>.txt, selected from the
+    // input package. "none" only for regenerating the trace itself.
     pins: { type: "string", default: "" },
     // Directory to also write the final .dat + trained dictionary into, for
     // out-of-band verification (the Windows image runs icu/test-package.cpp
@@ -78,7 +78,7 @@ const OBJ_FORMAT: string = args.values["obj-format"];
 if (OBJ_FORMAT !== "elf" && OBJ_FORMAT !== "coff") die(`--obj-format must be "elf" or "coff", got "${OBJ_FORMAT}"`);
 const SKIP_FILE: string = args.values.skip;
 const EMIT_DAT_DIR: string = args.values["emit-dat"];
-const PIN_FILE: string = args.values.pins || new URL("./pin-strings.txt", import.meta.url).pathname;
+const PIN_ARG: string = args.values.pins;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -625,7 +625,11 @@ function main(): void {
   // region, and every member's pool references are renumbered. Proven here,
   // for every member: the fully-resolved view is unchanged, and every
   // front-coded string round-trips through the reference decoder.
-  const pinned = loadPinnedTexts(PIN_FILE);
+  // The hot set is CLDR text, so it is traced per ICU major (Windows builds
+  // ICU 73; everything else 75). The wrong list would not corrupt anything,
+  // but test-package's startup-phase materialization gate would fail.
+  const pinFile = PIN_ARG || new URL(`./pin-strings-${header.pkg.replace(/^icudt/, "")}.txt`, import.meta.url).pathname;
+  const pinned = loadPinnedTexts(pinFile);
   const treeOf = (bare: string): string => (bare.includes("/") ? bare.slice(0, bare.lastIndexOf("/") + 1) : "");
   let fcSlots = 0, fcArenaUnits = 0, fcSaved = 0;
   for (const poolName of names.filter((n) => n === "pool.res" || n.endsWith("/pool.res"))) {

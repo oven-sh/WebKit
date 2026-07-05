@@ -9,7 +9,7 @@
 // This module rebuilds a pool's 16-bit area as:
 //
 //   units [0, V)       "verbatim" strings, stock string-v2 encoding: the
-//                      pinned hot set (icu/pin-strings.txt — everything the
+//                      pinned hot set (icu/pin-strings-<icu major>.txt — everything the
 //                      startup / first-Intl trace touches), the empty string
 //                      at unit 0, and any string too long for the decoder's
 //                      scratch buffer. Reads take exactly today's code path.

@@ -25,15 +25,8 @@ formatVersion-4 pool with U_INVALID_FORMAT_ERROR.
 
 bun_icu_fc_materialized_blocks counts block decodes; icu/test-package.cpp
 fails the image build if the startup / first-Intl phase materializes any
-block (i.e. icu/pin-strings.txt no longer covers that path).
+block (i.e. icu/pin-strings-<icu major>.txt no longer covers that path).
 
-Scope: formatVersion-4 pools exist only inside Bun's repacked common-data
-package, whose compact TOC (icu/ucmndata-toc.patch) ICU's package tools
-cannot open. ures_swap and toolutil's pkgitems therefore never see one
-(ures_swap rejects formatVersion 4 loudly; the package is little-endian
-only, like everything else this pipeline emits). The packer always keeps
-the "no inheritance" marker string verbatim, so isNoInheritanceMarker only
-ever sees genrb's own encoding of it.
 --- a/source/common/uresdata.h
 +++ b/source/common/uresdata.h
 @@ -380,6 +380,8 @@
@@ -122,7 +115,7 @@ ever sees genrb's own encoding of it.
 +extern const uint32_t bun_icu_fc_arena_unit_count __attribute__((weak));
 +/* Diagnostic: blocks materialized so far. icu/test-package.cpp asserts it is
 + * still 0 after the startup + first-Intl workload (i.e. the pinned verbatim
-+ * set in icu/pin-strings.txt still covers that path). */
++ * set in icu/pin-strings-<icu major>.txt still covers that path). */
 +int32_t bun_icu_fc_materialized_blocks = 0;
 +}
 +

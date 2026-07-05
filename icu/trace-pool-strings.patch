@@ -1,19 +1,24 @@
 DEVELOPMENT ONLY -- never applied by the Dockerfiles.
 
 Applies on top of icu/uresdata-frontcode.patch and instruments the two pool
-string readers so icu/pin-strings.txt can be regenerated:
+string readers so icu/pin-strings-<icu major>.txt can be regenerated:
 
   BUN_ICU_TRACE_POOL=<file>  append "<poolPtr>\t<offset>\t<utf8 text>" for
                              every pool string read through the verbatim
                              (non-front-coded) path
   BUN_ICU_TRACE_FC=<file>    append a line per materialized block
 
-Recipe (see also the header of icu/pin-strings.txt): build ICU with the
+Recipe (see also the header of icu/pin-strings-<icu major>.txt): build ICU with the
 three icu/*.patch files plus this one; link Bun against that libicuuc and a
 package whose pools are NOT front-coded (--pins none produces one); run
   BUN_ICU_TRACE_POOL=/tmp/t.startup  bun -e ''
   BUN_ICU_TRACE_POOL=/tmp/t.firstuse bun <first use of every common Intl API>
 and turn the union of the traces into pin lines (tree \t JSON(text)).
+For an ICU major Bun does not link (Dockerfile.windows's ICU 73), trace
+icu/test-package.cpp's startup phase instead:
+  BUN_ICU_TEST_STARTUP_ONLY=1 BUN_ICU_TRACE_POOL=<file> test-package <dat>
+Do not feed the wide sweep into the pins: test-package separately asserts
+that the front-coded path IS exercised after the startup phase.
 --- a/source/common/uresdata.cpp
 +++ b/source/common/uresdata.cpp
 @@ -104,6 +104,44 @@
