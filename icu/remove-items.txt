@@ -6,14 +6,17 @@
 # upgrade that renames one fails the build instead of silently re-shipping it.
 #
 # Names are as `icupkg -l` prints them (no package prefix). Lines starting with
-# '#' and blank lines are ignored.
+# '#' and blank lines are ignored. An item that only exists from some ICU
+# major onward is written `<major>:<name>` (e.g. `74:nfkc_scf.nrm`); the
+# Dockerfiles filter those against the ICU major they build (Windows is on
+# ICU 73, everything else on 75).
 
 # NFKC_Casefold / NFKC_SimpleCasefold normalizers. Loaded only by
 # unorm2_getNFKC(Simple)CasefoldInstance and two UCHAR_* properties; no JSC,
 # WTF, or Bun caller. String.prototype.normalize uses nfc.nrm + nfkc.nrm;
 # URL/IDNA (UTS46) has its own uts46.nrm.
 nfkc_cf.nrm
-nfkc_scf.nrm
+74:nfkc_scf.nrm
 
 # Indic layout properties (InPC / InSC / vo), loaded by uprops.cpp only for
 # u_getIntPropertyValue on those properties. Not a Yarr \p{} property; no caller.

@@ -104,7 +104,7 @@ RUN --mount=type=tmpfs,target=/icu \
     export LDFLAGS="${CROSS_FLAGS} -fuse-ld=lld" && \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
     /icu-host/source/bin/icupkg -l data/in/icudt75l.dat > data/in/all.lst && \
-    grep -vE '^#|^$' /icu-bun/remove-items.txt > data/in/rm-named.lst && \
+    grep -vE '^#|^$' /icu-bun/remove-items.txt | awk -F: -v M=75 'NF==1{print;next} ($1+0)<=M{print $2}' > data/in/rm-named.lst && \
     test "$(grep -Fxc -f data/in/rm-named.lst data/in/all.lst)" = "$(grep -c . data/in/rm-named.lst)" && \
     grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' data/in/all.lst > data/in/rm.lst && \
     grep -Fx -f data/in/rm-named.lst data/in/all.lst >> data/in/rm.lst && \

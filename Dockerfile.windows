@@ -210,7 +210,7 @@ ADD --checksum=sha256:${ICU_SHA256} \
 # cross-built sicuuc.lib.
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \
     patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch && \
-    patch -p1 -d /icu-src < /icu-bun/ucmndata-toc.patch
+    patch -p1 -d /icu-src < /icu-bun/ucmndata-toc.patch && \
 
 # Stage 1: host build — only the tools matter.
 RUN mkdir -p /icu-host && cd /icu-host && \
@@ -232,7 +232,7 @@ RUN set -eu && \
     DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
     FILTERED="${DAT%.dat}-filtered.dat" && \
     /icu-host/bin/icupkg -l "$DAT" > /tmp/icu-all.lst && \
-    grep -vE '^#|^$' /icu-bun/remove-items.txt > /tmp/icu-rm-named.lst && \
+    grep -vE '^#|^$' /icu-bun/remove-items.txt | awk -F: -v M=${ICU_MAJOR} 'NF==1{print;next} ($1+0)<=M{print $2}' > /tmp/icu-rm-named.lst && \
     test "$(grep -Fxc -f /tmp/icu-rm-named.lst /tmp/icu-all.lst)" = "$(grep -c . /tmp/icu-rm-named.lst)" && \
     grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' /tmp/icu-all.lst > /tmp/icu-rm.lst && \
     grep -Fx -f /tmp/icu-rm-named.lst /tmp/icu-all.lst >> /tmp/icu-rm.lst && \
