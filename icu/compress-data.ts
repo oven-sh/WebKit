@@ -32,6 +32,8 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { ResBundle, dumpResolved, loadPool, type Pool } from "./resbundle.ts";
+import { dropAfterRewrite, expectedDump, rewriteItem } from "./rewrite-items.ts";
 
 const args = parseArgs({
   allowPositionals: true,
@@ -480,14 +482,47 @@ function main(): void {
   process.on("exit", () => rmSync(work, { recursive: true, force: true }));
 
   const header: Header = readHeader(inDat);
-  const names: string[] = listItems(inDat, ICUPKG);
+  const allNames: string[] = listItems(inDat, ICUPKG);
   const itemsDir: string = join(work, "items");
   extractItems(inDat, itemsDir, ICUPKG);
 
   // Round-trip invariant: writePackage on the raw items must reproduce the
   // input byte-for-byte. If this fails, our offset/padding math doesn't match
   // ICU's UDataOffsetTOC for this package and the build must not proceed.
-  assertRoundTrip(inDat, header, names, itemsDir);
+  assertRoundTrip(inDat, header, allNames, itemsDir);
+
+  // Structural rewrites (rewrite-items.ts): dead-data drops, collation rule
+  // stubs, within-bundle dedup. Each rewritten bundle is proven equal to the
+  // original modulo the intended edits at build time by rewriteItem itself.
+  const poolCache = new Map<string, Pool | null>();
+  const poolFor = (bare: string): Pool | null => {
+    const tree = bare.includes("/") ? bare.slice(0, bare.lastIndexOf("/")) : "";
+    if (!poolCache.has(tree)) {
+      try { poolCache.set(tree, loadPool(readFileSync(join(itemsDir, tree, "pool.res")))); }
+      catch { poolCache.set(tree, null); }
+    }
+    return poolCache.get(tree)!;
+  };
+  let rewritten = 0;
+  for (const bare of allNames) {
+    const p = join(itemsDir, bare);
+    const orig = readFileSync(p);
+    const r = rewriteItem(bare, orig, poolFor(bare));
+    if (!r) continue;
+    // Prove the rewrite: the output's resolved resource tree must equal the
+    // input's with exactly the intended edits (see expectedDump).
+    const want = JSON.stringify(expectedDump(bare, dumpResolved(new ResBundle(orig, poolFor(bare)))));
+    const got = JSON.stringify(dumpResolved(new ResBundle(r.out, poolFor(bare))));
+    if (want !== got) die(`rewrite verification failed for ${bare} (${r.notes.join(",")})`);
+    writeFileSync(p, r.out);
+    rewritten++;
+  }
+  // Items that are only referenced by the rewritten-away brkitr line/title
+  // boundary entries; icupkg cannot drop them (it enforces referential
+  // integrity on the unrewritten input), so they are dropped here.
+  const dropped = dropAfterRewrite(allNames);
+  const names: string[] = allNames.filter((n) => !dropped.has(n));
+  console.error(`[icu-compress] rewrote ${rewritten} bundles, dropped ${dropped.size} unreferenced brkitr rule files`);
 
   const skip: RegExp[] = loadSkipGlobs(SKIP_FILE);
   const keepRaw = (bare: string): boolean => skip.some((r) => r.test(bare));
