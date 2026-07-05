@@ -47,12 +47,13 @@ RUN apk add --no-cache cpio curl tar nodejs patch
 # Install zstd (for icu/compress-data.ts). Pinned to match Bun's vendored
 # decoder so glibc/musl prebuilts compress identically.
 ARG ZSTD_VERSION=1.5.7
-RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
+RUN mkdir -p /usr/local/bin /usr/local/lib /usr/local/include \
+    && curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
     && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
     && make -C /tmp/zstd-${ZSTD_VERSION}/lib libzstd.a -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
     && cp /tmp/zstd-${ZSTD_VERSION}/lib/libzstd.a /usr/local/lib/ \
-    && cp /tmp/zstd-${ZSTD_VERSION}/lib/zstd.h /usr/local/include/ \
+    && cp /tmp/zstd-${ZSTD_VERSION}/lib/zstd.h /tmp/zstd-${ZSTD_VERSION}/lib/zstd_errors.h /usr/local/include/ \
     && rm -rf /tmp/zstd-${ZSTD_VERSION} \
     && zstd --version
 

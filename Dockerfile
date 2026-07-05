@@ -58,7 +58,7 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
     && make -C /tmp/zstd-${ZSTD_VERSION}/lib libzstd.a -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
     && cp /tmp/zstd-${ZSTD_VERSION}/lib/libzstd.a /usr/local/lib/ \
-    && cp /tmp/zstd-${ZSTD_VERSION}/lib/zstd.h /usr/local/include/ \
+    && cp /tmp/zstd-${ZSTD_VERSION}/lib/zstd.h /tmp/zstd-${ZSTD_VERSION}/lib/zstd_errors.h /usr/local/include/ \
     && rm -rf /tmp/zstd-${ZSTD_VERSION} \
     && zstd --version
 
