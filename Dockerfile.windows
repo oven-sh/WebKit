@@ -161,9 +161,9 @@ RUN for pair in "x86_64 x64" "aarch64 arm64"; do \
 # on the build machine), then the target build with clang's GNU driver
 # producing COFF objects archived by llvm-ar. The data table follows the same
 # two transformations the Linux artifacts get:
-#   1. build-icu.ps1's STAGE 1b filter (drop converters/translit/rbnf/
-#      stringprep/confusables/unames, which bun never uses): ~32 MB → ~24 MB,
-#      matching the native windows sicudt.lib.
+#   1. build-icu.ps1's STAGE 1b filter (drop converters/translit/stringprep/
+#      confusables/unames, which bun never uses): ~32 MB → ~25 MB, matching the
+#      native windows sicudt.lib.
 #   2. icu/compress-data.ts per-item zstd repack (same script as Dockerfile /
 #      Dockerfile.musl, in COFF mode): ~24 MB → ~11 MB. udata.cpp is patched
 #      with the weak bun_icu_maybe_decompress hook so bun decompresses items
@@ -214,17 +214,20 @@ RUN mkdir -p /icu-host && cd /icu-host && \
 
 # Filter the prebuilt data package the same way the native build does
 # (build-icu.ps1 STAGE 1b): drop charset converters, transliteration rules,
-# rule-based number formats, stringprep profiles, confusables, and character
-# names. Bun has zero ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU
-# is removed in bun's TextEncodingRegistry.cpp), and this is what keeps the
-# native sicudt.lib at ~24 MB instead of ~32 MB. pkgdata packages
-# data/in/icudt*l.dat verbatim in a cross build, so filtering it here is
-# equivalent to the native flow.
+# stringprep profiles, confusables, and character names. Bun has zero
+# ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU is removed in bun's
+# TextEncodingRegistry.cpp), and this is what keeps the native sicudt.lib at
+# ~24 MB instead of ~32 MB. Most of rbnf/ goes too, but root/ja/zh/zh_Hant stay: ICU
+# reaches those on its own through the algorithmic numbering systems in
+# numberingSystems.res (see the note and the staleness guard in ./Dockerfile).
+# pkgdata packages data/in/icudt*l.dat verbatim in a cross build, so filtering it
+# here is equivalent to the native flow.
 RUN set -eu && \
     DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
     FILTERED="${DAT%.dat}-filtered.dat" && \
     /icu-host/bin/icupkg -l "$DAT" | \
-      grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > /tmp/icu-rm.lst && \
+      grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | \
+      grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > /tmp/icu-rm.lst && \
     test -s /tmp/icu-rm.lst && \
     /icu-host/bin/icupkg --auto_toc_prefix -r /tmp/icu-rm.lst "$DAT" "$FILTERED" && \
     mv "$FILTERED" "$DAT" && \
