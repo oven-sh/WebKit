@@ -3840,6 +3840,10 @@ void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t paylo
 
 void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (queue.ptr() != &vm().defaultMicrotaskQueue())
+        vm().setMayHaveMultipleMicrotaskQueues();
+#endif
     m_microtaskQueue = WTF::move(queue);
 }
 

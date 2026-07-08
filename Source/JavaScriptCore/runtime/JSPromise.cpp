@@ -44,9 +44,47 @@
 #include "VMInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
+#include "InternalFunction.h"
 #endif
 
 namespace JSC {
+
+#if USE(BUN_JSC_ADDITIONS)
+static NEVER_INLINE JSGlobalObject* globalObjectForPromiseJobSlow(VM& vm, JSGlobalObject* globalObject, JSObject* callable)
+{
+    // GetFunctionRealm unwraps bound functions / Proxy chains so a wrapper
+    // created in one realm around a target from another routes to the target's
+    // queue. A revoked Proxy throws; HTML treats that as a null realm, which
+    // falls back to the caller's globalObject.
+    JSGlobalObject* callableRealm;
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        callableRealm = getFunctionRealm(globalObject, callable);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
+            return globalObject;
+        }
+    }
+    if (callableRealm == globalObject || &callableRealm->microtaskQueue() == &globalObject->microtaskQueue())
+        return globalObject;
+    return callableRealm;
+}
+
+// HTML's HostEnqueuePromiseJob: a promise job's realm is the handler's realm
+// for a PromiseReactionJob and then's realm for a PromiseResolveThenableJob,
+// and the job lands on that realm's microtask queue. This only matters when
+// some global has its own queue (node:vm microtaskMode: "afterEvaluate");
+// otherwise every global shares the VM's default queue and the fast path
+// keeps the caller's globalObject.
+static ALWAYS_INLINE JSGlobalObject* globalObjectForPromiseJob(VM& vm, JSGlobalObject* globalObject, JSValue callable)
+{
+    if (!vm.mayHaveMultipleMicrotaskQueues()) [[likely]]
+        return globalObject;
+    if (!callable.isObject())
+        return globalObject;
+    return globalObjectForPromiseJobSlow(vm, globalObject, asObject(callable));
+}
+#endif
 
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
 
@@ -395,7 +433,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Handle);
         if (rejectedCallable)
 #if USE(BUN_JSC_ADDITIONS)
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
+            globalObjectForPromiseJob(vm, globalObject, onRejected)->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
 #else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
 #endif
@@ -408,7 +446,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
         JSValue settled = settlementValue();
         if (fulfilledCallable)
 #if USE(BUN_JSC_ADDITIONS)
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
+            globalObjectForPromiseJob(vm, globalObject, onFulfilled)->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
 #else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled);
 #endif
@@ -450,7 +488,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
         if (!isHandled())
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Handle);
         if (rejectedCallable)
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
+            globalObjectForPromiseJob(vm, globalObject, onRejected)->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
         else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
         markAsHandled();
@@ -459,7 +497,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
     case JSPromise::Status::Fulfilled: {
         JSValue settled = settlementValue();
         if (fulfilledCallable)
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
+            globalObjectForPromiseJob(vm, globalObject, onFulfilled)->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
         else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, jsUndefined());
         break;
@@ -595,7 +633,11 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
     setSlot(vm, argument);
     setPackedCell(vm, settledFlags, nullptr);
     if (settledIsFulfilled == handlerIsFulfill)
+#if USE(BUN_JSC_ADDITIONS)
+        globalObjectForPromiseJob(vm, globalObject, handler)->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(newStatus), resultPromise, handler, argument);
+#else
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(newStatus), resultPromise, handler, argument);
+#endif
     else
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, jsUndefined());
 }
@@ -703,7 +745,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         return fulfillPromise(vm, resolutionObject);
 
 #if USE(BUN_JSC_ADDITIONS)
-    return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, AsyncContextSwapScope::current(globalObject));
+    return globalObjectForPromiseJob(vm, globalObject, then)->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, AsyncContextSwapScope::current(globalObject));
 #else
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this);
 #endif
@@ -918,7 +960,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             }
             JSValue context = fullReaction->context();
             if (!context.isUndefinedOrNull()) {
-                globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status), promise, handler, arg, context);
+                globalObjectForPromiseJob(vm, globalObject, handler)->queueMicrotask(vm, task, static_cast<uint8_t>(status), promise, handler, arg, context);
                 return;
             }
 #else
@@ -931,7 +973,14 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
         }
 
 
+#if USE(BUN_JSC_ADDITIONS)
+        JSGlobalObject* jobGlobalObject = task == InternalMicrotask::PromiseReactionJob
+            ? globalObjectForPromiseJob(vm, globalObject, handler)
+            : globalObject;
+        jobGlobalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status), promise, handler, arg);
+#else
         globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status), promise, handler, arg);
+#endif
     };
 
     ASSERT(head);
@@ -1041,7 +1090,11 @@ void JSPromise::resolveWithInternalMicrotask(JSGlobalObject* globalObject, VM& v
     if (!then.isCallable()) [[likely]]
         return fulfillWithInternalMicrotask(vm, globalObject, resolution, task, context);
 
+#if USE(BUN_JSC_ADDITIONS)
+    return globalObjectForPromiseJob(vm, globalObject, then)->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask, static_cast<uint8_t>(task), resolutionObject, then, context);
+#else
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask, static_cast<uint8_t>(task), resolutionObject, then, context);
+#endif
 }
 
 void JSPromise::rejectWithInternalMicrotask(VM& vm, JSGlobalObject* globalObject, JSValue argument, InternalMicrotask task, JSValue context)
