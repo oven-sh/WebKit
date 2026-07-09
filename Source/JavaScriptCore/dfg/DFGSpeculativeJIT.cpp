@@ -18862,8 +18862,23 @@ void SpeculativeJIT::compilePerformPromiseThenOneHandler(Node* node)
     constexpr uint64_t flagMask = static_cast<uint64_t>(JSPromise::stateMask | JSPromise::inlineReactionKindMask) << pointerBits;
     constexpr uint64_t mask = pointerMask | flagMask;
 
+    JumpList slowCases;
     load64(Address(inputPromiseGPR, JSPromise::offsetOfPacked()), packedGPR);
-    Jump slowPath = branchTest64(NonZero, packedGPR, TrustedImm64(mask));
+    slowCases.append(branchTest64(NonZero, packedGPR, TrustedImm64(mask)));
+
+#if USE(BUN_JSC_ADDITIONS)
+    {
+        // Inline reactions cannot carry an async context; when one is active,
+        // take the slow path so performPromiseThen captures it (see JSPromise.cpp).
+        GPRTemporary asyncContext(this);
+        GPRReg asyncContextGPR = asyncContext.gpr();
+        loadLinkableConstant(LinkableConstant::globalObject(*this, node), asyncContextGPR);
+        loadPtr(Address(asyncContextGPR, JSGlobalObject::offsetOfAsyncContextData()), asyncContextGPR);
+        Jump noAsyncContextData = branchTestPtr(Zero, asyncContextGPR);
+        slowCases.append(branch64(NotEqual, Address(asyncContextGPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(0)), TrustedImm64(JSValue::encode(jsUndefined()))));
+        noAsyncContextData.link(this);
+    }
+#endif
 
     uint64_t orBits = static_cast<uint64_t>(JSPromise::isHandledFlag | (static_cast<uint16_t>(kind) << JSPromise::inlineReactionKindShift)) << pointerBits;
     or64(TrustedImm64(orBits), packedGPR);
@@ -18872,7 +18887,7 @@ void SpeculativeJIT::compilePerformPromiseThenOneHandler(Node* node)
     store64(handlerGPR, Address(inputPromiseGPR, JSPromise::offsetOfSlot()));
     store64(packedGPR, Address(inputPromiseGPR, JSPromise::offsetOfPacked()));
 
-    addSlowPathGenerator(slowPathCall(slowPath, this, operationPerformPromiseThenOneHandler, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, NoResult, LinkableConstant::globalObject(*this, node), inputPromiseGPR, handlerGPR, resultPromiseGPR, TrustedImm32(static_cast<int32_t>(kind))));
+    addSlowPathGenerator(slowPathCall(slowCases, this, operationPerformPromiseThenOneHandler, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, NoResult, LinkableConstant::globalObject(*this, node), inputPromiseGPR, handlerGPR, resultPromiseGPR, TrustedImm32(static_cast<int32_t>(kind))));
 #else
     flushRegisters();
     callOperationWithoutExceptionCheck(operationPerformPromiseThenOneHandler, LinkableConstant::globalObject(*this, node), inputPromiseGPR, handlerGPR, resultPromiseGPR, TrustedImm32(static_cast<int32_t>(kind)));
