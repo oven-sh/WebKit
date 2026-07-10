@@ -18856,6 +18856,10 @@ void SpeculativeJIT::compilePerformPromiseThenOneHandler(Node* node)
 #if USE(JSVALUE64)
     GPRTemporary packed(this);
     GPRReg packedGPR = packed.gpr();
+#if USE(BUN_JSC_ADDITIONS)
+    GPRTemporary asyncContext(this);
+    GPRReg asyncContextGPR = asyncContext.gpr();
+#endif
 
     constexpr unsigned pointerBits = CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer;
     constexpr uint64_t pointerMask = (1ULL << pointerBits) - 1;
@@ -18867,17 +18871,13 @@ void SpeculativeJIT::compilePerformPromiseThenOneHandler(Node* node)
     slowCases.append(branchTest64(NonZero, packedGPR, TrustedImm64(mask)));
 
 #if USE(BUN_JSC_ADDITIONS)
-    {
-        // Inline reactions cannot carry an async context; when one is active,
-        // take the slow path so performPromiseThen captures it (see JSPromise.cpp).
-        GPRTemporary asyncContext(this);
-        GPRReg asyncContextGPR = asyncContext.gpr();
-        loadLinkableConstant(LinkableConstant::globalObject(*this, node), asyncContextGPR);
-        loadPtr(Address(asyncContextGPR, JSGlobalObject::offsetOfAsyncContextData()), asyncContextGPR);
-        Jump noAsyncContextData = branchTestPtr(Zero, asyncContextGPR);
-        slowCases.append(branch64(NotEqual, Address(asyncContextGPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(0)), TrustedImm64(JSValue::encode(jsUndefined()))));
-        noAsyncContextData.link(this);
-    }
+    // Inline reactions cannot carry an async context; when one is active,
+    // take the slow path so performPromiseThen captures it (see JSPromise.cpp).
+    loadLinkableConstant(LinkableConstant::globalObject(*this, node), asyncContextGPR);
+    loadPtr(Address(asyncContextGPR, JSGlobalObject::offsetOfAsyncContextData()), asyncContextGPR);
+    Jump noAsyncContextData = branchTestPtr(Zero, asyncContextGPR);
+    slowCases.append(branch64(NotEqual, Address(asyncContextGPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(0)), TrustedImm64(JSValue::encode(jsUndefined()))));
+    noAsyncContextData.link(this);
 #endif
 
     uint64_t orBits = static_cast<uint64_t>(JSPromise::isHandledFlag | (static_cast<uint16_t>(kind) << JSPromise::inlineReactionKindShift)) << pointerBits;
