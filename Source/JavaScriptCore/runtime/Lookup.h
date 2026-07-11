@@ -23,6 +23,7 @@
 #include "BatchedTransitionOptimizer.h"
 #include "CallFrame.h"
 #include "CustomGetterSetter.h"
+#include "DeferTermination.h"
 #include "DOMJITGetterSetter.h"
 #include "DOMJITSignature.h"
 #include "Identifier.h"
@@ -537,6 +538,10 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     }
     
     if (value.attributes() & PropertyAttribute::PropertyCallback) {
+        // LazyPropertyCallback runs inside getOwnPropertySlot with no exception
+        // check afterwards; defer termination (like LazyProperty::callFunc) so a
+        // callback that enters JS can't return with a termination pending.
+        DeferTerminationForAWhile deferScope(vm);
         JSValue result = value.lazyPropertyCallback()(vm, &thisObj);
         thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
         return;
