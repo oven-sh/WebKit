@@ -287,6 +287,13 @@ public:
     // API user fetched m_contents directly from a TypedArray object, the buffer is backed by a
     // WebAssembly.Memory, or is a SharedArrayBuffer.
     inline void pinAndLock();
+#if USE(BUN_JSC_ADDITIONS)
+    // The locked-flag half of what isDetachable() checks: true only for buffers
+    // that went through pinAndLock(), not for plain pin() borrows. Bun's
+    // SerializedScriptValue uses this so a pin()-borrowed buffer in a transfer
+    // list falls through to transferTo()'s copy path instead of throwing.
+    inline bool isLocked() const;
+#endif
 
     void NODELETE makeWasmMemory();
     inline bool isWasmMemory();
@@ -397,6 +404,13 @@ void ArrayBuffer::pinAndLock()
 {
     m_pinCount |= s_lockedFlag;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool ArrayBuffer::isLocked() const
+{
+    return m_pinCount & s_lockedFlag;
+}
+#endif
 
 bool ArrayBuffer::isWasmMemory()
 {

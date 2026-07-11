@@ -83,8 +83,11 @@ set(JavaScriptCore_SCRIPTS_DIR "${CMAKE_BINARY_DIR}/JavaScriptCore/Scripts")
 
 # On Apple platforms, some targets build as framework bundles. Point their
 # HEADERS variables to the inside of the framework bundle.
+# The JSCOnly port keeps the flat Headers/ layout: JavaScriptCore is a STATIC
+# archive there, so _WEBKIT_CREATE_FRAMEWORK_BUNDLE_STRUCTURE never runs, and
+# Bun's prebuilt packaging copies headers from JavaScriptCore/Headers/.
 set(USE_FRAMEWORK_BUNDLES OFF)
-if (APPLE)
+if (APPLE AND NOT PORT STREQUAL JSCOnly)
     set(USE_FRAMEWORK_BUNDLES ON)
     if (PORT STREQUAL Mac)
         set(_version "Versions/A/")
