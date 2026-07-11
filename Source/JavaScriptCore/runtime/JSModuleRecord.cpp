@@ -112,9 +112,15 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSValue error = evaluationError()) {
-        scope.throwException(globalObject, error);
-        return { };
+    // A TLA body suspended at an await (State != Init) must resume even if a
+    // sibling in the same cycle set our graph-level evaluationError meanwhile;
+    // asyncExecution{Fulfilled,Rejected} already no-op when status == Evaluated.
+    JSValue state = internalField(Field::State).get();
+    if (state.isNumber() && state.asInt32AsAnyInt() == std::to_underlying(State::Init)) {
+        if (JSValue error = evaluationError()) {
+            scope.throwException(globalObject, error);
+            return { };
+        }
     }
 
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
