@@ -1191,7 +1191,30 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::minContributionForGridItem(RenderBo
         return { };
 
     auto& gridItemSize = isRowAxis ? gridItem.style().logicalWidth() : gridItem.style().logicalHeight();
-    if (!gridItemSize.isAuto() && !gridItemSize.isPercentOrCalculated())
+
+    auto behavesAsAuto = [&gridItemSize] {
+        // https://www.w3.org/TR/css-sizing-3/#behave-as-auto
+        // "Behaves as auto" also covers a block-axis percentage size
+        // resolving against an indefinite containing block (CSS2§10.5),
+        // but that is a subset of dependsOnContainingBlockSize() below, so
+        // only the literal 'auto' case needs testing here.
+        return gridItemSize.isAuto();
+    };
+
+    auto dependsOnContainingBlockSize = [&gridItemSize] {
+        // The spec's "depends on the size of its containing block":
+        // percentages resolve against it, and stretch fills it.
+        return gridItemSize.isPercentOrCalculated()
+            || gridItemSize.isStretch();
+    };
+
+    // https://drafts.csswg.org/css-grid/#algo-single-span-items
+    // Specifically, if the item’s computed preferred size behaves as auto
+    // or depends on the size of its containing block in the relevant axis,
+    // its minimum contribution is the outer size that would result from assuming
+    // the item’s used minimum size as its preferred size; else the item’s
+    // minimum contribution is its min-content contribution.
+    if (!behavesAsAuto() && !dependsOnContainingBlockSize())
         return minContentContributionForGridItem(gridItem, gridLayoutState);
 
     auto& gridItemMinSize = isRowAxis ? gridItem.style().logicalMinWidth() : gridItem.style().logicalMinHeight();

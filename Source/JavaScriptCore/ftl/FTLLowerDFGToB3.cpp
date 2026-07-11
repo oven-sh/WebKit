@@ -980,9 +980,6 @@ private:
         case PutStructure:
             compilePutStructure();
             break;
-        case TryGetById:
-            compileGetById(AccessType::TryGetById);
-            break;
         case GetById:
         case GetByIdFlush:
             compileGetById(AccessType::GetById);
@@ -1844,6 +1841,9 @@ private:
         case RegExpExecNonGlobalOrSticky:
             compileRegExpExecNonGlobalOrSticky();
             break;
+        case RegExpExecSticky:
+            compileRegExpExecSticky();
+            break;
         case RegExpTest:
             compileRegExpTest();
             break;
@@ -1935,6 +1935,9 @@ private:
             break;
         case ToLowerCase:
             compileToLowerCase();
+            break;
+        case StringTrim:
+            compileStringTrim();
             break;
         case NumberToStringWithRadix:
             compileNumberToStringWithRadix();
@@ -4446,7 +4449,7 @@ private:
 
     void compileGetById(AccessType type)
     {
-        ASSERT(type == AccessType::GetById || type == AccessType::TryGetById || type == AccessType::GetByIdDirect);
+        ASSERT(type == AccessType::GetById || type == AccessType::GetByIdDirect);
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         switch (m_node->child1().useKind()) {
         case CellUse: {
@@ -8744,19 +8747,39 @@ IGNORE_CLANG_WARNINGS_END
                 return false;
             };
 
-            if (isCopyOnWriteArrayWithContiguous()) {
+            bool isOnlyAtomStrings = isCopyOnWriteArrayWithContiguous();
+            LBasicBlock checkAtomStructure = nullptr;
+            LBasicBlock atomCheckSearchIsAtom = nullptr;
+            LBasicBlock atomLoopHeader = nullptr;
+            LBasicBlock atomLoopBody = nullptr;
+            LBasicBlock atomLoopNext = nullptr;
+            LBasicBlock atomNotFound = nullptr;
+            ValueFromBlock initialStartIndexForAtom;
+
+            if (isOnlyAtomStrings) {
                 operation = operationCopyOnWriteArrayIndexOfString;
-                LValue targetStructureID = encodeStructureID(weakPointer(vm().cellButterflyOnlyAtomStringsStructure.get()));
-                LValue butterflyStructureID = m_out.load32(m_out.add(storage, m_out.constIntPtr(-JSCellButterfly::offsetOfData())), m_heaps.JSCell_structureID);
-                m_out.branch(m_out.equal(butterflyStructureID, targetStructureID), unsure(slowCase), unsure(checkSearchRopeString));
-            } else
-                m_out.jump(checkSearchRopeString);
+                checkAtomStructure = m_out.newBlock();
+                atomCheckSearchIsAtom = m_out.newBlock();
+                atomLoopHeader = m_out.newBlock();
+                atomLoopBody = m_out.newBlock();
+                atomLoopNext = m_out.newBlock();
+                atomNotFound = m_out.newBlock();
+                initialStartIndexForAtom = m_out.anchor(startIndex);
+            }
+            m_out.jump(checkSearchRopeString);
 
             LBasicBlock lastNext = m_out.appendTo(checkSearchRopeString, checkSearchElement8Bit);
-            m_out.branch(isRopeString(searchElement, searchElementEdge), rarely(slowCase), usually(checkSearchElement8Bit));
+            LValue searchElementImpl = m_out.loadPtr(searchElement, m_heaps.JSString_value);
+            m_out.branch(isRopeString(searchElement, searchElementEdge), rarely(slowCase), usually(isOnlyAtomStrings ? checkAtomStructure : checkSearchElement8Bit));
+
+            if (isOnlyAtomStrings) {
+                m_out.appendTo(checkAtomStructure, checkSearchElement8Bit);
+                LValue targetStructureID = weakStructureID(m_graph.registerStructure(vm().cellButterflyOnlyAtomStringsStructure.get()));
+                LValue butterflyStructureID = m_out.load32(m_out.add(storage, m_out.constIntPtr(-JSCellButterfly::offsetOfData())), m_heaps.JSCell_structureID);
+                m_out.branch(m_out.equal(butterflyStructureID, targetStructureID), unsure(atomCheckSearchIsAtom), unsure(checkSearchElement8Bit));
+            }
 
             m_out.appendTo(checkSearchElement8Bit, loopHeader);
-            LValue searchElementImpl = m_out.loadPtr(searchElement, m_heaps.JSString_value);
             m_out.branch(m_out.testIsZero32(m_out.load32(searchElementImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), unsure(slowCase), unsure(loopHeader));
 
             m_out.appendTo(loopHeader, fastCheckElementEmpty);
@@ -8853,13 +8876,45 @@ IGNORE_CLANG_WARNINGS_END
             ValueFromBlock slowCaseResult = isArrayIncludes ? m_out.anchor(vmCall(Int32, operationArrayIncludesString, weakPointer(globalObject), storage, searchElement, startIndex)) : m_out.anchor(vmCall(Int64, operation, weakPointer(globalObject), storage, searchElement, startIndex));
             m_out.jump(continuation);
 
+            Vector<ValueFromBlock, 5> results;
+            results.append(notFoundResult);
+            results.append(foundResult);
+            results.append(slowCaseResult);
+
+            if (isOnlyAtomStrings) {
+                m_out.appendTo(atomCheckSearchIsAtom, atomLoopHeader);
+                m_out.branch(m_out.testIsZero32(m_out.load32(searchElementImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom())), rarely(slowCase), usually(atomLoopHeader));
+
+                m_out.appendTo(atomLoopHeader, atomLoopBody);
+                LValue atomIndex = m_out.phi(pointerType(), initialStartIndexForAtom);
+                m_out.branch(m_out.notEqual(atomIndex, length), usually(atomLoopBody), rarely(atomNotFound));
+
+                m_out.appendTo(atomLoopBody, atomLoopNext);
+                ValueFromBlock atomFoundResult = isArrayIncludes ? m_out.anchor(m_out.constBool(true)) : m_out.anchor(atomIndex);
+                LValue atomElement = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, storage, atomIndex));
+                LValue atomElementImpl = m_out.loadPtr(atomElement, m_heaps.JSString_value);
+                m_out.branch(m_out.equal(atomElementImpl, searchElementImpl), rarely(continuation), usually(atomLoopNext));
+
+                m_out.appendTo(atomLoopNext, atomNotFound);
+                LValue atomNextIndex = m_out.add(atomIndex, m_out.intPtrOne);
+                m_out.addIncomingToPhi(atomIndex, m_out.anchor(atomNextIndex));
+                m_out.jump(atomLoopHeader);
+
+                m_out.appendTo(atomNotFound, continuation);
+                ValueFromBlock atomNotFoundResult = isArrayIncludes ? m_out.anchor(m_out.constBool(false)) : m_out.anchor(m_out.constIntPtr(-1));
+                m_out.jump(continuation);
+
+                results.append(atomNotFoundResult);
+                results.append(atomFoundResult);
+            }
+
             m_out.appendTo(continuation, lastNext);
             // We have to keep base alive since that keeps content of storage alive.
             ensureStillAliveHere(base);
             if (isArrayIncludes)
-                setBoolean(m_out.phi(Int32, notFoundResult, foundResult, slowCaseResult));
+                setBoolean(m_out.phi(Int32, results));
             else
-                setInt32(m_out.castToInt32(m_out.phi(Int64, notFoundResult, foundResult, slowCaseResult)));
+                setInt32(m_out.castToInt32(m_out.phi(Int64, results)));
             return;
         }
 
@@ -19324,6 +19379,15 @@ IGNORE_CLANG_WARNINGS_END
         setJSValue(result);
     }
 
+    void compileRegExpExecSticky()
+    {
+        LValue globalObject = lowCell(m_node->child1());
+        LValue base = lowRegExpObject(m_node->child2());
+        LValue argument = lowString(m_node->child3());
+        LValue result = vmCall(Int64, operationRegExpExecStickyKnownRegExp, globalObject, frozenPointer(m_node->cellOperand()), base, argument);
+        setJSValue(result);
+    }
+
     void compileRegExpMatchFastGlobal()
     {
         LValue globalObject = lowCell(m_node->child1());
@@ -20566,7 +20630,10 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock is16Bit = m_out.newBlock();
         LBasicBlock bitsContinuation = m_out.newBlock();
         LBasicBlock bigCharacter = m_out.newBlock();
-        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock multiCharCase = m_out.newBlock();
+        LBasicBlock notLengthTwoCase = m_out.newBlock();
+        LBasicBlock substringRopeAllocCase = m_out.newBlock();
+        LBasicBlock substringRopeSlowAlloc = m_out.newBlock();
         LBasicBlock ropeSlowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
@@ -20590,14 +20657,14 @@ IGNORE_CLANG_WARNINGS_END
         LValue span = m_out.sub(to, from);
         m_out.branch(m_out.lessThanOrEqual(span, m_out.int32Zero), unsure(emptyCase), unsure(notEmptyCase));
 
-        Vector<ValueFromBlock, 5> results;
+        Vector<ValueFromBlock, 8> results;
 
         m_out.appendTo(emptyCase, notEmptyCase);
         results.append(m_out.anchor(weakPointer(jsEmptyString(vm()))));
         m_out.jump(continuation);
 
         m_out.appendTo(notEmptyCase, oneCharCase);
-        m_out.branch(m_out.equal(span, m_out.int32One), unsure(oneCharCase), unsure(slowCase));
+        m_out.branch(m_out.equal(span, m_out.int32One), unsure(oneCharCase), unsure(multiCharCase));
 
         m_out.appendTo(oneCharCase, is8Bit);
         LValue storage = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
@@ -20624,14 +20691,32 @@ IGNORE_CLANG_WARNINGS_END
             m_vmValue, char16BitValue)));
         m_out.jump(continuation);
 
-        m_out.appendTo(bitsContinuation, slowCase);
+        m_out.appendTo(bitsContinuation, multiCharCase);
         LValue character = m_out.phi(Int32, char8Bit, char16Bit);
         LValue smallStrings = m_out.constIntPtr(vm().smallStrings.singleCharacterStrings());
         results.append(m_out.anchor(m_out.loadPtr(m_out.baseIndex(
             m_heaps.singleCharacterStrings, smallStrings, m_out.zeroExtPtr(character)))));
         m_out.jump(continuation);
 
-        m_out.appendTo(slowCase, ropeSlowCase);
+        m_out.appendTo(multiCharCase, notLengthTwoCase);
+        results.append(m_out.anchor(string));
+        m_out.branch(m_out.equal(span, length), unsure(continuation), unsure(notLengthTwoCase));
+
+        m_out.appendTo(notLengthTwoCase, substringRopeAllocCase);
+        m_out.branch(m_out.equal(span, m_out.constInt32(2)), rarely(substringRopeSlowAlloc), usually(substringRopeAllocCase));
+
+        m_out.appendTo(substringRopeAllocCase, substringRopeSlowAlloc);
+        Allocator allocator = allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists);
+        LValue rope = allocateCell(m_out.constIntPtr(allocator.localAllocator()), vm().stringStructure.get(), substringRopeSlowAlloc);
+        LValue baseIs8BitFlag = m_out.bitAnd(m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit()));
+        m_out.storePtr(m_out.bitOr(m_out.constIntPtr(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), m_out.zeroExtPtr(baseIs8BitFlag)), rope, m_heaps.JSRopeString_fiber0);
+        m_out.storePtr(m_out.bitOr(m_out.zeroExtPtr(span), m_out.shl(string, m_out.constInt32(32))), rope, m_heaps.JSRopeString_fiber1);
+        m_out.storePtr(m_out.bitOr(m_out.lShr(string, m_out.constInt32(32)), m_out.shl(m_out.zeroExtPtr(from), m_out.constInt32(16))), rope, m_heaps.JSRopeString_fiber2);
+        mutatorFence();
+        results.append(m_out.anchor(rope));
+        m_out.jump(continuation);
+
+        m_out.appendTo(substringRopeSlowAlloc, ropeSlowCase);
         results.append(m_out.anchor(vmCall(pointerType(), operationStringSubstr, weakPointer(globalObject), string, from, span)));
         m_out.jump(continuation);
 
@@ -20872,6 +20957,26 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(pointerType(), fastResult, slowResult));
+    }
+
+    void compileStringTrim()
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        LValue string = lowString(m_node->child1());
+        switch (m_node->intrinsic()) {
+        case StringPrototypeTrimIntrinsic:
+            setJSValue(vmCall(pointerType(), operationStringTrim, weakPointer(globalObject), string));
+            break;
+        case StringPrototypeTrimStartIntrinsic:
+            setJSValue(vmCall(pointerType(), operationStringTrimStart, weakPointer(globalObject), string));
+            break;
+        case StringPrototypeTrimEndIntrinsic:
+            setJSValue(vmCall(pointerType(), operationStringTrimEnd, weakPointer(globalObject), string));
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            break;
+        }
     }
 
     void compileNumberToStringWithRadix()

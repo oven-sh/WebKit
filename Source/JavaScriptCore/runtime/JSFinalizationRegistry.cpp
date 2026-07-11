@@ -151,15 +151,13 @@ NEVER_INLINE void JSFinalizationRegistry::finalizeUnconditionally(VM& vm, Collec
     });
 
     if (!m_hasAlreadyScheduledWork && (readiedCell || deadCount(locker))) {
-        auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
-        #ifndef BUN_SKIP_FAILING_ASSERTIONS
-        ASSERT(vm.deferredWorkTimer->hasPendingWork(ticket));
-        #endif
-        vm.deferredWorkTimer->scheduleWorkSoon(ticket, [this](DeferredWorkTimer::Ticket) {
+        auto weakTicket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
+        bool queued = vm.deferredWorkTimer->scheduleWorkSoonIfActive(weakTicket, [this](DeferredWorkTimer::Ticket&) {
             JSGlobalObject* globalObject = this->realm();
             this->m_hasAlreadyScheduledWork = false;
             this->runFinalizationCleanup(globalObject);
         });
+        RELEASE_ASSERT(queued);
         m_hasAlreadyScheduledWork = true;
     }
 }

@@ -63,9 +63,9 @@ inline void ComputedStyleBase::setUsesViewportUnits()
     m_nonInheritedFlags.usesViewportUnits = true;
 }
 
-inline void ComputedStyleBase::setUsesContainerUnits()
+inline void ComputedStyleBase::setIsContainerDependent()
 {
-    m_nonInheritedFlags.usesContainerUnits = true;
+    m_nonInheritedFlags.isContainerDependent = true;
 }
 
 inline void ComputedStyleBase::setUsesTreeCountingFunctions()
@@ -286,6 +286,11 @@ inline ScrollTimelines& ComputedStyleBase::ensureScrollTimelines()
 inline ViewTimelines& ComputedStyleBase::ensureViewTimelines()
 {
     return m_nonInheritedData.access().rareData.access().viewTimelines.access();
+}
+
+inline TimelineTriggers& ComputedStyleBase::ensureTimelineTriggers()
+{
+    return m_nonInheritedData.access().rareData.access().timelineTriggers.access();
 }
 
 inline void ComputedStyleBase::setBackgroundLayers(BackgroundLayers&& layers)

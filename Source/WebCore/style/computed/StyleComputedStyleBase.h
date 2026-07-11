@@ -364,6 +364,7 @@ struct TextSpacingTrim;
 struct TextTransform;
 struct TextUnderlineOffset;
 struct TextUnderlinePosition;
+struct TimelineTrigger;
 struct TouchAction;
 struct Transform;
 struct TransformOrigin;
@@ -429,6 +430,7 @@ using ScrollPaddingBox = MinimallySerializingSpaceSeparatedRectEdges<ScrollPaddi
 using ScrollTimelines = CoordinatedValueList<ScrollTimeline>;
 using ShapeImageThreshold = Number<CSS::ClosedUnitRangeClampBoth, float>;
 using TextShadows = Shadows<TextShadow>;
+using TimelineTriggers = CoordinatedValueList<TimelineTrigger>;
 using TransformOriginX = PositionX;
 using TransformOriginXY = Position;
 using TransformOriginY = PositionY;
@@ -464,8 +466,8 @@ public:
     inline bool usesViewportUnits() const;
     inline void setUsesViewportUnits();
 
-    inline bool usesContainerUnits() const;
-    inline void setUsesContainerUnits();
+    inline bool isContainerDependent() const;
+    inline void setIsContainerDependent();
 
     inline bool useTreeCountingFunctions() const;
     inline void setUsesTreeCountingFunctions();
@@ -676,6 +678,7 @@ public:
     inline Transitions& ensureTransitions() LIFETIME_BOUND;
     inline ScrollTimelines& ensureScrollTimelines() LIFETIME_BOUND;
     inline ViewTimelines& ensureViewTimelines() LIFETIME_BOUND;
+    inline TimelineTriggers& ensureTimelineTriggers() LIFETIME_BOUND;
 
     inline const BorderData& border() const LIFETIME_BOUND;
     inline const BorderValue& borderBottom() const LIFETIME_BOUND;
@@ -697,6 +700,7 @@ public:
     inline const ScrollMarginBox& scrollMarginBox() const LIFETIME_BOUND;
     inline const ScrollPaddingBox& scrollPaddingBox() const LIFETIME_BOUND;
     inline const ScrollTimelines& scrollTimelines() const LIFETIME_BOUND;
+    inline const TimelineTriggers& timelineTriggers() const LIFETIME_BOUND;
     inline const TransformOrigin& transformOrigin() const LIFETIME_BOUND;
     inline const Transitions& transitions() const LIFETIME_BOUND;
     inline const ViewTimelines& viewTimelines() const LIFETIME_BOUND;
@@ -748,7 +752,7 @@ public:
         PREFERRED_TYPE(Float) unsigned floating : 3;
 
         PREFERRED_TYPE(bool) unsigned usesViewportUnits : 1;
-        PREFERRED_TYPE(bool) unsigned usesContainerUnits : 1;
+        PREFERRED_TYPE(bool) unsigned isContainerDependent : 1;
         PREFERRED_TYPE(bool) unsigned useTreeCountingFunctions : 1;
         PREFERRED_TYPE(bool) unsigned hasExplicitlyInheritedProperties : 1; // Explicitly inherits a non-inherited property.
         PREFERRED_TYPE(bool) unsigned disallowsFastPathInheritance : 1;

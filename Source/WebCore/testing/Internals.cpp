@@ -49,6 +49,7 @@
 #include "CacheStorageConnection.h"
 #include "CacheStorageProvider.h"
 #include "CachedImage.h"
+#include "CachedMatchFinder.h"
 #include "CanvasBase.h"
 #include "CertificateInfo.h"
 #include "Chrome.h"
@@ -200,7 +201,6 @@
 #include "PushSubscriptionData.h"
 #include "RTCController.h"
 #include "RTCNetworkManager.h"
-#include "RTCRtpSFrameTransform.h"
 #include "Range.h"
 #include "ReadableStream.h"
 #include "RenderEmbeddedObject.h"
@@ -250,6 +250,7 @@
 #include "StringCallback.h"
 #include "StyleDocumentScope.h"
 #include "StyleGridPosition.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
 #include "StyleSheetContents.h"
@@ -346,6 +347,9 @@
 #endif
 
 #if ENABLE(MEDIA_STREAM)
+#if PLATFORM(COCOA)
+#include "AudioMediaStreamTrackRendererUnit.h"
+#endif
 #include "MediaStream.h"
 #include "MockRealtimeMediaSourceCenter.h"
 #include "VideoFrame.h"
@@ -619,6 +623,8 @@ void Internals::resetToConsistentState(Page& page)
 {
     page.setPageScaleFactor(1, IntPoint(0, 0));
     page.setPagination(Pagination());
+
+    CachedMatchFinder::setMaximumRunCountForTesting(std::nullopt);
 
     page.setDefersLoading(false);
     page.setResourceCachingDisabledByWebInspector(false);
@@ -1634,6 +1640,15 @@ Ref<CSSComputedStyleDeclaration> Internals::computedStyleIncludingVisitedInfo(El
     return CSSComputedStyleDeclaration::create(element, CSSComputedStyleDeclaration::AllowVisited::Yes);
 }
 
+float Internals::usedOutlineOffset(Element& element)
+{
+    element.document().updateStyleIfNeeded();
+    auto* style = element.computedStyle();
+    if (!style)
+        return 0;
+    return Style::evaluate<float>(style->usedOutlineOffset(), style->usedZoomForLength());
+}
+
 Node& Internals::ensureUserAgentShadowRoot(Element& host)
 {
     return host.ensureUserAgentShadowRoot();
@@ -2048,22 +2063,6 @@ void Internals::isVP9HardwareDecoderUsed(RTCPeerConnection& connection, DOMPromi
     connection.gatherDecoderImplementationName([promise = WTF::move(promise)](auto&& name) mutable {
         promise.resolve(!name.contains("fallback from:"_s) && !name.contains("libvpx"_s));
     });
-}
-
-void Internals::setSFrameCounter(RTCRtpSFrameTransform& transform, const String& counter)
-{
-    if (auto value = parseInteger<uint64_t>(counter))
-        transform.setCounterForTesting(*value);
-}
-
-uint64_t Internals::sframeCounter(const RTCRtpSFrameTransform& transform)
-{
-    return transform.counterForTesting();
-}
-
-uint64_t Internals::sframeKeyId(const RTCRtpSFrameTransform& transform)
-{
-    return transform.keyIdForTesting();
 }
 
 void Internals::setEnableWebRTCEncryption(bool value)
@@ -3347,6 +3346,11 @@ ExceptionOr<unsigned> Internals::countMatchesForText(const String& text, const V
 
     bool mark = markMatches == "mark"_s;
     return document->editor().countMatchesForText(text, std::nullopt, parsedOptions.releaseReturnValue(), 1000, mark, nullptr);
+}
+
+void Internals::setCachedFindMatchBufferLimitForTesting(unsigned maximumRunCount)
+{
+    CachedMatchFinder::setMaximumRunCountForTesting(maximumRunCount);
 }
 
 ExceptionOr<unsigned> Internals::countFindMatches(const String& text, const Vector<String>& findOptions)
@@ -6906,6 +6910,13 @@ bool Internals::supportsMultiMicrophoneCaptureWithoutEchoCancellation() const
     return true;
 #else
     return false;
+#endif
+}
+
+void Internals::deleteAudioUnit()
+{
+#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+    AudioMediaStreamTrackRendererUnit::singleton().deleteUnitForTesting();
 #endif
 }
 

@@ -849,7 +849,7 @@ void WebBackForwardList::backForwardUpdateItem(IPC::Connection& connection, Ref<
         return;
 
     if (RefPtr webPageProxy = m_page.get()) {
-        ASSERT(webPageProxy->identifier() == item->pageID() && frameState->itemID == item->identifier());
+        MESSAGE_CHECK(process, webPageProxy->identifier() == item->pageID() && frameState->itemID == item->identifier());
 
         auto oldFrameID = frameItem->frameID();
         frameItem->updateFrameStatePayload(WTF::move(frameState));

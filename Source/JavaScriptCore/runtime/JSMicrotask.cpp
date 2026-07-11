@@ -85,7 +85,7 @@ static ALWAYS_INLINE JSCell* NODELETE dynamicCastToCell(JSValue value)
 }
 
 template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
-static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCall* microtaskCall, Args... args)
+static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache* microtaskCallCache, Args... args)
 {
     NO_TAIL_CALLS();
 
@@ -93,15 +93,17 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     static_assert(sizeof...(args) <= MicrotaskCall::maxCallArguments);
 
-    if (microtaskCall && microtaskCall->canUseCall(functionObject)) [[likely]] {
-        if (!vm.isSafeToRecurseSoft()) [[unlikely]]
-            return throwStackOverflowError(globalObject, scope);
-        auto* jsFunction = uncheckedDowncast<JSFunction>(functionObject.asCell());
-        if (auto result = microtaskCall->tryCallWithArguments(vm, jsFunction, thisValue, context, args...)) [[likely]] {
-            scope.release();
-            return result;
+    if (microtaskCallCache) [[likely]] {
+        if (auto* microtaskCall = microtaskCallCache->find(functionObject)) [[likely]] {
+            if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+                return throwStackOverflowError(globalObject, scope);
+            auto* jsFunction = uncheckedDowncast<JSFunction>(functionObject.asCell());
+            if (auto result = microtaskCall->tryCallWithArguments(vm, jsFunction, thisValue, context, args...)) [[likely]] {
+                scope.release();
+                return result;
+            }
+            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
         }
-        RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
     }
 
     auto callData = JSC::getCallDataInline(functionObject);
@@ -139,8 +141,11 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
-        if (microtaskCall) {
+        if (microtaskCallCache) {
             auto* jsFunction = uncheckedDowncast<JSFunction>(functionObject.asCell());
+            auto* microtaskCall = microtaskCallCache->find(functionObject);
+            if (!microtaskCall)
+                microtaskCall = microtaskCallCache->nextEntryToReplace();
             microtaskCall->initialize(vm, jsFunction);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
 
@@ -211,16 +216,19 @@ static void promiseResolveThenableJobFastSlow(JSGlobalObject* globalObject, JSPr
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSObject* constructor = promiseSpeciesConstructor(globalObject, promise);
-    if (scope.exception()) [[unlikely]]
-        return;
-
+    // https://tc39.es/ecma262/#sec-newpromiseresolvethenablejob
+    // NewPromiseResolveThenableJob step a: create resolving functions first so
+    // an abrupt completion of the inlined `then` (SpeciesConstructor or
+    // NewPromiseCapability throwing) routes to reject(error) per step c.
     auto [resolve, reject] = promiseToResolve->createResolvingFunctions(vm, globalObject);
 
-    auto capability = JSPromise::createNewPromiseCapability(globalObject, constructor);
+    JSObject* constructor = promiseSpeciesConstructor(globalObject, promise);
     if (!scope.exception()) [[likely]] {
-        promise->performPromiseThen(vm, globalObject, resolve, reject, capability);
-        return;
+        auto capability = JSPromise::createNewPromiseCapability(globalObject, constructor);
+        if (!scope.exception()) [[likely]] {
+            promise->performPromiseThen(vm, globalObject, resolve, reject, capability);
+            return;
+        }
     }
 
     JSValue error = scope.exception()->value();
@@ -240,16 +248,15 @@ static void promiseResolveThenableJobWithInternalMicrotaskFastSlow(JSGlobalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSObject* constructor = promiseSpeciesConstructor(globalObject, promise);
-    if (scope.exception()) [[unlikely]]
-        return;
-
     auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context);
 
-    auto capability = JSPromise::createNewPromiseCapability(globalObject, constructor);
+    JSObject* constructor = promiseSpeciesConstructor(globalObject, promise);
     if (!scope.exception()) [[likely]] {
-        promise->performPromiseThen(vm, globalObject, resolve, reject, capability);
-        return;
+        auto capability = JSPromise::createNewPromiseCapability(globalObject, constructor);
+        if (!scope.exception()) [[likely]] {
+            promise->performPromiseThen(vm, globalObject, resolve, reject, capability);
+            return;
+        }
     }
 
     JSValue error = scope.exception()->value();
@@ -1599,7 +1606,7 @@ static void webAssemblyInstantiateStreaming(JSGlobalObject* globalObject, VM& vm
 }
 #endif
 
-void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments> arguments, MicrotaskCall* microtaskCall)
+void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments> arguments, MicrotaskCallCache* microtaskCallCache)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1814,11 +1821,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             // When userContext is defined (not empty, undefined, or null), pass 2 arguments and use userContext as the cell context
             // When userContext is empty/undefined/null, pass 1 argument only
             if (userContext.isEmpty() || userContext.isUndefinedOrNull())
-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCall, arguments[2]);
+                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, arguments[2]);
             else
-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(userContext), "handler is not a function"_s, microtaskCall, arguments[2], userContext);
+                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(userContext), "handler is not a function"_s, microtaskCallCache, arguments[2], userContext);
 #else
-            result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCall, arguments[2]);
+            result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, arguments[2]);
 #endif
             if (catchScope.exception()) {
                 if (promiseOrCapability.isUndefinedOrNull()) {
@@ -1909,7 +1916,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     case InternalMicrotask::InvokeFunctionJob: {
         JSValue handler = arguments[0];
         scope.release();
-        callMicrotask(globalObject, handler, jsUndefined(), nullptr, "handler is not a function"_s, microtaskCall);
+        callMicrotask(globalObject, handler, jsUndefined(), nullptr, "handler is not a function"_s, microtaskCallCache);
         return;
     }
 
@@ -1968,7 +1975,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         JSValue error;
         {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            value = callMicrotask(generatorGlobalObject, next, thisValue, generator, "handler is not a function"_s, microtaskCall,
+            value = callMicrotask(generatorGlobalObject, next, thisValue, generator, "handler is not a function"_s, microtaskCallCache,
                 generator, jsNumber(state), resolution, jsNumber(static_cast<int32_t>(resumeMode)), frame);
             if (catchScope.exception()) {
                 error = catchScope.exception()->value();
@@ -2254,11 +2261,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             // Call job with extra arguments using optimized callMicrotask path
             auto* jobCell = dynamicCastToCell(job);
             if (!arguments[3].isEmpty())
-                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCall, arguments[2], arguments[3]);
+                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, arguments[2], arguments[3]);
             else if (!arguments[2].isEmpty())
-                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCall, arguments[2]);
+                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, arguments[2]);
             else
-                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCall);
+                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache);
 
             // Restore async context before error reporting
             if (asyncContextData)

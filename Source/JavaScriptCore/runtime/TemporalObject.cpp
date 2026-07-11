@@ -71,60 +71,44 @@ static JSValue createNowObject(VM& vm, JSObject* object)
     return TemporalNow::create(vm, TemporalNow::createStructure(vm, globalObject));
 }
 
-static JSValue createDurationConstructor(VM& vm, JSObject* object)
+static JSValue createDurationConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    JSGlobalObject* globalObject = temporalObject->realm();
-    return TemporalDurationConstructor::create(vm, TemporalDurationConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalDurationPrototype>(globalObject->durationStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->durationConstructor();
 }
 
-static JSValue createInstantConstructor(VM& vm, JSObject* object)
+static JSValue createInstantConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    JSGlobalObject* globalObject = temporalObject->realm();
-    return TemporalInstantConstructor::create(vm, TemporalInstantConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalInstantPrototype>(globalObject->instantStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->instantConstructor();
 }
 
-static JSValue createPlainDateConstructor(VM& vm, JSObject* object)
+static JSValue createPlainDateConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    auto* globalObject = temporalObject->realm();
-    return TemporalPlainDateConstructor::create(vm, TemporalPlainDateConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalPlainDatePrototype>(globalObject->plainDateStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->plainDateConstructor();
 }
 
-static JSValue createPlainDateTimeConstructor(VM& vm, JSObject* object)
+static JSValue createPlainDateTimeConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    auto* globalObject = temporalObject->realm();
-    return TemporalPlainDateTimeConstructor::create(vm, TemporalPlainDateTimeConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalPlainDateTimePrototype>(globalObject->plainDateTimeStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->plainDateTimeConstructor();
 }
 
-static JSValue createPlainMonthDayConstructor(VM& vm, JSObject* object)
+static JSValue createPlainMonthDayConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    auto* globalObject = temporalObject->realm();
-    return TemporalPlainMonthDayConstructor::create(vm, TemporalPlainMonthDayConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalPlainMonthDayPrototype>(globalObject->plainMonthDayStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->plainMonthDayConstructor();
 }
 
-static JSValue createPlainTimeConstructor(VM& vm, JSObject* object)
+static JSValue createPlainTimeConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    auto* globalObject = temporalObject->realm();
-    return TemporalPlainTimeConstructor::create(vm, TemporalPlainTimeConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalPlainTimePrototype>(globalObject->plainTimeStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->plainTimeConstructor();
 }
 
-static JSValue createPlainYearMonthConstructor(VM& vm, JSObject* object)
+static JSValue createPlainYearMonthConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    auto* globalObject = temporalObject->realm();
-    return TemporalPlainYearMonthConstructor::create(vm, TemporalPlainYearMonthConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalPlainYearMonthPrototype>(globalObject->plainYearMonthStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->plainYearMonthConstructor();
 }
 
-static JSValue createZonedDateTimeConstructor(VM& vm, JSObject* object)
+static JSValue createZonedDateTimeConstructor(VM&, JSObject* object)
 {
-    TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
-    auto* globalObject = temporalObject->realm();
-    return TemporalZonedDateTimeConstructor::create(vm, TemporalZonedDateTimeConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<TemporalZonedDateTimePrototype>(globalObject->zonedDateTimeStructure()->storedPrototypeObject()));
+    return uncheckedDowncast<TemporalObject>(object)->realm()->zonedDateTimeConstructor();
 }
 
 } // namespace JSC
@@ -706,35 +690,40 @@ TemporalOffsetDisambiguation toTemporalOffset(JSGlobalObject* globalObject, JSOb
         fallback);
 }
 
-// https://tc39.es/proposal-temporal/#sec-temporal-rejectobjectwithcalendarortimezone
-void rejectObjectWithCalendarOrTimeZone(JSGlobalObject* globalObject, JSObject* object)
+// https://tc39.es/proposal-temporal/#sec-temporal-ispartialtemporalobject
+bool isPartialTemporalObject(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Step 1: If value is not an Object, return false.
+    if (!value.isObject())
+        return false;
+    JSObject* object = asObject(value);
+
+    // Step 2: If value has any [[InitializedTemporal*]] internal slot, return false.
     if (object->inherits<TemporalPlainDate>()
         || object->inherits<TemporalPlainDateTime>()
         || object->inherits<TemporalPlainTime>()
         || object->inherits<TemporalPlainMonthDay>()
         || object->inherits<TemporalPlainYearMonth>()
-        || object->inherits<TemporalZonedDateTime>()) {
-        throwTypeError(globalObject, scope, "argument object must not have calendar or timeZone property"_s);
-        return;
-    }
+        || object->inherits<TemporalZonedDateTime>())
+        return false;
 
-    auto calendar = object->get(globalObject, vm.propertyNames->calendar);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!calendar.isUndefined()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "argument object must not have calendar property"_s);
-        return;
-    }
+    // Steps 3-4: If Get(value, "calendar") is not undefined, return false.
+    JSValue calendar = object->get(globalObject, vm.propertyNames->calendar);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!calendar.isUndefined())
+        return false;
 
-    auto timeZone = object->get(globalObject, vm.propertyNames->timeZone);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!timeZone.isUndefined()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "argument object must not have timeZone property"_s);
-        return;
-    }
+    // Steps 5-6: If Get(value, "timeZone") is not undefined, return false.
+    JSValue timeZone = object->get(globalObject, vm.propertyNames->timeZone);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!timeZone.isUndefined())
+        return false;
+
+    // Step 7: Return true.
+    return true;
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaltimezoneidentifier

@@ -149,7 +149,7 @@ static Ref<JSON::ArrayOf<Inspector::Protocol::Animation::Keyframe>> buildObjectF
                 .release();
 
             RefPtr<const TimingFunction> timingFunction;
-            if (!parsedKeyframes.isEmpty())
+            if (i < parsedKeyframes.size())
                 timingFunction = parsedKeyframes[i].timingFunction;
             if (!timingFunction)
                 timingFunction = blendingKeyframe.timingFunction();
@@ -175,7 +175,7 @@ static Ref<JSON::ArrayOf<Inspector::Protocol::Animation::Keyframe>> buildObjectF
                         stylePayloadBuilder.append(
                             customProperty,
                             ": "_s,
-                            computedStyleExtractor.customPropertyValueSerialization(customProperty, CSS::defaultSerializationContext())
+                            computedStyleExtractor.customPropertyValueSerializationInStyle(style, customProperty, CSS::defaultSerializationContext())
                         );
                     }
                 );

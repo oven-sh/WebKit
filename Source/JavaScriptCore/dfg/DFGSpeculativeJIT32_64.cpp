@@ -2726,6 +2726,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case StringTrim: {
+        compileStringTrim(node);
+        break;
+    }
+
     case NumberToStringWithRadix: {
         compileNumberToStringWithRadix(node);
         break;
@@ -2799,6 +2804,11 @@ void SpeculativeJIT::compile(Node* node)
 
     case RegExpExecNonGlobalOrSticky: {
         compileRegExpExecNonGlobalOrSticky(node);
+        break;
+    }
+
+    case RegExpExecSticky: {
+        compileRegExpExecSticky(node);
         break;
     }
 
@@ -3482,11 +3492,6 @@ void SpeculativeJIT::compile(Node* node)
 
     case CallCustomAccessorSetter: {
         compileCallCustomAccessorSetter(node);
-        break;
-    }
-
-    case TryGetById: {
-        compileGetById(node, AccessType::TryGetById);
         break;
     }
 
@@ -4716,7 +4721,7 @@ void SpeculativeJIT::compileCreateClonedArguments(Node* node)
 
 void SpeculativeJIT::compileGetById(Node* node, AccessType accessType)
 {
-    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect || accessType == AccessType::TryGetById);
+    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect);
 
     switch (node->child1().useKind()) {
     case CellUse: {

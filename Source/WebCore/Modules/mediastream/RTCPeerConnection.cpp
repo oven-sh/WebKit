@@ -552,7 +552,11 @@ ExceptionOr<Vector<MediaEndpointConfiguration::IceServerInfo>> RTCPeerConnection
         for (auto& serverURL : serverURLs) {
             if (serverURL.isNull())
                 return Exception { ExceptionCode::TypeError, "Bad ICE server URL"_s };
+            if (!serverURL.hasOpaquePath())
+                return Exception { ExceptionCode::SyntaxError, "STUN/TURN URL should be opaque-path"_s };
             if (serverURL.protocolIs("turn"_s) || serverURL.protocolIs("turns"_s)) {
+                if (serverURL.hasQuery() && !!serverURL.query().findIgnoringASCIICase("?transport="_s))
+                    return Exception { ExceptionCode::SyntaxError, "Invalid TURN URL query string"_s };
                 if (server.credential.isNull() || server.username.isNull())
                     return Exception { ExceptionCode::InvalidAccessError, "TURN/TURNS server requires both username and credential"_s };
                 // https://tools.ietf.org/html/rfc8489#section-14.3
@@ -656,18 +660,36 @@ ExceptionOr<void> RTCPeerConnection::setConfiguration(RTCConfiguration&& configu
 void RTCPeerConnection::getStats(MediaStreamTrack* selector, Ref<DeferredPromise>&& promise)
 {
     if (selector) {
+        auto invalidSelectorCall = [&] {
+            promise->reject(Exception { ExceptionCode::InvalidAccessError, "Selector is invalid"_s });
+        };
+
+        RefPtr<RTCRtpSender> sender;
+        RefPtr<RTCRtpReceiver> receiver;
         for (auto& transceiver : m_transceiverSet.list()) {
             if (transceiver->sender().track() == selector) {
-                protect(*m_backend)->getStats(transceiver->sender(), WTF::move(promise));
-                return;
+                if (sender || receiver)
+                    return invalidSelectorCall();
+                sender = &transceiver->sender();
             }
             if (&transceiver->receiver().track() == selector) {
-                protect(*m_backend)->getStats(transceiver->receiver(), WTF::move(promise));
-                return;
+                if (sender || receiver)
+                    return invalidSelectorCall();
+                receiver = &transceiver->receiver();
             }
         }
-        promise->reject(Exception { ExceptionCode::InvalidAccessError, "Selector is invalid"_s });
-        return;
+
+        if (sender) {
+            protect(*m_backend)->getStats(*sender, WTF::move(promise));
+            return;
+        }
+
+        if (receiver) {
+            protect(*m_backend)->getStats(*receiver, WTF::move(promise));
+            return;
+        }
+
+        return invalidSelectorCall();
     }
 
     promise->whenSettled([pendingActivity = makePendingActivity(*this)] { });

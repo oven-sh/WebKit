@@ -302,14 +302,14 @@ public:
     LazyClassStructure m_dateTimeFormatStructure;
     LazyClassStructure m_numberFormatStructure;
 
-    LazyProperty<JSGlobalObject, Structure> m_durationStructure;
-    LazyProperty<JSGlobalObject, Structure> m_instantStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainDateStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainDateTimeStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainMonthDayStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainTimeStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainYearMonthStructure;
-    LazyProperty<JSGlobalObject, Structure> m_zonedDateTimeStructure;
+    LazyClassStructure m_durationStructure;
+    LazyClassStructure m_instantStructure;
+    LazyClassStructure m_plainDateStructure;
+    LazyClassStructure m_plainDateTimeStructure;
+    LazyClassStructure m_plainMonthDayStructure;
+    LazyClassStructure m_plainTimeStructure;
+    LazyClassStructure m_plainYearMonthStructure;
+    LazyClassStructure m_zonedDateTimeStructure;
 
     WriteBarrier<NullGetterFunction> m_nullGetterFunction;
     WriteBarrier<NullSetterFunction> m_nullSetterFunction;
@@ -602,9 +602,9 @@ public:
     inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
     inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& NODELETE typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
 
-    void addWeakTicket(DeferredWorkTimer::Ticket);
+    void addWeakTicket(DeferredWorkTimer::Ticket&);
     void clearWeakTickets();
-    std::unique_ptr<ThreadSafeWeakHashSet<DeferredWorkTimer::TicketData>> m_weakTickets;
+    std::unique_ptr<ThreadSafeWeakHashSet<DeferredWorkTimer::Ticket>> m_weakTickets;
 
 public:
     JSCallee* zombieFrameCallee() const LIFETIME_BOUND { return m_zombieFrameCallee.get(); }
@@ -723,6 +723,8 @@ public:
     WeakGCSetJSCustomSetterFunction& customSetterFunctionSet() { return m_customSetterFunctionSet; }
 
     const Ref<ImportMap> m_importMap;
+
+    Ref<SymbolImpl> m_intlLegacyConstructedSymbol;
 
     UncheckedKeyHashMap<String, JSCJSGlobalObjectSignpostIdentifier> m_signposts;
 
@@ -917,6 +919,7 @@ public:
     AsyncGeneratorPrototype* asyncGeneratorPrototype() const LIFETIME_BOUND { return m_asyncGeneratorPrototype.get(); }
     AsyncGeneratorFunctionPrototype* asyncGeneratorFunctionPrototype() const LIFETIME_BOUND { return m_asyncGeneratorFunctionPrototype.get(); }
     JSValue nullPrototype() const { return jsNull(); }
+    SymbolImpl* intlLegacyConstructedSymbol() const { return m_intlLegacyConstructedSymbol.ptr(); }
 
     Structure* debuggerScopeStructure() const { return m_debuggerScopeStructure.get(this); }
     Structure* withScopeStructure() const { return m_withScopeStructure.get(this); }
@@ -1083,6 +1086,15 @@ public:
     Structure* plainTimeStructure() { return m_plainTimeStructure.get(this); }
     Structure* plainYearMonthStructure() { return m_plainYearMonthStructure.get(this); }
     Structure* zonedDateTimeStructure() { return m_zonedDateTimeStructure.get(this); }
+
+    JSObject* durationConstructor() { return m_durationStructure.constructor(this); }
+    JSObject* instantConstructor() { return m_instantStructure.constructor(this); }
+    JSObject* plainDateConstructor() { return m_plainDateStructure.constructor(this); }
+    JSObject* plainDateTimeConstructor() { return m_plainDateTimeStructure.constructor(this); }
+    JSObject* plainMonthDayConstructor() { return m_plainMonthDayStructure.constructor(this); }
+    JSObject* plainTimeConstructor() { return m_plainTimeStructure.constructor(this); }
+    JSObject* plainYearMonthConstructor() { return m_plainYearMonthStructure.constructor(this); }
+    JSObject* zonedDateTimeConstructor() { return m_zonedDateTimeStructure.constructor(this); }
 
 #if USE(BUN_JSC_ADDITIONS)
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }

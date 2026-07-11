@@ -72,6 +72,7 @@
 #include <WebCore/StyleShapeMargin.h>
 #include <WebCore/StyleShapeOutside.h>
 #include <WebCore/StyleTextDecorationThickness.h>
+#include <WebCore/StyleTimelineTriggers.h>
 #include <WebCore/StyleTouchAction.h>
 #include <WebCore/StyleTranslate.h>
 #include <WebCore/StyleViewTimelines.h>
@@ -187,6 +188,9 @@ public:
     ViewTimelines viewTimelines;
 
     NameScope timelineScope;
+
+    NameScope triggerScope;
+    TimelineTriggers timelineTriggers;
 
     ScrollbarGutter scrollbarGutter;
     Style::ContainerType containerType;

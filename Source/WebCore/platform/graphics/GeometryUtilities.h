@@ -38,8 +38,10 @@ class FloatQuad;
 float NODELETE euclidianDistance(const FloatSize&);
 WEBCORE_EXPORT float euclidianDistance(const FloatPoint&, const FloatPoint&);
 
-// Find point where lines through the two pairs of points intersect. Returns false if the lines don't intersect.
-WEBCORE_EXPORT bool NODELETE findIntersection(const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& d1, const FloatPoint& d2, FloatPoint& intersection);
+float NODELETE dotProduct(const FloatSize&, const FloatSize&);
+
+// Find point where lines through the two pairs of points intersect. Returns std::nullopt if the lines are parallel.
+WEBCORE_EXPORT std::optional<FloatPoint> NODELETE findIntersection(const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& d1, const FloatPoint& d2);
 
 WEBCORE_EXPORT IntRect unionRect(const Vector<IntRect>&);
 WEBCORE_EXPORT IntRect unionRectIgnoringZeroRects(const Vector<IntRect>&);
@@ -61,6 +63,7 @@ FloatSize NODELETE sizeWithAreaAndAspectRatio(float area, float aspectRatio);
 FloatRect boundsOfRotatingRect(const FloatRect&);
 
 bool NODELETE ellipseContainsPoint(const FloatPoint& center, const FloatSize& radii, const FloatPoint&);
+float eccentricAngle(FloatPoint, FloatPoint center, float radiusX, float radiusY);
 
 FloatPoint NODELETE midPoint(const FloatPoint&, const FloatPoint&);
 

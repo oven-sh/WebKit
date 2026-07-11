@@ -4299,6 +4299,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case RegExpExecSticky: {
+        compileRegExpExecSticky(node);
+        break;
+    }
+
     case RegExpMatchFastGlobal: {
         compileRegExpMatchFastGlobal(node);
         break;
@@ -4993,11 +4998,6 @@ void SpeculativeJIT::compile(Node* node)
 
     case CallCustomAccessorSetter: {
         compileCallCustomAccessorSetter(node);
-        break;
-    }
-
-    case TryGetById: {
-        compileGetById(node, AccessType::TryGetById);
         break;
     }
 
@@ -5844,6 +5844,11 @@ void SpeculativeJIT::compile(Node* node)
 
     case ToLowerCase: {
         compileToLowerCase(node);
+        break;
+    }
+
+    case StringTrim: {
+        compileStringTrim(node);
         break;
     }
 
@@ -7289,17 +7294,12 @@ void SpeculativeJIT::compileGetByValWithThis(Node* node)
 
 void SpeculativeJIT::compileGetById(Node* node, AccessType accessType)
 {
-    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect || accessType == AccessType::TryGetById);
+    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect);
     CacheType cacheType = CacheType::GetByIdSelf;
-    if (accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect) {
-        if (node->cacheableIdentifier() == vm().propertyNames->length)
-            cacheType = CacheType::ArrayLength;
-        else {
-            if (accessType == AccessType::GetById)
-                cacheType = node->cacheType();
-        }
-    } else
-        cacheType = CacheType::GetByIdPrototype;
+    if (node->cacheableIdentifier() == vm().propertyNames->length)
+        cacheType = CacheType::ArrayLength;
+    else if (accessType == AccessType::GetById)
+        cacheType = node->cacheType();
 
     switch (node->child1().useKind()) {
     case CellUse: {

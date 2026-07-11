@@ -153,6 +153,7 @@ $(PROJECT_DIR)/NetworkProcess/NetworkResourceLoader.messages.in
 $(PROJECT_DIR)/NetworkProcess/NetworkSessionCreationParameters.serialization.in
 $(PROJECT_DIR)/NetworkProcess/NetworkSocketChannel.messages.in
 $(PROJECT_DIR)/NetworkProcess/NetworkTransportChannel.messages.in
+$(PROJECT_DIR)/NetworkProcess/PreconnectRequest.serialization.in
 $(PROJECT_DIR)/NetworkProcess/PrivateClickMeasurement/PrivateClickMeasurementManagerInterface.serialization.in
 $(PROJECT_DIR)/NetworkProcess/ServiceWorker/ServiceWorkerDownloadTask.messages.in
 $(PROJECT_DIR)/NetworkProcess/ServiceWorker/ServiceWorkerFetchTask.messages.in
@@ -420,7 +421,6 @@ $(PROJECT_DIR)/Shared/WebCoreArgumentCodersAuth.serialization.in
 $(PROJECT_DIR)/Shared/WebCoreArgumentCodersMedia.serialization.in
 $(PROJECT_DIR)/Shared/WebCoreArgumentCodersNetwork.serialization.in
 $(PROJECT_DIR)/Shared/WebCoreArgumentCodersPayment.serialization.in
-$(PROJECT_DIR)/Shared/WebCoreArgumentCodersPlatform.serialization.in
 $(PROJECT_DIR)/Shared/WebCoreArgumentCodersStorage.serialization.in
 $(PROJECT_DIR)/Shared/WebCoreFont.serialization.in
 $(PROJECT_DIR)/Shared/WebEvent.serialization.in
@@ -557,6 +557,7 @@ $(PROJECT_DIR)/UIProcess/Automation/Automation.json
 $(PROJECT_DIR)/UIProcess/Automation/WebAutomationSession.messages.in
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiBrowser.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiBrowsingContext.json
+$(PROJECT_DIR)/UIProcess/Automation/protocol/BidiDigitalCredentials.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiLog.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiPermissions.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiScript.json

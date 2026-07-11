@@ -42,7 +42,6 @@
 #include "NavigationActionData.h"
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
-#include "NetworkResourceLoadParameters.h"
 #include "PluginView.h"
 #include "SessionState.h"
 #include "SessionStateConversion.h"
@@ -511,7 +510,6 @@ void WebLocalFrameLoaderClient::didSameDocumentNavigationForFrameViaJS(SameDocum
         { }, /* clickLocationInRootViewCoordinates */
         { }, /* redirectResponse */
         false, /* isRequestFromClientOrUserInput */
-        true, /* treatAsSameOriginNavigation */
         false, /* hasOpenedFrames */
         false, /* openedByDOMWithOpener */
         !!localFrame->opener(), /* hasOpener */
@@ -690,7 +688,7 @@ void WebLocalFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureC
     }
 
     // Notify the UIProcess.
-    webPage->send(Messages::WebPageProxy::DidCommitLoadForFrame(frame->frameID(), frame->info(), documentLoader->request(), documentLoader->navigationID(), documentLoader->response().mimeType(), m_frameHasCustomContentProvider, m_localFrame->loader().loadType(), certificateInfo, usedLegacyTLS, wasPrivateRelayed, documentLoader->response().proxyName(), documentLoader->response().source(), m_localFrame->document()->isPluginDocument(), *hasInsecureContent, documentLoader->mouseEventPolicy(), *coreLocalFrame->frameDocumentSecurityPolicy(), cspOriginsThatUpgradeInsecureNavigations, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get()), m_localFrame->loader().loadingFromCachedPage() ? RestoredFromBackForwardCache::Yes : RestoredFromBackForwardCache::No, WTF::move(redirectReplaceFrameState)));
+    webPage->send(Messages::WebPageProxy::DidCommitLoadForFrame(frame->frameID(), frame->info(), documentLoader->request(), documentLoader->navigationID(), documentLoader->response().mimeType(), m_frameHasCustomContentProvider, m_localFrame->loader().loadType(), usedLegacyTLS, wasPrivateRelayed, documentLoader->response().proxyName(), documentLoader->response().source(), m_localFrame->document()->isPluginDocument(), *hasInsecureContent, documentLoader->mouseEventPolicy(), *coreLocalFrame->frameDocumentSecurityPolicy(), cspOriginsThatUpgradeInsecureNavigations, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get()), m_localFrame->loader().loadingFromCachedPage() ? RestoredFromBackForwardCache::Yes : RestoredFromBackForwardCache::No, WTF::move(redirectReplaceFrameState)));
     webPage->didCommitLoad(m_frame.ptr());
 }
 
@@ -1031,7 +1029,6 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Nav
         mouseEventData ? mouseEventData->locationInRootViewCoordinates : FloatPoint(),
         { }, /* redirectResponse */
         false, /* isRequestFromClientOrUserInput */
-        false, /* treatAsSameOriginNavigation */
         false, /* hasOpenedFrames */
         false, /* openedByDOMWithOpener */
         navigationAction.newFrameOpenerPolicy() == NewFrameOpenerPolicy::Allow, /* hasOpener */
@@ -2058,22 +2055,11 @@ void WebLocalFrameLoaderClient::sendH2Ping(const URL& url, CompletionHandler<voi
     if (!webPage)
         return completionHandler(makeUnexpected(internalError(url)));
 
-    NetworkResourceLoadParameters parameters {
-        webPage->webPageProxyIdentifier(),
-        webPage->identifier(),
-        m_frame->frameID(),
-        ResourceRequest(URL { url })
-    };
-    parameters.createSandboxExtensionHandlesIfNecessary();
-
-    parameters.identifier = WebCore::ResourceLoaderIdentifier::generate();
-    parameters.parentPID = legacyPresentingApplicationPID();
-    parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
-    parameters.options.destination = FetchOptions::Destination::EmptyString;
+    std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain;
 #if ENABLE(APP_BOUND_DOMAINS)
-    parameters.isNavigatingToAppBoundDomain = m_frame->isTopFrameNavigatingToAppBoundDomain();
+    isNavigatingToAppBoundDomain = m_frame->isTopFrameNavigatingToAppBoundDomain();
 #endif
-    WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::SendH2Ping(WTF::move(parameters)), WTF::move(completionHandler));
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::SendH2Ping(url, webPage->webPageProxyIdentifier(), webPage->identifier(), m_frame->frameID(), isNavigatingToAppBoundDomain), WTF::move(completionHandler));
 }
 
 void WebLocalFrameLoaderClient::didRestoreScrollPosition()

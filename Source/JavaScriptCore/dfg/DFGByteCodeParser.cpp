@@ -2580,6 +2580,14 @@ void ByteCodeParser::handleMinMax(Operand resultOperand, NodeType op, int regist
         set(resultOperand, resultNode);
 }
 
+static bool calleeMayBeCrossRealm(CallVariant variant, JSGlobalObject* globalObject)
+{
+    JSFunction* function = variant.function();
+    if (!function)
+        return true;
+    return function->realmMayBeNull() != globalObject;
+}
+
 template<typename ChecksFunctor>
 auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, CallVariant variant, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind kind, CodeSpecializationKind specializationKind, SpeculatedType prediction, const ChecksFunctor& insertChecks) -> CallOptimizationResult
 {
@@ -2724,10 +2732,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case ArrayKeysIntrinsic:
         case ArrayValuesIntrinsic: {
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            auto* function = variant.function();
-            if (!function)
-                return CallOptimizationResult::DidNothing;
-            if (function->realmMayBeNull() != globalObject)
+            if (calleeMayBeCrossRealm(variant, globalObject))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -2819,6 +2824,8 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             case Array::Int32:
             case Array::Contiguous: {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
+                if (calleeMayBeCrossRealm(variant, globalObject))
+                    return CallOptimizationResult::DidNothing;
                 // FIXME: We could easily relax the Array/Object.prototype transition as long as we OSR exitted if we saw a hole.
                 // https://bugs.webkit.org/show_bug.cgi?id=173171
                 if (globalObject->arraySpeciesWatchpointSet().state() == IsWatched
@@ -2834,8 +2841,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                     // We do a few things here to prove that we aren't skipping doing side-effects in an observable way:
                     // 1. We ensure that the "constructor" property hasn't been changed (because the observable
                     // effects of slice require that we perform a Get(array, "constructor") and we can skip
-                    // that if we're an original array structure. (We can relax this in the future by using
-                    // TryGetById and CheckIsConstant).
+                    // that if we're an original array structure.
                     //
                     // 2. We check that the array we're calling slice on has the same global object as the lexical
                     // global object that this code is running in. This requirement is necessary because we setup the
@@ -2892,6 +2898,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (!arrayMode.isJSArray())
                 return CallOptimizationResult::DidNothing;
 
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
+                return CallOptimizationResult::DidNothing;
+
             insertChecks();
 
             for (int i = 0; i < argumentCountIncludingThis; ++i)
@@ -2922,6 +2931,8 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             case Array::Int32:
             case Array::Contiguous: {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
+                if (calleeMayBeCrossRealm(variant, globalObject))
+                    return CallOptimizationResult::DidNothing;
                 if (globalObject->arraySpeciesWatchpointSet().state() != IsWatched
                     || !globalObject->havingABadTimeWatchpointSet().isStillValid()
                     || globalObject->arrayPrototypeChainIsSaneWatchpointSet().state() != IsWatched
@@ -3509,11 +3520,11 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             insertChecks();
             Node* thisNode = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
-            addToGraph(Check, Edge(thisNode, StringUse));
 
             unsigned numArguments = argumentCountIncludingThis - 1;
 
             if (!numArguments) {
+                addToGraph(Check, Edge(thisNode, StringUse));
                 setResult(addToGraph(ToString, thisNode));
                 return CallOptimizationResult::Inlined;
             }
@@ -3526,19 +3537,17 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             for (unsigned i = 0; i < numArguments; ++i) {
                 if (indexInOperands == maxStrCatArguments) {
-                    operands[0] = addToGraph(StrCat, operands[0], operands[1], operands[2]);
+                    operands[0] = addToGraph(StrCat, OpInfo(StringPrototypeConcatIntrinsic), operands[0], operands[1], operands[2]);
                     for (unsigned j = 1; j < AdjacencyList::Size; ++j)
                         operands[j] = nullptr;
                     indexInOperands = 1;
                 }
                 ASSERT(indexInOperands < AdjacencyList::Size);
                 ASSERT(indexInOperands < maxStrCatArguments);
-                Node* arg = get(virtualRegisterForArgumentIncludingThis(i + 1, registerOffset));
-                addToGraph(Check, Edge(arg, StringUse));
-                operands[indexInOperands++] = arg;
+                operands[indexInOperands++] = get(virtualRegisterForArgumentIncludingThis(i + 1, registerOffset));
             }
 
-            setResult(addToGraph(StrCat, operands[0], operands[1], operands[2]));
+            setResult(addToGraph(StrCat, OpInfo(StringPrototypeConcatIntrinsic), operands[0], operands[1], operands[2]));
             return CallOptimizationResult::Inlined;
         }
 
@@ -3647,10 +3656,13 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+            if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
+                return CallOptimizationResult::DidNothing;
+
             Structure* regExpStructure = globalObject->regExpStructure();
             m_graph.registerStructure(regExpStructure);
             ASSERT(regExpStructure->storedPrototype().isObject());
@@ -3677,13 +3689,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             Node* regExpObject = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             addToGraph(Check, Edge(regExpObject, RegExpObjectUse));
 
-            // Check that regExpObject's exec is actually the primordial RegExp.prototype.exec.
-            UniquedStringImpl* execPropertyID = m_vm->propertyNames->exec.impl();
-            m_graph.identifiers().ensure(execPropertyID);
-            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(execPropertyID), CacheType::GetByIdPrototype });
-            Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(regExpObject, CellUse));
-            FrozenValue* regExpPrototypeExec = m_graph.freeze(globalObject->regExpProtoExecFunction());
-            addToGraph(CheckIsConstant, OpInfo(regExpPrototypeExec), Edge(actualProperty, CellUse));
             Node* regExpExec = addToGraph(RegExpTest, OpInfo(0), OpInfo(prediction), addToGraph(GetGlobalObject, callee), regExpObject, get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
             setResult(regExpExec);
 
@@ -3737,13 +3742,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             Node* regExpObject = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             addToGraph(Check, Edge(regExpObject, RegExpObjectUse));
 
-            // Check that regExpObject's exec is actually the primodial RegExp.prototype.exec.
-            UniquedStringImpl* execPropertyID = m_vm->propertyNames->exec.impl();
-            m_graph.identifiers().ensure(execPropertyID);
-            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(execPropertyID), CacheType::GetByIdPrototype });
-            Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(regExpObject, CellUse));
-            FrozenValue* regExpPrototypeExec = m_graph.freeze(globalObject->regExpProtoExecFunction());
-            addToGraph(CheckIsConstant, OpInfo(regExpPrototypeExec), Edge(actualProperty, CellUse));
             Node* regExpExec = addToGraph(RegExpSearch, OpInfo(0), OpInfo(prediction), addToGraph(GetGlobalObject, callee), regExpObject, get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
             setResult(regExpExec);
             
@@ -3796,14 +3794,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             // Check that the regex is actually a RegExp object.
             Node* regExpObject = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             addToGraph(Check, Edge(regExpObject, RegExpObjectUse));
-
-            // Check that the regex's exec is actually the primordial RegExp.prototype.exec.
-            UniquedStringImpl* execPropertyID = m_vm->propertyNames->exec.impl();
-            m_graph.identifiers().ensure(execPropertyID);
-            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(execPropertyID), CacheType::GetByIdPrototype });
-            Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(regExpObject, CellUse));
-            FrozenValue* regExpPrototypeExec = m_graph.freeze(globalObject->regExpProtoExecFunction());
-            addToGraph(CheckIsConstant, OpInfo(regExpPrototypeExec), Edge(actualProperty, CellUse));
 
             Node* regExpMatch = addToGraph(RegExpMatchFast, OpInfo(0), OpInfo(prediction), addToGraph(GetGlobalObject, callee), regExpObject, get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
             setResult(regExpMatch);
@@ -3862,14 +3852,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             Node* regExpObject = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             addToGraph(Check, Edge(regExpObject, RegExpObjectUse));
 
-            // Check that the regex's exec is actually the primordial RegExp.prototype.exec.
-            UniquedStringImpl* execPropertyID = m_vm->propertyNames->exec.impl();
-            m_graph.identifiers().ensure(execPropertyID);
-            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(execPropertyID), CacheType::GetByIdPrototype });
-            Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(regExpObject, CellUse));
-            FrozenValue* regExpPrototypeExec = m_graph.freeze(globalObject->regExpProtoExecFunction());
-            addToGraph(CheckIsConstant, OpInfo(regExpPrototypeExec), Edge(actualProperty, CellUse));
-
             Node* string = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
             Node* limit = argumentCountIncludingThis >= 3
                 ? get(virtualRegisterForArgumentIncludingThis(2, registerOffset))
@@ -3894,6 +3876,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             Structure* iteratorResultStructure = globalObject->iteratorResultObjectStructureConcurrently();
             if (!iteratorResultStructure)
                 return CallOptimizationResult::DidNothing;
@@ -3965,6 +3950,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
+                return CallOptimizationResult::DidNothing;
+
             insertChecks();
             setResult(addToGraph(ObjectKeys, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
             return CallOptimizationResult::Inlined;
@@ -3974,6 +3962,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
+                return CallOptimizationResult::DidNothing;
+
             insertChecks();
             setResult(addToGraph(ObjectGetOwnPropertyNames, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
             return CallOptimizationResult::Inlined;
@@ -3981,6 +3972,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case ObjectGetOwnPropertySymbolsIntrinsic: {
             if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -4317,6 +4311,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
+                return CallOptimizationResult::DidNothing;
+
             insertChecks();
 
             IterationKind kind = IterationKind::Values;
@@ -4379,12 +4376,14 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
+            JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             insertChecks();
 
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             addToGraph(Check, Edge(base, StringUse));
-
-            JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
             Node* iterator = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->stringIteratorStructure())));
             addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSStringIterator::Field::Index)), iterator, jsConstant(jsNumber(0)));
             addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSStringIterator::Field::IteratedString)), iterator, base);
@@ -4401,6 +4400,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             // The structure is created lazily, but profiling already ran next(), so it exists by
             // the time this call site is hot. Bail if it does not exist for some reason.
             Structure* iteratorResultStructure = globalObject->iteratorResultObjectStructureConcurrently();
@@ -4492,6 +4494,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             Structure* iteratorResultStructure = globalObject->iteratorResultObjectStructureConcurrently();
             if (!iteratorResultStructure)
                 return CallOptimizationResult::DidNothing;
@@ -5146,6 +5151,19 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+        case StringPrototypeTrimIntrinsic:
+        case StringPrototypeTrimStartIntrinsic:
+        case StringPrototypeTrimEndIntrinsic: {
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* thisString = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            Node* resultNode = addToGraph(StringTrim, OpInfo(intrinsic), thisString);
+            setResult(resultNode);
+            return CallOptimizationResult::Inlined;
+        }
+
         case NumberPrototypeToStringIntrinsic: {
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
@@ -5597,7 +5615,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
 
-            if (!globalObject->promiseThenWatchpointSet().isStillValid())
+            if (!m_graph.isWatchingPromiseThenWatchpoint(currentCodeOrigin()))
                 return CallOptimizationResult::DidNothing;
 
             Structure* promiseStructure = globalObject->promiseStructure();
@@ -5623,13 +5641,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             Node* promise = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             addToGraph(Check, Edge(promise, PromiseObjectUse));
 
-            UniquedStringImpl* thenPropertyID = m_vm->propertyNames->then.impl();
-            m_graph.identifiers().ensure(thenPropertyID);
-            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(thenPropertyID), CacheType::GetByIdPrototype });
-            Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(promise, CellUse));
-
-            FrozenValue* promiseProtoThen = m_graph.freeze(globalObject->promiseProtoThenFunction());
-            addToGraph(CheckIsConstant, OpInfo(promiseProtoThen), Edge(actualProperty, CellUse));
+            addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(promiseStructure)), promise);
 
             Node* onFulfilled = addToGraph(JSConstant, OpInfo(m_constantUndefined));
 
@@ -6997,30 +7009,28 @@ void ByteCodeParser::handleGetById(
         getById = getByStatus.makesCalls() ? GetByIdDirectFlush : GetByIdDirect;
     auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, getByStatus.preferredCacheType() });
 
-    if (getById != TryGetById) {
-        if (getByStatus.isModuleNamespace()) {
-            if (handleModuleNamespaceLoad(destination, prediction, base, getByStatus)) {
-                if (m_graph.compilation()) [[unlikely]]
-                    m_graph.compilation()->noticeInlinedGetById();
-                return;
-            }
+    if (getByStatus.isModuleNamespace()) {
+        if (handleModuleNamespaceLoad(destination, prediction, base, getByStatus)) {
+            if (m_graph.compilation()) [[unlikely]]
+                m_graph.compilation()->noticeInlinedGetById();
+            return;
         }
-        if (getByStatus.isProxyObject()) {
-            if (handleProxyObjectLoad(destination, prediction, base, getByStatus, osrExitIndex)) {
-                if (m_graph.compilation()) [[unlikely]]
-                    m_graph.compilation()->noticeInlinedGetById();
-                return;
-            }
-        }
-#if USE(JSVALUE64)
-        if (type == AccessType::GetById) {
-            if (getByStatus.isMegamorphic() && canUseMegamorphicGetById(*m_vm, identifier.uid())) {
-                set(destination, addToGraph(GetByIdMegamorphic, OpInfo(data), OpInfo(prediction), base));
-                return;
-            }
-        }
-#endif
     }
+    if (getByStatus.isProxyObject()) {
+        if (handleProxyObjectLoad(destination, prediction, base, getByStatus, osrExitIndex)) {
+            if (m_graph.compilation()) [[unlikely]]
+                m_graph.compilation()->noticeInlinedGetById();
+            return;
+        }
+    }
+#if USE(JSVALUE64)
+    if (type == AccessType::GetById) {
+        if (getByStatus.isMegamorphic() && canUseMegamorphicGetById(*m_vm, identifier.uid())) {
+            set(destination, addToGraph(GetByIdMegamorphic, OpInfo(data), OpInfo(prediction), base));
+            return;
+        }
+    }
+#endif
 
     // Special path for custom accessors since custom's offset does not have any meaning.
     // So, this is completely different from Simple one. But we have a chance to optimize it when we use DOMJIT.

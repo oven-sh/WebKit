@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSDollarVM.h"
 
+#include "AccessCase.h"
 #include "ArrayPrototype.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
@@ -54,10 +55,13 @@
 #include "JSString.h"
 #include "LinkBuffer.h"
 #include "NativeCallee.h"
+#include "ObjectPropertyCondition.h"
 #include "OperationResult.h"
 #include "Options.h"
 #include "Parser.h"
 #include "ProbeContext.h"
+#include "PropertyInlineCacheClearingWatchpoint.h"
+#include "Scribble.h"
 #include "ShadowChicken.h"
 #include "Snippet.h"
 #include "SnippetParams.h"
@@ -79,6 +83,7 @@
 #include <wtf/ProcessID.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/TimeZone.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
@@ -123,6 +128,8 @@ public:
     { }
 
     void updateVMStackLimits() { return m_vm.updateStackLimits(); };
+
+    static void setOwnerIsDead(GCAwareJITStubRoutine& stub) { stub.m_ownerIsDead = true; }
 
     VM& m_vm;
 };
@@ -2205,6 +2212,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateCustomTestGetterSetter);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateCustomTestGetterSetterWithSharedStructure);
+static JSC_DECLARE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionDeltaBetweenButterflies);
 static JSC_DECLARE_HOST_FUNCTION(functionCurrentCPUTime);
 static JSC_DECLARE_HOST_FUNCTION(functionTotalGCTime);
@@ -2221,6 +2230,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionSetUserPreferredLanguages);
 static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
+static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
 static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
@@ -3853,6 +3863,81 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateCustomTestGetterSetter, (JSGlobalObject* 
     return JSValue::encode(JSTestCustomGetterSetter::create(vm, globalObject, JSTestCustomGetterSetter::createStructure(vm, globalObject)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionCreateCustomTestGetterSetterWithSharedStructure, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
+    RELEASE_ASSERT(dollarVM);
+    return JSValue::encode(JSTestCustomGetterSetter::create(vm, globalObject, dollarVM->testCustomGetterSetterStructure()));
+}
+
+// Usage: $vm.installPropertyInlineCacheClearingWatchpointWithDeadOwner(proto, "propertyName") Creates a
+//
+// PolymorphicAccessJITStubRoutine with an AdaptiveValuePropertyInlineCacheClearingWatchpoint installed on
+// proto's Structure for the given Equivalence property condition, then simulates the dead-owner
+// state.
+JSC_DEFINE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+#if ENABLE(JIT)
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+
+    JSObject* proto = dynamicDowncast<JSObject>(callFrame->argument(0));
+    RELEASE_ASSERT(proto);
+    JSString* propNameStr = dynamicDowncast<JSString>(callFrame->argument(1));
+    RELEASE_ASSERT(propNameStr);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto propertyName = propNameStr->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    Structure* structure = proto->structure();
+    PropertyOffset offset = structure->get(vm, propertyName);
+    RELEASE_ASSERT(isValidOffset(offset));
+    JSValue value = proto->getDirect(offset);
+    RELEASE_ASSERT(value.isCell() && value.asCell()->type() == CustomGetterSetterType);
+
+    // Create Equivalence ObjectPropertyCondition: "property on proto equals value".
+    ObjectPropertyCondition condition = ObjectPropertyCondition::equivalence(
+        vm, proto, proto, propertyName.impl(), value);
+    RELEASE_ASSERT(condition);
+    RELEASE_ASSERT(condition.kind() == PropertyCondition::Equivalence);
+
+    // Create a PolymorphicAccessJITStubRoutine.
+    // Use isCodeImmutable=true so JITStubRoutineSet::add doesn't read the (empty) code address.
+    MacroAssemblerCodeRef<JITStubRoutinePtrTag> emptyCode;
+    Ref<PolymorphicAccessJITStubRoutine> stub = adoptRef(*new PolymorphicAccessJITStubRoutine(
+        JITStubRoutine::Type::PolymorphicAccessJITStubRoutineType, emptyCode, vm,
+        FixedVector<Ref<AccessCase>> { }, FixedVector<StructureID> { }, proto, true));
+    stub->makeGCAware(vm);
+
+    // Install the AdaptiveValuePropertyInlineCacheClearingWatchpoint on proto's Structure.
+    // Must start watching property replacements first (as the IC does).
+    structure->startWatchingPropertyForReplacements(vm, offset);
+    auto& watchpointVariant = *stub->watchpoints().add(
+        WTF::InPlaceType<AdaptiveValuePropertyInlineCacheClearingWatchpoint>,
+        stub.ptr(), condition, stub->watchpointSet());
+    auto& adaptiveWp = std::get<AdaptiveValuePropertyInlineCacheClearingWatchpoint>(watchpointVariant);
+    adaptiveWp.install(vm);
+
+    // Store the stub on $vm and set the owner as dead, simulating the window
+    // between GC marking-end and CodeBlock sweep.
+    JSDollarVMHelper::setOwnerIsDead(stub.get());
+    auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
+    RELEASE_ASSERT(dollarVM);
+    dollarVM->m_testStubRoutine = WTF::move(stub);
+
+    // Scribble proto's cell header to simulate a swept dead cell.
+    scribble(proto, sizeof(JSCell));
+
+    return JSValue::encode(jsUndefined());
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsUndefined());
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionDeltaBetweenButterflies, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4040,6 +4125,21 @@ JSC_DEFINE_HOST_FUNCTION(functionICUHeaderVersion, (JSGlobalObject*, CallFrame*)
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(U_ICU_VERSION_MAJOR_NUM));
+}
+
+// Usage: $vm.setHostTimeZone("Asia/Tokyo")
+// Overrides the host time zone process-wide and invalidates dependent caches.
+// Returns false (changing nothing) for an invalid identifier.
+JSC_DEFINE_HOST_FUNCTION(functionSetHostTimeZone, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String tz { callFrame->argument(0).toWTFString(globalObject) };
+    RETURN_IF_EXCEPTION(scope, { });
+
+    return JSValue::encode(jsBoolean(WTF::setHostTimeZoneForTesting(tz)));
 }
 
 // Returns true if Debug ASSERTs are enabled.
@@ -4541,6 +4641,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);
     addFunction(vm, allowIfNotFuzz, "loadGetterFromGetterSetter"_s, functionLoadGetterFromGetterSetter, 1);
     addFunction(vm, alwaysAllow, "createCustomTestGetterSetter"_s, functionCreateCustomTestGetterSetter, 1);
+    addFunction(vm, allowIfNotFuzz, "createCustomTestGetterSetterWithSharedStructure"_s, functionCreateCustomTestGetterSetterWithSharedStructure, 0);
+    addFunction(vm, allowIfNotFuzz, "installPropertyInlineCacheClearingWatchpointWithDeadOwner"_s, functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner, 2);
 
     addFunction(vm, allowIfNotFuzz, "deltaBetweenButterflies"_s, functionDeltaBetweenButterflies, 2);
     
@@ -4564,6 +4666,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "icuVersion"_s, functionICUVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuMinorVersion"_s, functionICUMinorVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuHeaderVersion"_s, functionICUHeaderVersion, 0);
+    addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
 
     addFunction(vm, alwaysAllow, "assertEnabled"_s, functionAssertEnabled, 0);
     addFunction(vm, alwaysAllow, "securityAssertEnabled"_s, functionSecurityAssertEnabled, 0);
@@ -4610,8 +4713,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "dumpLineBreakData"_s, functionDumpLineBreakData, 0);
     addFunction(vm, alwaysAllow, "weakCreate"_s, functionWeakCreate, 0);
 
-    if (allowIfNotFuzz)
+    if (allowIfNotFuzz) {
         m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID.set(vm, this, ObjectDoingSideEffectPutWithoutCorrectSlotStatus::createStructure(vm, globalObject, jsNull()));
+        m_testCustomGetterSetterStructureID.set(vm, this, JSTestCustomGetterSetter::createStructure(vm, globalObject));
+    }
 }
 
 void JSDollarVM::addFunction(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction function, unsigned arguments)
@@ -4639,6 +4744,7 @@ void JSDollarVM::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSDollarVM* thisObject = uncheckedDowncast<JSDollarVM>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID);
+    visitor.append(thisObject->m_testCustomGetterSetterStructureID);
 }
 
 Structure* JSDollarVM::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

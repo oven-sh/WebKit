@@ -80,6 +80,7 @@ static ExceptionOr<IntersectionObserverMarginBox> parseMargin(String& margin, co
     auto parserContext = CSSParserContext { HTMLStandardMode };
     auto parserState = CSS::PropertyParserState {
         .context = parserContext,
+        .absoluteLengthUnitsOnly = true
     };
 
     CSSTokenizer tokenizer(margin);
@@ -90,30 +91,15 @@ static ExceptionOr<IntersectionObserverMarginBox> parseMargin(String& margin, co
         return IntersectionObserverMarginBox { IntersectionObserverMarginEdge::Dimension { 0 } };
 
     auto consumeEdge = [&] -> ExceptionOr<IntersectionObserverMarginEdge> {
-        auto parsedValue = MetaConsumer<CSS::LengthPercentage<CSS::All, float>>::consume(tokenRange, parserState);
+        auto parsedValue = MetaConsumer<CSS::LengthPercentageRaw<CSS::All, float>>::consume(tokenRange, parserState);
 
-        if (!parsedValue || parsedValue->isCalc())
-            return Exception { ExceptionCode::SyntaxError, makeString("Failed to construct 'IntersectionObserver': "_s, marginName, " must be specified in pixels or percent."_s) };
+        if (!parsedValue)
+            return Exception { ExceptionCode::SyntaxError, makeString("Failed to construct 'IntersectionObserver': "_s, marginName, " must be specified as an absolute length or a percentage."_s) };
 
-        auto raw = parsedValue->raw();
-        return CSS::switchOnUnitType(raw->unit,
-            [&](CSS::PercentageUnit) -> ExceptionOr<IntersectionObserverMarginEdge> {
-                return { IntersectionObserverMarginEdge::Percentage {
-                    Style::toStyle(CSS::PercentageRaw<CSS::All, float> { raw->value }, NoConversionDataRequiredToken { }).value
-                } };
-            },
-            [&](CSS::LengthUnit lengthUnit) -> ExceptionOr<IntersectionObserverMarginEdge> {
-                // FIXME: This should support all absolute length units, not just px.
-                // Spec states: "Similar to the CSS margin property, this is a string of 1-4 components, each either an *absolute length* or a percentage."
-                // https://w3c.github.io/IntersectionObserver/#dom-intersectionobserverinit-rootmargin
-                if (lengthUnit == CSS::LengthUnit::Px) {
-                    return { IntersectionObserverMarginEdge::Dimension {
-                        Style::toStyle(CSS::LengthRaw<CSS::All, float> { lengthUnit, raw->value }, NoConversionDataRequiredToken { }).unresolvedValue()
-                    } };
-                }
-                return Exception { ExceptionCode::SyntaxError, makeString("Failed to construct 'IntersectionObserver': "_s, marginName, " must be specified in pixels or percent."_s) };
-            }
-        );
+        // Due to setting the parser state's `absoluteLengthUnitsOnly` to true, no units requiring conversion data should be present.
+        ASSERT(!conversionToCanonicalUnitRequiresConversionData(parsedValue->unit));
+
+        return Style::toStyle(*parsedValue, NoConversionDataRequiredToken { });
     };
 
     auto edge1 = consumeEdge();
@@ -386,25 +372,6 @@ static void expandRootBoundsWithRootMargin(FloatRect& rootBounds, const Intersec
 // originates the very first rect)
 static std::optional<LayoutRect> computeClippedRectInRootContentsSpace(const LayoutRect& rect, const SecurityOrigin& targetSecurityOrigin, Variant<const RenderElement*, const Frame*> rendererOrFrame, std::optional<IntersectionObserverMarginBox> scrollMargin)
 {
-    RefPtr rendererOrFrameSecurityOrigin = WTF::visit(WTF::makeVisitor(
-        [&] (const RenderElement* renderer) { return Ref<const Frame>(renderer->frame())->frameDocumentSecurityOrigin(); },
-        [&] (const Frame* frame) { return frame->frameDocumentSecurityOrigin(); }
-    ), rendererOrFrame);
-
-    // targetSecurityOrigin is the security origin of the target (the element that originates the very first rect)
-    // Scroll margin should not propagate past the first cross-origin frame in the chain leading to the main frame.
-    // e.g given the chain: main frame <- cross-origin frame <- same-origin frame 2 <- same-origin frame 1 <- target
-    // then scroll margin is applied to same-origin frame 1/2 but not to cross-origin and main frames.
-    // Hence, clear out the scroll margin when we see a cross-origin frame.
-    bool isSameOriginDomain = [&] () {
-        if (rendererOrFrameSecurityOrigin)
-            return rendererOrFrameSecurityOrigin->isSameOriginDomain(targetSecurityOrigin);
-
-        return false;
-    }();
-    if (!isSameOriginDomain)
-        scrollMargin.reset();
-
     RefPtr<const Frame> enclosingFrame = WTF::visit(WTF::makeVisitor(
         [&] (const RenderElement* renderer) { return static_cast<const Frame*>(&renderer->frame()); },
         [&] (const Frame* frame) { return static_cast<const Frame*>(frame->tree().parent()); }
@@ -417,6 +384,19 @@ static std::optional<LayoutRect> computeClippedRectInRootContentsSpace(const Lay
     ASSERT(enclosingFrameView);
     if (!enclosingFrameView)
         return std::nullopt;
+
+    // Scroll margin should not propagate past the first cross-origin frame in the chain leading to the main frame.
+    // e.g given the chain: main <- cross-origin <- same-origin 2 <- same-origin 1 <- target
+    // then scroll margin is applied to same-origin frame 1/2 but not to cross-origin and main frames.
+    // Hence, clear out the scroll margin when we see a cross-origin frame.
+    bool isSameOriginDomain = [&] () {
+        if (RefPtr enclosingFrameSecurityOrigin = enclosingFrame->frameDocumentSecurityOrigin())
+            return enclosingFrameSecurityOrigin->isSameOriginDomain(targetSecurityOrigin);
+
+        return false;
+    }();
+    if (!isSameOriginDomain)
+        scrollMargin.reset();
 
     auto absoluteClippedRect = WTF::visit(WTF::makeVisitor(
         [&] (const RenderElement* renderer) {

@@ -1076,10 +1076,10 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, const Fun
             MarkedArgumentBuffer values;
             if constexpr (mode == JSObject::SortMode::Default) {
                 Vector<unsigned, 8> properties;
-                for (auto& [key, value] : *map) {
-                    if (!(value.attributes() & PropertyAttribute::DontEnum)) {
-                        properties.append(key);
-                        values.appendWithCrashOnOverflow(value.get());
+                for (auto& entry : *map) {
+                    if (!(entry.attributes() & PropertyAttribute::DontEnum)) {
+                        properties.append(entry.index());
+                        values.appendWithCrashOnOverflow(entry.get());
                     }
                 }
 
@@ -1090,10 +1090,10 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, const Fun
             } else {
                 Vector<std::tuple<unsigned, unsigned>, 8> propertyAndValueIndexTuples;
                 unsigned valueIndex = 0;
-                for (auto& [key, value] : *map) {
-                    if (!(value.attributes() & PropertyAttribute::DontEnum)) {
-                        propertyAndValueIndexTuples.append({ key, valueIndex++ });
-                        values.appendWithCrashOnOverflow(value.get());
+                for (auto& entry : *map) {
+                    if (!(entry.attributes() & PropertyAttribute::DontEnum)) {
+                        propertyAndValueIndexTuples.append({ entry.index(), valueIndex++ });
+                        values.appendWithCrashOnOverflow(entry.get());
                     }
                 }
 

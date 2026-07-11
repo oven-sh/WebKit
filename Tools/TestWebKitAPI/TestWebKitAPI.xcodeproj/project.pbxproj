@@ -16,6 +16,15 @@
 			name = "Derived Sources";
 			productName = "Derived Sources";
 		};
+		07A11A5702F9C0FE00000001 /* Testing.framework Overlays */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 07A11A5702F9C0FE00000002 /* Build configuration list for PBXAggregateTarget "Testing.framework Overlays" */;
+			buildPhases = (
+				0777713A2F887DCE00A1C903 /* Embed Testing.framework */,
+			);
+			name = "Testing.framework Overlays";
+			productName = "Testing.framework Overlays";
+		};
 		537CF84322EFD64100C6EBB3 /* Apply Configuration to XCFileLists */ = {
 			isa = PBXAggregateTarget;
 			buildConfigurationList = 537CF84622EFD64100C6EBB3 /* Build configuration list for PBXAggregateTarget "Apply Configuration to XCFileLists" */;
@@ -175,6 +184,7 @@
 				"",
 				"",
 				"",
+				"",
 			);
 		};
 /* End PBXBuildRule section */
@@ -221,6 +231,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = 0723A7492F80357300CB96E7;
 			remoteInfo = "Derived Sources";
+		};
+		07A11A5702F9C0FE00000005 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 08FB7793FE84155DC02AAC07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 07A11A5702F9C0FE00000001;
+			remoteInfo = "Testing.framework Overlays";
+		};
+		07A11A5702F9C0FE00000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 08FB7793FE84155DC02AAC07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 07A11A5702F9C0FE00000001;
+			remoteInfo = "Testing.framework Overlays";
 		};
 		3A5DDAFB28D3F2A7004DA950 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -534,10 +558,12 @@
 				"WebKit/WebPage/AppKit Gesture Tests/EmbeddedAppKitGesturesTests.swift",
 				WebKit/WebPage/EditingFontSizeTests.swift,
 				WebKit/WebPage/JavaScriptExpressionTests.swift,
+				WebKit/WebPage/JSHandleTests.swift,
 				WebKit/WebPage/NavigatorWebDriverOverride.swift,
 				WebKit/WebPage/SendInspectorMessage.swift,
 				WebKit/WebPage/SimulateClickOverTextTests.swift,
 				WebKit/WebPage/URLSchemeHandlerTests.swift,
+				WebKit/WebPage/UserContentControllerTests.swift,
 				WebKit/WebPage/WebPageMouseEventsTests.swift,
 				WebKit/WebPage/WebPageNavigationTests.swift,
 				WebKit/WebPage/WebPageTests.swift,
@@ -665,6 +691,7 @@
 				WebCore/ApplicationManifestParser.cpp,
 				WebCore/ASN1Utilities.cpp,
 				WebCore/AudioSampleFormat.cpp,
+				WebCore/CachedMatchFinder.cpp,
 				WebCore/CARingBufferTest.cpp,
 				WebCore/CBORReaderTest.cpp,
 				WebCore/CBORValueTest.cpp,
@@ -681,6 +708,7 @@
 				WebCore/cocoa/H264UtilitiesCocoaTests.mm,
 				WebCore/cocoa/ImageRotationSessionVT.cpp,
 				WebCore/cocoa/IOSurfaceTests.mm,
+				WebCore/cocoa/ISOBMFFTrackInfoParserTests.cpp,
 				WebCore/cocoa/MediaPlayerPrivateAVFoundationObjCTests.mm,
 				WebCore/cocoa/PrivateClickMeasurementCocoa.mm,
 				WebCore/cocoa/ResourceMonitor.mm,
@@ -762,7 +790,6 @@
 				WebCore/RegionTests.cpp,
 				WebCore/RegistrableDomain.cpp,
 				WebCore/RenderStyleChange.cpp,
-				WebCore/RTCRtpSFrameTransformerTests.cpp,
 				WebCore/SampleMap.cpp,
 				WebCore/SecurityOrigin.cpp,
 				WebCore/SerializedScriptValue.cpp,
@@ -778,8 +805,10 @@
 				WebCore/STUNMessageParsingTest.cpp,
 				WebCore/StyleGradient.cpp,
 				WebCore/SVGImageCasts.cpp,
+				WebCore/TestPlatformStrategies.cpp,
 				WebCore/TextBoundaries.cpp,
 				WebCore/TextCodec.cpp,
+				WebCore/TextIterator.cpp,
 				WebCore/TimeRanges.cpp,
 				WebCore/TransformationMatrix.cpp,
 				WebCore/U2fCommandConstructorTest.cpp,
@@ -1050,6 +1079,7 @@
 				WebKit/WKWebView/mac/WKWebViewMacEditingTests.mm,
 				WebKit/WKWebView/mac/WKWebViewTitlebarSeparatorTests.mm,
 				WebKit/WKWebView/mac/WordBoundaryTypingAttributes.mm,
+				WebKit/WKWebView/MediaStreamingActivitySuspended.mm,
 				WebKit/WKWebView/MediaStreamTrackDetached.mm,
 				WebKit/WKWebView/MSEIsTypeSupportedCaching.mm,
 				WebKit/WKWebView/NoHistoryItemScrollToFragment.mm,
@@ -1304,10 +1334,12 @@
 				"WebKit/WebPage/AppKit Gesture Tests/EmbeddedAppKitGesturesTests.swift",
 				WebKit/WebPage/EditingFontSizeTests.swift,
 				WebKit/WebPage/JavaScriptExpressionTests.swift,
+				WebKit/WebPage/JSHandleTests.swift,
 				WebKit/WebPage/NavigatorWebDriverOverride.swift,
 				WebKit/WebPage/SendInspectorMessage.swift,
 				WebKit/WebPage/SimulateClickOverTextTests.swift,
 				WebKit/WebPage/URLSchemeHandlerTests.swift,
+				WebKit/WebPage/UserContentControllerTests.swift,
 				WebKit/WebPage/WebPageMouseEventsTests.swift,
 				WebKit/WebPage/WebPageNavigationTests.swift,
 				WebKit/WebPage/WebPageTests.swift,
@@ -2008,7 +2040,6 @@
 			buildConfigurationList = 1DEB927408733DD40010E9CD /* Build configuration list for PBXNativeTarget "TestWebKitAPI" */;
 			buildPhases = (
 				A1508C552DAF1F8000C3E213 /* Process Entitlements */,
-				0777713A2F887DCE00A1C903 /* Embed Testing.framework */,
 				8DD76F990486AA7600D96B5E /* Sources */,
 				8DD76F9B0486AA7600D96B5E /* Frameworks */,
 			);
@@ -2016,6 +2047,7 @@
 			);
 			dependencies = (
 				0723A75B2F8035A300CB96E7 /* PBXTargetDependency */,
+				07A11A5702F9C0FE00000007 /* PBXTargetDependency */,
 				BC575A96126E74E7006F0F12 /* PBXTargetDependency */,
 				7CCE7F511A4124DB00447C4C /* PBXTargetDependency */,
 				A17C48562C98EBF50023F3C7 /* PBXTargetDependency */,
@@ -2096,6 +2128,7 @@
 			);
 			dependencies = (
 				A18898FE2CA9F70B00FEB09A /* PBXTargetDependency */,
+				07A11A5702F9C0FE00000008 /* PBXTargetDependency */,
 			);
 			name = TestWebKitAPIBundle;
 			productName = TestBundle;
@@ -2187,6 +2220,7 @@
 			targets = (
 				7C83E02B1D0A5E1000FEBCF3 /* All */,
 				0723A7492F80357300CB96E7 /* Derived Sources */,
+				07A11A5702F9C0FE00000001 /* Testing.framework Overlays */,
 				5C9D921422D7DA02008E9266 /* Generate Unified Sources */,
 				7CCE7E8B1A41144E00447C4C /* TestWebKitAPILibrary */,
 				7C83DE951D0A590C00FEBCF3 /* TestWTFLibrary */,
@@ -2503,6 +2537,16 @@
 			target = 0723A7492F80357300CB96E7 /* Derived Sources */;
 			targetProxy = 0723A75E2F8035B400CB96E7 /* PBXContainerItemProxy */;
 		};
+		07A11A5702F9C0FE00000007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 07A11A5702F9C0FE00000001 /* Testing.framework Overlays */;
+			targetProxy = 07A11A5702F9C0FE00000005 /* PBXContainerItemProxy */;
+		};
+		07A11A5702F9C0FE00000008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 07A11A5702F9C0FE00000001 /* Testing.framework Overlays */;
+			targetProxy = 07A11A5702F9C0FE00000006 /* PBXContainerItemProxy */;
+		};
 		3A5DDAFC28D3F2A7004DA950 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 3A15783C28D1505B00142DB1 /* TestWGSL */;
@@ -2580,6 +2624,22 @@
 			name = Debug;
 		};
 		0723A74B2F80357300CB96E7 /* Release configuration for PBXAggregateTarget "Derived Sources" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		07A11A5702F9C0FE00000003 /* Debug configuration for PBXAggregateTarget "Testing.framework Overlays" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		07A11A5702F9C0FE00000004 /* Release configuration for PBXAggregateTarget "Testing.framework Overlays" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -2839,6 +2899,14 @@
 			buildConfigurations = (
 				0723A74A2F80357300CB96E7 /* Debug configuration for PBXAggregateTarget "Derived Sources" */,
 				0723A74B2F80357300CB96E7 /* Release configuration for PBXAggregateTarget "Derived Sources" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		07A11A5702F9C0FE00000002 /* Build configuration list for PBXAggregateTarget "Testing.framework Overlays" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07A11A5702F9C0FE00000003 /* Debug configuration for PBXAggregateTarget "Testing.framework Overlays" */,
+				07A11A5702F9C0FE00000004 /* Release configuration for PBXAggregateTarget "Testing.framework Overlays" */,
 			);
 			defaultConfigurationName = Release;
 		};

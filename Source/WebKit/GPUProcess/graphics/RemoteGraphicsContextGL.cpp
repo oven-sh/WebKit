@@ -131,13 +131,10 @@ void RemoteGraphicsContextGL::workQueueInitialize(WebCore::GraphicsContextGLAttr
         auto contextAttributes = context->contextAttributes();
         auto knownActiveExtensions = context->knownActiveExtensions();
         auto requestableExtensions = context->requestableExtensions();
-        auto [externalImageTarget, externalImageBindingQuery] = context->externalImageTextureBindingPoint();
         RemoteGraphicsContextGLInitializationState initializationState {
             .attributes = context->contextAttributes(),
             .knownActiveExtensions = knownActiveExtensions.toRaw(),
             .requestableExtensions = requestableExtensions.toRaw(),
-            .externalImageTarget = externalImageTarget,
-            .externalImageBindingQuery = externalImageBindingQuery,
             .maxCombinedTextureImageUnits = context->maxCombinedTextureImageUnits(),
             .maxVertexAttribs = context->maxVertexAttribs(),
             .maxTextureSize = context->maxTextureSize(),

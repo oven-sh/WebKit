@@ -47,7 +47,6 @@
 #include "StyleListStyleType.h"
 #include "StyleScope.h"
 #include "TextUtil.h"
-#include <wtf/Assertions.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -56,25 +55,6 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderListMarker);
-
-// This is temporary and will be removed when subpixel inline layout is enabled.
-enum class SnapDirection : uint8_t { Floor, Ceil, Round };
-static float snap(float value, const RenderListMarker& listMarker, SnapDirection direction = SnapDirection::Round)
-{
-    if (listMarker.settings().subpixelInlineLayoutEnabled())
-        return value;
-
-    switch (direction) {
-    case SnapDirection::Floor:
-        return floorf(value);
-    case SnapDirection::Ceil:
-        return ceilf(value);
-    case SnapDirection::Round:
-        return roundf(value);
-    }
-    ASSERT_NOT_REACHED();
-    return value;
-}
 
 RenderListMarker::RenderListMarker(RenderListItem& listItem, Style::ComputedStyle&& style)
     : RenderBox(Type::ListMarker, listItem.document(), WTF::move(style))
@@ -87,33 +67,6 @@ RenderListMarker::RenderListMarker(RenderListItem& listItem, Style::ComputedStyl
 
 // Do not add any code in below destructor. Add it to willBeDestroyed() instead.
 RenderListMarker::~RenderListMarker() = default;
-
-bool RenderListMarker::shouldPaintInAssociatedListItemLayer() const
-{
-    if (isInside())
-        return false;
-
-    auto* associatedListItem = listItem();
-    if (!associatedListItem) {
-        ASSERT_NOT_REACHED("Marker must have an associated list item");
-        return false;
-    }
-
-    for (auto* ancestor = parent(); ancestor && ancestor != associatedListItem; ancestor = ancestor->parent()) {
-        if (!ancestor->hasSelfPaintingLayer())
-            continue;
-        if (ancestor->isRenderFragmentedFlow())
-            return false;
-        return ancestor->isPositioned();
-    }
-
-    return false;
-}
-
-void RenderListMarker::paintFromAssociatedListItemLayer(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-{
-    paint(paintInfo, paintOffset);
-}
 
 void RenderListMarker::willBeDestroyed()
 {
@@ -216,7 +169,7 @@ static auto textRunForContent(ListMarkerTextContent textContent, const Style::Co
 void RenderListMarker::paintDisclosureMarker(GraphicsContext& context, const FloatRect& markerRect)
 {
     auto systemUIFontCascade = disclosureMarkerFontCascade(style(), protect(document()));
-    auto textOrigin = FloatPoint { markerRect.x(), markerRect.y() + snap(systemUIFontCascade.metricsOfPrimaryFont().ascent(), *this) };
+    auto textOrigin = FloatPoint { markerRect.x(), markerRect.y() + systemUIFontCascade.metricsOfPrimaryFont().ascent() };
     textOrigin = roundPointToDevicePixels(LayoutPoint(textOrigin), protect(document())->deviceScaleFactor(), writingMode().isLogicalLeftInlineStart());
     context.drawText(systemUIFontCascade, textRunForContent(m_textContent, style()), textOrigin);
 }
@@ -224,9 +177,6 @@ void RenderListMarker::paintDisclosureMarker(GraphicsContext& context, const Flo
 void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
     if (paintInfo.phase != PaintPhase::Foreground && paintInfo.phase != PaintPhase::Accessibility)
-        return;
-
-    if (shouldPaintInAssociatedListItemLayer() && paintInfo.enclosingSelfPaintingLayer() == enclosingLayer())
         return;
 
     if (style().usedVisibility() != Visibility::Visible)
@@ -309,7 +259,7 @@ void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffse
         return;
     }
 
-    auto textOrigin = FloatPoint { markerRect.x(), markerRect.y() + snap(style().fontCascade().metricsOfPrimaryFont().ascent(), *this) };
+    auto textOrigin = FloatPoint { markerRect.x(), markerRect.y() + style().fontCascade().metricsOfPrimaryFont().ascent() };
     textOrigin = roundPointToDevicePixels(LayoutPoint(textOrigin), protect(document())->deviceScaleFactor(), writingMode().isLogicalLeftInlineStart());
     context.drawText(style().fontCascade(), textRunForContent(m_textContent, style()), textOrigin);
 }
@@ -542,7 +492,7 @@ FloatRect RenderListMarker::relativeMarkerRect()
     FloatRect relativeRect;
     if (widthUsesMetricsOfPrimaryFont()) {
         auto& fontMetrics = style().metricsOfPrimaryFont();
-        auto ascent = snap(fontMetrics.ascent(), *this);
+        auto ascent = fontMetrics.ascent();
         auto bulletWidth = (ascent * 2 / 3 + 1) / 2;
         relativeRect = { 1, 3 * (ascent - ascent * 2 / 3) / 2, bulletWidth, bulletWidth };
     } else {
@@ -555,13 +505,13 @@ FloatRect RenderListMarker::relativeMarkerRect()
             auto& fontMetrics = style().metricsOfPrimaryFont();
             auto& systemUIFontMetrics = systemUIFontCascade.metricsOfPrimaryFont();
             auto width = systemUIFontCascade.width(textRunForContent(m_textContent, style()));
-            auto height = snap(systemUIFontMetrics.height(), *this);
+            auto height = systemUIFontMetrics.height();
             // Center vertically within the original font metrics
-            auto yOffset = (snap(fontMetrics.height(), *this) - height) / 2.0f;
+            auto yOffset = (fontMetrics.height() - height) / 2.0f;
             relativeRect = { 0.f, yOffset, width, height };
         } else {
             auto& font = style().fontCascade();
-            relativeRect = { 0.f, 0.f, font.width(textRunForContent(m_textContent, style())), snap(font.metricsOfPrimaryFont().height(), *this) };
+            relativeRect = { 0.f, 0.f, font.width(textRunForContent(m_textContent, style())), font.metricsOfPrimaryFont().height() };
         }
     }
 
@@ -598,21 +548,21 @@ std::pair<float, float> RenderListMarker::layoutBoundForTextContent(String text)
     // FIXME: This should be part of InlineBoxBuilder (webkit.org/b/294342)
     // This is essentially what we do in LineBoxBuilder::enclosingAscentDescentWithFallbackFonts.
     auto ascentAndDescent = [&] (auto& fontMetrics) {
-        auto ascent = snap(fontMetrics.ascent(), *this);
-        auto descent = snap(fontMetrics.descent(), *this);
-        auto halfLeading = (snap(fontMetrics.lineSpacing(), *this) - (ascent + descent)) / 2.f;
-        return std::pair<float, float> { snap(ascent + halfLeading, *this, SnapDirection::Floor), snap(descent + halfLeading, *this, SnapDirection::Ceil) };
+        auto ascent = fontMetrics.ascent();
+        auto descent = fontMetrics.descent();
+        auto halfLeading = (fontMetrics.lineSpacing() - (ascent + descent)) / 2.f;
+        return std::pair<float, float> { ascent + halfLeading, descent + halfLeading };
     };
     auto& style = this->style();
     auto& metricsOfPrimaryFont = style.metricsOfPrimaryFont();
-    auto primaryFontHeight = snap(metricsOfPrimaryFont.height(), *this);
+    auto primaryFontHeight = metricsOfPrimaryFont.height();
 
     if (style.lineHeight().isNormal()) {
         auto maxAscentAndDescent = ascentAndDescent(metricsOfPrimaryFont);
 
         for (Ref fallbackFont : Layout::TextUtil::fallbackFontsForText(text, style, Layout::TextUtil::IncludeHyphen::No)) {
             auto& fontMetrics = fallbackFont->fontMetrics();
-            if (primaryFontHeight >= snap(fontMetrics.height(), *this, SnapDirection::Floor)) {
+            if (primaryFontHeight >= fontMetrics.height()) {
                 // FIXME: Figure out why certain symbols (e.g. disclosure-open) would initiate fallback fonts with just slightly different (subpixel) metrics.
                 // This is mainly about preserving legacy behavior.
                 continue;
@@ -625,8 +575,8 @@ std::pair<float, float> RenderListMarker::layoutBoundForTextContent(String text)
     }
 
     auto primaryFontAscentAndDescent = ascentAndDescent(metricsOfPrimaryFont);
-    auto halfLeading = (snap(style.computedLineHeight(), *this, SnapDirection::Floor) - (primaryFontAscentAndDescent.first + primaryFontAscentAndDescent.second)) / 2.f;
-    return { snap(primaryFontAscentAndDescent.first + halfLeading, *this, SnapDirection::Floor), snap(primaryFontAscentAndDescent.second + halfLeading, *this, SnapDirection::Ceil) };
+    auto halfLeading = (style.computedLineHeight() - (primaryFontAscentAndDescent.first + primaryFontAscentAndDescent.second)) / 2.f;
+    return { primaryFontAscentAndDescent.first + halfLeading, primaryFontAscentAndDescent.second + halfLeading };
 }
 
 } // namespace WebCore

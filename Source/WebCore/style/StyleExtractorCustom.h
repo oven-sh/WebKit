@@ -2289,8 +2289,12 @@ inline Ref<CSSValue> ExtractorCustom::extractTransform(ExtractorState& state)
     if (state.style.transform().isNone() && state.style.offsetPath().isNone())
         return createCSSValue(state.pool, state.style, CSS::Keyword::None { });
 
-    if (state.renderer)
-        return CSSTransformListValue::create(createCSSValue(state.pool, state.style, TransformResolver::computeTransform(state.style, TransformOperationData(state.renderer->transformReferenceBoxRect(state.style), state.renderer), { })));
+    if (state.renderer) {
+        auto transform = TransformResolver::computeTransform(state.style, TransformOperationData(state.renderer->transformReferenceBoxRect(state.style), state.renderer), { });
+        transform.unzoom(state.style.usedZoomForLength().value);
+
+        return CSSTransformListValue::create(createCSSValue(state.pool, state.style, transform));
+    }
 
     // https://w3c.github.io/csswg-drafts/css-transforms-1/#serialization-of-the-computed-value
     // If we don't have a renderer, then the value should be "none" if we're asking for the
@@ -2309,7 +2313,10 @@ inline void ExtractorCustom::extractTransformSerialization(ExtractorState& state
     }
 
     if (state.renderer) {
-        serializationForCSS(builder, context, state.style, TransformResolver::computeTransform(state.style, TransformOperationData(state.renderer->transformReferenceBoxRect(state.style), state.renderer), { }));
+        auto transform = TransformResolver::computeTransform(state.style, TransformOperationData(state.renderer->transformReferenceBoxRect(state.style), state.renderer), { });
+        transform.unzoom(state.style.usedZoomForLength().value);
+
+        serializationForCSS(builder, context, state.style, transform);
         return;
     }
 
@@ -2527,12 +2534,12 @@ inline void ExtractorCustom::extractCaretColorSerialization(ExtractorState& stat
 
 inline RefPtr<CSSValue> ExtractorCustom::extractOutlineOffset(ExtractorState& state)
 {
-    return createCSSValue(state.pool, state.style, state.style.usedOutlineOffset());
+    return createCSSValue(state.pool, state.style, state.style.outline().outlineOffset);
 }
 
 inline void ExtractorCustom::extractOutlineOffsetSerialization(ExtractorState& state, StringBuilder& builder, const CSS::SerializationContext& context)
 {
-    serializationForCSS(builder, context, state.style, state.style.usedOutlineOffset());
+    serializationForCSS(builder, context, state.style, state.style.outline().outlineOffset);
 }
 
 // MARK: - Shorthands

@@ -163,11 +163,22 @@ void loadDoubleConstant(BasicBlock* block, double value, Tmp tmp, Tmp scratch)
     loadConstantImpl<double>(block, value, MoveDouble, tmp, scratch);
 }
 
+// Air::Inst has a fixed, non-growable argument buffer, so a Shuffle's (src, dst, width) triples must
+// be accumulated up front and passed to the constructor rather than appended to a live Inst.
+template<size_t inlineCapacity>
+void addShufflePair(Vector<Arg, inlineCapacity>& args, Arg src, Arg dst, Arg width)
+{
+    args.append(src);
+    args.append(dst);
+    args.append(width);
+}
+
 void testShuffleSimpleSwap()
 {
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -203,6 +214,7 @@ void testShuffleSimpleShift()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -240,6 +252,7 @@ void testShuffleLongShift()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -292,6 +305,7 @@ void testShuffleLongShiftBackwards()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -344,6 +358,7 @@ void testShuffleSimpleRotate()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -380,6 +395,7 @@ void testShuffleSimpleBroadcast()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -416,6 +432,7 @@ void testShuffleBroadcastAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     const Vector<Reg>& regs = code.regsInPriorityOrder(GP);
 
     BasicBlock* root = code.addBlock();
@@ -425,11 +442,12 @@ void testShuffleBroadcastAllRegs()
         if (reg != Reg(GPRInfo::regT0))
             loadConstant(root, count++, Tmp(reg));
     }
-    Inst& shuffle = root->append(Shuffle, nullptr);
+    Vector<Arg, 8> shuffleArgs;
     for (Reg reg : regs) {
         if (reg != Reg(GPRInfo::regT0))
-            shuffle.append(Tmp(GPRInfo::regT0), Tmp(reg), Arg::widthArg(Width32));
+            addShufflePair(shuffleArgs, Tmp(GPRInfo::regT0), Tmp(reg), Arg::widthArg(Width32));
     }
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     StackSlot* slot = code.addStackSlot(sizeof(int32_t) * regs.size(), StackSlotKind::Locked);
     for (unsigned i = 0; i < regs.size(); ++i)
@@ -457,6 +475,7 @@ void testShuffleTreeShift()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -509,6 +528,7 @@ void testShuffleTreeShiftBackward()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -564,6 +584,7 @@ void testShuffleTreeShiftOtherBackward()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -616,6 +637,7 @@ void testShuffleMultipleShifts()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -659,6 +681,7 @@ void testShuffleRotateWithFringe()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -704,6 +727,7 @@ void testShuffleRotateWithFringeInWeirdOrder()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -749,6 +773,7 @@ void testShuffleRotateWithLongFringe()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -794,6 +819,7 @@ void testShuffleMultipleRotates()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -839,6 +865,7 @@ void testShuffleShiftAndRotate()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 1, Tmp(GPRInfo::regT0));
     loadConstant(root, 2, Tmp(GPRInfo::regT1));
@@ -883,6 +910,7 @@ void testRotateFringeClobber()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
 
     int32_t things[8];
@@ -955,14 +983,16 @@ void testShuffleShiftAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     const Vector<Reg>& regs = code.regsInPriorityOrder(GP);
 
     BasicBlock* root = code.addBlock();
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, 35 + i, Tmp(regs[i]));
-    Inst& shuffle = root->append(Shuffle, nullptr);
+    Vector<Arg, 8> shuffleArgs;
     for (unsigned i = 1; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     StackSlot* slot = code.addStackSlot(sizeof(int32_t) * regs.size(), StackSlotKind::Locked);
     for (unsigned i = 0; i < regs.size(); ++i)
@@ -991,15 +1021,17 @@ void testShuffleRotateAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     const Vector<Reg>& regs = code.regsInPriorityOrder(GP);
 
     BasicBlock* root = code.addBlock();
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, 35 + i, Tmp(regs[i]));
-    Inst& shuffle = root->append(Shuffle, nullptr);
+    Vector<Arg, 8> shuffleArgs;
     for (unsigned i = 1; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
-    shuffle.append(Tmp(regs.last()), Tmp(regs[0]), Arg::widthArg(Width32));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs, Tmp(regs.last()), Tmp(regs[0]), Arg::widthArg(Width32));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     StackSlot* slot = code.addStackSlot(sizeof(int32_t) * regs.size(), StackSlotKind::Locked);
     for (unsigned i = 0; i < regs.size(); ++i)
@@ -1030,6 +1062,7 @@ void testShuffleSimpleSwap64()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1065,6 +1098,7 @@ void testShuffleSimpleShift64()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1103,6 +1137,7 @@ void testShuffleSwapMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1138,6 +1173,7 @@ void testShuffleShiftMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadConstant(root, 10000000000000000ll, Tmp(GPRInfo::regT0));
     loadConstant(root, 20000000000000000ll, Tmp(GPRInfo::regT1));
@@ -1178,6 +1214,7 @@ void testShuffleShiftMemory()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1215,6 +1252,7 @@ void testShuffleShiftMemoryLong()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1263,6 +1301,7 @@ void testShuffleShiftMemoryAllRegs()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1274,20 +1313,20 @@ void testShuffleShiftMemoryAllRegs()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, i + 1, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int32_t))),
-        Arg::widthArg(Width32),
-        
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int32_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int32_t))), Arg::widthArg(Width32),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int32_t))), Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int32_t))), Tmp(regs[1]),
         Arg::widthArg(Width32));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width32));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     Vector<int32_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
@@ -1315,6 +1354,7 @@ void testShuffleShiftMemoryAllRegs64()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1326,20 +1366,20 @@ void testShuffleShiftMemoryAllRegs64()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width64),
-        
+        Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
         Arg::widthArg(Width64));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
@@ -1376,6 +1416,7 @@ void testShuffleShiftMemoryAllRegsMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1387,23 +1428,23 @@ void testShuffleShiftMemoryAllRegsMixedWidth()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width32),
-        
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
         Arg::widthArg(Width32));
 
     for (unsigned i = 2; i < regs.size(); ++i) {
-        shuffle.append(
+        addShufflePair(shuffleArgs,
             Tmp(regs[i - 1]), Tmp(regs[i]),
             (i & 1) ? Arg::widthArg(Width32) : Arg::widthArg(Width64));
     }
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
@@ -1433,6 +1474,7 @@ void testShuffleRotateMemory()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int32_t memory[2];
     memory[0] = 35;
     memory[1] = 36;
@@ -1480,6 +1522,7 @@ void testShuffleRotateMemory64()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1525,6 +1568,7 @@ void testShuffleRotateMemoryMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1570,6 +1614,7 @@ void testShuffleRotateMemoryAllRegs64()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1581,22 +1626,21 @@ void testShuffleRotateMemoryAllRegs64()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width64),
-        
+        Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
-        Arg::widthArg(Width64),
-
-        regs.last(), regs[0], Arg::widthArg(Width64));
+        Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs, regs.last(), regs[0], Arg::widthArg(Width64));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
@@ -1622,6 +1666,7 @@ void testShuffleRotateMemoryAllRegsMixedWidth()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     int64_t memory[2];
     memory[0] = 35000000000000ll;
     memory[1] = 36000000000000ll;
@@ -1633,22 +1678,21 @@ void testShuffleRotateMemoryAllRegsMixedWidth()
     for (unsigned i = 0; i < regs.size(); ++i)
         loadConstant(root, (i + 1) * 1000000000000ll, Tmp(regs[i]));
     root->append(Move, nullptr, Arg::immPtr(&memory), Tmp(GPRInfo::regT0));
-    Inst& shuffle = root->append(
-        Shuffle, nullptr,
-        
+    Vector<Arg, 8> shuffleArgs;
+    addShufflePair(shuffleArgs,
         Tmp(regs[0]), Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::widthArg(Width32),
-        
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(0 * sizeof(int64_t))),
-        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64),
-
+        Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Arg::widthArg(Width64));
+    addShufflePair(shuffleArgs,
         Arg::addr(Tmp(GPRInfo::regT0), static_cast<int32_t>(1 * sizeof(int64_t))), Tmp(regs[1]),
-        Arg::widthArg(Width32),
-
-        regs.last(), regs[0], Arg::widthArg(Width32));
+        Arg::widthArg(Width32));
+    addShufflePair(shuffleArgs, regs.last(), regs[0], Arg::widthArg(Width32));
 
     for (unsigned i = 2; i < regs.size(); ++i)
-        shuffle.append(Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+        addShufflePair(shuffleArgs, Tmp(regs[i - 1]), Tmp(regs[i]), Arg::widthArg(Width64));
+    root->appendInst(Inst(Shuffle, nullptr, WTF::move(shuffleArgs)));
 
     Vector<int64_t> things(FillWith { }, regs.size(), 666);
     root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things[0])), Tmp(GPRInfo::regT0));
@@ -1676,6 +1720,7 @@ void testShuffleSwapDouble()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadDoubleConstant(root, 1, Tmp(FPRInfo::fpRegT0), Tmp(GPRInfo::regT0));
     loadDoubleConstant(root, 2, Tmp(FPRInfo::fpRegT1), Tmp(GPRInfo::regT0));
@@ -1711,6 +1756,7 @@ void testShuffleShiftDouble()
     B3::Procedure proc;
     Code& code = proc.code();
 
+    proc.setUsesShuffle(true);
     BasicBlock* root = code.addBlock();
     loadDoubleConstant(root, 1, Tmp(FPRInfo::fpRegT0), Tmp(GPRInfo::regT0));
     loadDoubleConstant(root, 2, Tmp(FPRInfo::fpRegT1), Tmp(GPRInfo::regT0));
@@ -2253,8 +2299,7 @@ void testElideHandlesEarlyClobber()
         });
     });
 
-    Inst inst(Patch, patch, Arg::special(code.addSpecial(makeUniqueWithoutFastMallocCheck<JSC::B3::PatchpointSpecial>())));
-    inst.args.append(Tmp(firstCalleeSave));
+    Inst inst(Patch, patch, Arg::special(code.addSpecial(makeUniqueWithoutFastMallocCheck<JSC::B3::PatchpointSpecial>())), Tmp(firstCalleeSave));
     root->appendInst(WTF::move(inst));
 
     Tmp result = code.newTmp(B3::GP);
@@ -2379,9 +2424,7 @@ void testLinearScanSpillRangesLateUse()
 
         });
 
-        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-        inst.args.append(tmp1);
-        inst.args.append(tmp2);
+        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp1, tmp2);
 
         root->append(inst);
     }
@@ -2429,9 +2472,7 @@ void testLinearScanSpillRangesEarlyDef()
             jit.move(CCallHelpers::TrustedImm32(i + 1), params[0].gpr());
         });
 
-        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-        inst.args.append(tmp2); // def
-        inst.args.append(tmp1); // use
+        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp2, tmp1); // def, use
 
         root->append(inst);
     }
@@ -2450,8 +2491,7 @@ void testLinearScanSpillRangesEarlyDef()
             good.link(&jit);
         });
 
-        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-        inst.args.append(tmp);
+        Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp);
         root->append(inst);
     }
 
@@ -2639,11 +2679,8 @@ void testEarlyAndLateUseOfSameTmp()
                 good2.link(&jit);
             });
 
-            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-
             Tmp tmp = tmps[rand];
-            inst.args.append(tmp);
-            inst.args.append(tmp);
+            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp, tmp);
             root->append(inst);
         }
 
@@ -2696,10 +2733,8 @@ void testEarlyClobberInterference()
                 good.link(&jit);
             });
 
-            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial));
-
             Tmp tmp = tmps[rand];
-            inst.args.append(tmp);
+            Inst inst(Patch, patchpoint, Arg::special(patchpointSpecial), tmp);
             root->append(inst);
         }
 

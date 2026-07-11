@@ -167,6 +167,13 @@ extension View {
             .environment(\.webViewScrollEdgeEffectStyleContext, .init(style: style, edges: edges))
     }
 
+    // SPI for testing.
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    @_spi(Testing)
+    public nonisolated func webViewObscuredContentInsets(_ insets: EdgeInsets) -> some View {
+        environment(\.webViewObscuredContentInsetsContext, insets)
+    }
+
     /// Manages the lifecycle of immersive environments requested by websites.
     ///
     /// Use this modifier to control authorization, presentation, and dismissal of
@@ -186,7 +193,7 @@ extension View {
     ///     the immersive environment. It receives the `WebPage.ImmersiveEnvironment` to dismiss.
     ///     This closure should return after the dismissal transition completes.
     /// - Returns: A modified view that manages immersive environment lifecycle.
-    @available(TBA, *)
+    @available(anyAppleOSAndDownlevels 27.0, *)
     @available(iOS, unavailable)
     @available(macOS, unavailable)
     @available(watchOS, unavailable)

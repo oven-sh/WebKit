@@ -15,40 +15,7 @@ set(WebCore_POST_BUILD_COMMAND
 
 make_directory("${CMAKE_BINARY_DIR}/WebCore/Modules")
 configure_file(${WEBCORE_DIR}/WebCore.modulemap ${CMAKE_BINARY_DIR}/WebCore/Modules/module.modulemap COPYONLY)
-set(_webcore_fw "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework")
-if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    make_directory("${_webcore_fw}")
-    if (NOT EXISTS "${_webcore_fw}/PrivateHeaders")
-        file(CREATE_LINK "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore"
-                         "${_webcore_fw}/PrivateHeaders" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Modules")
-        file(CREATE_LINK "${CMAKE_BINARY_DIR}/WebCore/Modules"
-                         "${_webcore_fw}/Modules" SYMBOLIC)
-    endif ()
-else ()
-    make_directory("${_webcore_fw}/Versions/A")
-    if (NOT EXISTS "${_webcore_fw}/Versions/Current")
-        file(CREATE_LINK "A" "${_webcore_fw}/Versions/Current" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Versions/A/PrivateHeaders")
-        file(CREATE_LINK "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore"
-                         "${_webcore_fw}/Versions/A/PrivateHeaders" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Versions/A/Modules")
-        file(CREATE_LINK "${CMAKE_BINARY_DIR}/WebCore/Modules"
-                         "${_webcore_fw}/Versions/A/Modules" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/PrivateHeaders")
-        file(CREATE_LINK "Versions/Current/PrivateHeaders"
-                         "${_webcore_fw}/PrivateHeaders" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Modules")
-        file(CREATE_LINK "Versions/Current/Modules"
-                         "${_webcore_fw}/Modules" SYMBOLIC)
-    endif ()
-endif ()
-unset(_webcore_fw)
+configure_file(${WEBCORE_DIR}/WebCore_Private.modulemap ${CMAKE_BINARY_DIR}/WebCore/Modules/module.private.modulemap COPYONLY)
 
 target_compile_options(WebCore PRIVATE
     "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/WebCorePrefix.h>")
@@ -791,7 +758,7 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/HTMLArticleElement.h
     html/HTMLAudioElement.h
     html/Origin.h
-    html/PDFDocument.h
+    html/PDFJSDocument.h
 
     layout/FormattingState.h
 
@@ -1209,6 +1176,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cocoa/HEVCUtilitiesCocoa.h
     platform/graphics/cocoa/IOSurface.h
     platform/graphics/cocoa/IOSurfaceDrawingBuffer.h
+    platform/graphics/cocoa/ISOBMFFTrackInfoParser.h
     platform/graphics/cocoa/MediaPlayerEnumsCocoa.h
     platform/graphics/cocoa/NullPlaybackSessionInterface.h
     platform/graphics/cocoa/NullVideoPresentationInterface.h

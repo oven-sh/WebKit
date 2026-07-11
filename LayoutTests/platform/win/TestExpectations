@@ -390,7 +390,11 @@ fast/canvas/offscreen-no-script-context-crash.html [ Skip ]
 fast/canvas/offscreen-scaling.html [ Skip ]
 fast/canvas/offscreen-toggle-display.html [ Skip ]
 fast/canvas/offscreen-visibility-change.html [ Skip ]
+fast/canvas/offscreencanvas-in-dedicated-worker-readback.html [ Skip ]
+fast/canvas/offscreencanvas-in-shared-worker-readback.html [ Skip ]
 fast/images/protected-image-queue.html [ Skip ]
+http/wpt/service-workers/offscreencanvas-in-separate-service-worker-process-cpu-fallback.https.html [ Skip ]
+http/wpt/service-workers/offscreencanvas-in-separate-service-worker-process.https.html [ Skip ]
 webgl/2.0.y/conformance/offscreencanvas/context-lost-restored.html [ Skip ]
 webgl/2.0.y/conformance/offscreencanvas/context-lost.html [ Skip ]
 webgl/offscreen-webgl-errors-to-console.html [ Skip ]
@@ -1047,7 +1051,6 @@ http/wpt/fetch/response-status-text.html [ Failure Slow ]
 
 http/tests/lists/list-new-parent-no-sibling-append.html [ Failure ]
 
-http/tests/misc/ftp-eplf-directory.py [ Skip ]
 
 http/wpt/fetch/fetch-metadata-websocket.html [ Failure ]
 
@@ -1248,7 +1251,6 @@ webkit.org/b/185076 css3/color-filters [ Skip ]
 webkit.org/b/188613 intersection-observer [ Skip ]
 webkit.org/b/188613 http/tests/intersection-observer [ Skip ]
 
-css-custom-properties-api/ [ Skip ]
 fast/css-custom-paint/ [ Skip ]
 css-typedom [ Skip ]
 
@@ -4514,9 +4516,6 @@ fast/css/bidi-override-in-anonymous-block.html [ Failure ]
 
 fonts/font-cache-memory-pressure-crash.html [ Failure ]
 
-# SFrameTransform isn't supported yet
-streams/writable-stream-create-within-multiple-workers-crash.html [ Skip ]
-
 [ Release ] imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-inset-animation.html [ Pass Failure ]
 imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-lookup.html [ Pass Failure ]
 
@@ -4717,6 +4716,7 @@ http/tests/security/no-javascript-location-percent-escaped.html [ Skip ] # Crash
 http/tests/security/no-javascript-location.html [ Skip ] # Crash
 http/tests/security/no-javascript-refresh-percent-escaped.py [ Skip ] # Crash
 http/tests/security/no-javascript-refresh-spaces.py [ Skip ] # Crash
+http/tests/security/no-javascript-refresh-static-percent-escaped.html [ Skip ] # Crash
 
 webkit.org/b/315806 imported/w3c/web-platform-tests/gpc/sec-gpc.https.html [ Pass Failure ] # Flaky harness timeout after serviceworker subtests were added in 314317@main
 
@@ -4740,3 +4740,41 @@ fast/message-channel/transfer-mediastreamtrack.html [ Skip ]
 # tests for the same reason (see webkit.org/b/268068).
 imported/w3c/web-platform-tests/wasm/serialization/memory/messageport-via-sharedworker-success.tentative.https.html [ Skip ]
 imported/w3c/web-platform-tests/wasm/serialization/memory/window-success.tentative.https.html [ Skip ]
+
+# Gardening: unexpected failures on Win-Tests-EWS (316637@main), recording current
+# behavior to restore a green Windows queue.
+
+# Text failures
+editing/smart-lists/backspace-after-typing-in-smart-list-does-not-undo-list.html [ Failure ]
+editing/smart-lists/backspace-immediately-after-smart-list-creation-undoes-list.html [ Failure ]
+editing/smart-lists/backspace-immediately-after-third-list-item-does-not-undo-list.html [ Failure ]
+editing/smart-lists/smart-list-trigger-requires-marker-only-line.html [ Failure ]
+fast/canvas/canvas-getContext-reentrant.html [ Failure ]
+fast/webcodecs/video-frame-zero-display-size.html [ Failure ]
+http/tests/broadcastchannel/postmessage-audiodata.html [ Failure ]
+http/tests/broadcastchannel/postmessage-encodedaudiochunk.html [ Failure ]
+http/tests/broadcastchannel/postmessage-encodedvideochunk.html [ Failure ]
+http/tests/broadcastchannel/postmessage-imagebitmap.html [ Failure ]
+http/tests/broadcastchannel/postmessage-videoframe.html [ Failure ]
+http/tests/inspector/network/resource-certificate-subject-format.html [ Failure ]
+http/tests/websocket/tests/hybi/websocket-blocked-sending-cookie-as-third-party-from-worker.html [ Failure ]
+imported/w3c/web-platform-tests/focus/focus-already-focused-iframe-deep-same-site.html [ Failure ]
+imported/w3c/web-platform-tests/focus/focus-already-focused-iframe-same-site.html [ Failure ]
+
+# Timeouts
+fast/canvas/offscreen-worker-unsafe-isPointInStroke-call.html [ Skip ] # Timeout
+fast/webcodecs/audio-data-close-during-gc-crash.html [ Skip ] # Timeout
+
+# Crashes
+http/tests/cookies/document-cookie-during-iframe-parsing.html [ Skip ] # Crash
+http/wpt/site-isolation/overlapping-navigations-and-traversals/cross-document-traversal-cross-document-traversal.html [ Skip ] # Crash
+http/wpt/site-isolation/overlapping-navigations-and-traversals/cross-document-traversal-same-document-traversal.html [ Skip ] # Crash
+http/wpt/site-isolation/the-history-interface/001.html [ Skip ] # Crash
+
+# Flaky WebProcess crash (see the no-javascript-* crash family above)
+fast/dom/window-opener-setter-throws-if-defineownproperty-fails-1.html [ Skip ] # Crash
+
+# Gardening: new unexpected failures on Win-Tests-EWS (316766@main).
+fast/canvas/offscreen-canvas-measureText-unrealized-font-crash.html [ Failure ]
+http/tests/cookies/document-cookie-set-expired-cookie.html [ Skip ] # Crash
+http/wpt/storage-access/request-storage-access-under-opener-cross-site-opener.html [ Skip ] # Crash

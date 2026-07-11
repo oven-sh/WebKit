@@ -23,6 +23,7 @@ fast/page-color-sampling [ Pass ]
 http/tests/pdf [ Pass ]
 http/tests/quicklook [ Pass ]
 http/tests/swipe [ Pass ]
+ipc/ios [ Pass ]
 media/ios [ Pass ]
 media/audioSession/ios [ Pass ]
 pdf [ Pass ]
@@ -2494,6 +2495,7 @@ accessibility/table-display-flex.html [ Pass ]
 accessibility/table-display-grid.html [ Pass ]
 accessibility/table-display-inline-block.html [ Pass ]
 accessibility/text-input-hit-test.html [ Pass ]
+accessibility/textarea-line-for-index.html [ Pass ]
 accessibility/tree-update-with-dirty-layout.html [ Pass ]
 accessibility/tree-update-with-dynamically-ignored-inline-child-div.html [ Pass ]
 accessibility/tree-update-with-dynamically-ignored-tabindex-div.html [ Pass ]
@@ -8009,7 +8011,6 @@ webkit.org/b/296202 imported/w3c/web-platform-tests/service-workers/service-work
 webkit.org/b/296209 http/tests/workers/service/basic-timeout.https.html [ Pass Failure ]
 
 # rdar://156353464 ☂️Bug for iOS26 reproduction and expectations
-compositing/layer-creation/sticky-overlap-extent.html [ Failure ]
 editing/pasteboard/copy-paste-bidi.html [ Failure ]
 editing/selection/ios/show-selection-in-transformed-container-2.html [ Failure ]
 fast/mediastream/play-newly-added-audio-track.html [ Failure ]
@@ -8476,8 +8477,6 @@ webkit.org/b/316830 fast/forms/datalist/datalist-textinput-suggestions-order.htm
 
 webkit.org/b/317753 imported/w3c/web-platform-tests/content-security-policy/sandbox/meta-element.sub.html [ Skip ]
 
-webkit.org/b/317756 imported/w3c/web-platform-tests/css/selectors/user-valid.html [ Skip ]
-
 webkit.org/b/295419 loader/navigation-policy/should-open-external-urls/subframe-navigated-programatically-by-main-frame.html [ Pass Failure ]
 
 # webkit.org/b/317882 [iOS] Multiple wpt tests are flaky in text diff
@@ -8590,7 +8589,7 @@ fast/forms/ios/zoom-to-reveal-focused-element-after-delay.html [ Timeout ] # web
 editing/caret/ios/place-caret-after-autocorrected-word.html [ Failure ] # webkit.org/b/318253
 editing/input/ios/typing-with-inline-predictions.html [ Pass Timeout ] # webkit.org/b/318254
 imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure ] # webkit.org/b/318255
-imported/w3c/web-platform-tests/digital-credentials/mdoc/mixed-requests.https.html [ Failure ] # webkit.org/b/318256
+http/wpt/identity/formats/ISO18013/mixed-requests.https.html [ Failure ] # webkit.org/b/318256
 imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/number-constraint-validation.html [ Pass Failure ] # webkit.org/b/318257
 ipc/fecolormatrix-type-values-mismatch-crash.html [ Failure ] # webkit.org/b/318258
 
@@ -8600,3 +8599,5 @@ webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/interlea
 webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.worker.html [ Failure ]
 webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.serviceworker.html [ Failure ]
 webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.sharedworker.html [ Failure ]
+
+webkit.org/b/318375 imported/w3c/web-platform-tests/css/css-anchor-position/scroll-to-anchored-fixed-001.html [ Pass ImageOnlyFailure ]

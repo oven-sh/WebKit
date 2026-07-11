@@ -1809,7 +1809,7 @@ public:
     void showContactPicker(WebCore::ContactsRequestData&&, CompletionHandler<void(std::optional<Vector<WebCore::ContactInfo>>&&)>&&);
 
 #if ENABLE(WEB_AUTHN)
-    void showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData&, CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&);
+    void showDigitalCredentialsChooser(std::optional<WebCore::FrameIdentifier>, const WebCore::DigitalCredentialsRequestData&, CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&);
     void dismissDigitalCredentialsChooser(CompletionHandler<void(bool)>&&);
 #endif
 
@@ -2666,6 +2666,7 @@ private:
     void setIsSuspended(bool, CompletionHandler<void(std::optional<bool>)>&&);
     void suspendWithFrameItem(WebCore::BackForwardFrameItemIdentifier, CompletionHandler<void(bool)>&&);
     void restoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier, std::optional<std::pair<URL, WebCore::SecurityOriginData>>&&, CompletionHandler<void(bool)>&&);
+    void detachResidualSubframesForBackForwardCacheRestore(WebCore::Page&);
 
     RefPtr<WebImage> snapshotAtSize(const WebCore::IntRect&, const WebCore::IntSize& bitmapSize, SnapshotOptions, WebCore::LocalFrame&, WebCore::LocalFrameView&);
     RefPtr<WebImage> snapshotNode(WebCore::Node&, SnapshotOptions, unsigned maximumPixelCount = std::numeric_limits<unsigned>::max());

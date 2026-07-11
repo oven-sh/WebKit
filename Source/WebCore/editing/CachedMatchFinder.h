@@ -25,8 +25,9 @@
 
 #pragma once
 
-#include "FindOptions.h"
-#include "SimpleRange.h"
+#include <WebCore/FindOptions.h>
+#include <WebCore/SimpleRange.h>
+#include <wtf/Expected.h>
 #include <wtf/Function.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -41,11 +42,15 @@ class ShadowRoot;
 class CachedMatchFinder {
     WTF_MAKE_TZONE_ALLOCATED(CachedMatchFinder);
 public:
-    explicit CachedMatchFinder(Document&);
+    WEBCORE_EXPORT explicit CachedMatchFinder(Document&);
 
-    std::optional<SimpleRange> findMatchFrom(const std::optional<SimpleRange>&, const String& target, FindOptions);
-    Vector<SimpleRange> findMatches(const std::optional<SimpleRange>&, const String& target, FindOptions, std::optional<unsigned> limit = std::nullopt);
-    unsigned countMatches(const std::optional<SimpleRange>&, const String& target, FindOptions, std::optional<unsigned> limit = std::nullopt);
+    enum class CacheUnusable : bool { Oversized };
+
+    WEBCORE_EXPORT Expected<std::optional<SimpleRange>, CacheUnusable> findMatchFrom(const std::optional<SimpleRange>&, const String& target, FindOptions);
+    WEBCORE_EXPORT Expected<Vector<SimpleRange>, CacheUnusable> findMatches(const std::optional<SimpleRange>&, const String& target, FindOptions, std::optional<unsigned> limit = std::nullopt);
+    WEBCORE_EXPORT Expected<unsigned, CacheUnusable> countMatches(const std::optional<SimpleRange>&, const String& target, FindOptions, std::optional<unsigned> limit = std::nullopt);
+
+    WEBCORE_EXPORT static void setMaximumRunCountForTesting(std::optional<unsigned>);
 
 private:
     struct TextRun {
@@ -57,15 +62,16 @@ private:
         String text;
         Vector<TextRun> runs;
         bool dirty { true };
+        bool oversized { false };
     };
 
     bool isTextBufferCacheValid() const;
     bool clearTextBufferCache();
     TextRunCache& bufferForOptions(FindOptions);
     bool isSearchResultCacheValid(const String&, FindOptions, std::optional<unsigned> limit) const;
-    static std::pair<String, Vector<TextRun>> textForScope(ContainerNode&, FindOptions);
+    static std::optional<std::pair<String, Vector<TextRun>>> textForScope(ContainerNode&, FindOptions);
     enum class SearchShouldContinue : bool { No, Yes };
-    std::optional<SimpleRange> findNextMatchInShadowIncludingAncestorTree(ShadowRoot&, const SimpleRange&, const String& target, FindOptions);
+    Expected<std::optional<SimpleRange>, CachedMatchFinder::CacheUnusable> findNextMatchInShadowIncludingAncestorTree(ShadowRoot&, const SimpleRange&, const String& target, FindOptions);
     static void performSearch(StringView, unsigned startOffset, const String& target, FindOptions, NOESCAPE const Function<SearchShouldContinue(size_t, size_t)>&);
     static std::optional<SimpleRange> findNextMatch(StringView, const Vector<TextRun>&, unsigned startOffset, const String& target, FindOptions, const std::optional<SimpleRange>& excludeRange = std::nullopt);
     static unsigned bufferOffsetForBoundaryPoint(StringView, const Vector<TextRun>&, const BoundaryPoint&, FindOptions);

@@ -204,7 +204,7 @@ static GridAreaSizes computeGridAreaSizes(const PlacedGridItems& gridItems, cons
 }
 
 // https://drafts.csswg.org/css-grid-1/#layout-algorithm
-std::pair<UsedTrackSizes, GridItemRects> GridLayout::layout(UnplacedGridItems& unplacedGridItems, const GridLayoutState& gridLayoutState)
+GridLayoutResult GridLayout::layout(UnplacedGridItems& unplacedGridItems, const GridLayoutState& gridLayoutState)
 {
     auto& gridDefinition = gridLayoutState.gridDefinition;
     auto& gridTemplateColumnsTrackSizes = gridDefinition.gridTemplateColumns.sizes;
@@ -268,6 +268,10 @@ BorderBoxPositions GridLayout::performInlineAxisSelfAlignment(const PlacedGridIt
         // Stretching should be handled by GridLayout::layoutGridItems.
         auto marginBoxPosition = StyleSelfAlignmentData::adjustmentFromStartEdge(remainingSpace, gridItem.inlineAxisAlignment().position(), LogicalBoxAxis::Inline, formattingContextWritingMode, gridItem.writingMode());
 
+        // Safe alignment must never overflow the start edge, so clamp any negative start-edge offset back to the start.
+        if (gridItem.inlineAxisAlignment().overflow() == OverflowAlignment::Safe)
+            marginBoxPosition = std::max(0_lu, marginBoxPosition);
+
         borderBoxPositions.append(marginBoxPosition + inlineMargins[gridItemIndex].marginStart);
     }
 
@@ -295,6 +299,10 @@ BorderBoxPositions GridLayout::performBlockAxisSelfAlignment(const PlacedGridIte
         //
         // Stretching should be handled by GridLayout::layoutGridItems.
         auto marginBoxPosition = StyleSelfAlignmentData::adjustmentFromStartEdge(remainingSpace, gridItem.blockAxisAlignment().position(), LogicalBoxAxis::Block, formattingContextWritingMode, gridItem.writingMode());
+
+        // Safe alignment must never overflow the start edge, so clamp any negative start-edge offset back to the start.
+        if (gridItem.blockAxisAlignment().overflow() == OverflowAlignment::Safe)
+            marginBoxPosition = std::max(0_lu, marginBoxPosition);
 
         borderBoxPositions.append(marginBoxPosition + blockMargins[gridItemIndex].marginStart);
     }
@@ -452,7 +460,7 @@ TrackSizes GridLayout::sizeColumnTracks(const PlacedGridItems& placedGridItems, 
     });
 
     return TrackSizingAlgorithm::sizeTracks(columnTrackSizingItems, columnTrackSizingFunctionsList,
-        layoutConstraints.inlineAxis, GridLayoutUtils::inlineAxisGridItemSizingFunctions(formattingContext().integrationUtils()),
+        layoutConstraints.inlineAxis, GridItemSizingFunctions::inlineAxis(formattingContext().integrationUtils()),
         layoutState.usedColumnGap, layoutState.usedJustifyContent);
 }
 
@@ -472,7 +480,7 @@ TrackSizes GridLayout::sizeRowTracks(const PlacedGridItems& placedGridItems, con
     });
 
     return TrackSizingAlgorithm::sizeTracks(rowTrackSizingItems, rowTrackSizingFunctionsList,
-        layoutConstraints.blockAxis, GridLayoutUtils::blockAxisGridItemSizingFunctions(formattingContext()),
+        layoutConstraints.blockAxis, GridItemSizingFunctions::blockAxis(formattingContext()),
         layoutState.usedRowGap, layoutState.usedAlignContent);
 }
 
@@ -562,15 +570,15 @@ std::pair<UsedInlineSizes, UsedBlockSizes> GridLayout::layoutGridItems(const Pla
         auto& gridAreaInlineSize = gridAreaSizes.inlineSizes[gridItemIndex];
         auto& gridAreaBlockSize = gridAreaSizes.blockSizes[gridItemIndex];
 
-        auto usedInlineSizeForGridItem = GridLayoutUtils::usedInlineSizeForGridItem(gridItem, gridItem.usedInlineBorderAndPadding(), columnTrackSizingFunctions, gridAreaInlineSize, integrationUtils);
-        usedInlineSizes.append(usedInlineSizeForGridItem);
+        auto inlineUsedSize = GridLayoutUtils::inlineUsedSize(gridItem, columnTrackSizingFunctions, gridItem.usedInlineBorderAndPadding(), gridAreaInlineSize, integrationUtils);
+        usedInlineSizes.append(inlineUsedSize);
 
-        // FIXME: investigate to check if we should use the usedInlineSize or the size of the grid are in the inline direction.
-        auto usedBlockSizeForGridItem = GridLayoutUtils::usedBlockSizeForGridItem(gridItem, gridItem.usedBlockBorderAndPadding(), rowTrackSizingFunctions, gridAreaBlockSize, formattingContext, usedInlineSizeForGridItem);
-        usedBlockSizes.append(usedBlockSizeForGridItem);
+        // FIXME: investigate to check if we should use the inlineUsedSize or the size of the grid area in the inline direction.
+        auto blockUsedSize = GridLayoutUtils::blockUsedSize(gridItem, rowTrackSizingFunctions, gridItem.usedBlockBorderAndPadding(), gridAreaBlockSize, formattingContext, inlineUsedSize);
+        usedBlockSizes.append(blockUsedSize);
 
         auto& layoutBox = gridItem.layoutBox();
-        integrationUtils.layoutWithFormattingContextForBox(layoutBox, usedInlineSizeForGridItem, usedBlockSizeForGridItem);
+        integrationUtils.layoutWithFormattingContextForBox(layoutBox, inlineUsedSize, blockUsedSize);
     }
     return { usedInlineSizes, usedBlockSizes };
 }

@@ -266,7 +266,6 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case ArraySortCommit:
     case NewArrayWithSpecies:
     case NewArrayWithSizeAndStructure:
-    case TryGetById:
     case GetById:
     case GetByIdFlush:
     case GetByIdMegamorphic:
@@ -404,6 +403,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case CreateRest:
     case RegExpExec:
     case RegExpExecNonGlobalOrSticky:
+    case RegExpExecSticky:
     case RegExpTest:
     case RegExpTestInline:
     case RegExpMatchFast:
@@ -450,6 +450,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case StringSubstr:
     case ToUpperCase:
     case ToLowerCase:
+    case StringTrim:
     case NumberToStringWithRadix:
     case NumberToStringWithValidRadixConstant:
     case CheckJSCast:

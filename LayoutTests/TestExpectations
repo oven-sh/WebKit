@@ -132,6 +132,7 @@ inspector/page/setScreenSizeOverride.html [ Skip ]
 interaction-region [ Skip ]
 overlay-region [ Skip ]
 pdf [ Skip ]
+ipc/ios [ Skip ]
 ipc/mac [ Skip ]
 ipc/restrictedendpoints/mac [ Skip ]
 webanimations/threaded-animations [ Skip ]
@@ -825,6 +826,7 @@ imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/
 imported/w3c/web-platform-tests/html/semantics/forms/the-button-element/button-submit-remove-children.html [ Skip ]
 webkit.org/b/250171 imported/w3c/web-platform-tests/html/semantics/popovers/popover-anchor-nested-display.tentative.html [ ImageOnlyFailure ]
 webkit.org/b/250171 imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-scroll-within.html [ Skip ]
+webkit.org/b/318835 imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus-previous-crash.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-top-layer-interactions.html [ Pass Failure ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-top-layer-nesting.html [ Pass Failure ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-top-layer-nesting-anchor.tentative.html [ Pass Failure ]
@@ -1405,6 +1407,8 @@ imported/w3c/web-platform-tests/fetch/metadata/window-open.https.sub.html [ Skip
 imported/w3c/web-platform-tests/fetch/orb/tentative/status.sub.html [ Skip ]
 
 webkit.org/b/315147 imported/w3c/web-platform-tests/fetch/http-cache/freshness.any.worker.html [ Failure Pass ]
+
+webkit.org/b/318817 imported/w3c/web-platform-tests/fetch/local-network-access/iframe.tentative.https.window.html [ Failure Pass ]
 
 # These fetch tests are non-deterministic.
 imported/w3c/web-platform-tests/fetch/http-cache/pragma-no-cache-with-cache-control.html [ Skip ]
@@ -3998,7 +4002,6 @@ imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-018.h
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-019.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-020.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-021.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-023.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-024.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-025.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-027.html [ ImageOnlyFailure ]
@@ -6629,7 +6632,6 @@ webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-backdrop-filter-video-overflow.html [ ImageOnlyFailure Pass ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-backdrop-filter.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-bevel-overflow-composite.html [ ImageOnlyFailure ]
-webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-bevel-overflow.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-fill.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-clips-background.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-collapsed-shape-clips-background.html [ ImageOnlyFailure ]
@@ -6652,12 +6654,13 @@ webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-overflow.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-img-border.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-inset-shadow.html [ ImageOnlyFailure ]
-webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-notch.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-notch-mixed.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-overflow-clip-margin.html [ ImageOnlyFailure ]
+webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-scoop.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-square.html [ ImageOnlyFailure ]
+webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-superellipse-bevel.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-superellipse-negative-100.html [ ImageOnlyFailure ]
-webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-superellipse-negative-inf.html [ ImageOnlyFailure ]
+webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-superellipse-scoop.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-svg-border.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-video-border.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-iframe-border.html [ ImageOnlyFailure ]
@@ -6795,11 +6798,24 @@ webkit.org/b/257336 imported/w3c/web-platform-tests/css/css-tables/visibility-co
 # Only Sonoma+/iOS 17+ have support for auto word breaking. Skipped globally and re-enabled for each platform.
 imported/w3c/web-platform-tests/css/css-text/word-break/auto-phrase [ Skip ]
 
-# These tests time out because WebTransport only has a stub implementation.
+# These tests time out because the layout test harness does not yet run a WebTransport-over-HTTP/3
+# (webtransport-h3) server. https://bugs.webkit.org/show_bug.cgi?id=318998
 imported/w3c/web-platform-tests/webtransport/bidirectional-cancel-crash.https.html [ Skip ]
-imported/w3c/web-platform-tests/webtransport/constructor.https.any.worker.html [ Skip ]
-imported/w3c/web-platform-tests/webtransport/constructor.https.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/webtransport/constructor.https.any.sharedworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/congestion-control.https.any.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/congestion-control.https.any.serviceworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/congestion-control.https.any.sharedworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/congestion-control.https.any.worker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/incoming-multiple-streams.https.any.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/incoming-multiple-streams.https.any.serviceworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/incoming-multiple-streams.https.any.sharedworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/incoming-multiple-streams.https.any.worker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/historical.https.sub.any.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/historical.https.sub.any.serviceworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/historical.https.sub.any.sharedworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/historical.https.sub.any.worker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/constructor.https.sub.any.worker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/constructor.https.sub.any.serviceworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/constructor.https.sub.any.sharedworker.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/echo-large-bidirectional-streams.https.any.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/echo-large-bidirectional-streams.https.any.serviceworker.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/echo-large-bidirectional-streams.https.any.sharedworker.html [ Skip ]
@@ -6834,7 +6850,7 @@ imported/w3c/web-platform-tests/webtransport/server-certificate-hashes.https.any
 imported/w3c/web-platform-tests/webtransport/server-certificate-hashes.https.any.worker.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/csp-pass.https.window.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/csp-fail.https.window.html [ Skip ]
-imported/w3c/web-platform-tests/webtransport/constructor.https.any.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/constructor.https.sub.any.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/back-forward-cache-with-open-webtransport-connection.https.window.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/back-forward-cache-with-closed-webtransport-connection.https.window.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/stats.https.any.worker.html [ Skip ]
@@ -6849,11 +6865,11 @@ imported/w3c/web-platform-tests/webtransport/sendorder.https.any.worker.html [ S
 imported/w3c/web-platform-tests/webtransport/sendorder.https.any.sharedworker.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/sendorder.https.any.serviceworker.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/sendorder.https.any.html [ Skip ]
-imported/w3c/web-platform-tests/webtransport/idlharness.https.any.html [ Failure ]
-imported/w3c/web-platform-tests/webtransport/idlharness.https.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/webtransport/idlharness.https.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/webtransport/idlharness.https.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/webtransport/datagram-cancel-crash.https.window.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/idlharness.https.sub.any.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/idlharness.https.sub.any.serviceworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/idlharness.https.sub.any.sharedworker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/idlharness.https.sub.any.worker.html [ Skip ]
+imported/w3c/web-platform-tests/webtransport/datagram-cancel-crash.https.sub.window.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport/in-removed-iframe.https.html [ Skip ]
 
 # Some of Canvas Layer API features are not supported yet.
@@ -7166,7 +7182,6 @@ imported/w3c/web-platform-tests/css/css-view-transitions/view-transition-types-m
 
 # Chromium specific test.
 imported/w3c/web-platform-tests/css/css-view-transitions/navigation/chromium-paint-holding-timeout.html [ ImageOnlyFailure ]
-webkit.org/b/278756 imported/w3c/web-platform-tests/css/css-view-transitions/navigation/skip-outbound-vt-before-reveal.html [ Failure ]
 
 # prerender not supported.
 imported/w3c/web-platform-tests/css/css-view-transitions/navigation/prerender-removed-during-navigation.html [ Skip ]
@@ -7686,9 +7701,6 @@ imported/w3c/web-platform-tests/css/css-anchor-position/anchor-position-multicol
 imported/w3c/web-platform-tests/css/css-anchor-position/container-queries/anchored-fallback-color-change.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-anchor-position/container-queries/anchored-fallback-style-containment.html [ ImageOnlyFailure ]
 
-# This is passing only on mac-wk2
-webkit.org/b/299561 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-scroll-chained-003.html [ ImageOnlyFailure ]
-
 # timeouts
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-ident-function.html [ Skip ]
 
@@ -7711,6 +7723,7 @@ imported/w3c/web-platform-tests/css/css-scoping/has-slotted-functional-flattened
 
 imported/w3c/web-platform-tests/webrtc-encoded-transform/script-transform-generateKeyFrame-simulcast.https.html [ Pass Failure ]
 imported/w3c/web-platform-tests/webrtc-encoded-transform/RTCRtpScriptTransform-encoded-transform.https.html [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc-encoded-transform/RTCEncodedFrame-copy-construction.https.html [ Failure ]
 
 # https://bugs.webkit.org/show_bug.cgi?id=276663
 inspector/css/getMatchedStylesForNodeNestingStyleGrouping.html [ Failure ]
@@ -8017,8 +8030,6 @@ imported/w3c/web-platform-tests/css/css-break/table/repeated-section/text-in-nes
 imported/w3c/web-platform-tests/css/css-break/text-indent-and-wide-float.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-break/transform-025.html [ ImageOnlyFailure ]
 
-imported/w3c/web-platform-tests/html/rendering/sections/headingoffset-and-headingreset.html [ ImageOnlyFailure ]
-
 # Need to add tolerance for local in separate since failure is 0.01% and these tests pass on WPT itself.
 imported/w3c/web-platform-tests/svg/painting/reftests/text-shadow-01.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/painting/reftests/text-shadow-02.html [ ImageOnlyFailure ]
@@ -8089,9 +8100,9 @@ webkit.org/b/303807 imported/w3c/web-platform-tests/digital-credentials/create-e
 webkit.org/b/303807 imported/w3c/web-platform-tests/digital-credentials/allow-attribute-with-create.https.html [ Skip ]
 webkit.org/b/303807 imported/w3c/web-platform-tests/digital-credentials/webdriver/create.https.html [ Skip ]
 webkit.org/b/306292 imported/w3c/web-platform-tests/digital-credentials/webdriver/get.https.html [ Skip ]
-webkit.org/b/306292 imported/w3c/web-platform-tests/digital-credentials/mdoc/valid-roundtrip.https.html [ Skip ]
-webkit.org/b/306292 imported/w3c/web-platform-tests/digital-credentials/mdoc/response-handling.https.html [ Skip ]
-webkit.org/b/306292 imported/w3c/web-platform-tests/digital-credentials/mdoc/origin-binding.https.html [ Skip ]
+webkit.org/b/306292 http/wpt/identity/formats/ISO18013/valid-roundtrip.https.html [ Skip ]
+webkit.org/b/306292 http/wpt/identity/formats/ISO18013/response-handling.https.html [ Skip ]
+webkit.org/b/306292 http/wpt/identity/formats/ISO18013/origin-binding.https.html [ Skip ]
 webkit.org/b/306292 imported/w3c/web-platform-tests/digital-credentials/concurrent-requests.https.html [ Skip ]
 webkit.org/b/317545 imported/w3c/web-platform-tests/digital-credentials/protocol-filtering-openid4vp.https.html [ Skip ]
 
@@ -8239,3 +8250,9 @@ webkit.org/b/317017 imported/w3c/web-platform-tests/largest-contentful-paint/mul
 
 imported/w3c/web-platform-tests/preload/preload-csp.sub.html [ Skip ] # Different hash generated on each run
 imported/w3c/web-platform-tests/preload/modulepreload-multiple.html [ Failure Pass ]
+
+webkit.org/b/318777 fast/block/out-of-flow-intrinsic-height.html [ Timeout Pass ]
+
+webkit.org/b/318779 fast/css/has-lang-jit-crash.html [ Failure Pass ]
+
+webkit.org/b/315806 imported/w3c/web-platform-tests/gpc/sec-gpc.https.html [ Failure Pass ]

@@ -201,7 +201,7 @@ private:
     {
         m_iterator->callNext([weakThis = WeakPtr { *this }](auto* globalObject, bool isOK, auto value) {
             RefPtr protectedThis = weakThis.get();
-            if (!protectedThis || !globalObject)
+            if (!protectedThis || !globalObject || protectedThis->m_isCancelled)
                 return;
 
             if (!isOK) {
@@ -225,6 +225,7 @@ private:
 
     void doCancel(JSC::JSValue reason) final
     {
+        m_isCancelled = true;
         m_iterator->callReturn(reason, [weakThis = WeakPtr { *this }](auto* globalObject, bool isOK, auto value) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis || !globalObject)
@@ -242,6 +243,7 @@ private:
     }
 
     const Ref<DOMAsyncIterator> m_iterator;
+    bool m_isCancelled { false };
 };
 
 ExceptionOr<Ref<ReadableStream>> ReadableStream::from(JSDOMGlobalObject& globalObject, JSC::JSValue iterable)
@@ -534,7 +536,7 @@ Ref<DOMPromise> ReadableStream::cancel(JSDOMGlobalObject& globalObject, JSC::JSV
             return promise;
         }
 
-        auto* jsPromise = downcast<JSC::JSPromise>(result);
+        auto* jsPromise = dynamicDowncast<JSC::JSPromise>(result);
         if (!jsPromise)
             return promise;
 

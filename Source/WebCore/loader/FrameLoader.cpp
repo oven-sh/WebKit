@@ -1321,7 +1321,7 @@ void FrameLoader::updateURLAndHistory(const URL& newURL, RefPtr<SerializedScript
 {
     ASSERT(m_frame->document() && documentLoader());
 
-    if (documentLoader()->isInitialAboutBlank())
+    if (documentLoader()->isInitialAboutBlank() == IsInitialAboutBlank::Yes)
         historyHandling = NavigationHistoryBehavior::Replace;
 
     Ref history = m_history.get();
@@ -1685,7 +1685,7 @@ void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& ref
             else
                 historyHandling = NavigationHistoryBehavior::Push;
         }
-        if (newURL.protocolIsJavaScript() || (documentLoader() && documentLoader()->isInitialAboutBlank()))
+        if (newURL.protocolIsJavaScript() || (documentLoader() && documentLoader()->isInitialAboutBlank() == IsInitialAboutBlank::Yes))
             historyHandling = NavigationHistoryBehavior::Replace;
     }
     frameLoadRequest.setNavigationHistoryBehavior(historyHandling);
@@ -2400,7 +2400,7 @@ void FrameLoader::setState(FrameState newState)
 
 void FrameLoader::clearProvisionalLoad()
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "clearProvisionalLoad: Clearing provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderClearProvisionalLoad, m_provisionalDocumentLoader && m_provisionalDocumentLoader->navigationID() ? m_provisionalDocumentLoader->navigationID()->toUInt64() : 0);
     setProvisionalDocumentLoader(nullptr);
     if (CheckedPtr progressTracker = m_progressTracker.get())
         progressTracker->progressCompleted(FrameProgressTracker::LoadCompletionStatus::Failure);

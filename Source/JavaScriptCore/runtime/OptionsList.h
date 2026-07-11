@@ -529,6 +529,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxB3TailDupBlockSuccessors, 3, Normal, nullptr) \
     v(Bool, useB3HoistLoopInvariantValues, true, Normal, nullptr) \
     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
+    v(Bool, useB3EliminateWasmGCAllocations, true, Normal, "eliminate non-escaping wasm-GC struct allocations in B3"_s) \
     v(Bool, useB3ReduceStrengthFixpoint, false, Normal, "iterate B3 reduceStrength to a fixpoint instead of a single pass (for debugging)"_s) \
     v(Bool, useAirOptimizePairedLoadStore, true, Normal, nullptr) \
     \
@@ -682,7 +683,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, usePromiseIsPromise, false, Normal, nullptr) \
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
     v(Bool, useShadowRealm, false, Normal, "Expose the ShadowRealm object."_s) \
-    v(Bool, useTemporal, false, Normal, "Expose the Temporal object."_s) \
+    v(Bool, useTemporal, true, Normal, "Expose the Temporal object."_s) \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
     v(Bool, useWasmJSStringBuiltins, true, Normal, "Enable the implementation of the JS String Builtins proposal."_s) \
     v(Bool, useWasmMemory64, false, Normal, "Allow the Memory64 proposal for WebAssembly. This feature is currently only supported in the IPInt tier."_s) \

@@ -41,6 +41,7 @@
 #include "ContextMenuItem.h"
 #include "ContextMenuProvider.h"
 #include "DOMWrapperWorld.h"
+#include "DiagnosticLoggingClient.h"
 #include "DocumentPage.h"
 #include "DocumentView.h"
 #include "Editor.h"
@@ -529,7 +530,7 @@ void InspectorFrontendHost::pickColorFromScreen(Ref<DeferredPromise>&& promise)
 
         String serializedColor;
         // FIXME: <webkit.org/b/241198> Inspector frontend should support all color function gamuts.
-        if (color->colorSpace() != ColorSpace::SRGB || color->colorSpace() != ColorSpace::DisplayP3) {
+        if (color->colorSpace() != ColorSpace::SRGB && color->colorSpace() != ColorSpace::DisplayP3) {
             // DisplayP3 is the least-lossy format the frontend currently supports. This conversion will only be lossy
             // if the color space the system is providing colors in were to support a wider gamut than DisplayP3.
             auto colorForFrontend = color->toColorTypeLossy<DisplayP3<float>>();

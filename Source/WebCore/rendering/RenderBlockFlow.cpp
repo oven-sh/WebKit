@@ -343,7 +343,7 @@ void RenderBlockFlow::adjustIntrinsicLogicalWidthsForColumns(LayoutUnit& minLogi
         LayoutUnit colGap = columnGap();
         LayoutUnit gapExtra = (columnCount - 1) * colGap;
         if (auto columnWidthLength = style().columnWidth().tryLength()) {
-            columnWidth = Style::evaluate<LayoutUnit>(*columnWidthLength, Style::ZoomNeeded { });
+            columnWidth = Style::evaluate<LayoutUnit>(*columnWidthLength, style().usedZoomForLength());
             minLogicalWidth = std::min(minLogicalWidth, columnWidth);
         } else
             minLogicalWidth = minLogicalWidth * columnCount + gapExtra;
@@ -413,7 +413,7 @@ LayoutUnit RenderBlockFlow::columnGap() const
 {
     if (style().columnGap().isNormal())
         return LayoutUnit(style().fontDescription().computedSize()); // "1em" is recommended as the normal gap setting. Matches <p> margins.
-    return Style::evaluate<LayoutUnit>(style().columnGap(), contentBoxLogicalWidth(), Style::ZoomNeeded { });
+    return Style::evaluate<LayoutUnit>(style().columnGap(), contentBoxLogicalWidth(), style().usedZoomForLength());
 }
 
 void RenderBlockFlow::computeColumnCountAndWidth()
@@ -431,7 +431,7 @@ void RenderBlockFlow::computeColumnCountAndWidth()
 
     LayoutUnit availWidth = desiredColumnWidth;
     LayoutUnit colGap = columnGap();
-    LayoutUnit colWidth = std::max(1_lu, Style::evaluate<LayoutUnit>(style().columnWidth().tryLength().value_or(0_css_px), Style::ZoomNeeded { }));
+    LayoutUnit colWidth = std::max(1_lu, Style::evaluate<LayoutUnit>(style().columnWidth().tryLength().value_or(0_css_px), style().usedZoomForLength()));
     unsigned colCount = std::max<unsigned>(1, style().columnCount().tryValue().value_or(1).value);
 
     if (style().columnWidth().isAuto() && !style().columnCount().isAuto()) {
@@ -642,7 +642,7 @@ void RenderBlockFlow::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit 
 
     // Calculate our new height.
     LayoutUnit oldHeight = logicalHeight();
-    auto afterPaddingEdge = clientLogicalBottom();
+    auto afterPaddingEdge = paddingBoxLogicalBottom();
 
     // Before updating the final size of the flow thread make sure a forced break is applied after the content.
     // This ensures the size information is correctly computed for the last auto-height fragment receiving content.
@@ -1182,7 +1182,7 @@ void RenderBlockFlow::layoutBlockChild(RenderBox& child, MarginInfo& marginInfo,
     LayoutUnit logicalTopEstimate = estimateLogicalTopPosition(child, marginInfo, estimateWithoutPagination);
 
     // Cache our old rect so that we can dirty the proper repaint rects if the child moves.
-    LayoutRect oldRect = child.frameRect();
+    LayoutRect oldRect = child.borderBoxRectInContainer();
     LayoutUnit oldLogicalTop = logicalTopForChild(child);
 
 #if ASSERT_ENABLED
@@ -1226,7 +1226,7 @@ void RenderBlockFlow::layoutBlockChild(RenderBox& child, MarginInfo& marginInfo,
 
     auto& childStyle = child.style();
     if (auto blockStepSizeForChild = childStyle.blockStepSize().tryLength(); blockStepSizeForChild && BlockStepSizing::childHasSupportedStyle(childStyle))
-        performBlockStepSizing(child, LayoutUnit(blockStepSizeForChild->resolveZoom(Style::ZoomNeeded { })));
+        performBlockStepSizing(child, Style::evaluate<LayoutUnit>(*blockStepSizeForChild, childStyle.usedZoomForLength()));
 
     // Cache if we are at the top of the block right now.
     bool atBeforeSideOfBlock = marginInfo.atBeforeSideOfBlock();
@@ -2972,7 +2972,7 @@ bool RenderBlockFlow::positionNewFloats()
         if (childBox.containingBlock() != this)
             continue;
 
-        LayoutRect oldRect = childBox.frameRect();
+        LayoutRect oldRect = childBox.borderBoxRectInContainer();
         auto childBoxUsedClear = Style::ComputedStyle::usedClear(childBox);
         if (childBoxUsedClear == UsedClear::Left || childBoxUsedClear == UsedClear::Both)
             logicalTop = std::max(lowestFloatLogicalBottom(FloatingObject::FloatLeft), logicalTop);
@@ -3476,11 +3476,11 @@ void RenderBlockFlow::addOverflowFromInFlowChildren(OptionSet<ComputeOverflowOpt
         RenderBlock::addOverflowFromInFlowChildren(options);
 }
 
-static float lineHeightForEmptyContent(auto& style, auto shouldNotRoundToIntegral)
+static float lineHeightForEmptyContent(auto& style)
 {
     auto& fontMetrics = style.metricsOfPrimaryFont();
-    auto ascent = shouldNotRoundToIntegral ? fontMetrics.ascent() : fontMetrics.intAscent();
-    auto fontHeight = shouldNotRoundToIntegral ? fontMetrics.height() : fontMetrics.intHeight();
+    auto ascent = fontMetrics.ascent();
+    auto fontHeight = fontMetrics.height();
     return ascent + (style.computedLineHeight() - fontHeight) / 2.f;
 }
 
@@ -3499,7 +3499,7 @@ std::optional<LayoutUnit> RenderBlockFlow::firstLineBaseline() const
         return lineLayout->firstLineBaseline();
 
     if (hasLineIfEmpty())
-        return LayoutUnit { borderAndPaddingBefore() + lineHeightForEmptyContent(firstLineStyle(), settings().subpixelInlineLayoutEnabled()) };
+        return LayoutUnit { borderAndPaddingBefore() + lineHeightForEmptyContent(firstLineStyle()) };
 
     return { };
 }
@@ -3519,7 +3519,7 @@ std::optional<LayoutUnit> RenderBlockFlow::lastLineBaseline() const
         return lineLayout->lastLineBaseline();
 
     if (hasLineIfEmpty())
-        return LayoutUnit { borderAndPaddingBefore() + lineHeightForEmptyContent(style(), settings().subpixelInlineLayoutEnabled()) };
+        return LayoutUnit { borderAndPaddingBefore() + lineHeightForEmptyContent(style()) };
 
     return { };
 }

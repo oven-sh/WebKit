@@ -83,6 +83,24 @@ function extractRevision(text)
     return revisions;
 }
 
+export function buildGitWebkitRevertCommand(gitWebkitPath, revisions, reason, issueUrl)
+{
+    let args = [
+        gitWebkitPath,
+        "revert",
+        ...revisions,
+        "--pr",
+        "--defaults",
+    ];
+
+    if (issueUrl)
+        args.push("--issue", issueUrl);
+    else
+        args.push("--reason", reason);
+
+    return args;
+}
+
 export function extractRevisionsAndReason(args)
 {
     let revisions = [];
@@ -137,10 +155,22 @@ export function extractTextIfMentioned(text, id)
     // 2. Convert line-terminators to spaces. It is unlikely that we want to have line-terminators in webkitbot commands.
     text = text.replace(/(\r\n|\n|\r|\u2028|\u2029)/g, " ");
 
+    // 3. Strip Slack's auto-linked URLs: <https://url> → https://url, <https://url|label> → https://url
+    text = text.replace(/<(https?:\/\/[^|>]+)(?:\|[^>]*)?>/g, "$1");
+
     return text;
 }
 
 export default class WebKitBot {
+    postMessage(options)
+    {
+        return this._web.chat.postMessage({
+            unfurl_links: false,
+            unfurl_media: false,
+            ...options,
+        });
+    }
+
     constructor(webClient, auth)
     {
         this._taskQueue = new AsyncTaskQueue(defaultTaskLimit);
@@ -150,30 +180,24 @@ export default class WebKitBot {
         this._commands = new Map;
 
         let revertCommand = {
-            description: "Opens a bug to revert the specified revision, CCing author + reviewer, and attaching the reverse-diff of the given revisions marked as commit-queue=?.",
-            usage: `\`revert SVN_REVISION [SVN_REVISIONS] REASON\`
-e.g. \`revert 260220 Ensure it is working after refactoring\`
-\`revert 260220,260221 Ensure it is working after refactoring\``,
+            description: "Reverts the specified revision(s) by creating a GitHub pull request. Optionally reuse an existing bug by passing its URL in place of a reason.",
+            usage: `\`revert REVISION [REVISIONS] REASON\` or \`revert REVISION [REVISIONS] BUG_URL\`
+    Examples:
+    • \`revert 260220@main Ensure it is working after refactoring\`
+    • \`revert 260220@main,260221@main Ensure it is working after refactoring\`
+    • \`revert 308300@main https://bugs.webkit.org/show_bug.cgi?id=308859\``,
             operation: this.revertCommand.bind(this),
         };
         this._commands.set("rollout", revertCommand);
         this._commands.set("revert", revertCommand);
         this._commands.set("dry-revert", {
             description: "Parse revert message, but do not revert actually.",
-            usage: `\`dry-revert SVN_REVISION [SVN_REVISIONS] REASON\`
-e.g. \`dry-revert 260220 Ensure it is working after refactoring\`
-\`dry-revert 260220,260221 Ensure it is working after refactoring\``,
+            usage: `\`dry-revert REVISION [REVISIONS] REASON\` or \`dry-revert REVISION [REVISIONS] BUG_URL\`
+    Examples:
+    • \`dry-revert 260220@main Ensure it is working after refactoring\`
+    • \`dry-revert 308300@main https://bugs.webkit.org/show_bug.cgi?id=308859\``,
             operation: this.dryRevertCommand.bind(this),
         });
-        if (process.env.USE_GIT_WEBKIT_REVERT === "true") {
-            this._commands.set("revert-with-pr", {
-                description: "Creates a GitHub PR to revert the specified revision.",
-                usage: `\`revert-with-pr SVN_REVISION [SVN_REVISIONS] REASON\`
-e.g. \`revert-with-pr 260220 Ensure it is working after refactoring\`
-\`revert-with-pr 260220,260221 Ensure it is working after refactoring\``,
-                operation: this.revertWithPRCommand.bind(this),
-            });
-        }
         this._commands.set("ping", {
             description: "Responds with pong to check if WebKitBot is alive/working",
             usage: "`ping`",
@@ -233,22 +257,43 @@ e.g. \`revert-with-pr 260220 Ensure it is working after refactoring\`
         }, defaultPullPeriod);
     }
 
-    async revertCommand(event, command, args, usePR = false)
+    async revertCommand(event, command, args)
     {
         let {revisions, reason} = extractRevisionsAndReason(args);
 
-        if (!isASCII(reason)) {
-            await this._web.chat.postMessage({
+        const usingGitWebkit = process.env.USE_GIT_WEBKIT_REVERT === "true";
+
+        // When routing through git-webkit, check if the "reason" is actually a
+        // bug URL to reuse as the tracking issue.
+        let issueUrl = null;
+        if (usingGitWebkit && reason) {
+            let bugId = parseBugId(reason);
+            if (bugId) {
+                issueUrl = `https://bugs.webkit.org/show_bug.cgi?id=${bugId}`;
+                reason = "";
+            }
+        }
+
+        if (!issueUrl && !isASCII(reason)) {
+            await this.postMessage({
                 channel: event.channel,
                 text: `<@${event.user}> webkit-patch only accepts an ASCII string for reason: \`${escapeForSlackText(reason)}\``,
             });
             return;
         }
 
-        dataLogLn(revisions, reason);
+        if (usingGitWebkit && !reason && !issueUrl) {
+            await this.postMessage({
+                channel: event.channel,
+                text: `<@${event.user}> Please provide a reason or a bug URL.`,
+            });
+            return;
+        }
+
+        dataLogLn(revisions, reason, issueUrl);
         if (revisions.length) {
             try {
-                await this._web.chat.postMessage({
+                await this.postMessage({
                     channel: event.channel,
                     text: `<@${event.user}> Preparing revert for ${revisions.map((revision) => {
                         let revRepr = revision;
@@ -258,9 +303,10 @@ e.g. \`revert-with-pr 260220 Ensure it is working after refactoring\`
                     }).join(" ")} ...`,
                 });
                 let result = await this._taskQueue.postOrFailWhenExceedingLimit({
-                    command: usePR ? "revert-with-pr" : "revert",
+                    command: "revert",
                     revisions,
                     reason,
+                    issueUrl,
                 });
 
                 let successMessage;
@@ -269,15 +315,44 @@ e.g. \`revert-with-pr 260220 Ensure it is working after refactoring\`
                 else
                     successMessage = `<@${event.user}> Created a revert patch https://webkit.org/b/${escapeForSlackText(result)}`;
 
-                await this._web.chat.postMessage({
+                await this.postMessage({
                     channel: event.channel,
                     text: successMessage,
                 });
             } catch (error) {
                 console.error(error);
                 let stderr = error.stderr;
+                let stdout = error.stdout;
                 console.error("STDERR ", stderr);
                 if (typeof stderr === "string") {
+                    if (usingGitWebkit && stderr.indexOf("CONFLICT") !== -1) {
+                        let conflictFiles = [];
+                        for (let line of stderr.split("\n")) {
+                            let match = line.match(/CONFLICT.*Merge conflict in (.+)/);
+                            if (match)
+                                conflictFiles.push(match[1].trim());
+                        }
+                        // Check if a bug was already created before the conflict
+                        let createdBugMatch = typeof stdout === "string" && stdout.match(/https:\/\/bugs\.webkit\.org\/show_bug\.cgi\?id=\d+/);
+                        let message = `<@${event.user}> Failed to create revert PR due to merge conflicts.`;
+                        if (conflictFiles.length)
+                            message += `\nConflicting files:\n${escapeForSlackText(conflictFiles.map(f => `  • ${f}`).join("\n"))}`;
+                        if (createdBugMatch)
+                            message += `\nA bug was created at ${escapeForSlackText(createdBugMatch[0])}! Please close or reuse this bug for your revert.`;
+                        await this.postMessage({
+                            channel: event.channel,
+                            text: message,
+                        });
+                        return;
+                    }
+                    if (usingGitWebkit && stderr.indexOf("already be reverted") !== -1) {
+                        await this.postMessage({
+                            channel: event.channel,
+                            text: `<@${event.user}> The commit(s) appear to already be reverted.`,
+                        });
+                        return;
+                    }
+                    // webkit-patch: merge conflict
                     {
                         let index = stderr.indexOf("Failed to apply reverse diff for revision");
                         if (index !== -1) {
@@ -294,7 +369,7 @@ e.g. \`revert-with-pr 260220 Ensure it is working after refactoring\`
                                 }
                             }
                             if (files.length !== 0) {
-                                await this._web.chat.postMessage({
+                                await this.postMessage({
                                     channel: event.channel,
                                     text: `<@${event.user}> Failed to create revert patch because of the following conflicts:
 \`\`\`
@@ -309,7 +384,7 @@ ${escapeForSlackText(files.join("\n"))}\`\`\``,
                         if (index !== -1) {
                             let line = stderr.slice(index).split("\n")[0].trim();
                             let matched = /#(\d+)/.match(line);
-                            await this._web.chat.postMessage({
+                            await this.postMessage({
                                 channel: event.channel,
                                 text: `<@${event.user}> Failed to create revert patch. Please ensure commit-queue@webkit.org is authorized to access ${matched ? ("bug " + escapeForSlackText(matched[1])) : "the bug"}.`
                             });
@@ -317,7 +392,7 @@ ${escapeForSlackText(files.join("\n"))}\`\`\``,
                         }
                     }
                 }
-                await this._web.chat.postMessage({
+                await this.postMessage({
                     channel: event.channel,
                     text: `<@${event.user}> Failed to create revert patch.` + (stderr ? `
 \`\`\`
@@ -327,7 +402,7 @@ ${escapeForSlackText(stderr)}\`\`\`` : ""),
             return;
         }
 
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> Failed to parse revision and reason`,
         });
@@ -337,8 +412,18 @@ ${escapeForSlackText(stderr)}\`\`\`` : ""),
     {
         let {revisions, reason} = extractRevisionsAndReason(args);
 
-        if (!isASCII(reason)) {
-            await this._web.chat.postMessage({
+        // Check if the "reason" is actually a bug URL
+        let issueUrl = null;
+        if (reason) {
+            let bugId = parseBugId(reason);
+            if (bugId) {
+                issueUrl = `https://bugs.webkit.org/show_bug.cgi?id=${bugId}`;
+                reason = "";
+            }
+        }
+
+        if (!issueUrl && !isASCII(reason)) {
+            await this.postMessage({
                 channel: event.channel,
                 text: `<@${event.user}> webkit-patch only accepts an ASCII string for reason: \`${escapeForSlackText(reason)}\``,
             });
@@ -346,49 +431,43 @@ ${escapeForSlackText(stderr)}\`\`\`` : ""),
         }
 
         if (!revisions.length) {
-            await this._web.chat.postMessage({
+            let detail = issueUrl
+                ? `issue = \`${escapeForSlackText(issueUrl)}\``
+                : `reason = \`${escapeForSlackText(reason)}\``;
+            await this.postMessage({
                 channel: event.channel,
-                text: `<@${event.user}> No revision is found: reason = \`${escapeForSlackText(reason)}\``,
+                text: `<@${event.user}> No revision is found: ${detail}`,
             });
             return;
         }
 
-        let message = `revisions = \`${escapeForSlackText(revisions.join(","))}\`, reason = \`${escapeForSlackText(reason)}\``;
+        let message;
+        if (issueUrl)
+            message = `revisions = \`${escapeForSlackText(revisions.join(","))}\`, issue = \`${escapeForSlackText(issueUrl)}\``;
+        else
+            message = `revisions = \`${escapeForSlackText(revisions.join(","))}\`, reason = \`${escapeForSlackText(reason)}\``;
 
         if (process.env.USE_GIT_WEBKIT_REVERT === "true") {
-            const gitWebkitPath = path.resolve("BotWebKit", "Tools", "Scripts", "git-webkit");
-            let gitWebkitArgs = [
-                gitWebkitPath,
-                "revert",
-                ...revisions,
-                "--reason", reason,
-                "--pr",
-                "--draft",
-            ];
+            let gitWebkitArgs = buildGitWebkitRevertCommand("git-webkit", revisions, reason, issueUrl);
             message += `\nRevert command: \`${escapeForSlackText(gitWebkitArgs.join(" "))}\``;
         }
 
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> ${message}`,
         });
     }
 
-    async revertWithPRCommand(event, command, args)
-    {
-        return this.revertCommand(event, command, args, true);
-    }
-
     async pullCommand(event, command, args)
     {
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> Preparing pulling the latest WebKit checkout.`,
         });
         await this._taskQueue.postOrFailWhenExceedingLimit({
             command: "pull",
         });
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> Pulled the latest checkout.`,
         });
@@ -396,7 +475,7 @@ ${escapeForSlackText(stderr)}\`\`\`` : ""),
 
     async pingCommand(event, command, args)
     {
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> pong`,
         });
@@ -408,13 +487,13 @@ ${escapeForSlackText(stderr)}\`\`\`` : ""),
             let commandName = args[0];
             let operation = this._commands.get(commandName);
             if (operation) {
-                await this._web.chat.postMessage({
+                await this.postMessage({
                     channel: event.channel,
                     text: `<@${event.user}> \`${escapeForSlackText(commandName)}\`: ${escapeForSlackText(operation.description)}
 Usage: ${escapeForSlackText(operation.usage)}`,
                 });
             } else {
-                await this._web.chat.postMessage({
+                await this.postMessage({
                     channel: event.channel,
                     text: `<@${event.user}> Unknown command \`${escapeForSlackText(commandName)}\``,
                 });
@@ -423,7 +502,7 @@ Usage: ${escapeForSlackText(operation.usage)}`,
             let commandNames = [];
             for (let key of this._commands.keys())
                 commandNames.push("`" + key + "`");
-            await this._web.chat.postMessage({
+            await this.postMessage({
                 channel: event.channel,
                 text: `<@${event.user}> Available commands: ${escapeForSlackText(commandNames.join(", "))}
 Type \`help COMMAND\` for help on my individual commands.`,
@@ -433,7 +512,7 @@ Type \`help COMMAND\` for help on my individual commands.`,
 
     async statusCommand(event, command, args)
     {
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> ${escapeForSlackText(String(this._taskQueue.length))} requests in queue.`,
         });
@@ -441,7 +520,7 @@ Type \`help COMMAND\` for help on my individual commands.`,
 
     async hiCommand(event, command, args)
     {
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `Hi <@${event.user}>!`,
         });
@@ -449,7 +528,7 @@ Type \`help COMMAND\` for help on my individual commands.`,
 
     async youThereCommand(event, command, args)
     {
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> yes`,
         });
@@ -458,7 +537,7 @@ Type \`help COMMAND\` for help on my individual commands.`,
     async unknownCommand(event, command, args)
     {
         dataLogLn("Unknown command: ", command);
-        await this._web.chat.postMessage({
+        await this.postMessage({
             channel: event.channel,
             text: `<@${event.user}> Unknown command \`${escapeForSlackText(command)}\``,
         });
@@ -469,7 +548,13 @@ Type \`help COMMAND\` for help on my individual commands.`,
         return new Promise((resolve, reject) => {
             let task = spawn(command, args, {
                 cwd: process.env.webkitWorkingDirectory,
-                env: {},
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: process.env.HOME || "/root",
+                    // Needed to suppress long utf-8 warnings in logs
+                    LC_ALL: "C.UTF-8",
+                    LANG: "C.UTF-8",
+                },
                 stdio: "inherit",
             });
             task.on("close", (code) => {
@@ -500,13 +585,28 @@ Type \`help COMMAND\` for help on my individual commands.`,
 
         dataLogLn("6. Creating local 'main' ref");
         await this.execInWebKitDirectorySimple("git", ["checkout", "origin/main", "-b", "main"]);
+
+        dataLogLn("7. Cleaning up leftover branches");
+        try {
+            let {stdout} = await execFileAsync("git", ["for-each-ref", "--format", "%(refname:short)", "refs/heads/"], {
+                cwd: process.env.webkitWorkingDirectory,
+            });
+            for (let branch of stdout.split("\n").filter(b => b && b !== "main")) {
+                dataLogLn("Deleting branch:" + branch);
+                await execFileAsync("git", ["branch", "-D", branch], {
+                    cwd: process.env.webkitWorkingDirectory,
+                });
+            }
+        } catch (error) {
+            dataLogLn("Warning: Failed to clean up branches:" + error.message);
+        }
     }
 
     async generateRevertingPatchWithGitWebkit(revisions, reason, issueUrl = null)
     {
-        dataLogLn("Reverting with git-webkit: ", revisions, reason);
+        dataLogLn("Reverting with git-webkit: ", revisions, reason, issueUrl);
 
-        if (reason.startsWith("-"))
+        if (!issueUrl && reason.startsWith("-"))
             throw new Error(`The revert reason may not begin with - ("${reason}")`);
 
         await this.cleanUpWorkingCopy();
@@ -517,37 +617,55 @@ Type \`help COMMAND\` for help on my individual commands.`,
             const gitWebkitPath = path.resolve("BotWebKit", "Tools", "Scripts", "git-webkit");
             var pythonPath = which.sync("python3");
 
-            let args = [
-                gitWebkitPath,
-                "revert",
-                ...revisions,
-                "--reason", reason,
-                "--pr",
-                "--draft",
-            ];
+            let args = buildGitWebkitRevertCommand(gitWebkitPath, revisions, reason, issueUrl);
 
-            if (issueUrl)
-                args.push("--issue", issueUrl);
+            console.log("Running: " + pythonPath + " " + args.join(" "));
 
-            results = await execFileAsync(pythonPath, args, {
-                cwd: process.env.webkitWorkingDirectory,
-                env: {
-                    GIT_AUTHOR_NAME: "WebKit Revert Bot",
-                    GIT_AUTHOR_EMAIL: "revert-bot@webkit.org",
-                    GIT_COMMITTER_NAME: "WebKit Revert Bot",
-                    GIT_COMMITTER_EMAIL: "revert-bot@webkit.org",
-                    GIT_EDITOR: "true",
-                    GITHUB_COM_USERNAME: process.env.GITHUB_COM_USERNAME,
-                    GITHUB_COM_TOKEN: process.env.GITHUB_COM_TOKEN,
-                    BUGS_WEBKIT_ORG_USERNAME: process.env.BUGS_WEBKIT_ORG_USERNAME,
-                    BUGS_WEBKIT_ORG_PASSWORD: process.env.BUGS_WEBKIT_ORG_PASSWORD,
-                    http_proxy: process.env.http_proxy,
-                    https_proxy: process.env.http_proxy,
-                    PATH: process.env.PATH,
-                    HOME: process.env.HOME || "/root",
-                },
-                timeout: defaultTimeoutForRevert,
-                maxBuffer: 1024 * 1024 * 50,
+            results = await new Promise((resolve, reject) => {
+                let stdout = "";
+                let stderr = "";
+                let task = spawn(pythonPath, args, {
+                    cwd: process.env.webkitWorkingDirectory,
+                    env: {
+                        GIT_AUTHOR_NAME: "WebKit Revert Bot",
+                        GIT_AUTHOR_EMAIL: "revert-bot@webkit.org",
+                        GIT_COMMITTER_NAME: "WebKit Revert Bot",
+                        GIT_COMMITTER_EMAIL: "revert-bot@webkit.org",
+                        GIT_EDITOR: "true",
+                        GITHUB_COM_USERNAME: process.env.GITHUB_COM_USERNAME,
+                        GITHUB_COM_TOKEN: process.env.GITHUB_COM_TOKEN,
+                        BUGS_WEBKIT_ORG_USERNAME: process.env.BUGS_WEBKIT_ORG_USERNAME,
+                        BUGS_WEBKIT_ORG_PASSWORD: process.env.BUGS_WEBKIT_ORG_PASSWORD,
+                        http_proxy: process.env.http_proxy,
+                        https_proxy: process.env.http_proxy,
+                        PATH: process.env.PATH,
+                        HOME: process.env.HOME || "/root",
+                    },
+                    timeout: defaultTimeoutForRevert,
+                });
+                task.stdout.on("data", (data) => {
+                    process.stdout.write(data);
+                    stdout += data.toString();
+                });
+                task.stderr.on("data", (data) => {
+                    process.stderr.write(data);
+                    stderr += data.toString();
+                });
+                task.on("close", (code) => {
+                    if (code === 0)
+                        resolve({stdout, stderr});
+                    else {
+                        let error = new Error(`git-webkit exited with code ${code}`);
+                        error.stdout = stdout;
+                        error.stderr = stderr;
+                        reject(error);
+                    }
+                });
+                task.on("error", (error) => {
+                    error.stdout = stdout;
+                    error.stderr = stderr;
+                    reject(error);
+                });
             });
         } catch (error) {
             dataLogLn(error);
@@ -557,9 +675,9 @@ Type \`help COMMAND\` for help on my individual commands.`,
             throw newError;
         }
 
+        // stdout/stderr were already streamed live above; just parse the
+        // captured output for the PR URL (don't re-dump it).
         let {stdout, stderr} = results;
-        dataLogLn(stdout);
-        dataLogLn(stderr);
         let prUrl = parsePRUrl(stdout) || parsePRUrl(stderr);
         if (prUrl)
             return prUrl;
@@ -569,6 +687,9 @@ Type \`help COMMAND\` for help on my individual commands.`,
 
     async generateRevertingPatch(revisions, reason, issueUrl = null)
     {
+        if (process.env.USE_GIT_WEBKIT_REVERT === "true")
+            return this.generateRevertingPatchWithGitWebkit(revisions, reason, issueUrl);
+
         dataLogLn("Reverting ", revisions, reason);
         let revisionsArgument = revisions.join(" ");
 
@@ -633,12 +754,8 @@ Type \`help COMMAND\` for help on my individual commands.`,
         dataLogLn(task);
         switch (task.command) {
         case "revert": {
-            let {revisions, reason} = task;
-            return this.generateRevertingPatch(revisions, reason);
-        }
-        case "revert-with-pr": {
-            let {revisions, reason} = task;
-            return this.generateRevertingPatchWithGitWebkit(revisions, reason);
+            let {revisions, reason, issueUrl} = task;
+            return this.generateRevertingPatch(revisions, reason, issueUrl);
         }
         case "pull":
             return this.cleanUpWorkingCopy();

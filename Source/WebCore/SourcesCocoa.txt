@@ -121,7 +121,6 @@ Modules/async-clipboard/ios/ClipboardImageReaderIOS.mm @nonARC
 Modules/async-clipboard/mac/ClipboardImageReaderMac.mm @nonARC
 Modules/compression/cocoa/CompressionStreamEncoderCocoa.mm @nonARC
 Modules/compression/cocoa/DecompressionStreamDecoderCocoa.mm @nonARC
-Modules/mediastream/RTCRtpSFrameTransformerCocoa.cpp
 Modules/notifications/NotificationDataCocoa.mm @nonARC
 Modules/notifications/NotificationOptionsPayloadCocoa.mm @nonARC
 Modules/notifications/NotificationPayloadCocoa.mm @nonARC
@@ -469,6 +468,7 @@ platform/graphics/cocoa/IOSurface.mm @nonARC
 platform/graphics/cocoa/IOSurfaceDrawingBuffer.cpp
 platform/graphics/cocoa/IOSurfacePoolCocoa.mm @nonARC
 platform/graphics/cocoa/ISOBMFFPreParser.cpp
+platform/graphics/cocoa/ISOBMFFTrackInfoParser.cpp
 platform/graphics/cocoa/IconCocoa.mm @nonARC
 platform/graphics/cocoa/IntRectCocoa.mm @nonARC
 platform/graphics/cocoa/ImageAdapterCocoa.mm @nonARC

@@ -459,5 +459,12 @@
                 "expected": {"all" : { "status": ["PASS", "FAIL", "TIMEOUT"], "bug": "webkit.org/b/301570"}}
             }
         }
+    },
+    "TestInputMethodContext": {
+        "subtests": {
+            "/webkit/WebKitInputMethodContext/simple": {
+                "expected": {"gtk": {"status": ["PASS", "FAIL"], "bug": "webkit.org/b/318892"}}
+            }
+        }
     }
 }

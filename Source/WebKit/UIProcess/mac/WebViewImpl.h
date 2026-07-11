@@ -1071,6 +1071,7 @@ private:
 
     const UniqueRef<PAL::HysteresisActivity> m_contentRelativeViewsHysteresis;
     std::unique_ptr<PAL::HysteresisActivity> m_pageScrollingHysteresis;
+    bool m_contentRelativeViewsNeedToBeRepositioned { false };
 
     RetainPtr<NSColorSpace> m_colorSpace;
 

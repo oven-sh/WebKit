@@ -107,17 +107,17 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     return *_worldConfiguration;
 }
 
-- (BOOL)openClosedShadowRootsEnabled
+- (BOOL)allowAccessingClosedShadowRoots
 {
     return _worldConfiguration->allowAccessToClosedShadowRoots();
 }
 
-- (void)setOpenClosedShadowRootsEnabled:(BOOL)allow
+- (void)setAllowAccessingClosedShadowRoots:(BOOL)allow
 {
     _worldConfiguration->setAllowAccessToClosedShadowRoots(allow);
 }
 
-- (BOOL)autofillScriptingEnabled
+- (BOOL)isAutofillScriptingEnabled
 {
     return _worldConfiguration->allowAutofill();
 }
@@ -127,7 +127,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setAllowAutofill(enabled);
 }
 
-- (BOOL)elementUserInfoEnabled
+- (BOOL)isElementUserInfoEnabled
 {
     return _worldConfiguration->allowElementUserInfo();
 }
@@ -137,7 +137,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setAllowElementUserInfo(enabled);
 }
 
-- (BOOL)legacyBuiltinOverridesEnabled
+- (BOOL)isLegacyBuiltinOverridesEnabled
 {
     return !_worldConfiguration->disableLegacyBuiltinOverrides();
 }
@@ -147,7 +147,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setDisableLegacyBuiltinOverrides(!enabled);
 }
 
-- (BOOL)jsHandleCreationEnabled
+- (BOOL)isJSHandleCreationEnabled
 {
     return _worldConfiguration->allowJSHandleCreation();
 }
@@ -167,7 +167,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setInspectable(inspectable);
 }
 
-- (BOOL)nodeSerializationEnabled
+- (BOOL)isNodeSerializationEnabled
 {
     return _worldConfiguration->allowNodeSerialization();
 }
@@ -253,7 +253,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 
 - (BOOL)allowNodeSerialization
 {
-    return [self nodeSerializationEnabled];
+    return [self isNodeSerializationEnabled];
 }
 
 - (void)setAllowNodeSerialization:(BOOL)allow

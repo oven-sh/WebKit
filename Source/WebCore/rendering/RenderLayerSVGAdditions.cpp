@@ -409,8 +409,11 @@ void RenderLayer::paintNonLayerChildForFragmentsForSVG(RenderElement& childRende
     if (isSVGRoot)
         svgRootScrollAdjustment = LayoutPoint(-downcast<RenderSVGRoot>(renderer()).scrollPosition());
 
+    // Like collectEventRegionForFragments(), event-region collection runs even for fragments
+    // with no visible content (shouldPaintContent false, empty foreground rect).
+    bool collectingEventRegion = phase == PaintPhase::EventRegion;
     for (const auto& fragment : layerFragments) {
-        if (!fragment.shouldPaintContent || fragment.dirtyForegroundRect().isEmpty())
+        if (!collectingEventRegion && (!fragment.shouldPaintContent || fragment.dirtyForegroundRect().isEmpty()))
             continue;
 
         GraphicsContextStateSaver stateSaver(context, false);
@@ -421,6 +424,8 @@ void RenderLayer::paintNonLayerChildForFragmentsForSVG(RenderElement& childRende
             phase, paintBehavior, subtreePaintRootForRenderer,
             nullptr, nullptr, &paintingInfo.rootLayer->renderer(), this,
             paintingInfo.requireSecurityOriginAccessForWidgets);
+        if (collectingEventRegion)
+            paintInfo.regionContext = paintingInfo.regionContext;
         if (phase == PaintPhase::Foreground)
             paintInfo.overlapTestRequests = paintingInfo.overlapTestRequests;
         paintInfo.updateSubtreePaintRootForChildren(&renderer());
@@ -525,6 +530,14 @@ void RenderLayer::paintChildrenInDOMOrderForSVG(GraphicsContext& context, const 
             continue;
         }
 
+        // phasesToPaint only covers normal painting (Foreground/Outline), so drive the
+        // EventRegion phase separately for non-layer children when collecting the event region.
+        if (paintFlags.contains(PaintLayerFlag::CollectingEventRegion)) {
+            paintNonLayerChildForFragmentsForSVG(childRenderer.get(), childToPaint.accumulatedAncestorOffset,
+                PaintPhase::EventRegion, layerFragments, context, paintingInfo, paintBehavior, subtreePaintRootForRenderer, containerBaseOffset, isSVGRoot);
+            continue;
+        }
+
         for (auto phase : childToPaint.phasesToPaint) {
             paintNonLayerChildForFragmentsForSVG(childRenderer.get(), childToPaint.accumulatedAncestorOffset,
                 phase, layerFragments, context, paintingInfo, paintBehavior, subtreePaintRootForRenderer, containerBaseOffset, isSVGRoot);
@@ -538,13 +551,29 @@ std::optional<RenderLayer::SVGRendererTransform> RenderLayer::computeRendererTra
     CheckedRef layerModelObject = downcast<RenderLayerModelObject>(rendererRef.get());
     TransformationMatrix transform;
     CheckedRef style = layerModelObject->style();
-    auto referenceBoxRect = layerModelObject->transformReferenceBoxRect(style);
 
-    // For non-layer renderers, undo the alignReferenceBox shift applied in transformReferenceBoxRect().
-    if (!rendererRef->hasSelfPaintingLayer() && rendererRef->isSVGLayerAwareRenderer())
-        referenceBoxRect.moveBy(layerModelObject->nominalSVGLayoutLocation());
+    // Fast path: a non-layer SVG renderer already caches 'transform' in m_localTransform.
+    // The only difference from the paint transform is the reference-box + nominal shift, which
+    // just moves the transform-origin, so the paint transform equals:
+    // translate(nominal) * m_localTransform * translate(-nominal).
+    bool isNonLayerSVG = !rendererRef->hasSelfPaintingLayer() && rendererRef->isSVGLayerAwareRenderer();
+    CheckedPtr useTransformRenderer = (isNonLayerSVG && !is<RenderSVGViewportContainer>(rendererRef.get()))
+        ? dynamicDowncast<RenderSVGModelObject>(rendererRef.get()) : nullptr;
 
-    layerModelObject->applyTransform(transform, style, referenceBoxRect, Style::TransformResolver::allTransformOperations);
+    if (useTransformRenderer) {
+        auto nominal = useTransformRenderer->nominalSVGLayoutLocation();
+        transform.translate(nominal.x().toFloat(), nominal.y().toFloat());
+        transform.multiply(TransformationMatrix(useTransformRenderer->localTransform()));
+        transform.translate(-nominal.x().toFloat(), -nominal.y().toFloat());
+    } else {
+        auto referenceBoxRect = layerModelObject->transformReferenceBoxRect(style);
+
+        // For non-layer renderers, undo the alignReferenceBox shift applied in transformReferenceBoxRect().
+        if (isNonLayerSVG)
+            referenceBoxRect.moveBy(layerModelObject->nominalSVGLayoutLocation());
+
+        layerModelObject->applyTransform(transform, style, referenceBoxRect, Style::TransformResolver::allTransformOperations);
+    }
 
     // For the outermost viewport container (anonymous child of RenderSVGRoot), apply the
     // content-box origin offset (border+padding).

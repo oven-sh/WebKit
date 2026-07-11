@@ -4,10 +4,12 @@ list(APPEND JavaScriptCore_UNIFIED_SOURCE_LIST_FILES
     "Sources.txt"
 )
 
-set(JavaScriptCore_INCLUDE_DIRECTORIES
-    "${JavaScriptCore_FRAMEWORK_HEADERS_DIR}"
-    "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}"
-)
+if (NOT USE_FRAMEWORK_BUNDLES)
+    set(JavaScriptCore_INCLUDE_DIRECTORIES
+        "${JavaScriptCore_FRAMEWORK_HEADERS_DIR}"
+        "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}"
+    )
+endif ()
 
 set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${CMAKE_BINARY_DIR}"
@@ -223,8 +225,8 @@ if (MSVC AND NOT ENABLE_C_LOOP)
     list(APPEND OFFLINE_ASM_FORMAT_ARGS --platform=Windows)
 endif ()
 if (USE_APPLE_INTERNAL_SDK)
-    list(APPEND OFFLINE_ASM_ARGS "--webkit-additions-path=${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
-    list(APPEND OFFLINE_ASM_INCLUDE_DIRS "-I${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
+    list(APPEND OFFLINE_ASM_ARGS "--webkit-additions-path=${WebKitAdditions_HEADERS_DIR}")
+    list(APPEND OFFLINE_ASM_INCLUDE_DIRS "-I${WebKitAdditions_HEADERS_DIR}")
 endif ()
 
 set(LLINT_ASM
@@ -1236,7 +1238,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/DatePrototypeInlines.h
     runtime/DeferTermination.h
     runtime/DeferredWorkTimer.h
-    runtime/DeferredWorkTimerInlines.h
     runtime/DefinePropertyAttributes.h
     runtime/DeletePropertySlot.h
     runtime/DirectArguments.h
@@ -2215,14 +2216,13 @@ endif()
 
 WEBKIT_COPY_FILES(JavaScriptCore_CopyHeaders
     PRUNE_STALE
-    DESTINATION ${JavaScriptCore_FRAMEWORK_HEADERS_DIR}/JavaScriptCore
+    DESTINATION ${JavaScriptCore_HEADERS_DIR}
     FILES ${JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS}
     FLATTENED
 )
-
 WEBKIT_SYMLINK_FILES(JavaScriptCore_CopyPrivateHeaders
     PRUNE_STALE
-    DESTINATION ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/JavaScriptCore
+    DESTINATION ${JavaScriptCore_PRIVATE_HEADERS_DIR}
     FILES ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
 )

@@ -111,6 +111,7 @@
 #import <WebCore/CompositionHighlight.h>
 #import <WebCore/DataDetectorElementInfo.h>
 #import <WebCore/DestinationColorSpace.h>
+#import <WebCore/DiagnosticLoggingClient.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DigitalCredentialsRequestData.h>
 #import <WebCore/DragData.h>
@@ -1409,6 +1410,10 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     auto& pageConfiguration = m_page->configuration();
     m_page->initializeWebPage(pageConfiguration.openedSite(), pageConfiguration.initialSandboxFlags(), pageConfiguration.initialReferrerPolicy());
 
+    // This will ensure that DisplayID is set. This default is important so that offscreen webviews
+    // can schedule presentation updates.
+    windowDidChangeScreen();
+
     registerDraggedTypes();
 
     view.wantsLayer = YES;
@@ -1442,7 +1447,6 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
 WebViewImpl::~WebViewImpl()
 {
     if (m_remoteObjectRegistry) {
-        protect(m_page->configuration().processPool())->removeMessageReceiver(Messages::RemoteObjectRegistry::messageReceiverName(), m_page->identifier());
         [m_remoteObjectRegistry _invalidate];
         m_remoteObjectRegistry = nil;
     }
@@ -1504,6 +1508,8 @@ void WebViewImpl::handleProcessSwapOrExit()
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     [m_appKitGestureController reset];
 #endif
+
+    m_contentRelativeViewsNeedToBeRepositioned = false;
 }
 
 void WebViewImpl::processWillSwap()
@@ -3862,7 +3868,7 @@ bool WebViewImpl::hasContentRelativeChildViews() const
 
 void WebViewImpl::suppressContentRelativeChildViews(ContentRelativeChildViewsSuppressionType type)
 {
-    if (!hasContentRelativeChildViews())
+    if (!hasContentRelativeChildViews() && !inputContextForSelectionUpdates())
         return;
 
     switch (type) {
@@ -3879,13 +3885,16 @@ void WebViewImpl::suppressContentRelativeChildViews(ContentRelativeChildViewsSup
 
 void WebViewImpl::contentRelativeViewsHysteresisTimerFired(PAL::HysteresisState state)
 {
-    if (!hasContentRelativeChildViews())
-        return;
+    bool started = state == PAL::HysteresisState::Started;
+    if (hasContentRelativeChildViews()) {
+        if (started)
+            suppressContentRelativeChildViews();
+        else
+            restoreContentRelativeChildViews();
+    }
 
-    if (state == PAL::HysteresisState::Started)
-        suppressContentRelativeChildViews();
-    else
-        restoreContentRelativeChildViews();
+    if (m_contentRelativeViewsNeedToBeRepositioned != started && std::exchange(m_contentRelativeViewsNeedToBeRepositioned, started))
+        [inputContextForSelectionUpdates() textInputClientDidUpdateSelection];
 }
 
 void WebViewImpl::pageScrollingHysteresisFired(PAL::HysteresisState state)
@@ -4443,11 +4452,8 @@ RetainPtr<NSView> WebViewImpl::inspectorAttachmentView()
 
 _WKRemoteObjectRegistry *WebViewImpl::remoteObjectRegistry()
 {
-    if (!m_remoteObjectRegistry) {
+    if (!m_remoteObjectRegistry)
         m_remoteObjectRegistry = adoptNS([[_WKRemoteObjectRegistry alloc] _initWithWebPageProxy:m_page.get()]);
-        Ref webRemoteObjectRegistry = [m_remoteObjectRegistry remoteObjectRegistry];
-        protect(m_page->configuration().processPool())->addMessageReceiver(Messages::RemoteObjectRegistry::messageReceiverName(), m_page->identifier(), webRemoteObjectRegistry);
-    }
 
     return m_remoteObjectRegistry.get();
 }

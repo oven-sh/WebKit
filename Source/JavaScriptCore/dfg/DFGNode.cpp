@@ -357,6 +357,16 @@ void Node::convertToRegExpExecNonGlobalOrStickyWithoutChecks(FrozenValue* regExp
     m_opInfo = regExp;
 }
 
+void Node::convertToRegExpExecStickyWithoutChecks(FrozenValue* regExp)
+{
+    ASSERT(op() == RegExpExec);
+    setOpAndDefaultFlags(RegExpExecSticky);
+    children.child1() = Edge(children.child1().node(), KnownCellUse);
+    children.child2() = Edge(children.child2().node(), RegExpObjectUse);
+    children.child3() = Edge(children.child3().node(), KnownStringUse);
+    m_opInfo = regExp;
+}
+
 void Node::convertToRegExpMatchFastGlobalWithoutChecks(FrozenValue* regExp)
 {
     ASSERT(op() == RegExpMatchFast);
@@ -409,6 +419,22 @@ void Node::convertToDefineAccessorProperty(Graph& graph, Edge base, Edge propert
     graph.m_varArgChildren.append(getter);
     graph.m_varArgChildren.append(setter);
     graph.m_varArgChildren.append(attributes);
+    children = AdjacencyList(AdjacencyList::Variable, firstChild, 5);
+}
+
+void Node::convertToEnumeratorHasOwnProperty(Graph& graph, Edge base, Edge propertyName, Edge index, Edge mode, Edge enumerator, ArrayMode arrayMode, unsigned enumeratorMetadata)
+{
+    ASSERT(op() == HasOwnProperty);
+    setOpAndDefaultFlags(EnumeratorHasOwnProperty);
+    m_opInfo = arrayMode.asWord();
+    m_opInfo2 = enumeratorMetadata;
+
+    unsigned firstChild = graph.m_varArgChildren.size();
+    graph.m_varArgChildren.append(base);
+    graph.m_varArgChildren.append(propertyName);
+    graph.m_varArgChildren.append(index);
+    graph.m_varArgChildren.append(mode);
+    graph.m_varArgChildren.append(enumerator);
     children = AdjacencyList(AdjacencyList::Variable, firstChild, 5);
 }
 

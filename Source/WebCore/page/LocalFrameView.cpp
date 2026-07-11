@@ -152,7 +152,6 @@
 #include <wtf/text/TextStream.h>
 
 #if PLATFORM(IOS_FAMILY)
-#include "DocumentLoader.h"
 #include "LegacyTileCache.h"
 #endif
 
@@ -706,7 +705,7 @@ void LocalFrameView::applyPaginationToViewport()
         if (!columnGap.isNormal()) {
             CheckedPtr renderBox = dynamicDowncast<RenderBox>(documentOrBodyRenderer.get());
             if (CheckedPtr containerForPaginationGap = renderBox ? renderBox : documentOrBodyRenderer->containingBlock())
-                pagination.gap = Style::evaluate<LayoutUnit>(columnGap, containerForPaginationGap->contentBoxLogicalWidth(), Style::ZoomNeeded { }).toUnsigned();
+                pagination.gap = Style::evaluate<LayoutUnit>(columnGap, containerForPaginationGap->contentBoxLogicalWidth(), documentOrBodyRenderer->style().usedZoomForLength()).toUnsigned();
         }
     }
     setPagination(pagination);
@@ -2130,7 +2129,7 @@ std::optional<LayoutRect> LocalFrameView::visibleRectOfChild(const Frame& child)
     ASSERT(childOwnerRenderer->frame().frameID() == m_frame->frameID());
 
     auto rects = childOwnerRenderer->computeVisibleRectsInContainer(
-        { childOwnerRenderer->frameRect() },
+        { childOwnerRenderer->borderBoxRectInContainer() },
         &childOwnerRenderer->view(),
         {
             .hasPositionFixedDescendant = false,
@@ -4375,7 +4374,15 @@ Color LocalFrameView::baseBackgroundColor() const
     return m_baseBackgroundColor;
 }
 
-void LocalFrameView::invalidateForBaseBackgroundOrColorSchemeChange()
+void LocalFrameView::invalidateForFrameOwnerColorSchemeChange()
+{
+    invalidateForBaseBackgroundChange();
+
+    if (RefPtr document = frame().document())
+        document->appearanceDidChange();
+}
+
+void LocalFrameView::invalidateForBaseBackgroundChange()
 {
     recalculateScrollbarOverlayStyle();
     setNeedsLayoutAfterViewConfigurationChange();
@@ -4396,7 +4403,7 @@ void LocalFrameView::setBaseBackgroundColor(const Color& backgroundColor)
     if (!isViewForDocumentInFrame())
         return;
 
-    invalidateForBaseBackgroundOrColorSchemeChange();
+    invalidateForBaseBackgroundChange();
 }
 
 #if ENABLE(DARK_MODE_CSS)

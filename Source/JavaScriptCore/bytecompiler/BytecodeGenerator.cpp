@@ -483,7 +483,21 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     bool shouldCaptureSomeOfTheThings = shouldEmitDebugHooks() || functionNode->needsActivation() || containsArrowOrEvalButNotInArrowBlock;
 
     bool shouldCaptureAllOfTheThings = shouldEmitDebugHooks() || usesEval();
-    m_needsArguments = ((functionNode->usesArguments() && !codeBlock->isArrowFunction()) || usesEval() || (functionNode->usesArrowFunction() && !codeBlock->isArrowFunction() && isArgumentsUsedInInnerArrowFunction())) && parseMode != SourceParseMode::ClassFieldInitializerMode;
+    m_needsArguments = ([&] () {
+        if (parseMode != SourceParseMode::ClassFieldInitializerMode) {
+            if (!codeBlock->isArrowFunction()) {
+                if (functionNode->usesArrowFunction() && isArgumentsUsedInInnerArrowFunction())
+                    return true;
+                if (functionNode->usesArguments())
+                    return true;
+                if (shouldEmitDebugHooks())
+                    return true;
+            }
+            if (usesEval())
+                return true;
+        }
+        return false;
+    })();
 
     if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode)) {
         m_needsGeneratorification = true;
@@ -3687,6 +3701,8 @@ RegisterID* BytecodeGenerator::emitCallDirectEval(RegisterID* dst, RegisterID* f
 
 ExpectedFunction BytecodeGenerator::expectedFunctionForIdentifier(const Identifier& identifier)
 {
+    if (shouldEmitDebugHooks()) [[unlikely]]
+        return NoExpectedFunction;
     if (identifier == propertyNames().Object || identifier == propertyNames().builtinNames().ObjectPrivateName())
         return ExpectObjectConstructor;
     if (identifier == propertyNames().Array || identifier == propertyNames().builtinNames().ArrayPrivateName())

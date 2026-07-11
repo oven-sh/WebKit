@@ -42,7 +42,7 @@ if (ENABLE_WEBGL)
     )
 
     WEBKIT_COPY_FILES(ANGLEWebGLHeaders
-        DESTINATION ${ANGLE_FRAMEWORK_HEADERS_DIR}/ANGLE
+        DESTINATION ${ANGLE_HEADERS_DIR}
         FILES ${ANGLE_WEBGL_HEADERS}
         FLATTENED NO_SYMLINK  # adjust-angle-include-paths.py rewrites these in-place
     )
@@ -50,7 +50,7 @@ endif ()
 
 # Cocoa expects headers in an ANGLE directory
 WEBKIT_COPY_FILES(GLSLANGHeaders
-    DESTINATION ${ANGLE_FRAMEWORK_HEADERS_DIR}/ANGLE
+    DESTINATION ${ANGLE_HEADERS_DIR}
     FILES ${glslang_headers}
     FLATTENED NO_SYMLINK  # adjust-angle-include-paths.py rewrites these in-place
 )

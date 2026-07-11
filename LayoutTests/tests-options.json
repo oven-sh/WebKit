@@ -4121,10 +4121,19 @@
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-invoking-attribute.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-command-edge-cases.tentative.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-command.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-disabled-button.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-hint.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-input-button.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss.html": [
@@ -5330,6 +5339,9 @@
     "imported/w3c/web-platform-tests/navigation-api/navigate-event/dangling-navigate-event-after-bfcache-restore.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/navigation-api/navigate-event/defer/tentative/restore-after-bfcache.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/navigation-timing/nav2-test-response-end-and-duration-before-during-and-after-load-event.html": [
         "slow"
     ],
@@ -5562,21 +5574,6 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/resource-timing/workerStart-tao-protected.https.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/resources/test/tests/unit/exceptional-cases-timeouts.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/resources/test/tests/unit/exceptional-cases.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/resources/test/tests/unit/promise_setup-timeout.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/resources/test/tests/unit/single_test.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/resources/test/tests/unit/throwing-assertions.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/screen-orientation/hidden_document.html": [
@@ -6833,6 +6830,15 @@
     "imported/w3c/web-platform-tests/webmessaging/broadcastchannel/opaque-origin.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/webrtc-encoded-transform/RTCEncodedFrame-copy-construction.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/webrtc-encoded-transform/RTCRtpScriptTransform-encoded-transform.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/webrtc-encoded-transform/RTCRtpScriptTransform-sender-worker-single-frame.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/webrtc-encoded-transform/script-metadata-transform.https.html": [
         "slow"
     ],
@@ -6843,6 +6849,9 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/webrtc-encoded-transform/script-transform-sendKeyFrameRequest.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/webrtc-encoded-transform/script-transform.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/webrtc-extensions/RTCRtpEncodingParameters-scaleResolutionDownTo.https.html": [

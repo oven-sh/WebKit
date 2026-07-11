@@ -260,6 +260,7 @@ Modules/mediastream/MediaStreamTrackProcessor.cpp @cost:5
 Modules/mediastream/MediaTrackCapabilities.cpp
 Modules/mediastream/MediaTrackConstraints.cpp
 Modules/mediastream/NavigatorMediaDevices.cpp @cost:4
+Modules/mediastream/OverconstrainedError.cpp
 Modules/mediastream/OverconstrainedErrorEvent.cpp
 Modules/mediastream/PeerConnectionBackend.cpp @cost:5
 Modules/mediastream/RTCCertificate.cpp
@@ -283,9 +284,7 @@ Modules/mediastream/RTCPeerConnection.cpp @cost:5
 Modules/mediastream/RTCPeerConnectionIceErrorEvent.cpp
 Modules/mediastream/RTCPeerConnectionIceEvent.cpp
 Modules/mediastream/RTCRtpReceiver.cpp @cost:3
-Modules/mediastream/RTCRtpSFrameTransform.cpp @cost:3
 Modules/mediastream/RTCRtpSFrameTransformErrorEvent.cpp
-Modules/mediastream/RTCRtpSFrameTransformer.cpp
 Modules/mediastream/RTCRtpScriptTransform.cpp
 Modules/mediastream/RTCRtpScriptTransformer.cpp @cost:3
 Modules/mediastream/RTCRtpSender.cpp @cost:3
@@ -296,7 +295,6 @@ Modules/mediastream/RTCSctpTransport.cpp
 Modules/mediastream/RTCSessionDescription.cpp
 Modules/mediastream/RTCTrackEvent.cpp
 Modules/mediastream/RTCTransformEvent.cpp
-Modules/mediastream/SFrameUtils.cpp
 Modules/mediastream/STUNMessageParsing.cpp
 Modules/mediastream/UserMediaController.cpp
 Modules/mediastream/UserMediaRequest.cpp
@@ -775,7 +773,6 @@ bindings/js/JSPerformanceObserverCustom.cpp
 bindings/js/JSPluginElementFunctions.cpp @cost:3
 bindings/js/JSPopStateEventCustom.cpp
 bindings/js/JSPromiseRejectionEventCustom.cpp
-bindings/js/JSRTCRtpSFrameTransformCustom.cpp
 bindings/js/JSRangeCustom.cpp
 bindings/js/JSReadableStreamSourceCustom.cpp
 bindings/js/JSReportBodyCustom.cpp
@@ -1590,7 +1587,6 @@ html/DateTimeLocalInputType.cpp
 html/DirectoryFileListCreator.cpp
 html/EmailInputType.cpp
 html/EnterKeyHint.cpp
-html/FTPDirectoryDocument.cpp
 html/FallbackPopupMenu.cpp
 html/FileInputType.cpp
 html/FormAssociatedCustomElement.cpp
@@ -1716,7 +1712,7 @@ html/NavigatorUserActivation.cpp
 html/NumberInputType.cpp @header:RenderStyleGetters @cost:6
 html/OffscreenCanvas.cpp
 html/Origin.cpp
-html/PDFDocument.cpp
+html/PDFJSDocument.cpp
 html/PasswordInputType.cpp
 html/PermissionsPolicy.cpp
 html/PluginDocument.cpp
@@ -1962,6 +1958,7 @@ inspector/agents/frame/FrameCSSAgent.cpp @header:RenderStyleGetters
 inspector/agents/frame/FrameConsoleAgent.cpp
 inspector/agents/frame/FrameDOMAgent.cpp
 inspector/agents/frame/FrameDOMAgentStubs.cpp
+inspector/agents/frame/FrameDOMStorageAgent.cpp
 inspector/agents/frame/FrameDebuggerAgent.cpp
 inspector/agents/frame/FrameWorkerAgent.cpp
 inspector/agents/page/PageAuditAgent.cpp
@@ -2009,6 +2006,7 @@ layout/formattingContexts/flex/FlexFormattingContext.cpp @header:RenderStyleGett
 layout/formattingContexts/flex/FlexFormattingUtils.cpp @header:RenderStyleGetters
 layout/formattingContexts/flex/FlexLayout.cpp @header:RenderStyleGetters
 layout/formattingContexts/grid/GridFormattingContext.cpp @header:RenderStyleGetters
+layout/formattingContexts/grid/GridItemSizingFunctions.cpp
 layout/formattingContexts/grid/GridLayout.cpp @header:RenderStyleGetters
 layout/formattingContexts/grid/GridLayoutUtils.cpp @header:RenderStyleGetters
 layout/formattingContexts/grid/ImplicitGrid.cpp @header:RenderStyleGetters
@@ -2090,7 +2088,6 @@ loader/DocumentThreadableLoader.cpp
 loader/DocumentWriter.cpp
 loader/DocumentPrefetcher.cpp
 loader/EmptyClients.cpp
-loader/FTPDirectoryParser.cpp
 loader/FetchIdioms.cpp
 loader/FormState.cpp
 loader/FormSubmission.cpp
@@ -2565,6 +2562,7 @@ platform/gamepad/GamepadProvider.cpp
 platform/graphics/AV1Utilities.cpp
 platform/graphics/AlphaPremultiplication.cpp
 platform/graphics/AnimationFrameRate.cpp
+platform/graphics/BezierUtilities.cpp
 platform/graphics/BifurcatedGraphicsContext.cpp
 platform/graphics/BitmapImage.cpp
 platform/graphics/BitmapImageDescriptor.cpp
@@ -3207,6 +3205,7 @@ style/CustomFunctionRegistry.cpp
 style/ElementRuleCollector.cpp @cost:6
 style/HasSelectorFilter.cpp
 style/IdChangeInvalidation.cpp @cost:3
+style/IfConditionEvaluator.cpp
 style/InlineTextBoxStyle.cpp @header:RenderStyleGetters @cost:6
 style/InspectorCSSOMWrappers.cpp
 style/MatchResultCache.cpp @header:RenderStyleGetters @cost:5
@@ -3306,6 +3305,7 @@ style/values/anchor-position/StylePositionAreaSpan.cpp
 style/values/anchor-position/StylePositionAreaTrack.cpp
 style/values/anchor-position/StylePositionArea.cpp
 style/values/anchor-position/StylePositionTryFallback.cpp
+style/values/animation-triggers/StyleTimelineTrigger.cpp
 style/values/animations/StyleAnimation.cpp
 style/values/animations/StyleSingleAnimationName.cpp
 style/values/animations/StyleSingleAnimationRangeName.cpp
@@ -3663,6 +3663,7 @@ svg/graphics/SVGImage.cpp @header:RenderStyleGetters
 svg/graphics/SVGImageCache.cpp
 svg/graphics/SVGImageForContainer.cpp
 svg/graphics/SVGResourceImage.cpp
+svg/graphics/filters/SVGFilterPrimitiveGraph.cpp
 svg/graphics/filters/SVGFilterRenderer.cpp
 svg/properties/SVGAnimatedPropertyBase.cpp
 svg/properties/SVGAnimatedString.cpp
@@ -3687,7 +3688,6 @@ workers/WorkerOrWorkletGlobalScope.cpp
 workers/WorkerOrWorkletScriptController.cpp @cost:6
 workers/WorkerOrWorkletThread.cpp
 workers/WorkerRunLoop.cpp
-workers/WorkerSTWParticipation.cpp
 workers/WorkerScriptLoader.cpp
 workers/WorkerThread.cpp
 workers/service/ExtendableEvent.cpp
@@ -4850,7 +4850,6 @@ JSRTCRtpEncodingParameters.cpp
 JSRTCRtpHeaderExtensionParameters.cpp
 JSRTCRtpParameters.cpp
 JSRTCRtpReceiver.cpp
-JSRTCRtpSFrameTransform.cpp
 JSRTCRtpSFrameTransformErrorEvent.cpp
 JSRTCRtpScriptTransform.cpp
 JSRTCRtpScriptTransformer.cpp

@@ -38,7 +38,6 @@
 #include "GraphicsContext.h"
 #include "GraphicsLayerCoordinated.h"
 #include "NativeImage.h"
-#include "NotImplemented.h"
 #include "TextureMapperLayer.h"
 #include <wtf/MainThread.h>
 
@@ -919,9 +918,8 @@ Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::paint(const IntRect& dirtyR
     m_client->paintingEngine().paint(*m_owner, buffer.get(), dirtyRect, enclosingIntRect(scaledDirtyRect), IntRect { { }, dirtyRect.size() }, m_contentsScale);
     return buffer;
 #elif USE(SKIA)
-    auto& paintingEngine = m_client->paintingEngine();
-    ASSERT(!paintingEngine.useThreadedRendering());
-    return paintingEngine.paint(*m_owner, dirtyRect, m_contentsOpaque, m_contentsScale);
+    UNUSED_PARAM(dirtyRect);
+    RELEASE_ASSERT_NOT_REACHED();
 #endif
 }
 
@@ -934,14 +932,12 @@ sk_sp<GrContextThreadSafeProxy> CoordinatedPlatformLayer::threadSafeGrContext() 
     return m_client->paintingEngine().threadSafeGrContext();
 }
 
-Ref<SkiaRecordingResult> CoordinatedPlatformLayer::record(const IntRect& recordRect)
+Ref<SkiaRecordingResult> CoordinatedPlatformLayer::record(const IntRect& recordRect, unsigned dirtyTilesCount)
 {
     ASSERT(m_lock.isHeld());
     ASSERT(m_client);
     ASSERT(m_owner);
-    auto& paintingEngine = m_client->paintingEngine();
-    ASSERT(paintingEngine.useThreadedRendering());
-    return paintingEngine.record(*m_owner, recordRect, m_contentsOpaque, m_contentsScale);
+    return m_client->paintingEngine().record(*m_owner, recordRect, m_contentsOpaque, m_contentsScale, dirtyTilesCount);
 }
 
 Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(Ref<SkiaRecordingResult>&& recording, const IntRect& tileRect, const IntRect& dirtyRect)
@@ -949,9 +945,7 @@ Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(Ref<SkiaRecordingRes
     ASSERT(m_lock.isHeld());
     ASSERT(m_client);
     ASSERT(m_owner);
-    auto& paintingEngine = m_client->paintingEngine();
-    ASSERT(paintingEngine.useThreadedRendering());
-    return paintingEngine.replay(*m_owner, WTF::move(recording), tileRect, dirtyRect);
+    return m_client->paintingEngine().replay(*m_owner, WTF::move(recording), tileRect, dirtyRect);
 }
 #endif
 
@@ -1301,8 +1295,7 @@ void CoordinatedPlatformLayer::flushCompositingStateOnSkiaTarget(const OptionSet
         }
 
         if (m_pendingChanges.contains(Change::ContentsOpaque)) {
-            // FIXME: do we need this in SkiaCompositingLayer?
-            notImplemented();
+            layer.setContentsOpaque(m_contentsOpaque);
             m_pendingChanges.remove(Change::ContentsOpaque);
         }
 

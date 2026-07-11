@@ -37,33 +37,34 @@ For example:
 */
 WK_SWIFT_UI_ACTOR
 NS_SWIFT_SENDABLE
-WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA))
+NS_SWIFT_NAME(WKContentWorld.Configuration)
+WK_CLASS_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0))
 @interface WKContentWorldConfiguration : NSObject<NSCopying, NSSecureCoding>
 
 /*! @abstract A boolean value indicating whether every shadow root should be treated as open mode shadow root or not. */
-@property (nonatomic) BOOL openClosedShadowRootsEnabled;
+@property (nonatomic) BOOL allowAccessingClosedShadowRoots;
 
 /*! @abstract A boolean value indicating whether the capability to trigger autofill is exposed to scripts or not. */
-@property (nonatomic) BOOL autofillScriptingEnabled;
+@property (nonatomic, getter=isAutofillScriptingEnabled) BOOL autofillScriptingEnabled NS_SWIFT_NAME(autofillScriptingEnabled);
 
 /*! @abstract A boolean value indicating whether the ability to attach user info on an element is exposed to scripts or not. */
-@property (nonatomic) BOOL elementUserInfoEnabled;
+@property (nonatomic, getter=isElementUserInfoEnabled) BOOL elementUserInfoEnabled NS_SWIFT_NAME(elementUserInfoEnabled);
 
 /*! @abstract A boolean value indicating whether the behavior that elements with a name attribute overrides builtin methods on document object should be enabled or not. */
-@property (nonatomic) BOOL legacyBuiltinOverridesEnabled;
+@property (nonatomic, getter=isLegacyBuiltinOverridesEnabled) BOOL legacyBuiltinOverridesEnabled NS_SWIFT_NAME(legacyBuiltinOverridesEnabled);
 
 /*! @abstract A boolean indicating whether or not `window.webkit.serializeNode` is available.
  @discussion JavaScript can call `window.webkit.serializeNode` with a return value to create a `WKJSSerializedNode`
  object for the application to use in future JavaScript programs.
  Refer to the `WKJSSerializedNode` documentation for more information.
  */
-@property (nonatomic) BOOL nodeSerializationEnabled;
+@property (nonatomic, getter=isNodeSerializationEnabled) BOOL nodeSerializationEnabled NS_SWIFT_NAME(nodeSerializationEnabled);
 
 /*! @abstract A boolean indicating whether or not `window.webkit.createJSHandle` is available. */
-@property (nonatomic, setter=setJSHandleCreationEnabled:) BOOL jsHandleCreationEnabled;
+@property (nonatomic, getter=isJSHandleCreationEnabled, setter=setJSHandleCreationEnabled:) BOOL jsHandleCreationEnabled NS_SWIFT_NAME(jsHandleCreationEnabled);
 
 /*! @abstract A boolean indicating whether the JavaScript in this world is visible to the Web Inspector. */
-@property (nonatomic, getter=isInspectable) BOOL inspectable;
+@property (nonatomic, getter=isInspectable) BOOL inspectable NS_SWIFT_NAME(inspectable);
 
 @end
 

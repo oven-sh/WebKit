@@ -5,6 +5,7 @@ set(WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${PAL_FRAMEWORK_HEADERS_DIR}"
     "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}"
     "${WebKit_FRAMEWORK_HEADERS_DIR}"
+    "${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}"
     "${WebKit_DERIVED_SOURCES_DIR}"
     "${WebKit_DERIVED_SOURCES_DIR}/include"
     "${WEBKIT_DIR}"
@@ -451,6 +452,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     NetworkProcess/NetworkProcessCreationParameters.serialization.in
     NetworkProcess/NetworkResourceLoadParameters.serialization.in
     NetworkProcess/NetworkSessionCreationParameters.serialization.in
+    NetworkProcess/PreconnectRequest.serialization.in
 
     NetworkProcess/Classifier/ITPThirdPartyData.serialization.in
     NetworkProcess/Classifier/ITPThirdPartyDataForSpecificFirstParty.serialization.in
@@ -556,7 +558,6 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebCoreArgumentCodersMedia.serialization.in
     Shared/WebCoreArgumentCodersNetwork.serialization.in
     Shared/WebCoreArgumentCodersPayment.serialization.in
-    Shared/WebCoreArgumentCodersPlatform.serialization.in
     Shared/WebCoreArgumentCodersStorage.serialization.in
     Shared/WebCoreFont.serialization.in
     Shared/WebCompiledContentRuleListData.serialization.in
@@ -774,7 +775,7 @@ if (APPLE)
 endif ()
 if (USE_APPLE_INTERNAL_SDK)
     list(APPEND WebKit_FRAMEWORKS WebKitAdditions)
-    list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES "${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
+    list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES ${WebKitAdditions_HEADERS_DIR})
 endif ()
 
 set(WebProcess_LIBRARIES WebKit)
@@ -823,7 +824,7 @@ endif ()
 set(WebKit_AUTOMATION_PROTOCOL_GENERATOR_EXTRA_FLAGS)
 
 set(WebKit_INTERFACE_LIBRARIES WebKit)
-if (NOT USE_HEADER_MAPS)
+if (NOT USE_HEADER_MAPS AND NOT USE_FRAMEWORK_BUNDLES)
     set(WebKit_INTERFACE_INCLUDE_DIRECTORIES
         ${WebKit_FRAMEWORK_HEADERS_DIR}
         ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}
@@ -864,8 +865,8 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
     file(CONFIGURE OUTPUT "${WebCore_Private_SWIFT_MODULEMAP_DIR}/module.modulemap" CONTENT
 "module WebCore_Private [system] {
     requires cplusplus
-    header \"${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/DiagnosticLoggingKeys.h\"
-    header \"${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/DiagnosticLoggingClient.h\"
+    header \"${WebCore_PRIVATE_HEADERS_DIR}/DiagnosticLoggingKeys.h\"
+    header \"${WebCore_PRIVATE_HEADERS_DIR}/DiagnosticLoggingClient.h\"
     export *
 }
 ")
@@ -882,18 +883,22 @@ WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebKit)
 # project's prefix header has already defined ENABLE()/HAVE() values.
 set(WebKit_SWIFT_CLANG_INCLUDE_DIRS
     ${CMAKE_BINARY_DIR}
-    ${WebKit_FRAMEWORK_HEADERS_DIR}
     ${WebKit_DERIVED_SOURCES_DIR}
-    ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
-    ${JavaScriptCore_FRAMEWORK_HEADERS_DIR}
-    ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
     ${WTF_FRAMEWORK_HEADERS_DIR}
     ${bmalloc_FRAMEWORK_HEADERS_DIR}
     ${PAL_FRAMEWORK_HEADERS_DIR}
     ${ICU_INCLUDE_DIRS}
     ${WebCore_Private_SWIFT_MODULEMAP_DIR}
-    ${WebKit_PRIVATE_INCLUDE_DIRECTORIES}
 )
+if (NOT USE_FRAMEWORK_BUNDLES)
+    list(APPEND WebKit_SWIFT_CLANG_INCLUDE_DIRS
+        ${WebKit_FRAMEWORK_HEADERS_DIR}
+        ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
+        ${JavaScriptCore_FRAMEWORK_HEADERS_DIR}
+        ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
+        ${WebKit_PRIVATE_INCLUDE_DIRECTORIES}
+    )
+endif ()
 
 if (NOT APPLE AND SWIFT_REQUIRED)
     # Export-macro stubs, NODELETE=, WK_SUPPORTS_SWIFT_OBJCXX_INTEROP and the
@@ -908,7 +913,7 @@ if (NOT APPLE AND SWIFT_REQUIRED)
         # the flag ensures the PCM gets the right feature-test value.
         # rdar://175928621
         "-Xcc -D__glibcxx_want_coroutine=1"
-        "-Xcc -fmodule-map-file=${WTF_FRAMEWORK_HEADERS_DIR}/wtf/module.modulemap"
+        "-Xcc -fmodule-map-file=${WTF_HEADERS_DIR}/module.modulemap"
     )
     foreach (_dir IN LISTS WebKit_SWIFT_CLANG_INCLUDE_DIRS)
         list(APPEND WebKit_SWIFT_CLANG_FLAG_PAIRS "-Xcc -I${_dir}")
@@ -948,6 +953,7 @@ if (SWIFT_REQUIRED)
         UIProcess/Automation/WebAutomationSession.cpp
         WebProcess/WebPage/IPCTestingAPI.cpp
         ${WebKit_DERIVED_SOURCES_DIR}/UIProcess/WebBackForwardListMessageReceiver.cpp
+        ${WebKit_DERIVED_SOURCES_DIR}/Shared/IPCTesterReceiverMessageReceiver.cpp
     )
     if (APPLE)
         list(APPEND WebKit_SWIFT_INTEROP_SOURCES
@@ -980,7 +986,7 @@ WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebKit WebKit
 if (WebKit_PUBLIC_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyHeaders
         PRUNE_STALE
-        DESTINATION ${WebKit_FRAMEWORK_HEADERS_DIR}/WebKit
+        DESTINATION ${WebKit_HEADERS_DIR}
         FILES ${WebKit_PUBLIC_FRAMEWORK_HEADERS}
         FLATTENED
     )
@@ -990,7 +996,7 @@ endif ()
 if (WebKit_PRIVATE_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyPrivateHeaders
         PRUNE_STALE
-        DESTINATION ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebKit
+        DESTINATION ${WebKit_PRIVATE_HEADERS_DIR}
         FILES ${WebKit_PRIVATE_FRAMEWORK_HEADERS}
         FLATTENED
     )
@@ -1130,34 +1136,20 @@ foreach (in_file ${WebCore_GENERATED_SERIALIZATION_IN_FILES})
     list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebCore_DERIVED_SOURCES_DIR}/${in_file}")
 endforeach ()
 foreach (in_file ${WebCore_SERIALIZATION_IN_FILES})
-    list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/${in_file}")
+    list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebCore_PRIVATE_HEADERS_DIR}/${in_file}")
 endforeach ()
 list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.serialization.in")
 
 list(APPEND WebKit_DERIVED_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.h
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersExtra.h
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersShared0.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersShared1.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedAPI.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedCocoa.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedEditorState.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersShared.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedExtensions.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedModel.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedRemoteLayerTree.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersAuth.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersMedia.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersNetwork.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersPayment.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersPlatform.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreArgumentCodersStorage.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebCoreFont.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebEvent.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebGL.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebPageCreationParameters.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedWebProcessCreationParameters.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersSharedXR.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersWebProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersGPUProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersNetworkProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
@@ -1172,28 +1164,14 @@ list(APPEND WebKit_DERIVED_SOURCES
 set(_serializers_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.serializers-stage)
 set(_serializers_outputs
     GeneratedSerializers.h
-    GeneratedSerializersExtra.h
-    GeneratedSerializersShared0.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersShared1.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedAPI.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedCocoa.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedEditorState.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersShared.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedExtensions.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedModel.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedRemoteLayerTree.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedWebCoreArgumentCodersAuth.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedWebCoreArgumentCodersMedia.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedWebCoreArgumentCodersNetwork.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedWebCoreArgumentCodersPayment.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedWebCoreArgumentCodersPlatform.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedWebCoreArgumentCodersStorage.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedWebCoreFont.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedWebEvent.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedWebGL.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedWebPageCreationParameters.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedWebProcessCreationParameters.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
-    GeneratedSerializersSharedXR.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersWebProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersGPUProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersNetworkProcess.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
@@ -1233,27 +1211,14 @@ add_custom_command(
 if (WTF_CPU_ARM AND NOT CMAKE_CROSSCOMPILING)
     set(GeneratedSerializers_COMPILE_OPTIONS -O0 -DRELEASE_WITHOUT_OPTIMIZATIONS=ON)
     foreach (GeneratedSerializers_BASENAME
-        GeneratedSerializersShared0
-        GeneratedSerializersShared1
-        GeneratedSerializersSharedAPI
-        GeneratedSerializersSharedCocoa
-        GeneratedSerializersSharedEditorState
+        GeneratedSerializersShared
         GeneratedSerializersSharedExtensions
-        GeneratedSerializersSharedModel
-        GeneratedSerializersSharedRemoteLayerTree
+        GeneratedSerializersSharedWebGPU
         GeneratedSerializersSharedWebCoreArgumentCodersAuth
         GeneratedSerializersSharedWebCoreArgumentCodersMedia
         GeneratedSerializersSharedWebCoreArgumentCodersNetwork
         GeneratedSerializersSharedWebCoreArgumentCodersPayment
-        GeneratedSerializersSharedWebCoreArgumentCodersPlatform
         GeneratedSerializersSharedWebCoreArgumentCodersStorage
-        GeneratedSerializersSharedWebCoreFont
-        GeneratedSerializersSharedWebEvent
-        GeneratedSerializersSharedWebGL
-        GeneratedSerializersSharedWebGPU
-        GeneratedSerializersSharedWebPageCreationParameters
-        GeneratedSerializersSharedWebProcessCreationParameters
-        GeneratedSerializersSharedXR
         GeneratedSerializersWebProcess
         GeneratedSerializersGPUProcess
         GeneratedSerializersNetworkProcess
@@ -1298,6 +1263,7 @@ add_custom_command(
 set(WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiBrowser.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiBrowsingContext.json
+    ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiDigitalCredentials.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiLog.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiPermissions.json
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiScript.json
@@ -1354,9 +1320,9 @@ list(APPEND WebKit_HEADERS
 add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h
     MAIN_DEPENDENCY ${WEBKIT_DIR}/Platform/LogMessages.in
-    DEPENDS ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/generate-log-declarations.py
+    DEPENDS ${WebCore_PRIVATE_HEADERS_DIR}/generate-log-declarations.py
     WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
-    COMMAND ${PYTHON_EXECUTABLE} ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore/generate-log-declarations.py ${WEBKIT_DIR}/Platform/LogMessages.in ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h
+    COMMAND ${PYTHON_EXECUTABLE} ${WebCore_PRIVATE_HEADERS_DIR}/generate-log-declarations.py ${WEBKIT_DIR}/Platform/LogMessages.in ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h
     VERBATIM)
 list(APPEND WebKit_HEADERS ${WebKit_DERIVED_SOURCES_DIR}/WebKitLogDefinitions.h)
 
@@ -1420,8 +1386,13 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
 endif ()
 
 if (SWIFT_REQUIRED)
+    set_source_files_properties(
+        ${WebKit_DERIVED_SOURCES_DIR}/IPCTesterReceiverMessageReceiver.swift
+        PROPERTIES GENERATED TRUE)
     list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/Shared/Foundation+Extras.swift
+        ${WEBKIT_DIR}/Shared/IPCTesterReceiver.swift
+        ${WebKit_DERIVED_SOURCES_DIR}/IPCTesterReceiverMessageReceiver.swift
     )
 endif ()
 

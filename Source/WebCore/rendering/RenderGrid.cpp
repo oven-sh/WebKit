@@ -567,17 +567,22 @@ void RenderGrid::layoutGrid(RelayoutChildren relayoutChildren)
 
 bool RenderGrid::layoutUsingGridFormattingContext()
 {
-    if (!m_hasGridFormattingContextLayout.has_value())
-        m_hasGridFormattingContextLayout = LayoutIntegration::canUseForGridLayout(*this);
-
-    if (!*m_hasGridFormattingContextLayout)
+    if (m_hasGridFormattingContextLayout && !*m_hasGridFormattingContextLayout) {
+        // FIXME: Avoid continous content checking on (potentially) unsupported content. This ensures no pref impact on cases like resize etc.
+        // Remove when canUseForGridLayout becomes less expensive.
         return false;
+    }
+
+    m_hasGridFormattingContextLayout = LayoutIntegration::canUseForGridLayout(*this);
+    if (!*m_hasGridFormattingContextLayout) {
+        LayoutIntegration::GridLayout::invalidateFormattingContextRootRenderer(*this);
+        return false;
+    }
 
     auto gridLayout = LayoutIntegration::GridLayout { *this };
     gridLayout.updateFormattingContextGeometries();
 
     gridLayout.layout();
-    updateLogicalHeight();
     return true;
 }
 
@@ -723,7 +728,7 @@ LayoutUnit RenderGrid::gridGap(Style::GridTrackSizingDirection direction, std::o
         return downcast<RenderGrid>(parent())->gridGap(parentDirection);
     }
 
-    return Style::evaluate<LayoutUnit>(gap, availableSize.value_or(0_lu), Style::ZoomNeeded { });
+    return Style::evaluate<LayoutUnit>(gap, availableSize.value_or(0_lu), style().usedZoomForLength());
 }
 
 LayoutUnit RenderGrid::gridGap(Style::GridTrackSizingDirection direction) const
@@ -1605,7 +1610,7 @@ void RenderGrid::layoutGridItems(RenderGridLayoutState& gridLayoutState)
         // used during the track sizing algorithm.
         updateGridAreaIncludingAlignment(gridItem);
 
-        LayoutRect oldGridItemRect = gridItem.frameRect();
+        LayoutRect oldGridItemRect = gridItem.borderBoxRectInContainer();
 
         // Stretching logic might force a grid item layout, so we need to run it before the layoutIfNeeded
         // call to avoid unnecessary relayouts. This might imply that grid item margins, needed to correctly
@@ -1915,11 +1920,11 @@ std::optional<LayoutUnit> RenderGrid::firstLineBaseline() const
         // FIXME: We should pass |direction| into firstLineBaseline and stop bailing out if we're a writing
         // mode root. This would also fix some cases where the grid is orthogonal to its container.
         auto gridWritingMode = style().writingMode();
-        auto dominantBaseline = BaselineAlignmentState::dominantBaseline(gridWritingMode);
+        auto dominantBaseline = BaselineAlignment::dominantBaseline(gridWritingMode);
         auto direction = isHorizontalWritingMode() ? LineDirection::Horizontal : LineDirection::Vertical;
-        baseline = BaselineAlignmentState::synthesizedBaseline(*baselineGridItem, dominantBaseline, gridWritingMode, direction, BaselineSynthesisEdge::BorderBox);
+        baseline = BaselineAlignment::synthesizedBaseline(*baselineGridItem, dominantBaseline, gridWritingMode, direction, BaselineSynthesisEdge::BorderBox);
     }
-    return (settings().subpixelInlineLayoutEnabled() ? LayoutUnit(logicalTopForChild(*baselineGridItem)) : LayoutUnit(logicalTopForChild(*baselineGridItem).toInt())) + *baseline;
+    return logicalTopForChild(*baselineGridItem) + *baseline;
 }
 
 std::optional<LayoutUnit> RenderGrid::lastLineBaseline() const
@@ -1938,10 +1943,10 @@ std::optional<LayoutUnit> RenderGrid::lastLineBaseline() const
     if (!baseline) {
         auto direction = isHorizontalWritingMode() ? LineDirection::Horizontal : LineDirection::Vertical;
         auto gridWritingMode = style().writingMode();
-        auto dominantBaseline = BaselineAlignmentState::dominantBaseline(gridWritingMode);
-        baseline = BaselineAlignmentState::synthesizedBaseline(*baselineGridItem, dominantBaseline, gridWritingMode, direction, BaselineSynthesisEdge::BorderBox);
+        auto dominantBaseline = BaselineAlignment::dominantBaseline(gridWritingMode);
+        baseline = BaselineAlignment::synthesizedBaseline(*baselineGridItem, dominantBaseline, gridWritingMode, direction, BaselineSynthesisEdge::BorderBox);
     }
-    return (settings().subpixelInlineLayoutEnabled() ? LayoutUnit(logicalTopForChild(*baselineGridItem)) : LayoutUnit(logicalTopForChild(*baselineGridItem).toInt())) + *baseline;
+    return logicalTopForChild(*baselineGridItem) + *baseline;
 }
 
 const RenderBox* RenderGrid::baselineGridItem(ItemPosition alignment) const
@@ -2234,7 +2239,7 @@ LayoutRange RenderGrid::gridAreaRangeForOutOfFlow(const RenderBox& gridItem, Sty
         return borderBefore();
     }();
 
-    LayoutRange defaultRange(borderEdge, isRowAxis ? clientLogicalWidth() : clientLogicalHeight());
+    LayoutRange defaultRange(borderEdge, isRowAxis ? paddingBoxLogicalWidth() : paddingBoxLogicalHeight());
     if (!gridItem.style().positionArea().isNone() && hasRenderOverflow() && hasPotentiallyScrollableOverflow()) {
         // position-area uses the scrollable containing block
         defaultRange = isRowAxis == writingMode().isHorizontal()
@@ -2260,7 +2265,7 @@ LayoutRange RenderGrid::gridAreaRangeForOutOfFlow(const RenderBox& gridItem, Sty
     auto& positions = this->positions(direction);
     if (positions.isEmpty()) {
         ASSERT_WITH_SECURITY_IMPLICATION(!positions.isEmpty());
-        return LayoutRange(borderEdge, isRowAxis ? clientLogicalWidth() : clientLogicalHeight());
+        return LayoutRange(borderEdge, isRowAxis ? paddingBoxLogicalWidth() : paddingBoxLogicalHeight());
     }
 
     if (startIsAuto)
@@ -2449,7 +2454,7 @@ LayoutOptionalOutsets RenderGrid::allowedLayoutOverflow() const
 
 LayoutUnit RenderGrid::translateRTLCoordinate(LayoutUnit coordinate) const
 {
-    LayoutUnit width = borderLogicalLeft() + borderLogicalRight() + clientLogicalWidth();
+    LayoutUnit width = borderLogicalLeft() + borderLogicalRight() + paddingBoxLogicalWidth();
 
     // If we are in horizontal writing mode and RTL direction the scrollbar is painted on the left,
     // so we need to take into account when computing the position of the columns.

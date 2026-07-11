@@ -27,6 +27,7 @@
 #include "BackendResourceDataStore.h"
 
 #include <WebCore/CertificateInfo.h>
+#include <WebCore/HTTPHeaderNames.h>
 #include <WebCore/InspectorResourceUtilities.h>
 #include <WebCore/ResourceResponse.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -164,10 +165,12 @@ bool BackendResourceDataStore::ensureFreeSpace(size_t size)
     return true;
 }
 
-void BackendResourceDataStore::resourceCreated(ResourceLoaderIdentifier resourceID, Inspector::ResourceType type)
+void BackendResourceDataStore::resourceCreated(ResourceLoaderIdentifier resourceID, FrameIdentifier frameID, Inspector::ResourceType type)
 {
     ensureNoDataForId(resourceID);
-    m_resourceDataMap.set(resourceID, makeUniqueRef<ResourceData>(resourceID, type));
+    auto entry = makeUniqueRef<ResourceData>(resourceID, type);
+    entry->setFrameID(frameID);
+    m_resourceDataMap.set(resourceID, WTF::move(entry));
 }
 
 void BackendResourceDataStore::responseReceived(ResourceLoaderIdentifier resourceID, const ResourceResponse& response, Inspector::ResourceType type)
@@ -182,6 +185,12 @@ void BackendResourceDataStore::responseReceived(ResourceLoaderIdentifier resourc
     resourceData->setType(type);
     resourceData->setMIMEType(response.mimeType());
     resourceData->m_responseTimestamp = WallTime::now();
+
+    // Capture the source map URL header now, since the response is not retained.
+    String sourceMapURL = response.httpHeaderField(HTTPHeaderName::SourceMap);
+    if (sourceMapURL.isEmpty())
+        sourceMapURL = response.httpHeaderField(HTTPHeaderName::XSourceMap);
+    resourceData->setSourceMapURL(sourceMapURL);
 
     if (ResourceUtilities::shouldTreatAsText(response.mimeType()))
         resourceData->setDecoder(ResourceUtilities::createTextDecoder(response.mimeType(), response.textEncodingName()));

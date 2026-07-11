@@ -4860,7 +4860,27 @@ class RunWebKitTestsWithoutChange(RunWebKitTests):
             second_results_failing_tests = set(self.getProperty('second_run_failures', set()))
             list_failed_tests_with_change = sorted(first_results_failing_tests.union(second_results_failing_tests))
             if list_failed_tests_with_change:
+                positional_test_paths = self.positional_test_paths_from_additional_arguments()
+                if positional_test_paths:
+                    self.command = [argument for argument in self.command if argument not in positional_test_paths]
                 self.command += ['--skipped=always'] + list_failed_tests_with_change
+
+    def positional_test_paths_from_additional_arguments(self) -> list[str]:
+        if not self.ENABLE_ADDITIONAL_ARGUMENTS:
+            return []
+        additional_arguments = self.getProperty('additionalArguments') or []
+        positional_test_paths = []
+        skip_next_argument = False
+        for argument in additional_arguments:
+            if skip_next_argument:
+                skip_next_argument = False
+                continue
+            if argument.startswith('-'):
+                if argument == '--exclude-tests':
+                    skip_next_argument = True
+                continue
+            positional_test_paths.append(argument)
+        return positional_test_paths
 
 
 class AnalyzeLayoutTestsResults(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
@@ -6021,9 +6041,10 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
             self.handleExcessiveLogging()
             return
 
-        match = re.search(r'Ran (?P<ran>\d+) tests of (?P<total>\d+) with (?P<passed>\d+) successful', line)
+        match = re.search(r'Ran (?P<ran>\d+) tests of (?P<total>\d+) with (?P<passed>\d+) successful(?: \((?P<expected>\d+) expected failures?\))?', line)
         if match:
-            self.failedTestCount = int(match.group('ran')) - int(match.group('passed'))
+            expected = int(match.group('expected')) if match.group('expected') else 0
+            self.failedTestCount = int(match.group('ran')) - int(match.group('passed')) - expected
 
     def handleExcessiveLogging(self):
         build_url = f'{self.master.config.buildbotURL}#/builders/{self.build._builderid}/builds/{self.build.number}'

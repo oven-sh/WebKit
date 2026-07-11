@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2005 Allan Sandfeld Jensen (kde@carewolf.com)
  * Copyright (C) 2005-2026 Samuel Weinig (sam@webkit.org)
- * Copyright (C) 2005-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2010-2018 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -128,9 +128,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderElement);
 
 struct SameSizeAsRenderElement : public RenderObject {
     SingleThreadPackedWeakPtr<RenderObject> firstChild;
-    unsigned bitfields1 : 12;
     SingleThreadPackedWeakPtr<RenderObject> lastChild;
-    unsigned bitfields2 : 13;
+    unsigned bitfields : 21;
     Style::ComputedStyle style;
 };
 
@@ -144,21 +143,7 @@ static_assert(sizeof(RenderElement) == sizeof(SameSizeAsRenderElement), "RenderE
 inline RenderElement::RenderElement(Type type, ContainerNode& elementOrDocument, Style::ComputedStyle&& style, OptionSet<TypeFlag> flags, TypeSpecificFlags typeSpecificFlags)
     : RenderObject(type, elementOrDocument, flags, typeSpecificFlags)
     , m_firstChild(nullptr)
-    , m_hasInitializedStyle(false)
-    , m_hasPausedImageAnimations(false)
-    , m_hasCounterNodeMap(false)
-#if HAVE(SUPPORT_HDR_DISPLAY)
-    , m_hasHDRImages(false)
-#endif
-    , m_isFirstLetter(false)
-    , m_renderBlockHasMarginBeforeQuirk(false)
-    , m_renderBlockHasMarginAfterQuirk(false)
-    , m_renderBlockShouldForceRelayoutChildren(false)
-    , m_renderBlockFlowLineLayoutPath(RenderBlockFlow::UndeterminedPath)
     , m_lastChild(nullptr)
-    , m_isRegisteredForVisibleInViewportCallback(false)
-    , m_visibleInViewportState(static_cast<unsigned>(VisibleInViewportState::Unknown))
-    , m_didContributeToVisuallyNonEmptyPixelCount(false)
     , m_style(WTF::move(style))
 {
     ASSERT(RenderObject::isRenderElement());
@@ -1446,6 +1431,20 @@ void RenderElement::layout()
     clearNeedsLayout();
 }
 
+IntBoxExtent RenderElement::computeFilterOutsets() const
+{
+    if (!hasFilter())
+        return { };
+
+    auto zoom = style().usedZoomForLength();
+
+    if (auto outsets = style().filter().calculateOutsets(zoom))
+        return *outsets;
+
+    // FIXME: Need to compute outsets for reference filters: webkit.org/b/237538.
+    return { };
+}
+
 template<typename FillLayers> static bool mustRepaintFillLayers(const RenderElement& renderer, const FillLayers& layers)
 {
     // Nobody will use multiple layers without wanting fancy positioning.
@@ -1492,8 +1491,11 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
     if (oldClippedOverflowRect.isEmpty() && newClippedOverflowRect.isEmpty())
         return true;
 
-    auto mustRepaintBackgroundOrBorderOnSizeChange = [&](LayoutRect oldOutlineBounds, LayoutRect newOutlineBounds) {
+    auto mustFullRepaintOnSizeChange = [&](LayoutRect oldOutlineBounds, LayoutRect newOutlineBounds) {
         if (hasMask() && mustRepaintFillLayers(*this, style().maskLayers()))
+            return true;
+
+        if (hasFilter() && !computeFilterOutsets().isZero())
             return true;
 
         if (style().border().hasBorderRadius()) {
@@ -1539,7 +1541,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
 
         // If our outline bounds rect resized (as a proxy for a border box resize),
         // we have to repaint if we paint content that scales with the size.
-        if (oldRects.outlineBoundsRect->size() != newRects.outlineBoundsRect->size() && mustRepaintBackgroundOrBorderOnSizeChange(*oldRects.outlineBoundsRect, *newRects.outlineBoundsRect))
+        if (oldRects.outlineBoundsRect->size() != newRects.outlineBoundsRect->size() && mustFullRepaintOnSizeChange(*oldRects.outlineBoundsRect, *newRects.outlineBoundsRect))
             return true;
 
         return false;
@@ -2173,7 +2175,7 @@ bool RenderElement::getTrailingCorner(FloatPoint& point, bool& insideFixed) cons
                     continue;
                 point.moveBy(linesBox.maxXMaxYCorner());
             } else
-                point.moveBy(downcast<RenderBox>(*o).frameRect().maxXMaxYCorner());
+                point.moveBy(downcast<RenderBox>(*o).borderBoxRectInContainer().maxXMaxYCorner());
             point = o->container()->localToAbsolute(point, MapCoordinatesMode::UseTransforms, &insideFixed);
             return true;
         }
@@ -2517,6 +2519,14 @@ ReferencedSVGResources& RenderElement::ensureReferencedSVGResources()
         rareData.referencedSVGResources = makeUnique<ReferencedSVGResources>(*this);
 
     return *rareData.referencedSVGResources;
+}
+
+ReferencedSVGResources* RenderElement::referencedSVGResources() const
+{
+    if (!hasRareData())
+        return nullptr;
+
+    return rareData().referencedSVGResources.get();
 }
 
 void RenderElement::clearReferencedSVGResources()

@@ -372,6 +372,8 @@ PASS text-underline-position
 PASS text-wrap-mode
 PASS text-wrap-style
 PASS timeline-scope
+PASS timeline-trigger-name
+PASS timeline-trigger-source
 PASS top
 PASS touch-action
 PASS transform
@@ -384,6 +386,7 @@ PASS transition-duration
 PASS transition-property
 PASS transition-timing-function
 PASS translate
+PASS trigger-scope
 PASS unicode-bidi
 PASS vector-effect
 PASS vertical-align

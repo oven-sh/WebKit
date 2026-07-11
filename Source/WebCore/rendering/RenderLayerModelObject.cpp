@@ -177,6 +177,12 @@ void RenderLayerModelObject::styleDidChange(Style::Difference diff, const Style:
     updateFromStyle();
     RenderElement::styleDidChange(diff, oldStyle);
 
+    // Drop the cached paint-server resolution only when fill/stroke actually changed. SVG animation
+    // restyles the element every frame (e.g. the transform presentation attribute) without touching
+    // fill/stroke, and the cache must survive those to be worthwhile.
+    if (!oldStyle || oldStyle->fill() != style().fill() || oldStyle->stroke() != style().stroke())
+        invalidateSVGPaintServerCache();
+
     // When an out-of-flow-positioned element changes its display between block and inline-block,
     // then an incremental layout on the element's containing block lays out the element through
     // LayoutPositionedObjects, which skips laying out the element's parent.
@@ -445,7 +451,7 @@ void RenderLayerModelObject::mapLocalToSVGContainer(const RenderLayerModelObject
 
 void RenderLayerModelObject::applySVGTransform(TransformationMatrix& transform, const SVGGraphicsElement& graphicsElement, const Style::ComputedStyle& style, const FloatRect& boundingBox, const std::optional<AffineTransform>& preApplySVGTransformMatrix, const std::optional<AffineTransform>& postApplySVGTransformMatrix, OptionSet<Style::TransformResolverOption> options) const
 {
-    auto svgTransform = graphicsElement.transform().concatenate().value_or(identity);
+    auto svgTransform = graphicsElement.concatenatedTransform();
     auto* supplementalTransform = graphicsElement.supplementalTransform(); // SMIL <animateMotion>
 
     // This check does not use style.hasTransformRelatedProperty() on purpose -- we only want to know if either the 'transform' property, an
@@ -634,44 +640,52 @@ RenderSVGResourceMarker* RenderLayerModelObject::svgMarkerResourceFromStyle(cons
     return nullptr;
 }
 
-RenderSVGResourcePaintServer* RenderLayerModelObject::svgFillPaintServerResourceFromStyle(const Style::ComputedStyle& style) const
+RenderSVGResourcePaintServer* RenderLayerModelObject::svgPaintServerResourceFromStyle(const Style::SVGPaint& paint, const Style::ComputedStyle& style, SVGPaintType paintType) const
 {
     if (!document().settings().layerBasedSVGEngineEnabled())
         return nullptr;
 
-    auto fillURL = style.fill().tryAnyURL();
-    if (!fillURL)
+    // Only the renderer's own style is cached. A foreign style from the text selection or
+    // decoration painters resolves fresh. The cache lives on ReferencedSVGResources, which exists
+    // whenever this renderer references a paint server.
+    CheckedPtr resources = &style == &this->style() ? referencedSVGResources() : nullptr;
+    if (resources) {
+        if (auto* cached = paintType == SVGPaintType::Fill ? resources->cachedFillPaintServer() : resources->cachedStrokePaintServer())
+            return cached;
+    }
+
+    auto paintURL = paint.tryAnyURL();
+    if (!paintURL)
         return nullptr;
 
-    if (RefPtr referencedElement = ReferencedSVGResources::referencedPaintServerElement(treeScopeForSVGReferences(), *fillURL)) {
-        if (auto* referencedPaintServerRenderer = dynamicDowncast<RenderSVGResourcePaintServer>(referencedElement->renderer()))
+    if (RefPtr referencedElement = ReferencedSVGResources::referencedPaintServerElement(treeScopeForSVGReferences(), *paintURL)) {
+        if (auto* referencedPaintServerRenderer = dynamicDowncast<RenderSVGResourcePaintServer>(referencedElement->renderer())) {
+            if (resources)
+                resources->setCachedPaintServer(paintType, *referencedPaintServerRenderer);
             return referencedPaintServerRenderer;
+        }
     }
 
     if (RefPtr element = this->element())
-        document().addPendingSVGResource(AtomString(fillURL->resolved.string()), downcast<SVGElement>(*element));
+        document().addPendingSVGResource(AtomString(paintURL->resolved.string()), downcast<SVGElement>(*element));
 
     return nullptr;
 }
 
+RenderSVGResourcePaintServer* RenderLayerModelObject::svgFillPaintServerResourceFromStyle(const Style::ComputedStyle& style) const
+{
+    return svgPaintServerResourceFromStyle(style.fill(), style, SVGPaintType::Fill);
+}
+
 RenderSVGResourcePaintServer* RenderLayerModelObject::svgStrokePaintServerResourceFromStyle(const Style::ComputedStyle& style) const
 {
-    if (!document().settings().layerBasedSVGEngineEnabled())
-        return nullptr;
+    return svgPaintServerResourceFromStyle(style.stroke(), style, SVGPaintType::Stroke);
+}
 
-    auto strokeURL = style.stroke().tryAnyURL();
-    if (!strokeURL)
-        return nullptr;
-
-    if (RefPtr referencedElement = ReferencedSVGResources::referencedPaintServerElement(treeScopeForSVGReferences(), *strokeURL)) {
-        if (auto* referencedPaintServerRenderer = dynamicDowncast<RenderSVGResourcePaintServer>(referencedElement->renderer()))
-            return referencedPaintServerRenderer;
-    }
-
-    if (RefPtr element = this->element())
-        document().addPendingSVGResource(AtomString(strokeURL->resolved.string()), downcast<SVGElement>(*element));
-
-    return nullptr;
+void RenderLayerModelObject::invalidateSVGPaintServerCache() const
+{
+    if (CheckedPtr resources = referencedSVGResources())
+        resources->invalidatePaintServerCache();
 }
 
 LegacyRenderSVGResourceClipper* RenderLayerModelObject::legacySVGClipperResourceFromStyle() const
@@ -824,6 +838,23 @@ void RenderLayerModelObject::updateTransformAndRepaintForSVGAfterAttributeChange
         }
     }
 
+    // An ancestor container's own bounding boxes (its object, stroke and repaint bounding boxes) and
+    // cached visual overflow rect are computed from its descendants, so they include this renderer's
+    // transformed bounds and go stale when its transform changes. This path skips the layout that would
+    // recompute them, so when the transform actually
+    // changed, invalidate both up the ancestor chain to the SVG root, giving getBBox() and paint or
+    // hit-test culling a fresh rect. The scale-change paths above already scheduled a relayout for this.
+    if (previousTransform != currentTransform) {
+        for (CheckedPtr ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
+            if (CheckedPtr svgAncestor = dynamicDowncast<RenderLayerModelObject>(ancestor.get())) {
+                svgAncestor->invalidateCachedSVGTransformDependentBoundingBoxes();
+                svgAncestor->invalidateCachedVisualOverflowRect();
+            }
+            if (ancestor->isRenderSVGRoot())
+                break;
+        }
+    }
+
     // Scale unchanged, so no relayout is needed - just repaint the move. For a non-layered renderer
     // the batched transform flush repaints the moved region by comparing the renderer's repaint rect
     // from before and after the change, but it skips RenderSVGText because a text rect depends on
@@ -892,6 +923,17 @@ AffineTransform RenderLayerModelObject::computeRendererTransform() const
     auto referenceBoxRect = transformReferenceBoxRect(style());
     applyTransform(matrix, style(), referenceBoxRect, Style::TransformResolver::individualTransformOperations);
     return matrix.toAffineTransform();
+}
+
+void RenderLayerModelObject::contentChanged(ContentChangeType changeType, const std::optional<FloatRect>& dirtyRect)
+{
+    if (CheckedPtr layer = this->layer())
+        layer->contentChanged(changeType, dirtyRect);
+}
+
+bool RenderLayerModelObject::hasAcceleratedCompositing() const
+{
+    return view().compositor().hasAcceleratedCompositing();
 }
 
 #if ASSERT_ENABLED

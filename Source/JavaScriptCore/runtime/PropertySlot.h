@@ -67,7 +67,12 @@ enum class PropertyAttribute : unsigned {
     DOMJITFunction    = 1 << 16, // property is a DOM JIT function - only used by static hashtables
 #if USE(BUN_JSC_ADDITIONS)
     Constructable     = 1 << 17, // property is a function that is constructable - only used by static hashtables
+
+    LastAttribute = Constructable,
+#else
+    LastAttribute = DOMJITFunction,
 #endif
+
     BuiltinOrFunction = Builtin | Function, // helper only used by static hashtables
     BuiltinOrFunctionOrLazyProperty = Builtin | Function | CellProperty | ClassStructure | PropertyCallback, // helper only used by static hashtables
     BuiltinOrFunctionOrAccessorOrLazyProperty = Builtin | Function | Accessor | CellProperty | ClassStructure | PropertyCallback, // helper only used by static hashtables

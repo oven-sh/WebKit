@@ -478,8 +478,11 @@ void RemoteLayerTreeDrawingAreaProxyMac::scheduleDisplayRefreshCallbacks()
     if (m_displayRefreshObserverID)
         return;
 
+    // FIXME: as stated in the header, we should make m_displayID non-optional. An empty display ID
+    // can cause presentation update callbacks for the page to be stuck forever.
     if (!m_displayID) {
-        RELEASE_LOG(DisplayLink, "RemoteLayerTreeDrawingAreaProxyMac::scheduleDisplayLink(): page has no displayID");
+        RefPtr webPageProxy = page();
+        RELEASE_LOG_ERROR(DisplayLink, "%p [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", PID=%i] RemoteLayerTreeDrawingAreaProxyMac::scheduleDisplayRefreshCallbacks(): page has no display ID", this, webPageProxy ? webPageProxy->identifier().toUInt64() : 0, webPageProxy ? webPageProxy->webPageIDInMainFrameProcess().toUInt64() : 0, webPageProxy ? webPageProxy->legacyMainFrameProcessID() : 0);
         return;
     }
 
@@ -519,24 +522,6 @@ void RemoteLayerTreeDrawingAreaProxyMac::setPreferredFramesPerSecond(IPC::Connec
     auto* displayLink = existingDisplayLink();
     if (m_displayRefreshObserverID && displayLink)
         displayLink->setObserverPreferredFramesPerSecond(m_displayLinkClient, *m_displayRefreshObserverID, preferredFramesPerSecond);
-}
-
-void RemoteLayerTreeDrawingAreaProxyMac::setDisplayLinkWantsFullSpeedUpdates(bool wantsFullSpeedUpdates)
-{
-    if (!m_displayID)
-        return;
-
-    auto& displayLink = this->displayLink();
-
-    // Use a second observer for full-speed updates (used to drive scroll animations).
-    if (wantsFullSpeedUpdates) {
-        if (m_fullSpeedUpdateObserverID)
-            return;
-
-        m_fullSpeedUpdateObserverID = DisplayLinkObserverID::generate();
-        displayLink.addObserver(m_displayLinkClient, *m_fullSpeedUpdateObserverID, displayLink.nominalFramesPerSecond());
-    } else if (m_fullSpeedUpdateObserverID)
-        removeObserver(m_fullSpeedUpdateObserverID);
 }
 
 void RemoteLayerTreeDrawingAreaProxyMac::windowScreenDidChange(PlatformDisplayID displayID)

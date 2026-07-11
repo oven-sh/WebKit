@@ -94,8 +94,7 @@ private:
     bool hasVideo() const final { return true; }
     bool hasAudio() const final;
     void setPageIsVisible(bool) final { }
-    void seekToTarget(const SeekTarget&) final;
-    bool seeking() const final { return false; }
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final;
     bool paused() const final;
     MediaPlayer::NetworkState networkState() const final { return m_networkState; }
     MediaPlayer::ReadyState readyState() const final { return m_readyState; }
@@ -120,10 +119,11 @@ private:
     bool setCurrentTimeDidChangeCallback(MediaPlayer::CurrentTimeDidChangeCallback&&) final;
     void setRate(float) final;
     double rate() const final;
+    double effectiveRate() const final;
     void setVolumeLocked(bool) final;
     void setVolume(float) final;
     float volume() const final;
-    void setMuted(bool) final { }
+    void setMuted(bool) final;
     String engineDescription() const final;
 
     // MediaDeviceRouteClient
@@ -132,6 +132,10 @@ private:
     void errorDidChange(MediaDeviceRoute&) final;
     void audioOptionsDidChange(MediaDeviceRoute&) final;
     void playbackPositionDidChange(MediaDeviceRoute&) final;
+    void playingDidChange(MediaDeviceRoute&) final;
+    void playbackSpeedDidChange(MediaDeviceRoute&) final;
+    void mutedDidChange(MediaDeviceRoute&) final;
+    void volumeDidChange(MediaDeviceRoute&) final;
 
     CMTimebaseRef ensureTimebase();
     void destroyTimebase();
@@ -158,6 +162,7 @@ private:
     bool m_allowsWirelessVideoPlayback { true };
     bool m_volumeLocked { false };
     ShouldPlayToTarget m_shouldPlayToTarget { ShouldPlayToTarget::Unknown };
+    std::optional<MediaTimePromise::AutoRejectProducer> m_seekPromise;
     RefPtr<MediaPlaybackTarget> m_playbackTarget;
     MediaPlayer::CurrentTimeDidChangeCallback m_currentTimeDidChangeCallback;
     RetainPtr<CMTimebaseRef> m_timebase;

@@ -1156,7 +1156,12 @@ final class WebBackForwardList {
             return
         }
         // We can't use == here due to rdar://162357139
-        assert(contentsMatch(webPageProxy.identifier(), item.pageID()) && contentsMatch(itemID, item.identifier()))
+        if messageCheck(
+            process: process,
+            contentsMatch(webPageProxy.identifier(), item.pageID()) && contentsMatch(itemID, item.identifier())
+        ) {
+            return
+        }
         let oldFrameID = frameItem.frameID()
         frameItem.updateFrameStatePayload(consuming: frameState)
         let newFrameID = frameItem.frameID()

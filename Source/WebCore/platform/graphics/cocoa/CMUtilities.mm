@@ -200,6 +200,16 @@ static std::optional<EncryptionDataCollection> getEncryptionDataCollection(CMFor
         encryptionOriginalFormat = plainTextCodecType;
     }
 
+    // For video, every atom in this dictionary (including any codec configuration atom) is
+    // already captured in full by VideoInfo::extensionAtoms(); encryptionInitDatas is left
+    // empty here for video so createExtensionsDictionary() sources these atoms from a single place.
+    if (PAL::CMFormatDescriptionGetMediaType(description) == kCMMediaType_Video) {
+        return EncryptionDataCollection {
+            .encryptionData = WTF::move(*encryptionData),
+            .encryptionOriginalFormat = encryptionOriginalFormat
+        };
+    }
+
     RetainPtr extensionAtoms = dynamic_cf_cast<CFDictionaryRef>(PAL::CMFormatDescriptionGetExtension(description, PAL::kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
     if (!extensionAtoms) {
         return EncryptionDataCollection {
@@ -208,9 +218,7 @@ static std::optional<EncryptionDataCollection> getEncryptionDataCollection(CMFor
         };
     }
 
-    // For video content, the first element of the dictionary is always the video's atomData.
-    size_t indexStart = PAL::CMFormatDescriptionGetMediaType(description) == kCMMediaType_Video;
-    auto encryptionInitDatas = parseExtensionAtomsDictionary(extensionAtoms.get(), indexStart);
+    auto encryptionInitDatas = parseExtensionAtomsDictionary(extensionAtoms.get());
 
     return EncryptionDataCollection {
         .encryptionData = WTF::move(*encryptionData),
@@ -1221,7 +1229,11 @@ bool isCMSampleBufferRandomAccess(CMSampleBufferRef sample)
     if (!attachments || CFArrayGetCount(attachments.get()) < 1)
         return true;
     RetainPtr firstAttachment = checked_cf_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(attachments.get(), 0));
-    return !CFDictionaryContainsKey(firstAttachment.get(), PAL::kCMSampleAttachmentKey_NotSync);
+    const void* notSync = nullptr;
+    if (!CFDictionaryGetValueIfPresent(firstAttachment.get(), PAL::kCMSampleAttachmentKey_NotSync, &notSync))
+        return true;
+
+    return !notSync || !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
 }
 
 } // namespace WebCore

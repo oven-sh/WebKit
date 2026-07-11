@@ -39,6 +39,7 @@
 #include "ElementRareData.h"
 #include "FunctionCall.h"
 #include "HTMLDocument.h"
+#include "HTMLHeadingElement.h"
 #include "HTMLNames.h"
 #include "InspectorInstrumentation.h"
 #include "Namespace.h"
@@ -3946,8 +3947,6 @@ void SelectorCodeGenerator::generateElementMatchesHeading(Assembler::JumpList& f
 
 void SelectorCodeGenerator::generateElementMatchesHeading(Assembler::JumpList& failureCases, const FixedVector<int>* integerList)
 {
-    // FIXME: When HTMLHeadingElement caches an effective offset (headingoffset/headingreset),
-    // load that byte here, add it to the base, and saturate at 9.
     LocalRegister nodeName(m_registerAllocator);
     {
         LocalRegister qualifiedNameImpl(m_registerAllocator);
@@ -3963,10 +3962,16 @@ void SelectorCodeGenerator::generateElementMatchesHeading(Assembler::JumpList& f
     if (!integerList)
         return;
 
-    uint8_t levelMask = 0;
+    LocalRegister offset(m_registerAllocator);
+    m_assembler.load8(Assembler::Address(elementAddressRegister, HTMLHeadingElement::effectiveHeadingOffsetMemoryOffset()), offset);
+    m_assembler.add32(offset, nodeName);
+    m_assembler.add32(Assembler::TrustedImm32(1), nodeName);
+    m_assembler.moveConditionally32(Assembler::Above, nodeName, Assembler::TrustedImm32(9), Assembler::TrustedImm32(9), nodeName, nodeName);
+
+    uint16_t levelMask = 0;
     for (int level : *integerList) {
-        if (level >= 1 && level <= 6)
-            levelMask |= 1u << (level - 1);
+        if (level >= 1 && level <= 9)
+            levelMask |= 1u << level;
     }
     if (!levelMask) {
         failureCases.append(m_assembler.jump());
@@ -3988,16 +3993,7 @@ void SelectorCodeGenerator::generateElementIsLastChild(Assembler::JumpList& fail
     if (m_selectorContext == SelectorContext::QuerySelector) {
         Assembler::JumpList successCase = jumpIfNoNextAdjacentElement();
         failureCases.append(m_assembler.jump());
-
         successCase.link(&m_assembler);
-
-        LocalRegister parent(m_registerAllocator);
-        generateWalkToParentNode(parent);
-        auto noParentCase = m_assembler.branchTestPtr(Assembler::Zero, parent);
-
-        failureCases.append(m_assembler.branchTest16(Assembler::NonZero, Assembler::Address(parent, Node::stateFlagsMemoryOffset()), Assembler::TrustedImm32(Node::flagIsParsingChildren())));
-
-        noParentCase.link(&m_assembler);
         return;
     }
 
@@ -4050,14 +4046,6 @@ void SelectorCodeGenerator::generateElementIsOnlyChild(Assembler::JumpList& fail
         Assembler::JumpList nextSuccessCase = jumpIfNoNextAdjacentElement();
         failureCases.append(m_assembler.jump());
         nextSuccessCase.link(&m_assembler);
-
-        LocalRegister parent(m_registerAllocator);
-        generateWalkToParentNode(parent);
-        auto noParentCase = m_assembler.branchTestPtr(Assembler::Zero, parent);
-
-        failureCases.append(m_assembler.branchTest16(Assembler::NonZero, Assembler::Address(parent, Node::stateFlagsMemoryOffset()), Assembler::TrustedImm32(Node::flagIsParsingChildren())));
-
-        noParentCase.link(&m_assembler);
         return;
     }
 
@@ -4375,8 +4363,10 @@ void SelectorCodeGenerator::generateNthLastChildParentCheckAndRelationUpdate(Ass
     generateAddStyleRelationIfResolvingStyle(parentNode, relation);
     notElementCase.link(&m_assembler);
 
-    failureCases.append(m_assembler.branchTest16(Assembler::NonZero, Assembler::Address(parentNode, Node::stateFlagsMemoryOffset()),
-        Assembler::TrustedImm32(Node::flagIsParsingChildren())));
+    if (m_selectorContext != SelectorContext::QuerySelector) {
+        failureCases.append(m_assembler.branchTest16(Assembler::NonZero, Assembler::Address(parentNode, Node::stateFlagsMemoryOffset()),
+            Assembler::TrustedImm32(Node::flagIsParsingChildren())));
+    }
 
     noParentCase.link(&m_assembler);
 }
