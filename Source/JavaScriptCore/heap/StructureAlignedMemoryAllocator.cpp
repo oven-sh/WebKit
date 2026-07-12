@@ -51,6 +51,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if OS(LINUX)
 #include <sys/mman.h>
 #include <errno.h>
+#elif OS(DARWIN)
+#include <mach/mach.h>
 #endif
 #endif
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -149,6 +151,10 @@ public:
             // mi_arena_t and theaps inside this region and registers them in
             // process-wide lists that _mi_process_fork_child walks pre-exec.
             while (madvise(reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap), g_jscConfig.sizeOfStructureHeap, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+#elif OS(DARWIN)
+            // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
+            // same rationale as the Linux MADV_DOFORK branch above.
+            vm_inherit(mach_task_self(), static_cast<vm_address_t>(g_jscConfig.startOfStructureHeap), static_cast<vm_size_t>(g_jscConfig.sizeOfStructureHeap), VM_INHERIT_COPY);
 #endif
             return;
         }
