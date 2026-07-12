@@ -112,13 +112,16 @@ void freeLargeVirtual(void* object, size_t size, HeapKind kind)
 #endif
 }
 
-void scavengeThisThread()
+void scavengeThisThread(bool force)
 {
 #if BENABLE(LIBPAS)
+    BUNUSED(force);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
                                   pas_lock_is_not_held);
 #elif BUSE(MIMALLOC)
-    mi_theap_collect(mi_theap_get_default(), /* force */ true);
+    mi_theap_collect(mi_theap_get_default(), force);
+#else
+    BUNUSED(force);
 #endif
 }
 
