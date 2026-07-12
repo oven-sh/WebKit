@@ -552,19 +552,28 @@ jobs:
     strategy:
       matrix:
         include:
-          - label: bun-webkit-linux-arm64-android
+          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+            label: bun-webkit-linux-arm64-android-lto
             android_arch: aarch64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
-          - label: bun-webkit-linux-arm64-android-debug
+          - lto_flag: ""
+            label: bun-webkit-linux-arm64-android
+            android_arch: aarch64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Release"
+          - lto_flag: ""
+            label: bun-webkit-linux-arm64-android-debug
             android_arch: aarch64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Debug"
-          - label: bun-webkit-linux-amd64-android
+          - lto_flag: ""
+            label: bun-webkit-linux-amd64-android
             android_arch: x86_64
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
-          - label: bun-webkit-linux-amd64-android-debug
+          - lto_flag: ""
+            label: bun-webkit-linux-amd64-android-debug
             android_arch: x86_64
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Debug"
@@ -585,7 +594,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" temp=${{runner.temp}} bash android-release.sh
+          ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} bash android-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["android"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -766,6 +775,10 @@ jobs:
           path: ${{runner.temp}}/bun-webkit-linux-amd64-musl-baseline-lto
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: bun-webkit-linux-arm64-android-lto
+          path: ${{runner.temp}}/bun-webkit-linux-arm64-android-lto
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
           name: bun-webkit-linux-arm64-android
           path: ${{runner.temp}}/bun-webkit-linux-arm64-android
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -835,6 +848,7 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-windows-arm64/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-lto.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-arm64-android-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-android-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64-android/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-android.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64-android-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-android-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-android/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-android.tar.gz
@@ -890,6 +904,7 @@ jobs:
         with:
           tag_name: ${{ inputs.release_tag }}
           files: |
+            ./out/bun-webkit-linux-arm64-android-lto.tar.gz
             ./out/bun-webkit-linux-arm64-android.tar.gz
             ./out/bun-webkit-linux-arm64-android-debug.tar.gz
             ./out/bun-webkit-linux-amd64-android.tar.gz
