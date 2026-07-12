@@ -104,7 +104,6 @@
 #include <algorithm>
 #include <wtf/AvailableMemory.h>
 #include <wtf/CryptographicallyRandomNumber.h>
-#include <wtf/FastMalloc.h>
 #include <wtf/ListDump.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/RAMSize.h>
@@ -2633,13 +2632,6 @@ void Heap::didFinishCollection()
 
     for (auto* observer : m_observers)
         observer->didGarbageCollect(scope);
-
-#if USE(MIMALLOC)
-    // libpas runs a scavenger thread; mimalloc only purges from alloc
-    // slow-paths, so drive it here after a full GC freed FastMalloc memory.
-    if (scope == CollectionScope::Full)
-        WTF::releaseFastMallocFreeMemoryForThisThread();
-#endif
 }
 
 void Heap::resumeCompilerThreads()
