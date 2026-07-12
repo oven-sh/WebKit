@@ -66,24 +66,32 @@ jobs:
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: ""
             label: bun-webkit-linux-arm64
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-lto
             os: linux-x64-gh
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: ""
             label: bun-webkit-linux-amd64
             os: linux-x64-gh
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-baseline-lto
             os: linux-x64-gh
@@ -91,6 +99,8 @@ jobs:
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
             MARCH_FLAG: "-march=nehalem"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: ""
             label: bun-webkit-linux-amd64-baseline
             os: linux-x64-gh
@@ -98,6 +108,8 @@ jobs:
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
             MARCH_FLAG: "-march=nehalem"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: ""
             label: bun-webkit-linux-amd64-asan
             os: linux-x64-gh
@@ -112,42 +124,6 @@ jobs:
             CMAKE_BUILD_TYPE: "Release"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
             ENABLE_SANITIZERS: "address,undefined"
-          # mimalloc variants: USE_MIMALLOC=ON routes bmalloc/FastMalloc through
-          # mimalloc instead of libpas. USE_EXTERNAL_MIMALLOC=ON leaves the
-          # mi_* symbols unresolved in the shipped archives so Bun's own
-          # vendored mimalloc (oven-sh/mimalloc) satisfies them at link time.
-          - lto_flag: ""
-            label: bun-webkit-linux-amd64-mimalloc
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-amd64-mimalloc-lto
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: ""
-            label: bun-webkit-linux-arm64-mimalloc
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-arm64-mimalloc-lto
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -204,6 +180,8 @@ jobs:
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
             lto_flag: ""
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-windows-amd64-lto
             win_arch: x64
             package_json_arch: "x64"
@@ -219,6 +197,8 @@ jobs:
             # LTO codegen aborts ("Associative COMDAT symbol '??_7...' does
             # not exist").
             lto_flag: "/clang:-flto=thin /clang:-fno-split-lto-unit"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-windows-amd64-debug
             win_arch: x64
             package_json_arch: "x64"
@@ -230,6 +210,8 @@ jobs:
             CMAKE_BUILD_TYPE: "Release"
             lto_flag: ""
             baseline: "true"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-windows-amd64-baseline-lto
             win_arch: x64
             package_json_arch: "x64"
@@ -240,6 +222,8 @@ jobs:
             # LTO too — matching bun-webkit-linux-amd64-baseline-lto.
             lto_flag: "/clang:-flto=thin /clang:-fno-split-lto-unit"
             baseline: "true"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           # ASAN is x64-only: LLVM ships no Windows ARM64 ASAN runtime. The
           # sanitizer runtime (import lib, /MT runtime thunk, DLL) comes from
           # the compiler-rt-windows-* release tag (see Dockerfile.windows).
@@ -254,6 +238,8 @@ jobs:
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
             lto_flag: ""
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           # No arm64-lto variant: LLVM 21's CodeView emitter has no register
           # mapping for ARM64 NEON quad-register tuples ("LLVM ERROR: unknown
           # codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates
@@ -278,7 +264,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          WIN_ARCH="${{matrix.win_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" BASELINE="${{matrix.baseline}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" temp=${{runner.temp}} bash windows-cross-release.sh
+          WIN_ARCH="${{matrix.win_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" BASELINE="${{matrix.baseline}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash windows-cross-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["windows"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -375,33 +361,45 @@ jobs:
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "MinSizeRel"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: ""
             label: bun-webkit-linux-arm64-musl
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "MinSizeRel"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-musl-lto
             os: linux-x64-gh
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "MinSizeRel"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: ""
             label: bun-webkit-linux-amd64-musl
             os: linux-x64-gh
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "MinSizeRel"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-musl-baseline-lto
             os: linux-x64-gh
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "MinSizeRel"
             MARCH_FLAG: "-march=nehalem"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - lto_flag: ""
             label: bun-webkit-linux-amd64-musl-baseline
             os: linux-x64-gh
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "MinSizeRel"
             MARCH_FLAG: "-march=nehalem"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -424,7 +422,7 @@ jobs:
           else
             export MARCH_FLAG="${{ matrix.MARCH_FLAG || '-march=haswell' }}"
           fi
-          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} bash musl-release.sh
+          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash musl-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -454,11 +452,15 @@ jobs:
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
             lto_flag: ""
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-macos-arm64-lto
             macos_arch: arm64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
             lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-macos-arm64-debug
             macos_arch: arm64
             package_json_arch: "arm64"
@@ -470,11 +472,15 @@ jobs:
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
             lto_flag: ""
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-macos-amd64-lto
             macos_arch: x86_64
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
             lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-macos-amd64-debug
             macos_arch: x86_64
             package_json_arch: "x64"
@@ -516,7 +522,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          MACOS_ARCH="${{matrix.macos_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" CPP_FLAGS="${{matrix.cpp_flags}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" ENABLE_MALLOC_HEAP_BREAKDOWN="${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}" temp=${{runner.temp}} bash macos-cross-release.sh
+          MACOS_ARCH="${{matrix.macos_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" CPP_FLAGS="${{matrix.cpp_flags}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" ENABLE_MALLOC_HEAP_BREAKDOWN="${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash macos-cross-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["darwin"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -539,6 +545,8 @@ jobs:
             freebsd_arch: x86_64
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-freebsd-amd64-debug
             freebsd_arch: x86_64
             package_json_arch: "x64"
@@ -547,6 +555,8 @@ jobs:
             freebsd_arch: aarch64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-freebsd-arm64-debug
             freebsd_arch: aarch64
             package_json_arch: "arm64"
@@ -568,7 +578,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          FREEBSD_ARCH="${{matrix.freebsd_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" temp=${{runner.temp}} bash freebsd-release.sh
+          FREEBSD_ARCH="${{matrix.freebsd_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash freebsd-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["freebsd"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -592,6 +602,8 @@ jobs:
             android_arch: aarch64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-linux-arm64-android-debug
             android_arch: aarch64
             package_json_arch: "arm64"
@@ -600,6 +612,8 @@ jobs:
             android_arch: x86_64
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-linux-amd64-android-debug
             android_arch: x86_64
             package_json_arch: "x64"
@@ -621,7 +635,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" temp=${{runner.temp}} bash android-release.sh
+          ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash android-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["android"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -732,22 +746,6 @@ jobs:
         with:
           name: bun-webkit-linux-arm64-lto
           path: ${{runner.temp}}/bun-webkit-linux-arm64-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-mimalloc
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-mimalloc
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-mimalloc-lto
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-mimalloc-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-mimalloc
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-mimalloc
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-mimalloc-lto
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-mimalloc-lto
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: bun-webkit-linux-amd64-baseline
@@ -874,10 +872,6 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-macos-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-mimalloc/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-mimalloc.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-mimalloc-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-mimalloc-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-mimalloc/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-mimalloc.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-mimalloc-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-mimalloc-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-baseline/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-baseline.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-baseline-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl-lto.tar.gz
@@ -928,10 +922,6 @@ jobs:
             ./out/bun-webkit-linux-arm64-debug.tar.gz
             ./out/bun-webkit-linux-amd64-debug-asan.tar.gz
             ./out/bun-webkit-linux-arm64-debug-asan.tar.gz
-            ./out/bun-webkit-linux-amd64-mimalloc.tar.gz
-            ./out/bun-webkit-linux-amd64-mimalloc-lto.tar.gz
-            ./out/bun-webkit-linux-arm64-mimalloc.tar.gz
-            ./out/bun-webkit-linux-arm64-mimalloc-lto.tar.gz
 
       - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
         with:
