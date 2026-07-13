@@ -48,7 +48,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <bmalloc/pas_primitive_heap_ref.h>
 #elif USE(MIMALLOC)
 #include <bmalloc/mimalloc.h>
-#include <mimalloc/types.h>
+#if OS(LINUX)
+#include <sys/mman.h>
+#include <errno.h>
+#elif OS(DARWIN)
+#include <mach/mach.h>
+#endif
 #endif
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
@@ -136,10 +141,24 @@ public:
         }
         m_usedBlocks.set(0);
 #elif USE(MIMALLOC)
-        void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
-        size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;
-        RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, false, -1, true, &structureArena));
-        structureHeap = mi_heap_new_in_arena(structureArena);
+        if (!m_useSystemHeap) [[likely]] {
+            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
+            size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;
+            RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, false, -1, true, &structureArena));
+            structureHeap = mi_heap_new_in_arena(structureArena);
+#if OS(LINUX) && defined(MADV_DOFORK)
+            // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
+            // mi_arena_t and theaps inside this region and registers them in
+            // process-wide lists that _mi_process_fork_child walks pre-exec.
+            while (madvise(reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap), g_jscConfig.sizeOfStructureHeap, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+#elif OS(DARWIN)
+            // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
+            // same rationale as the Linux MADV_DOFORK branch above.
+            vm_inherit(mach_task_self(), static_cast<vm_address_t>(g_jscConfig.startOfStructureHeap), static_cast<vm_size_t>(g_jscConfig.sizeOfStructureHeap), VM_INHERIT_COPY);
+#endif
+            return;
+        }
+        m_usedBlocks.set(0);
 #else
         m_usedBlocks.set(0);
 #endif

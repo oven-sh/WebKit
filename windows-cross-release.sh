@@ -10,6 +10,8 @@ export WIN_ARCH="${WIN_ARCH:-x64}"
 export WEBKIT_RELEASE_TYPE="${WEBKIT_RELEASE_TYPE:-Release}"
 export LTO_FLAG="${LTO_FLAG:-}"
 export ENABLE_SANITIZERS="${ENABLE_SANITIZERS:-}"
+export USE_MIMALLOC="${USE_MIMALLOC:-OFF}"
+export USE_EXTERNAL_MIMALLOC="${USE_EXTERNAL_MIMALLOC:-OFF}"
 
 # Codegen floor per arch, matching windows-release.ps1:
 #   x64 -> haswell, x64 baseline -> nehalem, arm64 -> armv8-a+crc.
@@ -56,6 +58,8 @@ docker buildx build -f Dockerfile.windows -t "$CONTAINER_NAME" \
     --build-arg MARCH_FLAG="$MARCH_FLAG" \
     --build-arg ICU_MARCH_FLAG="$ICU_MARCH_FLAG" \
     --build-arg ENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
+    --build-arg USE_MIMALLOC="$USE_MIMALLOC" \
+    --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     --progress=plain \
     --platform=linux/amd64 \
     --target=artifact \

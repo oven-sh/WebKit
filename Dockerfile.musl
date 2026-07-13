@@ -4,6 +4,8 @@ ARG CPU=native
 ARG LTO_FLAG="-flto=full -fwhole-program-vtables -fforce-emit-vtables "
 ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
+ARG USE_MIMALLOC="OFF"
+ARG USE_EXTERNAL_MIMALLOC="OFF"
 
 FROM alpine:3.23 as base
 
@@ -95,6 +97,8 @@ ARG CPU
 ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
+ARG USE_MIMALLOC
+ARG USE_EXTERNAL_MIMALLOC
 
 RUN apk add --no-cache cpio curl file gnupg ninja ruby ruby-getoptlong unzip rsync perl python3 openssl-dev openssl linux-headers
 
@@ -120,6 +124,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DUSE_THIN_ARCHIVES=OFF \
     -DUSE_BUN_JSC_ADDITIONS=ON \
     -DUSE_BUN_EVENT_LOOP=ON \
+    -DUSE_MIMALLOC="$USE_MIMALLOC" \
+    -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -DENABLE_FTL_JIT=ON \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
