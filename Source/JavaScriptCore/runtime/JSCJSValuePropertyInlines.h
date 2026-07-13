@@ -46,9 +46,14 @@ ALWAYS_INLINE JSValue JSValue::get(JSGlobalObject* globalObject, PropertyName pr
 
 ALWAYS_INLINE JSValue JSValue::get(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot) const
 {
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool hasSlot = getPropertySlot(globalObject, propertyName, slot);
-    EXCEPTION_ASSERT(!scope.exception() || !hasSlot);
+    // A DeferTermination scope unwinding inside the slot lookup can throw the
+    // TerminationException after the property was found; tolerate it like
+    // JSObject::get does and let the caller's exception check unwind.
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException() || !hasSlot);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
     if (!hasSlot)
         return jsUndefined();
     RELEASE_AND_RETURN(scope, slot.getValue(globalObject, propertyName));
@@ -136,7 +141,10 @@ ALWAYS_INLINE JSValue JSValue::get(JSGlobalObject* globalObject, unsigned proper
         object = asObject(asCell());
 
     bool hasSlot = object->getPropertySlot(globalObject, propertyName, slot);
-    EXCEPTION_ASSERT(!scope.exception() || !hasSlot);
+    // See JSValue::get(JSGlobalObject*, PropertyName, PropertySlot&) above:
+    // termination can be thrown after a successful lookup.
+    EXCEPTION_ASSERT(!scope.exception() || getVM(globalObject).hasPendingTerminationException() || !hasSlot);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
     if (!hasSlot)
         return jsUndefined();
     RELEASE_AND_RETURN(scope, slot.getValue(globalObject, propertyName));
