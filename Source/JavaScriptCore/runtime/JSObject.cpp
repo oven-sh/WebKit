@@ -3933,7 +3933,11 @@ bool JSObject::getOwnPropertyDescriptor(JSGlobalObject* globalObject, PropertyNa
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
 
     bool result = methodTable()->getOwnPropertySlot(this, globalObject, propertyName, slot);
-    EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || !result);
+    // A DeferTermination scope unwinding inside the slot lookup can throw the
+    // TerminationException after the property was found; tolerate it like
+    // JSObject::get does and let the caller's exception check unwind.
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException() || !result);
+    RETURN_IF_EXCEPTION(scope, false);
     if (!result)
         return false;
 

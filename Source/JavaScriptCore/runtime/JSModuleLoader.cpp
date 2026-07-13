@@ -1023,7 +1023,10 @@ void JSModuleLoader::continueDynamicImport(JSGlobalObject* globalObject, ModuleL
         // 1.a. Perform ! Call(promiseCapability.[[Reject]], undefined, « moduleCompletion.[[Value]] »).
         promise->reject(vm, (*exception)->value());
         // 1.b. Return UNUSED.
-        scope.assertNoException();
+        // The abrupt completion may be a resolution failure caused by the
+        // TerminationException, which rejectWithCaughtException cannot clear;
+        // it stays pending in the VM and the caller's exception check unwinds.
+        scope.assertNoExceptionExceptTermination();
         return;
     }
     // 2. Let module be moduleCompletion.[[Value]].
