@@ -755,6 +755,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
+    static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
 #endif
 
     bool hasDebugger() const { return m_debugger; }
