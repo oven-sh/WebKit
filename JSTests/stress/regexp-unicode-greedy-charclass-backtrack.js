@@ -34,6 +34,11 @@ assertMatch(/([^"]+)Z/u, "\u{1F600}Z", "\u{1F600}Z");
 assertMatch(/([^"]+)Z/u, "Z", null);
 assertMatch(/q([^"q]*)Z/u, "q\uDC00aZb", "q\uDC00aZ");
 assertMatch(/q([^"q]*)Z/u, "q\uDC00aa", null);
+// Backward step must classify surrogates the same way the forward read does (surrogateTagMask)
+// so they agree on how many units a pair consumed. U+F800/U+FC00 are not surrogates.
+assertMatch(/([^"]*)Z/u, "Z\uF800\uFC00\uF800\uFC00", "Z");
+assertMatch(/([^"]*)Z/u, "aZ\uF800\uFC00", "aZ");
+assertMatch(/([^"]*)Z/u, "\uF800\uFC00Z", "\uF800\uFC00Z");
 
 // Alternating widths: "a😀" repeated, Z at the front so every step is unwound.
 (function () {

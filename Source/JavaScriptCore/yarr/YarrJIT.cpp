@@ -3396,10 +3396,13 @@ class YarrGenerator final : public YarrJITInfo {
         else {
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
             // Unmatch one code point in O(1) by stepping backward. The forward loop advanced
-            // index by 2 only for a valid surrogate pair (tryReadUnicodeChar combines them) and
-            // by 1 otherwise, so the last matched code point spans two code units iff the unit
-            // at input[index - 1] is a trail surrogate preceded by a lead surrogate inside the
+            // index by 2 only when tryReadUnicodeChar combined a surrogate pair and by 1
+            // otherwise, so the last matched code point spans two code units iff the unit at
+            // input[index - 1] is a trail surrogate preceded by a lead surrogate inside the
             // range covered by this term (beginIndex was stored in generateCharacterClassGreedy).
+            // The surrogate classification must use the same mask as tryReadUnicodeCharImpl
+            // (surrogateTagMask, & 0xdc00) so forward advance and backward retreat agree on
+            // how many units a given pair of code units consumed.
             const MacroAssembler::RegisterID character = m_regs.regT0;
             const MacroAssembler::RegisterID scratch = m_regs.regT2;
             m_usesT2 = true;
@@ -3407,14 +3410,14 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
 
             m_jit.load16Unaligned(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition, character), character);
-            m_jit.and32(MacroAssembler::TrustedImm32(0xfc00), character);
+            m_jit.and32(surrogateTagMask, character);
             MacroAssembler::Jump notTrail = m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm32(0xdc00));
 
             loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::beginIndex(), scratch);
             MacroAssembler::Jump atBegin = m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, scratch);
 
             m_jit.load16Unaligned(negativeOffsetIndexedAddress((op.m_checkedOffset - term->inputPosition) + 1u, character), character);
-            m_jit.and32(MacroAssembler::TrustedImm32(0xfc00), character);
+            m_jit.and32(surrogateTagMask, character);
             MacroAssembler::Jump notLead = m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm32(0xd800));
 
             m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
