@@ -3394,29 +3394,37 @@ class YarrGenerator final : public YarrJITInfo {
         else if (term->isFixedWidthCharacterClass())
             m_jit.sub32(MacroAssembler::TrustedImm32(term->characterClass->hasNonBMPCharacters() ? 2 : 1), m_regs.index);
         else {
-            // Rematch one less
-            const MacroAssembler::RegisterID character = m_regs.regT0;
-
-            loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::beginIndex(), m_regs.index);
-
-            MacroAssembler::Label rematchLoop(&m_jit);
-            MacroAssembler::Jump doneRematching = m_jit.branchTest32(MacroAssembler::Zero, countRegister);
-
-            readCharacter(op.m_checkedOffset - term->inputPosition, character);
-
-            m_jit.sub32(MacroAssembler::TrustedImm32(1), countRegister);
-            m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index);
-
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
-            MacroAssembler::Jump isBMPChar = m_jit.branch32(MacroAssembler::LessThan, character, MacroAssembler::TrustedImm32(0x10000));
-            m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index);
-            isBMPChar.link(&m_jit);
+            // Unmatch one code point in O(1) by stepping backward. The forward loop advanced
+            // index by 2 only for a valid surrogate pair (tryReadUnicodeChar combines them) and
+            // by 1 otherwise, so the last matched code point spans two code units iff the unit
+            // at input[index - 1] is a trail surrogate preceded by a lead surrogate inside the
+            // range covered by this term (beginIndex was stored in generateCharacterClassGreedy).
+            const MacroAssembler::RegisterID character = m_regs.regT0;
+            const MacroAssembler::RegisterID scratch = m_regs.regT2;
+            m_usesT2 = true;
+
+            m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
+
+            m_jit.load16Unaligned(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition, character), character);
+            m_jit.and32(MacroAssembler::TrustedImm32(0xfc00), character);
+            MacroAssembler::Jump notTrail = m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm32(0xdc00));
+
+            loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::beginIndex(), scratch);
+            MacroAssembler::Jump atBegin = m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, scratch);
+
+            m_jit.load16Unaligned(negativeOffsetIndexedAddress((op.m_checkedOffset - term->inputPosition) + 1u, character), character);
+            m_jit.and32(MacroAssembler::TrustedImm32(0xfc00), character);
+            MacroAssembler::Jump notLead = m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm32(0xd800));
+
+            m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
+
+            notTrail.link(&m_jit);
+            atBegin.link(&m_jit);
+            notLead.link(&m_jit);
+#else
+            m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
 #endif
-
-            m_jit.jump(rematchLoop);
-            doneRematching.link(&m_jit);
-
-            loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex(), countRegister);
         }
         m_jit.jump(op.m_reentry);
     }
