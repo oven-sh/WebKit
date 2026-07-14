@@ -259,6 +259,51 @@ uint64_t uv_get_constrained_memory()
     return uv__get_cgroup_constrained_memory(buf);
 }
 
+static uint64_t uv__get_cgroup1_current_memory(char buf[1024])
+{
+    char filename[4097];
+    char* p;
+    int n;
+
+    p = uv__cgroup1_find_memory_controller(buf, &n);
+    if (p != NULL) {
+        snprintf(filename, sizeof(filename),
+            "/sys/fs/cgroup/memory/%.*s/memory.usage_in_bytes", n, p);
+        uint64_t current = uv__read_uint64(filename);
+        if (current != 0)
+            return current;
+    }
+
+    return uv__read_uint64("/sys/fs/cgroup/memory/memory.usage_in_bytes");
+}
+
+static uint64_t uv__get_cgroup2_current_memory(char buf[1024])
+{
+    char filename[4097];
+    char* p;
+    int n;
+
+    p = buf + strlen("0::/");
+    n = (int)strcspn(p, "\n");
+
+    snprintf(filename, sizeof(filename),
+        "/sys/fs/cgroup/%.*s/memory.current", n, p);
+    return uv__read_uint64(filename);
+}
+
+uint64_t uv_get_cgroup_current_memory()
+{
+    char buf[1024];
+
+    if (uv__slurp("/proc/self/cgroup", buf, sizeof(buf)))
+        return 0;
+
+    if (strncmp(buf, "0::/", 4))
+        return uv__get_cgroup1_current_memory(buf);
+
+    return uv__get_cgroup2_current_memory(buf);
+}
+
 /* Find the cgroup v1 line whose controller list contains "cpu" as a whole
  * token (it may appear as "cpu", "cpu,cpuacct", or "cpuacct,cpu"). Returns
  * a pointer to the path component (after the leading "/") and its length. */
@@ -372,6 +417,11 @@ int uv_get_constrained_cpu()
 #else
 
 uint64_t uv_get_constrained_memory()
+{
+    return 0;
+}
+
+uint64_t uv_get_cgroup_current_memory()
 {
     return 0;
 }
