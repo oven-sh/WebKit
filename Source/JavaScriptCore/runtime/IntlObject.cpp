@@ -1951,10 +1951,23 @@ static bool isValidTimeZoneNameFromICUTimeZone(StringView timeZoneName)
         return false;
     if (timeZoneName.startsWith("Etc/"_s))
         return true;
-    // IANA time zone names include '/'. Some of them are not including, but it is in backward links.
-    // And ICU already resolved these backward links.
-    if (!timeZoneName.contains('/'))
-        return timeZoneName == "UTC"_s || timeZoneName == "GMT"_s;
+    // IANA time zone names usually include '/'. The following legacy identifiers
+    // are first-class `Zone`s in the IANA `etcetera` file (not backward links),
+    // so they are primary IANA zones and must be treated as valid:
+    //   CET, CST6CDT, EET, EST5EDT, MET, MST7MDT, PST8PDT, WET
+    // plus UTC/GMT which are always valid.
+    if (!timeZoneName.contains('/')) {
+        return timeZoneName == "UTC"_s
+            || timeZoneName == "GMT"_s
+            || timeZoneName == "CET"_s
+            || timeZoneName == "CST6CDT"_s
+            || timeZoneName == "EET"_s
+            || timeZoneName == "EST5EDT"_s
+            || timeZoneName == "MET"_s
+            || timeZoneName == "MST7MDT"_s
+            || timeZoneName == "PST8PDT"_s
+            || timeZoneName == "WET"_s;
+    }
     return true;
 }
 
