@@ -115,6 +115,42 @@ static LazyNeverDestroyed<Semaphore> globalSemaphoreForSuspendResume;
 
 static std::atomic<Thread*> targetThread { nullptr };
 
+#if HAVE(MACHINE_CONTEXT)
+// Return the stack pointer the thread was running at when the signal arrived,
+// read straight out of the kernel-saved register state. Unlike
+// currentStackPointer() this is stable regardless of whether the handler
+// itself runs on the normal stack or the alternate signal stack.
+//
+// The per-arch field selection below mirrors JSC::MachineContext::stackPointerImpl(mcontext_t&)
+// in Source/JavaScriptCore/runtime/MachineContext.h. WTF sits below JSC and can't include that
+// header, so the accessors are duplicated here. Keep the two in sync: MachineContext.h fails to
+// compile (#error Unknown Architecture) on an unlisted arch, but this copy falls through to the
+// nullptr branch, which the caller treats as "use currentStackPointer()" and silently reintroduces
+// the SA_ONSTACK deadlock this function exists to avoid. An arch added to MachineContext.h must be
+// added here too.
+static inline void* interruptedStackPointer(ucontext_t* ucontext)
+{
+#if OS(LINUX) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.gregs[REG_RSP]);
+#elif OS(LINUX) && CPU(ARM64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.sp);
+#elif OS(LINUX) && CPU(ARM)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.arm_sp);
+#elif OS(LINUX) && CPU(RISCV64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[REG_SP]);
+#elif OS(FREEBSD) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.mc_rsp);
+#elif OS(FREEBSD) && CPU(ARM64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.mc_gpregs.gp_sp);
+#else
+    // No accessor for this arch: fall back to currentStackPointer() in the caller. See the sync
+    // note above; prefer adding the arch's SP field here over relying on the fallback.
+    UNUSED_PARAM(ucontext);
+    return nullptr;
+#endif
+}
+#endif
+
 void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 {
     // Touching a global variable atomic types from signal handlers is allowed.
@@ -130,25 +166,41 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
         return;
     }
 
-    void* approximateStackPointer = currentStackPointer();
-    if (!thread->m_stack.contains(approximateStackPointer)) {
-        // This happens if we use an alternative signal stack.
-        // 1. A user-defined signal handler is invoked with an alternative signal stack.
-        // 2. In the middle of the execution of the handler, we attempt to suspend the target thread.
-        // 3. A nested signal handler is executed.
-        // 4. The stack pointer saved in the machine context will be pointing to the alternative signal stack.
-        // In this case, we back off the suspension and retry a bit later.
+    // We need to decide whether the interrupted thread is parked somewhere
+    // we can safely snapshot from, i.e. running on its own normal stack
+    // rather than inside a nested signal handler on an alt stack. When
+    // possible, read the SP the thread was running at straight from the
+    // ucontext (kernel-saved register state); that SP is stable regardless
+    // of whether the handler itself runs on the normal or the alternate
+    // signal stack. Using currentStackPointer() here only works so long as
+    // the handler always runs on the normal stack, which does not hold if
+    // the handler's SA_ONSTACK flag is set. Ours isn't by default, but
+    // any runtime loaded via dlopen (Go's cgo init, Mono, some JNI
+    // layouts, Rust cdylibs) may force it on. Fall back to the handler's
+    // own SP on platforms where we don't have a machine context.
+#if HAVE(MACHINE_CONTEXT)
+    ucontext_t* userContext = static_cast<ucontext_t*>(ucontext);
+    void* interruptedSP = interruptedStackPointer(userContext);
+    void* stackPointerToCheck = interruptedSP ? interruptedSP : currentStackPointer();
+#else
+    void* stackPointerToCheck = currentStackPointer();
+#endif
+    if (!thread->m_stack.contains(stackPointerToCheck)) {
+        // The signal genuinely interrupted code running on an alternative
+        // stack, for example a nested signal handler already running on
+        // the alt stack. The snapshot we'd take here wouldn't represent
+        // the thread's normal-stack state. Back off and let the caller
+        // retry once the outer frame has returned to the normal stack.
         thread->m_platformRegisters = nullptr;
         globalSemaphoreForSuspendResume->post();
         return;
     }
 
 #if HAVE(MACHINE_CONTEXT)
-    ucontext_t* userContext = static_cast<ucontext_t*>(ucontext);
     thread->m_platformRegisters = &registersFromUContext(userContext);
 #else
     UNUSED_PARAM(ucontext);
-    PlatformRegisters platformRegisters { approximateStackPointer };
+    PlatformRegisters platformRegisters { stackPointerToCheck };
     thread->m_platformRegisters = &platformRegisters;
 #endif
 
@@ -185,6 +237,12 @@ void Thread::initializePlatformThreading()
         // features. We tell it to use SIGPWR instead, which we assume is unlikely to be reliable
         // for its stated purpose. Mono's garbage collector also uses SIGPWR:
         // https://www.mono-project.com/docs/advanced/embedding/#signal-handling
+        //
+        // Runtimes loaded via dlopen (Go's cgo init, Mono, some JNI layouts) may add SA_ONSTACK to
+        // this handler's sigaction flags when they re-install inherited signal handlers, so the
+        // handler can then be delivered on an alternate signal stack. signalHandlerSuspendResume
+        // stays correct because it reads the interrupted stack pointer from the ucontext rather
+        // than the handler's own stack pointer. See oven-sh/bun#31158.
         g_wtfConfig.sigThreadSuspendResume = SIGPWR;
 #else
         g_wtfConfig.sigThreadSuspendResume = SIGUSR1;
