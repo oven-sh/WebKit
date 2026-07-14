@@ -6,6 +6,8 @@ ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
 ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
+ARG USE_MIMALLOC="OFF"
+ARG USE_EXTERNAL_MIMALLOC="OFF"
 
 # Use different base images for ARM64 vs x86_64
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
@@ -21,6 +23,8 @@ ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 ARG TARGETARCH
 ARG ENABLE_SANITIZERS
+ARG USE_MIMALLOC
+ARG USE_EXTERNAL_MIMALLOC
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -249,7 +253,11 @@ ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
+# clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
+# resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=haswell)
+# pick up gcc's incompatible copy. clang ships its own; drop it for this step.
 RUN --mount=type=tmpfs,target=/webkitbuild \
+    unset C_INCLUDE_PATH && \
     export CFLAGS="$CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
     export CXXFLAGS="$CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export ENABLE_ASSERTS="AUTO" && \
@@ -280,6 +288,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DICU_ROOT=/icu \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
+    -DUSE_MIMALLOC="$USE_MIMALLOC" \
+    -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \

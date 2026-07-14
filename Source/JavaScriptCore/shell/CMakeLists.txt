@@ -18,6 +18,13 @@ if (WIN32)
     list(APPEND jsc_LIBRARIES Winmm)
 endif ()
 
+if (USE_EXTERNAL_MIMALLOC)
+    # The shipped static archives intentionally leave mi_* unresolved so the
+    # consumer links its own mimalloc. The jsc shell still needs a working
+    # allocator, so link the vendored mimalloc object library here only.
+    list(APPEND jsc_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+endif ()
+
 if (ENABLE_FUZZILLI)
   list(APPEND jsc_SOURCES ../fuzzilli/Fuzzilli.cpp)
 endif ()
