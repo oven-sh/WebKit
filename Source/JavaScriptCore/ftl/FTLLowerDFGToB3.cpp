@@ -21461,6 +21461,65 @@ IGNORE_CLANG_WARNINGS_END
 
                 break;
             }
+            case 8: {
+                LValue loadedValue = m_out.load64(pointer);
+
+                if (data.isLittleEndian == TriState::False)
+                    loadedValue = byteSwap64(loadedValue);
+                else if (data.isLittleEndian == TriState::Indeterminate) {
+                    auto emitLittleEndianCode = [&] {
+                        return loadedValue;
+                    };
+                    auto emitBigEndianCode = [&] {
+                        return byteSwap64(loadedValue);
+                    };
+
+                    loadedValue = emitCodeBasedOnEndiannessBranch(isLittleEndian, emitLittleEndianCode, emitBigEndianCode);
+                }
+
+                JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+
+                // Fast path: inline-allocate a one-digit heap BigInt. The zero
+                // case is represented canonically with length 0; the extra digit
+                // slot stays within the allocated cell, so storing it is safe.
+                LBasicBlock slowPath = m_out.newBlock();
+                LBasicBlock continuation = m_out.newBlock();
+
+                LValue isNegative = nullptr;
+                LValue digit = loadedValue;
+                if (data.isSigned) {
+                    isNegative = m_out.lessThan(loadedValue, m_out.constInt64(0));
+                    digit = m_out.select(isNegative, m_out.neg(loadedValue), loadedValue);
+                }
+
+                Allocator cellAllocator = allocatorForConcurrently<JSBigInt>(vm(), JSBigInt::allocationSize(1), AllocatorForMode::AllocatorIfExists);
+                LValue fastBigInt = allocateCell(m_out.constIntPtr(cellAllocator.localAllocator()), vm().bigIntStructure.get(), slowPath);
+                if (data.isSigned) {
+                    LValue flags = m_out.load8ZeroExt32(fastBigInt, m_heaps.JSCell_typeInfoFlags);
+                    LValue newFlags = m_out.select(isNegative, m_out.bitOr(flags, m_out.constInt32(TypeInfoPerCellBit)), flags);
+                    m_out.store32As8(newFlags, fastBigInt, m_heaps.JSCell_typeInfoFlags);
+                }
+                m_out.store32(m_out.select(m_out.notZero64(digit), m_out.constInt32(1), m_out.constInt32(0)), fastBigInt, m_heaps.JSBigInt_length);
+                m_out.store32(m_out.constInt32(0), fastBigInt, m_heaps.JSBigInt_hash);
+                m_out.store64(digit, fastBigInt, m_heaps.JSBigInt_data0);
+                mutatorFence();
+                ValueFromBlock fastResult = m_out.anchor(fastBigInt);
+                m_out.jump(continuation);
+
+                LBasicBlock lastNext = m_out.appendTo(slowPath, continuation);
+                LValue slowResultValue;
+                if (data.isSigned)
+                    slowResultValue = vmCall(Int64, operationInt64ToBigInt, weakPointer(globalObject), loadedValue);
+                else
+                    slowResultValue = vmCall(Int64, operationUint64ToBigInt, weakPointer(globalObject), loadedValue);
+                ValueFromBlock slowResult = m_out.anchor(slowResultValue);
+                m_out.jump(continuation);
+
+                m_out.appendTo(continuation, lastNext);
+                setJSValue(m_out.phi(Int64, fastResult, slowResult));
+
+                break;
+            }
             default:
                 RELEASE_ASSERT_NOT_REACHED();
             }
@@ -21581,6 +21640,9 @@ IGNORE_CLANG_WARNINGS_END
             break;
         case Int52RepUse:
             valueToStore = lowStrictInt52(valueEdge);
+            break;
+        case HeapBigIntUse:
+            valueToStore = lowHeapBigInt(valueEdge);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -21715,6 +21777,47 @@ IGNORE_CLANG_WARNINGS_END
                 };
                 auto emitBigEndianCode = [&] () -> LValue {
                     m_out.store32(byteSwap32(valueToStore), pointer);
+                    return nullptr;
+                };
+
+                if (data.isLittleEndian == TriState::False)
+                    emitBigEndianCode();
+                else if (data.isLittleEndian == TriState::True)
+                    emitLittleEndianCode();
+                else
+                    emitCodeBasedOnEndiannessBranch(isLittleEndian, emitLittleEndianCode, emitBigEndianCode);
+
+                break;
+            }
+            case 8: {
+                RELEASE_ASSERT(valueEdge.useKind() == HeapBigIntUse);
+
+                // setBigInt64/setBigUint64 wrap the value modulo 2^64, so the
+                // low digit of the heap BigInt (with the sign applied) suffices.
+                LBasicBlock nonZeroLength = m_out.newBlock();
+                LBasicBlock continuation = m_out.newBlock();
+
+                LValue length = m_out.load32NonNegative(valueToStore, m_heaps.JSBigInt_length);
+                ValueFromBlock zeroValue = m_out.anchor(m_out.constInt64(0));
+                m_out.branch(m_out.isZero32(length), unsure(continuation), unsure(nonZeroLength));
+
+                LBasicBlock lastNext = m_out.appendTo(nonZeroLength, continuation);
+                LValue digit = m_out.load64(valueToStore, m_heaps.JSBigInt_data0);
+                LValue isNegative = m_out.testNonZero32(
+                    m_out.load8ZeroExt32(valueToStore, m_heaps.JSCell_typeInfoFlags),
+                    m_out.constInt32(TypeInfoPerCellBit));
+                ValueFromBlock nonZeroValue = m_out.anchor(m_out.select(isNegative, m_out.neg(digit), digit));
+                m_out.jump(continuation);
+
+                m_out.appendTo(continuation, lastNext);
+                LValue int64Value = m_out.phi(Int64, zeroValue, nonZeroValue);
+
+                auto emitLittleEndianCode = [&] () -> LValue {
+                    m_out.store64(int64Value, pointer);
+                    return nullptr;
+                };
+                auto emitBigEndianCode = [&] () -> LValue {
+                    m_out.store64(byteSwap64(int64Value), pointer);
                     return nullptr;
                 };
 

@@ -264,7 +264,6 @@ bool doesGC(Graph& graph, Node* node)
     case FilterSetPrivateBrandStatus:
     case DateGetInt32OrNaN:
     case DateGetTime:
-    case DataViewGetInt:
     case DataViewGetFloat:
     case DataViewSet:
     case PutByOffset:
@@ -533,6 +532,10 @@ bool doesGC(Graph& graph, Node* node)
     case GlobalIsFinite:
     case GlobalIsNaN:
         return node->child1().useKind() == UntypedUse;
+
+    case DataViewGetInt:
+        // getBigInt64/getBigUint64 allocate a BigInt for the result.
+        return node->dataViewData().byteSize == 8;
 
     case CallNumberConstructor:
         switch (node->child1().useKind()) {

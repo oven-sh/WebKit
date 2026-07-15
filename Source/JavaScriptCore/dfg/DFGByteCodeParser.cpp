@@ -4863,7 +4863,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case DataViewGetUint32:
         case DataViewGetFloat16:
         case DataViewGetFloat32:
-        case DataViewGetFloat64: {
+        case DataViewGetFloat64:
+        case DataViewGetBigInt64:
+        case DataViewGetBigUint64: {
             if (!is64Bit())
                 return CallOptimizationResult::DidNothing;
 
@@ -4919,6 +4921,13 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 byteSize = 8;
                 op = DataViewGetFloat;
                 break;
+
+            case DataViewGetBigInt64:
+                isSigned = true;
+                [[fallthrough]];
+            case DataViewGetBigUint64:
+                byteSize = 8;
+                break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
             }
@@ -4966,9 +4975,17 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case DataViewSetUint32:
         case DataViewSetFloat16:
         case DataViewSetFloat32:
-        case DataViewSetFloat64: {
+        case DataViewSetFloat64:
+        case DataViewSetBigInt64:
+        case DataViewSetBigUint64: {
             if (!is64Bit())
                 return CallOptimizationResult::DidNothing;
+#if USE(BIGINT32)
+            // The value child is speculated as a heap BigInt, which would always
+            // exit when small BigInts are boxed as BigInt32.
+            if (intrinsic == DataViewSetBigInt64 || intrinsic == DataViewSetBigUint64)
+                return CallOptimizationResult::DidNothing;
+#endif
 
             if (argumentCountIncludingThis < 3)
                 return CallOptimizationResult::DidNothing;
@@ -5017,6 +5034,12 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 break;
             case DataViewSetFloat64:
                 isFloatingPoint = true;
+                byteSize = 8;
+                break;
+            case DataViewSetBigInt64:
+                isSigned = true;
+                [[fallthrough]];
+            case DataViewSetBigUint64:
                 byteSize = 8;
                 break;
             default:

@@ -104,6 +104,11 @@ public:
         return OBJECT_OFFSETOF(JSBigInt, m_length);
     }
 
+    static constexpr size_t offsetOfHash()
+    {
+        return OBJECT_OFFSETOF(JSBigInt, m_hash);
+    }
+
     static constexpr size_t offsetOfData()
     {
         return WTF::roundUpToMultipleOf<alignof(Digit)>(sizeof(JSBigInt));

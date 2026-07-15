@@ -3668,6 +3668,10 @@ private:
                     else
                         node->setResult(NodeResultInt52);
                     break;
+                case 8:
+                    // getBigInt64/getBigUint64: the result is a BigInt JSValue.
+                    ASSERT(node->result() == NodeResultJS);
+                    break;
                 default:
                     RELEASE_ASSERT_NOT_REACHED();
                 }
@@ -3696,6 +3700,11 @@ private:
                         fixEdge<Int32Use>(valueToStore);
                     else
                         fixEdge<Int52RepUse>(valueToStore);
+                    break;
+                case 8:
+                    // setBigInt64/setBigUint64: the value is wrapped modulo 2^64,
+                    // so the heap BigInt's low digit (with sign applied) suffices.
+                    fixEdge<HeapBigIntUse>(valueToStore);
                     break;
                 }
             }

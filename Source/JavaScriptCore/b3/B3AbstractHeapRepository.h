@@ -92,7 +92,9 @@ namespace JSC::B3 {
     macro(JSArrayBufferView_length, JSArrayBufferView::offsetOfLength(), Mutability::Mutable) \
     macro(JSArrayBufferView_mode, JSArrayBufferView::offsetOfMode(), Mutability::Mutable) \
     macro(JSArrayBufferView_vector, JSArrayBufferView::offsetOfVector(), Mutability::Mutable) \
-    macro(JSBigInt_length, JSBigInt::offsetOfLength(), Mutability::Immutable) \
+    macro(JSBigInt_length, JSBigInt::offsetOfLength(), Mutability::Mutable) \
+    macro(JSBigInt_hash, JSBigInt::offsetOfHash(), Mutability::Mutable) \
+    macro(JSBigInt_data0, JSBigInt::offsetOfData(), Mutability::Mutable) \
     macro(JSBoundFunction_targetFunction, JSBoundFunction::offsetOfTargetFunction(), Mutability::Mutable) \
     macro(JSBoundFunction_boundThis, JSBoundFunction::offsetOfBoundThis(), Mutability::Mutable) \
     macro(JSBoundFunction_boundArg0, JSBoundFunction::offsetOfBoundArgs() + sizeof(WriteBarrier<Unknown>) * 0, Mutability::Mutable) \
