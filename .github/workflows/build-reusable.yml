@@ -482,6 +482,14 @@ jobs:
             MARCH_FLAG: "-march=nehalem"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
+          - label: bun-webkit-macos-amd64-baseline-lto
+            macos_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
+            MARCH_FLAG: "-march=nehalem"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-macos-amd64-lto
             macos_arch: x86_64
             package_json_arch: "x64"
@@ -744,6 +752,10 @@ jobs:
           path: ${{runner.temp}}/bun-webkit-macos-amd64-baseline
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: bun-webkit-macos-amd64-baseline-lto
+          path: ${{runner.temp}}/bun-webkit-macos-amd64-baseline-lto
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
           name: bun-webkit-macos-arm64-lto
           path: ${{runner.temp}}/bun-webkit-macos-arm64-lto
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -870,6 +882,7 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-macos-arm64-asan/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64-baseline/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-baseline.tar.gz
+          mv ${{runner.temp}}/bun-webkit-macos-amd64-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-baseline-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-arm64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-debug-asan.tar.gz
@@ -977,6 +990,7 @@ jobs:
             ./out/bun-webkit-macos-arm64-debug-asan.tar.gz
             ./out/bun-webkit-macos-amd64.tar.gz
             ./out/bun-webkit-macos-amd64-baseline.tar.gz
+            ./out/bun-webkit-macos-amd64-baseline-lto.tar.gz
             ./out/bun-webkit-macos-amd64-debug.tar.gz
             ./out/bun-webkit-macos-arm64-lto.tar.gz
             ./out/bun-webkit-macos-amd64-lto.tar.gz
