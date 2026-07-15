@@ -130,6 +130,7 @@ public:
     template<typename Functor> void forEachSubspace(const Functor&);
 
     void shrink();
+    void returnEmptyBlocks(unsigned retainCountPerDirectory);
     void freeBlock(MarkedBlock::Handle*);
 
     void didAddBlock(MarkedBlock::Handle*);

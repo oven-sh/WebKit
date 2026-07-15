@@ -72,6 +72,7 @@ public:
     void NODELETE snapshotUnsweptForFullCollection();
     void sweep();
     void shrink();
+    void returnEmptyBlocks(unsigned retainCount);
     void assertNoUnswept();
     size_t cellSize() const { return m_cellSize; }
     CellAttributes attributes() const { return m_attributes; }
@@ -185,7 +186,11 @@ private:
     // this number is bound by capacity of Vector m_blocks, which must be within unsigned.
     unsigned m_emptyCursor { 0 };
     unsigned m_unsweptCursor { 0 }; // Points to the next block that is a candidate for incremental sweeping.
-    
+
+    // Snapshot of edenBits() taken in prepareForAllocation() just before it clears them, so that
+    // returnEmptyBlocks() can tell a directory that is part of the working set from a cold one.
+    bool m_allocatedSinceLastCollection { false };
+
     // FIXME: All of these should probably be references.
     // https://bugs.webkit.org/show_bug.cgi?id=166988
     Subspace* m_subspace { nullptr };

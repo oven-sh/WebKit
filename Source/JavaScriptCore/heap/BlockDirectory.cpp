@@ -225,6 +225,7 @@ void BlockDirectory::prepareForAllocation()
     m_emptyCursor = 0;
     
     assertSweeperIsSuspended();
+    m_allocatedSinceLastCollection = !edenBits().isEmpty();
     edenBits().clearAll();
 
     if (Options::useImmortalObjects()) [[unlikely]] {
@@ -399,6 +400,52 @@ void BlockDirectory::shrink()
             markedSpace().freeBlock(m_blocks[index]);
         }
         setIsInUse(index, false);
+    }
+}
+
+void BlockDirectory::returnEmptyBlocks(unsigned retainCount)
+{
+    assertSweeperIsSuspended();
+
+    // Only a directory that allocated during the cycle that just ended keeps a cache, so the
+    // retained set stays proportional to the working set rather than to directory count. Note
+    // this does give up donors for findEmptyBlockToSteal(): under an allocator with a page cache
+    // of its own, re-requesting a block is cheaper than holding one here against a maybe.
+    if (!m_allocatedSinceLastCollection)
+        retainCount = 0;
+
+    unsigned retained = 0;
+    Locker locker(bitvectorLock());
+    for (size_t index = 0; index < m_blocks.size(); ++index) {
+        index = (emptyBits() & ~destructibleBits() & ~inUseBits()).findBit(index, true);
+        if (index >= m_blocks.size())
+            break;
+
+        // Every empty block left behind counts against retainCount, whether it was kept as cache
+        // or skipped below, so the option bounds the footprint a directory can sit on.
+        if (retained < retainCount) {
+            retained++;
+            continue;
+        }
+
+        // Unlike shrink(), which only ever runs on swept blocks, these are still unswept.
+        // ~WeakSet destroys weak blocks without running their pending finalizers and without
+        // rehoming ones a live Weak<T> points into; isOnList() rejects a set that WeakSet::sweep
+        // emptied but left active. Anything else stays for the sweeper.
+        MarkedBlock::Handle* block = m_blocks[index];
+        if (!block->weakSet().isTriviallyDestructible()) {
+            retained++;
+            continue;
+        }
+
+        ASSERT(!isInUse(index));
+        setIsInUse(index, true);
+        {
+            DropLockForScope scope(locker);
+            markedSpace().freeBlock(block);
+        }
+        // freeBlock() deleted the handle; removeBlock() already cleared every bit for this index,
+        // so do not touch it again -- the mutator may own it by now.
     }
 }
 

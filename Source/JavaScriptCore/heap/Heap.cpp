@@ -1805,6 +1805,15 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
     m_codeBlocks->clearCurrentlyExecutingAndRemoveDeadCodeBlocks(vm());
 
     m_objectSpace.prepareForAllocation();
+
+    // Marking reached fixpoint, so emptyBits() names blocks with no reachable cells, and
+    // prepareForAllocation() just reset every LocalAllocator, so none of them holds a block
+    // pointer. That reset -- not the inUse claim protocol -- is what makes this safe here:
+    // m_lastActiveBlock is NOT inUse (MarkedBlock::Handle::stopAllocating clears it), so this
+    // call must stay after prepareForAllocation().
+    if (Options::returnEmptyBlocksAtEndOfCollection())
+        m_objectSpace.returnEmptyBlocks(Options::retainedEmptyBlocksPerDirectory());
+
     updateAllocationLimits();
 
     if (m_verifier) [[unlikely]] {

@@ -415,6 +415,15 @@ void MarkedSpace::shrink()
         });
 }
 
+void MarkedSpace::returnEmptyBlocks(unsigned retainCountPerDirectory)
+{
+    forEachDirectory(
+        [&] (BlockDirectory& directory) -> IterationStatus {
+            directory.returnEmptyBlocks(retainCountPerDirectory);
+            return IterationStatus::Continue;
+        });
+}
+
 void MarkedSpace::beginMarking()
 {
     switch (heap().collectionScope().value()) {
