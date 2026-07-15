@@ -1,11 +1,34 @@
 # Container audit: freeing empty MarkedBlocks from the collector thread after the world resumes
 
-Status: **audit only — no concurrent code written yet.** This is the artifact that step 1 of the plan
-asks for: the complete list of shared structures the free path touches, their current readers and
-writers, and what each would require. Line numbers are against `4895f45dfbd0` plus the End-phase
-measurement scaffold in this branch.
+Status: **the audit below is why the shipped design splits the free in half instead of making these
+containers concurrent.** Read "Outcome" first; the rest is the evidence.
 
-## Summary
+## Outcome
+
+`~MarkedBlock::Handle` is one unsafe line and three safe ones:
+
+```
+removeBlock(this, WillDeleteBlock::Yes);   // ALL the container bookkeeping. Cheap: a bitscan + vector writes.
+m_block->~MarkedBlock();                   // trivial
+m_alignedMemoryAllocator->freeAlignedMemory(m_block);   // the madvise. THE COST. Thread-safe (see below).
+heap.didFreeBlock(blockSize);              // a counter, RESOURCE_USAGE-only
+```
+
+Every hazard in this audit lives in `removeBlock`. None of it lives in `freeAlignedMemory`. So the
+implementation does the bookkeeping half in the End phase, where the mutator is already quiesced and
+the cost is a bit-scan, and defers the memory release to after `resumeThePeriphery()`, where the
+expensive part runs concurrently with the mutator. By then the block is unlinked from every
+directory, from `MarkedBlockSet`, and from every `IsoCellSet` — **nothing can reach it, so there is
+no shared state left to race.** The containers below never need to become concurrent.
+
+This also dodges the race that kills the "walk the directories after resume" design outright:
+`m_requests.removeFirst()` (`Heap.cpp:1843`) runs *before* `resumeThePeriphery()` (`Heap.cpp:1893`),
+so a queued collection can start the instant the mutator resumes — running `stopThePeriphery` →
+`stopAllocating`, which repopulates every `m_lastActiveBlock` with a **not-inUse** block, while the
+freer is walking `emptyBits & ~inUseBits`. No phase-ordering argument saves that; see the
+`m_lastActiveBlock` section.
+
+## Summary of the containers (why the above was necessary)
 
 The concurrent design is not blocked by the allocator or by the block memory. It is blocked by four
 bookkeeping containers whose current safety rests on a single sentence:
@@ -165,7 +188,9 @@ without setting `inUse` (`MarkedBlock.cpp:275-281`) while `LocalAllocator::resum
 unconditionally assigns `m_currentBlock` (`LocalAllocator.cpp:96`). Unreachable today only because
 `endMarking` precedes `prepareForAllocation` inside `endPhase`. Nothing asserts it.
 
-## What step 2 actually costs
+## What making the containers concurrent WOULD have cost (not done, and not needed)
+
+Kept for the record, because if anyone later wants the full-concurrent walk, this is the bill:
 
 1. Resolve the `didRemoveBlock` recursion (`WTF::Lock` is not recursive) — a `WTF_REQUIRES_LOCK`
    overload, deleting the inner `Locker`.
@@ -179,4 +204,8 @@ unconditionally assigns `m_currentBlock` (`LocalAllocator.cpp:96`). Unreachable 
    `assertSweeperIsSuspended()` / `assertIsMutatorOrMutatorIsStopped()` — both are claims about the
    *incremental sweeper* and the *mutator*, neither of which a collector-thread freer is.
 
-Every race above is release-build-silent. TSan is the gate, not assertions.
+Every race above is release-build-silent. TSan would be the gate, not assertions.
+
+The split design pays none of this. Its only new invariant is "a deferred block is unreachable",
+which is enforced by construction (it is unlinked before it is queued) and asserted at the drain
+point (`ASSERT(m_deferredDestroyBlocks.isEmpty() || !heap().worldIsStopped())`).

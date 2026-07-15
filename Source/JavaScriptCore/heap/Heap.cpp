@@ -1859,7 +1859,14 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
     m_totalGCTime += m_lastGCEndTime - m_lastGCStartTime;
     if (endingCollectionScope == CollectionScope::Full)
         m_lastFullGCEndTime = m_lastGCEndTime;
-    return changePhase(conn, CollectorPhase::NotRunning);
+    bool result = changePhase(conn, CollectorPhase::NotRunning);
+
+    // changePhase() ran resumeThePeriphery(), so the world is running again by here. Release the
+    // memory of the blocks unlinked above now, off the pause. This may race the mutator, and is
+    // safe only because those blocks are already unreachable -- see destroyDeferredBlocks().
+    m_objectSpace.destroyDeferredBlocks();
+
+    return result;
 }
 
 bool Heap::changePhase(GCConductor conn, CollectorPhase nextPhase)

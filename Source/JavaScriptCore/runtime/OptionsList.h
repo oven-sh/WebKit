@@ -249,7 +249,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, preciseAllocationCutoff, 100000, Normal, nullptr) \
     v(Bool, dumpSizeClasses, false, Normal, nullptr) \
     v(Bool, stealEmptyBlocksFromOtherAllocators, true, Normal, nullptr) \
-    v(Bool, returnEmptyBlocksAtEndOfCollection, false, Normal, "return blocks that marking proved empty to the block allocator in the End phase instead of waiting for the incremental sweeper's timer. Measurement scaffold: this adds work to the stop-the-world pause, so it is not meant to ship on"_s) \
+    v(Bool, returnEmptyBlocksAtEndOfCollection, false, Normal, "return blocks that marking proved empty to the block allocator at the end of every collection instead of waiting for the incremental sweeper's timer. Unlinking happens in the End phase; the memory is released after the world resumes"_s) \
     v(Unsigned, retainedEmptyBlocksPerDirectory, 1, Normal, "empty blocks a directory allocated out of during the last cycle may keep as an allocation cache when returnEmptyBlocksAtEndOfCollection is set"_s) \
     v(Bool, eagerlyUpdateTopCallFrame, false, Normal, nullptr) \
     v(Bool, dumpZappedCellCrashData, false, Normal, nullptr) \

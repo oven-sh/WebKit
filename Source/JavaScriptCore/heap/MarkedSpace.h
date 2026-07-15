@@ -131,6 +131,9 @@ public:
 
     void shrink();
     void returnEmptyBlocks(unsigned retainCountPerDirectory);
+    void deferBlockDestruction(MarkedBlock::Handle*);
+    void destroyDeferredBlocks();
+    bool hasDeferredBlocks() const { return !m_deferredDestroyBlocks.isEmpty(); }
     void freeBlock(MarkedBlock::Handle*);
 
     void didAddBlock(MarkedBlock::Handle*);
@@ -223,7 +226,12 @@ private:
     bool m_conservativeScanIsPrepared { false };
     Lock m_directoryLock;
     MarkedBlockSet m_blocks;
-    
+
+    // Blocks unlinked from every directory and from m_blocks, whose memory has not been released
+    // yet. Only ever touched by the collection that filled it, before the mutator resumes and
+    // immediately after, so it needs no lock of its own.
+    Vector<MarkedBlock::Handle*> m_deferredDestroyBlocks;
+
     SentinelLinkedList<WeakSet, BasicRawSentinelNode<WeakSet>> m_activeWeakSets;
     SentinelLinkedList<WeakSet, BasicRawSentinelNode<WeakSet>> m_newActiveWeakSets;
 

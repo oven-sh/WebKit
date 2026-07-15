@@ -442,10 +442,9 @@ void BlockDirectory::returnEmptyBlocks(unsigned retainCount)
         setIsInUse(index, true);
         {
             DropLockForScope scope(locker);
-            markedSpace().freeBlock(block);
+            markedSpace().deferBlockDestruction(block);
         }
-        // freeBlock() deleted the handle; removeBlock() already cleared every bit for this index,
-        // so do not touch it again -- the mutator may own it by now.
+        // removeBlock() already cleared every bit for this index, so do not touch it again.
     }
 }
 

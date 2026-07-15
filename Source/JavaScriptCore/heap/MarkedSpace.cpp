@@ -424,6 +424,31 @@ void MarkedSpace::returnEmptyBlocks(unsigned retainCountPerDirectory)
         });
 }
 
+void MarkedSpace::deferBlockDestruction(MarkedBlock::Handle* block)
+{
+    // The bookkeeping half of a free: everything that touches state the mutator shares. It must
+    // happen while the mutator is quiesced, so it happens here, in the End phase.
+    m_capacity -= MarkedBlock::blockSize;
+    m_blocks.remove(&block->block());
+    block->removeFromDirectoryForDeferredDestruction();
+    m_deferredDestroyBlocks.append(block);
+}
+
+void MarkedSpace::destroyDeferredBlocks()
+{
+    // The whole point is that this runs off the pause. If it ever runs world-stopped, the cost it
+    // was written to move has moved back.
+    ASSERT(m_deferredDestroyBlocks.isEmpty() || !heap().worldIsStopped());
+
+    // The release-the-memory half. These blocks are unlinked from every directory, from m_blocks,
+    // and from every IsoCellSet, so nothing can reach them and none of this touches shared state:
+    // ~MarkedBlock is trivial, the weak sets were required to be trivially destructible, and
+    // freeAlignedMemory is thread-safe in all three allocators. This is where the madvise happens,
+    // so this is the part worth keeping out of the stop-the-world pause.
+    for (MarkedBlock::Handle* block : std::exchange(m_deferredDestroyBlocks, { }))
+        delete block;
+}
+
 void MarkedSpace::beginMarking()
 {
     switch (heap().collectionScope().value()) {

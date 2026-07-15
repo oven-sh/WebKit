@@ -159,10 +159,18 @@ MarkedBlock::Handle::~Handle()
         if (!(balance % 10))
             dataLog("MarkedBlock Balance: ", balance, "\n");
     }
-    m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
+    if (!m_isRemovedFromDirectory)
+        m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
     m_block->~MarkedBlock();
     m_alignedMemoryAllocator->freeAlignedMemory(m_block);
     heap.didFreeBlock(blockSize);
+}
+
+void MarkedBlock::Handle::removeFromDirectoryForDeferredDestruction()
+{
+    ASSERT(!m_isRemovedFromDirectory);
+    m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
+    m_isRemovedFromDirectory = true;
 }
 
 MarkedBlock::MarkedBlock(VM& vm, Handle& handle)

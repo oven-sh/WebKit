@@ -123,7 +123,12 @@ public:
     public:
             
         ~Handle();
-            
+
+        // Unlink from the directory now and let ~Handle skip removeBlock(). Splits a free into its
+        // bookkeeping half, which needs the mutator quiesced, and its release-the-memory half,
+        // which does not. See MarkedSpace::deferBlockDestruction().
+        void removeFromDirectoryForDeferredDestruction();
+
         MarkedBlock& block();
         MarkedBlock::Header& blockHeader();
             
@@ -241,6 +246,7 @@ public:
             
         CellAttributes m_attributes;
         bool m_isFreeListed { false };
+        bool m_isRemovedFromDirectory { false };
         unsigned m_index { std::numeric_limits<unsigned>::max() };
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
