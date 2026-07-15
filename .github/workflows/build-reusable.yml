@@ -481,6 +481,25 @@ jobs:
             lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
+          # Baseline (-march=nehalem, pre-AVX) variants, mirroring the linux
+          # amd64 baseline lanes: pre-Haswell Intel Macs crash on the default
+          # -march=haswell build (oven-sh/bun#34206).
+          - label: bun-webkit-macos-amd64-baseline
+            macos_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: ""
+            MARCH_FLAG: "-march=nehalem"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
+          - label: bun-webkit-macos-amd64-baseline-lto
+            macos_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
+            MARCH_FLAG: "-march=nehalem"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-macos-amd64-debug
             macos_arch: x86_64
             package_json_arch: "x64"
@@ -522,7 +541,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          MACOS_ARCH="${{matrix.macos_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" CPP_FLAGS="${{matrix.cpp_flags}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" ENABLE_MALLOC_HEAP_BREAKDOWN="${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash macos-cross-release.sh
+          MACOS_ARCH="${{matrix.macos_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" CPP_FLAGS="${{matrix.cpp_flags}}" MARCH_FLAG="${{matrix.MARCH_FLAG}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" ENABLE_MALLOC_HEAP_BREAKDOWN="${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash macos-cross-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["darwin"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -740,6 +759,14 @@ jobs:
           path: ${{runner.temp}}/bun-webkit-macos-amd64-lto
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: bun-webkit-macos-amd64-baseline
+          path: ${{runner.temp}}/bun-webkit-macos-amd64-baseline
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bun-webkit-macos-amd64-baseline-lto
+          path: ${{runner.temp}}/bun-webkit-macos-amd64-baseline-lto
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
           name: bun-webkit-linux-amd64-lto
           path: ${{runner.temp}}/bun-webkit-linux-amd64-lto
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -762,6 +789,10 @@ jobs:
         with:
           name: bun-webkit-windows-amd64-baseline
           path: ${{runner.temp}}/bun-webkit-windows-amd64-baseline
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bun-webkit-windows-amd64-baseline-lto
+          path: ${{runner.temp}}/bun-webkit-windows-amd64-baseline-lto
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: bun-webkit-windows-amd64-asan
@@ -859,6 +890,8 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-macos-amd64/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-arm64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-lto.tar.gz
+          mv ${{runner.temp}}/bun-webkit-macos-amd64-baseline/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-baseline.tar.gz
+          mv ${{runner.temp}}/bun-webkit-macos-amd64-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-baseline-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-debug-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-debug-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-debug.tar.gz
@@ -880,6 +913,7 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-baseline/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-baseline.tar.gz
+          mv ${{runner.temp}}/bun-webkit-windows-amd64-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-baseline-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-asan/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-arm64/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64.tar.gz
@@ -966,6 +1000,8 @@ jobs:
             ./out/bun-webkit-macos-amd64-debug.tar.gz
             ./out/bun-webkit-macos-arm64-lto.tar.gz
             ./out/bun-webkit-macos-amd64-lto.tar.gz
+            ./out/bun-webkit-macos-amd64-baseline.tar.gz
+            ./out/bun-webkit-macos-amd64-baseline-lto.tar.gz
 
       - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
         with:
@@ -973,6 +1009,7 @@ jobs:
           files: |
             ./out/bun-webkit-windows-amd64.tar.gz
             ./out/bun-webkit-windows-amd64-baseline.tar.gz
+            ./out/bun-webkit-windows-amd64-baseline-lto.tar.gz
             ./out/bun-webkit-windows-amd64-asan.tar.gz
             ./out/bun-webkit-windows-amd64-debug.tar.gz
             ./out/bun-webkit-windows-arm64.tar.gz
