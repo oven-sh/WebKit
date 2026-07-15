@@ -788,6 +788,10 @@ jobs:
           path: ${{runner.temp}}/bun-webkit-windows-amd64-baseline
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: bun-webkit-windows-amd64-baseline-lto
+          path: ${{runner.temp}}/bun-webkit-windows-amd64-baseline-lto
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
           name: bun-webkit-windows-amd64-asan
           path: ${{runner.temp}}/bun-webkit-windows-amd64-asan
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -906,6 +910,7 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-baseline/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-baseline.tar.gz
+          mv ${{runner.temp}}/bun-webkit-windows-amd64-baseline-lto/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-baseline-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-asan/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-asan.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-arm64/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64.tar.gz
@@ -1001,6 +1006,7 @@ jobs:
           files: |
             ./out/bun-webkit-windows-amd64.tar.gz
             ./out/bun-webkit-windows-amd64-baseline.tar.gz
+            ./out/bun-webkit-windows-amd64-baseline-lto.tar.gz
             ./out/bun-webkit-windows-amd64-asan.tar.gz
             ./out/bun-webkit-windows-amd64-debug.tar.gz
             ./out/bun-webkit-windows-arm64.tar.gz
