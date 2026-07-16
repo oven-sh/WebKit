@@ -2526,6 +2526,18 @@ public:
         }
         result.last()->m_isLastAlternative = true;
         alternatives = WTF::move(result);
+
+        // Factor inside pre-existing (source-written) groups too, so that
+        // /\b(?:about|above|after)\b/ shares its "a" prefix like a top-level
+        // alternation would. Groups synthesized by mergeSharedPrefix were
+        // already factored when built; re-running is a harmless no-op.
+        for (auto& alternative : alternatives) {
+            for (auto& term : alternative->m_terms) {
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.parentheses.disjunction && !term.parentheses.isCopy
+                    && term.parentheses.disjunction->m_alternatives.size() > 1 && term.matchDirection() == Forward)
+                    factorAlternatives(*term.parentheses.disjunction);
+            }
+        }
     }
 
     // A large top-level alternation costs one entry attempt per alternative at
