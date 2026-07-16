@@ -103,6 +103,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, is64Bit(), Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault() && is64Bit(), Normal, "allows the RegExp JIT to be used if true"_s) \
+    v(Bool, useRegExpAlternationFactoring, true, Normal, "factors common prefixes out of an alternation's literal-leading alternatives and folds large top-level alternations into a group"_s) \
+    v(Unsigned, regExpAlternationGroupThreshold, 8, Normal, "minimum number of repeated top-level alternatives before the alternation is folded into a group"_s) \
     v(Bool, useDOMJIT, is64Bit(), Normal, "allows the DOMJIT to be used if true"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \

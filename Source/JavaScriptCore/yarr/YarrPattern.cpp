@@ -2334,9 +2334,271 @@ public:
             // Move alternatives from loopDisjunction to disjunction
             for (unsigned alt = 0; alt < loopDisjunction->m_alternatives.size(); ++alt)
                 disjunction->m_alternatives.append(loopDisjunction->m_alternatives[alt].release());
-                
+
             loopDisjunction->m_alternatives.clear();
         }
+    }
+
+    // Alternation prefix factoring.
+    //
+    // Alternatives are tried leftmost-first, so their order is observable -- but
+    // only between alternatives that can match at the same starting position.
+    // Two alternatives that must begin with different literal characters have
+    // disjoint starting points, so a maximal run of consecutive alternatives
+    // that each begin with a (non-optional, case-sensitive) literal character
+    // may be stably sorted by that character and then merged on common
+    // prefixes:  /aq|bx|ar|by/ becomes /a(?:q|r)|b(?:x|y)/. Stability keeps
+    // same-first-character alternatives in source order, and any alternative
+    // that does not start with such a character (a class, group, anchor,
+    // optional atom, or the empty alternative) is a barrier that no reordering
+    // crosses. The rewrite is applied recursively to the factored suffixes. It
+    // is a pure pattern-level equivalence, so both the JIT and the interpreter
+    // see the factored form.
+
+    // The leading literal character of an alternative, if its first term is a
+    // fixed, case-sensitive pattern character that must consume input.
+    std::optional<char32_t> firstLiteralCharacter(const PatternAlternative& alternative)
+    {
+        if (alternative.m_terms.isEmpty())
+            return std::nullopt;
+        const PatternTerm& term = alternative.m_terms[0];
+        if (term.type != PatternTerm::Type::PatternCharacter)
+            return std::nullopt;
+        if (term.quantityType != QuantifierType::FixedCount || term.quantityMinCount != 1 || term.quantityMaxCount != 1)
+            return std::nullopt;
+        if (term.ignoreCase() || term.matchDirection() != Forward)
+            return std::nullopt;
+        return term.patternCharacter;
+    }
+
+    // Two leading terms match for prefix purposes only if they are the same
+    // fixed, case-sensitive pattern character.
+    static bool isSameLiteralTerm(const PatternTerm& a, const PatternTerm& b)
+    {
+        return a.type == PatternTerm::Type::PatternCharacter
+            && b.type == PatternTerm::Type::PatternCharacter
+            && a.quantityType == QuantifierType::FixedCount && b.quantityType == QuantifierType::FixedCount
+            && a.quantityMinCount == 1 && a.quantityMaxCount == 1
+            && b.quantityMinCount == 1 && b.quantityMaxCount == 1
+            && !a.ignoreCase() && !b.ignoreCase()
+            && a.matchDirection() == Forward && b.matchDirection() == Forward
+            && a.patternCharacter == b.patternCharacter;
+    }
+
+    // Merge a group of alternatives (already known to share their leading
+    // literal term) into a single alternative:  a X | a Y | a Z  ->  a (?: X | Y | Z),
+    // with the longest common literal prefix hoisted and the suffixes factored
+    // recursively. `members` are removed from their owner and re-parented.
+    std::unique_ptr<PatternAlternative> mergeSharedPrefix(Vector<std::unique_ptr<PatternAlternative>>&& members)
+    {
+        ASSERT(members.size() >= 2);
+
+        // Longest common prefix of literal terms across all members. Never
+        // consume a member's entire term list, so no member's suffix depends on
+        // an empty tail being ordered against a longer sibling's tail through the
+        // prefix (the empty suffix is handled explicitly below).
+        size_t prefixLength = 1;
+        for (;; ++prefixLength) {
+            const auto& first = members[0]->m_terms;
+            if (prefixLength >= first.size())
+                break;
+            bool allShare = true;
+            for (auto& member : members) {
+                if (prefixLength >= member->m_terms.size() || !isSameLiteralTerm(first[prefixLength], member->m_terms[prefixLength])) {
+                    allShare = false;
+                    break;
+                }
+            }
+            if (!allShare)
+                break;
+        }
+
+        auto merged = makeUnique<PatternAlternative>(members[0]->m_parent, members[0]->m_firstSubpatternId);
+        for (size_t i = 0; i < prefixLength; ++i)
+            merged->m_terms.append(members[0]->m_terms[i]);
+
+        // The suffix disjunction holds each member's remaining terms, in the
+        // members' (stable, first-character-sorted) order.
+        auto suffixDisjunction = makeUnique<PatternDisjunction>();
+        unsigned firstSubpatternId = members[0]->m_firstSubpatternId;
+        unsigned lastSubpatternId = 0;
+        bool containsBOL = false;
+        for (auto& member : members) {
+            PatternAlternative* suffix = suffixDisjunction->addNewAlternative(member->m_firstSubpatternId);
+            suffix->m_lastSubpatternId = member->m_lastSubpatternId;
+            suffix->m_containsBOL = member->m_containsBOL;
+            for (size_t i = prefixLength; i < member->m_terms.size(); ++i)
+                suffix->m_terms.append(member->m_terms[i]);
+            reparentNestedDisjunctions(*suffix);
+            lastSubpatternId = std::max(lastSubpatternId, member->m_lastSubpatternId);
+            containsBOL |= member->m_containsBOL;
+        }
+        suffixDisjunction->m_alternatives.last()->m_isLastAlternative = true;
+
+        // Factor the suffixes themselves (a shared second character, and so on).
+        factorAlternatives(*suffixDisjunction);
+
+        merged->m_lastSubpatternId = lastSubpatternId;
+        merged->m_containsBOL = containsBOL;
+        PatternTerm group(PatternTerm::Type::ParenthesesSubpattern, firstSubpatternId + 1, suffixDisjunction.get(), m_flags, /* capture */ false);
+        group.parentheses.lastSubpatternId = lastSubpatternId;
+        merged->m_terms.append(group);
+        suffixDisjunction->m_parent = merged.get();
+        m_pattern.m_disjunctions.append(WTF::move(suffixDisjunction));
+        return merged;
+    }
+
+    // A nested group's disjunction points back at its owning alternative; keep
+    // that consistent when terms move to a new alternative.
+    void reparentNestedDisjunctions(PatternAlternative& alternative)
+    {
+        for (auto& term : alternative.m_terms) {
+            if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && term.parentheses.disjunction)
+                term.parentheses.disjunction->m_parent = &alternative;
+        }
+    }
+
+    // Rewrite `disjunction`'s alternatives in place: sort each barrier-free run
+    // by leading literal and merge shared prefixes into nested groups.
+    void factorAlternatives(PatternDisjunction& disjunction)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return;
+
+        auto& alternatives = disjunction.m_alternatives;
+        Vector<std::unique_ptr<PatternAlternative>> result;
+        result.reserveInitialCapacity(alternatives.size());
+
+        size_t i = 0;
+        while (i < alternatives.size()) {
+            // A barrier (no fixed leading literal, or the empty alternative) is
+            // copied through untouched and never reordered across.
+            if (!firstLiteralCharacter(*alternatives[i]) || alternatives[i]->onceThrough()) {
+                result.append(WTF::move(alternatives[i]));
+                ++i;
+                continue;
+            }
+
+            // Gather the maximal run of literal-leading alternatives.
+            size_t runStart = i;
+            while (i < alternatives.size() && firstLiteralCharacter(*alternatives[i]) && !alternatives[i]->onceThrough())
+                ++i;
+            size_t runEnd = i;
+
+            if (runEnd - runStart == 1) {
+                result.append(WTF::move(alternatives[runStart]));
+                continue;
+            }
+
+            Vector<std::unique_ptr<PatternAlternative>> run;
+            for (size_t j = runStart; j < runEnd; ++j)
+                run.append(WTF::move(alternatives[j]));
+            std::stable_sort(run.begin(), run.end(), [&](auto& a, auto& b) {
+                return *firstLiteralCharacter(*a) < *firstLiteralCharacter(*b);
+            });
+
+            // Walk the sorted run, merging each maximal group that shares the
+            // leading literal term.
+            size_t j = 0;
+            while (j < run.size()) {
+                size_t groupEnd = j + 1;
+                while (groupEnd < run.size() && isSameLiteralTerm(run[j]->m_terms[0], run[groupEnd]->m_terms[0]))
+                    ++groupEnd;
+                if (groupEnd - j == 1)
+                    result.append(WTF::move(run[j]));
+                else {
+                    Vector<std::unique_ptr<PatternAlternative>> members;
+                    for (size_t k = j; k < groupEnd; ++k)
+                        members.append(WTF::move(run[k]));
+                    auto merged = mergeSharedPrefix(WTF::move(members));
+                    merged->m_parent = &disjunction;
+                    result.append(WTF::move(merged));
+                }
+                j = groupEnd;
+            }
+        }
+
+        // Every alternative was moved into `result`; always reinstall the list
+        // (a run that sorted or merged nothing is simply the original order).
+        for (auto& alternative : result) {
+            alternative->m_parent = &disjunction;
+            alternative->m_isLastAlternative = false;
+        }
+        result.last()->m_isLastAlternative = true;
+        alternatives = WTF::move(result);
+    }
+
+    // A large top-level alternation costs one entry attempt per alternative at
+    // every candidate position when the alternatives are tried in sequence. Fold
+    // the repeated (non-once-through) alternatives into a single alternative
+    // holding one non-capturing group -- /X|Y|Z/ is exactly /(?:X|Y|Z)/ -- so
+    // that the group's alternatives can be dispatched on their first character.
+    // The rewrite itself is engine-neutral; setupOffsets() (which runs after
+    // this) lays out the group like any hand-written one.
+    void factorAndWrapAlternatives()
+    {
+        if (!Options::useRegExpAlternationFactoring())
+            return;
+
+        factorAlternatives(*m_pattern.m_body);
+        wrapAlternativesForDispatch();
+    }
+
+    void wrapAlternativesForDispatch()
+    {
+        PatternDisjunction* body = m_pattern.m_body;
+        auto& alternatives = body->m_alternatives;
+
+        // The body is laid out as [onceThrough..., repeated...] (see optimizeBOL).
+        size_t firstRepeated = 0;
+        while (firstRepeated < alternatives.size() && alternatives[firstRepeated]->onceThrough())
+            ++firstRepeated;
+        size_t repeatedCount = alternatives.size() - firstRepeated;
+        if (repeatedCount < Options::regExpAlternationGroupThreshold())
+            return;
+
+        // A DotStarEnclosure records match bounds through the enclosing body
+        // alternative; keep such bodies in their existing shape.
+        for (size_t i = firstRepeated; i < alternatives.size(); ++i) {
+            for (auto& term : alternatives[i]->m_terms) {
+                if (term.type == PatternTerm::Type::DotStarEnclosure)
+                    return;
+            }
+        }
+
+        // The group's captures are exactly those of the alternatives it absorbs:
+        // subpatternId is the id a capture opened at the group start would take,
+        // lastSubpatternId the last id closed inside it (matching atomParenthesesEnd).
+        unsigned firstSubpatternId = alternatives[firstRepeated]->m_firstSubpatternId;
+        unsigned lastSubpatternId = 0;
+        bool containsBOL = false;
+        unsigned startsWithBOLCount = 0;
+
+        auto groupDisjunction = makeUnique<PatternDisjunction>();
+        for (size_t i = firstRepeated; i < alternatives.size(); ++i) {
+            PatternAlternative* alternative = alternatives[i].get();
+            alternative->m_parent = groupDisjunction.get();
+            alternative->m_isLastAlternative = false;
+            lastSubpatternId = std::max(lastSubpatternId, alternative->m_lastSubpatternId);
+            containsBOL |= alternative->m_containsBOL;
+            if (alternative->m_startsWithBOL)
+                ++startsWithBOLCount;
+            groupDisjunction->m_alternatives.append(WTF::move(alternatives[i]));
+        }
+        groupDisjunction->m_alternatives.last()->m_isLastAlternative = true;
+        alternatives.shrink(firstRepeated);
+
+        PatternAlternative* wrapped = body->addNewAlternative(firstSubpatternId);
+        wrapped->m_lastSubpatternId = lastSubpatternId;
+        wrapped->m_containsBOL = containsBOL;
+        wrapped->m_startsWithBOL = startsWithBOLCount == groupDisjunction->m_alternatives.size();
+        groupDisjunction->m_parent = wrapped;
+
+        PatternTerm group(PatternTerm::Type::ParenthesesSubpattern, firstSubpatternId + 1, groupDisjunction.get(), m_flags, /* capture */ false);
+        group.parentheses.lastSubpatternId = lastSubpatternId;
+        wrapped->m_terms.append(group);
+
+        m_pattern.m_disjunctions.append(WTF::move(groupDisjunction));
     }
 
     bool containsCapturingTerms(PatternAlternative* alternative, size_t firstTermIndex, size_t endIndex)
@@ -2930,6 +3192,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     constructor.checkForTerminalParentheses();
     constructor.optimizeDotStarWrappedExpressions();
     constructor.optimizeBOL();
+    constructor.factorAndWrapAlternatives();
     constructor.optimizePossessiveQuantifiers();
 
     if (hasError(constructor.error()))
