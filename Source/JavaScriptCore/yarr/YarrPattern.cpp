@@ -1572,8 +1572,12 @@ public:
 
         if (numBOLAnchoredAlts) {
             m_alternative->m_containsBOL = true;
-            // If all the alternatives in parens start with BOL, then so does this one
-            if (numBOLAnchoredAlts == numParenAlternatives)
+            // If all the alternatives in parens start with BOL, then this alternative
+            // starts with BOL too -- but only when the group is its first term (mirroring
+            // assertionBOL) and is a group whose match anchors the position, i.e. not a
+            // negative assertion (which anchors nothing on success). A later quantifier
+            // with a zero minimum removes the anchoring again; see quantifyAtom.
+            if (numBOLAnchoredAlts == numParenAlternatives && m_alternative->m_terms.size() == 1 && !lastTerm.invert())
                 m_alternative->m_startsWithBOL = true;
         }
 
@@ -1764,6 +1768,12 @@ public:
         PatternTerm& term = m_alternative->lastTerm();
         ASSERT(term.type > PatternTerm::Type::AssertionWordBoundary);
         ASSERT(term.quantityMinCount == 1 && term.quantityMaxCount == 1 && term.quantityType == QuantifierType::FixedCount);
+
+        // A term with a zero minimum count may not match at all, so an alternative
+        // whose BOL anchoring came from this (first) term no longer starts with BOL:
+        // e.g. /(^)?a/ or /(?:^b)?a/ can match away from a line start.
+        if (!min && m_alternative->m_terms.size() == 1 && m_alternative->m_startsWithBOL)
+            m_alternative->m_startsWithBOL = false;
 
         if (term.type == PatternTerm::Type::ParentheticalAssertion) {
             // If an assertion is quantified with a minimum count of zero, it can simply be removed.
@@ -2610,7 +2620,10 @@ public:
         while (firstRepeated < alternatives.size() && alternatives[firstRepeated]->onceThrough())
             ++firstRepeated;
         size_t repeatedCount = alternatives.size() - firstRepeated;
-        if (repeatedCount < Options::regExpAlternationGroupThreshold())
+        // Folding one (or no) alternative into a group is meaningless whatever
+        // the configured threshold is (e.g. regExpAlternationGroupThreshold=0
+        // with an all-once-through body).
+        if (repeatedCount < 2 || repeatedCount < Options::regExpAlternationGroupThreshold())
             return;
 
         // A DotStarEnclosure records match bounds through the enclosing body

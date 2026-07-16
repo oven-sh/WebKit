@@ -371,7 +371,6 @@ public:
         MacroAssembler::Label head; // start of the chain's stub sequence
     };
 
-    Vector<FirstCharacterSet, 8> sets; // per alternative
     Vector<Chain, 8> chains; // distinct Latin-1 chains
     std::array<unsigned, 256> chainForCharacter { }; // Latin-1 char -> chain index, or noChain
     Chain wideChain; // characters >= 0x100 (16-bit strings only)
@@ -381,10 +380,8 @@ public:
     Checked<unsigned> enclosingCheckedOffset; // checkedOffset at the group term
     size_t endOpIndex { 0 }; // the group's NestedAlternativeEnd op (success join point)
 
-    // Per alternative: the entry label (bound during generation) and jumps
-    // from chain stubs awaiting that label.
-    Vector<MacroAssembler::Label, 8> entries;
-    Vector<bool, 8> entryBound;
+    // Per alternative: jumps from chain stubs awaiting that alternative's
+    // entry point (always a forward reference; see emitJumpToDispatchEntry).
     Vector<MacroAssembler::JumpList, 8> pendingEntryJumps;
 
     // Failures that mean "no alternative can match here" (empty chains, chain
@@ -393,6 +390,8 @@ public:
 
     static constexpr unsigned noChain = std::numeric_limits<unsigned>::max();
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DispatchInfo);
 
 struct MaskedAlternativeInfo {
 private:
@@ -5290,14 +5289,12 @@ class YarrGenerator final : public YarrJITInfo {
                         loadFromFrameAndJump(op.m_dispatch->frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex());
                     }
                     if (isBegin) {
-                        // Group-level failures gathered by the dispatch, plus any jumps
-                        // planted on the End (none are expected under dispatch, kept
-                        // for parity with the sequential path).
+                        // Group-level failures gathered by the dispatch (empty routes,
+                        // exhausted chains) resume at the Begin, where the index is at
+                        // the group frame. (Under dispatch nothing plants jumps on the
+                        // End: Next backtracks jump through chainResume, and dispatch
+                        // requires a FixedCount group, so no zero-length-match check.)
                         m_backtrackingState.append(op.m_dispatch->groupFailJumps);
-                        YarrOp* endOp = &m_ops[op.m_nextOp];
-                        while (endOp->m_nextOp != notFound)
-                            endOp = &m_ops[endOp->m_nextOp];
-                        m_backtrackingState.append(endOp->m_jumps);
                     }
                     // For non-simple alternatives, link the alternative's 'return
                     // address' so we backtrack back out into it correctly.
@@ -6607,18 +6604,16 @@ class YarrGenerator final : public YarrJITInfo {
     // later alternatives are bound as they are generated; stubs that target them
     // are patched then via DispatchInfo::pendingEntryJumps.
 
+    // Chain stubs are all emitted at the Begin op, before any alternative's
+    // entry point exists, so every stub target is a forward reference: collected
+    // per alternative here and linked when the alternative's entry is generated.
     void emitJumpToDispatchEntry(DispatchInfo& info, unsigned alternativeIndex)
     {
-        if (info.entryBound[alternativeIndex])
-            m_jit.jump(info.entries[alternativeIndex]);
-        else
-            info.pendingEntryJumps[alternativeIndex].append(m_jit.jump());
+        info.pendingEntryJumps[alternativeIndex].append(m_jit.jump());
     }
 
     void bindDispatchEntry(DispatchInfo& info, unsigned alternativeIndex)
     {
-        info.entries[alternativeIndex] = m_jit.label();
-        info.entryBound[alternativeIndex] = true;
         info.pendingEntryJumps[alternativeIndex].link(&m_jit);
         info.pendingEntryJumps[alternativeIndex].clear();
     }
@@ -6628,9 +6623,16 @@ class YarrGenerator final : public YarrJITInfo {
     // exact characters or not. Such alternatives are emitted as inline compare
     // blocks inside the chain (no frame store/load, no indirect jump), with a
     // static fall-through to the next chain element on mismatch.
+    // Inlining unrolls one compare per character, so it is only for genuinely
+    // short literals; a counted literal like a{200000000} keeps the entered
+    // path, whose fixed-count loop runs at match time instead of being unrolled.
+    static constexpr unsigned maxInlineLiteralLength = 32;
+
     bool isInlineLiteralAlternative(const PatternAlternative& alternative)
     {
         if (alternative.m_terms.isEmpty() || !alternative.m_hasFixedSize)
+            return false;
+        if (alternative.m_minimumSize > maxInlineLiteralLength)
             return false;
         for (auto& term : alternative.m_terms) {
             if (term.type != PatternTerm::Type::PatternCharacter)
@@ -6813,12 +6815,13 @@ class YarrGenerator final : public YarrJITInfo {
             return nullptr;
 
         auto info = makeUniqueRef<DispatchInfo>();
+        Vector<FirstCharacterSet, 8> sets; // per alternative; only needed to build the routing
         unsigned anyCount = 0;
         for (auto& alternative : alternatives) {
             FirstCharacterSet set = computeFirstCharacterSet(*alternative);
             if (set.any)
                 ++anyCount;
-            info->sets.append(WTF::move(set));
+            sets.append(WTF::move(set));
         }
         // Dispatch is pointless when most alternatives can start with anything.
         if (anyCount * 4 > alternatives.size())
@@ -6830,7 +6833,7 @@ class YarrGenerator final : public YarrJITInfo {
         for (unsigned ch = 0; ch < 256; ++ch) {
             Vector<unsigned, 4> members;
             for (unsigned i = 0; i < alternatives.size(); ++i) {
-                if (info->sets[i].matches(ch))
+                if (sets[i].matches(ch))
                     members.append(i);
             }
             if (members.isEmpty()) {
@@ -6860,7 +6863,7 @@ class YarrGenerator final : public YarrJITInfo {
             return nullptr;
         if (m_charSize == CharSize::Char16) {
             for (unsigned i = 0; i < alternatives.size(); ++i) {
-                if (info->sets[i].matchesWide())
+                if (sets[i].matchesWide())
                     info->wideChain.alternativeIndices.append(i);
             }
         }
@@ -6876,8 +6879,6 @@ class YarrGenerator final : public YarrJITInfo {
         info->frameLocation = term->frameLocation;
         info->disjunction = disjunction;
         info->enclosingCheckedOffset = checkedOffset;
-        info->entries.resize(alternatives.size());
-        info->entryBound.fill(false, alternatives.size());
         info->pendingEntryJumps.resize(alternatives.size());
 
         DispatchInfo* result = info.ptr();
@@ -8005,11 +8006,14 @@ public:
 #endif
 
         // Lookbehind bodies are JIT-compiled via mirroring (see
-        // mirrorDisjunctionForLookbehind), except when the pattern also decodes
-        // surrogate pairs: reading backward across a UTF-16 pair (trail first,
-        // then lead) is not implemented in the backward JIT yet. Unsupported body
-        // content is detected during op-compilation and falls back the same way.
-        if (m_pattern.m_containsLookbehinds && m_decodeSurrogatePairs) {
+        // mirrorDisjunctionForLookbehind), except for unicode patterns: reading
+        // backward across a UTF-16 surrogate pair (trail first, then lead) is
+        // not implemented in the backward JIT yet. The decision is made per
+        // pattern (eitherUnicode), not per subject encoding (m_decodeSurrogatePairs),
+        // so the 8-bit and 16-bit specializations of one RegExp always run the
+        // same engine. Unsupported body content is detected during op-compilation
+        // and falls back the same way.
+        if (m_pattern.m_containsLookbehinds && m_pattern.eitherUnicode()) {
             codeBlock.setFallBackWithFailureReason(JITFailureReason::Lookbehind);
             return;
         }

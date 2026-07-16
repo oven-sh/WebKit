@@ -134,3 +134,26 @@ shouldBe(matchOf(/(?<=(a))bz|(?<=(a))b/, "ab"), [1, ["b", undefined, "a"]]);
     [true, false, false, true, true, false, true, true],
   );
 }
+
+// Lookbehind patterns must not force BOL anchoring onto the enclosing
+// alternative through a group that starts with ^ but is optional, quantified,
+// negated, or not the alternative's first term (these previously matched only
+// because lookbehind kept the whole pattern on the interpreter).
+shouldBe(JSON.stringify(/a(?<!x)(^)?$/.exec("xa")), '["a",null]');
+shouldBe(JSON.stringify(/(?<=y)a(^)?$/.exec("ya")), '["a",null]');
+shouldBe(JSON.stringify(/c(?<=c)(?!(?=^))/.exec("xc")), '["c"]');
+shouldBe(JSON.stringify(/(?<!q)b(^)*c/.exec("abc")), '["bc",null]');
+shouldBe(JSON.stringify(/\w(?<=\d)(^)?/.exec("a1")), '["1",null]');
+shouldBe(JSON.stringify(/z(?<!q)(?=(^)?)/.exec("yz")), '["z",null]');
+shouldBe(JSON.stringify("qxaqxa".split(/a(?<!x)(^)?$/)), '["qxaqx",null,""]');
+// The same optional-BOL-group family without lookbehind.
+shouldBe(JSON.stringify(/(?:^)?a/.exec("ba")), '["a"]');
+shouldBe(JSON.stringify(/(^)*a/.exec("ba")), '["a",null]');
+shouldBe(JSON.stringify(/\B(?:^)?/.exec("xx")), '[""]');
+shouldBe(/\B(?:^)?/.exec("xx").index, 1);
+shouldBe(JSON.stringify(/(^)* \b/v.exec("a b")), '[" ",null]');
+// Genuine anchoring is unchanged.
+shouldBe(/^a/.exec("ba"), null);
+shouldBe(/(?:^a)/.exec("ba"), null);
+shouldBe(/(^a)+/.exec("ba"), null);
+shouldBe(/(?:^a|^b)/.exec("cb"), null);
