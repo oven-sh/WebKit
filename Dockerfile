@@ -33,13 +33,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 # timed out from inside the GitHub-hosted docker-buildx network at different
 # times. Prefer Azure (faster on Azure-hosted runners) but fall back to the
 # canonical mirror if `apt-get update` can't reach it. arm64 uses
-# ports.ubuntu.com which has been reachable, so leave it alone.
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+# ports.ubuntu.com (no Azure mirror), so rely on Acquire::Retries there.
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
+    && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99-retries
 
-# Install basic build dependencies
-RUN ( apt-get update || \
-      ( sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && apt-get update ) \
-    ) && apt-get install -y \
+# Install basic build dependencies. `apt-get update` exits 0 on partial index
+# fetch failure (only W:, not E:), which then makes the install fail with
+# "no installation candidate" — so retry the whole update+install once if the
+# install step is what fails.
+RUN for attempt in 1 2 3; do \
+      ( apt-get update || \
+        ( sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && apt-get update ) \
+      ) && apt-get install -y \
     wget \
     curl \
     git \
@@ -52,6 +57,9 @@ RUN ( apt-get update || \
     ca-certificates \
     gnupg \
     lsb-release \
+    && break || { echo "apt attempt $attempt failed, retrying"; sleep 15; }; \
+    done \
+    && dpkg -l wget curl git python3 ninja-build lsb-release >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 
 # Install zstd (for icu/compress-data.ts). Pinned: focal's apt has 1.4.4 which
