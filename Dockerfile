@@ -3,7 +3,7 @@ ARG WEBKIT_RELEASE_TYPE=Release
 ARG CPU=native
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
 ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
-ARG LLVM_VERSION="21"
+ARG LLVM_VERSION="22"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
@@ -102,10 +102,10 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
     --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
     --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Install LLVM 21
+# Install LLVM 22
 RUN wget https://apt.llvm.org/llvm.sh \
     && chmod +x llvm.sh \
-    && ./llvm.sh 21 all \
+    && ./llvm.sh 22 all \
     && rm llvm.sh \
     && rm -rf /var/lib/apt/lists/*
 

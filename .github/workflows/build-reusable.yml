@@ -1,7 +1,7 @@
 name: Build WebKit (Reusable)
 
 env:
-  LLVM_VERSION: 21
+  LLVM_VERSION: 22
 
 on:
   workflow_call:
@@ -21,7 +21,7 @@ on:
       llvm_version:
         description: 'LLVM version to use'
         type: string
-        default: '19'
+        default: '22'
     outputs:
       release_tag:
         description: 'The release tag that was created'
@@ -266,8 +266,8 @@ jobs:
           scoop config use_external_7zip true
           scoop install ninja
           # Install LLVM ARM64 from official LLVM releases
-          # Use LLVM 21 for ARM64 - has better Windows ARM64 support and fixes SEH unwind bugs
-          $llvmVersion = "21.1.8"
+          # Use LLVM 22 for ARM64 - has better Windows ARM64 support and fixes SEH unwind bugs
+          $llvmVersion = "22.1.8"
           $llvmUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvmVersion/LLVM-$llvmVersion-woa64.exe"
           $llvmPath = "C:\LLVM"
           Invoke-WebRequest -Uri $llvmUrl -OutFile "$env:TEMP\llvm-arm64.exe"

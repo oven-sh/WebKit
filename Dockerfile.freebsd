@@ -1,7 +1,7 @@
 ARG MARCH_FLAG="-march=nehalem"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
-ARG LLVM_VERSION="21"
+ARG LLVM_VERSION="22"
 ARG FREEBSD_VERSION="14.3"
 ARG FREEBSD_ARCH="x86_64"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "

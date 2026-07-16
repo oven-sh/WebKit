@@ -29,7 +29,7 @@ ARG BUN_DOWNLOAD_URL="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releas
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG MARCH_FLAG="-mcpu=apple-m1"
-ARG LLVM_VERSION="21"
+ARG LLVM_VERSION="22"
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
 # Matches the native macOS lane's CMAKE_C_FLAGS (build-reusable.yml) plus -g
 # from mac-release.bash. Cross-only additions live in the build stage.
@@ -47,8 +47,8 @@ ARG ENABLE_MALLOC_HEAP_BREAKDOWN="OFF"
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
-ARG COMPILER_RT_DARWIN_TAG="compiler-rt-darwin-21.1.8"
-ARG COMPILER_RT_DARWIN_SHA256="f9bab8191d63873682ec69492d06cfdf0807a7335c4e9b188ef013b3cc3c9dbc"
+ARG COMPILER_RT_DARWIN_TAG="compiler-rt-darwin-22.1.8"
+ARG COMPILER_RT_DARWIN_SHA256="2a6cb08a41880f20f882205d567ee0676ced7db9aaeccfa2e26643d94eca23b7"
 
 FROM ubuntu:24.04 AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -113,7 +113,7 @@ ENV MACOS_SDK=/opt/MacOSX${MACOS_SDK_VERSION}.sdk
 # in Dockerfile). Installed into clang's resource dir where the darwin
 # driver looks for libclang_rt.*_osx*.
 ADD --checksum=sha256:${COMPILER_RT_DARWIN_SHA256} \
-    https://github.com/oven-sh/WebKit/releases/download/${COMPILER_RT_DARWIN_TAG}/compiler-rt-darwin-21.1.8-arm64.tar.gz /compiler-rt-darwin.tar.gz
+    https://github.com/oven-sh/WebKit/releases/download/${COMPILER_RT_DARWIN_TAG}/compiler-rt-darwin-22.1.8-arm64.tar.gz /compiler-rt-darwin.tar.gz
 RUN tar -xzf /compiler-rt-darwin.tar.gz -C /usr/lib/llvm-${LLVM_VERSION}/lib/clang/${LLVM_VERSION}/lib/ && \
     rm /compiler-rt-darwin.tar.gz && \
     test -f /usr/lib/llvm-${LLVM_VERSION}/lib/clang/${LLVM_VERSION}/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
