@@ -195,6 +195,9 @@ public:
 #if ENABLE(RESOURCE_USAGE)
     virtual void reportExternalMemoryVisited(size_t) = 0;
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    virtual void reportTypedArrayVectorBytesVisited(size_t) = 0;
+#endif
 
     // This can't be pure virtual as it breaks our Dumpable concept.
     // FIXME: Make this virtual after we stop suppporting the Montery Clang.

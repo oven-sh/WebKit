@@ -719,11 +719,17 @@ void JSGenericTypedArrayView<Adaptor>::visitChildrenImpl(JSCell* cell, Visitor& 
     case FastTypedArray: {
         if (vector)
             visitor.markAuxiliary(vector);
+#if USE(BUN_JSC_ADDITIONS)
+        visitor.reportTypedArrayVectorBytesVisited(byteSize);
+#endif
         break;
     }
 
     case OversizeTypedArray: {
         visitor.reportExtraMemoryVisited(byteSize);
+#if USE(BUN_JSC_ADDITIONS)
+        visitor.reportTypedArrayVectorBytesVisited(byteSize);
+#endif
         break;
     }
 

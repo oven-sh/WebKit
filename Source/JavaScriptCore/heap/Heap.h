@@ -456,6 +456,14 @@ public:
     size_t externalMemorySize() { return m_externalMemorySize; }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Tracks FastTypedArray/OversizeTypedArray backing store bytes so that
+    // arrayBufferSize() can include typed arrays with no ArrayBuffer yet.
+    JS_EXPORT_PRIVATE void reportTypedArrayVectorBytesAllocated(size_t);
+    JS_EXPORT_PRIVATE void reportTypedArrayVectorBytesDeallocated(size_t);
+    JS_EXPORT_PRIVATE void reportTypedArrayVectorBytesVisited(size_t);
+#endif
+
     // Use this API to report non-GC memory if you can't use the better API above.
     void deprecatedReportExtraMemory(size_t size)
     {
@@ -884,6 +892,10 @@ private:
     GCIncomingRefCountedSet<ArrayBuffer> m_arrayBuffers;
     size_t m_extraMemorySize { 0 };
     size_t m_deprecatedExtraMemorySize { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_typedArrayVectorBytes { 0 };
+    size_t m_typedArrayVectorBytesVisited { 0 };
+#endif
 
     ProtectCountSet m_protectedValues;
     UncheckedKeyHashSet<MarkedVectorBase*> m_markListSet;

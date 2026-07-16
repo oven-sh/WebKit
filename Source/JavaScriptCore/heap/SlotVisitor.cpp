@@ -105,6 +105,9 @@ void SlotVisitor::didStartMarking()
             break;
         case CollectionScope::Full:
             m_extraMemorySize = 0;
+#if USE(BUN_JSC_ADDITIONS)
+            m_typedArrayVectorBytes = 0;
+#endif
             break;
         }
     }
@@ -421,6 +424,13 @@ inline void SlotVisitor::propagateExternalMemoryVisitedIfNecessary()
         else if (m_extraMemorySize)
             heap()->reportExtraMemoryVisited(m_extraMemorySize);
         m_extraMemorySize = 0;
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_typedArrayVectorBytes.hasOverflowed())
+            heap()->reportTypedArrayVectorBytesVisited(std::numeric_limits<size_t>::max());
+        else if (m_typedArrayVectorBytes)
+            heap()->reportTypedArrayVectorBytesVisited(m_typedArrayVectorBytes);
+        m_typedArrayVectorBytes = 0;
+#endif
     }
 }
 

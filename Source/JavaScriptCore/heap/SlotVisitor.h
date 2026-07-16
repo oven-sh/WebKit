@@ -158,6 +158,9 @@ public:
 #if ENABLE(RESOURCE_USAGE)
     void reportExternalMemoryVisited(size_t) final;
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    void reportTypedArrayVectorBytesVisited(size_t) final;
+#endif
     
     void dump(PrintStream&) const final;
 
@@ -229,6 +232,9 @@ private:
     size_t m_bytesVisited { 0 };
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
     CheckedSize m_extraMemorySize { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    CheckedSize m_typedArrayVectorBytes { 0 };
+#endif
 
     HeapAnalyzer* m_heapAnalyzer { nullptr };
     JSCell* m_currentCell { nullptr };

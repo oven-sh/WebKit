@@ -1031,7 +1031,15 @@ size_t Heap::objectCount()
 
 size_t Heap::arrayBufferSize()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    CheckedSize checkedTotal = m_arrayBuffers.size();
+    checkedTotal += m_typedArrayVectorBytes;
+    if (checkedTotal.hasOverflowed()) [[unlikely]]
+        return std::numeric_limits<size_t>::max();
+    return checkedTotal.value();
+#else
     return m_arrayBuffers.size();
+#endif
 }
 
 size_t Heap::extraMemorySize()
@@ -2454,6 +2462,9 @@ void Heap::willStartCollection()
 #if ENABLE(RESOURCE_USAGE)
         m_externalMemorySize = 0;
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+        m_typedArrayVectorBytesVisited = 0;
+#endif
         m_shouldDoOpportunisticFullCollection = false;
         if (m_fullActivityCallback)
             m_fullActivityCallback->willCollect();
@@ -2495,6 +2506,10 @@ void Heap::pruneStaleEntriesFromWeakGCHashTables()
 void Heap::sweepArrayBuffers()
 {
     m_arrayBuffers.sweep(vm(), collectionScope().value_or(CollectionScope::Eden));
+#if USE(BUN_JSC_ADDITIONS)
+    if (collectionScope().value_or(CollectionScope::Eden) == CollectionScope::Full)
+        m_typedArrayVectorBytes = m_typedArrayVectorBytesVisited;
+#endif
 }
 
 void Heap::snapshotUnswept()
@@ -2871,6 +2886,49 @@ void Heap::reportExternalMemoryVisited(size_t size)
     for (;;) {
         size_t oldSize = *counter;
         if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, oldSize + size))
+            return;
+    }
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+void Heap::reportTypedArrayVectorBytesAllocated(size_t size)
+{
+    size_t* counter = &m_typedArrayVectorBytes;
+    for (;;) {
+        size_t oldSize = *counter;
+        CheckedSize checkedNewSize = oldSize;
+        checkedNewSize += size;
+        size_t newSize = std::numeric_limits<size_t>::max();
+        if (!checkedNewSize.hasOverflowed()) [[likely]]
+            newSize = checkedNewSize.value();
+        if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, newSize))
+            return;
+    }
+}
+
+void Heap::reportTypedArrayVectorBytesDeallocated(size_t size)
+{
+    size_t* counter = &m_typedArrayVectorBytes;
+    for (;;) {
+        size_t oldSize = *counter;
+        size_t newSize = oldSize > size ? oldSize - size : 0;
+        if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, newSize))
+            return;
+    }
+}
+
+void Heap::reportTypedArrayVectorBytesVisited(size_t size)
+{
+    size_t* counter = &m_typedArrayVectorBytesVisited;
+    for (;;) {
+        size_t oldSize = *counter;
+        CheckedSize checkedNewSize = oldSize;
+        checkedNewSize += size;
+        size_t newSize = std::numeric_limits<size_t>::max();
+        if (!checkedNewSize.hasOverflowed()) [[likely]]
+            newSize = checkedNewSize.value();
+        if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, newSize))
             return;
     }
 }
