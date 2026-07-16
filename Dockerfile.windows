@@ -344,7 +344,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     export LIB="/winsdk/crt/lib/${WIN_ARCH};/winsdk/sdk/lib/um/${WIN_ARCH};/winsdk/sdk/lib/ucrt/${WIN_ARCH};/winsdk" && \
     export CRT="MultiThreaded"; if [ "${WEBKIT_RELEASE_TYPE}" = "Debug" ]; then CRT="MultiThreadedDebug"; fi && \
     SAN_FLAGS=""; ENABLE_ASSERTS="AUTO"; \
-    if [ -n "${ENABLE_SANITIZERS}" ]; then SAN_FLAGS="-D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION"; ENABLE_ASSERTS="ON"; fi && \
+    if [ -n "${ENABLE_SANITIZERS}" ]; then SAN_FLAGS="/GF- -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION"; ENABLE_ASSERTS="ON"; fi && \
     EXE_LD_FLAGS=""; if [ -n "${LTO_FLAG}" ]; then EXE_LD_FLAGS="/force:multiple"; fi && \
     cd /webkitbuild && \
     cmake \
