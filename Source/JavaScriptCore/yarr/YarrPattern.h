@@ -870,9 +870,14 @@ private:
     struct BackTrackInfoParenthesesOnce {
         uintptr_t begin;
         uintptr_t returnAddress;
+        // Address of the code that continues a first-character dispatch chain
+        // when the alternative just entered fails (see the dispatched-alternatives
+        // path in YarrJIT).
+        uintptr_t chainResume;
 
         static unsigned beginIndex() { return offsetof(BackTrackInfoParenthesesOnce, begin) / sizeof(uintptr_t); }
         static unsigned returnAddressIndex() { return offsetof(BackTrackInfoParenthesesOnce, returnAddress) / sizeof(uintptr_t); }
+        static unsigned chainResumeIndex() { return offsetof(BackTrackInfoParenthesesOnce, chainResume) / sizeof(uintptr_t); }
     };
 
     struct BackTrackInfoParenthesesTerminal {

@@ -105,6 +105,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useRegExpJIT, jitEnabledByDefault() && is64Bit(), Normal, "allows the RegExp JIT to be used if true"_s) \
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors common prefixes out of an alternation's literal-leading alternatives and folds large top-level alternations into a group"_s) \
     v(Unsigned, regExpAlternationGroupThreshold, 8, Normal, "minimum number of repeated top-level alternatives before the alternation is folded into a group"_s) \
+    v(Bool, useRegExpAlternationDispatch, true, Normal, "reads a group's first character once and jumps to the chain of alternatives that can start with it"_s) \
+    v(Unsigned, regExpAlternationDispatchThreshold, 4, Normal, "minimum number of alternatives in a group before its alternatives are dispatched on the first character"_s) \
     v(Bool, useDOMJIT, is64Bit(), Normal, "allows the DOMJIT to be used if true"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \

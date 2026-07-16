@@ -314,6 +314,83 @@ void BoyerMooreBitmap::dump(PrintStream& out) const
 //
 // FIXME: Currently we are only supporting 2 alternative cases at first, aligned to V8's optimization.
 // We will extend it to 1 and 3 later.
+// First-character set of an alternative: an over-approximation of the set of
+// characters a match can start with. Latin-1 characters are tracked precisely;
+// `wide` means a first character >= 0x100 is possible; `any` is the top
+// element (every character possible). An over-approximation is always sound
+// for dispatch: membership merely means the alternative is tried there.
+struct FirstCharacterSet {
+    WTF::BitSet<256> latin1;
+    bool wide { false };
+    bool any { false };
+    // Whether analysis reached a term that must consume a character. If false
+    // the alternative can match the empty string, which for dispatch is `any`.
+    bool consumed { false };
+
+    void add(char32_t ch)
+    {
+        if (ch < 256)
+            latin1.set(ch);
+        else
+            wide = true;
+    }
+    void addRange(char32_t begin, char32_t end)
+    {
+        for (char32_t ch = begin; ch <= end && ch < 256; ++ch)
+            latin1.set(ch);
+        if (end >= 256)
+            wide = true;
+    }
+    void merge(const FirstCharacterSet& other)
+    {
+        latin1.merge(other.latin1);
+        wide |= other.wide;
+        any |= other.any;
+    }
+    bool matches(unsigned latin1Char) const { return any || latin1.get(latin1Char); }
+    bool matchesWide() const { return any || wide; }
+};
+
+// First-character dispatch for a nested disjunction with many alternatives.
+//
+// Trying N alternatives in sequence costs an entry attempt each. When every
+// alternative must consume a first character, that character is already inside
+// input the enclosing alternative claimed, so it can be read once (no bounds
+// check) and a decision tree over its value can jump straight to the ordered
+// chain of alternatives whose first-character set contains it. Alternatives
+// are still tried in source order within a chain, so leftmost-first semantics
+// hold; an alternative whose set is `any` appears in every chain. A failing
+// alternative continues its chain through a code address the chain stored in
+// the group's frame (BackTrackInfoParenthesesOnce::chainResume) before entry.
+struct DispatchInfo {
+private:
+    WTF_MAKE_TZONE_ALLOCATED(DispatchInfo);
+public:
+    struct Chain {
+        Vector<unsigned, 4> alternativeIndices; // ascending; tried in this order
+        MacroAssembler::Label head; // start of the chain's stub sequence
+    };
+
+    Vector<FirstCharacterSet, 8> sets; // per alternative
+    Vector<Chain, 8> chains; // distinct Latin-1 chains
+    std::array<unsigned, 256> chainForCharacter { }; // Latin-1 char -> chain index, or noChain
+    Chain wideChain; // characters >= 0x100 (16-bit strings only)
+    unsigned frameLocation { 0 }; // the group's frame; chainResume lives here
+    Checked<unsigned> firstCharacterOffset; // read offset of the group's first character
+
+    // Per alternative: the entry label (bound during generation) and jumps
+    // from chain stubs awaiting that label.
+    Vector<MacroAssembler::Label, 8> entries;
+    Vector<bool, 8> entryBound;
+    Vector<MacroAssembler::JumpList, 8> pendingEntryJumps;
+
+    // Failures that mean "no alternative can match here" (empty chains, chain
+    // exhaustion). Routed as the group's failure with the index unmoved.
+    MacroAssembler::JumpList groupFailJumps;
+
+    static constexpr unsigned noChain = std::numeric_limits<unsigned>::max();
+};
+
 struct MaskedAlternativeInfo {
 private:
     WTF_MAKE_TZONE_ALLOCATED(MaskedAlternativeInfo);
@@ -2071,6 +2148,13 @@ class YarrGenerator final : public YarrJITInfo {
         BoyerMooreInfo* m_bmInfo { nullptr };
         MaskedAlternativeInfo* m_maskedAltInfo { nullptr };
 
+        // Set on the alternative Begin/Next/End ops of a nested disjunction whose
+        // alternatives are dispatched on their first character (see DispatchInfo).
+        struct DispatchInfo* m_dispatch { nullptr };
+        // Position of this Begin/Next op's alternative within the dispatched
+        // disjunction.
+        unsigned m_dispatchAlternativeIndex { 0 };
+
         // Shared UTF-16 lead surrogate across all repeated alternatives' first character.
         std::optional<char16_t> m_bodyAltSharedLead;
 
@@ -2130,6 +2214,13 @@ class YarrGenerator final : public YarrJITInfo {
         void append(const MacroAssembler::DataLabelPtr& returnAddress)
         {
             m_pendingReturns.append(returnAddress);
+        }
+        // Bind a patchable frame store directly to a known code location (used by
+        // first-character dispatch chains, whose targets are forward-generated
+        // stubs rather than backtracking sites).
+        void addReturnAddressRecord(const MacroAssembler::DataLabelPtr& dataLabel, MacroAssembler::Label target)
+        {
+            m_backtrackRecords.append(ReturnAddressRecord(dataLabel, target));
         }
         void NODELETE fallthrough()
         {
@@ -4390,6 +4481,14 @@ class YarrGenerator final : public YarrJITInfo {
                     termMatchTargets.last() = alternative->m_isLastAlternative ? MatchTargets(MatchTargets::PreferredTarget::MatchSuccessFallThrough) : MatchTargets(endOp->m_jumps, op.m_jumps, MatchTargets::PreferredTarget::MatchFailFallThrough);
                 }
 
+                // First-character dispatch: read the character once and route to
+                // the applicable chain, then fall into alternative 0's entry (which
+                // is now a labelled chain target rather than a fallthrough).
+                if (op.m_dispatch) {
+                    generateDispatch(op);
+                    bindDispatchEntry(*op.m_dispatch, 0);
+                }
+
                 // Calculate how much input we need to check for, and if non-zero check.
                 op.m_checkAdjust = Checked<unsigned>(alternative->m_minimumSize);
                 if ((term->quantityType == QuantifierType::FixedCount) && (term->quantityMaxCount == 1) && (term->type != PatternTerm::Type::ParentheticalAssertion))
@@ -4443,6 +4542,8 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // This is the entry point for the next alternative.
                 defineReentryLabel(op);
+                if (op.m_dispatch)
+                    bindDispatchEntry(*op.m_dispatch, op.m_dispatchAlternativeIndex);
 
                 // Calculate how much input we need to check for, and if non-zero check.
                 op.m_checkAdjust = alternative->m_minimumSize;
@@ -5171,6 +5272,38 @@ class YarrGenerator final : public YarrJITInfo {
                 // Treat an input check failure the same as a failed match.
                 m_backtrackingState.append(op.m_jumps);
 
+                // Dispatched alternatives (first-character dispatch): a failing
+                // alternative releases its claim and continues its own chain through
+                // the resume address the chain stored in the frame, rather than
+                // falling to a fixed successor. Failures that mean "no alternative can
+                // match here" (empty routes, exhausted chains) join the group's
+                // failure flow at the Begin op, where the index is at the group frame.
+                if (op.m_dispatch) {
+                    if (!m_backtrackingState.isEmpty()) {
+                        m_backtrackingState.link(*this, op);
+                        // Give back the input this alternative claimed on entry.
+                        if (op.m_checkAdjust)
+                            m_jit.sub32(MacroAssembler::Imm32(op.m_checkAdjust), m_regs.index);
+                        loadFromFrameAndJump(op.m_dispatch->frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex());
+                    }
+                    if (isBegin) {
+                        // Group-level failures gathered by the dispatch, plus any jumps
+                        // planted on the End (none are expected under dispatch, kept
+                        // for parity with the sequential path).
+                        m_backtrackingState.append(op.m_dispatch->groupFailJumps);
+                        YarrOp* endOp = &m_ops[op.m_nextOp];
+                        while (endOp->m_nextOp != notFound)
+                            endOp = &m_ops[endOp->m_nextOp];
+                        m_backtrackingState.append(endOp->m_jumps);
+                    }
+                    // For non-simple alternatives, link the alternative's 'return
+                    // address' so we backtrack back out into it correctly.
+                    if (op.m_op == YarrOpCode::NestedAlternativeNext)
+                        m_backtrackingState.append(op.m_returnAddress);
+                    op.m_contentBacktrackEntryLabel = m_jit.label();
+                    break;
+                }
+
                 // Set the backtracks to jump to the appropriate place. We may need
                 // to link the backtracks in one of three different way depending on
                 // the type of alternative we are dealing with:
@@ -5794,12 +5927,25 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
         }
 
+        // Try first-character dispatch for a plain once-group with several
+        // alternatives (its ops are the ParenthesesSubpatternOnce + Nested* set).
+        // The sets must be computed before opCompileAlternative reorders terms.
+        DispatchInfo* dispatch = nullptr;
+        if (parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && alternativeBeginOpCode == YarrOpCode::NestedAlternativeBegin)
+            dispatch = tryPrepareDispatch(term, checkedOffset);
+        if (Options::verboseRegExpCompilation() && term->parentheses.disjunction->m_alternatives.size() >= Options::regExpAlternationDispatchThreshold()) {
+            dumpFirstCharacterSets(*term->parentheses.disjunction);
+            dataLogLn(dispatch ? "First-character dispatch enabled" : "First-character dispatch not used");
+        }
+
         size_t parenBegin = m_ops.size();
         appendOp(parenthesesBeginOpCode);
 
         appendOp(alternativeBeginOpCode);
         m_ops.last().m_previousOp = notFound;
         m_ops.last().m_term = term;
+        m_ops.last().m_dispatch = dispatch;
+        m_ops.last().m_dispatchAlternativeIndex = 0;
         PatternDisjunction* disjunction = term->parentheses.disjunction;
         auto& alternatives = disjunction->m_alternatives;
         for (unsigned i = 0; i < alternatives.size(); ++i) {
@@ -5835,6 +5981,8 @@ class YarrGenerator final : public YarrJITInfo {
             lastOp.m_nextOp = thisOpIndex;
             thisOp.m_previousOp = lastOpIndex;
             thisOp.m_term = term;
+            thisOp.m_dispatch = dispatch;
+            thisOp.m_dispatchAlternativeIndex = i + 1;
         }
         YarrOp& lastOp = m_ops.last();
         ASSERT(lastOp.m_op == alternativeNextOpCode);
@@ -6364,6 +6512,346 @@ class YarrGenerator final : public YarrJITInfo {
         default:
             return std::nullopt;
         }
+    }
+
+    // First-character set analysis (see FirstCharacterSet).
+    //
+    // Adds the characters that `term`, matched at the start of what remains,
+    // can begin with. Returns true if the term must consume at least one
+    // character (so the alternative's first character is now fully accounted
+    // for), false if the term can match the empty string and the analysis must
+    // continue into the following term.
+    bool addFirstCharactersOfTerm(const PatternTerm& term, FirstCharacterSet& set)
+    {
+        switch (term.type) {
+        case PatternTerm::Type::AssertionBOL:
+        case PatternTerm::Type::AssertionEOL:
+        case PatternTerm::Type::AssertionWordBoundary:
+        case PatternTerm::Type::NumberedForwardReference:
+        case PatternTerm::Type::NamedForwardReference:
+            // Zero-width: contributes no first character.
+            return false;
+
+        case PatternTerm::Type::NumberedBackReference:
+        case PatternTerm::Type::NamedBackReference:
+        case PatternTerm::Type::DotStarEnclosure:
+            set.any = true;
+            return true;
+
+        case PatternTerm::Type::ParentheticalAssertion:
+            // An assertion consumes no input; a positive lookahead could narrow the
+            // set but ignoring it keeps the set a valid over-approximation.
+            return false;
+
+        case PatternTerm::Type::PatternCharacter: {
+            char32_t ch = term.patternCharacter;
+            if (term.ignoreCase() && isASCIIAlpha(ch)) {
+                set.add(toASCIIUpper(ch));
+                set.add(toASCIILower(ch));
+            } else if (term.ignoreCase() && !isASCII(ch))
+                set.any = true; // Non-ASCII case folding: don't try to be clever.
+            else
+                set.add(ch);
+            return !!term.quantityMinCount;
+        }
+
+        case PatternTerm::Type::CharacterClass: {
+            const CharacterClass* characterClass = term.characterClass;
+            if (term.invert() || characterClass->m_anyCharacter || characterClass->m_table || term.ignoreCase())
+                set.any = true;
+            else {
+                for (char32_t ch : characterClass->m_matches8)
+                    set.add(ch);
+                for (auto& range : characterClass->m_ranges8)
+                    set.addRange(range.begin, range.end);
+                if (!characterClass->m_matches32.isEmpty() || !characterClass->m_ranges32.isEmpty() || characterClass->hasStrings())
+                    set.wide = true;
+            }
+            return !!term.quantityMinCount;
+        }
+
+        case PatternTerm::Type::ParenthesesSubpattern: {
+            PatternDisjunction* disjunction = term.parentheses.disjunction;
+            bool allConsumed = true;
+            for (auto& alternative : disjunction->m_alternatives) {
+                FirstCharacterSet nested = computeFirstCharacterSet(*alternative);
+                set.merge(nested);
+                allConsumed &= nested.consumed;
+            }
+            // The group only guarantees a consumed first character if it is
+            // required (min count >= 1) and every alternative consumes.
+            return term.quantityMinCount && allConsumed;
+        }
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // First-character dispatch code generation.
+    //
+    // Emitted at the group's alternative Begin op, before any alternative body:
+    //
+    //   char = input[index - firstCharacterOffset]      ; inside claimed input
+    //   [16-bit: char >= 0x100 -> wide chain]
+    //   binary decision tree over char -> jump to chain head, or group failure
+    //   chain stubs:  head_C:  frame.chainResume = &stub_C[1]; jump entry(alt i0)
+    //                 stub_C[1]: frame.chainResume = &stub_C[2]; jump entry(alt i1)
+    //                 ...        stub_C[n]: jump groupFailure
+    //
+    // A failing alternative releases its claim and jumps to frame.chainResume, so
+    // it continues its own chain rather than a fixed successor. Entry labels of
+    // later alternatives are bound as they are generated; stubs that target them
+    // are patched then via DispatchInfo::pendingEntryJumps.
+
+    void emitJumpToDispatchEntry(DispatchInfo& info, unsigned alternativeIndex)
+    {
+        if (info.entryBound[alternativeIndex])
+            m_jit.jump(info.entries[alternativeIndex]);
+        else
+            info.pendingEntryJumps[alternativeIndex].append(m_jit.jump());
+    }
+
+    void bindDispatchEntry(DispatchInfo& info, unsigned alternativeIndex)
+    {
+        info.entries[alternativeIndex] = m_jit.label();
+        info.entryBound[alternativeIndex] = true;
+        info.pendingEntryJumps[alternativeIndex].link(&m_jit);
+        info.pendingEntryJumps[alternativeIndex].clear();
+    }
+
+    // Emit one chain: for each member, store the address of the following stub
+    // as the chain-resume point, then jump into the member; the final stub is the
+    // group failure. Returns the label of the chain head.
+    MacroAssembler::Label emitDispatchChainStubs(DispatchInfo& info, const Vector<unsigned, 4>& alternativeIndices)
+    {
+        JIT_COMMENT(m_jit, "dispatch chain (", alternativeIndices.size(), " alternatives)");
+        MacroAssembler::Label head = m_jit.label();
+        Vector<MacroAssembler::DataLabelPtr, 4> pendingStores;
+        for (unsigned index : alternativeIndices) {
+            // Bind the previous stub's stored resume address to here.
+            if (!pendingStores.isEmpty())
+                m_backtrackingState.addReturnAddressRecord(pendingStores.takeLast(), m_jit.label());
+            pendingStores.append(storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex()));
+            emitJumpToDispatchEntry(info, index);
+        }
+        // Chain exhausted: no more applicable alternatives at this position.
+        m_backtrackingState.addReturnAddressRecord(pendingStores.takeLast(), m_jit.label());
+        info.groupFailJumps.append(m_jit.jump());
+        return head;
+    }
+
+    // Binary decision tree over the character's Latin-1 value. `ranges` are
+    // maximal [begin,end] intervals with a constant chain id, sorted and
+    // contiguous over 0..255. Leaves jump to the chain head (or group failure).
+    struct DispatchRange {
+        unsigned begin;
+        unsigned end;
+        unsigned chainId;
+    };
+    void emitDispatchTree(DispatchInfo& info, MacroAssembler::RegisterID character, const Vector<DispatchRange, 16>& ranges, unsigned low, unsigned high)
+    {
+        if (low == high) {
+            unsigned chainId = ranges[low].chainId;
+            if (chainId == DispatchInfo::noChain)
+                info.groupFailJumps.append(m_jit.jump());
+            else
+                m_jit.jump().linkTo(info.chains[chainId].head, &m_jit);
+            return;
+        }
+        unsigned middle = (low + high + 1) / 2;
+        MacroAssembler::Jump upper = m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(ranges[middle].begin));
+        emitDispatchTree(info, character, ranges, low, middle - 1);
+        upper.link(&m_jit);
+        emitDispatchTree(info, character, ranges, middle, high);
+    }
+
+    void generateDispatch(YarrOp& op)
+    {
+        DispatchInfo& info = *op.m_dispatch;
+        const MacroAssembler::RegisterID character = m_regs.regT0;
+
+        JIT_COMMENT(m_jit, "first-character dispatch");
+        readCharacter(info.firstCharacterOffset, character);
+
+        MacroAssembler::JumpList wideCharacter;
+        if (m_charSize == CharSize::Char16)
+            wideCharacter.append(m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(256)));
+
+        // Emit the chain stubs first so tree leaves can jump backward to them;
+        // the tree itself is entered by jumping over the stubs.
+        MacroAssembler::Jump toTree = m_jit.jump();
+        for (auto& chain : info.chains)
+            chain.head = emitDispatchChainStubs(info, chain.alternativeIndices);
+        if (m_charSize == CharSize::Char16) {
+            if (info.wideChain.alternativeIndices.isEmpty()) {
+                MacroAssembler::Label failHead(m_jit);
+                info.wideChain.head = failHead;
+                info.groupFailJumps.append(m_jit.jump());
+            } else
+                info.wideChain.head = emitDispatchChainStubs(info, info.wideChain.alternativeIndices);
+        }
+        toTree.link(&m_jit);
+        if (m_charSize == CharSize::Char16)
+            wideCharacter.linkTo(info.wideChain.head, &m_jit);
+
+        // Group the routing table into maximal ranges of equal chain id.
+        Vector<DispatchRange, 16> ranges;
+        for (unsigned ch = 0; ch < 256;) {
+            unsigned chainId = info.chainForCharacter[ch];
+            unsigned begin = ch;
+            while (ch < 256 && info.chainForCharacter[ch] == chainId)
+                ++ch;
+            ranges.append({ begin, ch - 1, chainId });
+        }
+        emitDispatchTree(info, character, ranges, 0, ranges.size() - 1);
+    }
+
+    // Decide whether a nested group's alternatives are worth dispatching on the
+    // first character, and if so build the DispatchInfo (chains and character
+    // routing). Called at op-compile time, before the alternatives' ops are
+    // emitted (so the first term of each alternative is still in position order).
+    DispatchInfo* tryPrepareDispatch(PatternTerm* term, Checked<unsigned> checkedOffset)
+    {
+        if (!Options::useRegExpAlternationDispatch())
+            return nullptr;
+        // Only once-quantified fixed groups take the ParenthesesSubpatternOnce +
+        // NestedAlternative path whose frame holds BackTrackInfoParenthesesOnce.
+        if (term->type != PatternTerm::Type::ParenthesesSubpattern)
+            return nullptr;
+        if (term->quantityType != QuantifierType::FixedCount || term->quantityMinCount != 1 || term->quantityMaxCount != 1)
+            return nullptr;
+        if (term->parentheses.isCopy || term->parentheses.isTerminal || term->parentheses.isStringList)
+            return nullptr;
+        if (term->matchDirection() != Forward || m_direction != Forward)
+            return nullptr;
+        if (m_decodeSurrogatePairs)
+            return nullptr;
+
+        PatternDisjunction* disjunction = term->parentheses.disjunction;
+        auto& alternatives = disjunction->m_alternatives;
+        if (alternatives.size() < Options::regExpAlternationDispatchThreshold())
+            return nullptr;
+        // The first character is only guaranteed inside claimed input when every
+        // alternative must consume at least one character.
+        if (!disjunction->m_minimumSize)
+            return nullptr;
+
+        auto info = makeUniqueRef<DispatchInfo>();
+        unsigned anyCount = 0;
+        for (auto& alternative : alternatives) {
+            FirstCharacterSet set = computeFirstCharacterSet(*alternative);
+            if (set.any)
+                ++anyCount;
+            info->sets.append(WTF::move(set));
+        }
+        // Dispatch is pointless when most alternatives can start with anything.
+        if (anyCount * 4 > alternatives.size())
+            return nullptr;
+
+        // Route each Latin-1 character to the ordered chain of alternatives whose
+        // set contains it; identical chains are shared (linear dedupe: chains are
+        // few in practice).
+        for (unsigned ch = 0; ch < 256; ++ch) {
+            Vector<unsigned, 4> members;
+            for (unsigned i = 0; i < alternatives.size(); ++i) {
+                if (info->sets[i].matches(ch))
+                    members.append(i);
+            }
+            if (members.isEmpty()) {
+                info->chainForCharacter[ch] = DispatchInfo::noChain;
+                continue;
+            }
+            unsigned chainId = DispatchInfo::noChain;
+            for (unsigned c = 0; c < info->chains.size(); ++c) {
+                if (info->chains[c].alternativeIndices == members) {
+                    chainId = c;
+                    break;
+                }
+            }
+            if (chainId == DispatchInfo::noChain) {
+                chainId = info->chains.size();
+                DispatchInfo::Chain chain;
+                chain.alternativeIndices = WTF::move(members);
+                info->chains.append(WTF::move(chain));
+            }
+            info->chainForCharacter[ch] = chainId;
+        }
+        // Bound the emitted stub code.
+        unsigned stubCount = 0;
+        for (auto& chain : info->chains)
+            stubCount += chain.alternativeIndices.size();
+        if (info->chains.size() > 96 || stubCount > 768)
+            return nullptr;
+        if (m_charSize == CharSize::Char16) {
+            for (unsigned i = 0; i < alternatives.size(); ++i) {
+                if (info->sets[i].matchesWide())
+                    info->wideChain.alternativeIndices.append(i);
+            }
+        }
+
+        // The group's first character is at the frame position where the group
+        // starts, inside the input the enclosing alternative already claimed.
+        Checked<unsigned> groupStart = term->inputPosition - disjunction->m_minimumSize;
+        if (checkedOffset < term->inputPosition)
+            return nullptr;
+        info->firstCharacterOffset = checkedOffset - groupStart;
+        if (info->firstCharacterOffset.hasOverflowed())
+            return nullptr;
+        info->frameLocation = term->frameLocation;
+        info->entries.resize(alternatives.size());
+        info->entryBound.fill(false, alternatives.size());
+        info->pendingEntryJumps.resize(alternatives.size());
+
+        DispatchInfo* result = info.ptr();
+        m_dispatchInfos.append(WTF::move(info));
+        return result;
+    }
+
+    void dumpFirstCharacterSets(PatternDisjunction& disjunction)
+    {
+        dataLogLn("First-character sets for ", disjunction.m_alternatives.size(), " alternatives:");
+        for (size_t i = 0; i < disjunction.m_alternatives.size(); ++i) {
+            FirstCharacterSet set = computeFirstCharacterSet(*disjunction.m_alternatives[i]);
+            dataLog("  alt ", i, ": ");
+            if (set.any)
+                dataLog("ANY");
+            else {
+                for (unsigned ch = 0; ch < 256; ++ch) {
+                    if (set.latin1.get(ch)) {
+                        if (isASCIIPrintable(ch))
+                            dataLog("'", static_cast<char>(ch), "'");
+                        else
+                            dataLog("\\x", ch);
+                    }
+                }
+                if (set.wide)
+                    dataLog(" +wide");
+            }
+            dataLogLn();
+        }
+    }
+
+    FirstCharacterSet computeFirstCharacterSet(const PatternAlternative& alternative)
+    {
+        FirstCharacterSet set;
+        if (!isSafeToRecurse()) [[unlikely]] {
+            set.any = true;
+            return set;
+        }
+        for (auto& term : alternative.m_terms) {
+            if (addFirstCharactersOfTerm(term, set)) {
+                set.consumed = true;
+                break;
+            }
+            if (set.any) {
+                set.consumed = true;
+                break;
+            }
+        }
+        // An alternative that can match without consuming a character can start
+        // at any character (its "first character" is whatever follows).
+        if (!set.consumed)
+            set.any = true;
+        return set;
     }
 
     std::optional<unsigned> collectBoyerMooreInfoFromTerm(PatternTerm& term, unsigned cursor, BoyerMooreInfo& bmInfo)
@@ -8039,6 +8527,9 @@ private:
     // Owns the mirrored (term-reversed) copies of lookbehind bodies. The original
     // YarrPattern is left untouched so the bytecode fallback remains valid.
     Vector<std::unique_ptr<PatternDisjunction>> m_mirroredDisjunctions;
+
+    // First-character dispatch state for nested disjunctions (see DispatchInfo).
+    Vector<UniqueRef<DispatchInfo>, 2> m_dispatchInfos;
 
     // The regular expression expressed as a linear sequence of operations.
     Vector<YarrOp, 128> m_ops;
