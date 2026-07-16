@@ -116,11 +116,36 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
     --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
     --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Install LLVM 22
-RUN wget https://apt.llvm.org/llvm.sh \
-    && chmod +x llvm.sh \
-    && ./llvm.sh 22 all \
-    && rm llvm.sh \
+# Install LLVM 22.
+#
+# apt.llvm.org stopped publishing focal arm64 binaries for the 22 release
+# (llvm-toolchain-focal-22/main/binary-arm64 carries only the Architecture:all
+# -doc/-examples packages). The bullseye repo still has the full arm64 set and
+# is built against glibc 2.31 (same as focal), so on arm64 we pull from there
+# instead. The bullseye clang-22 package declares Depends on Debian's
+# libstdc++-10-dev/libgcc-10-dev/libobjc-10-dev, which focal doesn't name that
+# way (we use gcc-13's libstdc++ via the PPA and set its include paths below),
+# so those three are satisfied with equivs dummies before the install.
+RUN wget -qO /etc/apt/trusted.gpg.d/apt.llvm.org.asc https://apt.llvm.org/llvm-snapshot.gpg.key \
+    && if [ "$TARGETARCH" = "arm64" ]; then \
+         echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-22 main" > /etc/apt/sources.list.d/llvm.list \
+         && apt-get update \
+         && apt-get install -y --no-install-recommends equivs \
+         && for p in libstdc++-10-dev libgcc-10-dev libobjc-10-dev; do \
+              printf 'Section: misc\nPriority: optional\nStandards-Version: 3.9.2\nPackage: %s\nVersion: 99\nDescription: dummy for bullseye clang-22 dep\n' "$p" > /tmp/$p.ctl \
+              && (cd /tmp && equivs-build $p.ctl && dpkg -i ${p}_99_all.deb && rm -f $p.ctl ${p}_99_all.deb); \
+            done \
+         && apt-get install -y --no-install-recommends \
+              clang-22 lld-22 llvm-22 llvm-22-dev llvm-22-tools llvm-22-runtime \
+              llvm-22-linker-tools libllvm22 libclang-cpp22 libclang1-22 \
+              libclang-common-22-dev libclang-rt-22-dev liblld-22 clangd-22 lldb-22; \
+       else \
+         wget https://apt.llvm.org/llvm.sh \
+         && chmod +x llvm.sh \
+         && ./llvm.sh 22 all \
+         && rm llvm.sh; \
+       fi \
+    && clang-22 --version \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure library paths
