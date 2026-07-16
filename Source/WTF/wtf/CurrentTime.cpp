@@ -81,6 +81,10 @@ static constexpr ULONGLONG epochBias = 116444736000000000ULL;
 // std::time::SystemTime, and Zig's std.time before it) already calls the
 // precise API, so reading it here keeps Date.now() consistent with native
 // timestamps and avoids the shared mutable state.
+//
+// NOTE: GetSystemTimePreciseAsFileTime requires Windows 8 / Server 2012. If
+// Bun ever targets an older Windows, this needs a GetProcAddress fallback to
+// GetSystemTimeAsFileTime (see SpiderMonkey pre-bmo-1843842 for the pattern).
 static constexpr double hundredsOfNanosecondsPerSecond = 10000000;
 
 static inline double currentTime()
