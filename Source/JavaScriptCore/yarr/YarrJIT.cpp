@@ -8006,14 +8006,19 @@ public:
 #endif
 
         // Lookbehind bodies are JIT-compiled via mirroring (see
-        // mirrorDisjunctionForLookbehind), except for unicode patterns: reading
-        // backward across a UTF-16 surrogate pair (trail first, then lead) is
-        // not implemented in the backward JIT yet. The decision is made per
-        // pattern (eitherUnicode), not per subject encoding (m_decodeSurrogatePairs),
-        // so the 8-bit and 16-bit specializations of one RegExp always run the
-        // same engine. Unsupported body content is detected during op-compilation
-        // and falls back the same way.
-        if (m_pattern.m_containsLookbehinds && m_pattern.eitherUnicode()) {
+        // mirrorDisjunctionForLookbehind), except when the pattern would change
+        // engines in ways that are not yet safe:
+        //  - unicode patterns: reading backward across a UTF-16 surrogate pair
+        //    (trail first, then lead) is not implemented in the backward JIT; and
+        //  - a BOL-group bubble (m_containsBOLGroupBubble): optimizeBOL's
+        //    once-through/loop-copy split of such patterns is only handled
+        //    correctly by the interpreter today (a pre-existing JIT-only defect),
+        //    so those patterns must not newly move to the JIT with this change.
+        // The decision is per pattern, not per subject encoding, so the 8-bit and
+        // 16-bit specializations of one RegExp always run the same engine.
+        // Unsupported body content is detected during op-compilation and falls
+        // back the same way.
+        if (m_pattern.m_containsLookbehinds && (m_pattern.eitherUnicode() || m_pattern.m_containsBOLGroupBubble)) {
             codeBlock.setFallBackWithFailureReason(JITFailureReason::Lookbehind);
             return;
         }

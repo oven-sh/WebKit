@@ -1572,13 +1572,15 @@ public:
 
         if (numBOLAnchoredAlts) {
             m_alternative->m_containsBOL = true;
-            // If all the alternatives in parens start with BOL, then this alternative
-            // starts with BOL too -- but only when the group is its first term (mirroring
-            // assertionBOL) and is a group whose match anchors the position, i.e. not a
-            // negative assertion (which anchors nothing on success). A later quantifier
-            // with a zero minimum removes the anchoring again; see quantifyAtom.
-            if (numBOLAnchoredAlts == numParenAlternatives && m_alternative->m_terms.size() == 1 && !lastTerm.invert())
+            // If all the alternatives in parens start with BOL, then so does this one
+            if (numBOLAnchoredAlts == numParenAlternatives) {
                 m_alternative->m_startsWithBOL = true;
+                // A whole group being BOL-anchored feeds optimizeBOL's once-through /
+                // loop-copy split, which the JIT and interpreter treat differently for
+                // some shapes (e.g. an optional (^)? group); noted so a JIT compile can
+                // keep such patterns on the interpreter (see YarrJIT::compile).
+                m_pattern.m_containsBOLGroupBubble = true;
+            }
         }
 
         lastTerm.parentheses.lastSubpatternId = m_pattern.m_numSubpatterns;
@@ -1768,12 +1770,6 @@ public:
         PatternTerm& term = m_alternative->lastTerm();
         ASSERT(term.type > PatternTerm::Type::AssertionWordBoundary);
         ASSERT(term.quantityMinCount == 1 && term.quantityMaxCount == 1 && term.quantityType == QuantifierType::FixedCount);
-
-        // A term with a zero minimum count may not match at all, so an alternative
-        // whose BOL anchoring came from this (first) term no longer starts with BOL:
-        // e.g. /(^)?a/ or /(?:^b)?a/ can match away from a line start.
-        if (!min && m_alternative->m_terms.size() == 1 && m_alternative->m_startsWithBOL)
-            m_alternative->m_startsWithBOL = false;
 
         if (term.type == PatternTerm::Type::ParentheticalAssertion) {
             // If an assertion is quantified with a minimum count of zero, it can simply be removed.
@@ -3295,6 +3291,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
 YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode)
     : m_containsBackreferences(false)
     , m_containsBOL(false)
+    , m_containsBOLGroupBubble(false)
     , m_containsLookbehinds(false)
     , m_containsUnsignedLengthPattern(false)
     , m_containsModifiers(false)

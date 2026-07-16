@@ -612,6 +612,7 @@ struct YarrPattern {
 
         m_containsBackreferences = false;
         m_containsBOL = false;
+        m_containsBOLGroupBubble = false;
         m_containsLookbehinds = false;
         m_containsUnsignedLengthPattern = false;
         m_hasCopiedParenSubexpressions = false;
@@ -783,6 +784,7 @@ struct YarrPattern {
 
     bool m_containsBackreferences : 1;
     bool m_containsBOL : 1;
+    bool m_containsBOLGroupBubble : 1; // a group's alternatives all start with BOL (optimizeBOL bubbling)
     bool m_containsLookbehinds : 1;
     bool m_containsUnsignedLengthPattern : 1;
     bool m_containsModifiers : 1;
