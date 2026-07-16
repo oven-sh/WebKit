@@ -113,9 +113,11 @@ public:
 
     const WTF::UUID& identifier() const LIFETIME_BOUND { return m_identifier; }
     String deviceName() const;
+    String routeName() const;
     WebMediaDevicePlatformRoute *platformRoute() const;
 
     void loadURL(const URL&, CompletionHandler<void(const MediaDeviceRouteLoadURLResult&)>&&);
+    void disconnectFromSession();
 
     MediaTimeRange timeRange() const;
     bool ready() const;

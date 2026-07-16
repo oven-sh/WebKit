@@ -66,7 +66,7 @@ public:
         return m_condition;
     }
 
-    RefPtr<DeferredWorkTimer::TicketData> ticket(const AbstractLocker&) const
+    RefPtr<DeferredWorkTimer::Ticket> ticket(const AbstractLocker&) const
     {
         ASSERT(m_isAsync);
         return m_ticket.get();
@@ -95,9 +95,11 @@ public:
         // If the timeout for AsyncWaiter is infinity, we won't dispatch any timer.
         if (!m_timer)
             return;
-        m_timer->stop();
-        // The AsyncWaiter's timer holds the waiter's reference. This
-        // releases the strong reference to the Waiter in the timer.
+        // Don't stop the timer here: clearTimer() can run on a different thread than the one whose run
+        // loop owns the timer (e.g. from Atomics.notify on another agent), and stopping a RunLoop timer
+        // off its run loop's thread is unsafe. The dispatchAfter() timer keeps itself alive, fires once
+        // on its own thread, and tears itself down there; the timeout handler is idempotent because the
+        // waiter's ticket has already been cleared, so a late fire is a no-op. Just drop our reference.
         m_timer = nullptr;
     }
 
@@ -112,7 +114,7 @@ private:
     // GC End phase freeing m_dependencies via cancelAndClear(). Written before the Waiter
     // is added to any list, so readers acquiring list->lock always see the completed write.
     JSGlobalObject* m_globalObject { nullptr };
-    ThreadSafeWeakPtr<DeferredWorkTimer::TicketData> m_ticket { nullptr };
+    ThreadSafeWeakPtr<DeferredWorkTimer::Ticket> m_ticket { nullptr };
     RefPtr<RunLoop::DispatchTimer> m_timer { nullptr };
     Condition m_condition;
     bool m_isAsync { false };

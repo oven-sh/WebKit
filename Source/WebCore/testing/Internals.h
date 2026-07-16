@@ -167,10 +167,6 @@ class TextTrackCueGeneric;
 class VTTCue;
 #endif
 
-#if ENABLE(WEB_RTC)
-class RTCRtpSFrameTransform;
-#endif
-
 #if ENABLE(WEBXR)
 class WebXRTest;
 #endif
@@ -307,6 +303,8 @@ public:
 
     Ref<CSSComputedStyleDeclaration> computedStyleIncludingVisitedInfo(Element&) const;
 
+    float usedOutlineOffset(Element&);
+
     Node& ensureUserAgentShadowRoot(Element& host);
     Node* shadowRoot(Element& host);
     ExceptionOr<String> shadowRootType(const Node&) const;
@@ -384,6 +382,7 @@ public:
 #endif
 
     Ref<DOMRect> boundingBox(Element&);
+    Ref<DOMRect> boundingBoxInRootViewCoordinates(Element&);
 
     ExceptionOr<Ref<DOMRectList>> inspectorHighlightRects();
     ExceptionOr<unsigned> inspectorGridOverlayCount();
@@ -539,6 +538,7 @@ public:
     ExceptionOr<RefPtr<Range>> rangeOfString(const String&, RefPtr<Range>&&, const Vector<String>& findOptions);
     ExceptionOr<unsigned> countMatchesForText(const String&, const Vector<String>& findOptions, const String& markMatches);
     ExceptionOr<unsigned> countFindMatches(const String&, const Vector<String>& findOptions);
+    void setCachedFindMatchBufferLimitForTesting(unsigned maximumRunCount);
 #if ENABLE(VIDEO)
     ExceptionOr<Vector<double>> findCueMatches(const String&, const Vector<String>& findOptions);
 #endif
@@ -841,9 +841,6 @@ public:
     void isVP9HardwareDecoderUsed(RTCPeerConnection&, DOMPromiseDeferred<IDLBoolean>&&);
     bool isSupportingAV1HardwareDecoder() const;
 
-    void setSFrameCounter(RTCRtpSFrameTransform&, const String&);
-    uint64_t NODELETE sframeCounter(const RTCRtpSFrameTransform&);
-    uint64_t NODELETE sframeKeyId(const RTCRtpSFrameTransform&);
     void NODELETE setEnableWebRTCEncryption(bool);
     bool hasPeerConnectionEnabledServiceClass(const RTCPeerConnection&);
 #endif
@@ -1109,6 +1106,7 @@ public:
     bool NODELETE isMediaStreamSourceEnded(MediaStreamTrack&) const;
     bool NODELETE isMockRealtimeMediaSourceCenterEnabled();
     bool NODELETE shouldAudioTrackPlay(const AudioTrack&);
+    void deleteAudioUnit();
 #endif // ENABLE(MEDIA_STREAM)
 #if ENABLE(WEB_RTC)
     String rtcNetworkInterfaceName() const;
@@ -1725,7 +1723,7 @@ private:
     ExceptionOr<RenderedDocumentMarker*> markerAt(Node&, const String& markerType, unsigned index);
     ExceptionOr<ScrollableArea*> scrollableAreaForNode(Node*) const;
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     static RetainPtr<VKCImageAnalysis> fakeImageAnalysisResultForTesting(const Vector<ImageOverlayLine>&);
 #endif
 

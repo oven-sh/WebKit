@@ -272,21 +272,29 @@
 #include "SyntheticModuleRecord.h"
 #include "TemporalCalendar.h"
 #include "TemporalDuration.h"
+#include "TemporalDurationConstructor.h"
 #include "TemporalDurationPrototype.h"
 #include "TemporalInstant.h"
+#include "TemporalInstantConstructor.h"
 #include "TemporalInstantPrototype.h"
 #include "TemporalObject.h"
 #include "TemporalPlainDate.h"
+#include "TemporalPlainDateConstructor.h"
 #include "TemporalPlainDatePrototype.h"
 #include "TemporalPlainDateTime.h"
+#include "TemporalPlainDateTimeConstructor.h"
 #include "TemporalPlainDateTimePrototype.h"
 #include "TemporalPlainMonthDay.h"
+#include "TemporalPlainMonthDayConstructor.h"
 #include "TemporalPlainMonthDayPrototype.h"
 #include "TemporalPlainTime.h"
+#include "TemporalPlainTimeConstructor.h"
 #include "TemporalPlainTimePrototype.h"
 #include "TemporalPlainYearMonth.h"
+#include "TemporalPlainYearMonthConstructor.h"
 #include "TemporalPlainYearMonthPrototype.h"
 #include "TemporalZonedDateTime.h"
+#include "TemporalZonedDateTimeConstructor.h"
 #include "TemporalZonedDateTimePrototype.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
@@ -347,7 +355,7 @@
 
 namespace JSC {
 
-MicrotaskQueue& JSGlobalObject::microtaskQueue() const { return m_microtaskQueue.get(); }
+static StringImpl::StaticStringImpl intlLegacyConstructedSymbolDescription { "IntlLegacyConstructedSymbol" };
 
 #define CHECK_FEATURE_FLAG_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
 static_assert(std::is_same_v<std::remove_cv_t<decltype(featureFlag)>, bool> || std::is_same_v<std::remove_cv_t<decltype(featureFlag)>, bool&>);
@@ -372,7 +380,6 @@ static JSC_DECLARE_HOST_FUNCTION(fulfillPromiseWithFirstResolvingFunctionCallChe
 static JSC_DECLARE_HOST_FUNCTION(newResolvedPromise);
 static JSC_DECLARE_HOST_FUNCTION(newRejectedPromise);
 static JSC_DECLARE_HOST_FUNCTION(resolveWithInternalMicrotaskForAsyncAwait);
-static JSC_DECLARE_HOST_FUNCTION(driveAsyncFunction);
 static JSC_DECLARE_HOST_FUNCTION(newHandledRejectedPromise);
 static JSC_DECLARE_HOST_FUNCTION(promiseReturnUndefinedOnFulfilled);
 static JSC_DECLARE_HOST_FUNCTION(promiseResolve);
@@ -381,7 +388,6 @@ static JSC_DECLARE_HOST_FUNCTION(promiseReject);
 static JSC_DECLARE_HOST_FUNCTION(promiseResolveWithThen);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(performPromiseThen);
-static JSC_DECLARE_HOST_FUNCTION(asyncGeneratorNextQueueEnqueue);
 #if ASSERT_ENABLED
 static JSC_DECLARE_HOST_FUNCTION(assertCall);
 #endif
@@ -853,15 +859,6 @@ JSC_DEFINE_HOST_FUNCTION(resolveWithInternalMicrotaskForAsyncAwait, (JSGlobalObj
     return encodedJSUndefined();
 }
 
-JSC_DEFINE_HOST_FUNCTION(driveAsyncFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    JSValue resolution = callFrame->uncheckedArgument(0);
-    JSValue context = callFrame->uncheckedArgument(1);
-    JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, resolution, InternalMicrotask::AsyncFunctionResume, context);
-    return encodedJSUndefined();
-}
-
 JSC_DEFINE_HOST_FUNCTION(newHandledRejectedPromise, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     JSValue argument = callFrame->uncheckedArgument(0);
@@ -932,55 +929,6 @@ JSC_DEFINE_HOST_FUNCTION(performPromiseThen, (JSGlobalObject* globalObject, Call
     return encodedJSUndefined();
 }
 
-// https://tc39.es/ecma262/#sec-asyncgenerator-prototype-next
-JSC_DEFINE_HOST_FUNCTION(asyncGeneratorNextQueueEnqueue, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-
-    JSAsyncGenerator* generator = dynamicDowncast<JSAsyncGenerator>(callFrame->uncheckedArgument(0));
-    JSValue value = callFrame->uncheckedArgument(1);
-    int32_t resumeMode = callFrame->uncheckedArgument(2).asInt32();
-    JSPromise* promise = uncheckedDowncast<JSPromise>(callFrame->uncheckedArgument(3));
-
-    // 3. Let result be Completion(AsyncGeneratorValidate(gen, empty)).
-    // 4. IfAbruptRejectPromise(result, promiseCapability).
-    // https://tc39.es/ecma262/#sec-asyncgeneratorvalidate
-    if (!generator) [[unlikely]] {
-        promise->reject(vm, createTypeError(globalObject, "|this| should be an async generator"_s));
-        return JSValue::encode(jsNumber(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorResumeMode::Empty)));
-    }
-
-    // 5. Let state be gen.[[AsyncGeneratorState]].
-    auto state = generator->state();
-    // 6. If state is completed, then
-    if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed)) {
-        // 6.a. Let iteratorResult be CreateIteratorResultObject(undefined, true).
-        // 6.b. Perform ! Call(promiseCapability.[[Resolve]], undefined, « iteratorResult »).
-        // 6.c. Return promiseCapability.[[Promise]].
-        ASSERT(resumeMode == static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode));
-        auto* iteratorResult = createIteratorResultObject(globalObject, jsUndefined(), /* done */ true);
-        promise->resolve(globalObject, vm, iteratorResult);
-        return JSValue::encode(jsNumber(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorResumeMode::Empty)));
-    }
-
-    // 7. Let completion be NormalCompletion(value).
-    // 8. Perform AsyncGeneratorEnqueue(gen, completion, promiseCapability).
-    generator->enqueue(vm, value, resumeMode, promise);
-
-    // 9. If state is either suspended-start or suspended-yield, then
-    if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Init) || JSAsyncGenerator::isSuspendedYieldState(state)) {
-        // 9.a. Perform AsyncGeneratorResume(gen, completion).
-        return JSValue::encode(jsNumber(generator->resumeMode()));
-    }
-
-    // 10. Else,
-    // 10.a. Assert: state is either executing or draining-queue.
-    ASSERT(JSAsyncGenerator::isExecutingState(state) || state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::DrainingQueue));
-
-    // 11. Return promiseCapability.[[Promise]].
-    return JSValue::encode(jsNumber(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorResumeMode::Empty)));
-}
-
 JS_GLOBAL_OBJECT_ADDITIONS_2;
 
 JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectMethodTable* globalObjectMethodTable)
@@ -1003,6 +951,7 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_customGetterFunctionSet(vm)
     , m_customSetterFunctionSet(vm)
     , m_importMap(ImportMap::create())
+    , m_intlLegacyConstructedSymbol(SymbolImpl::create(intlLegacyConstructedSymbolDescription))
     , m_globalObjectMethodTable(globalObjectMethodTable ? globalObjectMethodTable : baseGlobalObjectMethodTable())
 {
 }
@@ -1456,6 +1405,13 @@ void JSGlobalObject::init(VM& vm)
     m_iteratorHelperPrototype.set(vm, this, JSIteratorHelperPrototype::create(vm, this, JSIteratorHelperPrototype::createStructure(vm, this, m_iteratorPrototype.get())));
     m_iteratorHelperStructure.set(vm, this, JSIteratorHelper::createStructure(vm, this, m_iteratorHelperPrototype.get()));
 
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncGeneratorPrototypeNext)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, init.vm.propertyNames->next.impl(), asyncGeneratorPrototypeNext, ImplementationVisibility::Public));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncIteratorPrototypeSymbolAsyncIterator)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 0, "[Symbol.asyncIterator]"_s, asyncIteratorProtoFuncAsyncIterator, ImplementationVisibility::Public, AsyncIteratorIntrinsic));
+        });
+
     m_asyncIteratorPrototype.set(vm, this, AsyncIteratorPrototype::create(vm, this, AsyncIteratorPrototype::createStructure(vm, this, m_objectPrototype.get())));
 
     m_generatorPrototype.set(vm, this, GeneratorPrototype::create(vm, this, GeneratorPrototype::createStructure(vm, this, m_iteratorPrototype.get())));
@@ -1823,59 +1779,67 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::useTemporal()) {
         m_durationStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                JSGlobalObject* globalObject = init.owner;
-                TemporalDurationPrototype* durationPrototype = TemporalDurationPrototype::create(init.vm, TemporalDurationPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalDuration::createStructure(init.vm, globalObject, durationPrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalDurationPrototype::create(init.vm, TemporalDurationPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalDuration::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalDurationConstructor::create(init.vm, TemporalDurationConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         m_instantStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                JSGlobalObject* globalObject = init.owner;
-                TemporalInstantPrototype* instantPrototype = TemporalInstantPrototype::create(init.vm, TemporalInstantPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalInstant::createStructure(init.vm, globalObject, instantPrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalInstantPrototype::create(init.vm, TemporalInstantPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalInstant::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalInstantConstructor::create(init.vm, TemporalInstantConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         m_plainDateStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                auto* globalObject = init.owner;
-                auto* plainDatePrototype = TemporalPlainDatePrototype::create(init.vm, globalObject, TemporalPlainDatePrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalPlainDate::createStructure(init.vm, globalObject, plainDatePrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalPlainDatePrototype::create(init.vm, init.global, TemporalPlainDatePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalPlainDate::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalPlainDateConstructor::create(init.vm, TemporalPlainDateConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         m_plainDateTimeStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                auto* globalObject = init.owner;
-                auto* plainDateTimePrototype = TemporalPlainDateTimePrototype::create(init.vm, globalObject, TemporalPlainDateTimePrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalPlainDateTime::createStructure(init.vm, globalObject, plainDateTimePrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalPlainDateTimePrototype::create(init.vm, init.global, TemporalPlainDateTimePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalPlainDateTime::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalPlainDateTimeConstructor::create(init.vm, TemporalPlainDateTimeConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         m_plainMonthDayStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                auto* globalObject = init.owner;
-                auto* plainMonthDayPrototype = TemporalPlainMonthDayPrototype::create(init.vm, globalObject, TemporalPlainMonthDayPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalPlainMonthDay::createStructure(init.vm, globalObject, plainMonthDayPrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalPlainMonthDayPrototype::create(init.vm, init.global, TemporalPlainMonthDayPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalPlainMonthDay::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalPlainMonthDayConstructor::create(init.vm, TemporalPlainMonthDayConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         m_plainTimeStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                auto* globalObject = init.owner;
-                auto* plainTimePrototype = TemporalPlainTimePrototype::create(init.vm, globalObject, TemporalPlainTimePrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalPlainTime::createStructure(init.vm, globalObject, plainTimePrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalPlainTimePrototype::create(init.vm, init.global, TemporalPlainTimePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalPlainTime::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalPlainTimeConstructor::create(init.vm, TemporalPlainTimeConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         m_plainYearMonthStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                auto* globalObject = init.owner;
-                auto* plainYearMonthPrototype = TemporalPlainYearMonthPrototype::create(init.vm, globalObject, TemporalPlainYearMonthPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalPlainYearMonth::createStructure(init.vm, globalObject, plainYearMonthPrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalPlainYearMonthPrototype::create(init.vm, init.global, TemporalPlainYearMonthPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalPlainYearMonth::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalPlainYearMonthConstructor::create(init.vm, TemporalPlainYearMonthConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         m_zonedDateTimeStructure.initLater(
-            [] (const Initializer<Structure>& init) {
-                auto* globalObject = init.owner;
-                auto* zonedDateTimePrototype = TemporalZonedDateTimePrototype::create(init.vm, globalObject, TemporalZonedDateTimePrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
-                init.set(TemporalZonedDateTime::createStructure(init.vm, globalObject, zonedDateTimePrototype));
+            [] (LazyClassStructure::Initializer& init) {
+                auto* prototype = TemporalZonedDateTimePrototype::create(init.vm, init.global, TemporalZonedDateTimePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                init.setPrototype(prototype);
+                init.setStructure(TemporalZonedDateTime::createStructure(init.vm, init.global, prototype));
+                init.setConstructor(TemporalZonedDateTimeConstructor::create(init.vm, TemporalZonedDateTimeConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
             });
 
         TemporalObject* temporal = TemporalObject::create(vm, TemporalObject::createStructure(vm, this));
@@ -2057,17 +2021,8 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::resolveWithInternalMicrotaskForAsyncAwait)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 3, "resolveWithInternalMicrotaskForAsyncAwait"_s, resolveWithInternalMicrotaskForAsyncAwait, ImplementationVisibility::Private));
         });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncGeneratorNextQueueEnqueue)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 4, "asyncGeneratorNextQueueEnqueue"_s, asyncGeneratorNextQueueEnqueue, ImplementationVisibility::Private));
-        });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncGeneratorCompleteAndDrain)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 3, "asyncGeneratorCompleteAndDrain"_s, asyncGeneratorCompleteAndDrain, ImplementationVisibility::Private));
-        });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncGeneratorSuspend)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, "asyncGeneratorSuspend"_s, asyncGeneratorSuspend, ImplementationVisibility::Private));
-        });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::driveAsyncFunction)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, "driveAsyncFunction"_s, driveAsyncFunction, ImplementationVisibility::Private));
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncFunctionDrive)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, "asyncFunctionDrive"_s, asyncFunctionDrive, ImplementationVisibility::Private));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::newHandledRejectedPromise)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, "newHandledRejectedPromise"_s, newHandledRejectedPromise, ImplementationVisibility::Private));
@@ -2135,6 +2090,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::isDetached)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, "typedArrayViewIsDetached"_s, typedArrayViewPrivateFuncIsDetached, ImplementationVisibility::Private));
         });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::isTypedArrayOutOfBounds)].initLater([] (const Initializer<JSCell>& init) {
+        init.set(JSFunction::create(init.vm, init.owner, 1, "typedArrayViewIsOutOfBounds"_s, typedArrayViewPrivateFuncIsOutOfBounds, ImplementationVisibility::Private));
+    });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::instanceOf)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "instanceOf"_s, objectPrivateFuncInstanceOf, ImplementationVisibility::Private));
         });
@@ -3249,7 +3207,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     {
         if (thisObject->m_weakTickets) {
             Locker locker { thisObject->cellLock() };
-            for (Ref<DeferredWorkTimer::TicketData> ticket : *thisObject->m_weakTickets) {
+            for (Ref<DeferredWorkTimer::Ticket> ticket : *thisObject->m_weakTickets) {
                 // FIXME: This seems like it should remove the cancelled ticket? Although, it would likely have to deal with deadlocking somehow.
                 if (ticket->isCancelled())
                     continue;
@@ -3794,20 +3752,6 @@ static bool incumbentRealmIs(VM& vm, JSGlobalObject* target)
     return result;
 }
 
-void JSGlobalObject::queueMicrotask(VM& vm, QueuedTask&& task)
-{
-    if (!m_canFastQueueMicrotask || vm.crossTaskToken()) [[unlikely]] {
-        queueMicrotaskSlow(vm, WTF::move(task));
-        return;
-    }
-    microtaskQueue().enqueue(WTF::move(task));
-}
-
-void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2)
-{
-    queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2 });
-}
-
 void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
 {
     ([&] ALWAYS_INLINE_LAMBDA {
@@ -3942,15 +3886,15 @@ void JSGlobalObject::setWrapperMap(std::unique_ptr<WrapperMap>&& map)
 }
 #endif
 
-void JSGlobalObject::addWeakTicket(DeferredWorkTimer::Ticket ticket)
+void JSGlobalObject::addWeakTicket(DeferredWorkTimer::Ticket& ticket)
 {
     Locker locker { cellLock() };
     if (!m_weakTickets) {
-        auto weakTickets = makeUnique<ThreadSafeWeakHashSet<DeferredWorkTimer::TicketData>>();
+        auto weakTickets = makeUnique<ThreadSafeWeakHashSet<DeferredWorkTimer::Ticket>>();
         WTF::storeStoreFence();
         m_weakTickets = WTF::move(weakTickets);
     }
-    m_weakTickets->add(*ticket);
+    m_weakTickets->add(ticket);
     vm().writeBarrier(this);
 }
 void JSGlobalObject::clearWeakTickets()

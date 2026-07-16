@@ -482,7 +482,8 @@ void Connection::setDidCloseOnConnectionWorkQueueCallback(DidCloseOnConnectionWo
 
 void Connection::setOutgoingMessageQueueIsGrowingLargeCallback(OutgoingMessageQueueIsGrowingLargeCallback&& callback)
 {
-    m_outgoingMessageQueueIsGrowingLargeCallback = WTF::move(callback);
+    Locker locker { m_outgoingMessagesLock };
+    m_outgoingMessageQueueIsGrowingLargeCallback = Box<OutgoingMessageQueueIsGrowingLargeCallback>::create(WTF::move(callback));
 }
 
 bool Connection::open(Client& client, SerialFunctionDispatcher& dispatcher)
@@ -524,7 +525,10 @@ void Connection::invalidate()
         return;
     assertIsCurrent(dispatcher());
     m_client = nullptr;
-    m_outgoingMessageQueueIsGrowingLargeCallback = nullptr;
+    {
+        Locker locker { m_outgoingMessagesLock };
+        m_outgoingMessageQueueIsGrowingLargeCallback = nullptr;
+    }
     {
         Locker locker { m_incomingMessagesLock };
         m_syncState = nullptr;
@@ -639,6 +643,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
     bool shouldDispatchMessageSend;
     size_t outgoingMessagesCount;
     bool shouldNotifyOfQueueGrowingLarge;
+    Box<OutgoingMessageQueueIsGrowingLargeCallback> outgoingMessageQueueIsGrowingLargeCallback;
     unsigned maxOutgoingMessageNameCount = 0;
     ASCIILiteral maxOutgoingMessageName;
     {
@@ -648,6 +653,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
         outgoingMessagesCount = m_outgoingMessages.size();
         shouldNotifyOfQueueGrowingLarge = m_outgoingMessageQueueIsGrowingLargeCallback && outgoingMessagesCount > largeOutgoingMessageQueueCountThreshold && (MonotonicTime::now() - m_lastOutgoingMessageQueueIsGrowingLargeCallbackCallTime) >= largeOutgoingMessageQueueTimeThreshold;
         if (shouldNotifyOfQueueGrowingLarge) {
+            outgoingMessageQueueIsGrowingLargeCallback = m_outgoingMessageQueueIsGrowingLargeCallback;
             HashCountedSet<ASCIILiteral> outgoingMessageNameCounts;
             for (auto& encoder : m_outgoingMessages) {
                 auto name = description(encoder->messageName());
@@ -668,7 +674,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
 #else
         RELEASE_LOG_ERROR(IPC, "Connection::sendMessage(): Too many messages (%zu) in the queue, notifying client (most common: %u %" PUBLIC_LOG_STRING " messages)", outgoingMessagesCount, maxOutgoingMessageNameCount, maxOutgoingMessageName.characters());
 #endif
-        m_outgoingMessageQueueIsGrowingLargeCallback();
+        (*outgoingMessageQueueIsGrowingLargeCallback)();
     }
 
     // It's not clear if calling dispatchWithQOS() will do anything if Connection::sendOutgoingMessages() is already running.
@@ -1078,6 +1084,10 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
     if (message->isAsyncReplyMessage()) {
         // Disallow async replies with invalid destinationIDs to be sent
         if (!AtomicObjectIdentifier<AsyncReplyIDType>::isValidIdentifier(message->destinationID())) {
+            // Drop our SyncMessageState reference while still holding m_incomingMessagesLock. Otherwise the
+            // ~SyncMessageState triggered by this last deref would run without the lock and could race with
+            // invalidate() dropping its own reference (both under m_incomingMessagesLock) on the dispatcher thread.
+            syncState = nullptr;
             incomingMessagesLocker.unlockEarly();
             waitForMessagesLocker.unlockEarly();
 #if ENABLE(IPC_TESTING_API)
@@ -1089,6 +1099,13 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
             return;
         }
         if (auto replyHandlerWithDispatcher = takeAsyncReplyHandlerWithDispatcherWithLockHeld(AtomicObjectIdentifier<AsyncReplyIDType>(message->destinationID()))) {
+            // Drop our SyncMessageState reference while still holding m_incomingMessagesLock, before unlocking to
+            // run the reply handler. Otherwise the ~SyncMessageState triggered by this last deref would run without
+            // the lock and could race with invalidate() dropping its own reference on the dispatcher thread.
+            syncState = nullptr;
+            incomingMessagesLocker.unlockEarly();
+            waitForMessagesLocker.unlockEarly();
+
             replyHandlerWithDispatcher(this, message.moveToUniquePtr());
             return;
         }

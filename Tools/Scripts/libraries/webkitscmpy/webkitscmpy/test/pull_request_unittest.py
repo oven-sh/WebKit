@@ -603,6 +603,64 @@ No pre-PR checks to run""")
                 "https://github.example.com/WebKit/WebKit/pull/1\n",
             )
 
+    def test_github_sticky_no_update_title(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            repo.edit_config('webkitscmpy.update-title', 'false')
+
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history'),
+                    path=self.path,
+                ))
+
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(1).title, '[Testing] Creating commits')
+            self.assertEqual(
+                captured.stdout.getvalue(),
+                "Updated 'PR 1 | [Testing] Creating commits'!\n"
+                "https://github.example.com/WebKit/WebKit/pull/1\n",
+            )
+
+    def test_github_sticky_update_title_override(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            repo.edit_config('webkitscmpy.update-title', 'false')
+
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history', '--update-title'),
+                    path=self.path,
+                ))
+
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(1).title, '[Testing] Amending commits')
+            self.assertEqual(
+                captured.stdout.getvalue(),
+                "Updated 'PR 1 | [Testing] Amending commits'!\n"
+                "https://github.example.com/WebKit/WebKit/pull/1\n",
+            )
+
     def test_github_sticky_remote(self):
         with mocks.remote.GitHub(remote='github.example.com/WebKit/WebKit-security') as remote, mocks.local.Git(
             self.path, remote='https://{}'.format(remote.remote),
@@ -1915,7 +1973,7 @@ No pre-PR checks to run""")
         )
 
     def test_update_radar(self):
-        def run(args, substate='Investigate', message=None):
+        def run(commands, substate='Investigate', message=None):
             issues = list(bmocks.ISSUES)
             issues[0] = dict(bmocks.ISSUES[0], substate=substate)
             if message is None:
@@ -1950,34 +2008,49 @@ No pre-PR checks to run""")
                     )
                 ]
 
+                result = None
                 repo.head = repo.commits['eng/pr-branch'][-1]
-                result = program.main(args=args, path=self.path)
+                for args in commands:
+                    result = program.main(args=args, path=self.path)
                 rdar_tracker = next(t for t in Tracker._trackers if isinstance(t, radar.Tracker))
                 return result, rdar_tracker.issue(1).substate
 
         # on by default: Investigate → Review
-        result, substate = run(('pull-request', '--no-history'))
+        result, substate = run([('pull-request', '--no-history')])
         self.assertEqual(0, result)
         self.assertEqual('Review', substate)
 
         # on by default: Fix → Review
-        result, substate = run(('pull-request', '--no-history'), substate='Fix')
+        result, substate = run([('pull-request', '--no-history')], substate='Fix')
         self.assertEqual(0, result)
         self.assertEqual('Review', substate)
 
+        # draft PR: Investigate → Fix
+        result, substate = run([('pull-request', '--no-history', '--draft')])
+        self.assertEqual(0, result)
+        self.assertEqual('Fix', substate)
+
+        # existing draft PR re-pushed without --draft: still → Fix
+        result, substate = run([
+            ('pull-request', '--no-history', '--draft'),
+            ('pull-request', '--no-history'),
+        ])
+        self.assertEqual(0, result)
+        self.assertEqual('Fix', substate)
+
         # --no-update-radar: no change
-        result, substate = run(('pull-request', '--no-history', '--no-update-radar'))
+        result, substate = run([('pull-request', '--no-history', '--no-update-radar')])
         self.assertEqual(0, result)
         self.assertEqual('Investigate', substate)
 
         # substate not Investigate or Fix: no change
-        result, substate = run(('pull-request', '--no-history'), substate='Screen')
+        result, substate = run([('pull-request', '--no-history')], substate='Screen')
         self.assertEqual(0, result)
         self.assertEqual('Screen', substate)
 
         # new radar: no change
         result, substate = run(
-            ('pull-request', '--no-history'),
+            [('pull-request', '--no-history')],
             substate='Screen',
             message='[Testing] Existing commit\nbugs.example.com/show_bug.cgi?id=1\n'
         )

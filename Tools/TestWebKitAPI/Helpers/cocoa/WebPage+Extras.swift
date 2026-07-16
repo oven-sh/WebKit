@@ -28,6 +28,7 @@ import Foundation
 import WebKit_Private.WKPreferencesPrivate
 import WebKit_Private.WKWebViewPrivateForTesting
 import WebKit_Private.WKWebViewPrivate
+public import WebKit_Private._WKFrameTreeNode
 public import struct Swift.String
 private import TestWebKitAPILibrary.Helpers.cocoa.TestWKWebView
 
@@ -73,6 +74,14 @@ extension WebPage {
         try await backingWebView._getRenderTreeAsString()
     }
 
+    /// The hyperbolic elastic coefficient the main-frame scrolling node latched for its most recent
+    /// gesture, which depends on the scroll source.
+    ///
+    /// - Returns: The latched rubberband hyperbolic coefficient.
+    public func rubberbandHyperbolicCoefficient() -> Double {
+        backingWebView._rubberbandHyperbolicCoefficientForTesting
+    }
+
     /// Inserts text into the web page.
     ///
     /// - Parameter text: The text to insert.
@@ -83,6 +92,13 @@ extension WebPage {
         backingWebView.textInputContentView.insertText(text)
         #endif
         await waitForNextPresentationUpdate()
+    }
+
+    /// The main frame tree node of this page.
+    public var mainFrame: _WKFrameTreeNode? {
+        get async {
+            await backingWebView._frames()
+        }
     }
 
     /// Perform the specified edit command on the webpage, optionally with an argument provided to the command.
@@ -96,6 +112,15 @@ extension WebPage {
     }
 
     #if os(macOS)
+
+    /// Determines if the specified point is located above a visible scrollbar.
+    ///
+    /// - Parameter locationInView: The point in view coordinates to test.
+    /// - Returns: `true` if the point is over a scrollbar; `false` otherwise.
+    public func isPointInScrollbar(locationInView: NSPoint) -> Bool {
+        backingWebView.isPoint(inScrollbar: locationInView)
+    }
+
     /// Sends a left mouse-down NSEvent to the web view at the given location.
     ///
     /// - Parameter location: The location in window coordinates.
@@ -155,6 +180,26 @@ extension WebPage {
         backingWebView.rightMouseUp(with: mouseEvent(.rightMouseUp, at: location, clickCount: 1, pressure: 0))
     }
 
+    /// Synthesizes a user-driven trackpad-driven scroll gesture and delivers it to the web view.
+    ///
+    /// - Parameters:
+    ///   - location: The location in window coordinates to scroll at.
+    ///   - delta: The scroll delta in pixels (positive `y` scrolls the content up).
+    public func scrollWheel(at location: NSPoint, delta: CGSize) {
+        let beganPhaseDelta = CGSize(
+            width: Int(delta.width.rounded(.awayFromZero)).signum(),
+            height: Int(delta.height.rounded(.awayFromZero)).signum()
+        )
+
+        let changedPhaseDelta = CGSize(
+            width: delta.width - beganPhaseDelta.width,
+            height: delta.height - beganPhaseDelta.height
+        )
+        backingWebView.scrollWheel(with: scrollWheelEvent(at: location, delta: beganPhaseDelta, phase: .began, momentumPhase: .none))
+        backingWebView.scrollWheel(with: scrollWheelEvent(at: location, delta: changedPhaseDelta, phase: .changed, momentumPhase: .none))
+        backingWebView.scrollWheel(with: scrollWheelEvent(at: location, delta: .zero, phase: .ended, momentumPhase: .none))
+    }
+
     /// Suspends until WebKit has processed all pending mouse events delivered to this page.
     public func waitForPendingMouseEvents() async {
         await withCheckedContinuation { continuation in
@@ -197,6 +242,44 @@ extension WebPage {
             )
         else {
             preconditionFailure("Could not create NSEvent.")
+        }
+
+        return event
+    }
+
+    private func scrollWheelEvent(
+        at location: NSPoint,
+        delta: CGSize,
+        phase: CGScrollPhase,
+        momentumPhase: CGMomentumScrollPhase
+    ) -> NSEvent {
+        guard let window = unsafe backingWebView.window else {
+            preconditionFailure("Could not create scroll NSEvent because there is no NSWindow.")
+        }
+
+        guard
+            let cgEvent = CGEvent(
+                scrollWheelEvent2Source: nil,
+                units: .pixel,
+                wheelCount: 2,
+                wheel1: Int32(delta.height),
+                wheel2: Int32(delta.width),
+                wheel3: 0
+            )
+        else {
+            preconditionFailure("Could not create CGEvent for scroll.")
+        }
+
+        cgEvent.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+        cgEvent.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(momentumPhase.rawValue))
+
+        // CGEvent locations are in flipped, global screen coordinates.
+        let locationInScreen = window.convertPoint(toScreen: location)
+        let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? 0
+        cgEvent.location = CGPoint(x: locationInScreen.x, y: primaryScreenHeight - locationInScreen.y)
+
+        guard let event = NSEvent(cgEvent: cgEvent) else {
+            preconditionFailure("Could not create scroll NSEvent.")
         }
 
         return event

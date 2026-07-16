@@ -396,6 +396,7 @@ public:
     virtual void recomputeAriaRole() { }
     virtual AccessibilityRole ariaRoleAttribute() const { return AccessibilityRole::Unknown; }
     bool hasExplicitGenericRole() const { return ariaRoleAttribute() == AccessibilityRole::Generic; }
+    bool hasExplicitGroupRole() const final { return ariaRoleAttribute() == AccessibilityRole::Group; }
     bool hasImplicitGenericRole() const { return role() == AccessibilityRole::Generic && !hasExplicitGenericRole(); }
     bool ariaRoleHasPresentationalChildren() const;
     bool inheritsPresentationalRole() const override { return false; }
@@ -553,6 +554,7 @@ public:
     RenderView* topRenderer() const;
     virtual ScrollView* scrollView() const { return nullptr; }
     unsigned ariaLevel() const final;
+    unsigned computedHeadingLevel() const final;
     String language() const final;
     // 1-based, to match the aria-level spec.
     bool isInlineText() const final;

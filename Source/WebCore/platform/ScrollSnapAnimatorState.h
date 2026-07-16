@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -104,6 +104,15 @@ private:
     Vector<SnapOffset<LayoutUnit>> currentlySnappedOffsetsForAxis(ScrollEventAxis) const;
     HashSet<NodeIdentifier> currentlySnappedBoxes(const Vector<SnapOffset<LayoutUnit>>& horizontalOffsets, const Vector<SnapOffset<LayoutUnit>>& verticalOffsets) const;
 
+    // This axis's snap target among the boxes aligned at the active offset, per
+    // https://drafts.csswg.org/css-scroll-snap/#multiple-aligned-snap-areas (focused, targeted,
+    // innermost, area aligned in both axes, then first in tree order).
+    std::optional<NodeIdentifier> selectSnapTargetForAxis(ScrollEventAxis) const;
+
+    // The snap areas aligned at this axis's active offset with enclosing ancestors removed, in tree
+    // order — the per-axis candidate list after the spec's ancestor-removal step.
+    Vector<size_t, 1> innermostAlignedAreaIndicesForAxis(ScrollEventAxis) const;
+
     bool setNearestScrollSnapIndexForAxisAndOffsetInternal(ScrollEventAxis, ScrollOffset, const ScrollExtents&, float pageScale);
     void updateCurrentlySnappedBoxes();
 
@@ -124,6 +133,8 @@ private:
     std::optional<unsigned> m_activeSnapIndexX;
     std::optional<unsigned> m_activeSnapIndexY;
     HashSet<NodeIdentifier> m_currentlySnappedBoxes;
+    Markable<NodeIdentifier> m_currentSnapTargetForHorizontalAxis;
+    Markable<NodeIdentifier> m_currentSnapTargetForVerticalAxis;
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const ScrollSnapAnimatorState&);

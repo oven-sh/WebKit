@@ -3046,7 +3046,7 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
         repaintEntireCanvas = true;
     } else {
         auto clipBounds = c->clipBounds();
-        if ((clipBounds.isEmpty() || (!textRect.isEmpty() && !clipBounds.intersects(enclosingIntRect(textRect)))) && !shouldDrawShadows())
+        if ((clipBounds.isEmpty() || (!useMaxWidth && !textRect.isEmpty() && !clipBounds.intersects(enclosingIntRect(textRect)))) && !shouldDrawShadows())
             return;
         drawText(*c, location);
     }
@@ -3066,7 +3066,11 @@ Ref<TextMetrics> CanvasRenderingContext2DBase::measureTextInternal(const TextRun
 {
     Ref<TextMetrics> metrics = TextMetrics::create();
 
-    auto& font = *fontProxy();
+    auto* fontProxy = this->fontProxy();
+    if (!fontProxy->realized())
+        return metrics;
+
+    auto& font = *fontProxy;
     auto& fontMetrics = font.metricsOfPrimaryFont();
 
     GlyphOverflow glyphOverflow;
@@ -3269,7 +3273,7 @@ void CanvasRenderingContext2DBase::setLetterSpacing(const String& letterSpacing)
     auto parserContext = CSSParserContext { HTMLStandardMode };
     auto parserState = CSS::PropertyParserState { .context = parserContext, .pool = protect(canvasBase())->scriptExecutionContext()->cssValuePool() };
 
-    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<>>::consume(tokenRange, parserState);
+    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(tokenRange, parserState);
     if (!parsedValue)
         return;
     auto rawLength = parsedValue->raw();
@@ -3297,7 +3301,7 @@ void CanvasRenderingContext2DBase::setWordSpacing(const String& wordSpacing)
     auto parserContext = CSSParserContext { HTMLStandardMode };
     auto parserState = CSS::PropertyParserState { .context = parserContext, .pool = protect(canvasBase())->scriptExecutionContext()->cssValuePool() };
 
-    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<>>::consume(tokenRange, parserState);
+    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(tokenRange, parserState);
     if (!parsedValue)
         return;
     auto rawLength = parsedValue->raw();

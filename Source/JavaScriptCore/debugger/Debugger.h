@@ -42,6 +42,7 @@ class CallFrame;
 class CodeBlock;
 class DebuggerCallFrame;
 class Exception;
+class InternalFunction;
 class JSAsyncFunctionGenerator;
 class JSGlobalObject;
 class Microtask;
@@ -169,6 +170,8 @@ public:
 
     void didCreateNativeExecutable(NativeExecutable&);
     void willCallNativeExecutable(CallFrame*);
+    void didCreateInternalFunction(InternalFunction&);
+    void willCallInternalFunction(InternalFunction&);
 
     class Client {
     public:
@@ -207,6 +210,8 @@ public:
 
         virtual void didCreateNativeExecutable(NativeExecutable&) { }
         virtual void willCallNativeExecutable(CallFrame*) { }
+        virtual void didCreateInternalFunction(InternalFunction&) { }
+        virtual void willCallInternalFunction(InternalFunction&) { }
 
         virtual void willEnter(CallFrame*) { }
 

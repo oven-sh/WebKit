@@ -550,6 +550,20 @@ AnimatedImageAsyncDecodingEnabled:
     WebCore:
       default: true
 
+AnimationTriggersEnabled:
+  type: bool
+  status: testable
+  category: animation
+  humanReadableName: "Animation Triggers"
+  humanReadableDescription: "Support for the timeline-trigger, animation-trigger and event-trigger CSS properties"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 AnonymousBlockGenerationDisabled:
   type: bool
   status: unstable
@@ -699,6 +713,19 @@ AsyncOverflowScrollingEnabled:
     WebCore:
       default: false
 
+AsyncStackTraceEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "Async Stack Traces"
+  humanReadableDescription: "Enable async stack traces"
+  webcoreBinding: none
+  jscOptionName: useAsyncStackTrace
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
+
 AsynchronousSpellCheckingEnabled:
   type: bool
   status: embedder
@@ -836,6 +863,21 @@ AzimuthAngleEnabled:
       "PLATFORM(COCOA)": true
       default: false
 
+BackForwardCacheWithMediaEnabled:
+  type: bool
+  status: stable
+  category: media
+  humanReadableName: "Back/Forward Cache with Media"
+  humanReadableDescription: "Enable back/forward cache for pages with media"
+  condition: PLATFORM(WPE)
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
 BackgroundFetchAPIEnabled:
   type: bool
   status: testable
@@ -906,6 +948,19 @@ BidiContentAwarePasteEnabled:
     WebKitLegacy:
       default: false
     WebCore:
+      default: false
+
+BigIntMathMethodsEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "BigInt Math Methods"
+  humanReadableDescription: "Enable BigInt math helper methods."
+  webcoreBinding: none
+  jscOptionName: useBigIntMathMethods
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
       default: false
 
 BlobFileAccessEnforcementEnabled:
@@ -1031,16 +1086,16 @@ CSSAppearanceBaseEnabled:
 CSSAttrSubstitutionFunctionEnabled:
   type: bool
   category: css
-  status: preview
+  status: stable
   humanReadableName: "CSS attr() substitution function"
   humanReadableDescription: "Enable CSS Values 5 attr() arbitrary substitution function"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSAxisRelativePositionKeywordsEnabled:
   type: bool
@@ -1059,16 +1114,16 @@ CSSAxisRelativePositionKeywordsEnabled:
 CSSCalcMixEnabled:
   type: bool
   category: css
-  status: preview
+  status: stable
   humanReadableName: "CSS calc-mix()"
   humanReadableDescription: "Enable support for CSS calc-mix()"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSColorLayersEnabled:
   type: bool
@@ -1168,6 +1223,20 @@ CSSFieldSizingEnabled:
     WebCore:
       default: true
 
+CSSFontFaceMetricOverrideDescriptorsEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS @font-face metric override descriptors"
+  humanReadableDescription: "Enable CSS @font-face metric override descriptors"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSFontSynthesisStyleObliqueOnlyEnabled:
   type: bool
   status: preview
@@ -1199,17 +1268,17 @@ CSSFontVariantEmojiEnabled:
 
 CSSFunctionAtRuleEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS @function"
   humanReadableDescription: "Enable CSS @function rule"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSIdentFunctionEnabled:
   type: bool
@@ -1224,6 +1293,20 @@ CSSIdentFunctionEnabled:
       default: false
     WebCore:
       default: false
+
+CSSIfFunctionEnabled:
+  type: bool
+  category: css
+  status: stable
+  humanReadableName: "CSS if() function"
+  humanReadableDescription: "Enable CSS Values 5 if() conditional substitution function"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
 
 CSSInputSecurityEnabled:
   type: bool
@@ -1273,6 +1356,20 @@ CSSLineFitEdgeEnabled:
   category: css
   humanReadableName: "CSS line-fit-edge"
   humanReadableDescription: "Enable CSS line-fit-edge"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+CSSMarkerContentEnabled:
+  type: bool
+  status: preview
+  category: css
+  humanReadableName: "CSS content on ::marker"
+  humanReadableDescription: "Enable the content property on the ::marker pseudo-element"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -1496,6 +1593,21 @@ CSSSelectorJITCompilerEnabled:
     WebCore:
       default: true
 
+CSSTextDecorationInsetEnabled:
+  type: bool
+  status: preview
+  category: css
+  webcoreOnChange: setNeedsRecalcStyleInAllFrames
+  humanReadableName: "CSS text-decoration-inset property"
+  humanReadableDescription: "Enable the text-decoration-inset property, defined in CSS Text Decoration 4"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSTextDecorationLineErrorValues:
   type: bool
   status: stable
@@ -1668,6 +1780,21 @@ CSSUnprefixedBackdropFilterEnabled:
       "ENABLE(UNPREFIXED_BACKDROP_FILTER)": true
       default: false
 
+CSSWhiteSpaceTrimEnabled:
+  type: bool
+  status: preview
+  category: css
+  webcoreOnChange: setNeedsRecalcStyleInAllFrames
+  humanReadableName: "CSS white-space-trim property"
+  humanReadableDescription: "Enable the property white-space-trim, defined in CSS Text 4"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSWordBreakAutoPhraseEnabled:
   type: bool
   status: preview
@@ -1675,6 +1802,21 @@ CSSWordBreakAutoPhraseEnabled:
   webcoreOnChange: setNeedsRecalcStyleInAllFrames
   humanReadableName: "word-break: auto-phrase enabled"
   humanReadableDescription: "Enables the auto-phrase value of the word-break CSS property"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+CSSWrapInsideEnabled:
+  type: bool
+  status: preview
+  category: css
+  webcoreOnChange: setNeedsRecalcStyleInAllFrames
+  humanReadableName: "CSS wrap-inside property"
+  humanReadableDescription: "Enable the wrap-inside property, defined in CSS Text 4"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -1900,17 +2042,17 @@ ClearSiteDataHTTPHeaderEnabled:
 
 CloseWatcherEnabled:
   type: bool
-  status: preview
+  status: stable
   category: html
   humanReadableName: "Close Watcher API"
   humanReadableDescription: "Enable Close Watcher API including dialog closedby attribute"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 ColorFilterEnabled:
   type: bool
@@ -2357,7 +2499,7 @@ DataTransferItemsEnabled:
     WebKitLegacy:
       default: true
     WebKit:
-      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)": true
       default: false
     WebCore:
       default: false
@@ -2546,20 +2688,6 @@ DeviceWidth:
       default: 0
     WebCore:
       default: 0
-
-DevolvableWidgetsEnabled:
-  type: bool
-  status: stable
-  category: css
-  humanReadableName: "CSS Devolvable Widgets"
-  humanReadableDescription: "Enable support for devolvable widgets"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
 
 DiagnosticLoggingEnabled:
   type: bool
@@ -2927,6 +3055,19 @@ ExperimentalSandboxEnabled:
     WebKit:
       default: false
 
+ExplicitResourceManagementEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "Explicit Resource Management"
+  humanReadableDescription: "Enable explicit resource management builtins and syntax."
+  webcoreBinding: none
+  jscOptionName: useExplicitResourceManagement
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
 ExposeCaptureDevicesAfterCaptureEnabled:
   type: bool
   status: internal
@@ -3035,17 +3176,6 @@ ExtensibleSSOEnabled:
     WebKit:
       default: true
 
-FTPDirectoryTemplatePath:
-  type: String
-  status: embedder
-  defaultValue:
-    WebKitLegacy:
-      default: '""_str'
-    WebKit:
-      default: '""_str'
-    WebCore:
-      default: '""_str'
-
 FTPEnabled:
   type: bool
   status: developer
@@ -3134,7 +3264,7 @@ FileSystemEnabled:
 
 FileSystemHandleSerializationEnabled:
   type: bool
-  status: preview
+  status: stable
   category: dom
   humanReadableName: "File System Handle Serialization"
   humanReadableDescription: "Enable FileSystemHandle for postMessage() and structuredClone()"
@@ -3142,8 +3272,10 @@ FileSystemHandleSerializationEnabled:
     WebKitLegacy:
       default: false
     WebKit:
+      "PLATFORM(COCOA)" : true
       default: false
     WebCore:
+      "PLATFORM(COCOA)" : true
       default: false
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
@@ -3172,6 +3304,21 @@ FilterLinkDecorationByDefaultEnabled:
   category: networking
   humanReadableName: "Filter Link Decoration"
   humanReadableDescription: "Enable Filtering Link Decoration"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+FindInVideoEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Find in Video"
+  humanReadableDescription: "Include video subtitle/caption cues in Find-in-Page results"
+  condition: ENABLE(VIDEO)
   defaultValue:
     WebKitLegacy:
       default: false
@@ -3251,17 +3398,6 @@ ForceEnhancedSecurity:
   humanReadableDescription: "Force all navigations to use Enhanced Security"
   webcoreBinding: none
   exposed: [ WebKit ]
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: false
-    WebCore:
-      default: false
-
-ForceFTPDirectoryListings:
-  type: bool
-  status: embedder
   defaultValue:
     WebKitLegacy:
       default: false
@@ -3689,6 +3825,20 @@ HardwareAccelerationEnabled:
     WebCore:
       default: true
 
+HeadingOffsetEnabled:
+  type: bool
+  status: stable
+  category: html
+  humanReadableName: "HTML headingoffset & headingreset attributes"
+  humanReadableDescription: "Enable HTML headingoffset & headingreset attribute support"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
 HiddenPageCSSAnimationSuspensionEnabled:
   type: bool
   status: embedder
@@ -3964,6 +4114,19 @@ ImageControlsEnabled:
     WebCore:
       default: false
 
+ImportDeferEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "Import Defer"
+  humanReadableDescription: "Enable deferred module import."
+  webcoreBinding: none
+  jscOptionName: useImportDefer
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
 InactiveMediaCaptureStreamRepromptIntervalInMinutes:
   type: double
   status: embedder
@@ -4056,16 +4219,16 @@ IndexedDBAPIEnabled:
 IndexedDBGetAllRecordsAndGetAllOptionsEnabled:
   type: bool
   category: dom
-  status: preview
+  status: stable
   humanReadableName: "IndexedDB getAllRecords() API and IDBGetAllOptions"
   humanReadableDescription: "Enable the getAllRecords() API on IDBObjectStore/IDBIndex and enable getAll()/getAllKeys() to accept IDBGetAllOptions and support direction"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 IndexedDBSQLiteMemoryBackingStoreEnabled:
   type: bool
@@ -4178,6 +4341,7 @@ InputTypeMonthEnabled:
   status: embedder
   humanReadableName: "Month Input"
   humanReadableDescription: "Enable input elements of type month"
+  inspectorOverride: true
   defaultValue:
     WebKitLegacy:
       "PLATFORM(IOS_FAMILY)": true
@@ -4210,6 +4374,7 @@ InputTypeWeekEnabled:
   status: embedder
   humanReadableName: "Week Input"
   humanReadableDescription: "Enable input elements of type week"
+  inspectorOverride: true
   defaultValue:
     WebKitLegacy:
       default: false
@@ -4371,6 +4536,19 @@ InterruptVideoOnPageVisibilityChangeEnabled:
     WebCore:
       default: false
 
+IntlEraMonthcodeEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "Intl Era and Month Code"
+  humanReadableDescription: "Enable Intl.Era-monthcode proposal."
+  webcoreBinding: none
+  jscOptionName: useIntlEraMonthcode
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
 InvisibleAutoplayNotPermitted:
   type: bool
   status: embedder
@@ -4507,6 +4685,58 @@ IsThirdPartyCookieBlockingDisabled:
     WebCore:
       default: false
 
+IteratorChunkingEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "Iterator Chunking"
+  humanReadableDescription: "Expose the Iterator.prototype.chunks and Iterator.prototype.windows methods."
+  webcoreBinding: none
+  jscOptionName: useIteratorChunking
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
+IteratorIncludesEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "Iterator Includes"
+  humanReadableDescription: "Expose the Iterator.includes method."
+  webcoreBinding: none
+  jscOptionName: useIteratorIncludes
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
+IteratorJoinEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "Iterator Join"
+  humanReadableDescription: "Expose the Iterator.prototype.join method."
+  webcoreBinding: none
+  jscOptionName: useIteratorJoin
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
+IteratorSequencingEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "Iterator Sequencing"
+  humanReadableDescription: "Expose the Iterator.concat method."
+  webcoreBinding: none
+  jscOptionName: useIteratorSequencing
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
+
 # FIXME: This is not relevent for WebKitLegacy, so should be excluded from WebKitLegacy entirely (though we should still set the default value to false when initializing settings).
 ItpDebugModeEnabled:
   type: bool
@@ -4521,6 +4751,32 @@ ItpDebugModeEnabled:
       default: false
     WebCore:
       default: false
+
+JSONSourceTextAccessEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "JSON Source Text Access"
+  humanReadableDescription: "Expose JSON source text access feature."
+  webcoreBinding: none
+  jscOptionName: useJSONSourceTextAccess
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
+
+JSPIEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "JavaScript Promise Integration"
+  humanReadableDescription: "Enable the implementation of JavaScript Promise Integration."
+  webcoreBinding: none
+  jscOptionName: useJSPI
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
 
 JavaScriptCanAccessClipboard:
   type: bool
@@ -5830,6 +6086,19 @@ MomentumScrollingAnimatorEnabled:
     WebCore:
       default: false
 
+MoreCurrencyDisplayChoicesEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "More Currency Display Choices"
+  humanReadableDescription: "Enable more currencyDisplay choices for Intl.NumberFormat"
+  webcoreBinding: none
+  jscOptionName: useMoreCurrencyDisplayChoices
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
 MouseEventsSimulationEnabled:
   type: bool
   status: internal
@@ -6187,17 +6456,17 @@ OriginAPIEnabled:
 
 OriginAgentClusterEnabled:
   type: bool
-  status: preview
+  status: stable
   category: security
   humanReadableName: "Origin-Agent-Cluster header"
   humanReadableDescription: "Support for the Origin-Agent-Cluster HTTP response header and window.originAgentCluster getter"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 OverlayRegionsEnabled:
   type: bool
@@ -6642,6 +6911,19 @@ ProcessSwapOnCrossSiteNavigationEnabled:
       "PLATFORM(PLAYSTATION)": false
       default: true
 
+PromiseIsPromiseEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "Promise.isPromise"
+  humanReadableDescription: "Expose the Promise.isPromise method."
+  webcoreBinding: none
+  jscOptionName: usePromiseIsPromise
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
 PropagateDamagingInformation:
    type: bool
    status: testable
@@ -6825,7 +7107,7 @@ RemoveBackgroundEnabled:
   category: dom
   humanReadableName: "Remove Background"
   humanReadableDescription: "Enable Remove Background"
-  condition: ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+  condition: ENABLE(IMAGE_ANALYSIS)
   exposed: [ WebKit ]
   defaultValue:
     WebCore:
@@ -7038,6 +7320,20 @@ SKAttributionEnabled:
     WebKit:
       default: true
 
+SVGExternalResourcesEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "SVG external resources"
+  humanReadableDescription: "Enable referencing SVG resources (paint servers, etc.) via external or data: URLs"
+  defaultValue:
+    WebCore:
+      default: false
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+
 SWVPDecodersAlwaysEnabled:
   type: bool
   status: internal
@@ -7212,21 +7508,7 @@ ScriptTrackingPrivacyNetworkRequestBlockingEnabled:
   type: bool
   status: internal
   humanReadableName: "Script Tracking Privacy Network Requests Blocking"
-  humanReadableDescription: "Block network requests made from tracking scripts"
-  exposed: [ WebKit ]
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
-
-ScriptTrackingPrivacyNetworkRequestBlockingLatchEnabled:
-  type: bool
-  status: internal
-  humanReadableName: "Script Tracking Privacy Network Requests Blocking Latch"
-  humanReadableDescription: "Block multiple network requests made to tracking domains"
+  humanReadableDescription: "Block network requests to known tracking domains"
   exposed: [ WebKit ]
   defaultValue:
     WebKitLegacy:
@@ -7368,6 +7650,20 @@ ScrollingPerformanceTestingEnabled:
   exposed: [ WebKit ]
   defaultValue:
     WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+SearchInputResultsAttributeEnabled:
+  type: bool
+  status: embedder
+  humanReadableName: "<input type=search> results=N attribute"
+  humanReadableDescription: "Enable the legacy WebKit-only ::-webkit-search-results-button saved-searches dropdown opt-in"
+  defaultValue:
+    WebKitLegacy:
+      "PLATFORM(COCOA)" : WebKit::defaultSearchInputResultsAttributeEnabled()
       default: false
     WebKit:
       default: false
@@ -7556,6 +7852,19 @@ SessionStorageEnabled:
       default: false
   sharedPreferenceForWebProcess: true
 
+ShadowRealmEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "ShadowRealm"
+  humanReadableDescription: "Expose the ShadowRealm object."
+  webcoreBinding: none
+  jscOptionName: useShadowRealm
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
 ShadowRootReferenceTargetEnabled:
   type: bool
   status: testable
@@ -7664,20 +7973,6 @@ ShouldDecidePolicyBeforeLoadingQuickLookPreview:
       default: false
     WebCore:
       default: false
-
-ShouldDeferAsynchronousScriptsUntilAfterDocumentLoadOrFirstPaint:
-  type: bool
-  status: stable
-  category: dom
-  humanReadableName: "Defer async scripts until DOMContentLoaded or first-paint"
-  humanReadableDescription: "Defer async scripts until DOMContentLoaded or first-paint"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
 
 ShouldDisplayCaptions:
   type: bool
@@ -7915,6 +8210,7 @@ ShrinksStandaloneImagesToFit:
 SiteIsolationEnabled:
   type: bool
   status: unstable
+  defaultsOverridable: true
   category: security
   humanReadableName: "Site Isolation"
   humanReadableDescription: "Put cross-origin iframes in a different process"
@@ -8044,17 +8340,17 @@ SpeakerSelectionRequiresUserGesture:
 
 SpeculationRulesPrefetchEnabled:
   type: bool
-  status: preview
+  status: stable
   category: html
   humanReadableName: "SpeculationRules prefetch"
   humanReadableDescription: "SpeculationRules prefetch"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
   richJavaScript: true
@@ -8209,20 +8505,6 @@ StorageBlockingPolicy:
       default: StorageBlockingPolicy::AllowAll
   sharedPreferenceForWebProcess: true
 
-SubpixelInlineLayoutEnabled:
-  type: bool
-  status: stable
-  category: css
-  humanReadableName: "Subpixels in inline layout (in block direction)"
-  humanReadableDescription: "Subpixels in line layout (in block direction)"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
-
 SupportHDRCompositorTonemappingEnabled:
   type: bool
   status: testable
@@ -8360,6 +8642,19 @@ TelephoneNumberParsingEnabled:
       default: false
     WebCore:
       default: false
+
+TemporalEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "Temporal"
+  humanReadableDescription: "Expose the Temporal object."
+  webcoreBinding: none
+  jscOptionName: useTemporal
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
 
 TemporaryTileCohortRetentionEnabled:
   type: bool
@@ -8608,7 +8903,7 @@ ThreadedTimeBasedAnimationsAtHighFrameRateEnabled:
 
 ThreadedTimeBasedAnimationsEnabled:
   type: bool
-  status: preview
+  status: stable
   category: animation
   humanReadableName: "Threaded Time-based Animations"
   humanReadableDescription: "Run qualifying time-based animations on a separate thread"
@@ -8617,9 +8912,9 @@ ThreadedTimeBasedAnimationsEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 # FIXME: This is not relevent for WebKitLegacy, so should be excluded from WebKitLegacy entirely.
 TiledScrollingIndicatorVisible:
@@ -9379,6 +9674,110 @@ WantsBalancedSetDefersLoadingBehavior:
     WebKit:
       default: false
     WebCore:
+      default: false
+
+WasmJSStringBuiltinsEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "WebAssembly JS String Builtins"
+  humanReadableDescription: "Enable the implementation of the JS String Builtins proposal."
+  webcoreBinding: none
+  jscOptionName: useWasmJSStringBuiltins
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
+
+WasmMemory64Enabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "WebAssembly Memory64"
+  humanReadableDescription: "Allow the Memory64 proposal for WebAssembly. This feature is currently only supported in the IPInt tier."
+  webcoreBinding: none
+  jscOptionName: useWasmMemory64
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
+WasmMemoryToBufferAPIsEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "WebAssembly Memory to Buffer APIs"
+  humanReadableDescription: "Enable the toFixedLengthBuffer() and toResizableBuffer() Wasm Memory.prototype functions."
+  webcoreBinding: none
+  jscOptionName: useWasmMemoryToBufferAPIs
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
+
+WasmMultiMemoryEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "WebAssembly Multi-Memory"
+  humanReadableDescription: "Allow wasm code to access multiple linear memories"
+  webcoreBinding: none
+  jscOptionName: useWasmMultiMemory
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
+WasmRelaxedSIMDEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "WebAssembly Relaxed SIMD"
+  humanReadableDescription: "Allow the relaxed simd instructions and types from the wasm relaxed simd spec."
+  webcoreBinding: none
+  jscOptionName: useWasmRelaxedSIMD
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
+
+WasmSIMDEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "WebAssembly SIMD"
+  humanReadableDescription: "Allow the new simd instructions and types from the wasm simd spec."
+  webcoreBinding: none
+  jscOptionName: useWasmSIMD
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
+
+WasmTailCallsEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "WebAssembly Tail Calls"
+  humanReadableDescription: "Allow the new instructions from the wasm tail calls spec."
+  webcoreBinding: none
+  jscOptionName: useWasmTailCalls
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
+
+WasmWideArithmeticEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "WebAssembly Wide Arithmetic"
+  humanReadableDescription: "Allow the wide arithmetic instructions from the wasm wide-arithmetic spec."
+  webcoreBinding: none
+  jscOptionName: useWasmWideArithmetic
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
       default: false
 
 WebAPIStatisticsEnabled:
@@ -10142,7 +10541,7 @@ WebSocketEnabled:
 
 WebTransportEnabled:
   type: bool
-  status: Web_transport_status
+  status: developer
   category: networking
   humanReadableName: "WebTransport"
   humanReadableDescription: "Enable WebTransport"
@@ -10150,9 +10549,9 @@ WebTransportEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      default: true
+      default: WebKit::defaultWebTransportEnabled()
     WebCore:
-      default: true
+      default: false
   sharedPreferenceForWebProcess: true
   richJavaScript: true
   disableInLockdownMode: true
@@ -10333,31 +10732,31 @@ WirelessPlaybackTargetAPIEnabled:
 
 WorkerInSharedWorkerEnabled:
   type: bool
-  status: preview
+  status: stable
   category: dom
   humanReadableName: "Worker in SharedWorker"
   humanReadableDescription: "Allow creating dedicated workers from shared workers"
   defaultValue:
     WebCore:
-      default: false
+      default: true
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
 
 WorkerParseErrorReportingEnabled:
   type: bool
-  status: preview
+  status: stable
   category: dom
   humanReadableName: "Worker parse error reporting"
   humanReadableDescription: "Report worker script parse errors on the Worker object"
   defaultValue:
     WebCore:
-      default: false
+      default: true
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
 
 WriteRichTextDataWhenCopyingOrDragging:
   type: bool

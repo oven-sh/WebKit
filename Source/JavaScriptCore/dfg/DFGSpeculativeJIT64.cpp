@@ -1740,7 +1740,7 @@ void SpeculativeJIT::compileRegExpStringIteratorNext(Node* node)
     GPRReg scratchGPR = scratch.gpr();
 
     // FIXME: Detach iterator advancement and result object creation from this node so that the iterator allocation can be sunk.
-    speculateCellType(node->child1(), iteratorGPR, SpecObjectOther, JSRegExpStringIteratorType);
+    speculateCellTypeWithoutTypeFiltering(node->child1(), iteratorGPR, JSRegExpStringIteratorType);
 
     flushRegisters();
     callOperation(operationRegExpStringIteratorNext, JSValueRegs(valueGPR), LinkableConstant::globalObject(*this, node), iteratorGPR);
@@ -4299,6 +4299,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case RegExpExecSticky: {
+        compileRegExpExecSticky(node);
+        break;
+    }
+
     case RegExpMatchFastGlobal: {
         compileRegExpMatchFastGlobal(node);
         break;
@@ -4993,11 +4998,6 @@ void SpeculativeJIT::compile(Node* node)
 
     case CallCustomAccessorSetter: {
         compileCallCustomAccessorSetter(node);
-        break;
-    }
-
-    case TryGetById: {
-        compileGetById(node, AccessType::TryGetById);
         break;
     }
 
@@ -5847,6 +5847,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case StringTrim: {
+        compileStringTrim(node);
+        break;
+    }
+
     case NumberToStringWithRadix: {
         compileNumberToStringWithRadix(node);
         break;
@@ -5988,6 +5993,10 @@ void SpeculativeJIT::compile(Node* node)
 
     case SetFunctionName:
         compileSetFunctionName(node);
+        break;
+
+    case EnqueueAsyncGeneratorDriver:
+        compileEnqueueAsyncGeneratorDriver(node);
         break;
 
     case InById:
@@ -7289,17 +7298,12 @@ void SpeculativeJIT::compileGetByValWithThis(Node* node)
 
 void SpeculativeJIT::compileGetById(Node* node, AccessType accessType)
 {
-    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect || accessType == AccessType::TryGetById);
+    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect);
     CacheType cacheType = CacheType::GetByIdSelf;
-    if (accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect) {
-        if (node->cacheableIdentifier() == vm().propertyNames->length)
-            cacheType = CacheType::ArrayLength;
-        else {
-            if (accessType == AccessType::GetById)
-                cacheType = node->cacheType();
-        }
-    } else
-        cacheType = CacheType::GetByIdPrototype;
+    if (node->cacheableIdentifier() == vm().propertyNames->length)
+        cacheType = CacheType::ArrayLength;
+    else if (accessType == AccessType::GetById)
+        cacheType = node->cacheType();
 
     switch (node->child1().useKind()) {
     case CellUse: {

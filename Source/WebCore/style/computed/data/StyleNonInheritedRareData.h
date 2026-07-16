@@ -71,7 +71,9 @@
 #include <WebCore/StyleShapeImageThreshold.h>
 #include <WebCore/StyleShapeMargin.h>
 #include <WebCore/StyleShapeOutside.h>
+#include <WebCore/StyleTextDecorationInset.h>
 #include <WebCore/StyleTextDecorationThickness.h>
+#include <WebCore/StyleTimelineTriggers.h>
 #include <WebCore/StyleTouchAction.h>
 #include <WebCore/StyleTranslate.h>
 #include <WebCore/StyleViewTimelines.h>
@@ -80,6 +82,7 @@
 #include <WebCore/StyleWebKitBoxReflect.h>
 #include <WebCore/StyleWebKitInitialLetter.h>
 #include <WebCore/StyleWebKitLineClamp.h>
+#include <WebCore/StyleWhiteSpaceTrim.h>
 #include <WebCore/StyleWillChange.h>
 #include <WebCore/StyleZoom.h>
 #include <wtf/DataRef.h>
@@ -181,12 +184,16 @@ public:
     OffsetRotate offsetRotate;
 
     Color textDecorationColor;
+    TextDecorationInset textDecorationInset;
     TextDecorationThickness textDecorationThickness;
 
     ScrollTimelines scrollTimelines;
     ViewTimelines viewTimelines;
 
     NameScope timelineScope;
+
+    NameScope triggerScope;
+    TimelineTriggers timelineTriggers;
 
     ScrollbarGutter scrollbarGutter;
     Style::ContainerType containerType;
@@ -236,6 +243,7 @@ public:
     PREFERRED_TYPE(PositionTryOrder) unsigned positionTryOrder : 3;
     PREFERRED_TYPE(PositionVisibility) unsigned positionVisibility : 5;
     PREFERRED_TYPE(FieldSizing) unsigned fieldSizing : 1;
+    PREFERRED_TYPE(WrapInside) unsigned wrapInside : 1;
     PREFERRED_TYPE(bool) unsigned nativeAppearanceDisabled : 1;
 #if HAVE(CORE_MATERIAL)
     PREFERRED_TYPE(AppleVisualEffect) unsigned appleVisualEffect : 5;
@@ -249,6 +257,7 @@ public:
     PREFERRED_TYPE(Contain) unsigned contain : 5;
     PREFERRED_TYPE(OverflowContinue) unsigned overflowContinue : 1;
     PREFERRED_TYPE(ScrollSnapStop) unsigned scrollSnapStop : 1;
+    PREFERRED_TYPE(WhiteSpaceTrim) unsigned whiteSpaceTrim : 3;
 
 private:
     NonInheritedRareData();

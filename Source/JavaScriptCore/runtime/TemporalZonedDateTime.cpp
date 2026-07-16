@@ -89,14 +89,10 @@ TemporalZonedDateTime::TemporalZonedDateTime(VM& vm, Structure* structure, ISO86
 {
 }
 
-// https://tc39.es/proposal-temporal/#sec-temporal-getoffsetnanosecondsfor
 std::optional<int64_t> TemporalZonedDateTime::getOffsetNanoseconds(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Step 1: If timeZone is an offset timezone, return offsetMinutes × 60 × 10⁹.
-    // Step 2: Return GetNamedTimeZoneOffsetNanoseconds(timeZone, epochNanoseconds).
-    // (Both paths are handled by TemporalCore::getOffsetNanosecondsFor.)
     auto result = TemporalCore::getOffsetNanosecondsFor(m_timeZone, exactTime());
     if (!result) [[unlikely]] {
         if (result.error().kind == TemporalErrorKind::RangeError)
@@ -109,15 +105,20 @@ std::optional<int64_t> TemporalZonedDateTime::getOffsetNanoseconds(JSGlobalObjec
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-getisodatetimefor
-void TemporalZonedDateTime::getLocalDateAndTime(JSGlobalObject* globalObject, ISO8601::PlainDate& outDate, ISO8601::PlainTime& outTime) const
+// Thin JS-side wrapper: forwards TemporalResult errors to the caller's ThrowScope.
+ISO8601::PlainDateTime TemporalZonedDateTime::getLocalDateTime(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Step 1: Let offsetNanoseconds be ! GetOffsetNanosecondsFor(timeZone, epochNanoseconds).
-    auto offsetOpt = getOffsetNanoseconds(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    // Step 2: Return BalanceISODateTime(epochNanoseconds + offsetNanoseconds).
-    TemporalCore::exactTimeToLocalDateAndTime(exactTime(), *offsetOpt, outDate, outTime);
+    auto result = TemporalCore::getISODateTimeFor(m_timeZone, exactTime());
+    if (!result) [[unlikely]] {
+        if (result.error().kind == TemporalErrorKind::RangeError)
+            throwRangeError(globalObject, scope, result.error().message);
+        else
+            throwTypeError(globalObject, scope, result.error().message);
+        return { };
+    }
+    return *result;
 }
 
 // Internal helper: extracts the runtime TimeZone handle from an already-parsed TimeZoneRecord.
@@ -474,9 +475,8 @@ TemporalZonedDateTime* TemporalZonedDateTime::from(JSGlobalObject* globalObject,
             return nullptr;
     }
 
-    // Steps 10-12 (unified epilogue — both string and property-bag paths converge here).
-    // Steps 6-9 are encoded in args: offsetBehaviour (steps 6-8) and inlineOffsetNs (steps 9-10).
-    // Step 10: epochNanoseconds = ? InterpretISODateTimeOffset(...).
+    // Steps 6-10 are encoded in args: offsetBehaviour (Steps 6-8: exact/wall/option) and inlineOffsetNs (Steps 9-10: default 0, or ParseDateTimeUTCOffset(offsetString) when option).
+    // Step 11: epochNanoseconds = ? InterpretISODateTimeOffset(...).
     auto exactTimeResult = TemporalCore::interpretISODateTimeOffset(
         args->plainDate, args->plainTime, args->useStartOfDay,
         args->offsetBehaviour, args->offsetOpt, args->inlineOffsetNs,

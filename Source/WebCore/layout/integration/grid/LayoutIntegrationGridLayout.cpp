@@ -180,7 +180,7 @@ void GridLayout::updateFormattingContextRootRenderer(const Layout::GridLayoutCon
 
     if (layoutConstraints.blockAxis.scenario() != Layout::AxisConstraint::FreeSpaceScenario::Definite) {
         auto& rowSizes = usedTrackSizes.rowSizes;
-        auto usedRowGutter = Layout::GridFormattingContext::usedGapValue(renderGrid->style().rowGap());
+        auto usedRowGutter = Layout::GridFormattingContext::usedGapValue(renderGrid->style().rowGap(), renderGrid->style());
         auto blockContentSize = std::reduce(rowSizes.begin(), rowSizes.end()) + Layout::GridLayoutUtils::totalGuttersSize(rowSizes.size(), usedRowGutter);
         renderGrid->setBorderBoxHeight(blockContentSize + renderGrid->borderAndPaddingLogicalHeight());
     } else
@@ -188,6 +188,15 @@ void GridLayout::updateFormattingContextRootRenderer(const Layout::GridLayoutCon
 
     for (CheckedRef layoutBox : formattingContextBoxes(gridBox()))
         orderIteratorPopulator.collectChild(CheckedRef { downcast<RenderBox>(*layoutBox->rendererForIntegration()) });
+}
+
+// updateFormattingContextRootRenderer may mutate bits of RenderGrid to properly reflect
+// the state and result of layout since certain clients may query this information
+// (see RenderGrid::paintChildren). Undo this state if we are falling back to legacy
+// so that we run a full layout.
+void GridLayout::invalidateFormattingContextRootRenderer(RenderGrid& renderGrid)
+{
+    renderGrid.currentGrid().setNeedsItemsPlacement(true);
 }
 
 std::pair<LayoutUnit, LayoutUnit> GridLayout::computeIntrinsicWidths()
@@ -204,6 +213,40 @@ void GridLayout::layout()
     updateGridItemRenderers();
     updateFormattingContextRootRenderer(gridLayoutConstraints, usedTrackSizes);
     layoutOutOfFlowBoxes(usedTrackSizes);
+
+    CheckedRef renderGrid = gridBoxRenderer();
+    renderGrid->updateLogicalHeight();
+    updateOverflow(renderGrid);
+
+    // https://drafts.csswg.org/css-grid-2/#resolved-track-list
+    renderGrid->setResolvedTrackSizes(WTF::move(usedTrackSizes.columnSizes), WTF::move(usedTrackSizes.rowSizes));
+}
+
+void GridLayout::updateOverflow(RenderGrid& renderGrid)
+{
+    ASSERT(renderGrid.style().isOverflowVisible());
+    renderGrid.clearOverflow();
+
+    CheckedRef layoutState = this->layoutState();
+    auto& gridBoxGeometry = layoutState->geometryForBox(gridBox());
+    auto contentBoxOffset = LayoutSize { gridBoxGeometry.contentBoxLeft(), gridBoxGeometry.contentBoxTop() };
+
+    auto gridItemsOverflowRect = LayoutRect { };
+    for (CheckedRef layoutBox : formattingContextBoxes(gridBox())) {
+        LayoutRect gridItemBorderBoxRect = Layout::BoxGeometry::borderBoxRect(layoutState->geometryForBox(layoutBox));
+        gridItemBorderBoxRect.move(contentBoxOffset);
+        gridItemsOverflowRect.unite(gridItemBorderBoxRect);
+
+        CheckedRef gridItemRenderer = downcast<RenderBox>(*layoutBox->rendererForIntegration());
+        if (gridItemRenderer->hasVisualOverflow()) {
+            auto gridItemVisualOverflowRect = gridItemRenderer->visualOverflowRectForPropagation(renderGrid.writingMode());
+            gridItemVisualOverflowRect.move(gridItemRenderer->locationOffset());
+            gridItemsOverflowRect.unite(gridItemVisualOverflowRect);
+        }
+    }
+
+    if (!renderGrid.borderBoxRect().contains(gridItemsOverflowRect))
+        renderGrid.addVisualOverflow(gridItemsOverflowRect);
 }
 
 void GridLayout::layoutOutOfFlowBoxes(const Layout::UsedTrackSizes& usedTrackSizes)
@@ -234,7 +277,7 @@ void GridLayout::populateGridPositionsForOutOfFlowLayout(const Layout::UsedTrack
     auto populate = [&](Style::GridTrackSizingDirection direction) {
         bool isColumns = direction == Style::GridTrackSizingDirection::Columns;
         auto& trackSizes = isColumns ? usedTrackSizes.columnSizes : usedTrackSizes.rowSizes;
-        auto gap = Layout::GridFormattingContext::usedGapValue(isColumns ? renderGrid->style().columnGap() : renderGrid->style().rowGap());
+        auto gap = Layout::GridFormattingContext::usedGapValue(isColumns ? renderGrid->style().columnGap() : renderGrid->style().rowGap(), renderGrid->style());
         auto borderAndPadding = isColumns ? renderGrid->borderAndPaddingStart() : renderGrid->borderAndPaddingBefore();
         auto numberOfTracks = trackSizes.size();
         bool hasMultipleTracks = numberOfTracks > 1;

@@ -159,7 +159,7 @@ class EmptyContextMenuClient final : public ContextMenuClient {
     bool NODELETE supportsLookUpInImages() final { return false; }
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     bool NODELETE supportsCopySubject() final { return false; }
 #endif
 };
@@ -319,6 +319,9 @@ private:
     void NODELETE clearUndoRedoOperations() final { }
 
     DOMPasteAccessResponse NODELETE requestDOMPasteAccess(DOMPasteAccessCategory, FrameIdentifier, const String&) final { return DOMPasteAccessResponse::DeniedForGesture; }
+#if PLATFORM(COCOA)
+    HashMap<FrameIdentifier, AttributedString> collectAttributedStringsForRemoteFrames(FrameIdentifier, const Vector<FrameIdentifier>&) final { return { }; }
+#endif
 
     bool NODELETE canCopyCut(LocalFrame*, bool defaultValue) const final { return defaultValue; }
     bool NODELETE canPaste(LocalFrame*, bool defaultValue) const final { return defaultValue; }
@@ -497,7 +500,7 @@ public:
         return adoptRef(*new EmptyCredentialRequestCoordinatorClient);
     }
 
-    void showDigitalCredentialsChooser(DigitalCredentialsRawRequests&&, const DigitalCredentialsRequestData&, CompletionHandler<void(Expected<DigitalCredentialsResponseData, ExceptionData>&&)>&& completionHandler)
+    void showDigitalCredentialsChooser(std::optional<FrameIdentifier>, DigitalCredentialsRawRequests&&, const DigitalCredentialsRequestData&, CompletionHandler<void(Expected<DigitalCredentialsResponseData, ExceptionData>&&)>&& completionHandler)
     {
         callOnMainThread([completionHandler = WTF::move(completionHandler)]() mutable {
             completionHandler(makeUnexpected(ExceptionData { ExceptionCode::NotSupportedError, "Empty client."_s }));
@@ -1069,7 +1072,11 @@ void EmptyFrameLoaderClient::shouldGoToHistoryItemAsync(HistoryItem&, Completion
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void EmptyFrameLoaderClient::dispatchGoToBackForwardItemAtIndex(int, FrameLoadType)
+void EmptyFrameLoaderClient::dispatchGoToBackForwardItemAtIndex(int)
+{
+}
+
+void EmptyFrameLoaderClient::dispatchEnqueueHistoryTraversalDelta(int)
 {
 }
 

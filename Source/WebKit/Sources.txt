@@ -215,6 +215,7 @@ NetworkProcess/webtransport/NetworkTransportSession.cpp
 NetworkProcess/webtransport/NetworkTransportStream.cpp
 
 Platform/IPC/DaemonCoders.cpp
+Platform/IPC/FormDataReference.cpp
 
 Shared/ActivityAssertion.cpp
 Shared/AuxiliaryProcess.cpp
@@ -433,6 +434,7 @@ UIProcess/RemotePageVideoPresentationManagerProxy.cpp
 UIProcess/RemotePageWebAuthenticatorCoordinatorProxy.cpp
 UIProcess/RemotePageWebDeviceOrientationUpdateProviderProxy.cpp
 UIProcess/ResponsivenessTimer.cpp
+UIProcess/SessionHistoryTraversalQueue.cpp
 UIProcess/SpeechRecognitionRemoteRealtimeMediaSource.cpp
 UIProcess/SpeechRecognitionRemoteRealtimeMediaSourceManager.cpp
 UIProcess/SpeechRecognitionServer.cpp
@@ -504,7 +506,6 @@ UIProcess/API/APIHTTPCookieStore.cpp
 UIProcess/API/APIHitTestResult.cpp
 UIProcess/API/APIInspectorConfiguration.cpp
 UIProcess/API/APIInspectorExtension.cpp
-UIProcess/API/APIJSBuffer.cpp
 UIProcess/API/APIJSHandle.cpp
 UIProcess/API/APINavigation.cpp
 UIProcess/API/APINavigationData.cpp
@@ -589,6 +590,7 @@ UIProcess/Authentication/WebProtectionSpace.cpp
 
 UIProcess/Automation/BidiBrowserAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiBrowsingContextAgent.cpp @no-unify-when(bundle<=8)
+UIProcess/Automation/BidiDigitalCredentialsAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiPermissionsAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiScriptAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiSessionAgent.cpp @no-unify-when(bundle<=8)
@@ -628,6 +630,7 @@ UIProcess/Model/ModelProcessProxy.cpp
 
 UIProcess/Inspector/FrameInspectorTargetProxy.cpp
 UIProcess/Inspector/InspectorTargetProxy.cpp @cost:3
+UIProcess/Inspector/InspectorCookieStoreHelpers.cpp
 UIProcess/Inspector/PageInspectorTargetProxy.cpp @cost:3
 UIProcess/Inspector/RemoteWebInspectorUIProxy.cpp
 UIProcess/Inspector/WasmDebuggerDebuggable.cpp
@@ -639,6 +642,7 @@ UIProcess/Inspector/WebPageDebuggable.cpp
 UIProcess/Inspector/WebPageInspectorController.cpp
 
 UIProcess/Inspector/Agents/InspectorBrowserAgent.cpp
+UIProcess/Inspector/Agents/InspectorStorageAgent.cpp
 UIProcess/Inspector/Agents/ProxyingNetworkAgent.cpp
 UIProcess/Inspector/Agents/ProxyingPageAgent.cpp
 
@@ -1025,6 +1029,7 @@ ServiceWorkerDownloadTaskMessageReceiver.cpp
 WebBroadcastChannelRegistryMessageReceiver.cpp
 WebFrameMessageReceiver.cpp
 WebFrameProxyMessageReceiver.cpp @cost:10
+WebFrameProxyFromNetworkProcessMessageReceiver.cpp @cost:10
 WebLockRegistryProxyMessageReceiver.cpp @cost:10
 WebPermissionControllerMessageReceiver.cpp
 WebPermissionControllerProxyMessageReceiver.cpp @cost:10

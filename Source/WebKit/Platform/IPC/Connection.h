@@ -40,6 +40,7 @@
 #include <new>
 #include <tuple>
 #include <wtf/Assertions.h>
+#include <wtf/Box.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
@@ -463,7 +464,7 @@ public:
     template<typename PC = NoOpPromiseConverter, typename T, typename Promise = typename ConvertedPromise<PC, typename T::Promise>::Type, typename RawValue>
     Ref<Promise> sendWithPromisedReply(T&& message, const ObjectIdentifierGenericBase<RawValue>& destinationID, OptionSet<SendOption> sendOptions = { })
     {
-        return sendWithPromisedReply<PC, T, Promise>(WTF::move(message), destinationID.toUInt64(), sendOptions);
+        return sendWithPromisedReply<PC, T, Promise>(std::forward<T>(message), destinationID.toUInt64(), sendOptions);
     }
 
     // Thread-safe.
@@ -689,7 +690,7 @@ private:
     bool m_onlySendMessagesAsDispatchWhenWaitingForSyncReplyWhenProcessingSuchAMessage { false };
     bool m_shouldExitOnSyncMessageSendFailure { false };
     DidCloseOnConnectionWorkQueueCallback m_didCloseOnConnectionWorkQueueCallback { nullptr };
-    OutgoingMessageQueueIsGrowingLargeCallback m_outgoingMessageQueueIsGrowingLargeCallback;
+    Box<OutgoingMessageQueueIsGrowingLargeCallback> m_outgoingMessageQueueIsGrowingLargeCallback WTF_GUARDED_BY_LOCK(m_outgoingMessagesLock);
     MonotonicTime m_lastOutgoingMessageQueueIsGrowingLargeCallbackCallTime WTF_GUARDED_BY_LOCK(m_outgoingMessagesLock);
 
     const Ref<WorkQueue> m_connectionQueue;
@@ -997,7 +998,7 @@ template<typename T, typename C>
 CompletionHandler<void(Connection*, Decoder*)> Connection::makeAsyncReplyCompletionHandler(C&& completionHandler, ThreadLikeAssertion callThread)
 {
     return {
-        [completionHandler = WTF::move(completionHandler)] (Connection* connection, Decoder* decoder) mutable {
+        [completionHandler = std::forward<C>(completionHandler)] (Connection* connection, Decoder* decoder) mutable {
             if (decoder && decoder->isValid()) {
                 ASSERT(connection);
                 callReply<T>(connection, *decoder, WTF::move(completionHandler));

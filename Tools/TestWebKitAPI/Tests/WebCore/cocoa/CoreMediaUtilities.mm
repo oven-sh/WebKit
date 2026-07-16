@@ -131,6 +131,158 @@ TEST(CMUtilities, GetKeyIDsWithActiveGigacage)
     }
 }
 
+// Verifies that when a video format description carries both encryption extensions and
+// SampleDescriptionExtensionAtoms, each atom is emitted exactly once (as CFData) rather than
+// as a CFArray of duplicate entries.
+TEST(CMUtilities, EncryptedVideoExtensionAtomsRoundTripDoesNotDuplicate)
+{
+    constexpr uint8_t tencData[] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+    };
+    constexpr uint8_t dvcCBuf[] = { 0x01, 0x02, 0x03 };
+    constexpr uint8_t hvcCBuf[] = { 0x0a, 0x0b };
+
+    WebCore::EncryptionDataCollection encryptionCollection {
+        .encryptionData = { WebCore::EncryptionBoxType::CommonEncryptionTrackEncryptionBox, WebCore::SharedBuffer::create(std::span<const uint8_t> { tencData, sizeof(tencData) }) },
+    };
+
+    auto videoInfo = WebCore::VideoInfo::create({
+        { .codecName = WebCore::FourCC('hvc1'), .encryptionData = WTF::move(encryptionCollection) }, {
+            .size = { 640, 480 },
+            .displaySize = { 640, 480 },
+            .extensionAtoms = {
+                { WebCore::FourCC('dvcC'), WebCore::SharedBuffer::create(std::span<const uint8_t> { dvcCBuf, sizeof(dvcCBuf) }) },
+                { WebCore::FourCC('hvcC'), WebCore::SharedBuffer::create(std::span<const uint8_t> { hvcCBuf, sizeof(hvcCBuf) }) },
+            },
+        }
+    });
+
+    auto desc = WebCore::createFormatDescriptionFromTrackInfo(videoInfo);
+    ASSERT_TRUE(desc);
+
+    RetainPtr atomDict = dynamic_cf_cast<CFDictionaryRef>(PAL::CMFormatDescriptionGetExtension(desc.get(), PAL::kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
+    ASSERT_TRUE(atomDict);
+    ASSERT_EQ(CFDictionaryGetCount(atomDict.get()), 2);
+
+    auto dvcCValue = CFDictionaryGetValue(atomDict.get(), CFSTR("dvcC"));
+    ASSERT_TRUE(dvcCValue);
+    EXPECT_EQ(CFGetTypeID(dvcCValue), CFDataGetTypeID());
+    ASSERT_EQ(CFDataGetLength(checked_cf_cast<CFDataRef>(dvcCValue)), 3);
+
+    auto hvcCValue = CFDictionaryGetValue(atomDict.get(), CFSTR("hvcC"));
+    ASSERT_TRUE(hvcCValue);
+    EXPECT_EQ(CFGetTypeID(hvcCValue), CFDataGetTypeID());
+    ASSERT_EQ(CFDataGetLength(checked_cf_cast<CFDataRef>(hvcCValue)), 2);
+}
+
+// Verifies the WebContent -> GPU-process round trip: parsing an encrypted CMFormatDescription
+// into a VideoInfo and rebuilding a CMFormatDescription from it preserves each extension atom
+// exactly once.
+TEST(CMUtilities, EncryptedVideoFormatDescriptionRoundTripDoesNotDuplicateAtoms)
+{
+    constexpr uint8_t tencData[] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+    };
+    constexpr uint8_t dvcCBuf[] = { 0x01, 0x02, 0x03 };
+    constexpr uint8_t hvcCBuf[] = { 0x0a, 0x0b };
+    RetainPtr tencCFData = adoptCF(CFDataCreate(kCFAllocatorDefault, tencData, sizeof(tencData)));
+    NSData *dvcCData = [NSData dataWithBytes:dvcCBuf length:sizeof(dvcCBuf)];
+    NSData *hvcCData = [NSData dataWithBytes:hvcCBuf length:sizeof(hvcCBuf)];
+    NSDictionary *extensions = @{
+        (__bridge NSString *)PAL::kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: @{ @"dvcC": dvcCData, @"hvcC": hvcCData },
+        @"CommonEncryptionTrackEncryptionBox": (__bridge NSData *)tencCFData.get(),
+    };
+    CMFormatDescriptionRef rawDesc = nullptr;
+    PAL::CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_HEVC, 1920, 1080, (__bridge CFDictionaryRef)extensions, &rawDesc);
+    RetainPtr desc = adoptCF(rawDesc);
+    ASSERT_TRUE(desc.get());
+
+    RefPtr videoInfo = WebCore::createVideoInfoFromFormatDescription(desc.get());
+    ASSERT_TRUE(videoInfo);
+    ASSERT_TRUE(videoInfo->encryptionDataCollection());
+    EXPECT_TRUE(videoInfo->encryptionDataCollection()->encryptionInitDatas.isEmpty());
+    ASSERT_EQ(videoInfo->extensionAtoms().size(), 2u);
+
+    RetainPtr reconstructed = WebCore::createFormatDescriptionFromTrackInfo(*videoInfo);
+    ASSERT_TRUE(reconstructed);
+
+    RetainPtr atomDict = dynamic_cf_cast<CFDictionaryRef>(PAL::CMFormatDescriptionGetExtension(reconstructed.get(), PAL::kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
+    ASSERT_TRUE(atomDict);
+    ASSERT_EQ(CFDictionaryGetCount(atomDict.get()), 2);
+
+    auto dvcCValue = CFDictionaryGetValue(atomDict.get(), CFSTR("dvcC"));
+    ASSERT_TRUE(dvcCValue);
+    EXPECT_EQ(CFGetTypeID(dvcCValue), CFDataGetTypeID());
+    ASSERT_EQ(CFDataGetLength(checked_cf_cast<CFDataRef>(dvcCValue)), 3);
+
+    auto hvcCValue = CFDictionaryGetValue(atomDict.get(), CFSTR("hvcC"));
+    ASSERT_TRUE(hvcCValue);
+    EXPECT_EQ(CFGetTypeID(hvcCValue), CFDataGetTypeID());
+    ASSERT_EQ(CFDataGetLength(checked_cf_cast<CFDataRef>(hvcCValue)), 2);
+}
+
+// Verifies that a genuinely duplicated FourCC (CFArray of multiple distinct atoms sharing
+// one key, e.g. 'avcC') round-trips through an encrypted video CMFormatDescription without
+// being merged into any other atom's data or multiplied beyond its original count.
+TEST(CMUtilities, EncryptedVideoWithDuplicateFourCCAtomsRoundTrip)
+{
+    constexpr uint8_t tencData[] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+    };
+    constexpr uint8_t avcC1[] = { 0xAA };
+    constexpr uint8_t avcC2[] = { 0xBB, 0xBB };
+    constexpr uint8_t hvcCBuf[] = { 0x0a, 0x0b };
+    RetainPtr tencCFData = adoptCF(CFDataCreate(kCFAllocatorDefault, tencData, sizeof(tencData)));
+    NSData *avcCData1 = [NSData dataWithBytes:avcC1 length:sizeof(avcC1)];
+    NSData *avcCData2 = [NSData dataWithBytes:avcC2 length:sizeof(avcC2)];
+    NSData *hvcCData = [NSData dataWithBytes:hvcCBuf length:sizeof(hvcCBuf)];
+    NSDictionary *extensions = @{
+        (__bridge NSString *)PAL::kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: @{ @"avcC": @[avcCData1, avcCData2], @"hvcC": hvcCData },
+        @"CommonEncryptionTrackEncryptionBox": (__bridge NSData *)tencCFData.get(),
+    };
+    CMFormatDescriptionRef rawDesc = nullptr;
+    PAL::CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_HEVC, 1920, 1080, (__bridge CFDictionaryRef)extensions, &rawDesc);
+    RetainPtr desc = adoptCF(rawDesc);
+    ASSERT_TRUE(desc.get());
+
+    RefPtr videoInfo = WebCore::createVideoInfoFromFormatDescription(desc.get());
+    ASSERT_TRUE(videoInfo);
+    ASSERT_TRUE(videoInfo->encryptionDataCollection());
+    EXPECT_TRUE(videoInfo->encryptionDataCollection()->encryptionInitDatas.isEmpty());
+    ASSERT_EQ(videoInfo->extensionAtoms().size(), 3u);
+
+    RetainPtr reconstructed = WebCore::createFormatDescriptionFromTrackInfo(*videoInfo);
+    ASSERT_TRUE(reconstructed.get());
+
+    RetainPtr atomDict = dynamic_cf_cast<CFDictionaryRef>(PAL::CMFormatDescriptionGetExtension(reconstructed.get(), PAL::kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
+    ASSERT_TRUE(atomDict);
+    ASSERT_EQ(CFDictionaryGetCount(atomDict.get()), 2);
+
+    auto avcCValue = CFDictionaryGetValue(atomDict.get(), CFSTR("avcC"));
+    ASSERT_TRUE(avcCValue);
+    EXPECT_EQ(CFGetTypeID(avcCValue), CFArrayGetTypeID());
+    auto avcCArray = checked_cf_cast<CFArrayRef>(avcCValue);
+    ASSERT_EQ(CFArrayGetCount(avcCArray), 2);
+    auto avcCEntry0 = checked_cf_cast<CFDataRef>(CFArrayGetValueAtIndex(avcCArray, 0));
+    ASSERT_EQ(CFDataGetLength(avcCEntry0), 1);
+    EXPECT_EQ(CFDataGetBytePtr(avcCEntry0)[0], 0xAA);
+    auto avcCEntry1 = checked_cf_cast<CFDataRef>(CFArrayGetValueAtIndex(avcCArray, 1));
+    ASSERT_EQ(CFDataGetLength(avcCEntry1), 2);
+    EXPECT_EQ(CFDataGetBytePtr(avcCEntry1)[0], 0xBB);
+    EXPECT_EQ(CFDataGetBytePtr(avcCEntry1)[1], 0xBB);
+
+    auto hvcCValue = CFDictionaryGetValue(atomDict.get(), CFSTR("hvcC"));
+    ASSERT_TRUE(hvcCValue);
+    EXPECT_EQ(CFGetTypeID(hvcCValue), CFDataGetTypeID());
+    ASSERT_EQ(CFDataGetLength(checked_cf_cast<CFDataRef>(hvcCValue)), 2);
+}
+
 #endif // ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
 
 // Creates a CMFormatDescriptionRef embedding the given color space via createFormatDescriptionFromTrackInfo.

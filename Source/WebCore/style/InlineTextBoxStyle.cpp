@@ -36,15 +36,9 @@
 #include "RenderElementInlines.h"
 #include "RenderInline.h"
 #include "RenderObjectInlines.h"
-#include "Settings.h"
+#include "StyleTextDecorationInset.h"
 
 namespace WebCore {
-
-// This is temporary and will be removed when subpixel inline layout is enabled.
-static float snap(float value, const RenderObject& renderer)
-{
-    return renderer.settings().subpixelInlineLayoutEnabled() ? value : roundf(value);
-}
 
 struct UnderlineOffsetArguments {
     const Style::ComputedStyle& lineStyle;
@@ -130,7 +124,7 @@ static float computedUnderlineOffset(const UnderlineOffsetArguments& context, co
     auto& fontMetrics = styleToUse.metricsOfPrimaryFont();
     auto ascent = [&]() -> float {
         if (renderer)
-            return snap(fontMetrics.ascent(), *renderer);
+            return fontMetrics.ascent();
         // This is temporary until after subpixel layout in enabled -used only for ink overflow.
         return fontMetrics.intAscent();
     };
@@ -229,6 +223,18 @@ static InkOverflowForDecorations computedInkOverflowForDecorations(const Style::
         overflowResult.extendTop(-rect.y());
         overflowResult.extendBottom(rect.maxY() - height);
     }
+
+    // text-decoration-inset moves the decoration's endpoints along the inline axis. A negative inset
+    // extends the line outward past the text box, so that overhang must be part of the ink overflow
+    // or it gets clipped / left unrepainted. A positive inset (and 'auto', which only trims inward)
+    // needs no expansion. We expand both inline edges by the largest outward amount, which is a safe
+    // superset regardless of writing mode / direction.
+    auto outwardInset = std::max<float>({ 0.f, -lineStyle.textDecorationInset().resolvedStart(lineStyle, 0.f), -lineStyle.textDecorationInset().resolvedEnd(lineStyle, 0.f) });
+    if (outwardInset) {
+        overflowResult.left() = std::max(overflowResult.left(), LayoutUnit(ceilf(outwardInset)));
+        overflowResult.right() = std::max(overflowResult.right(), LayoutUnit(ceilf(outwardInset)));
+    }
+
     return overflowResult;
 }
 
@@ -322,7 +328,7 @@ float underlineOffsetForTextBoxPainting(const InlineIterator::InlineBox& inlineB
         underlineOffset = computedUnderlineOffset({ style, TextUnderlinePositionUnder { inlineBoxContentBoxHeight(inlineBox), textRunOffset } }, &renderer);
     }
 
-    return underlineOffset - (!inlineBox.isRootInlineBox() ? snap(textBoxEdgeAdjustmentForUnderline(style), inlineBox.renderer()) : 0.f);
+    return underlineOffset - (!inlineBox.isRootInlineBox() ? textBoxEdgeAdjustmentForUnderline(style) : 0.f);
 }
 
 float overlineOffsetForTextBoxPainting(const InlineIterator::InlineBox& inlineBox, const Style::ComputedStyle& style)

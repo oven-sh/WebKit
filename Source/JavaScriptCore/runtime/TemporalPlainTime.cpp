@@ -516,9 +516,7 @@ TemporalPlainTime* TemporalPlainTime::from(JSGlobalObject* globalObject, JSValue
         // Return ! CreateTemporalTime(isoDateTime.[[Time]]).
         if (itemValue.inherits<TemporalZonedDateTime>()) {
             auto* zdt = uncheckedDowncast<TemporalZonedDateTime>(itemValue);
-            ISO8601::PlainDate date;
-            ISO8601::PlainTime time;
-            zdt->getLocalDateAndTime(globalObject, date, time);
+            auto [date, time] = zdt->getLocalDateTime(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             toTemporalOverflow(globalObject, optionsValue);
             RETURN_IF_EXCEPTION(scope, { });
@@ -643,9 +641,12 @@ ISO8601::PlainTime TemporalPlainTime::with(JSGlobalObject* globalObject, JSObjec
     // Steps 1-2: branding done by caller.
 
     // Step 3: If ? IsPartialTemporalObject(temporalTimeLike) is false, throw TypeError.
-    //   rejectObjectWithCalendarOrTimeZone handles both rejection cases (Temporal.* instance, or calendar/timeZone property).
-    rejectObjectWithCalendarOrTimeZone(globalObject, temporalTimeLike);
+    bool isPartial = isPartialTemporalObject(globalObject, JSValue(temporalTimeLike));
     RETURN_IF_EXCEPTION(scope, { });
+    if (!isPartial) [[unlikely]] {
+        throwTypeError(globalObject, scope, "argument must be a partial Temporal object"_s);
+        return { };
+    }
 
     // Step 4: Let partialTime be ? ToTemporalTimeRecord(temporalTimeLike, ~partial~).
     auto [hourOptional, minuteOptional, secondOptional, millisecondOptional, microsecondOptional, nanosecondOptional] = toPartialTime(globalObject, temporalTimeLike);

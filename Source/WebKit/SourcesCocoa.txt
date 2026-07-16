@@ -190,6 +190,7 @@ Shared/Cocoa/InteractionInformationAtPosition.mm @nonARC
 Shared/Cocoa/InteractionInformationRequest.cpp
 Shared/Cocoa/LibAccessibilitySoftLink.mm @nonARC
 Shared/Cocoa/LoadParametersCocoa.mm @nonARC
+Shared/Cocoa/PathsBlockedForSandboxExtensions.mm @nonARC
 Shared/Cocoa/PDFKitSoftLink.mm @nonARC
 Shared/Cocoa/RevealItem.mm @nonARC
 Shared/Cocoa/SandboxExtensionCocoa.mm @nonARC
@@ -367,13 +368,12 @@ UIProcess/API/Cocoa/WKFrameInfo.mm @nonARC
 UIProcess/API/Cocoa/WKHTTPCookieStore.mm @nonARC
 UIProcess/API/Cocoa/WKImmersiveEnvironment.mm @nonARC
 UIProcess/API/Cocoa/WKJSHandle.mm @nonARC
-UIProcess/API/Cocoa/WKJSScriptingBuffer.mm @nonARC
-UIProcess/API/Cocoa/WKJSSerializedNode.mm @nonARC
 UIProcess/API/Cocoa/WKMenuItemIdentifiers.mm @nonARC
 UIProcess/API/Cocoa/WKNavigation.mm @nonARC
 UIProcess/API/Cocoa/WKNavigationAction.mm @nonARC
 UIProcess/API/Cocoa/WKNavigationData.mm @nonARC
 UIProcess/API/Cocoa/WKNavigationResponse.mm @nonARC
+UIProcess/API/Cocoa/WKDOMNodeSnapshot.mm @nonARC
 UIProcess/API/Cocoa/WKNSURLAuthenticationChallenge.mm @nonARC
 UIProcess/API/Cocoa/WKOpenPanelParameters.mm @nonARC
 UIProcess/API/Cocoa/WKPDFConfiguration.mm @nonARC
@@ -405,6 +405,7 @@ UIProcess/API/Cocoa/WKWebExtensionWindowConfiguration.mm
 UIProcess/API/Cocoa/WKWebsiteDataRecord.mm @nonARC
 UIProcess/API/Cocoa/WKWebsiteDataStore.mm @nonARC
 UIProcess/API/Cocoa/WKWebView.mm @nonARC
+UIProcess/API/Cocoa/WKWebView+TextExtraction.mm @nonARC
 UIProcess/API/Cocoa/WKWebViewTesting.mm @nonARC
 UIProcess/API/Cocoa/WKWebViewConfiguration.mm @nonARC
 UIProcess/API/Cocoa/WKWebpagePreferences.mm @nonARC
@@ -649,6 +650,7 @@ UIProcess/mac/WindowServerConnection.mm @nonARC
 UIProcess/mac/WKFullScreenWindowController.mm @nonARC
 UIProcess/mac/WKImmediateActionController.mm @nonARC
 UIProcess/mac/WKAppKitGestureController.mm @nonARC
+UIProcess/mac/PositionInformationManager.cpp
 UIProcess/mac/WKPrintingView.mm @nonARC
 UIProcess/mac/WKQuickLookPreviewController.mm @nonARC
 UIProcess/mac/WKRevealItemPresenter.mm @nonARC

@@ -79,7 +79,7 @@ std::optional<LayoutUnit> RenderMathMLRow::firstLineBaseline() const
     if (!baselineChild)
         return { };
 
-    auto baseline = settings().subpixelInlineLayoutEnabled() ? baselineChild->marginBefore() + baselineChild->logicalTop() + ascentForChild(*baselineChild) : LayoutUnit(roundf(baselineChild->marginBefore() + baselineChild->logicalTop() + ascentForChild(*baselineChild)));
+    auto baseline = baselineChild->marginBefore() + baselineChild->logicalTop() + ascentForChild(*baselineChild);
     return { baseline };
 }
 
@@ -178,10 +178,10 @@ void RenderMathMLRow::layoutRowItems(LayoutUnit width, LayoutUnit ascent)
         LayoutUnit childVerticalOffset = ascent - ascentForChild(*child);
         LayoutUnit childWidth = child->logicalWidth();
         LayoutUnit childHorizontalOffset = writingMode().isBidiLTR() ? horizontalOffset : width - horizontalOffset - childWidth;
-        auto repaintRect = child->checkForRepaintDuringLayout() ? std::make_optional(child->frameRect()) : std::nullopt;
+        auto repaintRect = child->checkForRepaintDuringLayout() ? std::make_optional(child->borderBoxRectInContainer()) : std::nullopt;
         child->setLocation(LayoutPoint(childHorizontalOffset, childVerticalOffset));
         if (repaintRect) {
-            repaintRect->uniteEvenIfEmpty(child->frameRect());
+            repaintRect->uniteEvenIfEmpty(child->borderBoxRectInContainer());
             repaintRectangle(*repaintRect);
         }
         horizontalOffset += childWidth + child->marginEnd();

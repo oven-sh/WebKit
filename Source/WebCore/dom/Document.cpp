@@ -423,7 +423,6 @@
 #include "DeviceOrientationClientIOS.h"
 #include "DeviceOrientationController.h"
 #include "Geolocation.h"
-#include "Navigator.h"
 #include "NavigatorGeolocation.h"
 #endif
 
@@ -1229,7 +1228,7 @@ void Document::setMarkupUnsafe(const String& markup, OptionSet<ParserContentPoli
 
 ExceptionOr<Ref<Document>> Document::parseHTMLUnsafe(Document& context, Variant<Ref<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(context.contextDocument(), WTF::move(html), "Document parseHTMLUnsafe"_s);
+    auto stringValueHolder = trustedTypeCompliantString(protect(context.contextDocument()), WTF::move(html), "Document parseHTMLUnsafe"_s);
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
 
@@ -2653,10 +2652,11 @@ void Document::forEachMediaElement(NOESCAPE const Function<void(HTMLMediaElement
 Vector<CueMatch> Document::findCueMatches(const String& target, FindOptions options)
 {
     Vector<CueMatch> results;
+    if (!settings().findInVideoEnabled())
+        return results;
     if (target.isEmpty())
         return results;
 
-    // Order this document's media elements by tree position.
     Vector<Ref<HTMLMediaElement>> elements;
     forEachMediaElement([&](HTMLMediaElement& element) {
         if (element.isConnected())
@@ -2678,7 +2678,6 @@ Vector<CueMatch> Document::findCueMatches(const String& target, FindOptions opti
             RefPtr track = tracks->item(i);
             if (!track)
                 continue;
-            // Only search tracks that are currently rendered on screen.
             if (track->mode() != TextTrack::Mode::Showing)
                 continue;
             // Only search tracks whose cues carry text the user reads or hears, skip chapters and metadata tracks.
@@ -2712,6 +2711,14 @@ Vector<CueMatch> Document::findCueMatches(const String& target, FindOptions opti
         std::ranges::stable_sort(results.mutableSubspan(firstMatchForElement), [](auto& a, auto& b) {
             return a.seekTime < b.seekTime;
         });
+
+        // Collapse cues that share a start time
+        MediaTime previousSeekTime = MediaTime::invalidTime();
+        results.removeAllMatching([&previousSeekTime](auto& match) {
+            bool isDuplicate = match.seekTime == previousSeekTime;
+            previousSeekTime = match.seekTime;
+            return isDuplicate;
+        }, firstMatchForElement);
     }
 
     return results;
@@ -3432,9 +3439,10 @@ void Document::pageSizeAndMarginsInPixels(int pageIndex, IntSize& pageSize, int&
             return pageSize;
         },
         [&](const Style::PageSize::Lengths& lengths) -> IntSize {
+            // FIXME: Document why <length> `page-size` ignores `zoom`.
             return {
-                static_cast<int>(lengths.width().resolveZoom(Style::ZoomNeeded { })),
-                static_cast<int>(lengths.height().resolveZoom(Style::ZoomNeeded { })),
+                Style::evaluate<int>(lengths.width(), Style::ZoomFactor::none()),
+                Style::evaluate<int>(lengths.height(), Style::ZoomFactor::none()),
             };
         }
     );
@@ -4562,7 +4570,7 @@ ExceptionOr<void> Document::write(Document* entryDocument, FixedVector<Variant<R
     }
 
     String textString = text.toString();
-    auto stringValueHolder = trustedTypeCompliantString(TrustedType::TrustedHTML, contextDocument(), textString, lineFeed.isEmpty() ? "Document write"_s : "Document writeln"_s);
+    auto stringValueHolder = trustedTypeCompliantString(TrustedType::TrustedHTML, protect(contextDocument()), textString, lineFeed.isEmpty() ? "Document write"_s : "Document writeln"_s);
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
     SegmentedString trustedText(stringValueHolder.releaseReturnValue());
@@ -5709,23 +5717,27 @@ bool Document::canAcceptChild(const Node& newChild, const Node* refChild, Accept
     }
     case NodeType::DocumentType: {
         auto* existingDocType = childrenOfType<DocumentType>(*this).first();
+        if (operation == AcceptChildOperation::ReplaceAll)
+            break;
         if (operation == AcceptChildOperation::Replace) {
             //  parent has a doctype child that is not child, or an element is preceding child.
             if (existingDocType && existingDocType != refChild)
                 return false;
             if (refChild->previousElementSibling())
                 return false;
-        } else {
-            ASSERT(operation == AcceptChildOperation::InsertOrAdd);
-            if (existingDocType)
-                return false;
-            if ((refChild && refChild->previousElementSibling()) || (!refChild && firstElementChild()))
-                return false;
+            break;
         }
+        ASSERT(operation == AcceptChildOperation::InsertOrAdd);
+        if (existingDocType)
+            return false;
+        if ((refChild && refChild->previousElementSibling()) || (!refChild && firstElementChild()))
+            return false;
         break;
     }
     case NodeType::Element: {
         auto* existingElementChild = firstElementChild();
+        if (operation == AcceptChildOperation::ReplaceAll)
+            break;
         if (operation == AcceptChildOperation::Replace) {
             if (existingElementChild && existingElementChild != refChild)
                 return false;
@@ -5733,14 +5745,14 @@ bool Document::canAcceptChild(const Node& newChild, const Node* refChild, Accept
                 if (is<DocumentType>(*child))
                     return false;
             }
-        } else {
-            ASSERT(operation == AcceptChildOperation::InsertOrAdd);
-            if (existingElementChild)
+            break;
+        }
+        ASSERT(operation == AcceptChildOperation::InsertOrAdd);
+        if (existingElementChild)
+            return false;
+        for (auto* child = refChild; child; child = child->nextSibling()) {
+            if (is<DocumentType>(*child))
                 return false;
-            for (auto* child = refChild; child; child = child->nextSibling()) {
-                if (is<DocumentType>(*child))
-                    return false;
-            }
         }
         break;
     }
@@ -7609,6 +7621,11 @@ void Document::setBackForwardCacheState(BackForwardCacheState state)
         exitPointerLock();
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+        if (RefPtr immersive = immersiveIfExists())
+            immersive->clearForBackForwardCache();
+#endif
+
         styleScope().clearResolver();
         m_styleRecalcTimer.stop();
 
@@ -7853,7 +7870,7 @@ ExceptionOr<bool> Document::execCommand(const String& commandName, bool userInte
         [&commandName, this](const String& str) -> ExceptionOr<String> {
             if (commandName != "insertHTML"_s)
                 return String(str);
-            return trustedTypeCompliantString(TrustedType::TrustedHTML, contextDocument(), str, "Document execCommand"_s);
+            return trustedTypeCompliantString(TrustedType::TrustedHTML, protect(contextDocument()), str, "Document execCommand"_s);
         },
         [](const Ref<TrustedHTML>& trustedHtml) -> ExceptionOr<String> {
             return trustedHtml->toString();
@@ -7915,9 +7932,6 @@ void Document::popCurrentScript()
 
 bool Document::shouldDeferAsynchronousScriptsUntilParsingFinishes() const
 {
-    if (!settings().shouldDeferAsynchronousScriptsUntilAfterDocumentLoadOrFirstPaint())
-        return false;
-
     if (quirks().shouldBypassAsyncScriptDeferring())
         return false;
 
@@ -7958,6 +7972,12 @@ void Document::applyPendingXSLTransformsTimerFired()
         // Don't apply XSL transforms to already transformed documents -- <rdar://problem/4132806>
         if (transformSourceDocument() || !processingInstruction->sheet())
             return;
+
+        // Don't attempt to compile a stylesheet whose import chain is still loading.
+        // Compiling a partially-loaded tree can cause libxslt to free imported docs
+        // that WebKit still references, leading to use-after-free.
+        if (processingInstruction->sheet()->isLoading())
+            continue;
 
         // If the Document has already been detached from the frame, or the frame is currently in the process of
         // changing to a new document, don't attempt to create a new Document from the XSLT.
@@ -8940,6 +8960,13 @@ void Document::reveal()
 {
     if (m_hasBeenRevealed)
         return;
+
+    // A navigation away from this document that will replace it is in progress, so this
+    // document is being discarded before it was ever revealed. Do not reveal it (and do
+    // not mark it revealed, so it can still reveal if the navigation is aborted).
+    if (RefPtr frame = this->frame(); frame && frame->loader().provisionalDocumentLoader())
+        return;
+
     m_hasBeenRevealed = true;
 
     PageRevealEvent::Init init;
@@ -9543,23 +9570,28 @@ bool Document::mainFrameDocumentHasHadUserInteraction() const
 
 bool Document::processingUserGestureForMedia() const
 {
+    return mediaUserGestureReason() != MediaGestureReason::None;
+}
+
+Document::MediaGestureReason Document::mediaUserGestureReason() const
+{
     if (UserGestureIndicator::processingUserGestureForMedia())
-        return true;
+        return MediaGestureReason::ActiveToken;
 
     if (m_domWindow && m_domWindow->hasTransientActivation())
-        return true;
+        return MediaGestureReason::TransientActivation;
 
     if (m_userActivatedMediaFinishedPlayingTimestamp + maxIntervalForUserGestureForwardingAfterMediaFinishesPlaying >= MonotonicTime::now())
-        return true;
+        return MediaGestureReason::MediaFinishedGrace;
 
     if (settings().mediaUserGestureInheritsFromDocument())
-        return mainFrameDocumentHasHadUserInteraction();
+        return mainFrameDocumentHasHadUserInteraction() ? MediaGestureReason::InheritsFromDocumentSetting : MediaGestureReason::None;
 
     RefPtr loader = this->loader();
     if (loader && loader->allowedAutoplayQuirks().contains(AutoplayQuirk::InheritedUserGestures))
-        return mainFrameDocumentHasHadUserInteraction();
+        return mainFrameDocumentHasHadUserInteraction() ? MediaGestureReason::InheritedUserGesturesQuirk : MediaGestureReason::None;
 
-    return false;
+    return MediaGestureReason::None;
 }
 
 bool Document::hasRecentUserInteractionForNavigationFromJS() const
@@ -10000,6 +10032,12 @@ bool Document::useDarkAppearance([[maybe_unused]] const Style::ComputedStyle* st
 
 void Document::appearanceDidChange()
 {
+    styleScope().didChangeStyleSheetEnvironment();
+    styleScope().evaluateMediaQueriesForAppearanceChange();
+    updateElementsAffectedByMediaQueries();
+    scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
+    invalidateScrollbars();
+
     if (std::exchange(m_cachedThemeColor, Color()) != themeColor())
         themeColorChanged();
 }
@@ -10449,7 +10487,7 @@ void Document::updateIntersectionObservers()
     updateAndNotifyIntersectionObservers(m_localIntersectionObservers, *frame);
     updateRemoteIntersectionObservers();
 
-    if (frame->isMainFrame())
+    if (settings().siteIsolationEnabled())
         page->chrome().client().updateRemoteIntersectionObserversInOtherWebProcesses();
 }
 
@@ -11382,7 +11420,7 @@ void Document::navigateFromServiceWorker(const URL& url, CompletionHandler<void(
             callback(ScheduleLocationChangeResult::Stopped);
             return;
         }
-        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, weakThis->securityOrigin(), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, [callback = WTF::move(callback)](auto result) mutable {
+        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, protect(weakThis->securityOrigin()), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, [callback = WTF::move(callback)](auto result) mutable {
             callback(result);
         });
     });

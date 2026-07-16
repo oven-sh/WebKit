@@ -430,6 +430,13 @@ bool DocumentLoader::isLoading() const
     return isLoadingMainResource() || !m_subresourceLoaders.isEmpty() || !m_plugInStreamLoaders.isEmpty();
 }
 
+static void hideRedirectTimingForNoReferrerNavigation(const DocumentLoader& loader, NetworkLoadMetrics& metrics)
+{
+    // https://html.spec.whatwg.org/C#initialise-the-document-object step 15.3 resets redirectCount in case of "no-referrer".
+    if (loader.triggeringAction().requester() && loader.request().httpReferrer().isEmpty())
+        metrics.redirectCount = 0;
+}
+
 void DocumentLoader::notifyFinished(CachedResource& resource, const NetworkLoadMetrics& fetchMetrics, LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
 {
     ASSERT(isMainThread());
@@ -447,6 +454,8 @@ void DocumentLoader::notifyFinished(CachedResource& resource, const NetworkLoadM
     }
     if (!metrics)
         metrics = Box<NetworkLoadMetrics>::create(fetchMetrics);
+
+    hideRedirectTimingForNoReferrerNavigation(*this, *metrics);
 
     if (RefPtr document = this->document()) {
         if (RefPtr window = document->window())
@@ -1038,13 +1047,6 @@ void DocumentLoader::responseReceived(ResourceResponse&& response, CompletionHan
     }
 
     RefPtr frame = m_frame.get();
-#if ENABLE(FTPDIR)
-    // Respect the hidden FTP Directory Listing pref so it can be tested even if the policy delegate might otherwise disallow it
-    if (frame && frame->settings().forceFTPDirectoryListings() && m_response.mimeType() == "application/x-ftp-directory"_s) {
-        continueAfterContentPolicy(PolicyAction::Use);
-        return;
-    }
-#endif
 
     if (!frame) {
         DOCUMENTLOADER_RELEASE_LOG("responseReceived by DocumentLoader with null frame");
@@ -1146,6 +1148,16 @@ void DocumentLoader::continueAfterContentPolicy(PolicyAction policy)
         if (!m_mainResource) {
             DOCUMENTLOADER_RELEASE_LOG("continueAfterContentPolicy: cannot show URL");
             mainReceivedError(platformStrategies()->loaderStrategy()->cannotShowURLError(m_request));
+            return;
+        }
+
+        // Defense-in-depth: refuse to download a data: URL through a top-frame navigation that
+        // wasn't initiated by the user or the API client, mirroring the existing check in the
+        // PolicyAction::Use branch. The primary defense lives in the UI process; this guards
+        // ports / future flows that don't share that boundary.
+        if (disallowDataRequest()) {
+            protect(frameLoader())->policyChecker().cannotShowMIMEType(m_response);
+            stopLoadingForPolicyChange();
             return;
         }
 
@@ -1386,6 +1398,7 @@ void DocumentLoader::commitData(const SharedBuffer& data)
                     || source == ResourceResponse::Source::MemoryCacheAfterValidation;
                 if (RefPtr frameLoader = this->frameLoader())
                     finalMetrics.fromPrefetch = frameLoader->documentPrefetcher().wasPrefetched(url());
+                hideRedirectTimingForNoReferrerNavigation(*this, finalMetrics);
                 protect(window->performance())->addNavigationTiming(*this, document, protect(*m_mainResource), timing(), finalMetrics);
             }
         }
@@ -1921,12 +1934,6 @@ void DocumentLoader::scheduleSubstituteResourceLoad(ResourceLoader& loader, Subs
     deliverSubstituteResourcesAfterDelay();
 }
 
-void DocumentLoader::scheduleCannotShowURLError(ResourceLoader& loader)
-{
-    m_pendingSubstituteResources.set(loader, nullptr);
-    deliverSubstituteResourcesAfterDelay();
-}
-
 void DocumentLoader::addResponse(const ResourceResponse& response)
 {
     if (!m_stopRecordingResponses)
@@ -2131,7 +2138,7 @@ bool DocumentLoader::maybeLoadEmpty()
     }
 
     SetForScope isInFinishedLoadingOfEmptyDocument { m_isInFinishedLoadingOfEmptyDocument, true };
-    m_isInitialAboutBlank = isDisplayingInitialEmptyDocument;
+    m_isInitialAboutBlank = isDisplayingInitialEmptyDocument ? IsInitialAboutBlank::Yes : IsInitialAboutBlank::No;
     finishedLoading();
     return true;
 }
@@ -2334,8 +2341,7 @@ void DocumentLoader::loadMainResource(ResourceRequest&& request)
         }
 
         if (advancedPrivacyProtections().contains(AdvancedPrivacyProtections::HTTPSOnly)) {
-            if (auto httpNavigationWithHTTPSOnlyError = platformStrategies()->loaderStrategy()->httpNavigationWithHTTPSOnlyError(m_request); mainResourceOrError.error().domain() == httpNavigationWithHTTPSOnlyError.domain()
-                && mainResourceOrError.error().errorCode() == httpNavigationWithHTTPSOnlyError.errorCode()) {
+            if (platformStrategies()->loaderStrategy()->isHttpNavigationWithHTTPSOnlyError(mainResourceOrError.error())) {
                 DOCUMENTLOADER_RELEASE_LOG("loadMainResource: Unable to load main resource, URL has HTTP scheme with HTTPSOnly enabled");
                 cancelMainResourceLoad(mainResourceOrError.error());
                 return;
@@ -2549,6 +2555,12 @@ ShouldOpenExternalURLsPolicy DocumentLoader::shouldOpenExternalURLsPolicyToPropa
 CanTriggerCrossDocumentViewTransition DocumentLoader::navigationCanTriggerCrossDocumentViewTransition(Document& oldDocument, bool fromBackForwardCache)
 {
     if (loadStartedDuringSwipeAnimation())
+        return CanTriggerCrossDocumentViewTransition::No;
+
+    // A document that navigates away before it has been revealed (had its first
+    // rendering opportunity) has no captured state to animate from, so no outbound
+    // cross-document view transition is started.
+    if (!oldDocument.hasBeenRevealed())
         return CanTriggerCrossDocumentViewTransition::No;
 
     if (std::holds_alternative<Document::SkipTransition>(oldDocument.resolveViewTransitionRule()))

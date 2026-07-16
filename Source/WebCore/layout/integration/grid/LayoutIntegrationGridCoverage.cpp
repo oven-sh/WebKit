@@ -26,6 +26,7 @@
 #include "config.h"
 #include "LayoutIntegrationGridCoverage.h"
 
+#include "BaselineAlignmentInlines.h"
 #include "Document.h"
 #include "RenderChildIterator.h"
 #include "RenderDescendantIterator.h"
@@ -53,6 +54,7 @@ enum class GridAvoidanceReason : uint8_t {
     GridHasNonVisibleOverflow,
     GridItemIsReplacedElement,
     GridItemDoesNotHaveElement,
+    GridItemIsSubgrid,
     GridIsEmpty,
     GridHasGridTemplateAreas,
     GridHasColumnAutoFlow,
@@ -63,6 +65,10 @@ enum class GridAvoidanceReason : uint8_t {
     GridHasUnsupportedGridTemplateRows,
     GridHasUnsupportedJustifyContent,
     GridHasUnsupportedAlignContent,
+    GridHasUnsupportedMinWidth,
+    GridHasUnsupportedMaxWidth,
+    GridHasUnsupportedMinHeight,
+    GridHasUnsupportedMaxHeight,
     GridItemHasNonInitialMaxWidth,
     GridItemHasNonInitialMaxHeight,
     GridItemHasBorder,
@@ -75,6 +81,7 @@ enum class GridAvoidanceReason : uint8_t {
     GridItemHasUnsupportedBlockAxisAlignment,
     GridItemHasNonVisibleOverflow,
     GridItemHasContainsSize,
+    GridItemNeedsSecondColumnSizingPass,
 
     GridItemColumnStartHasLineName,
     GridItemColumnStartHasNegativeLineNumber,
@@ -279,8 +286,10 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridFormattingContextIntegrationDisabled, reasons, reasonCollectionMode);
 
     CheckedRef renderGridStyle = renderGrid.style();
-
-    if (renderGridStyle->display() == Style::DisplayType::InlineGrid)
+    CheckedPtr gridParentStyle = renderGrid.parent() ? &renderGrid.parent()->style() : nullptr;
+    if (renderGridStyle->display() == Style::DisplayType::InlineGrid
+        || isBaselinePosition(renderGridStyle->justifySelf().resolve(gridParentStyle).position())
+        || isBaselinePosition(renderGridStyle->alignSelf().resolve(gridParentStyle).position()))
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridNeedsBaseline, reasons, reasonCollectionMode);
 
     if (renderGridStyle->display() != Style::DisplayType::BlockGrid)
@@ -405,6 +414,19 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
     if (!renderGridStyle->alignContent().isNormal())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedAlignContent, reasons, reasonCollectionMode);
 
+    // GFC cannot yet resolve intrinsic (min-content/max-content/fit-content) sizing on the grid container itself.
+    if (renderGridStyle->minWidth().isIntrinsic())
+        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMinWidth, reasons, reasonCollectionMode);
+
+    if (renderGridStyle->maxWidth().isIntrinsic())
+        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMaxWidth, reasons, reasonCollectionMode);
+
+    if (renderGridStyle->minHeight().isIntrinsic())
+        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMinHeight, reasons, reasonCollectionMode);
+
+    if (renderGridStyle->maxHeight().isIntrinsic())
+        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMaxHeight, reasons, reasonCollectionMode);
+
     ASSERT(renderGridStyle->gridAutoFlow().isRow(),
         "If we end up supporting column auto flow before broader implicit grid support then the logic using explicitlyPlacedItemsInRowCount will need to be reworked to be based upon the auto flow direction");
     Vector<size_t> explicitlyPlacedItemsInRowCount;
@@ -418,6 +440,12 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         if (gridItemElement->isReplaced())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemIsReplacedElement, reasons, reasonCollectionMode);
+
+        // GFC has no subgrid support, so a subgrid item would fall through to the legacy
+        // RenderGrid path, which crashes when its grid-item-area map has not been populated
+        // by a legacy parent grid.
+        if (CheckedPtr renderGridItem = dynamicDowncast<RenderGrid>(gridItem.get()); renderGridItem && renderGridItem->isSubgrid())
+            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemIsSubgrid, reasons, reasonCollectionMode);
 
         CheckedRef gridItemStyle = gridItem->style();
 
@@ -581,6 +609,27 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         if (gridItemStyle->usedContain().contains(Style::ContainValue::Size))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasContainsSize, reasons, reasonCollectionMode);
+
+        auto gridItemIsStretchedInBlockAxis = [&] {
+            return gridItemHeight.isAuto() && usedAlignSelf.isStretchy(ItemPosition::Stretch);
+        };
+
+        auto gridItemHasChildWithInlineSizeComputedFromAspectRatio = [&] {
+            for (CheckedRef gridItemChild : childrenOfType<RenderBox>(gridItem.get())) {
+                CheckedRef gridItemChildStyle = gridItemChild->style();
+                RefPtr gridItemChildElement = gridItemChild->element();
+                bool hasAspectRatio = (gridItemChildElement && gridItemChildElement->isReplaced()) || gridItemChildStyle->aspectRatio().hasRatio();
+                if (hasAspectRatio && gridItemChildStyle->width().isAuto() && gridItemChildStyle->height().isPercent())
+                    return true;
+            }
+            return false;
+        };
+
+        // A stretched item's child can resolve its inline size from its aspect ratio against the item's
+        // stretched block size, changing the item's inline contribution. This requires a second column
+        // sizing pass, which GFC does not yet support.
+        if (gridItemIsStretchedInBlockAxis() && gridItemHasChildWithInlineSizeComputedFromAspectRatio())
+            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemNeedsSecondColumnSizingPass, reasons, reasonCollectionMode);
     }
     return reasons;
 }
@@ -646,6 +695,9 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
         break;
     case GridAvoidanceReason::GridItemIsReplacedElement:
         stream << "grid item is a replaced element";
+        break;
+    case GridAvoidanceReason::GridItemIsSubgrid:
+        stream << "grid item is a subgrid";
         break;
     case GridAvoidanceReason::GridIsEmpty:
         stream << "grid is empty";
@@ -725,6 +777,9 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridItemHasContainsSize:
         stream << "grid item has contains: size";
         break;
+    case GridAvoidanceReason::GridItemNeedsSecondColumnSizingPass:
+        stream << "grid item needs second column sizing support";
+        break;
     case GridAvoidanceReason::GridItemColumnStartHasLineName:
         stream << "grid item column start has line name";
         break;
@@ -766,6 +821,18 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
         break;
     case GridAvoidanceReason::GridItemHasUnsupportedMinHeight:
         stream << "grid item has unsupported min-height";
+        break;
+    case GridAvoidanceReason::GridHasUnsupportedMinWidth:
+        stream << "grid container has unsupported min-width";
+        break;
+    case GridAvoidanceReason::GridHasUnsupportedMaxWidth:
+        stream << "grid container has unsupported max-width";
+        break;
+    case GridAvoidanceReason::GridHasUnsupportedMinHeight:
+        stream << "grid container has unsupported min-height";
+        break;
+    case GridAvoidanceReason::GridHasUnsupportedMaxHeight:
+        stream << "grid container has unsupported max-height";
         break;
     case GridAvoidanceReason::NotAGrid:
         stream << "not a grid";

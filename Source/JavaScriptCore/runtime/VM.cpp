@@ -46,7 +46,6 @@
 #include "DOMAttributeGetterSetterInlines.h"
 #include "Debugger.h"
 #include "DeferredWorkTimer.h"
-#include "DeferredWorkTimerInlines.h"
 #include "Disassembler.h"
 #include "DoublePredictionFuzzerAgent.h"
 #include "ErrorInstance.h"
@@ -399,6 +398,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         m_fastSetValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastSetEntriesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastStringValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
+        m_fastAsyncGeneratorSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
     }
 
     // Eagerly initialize constant cells since the concurrent compiler can access them.
@@ -1757,9 +1757,8 @@ void VM::executeEntryScopeServicesOnEntry()
         clearEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
     }
 
-    // Reset the date cache between JS invocations to force the VM to
-    // observe time zone changes.
-    dateCache.resetIfNecessary();
+    if (dateCache.hasTimeZoneChange()) [[unlikely]]
+        dateCache.clearForTimeZoneChange();
 
     RefPtr watchdog = this->watchdog();
     if (watchdog) [[unlikely]]
@@ -1957,6 +1956,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_fastSetValuesSentinel);
     visitor.append(m_fastSetEntriesSentinel);
     visitor.append(m_fastStringValuesSentinel);
+    visitor.append(m_fastAsyncGeneratorSentinel);
     visitor.append(m_cachedSortScratch);
     visitor.append(m_sortScratchSentinel);
     visitor.append(m_fastCanConstructBoundExecutable);

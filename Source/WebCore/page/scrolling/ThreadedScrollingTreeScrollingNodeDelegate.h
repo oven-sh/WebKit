@@ -46,6 +46,10 @@ class ThreadedScrollingTreeScrollingNodeDelegate : public ScrollingTreeScrolling
 public:
     void updateSnapScrollState();
 
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    float rubberbandHyperbolicCoefficientForTesting() const final { return m_scrollController.rubberbandHyperbolicCoefficientForTesting(); }
+#endif
+
 protected:
     explicit ThreadedScrollingTreeScrollingNodeDelegate(ScrollingTreeScrollingNode&);
     virtual ~ThreadedScrollingTreeScrollingNodeDelegate();
@@ -60,6 +64,7 @@ protected:
 
     // ScrollingEffectsControllerClient.
     std::unique_ptr<ScrollingEffectsControllerTimer> createTimer(Function<void()>&&) override;
+    void destroyTimer(std::unique_ptr<ScrollingEffectsControllerTimer>) override;
     void startAnimationCallback(ScrollingEffectsController&) override;
     void stopAnimationCallback(ScrollingEffectsController&) override;
 

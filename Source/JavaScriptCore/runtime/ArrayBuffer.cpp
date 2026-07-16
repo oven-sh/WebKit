@@ -433,14 +433,15 @@ RefPtr<ArrayBuffer> ArrayBuffer::sliceWithClampedIndex(size_t begin, size_t end)
 void ArrayBuffer::makeShared()
 {
     m_contents.makeShared();
-    m_locked = true;
+    pinAndLock();
     ASSERT(!isDetached());
 }
 
 void ArrayBuffer::makeWasmMemory()
 {
-    m_locked = true;
     m_isWasmMemory = true;
+    pinAndLock();
+    ASSERT(!isDetachable());
 }
 
 void ArrayBuffer::refreshAfterWasmMemoryGrow(Wasm::Memory* memory)
@@ -721,7 +722,7 @@ Expected<int64_t, GrowFailReason> SharedArrayBufferContents::grow(const Abstract
 
 ASCIILiteral errorMessageForTransfer(ArrayBuffer* buffer)
 {
-    ASSERT(buffer->isLocked());
+    ASSERT(!buffer->isDetachable());
     if (buffer->isShared())
         return "Cannot transfer a SharedArrayBuffer"_s;
     if (buffer->isWasmMemory())

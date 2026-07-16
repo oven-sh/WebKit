@@ -43,6 +43,7 @@
 #include "HTMLBRElement.h"
 #include "HTMLNames.h"
 #include "HitTestResult.h"
+#include "InspectorInstrumentation.h"
 #include "LayoutBox.h"
 #include "LayoutIntegrationCoverage.h"
 #include "LegacyRenderSVGModelObject.h"
@@ -705,6 +706,11 @@ void RenderObject::invalidateContainerContentLogicalWidths(const RenderBlock* an
     }
 }
 
+void RenderObject::notifyInspectorOfLayoutInvalidate()
+{
+    InspectorInstrumentation::willInvalidateLayout(*this);
+}
+
 void RenderObject::setLayerNeedsFullRepaint()
 {
     ASSERT(hasLayer());
@@ -1363,7 +1369,7 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
         stream << " (::" << *style().pseudoElementType() << ")";
 
     if (auto* renderBox = dynamicDowncast<RenderBox>(*this)) {
-        FloatRect boxRect = renderBox->frameRect();
+        FloatRect boxRect = renderBox->borderBoxRectInContainer();
         if (renderBox->isInFlowPositioned())
             boxRect.move(renderBox->offsetForInFlowPosition());
         stream << " " << boxRect;
@@ -1550,19 +1556,23 @@ void RenderObject::getTransformFromContainer(const LayoutSize& offsetInContainer
     }
 
     CheckedPtr perspectiveObject = parent();
+    if (!perspectiveObject || !perspectiveObject->hasLayer())
+        return;
 
-    if (perspectiveObject && perspectiveObject->hasLayer() && !perspectiveObject->style().perspective().isNone()) {
-        // Perspective on the container affects us, so we have to factor it in here.
-        ASSERT(perspectiveObject->hasLayer());
-        FloatPoint perspectiveOrigin = downcast<RenderLayerModelObject>(*perspectiveObject).layer()->perspectiveOrigin();
+    CheckedRef style = perspectiveObject->style();
+    if (style->perspective().isNone())
+        return;
 
-        TransformationMatrix perspectiveMatrix;
-        perspectiveMatrix.applyPerspective(perspectiveObject->style().usedPerspective());
-        
-        transform.translateRight3d(-perspectiveOrigin.x(), -perspectiveOrigin.y(), 0);
-        transform = perspectiveMatrix * transform;
-        transform.translateRight3d(perspectiveOrigin.x(), perspectiveOrigin.y(), 0);
-    }
+    // Perspective on the container affects us, so we have to factor it in here.
+    ASSERT(perspectiveObject->hasLayer());
+    FloatPoint perspectiveOrigin = downcast<RenderLayerModelObject>(*perspectiveObject).layer()->perspectiveOrigin();
+
+    TransformationMatrix perspectiveMatrix;
+    perspectiveMatrix.applyPerspective(Style::evaluate<float>(style->perspective(), style->usedZoomForLength()));
+
+    transform.translateRight3d(-perspectiveOrigin.x(), -perspectiveOrigin.y(), 0);
+    transform = perspectiveMatrix * transform;
+    transform.translateRight3d(perspectiveOrigin.x(), perspectiveOrigin.y(), 0);
 }
 
 void RenderObject::pushOntoTransformState(TransformState& transformState, OptionSet<MapCoordinatesMode> mode, const RenderLayerModelObject* repaintContainer, const RenderElement* container, const LayoutSize& offsetInContainer, bool containerSkipped) const

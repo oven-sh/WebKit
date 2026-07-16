@@ -1954,8 +1954,12 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     RefPtr<AccessibilityObject> object = self.axBackingObject;
     AXAttributeCacheScope enableCache(object->axObjectCache());
 
-    // As long as there's a parent wrapper, that's the correct chain to climb.
-    RefPtr parent = object->parentObjectUnignored();
+    // As long as there's a parent wrapper, that's the correct chain to climb. Use the cross-frame variant
+    // so that ascending out of a local iframe reaches the hosting frame in the parent document. Without this,
+    // parentObjectUnignored() returns null at the iframe's root scroll view, the container chain dead-ends, and
+    // VoiceOver can neither advance past the last iframe element nor resolve the view/window needed to draw its cursor.
+    // This mirrors the macOS wrapper (handleParentAttribute / scrollViewParent).
+    RefPtr parent = object->crossFrameParentObjectUnignored();
     if (parent)
         return parent->wrapper();
 
@@ -2751,6 +2755,18 @@ static RenderObject* rendererForView(WAKView* view)
         return nil;
 
     return @[ startMarker, endMarker ];
+}
+
+// Returns the zero-based line number containing the given character index, or nil when the element
+// exposes no line geometry. Computed in the web process from the render tree (doAXLineForIndex), so
+// a client can obtain the line number in a single query instead of walking line ranges.
+- (NSNumber *)lineNumberForIndex:(NSUInteger)index
+{
+    if (![self _prepareAccessibilityCall])
+        return nil;
+
+    int lineNumber = protect(self.axBackingObject)->doAXLineForIndex(index);
+    return lineNumber < 0 ? nil : @(lineNumber);
 }
 
 // This method is intended to return the marker at the start of the line starting at

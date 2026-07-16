@@ -36,12 +36,14 @@
 #include "JSCTimeZone.h"
 #include "PlainDateTimeCore.h"
 #include "Rounding.h"
+#include "TemporalCalendar.h"
 #include "TemporalCoreTypes.h"
 #include "TemporalEnums.h"
 #include "TimeZoneICUBridge.h"
 #include "ZonedDateTimeCore.h"
 #include <stdio.h>
 #include <wtf/Int128.h>
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -2585,10 +2587,6 @@ static void testCalendarFieldsFunctions()
     auto rMDFrom = plainMonthDayFromISODate(id("iso8601"_s), { 2020, 6, 15 }, TemporalOverflow::Reject);
     TCHECK_TRUE(rMDFrom.has_value() && rMDFrom->isoDate.month() == 6 && rMDFrom->isoDate.day() == 15, "plainMonthDayFromISODate: month=6 day=15");
 
-    // --- plainMonthDayToPlainDate ---
-    auto rMDToD = plainMonthDayToPlainDate(id("iso8601"_s), { 1972, 6, 15 }, 2020);
-    TCHECK_TRUE(rMDToD.has_value() && rMDToD->isoDate.year() == 2020 && rMDToD->isoDate.month() == 6 && rMDToD->isoDate.day() == 15, "plainMonthDayToPlainDate: day=15 year=2020");
-
     // --- plainYearMonthWith ---
     // temporal_rs: test_plain_year_month_with — override year only
     CalendarFieldsIn partialYear;
@@ -2606,6 +2604,62 @@ static void testCalendarFieldsFunctions()
     CalendarFieldsIn emptyPartial;
     auto rWithEmpty = plainYearMonthWith(id("iso8601"_s), { 2025, 3, 1 }, emptyPartial, TemporalOverflow::Constrain);
     TCHECK_TRUE(!rWithEmpty.has_value(), "plainYearMonthWith: empty partial -> TypeError (temporal_rs: fields.is_empty())");
+
+    f = { };
+    f.year = 275761; // one past maxYear
+    f.month = 1;
+    auto rYMOver = yearMonthFromFields(id("iso8601"_s), f, TemporalOverflow::Reject);
+    TCHECK_TRUE(!rYMOver.has_value(), "yearMonthFromFields ISO: year=275761 -> RangeError (Bug #2)");
+
+    f = { };
+    f.year = 275761;
+    f.month = 1;
+    f.day = 1;
+    auto rDOver = dateFromFields(id("iso8601"_s), f, TemporalOverflow::Reject);
+    TCHECK_TRUE(!rDOver.has_value(), "dateFromFields ISO: year=275761 -> RangeError (Bug #3)");
+
+    f = { };
+    f.era = "ce"_s;
+    f.eraYear = 2024;
+    auto rYMNoMonth = yearMonthFromFields(id("gregory"_s), f, TemporalOverflow::Constrain);
+    TCHECK_TRUE(!rYMNoMonth.has_value(), "yearMonthFromFields non-ISO: era+eraYear without month -> TypeError (Bug #5)");
+
+    f = { };
+    f.year = 2023;
+    f.month = 3;
+    f.monthCode = MC { 4, false }; // M04, disagrees with month=3
+    f.day = 15;
+    auto rDConflict = dateFromFields(id("japanese"_s), f, TemporalOverflow::Constrain);
+    TCHECK_TRUE(!rDConflict.has_value(), "dateFromFields japanese: month=3 vs monthCode=M04 -> RangeError (Bug #7)");
+
+    f = { };
+    f.year = 2023;
+    f.month = 3;
+    f.monthCode = MC { 4, false };
+    auto rYMConflict = yearMonthFromFields(id("japanese"_s), f, TemporalOverflow::Constrain);
+    TCHECK_TRUE(!rYMConflict.has_value(), "yearMonthFromFields japanese: month=3 vs monthCode=M04 -> RangeError (Bug #7)");
+
+    f = { };
+    f.year = 2023;
+    f.month = 3;
+    f.monthCode = MC { 4, false };
+    f.day = 15;
+    auto rMDConflict = monthDayFromFields(id("japanese"_s), f, TemporalOverflow::Constrain);
+    TCHECK_TRUE(!rMDConflict.has_value(), "monthDayFromFields japanese: month=3 vs monthCode=M04 -> RangeError (Bug #7)");
+
+    f = { };
+    f.era = "reiwa"_s;
+    f.eraYear = 5;
+    f.month = 3;
+    f.day = 15;
+    auto rMDEra = monthDayFromFields(id("japanese"_s), f, TemporalOverflow::Constrain);
+    TCHECK_TRUE(rMDEra.has_value(), "monthDayFromFields japanese: era+eraYear+month+day -> ok (Bug #10)");
+
+    f = { };
+    f.month = 11;
+    f.day = 18;
+    auto rMDNoYear = monthDayFromFields(id("gregory"_s), f, TemporalOverflow::Constrain);
+    TCHECK_TRUE(!rMDNoYear.has_value(), "monthDayFromFields gregory: {month,day} without year identifier -> TypeError");
 
     // --- plainDateWith ---
     // temporal_rs: basic_date_with — ISO override year/month/monthCode/day
@@ -2716,6 +2770,48 @@ static void testCalendarDateFromFields()
     // --- Invalid era ---
     auto rBadEra = calendarDateFromFields(id("gregory"_s), 0, 1, 1, StringView("invalid"_s), 2024, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(!rBadEra.has_value(), "gregory: invalid era -> error");
+
+    // Buddhist: user's `year` is BE (= Gregorian + 543).
+    auto rBud = calendarDateFromFields(id("buddhist"_s), 2567, 1, 1, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rBud.has_value() && rBud->year() == 2024, "buddhist: BE 2567 -> ISO 2024");
+    auto rBudEra = calendarDateFromFields(id("buddhist"_s), std::nullopt, 1, 1, StringView("be"_s), 2567, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rBudEra.has_value() && rBudEra->year() == 2024, "buddhist: era be, eraYear=2567 -> ISO 2024");
+    // Reference-year path: BE 2515 = Gregorian 1972 leap; Feb 29 must succeed.
+    auto rBudRef = calendarDateFromFields(id("buddhist"_s), 2515, 2, 29, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rBudRef.has_value() && rBudRef->year() == 1972 && rBudRef->day() == 29u, "buddhist: BE 2515 Feb 29 -> ISO 1972-02-29");
+
+    // Coptic am era: era 1 (AM), not era 0. AM 1740 M01 D01 = ISO 2023-09-12.
+    auto rCop = calendarDateFromFields(id("coptic"_s), std::nullopt, 1, 1, StringView("am"_s), 1740, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rCop.has_value() && rCop->year() == 2023 && rCop->month() == 9u && rCop->day() == 12u, "coptic: am 1740 M01 D01 -> ISO 2023-09-12");
+    auto rCopY = calendarDateFromFields(id("coptic"_s), 1740, 1, 1, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rCopY.has_value() && rCopY->year() == 2023, "coptic: year=1740 -> ISO 2023 (era-free)");
+
+    // Ethiopic am era: same fix as Coptic. AM 2016 M01 D01 = ISO 2023-09-12.
+    auto rEth = calendarDateFromFields(id("ethiopic"_s), std::nullopt, 1, 1, StringView("am"_s), 2016, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rEth.has_value() && rEth->year() == 2023, "ethiopic: am 2016 -> ISO 2023");
+}
+
+static void testIsBuiltinCalendar()
+{
+    // Canonical (16 entries) — accepted regardless of flag.
+    auto calenders = { "buddhist"_s, "chinese"_s, "coptic"_s, "dangi"_s, "ethioaa"_s,
+        "ethiopic"_s, "gregory"_s, "hebrew"_s, "indian"_s,
+        "islamic-civil"_s, "islamic-tbla"_s, "islamic-umalqura"_s,
+        "iso8601"_s, "japanese"_s, "persian"_s, "roc"_s };
+    for (auto id : calenders)
+        TCHECK_TRUE(JSC::isBuiltinCalendar(id).has_value(), makeString(id, ": canonical accepted"_s).utf8().data());
+
+    // Legacy CLDR aliases resolve to their canonical CalendarID (both flag states).
+    TCHECK_TRUE(JSC::isBuiltinCalendar("islamicc"_s).has_value(), "islamicc alias -> islamic-civil");
+    TCHECK_TRUE(JSC::isBuiltinCalendar("ethiopic-amete-alem"_s).has_value(), "ethiopic-amete-alem alias -> ethioaa");
+    TCHECK_TRUE(*JSC::isBuiltinCalendar("islamicc"_s) == *JSC::isBuiltinCalendar("islamic-civil"_s), "islamicc same CalendarID as islamic-civil");
+    TCHECK_TRUE(*JSC::isBuiltinCalendar("ethiopic-amete-alem"_s) == *JSC::isBuiltinCalendar("ethioaa"_s), "ethiopic-amete-alem same CalendarID as ethioaa");
+
+    // Unknown identifier: rejected in either mode.
+    TCHECK_TRUE(!JSC::isBuiltinCalendar("nonexistent-calendar-name"_s).has_value(), "unknown -> nullopt");
+
+    // Case-insensitive canonical: ISO8601 accepted regardless of case.
+    TCHECK_TRUE(JSC::isBuiltinCalendar("ISO8601"_s).has_value(), "ISO8601 case-insensitive accepted");
 }
 
 static void testCalendarICUNonISO()
@@ -2802,6 +2898,21 @@ static void testCalendarICUNonISO()
     TCHECK_TRUE(rHL.has_value(), "hebrew: 5782 leap check ok");
     // Hebrew 5782 is a leap year (has Adar II)
     TCHECK_TRUE(*rHL, "hebrew: 5782 is leap");
+
+    // Buddhist: calendarYear returns BE year (Gregorian + 543).
+    auto rBudY = calendarYear(calendarIDFromString("buddhist"_s), { 2024, 1, 1 });
+    TCHECK_TRUE(rBudY.has_value() && *rBudY == 2567, "buddhist: ISO 2024 -> BE 2567");
+
+    // Japanese pre-1582: proleptic Gregorian (not Julian). ISO 1500 is Julian-leap but not Gregorian-leap.
+    auto rJpFeb = calendarDaysInMonth(calendarIDFromString("japanese"_s), { 1500, 2, 15 });
+    TCHECK_TRUE(rJpFeb.has_value() && *rJpFeb == 28, "japanese: 1500 Feb = 28 days");
+    auto rJpDIY = calendarDaysInYear(calendarIDFromString("japanese"_s), { 1500, 6, 15 });
+    TCHECK_TRUE(rJpDIY.has_value() && *rJpDIY == 365, "japanese: 1500 daysInYear = 365");
+    auto rJpLeap = calendarInLeapYear(calendarIDFromString("japanese"_s), { 1500, 6, 15 });
+    TCHECK_TRUE(rJpLeap.has_value() && !*rJpLeap, "japanese: 1500 not leap");
+    // 1600 IS a Gregorian leap (400-year rule).
+    auto rJp1600 = calendarInLeapYear(calendarIDFromString("japanese"_s), { 1600, 6, 15 });
+    TCHECK_TRUE(rJp1600.has_value() && *rJp1600, "japanese: 1600 is leap");
 }
 
 // ---------------------------------------------------------------------------
@@ -2810,22 +2921,20 @@ static void testCalendarICUNonISO()
 
 static void testExactTimeToLocalDateAndTime()
 {
-    ISO8601::PlainDate date;
-    ISO8601::PlainTime time;
     // epoch=0, offset=0 -> 1970-01-01T00:00:00
-    exactTimeToLocalDateAndTime(ISO8601::ExactTime(Int128(0)), 0, date, time);
+    auto [date, time] = exactTimeToLocalDateAndTime(ISO8601::ExactTime(Int128(0)), 0);
     TCHECK_EQ(date.year(), 1970, "localDT: epoch year");
     TCHECK_EQ(date.month(), 1u, "localDT: epoch month");
     TCHECK_EQ(date.day(), 1u, "localDT: epoch day");
     TCHECK_EQ(time.hour(), 0u, "localDT: epoch hour");
     // epoch=86400000000000 (1 day), offset=0 -> 1970-01-02T00:00:00
-    exactTimeToLocalDateAndTime(ISO8601::ExactTime(Int128(86400000000000LL)), 0, date, time);
-    TCHECK_EQ(date.year(), 1970, "localDT: +1day year");
-    TCHECK_EQ(date.day(), 2u, "localDT: +1day day");
+    auto [date2, time2] = exactTimeToLocalDateAndTime(ISO8601::ExactTime(Int128(86400000000000LL)), 0);
+    TCHECK_EQ(date2.year(), 1970, "localDT: +1day year");
+    TCHECK_EQ(date2.day(), 2u, "localDT: +1day day");
     // offset=-18000000000000 ns (UTC-5): epoch=0 -> 1969-12-31T19:00:00
-    exactTimeToLocalDateAndTime(ISO8601::ExactTime(Int128(0)), -18000000000000LL, date, time);
-    TCHECK_EQ(date.year(), 1969, "localDT: UTC-5 epoch year");
-    TCHECK_EQ(time.hour(), 19u, "localDT: UTC-5 epoch hour");
+    auto [date3, time3] = exactTimeToLocalDateAndTime(ISO8601::ExactTime(Int128(0)), -18000000000000LL);
+    TCHECK_EQ(date3.year(), 1969, "localDT: UTC-5 epoch year");
+    TCHECK_EQ(time3.hour(), 19u, "localDT: UTC-5 epoch hour");
 }
 
 static void testInterpretISODateTimeOffset()
@@ -3188,11 +3297,9 @@ static void testToZonedDateTime()
     auto r = getEpochNanosecondsFor(utc, { 2020, 1, 1 }, { 0, 0, 0, 0, 0, 0 }, TemporalDisambiguation::Compatible);
     TCHECK_TRUE(r.has_value(), "toZDT: 2020-01-01 UTC ok");
     // Verify round-trip: epoch -> local date/time
-    ISO8601::PlainDate date;
-    ISO8601::PlainTime time;
     auto offset = getOffsetNanosecondsFor(utc, *r);
     TCHECK_TRUE(offset.has_value(), "toZDT: offset ok");
-    exactTimeToLocalDateAndTime(*r, *offset, date, time);
+    auto [date, time] = exactTimeToLocalDateAndTime(*r, *offset);
     TCHECK_EQ(date.year(), 2020, "toZDT: year=2020");
     TCHECK_EQ(date.month(), 1u, "toZDT: month=1");
     TCHECK_EQ(date.day(), 1u, "toZDT: day=1");
@@ -3727,7 +3834,8 @@ static void runStressTests()
     testCalendarInLeapYearISO(); // ISO leap year
     testCalendarISO8601Fields(); // ISO field accessors
     testCalendarICUNonISO(); // Non-ISO calendars (hebrew, chinese, japanese, persian)
-    testCalendarDateFromFields(); // calendarDateFromFields: era, monthCode, overflow, ROC, Japanese
+    testCalendarDateFromFields(); // calendarDateFromFields: era, monthCode, overflow, ROC, Japanese, Buddhist, Coptic, Ethiopic
+    testIsBuiltinCalendar(); // Canonical Temporal calendar set + legacy aliases
     testCalendarFieldsFunctions(); // yearMonthFromFields, monthDayFromFields, differenceYearMonth, plainYearMonthAdd, etc.
 
     // parseISODateTime

@@ -678,6 +678,7 @@
          "acarlsson@apple.com"
       ],
       "expertise" : "Storage, Networking, Core DOM, Plug-ins and Java (Win, General), XML, JavaScript/ECMAScript",
+      "github" : "andersca",
       "name" : "Anders Carlsson",
       "nicks" : [
          "andersca"
@@ -3789,7 +3790,8 @@
    },
    {
       "emails" : [
-         "ian.grunert@gmail.com"
+         "ian.grunert@gmail.com",
+         "ig@anthropic.com"
       ],
       "github" : "iangrunert",
       "name" : "Ian Grunert",
@@ -5609,8 +5611,9 @@
          "info.aeslilly@gmail.com",
          "lilly_le@apple.com"
       ],
-      "github" : "codedbycupidity",
-      "name" : "Lilly Le"
+      "github" : "cupidsity",
+      "name" : "Lilly Le",
+      "status" : "committer"
    },
    {
       "emails" : [
@@ -7694,6 +7697,15 @@
       ],
       "github" : "serakeri",
       "name" : "Sara Kelley"
+   },
+   {
+      "emails" : [
+         "s_krigel@apple.com",
+         "sasha.krigel@gmail.com",
+         "skrigel@mit.edu"
+      ],
+      "github" : "skrigel",
+      "name" : "Sasha Krigel"
    },
    {
       "emails" : [

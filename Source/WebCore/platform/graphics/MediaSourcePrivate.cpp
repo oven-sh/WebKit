@@ -422,9 +422,8 @@ PlatformTimeRanges MediaSourcePrivate::computeBufferedRanges(const Vector<Platfo
     // 3. Let highest end time be the largest range end time in the active ranges.
     MediaTime highestEndTime = MediaTime::zeroTime();
     for (auto& ranges : activeRanges) {
-        unsigned length = ranges.length();
-        if (length)
-            highestEndTime = std::max(highestEndTime, ranges.end(length - 1));
+        if (auto span = ranges.span(); !span.empty())
+            highestEndTime = std::max(highestEndTime, span.back().end);
     }
 
     // Return an empty range if all ranges are empty.

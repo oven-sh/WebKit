@@ -39,14 +39,11 @@ namespace JSC {
 
 // Free helper functions (previously static methods of the removed TemporalCalendar JSObject class).
 
-std::optional<CalendarID> JS_EXPORT_PRIVATE isBuiltinCalendar(StringView);
+JS_EXPORT_PRIVATE std::optional<CalendarID> isBuiltinCalendar(StringView);
 
 std::optional<ParsedMonthCode> parseMonthCode(JSGlobalObject*, JSValue argument);
 
 ISO8601::PlainDate isoDateFromFields(JSGlobalObject*, TemporalDateFormat, int32_t, uint32_t, uint32_t, std::optional<ParsedMonthCode>, TemporalOverflow, CalendarID = iso8601CalendarID());
-
-template<DifferenceOperation>
-ISO8601::Duration differenceTemporalPlainYearMonth(JSGlobalObject*, const ISO8601::PlainYearMonth&, const ISO8601::PlainYearMonth&, unsigned, TemporalUnit, TemporalUnit, RoundingMode, CalendarID = iso8601CalendarID());
 
 ISO8601::PlainDate isoDateAdd(JSGlobalObject*, const ISO8601::PlainDate&, const ISO8601::Duration&, TemporalOverflow);
 ISO8601::PlainDate calendarDateAdd(JSGlobalObject*, CalendarID, const ISO8601::PlainDate&, const ISO8601::Duration&, TemporalOverflow);

@@ -274,6 +274,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/svg/graphics"
     "${WEBCORE_DIR}/svg/graphics/filters"
     "${WEBCORE_DIR}/svg/properties"
+    "${WEBCORE_DIR}/testing"
     "${WEBCORE_DIR}/websockets"
     "${WEBCORE_DIR}/workers"
     "${WEBCORE_DIR}/workers/service"
@@ -588,7 +589,6 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/mediastream/RTCRtpHeaderExtensionParameters.idl
     Modules/mediastream/RTCRtpParameters.idl
     Modules/mediastream/RTCRtpReceiver.idl
-    Modules/mediastream/RTCRtpSFrameTransform.idl
     Modules/mediastream/RTCRtpSFrameTransformErrorEvent.idl
     Modules/mediastream/RTCRtpScriptTransform.idl
     Modules/mediastream/RTCRtpScriptTransformer.idl
@@ -1470,8 +1470,8 @@ set(WebCore_NON_SVG_IDL_FILES
     page/WebKitBuffer.idl
     page/WebKitBufferNamespace.idl
     page/WebKitJSHandle.idl
+    page/WebKitNodeSnapshot.idl
     page/WebKitPoint.idl
-    page/WebKitSerializedNode.idl
     page/WindowPostMessageOptions.idl
     page/WorkerNavigator.idl
 
@@ -2167,10 +2167,10 @@ if (USE_APPLE_INTERNAL_SDK)
         dom/Document+Touch.idl
     )
     list(APPEND WebCore_NON_SVG_IDL_FILES
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/GestureEvent.idl
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/Touch.idl
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/TouchEvent.idl
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/TouchList.idl
+        ${WebKitAdditions_HEADERS_DIR}/GestureEvent.idl
+        ${WebKitAdditions_HEADERS_DIR}/Touch.idl
+        ${WebKitAdditions_HEADERS_DIR}/TouchEvent.idl
+        ${WebKitAdditions_HEADERS_DIR}/TouchList.idl
     )
     list(APPEND WebCore_SUPPLEMENTAL_IDL_FILES
         ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/DocumentTouch.idl
@@ -2235,7 +2235,7 @@ set(WebCore_FRAMEWORKS
 )
 if (USE_APPLE_INTERNAL_SDK)
     list(APPEND WebCore_FRAMEWORKS WebKitAdditions)
-    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES "${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
+    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES ${WebKitAdditions_HEADERS_DIR})
 endif ()
 
 if (ENABLE_XSLT)
@@ -2278,7 +2278,11 @@ endif ()
 
 set(WebCoreTestSupport_FRAMEWORKS ${WebCore_FRAMEWORKS})
 set(WebCoreTestSupport_DEPENDENCIES WebCoreTestSupportBindings)
-set(WebCoreTestSupport_PRIVATE_HEADERS testing/js/WebCoreTestSupport.h)
+set(WebCoreTestSupport_PRIVATE_HEADERS
+    testing/TestPage.h
+
+    testing/js/WebCoreTestSupport.h
+)
 
 if (ENABLE_LEGACY_ENCRYPTED_MEDIA)
     list(APPEND WebCore_SOURCES
@@ -2614,6 +2618,7 @@ list(APPEND WebCoreTestSupport_SOURCES
     testing/MockPageOverlay.cpp
     testing/MockPageOverlayClient.cpp
     testing/ServiceWorkerInternals.cpp
+    testing/TestPage.cpp
     testing/js/WebCoreTestSupport.cpp
 )
 
@@ -2813,7 +2818,9 @@ set(PAINTWORKLETGLOBALSCOPE_CONSTRUCTORS_FILE ${WebCore_DERIVED_SOURCES_DIR}/Pai
 set(AUDIOWORKLETGLOBALSCOPE_CONSTRUCTORS_FILE ${WebCore_DERIVED_SOURCES_DIR}/AudioWorkletGlobalScopeConstructors.idl)
 
 set(WebCore_INTERFACE_LIBRARIES WebCore)
-set(WebCore_INTERFACE_INCLUDE_DIRECTORIES ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR})
+if (NOT USE_FRAMEWORK_BUNDLES)
+    set(WebCore_INTERFACE_INCLUDE_DIRECTORIES ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR})
+endif ()
 
 set(WebCoreTestSupport_INTERFACE_LIBRARIES WebCoreTestSupport)
 set(WebCoreTestSupport_INTERFACE_INCLUDE_DIRECTORIES
@@ -3232,7 +3239,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
 WEBKIT_SYMLINK_FILES(WebCore_CopyPrivateHeaders
     PRUNE_STALE
-    DESTINATION ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore
+    DESTINATION ${WebCore_PRIVATE_HEADERS_DIR}
     FILES ${WebCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
 )
@@ -3244,6 +3251,10 @@ if (NOT USE_HEADER_MAPS)
 endif ()
 
 WEBKIT_FRAMEWORK(WebCore)
+
+if (USE_APPLE_INTERNAL_SDK)
+    WEBKIT_TARGET_USE_PGO(WebCore PROFILE WebCore)
+endif ()
 
 # Specify dependencies explicitly so we can generate derived sources before our
 # upstream targets finish linking.

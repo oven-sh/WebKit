@@ -34,16 +34,6 @@
 OBJC_CLASS NSData;
 OBJC_CLASS NSError;
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-using CocoaImageAnalysis = VKCImageAnalysis;
-using CocoaImageAnalyzer = VKCImageAnalyzer;
-using CocoaImageAnalyzerRequest = VKCImageAnalyzerRequest;
-#elif ENABLE(IMAGE_ANALYSIS)
-using CocoaImageAnalysis = VKImageAnalysis;
-using CocoaImageAnalyzer = VKImageAnalyzer;
-using CocoaImageAnalyzerRequest = VKImageAnalyzerRequest;
-#endif
-
 namespace WebCore {
 struct TextRecognitionResult;
 }
@@ -55,13 +45,12 @@ namespace WebKit {
 bool isLiveTextAvailableAndEnabled();
 bool languageIdentifierSupportsLiveText(NSString *);
 
-WebCore::TextRecognitionResult makeTextRecognitionResult(CocoaImageAnalysis *);
+WebCore::TextRecognitionResult makeTextRecognitionResult(VKCImageAnalysis *);
 
-RetainPtr<CocoaImageAnalyzer> createImageAnalyzer();
-RetainPtr<CocoaImageAnalyzerRequest> createImageAnalyzerRequest(CGImageRef, VKAnalysisTypes);
+RetainPtr<VKCImageAnalyzer> createImageAnalyzer();
+RetainPtr<VKCImageAnalyzerRequest> createImageAnalyzerRequest(CGImageRef, VKAnalysisTypes);
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-void requestVisualTranslation(CocoaImageAnalyzer *, NSURL *, const String& source, const String& target, CGImageRef, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&);
+void requestVisualTranslation(VKCImageAnalyzer *, NSURL *, const String& source, const String& target, CGImageRef, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&);
 void requestBackgroundRemoval(CGImageRef, CompletionHandler<void(CGImageRef)>&&);
 
 constexpr VKAnalysisTypes analysisTypesForElementFullscreenVideo()
@@ -89,7 +78,6 @@ using PlatformImageAnalysisObject = VKCImageAnalysisInteraction;
 using PlatformImageAnalysisObject = VKCImageAnalysisOverlayView;
 #endif
 void prepareImageAnalysisForOverlayView(PlatformImageAnalysisObject *);
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 

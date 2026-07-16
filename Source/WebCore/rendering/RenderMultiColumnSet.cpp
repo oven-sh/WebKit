@@ -447,7 +447,7 @@ LayoutUnit RenderMultiColumnSet::columnGap() const
     auto& parentBlockGap = parentBlock.style().columnGap();
     if (parentBlockGap.isNormal())
         return LayoutUnit(parentBlock.style().fontDescription().computedSize()); // "1em" is recommended as the normal gap setting. Matches <p> margins.
-    return Style::evaluate<LayoutUnit>(parentBlockGap, parentBlock.contentBoxLogicalWidth(), Style::ZoomNeeded { });
+    return Style::evaluate<LayoutUnit>(parentBlockGap, parentBlock.contentBoxLogicalWidth(), parentBlock.style().usedZoomForLength());
 }
 
 unsigned RenderMultiColumnSet::columnCount() const
@@ -823,7 +823,7 @@ void RenderMultiColumnSet::collectLayerFragments(LayerFragments& fragments, cons
     //
     // All other rectangles in this method are slightly less physical, when it comes to how they are
     // used with different writing modes, but they aren't really logical either. They are just like
-    // RenderBox::frameRect(). More precisely, the sizes are physical, and the inline direction
+    // RenderBox::borderBoxRectInContainer(). More precisely, the sizes are physical, and the inline direction
     // coordinate is too, but the block direction coordinate is always "logical top". These
     // rectangles also pretend that there's only one long column, i.e. they are for the flow thread.
     //

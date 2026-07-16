@@ -264,6 +264,11 @@ WebCore::RectEdges<bool> RemoteScrollingCoordinatorProxy::pinnedStateIncludingAn
     return m_scrollingTree->pinnedStateIncludingAncestorsAtPoint(p);
 }
 
+bool RemoteScrollingCoordinatorProxy::isPointInScrollbar(FloatPoint p)
+{
+    return m_scrollingTree->isPointInScrollbar(p);
+}
+
 void RemoteScrollingCoordinatorProxy::viewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const FloatRect& layoutViewport, double scale)
 {
     m_scrollingTree->mainFrameViewportChangedViaDelegatedScrolling(scrollPosition, layoutViewport, scale);
@@ -365,6 +370,11 @@ bool RemoteScrollingCoordinatorProxy::scrollingTreeNodeRequestsKeyboardScroll(Sc
 String RemoteScrollingCoordinatorProxy::scrollingTreeAsText() const
 {
     return m_scrollingTree->scrollingTreeAsText();
+}
+
+float RemoteScrollingCoordinatorProxy::rubberbandHyperbolicCoefficientForTesting() const
+{
+    return m_scrollingTree->rubberbandHyperbolicCoefficientForTesting();
 }
 
 bool RemoteScrollingCoordinatorProxy::hasScrollableMainFrame() const

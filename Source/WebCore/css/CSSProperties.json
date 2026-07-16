@@ -2144,6 +2144,33 @@
                 "url": "https://drafts.csswg.org/css-animations-1/#propdef-animation-timing-function"
             }
         },
+        "animation-trigger": {
+            "animation-type": "not animatable",
+            "initial": "none",
+            "values": [
+                "none",
+                "replay",
+                "pause",
+                "play-backwards",
+                "reset",
+                "play-once",
+                "play-forwards",
+                "play"
+            ],
+            "codegen-properties": {
+                "coordinated-value-list-property": true,
+                "coordinated-value-list-property-name-for-methods": "Trigger",
+                "coordinated-value-list-property-item-type": "Style::SingleAnimationTrigger",
+                "computed-style-storage-container": "opaque",
+                "computed-style-storage-path": ["m_nonInheritedData", "miscData", "animations"],
+                "parser-grammar": "<single-animation-trigger>#@(no-single-item-opt)",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-animation-trigger"
+            }
+        },
         "background": {
             "codegen-properties": {
                 "longhands": [
@@ -2452,9 +2479,9 @@
         "block-ellipsis": {
             "animation-type": "discrete",
             "inherited": true,
-            "initial": "none",
+            "initial": "no-ellipsis",
             "values": [
-                "none",
+                "no-ellipsis",
                 "auto"
             ],
             "codegen-properties": {
@@ -2462,7 +2489,7 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::BlockEllipsis",
-                "parser-grammar": "none | auto | <string>",
+                "parser-grammar": "no-ellipsis | auto | <string>",
                 "parser-exported": true
             },
             "specification": {
@@ -7186,10 +7213,7 @@
             "animation-type": "by computed value",
             "initial": "0px",
             "values": [
-                {
-                	"value": "-internal-inset",
-                	"status": "internal"
-                }
+                "inset"
             ],
             "codegen-properties": {
                 "computed-style-storage-path": ["m_nonInheritedData", "backgroundData", "outline"],
@@ -9041,6 +9065,28 @@
                 "url": "https://www.w3.org/TR/css-text-4/#white-space-collapsing"
             }
         },
+        "white-space-trim": {
+            "animation-type": "discrete",
+            "initial": "none",
+            "values": [
+                "none",
+                "discard-before",
+                "discard-after",
+                "discard-inner"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssWhiteSpaceTrimEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "raw",
+                "computed-style-type": "Style::WhiteSpaceTrim",
+                "parser-grammar": "none | [ discard-before || discard-after || discard-inner ]@(no-single-item-opt)",
+                "parser-exported": true
+            },
+            "specification": {
+                "category": "css-text",
+                "url": "https://drafts.csswg.org/css-text-4/#white-space-trim"
+            }
+        },
         "widows": {
             "animation-type": "by computed value",
             "inherited": true,
@@ -9193,6 +9239,25 @@
             "specification": {
                 "category": "css-text",
                 "url": "https://www.w3.org/TR/css-text/#word-spacing-property"
+            }
+        },
+        "wrap-inside": {
+            "animation-type": "discrete",
+            "initial": "auto",
+            "values": [
+                "auto",
+                "avoid"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssWrapInsideEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "WrapInside",
+                "parser-grammar": "<<values>>"
+            },
+            "specification": {
+                "category": "css-text",
+                "url": "https://drafts.csswg.org/css-text-4/#wrap-inside"
             }
         },
         "x": {
@@ -11906,6 +11971,24 @@
                 "url": "https://drafts.csswg.org/css-text-decor-4/#text-decoration-thickness-property"
             }
         },
+        "text-decoration-inset": {
+            "animation-type": "by computed value",
+            "initial": "0px",
+            "values": [
+                "auto"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssTextDecorationInsetEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "reference",
+                "computed-style-type": "Style::TextDecorationInset",
+                "parser-grammar": "auto | <length>{1,2}@(type=CSSValuePair default=previous)"
+            },
+            "specification": {
+                "category": "css-text-decor",
+                "url": "https://drafts.csswg.org/css-text-decor-4/#text-decoration-inset-property"
+            }
+        },
         "-webkit-text-decorations-in-effect": {
             "animation-type": "not animatable (internal)",
             "inherited": true,
@@ -13170,6 +13253,182 @@
                 "url": "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
             }
         },
+        "trigger-scope": {
+            "animation-type": "not animatable",
+            "initial": "none",
+            "values": [
+                "none",
+                "all"
+            ],
+            "codegen-properties": {
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "reference",
+                "computed-style-type": "Style::NameScope",
+                "parser-grammar": "none | all | <dashed-ident>#",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#trigger-scope"
+            }
+        },
+        "timeline-trigger-name": {
+            "animation-type": "not animatable",
+            "initial": "none",
+            "values": [
+                "none"
+            ],
+            "codegen-properties": {
+                "coordinated-value-list-property": true,
+                "coordinated-value-list-property-name-for-methods": "Name",
+                "coordinated-value-list-property-item-type": "Style::TimelineTriggerName",
+                "computed-style-storage-container": "opaque",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData", "timelineTriggers"],
+                "parser-grammar": "<single-timeline-trigger-name>#",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#timeline-trigger-name"
+            }
+        },
+        "timeline-trigger-source": {
+            "animation-type": "not animatable",
+            "initial": "auto",
+            "values": [
+                "auto",
+                "none"
+            ],
+            "codegen-properties": {
+                "coordinated-value-list-property": true,
+                "coordinated-value-list-property-name-for-methods": "Source",
+                "coordinated-value-list-property-item-type": "Style::SingleAnimationTimeline",
+                "computed-style-storage-container": "opaque",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData", "timelineTriggers"],
+                "parser-grammar": "<single-animation-timeline>#",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#timeline-trigger-source"
+            }
+        },
+        "timeline-trigger-activation-range": {
+            "codegen-properties": {
+                "longhands": [
+                    "timeline-trigger-activation-range-start",
+                    "timeline-trigger-activation-range-end"
+                ],
+                "coordinated-value-list-property": true,
+                "separator": ",",
+                "parser-function": "consumeTimelineTriggerActivationRangeShorthand",
+                "parser-grammar-unused": "[ <'timeline-trigger-activation-range-start'> <'timeline-trigger-activation-range-end'>? ]#",
+                "parser-grammar-unused-reason": "Needs support for shorthand grammars.",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-timeline-trigger-activation-range"
+            }
+        },
+        "timeline-trigger-activation-range-start": {
+            "animation-type": "not animatable",
+            "initial": "normal",
+            "values": [
+                "normal"
+            ],
+            "codegen-properties": {
+                "coordinated-value-list-property": true,
+                "coordinated-value-list-property-name-for-methods": "ActivationRangeStart",
+                "coordinated-value-list-property-item-type": "Style::SingleAnimationRangeStart",
+                "computed-style-storage-container": "opaque",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData", "timelineTriggers"],
+                "parser-grammar": "<single-animation-range-start>#",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-timeline-trigger-activation-range-start"
+            }
+        },
+        "timeline-trigger-activation-range-end": {
+            "animation-type": "not animatable",
+            "initial": "normal",
+            "values": [
+                "normal"
+            ],
+            "codegen-properties": {
+                "coordinated-value-list-property": true,
+                "coordinated-value-list-property-name-for-methods": "ActivationRangeEnd",
+                "coordinated-value-list-property-item-type": "Style::SingleAnimationRangeEnd",
+                "computed-style-storage-container": "opaque",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData", "timelineTriggers"],
+                "parser-grammar": "<single-animation-range-end>#",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-timeline-trigger-activation-range-end"
+            }
+        },
+        "timeline-trigger-active-range-start": {
+            "animation-type": "not animatable",
+            "initial": "normal",
+            "values": [
+                "normal"
+            ],
+            "codegen-properties": {
+                "coordinated-value-list-property": true,
+                "coordinated-value-list-property-name-for-methods": "ActiveRangeStart",
+                "coordinated-value-list-property-item-type": "Style::SingleAnimationRangeStart",
+                "computed-style-storage-container": "opaque",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData", "timelineTriggers"],
+                "parser-grammar": "<single-animation-range-start>#",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-timeline-trigger-active-range-start"
+            }
+        },
+        "timeline-trigger-active-range": {
+            "codegen-properties": {
+                "longhands": [
+                    "timeline-trigger-active-range-start",
+                    "timeline-trigger-active-range-end"
+                ],
+                "coordinated-value-list-property": true,
+                "separator": ",",
+                "parser-function": "consumeTimelineTriggerActiveRangeShorthand",
+                "parser-grammar-unused": "[ <'timeline-trigger-active-range-start'> <'timeline-trigger-active-range-end'>? ]#",
+                "parser-grammar-unused-reason": "Needs support for shorthand grammars.",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-timeline-trigger-active-range"
+            }
+        },
+        "timeline-trigger-active-range-end": {
+            "animation-type": "not animatable",
+            "initial": "normal",
+            "values": [
+                "normal"
+            ],
+            "codegen-properties": {
+                "coordinated-value-list-property": true,
+                "coordinated-value-list-property-name-for-methods": "ActiveRangeEnd",
+                "coordinated-value-list-property-item-type": "Style::SingleAnimationRangeEnd",
+                "computed-style-storage-container": "opaque",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData", "timelineTriggers"],
+                "parser-grammar": "<single-animation-range-end>#",
+                "settings-flag": "animationTriggersEnabled"
+            },
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-timeline-trigger-active-range-end"
+            }
+        },
         "view-transition-class": {
             "animation-type": "discrete",
             "initial": "none",
@@ -13828,6 +14087,39 @@
                     "url": "https://drafts.csswg.org/css-fonts-4/#descdef-font-face-src"
                 }
             },
+            "ascent-override": {
+                "codegen-properties": {
+                    "parser-grammar": "normal | <percentage [0,inf]>",
+                    "parser-exported": true,
+                    "settings-flag": "cssFontFaceMetricOverrideDescriptorsEnabled"
+                },
+                "specification": {
+                    "category": "css-fonts-4",
+                    "url": "https://drafts.csswg.org/css-fonts-4/#descdef-font-face-ascent-override"
+                }
+            },
+            "descent-override": {
+                "codegen-properties": {
+                    "parser-grammar": "normal | <percentage [0,inf]>",
+                    "parser-exported": true,
+                    "settings-flag": "cssFontFaceMetricOverrideDescriptorsEnabled"
+                },
+                "specification": {
+                    "category": "css-fonts-4",
+                    "url": "https://drafts.csswg.org/css-fonts-4/#descdef-font-face-descent-override"
+                }
+            },
+            "line-gap-override": {
+                "codegen-properties": {
+                    "parser-grammar": "normal | <percentage [0,inf]>",
+                    "parser-exported": true,
+                    "settings-flag": "cssFontFaceMetricOverrideDescriptorsEnabled"
+                },
+                "specification": {
+                    "category": "css-fonts-4",
+                    "url": "https://drafts.csswg.org/css-fonts-4/#descdef-font-face-line-gap-override"
+                }
+            },
             "size-adjust": {
                 "codegen-properties": {
                     "parser-grammar": "<percentage [0,inf]>",
@@ -13964,6 +14256,11 @@
         }
     },
     "categories": {
+        "animation-triggers": {
+            "shortname": "Animation Triggers",
+            "longname": "Animation Triggers",
+            "url": "https://drafts.csswg.org/animation-triggers-1"
+        },
         "css-22": {
             "shortname": "CSS 2.2",
             "longname": "CSS 2.2",
@@ -15333,6 +15630,28 @@
             "specification": {
                 "category": "css-animations",
                 "url": "https://drafts.csswg.org/css-animations-2/#typedef-single-animation-timeline"
+            }
+        },
+        "<animation-action>": {
+            "grammar": "none | play | play-once | play-forwards | play-backwards | pause | reset | replay",
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#typedef-animation-action"
+            }
+        },
+        "<single-animation-trigger>": {
+            "grammar": "none | [ <dashed-ident> <animation-action>+ ]+@(no-single-item-opt)",
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#propdef-animation-trigger"
+            }
+        },
+        "<single-timeline-trigger-name>": {
+            "grammar": "none | <dashed-ident>",
+            "exported": true,
+            "specification": {
+                "category": "animation-triggers",
+                "url": "https://drafts.csswg.org/animation-triggers-1/#timeline-trigger-name"
             }
         },
         "<single-container-name>": {

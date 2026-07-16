@@ -43,20 +43,7 @@
 
 #import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
-
-#if !defined(WebCore_AVKitLibrary_SoftLinked)
-#define WebCore_AVKitLibrary_SoftLinked
-SOFTLINK_AVKIT_FRAMEWORK()
-#endif
-SOFT_LINK_CLASS_OPTIONAL(AVKit, __AVPlayerLayerView)
-
-#if !RELEASE_LOG_DISABLED
-@interface WebAVPlayerLayer (Logging)
-@property (readonly, nonatomic) uint64_t logIdentifier;
-@property (readonly, nonatomic) const Logger* loggerPtr;
-@property (readonly, nonatomic) WTFLogChannel* logChannel;
-@end
-#endif
+#import <pal/cocoa/AVKitSoftLink.h>
 
 namespace WebCore {
 class WebAVPlayerLayerPresentationModelClient final : public VideoPresentationModelClient, public CanMakeCheckedPtr<WebAVPlayerLayerPresentationModelClient> {

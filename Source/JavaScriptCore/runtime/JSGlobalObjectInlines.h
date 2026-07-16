@@ -680,6 +680,11 @@ inline JSObject* JSGlobalObject::typedArrayConstructor(TypedArrayType type) cons
     return lazyTypedArrayStructure(type).constructor(this);
 }
 
+inline JSObject* JSGlobalObject::typedArrayConstructorConcurrently(TypedArrayType type) const
+{
+    return lazyTypedArrayStructure(type).constructorConcurrently();
+}
+
 inline JSObject* JSGlobalObject::typedArrayPrototype(TypedArrayType type) const
 {
     return lazyTypedArrayStructure(type).prototype(this);
@@ -690,6 +695,16 @@ inline JSCell* JSGlobalObject::linkTimeConstant(LinkTimeConstant value) const
     JSCell* result = m_linkTimeConstants[static_cast<unsigned>(value)].getInitializedOnMainThread(this);
     ASSERT(result);
     return result;
+}
+
+inline JSObject* JSGlobalObject::asyncGeneratorPrototypeNextFunction() const
+{
+    return uncheckedDowncast<JSObject>(linkTimeConstant(LinkTimeConstant::asyncGeneratorPrototypeNext));
+}
+
+inline JSObject* JSGlobalObject::asyncIteratorPrototypeSymbolAsyncIteratorFunction() const
+{
+    return uncheckedDowncast<JSObject>(linkTimeConstant(LinkTimeConstant::asyncIteratorPrototypeSymbolAsyncIterator));
 }
 
 template<typename Type> inline Type JSGlobalObject::linkTimeConstantConcurrently(LinkTimeConstant value) const

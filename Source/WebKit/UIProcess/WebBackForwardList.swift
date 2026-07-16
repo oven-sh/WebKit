@@ -1156,7 +1156,12 @@ final class WebBackForwardList {
             return
         }
         // We can't use == here due to rdar://162357139
-        assert(contentsMatch(webPageProxy.identifier(), item.pageID()) && contentsMatch(itemID, item.identifier()))
+        if messageCheck(
+            process: process,
+            contentsMatch(webPageProxy.identifier(), item.pageID()) && contentsMatch(itemID, item.identifier())
+        ) {
+            return
+        }
         let oldFrameID = frameItem.frameID()
         frameItem.updateFrameStatePayload(consuming: frameState)
         let newFrameID = frameItem.frameID()
@@ -1231,6 +1236,17 @@ final class WebBackForwardList {
         }
 
         if let item = itemForID(identifier: itemID) {
+            // Mirror of the C++ backForwardGoToItemShared guard (webkit.org/b/318728): ignore an index
+            // move opposite to the in-flight traversal direction so a stale split leg can't clobber it.
+            if let webPageProxy = page.get(), let priorCurrentIndex = currentIndex,
+                let targetIndex = entries.firstIndex(where: { $0 === item })
+            {
+                let direction = webPageProxy.inFlightTraversalDirection()
+                if (direction < 0 && targetIndex > priorCurrentIndex) || (direction > 0 && targetIndex < priorCurrentIndex) {
+                    completionHandler.pointee(consuming: rawCounts())
+                    return
+                }
+            }
             goToItem(item: item)
         }
 

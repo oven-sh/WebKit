@@ -592,15 +592,10 @@ WI.DataGrid = class DataGrid extends WI.View
             return;
 
         let node = this.dataGridNodeFromNode(target);
-        if (!node.editable)
+        if (!node?.editable)
             return;
 
         this._editingNode = node;
-        if (!this._editingNode) {
-            if (!this.placeholderNode)
-                return;
-            this._editingNode = this.placeholderNode;
-        }
 
         // Force editing the 1st column when editing the placeholder node
         if (this._editingNode.isPlaceholderNode)
@@ -1191,7 +1186,7 @@ WI.DataGrid = class DataGrid extends WI.View
             this._topDataTableMarginElement.style.height = marginTop + "px";
         }
 
-        if (this._bottomDataTableMarginElement !== marginBottom) {
+        if (this._bottomDataTableMarginHeight !== marginBottom) {
             this._bottomDataTableMarginHeight = marginBottom;
             this._bottomDataTableMarginElement.style.height = marginBottom + "px";
         }
@@ -1201,14 +1196,16 @@ WI.DataGrid = class DataGrid extends WI.View
 
         this.dataTableBodyElement.removeChildren();
 
+        let dataTableBodyElementFragment = document.createDocumentFragment();
         for (let i = topHiddenRowCount; i < topHiddenRowCount + visibleRowCount; ++i) {
             let rowDataGridNode = revealedRows[i];
             if (!rowDataGridNode)
                 continue;
-            this.dataTableBodyElement.appendChild(rowDataGridNode.element);
+            dataTableBodyElementFragment.appendChild(rowDataGridNode.element);
         }
 
-        this.dataTableBodyElement.appendChild(this._fillerRowElement);
+        dataTableBodyElementFragment.appendChild(this._fillerRowElement);
+        this.dataTableBodyElement.appendChild(dataTableBodyElementFragment);
     }
 
     addPlaceholderNode()
@@ -1916,7 +1913,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
         dragPoint = Number.constrain(dragPoint, leftMinimum, rightMaximum);
 
-        resizer.element.style.setProperty(isRTL ? "right" : "left", `${dragPoint - this.CenterResizerOverBorderAdjustment}px`);
+        resizer.element.style.setProperty(isRTL ? "right" : "left", `${dragPoint - WI.DataGrid.CenterResizerOverBorderAdjustment}px`);
 
         let percentLeftColumn = (((dragPoint - leadingEdgeOfPreviousColumn) / this._dataTableElement.offsetWidth) * 100) + "%";
         this._headerTableColumnGroupElement.children[leftColumnIndex].style.width = percentLeftColumn;

@@ -1415,7 +1415,7 @@ void WebPage::frameTreeSyncDataChangedInAnotherProcess(FrameIdentifier frameID, 
     if (coreFrame) {
         coreFrame->updateFrameTreeSyncData(data);
 
-        switch (data.type) {
+        switch (static_cast<FrameTreeSyncDataType>(data.value.index())) {
         case FrameTreeSyncDataType::FrameRect:
             frame->updateFrameRectFromRemote(coreFrame->frameTreeSyncData().frameRect);
             break;
@@ -4950,7 +4950,7 @@ void WebPage::runJavaScriptInFrameInScriptWorld(RunJavaScriptParameters&& parame
 
 void WebPage::clearContentWorld(ContentWorldIdentifier worldIdentifier, CompletionHandler<void()>&& completionHandler)
 {
-    if (RefPtr world = m_userContentController->worldForIdentifier(worldIdentifier); world && world->coreWorld().allowNodeSerialization()) {
+    if (RefPtr world = m_userContentController->worldForIdentifier(worldIdentifier); world && world->coreWorld().allowNodeSnapshotCreation()) {
         WEBPAGE_RELEASE_LOG(Loading, "clearContentWorld: id=%" PUBLIC_LOG_STRING " name=%" PUBLIC_LOG_STRING, worldIdentifier.loggingString().ascii().data(), world->name().utf8().data());
         world->clearWrappers();
     }
@@ -6639,7 +6639,7 @@ void WebPage::sendSetWindowFrame(const FloatRect& windowFrame)
 #if PLATFORM(COCOA)
     m_hasCachedWindowFrame = false;
 #endif
-    send(Messages::WebPageProxy::SetWindowFrame(windowFrame));
+    send(Messages::WebPageProxy::SetWindowFrameIPC(windowFrame));
 }
 
 #if PLATFORM(COCOA)
@@ -8273,7 +8273,7 @@ void WebPage::didCommitLoad(WebFrame* frame)
 
     updateMockAccessibilityElementAfterCommittingLoad();
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     m_elementsToExcludeFromRemoveBackground.clear();
 #endif
 
@@ -8405,7 +8405,12 @@ void WebPage::scheduleFullEditorStateUpdate()
 
 void WebPage::loadAndDecodeImage(WebCore::ResourceRequest&& request, std::optional<WebCore::FloatSize> sizeConstraint, uint64_t maximumBytesFromNetwork, CompletionHandler<void(Expected<Ref<WebCore::ShareableBitmap>, WebCore::ResourceError>&&)>&& completionHandler)
 {
-    URL url = request.url();
+    auto url = request.url();
+    RefPtr page = corePage();
+    if (!page)
+        return completionHandler(makeUnexpected(decodeError(url)));
+
+    request.setFirstPartyForCookies(page->mainFrameURL());
     WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::LoadImageForDecoding(WTF::move(request), m_webPageProxyIdentifier, maximumBytesFromNetwork), [completionHandler = WTF::move(completionHandler), sizeConstraint, url] (Expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&& result) mutable {
         if (!result)
             return completionHandler(makeUnexpected(WTF::move(result.error())));
@@ -8904,7 +8909,7 @@ void WebPage::setIsSuspended(bool suspended, CompletionHandler<void(std::optiona
 void WebPage::suspendWithFrameItem(BackForwardFrameItemIdentifier identifier, CompletionHandler<void(bool)>&& completionHandler)
 {
     if (m_isSuspended)
-        return completionHandler(true);
+        return completionHandler(BackForwardCache::singleton().isInBackForwardCache(identifier));
 
     RefPtr page = corePage();
     if (!page) {
@@ -8951,8 +8956,31 @@ void WebPage::restoreWithFrameItem(BackForwardFrameItemIdentifier identifier, st
 
     m_isSuspended = false;
     unfreezeLayerTree(LayerTreeFreezeReason::PageSuspended);
+    detachResidualSubframesForBackForwardCacheRestore(*page);
     cachedPage->restore(*page);
     completionHandler(true);
+}
+
+void WebPage::detachResidualSubframesForBackForwardCacheRestore(WebCore::Page& page)
+{
+    // Only reached in an iframe process: the main frame is remote, so every child belongs to
+    // the outgoing navigation and detaching all of them is safe.
+    ASSERT(!page.localMainFrame());
+
+    Ref mainFrame = page.mainFrame();
+    Vector<Ref<WebCore::Frame>> children;
+    for (RefPtr child = mainFrame->tree().firstChild(); child; child = child->tree().nextSibling())
+        children.append(*child);
+    for (auto& child : children) {
+        if (RefPtr localChild = dynamicDowncast<WebCore::LocalFrame>(child.get()))
+            localChild->loader().detachFromParent();
+        else {
+            child->disconnectOwnerElement();
+            if (RefPtr parent = child->tree().parent())
+                parent->tree().removeChild(child);
+            child->disconnectView();
+        }
+    }
 }
 
 void WebPage::hasStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, WebFrame& frame, CompletionHandler<void(bool)>&& completionHandler)
@@ -9087,9 +9115,9 @@ void WebPage::showContactPicker(WebCore::ContactsRequestData&& requestData, Comp
 }
 
 #if ENABLE(WEB_AUTHN)
-void WebPage::showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData& requestData, CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& completionHandler)
+void WebPage::showDigitalCredentialsChooser(std::optional<WebCore::FrameIdentifier> frameID, const WebCore::DigitalCredentialsRequestData& requestData, CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::WebPageProxy::ShowDigitalCredentialsChooser(requestData), WTF::move(completionHandler));
+    sendWithAsyncReply(Messages::WebPageProxy::ShowDigitalCredentialsChooser(frameID, requestData), WTF::move(completionHandler));
 }
 
 void WebPage::dismissDigitalCredentialsChooser(CompletionHandler<void(bool)>&& completionHandler)
@@ -9789,7 +9817,7 @@ void WebPage::showMediaControlsContextMenu(FloatRect&& targetFrame, Vector<Media
         return;
     }
 
-    sendWithAsyncReply(Messages::WebPageProxy::ShowMediaControlsContextMenu(WTF::move(targetFrame), WTF::move(items), protect(WebFrame::fromCoreFrame(*frame))->info(), identifier), completionHandler);
+    sendWithAsyncReply(Messages::WebPageProxy::ShowMediaControlsContextMenu(WTF::move(targetFrame), WTF::move(items), protect(WebFrame::fromCoreFrame(*frame))->info(), identifier), WTF::move(completionHandler));
 }
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
 
@@ -10041,7 +10069,7 @@ void WebPage::cancelTextRecognitionForVideoInElementFullScreen()
 #endif // ENABLE(IMAGE_ANALYSIS) && ENABLE(VIDEO)
 
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 void WebPage::shouldAllowRemoveBackground(const ElementContext& context, CompletionHandler<void(bool)>&& completion) const
 {

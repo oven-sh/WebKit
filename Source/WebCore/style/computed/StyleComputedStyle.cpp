@@ -68,7 +68,7 @@ struct SameSizeAsComputedStyle : CanMakeCheckedPtr<SameSizeAsComputedStyle> {
         unsigned unicodeBidi : 3;
         unsigned floating : 3;
         bool usesViewportUnits : 1;
-        bool usesContainerUnits : 1;
+        bool isContainerDependent : 1;
         bool useTreeCountingFunctions : 1;
         bool hasExplicitlyInheritedProperties : 1;
         bool disallowsFastPathInheritance : 1;
@@ -152,6 +152,7 @@ ComputedStyle ComputedStyle::createStyleInheritingFromPseudoStyle(const Computed
 {
     ASSERT(pseudoStyle.pseudoElementType() == PseudoElementType::Before
         || pseudoStyle.pseudoElementType() == PseudoElementType::After
+        || pseudoStyle.pseudoElementType() == PseudoElementType::Marker
         || pseudoStyle.pseudoElementType() == PseudoElementType::Checkmark
         || pseudoStyle.pseudoElementType() == PseudoElementType::PickerIcon);
 
@@ -597,7 +598,7 @@ Style::LineWidth ComputedStyle::usedColumnRuleWidth() const
 Style::Length<CSS::AllUnzoomed> ComputedStyle::usedOutlineOffset() const
 {
     auto& outline = this->outline();
-    if (outline.outlineOffset.isInternalInset())
+    if (outline.outlineOffset.isInset())
         return Style::Length<CSS::AllUnzoomed> { -usedOutlineWidth().unresolvedValue() };
     return *outline.outlineOffset.tryLength();
 }
@@ -627,7 +628,7 @@ static LayoutUnit computeOutset(const OutsetValue& outsetValue, const Style::Lin
             return LayoutUnit(Style::evaluate<LayoutUnit>(borderWidth, zoom, deviceScaleFactor) * number.value);
         },
         [&](const typename OutsetValue::Length& length) {
-            return Style::evaluate<LayoutUnit>(length, Style::ZoomNeeded { });
+            return Style::evaluate<LayoutUnit>(length, zoom);
         }
     );
 }

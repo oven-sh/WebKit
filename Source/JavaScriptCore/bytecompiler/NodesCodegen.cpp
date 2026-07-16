@@ -1579,38 +1579,6 @@ static JSIteratorHelper::Field NODELETE iteratorHelperInternalFieldIndex(Bytecod
     return JSIteratorHelper::Field::Generator;
 }
 
-static JSAsyncGenerator::Field NODELETE asyncGeneratorInternalFieldIndex(BytecodeIntrinsicNode* node)
-{
-    ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_generatorFieldState)
-        return JSAsyncGenerator::Field::State;
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_generatorFieldNext)
-        return JSAsyncGenerator::Field::Next;
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_generatorFieldThis)
-        return JSAsyncGenerator::Field::This;
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_generatorFieldFrame)
-        return JSAsyncGenerator::Field::Frame;
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncGeneratorFieldQueue)
-        return JSAsyncGenerator::Field::Queue;
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncGeneratorFieldResumeValue)
-        return JSAsyncGenerator::Field::ResumeValue;
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncGeneratorFieldResumeMode)
-        return JSAsyncGenerator::Field::ResumeMode;
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncGeneratorFieldResumePromise)
-        return JSAsyncGenerator::Field::ResumePromise;
-    RELEASE_ASSERT_NOT_REACHED();
-    return JSAsyncGenerator::Field::State;
-}
-
-static AbstractModuleRecord::Field NODELETE abstractModuleRecordInternalFieldIndex(BytecodeIntrinsicNode* node)
-{
-    ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
-    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_abstractModuleRecordFieldState)
-        return AbstractModuleRecord::Field::State;
-    RELEASE_ASSERT_NOT_REACHED();
-    return AbstractModuleRecord::Field::State;
-}
-
 static JSArrayIterator::Field NODELETE arrayIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
@@ -1725,32 +1693,6 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getProxyInternalField(Bytecode
     RELEASE_ASSERT(node->m_expr->isBytecodeIntrinsicNode());
     unsigned index = static_cast<unsigned>(proxyInternalFieldIndex(static_cast<BytecodeIntrinsicNode*>(node->m_expr)));
     ASSERT(index < ProxyObject::numberOfInternalFields);
-    ASSERT(!node->m_next);
-
-    return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
-}
-
-RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getAsyncGeneratorInternalField(BytecodeGenerator& generator, RegisterID* dst)
-{
-    ArgumentListNode* node = m_args->m_listNode;
-    RefPtr<RegisterID> base = generator.emitNode(node);
-    node = node->m_next;
-    RELEASE_ASSERT(node->m_expr->isBytecodeIntrinsicNode());
-    unsigned index = static_cast<unsigned>(asyncGeneratorInternalFieldIndex(static_cast<BytecodeIntrinsicNode*>(node->m_expr)));
-    ASSERT(index < JSAsyncGenerator::numberOfInternalFields);
-    ASSERT(!node->m_next);
-
-    return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
-}
-
-RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getAbstractModuleRecordInternalField(BytecodeGenerator& generator, RegisterID* dst)
-{
-    ArgumentListNode* node = m_args->m_listNode;
-    RefPtr<RegisterID> base = generator.emitNode(node);
-    node = node->m_next;
-    RELEASE_ASSERT(node->m_expr->isBytecodeIntrinsicNode());
-    unsigned index = static_cast<unsigned>(abstractModuleRecordInternalFieldIndex(static_cast<BytecodeIntrinsicNode*>(node->m_expr)));
-    ASSERT(index < AbstractModuleRecord::numberOfInternalFields);
     ASSERT(!node->m_next);
 
     return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
@@ -1926,22 +1868,6 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putGeneratorInternalField(Byte
     RELEASE_ASSERT(node->m_expr->isBytecodeIntrinsicNode());
     unsigned index = static_cast<unsigned>(generatorInternalFieldIndex(static_cast<BytecodeIntrinsicNode*>(node->m_expr)));
     ASSERT(index < JSGenerator::numberOfInternalFields);
-    node = node->m_next;
-    RefPtr<RegisterID> value = generator.emitNode(node);
-
-    ASSERT(!node->m_next);
-
-    return generator.move(dst, generator.emitPutInternalField(base.get(), index, value.get()));
-}
-
-RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putAsyncGeneratorInternalField(BytecodeGenerator& generator, RegisterID* dst)
-{
-    ArgumentListNode* node = m_args->m_listNode;
-    RefPtr<RegisterID> base = generator.emitNode(node);
-    node = node->m_next;
-    RELEASE_ASSERT(node->m_expr->isBytecodeIntrinsicNode());
-    unsigned index = static_cast<unsigned>(asyncGeneratorInternalFieldIndex(static_cast<BytecodeIntrinsicNode*>(node->m_expr)));
-    ASSERT(index < JSAsyncGenerator::numberOfInternalFields);
     node = node->m_next;
     RefPtr<RegisterID> value = generator.emitNode(node);
 
@@ -2138,7 +2064,6 @@ CREATE_INTRINSIC_FOR_BRAND_CHECK(isProxyObject, IsProxyObject)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isDerivedArray, IsDerivedArray)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isGenerator, IsGenerator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isIteratorHelper, IsIteratorHelper)
-CREATE_INTRINSIC_FOR_BRAND_CHECK(isAsyncGenerator, IsAsyncGenerator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isPromise, IsPromise)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isRegExpObject, IsRegExpObject)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isMap, IsMap)
@@ -5526,12 +5451,12 @@ void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
 
         {
             generator.emitLabel(driveLabel.get());
-            RefPtr<RegisterID> driveAsyncFunction = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::driveAsyncFunction);
+            RefPtr<RegisterID> asyncFunctionDrive = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::asyncFunctionDrive);
             CallArguments driveArgs(generator, nullptr, 2);
             generator.emitLoad(driveArgs.thisRegister(), jsUndefined());
             generator.move(driveArgs.argumentRegister(0), nextResult.get());
             generator.move(driveArgs.argumentRegister(1), generator.generatorRegister());
-            generator.emitCallIgnoreResult(generator.newTemporary(), driveAsyncFunction.get(), NoExpectedFunction, driveArgs, divot, divot, divot, DebuggableCall::No);
+            generator.emitCallIgnoreResult(generator.newTemporary(), asyncFunctionDrive.get(), NoExpectedFunction, driveArgs, divot, divot, divot, DebuggableCall::No);
             generator.emitJump(successLabel.get());
         }
 
@@ -5598,13 +5523,18 @@ void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
         StatementNode* singleStatement = this->singleStatement();
         ReturnNode* returnNode = nullptr;
 
-        // Check for a return statement at the end of a function composed of a single block.
+        // Check for a return statement at the end of a function composed of a single block,
+        // or a function whose body is a single return statement (arrow function expression body).
         // With using declarations, emitUsingBodyScope ends with a `done` label that needs
         // a terminal, otherwise it collides with the op_catch stubs appended by generate().
-        if (singleStatement && singleStatement->isBlock() && !usingDeclarationCount()) {
-            StatementNode* lastStatementInBlock = static_cast<BlockNode*>(singleStatement)->lastStatement();
-            if (lastStatementInBlock && lastStatementInBlock->isReturnNode())
-                returnNode = static_cast<ReturnNode*>(lastStatementInBlock);
+        if (singleStatement && !usingDeclarationCount()) {
+            if (singleStatement->isReturnNode())
+                returnNode = static_cast<ReturnNode*>(singleStatement);
+            else if (singleStatement->isBlock()) {
+                StatementNode* lastStatementInBlock = static_cast<BlockNode*>(singleStatement)->lastStatement();
+                if (lastStatementInBlock && lastStatementInBlock->isReturnNode())
+                    returnNode = static_cast<ReturnNode*>(lastStatementInBlock);
+            }
         }
 
         // If there is no return we must automatically insert one.

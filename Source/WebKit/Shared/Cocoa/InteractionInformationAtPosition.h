@@ -72,12 +72,16 @@ struct InteractionInformationAtPosition {
         bool isDHTMLDraggable,
         bool isColorInput,
         bool isRangeInput,
+        bool isARIASlider,
         bool isNearMarkedText,
 #if PLATFORM(IOS_FAMILY)
         bool touchCalloutEnabled,
 #endif
         bool isLink,
         bool isImage,
+#if PLATFORM(IOS_FAMILY)
+        bool hasSaveableImage,
+#endif
 #if ENABLE(MODEL_PROCESS)
         bool isInteractiveModel,
 #endif
@@ -142,6 +146,7 @@ struct InteractionInformationAtPosition {
     bool isDHTMLDraggable { false };
     bool isColorInput { false };
     bool isRangeInput { false };
+    bool isARIASlider { false };
 
     bool isNearMarkedText { false };
 #if PLATFORM(IOS_FAMILY)
@@ -149,6 +154,9 @@ struct InteractionInformationAtPosition {
 #endif
     bool isLink { false };
     bool isImage { false };
+#if PLATFORM(IOS_FAMILY)
+    bool hasSaveableImage { false };
+#endif
 #if ENABLE(MODEL_PROCESS)
     bool isInteractiveModel { false };
 #endif

@@ -124,10 +124,24 @@ static bool isFallbackAdapter(WGPUAdapter adapter)
     return properties.adapterType == WGPUAdapterType_CPU;
 }
 
+static uint32_t subgroupMinSize(WGPUAdapter adapter)
+{
+    WGPUAdapterProperties properties;
+    wgpuAdapterGetProperties(adapter, &properties);
+    return properties.subgroupMinSize;
+}
+
+static uint32_t subgroupMaxSize(WGPUAdapter adapter)
+{
+    WGPUAdapterProperties properties;
+    wgpuAdapterGetProperties(adapter, &properties);
+    return properties.subgroupMaxSize;
+}
+
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AdapterImpl);
 
 AdapterImpl::AdapterImpl(WebGPUPtr<WGPUAdapter>&& adapter, ConvertToBackingContext& convertToBackingContext)
-    : Adapter(adapterName(adapter.get()), supportedFeatures(adapter.get()), supportedLimits(adapter.get()), WebGPU::isFallbackAdapter(adapter.get()))
+    : Adapter(adapterName(adapter.get()), supportedFeatures(adapter.get()), supportedLimits(adapter.get()), WebGPU::isFallbackAdapter(adapter.get()), WebGPU::subgroupMinSize(adapter.get()), WebGPU::subgroupMaxSize(adapter.get()))
     , m_backing(WTF::move(adapter))
     , m_convertToBackingContext(convertToBackingContext)
 {
@@ -185,6 +199,9 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
     auto features = descriptor.requiredFeatures.map([&convertToBackingContext = m_convertToBackingContext.get()](auto featureName) {
         return convertToBackingContext.convertToBacking(featureName);
     });
+
+    if (features.contains(WGPUFeatureName_TextureFormatsTier2) && !features.contains(WGPUFeatureName_TextureFormatsTier1))
+        features.append(WGPUFeatureName_TextureFormatsTier1);
 
     if (features.contains(WGPUFeatureName_TextureFormatsTier1) && !features.contains(WGPUFeatureName_RG11B10UfloatRenderable))
         features.append(WGPUFeatureName_RG11B10UfloatRenderable);

@@ -1,3 +1,6 @@
+//@ requireOptions("--useExplicitResourceManagement=1")
+// DumpRenderTree and WebKitTestRunner run with experimental features enabled, which changes the expectations for this test.
+
 description("Test to ensure correct behaviour of Object.getOwnPropertyNames");
 
 function argumentsObject() { return arguments; };
@@ -64,14 +67,14 @@ var expectedPropertyNamesSet = {
     "Number": "['EPSILON', 'MAX_SAFE_INTEGER', 'MAX_VALUE', 'MIN_SAFE_INTEGER', 'MIN_VALUE', 'NEGATIVE_INFINITY', 'NaN', 'POSITIVE_INFINITY', 'isFinite', 'isInteger', 'isNaN', 'isSafeInteger', 'length', 'name', 'parseFloat', 'parseInt', 'prototype']",
     "Number.prototype": "['constructor', 'toExponential', 'toFixed', 'toLocaleString', 'toPrecision', 'toString', 'valueOf']",
     "Date": "['UTC', 'length', 'name', 'now', 'parse', 'prototype']",
-    "Date.prototype": "['constructor', 'getDate', 'getDay', 'getFullYear', 'getHours', 'getMilliseconds', 'getMinutes', 'getMonth', 'getSeconds', 'getTime', 'getTimezoneOffset', 'getUTCDate', 'getUTCDay', 'getUTCFullYear', 'getUTCHours', 'getUTCMilliseconds', 'getUTCMinutes', 'getUTCMonth', 'getUTCSeconds', 'getYear', 'setDate', 'setFullYear', 'setHours', 'setMilliseconds', 'setMinutes', 'setMonth', 'setSeconds', 'setTime', 'setUTCDate', 'setUTCFullYear', 'setUTCHours', 'setUTCMilliseconds', 'setUTCMinutes', 'setUTCMonth', 'setUTCSeconds', 'setYear', 'toDateString', 'toGMTString', 'toISOString', 'toJSON', 'toLocaleDateString', 'toLocaleString', 'toLocaleTimeString', 'toString', 'toTimeString', 'toUTCString', 'valueOf']",
+    "Date.prototype": "['constructor', 'getDate', 'getDay', 'getFullYear', 'getHours', 'getMilliseconds', 'getMinutes', 'getMonth', 'getSeconds', 'getTime', 'getTimezoneOffset', 'getUTCDate', 'getUTCDay', 'getUTCFullYear', 'getUTCHours', 'getUTCMilliseconds', 'getUTCMinutes', 'getUTCMonth', 'getUTCSeconds', 'getYear', 'setDate', 'setFullYear', 'setHours', 'setMilliseconds', 'setMinutes', 'setMonth', 'setSeconds', 'setTime', 'setUTCDate', 'setUTCFullYear', 'setUTCHours', 'setUTCMilliseconds', 'setUTCMinutes', 'setUTCMonth', 'setUTCSeconds', 'setYear', 'toDateString', 'toGMTString', 'toISOString', 'toJSON', 'toLocaleDateString', 'toLocaleString', 'toLocaleTimeString', 'toString', 'toTemporalInstant', 'toTimeString', 'toUTCString', 'valueOf']",
     "RegExp": "['$&', \"$'\", '$*', '$+', '$1', '$2', '$3', '$4', '$5', '$6', '$7', '$8', '$9', '$_', '$`', 'escape', 'input', 'lastMatch', 'lastParen', 'leftContext', 'length', 'multiline', 'name', 'prototype', 'rightContext']",
     "RegExp.prototype": "['compile', 'constructor', 'dotAll', 'exec', 'flags', 'global', 'hasIndices', 'ignoreCase', 'multiline', 'source', 'sticky', 'test', 'toString', 'unicode', 'unicodeSets']",
     "Error": "['captureStackTrace', 'isError', 'length', 'name', 'prototype', 'stackTraceLimit']",
     "Error.prototype": "['constructor', 'message', 'name', 'toString']",
     "Math": "['E','LN10','LN2','LOG10E','LOG2E','PI','SQRT1_2','SQRT2','abs','acos','acosh','asin','asinh','atan','atan2','atanh','cbrt','ceil','clz32','cos','cosh','exp','expm1','f16round','floor','fround','hypot','imul','log','log10','log1p','log2','max','min','pow','random','round','sign','sin','sinh','sqrt','sumPrecise','tan','tanh','trunc']",
     "JSON": "['isRawJSON', 'parse', 'rawJSON', 'stringify']",
-    "Symbol": "['asyncIterator','for', 'hasInstance', 'isConcatSpreadable', 'iterator', 'keyFor', 'length', 'match', 'matchAll', 'name', 'prototype', 'replace', 'search', 'species', 'split', 'toPrimitive', 'toStringTag', 'unscopables']",
+    "Symbol": "['asyncDispose', 'asyncIterator', 'dispose', 'for', 'hasInstance', 'isConcatSpreadable', 'iterator', 'keyFor', 'length', 'match', 'matchAll', 'name', 'prototype', 'replace', 'search', 'species', 'split', 'toPrimitive', 'toStringTag', 'unscopables']",
     "Symbol.prototype": "['constructor', 'description', 'toString', 'valueOf']",
     "Map": "['groupBy', 'length', 'name', 'prototype']",
     "Map.prototype": "['clear', 'constructor', 'delete', 'entries', 'forEach', 'get', 'getOrInsert', 'getOrInsertComputed', 'has', 'keys', 'set', 'size', 'values']",

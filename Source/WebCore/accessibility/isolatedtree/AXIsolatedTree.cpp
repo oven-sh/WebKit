@@ -666,6 +666,9 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
         case AXProperty::ARIALevel:
             properties.append({ AXProperty::ARIALevel, axObject.ariaLevel() });
             break;
+        case AXProperty::HeadingLevel:
+            properties.append({ AXProperty::HeadingLevel, axObject.computedHeadingLevel() });
+            break;
         case AXProperty::ValueAutofillButtonType:
             properties.append({ AXProperty::ValueAutofillButtonType, static_cast<int>(axObject.valueAutofillButtonType()) });
             properties.append({ AXProperty::IsValueAutofillAvailable, axObject.isValueAutofillAvailable() });
@@ -2229,6 +2232,7 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         setProperty(AXProperty::IsAttachment, object.isAttachment());
         setProperty(AXProperty::IsBusy, object.isBusy());
         setProperty(AXProperty::IsExpanded, object.isExpanded());
+        setProperty(AXProperty::HasExplicitGroupRole, object.hasExplicitGroupRole());
 
         // FIXME: Caching isSecureField would require caching an additional property (on top of input type), so for now, let's still cache this.
         setProperty(AXProperty::IsSecureField, object.isSecureField());
@@ -2510,6 +2514,9 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
 
         if (object.isHeading() || isExposedTableRow || isTreeItem)
             setProperty(AXProperty::ARIALevel, object.ariaLevel());
+
+        if (object.isHeading())
+            setProperty(AXProperty::HeadingLevel, object.computedHeadingLevel());
 
         // These properties are only needed on the AXCoreObject interface due to their use in ATSPI,
         // so only cache them for ATSPI.

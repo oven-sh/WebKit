@@ -91,7 +91,6 @@ b3/air/AirKind.cpp
 b3/air/AirLogRegisterPressure.cpp
 b3/air/AirLowerAfterRegAlloc.cpp
 b3/air/AirLowerEntrySwitch.cpp
-b3/air/AirLowerMacros.cpp
 b3/air/AirLowerStackArgs.cpp
 b3/air/AirOptimizeBlockOrder.cpp
 b3/air/AirOptimizePairedLoadStore.cpp
@@ -139,6 +138,7 @@ b3/B3DuplicateTails.cpp
 b3/B3Effects.cpp
 b3/B3EliminateCommonSubexpressions.cpp
 b3/B3EliminateDeadCode.cpp
+b3/B3EliminateWasmGCAllocations.cpp
 b3/B3EnsureLoopPreHeaders.cpp
 b3/B3EstimateStaticExecutionCounts.cpp
 b3/B3ExtractValue.cpp

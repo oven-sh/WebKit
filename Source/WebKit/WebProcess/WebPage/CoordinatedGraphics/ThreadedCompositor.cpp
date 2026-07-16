@@ -80,7 +80,7 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
     , m_useSkia(webPage.corePage()->settings().useSkiaForComposition())
     , m_surface(AcceleratedSurface::create(webPage, [this] { frameComplete(); }, AcceleratedSurface::RenderingPurpose::Composited, m_useSkia))
     , m_sceneState(&sceneState)
-    , m_flipY(m_surface->shouldPaintMirrored())
+    , m_flipY(!m_surface->shouldPaintMirrored())
     , m_renderTimer(m_workQueue->runLoop(), "ThreadedCompositor::RenderTimer"_s, this, &ThreadedCompositor::renderLayerTree)
 {
     ASSERT(RunLoop::isMain());
@@ -129,8 +129,6 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
         } else {
             m_context = WTF::move(context);
             m_textureMapper = TextureMapper::create();
-            if (!nativeSurfaceHandle)
-                m_flipY = !m_flipY;
         }
     });
 }
@@ -180,14 +178,37 @@ void ThreadedCompositor::startRenderTimer()
     ASSERT(m_state.lock.isHeld());
     ASSERT(!m_state.isRenderTimerActive);
     m_state.isRenderTimerActive = true;
-    m_renderTimer.startOneShot(0_s);
+    updateRenderTimer();
 }
 
 void ThreadedCompositor::stopRenderTimer()
 {
     ASSERT(m_state.lock.isHeld());
     m_state.isRenderTimerActive = false;
-    m_renderTimer.stop();
+    updateRenderTimer();
+}
+
+void ThreadedCompositor::updateRenderTimer()
+{
+    ASSERT(m_state.lock.isHeld());
+
+    // m_renderTimer is bound to the compositor thread's run loop (m_workQueue), so it must be started
+    // and stopped there. The render timer's desired state is tracked synchronously under m_state.lock by
+    // m_state.isRenderTimerActive and may be changed from the main thread (e.g. from suspend()/resume()/
+    // invalidate()), so hop to the compositor thread to bring the timer in line with that state.
+    if (!m_workQueue->runLoop().isCurrent()) {
+        m_workQueue->dispatch([protectedThis = Ref { *this }] {
+            Locker locker { protectedThis->m_state.lock };
+            protectedThis->updateRenderTimer();
+        });
+        return;
+    }
+
+    if (m_state.isRenderTimerActive) {
+        if (!m_renderTimer.isActive())
+            m_renderTimer.startOneShot(0_s);
+    } else
+        m_renderTimer.stop();
 }
 
 bool ThreadedCompositor::isOnlyRenderingUpdatePendingAndWaitingForTiles() const
@@ -384,17 +405,17 @@ void ThreadedCompositor::paintToSkiaCanvas(const TransformationMatrix& matrix, c
     auto& rootLayer = m_sceneState->rootLayer().ensureSkiaTarget();
     rootLayer.setTransform(matrix);
 
-    m_surface->clear(reasons);
-
-    canvas->save();
-
     std::optional<Damage> frameDamage;
 #if ENABLE(DAMAGE_TRACKING)
+    // The damage is collected by a walk of its own, which draws nothing, before the walk that draws.
     if (m_damage.flags)
         frameDamage = Damage(size, m_damage.flags->contains(DamagePropagationFlags::Unified) ? Damage::Mode::BoundingBox : Damage::Mode::Rectangles);
 #endif
 
-    bool sceneHasRunningAnimations = rootLayer.paint(*canvas, frameDamage);
+    m_surface->clear(reasons);
+
+    canvas->save();
+    const bool hasRunningAnimations = rootLayer.paint(*canvas, frameDamage);
     canvas->restore();
 
 #if ENABLE(DAMAGE_TRACKING)
@@ -405,9 +426,7 @@ void ThreadedCompositor::paintToSkiaCanvas(const TransformationMatrix& matrix, c
         if (!frameDamage->isEmpty())
             m_surface->setFrameDamage(WTF::move(*frameDamage));
     }
-#endif
 
-#if ENABLE(DAMAGE_TRACKING)
     if (m_damage.showSkiaDamage) {
         if (auto damage = m_surface->frameDamage())
             drawSkiaDamage(*canvas, damage);
@@ -424,7 +443,7 @@ void ThreadedCompositor::paintToSkiaCanvas(const TransformationMatrix& matrix, c
     if (auto* surface = canvas->getSurface())
         PlatformDisplay::sharedDisplay().skiaGrContext()->flushAndSubmit(surface, GrSyncCpu::kNo);
 
-    if (sceneHasRunningAnimations)
+    if (hasRunningAnimations)
         requestComposition(CompositionReason::Animation);
 }
 

@@ -50,6 +50,7 @@
 #include "ServiceWorkerFetchTask.h"
 #include "SharedBufferReference.h"
 #include "WebErrors.h"
+#include "WebFrameProxyFromNetworkProcessMessages.h"
 #include "WebLoaderStrategy.h"
 #include "WebPageMessages.h"
 #include "WebResourceLoaderMessages.h"
@@ -64,6 +65,7 @@
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/CrossOriginEmbedderPolicy.h>
+#include <WebCore/DiagnosticLoggingClient.h>
 #include <WebCore/DiagnosticLoggingKeys.h>
 #include <WebCore/HTTPParsers.h>
 #include <WebCore/HTTPStatusCodes.h>
@@ -99,6 +101,11 @@
 
 #if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
 #include "WebParentalControlsURLFilter.h"
+#endif
+
+#if PLATFORM(COCOA)
+#include "PathsBlockedForSandboxExtensions.h"
+#include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
 #define LOADER_RELEASE_LOG_WITH_THIS(thisPtr, fmt, ...) RELEASE_LOG(Network, "%p - [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", frameID=%" PRIu64 ", resourceID=%" PRIu64 ", isMainResource=%d, destination=%u, isSynchronous=%d] NetworkResourceLoader::" fmt, WTF::getPtr(thisPtr), thisPtr->webPageProxyID().toUInt64(), thisPtr->pageID().toUInt64(), thisPtr->frameID().toUInt64(), thisPtr->coreIdentifier().toUInt64(), thisPtr->isMainResource(), static_cast<unsigned>(thisPtr->m_parameters.options.destination), thisPtr->isSynchronous(), ##__VA_ARGS__)
@@ -389,28 +396,25 @@ bool NetworkResourceLoader::shouldSendResourceLoadMessages() const
 }
 
 #if ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
-bool NetworkResourceLoader::isLocalFileLoadAllowedWithoutSandboxExtension(const URL& url)
+bool NetworkResourceLoader::isLocalFileLoadAllowed(const URL& url)
 {
-    // Some applications are relying on using the fetch JS API to load local files they have created in their temp directory.
-    // In this case, the WebContent process will not provide the Networking process with a sandbox extension to that file, since it does not have access.
-    // This is because the load is not initiated from the UI process which would provide an extension, but from JS in the WebContent process.
-    // To continue supporting this undocumented feature, we should allow local file loads from that location.
-
-    String directory = connectionToWebProcess().networkProcess().containerTemporaryDirectory();
-    return !directory.isEmpty() && FileSystem::isAncestor(directory, FileSystem::realPath(url.fileSystemPath()));
+    bool pathIsAllowed = !pathIsBlockedForSandboxExtensions(url.fileSystemPath());
+    LOADER_RELEASE_LOG("isLocalFileLoadAllowed: allowed = %d, path = %{public}s", pathIsAllowed, url.fileSystemPath().utf8().data());
+    return pathIsAllowed;
 }
 #endif // ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
 
 void NetworkResourceLoader::startNetworkLoad(ResourceRequest&& request, FirstLoad load)
 {
-    if (load == FirstLoad::Yes) {
 #if ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
-        if (request.url().protocolIsFile() && !m_parameters.resourceSandboxExtension.has_value() && !isLocalFileLoadAllowedWithoutSandboxExtension(request.url())) {
+        if (request.url().protocolIsFile() && !isLocalFileLoadAllowed(request.url())) {
             LOADER_RELEASE_LOG("startNetworkLoad: stop local file load because a sandbox extension is not provided");
             didFailLoading(internalError(request.url()));
             return;
         }
 #endif // ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
+
+    if (load == FirstLoad::Yes) {
         consumeSandboxExtensions();
 
         if (isSynchronous() || m_parameters.maximumBufferingTime > 0_s)
@@ -1177,8 +1181,17 @@ void NetworkResourceLoader::didReceiveBuffer(const WebCore::FragmentedSharedBuff
     sendBuffer(buffer);
 }
 
-void NetworkResourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLoadMetrics)
+void NetworkResourceLoader::didFinishLoading(const NetworkLoadMetrics& originalNetworkLoadMetrics)
 {
+    // https://fetch.spec.whatwg.org/#navigation-tao-check
+    std::optional<NetworkLoadMetrics> navigationMetrics;
+    if (parameters().options.mode == FetchOptions::Mode::Navigate && originalNetworkLoadMetrics.hasCrossOriginRedirect
+        && !(m_networkLoadChecker && m_networkLoadChecker->navigationTAOCheckPassed())) {
+        navigationMetrics = originalNetworkLoadMetrics;
+        navigationMetrics->redirectCount = 0;
+    }
+    const NetworkLoadMetrics& networkLoadMetrics = navigationMetrics ? *navigationMetrics : originalNetworkLoadMetrics;
+
     ASSERT(!m_networkLoadChecker || networkLoadMetrics.failsTAOCheck == m_networkLoadChecker->timingAllowFailedFlag());
 
     LOADER_RELEASE_LOG("didFinishLoading: (numBytesReceived=%zd, hasCacheEntryForValidation=%d)", m_numBytesReceived, !!m_cacheEntryForValidation);
@@ -1729,6 +1742,8 @@ void NetworkResourceLoader::didReceiveMainResourceResponse(const WebCore::Resour
     LOADER_RELEASE_LOG("didReceiveMainResourceResponse:");
     if (CheckedPtr speculativeLoadManager = m_cache ? m_cache->speculativeLoadManager() : nullptr)
         speculativeLoadManager->registerMainResourceLoadResponse(globalFrameID(), originalRequest(), response);
+    if (auto& certificateInfo = response.certificateInfo(); certificateInfo && !certificateInfo->isEmpty())
+        connectionToWebProcess().networkProcess().parentProcessConnection()->send(Messages::WebFrameProxyFromNetworkProcess::ReceivedMainResourceResponseWithCertificateInfo(response.url().hostAndPort(), *certificateInfo), frameID());
 }
 
 void NetworkResourceLoader::initializeReportingEndpoints(const ResourceResponse& response)

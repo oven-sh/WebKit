@@ -404,7 +404,6 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         mouseEventData ? mouseEventData->locationInRootViewCoordinates : FloatPoint { },
         { }, /* redirectResponse */
         navigationAction.isRequestFromClientOrUserInput(),
-        false, /* treatAsSameOriginNavigation */
         false, /* hasOpenedFrames */
         false, /* openedByDOMWithOpener */
         navigationAction.newFrameOpenerPolicy() == NewFrameOpenerPolicy::Allow, /* hasOpener */
@@ -1064,7 +1063,7 @@ void WebChromeClient::showContactPicker(WebCore::ContactsRequestData&& requestDa
 void WebChromeClient::showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData& requestData, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& callback)
 {
     if (RefPtr page = m_page.get())
-        page->showDigitalCredentialsChooser(requestData, WTF::move(callback));
+        page->showDigitalCredentialsChooser(std::nullopt, requestData, WTF::move(callback));
 }
 
 void WebChromeClient::dismissDigitalCredentialsChooser(WTF::CompletionHandler<void(bool)>&& completionHandler)

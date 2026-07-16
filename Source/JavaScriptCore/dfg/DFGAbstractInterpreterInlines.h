@@ -1640,7 +1640,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case StringSubstring:
     case StringSlice:
-    case StringSubstr: {
+    case StringSubstr:
+    case StringTrim: {
         setTypeForNode(node, SpecString);
         break;
     }
@@ -3433,6 +3434,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             
     case RegExpExec:
     case RegExpExecNonGlobalOrSticky:
+    case RegExpExecSticky:
         if (node->op() == RegExpExec) {
             // Even if we've proven known input types as RegExpObject and String,
             // accessing lastIndex is effectful if it's a global regexp.
@@ -4532,96 +4534,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case GetArgument:
         makeHeapTopForNode(node);
         break;
-
-    case TryGetById: {
-        // This is very adhoc, but @tryGetById is not used in user code, and it is used adhocly in very limited places.
-        // So adhoc one is fine.
-        AbstractValue& value = forNode(node->child1());
-        if (value.m_structure.isFinite()
-            && (node->child1().useKind() == CellUse || !(value.m_type & ~SpecCell))) {
-            if (RegisteredStructure structure = value.m_structure.onlyStructure()) {
-                JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
-                if (structure->typeInfo().type() == RegExpObjectType
-                    && !structure->hasPolyProto()
-                    && structure->storedPrototype() == globalObject->regExpPrototype()
-                    && !structure->isDictionary()
-                    && structure->propertyAccessesAreCacheable()
-                    && structure->propertyAccessesAreCacheableForAbsence()
-                    && m_graph.isWatchingRegExpPrimordialPropertiesWatchpoint(node)) {
-                    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
-
-                    auto attemptToFold = [&](UniquedStringImpl* name, JSValue constant) -> bool {
-                        if (uid != name)
-                            return false;
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(uid, attributes);
-                        if (isValidOffset(offset))
-                            return false;
-                        didFoldClobberWorld();
-                        setConstant(node, *m_graph.freeze(constant));
-                        return true;
-                    };
-
-                    if (attemptToFold(m_vm.propertyNames->exec.impl(), globalObject->regExpProtoExecFunction()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->flags.impl(), globalObject->regExpProtoFlagsGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->dotAll.impl(), globalObject->regExpProtoDotAllGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->global.impl(), globalObject->regExpProtoGlobalGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->hasIndices.impl(), globalObject->regExpProtoHasIndicesGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->ignoreCase.impl(), globalObject->regExpProtoIgnoreCaseGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->multiline.impl(), globalObject->regExpProtoMultilineGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->sticky.impl(), globalObject->regExpProtoStickyGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->unicode.impl(), globalObject->regExpProtoUnicodeGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->unicodeSets.impl(), globalObject->regExpProtoUnicodeSetsGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->replaceSymbol.impl(), globalObject->regExpProtoSymbolReplaceFunction()))
-                        break;
-                }
-                if (structure->typeInfo().type() == JSPromiseType
-                    && !structure->hasPolyProto()
-                    && structure->storedPrototype() == globalObject->promisePrototype()
-                    && !structure->isDictionary()
-                    && structure->propertyAccessesAreCacheable()
-                    && structure->propertyAccessesAreCacheableForAbsence()
-                    && m_graph.isWatchingPromiseThenWatchpoint(node)) {
-                    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
-                    if (uid == m_vm.propertyNames->then.impl()) {
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(uid, attributes);
-                        if (!isValidOffset(offset)) {
-                            didFoldClobberWorld();
-                            setConstant(node, *m_graph.freeze(globalObject->promiseProtoThenFunction()));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // FIXME: This should constant fold at least as well as the normal GetById case.
-        // https://bugs.webkit.org/show_bug.cgi?id=156422
-        clobberWorld();
-        makeHeapTopForNode(node);
-        break;
-    }
 
     case GetPrivateNameById:
     case GetByIdDirect:
@@ -5960,6 +5872,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
 
     case SetFunctionName: {
+        clobberWorld();
+        break;
+    }
+
+    case EnqueueAsyncGeneratorDriver: {
         clobberWorld();
         break;
     }

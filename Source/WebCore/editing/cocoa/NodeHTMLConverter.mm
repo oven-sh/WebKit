@@ -71,6 +71,7 @@
 #import "LocalFrame.h"
 #import "LocalizedStrings.h"
 #import "NodeName.h"
+#import "RemoteFrame.h"
 #import "RenderImage.h"
 #import "RenderText.h"
 #import "StyleComputedStyle+GettersInlines.h"
@@ -175,7 +176,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLConverterCaches);
 
 class HTMLConverter {
 public:
-    explicit HTMLConverter(const SimpleRange&, IgnoreUserSelectNone);
+    explicit HTMLConverter(const SimpleRange&, IgnoreUserSelectNone, HashMap<FrameIdentifier, AttributedString>&& remoteFrameContent);
     ~HTMLConverter();
 
     AttributedString convert();
@@ -184,6 +185,7 @@ private:
     Position m_start;
     Position m_end;
     SingleThreadWeakPtr<DocumentLoader> m_dataSource;
+    const HashMap<FrameIdentifier, AttributedString> m_remoteFrameContent;
 
     HashMap<Ref<Element>, RetainPtr<NSDictionary>> m_attributesForElements;
     HashMap<RetainPtr<CFTypeRef>, Ref<Element>> m_textTableFooters;
@@ -262,9 +264,10 @@ private:
     void _adjustTrailingNewline();
 };
 
-HTMLConverter::HTMLConverter(const SimpleRange& range, IgnoreUserSelectNone treatment)
+HTMLConverter::HTMLConverter(const SimpleRange& range, IgnoreUserSelectNone treatment, HashMap<FrameIdentifier, AttributedString>&& remoteFrameContent)
     : m_start(makeContainerOffsetPosition(range.start))
     , m_end(makeContainerOffsetPosition(range.end))
+    , m_remoteFrameContent(WTF::move(remoteFrameContent))
     , m_userSelectNoneStateCache(ComposedTree)
     , m_ignoreUserSelectNoneContent(treatment == IgnoreUserSelectNone::Yes && !protect(range.start.document())->quirks().needsToCopyUserSelectNoneQuirk())
 {
@@ -650,7 +653,7 @@ String HTMLConverterCaches::propertyValueForNode(Node& node, CSSPropertyID prope
 static inline bool floatValueFromPrimitiveValue(CSSPrimitiveValue& primitiveValue, float& result)
 {
     if (primitiveValue.isFontIndependentLength()) {
-        result = WebCore::Style::deprecatedToStyleFromCSSValue<WebCore::Style::Length<CSS::All, float>>(primitiveValue)->resolveZoom(WebCore::Style::ZoomNeeded { });
+        result = WebCore::Style::deprecatedToStyleFromCSSValue<WebCore::Style::Length<CSS::AllUnzoomed, float>>(primitiveValue)->resolveZoom(WebCore::Style::ZoomFactor::none());
         return true;
     }
     return false;
@@ -1824,6 +1827,12 @@ BOOL HTMLConverter::_processElement(Element& element, NSInteger depth)
         if (RefPtr contentDocument = frameElement->contentDocument()) {
             _traverseNode(*contentDocument, depth + 1, true /* embedded */);
             retval = NO;
+        } else if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(frameElement->contentFrame())) {
+            if (auto it = m_remoteFrameContent.find(remoteFrame->frameID()); it != m_remoteFrameContent.end()) {
+                if (RetainPtr subframeAttrString = it->value.nsAttributedString())
+                    [_attrStr appendAttributedString:subframeAttrString];
+            }
+            retval = NO;
         }
     } else if (element.hasTagName(brTag)) {
         RefPtr blockElement = _blockLevelElementForNode(protect(element.parentInComposedTree()));
@@ -2300,9 +2309,9 @@ Node* HTMLConverterCaches::cacheAncestorsOfStartToBeConverted(const Position& st
 namespace WebCore {
 
 // This function supports more HTML features than the editing variant below, such as tables.
-AttributedString attributedString(const SimpleRange& range, IgnoreUserSelectNone treatment)
+AttributedString attributedString(const SimpleRange& range, IgnoreUserSelectNone treatment, HashMap<FrameIdentifier, AttributedString>&& remoteFrameContent)
 {
-    return HTMLConverter { range, treatment }.convert();
+    return HTMLConverter { range, treatment, WTF::move(remoteFrameContent) }.convert();
 }
 
 }

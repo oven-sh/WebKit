@@ -79,10 +79,10 @@ using UnresolvedFontWidthPercentage = CSS::Percentage<CSS::Nonnegative>;
 using UnresolvedFontWidth = Variant<CSSValueID, UnresolvedFontWidthPercentage>;
 
 // <absolute-size> | <relative-size> | <length-percentage [0,∞]>
-using UnresolvedFontSize = Variant<CSSValueID, CSS::LengthPercentage<CSS::Nonnegative>>;
+using UnresolvedFontSize = Variant<CSSValueID, CSS::LengthPercentage<CSS::NonnegativeUnzoomed>>;
 
 // normal | <number [0,∞]> | <length-percentage [0,∞]>
-using UnresolvedFontLineHeight = Variant<CSSValueID, CSS::Number<CSS::Nonnegative>, CSS::LengthPercentage<CSS::Nonnegative>>;
+using UnresolvedFontLineHeight = Variant<CSSValueID, CSS::Number<CSS::Nonnegative>, CSS::LengthPercentage<CSS::NonnegativeUnzoomed>>;
 
 // [ <family-name> | <generic-family> ]#
 using UnresolvedFontFamilyName = Variant<CSSValueID, AtomString>;
@@ -145,6 +145,12 @@ RefPtr<CSSValueList> parseFontFaceUnicodeRange(const String&, ScriptExecutionCon
 // MARK: @font-face 'font-display'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-display
 RefPtr<CSSValue> parseFontFaceDisplay(const String&, ScriptExecutionContext&);
+
+// MARK: @font-face metric override descriptors
+// https://drafts.csswg.org/css-fonts-4/#font-metrics-override-desc
+RefPtr<CSSValue> parseFontFaceAscentOverride(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceDescentOverride(const String&, ScriptExecutionContext&);
+RefPtr<CSSValue> parseFontFaceLineGapOverride(const String&, ScriptExecutionContext&);
 
 // MARK: @font-face 'font-style'
 // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-style

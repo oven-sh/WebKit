@@ -104,9 +104,9 @@ inline bool ComputedStyleBase::usesViewportUnits() const
     return m_nonInheritedFlags.usesViewportUnits;
 }
 
-inline bool ComputedStyleBase::usesContainerUnits() const
+inline bool ComputedStyleBase::isContainerDependent() const
 {
-    return m_nonInheritedFlags.usesContainerUnits;
+    return m_nonInheritedFlags.isContainerDependent;
 }
 
 inline bool ComputedStyleBase::useTreeCountingFunctions() const
@@ -152,6 +152,11 @@ inline bool ComputedStyleBase::effectiveInert() const
 inline bool ComputedStyleBase::isEffectivelyTransparent() const
 {
     return m_inheritedRareData->effectivelyTransparent;
+}
+
+inline bool ComputedStyleBase::effectiveWrapInsideAvoid() const
+{
+    return m_inheritedRareData->effectiveWrapInsideAvoid;
 }
 
 inline bool ComputedStyleBase::insideDefaultButton() const
@@ -389,6 +394,11 @@ inline const ScrollTimelines& ComputedStyleBase::scrollTimelines() const
 inline const ViewTimelines& ComputedStyleBase::viewTimelines() const
 {
     return m_nonInheritedData->rareData->viewTimelines;
+}
+
+inline const TimelineTriggers& ComputedStyleBase::timelineTriggers() const
+{
+    return m_nonInheritedData->rareData->timelineTriggers;
 }
 
 inline const Animations& ComputedStyleBase::animations() const

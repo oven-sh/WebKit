@@ -62,8 +62,10 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSFontFace);
 
 static void iterateClients(WeakHashSet<CSSFontFaceClient>& clients, NOESCAPE const Function<void(CSSFontFaceClient&)>& callback)
 {
-    for (auto& client : copyToVectorOf<Ref<CSSFontFaceClient>>(clients))
-        callback(client);
+    for (auto& client : copyToVectorOf<Ref<CSSFontFaceClient>>(clients)) {
+        if (clients.contains(client))
+            callback(client);
+    }
 }
 
 void CSSFontFace::appendSources(CSSFontFace& fontFace, CSSValueList& srcList, ScriptExecutionContext* context, bool isInitiatingElementInUserAgentShadowTree)
@@ -356,6 +358,33 @@ void CSSFontFace::setDisplay(CSSValue& loadingBehaviorValue)
     });
 }
 
+void CSSFontFace::setAscentOverride(CSSValue& value)
+{
+    protect(mutableProperties())->setProperty(CSSPropertyAscentOverride, value);
+
+    iterateClients(m_clients, [&](CSSFontFaceClient& client) {
+        client.fontPropertyChanged(*this);
+    });
+}
+
+void CSSFontFace::setDescentOverride(CSSValue& value)
+{
+    protect(mutableProperties())->setProperty(CSSPropertyDescentOverride, value);
+
+    iterateClients(m_clients, [&](CSSFontFaceClient& client) {
+        client.fontPropertyChanged(*this);
+    });
+}
+
+void CSSFontFace::setLineGapOverride(CSSValue& value)
+{
+    protect(mutableProperties())->setProperty(CSSPropertyLineGapOverride, value);
+
+    iterateClients(m_clients, [&](CSSFontFaceClient& client) {
+        client.fontPropertyChanged(*this);
+    });
+}
+
 AtomString CSSFontFace::family() const
 {
     RefPtr value = dynamicDowncast<CSSFontFamilyNameValue>(properties().getPropertyCSSValue(CSSPropertyFontFamily));
@@ -392,6 +421,21 @@ String CSSFontFace::featureSettings() const
 String CSSFontFace::sizeAdjust() const
 {
     return properties().getPropertyValue(CSSPropertySizeAdjust);
+}
+
+String CSSFontFace::ascentOverride() const
+{
+    return properties().getPropertyValue(CSSPropertyAscentOverride);
+}
+
+String CSSFontFace::descentOverride() const
+{
+    return properties().getPropertyValue(CSSPropertyDescentOverride);
+}
+
+String CSSFontFace::lineGapOverride() const
+{
+    return properties().getPropertyValue(CSSPropertyLineGapOverride);
 }
 
 String CSSFontFace::display() const

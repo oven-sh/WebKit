@@ -172,6 +172,9 @@ WK_EXPORT void WKPageSetIgnoresViewportScaleLimits(WKPageRef page, bool ignoresV
 
 WK_EXPORT void WKPageSetUseDarkAppearanceForTesting(WKPageRef pageRef, bool useDarkAppearance);
 
+// Test-only virtual wallet actuation (action: "respond"|"decline"|"wait"|"clear"); webkit.org/b/306292.
+WK_EXPORT void WKPageSetVirtualWalletBehaviorForTesting(WKPageRef page, WKStringRef action, WKStringRef protocol, WKStringRef responseJSON);
+
 WK_EXPORT WKProcessID WKPageGetProcessIdentifier(WKPageRef page);
 WK_EXPORT WKProcessID WKPageGetGPUProcessIdentifier(WKPageRef page);
 
@@ -244,6 +247,12 @@ WK_EXPORT void WKPageDoAfterProcessingAllPendingMouseEvents(WKPageRef page, void
 #if !defined(__APPLE__)
 typedef void (*WKPageDoAfterProcessingAllPendingKeyEventsFunction)(void* functionContext);
 WK_EXPORT void WKPageDoAfterProcessingAllPendingKeyEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingKeyEventsFunction function);
+
+typedef void (*WKPageDoAfterProcessingAllPendingWheelEventsFunction)(void* functionContext);
+WK_EXPORT void WKPageDoAfterProcessingAllPendingWheelEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingWheelEventsFunction function);
+
+typedef void (*WKPageDoAfterProcessingAllPendingTouchEventsFunction)(void* functionContext);
+WK_EXPORT void WKPageDoAfterProcessingAllPendingTouchEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingTouchEventsFunction function);
 #endif
 
 typedef void (*WKPageCursorDidChangeCallbackForTesting)(WKStringRef cursorInfo, const void* clientInfo);

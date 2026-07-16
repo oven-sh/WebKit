@@ -31,6 +31,7 @@
 #include "CoordinatedTileBuffer.h"
 #include "FontRenderOptions.h"
 #include "PlatformDisplay.h"
+#include "SkiaDamageRegion.h"
 #include "SkiaPaintingEngine.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
@@ -83,38 +84,62 @@ static inline bool allTileEdgesExposed(const FloatRect& totalRect, const FloatRe
     return !tileRect.x() && !tileRect.y() && tileRect.width() + tileRect.x() >= totalRect.width() && tileRect.height() + tileRect.y() >= totalRect.height();
 }
 
-void SkiaBackingStore::paintToCanvas(SkCanvas& canvas, const SkPaint& paint)
+void SkiaBackingStore::paintToCanvas(SkCanvas& canvas, const SkPaint& paint, const SkiaDamageRegion* damageRegion)
 {
     if (m_tiles.isEmpty())
         return;
 
+    // Tiles are culled against the damage region on top of the canvas clip, because quickReject() only
+    // tests the bounding box of the clip, which grows to the whole surface as soon as two damage rects
+    // are far apart.
+
     FloatRect layerRect = { { }, m_size };
 
+    const auto ctm = canvas.getLocalToDeviceAs3x3();
+    const auto sampling = SkSamplingOptions(SkFilterMode::kNearest, SkMipmapMode::kNone);
     auto tilePaint = paint;
     for (auto& tile : m_tiles.values()) {
         if (canvas.quickReject(tile.rect()))
             continue;
+
+        if (damageRegion) {
+            const auto deviceRect = ctm.mapRect(tile.rect());
+            if (!damageRegion->intersects(deviceRect))
+                continue;
+        }
 
         const auto& image = tile.image();
         if (!image)
             continue;
 
         tilePaint.setAntiAlias(paint.isAntiAlias() && allTileEdgesExposed(layerRect, tile.rect()));
-        canvas.drawImageRect(image, SkRect::MakeWH(image->width(), image->height()), tile.rect(), SkSamplingOptions(SkFilterMode::kNearest, SkMipmapMode::kNone), &tilePaint, SkCanvas::kFast_SrcRectConstraint);
+        canvas.drawImageRect(image, tile.imageSourceRect(), tile.rect(), sampling, &tilePaint, SkCanvas::kFast_SrcRectConstraint);
     }
 }
 
-Vector<SkCanvas::ImageSetEntry> SkiaBackingStore::buildImageSet(SkCanvas& canvas, const SkMatrix& ctm, size_t matrixIndex, float opacity, bool enableAntialias) const
+void SkiaBackingStore::appendImageSetEntries(SkCanvas& canvas, const SkMatrix& ctm, size_t matrixIndex, float opacity, bool enableAntialias, Vector<SkCanvas::ImageSetEntry>& images, const SkiaDamageRegion* damageRegion) const
 {
     if (m_tiles.isEmpty())
-        return { };
+        return;
+
+    // Splitting a tile creates edges inside the tile, and antialiasing them would blend along those edges.
+    // This never happens: a split needs a CTM that keeps rects as rects, and the caller only antialiases
+    // when the CTM does not.
+    ASSERT(!damageRegion || !enableAntialias);
+
+    // Maps device rects back to layer coordinates. The caller only passes a damage region after establishing
+    // that the CTM keeps rects as rects, which implies it is invertible.
+    SkMatrix inverse;
+    if (damageRegion && !ctm.invert(&inverse)) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
 
     FloatRect layerRect = { { }, m_size };
 
     SkAutoCanvasRestore autoRestore(&canvas, true);
     canvas.concat(ctm);
 
-    Vector<SkCanvas::ImageSetEntry> images;
     for (auto& tile : m_tiles.values()) {
         if (canvas.quickReject(tile.rect()))
             continue;
@@ -124,10 +149,23 @@ Vector<SkCanvas::ImageSetEntry> SkiaBackingStore::buildImageSet(SkCanvas& canvas
             continue;
 
         // FIXME: implement per edge antialiasing.
-        unsigned aaFlags = enableAntialias && allTileEdgesExposed(layerRect, tile.rect()) ? SkCanvas::kAll_QuadAAFlags : SkCanvas::kNone_QuadAAFlags;
-        images.append(SkCanvas::ImageSetEntry(image, SkRect::MakeWH(image->width(), image->height()), SkRect(tile.rect()), matrixIndex, opacity, aaFlags, false));
+        const unsigned aaFlags = enableAntialias && allTileEdgesExposed(layerRect, tile.rect()) ? SkCanvas::kAll_QuadAAFlags : SkCanvas::kNone_QuadAAFlags;
+        const SkRect srcRectFull = tile.imageSourceRect();
+        const SkRect dstRectFull = tile.rect();
+
+        if (!damageRegion) {
+            images.append(SkCanvas::ImageSetEntry(image, srcRectFull, dstRectFull, matrixIndex, opacity, aaFlags, false));
+            continue;
+        }
+
+        const auto deviceRect = ctm.mapRect(dstRectFull);
+        if (!damageRegion->intersects(deviceRect))
+            continue;
+
+        damageRegion->forEachDamagedSubRect(deviceRect, dstRectFull, srcRectFull, inverse, [&](const SkRect& srcSubRect, const SkRect& dstSubRect) {
+            images.append(SkCanvas::ImageSetEntry(image, srcSubRect, dstSubRect, matrixIndex, opacity, aaFlags, false));
+        });
     }
-    return images;
 }
 
 void SkiaBackingStore::drawDebugBorders(SkCanvas& canvas, const SkPaint& paint)
@@ -199,10 +237,12 @@ void SkiaBackingStore::Tile::update(const IntRect& dirtyRect, const IntRect& til
             auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
             ASSERT(grContext);
 
-            if (!m_surface) {
-                const auto& characterization = displayList->characterization();
+            // isCompatible() does not compare alpha type, so check it separately -- a layer's
+            // opaqueness can flip without any other characterization change, and reusing the old
+            // surface would then carry the wrong alpha type into its image snapshot.
+            const auto& characterization = displayList->characterization();
+            if (!m_surface || !m_surface->isCompatible(characterization) || m_surface->imageInfo().alphaType() != characterization.imageInfo().alphaType())
                 m_surface = SkSurfaces::RenderTarget(grContext, skgpu::Budgeted::kYes, characterization.imageInfo(), characterization.sampleCount(), characterization.origin(), &characterization.surfaceProps());
-            }
 
             skgpu::ganesh::DrawDDL(m_surface.get(), displayList);
         } else if (auto texture = acceleratedBuffer.texture()) {
@@ -243,10 +283,34 @@ sk_sp<SkImage> SkiaBackingStore::Tile::image() const
         externalTexture.fTarget = GL_TEXTURE_2D;
         externalTexture.fID = m_texture->id();
         externalTexture.fFormat = colorType == kBGRA_8888_SkColorType ? GL_BGRA8_EXT : GL_RGBA8;
-        auto backendTexture = GrBackendTextures::MakeGL(m_texture->size().width(), m_texture->size().height(), skgpu::Mipmapped::kNo, externalTexture);
-        m_cachedImage = SkImages::BorrowTextureFrom(grContext, backendTexture, kTopLeft_GrSurfaceOrigin, colorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+        // Use the physical allocatedSize(): super-tiled textures are padded past the logical
+        // size(), and sizing the image to size() would map u=1.0 to the padded edge, stretching
+        // content and bleeding in padding. imageSourceRect() then restricts sampling to the
+        // logical region, mirroring the uvMax clamp on the TextureMapper path.
+        auto allocatedSize = m_texture->allocatedSize();
+        auto backendTexture = GrBackendTextures::MakeGL(allocatedSize.width(), allocatedSize.height(), skgpu::Mipmapped::kNo, externalTexture);
+        auto alphaType = m_texture->isOpaque() ? kOpaque_SkAlphaType : kPremul_SkAlphaType;
+        m_cachedImage = SkImages::BorrowTextureFrom(grContext, backendTexture, kTopLeft_GrSurfaceOrigin, colorType, alphaType, SkColorSpace::MakeSRGB());
     }
     return m_cachedImage;
+}
+
+SkRect SkiaBackingStore::Tile::imageSourceRect() const
+{
+    // The surface snapshot is sized to the logical tile, so all of it is valid.
+    if (m_surface)
+        return SkRect::MakeWH(m_surface->width(), m_surface->height());
+
+    // The texture image spans allocatedSize() - only the top-left size() region is real content.
+    if (m_texture) {
+        auto size = m_texture->size();
+        return SkRect::MakeWH(size.width(), size.height());
+    }
+
+    // Callers only reach imageSourceRect() after image() returned a valid image, which requires
+    // one of m_surface or m_texture to be set, so this fallback is never taken in practice.
+    ASSERT_NOT_REACHED();
+    return SkRect::MakeEmpty();
 }
 
 } // namespace WebCore

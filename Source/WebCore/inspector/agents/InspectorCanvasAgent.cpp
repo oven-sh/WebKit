@@ -149,7 +149,7 @@ void InspectorCanvasAgent::internalEnable()
 
     {
         Locker locker { CanvasRenderingContext::instancesLock() };
-        for (RefPtr context : CanvasRenderingContext::instances()) {
+        for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
             if (!context->isContextThread())
                 continue;
             if (!is<CanvasRenderingContext2D>(context)
@@ -172,8 +172,11 @@ void InspectorCanvasAgent::internalEnable()
 #if ENABLE(WEBGL)
     {
         Locker locker { WebGLProgram::instancesLock() };
-        for (auto& [program, contextWebGLBase] : WebGLProgram::instances()) {
-            if (contextWebGLBase && contextWebGLBase->isContextThread() && matchesCurrentContext(contextWebGLBase->canvasBase().scriptExecutionContext()))
+        for (SUPPRESS_UNCOUNTED_ARG auto& [program, contextWebGLBase] : WebGLProgram::instances()) {
+            if (!contextWebGLBase || !contextWebGLBase->isContextThread())
+                continue;
+
+            if (matchesCurrentContext(contextWebGLBase->canvasBase().scriptExecutionContext()))
                 didCreateWebGLProgram(protect(*contextWebGLBase), protect(*program));
         }
     }
@@ -355,11 +358,7 @@ void InspectorCanvasAgent::didCreateCanvasRenderingContext(CanvasRenderingContex
 
 void InspectorCanvasAgent::didChangeCanvasSize(CanvasRenderingContext& context)
 {
-    RefPtr<InspectorCanvas> inspectorCanvas;
-
-    if (!inspectorCanvas)
-        inspectorCanvas = findInspectorCanvas(context);
-
+    RefPtr inspectorCanvas = findInspectorCanvas(context);
     ASSERT(inspectorCanvas);
     if (!inspectorCanvas)
         return;
@@ -370,11 +369,7 @@ void InspectorCanvasAgent::didChangeCanvasSize(CanvasRenderingContext& context)
 
 void InspectorCanvasAgent::didChangeCanvasMemory(const CanvasRenderingContext& context)
 {
-    RefPtr<InspectorCanvas> inspectorCanvas;
-
-    if (!inspectorCanvas)
-        inspectorCanvas = findInspectorCanvas(context);
-
+    RefPtr inspectorCanvas = findInspectorCanvas(context);
     ASSERT(inspectorCanvas);
     if (!inspectorCanvas)
         return;

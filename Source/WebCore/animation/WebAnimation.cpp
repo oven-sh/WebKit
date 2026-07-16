@@ -1236,10 +1236,13 @@ ExceptionOr<void> WebAnimation::play(AutoRewind autoRewind)
         m_holdTime = zeroTime();
     }
 
-    // 7. If has finite timeline and previous current time is unresolved:
+    // 7. If has finite timeline and auto-rewind is true:
     // Set the flag auto align start time to true.
-    if (hasFiniteTimeline && !previousCurrentTime)
+    // Set hold time to previous current time.
+    if (hasFiniteTimeline && autoRewind == AutoRewind::Yes) {
         m_autoAlignStartTime = true;
+        m_holdTime = previousCurrentTime;
+    }
 
     // 8. If animation’s hold time is resolved, let its start time be unresolved.
     if (m_holdTime)
@@ -1543,7 +1546,10 @@ void WebAnimation::autoAlignStartTime()
     // 7. Set start time to start offset if effective playback rate ≥ 0, and end offset otherwise.
     auto previousStartTime = std::exchange(m_startTime, effectivePlaybackRate() >= 0 ? startOffset : endOffset);
 
-    // 8. Clear hold time.
+    // 8. Apply any pending playback rate on animation.
+    applyPendingPlaybackRate();
+
+    // 9. Clear hold time.
     m_holdTime = std::nullopt;
 
     if (previousStartTime != m_startTime)
@@ -1679,7 +1685,21 @@ void WebAnimation::stop()
 bool WebAnimation::virtualHasPendingActivity() const
 {
     // Keep the JS wrapper alive if the animation is considered relevant or could become relevant again by virtue of having a timeline.
-    return m_timeline || m_isRelevant;
+
+    if (m_isRelevant)
+        return true;
+    if (!m_timeline)
+        return false;
+
+    // Progress-based (scroll/view) timelines can make an animation relevant again without script, so their wrappers must stay alive.
+    if (m_timeline->isProgressBased())
+        return true;
+
+    ASSERT(m_timeline->isMonotonic());
+
+    // On a monotonic timeline, a canceled (idle) animation cannot become relevant again unless script holds a reference to it.
+    auto playStateIsIdle = !m_holdTime && !m_startTime && !pending();
+    return !playStateIsIdle;
 }
 
 void WebAnimation::updateRelevance()

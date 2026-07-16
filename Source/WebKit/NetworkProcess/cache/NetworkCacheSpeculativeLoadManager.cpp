@@ -34,7 +34,9 @@
 #include "NetworkProcess.h"
 #include "NetworkSession.h"
 #include "PreconnectTask.h"
+#include <WebCore/DiagnosticLoggingClient.h>
 #include <WebCore/DiagnosticLoggingKeys.h>
+#include <WebCore/HTTPStatusCodes.h>
 #include <pal/HysteresisActivity.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/NeverDestroyed.h>
@@ -435,6 +437,12 @@ void SpeculativeLoadManager::retrieveEntryFromStorage(const SubresourceInfo& inf
 
         auto entry = Entry::decodeStorageRecord(record);
         if (!entry) {
+            completionHandler(nullptr);
+            return false;
+        }
+
+        // FIXME: This is a workaround for rdar://181130091, which we can drop after a release.
+        if (entry->response().httpStatusCode() == httpStatus304NotModified) {
             completionHandler(nullptr);
             return false;
         }

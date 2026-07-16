@@ -61,10 +61,9 @@ class JSGlobalObject;
     v(newResolvedPromise, nullptr) \
     v(newRejectedPromise, nullptr) \
     v(resolveWithInternalMicrotaskForAsyncAwait, nullptr) \
-    v(asyncGeneratorNextQueueEnqueue, nullptr) \
-    v(asyncGeneratorCompleteAndDrain, nullptr) \
-    v(asyncGeneratorSuspend, nullptr) \
-    v(driveAsyncFunction, nullptr) \
+    v(asyncGeneratorPrototypeNext, nullptr) \
+    v(asyncIteratorPrototypeSymbolAsyncIterator, nullptr) \
+    v(asyncFunctionDrive, nullptr) \
     v(newHandledRejectedPromise, nullptr) \
     v(promiseReturnUndefinedOnFulfilled, nullptr) \
     v(promiseResolve, nullptr) \
@@ -81,6 +80,7 @@ class JSGlobalObject;
     v(isResizableOrGrowableSharedTypedArrayView, nullptr) \
     v(typedArrayFromFast, nullptr) \
     v(isDetached, nullptr) \
+    v(isTypedArrayOutOfBounds, nullptr) \
     v(isFinite, nullptr) \
     v(instanceOf, nullptr) \
     v(BuiltinLog, nullptr) \

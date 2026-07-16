@@ -51,6 +51,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 #include "StyleComputedStyle+SettersInlines.h"
+#include "StyleCustomIdent.h"
 #include "StyleCustomProperty.h"
 #include "StyleCustomPropertyData.h"
 #include "StyleCustomPropertyRegistry.h"
@@ -439,7 +440,7 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
         style.setHasExplicitlyInheritedProperties();
 
     if (RefPtr paintImageValue = dynamicDowncast<CSSPaintImageValue>(valueToApply.get())) {
-        auto& name = paintImageValue->name().value;
+        auto name = toStyle(paintImageValue->name(), m_state).value;
         if (RefPtr paintWorklet = const_cast<Document&>(m_state->document()).paintWorkletGlobalScopeForName(name)) {
             Locker locker { paintWorklet->paintDefinitionLock() };
             if (auto* registration = paintWorklet->paintDefinitionMap().get(name)) {
@@ -670,13 +671,28 @@ RefPtr<const CustomProperty> Builder::resolveCustomPropertyForContainerQueries(c
     );
 }
 
-std::optional<Builder::CustomPropertyOrKeyword> Builder::resolveFunctionResult(const CSSCustomPropertyValue& value)
+std::optional<Builder::CustomPropertyOrKeyword> Builder::resolveFunctionResult()
 {
+    // resolveFunctionResult is only called while evaluating a custom function.
+    ASSERT(m_state->callingContextBuilder());
+
+    if (!m_cascade.hasNormalProperty(CSSPropertyResult))
+        return { };
+
     SetForScope resultScope(m_state->m_currentProperty, &m_cascade.functionResultProperty());
+
+    // Apply all local variables, not just those reached by result. A local can be in a cycle with the
+    // function even when result never references it.
+    // https://drafts.csswg.org/css-mixins/#evaluating-custom-functions
+    applyCustomProperties();
+
+    RefPtr resultValue = dynamicDowncast<CSSCustomPropertyValue>(m_cascade.functionResultProperty().cssValue[SelectorChecker::MatchDefault]);
+    if (!resultValue)
+        return { };
 
     // The caller (custom function evaluation) handles a CSS-wide keyword result, which per spec is
     // left unresolved. https://drafts.csswg.org/css-mixins/#evaluating-custom-functions
-    return resolveCustomPropertyValue(const_cast<CSSCustomPropertyValue&>(value));
+    return resolveCustomPropertyValue(*resultValue);
 }
 
 std::optional<Builder::CustomPropertyOrKeyword> Builder::resolveCustomPropertyValue(CSSCustomPropertyValue& value)
@@ -721,15 +737,15 @@ std::optional<Builder::CustomPropertyOrKeyword> Builder::resolveCustomPropertyVa
     if (!resolvedData)
         return { };
 
-    if (!registered) {
-        // CSS-wide keywords are allowed in var() fallbacks of unregistered properties.
-        auto tokens = resolvedData->tokenRange();
-        tokens.consumeWhitespace();
-        if (auto keyword = CSSPropertyParserHelpers::consumeCSSWideKeyword(tokens))
-            return { { *keyword } };
+    // A CSS-wide keyword can surface after substitution, e.g. from a var() fallback or a custom
+    // function result. https://drafts.csswg.org/css-mixins/#evaluating-custom-functions
+    auto keywordTokens = resolvedData->tokenRange();
+    keywordTokens.consumeWhitespace();
+    if (auto keyword = CSSPropertyParserHelpers::consumeCSSWideKeyword(keywordTokens))
+        return { { *keyword } };
 
+    if (!registered)
         return { { CustomProperty::createForVariableData(name, *resolvedData) } };
-    }
 
     auto dependencies = CSSPropertyParser::collectParsedCustomPropertyValueDependencies(registered->syntax, resolvedData->tokens(), resolvedData->context());
 

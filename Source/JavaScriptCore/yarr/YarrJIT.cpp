@@ -3497,6 +3497,7 @@ class YarrGenerator final : public YarrJITInfo {
         const MacroAssembler::RegisterID character = m_regs.regT0;
         const MacroAssembler::RegisterID matchPos = m_regs.regT1;
         const MacroAssembler::RegisterID scratch = m_regs.regT2;
+        const MacroAssembler::RegisterID initialStart = m_regs.regT3;
         m_usesT2 = true;
 
         MacroAssembler::JumpList foundBeginningNewLine;
@@ -3512,8 +3513,9 @@ class YarrGenerator final : public YarrJITInfo {
 
         ASSERT(!m_pattern.m_body->m_hasFixedSize);
         getMatchStart(matchPos);
+        loadFromFrame(m_pattern.m_initialStartValueFrameLocation, initialStart);
 
-        saveStartIndex.append(m_jit.branch32(MacroAssembler::BelowOrEqual, matchPos, m_regs.initialStart));
+        saveStartIndex.append(m_jit.branch32(MacroAssembler::BelowOrEqual, matchPos, initialStart));
         MacroAssembler::Label findBOLLoop(&m_jit);
         m_jit.sub32(MacroAssembler::TrustedImm32(1), matchPos);
         if (m_charSize == CharSize::Char8)
@@ -3522,7 +3524,7 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.load16(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesTwo, 0), character);
         matchCharacterClass(character, scratch, foundBeginningNewLine, m_pattern.newlineCharacterClass());
 
-        m_jit.branch32(MacroAssembler::Above, matchPos, m_regs.initialStart).linkTo(findBOLLoop, &m_jit);
+        m_jit.branch32(MacroAssembler::Above, matchPos, initialStart).linkTo(findBOLLoop, &m_jit);
         saveStartIndex.append(m_jit.jump());
 
         foundBeginningNewLine.link(&m_jit);
@@ -5897,42 +5899,43 @@ class YarrGenerator final : public YarrJITInfo {
         case PatternTerm::Type::CharacterClass: {
             if (term.quantityType != QuantifierType::FixedCount && term.quantityType != QuantifierType::Greedy)
                 return std::nullopt;
-            if (term.quantityMaxCount != 1)
+            if (term.quantityMaxCount != 1 && term.quantityType != QuantifierType::FixedCount)
                 return std::nullopt;
             if (term.inputPosition != cursor)
                 return std::nullopt;
             auto& characterClass = *term.characterClass;
-            if (term.invert() || characterClass.m_anyCharacter) {
-                bmInfo.setAll(cursor);
-                // If this is greedy one-character pattern "a?", we should not increase cursor.
-                // If we see greedy pattern, then we cut bmInfo here to avoid possibility explosion.
-                if (term.quantityType == QuantifierType::FixedCount)
-                    ++cursor;
-                else
-                    bmInfo.shortenLength(cursor + 1);
+            auto addCharacterClass = [&](unsigned index) {
+                if (term.invert() || characterClass.m_anyCharacter) {
+                    bmInfo.setAll(index);
+                    return;
+                }
+                if (!characterClass.m_ranges32.isEmpty())
+                    bmInfo.addRanges(index, characterClass.m_ranges32);
+                if (!characterClass.m_matches32.isEmpty())
+                    bmInfo.addCharacters(index, characterClass.m_matches32);
+                if (!characterClass.m_ranges8.isEmpty())
+                    bmInfo.addRanges(index, characterClass.m_ranges8);
+                if (!characterClass.m_matches8.isEmpty())
+                    bmInfo.addCharacters(index, characterClass.m_matches8);
+            };
+
+            if (term.quantityType == QuantifierType::FixedCount) {
+                unsigned count = term.quantityMaxCount;
+                for (unsigned i = 0; i < count && cursor < bmInfo.length(); ++i)
+                    addCharacterClass(cursor++);
                 return cursor;
             }
-            if (!characterClass.m_ranges32.isEmpty())
-                bmInfo.addRanges(cursor, characterClass.m_ranges32);
-            if (!characterClass.m_matches32.isEmpty())
-                bmInfo.addCharacters(cursor, characterClass.m_matches32);
-            if (!characterClass.m_ranges8.isEmpty())
-                bmInfo.addRanges(cursor, characterClass.m_ranges8);
-            if (!characterClass.m_matches8.isEmpty())
-                bmInfo.addCharacters(cursor, characterClass.m_matches8);
 
             // If this is greedy one-character pattern "a?", we should not increase cursor.
             // If we see greedy pattern, then we cut bmInfo here to avoid possibility explosion.
-            if (term.quantityType == QuantifierType::FixedCount)
-                ++cursor;
-            else
-                bmInfo.shortenLength(cursor + 1);
+            addCharacterClass(cursor);
+            bmInfo.shortenLength(cursor + 1);
             return cursor;
         }
         case PatternTerm::Type::PatternCharacter: {
             if (term.quantityType != QuantifierType::FixedCount && term.quantityType != QuantifierType::Greedy)
                 return std::nullopt;
-            if (term.quantityMaxCount != 1)
+            if (term.quantityMaxCount != 1 && term.quantityType != QuantifierType::FixedCount)
                 return std::nullopt;
             if (term.inputPosition != cursor)
                 return std::nullopt;
@@ -5941,18 +5944,25 @@ class YarrGenerator final : public YarrJITInfo {
             // For case-insesitive compares, non-ascii characters that have different
             // upper & lower case representations are already converted to a character class.
             ASSERT(!term.ignoreCase() || isASCIIAlpha(term.patternCharacter) || isCanonicallyUnique(term.patternCharacter, m_canonicalMode));
-            if (term.ignoreCase() && isASCIIAlpha(term.patternCharacter)) {
-                bmInfo.set(cursor, toASCIIUpper(term.patternCharacter));
-                bmInfo.set(cursor, toASCIILower(term.patternCharacter));
-            } else
-                bmInfo.set(cursor, term.patternCharacter);
+            auto addCharacter = [&](unsigned index) {
+                if (term.ignoreCase() && isASCIIAlpha(term.patternCharacter)) {
+                    bmInfo.set(index, toASCIIUpper(term.patternCharacter));
+                    bmInfo.set(index, toASCIILower(term.patternCharacter));
+                } else
+                    bmInfo.set(index, term.patternCharacter);
+            };
+
+            if (term.quantityType == QuantifierType::FixedCount) {
+                unsigned count = term.quantityMaxCount;
+                for (unsigned i = 0; i < count && cursor < bmInfo.length(); ++i)
+                    addCharacter(cursor++);
+                return cursor;
+            }
 
             // If this is greedy one-character pattern "a?", we should not increase cursor.
             // If we see greedy pattern, then we cut bmInfo here to avoid possibility explosion.
-            if (term.quantityType == QuantifierType::FixedCount)
-                ++cursor;
-            else
-                bmInfo.shortenLength(cursor + 1);
+            addCharacter(cursor);
+            bmInfo.shortenLength(cursor + 1);
             return cursor;
         }
         }
@@ -6611,11 +6621,10 @@ class YarrGenerator final : public YarrJITInfo {
     {
         RegisterSet registers;
 #if CPU(X86_64)
-        if (m_pattern.m_saveInitialStartValue)
-            registers.add(X86Registers::ebx, IgnoreVectors);
-
-        if (m_containsNestedSubpatterns)
-            registers.add(X86Registers::r12, IgnoreVectors);
+        if (m_containsNestedSubpatterns) {
+            registers.add(X86Registers::ebx, IgnoreVectors); // matchingContext
+            registers.add(X86Registers::r12, IgnoreVectors); // remainingMatchCount
+        }
 
         if (mayCall() || m_callFrameSizeInBytes) {
             registers.add(X86Registers::r13, IgnoreVectors);
@@ -6919,7 +6928,8 @@ public:
             unsigned offset = POKE_ARGUMENT_OFFSET;
             m_jit.loadPtr(MacroAssembler::Address(GPRInfo::callFrameRegister, offset * sizeof(void*)), matchingContext);
 #else
-            MacroAssembler::RegisterID matchingContext = m_regs.matchingContext;
+            // The MatchingContextHolder* arrives in the 5th argument register.
+            MacroAssembler::RegisterID matchingContext = GPRInfo::argumentGPR4;
 #endif
             MacroAssembler::Jump stackOk = m_jit.branchPtr(MacroAssembler::BelowOrEqual, MacroAssembler::Address(matchingContext, MatchingContextHolder::offsetOfStackLimit()), m_regs.regT0);
 
@@ -6939,6 +6949,12 @@ public:
 
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
         if (m_containsNestedSubpatterns) {
+#if CPU(X86_64)
+            // Preserve the MatchingContextHolder* in m_regs.matchingContext.
+            m_jit.move(GPRInfo::argumentGPR4, m_regs.matchingContext);
+#else
+            ASSERT(GPRInfo::argumentGPR4 == m_regs.matchingContext);
+#endif
             m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
 
             // Initialize freelist to null - contexts will be allocated from stack
@@ -6957,7 +6973,7 @@ public:
             setMatchStart(m_regs.index);
 
         if (m_pattern.m_saveInitialStartValue)
-            m_jit.move(m_regs.index, m_regs.initialStart);
+            storeToFrame(m_regs.index, m_pattern.m_initialStartValueFrameLocation);
 
         generate();
         if (m_disassembler)
@@ -7108,7 +7124,7 @@ public:
             setMatchStart(m_regs.index);
 
         if (m_pattern.m_saveInitialStartValue)
-            m_jit.move(m_regs.index, m_regs.initialStart);
+            storeToFrame(m_regs.index, m_pattern.m_initialStartValueFrameLocation);
 
         generate();
         if (m_disassembler)

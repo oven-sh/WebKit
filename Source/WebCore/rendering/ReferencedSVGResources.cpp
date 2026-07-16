@@ -27,6 +27,7 @@
 #include "config.h"
 #include "ReferencedSVGResources.h"
 
+#include "ContainerNodeInlines.h"
 #include "DocumentView.h"
 #include "LegacyRenderSVGResourceClipper.h"
 #include "LegacyRenderSVGResourceContainerInlines.h"
@@ -35,6 +36,9 @@
 #include "RenderLayerModelObject.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGPath.h"
+#include "RenderSVGResourceGradient.h"
+#include "RenderSVGResourcePaintServer.h"
+#include "RenderSVGResourcePattern.h"
 #include "SVGClipPathElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGFilterElement.h"
@@ -85,11 +89,30 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
         return;
     }
 
+    bool resourceIsPaintServer = is<RenderSVGResourceGradient>(element.renderer()) || is<RenderSVGResourcePattern>(element.renderer());
+
+    // A gradient or pattern change can leave the cached fill or stroke paint server stale, so drop
+    // it before the needsLayout() return below, because layout never touches the cache. Other
+    // resource types are not paint servers, so they leave it alone.
+    if (resourceIsPaintServer) {
+        if (CheckedPtr layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get()))
+            layerModelObject->invalidateSVGPaintServerCache();
+    }
+
     if (m_clientRenderer->needsLayout())
         return;
 
+    RefPtr frameView = m_clientRenderer->document().view();
+
     // Invalidate cached visual overflow rect since resource bounds may have changed.
     if (CheckedPtr layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get())) {
+        // A marker or clip-path change can resize the client, but a layer-less client gets no post-layout
+        // position update, so repaint the old bounds now while the cached visual overflow still holds
+        // them, letting a shrunk client erase the area it used to cover. Paint servers (gradient,
+        // pattern) leave bounds unchanged, so they skip this.
+        if (!resourceIsPaintServer && !layerModelObject->hasLayer() && !(frameView && frameView->layoutContext().isInLayout()))
+            m_clientRenderer->repaint();
+
         layerModelObject->invalidateCachedVisualOverflowRect();
         // Ensure the post-layout recursiveUpdateLayerPositions() processes this client layer
         // and generates repaint rects, even if the client's own geometry didn't change.
@@ -108,7 +131,7 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
 
     // During layout, clients with layers are handled by the post-layout
     // recursiveUpdateLayerPositions() phase. Clients without layers need a direct repaint.
-    if (m_clientRenderer->document().view()->layoutContext().isInLayout()) {
+    if (frameView && frameView->layoutContext().isInLayout()) {
         if (auto* layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get()); layerModelObject && layerModelObject->hasLayer())
             return;
     }
@@ -143,6 +166,25 @@ void ReferencedSVGResources::removeClientForTarget(const AtomString& targetID)
     auto entry = m_elementClients.take(targetID);
     if (RefPtr targetElement = entry.targetElement)
         targetElement->removeReferencingCSSClient(protect(*entry.client));
+}
+
+RenderSVGResourcePaintServer* ReferencedSVGResources::cachedFillPaintServer() const
+{
+    return m_cachedFillPaintServer.get();
+}
+
+RenderSVGResourcePaintServer* ReferencedSVGResources::cachedStrokePaintServer() const
+{
+    return m_cachedStrokePaintServer.get();
+}
+
+void ReferencedSVGResources::setCachedPaintServer(SVGPaintType paintType, RenderSVGResourcePaintServer& paintServer)
+{
+    ASSERT(paintType == SVGPaintType::Fill || paintType == SVGPaintType::Stroke);
+    if (paintType == SVGPaintType::Fill)
+        m_cachedFillPaintServer = paintServer;
+    else
+        m_cachedStrokePaintServer = paintServer;
 }
 
 ReferencedSVGResources::SVGElementIdentifierAndTagPairs ReferencedSVGResources::referencedSVGResourceIDs(const Style::ComputedStyle& style, const Document& document)

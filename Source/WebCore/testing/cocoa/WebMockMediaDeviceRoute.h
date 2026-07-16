@@ -49,10 +49,12 @@ extern NSErrorDomain const WebMockMediaDeviceRouteErrorDomain;
 @interface WebMockMediaDeviceRoute : NSObject <AVPlaybackControl, WebMediaDevicePlatformRoute>
 @property (nonatomic, nullable, setter=setURLCallback:) WebCore::MockMediaDeviceRouteURLCallback* urlCallback;
 @property (copy) NSString *routeDisplayName;
+@property (copy) UTType *protocolType;
 @property (nonatomic, getter=isReady) BOOL ready;
 @property (nonatomic, strong, nullable) NSError *error;
 @property (nonatomic) CMTimeRange timeRange;
 @property (nonatomic, copy) NSArray<AVPlaybackUserInterfaceMediaSelectionOption *> *audioOptions;
+@property (nonatomic, readonly, getter=isConnected) BOOL connected;
 @end
 
 NS_ASSUME_NONNULL_END

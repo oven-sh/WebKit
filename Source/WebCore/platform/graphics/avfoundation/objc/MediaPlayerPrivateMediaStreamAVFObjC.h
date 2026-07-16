@@ -139,8 +139,7 @@ private:
     MediaTime duration() const override;
     MediaTime currentTime() const override;
 
-    void seekToTarget(const SeekTarget&) final { };
-    bool seeking() const final { return false; }
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final { return MediaTimePromise::createAndReject(PlatformMediaError::Cancelled); }
 
     const PlatformTimeRanges& seekable() const override;
     const PlatformTimeRanges& buffered() const override;
@@ -248,7 +247,7 @@ private:
 
     HostingContext hostingContext() const final;
     void setVideoLayerSizeFenced(const FloatSize&, WTF::MachSendRightAnnotated&&) final;
-    void requestHostingContext(LayerHostingContextCallback&&) final;
+    Ref<HostingContextPromise> requestHostingContext() final;
 
 
     ThreadSafeWeakPtr<MediaPlayer> m_player;
@@ -325,7 +324,7 @@ private:
 
     std::optional<CGRect> m_storedBounds;
     static NativeImageCreator m_nativeImageCreator;
-    LayerHostingContextCallback m_layerHostingContextCallback;
+    Vector<HostingContextPromise::AutoRejectProducer> m_layerHostingContextPromises;
     bool m_shouldMaintainAspectRatio { true };
 };
 

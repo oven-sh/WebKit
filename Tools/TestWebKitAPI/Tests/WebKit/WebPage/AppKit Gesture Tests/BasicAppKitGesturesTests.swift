@@ -56,11 +56,14 @@ extension AppKitGesturesTests {
 
             self.window = NSWindow(size: contentSize) { [page] in
                 WebView(page)
+                    .webViewBackForwardNavigationGestures(.enabled)
             }
 
             self.window.setFrameOrigin(.zero)
             NSApp.activate(ignoringOtherApps: true)
             self.window.makeKeyAndOrderFront(nil)
+
+            await NSApp.waitForActivation()
         }
     }
 }
@@ -93,8 +96,6 @@ extension AppKitGesturesTests.Basic {
 
         let toBounds = try await screenBoundsOfText("to")
 
-        guard NSApp.isActive else { return }
-
         await recap.play { composer in
             composer._wk_click(at: toBounds.center, for: .seconds(0.05))
         }
@@ -121,11 +122,6 @@ extension AppKitGesturesTests.Basic {
         let crazyBounds = try await screenBoundsOfText("crazy")
 
         let editorStateSnapshots = page.editorStateSnapshots()
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         await recap.play { composer in
             composer._wk_click(at: toBounds.center, for: .seconds(0.1))
@@ -157,11 +153,6 @@ extension AppKitGesturesTests.Basic {
 
         let startViewportCoordinates = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: "line97"))
         let startBounds = screenBounds(ofRectInViewportCoordinates: startViewportCoordinates)
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         let initialScrollPosition = try await page.callJavaScript(JavaScriptMessages.ScrollPosition())
         #expect(CGPoint(initialScrollPosition) == .zero)
@@ -200,11 +191,6 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         let startBounds = try await screenBounds(ofElementWithID: "line97")
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         // Record (timestamp, scrollY) on every scroll event so we can observe that scrolling continues
         // throughout the hold, rather than scrolling in one burst and stopping early (the pre-fix bug).
@@ -252,11 +238,6 @@ extension AppKitGesturesTests.Basic {
 
         let startBounds = try await screenBounds(ofElementWithID: "line97")
 
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
-
         let initialScrollPosition = try await page.callJavaScript(JavaScriptMessages.ScrollPosition())
         #expect(CGPoint(initialScrollPosition) == .zero)
 
@@ -284,11 +265,6 @@ extension AppKitGesturesTests.Basic {
 
         let startBounds = try await screenBounds(ofElementWithID: "line97")
 
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
-
         let dragEnd = screenBounds(ofPointInWindowCoordinates: NSPoint(x: window.frame.width / 2, y: 20))
 
         await recap.play { composer in
@@ -315,11 +291,6 @@ extension AppKitGesturesTests.Basic {
     func draggingSelectionToTopEdgeScrollsUp() async throws {
         try await loadScrollableText()
         await page.waitForNextPresentationUpdate()
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         // Start partway down the page so there is room to scroll back up.
         try await page.callJavaScript { "window.scrollTo(0, 3000);" }
@@ -352,11 +323,6 @@ extension AppKitGesturesTests.Basic {
         try await loadScrollableText()
         await page.waitForNextPresentationUpdate()
 
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
-
         // Begin the selection inside the bottom edge band (~70pt from the bottom; the band is 100pt) and
         // drag only a short distance toward the edge - less than the ~50pt threshold. The selection
         // originates near the edge but the drag is too small to be a deliberate "scroll past the edge"
@@ -384,11 +350,6 @@ extension AppKitGesturesTests.Basic {
     func selectionOriginatingNearEdgeAutoscrollsAfterDraggingPastThreshold() async throws {
         try await loadScrollableText()
         await page.waitForNextPresentationUpdate()
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         // Same near-edge origin as the short-drag test, but now drag well past the threshold (and past the
         // window edge) and hold, so the deliberate gesture engages autoscroll.
@@ -427,11 +388,6 @@ extension AppKitGesturesTests.Basic {
 
         await page.waitForNextPresentationUpdate()
 
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
-
         await withSwizzledContextMenu {
             await recap.play { composer in
                 composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
@@ -450,11 +406,6 @@ extension AppKitGesturesTests.Basic {
         try await loadHTML(contentEditable: contentEditable)
 
         let middleOfWindow = screenBounds(ofPointInWindowCoordinates: window.frame.center)
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         await withSwizzledContextMenu {
             await recap.play { composer in
@@ -491,11 +442,6 @@ extension AppKitGesturesTests.Basic {
         let crazyBoundsInScreenCoordinates = try await screenBoundsOfText("crazy")
         await page.waitForNextPresentationUpdate()
 
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
-
         await recap.play { composer in
             composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(1))
         }
@@ -520,11 +466,6 @@ extension AppKitGesturesTests.Basic {
         let crazyBoundsInScreenCoordinates = try await screenBoundsOfText("crazy")
 
         await page.waitForNextPresentationUpdate()
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         await recap.play { composer in
             composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
@@ -562,11 +503,6 @@ extension AppKitGesturesTests.Basic {
 
         await page.waitForNextPresentationUpdate()
 
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
-
         await recap.play { composer in
             composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
             composer.advanceTime(0.1)
@@ -587,11 +523,6 @@ extension AppKitGesturesTests.Basic {
         let pdfURL = try #require(Bundle.testResources.url(forResource: "test", withExtension: "pdf"))
         try await page.load(pdfURL).wait()
         await page.waitForNextPresentationUpdate()
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         let clickPoint = screenBounds(ofPointInWindowCoordinates: .init(x: 100, y: 350))
 
@@ -626,11 +557,6 @@ extension AppKitGesturesTests.Basic {
         try await page.callJavaScript(JavaScriptMessages.SetSelection(in: "div", offset: 0))
 
         await page.waitForNextPresentationUpdate()
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         await recap.play { composer in
             composer._wk_click(at: point, for: .seconds(0.1))
@@ -688,6 +614,30 @@ extension AppKitGesturesTests.Basic {
         #expect(selection == expected)
     }
 
+    @Test(arguments: [6, 8], [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
+    func scrollingOnScrollBarChangesScrollPosition(inset: Int, pressAndWait: Duration) async throws {
+        let html = """
+            <body style="width: 100%; height: 2000px; margin: 0; background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
+            </body>
+            """
+
+        try await page.load(html: html).wait()
+
+        let topOfScrollBarInWindowCoordinates = NSPoint(x: window.frame.maxX - CGFloat(inset), y: window.frame.maxY - 160)
+        let start = screenBounds(ofPointInWindowCoordinates: topOfScrollBarInWindowCoordinates)
+        let end = CGPoint(x: start.x, y: start.y + 200)
+
+        await recap.play { composer in
+            composer._wk_drag(withStart: start, end: end, duration: .seconds(1.0), pressAndWait: pressAndWait)
+        }
+
+        try await Task.sleep(for: .seconds(1))
+
+        let finalScrollPosition = try await page.callJavaScript(JavaScriptMessages.ScrollPosition())
+        #expect(finalScrollPosition.x == 0)
+        #expect(finalScrollPosition.y > 0)
+    }
+
     @Test(arguments: [true, false])
     func scrollingChangesScrollPosition(scrollOnImage: Bool) async throws {
         let image = scrollOnImage ? #"<img id="img" src="400x400-green.png" style="display: block; margin: 50px;">"# : ""
@@ -702,10 +652,6 @@ extension AppKitGesturesTests.Basic {
         try await page.load(html: html, baseURL: baseURL).wait()
 
         await page.waitForNextPresentationUpdate()
-
-        guard NSApp.isActive else {
-            return
-        }
 
         let initialScrollPosition = try await page.callJavaScript(JavaScriptMessages.ScrollPosition())
         #expect(CGPoint(initialScrollPosition) == .zero)
@@ -725,6 +671,62 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test
+    func scrollInputSourceUpdatesrubberbandHyperbolicCoefficient() async throws {
+        let html = """
+            <body style="margin: 0; width: 100%; height: 20000px;
+                         background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
+            </body>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        // No gesture has run yet.
+        #expect(page.rubberbandHyperbolicCoefficient() == 0)
+        try await page.callJavaScript { "window.scrollTo(0, 0);" }
+        #expect(page.rubberbandHyperbolicCoefficient() == 0)
+
+        await page.waitForNextPresentationUpdate()
+
+        let automationLocation = screenBounds(ofPointInWindowCoordinates: window.frame.center)
+        let trackpadLocation = window.frame.center
+
+        func expectCoefficient(_ expected: CGFloat, _ message: Comment) {
+            let actual = page.rubberbandHyperbolicCoefficient()
+            #expect(abs(actual - Double(expected)) < 0.0001, message)
+        }
+
+        // 1. Trackpad scroll.
+        page.scrollWheel(at: trackpadLocation, delta: CGSize(width: 0, height: 600))
+        await page.waitForNextPresentationUpdate()
+        // End the scroll by programatically scrolling back to 0,0.
+        try await page.callJavaScript { "window.scrollTo(0, 0);" }
+
+        expectCoefficient(trackpadRubberbandHyperbolicCoefficient, "after initial trackpad scroll")
+
+        // 2. Automation scroll.
+        await recap.play { composer in
+            composer._wk_scroll(
+                withStart: automationLocation,
+                end: CGPoint(x: automationLocation.x, y: automationLocation.y + 200),
+                duration: .seconds(0.5)
+            )
+        }
+        await page.waitForNextPresentationUpdate()
+        // End the scroll by programatically scrolling back to 0,0.
+        try await page.callJavaScript { "window.scrollTo(0, 0);" }
+
+        expectCoefficient(automationHyperbolicCoefficient, "after automated scroll")
+
+        // 3. Trackpad scroll again.
+        page.scrollWheel(at: trackpadLocation, delta: CGSize(width: 0, height: 600))
+        await page.waitForNextPresentationUpdate()
+        // End the scroll by programatically scrolling back to 0,0.
+        try await page.callJavaScript { "window.scrollTo(0, 0);" }
+
+        expectCoefficient(trackpadRubberbandHyperbolicCoefficient, "after returning to trackpad scroll")
+    }
+
+    @Test
     func interruptingDeceleratingScrollDoesNotFollowLink() async throws {
         let html = """
             <a id="link" href="about:blank"
@@ -735,11 +737,6 @@ extension AppKitGesturesTests.Basic {
         let initialURL = try #require(URL(string: "http://webkit.org/"))
         try await page.load(html: html, baseURL: initialURL).wait()
         await page.waitForNextPresentationUpdate()
-
-        // Recap requires this test to be ran within an app host.
-        guard NSApp.isActive else {
-            return
-        }
 
         let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
         let scrollEnd = CGPoint(x: center.x, y: center.y - 200)
@@ -795,10 +792,6 @@ extension AppKitGesturesTests.Basic {
 
         await page.waitForNextPresentationUpdate()
 
-        guard NSApp.isActive else {
-            return
-        }
-
         await recap.play { composer in
             composer._wk_click(at: convertedBounds.center, for: .seconds(0.1))
         }
@@ -831,10 +824,6 @@ extension AppKitGesturesTests.Basic {
 
         try await page.callJavaScript(arguments: ["elementID": "custom-slider"], script: styleAdjustmentForCustomWidgetScript)
         await page.waitForNextPresentationUpdate()
-
-        guard NSApp.isActive else {
-            return
-        }
 
         let sliderBounds = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: elementID))
         let convertedSliderBounds = screenBounds(ofRectInViewportCoordinates: sliderBounds)
@@ -885,8 +874,6 @@ extension AppKitGesturesTests.Basic {
         try await page.callJavaScript(JavaScriptMessages.SetSelection(in: "div", offset: 0))
         await page.waitForNextPresentationUpdate()
 
-        guard NSApp.isActive else { return }
-
         await recap.play { composer in
             composer._wk_drag(
                 withStart: toBounds.center,
@@ -936,8 +923,6 @@ extension AppKitGesturesTests.Basic {
         }()
 
         let dragEnd = CGPoint(x: linkBounds.maxX + 50, y: linkBounds.midY)
-
-        guard NSApp.isActive else { return }
 
         let dragInitiated = Future()
 
@@ -994,8 +979,6 @@ extension AppKitGesturesTests.Basic {
 
         let dragEnd = CGPoint(x: imgBounds.maxX + 50, y: imgBounds.midY)
 
-        guard NSApp.isActive else { return }
-
         let dragInitiated = Future()
 
         let implementation: @convention(block) (NSView, NSArray, NSGestureRecognizer, AnyObject) -> NSDraggingSession? = { _, _, _, _ in
@@ -1049,8 +1032,6 @@ extension AppKitGesturesTests.Basic {
         let crazyBounds = try await screenBoundsOfText("crazy")
         let onesBounds = try await screenBoundsOfText("ones")
 
-        guard NSApp.isActive else { return }
-
         let dragInitiated = Future()
 
         let implementation: @convention(block) (NSView, NSArray, NSGestureRecognizer, AnyObject) -> NSDraggingSession? = { _, _, _, _ in
@@ -1086,6 +1067,71 @@ extension AppKitGesturesTests.Basic {
                     extent: .init(in: "div", at: onesRange.upperBound)
                 )
         )
+    }
+
+    @Test
+    func scrubbingVideoTimelineDoesNotTriggerBackNavigation() async throws {
+        // Establish a back-forward history entry so that a "swipe back" gesture would have somewhere to navigate to.
+        try await page.load(URL(string: "about:blank?1")).wait()
+
+        let videoPlayerURL = try #require(Bundle.testResources.url(forResource: "playback-scrubber", withExtension: "html"))
+        try await page.load(videoPlayerURL).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let urlBeforeScrub = page.url
+        #expect(page.backForwardList.backList.count == 1)
+
+        let scrubberBounds = try await screenBounds(ofElementWithID: "scrubber")
+        let thumbBounds = try await screenBounds(ofElementWithID: "playhead")
+        let start = thumbBounds.center
+        let end = CGPoint(x: scrubberBounds.maxX - 10, y: start.y)
+
+        await recap.play { composer in
+            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5))
+        }
+
+        await page.waitForNextPresentationUpdate()
+
+        // Allow any (incorrectly) triggered back navigation to occur before asserting it did not.
+        try await Task.sleep(for: .seconds(1))
+
+        #expect(page.url == urlBeforeScrub)
+        #expect(page.backForwardList.backList.count == 1)
+
+        let scrubbedValues = try await page.callJavaScript(returning: [Double].self) {
+            "return window.scrubbedValues ?? [];"
+        }
+        let lastScrubbedValue = try #require(scrubbedValues.last)
+        #expect(lastScrubbedValue > 0)
+    }
+
+    @Test(
+        .bug("https://webkit.org/b/319256", "Trackpad swiping between spaces should not trigger back navigation")
+    )
+    func swipingBetweenSpacesShouldNotTriggerBackNavigation() async throws {
+        // Establish a back-forward history entry so that a "swipe back" gesture would have somewhere to navigate to.
+        try await page.load(URL(string: "about:blank?1")).wait()
+
+        let testURL = try #require(Bundle.testResources.url(forResource: "red", withExtension: "html"))
+        try await page.load(testURL).wait()
+        await page.waitForNextPresentationUpdate()
+        let urlBeforeGesture = page.url
+
+        #expect(page.backForwardList.backList.count == 1)
+
+        let start = screenBounds(ofPointInWindowCoordinates: CGPoint(x: window.frame.width / 4, y: window.frame.height / 2))
+        let end = screenBounds(ofPointInWindowCoordinates: CGPoint(x: 3 * window.frame.width / 4, y: window.frame.height / 2))
+
+        await recap.play { composer in
+            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5), multiFinger: true)
+        }
+
+        // Allow any (incorrectly) triggered back navigation to occur before asserting it did not.
+        // FIXME: Switch over to `webViewDidBeginNavigationGesture` when we adopt it for positive swipe navigation tests.
+        try await Task.sleep(for: .seconds(1))
+
+        #expect(page.url == urlBeforeGesture)
+        #expect(page.backForwardList.backList.count == 1)
     }
 }
 

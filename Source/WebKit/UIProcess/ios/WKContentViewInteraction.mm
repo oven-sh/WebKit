@@ -311,7 +311,7 @@ static void *WKContentViewKVOTransformContext = &WKContentViewKVOTransformContex
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 @interface WKContentView (ImageAnalysisInteraction) <VKCImageAnalysisInteractionDelegate>
 @end
@@ -325,13 +325,9 @@ static bool canAttemptTextRecognitionForNonImageElements(const WebKit::Interacti
     return preferences.textRecognitionInVideosEnabled() && information.isPausedVideo;
 }
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-
 @interface AVPlayerViewController (Staging_86237428)
-- (void)setImageAnalysis:(CocoaImageAnalysis *)analysis;
+- (void)setImageAnalysis:(VKCImageAnalysis *)analysis;
 @end
-
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
@@ -614,12 +610,29 @@ constexpr double fasterTapSignificantZoomThreshold = 0.8;
 
 @end
 
+@interface WKFoundCueTextRange : WKFoundTextRange
+
+@property (nonatomic) uint64_t mediaElementIdentifier;
+@property (nonatomic) uint64_t documentOffset;
+@property (nonatomic) uint64_t seekTimeMilliseconds;
+
+@end
+
 @interface WKFoundPDFTextPosition : WKFoundTextPosition
 
 @property (nonatomic) NSUInteger page;
 @property (nonatomic) NSUInteger offset;
 
 + (WKFoundPDFTextPosition *)textPositionWithPage:(NSUInteger)page offset:(NSUInteger)offset;
+
+@end
+
+@interface WKFoundCueTextPosition : WKFoundTextPosition
+
+@property (nonatomic) uint64_t documentOffset;
+@property (nonatomic) uint64_t seekTimeMilliseconds;
+
++ (WKFoundCueTextPosition *)textPositionWithDocumentOffset:(uint64_t)documentOffset seekTimeMilliseconds:(uint64_t)seekTimeMilliseconds order:(NSUInteger)order;
 
 @end
 
@@ -3680,7 +3693,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (BOOL)hasSelectablePositionAtPoint:(CGPoint)point
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if ([_imageAnalysisInteraction interactableItemExistsAtPoint:point])
         return NO;
 #endif
@@ -3713,7 +3726,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (BOOL)pointIsNearMarkedText:(CGPoint)point
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if ([_imageAnalysisInteraction interactableItemExistsAtPoint:point])
         return NO;
 #endif
@@ -3742,7 +3755,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return [self hasSelectablePositionAtPoint:point];
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if ([_imageAnalysisInteraction interactableItemExistsAtPoint:point])
         return NO;
 #endif
@@ -4112,7 +4125,7 @@ static void cancelPotentialTapIfNecessary(WKContentView* contentView)
     if (!_isExpectingFastSingleTapCommit)
         [self _finishInteraction];
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if (![_imageAnalysisInteraction interactableItemExistsAtPoint:_lastInteractionLocation])
         [_imageAnalysisInteraction resetSelection];
 #endif
@@ -5709,7 +5722,7 @@ static void selectionChangedWithTouch(WKTextInteractionWrapper *interaction, con
         });
     };
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     [self doAfterComputingImageAnalysisResultsForBackgroundRemoval:WTF::move(requestRectsToEvadeIfNeeded)];
 #else
     requestRectsToEvadeIfNeeded();
@@ -5718,7 +5731,7 @@ static void selectionChangedWithTouch(WKTextInteractionWrapper *interaction, con
 
 #endif // HAVE(UI_EDIT_MENU_INTERACTION)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 - (UIMenu *)removeBackgroundMenu
 {
@@ -5812,7 +5825,7 @@ static void selectionChangedWithTouch(WKTextInteractionWrapper *interaction, con
     });
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 - (BOOL)_handleTapOverInteractiveControl:(CGPoint)position
 {
@@ -5820,7 +5833,7 @@ static void selectionChangedWithTouch(WKTextInteractionWrapper *interaction, con
     if (!hitButton)
         return NO;
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     UIButton *analysisButton = [_imageAnalysisInteraction analysisButton];
     // This has to be a class check instead of a straight equality check because the `analysisButton`
     // isn't in the view hierarchy, so this is the only way to disambiguate this particular button.
@@ -6287,7 +6300,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
     _treatAsContentEditableUntilNextEditorStateUpdate = NO;
     [self _invalidateCurrentPositionInformation];
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     [self uninstallImageAnalysisInteraction];
 #endif
 
@@ -6934,16 +6947,6 @@ static Vector<WebCore::CompositionHighlight> compositionHighlights(NSAttributedS
 - (NSInteger)offsetFromPosition:(UITextPosition *)from toPosition:(UITextPosition *)to
 {
 #if HAVE(UIFINDINTERACTION)
-    if ([from isKindOfClass:[WKFoundDOMTextPosition class]] && [to isKindOfClass:[WKFoundDOMTextPosition class]]) {
-        WKFoundDOMTextPosition *fromPosition = (WKFoundDOMTextPosition *)from;
-        WKFoundDOMTextPosition *toPosition = (WKFoundDOMTextPosition *)to;
-
-        if (fromPosition.order != toPosition.order)
-            return fromPosition.order - toPosition.order;
-
-        return fromPosition.offset - toPosition.offset;
-    }
-
     if ([from isKindOfClass:[WKFoundPDFTextPosition class]] && [to isKindOfClass:[WKFoundPDFTextPosition class]]) {
         WKFoundPDFTextPosition *fromPosition = (WKFoundPDFTextPosition *)from;
         WKFoundPDFTextPosition *toPosition = (WKFoundPDFTextPosition *)to;
@@ -6954,6 +6957,26 @@ static Vector<WebCore::CompositionHighlight> compositionHighlights(NSAttributedS
         if (fromPosition.page == toPosition.page)
             return fromPosition.offset - toPosition.offset;
         return fromPosition.page - toPosition.page;
+    }
+
+    BOOL fromIsDocumentPosition = [from isKindOfClass:[WKFoundDOMTextPosition class]] || [from isKindOfClass:[WKFoundCueTextPosition class]];
+    BOOL toIsDocumentPosition = [to isKindOfClass:[WKFoundDOMTextPosition class]] || [to isKindOfClass:[WKFoundCueTextPosition class]];
+    if (fromIsDocumentPosition && toIsDocumentPosition) {
+        auto keyForPosition = [](UITextPosition *position) -> std::tuple<NSUInteger, uint64_t, uint64_t> {
+            if (RetainPtr domPosition = dynamic_objc_cast<WKFoundDOMTextPosition>(position))
+                return { [domPosition order], [domPosition offset], 0 };
+            RetainPtr cuePosition = checked_objc_cast<WKFoundCueTextPosition>(position);
+            return { [cuePosition order], [cuePosition documentOffset], [cuePosition seekTimeMilliseconds] };
+        };
+
+        auto [fromOrder, fromOffset, fromSecondary] = keyForPosition(from);
+        auto [toOrder, toOffset, toSecondary] = keyForPosition(to);
+
+        if (fromOrder != toOrder)
+            return fromOrder - toOrder;
+        if (fromOffset != toOffset)
+            return fromOffset - toOffset;
+        return fromSecondary - toSecondary;
     }
 
     if ([from isKindOfClass:[WKFoundTextPosition class]] && [to isKindOfClass:[WKFoundTextPosition class]]) {
@@ -9679,7 +9702,7 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
 
 - (void)_internalSelectTextForContextMenuWithLocationInView:(CGPoint)locationInView completionHandler:(void(^)(BOOL shouldPresentMenu, const WebKit::RevealItem& item))completionHandler
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     _removeBackgroundData = std::nullopt;
 #endif
 
@@ -9691,7 +9714,7 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
         if (shouldPresentMenu && ![strongSelf shouldSuppressEditMenu])
             [strongSelf->_textInteractionWrapper activateSelection];
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
         [strongSelf doAfterComputingImageAnalysisResultsForBackgroundRemoval:[completionHandler, shouldPresentMenu, item, weakSelf] {
             auto strongSelf = weakSelf.get();
             if (!strongSelf)
@@ -10097,7 +10120,7 @@ static String fallbackLabelTextForUnlabeledInputFieldInZoomedFormControls(WebCor
 {
     _touchEventsCanPreventNativeGestures = YES;
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if ([_imageAnalysisInteraction interactableItemExistsAtPoint:[_touchEventGestureRecognizer locationInView:self]])
         return YES;
 #endif
@@ -10546,7 +10569,7 @@ static WebCore::DataOwnerType coreDataOwnerType(_UIDataOwner platformType)
 {
     protect(self.gestureRecognizerConsistencyEnforcer)->beginTracking(deferringGestureRecognizer);
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if ([_imageAnalysisInteraction interactableItemExistsAtPoint:[deferringGestureRecognizer locationInView:self]])
         return NO;
 #endif
@@ -12298,7 +12321,7 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
 
 - (void)buildMenuForWebViewWithBuilder:(id <UIMenuBuilder>)builder
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if (auto menu = self.removeBackgroundMenu)
         [builder insertSiblingMenu:menu beforeMenuForIdentifier:UIMenuFormat];
 #endif
@@ -13154,7 +13177,7 @@ static RetainPtr<NSItemProvider> createItemProvider(const WebKit::WebPageProxy& 
 
 #pragma mark - Image Extraction
 
-- (CocoaImageAnalyzer *)imageAnalyzer
+- (VKCImageAnalyzer *)imageAnalyzer
 {
     if (!_imageAnalyzer)
         _imageAnalyzer = WebKit::createImageAnalyzer();
@@ -13172,13 +13195,10 @@ static RetainPtr<NSItemProvider> createItemProvider(const WebKit::WebPageProxy& 
         return;
 
     _pendingImageAnalysisRequestIdentifier = std::nullopt;
-    _isProceedingWithTextSelectionInImage = NO;
     _elementPendingImageAnalysis = std::nullopt;
     _imageAnalysisGestureRecognizer = adoptNS([[WKImageAnalysisGestureRecognizer alloc] initWithImageAnalysisGestureDelegate:self]);
     [self addGestureRecognizer:_imageAnalysisGestureRecognizer.get()];
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     _removeBackgroundData = std::nullopt;
-#endif
     _dynamicImageAnalysisContextMenuState = WebKit::DynamicImageAnalysisContextMenuState::NotWaiting;
     _imageAnalysisContextMenuActionData = std::nullopt;
 }
@@ -13192,16 +13212,13 @@ static RetainPtr<NSItemProvider> createItemProvider(const WebKit::WebPageProxy& 
     [self removeGestureRecognizer:_imageAnalysisGestureRecognizer.get()];
     _imageAnalysisGestureRecognizer = nil;
     _pendingImageAnalysisRequestIdentifier = std::nullopt;
-    _isProceedingWithTextSelectionInImage = NO;
     _elementPendingImageAnalysis = std::nullopt;
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     [std::exchange(_imageAnalyzer, nil) cancelAllRequests];
 ALLOW_DEPRECATED_DECLARATIONS_END
     [self _invokeAllActionsToPerformAfterPendingImageAnalysis:WebKit::ProceedWithTextSelectionInImage::No];
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     [self uninstallImageAnalysisInteraction];
     _removeBackgroundData = std::nullopt;
-#endif
     _dynamicImageAnalysisContextMenuState = WebKit::DynamicImageAnalysisContextMenuState::NotWaiting;
     _imageAnalysisContextMenuActionData = std::nullopt;
 }
@@ -13213,11 +13230,10 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_END
     RELEASE_LOG_IF(self.hasPendingImageAnalysisRequest, ImageAnalysis, "Image analysis request %" PRIu64 " cancelled.", _pendingImageAnalysisRequestIdentifier->toUInt64());
     _pendingImageAnalysisRequestIdentifier = std::nullopt;
-    _isProceedingWithTextSelectionInImage = NO;
     _elementPendingImageAnalysis = std::nullopt;
 }
 
-- (RetainPtr<CocoaImageAnalyzerRequest>)createImageAnalyzerRequest:(VKAnalysisTypes)analysisTypes image:(CGImageRef)image imageURL:(NSURL *)imageURL
+- (RetainPtr<VKCImageAnalyzerRequest>)createImageAnalyzerRequest:(VKAnalysisTypes)analysisTypes image:(CGImageRef)image imageURL:(NSURL *)imageURL
 {
     auto request = WebKit::createImageAnalyzerRequest(image, analysisTypes);
     [request setImageURL:imageURL];
@@ -13225,13 +13241,13 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return request;
 }
 
-- (RetainPtr<CocoaImageAnalyzerRequest>)createImageAnalyzerRequest:(VKAnalysisTypes)analysisTypes image:(CGImageRef)image
+- (RetainPtr<VKCImageAnalyzerRequest>)createImageAnalyzerRequest:(VKAnalysisTypes)analysisTypes image:(CGImageRef)image
 {
     return [self createImageAnalyzerRequest:analysisTypes image:image imageURL:_positionInformation.imageURL.createNSURL().get()];
 }
 
 
-- (void)updateImageAnalysisForContextMenuPresentation:(CocoaImageAnalysis *)analysis elementBounds:(CGRect)elementBounds
+- (void)updateImageAnalysisForContextMenuPresentation:(VKCImageAnalysis *)analysis elementBounds:(CGRect)elementBounds
 {
 #if USE(UICONTEXTMENU) && ENABLE(IMAGE_ANALYSIS_FOR_MACHINE_READABLE_CODES)
     analysis.presentingViewControllerForMrcAction = self._wk_viewControllerForFullScreenPresentation;
@@ -13272,16 +13288,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return;
     }
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     if (targetLanguageIdentifier.length)
         return WebKit::requestVisualTranslation(self.imageAnalyzer, imageURL, sourceLanguageIdentifier, targetLanguageIdentifier, cgImage.get(), WTF::move(completion));
-#else
-    UNUSED_PARAM(sourceLanguageIdentifier);
-    UNUSED_PARAM(targetLanguageIdentifier);
-#endif
 
     auto request = [self createImageAnalyzerRequest:VKAnalysisTypeText image:cgImage.get()];
-    [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion)] (CocoaImageAnalysis *result, NSError *) mutable {
+    [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion)] (VKCImageAnalysis *result, NSError *) mutable {
         completion(WebKit::makeTextRecognitionResult(result));
     }).get()];
 }
@@ -13301,7 +13312,6 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     [_imageAnalyzer cancelAllRequests];
 ALLOW_DEPRECATED_DECLARATIONS_END
     _pendingImageAnalysisRequestIdentifier = requestIdentifier;
-    _isProceedingWithTextSelectionInImage = NO;
     _elementPendingImageAnalysis = std::nullopt;
     _dynamicImageAnalysisContextMenuState = WebKit::DynamicImageAnalysisContextMenuState::NotWaiting;
     _imageAnalysisContextMenuActionData = std::nullopt;
@@ -13360,7 +13370,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         }
 
         auto textAnalysisStartTime = MonotonicTime::now();
-        [[strongSelf imageAnalyzer] processRequest:requestForTextSelection.get() progressHandler:nil completionHandler:[requestIdentifier = WTF::move(requestIdentifier), weakSelf, elementContext, requestLocation, cgImage, gestureDeferralToken, textAnalysisStartTime] (CocoaImageAnalysis *result, NSError *error) mutable {
+        [[strongSelf imageAnalyzer] processRequest:requestForTextSelection.get() progressHandler:nil completionHandler:[requestIdentifier = WTF::move(requestIdentifier), weakSelf, elementContext, requestLocation, cgImage, gestureDeferralToken, textAnalysisStartTime] (VKCImageAnalysis *result, NSError *error) mutable {
             auto strongSelf = weakSelf.get();
             if (![strongSelf validateImageAnalysisRequestIdentifier:requestIdentifier])
                 return;
@@ -13374,7 +13384,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
                     return;
 
                 if (updateResult == WebKit::TextRecognitionUpdateResult::Text) {
-                    strongSelf->_isProceedingWithTextSelectionInImage = YES;
                     [strongSelf _invokeAllActionsToPerformAfterPendingImageAnalysis:WebKit::ProceedWithTextSelectionInImage::Yes];
                     return;
                 }
@@ -13393,7 +13402,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 }
 
 #if ENABLE(IMAGE_ANALYSIS_FOR_MACHINE_READABLE_CODES)
-static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAnalysis *result)
+static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(VKCImageAnalysis *result)
 {
 #if HAVE(BCS_LIVE_CAMERA_ONLY_ACTION_SPI)
     return [result.barcodeActions indexOfObjectPassingTest:^BOOL(BCSAction *action, NSUInteger index, BOOL *stop) {
@@ -13430,7 +13439,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 
     auto elementBounds = _positionInformation.bounds;
     auto visualSearchAnalysisStartTime = MonotonicTime::now();
-    [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:[requestIdentifier = WTF::move(requestIdentifier), weakSelf, visualSearchAnalysisStartTime, aggregator = aggregator.copyRef(), data, elementBounds] (CocoaImageAnalysis *result, NSError *error) mutable {
+    [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:[requestIdentifier = WTF::move(requestIdentifier), weakSelf, visualSearchAnalysisStartTime, aggregator = aggregator.copyRef(), data, elementBounds] (VKCImageAnalysis *result, NSError *error) mutable {
         auto strongSelf = weakSelf.get();
         if (!strongSelf)
             return;
@@ -13456,14 +13465,12 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 #endif
     }];
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     if (protect(_page->preferences())->removeBackgroundEnabled()) {
         WebKit::requestBackgroundRemoval(image, [weakSelf = WeakObjCPtr<WKContentView>(self), aggregator = aggregator.copyRef(), data](CGImageRef result) mutable {
             if (auto strongSelf = weakSelf.get())
                 data->copySubjectResult = result;
         });
     }
-#endif
 }
 
 - (void)_insertDynamicImageAnalysisContextMenuItemsIfPossible
@@ -13542,7 +13549,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 - (BOOL)actionSheetAssistantShouldIncludeCopySubjectAction:(WKActionSheetAssistant *)assistant
 {
@@ -13579,11 +13586,11 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
     return interaction.hasActiveTextSelection || [interaction interactableItemExistsAtPoint:point];
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 - (void)beginTextRecognitionForFullscreenVideo:(WebCore::ShareableBitmap::Handle&&)imageData playerViewController:(AVPlayerViewController *)controller
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     ASSERT(_page->preferences().textRecognitionInVideosEnabled());
 
     if (_fullscreenVideoImageAnalysisRequestIdentifier)
@@ -13599,7 +13606,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 
     auto request = [self createImageAnalyzerRequest:WebKit::analysisTypesForFullscreenVideo() image:cgImage.get()];
     [request setImageSource:VKImageAnalyzerRequestImageSourceVideoFrame];
-    _fullscreenVideoImageAnalysisRequestIdentifier = [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([weakSelf = WeakObjCPtr<WKContentView>(self), controller = RetainPtr { controller }] (CocoaImageAnalysis *result, NSError *) mutable {
+    _fullscreenVideoImageAnalysisRequestIdentifier = [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([weakSelf = WeakObjCPtr<WKContentView>(self), controller = RetainPtr { controller }] (VKCImageAnalysis *result, NSError *) mutable {
         auto strongSelf = weakSelf.get();
         if (!strongSelf)
             return;
@@ -13609,12 +13616,12 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
         if ([controller respondsToSelector:@selector(setImageAnalysis:)])
             [controller setImageAnalysis:result];
     }).get()];
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 }
 
 - (void)cancelTextRecognitionForFullscreenVideo:(AVPlayerViewController *)controller
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if (auto identifier = std::exchange(_fullscreenVideoImageAnalysisRequestIdentifier, 0))
         [_imageAnalyzer cancelRequestID:identifier];
 
@@ -13625,7 +13632,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 
 - (BOOL)isTextRecognitionInFullscreenVideoEnabled
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     return protect(_page->preferences())->textRecognitionInVideosEnabled();
 #else
     return NO;
@@ -13634,7 +13641,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 
 - (void)beginTextRecognitionForVideoInElementFullscreen:(WebCore::ShareableBitmap::Handle&&)bitmapHandle bounds:(WebCore::FloatRect)bounds
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     auto imageBitmap = WebCore::ShareableBitmap::create(WTF::move(bitmapHandle));
     if (!imageBitmap)
         return;
@@ -13645,7 +13652,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 
     auto request = WebKit::createImageAnalyzerRequest(image.get(), WebKit::analysisTypesForElementFullscreenVideo());
     [request setImageSource:VKImageAnalyzerRequestImageSourceVideoFrame];
-    _fullscreenVideoImageAnalysisRequestIdentifier = [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:[weakSelf = WeakObjCPtr<WKContentView>(self), bounds](CocoaImageAnalysis *result, NSError *error) {
+    _fullscreenVideoImageAnalysisRequestIdentifier = [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:[weakSelf = WeakObjCPtr<WKContentView>(self), bounds](VKCImageAnalysis *result, NSError *error) {
         auto strongSelf = weakSelf.get();
         if (!strongSelf || !strongSelf->_fullscreenVideoImageAnalysisRequestIdentifier)
             return;
@@ -13657,12 +13664,12 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
         strongSelf->_imageAnalysisInteractionBounds = bounds;
         [strongSelf installImageAnalysisInteraction:result];
     }];
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 }
 
 - (void)cancelTextRecognitionForVideoInElementFullscreen
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     [self uninstallImageAnalysisInteraction];
 
     if (auto previousIdentifier = std::exchange(_fullscreenVideoImageAnalysisRequestIdentifier, 0))
@@ -13670,7 +13677,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 #endif
 }
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 - (void)installImageAnalysisInteraction:(VKCImageAnalysis *)analysis
 {
@@ -13710,14 +13717,14 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
     [_imageAnalysisGestureRecognizer setEnabled:WebKit::isLiveTextAvailableAndEnabled()];
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 - (BOOL)_shouldAvoidSecurityHeuristicScoreUpdates
 {
     // FIXME: The whole security heuristic thing should be a USE/HAVE.
 #if PLATFORM(VISION)
     return YES;
-#elif ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#elif ENABLE(IMAGE_ANALYSIS)
     return [_imageAnalysisInteraction hasActiveTextSelection];
 #else
     return NO;
@@ -16275,6 +16282,13 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             [foundPDFTextRange setEndPage:pdfData.endPage];
             [foundPDFTextRange setEndPageOffset:pdfData.endOffset];
             return foundPDFTextRange;
+        },
+        [] (const WebKit::WebFoundTextRange::CueData& cueData) -> RetainPtr<WKFoundTextRange> {
+            RetainPtr foundCueTextRange = adoptNS([[WKFoundCueTextRange alloc] init]);
+            [foundCueTextRange setMediaElementIdentifier:cueData.mediaElementIdentifier.toRawValue()];
+            [foundCueTextRange setDocumentOffset:cueData.documentOffset];
+            [foundCueTextRange setSeekTimeMilliseconds:cueData.seekTimeMilliseconds];
+            return foundCueTextRange;
         }
     );
 
@@ -16374,6 +16388,42 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     RetainPtr pos = adoptNS([[WKFoundPDFTextPosition alloc] init]);
     [pos setPage:page];
     [pos setOffset:offset];
+    return pos.autorelease();
+}
+
+@end
+
+@implementation WKFoundCueTextRange
+
+- (WKFoundCueTextPosition *)start
+{
+    return [WKFoundCueTextPosition textPositionWithDocumentOffset:self.documentOffset seekTimeMilliseconds:self.seekTimeMilliseconds order:self.order];
+}
+
+- (WKFoundCueTextPosition *)end
+{
+    return [WKFoundCueTextPosition textPositionWithDocumentOffset:self.documentOffset seekTimeMilliseconds:self.seekTimeMilliseconds order:self.order];
+}
+
+- (WebKit::WebFoundTextRange)webFoundTextRange
+{
+    WebKit::WebFoundTextRange::CueData data { WebCore::MediaPlayerClientIdentifier(self.mediaElementIdentifier), self.documentOffset, self.seekTimeMilliseconds };
+    auto pathToFrameVector = makeVector(self.pathToFrame, [](id number) -> std::optional<uint64_t> {
+        return [number unsignedLongValue];
+    });
+    return { data, WTF::move(pathToFrameVector), self.order };
+}
+
+@end
+
+@implementation WKFoundCueTextPosition
+
++ (WKFoundCueTextPosition *)textPositionWithDocumentOffset:(uint64_t)documentOffset seekTimeMilliseconds:(uint64_t)seekTimeMilliseconds order:(NSUInteger)order
+{
+    RetainPtr pos = adoptNS([[WKFoundCueTextPosition alloc] init]);
+    [pos setDocumentOffset:documentOffset];
+    [pos setSeekTimeMilliseconds:seekTimeMilliseconds];
+    [pos setOrder:order];
     return pos.autorelease();
 }
 

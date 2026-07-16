@@ -213,9 +213,6 @@ MediaPlayerPrivateRemote::~MediaPlayerPrivateRemote()
         audioSourceProvider->close();
 #endif
 
-    for (auto& request : std::exchange(m_layerHostingContextRequests, { }))
-        request({ });
-
     // Shutdown any stale MediaResources.
     // This condition can happen if the MediaPlayer gets reloaded half-way.
     ensureOnMainThread([resources = std::exchange(m_mediaResources, { })] {
@@ -386,12 +383,21 @@ MediaTime MediaPlayerPrivateRemote::currentOrPendingSeekTime() const
     return m_currentTimeEstimator.currentTimeWithLockHeld();
 }
 
-void MediaPlayerPrivateRemote::seekToTarget(const WebCore::SeekTarget& target)
+Ref<MediaTimePromise> MediaPlayerPrivateRemote::seekToTarget(const WebCore::SeekTarget& target)
 {
     ALWAYS_LOG(LOGIDENTIFIER, target);
     m_seeking = true;
     m_currentTimeEstimator.setTime({ target.time, false, MonotonicTime::now() });
-    protect(connection())->send(Messages::RemoteMediaPlayerProxy::SeekToTarget(target), m_id);
+    return protect(connection())->sendWithPromisedReply<MediaPromiseConverter>(Messages::RemoteMediaPlayerProxy::SeekToTarget(target), m_id)->whenSettled(RunLoop::mainSingleton(), [weakThis = ThreadSafeWeakPtr { *this }](auto&& result) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return MediaTimePromise::createAndReject(PlatformMediaError::Cancelled);
+        protectedThis->m_seeking = false;
+        if (!result)
+            return MediaTimePromise::createAndReject(result.error());
+        protectedThis->m_currentTimeEstimator.setTime(*result);
+        return MediaTimePromise::createAndResolve(result->currentTime);
+    });
 }
 
 bool MediaPlayerPrivateRemote::didLoadingProgress() const
@@ -469,15 +475,6 @@ void MediaPlayerPrivateRemote::muteChanged(bool muted)
         player->muteChanged(muted);
 }
 
-void MediaPlayerPrivateRemote::seeked(MediaTimeUpdateData&& timeData)
-{
-    ALWAYS_LOG(LOGIDENTIFIER, "currentTime:", timeData.currentTime, " effectiveRate:", timeData.effectiveRate);
-    m_seeking = false;
-    m_currentTimeEstimator.setTime(timeData);
-    if (RefPtr player = m_player.get())
-        player->seeked(timeData.currentTime);
-}
-
 void MediaPlayerPrivateRemote::timeChanged(RemoteMediaPlayerState&& state, MediaTimeUpdateData&& timeData)
 {
     ALWAYS_LOG(LOGIDENTIFIER, "currentTime:", timeData.currentTime, " effectiveRate:", timeData.effectiveRate);
@@ -492,11 +489,6 @@ void MediaPlayerPrivateRemote::durationChanged(RemoteMediaPlayerState&& state)
     updateCachedState(WTF::move(state));
     if (RefPtr player = m_player.get())
         player->durationChanged();
-}
-
-bool MediaPlayerPrivateRemote::seeking() const
-{
-    return m_seeking;
 }
 
 void MediaPlayerPrivateRemote::rateChanged(double rate, MediaTimeUpdateData&& timeData)
@@ -634,6 +626,7 @@ void MediaPlayerPrivateRemote::updateCachedState(RemoteMediaPlayerState&& state)
     m_cachedState.movieLoadType = state.movieLoadType;
     m_cachedState.wirelessPlaybackTargetType = state.wirelessPlaybackTargetType;
     m_cachedState.wirelessPlaybackTargetName = state.wirelessPlaybackTargetName;
+    m_cachedState.wirelessPlaybackRouteName = state.wirelessPlaybackRouteName;
 
     m_cachedState.startDate = state.startDate;
     m_cachedState.startTime = state.startTime;
@@ -1235,6 +1228,11 @@ String MediaPlayerPrivateRemote::wirelessPlaybackTargetName() const
     return m_cachedState.wirelessPlaybackTargetName;
 }
 
+String MediaPlayerPrivateRemote::wirelessPlaybackRouteName() const
+{
+    return m_cachedState.wirelessPlaybackRouteName;
+}
+
 MediaPlayer::WirelessPlaybackTargetType MediaPlayerPrivateRemote::wirelessPlaybackTargetType() const
 {
     return m_cachedState.wirelessPlaybackTargetType;
@@ -1602,18 +1600,21 @@ WTFLogChannel& MediaPlayerPrivateRemote::logChannel() const
 }
 #endif
 
-void MediaPlayerPrivateRemote::requestHostingContext(LayerHostingContextCallback&& completionHandler)
+Ref<MediaPlayer::HostingContextPromise> MediaPlayerPrivateRemote::requestHostingContext()
 {
-    if (m_layerHostingContext.contextID) {
-        completionHandler(m_layerHostingContext);
-        return;
-    }
+    if (m_layerHostingContext.contextID)
+        return HostingContextPromise::createAndResolve(m_layerHostingContext);
 
-    m_layerHostingContextRequests.append(WTF::move(completionHandler));
-    protect(connection())->sendWithAsyncReply(Messages::RemoteMediaPlayerProxy::RequestHostingContext(), [weakThis = ThreadSafeWeakPtr { *this }] (WebCore::HostingContext context) {
-        if (RefPtr protectedThis = weakThis.get())
-            protectedThis->setLayerHostingContext(WTF::move(context));
+    HostingContextPromise::AutoRejectProducer producer;
+    Ref promise = producer.promise();
+    protect(connection())->sendWithAsyncReply(Messages::RemoteMediaPlayerProxy::RequestHostingContext(), [weakThis = ThreadSafeWeakPtr { *this }, producer = WTF::move(producer)] (WebCore::HostingContext context) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || !context.contextID)
+            return;
+        protectedThis->setLayerHostingContext(WebCore::HostingContext { context });
+        producer.resolve(WTF::move(context));
     }, m_id);
+    return promise;
 }
 
 WebCore::HostingContext MediaPlayerPrivateRemote::hostingContext() const
@@ -1625,14 +1626,10 @@ void MediaPlayerPrivateRemote::setLayerHostingContext(WebCore::HostingContext&& 
 {
     if (m_layerHostingContext.contextID == hostingContext.contextID)
         return;
-
     m_layerHostingContext = WTF::move(hostingContext);
 #if PLATFORM(COCOA)
     m_videoLayer = nullptr;
 #endif
-
-    for (auto& request : std::exchange(m_layerHostingContextRequests, { }))
-        request(m_layerHostingContext);
 }
 
 #if ENABLE(MEDIA_SOURCE)

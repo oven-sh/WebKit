@@ -690,7 +690,7 @@ public:
 #if ENABLE(MODEL_ELEMENT)
     bool isModelDocument() const { return m_documentClasses.contains(DocumentClass::Model); }
 #endif
-    bool isPDFDocument() const { return m_documentClasses.contains(DocumentClass::PDF); }
+    bool isPDFJSDocument() const { return m_documentClasses.contains(DocumentClass::PDFJS); }
 
     bool NODELETE hasSVGRootNode() const;
     virtual bool isFrameSet() const { return false; }
@@ -1019,6 +1019,7 @@ public:
     void flushAutofocusCandidates();
 
     void reveal();
+    bool hasBeenRevealed() const { return m_hasBeenRevealed; }
 
     void hoveredElementDidDetach(Element&);
     void elementInActiveChainDidDetach(Element&);
@@ -1068,7 +1069,6 @@ public:
     void nodeWillBeMoved(Node&);
     void parentlessNodeMovedToNewDocument(Node&);
 
-    enum class AcceptChildOperation : bool { Replace, InsertOrAdd };
     bool NODELETE canAcceptChild(const Node& newChild, const Node* refChild, AcceptChildOperation) const;
 
     void textInserted(Node&, unsigned offset, unsigned length);
@@ -1540,6 +1540,11 @@ public:
     bool hasHadUserInteraction() const { return static_cast<bool>(m_lastHandledUserGestureTimestamp); }
     void updateLastHandledUserGestureTimestamp(MonotonicTime);
     bool processingUserGestureForMedia() const;
+
+    // Identifies which branch of processingUserGestureForMedia() authorizes media playback.
+    enum class MediaGestureReason : uint8_t { None, ActiveToken, TransientActivation, MediaFinishedGrace, InheritsFromDocumentSetting, InheritedUserGesturesQuirk };
+    MediaGestureReason mediaUserGestureReason() const;
+
     bool hasRecentUserInteractionForNavigationFromJS() const;
     void userActivatedMediaFinishedPlaying() { m_userActivatedMediaFinishedPlayingTimestamp = MonotonicTime::now(); }
 
@@ -2025,6 +2030,9 @@ public:
     WEBCORE_EXPORT bool NODELETE hasElementWithPendingUserAgentShadowTreeUpdate(Element&) const;
     void addElementWithPendingUserAgentShadowTreeUpdate(Element&);
     WEBCORE_EXPORT void removeElementWithPendingUserAgentShadowTreeUpdate(Element&);
+
+    bool usesHeadingOffsetAttribute() const { return m_usesHeadingOffsetAttribute; }
+    void setUsesHeadingOffsetAttribute() { m_usesHeadingOffsetAttribute = true; }
 
     std::optional<PAL::SessionID> sessionID() const final;
 
@@ -2811,6 +2819,7 @@ private:
     bool m_inHitTesting { false };
 #endif
     bool m_isDirAttributeDirty { false };
+    bool m_usesHeadingOffsetAttribute { false };
 
     bool m_scheduledDeferredAXObjectCacheUpdate { false };
     bool m_wasRemovedLastRefCalled { false };

@@ -39,7 +39,6 @@ namespace Layout {
 
 class ElementBox;
 class PlacedGridItem;
-
 class UnplacedGridItem;
 
 struct GridAreaLines;
@@ -71,6 +70,14 @@ struct GridDefinition {
     GridAutoFlowOptions autoFlowOptions;
 };
 
+// Static classification of how much grid-sizing work is required to compute
+// the grid's intrinsic widths. Set once per GridFormattingContext before
+// either the min-content or max-content scenario runs.
+enum class IntrinsicWidthSizingPath : uint8_t {
+    ColumnsOnly, // No item's inline contribution depends on the item's own block size.
+    NeedsFullSizing, // At least one item's inline contribution depends on the item's own block size.
+};
+
 class GridFormattingContext {
     WTF_MAKE_TZONE_ALLOCATED(GridFormattingContext);
 public:
@@ -85,6 +92,7 @@ public:
     };
 
     IntrinsicWidths computeIntrinsicWidths();
+    IntrinsicWidthSizingPath intrinsicWidthSizingPath() const { return m_intrinsicWidthSizingPath; }
 
     PlacedGridItems constructPlacedGridItems(const GridAreas&) const;
 
@@ -101,14 +109,14 @@ public:
     // FIXME: This is only here because the integration code needs to know the
     // row gap to update RenderGrid. We should figure out a way to do that and remove
     // this from the public API.
-    static LayoutUnit usedGapValue(const Style::GapGutter& gap)
+    static LayoutUnit usedGapValue(const Style::GapGutter& gap, const Style::ComputedStyle& style)
     {
         if (gap.isNormal())
             return { };
 
         // Only handle fixed length gaps for now
         if (auto fixedGap = gap.tryFixed())
-            return Style::evaluate<LayoutUnit>(*fixedGap, 0_lu, Style::ZoomNeeded { });
+            return Style::evaluate<LayoutUnit>(*fixedGap, 0_lu, style.usedZoomForLength());
 
         ASSERT_NOT_REACHED();
         return { };
@@ -116,6 +124,8 @@ public:
 
 private:
     UnplacedGridItems constructUnplacedGridItems() const;
+
+    IntrinsicWidthSizingPath classifyIntrinsicWidthSizingPath() const;
 
     const LayoutState& layoutState() const LIFETIME_BOUND { return m_globalLayoutState; }
     BoxGeometry& geometryForGridItem(const ElementBox&) LIFETIME_BOUND;
@@ -126,6 +136,7 @@ private:
     const CheckedRef<const ElementBox> m_gridBox;
     const CheckedRef<LayoutState> m_globalLayoutState;
     const IntegrationUtils m_integrationUtils;
+    const IntrinsicWidthSizingPath m_intrinsicWidthSizingPath;
 };
 
 } // namespace Layout

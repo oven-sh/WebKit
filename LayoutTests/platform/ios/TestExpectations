@@ -23,6 +23,7 @@ fast/page-color-sampling [ Pass ]
 http/tests/pdf [ Pass ]
 http/tests/quicklook [ Pass ]
 http/tests/swipe [ Pass ]
+ipc/ios [ Pass ]
 media/ios [ Pass ]
 media/audioSession/ios [ Pass ]
 pdf [ Pass ]
@@ -364,6 +365,7 @@ fast/selectors/text-field-selection-text-shadow.html [ WontFix ]
 fast/selectors/text-field-selection-window-inactive-stroke-color.html [ WontFix ]
 fast/selectors/text-field-selection-window-inactive-text-shadow.html [ WontFix ]
 fast/text/selection-with-text-decorations.html [ WontFix ]
+imported/w3c/web-platform-tests/css/css-text-decor/text-decoration-inset-marked-text-gap.html [ WontFix ]
 
 # Plugins are not supported on iOS
 fast/frames/sandboxed-iframe-plugins.html
@@ -399,6 +401,7 @@ http/tests/media/audio-load-loadeddata.html [ Pass ]
 
 # Digital Credentials
 http/wpt/identity/identitycredentialscontainer-get-hidden.https.html [ Skip ]
+webkit.org/b/318843 http/wpt/identity/formats/ISO18013/mobiledocument.https.html [ Failure ]
 
 # No touch events
 fast/events/touch [ Skip ]
@@ -1387,6 +1390,7 @@ fast/css/resize-textarea-align-content.html [ Skip ]
 fast/events/mouse-events-on-textarea-resize.html [ Skip ]
 fast/events/mouse_resizer_mousedown.html [ Skip ]
 fast/css/resize-corner-over-child-layer.html [ Skip ]
+fast/frames/frameset-noresize-removal-allows-resize.html [ Skip ]
 
 # The file-wrapper part of <attachment> is not yet working on iOS
 fast/attachment/attachment-type-attribute.html [ Skip ]
@@ -1489,9 +1493,15 @@ imported/w3c/web-platform-tests/css/css-view-transitions/input-pointer-capture-w
 
 # Needs special fuzziness on iOS.
 imported/w3c/web-platform-tests/css/css-view-transitions/rotated-cat-off-top-edge.html [ ImageOnlyFailure ]
+
 imported/w3c/web-platform-tests/css/css-view-transitions/table-caption.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-left-of-viewport-offscreen-old.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-on-top-of-viewport-partially-onscreen-new.html [ ImageOnlyFailure ]
+
+# webkit.org/b/316882 1px device-pixel rounding difference in snapRectToDevicePixels for the
+# overflow-visible ::view-transition-old/new object-view-box path.
+webkit.org/b/316882 imported/w3c/web-platform-tests/css/css-view-transitions/old-content-with-object-view-box.html [ Skip ]
+webkit.org/b/316882 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-with-object-view-box.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/old-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure ]
 
@@ -1894,6 +1904,8 @@ imported/w3c/web-platform-tests/css/css-masking/mask-image/mask-opacity-1e.html 
 imported/w3c/web-platform-tests/css/css-text-decor/text-decoration-thickness-length-rounding-min-val.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text-decor/text-shadow/svg-fill-none.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text-decor/text-shadow/svg-stroke-dasharray.html [ ImageOnlyFailure ]
+# incorrect skip ink on iOS only
+imported/w3c/web-platform-tests/css/css-text-decor/text-decoration-inset-011.html [ ImageOnlyFailure ]
 
 fast/flexbox/flex-hang.html [ Failure ]
 fast/flexbox/overhanging-floats-removed.html [ Failure ]
@@ -2494,6 +2506,7 @@ accessibility/table-display-flex.html [ Pass ]
 accessibility/table-display-grid.html [ Pass ]
 accessibility/table-display-inline-block.html [ Pass ]
 accessibility/text-input-hit-test.html [ Pass ]
+accessibility/textarea-line-for-index.html [ Pass ]
 accessibility/tree-update-with-dirty-layout.html [ Pass ]
 accessibility/tree-update-with-dynamically-ignored-inline-child-div.html [ Pass ]
 accessibility/tree-update-with-dynamically-ignored-tabindex-div.html [ Pass ]
@@ -8009,7 +8022,6 @@ webkit.org/b/296202 imported/w3c/web-platform-tests/service-workers/service-work
 webkit.org/b/296209 http/tests/workers/service/basic-timeout.https.html [ Pass Failure ]
 
 # rdar://156353464 ☂️Bug for iOS26 reproduction and expectations
-compositing/layer-creation/sticky-overlap-extent.html [ Failure ]
 editing/pasteboard/copy-paste-bidi.html [ Failure ]
 editing/selection/ios/show-selection-in-transformed-container-2.html [ Failure ]
 fast/mediastream/play-newly-added-audio-track.html [ Failure ]
@@ -8317,9 +8329,6 @@ fast/events/ios/should-be-able-to-dismiss-form-accessory-after-tapping-outside-i
 # This tests the system picker triggered by HTMLSelectElement::showPopup(), which iOS doesn't use.
 fast/css/css-anchor-position/anchor-positioned-select-picker.html [ Skip ]
 
-# from fast/ tests that are flaky: adding timeout
-webkit.org/b/304027 fast/block/basic/001.html [ Pass Failure Timeout ]
-
 webkit.org/b/303650 fast/lists/marker-before-empty-inline.html [ ImageOnlyFailure ]
 
 webkit.org/b/304298 accessibility/text-stitching-inside-links.html [ Failure ]
@@ -8476,8 +8485,6 @@ webkit.org/b/316830 fast/forms/datalist/datalist-textinput-suggestions-order.htm
 
 webkit.org/b/317753 imported/w3c/web-platform-tests/content-security-policy/sandbox/meta-element.sub.html [ Skip ]
 
-webkit.org/b/317756 imported/w3c/web-platform-tests/css/selectors/user-valid.html [ Skip ]
-
 webkit.org/b/295419 loader/navigation-policy/should-open-external-urls/subframe-navigated-programatically-by-main-frame.html [ Pass Failure ]
 
 # webkit.org/b/317882 [iOS] Multiple wpt tests are flaky in text diff
@@ -8590,7 +8597,7 @@ fast/forms/ios/zoom-to-reveal-focused-element-after-delay.html [ Timeout ] # web
 editing/caret/ios/place-caret-after-autocorrected-word.html [ Failure ] # webkit.org/b/318253
 editing/input/ios/typing-with-inline-predictions.html [ Pass Timeout ] # webkit.org/b/318254
 imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure ] # webkit.org/b/318255
-imported/w3c/web-platform-tests/digital-credentials/mdoc/mixed-requests.https.html [ Failure ] # webkit.org/b/318256
+http/wpt/identity/formats/ISO18013/mixed-requests.https.html [ Failure ] # webkit.org/b/318256
 imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/number-constraint-validation.html [ Pass Failure ] # webkit.org/b/318257
 ipc/fecolormatrix-type-values-mismatch-crash.html [ Failure ] # webkit.org/b/318258
 
@@ -8600,3 +8607,5 @@ webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/interlea
 webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.worker.html [ Failure ]
 webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.serviceworker.html [ Failure ]
 webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.sharedworker.html [ Failure ]
+
+webkit.org/b/318375 imported/w3c/web-platform-tests/css/css-anchor-position/scroll-to-anchored-fixed-001.html [ Pass ImageOnlyFailure ]

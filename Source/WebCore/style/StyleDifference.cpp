@@ -100,7 +100,8 @@ public:
 
             if (&a.nonInheritedData() != &b.nonInheritedData() && a.nonInheritedData().rareData.ptr() != b.nonInheritedData().rareData.ptr()) {
                 if (a.nonInheritedData().rareData->textDecorationStyle != b.nonInheritedData().rareData->textDecorationStyle
-                    || a.nonInheritedData().rareData->textDecorationThickness != b.nonInheritedData().rareData->textDecorationThickness)
+                    || a.nonInheritedData().rareData->textDecorationThickness != b.nonInheritedData().rareData->textDecorationThickness
+                    || a.nonInheritedData().rareData->textDecorationInset != b.nonInheritedData().rareData->textDecorationInset)
                     return true;
             }
 
@@ -312,6 +313,9 @@ public:
         if (a.textBoxTrim != b.textBoxTrim)
             return true;
 
+        if (a.whiteSpaceTrim != b.whiteSpaceTrim)
+            return true;
+
         if (a.maxLines != b.maxLines)
             return true;
 
@@ -349,6 +353,7 @@ public:
     #endif
             || a.wordBreak != b.wordBreak
             || a.overflowWrap != b.overflowWrap
+            || a.effectiveWrapInsideAvoid != b.effectiveWrapInsideAvoid
             || a.nbspMode != b.nbspMode
             || a.lineBreak != b.lineBreak
             || a.textSecurity != b.textSecurity
@@ -764,7 +769,8 @@ public:
     {
         if (a.userDrag != b.userDrag
             || a.objectFit != b.objectFit
-            || a.objectPosition != b.objectPosition)
+            || a.objectPosition != b.objectPosition
+            || a.objectViewBox != b.objectViewBox)
             return true;
 
         return false;
@@ -781,7 +787,10 @@ public:
             // Don't return true; keep looking for another change.
         }
 
-        if (a.textDecorationStyle != b.textDecorationStyle || a.textDecorationColor != b.textDecorationColor || a.textDecorationThickness != b.textDecorationThickness)
+        if (a.textDecorationStyle != b.textDecorationStyle || a.textDecorationColor != b.textDecorationColor || a.textDecorationThickness != b.textDecorationThickness || a.textDecorationInset != b.textDecorationInset)
+            return true;
+
+        if (a.viewTransitionName != b.viewTransitionName)
             return true;
 
         return false;

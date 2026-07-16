@@ -143,7 +143,14 @@ static Vector<WGPUFeatureName> baseFeatures(id<MTLDevice> device, const Hardware
     features.append(WGPUFeatureName_BGRA8UnormStorage);
 #if CPU(ARM64)
     features.append(WGPUFeatureName_TextureFormatsTier1);
+    features.append(WGPUFeatureName_TextureFormatsTier2);
 #endif
+
+    // Subgroup (SIMD-group) built-in functions are guaranteed across GPU vendors by the
+    // Metal 3 feature set, which provides the full reduction, prefix-scan, shuffle, ballot,
+    // and quad operation set that the WGSL 'subgroups' extension requires.
+    if ([device supportsFamily:MTLGPUFamilyMetal3])
+        features.append(WGPUFeatureName_Subgroups);
 
 #if !PLATFORM(WATCHOS)
     if (device.supports32BitFloatFiltering)
@@ -561,8 +568,13 @@ static bool isPhysicalHardware()
     static bool result = [] {
         uint32_t isVM = 0;
         size_t size = sizeof(isVM);
-        if (!sysctlbyname("kern.hv_vmm_present", &isVM, &size, NULL, 0))
-            return isVM ? static_cast<bool>([[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitAllowWebGPUOnVMs"]) : true;
+        if (!sysctlbyname("kern.hv_vmm_present", &isVM, &size, NULL, 0)) {
+            if (isVM) {
+                id value = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKitAllowWebGPUOnVMs"];
+                return value ? static_cast<bool>([value boolValue]) : true;
+            }
+            return true;
+        }
         return true;
     }();
     return result;
