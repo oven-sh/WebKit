@@ -31,15 +31,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Both archive.ubuntu.com and azure.archive.ubuntu.com have intermittently
 # timed out from inside the GitHub-hosted docker-buildx network at different
-# times. Prefer Azure (faster on Azure-hosted runners) but fall back to the
-# canonical mirror if `apt-get update` can't reach it. arm64 uses
-# ports.ubuntu.com which has been reachable, so leave it alone.
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+# times, and ports.ubuntu.com (arm64) has gone fully dark for hours at a
+# stretch. Prefer Azure on amd64 (faster on Azure-hosted runners). On any
+# failed attempt, swap to a fallback mirror before retrying: amd64 falls back
+# to the canonical archive, arm64 falls back to a Launchpad-registered
+# ubuntu-ports mirror.
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
+    && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99-retries
 
-# Install basic build dependencies
-RUN ( apt-get update || \
-      ( sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && apt-get update ) \
-    ) && apt-get install -y \
+# Install basic build dependencies. `apt-get update` exits 0 on partial index
+# fetch failure (only W:, not E:), which then makes the install fail with
+# "no installation candidate"; retry the whole update+install, swapping to a
+# fallback mirror after the first failure.
+RUN for attempt in 1 2 3; do \
+      apt-get update && apt-get install -y \
     wget \
     curl \
     git \
@@ -52,6 +57,15 @@ RUN ( apt-get update || \
     ca-certificates \
     gnupg \
     lsb-release \
+    && break || { \
+        echo "apt attempt $attempt failed, swapping mirrors and retrying"; \
+        sed -i -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+               -e 's|http://ports.ubuntu.com/ubuntu-ports|http://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
+               /etc/apt/sources.list; \
+        sleep 15; \
+    }; \
+    done \
+    && dpkg -l wget curl git python3 ninja-build lsb-release >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 
 # Install zstd (for icu/compress-data.ts). Pinned: focal's apt has 1.4.4 which
