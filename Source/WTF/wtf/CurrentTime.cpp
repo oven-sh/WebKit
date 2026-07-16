@@ -111,6 +111,25 @@ Int128 currentTimeInNanoseconds()
     return static_cast<Int128>(dateTime.QuadPart - epochBias) * 100;
 }
 
+// QueryPerformanceCounter is the canonical Windows monotonic clock. The
+// frequency is fixed at boot and QueryPerformanceFrequency never fails on
+// XP+ per MSDN, so the reciprocal is computed once (WTF builds with
+// thread-safe local statics; only bmalloc/JSC opt out). This backs
+// MonotonicTime/ContinuousTime/ContinuousApproximateTime::now() below so
+// their Windows paths have no mutable static state and are monotonic by
+// construction instead of wall-clock-clamped.
+static inline double qpcSeconds()
+{
+    static const double secondsPerTick = [] {
+        LARGE_INTEGER freq;
+        QueryPerformanceFrequency(&freq);
+        return 1.0 / static_cast<double>(freq.QuadPart);
+    }();
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return static_cast<double>(now.QuadPart) * secondsPerTick;
+}
+
 #else // !USE(BUN_JSC_ADDITIONS)
 
 static constexpr double hundredsOfNanosecondsPerMillisecond = 10000;
@@ -354,6 +373,8 @@ MonotonicTime MonotonicTime::now()
     return fromRawSeconds(static_cast<double>(ts.tv_sec) + ts.tv_nsec / 1.0e9);
 #elif OS(HAIKU)
     return fromRawSeconds(static_cast<double>(system_time_nsecs() / 1.0e9));
+#elif OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+    return fromRawSeconds(qpcSeconds());
 #else
     static double lastTime = 0;
     double currentTimeNow = currentTime();
@@ -393,6 +414,8 @@ ContinuousTime ContinuousTime::now()
     struct timespec ts { };
     clock_gettime(CLOCK_BOOTTIME, &ts);
     return fromRawSeconds(static_cast<double>(ts.tv_sec) + ts.tv_nsec / 1.0e9);
+#elif OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+    return fromRawSeconds(qpcSeconds());
 #else
     static double lastTime = 0;
     double currentTimeNow = currentTime();
@@ -411,6 +434,8 @@ ContinuousApproximateTime ContinuousApproximateTime::now()
     struct timespec ts { };
     clock_gettime(CLOCK_BOOTTIME, &ts);
     return fromRawSeconds(static_cast<double>(ts.tv_sec) + ts.tv_nsec / 1.0e9);
+#elif OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+    return fromRawSeconds(qpcSeconds());
 #else
     static double lastTime = 0;
     double currentTimeNow = currentTime();
