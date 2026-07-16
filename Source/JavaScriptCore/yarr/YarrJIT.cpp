@@ -377,6 +377,9 @@ public:
     Chain wideChain; // characters >= 0x100 (16-bit strings only)
     unsigned frameLocation { 0 }; // the group's frame; chainResume lives here
     Checked<unsigned> firstCharacterOffset; // read offset of the group's first character
+    PatternDisjunction* disjunction { nullptr }; // the dispatched alternatives
+    Checked<unsigned> enclosingCheckedOffset; // checkedOffset at the group term
+    size_t endOpIndex { 0 }; // the group's NestedAlternativeEnd op (success join point)
 
     // Per alternative: the entry label (bound during generation) and jumps
     // from chain stubs awaiting that label.
@@ -5990,6 +5993,8 @@ class YarrGenerator final : public YarrJITInfo {
         lastOp.m_alternative = nullptr;
         lastOp.m_nextOp = notFound;
         lastOp.m_checkedOffset = checkedOffset;
+        if (dispatch)
+            dispatch->endOpIndex = m_ops.size() - 1;
 
         size_t parenEnd = m_ops.size();
         appendOp(parenthesesEndOpCode);
@@ -6618,23 +6623,95 @@ class YarrGenerator final : public YarrJITInfo {
         info.pendingEntryJumps[alternativeIndex].clear();
     }
 
-    // Emit one chain: for each member, store the address of the following stub
-    // as the chain-resume point, then jump into the member; the final stub is the
-    // group failure. Returns the label of the chain head.
+    // An alternative that is a fixed-length literal string (only fixed-count
+    // pattern characters) can never be backtracked into: it either matches its
+    // exact characters or not. Such alternatives are emitted as inline compare
+    // blocks inside the chain (no frame store/load, no indirect jump), with a
+    // static fall-through to the next chain element on mismatch.
+    bool isInlineLiteralAlternative(const PatternAlternative& alternative)
+    {
+        if (alternative.m_terms.isEmpty() || !alternative.m_hasFixedSize)
+            return false;
+        for (auto& term : alternative.m_terms) {
+            if (term.type != PatternTerm::Type::PatternCharacter)
+                return false;
+            if (term.quantityType != QuantifierType::FixedCount || !term.quantityMaxCount || term.quantityMinCount != term.quantityMaxCount)
+                return false;
+            if (term.matchDirection() != Forward)
+                return false;
+        }
+        return true;
+    }
+
+    // Emit an inline literal alternative as part of a chain: claim its extra
+    // input, compare its characters, and on a full match join the group's
+    // success path; on mismatch release the claim and fall to the next chain
+    // element. The return-address slot points at an unwind thunk that releases
+    // the claim and continues the chain, so backtracking into this matched
+    // alternative from after the group tries the following alternatives.
+    void emitInlineLiteralAlternative(DispatchInfo& info, const PatternAlternative& alternative, MacroAssembler::JumpList& toNextElement)
+    {
+        const MacroAssembler::RegisterID character = m_regs.regT0;
+        unsigned extraClaim = alternative.m_minimumSize - info.disjunction->m_minimumSize;
+        Checked<unsigned> frameChecked = info.enclosingCheckedOffset + extraClaim;
+
+        MacroAssembler::JumpList mismatch;
+        if (extraClaim) {
+            m_jit.add32(MacroAssembler::Imm32(extraClaim), m_regs.index);
+            mismatch.append(m_jit.branch32(MacroAssembler::Above, m_regs.index, m_regs.length));
+        }
+        for (auto& term : alternative.m_terms) {
+            char32_t ch = term.patternCharacter;
+            for (unsigned repeat = 0; repeat < term.quantityMaxCount; ++repeat) {
+                Checked<unsigned> offset = frameChecked - term.inputPosition - repeat;
+                mismatch.append(jumpIfCharNotEquals(ch, offset, character, term.ignoreCase()));
+            }
+        }
+
+        // Full match: record where to unwind to, then skip to the group's End.
+        MacroAssembler::DataLabelPtr returnAddress = storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::returnAddressIndex());
+        m_ops[info.endOpIndex].m_jumps.append(m_jit.jump());
+
+        // Unwind thunk (reached only through the return-address slot when
+        // something after the group fails): release the claim and continue the
+        // chain by falling through to the next element.
+        MacroAssembler::Label unwind(m_jit);
+        m_backtrackingState.addReturnAddressRecord(returnAddress, unwind);
+        mismatch.link(&m_jit);
+        if (extraClaim)
+            m_jit.sub32(MacroAssembler::Imm32(extraClaim), m_regs.index);
+        toNextElement.append(m_jit.jump());
+    }
+
+    // Emit one chain: literal alternatives are compared inline; other
+    // alternatives are entered through a stub that stores the address of the
+    // following element as the chain-resume point before jumping in. The final
+    // element is the group failure. Returns the label of the chain head.
     MacroAssembler::Label emitDispatchChainStubs(DispatchInfo& info, const Vector<unsigned, 4>& alternativeIndices)
     {
         JIT_COMMENT(m_jit, "dispatch chain (", alternativeIndices.size(), " alternatives)");
         MacroAssembler::Label head = m_jit.label();
         Vector<MacroAssembler::DataLabelPtr, 4> pendingStores;
+        MacroAssembler::JumpList toNextElement;
         for (unsigned index : alternativeIndices) {
-            // Bind the previous stub's stored resume address to here.
+            // Bind the previous element's continuations to here.
             if (!pendingStores.isEmpty())
                 m_backtrackingState.addReturnAddressRecord(pendingStores.takeLast(), m_jit.label());
-            pendingStores.append(storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex()));
-            emitJumpToDispatchEntry(info, index);
+            toNextElement.link(&m_jit);
+            toNextElement.clear();
+
+            const PatternAlternative& alternative = *info.disjunction->m_alternatives[index];
+            if (isInlineLiteralAlternative(alternative))
+                emitInlineLiteralAlternative(info, alternative, toNextElement);
+            else {
+                pendingStores.append(storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex()));
+                emitJumpToDispatchEntry(info, index);
+            }
         }
         // Chain exhausted: no more applicable alternatives at this position.
-        m_backtrackingState.addReturnAddressRecord(pendingStores.takeLast(), m_jit.label());
+        if (!pendingStores.isEmpty())
+            m_backtrackingState.addReturnAddressRecord(pendingStores.takeLast(), m_jit.label());
+        toNextElement.link(&m_jit);
         info.groupFailJumps.append(m_jit.jump());
         return head;
     }
@@ -6797,6 +6874,8 @@ class YarrGenerator final : public YarrJITInfo {
         if (info->firstCharacterOffset.hasOverflowed())
             return nullptr;
         info->frameLocation = term->frameLocation;
+        info->disjunction = disjunction;
+        info->enclosingCheckedOffset = checkedOffset;
         info->entries.resize(alternatives.size());
         info->entryBound.fill(false, alternatives.size());
         info->pendingEntryJumps.resize(alternatives.size());
