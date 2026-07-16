@@ -1138,6 +1138,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ArrayStorage.h
     runtime/ArrayStorageInlines.h
     runtime/AssertInvariants.h
+    runtime/AsyncContextSwapScope.h
     runtime/AsyncDisposableStackConstructor.h
     runtime/AsyncDisposableStackPrototype.h
     runtime/AsyncDisposableStackPrototypeInlines.h
