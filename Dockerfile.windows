@@ -343,7 +343,8 @@ RUN rm -rf /webkit/WebKitLibraries/windows && ln -s /winsdk /webkit/WebKitLibrar
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export LIB="/winsdk/crt/lib/${WIN_ARCH};/winsdk/sdk/lib/um/${WIN_ARCH};/winsdk/sdk/lib/ucrt/${WIN_ARCH};/winsdk" && \
     export CRT="MultiThreaded"; if [ "${WEBKIT_RELEASE_TYPE}" = "Debug" ]; then CRT="MultiThreadedDebug"; fi && \
-    SAN_FLAGS=""; if [ -n "${ENABLE_SANITIZERS}" ]; then SAN_FLAGS="-D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION"; fi && \
+    SAN_FLAGS=""; ENABLE_ASSERTS="AUTO"; \
+    if [ -n "${ENABLE_SANITIZERS}" ]; then SAN_FLAGS="-D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION"; ENABLE_ASSERTS="ON"; fi && \
     EXE_LD_FLAGS=""; if [ -n "${LTO_FLAG}" ]; then EXE_LD_FLAGS="/force:multiple"; fi && \
     cd /webkitbuild && \
     cmake \
@@ -375,6 +376,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
     -DENABLE_REMOTE_INSPECTOR=ON \
     -DENABLE_SANITIZERS="${ENABLE_SANITIZERS}" \
+    -DENABLE_ASSERTS="${ENABLE_ASSERTS}" \
     -DCLANG_LIB_PATH=/winsdk \
     -DCMAKE_MSVC_RUNTIME_LIBRARY=${CRT} \
     -DICU_ROOT=/icu-out \
