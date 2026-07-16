@@ -70,6 +70,45 @@ namespace WTF {
 
 // Number of 100 nanosecond between January 1, 1601 and January 1, 1970.
 static constexpr ULONGLONG epochBias = 116444736000000000ULL;
+
+#if USE(BUN_JSC_ADDITIONS)
+
+// GetSystemTimePreciseAsFileTime (Windows 8+) returns wall-clock time with
+// sub-microsecond precision in a single call. The upstream path below uses
+// GetSystemTimeAsFileTime (15.6ms tick) corrected with QueryPerformanceCounter,
+// which can disagree with the precise system clock by ~1ms and keeps
+// unsynchronized static state across threads. Bun's native clock (Rust's
+// std::time::SystemTime, and Zig's std.time before it) already calls the
+// precise API, so reading it here keeps Date.now() consistent with native
+// timestamps and avoids the shared mutable state.
+static constexpr double hundredsOfNanosecondsPerSecond = 10000000;
+
+static inline double currentTime()
+{
+    FILETIME fileTime;
+    GetSystemTimePreciseAsFileTime(&fileTime);
+
+    ULARGE_INTEGER dateTime;
+    static_assert(sizeof(dateTime) == sizeof(fileTime));
+    memcpySpan(asMutableByteSpan(dateTime), asByteSpan(fileTime));
+
+    return (dateTime.QuadPart - epochBias) / hundredsOfNanosecondsPerSecond;
+}
+
+Int128 currentTimeInNanoseconds()
+{
+    FILETIME fileTime;
+    GetSystemTimePreciseAsFileTime(&fileTime);
+
+    ULARGE_INTEGER dateTime;
+    static_assert(sizeof(dateTime) == sizeof(fileTime));
+    memcpySpan(asMutableByteSpan(dateTime), asByteSpan(fileTime));
+
+    return static_cast<Int128>(dateTime.QuadPart - epochBias) * 100;
+}
+
+#else // !USE(BUN_JSC_ADDITIONS)
+
 static constexpr double hundredsOfNanosecondsPerMillisecond = 10000;
 
 static double lowResUTCTime()
@@ -196,6 +235,8 @@ Int128 currentTimeInNanoseconds()
 {
     return static_cast<Int128>(currentTime() * 1'000'000'000);
 }
+
+#endif // !USE(BUN_JSC_ADDITIONS)
 
 #elif OS(HAIKU)
 
