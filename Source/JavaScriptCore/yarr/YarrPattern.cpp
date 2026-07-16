@@ -2393,10 +2393,9 @@ public:
     {
         ASSERT(members.size() >= 2);
 
-        // Longest common prefix of literal terms across all members. Never
-        // consume a member's entire term list, so no member's suffix depends on
-        // an empty tail being ordered against a longer sibling's tail through the
-        // prefix (the empty suffix is handled explicitly below).
+        // Longest common prefix of literal terms across all members. A member
+        // that is a prefix of a longer sibling contributes an empty suffix
+        // alternative, which keeps its own position in the (stable) order.
         size_t prefixLength = 1;
         for (;; ++prefixLength) {
             const auto& first = members[0]->m_terms;
@@ -2418,10 +2417,11 @@ public:
             merged->m_terms.append(members[0]->m_terms[i]);
 
         // The suffix disjunction holds each member's remaining terms, in the
-        // members' (stable, first-character-sorted) order.
+        // members' (stable, first-character-sorted) order. The group's capture
+        // span is computed from the terms (see accumulateCaptureRange).
         auto suffixDisjunction = makeUnique<PatternDisjunction>();
-        unsigned firstSubpatternId = members[0]->m_firstSubpatternId;
-        unsigned lastSubpatternId = 0;
+        unsigned firstCaptureId = std::numeric_limits<unsigned>::max();
+        unsigned lastCaptureId = 0;
         bool containsBOL = false;
         for (auto& member : members) {
             PatternAlternative* suffix = suffixDisjunction->addNewAlternative(member->m_firstSubpatternId);
@@ -2430,7 +2430,8 @@ public:
             for (size_t i = prefixLength; i < member->m_terms.size(); ++i)
                 suffix->m_terms.append(member->m_terms[i]);
             reparentNestedDisjunctions(*suffix);
-            lastSubpatternId = std::max(lastSubpatternId, member->m_lastSubpatternId);
+            clearTerminalMarks(*suffix);
+            accumulateCaptureRange(*member, firstCaptureId, lastCaptureId);
             containsBOL |= member->m_containsBOL;
         }
         suffixDisjunction->m_alternatives.last()->m_isLastAlternative = true;
@@ -2438,10 +2439,11 @@ public:
         // Factor the suffixes themselves (a shared second character, and so on).
         factorAlternatives(*suffixDisjunction);
 
-        merged->m_lastSubpatternId = lastSubpatternId;
+        bool hasCaptures = firstCaptureId <= lastCaptureId;
+        merged->m_lastSubpatternId = hasCaptures ? lastCaptureId : 0;
         merged->m_containsBOL = containsBOL;
-        PatternTerm group(PatternTerm::Type::ParenthesesSubpattern, firstSubpatternId + 1, suffixDisjunction.get(), m_flags, /* capture */ false);
-        group.parentheses.lastSubpatternId = lastSubpatternId;
+        PatternTerm group(PatternTerm::Type::ParenthesesSubpattern, hasCaptures ? firstCaptureId : m_pattern.m_numSubpatterns + 1, suffixDisjunction.get(), m_flags, /* capture */ false);
+        group.parentheses.lastSubpatternId = hasCaptures ? lastCaptureId : 0;
         merged->m_terms.append(group);
         suffixDisjunction->m_parent = merged.get();
         m_pattern.m_disjunctions.append(WTF::move(suffixDisjunction));
@@ -2455,6 +2457,39 @@ public:
         for (auto& term : alternative.m_terms) {
             if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && term.parentheses.disjunction)
                 term.parentheses.disjunction->m_parent = &alternative;
+        }
+    }
+
+    // The [first, last] capture-subpattern ids actually contained in an
+    // alternative's terms (recursively). Parser bookkeeping on the alternative
+    // (m_firstSubpatternId / m_lastSubpatternId) is not reliable enough here:
+    // m_lastSubpatternId is only set once a following sibling is parsed, and
+    // sorting reorders which alternative comes first.
+    static void accumulateCaptureRange(const PatternAlternative& alternative, unsigned& first, unsigned& last)
+    {
+        for (auto& term : alternative.m_terms) {
+            if (term.type != PatternTerm::Type::ParenthesesSubpattern && term.type != PatternTerm::Type::ParentheticalAssertion)
+                continue;
+            if (term.capture()) {
+                first = std::min(first, term.parentheses.subpatternId);
+                last = std::max(last, term.parentheses.subpatternId);
+            }
+            if (auto* nested = term.parentheses.disjunction) {
+                for (auto& nestedAlternative : nested->m_alternatives)
+                    accumulateCaptureRange(*nestedAlternative, first, last);
+            }
+        }
+    }
+
+    // A "terminal" parenthesis is valid only as the last term of a body
+    // alternative (nothing after the body can force a backtrack into it). Once
+    // an alternative moves inside a nested group that guarantee is gone, so
+    // drop the marks (the general once/greedy path is used instead).
+    static void clearTerminalMarks(PatternAlternative& alternative)
+    {
+        for (auto& term : alternative.m_terms) {
+            if (term.type == PatternTerm::Type::ParenthesesSubpattern)
+                term.parentheses.isTerminal = false;
         }
     }
 
@@ -2485,8 +2520,13 @@ public:
                 ++i;
             size_t runEnd = i;
 
-            if (runEnd - runStart == 1) {
-                result.append(WTF::move(alternatives[runStart]));
+            // Small alternations are left alone: the sequential JIT path (fused
+            // compares, the two-alternative SIMD scan, frame-free inlinable code)
+            // is already optimal there, and factoring would forfeit those. The
+            // rewrite pays for itself only on large alternations.
+            if (runEnd - runStart < Options::regExpAlternationGroupThreshold()) {
+                for (size_t j = runStart; j < runEnd; ++j)
+                    result.append(WTF::move(alternatives[j]));
                 continue;
             }
 
@@ -2530,10 +2570,14 @@ public:
         // Factor inside pre-existing (source-written) groups too, so that
         // /\b(?:about|above|after)\b/ shares its "a" prefix like a top-level
         // alternation would. Groups synthesized by mergeSharedPrefix were
-        // already factored when built; re-running is a harmless no-op.
+        // already factored when built; re-running is a harmless no-op. Groups
+        // that checkForTerminalParentheses already committed to a specialized
+        // code shape (string lists, terminal parentheses) are left alone: that
+        // shape is fixed by their alternatives, which restructuring would break.
         for (auto& alternative : alternatives) {
             for (auto& term : alternative->m_terms) {
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.parentheses.disjunction && !term.parentheses.isCopy
+                    && !term.parentheses.isStringList && !term.parentheses.isTerminal
                     && term.parentheses.disjunction->m_alternatives.size() > 1 && term.matchDirection() == Forward)
                     factorAlternatives(*term.parentheses.disjunction);
             }
@@ -2579,10 +2623,12 @@ public:
         }
 
         // The group's captures are exactly those of the alternatives it absorbs:
-        // subpatternId is the id a capture opened at the group start would take,
-        // lastSubpatternId the last id closed inside it (matching atomParenthesesEnd).
-        unsigned firstSubpatternId = alternatives[firstRepeated]->m_firstSubpatternId;
-        unsigned lastSubpatternId = 0;
+        // The group's capture span brackets exactly the captures its alternatives
+        // contain, computed from the terms themselves (sorting reorders which
+        // alternative is first, and the parser leaves the last body alternative's
+        // m_lastSubpatternId unset, so per-alternative bookkeeping is not reliable).
+        unsigned firstCaptureId = std::numeric_limits<unsigned>::max();
+        unsigned lastCaptureId = 0;
         bool containsBOL = false;
         unsigned startsWithBOLCount = 0;
 
@@ -2591,7 +2637,8 @@ public:
             PatternAlternative* alternative = alternatives[i].get();
             alternative->m_parent = groupDisjunction.get();
             alternative->m_isLastAlternative = false;
-            lastSubpatternId = std::max(lastSubpatternId, alternative->m_lastSubpatternId);
+            clearTerminalMarks(*alternative);
+            accumulateCaptureRange(*alternative, firstCaptureId, lastCaptureId);
             containsBOL |= alternative->m_containsBOL;
             if (alternative->m_startsWithBOL)
                 ++startsWithBOLCount;
@@ -2600,14 +2647,20 @@ public:
         groupDisjunction->m_alternatives.last()->m_isLastAlternative = true;
         alternatives.shrink(firstRepeated);
 
-        PatternAlternative* wrapped = body->addNewAlternative(firstSubpatternId);
-        wrapped->m_lastSubpatternId = lastSubpatternId;
+        // With no captures inside, subpatternId > lastSubpatternId makes
+        // containsAnyCaptures() false (the convention for capture-free groups).
+        bool hasCaptures = firstCaptureId <= lastCaptureId;
+        unsigned groupSubpatternId = hasCaptures ? firstCaptureId : m_pattern.m_numSubpatterns + 1;
+        unsigned groupLastSubpatternId = hasCaptures ? lastCaptureId : 0;
+
+        PatternAlternative* wrapped = body->addNewAlternative(hasCaptures ? firstCaptureId - 1 : m_pattern.m_numSubpatterns);
+        wrapped->m_lastSubpatternId = groupLastSubpatternId;
         wrapped->m_containsBOL = containsBOL;
         wrapped->m_startsWithBOL = startsWithBOLCount == groupDisjunction->m_alternatives.size();
         groupDisjunction->m_parent = wrapped;
 
-        PatternTerm group(PatternTerm::Type::ParenthesesSubpattern, firstSubpatternId + 1, groupDisjunction.get(), m_flags, /* capture */ false);
-        group.parentheses.lastSubpatternId = lastSubpatternId;
+        PatternTerm group(PatternTerm::Type::ParenthesesSubpattern, groupSubpatternId, groupDisjunction.get(), m_flags, /* capture */ false);
+        group.parentheses.lastSubpatternId = groupLastSubpatternId;
         wrapped->m_terms.append(group);
 
         m_pattern.m_disjunctions.append(WTF::move(groupDisjunction));
