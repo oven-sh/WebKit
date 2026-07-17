@@ -5025,7 +5025,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case ResolveRope: {
         AbstractValue& value = forNode(node->child1());
         JSValue childConst = value.value();
+#if USE(BUN_JSC_ADDITIONS)
+        // Inline small strings are !isRope() but still lack a StringImpl*. Folding them through
+        // lets the generic constant folder elide this node, leaking an inline fiber to consumers
+        // (GetByVal/StringCharAt/StringCodePointAt) that load StringImpl fields without a guard.
+        if (childConst && childConst.isString() && !asString(childConst)->isRope() && !asString(childConst)->isInline()) {
+#else
         if (childConst && childConst.isString() && !asString(childConst)->isRope()) {
+#endif
             setConstant(node, *m_graph.freeze(childConst));
             break;
         }
