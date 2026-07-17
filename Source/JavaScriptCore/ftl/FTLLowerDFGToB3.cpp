@@ -21974,11 +21974,31 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock fastPath = m_out.newBlock();
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
+#if USE(BUN_JSC_ADDITIONS)
+        LBasicBlock asyncContextDataCase = m_out.newBlock();
+        LBasicBlock asyncContextCheck = m_out.newBlock();
+#endif
 
         LValue packed = m_out.load64(inputPromise, m_heaps.JSPromise_packed);
+#if USE(BUN_JSC_ADDITIONS)
+        // Inline reactions cannot carry an async context; when one is active,
+        // take the slow path so performPromiseThen captures it (see JSPromise.cpp).
+        m_out.branch(m_out.notZero64(m_out.bitAnd(packed, m_out.constInt64(mask))), rarely(slowPath), usually(asyncContextDataCase));
+
+        LBasicBlock lastNext = m_out.appendTo(asyncContextDataCase, asyncContextCheck);
+        LValue asyncContextData = m_out.loadPtr(m_out.absolute(reinterpret_cast<char*>(globalObject) + JSGlobalObject::offsetOfAsyncContextData()));
+        m_out.branch(m_out.isNull(asyncContextData), unsure(fastPath), unsure(asyncContextCheck));
+
+        m_out.appendTo(asyncContextCheck, fastPath);
+        LValue asyncContext = m_out.load64(asyncContextData, m_heaps.JSInternalFieldObjectImpl_internalFields[0]);
+        m_out.branch(m_out.equal(asyncContext, m_out.constInt64(JSValue::ValueUndefined)), usually(fastPath), rarely(slowPath));
+
+        m_out.appendTo(fastPath, slowPath);
+#else
         m_out.branch(m_out.notZero64(m_out.bitAnd(packed, m_out.constInt64(mask))), rarely(slowPath), usually(fastPath));
 
         LBasicBlock lastNext = m_out.appendTo(fastPath, slowPath);
+#endif
         LValue newPacked = m_out.bitOr(m_out.bitOr(packed, m_out.constInt64(orBits)), resultPromise);
         m_out.store64(handler, inputPromise, m_heaps.JSPromise_slot);
         m_out.store64(newPacked, inputPromise, m_heaps.JSPromise_packed);

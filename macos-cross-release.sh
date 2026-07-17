@@ -12,6 +12,8 @@ export WEBKIT_RELEASE_TYPE="${WEBKIT_RELEASE_TYPE:-Release}"
 export LTO_FLAG="${LTO_FLAG:-}"
 export CPP_FLAGS="${CPP_FLAGS:-}"
 export ENABLE_SANITIZERS="${ENABLE_SANITIZERS:-}"
+export USE_MIMALLOC="${USE_MIMALLOC:-OFF}"
+export USE_EXTERNAL_MIMALLOC="${USE_EXTERNAL_MIMALLOC:-OFF}"
 
 # Match the native macOS lanes: apple-m1 on the arm64 runners (`cpu: native`
 # on macos-14-xlarge), haswell on the amd64 ones.
@@ -48,6 +50,8 @@ docker buildx build -f Dockerfile.macos -t "$CONTAINER_NAME" \
     --build-arg WEBKIT_RELEASE_TYPE="$WEBKIT_RELEASE_TYPE" \
     --build-arg ENABLE_MALLOC_HEAP_BREAKDOWN="$ENABLE_MALLOC_HEAP_BREAKDOWN" \
     --build-arg ENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
+    --build-arg USE_MIMALLOC="$USE_MIMALLOC" \
+    --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     --progress=plain \
     --platform=linux/amd64 \
     --target=artifact \
