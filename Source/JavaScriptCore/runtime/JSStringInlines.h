@@ -40,6 +40,10 @@ namespace JSC {
 ALWAYS_INLINE void JSString::destroy(JSCell* cell)
 {
     auto* string = static_cast<JSString*>(cell);
+#if USE(BUN_JSC_ADDITIONS)
+    if (string->m_fiber & notStringImplMask)
+        return;
+#endif
     string->valueInternal().~String();
 }
 
@@ -53,7 +57,7 @@ ALWAYS_INLINE void JSRopeString::destroy(JSCell* cell)
 
 bool JSString::equal(JSGlobalObject* globalObject, JSString* other) const
 {
-    if (isRope() || other->isRope())
+    if ((m_fiber | other->m_fiber) & notStringImplMask)
         return equalSlowCase(globalObject, other);
     return WTF::equal(*valueInternal().impl(), *other->valueInternal().impl());
 }
@@ -837,6 +841,10 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
     }
 
     ASSERT(!s->isRope());
+#if USE(BUN_JSC_ADDITIONS)
+    if (s->isInline())
+        s->resolveInline(nullptr);
+#endif
     auto& base = s->valueInternal();
     if (!offset && length == base.length())
         return s;
@@ -857,6 +865,14 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
             return vm.keyAtomStringCache.make(vm, buffer, createFromSubstring);
         }
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // Short substrings: 16-byte inline JSString instead of a 32-byte substring rope.
+    if (base.is8Bit()) {
+        if (length <= JSString::maxInlineLength8)
+            return JSString::createInline8(vm, base.span8().subspan(offset, length));
+    } else if (length <= JSString::maxInlineLength16)
+        return JSString::createInline16(vm, base.span16().subspan(offset, length));
+#endif
     return JSRopeString::createSubstringOfResolved(vm, deferralContext, s, offset, length, base.is8Bit());
 }
 
@@ -875,6 +891,17 @@ void JSString::resolveToBuffer(std::span<CharacterType> destination)
         uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm().softStackLimit());
         return JSRopeString::resolveToBuffer(rope->fiber0(), rope->fiber1(), rope->fiber2(), destination, stackLimit);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    uintptr_t fiber = fiberConcurrently();
+    if (isInlineFiber(fiber)) {
+        unsigned len = inlineLengthFromFiber(fiber);
+        if (fiber & JSRopeString::is8BitInPointer)
+            StringView(std::span { inlineData8(), len }).getCharacters(destination);
+        else
+            StringView(std::span { inlineData16(), len }).getCharacters(destination);
+        return;
+    }
+#endif
     StringView(valueInternal().impl()).getCharacters(destination);
 }
 

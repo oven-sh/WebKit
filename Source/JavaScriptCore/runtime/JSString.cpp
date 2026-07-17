@@ -75,6 +75,10 @@ void JSString::dumpToStream(const JSCell* cell, PrintStream& out)
             out.printf("[substring]");
         else
             out.printf("[rope]");
+#if USE(BUN_JSC_ADDITIONS)
+    } else if (isInlineFiber(pointer)) {
+        out.printf("[inline %s]", (pointer & JSRopeString::is8BitInPointer) ? "8" : "16");
+#endif
     } else {
         if (WTF::StringImpl* ourImpl = std::bit_cast<StringImpl*>(pointer)) {
             if (ourImpl->is8Bit())
@@ -95,7 +99,7 @@ size_t JSString::estimatedSize(JSCell* cell, VM& vm)
 {
     JSString* thisObject = asString(cell);
     uintptr_t pointer = thisObject->fiberConcurrently();
-    if (pointer & isRopeInPointer)
+    if (pointer & notStringImplMask)
         return Base::estimatedSize(cell, vm);
     return Base::estimatedSize(cell, vm) + std::bit_cast<StringImpl*>(pointer)->costDuringGC();
 }
@@ -135,9 +139,30 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         }
         return;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlineFiber(pointer))
+        return;
+#endif
     if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer))
         visitor.reportExtraMemoryVisited(impl->costDuringGC());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+const String& JSString::resolveInline(JSGlobalObject* globalObject) const
+{
+    ASSERT(isInline());
+    uintptr_t fiber = m_fiber;
+    unsigned len = inlineLengthFromFiber(fiber);
+    String result = (fiber & JSRopeString::is8BitInPointer)
+        ? String(StringImpl::create(std::span { inlineData8(), len }))
+        : String(StringImpl::create(std::span { inlineData16(), len }));
+    WTF::storeStoreFence();
+    new (&uninitializedValueInternal()) String(WTF::move(result));
+    if (globalObject)
+        getVM(globalObject).heap.reportExtraMemoryAllocated(this, valueInternal().impl()->cost());
+    return valueInternal();
+}
+#endif
 
 DEFINE_VISIT_CHILDREN(JSString);
 

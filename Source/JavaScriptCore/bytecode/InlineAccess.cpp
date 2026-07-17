@@ -365,6 +365,12 @@ bool InlineAccess::generateStringLength(PropertyInlineCache& propertyCache)
     auto done = jit.jump();
 
     isRope.link(&jit);
+#if USE(BUN_JSC_ADDITIONS)
+    // Inline small strings share the rope branch; their cell is only 16 bytes,
+    // so JSRopeString::offsetOfLength() would read past the end. Take the slow path.
+    jit.branchTestPtr(CCallHelpers::Zero, scratch, CCallHelpers::TrustedImm32(JSString::isRopeInPointer))
+        .linkThunk(propertyCache.slowPathStartLocation, &jit);
+#endif
     jit.load32(CCallHelpers::Address(base, JSRopeString::offsetOfLength()), value.payloadGPR());
 
     done.link(&jit);

@@ -138,6 +138,18 @@ public:
     static constexpr unsigned minLengthForRopeWalk = 0x128;
 
     static constexpr uintptr_t isRopeInPointer = 0x1;
+#if USE(BUN_JSC_ADDITIONS)
+    // Inline small strings: bit 1 of m_fiber set with bit 0 clear means the
+    // remaining bytes of m_fiber hold the character data directly (no
+    // StringImpl). Bit 2 is the is8Bit flag (same bit JSRopeString uses).
+    static constexpr uintptr_t isInlineInPointer = 0x2;
+    static constexpr uintptr_t notStringImplMask = isRopeInPointer | isInlineInPointer;
+    static constexpr unsigned inlineLengthShift = 3;
+    static constexpr unsigned maxInlineLength8 = 7;
+    static constexpr unsigned maxInlineLength16 = 3;
+#else
+    static constexpr uintptr_t notStringImplMask = isRopeInPointer;
+#endif
 
     static constexpr unsigned maxLengthForOnStackResolve = 2048;
 
@@ -152,7 +164,7 @@ private:
 
     String& valueInternal() const
     {
-        ASSERT(!isRope());
+        ASSERT(!(m_fiber & notStringImplMask));
         return uninitializedValueInternal();
     }
 
@@ -173,6 +185,15 @@ private:
         , m_fiber(isRopeInPointer)
     {
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    enum InlineTag { CreateInline };
+    JSString(VM& vm, InlineTag, uintptr_t encodedFiber)
+        : JSCell(CreatingWellDefinedBuiltinCell, vm.stringStructure.get()->id(), defaultTypeInfoBlob())
+        , m_fiber(encodedFiber)
+    {
+    }
+#endif
 
     void finishCreation(VM& vm, unsigned length)
     {
@@ -226,6 +247,40 @@ private:
         return newString;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    static ALWAYS_INLINE uintptr_t encodeInline8(std::span<const Latin1Character> chars)
+    {
+        ASSERT(chars.size() >= 2 && chars.size() <= maxInlineLength8);
+        uintptr_t fiber = isInlineInPointer | static_cast<uintptr_t>(StringImpl::flagIs8Bit())
+            | (static_cast<uintptr_t>(chars.size()) << inlineLengthShift);
+        memcpy(reinterpret_cast<uint8_t*>(&fiber) + 1, chars.data(), chars.size());
+        return fiber;
+    }
+
+    static ALWAYS_INLINE uintptr_t encodeInline16(std::span<const char16_t> chars)
+    {
+        ASSERT(chars.size() >= 1 && chars.size() <= maxInlineLength16);
+        uintptr_t fiber = isInlineInPointer
+            | (static_cast<uintptr_t>(chars.size()) << inlineLengthShift);
+        memcpy(reinterpret_cast<uint8_t*>(&fiber) + 2, chars.data(), chars.size() * sizeof(char16_t));
+        return fiber;
+    }
+
+    static JSString* createInline8(VM& vm, std::span<const Latin1Character> chars)
+    {
+        JSString* s = new (NotNull, allocateCell<JSString>(vm)) JSString(vm, CreateInline, encodeInline8(chars));
+        s->Base::finishCreation(vm);
+        return s;
+    }
+
+    static JSString* createInline16(VM& vm, std::span<const char16_t> chars)
+    {
+        JSString* s = new (NotNull, allocateCell<JSString>(vm)) JSString(vm, CreateInline, encodeInline16(chars));
+        s->Base::finishCreation(vm);
+        return s;
+    }
+#endif
+
 protected:
     DECLARE_DEFAULT_FINISH_CREATION;
 
@@ -271,6 +326,30 @@ public:
     {
         return m_fiber & isRopeInPointer;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    ALWAYS_INLINE bool isInline() const
+    {
+        return (fiberConcurrently() & notStringImplMask) == isInlineInPointer;
+    }
+    ALWAYS_INLINE static bool isInlineFiber(uintptr_t fiber)
+    {
+        return (fiber & notStringImplMask) == isInlineInPointer;
+    }
+    ALWAYS_INLINE static unsigned inlineLengthFromFiber(uintptr_t fiber)
+    {
+        return static_cast<unsigned>(fiber >> inlineLengthShift) & 0x1fu;
+    }
+    ALWAYS_INLINE const Latin1Character* inlineData8() const
+    {
+        return reinterpret_cast<const Latin1Character*>(&m_fiber) + 1;
+    }
+    ALWAYS_INLINE const char16_t* inlineData16() const
+    {
+        return reinterpret_cast<const char16_t*>(reinterpret_cast<const uint8_t*>(&m_fiber) + 2);
+    }
+    JS_EXPORT_PRIVATE const String& resolveInline(JSGlobalObject*) const;
+#endif
     ALWAYS_INLINE JSRopeString* asRope()
     {
         ASSERT(isRope());
@@ -784,9 +863,10 @@ JS_EXPORT_PRIVATE JSString* jsStringWithCacheSlowCase(VM&, StringImpl&);
 ALWAYS_INLINE bool JSString::is8Bit() const
 {
     uintptr_t pointer = fiberConcurrently();
-    if (pointer & isRopeInPointer) {
+    if (pointer & notStringImplMask) {
         // Do not load m_fiber twice. We should use the information in pointer.
         // Otherwise, JSRopeString may be converted to JSString between the first and second accesses.
+        // Rope and inline both encode is8Bit in the same low bit.
         return pointer & JSRopeString::is8BitInPointer;
     }
     return std::bit_cast<StringImpl*>(pointer)->is8Bit();
@@ -798,21 +878,29 @@ ALWAYS_INLINE bool JSString::is8Bit() const
 ALWAYS_INLINE unsigned JSString::length() const
 {
     uintptr_t pointer = fiberConcurrently();
+#if USE(BUN_JSC_ADDITIONS)
+    if (pointer & notStringImplMask) {
+        if (pointer & isRopeInPointer)
+            return uncheckedDowncast<JSRopeString>(this)->length();
+        return inlineLengthFromFiber(pointer);
+    }
+#else
     if (pointer & isRopeInPointer)
         return uncheckedDowncast<JSRopeString>(this)->length();
+#endif
     return std::bit_cast<StringImpl*>(pointer)->length();
 }
 
 inline StringImpl* JSString::getValueImpl() const
 {
-    ASSERT(!isRope());
+    ASSERT(!(m_fiber & notStringImplMask));
     return std::bit_cast<StringImpl*>(m_fiber);
 }
 
 inline StringImpl* JSString::tryGetValueImpl() const
 {
     uintptr_t pointer = fiberConcurrently();
-    if (pointer & isRopeInPointer)
+    if (pointer & notStringImplMask)
         return nullptr;
     return std::bit_cast<StringImpl*>(pointer);
 }
@@ -890,6 +978,10 @@ ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) co
         getVM(globalObject).verifyCanGC();
     if (isRope())
         return static_cast<const JSRopeString*>(this)->toIdentifier(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInline())
+        resolveInline(globalObject);
+#endif
     VM& vm = getVM(globalObject);
     if (valueInternal().impl()->isAtom())
         return Identifier::fromString(vm, Ref { *static_cast<AtomStringImpl*>(valueInternal().impl()) });
@@ -910,6 +1002,10 @@ ALWAYS_INLINE GCOwnedDataScope<AtomStringImpl*> JSString::toAtomString(JSGlobalO
         getVM(globalObject).verifyCanGC();
     if (isRope())
         return { this, static_cast<const JSRopeString*>(this)->resolveRopeToAtomString(globalObject) };
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInline())
+        resolveInline(globalObject);
+#endif
     if (valueInternal().impl()->isAtom())
         return { this, static_cast<AtomStringImpl*>(valueInternal().impl()) };
     AtomString atom(valueInternal());
@@ -923,6 +1019,10 @@ ALWAYS_INLINE GCOwnedDataScope<AtomStringImpl*> JSString::toExistingAtomString(J
         getVM(globalObject).verifyCanGC();
     if (isRope())
         return static_cast<const JSRopeString*>(this)->resolveRopeToExistingAtomString(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInline())
+        resolveInline(globalObject);
+#endif
     if (valueInternal().impl()->isAtom())
         return { this, static_cast<AtomStringImpl*>(valueInternal().impl()) };
     if (auto atom = AtomStringImpl::lookUp(valueInternal().impl())) {
@@ -938,6 +1038,10 @@ inline GCOwnedDataScope<const String&> JSString::value(JSGlobalObject* globalObj
         getVM(globalObject).verifyCanGC();
     if (isRope())
         return { this, static_cast<const JSRopeString*>(this)->resolveRope(globalObject) };
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInline())
+        return { this, resolveInline(globalObject) };
+#endif
     return { this, valueInternal() };
 }
 #if USE(BUN_JSC_ADDITIONS)
@@ -945,6 +1049,15 @@ inline void JSString::value(jsstring_iterator* iterator) const
 {
       if (isRope()) {
           static_cast<const JSRopeString*>(this)->iterRope(iterator);
+          return;
+      }
+      uintptr_t fiber = fiberConcurrently();
+      if (isInlineFiber(fiber)) {
+          unsigned len = inlineLengthFromFiber(fiber);
+          if (fiber & JSRopeString::is8BitInPointer)
+              iterator->append8(iterator, (void*)inlineData8(), len);
+          else
+              iterator->append16(iterator, (void*)inlineData16(), len);
           return;
       }
 
@@ -967,8 +1080,12 @@ inline GCOwnedDataScope<const String&> JSString::tryGetValue(bool allocationAllo
             // Pass nullptr for the JSGlobalObject so that resolveRope does not throw in the event of an OOM error.
             return { this, static_cast<const JSRopeString*>(this)->resolveRope(nullptr) };
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (isInline())
+            return { this, resolveInline(nullptr) };
+#endif
     } else
-        RELEASE_ASSERT(!isRope());
+        RELEASE_ASSERT(!(m_fiber & notStringImplMask));
     return { this, valueInternal() };
 }
 
@@ -1025,6 +1142,13 @@ inline JSString* jsString(VM& vm, StringView s)
         if (auto c = s.codeUnitAt(0); c <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(c);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (s.is8Bit()) {
+        if (static_cast<unsigned>(size) <= JSString::maxInlineLength8)
+            return JSString::createInline8(vm, s.span8());
+    } else if (static_cast<unsigned>(size) <= JSString::maxInlineLength16)
+        return JSString::createInline16(vm, s.span16());
+#endif
     auto impl = s.is8Bit() ? StringImpl::create(s.span8()) : StringImpl::create(s.span16());
     return JSString::create(vm, WTF::move(impl));
 }
@@ -1244,12 +1368,26 @@ ALWAYS_INLINE GCOwnedDataScope<StringView> JSString::view(JSGlobalObject* global
 {
     if (isRope())
         return static_cast<const JSRopeString&>(*this).view(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+    uintptr_t fiber = fiberConcurrently();
+    if (isInlineFiber(fiber)) {
+        unsigned len = inlineLengthFromFiber(fiber);
+        if (fiber & JSRopeString::is8BitInPointer)
+            return { this, StringView { std::span { inlineData8(), len } } };
+        return { this, StringView { std::span { inlineData16(), len } } };
+    }
+#endif
     return { this, valueInternal() };
 }
 
 inline bool JSString::isSubstring() const
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // isSubstringInPointer == isInlineInPointer; a substring rope has both low bits set.
+    return (fiberConcurrently() & notStringImplMask) == (isRopeInPointer | JSRopeString::isSubstringInPointer);
+#else
     return fiberConcurrently() & JSRopeString::isSubstringInPointer;
+#endif
 }
 
 } // namespace JSC

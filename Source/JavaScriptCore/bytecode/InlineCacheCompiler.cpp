@@ -3961,8 +3961,19 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
         auto done = jit.jump();
 
         isRope.link(&jit);
+#if USE(BUN_JSC_ADDITIONS)
+        // Inline small strings: length is in bits 3..7 of m_fiber (still in scratchGPR).
+        auto realRope = jit.branchTestPtr(CCallHelpers::NonZero, scratchGPR, CCallHelpers::TrustedImm32(JSString::isRopeInPointer));
+        jit.urshiftPtr(CCallHelpers::TrustedImm32(JSString::inlineLengthShift), scratchGPR);
+        jit.and32(CCallHelpers::TrustedImm32(0x1f), scratchGPR, valueRegs.payloadGPR());
+        auto doneInline = jit.jump();
+        realRope.link(&jit);
+#endif
         jit.load32(CCallHelpers::Address(baseGPR, JSRopeString::offsetOfLength()), valueRegs.payloadGPR());
 
+#if USE(BUN_JSC_ADDITIONS)
+        doneInline.link(&jit);
+#endif
         done.link(&jit);
         jit.boxInt32(valueRegs.payloadGPR(), valueRegs);
         succeed();

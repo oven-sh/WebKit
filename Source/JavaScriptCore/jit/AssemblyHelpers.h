@@ -1245,14 +1245,15 @@ public:
         return branchDouble(DoubleEqualAndOrdered, fpr, fpr);
     }
 
+    // "Rope" here means "not a plain StringImpl*" (rope or inline small string).
     Jump branchIfRopeStringImpl(GPRReg stringImplGPR)
     {
-        return branchTestPtr(NonZero, stringImplGPR, TrustedImm32(JSString::isRopeInPointer));
+        return branchTestPtr(NonZero, stringImplGPR, TrustedImm32(JSString::notStringImplMask));
     }
 
     Jump branchIfNotRopeStringImpl(GPRReg stringImplGPR)
     {
-        return branchTestPtr(Zero, stringImplGPR, TrustedImm32(JSString::isRopeInPointer));
+        return branchTestPtr(Zero, stringImplGPR, TrustedImm32(JSString::notStringImplMask));
     }
 
 #if USE(JSVALUE64)

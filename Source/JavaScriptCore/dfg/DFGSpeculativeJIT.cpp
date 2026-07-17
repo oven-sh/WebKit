@@ -8618,7 +8618,17 @@ void SpeculativeJIT::compileGetArrayLength(Node* node)
         if (isRope.isSet()) {
             auto done = jump();
             isRope.link(this);
+#if USE(BUN_JSC_ADDITIONS)
+            auto realRope = branchTestPtr(NonZero, tempGPR, TrustedImm32(JSString::isRopeInPointer));
+            urshiftPtr(TrustedImm32(JSString::inlineLengthShift), tempGPR);
+            and32(TrustedImm32(0x1f), tempGPR, resultGPR);
+            auto doneInline = jump();
+            realRope.link(this);
+#endif
             load32(Address(baseGPR, JSRopeString::offsetOfLength()), resultGPR);
+#if USE(BUN_JSC_ADDITIONS)
+            doneInline.link(this);
+#endif
             done.link(this);
         }
         strictInt32Result(resultGPR, node);

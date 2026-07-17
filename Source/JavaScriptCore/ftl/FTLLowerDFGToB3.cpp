@@ -25604,7 +25604,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (!canBeRope(edge))
             return m_out.booleanFalse;
-        return m_out.testNonZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer));
+        return m_out.testNonZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::notStringImplMask));
     }
 
     std::optional<unsigned> tryGetConstantStringLength(Edge edge)
@@ -25621,7 +25621,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (!canBeRope(edge))
             return m_out.booleanTrue;
-        return m_out.testIsZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer));
+        return m_out.testIsZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::notStringImplMask));
     }
 
     LValue isNotSymbol(LValue cell, SpeculatedType type = SpecFullTop)

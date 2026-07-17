@@ -4628,6 +4628,14 @@ JSC_DEFINE_JIT_OPERATION(operationResolveRopeString, JSString*, (JSGlobalObject*
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // compileResolveRope routes inline small strings here via the widened
+    // notStringImplMask test; those are plain JSStrings, not JSRopeStrings.
+    if (static_cast<JSString*>(string)->isInline()) {
+        static_cast<JSString*>(string)->resolveInline(globalObject);
+        OPERATION_RETURN(scope, static_cast<JSString*>(string));
+    }
+#endif
     string->resolveRope(globalObject);
     OPERATION_RETURN(scope, string);
 }
