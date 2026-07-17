@@ -74,7 +74,13 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
         if (!inferredInlineCapacity) {
             // Empty objects are rare, so most likely the static analyzer just didn't
             // see the real initializer function. This can happen with helper functions.
+#if USE(BUN_JSC_ADDITIONS)
+            // Bun: on the server, empty `{}` that stays empty is very common.
+            // 2 slots (32-byte cell) instead of 6 (64-byte cell).
+            inferredInlineCapacity = 2;
+#else
             inferredInlineCapacity = JSFinalObject::defaultInlineCapacity;
+#endif
         } else if (inferredInlineCapacity > JSFinalObject::defaultInlineCapacity) {
             // Default properties are weak guesses, so don't allow them to turn a small
             // object into a large object.

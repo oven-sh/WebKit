@@ -78,7 +78,12 @@ static_assert(MAX_STORAGE_VECTOR_INDEX <= MAX_ARRAY_INDEX, "MAX_STORAGE_VECTOR_I
 // The value BASE_XXX_VECTOR_LEN is the minimum number of vector elements we'll allocate
 // for an array that was created with a specified length (e.g. a = new Array(123))
 #define BASE_CONTIGUOUS_VECTOR_LEN 3U
+#if USE(BUN_JSC_ADDITIONS)
+// Bun: a 16-byte butterfly (1 slot) instead of 48 bytes for `[]`.
+#define BASE_CONTIGUOUS_VECTOR_LEN_EMPTY 1U
+#else
 #define BASE_CONTIGUOUS_VECTOR_LEN_EMPTY 5U
+#endif
 #define BASE_CONTIGUOUS_VECTOR_LEN_MIN 3U
 #define BASE_CONTIGUOUS_VECTOR_LEN_MAX 25U
 #define BASE_ARRAY_STORAGE_VECTOR_LEN 4U
