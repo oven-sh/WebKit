@@ -657,7 +657,7 @@ if (ATOMICS_REQUIRE_LIBATOMIC)
     list(APPEND bmalloc_LIBRARIES atomic)
 endif ()
 
-if (USE_MIMALLOC)
+if (USE_MIMALLOC AND NOT USE_EXTERNAL_MIMALLOC)
     list(APPEND bmalloc_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
 endif ()
 

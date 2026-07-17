@@ -207,9 +207,12 @@ Write-Host ":: Built makedata successfully"
 # ========================================================================
 # STAGE 1b: Filter ICU data
 # ========================================================================
-# Drop converters/translit/rbnf/stringprep/confusables/unames. Bun has zero
+# Drop converters/translit/stringprep/confusables/unames. Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU is removed in
 # src/bun.js/bindings/TextEncodingRegistry.cpp). Cuts sicudt.lib by ~6.8 MB.
+# Most of rbnf/ goes too, but root/ja/zh/zh_Hant stay: ICU reaches those on its own
+# through the algorithmic numbering systems in numberingSystems.res (see the note and
+# the staleness guard in ./Dockerfile).
 $binDirName = if ($Platform -eq "x64") { "bin64" } else { "bin$Platform" }
 $icupkg = Join-Path $ICU_SOURCE_DIR "..\$binDirName\icupkg.exe"
 $datFile = Get-ChildItem -Path (Join-Path $ICU_SOURCE_DIR "data\in") -Filter "icudt*l.dat" | Select-Object -First 1
@@ -218,6 +221,7 @@ if ((Test-Path $icupkg) -and $datFile) {
     $rmList = Join-Path $datFile.DirectoryName "rm.lst"
     & $icupkg -l $datFile.FullName |
         Where-Object { $_ -match '\.(cnv|spp|cfu)$' -or $_ -match '^cnvalias\.icu$' -or $_ -match '^translit/' -or $_ -match '^rbnf/' -or $_ -match '^unames\.icu$' } |
+        Where-Object { $_ -notmatch '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' } |
         Set-Content $rmList -Encoding ascii
     $filtered = Join-Path $datFile.DirectoryName "icudt_filtered.dat"
     & $icupkg --auto_toc_prefix -r $rmList $datFile.FullName $filtered
