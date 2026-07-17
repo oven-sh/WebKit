@@ -108,10 +108,26 @@ class SubjectSampler {
 public:
     static constexpr unsigned sampleSize = 128;
 
+    // Frequency, in units of the sample above, past which the vector search stops paying for
+    // itself. Leaving the vector loop costs a vector to general purpose register transfer, so its
+    // price is paid per candidate that fails to match. How often a candidate fails is not known
+    // when compiling, leaving this frequency as the proxy. Measured on arm64: from here the scalar
+    // loop is 2.2x faster on a keyword alternation whose candidates almost all fail, while below it
+    // the vector loop reaches 8x on subjects holding no candidate at all. The vector loop leaves
+    // more cheaply on x86_64, where the crossover sits higher and this gives up some of its reach.
+    static constexpr int32_t maxCandidateFrequencyForSIMDSearch = 8;
+
+    // Below this, one occurrence alone already scales past maxCandidateFrequencyForSIMDSearch, so
+    // the sample cannot tell a rare candidate from a common one. Such a subject also says little
+    // about the later subjects a compile is reused for, since RegExp caches keep the first one's.
+    static constexpr unsigned minimumSampleSizeForFrequency = sampleSize / maxCandidateFrequencyForSIMDSearch;
+
     explicit SubjectSampler(CharSize charSize)
         : m_is8Bit(charSize == CharSize::Char8)
     {
     }
+
+    bool canResolveCandidateFrequency() const { return m_size >= minimumSampleSizeForFrequency; }
 
     int32_t NODELETE frequency(char16_t character) const
     {
@@ -232,11 +248,6 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
     // a short selective range whose neighbours pollute the union, e.g. the distinct leading
     // characters of /zalpha|qbravo|xcharlie/, whose union with the following positions matches
     // almost everything.
-    // A position matching many characters is not worth testing: the sampled frequency underestimates
-    // how often such a set hits when the pattern itself matches often, and the search loop then costs
-    // more than the match attempts it avoids.
-    constexpr unsigned maxCandidatesPerCharacter = 16;
-    static_assert(maxCandidatesPerCharacter < BoyerMooreBitmap::mapSize);
     int32_t biggestPoint = INT32_MIN;
     unsigned beginResult = 0;
     unsigned endResult = 0;
@@ -245,7 +256,11 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
         int32_t frequency = 0;
         for (unsigned end = begin + 1; end <= length(); ++end) {
             auto& candidates = m_characters[end - 1];
-            if (candidates.count() > maxCandidatesPerCharacter)
+            // A position matching every character records that in its count alone, leaving its map
+            // empty, so merging one would drop every character it matches out of the union and the
+            // search would skip positions that can start a match. It could only widen the union to
+            // everything in any case, which no search can profit from.
+            if (candidates.isAllSet())
                 break;
             candidates.map().forEachSetBit([&](unsigned character) {
                 if (!map.testAndSet(character))
@@ -8040,6 +8055,19 @@ class YarrGenerator final : public YarrJITInfo {
         // the scalar Boyer-Moore version can skip multiple characters per iteration,
         // which performs better than SIMD checking every character.
         if (strideLength != 1)
+            return std::nullopt;
+
+        // Leave the search scalar once candidates are too common for the vector loop's exit to pay
+        // for its reads. A sample too short to rate them falls back to counting them, as an absent
+        // sample already does.
+        int32_t frequency = 0;
+        if (m_sampler.canResolveCandidateFrequency()) {
+            bitmap.forEachSetBit([&](unsigned character) {
+                frequency += m_sampler.frequency(character);
+            });
+        } else
+            frequency = bitmap.count();
+        if (frequency > SubjectSampler::maxCandidateFrequencyForSIMDSearch)
             return std::nullopt;
 
         // Call can clobber SIMD registers
