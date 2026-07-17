@@ -538,6 +538,11 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     
     if (value.attributes() & PropertyAttribute::PropertyCallback) {
         JSValue result = value.lazyPropertyCallback()(vm, &thisObj);
+        // A callback that enters JS may return empty with an exception pending;
+        // the two callers (setUpStaticFunctionSlot / reifyAllStaticProperties)
+        // check and propagate, so don't put an empty value in the slot here.
+        if (!result) [[unlikely]]
+            return;
         thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
         return;
     }
