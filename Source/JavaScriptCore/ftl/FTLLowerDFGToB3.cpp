@@ -6229,16 +6229,41 @@ IGNORE_CLANG_WARNINGS_END
 
             m_out.branch(isRopeString(string, m_node->child1()), rarely(ropePath), usually(nonRopePath));
 
+#if USE(BUN_JSC_ADDITIONS)
+            LBasicBlock realRopePath = m_out.newBlock();
+            LBasicBlock inlinePath = m_out.newBlock();
+
+            LBasicBlock lastNext = m_out.appendTo(ropePath, inlinePath);
+            LValue fiber = m_out.loadPtr(string, m_heaps.JSString_value);
+            m_out.branch(
+                m_out.testNonZeroPtr(fiber, m_out.constIntPtr(JSString::isRopeInPointer)),
+                usually(realRopePath), rarely(inlinePath));
+
+            m_out.appendTo(inlinePath, realRopePath);
+            ValueFromBlock inlineLength = m_out.anchor(m_out.bitAnd(
+                m_out.castToInt32(m_out.lShr(fiber, m_out.constInt32(JSString::inlineLengthShift))),
+                m_out.constInt32(0x1f)));
+            m_out.jump(continuation);
+
+            m_out.appendTo(realRopePath, nonRopePath);
+            ValueFromBlock ropeLength = m_out.anchor(m_out.load32NonNegative(string, m_heaps.JSRopeString_length));
+            m_out.jump(continuation);
+#else
             LBasicBlock lastNext = m_out.appendTo(ropePath, nonRopePath);
             ValueFromBlock ropeLength = m_out.anchor(m_out.load32NonNegative(string, m_heaps.JSRopeString_length));
             m_out.jump(continuation);
+#endif
 
             m_out.appendTo(nonRopePath, continuation);
             ValueFromBlock nonRopeLength = m_out.anchor(m_out.load32NonNegative(m_out.loadPtr(string, m_heaps.JSString_value), m_heaps.StringImpl_length));
             m_out.jump(continuation);
 
             m_out.appendTo(continuation, lastNext);
+#if USE(BUN_JSC_ADDITIONS)
+            setInt32(m_out.phi(Int32, inlineLength, ropeLength, nonRopeLength));
+#else
             setInt32(m_out.phi(Int32, ropeLength, nonRopeLength));
+#endif
             return;
         }
 
@@ -11718,6 +11743,16 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isRopeString(child, edge), unsure(ropeCase), unsure(notRopeCase));
 
             LBasicBlock lastNext = m_out.appendTo(ropeCase, notRopeCase);
+#if USE(BUN_JSC_ADDITIONS)
+            // Inline small-string child: the rope-layout loads below would read past the
+            // 16-byte inline cell, so defer to operationMakeRope* via slowPath.
+            LBasicBlock realRopeCase = m_out.newBlock();
+            LValue childFiber = m_out.loadPtr(child, m_heaps.JSString_value);
+            m_out.branch(
+                m_out.testNonZeroPtr(childFiber, m_out.constIntPtr(JSString::isRopeInPointer)),
+                usually(realRopeCase), rarely(slowPath));
+            m_out.appendTo(realRopeCase, notRopeCase);
+#endif
             ValueFromBlock flagsForRope = m_out.anchor(m_out.load32NonNegative(child, m_heaps.JSRopeString_flags));
             ValueFromBlock lengthForRope = m_out.anchor(m_out.load32NonNegative(child, m_heaps.JSRopeString_length));
             m_out.jump(continuation);
@@ -23549,8 +23584,19 @@ IGNORE_CLANG_WARNINGS_END
         LValue ropeLength;
         if (auto stringLength = tryGetConstantStringLength(edge))
             ropeLength = m_out.constInt32(*stringLength);
-        else
+        else {
+#if USE(BUN_JSC_ADDITIONS)
+            // Inline small strings reach here via the widened notStringImplMask test; route them to
+            // the slow switch to avoid reading the (out-of-bounds) rope length.
+            LBasicBlock realRopeBlock = m_out.newBlock();
+            LValue ropeFiber = m_out.loadPtr(string, m_heaps.JSString_value);
+            m_out.branch(
+                m_out.testNonZeroPtr(ropeFiber, m_out.constIntPtr(JSString::isRopeInPointer)),
+                usually(realRopeBlock), rarely(slowBlock));
+            m_out.appendTo(realRopeBlock, slowBlock);
+#endif
             ropeLength = m_out.load32NonNegative(string, m_heaps.JSRopeString_length);
+        }
         m_out.branch(m_out.belowOrEqual(m_out.sub(ropeLength, m_out.constInt32(unlinkedTable.minLength())), m_out.constInt32(unlinkedTable.maxLength() - unlinkedTable.minLength())), unsure(slowBlock), unsure(lowBlock(data->fallThrough.block)));
 
         m_out.appendTo(slowBlock, lastNext);

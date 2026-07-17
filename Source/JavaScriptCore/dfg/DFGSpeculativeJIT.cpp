@@ -13588,6 +13588,10 @@ void SpeculativeJIT::emitSwitchStringOnString(Node* node, SwitchData* data, GPRR
 
     if (!isRopeCases.empty()) {
         isRopeCases.link(this);
+#if USE(BUN_JSC_ADDITIONS)
+        // tempGPR still holds m_fiber here. Inline small strings take the slow operation call.
+        slowCases.append(branchTestPtr(Zero, tempGPR, TrustedImm32(JSString::isRopeInPointer)));
+#endif
         load32(Address(string, JSRopeString::offsetOfLength()), tempGPR);
         sub32(TrustedImm32(unlinkedTable.minLength()), tempGPR);
         branch32(Above, tempGPR, TrustedImm32(unlinkedTable.maxLength() - unlinkedTable.minLength()), data->fallThrough.block);
@@ -17684,6 +17688,10 @@ void SpeculativeJIT::compileMakeRope(Node* node)
                 auto done = jump();
 
                 isRope.link(this);
+#if USE(BUN_JSC_ADDITIONS)
+                // Inline small-string child: defer to operationMakeRope* (reads past 16-byte cell otherwise).
+                slowPath.append(branchTestPtr(Zero, scratch2GPR, TrustedImm32(JSString::isRopeInPointer)));
+#endif
                 load32(Address(opGPRs[0], JSRopeString::offsetOfFlags()), scratchGPR);
                 load32(Address(opGPRs[0], JSRopeString::offsetOfLength()), allocatorGPR);
                 done.link(this);
@@ -17721,6 +17729,10 @@ void SpeculativeJIT::compileMakeRope(Node* node)
                     auto done = jump();
 
                     isRope.link(this);
+#if USE(BUN_JSC_ADDITIONS)
+                    // Inline small-string child: defer to operationMakeRope*.
+                    slowPath.append(branchTestPtr(Zero, scratch2GPR, TrustedImm32(JSString::isRopeInPointer)));
+#endif
                     and32(Address(opGPRs[i], JSRopeString::offsetOfFlags()), scratchGPR);
                     load32(Address(opGPRs[i], JSRopeString::offsetOfLength()), scratch2GPR);
                     outOfMemory.append(branchAdd32(Overflow, scratch2GPR, allocatorGPR));

@@ -694,6 +694,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> stringEqualThunkGenerator(VM& vm)
 
         // Rope: must be substring rope (concat ropes go to slowCase).
         isRope.link(&jit);
+#if USE(BUN_JSC_ADDITIONS)
+        // Inline small string (bit 0 clear, bit 1 set) shares the "not a StringImpl" branch; the
+        // rope-layout reads below would be out of bounds on the 16-byte inline cell.
+        slowCase.append(jit.branchTestPtr(JIT::Zero, dataGPR, JIT::TrustedImm32(JSString::isRopeInPointer)));
+#endif
         slowCase.append(jit.branchTest64(JIT::Zero, dataGPR, JIT::TrustedImm64(JSRopeString::isSubstringInPointer)));
 
         // Load substring base raw (low 48 bits of fiber1) and mask. and64(TrustedImm64) is one
