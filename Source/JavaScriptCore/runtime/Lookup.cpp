@@ -59,22 +59,25 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         if (thisObject->staticPropertiesReified())
             return false;
 
-        auto scope = DECLARE_THROW_SCOPE(vm);
         {
             // A PropertyCallback builder can enter JS; defer termination (like
             // LazyProperty::callFunc) so it can't return with one pending.
             DeferTerminationForAWhile deferScope(vm);
             reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
         }
-        // The builder may still throw a non-termination exception; report the
-        // slot as not found so JSValue::get / getOwnPropertyDescriptor's
-        // EXCEPTION_ASSERT(!scope.exception() || !result) holds.
-        RETURN_IF_EXCEPTION(scope, false);
 
         offset = thisObject->getDirectOffset(vm, propertyName, attributes);
         if (!isValidOffset(offset)) {
-            dataLog("Static hashtable initialiation for ", propertyName, " did not produce a property.\n");
-            RELEASE_ASSERT_NOT_REACHED();
+            // reifyStaticProperty skips the putDirect when a PropertyCallback
+            // builder throws (returns empty) or when the defer scope re-throws
+            // a suspended termination. Report the slot as not found so
+            // JSValue::get / getOwnPropertyDescriptor's
+            // EXCEPTION_ASSERT(!scope.exception() || !result) still holds. A
+            // ThrowScope here would force every getOwnNonIndexPropertySlot
+            // caller to add an exception check on the property-lookup fast
+            // path, so key on the missing offset instead.
+            ASSERT(vm.exceptionForInspection());
+            return false;
         }
     }
 
