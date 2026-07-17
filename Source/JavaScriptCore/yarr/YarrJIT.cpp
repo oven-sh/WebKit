@@ -2682,8 +2682,6 @@ class YarrGenerator final : public YarrJITInfo {
         const MacroAssembler::RegisterID character = m_regs.regT0;
         const MacroAssembler::RegisterID scratch = m_regs.regT1;
 
-#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
-#endif
 
         MacroAssembler::Jump atBegin;
         MacroAssembler::JumpList matchDest;
@@ -2765,8 +2763,6 @@ class YarrGenerator final : public YarrJITInfo {
         unsigned subpatternId = term->backReferenceSubpatternId;
         unsigned duplicateNamedGroupId = m_pattern.hasDuplicateNamedCaptureGroups() ? m_pattern.m_duplicateNamedGroupForSubpatternId[subpatternId] : 0;
 
-#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
-#endif
 
         MacroAssembler::Label loop(&m_jit);
 
@@ -7427,7 +7423,7 @@ class YarrGenerator final : public YarrJITInfo {
                         if (isASCIIPrintable(ch))
                             dataLog("'", static_cast<char>(ch), "'");
                         else
-                            dataLog("\\x", ch);
+                            dataLog("\\x", hex(ch, 2));
                     }
                 }
                 if (set.wide)

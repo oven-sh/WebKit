@@ -4,11 +4,25 @@
 // Lookbehind assertions compiled by the Yarr JIT (mirrored bodies matched
 // right-to-left) must produce results identical to the interpreter.
 
+// Strict structural equality that distinguishes an undefined array element
+// (a non-participating capture group) from null; JSON.stringify would map
+// both to null and let a wrongly-nulled capture pass.
+function isSameValue(actual, expected) {
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    return Array.isArray(actual) && Array.isArray(expected)
+      && actual.length === expected.length
+      && actual.every((value, i) => isSameValue(value, expected[i]));
+  }
+  return Object.is(actual, expected);
+}
+
+function describe(value) {
+  return JSON.stringify(value, (key, v) => (v === undefined ? "<undefined>" : v));
+}
+
 function shouldBe(actual, expected, message) {
-  if (JSON.stringify(actual) !== JSON.stringify(expected))
-    throw new Error(
-      (message ? message + ": " : "") + "expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual),
-    );
+  if (!isSameValue(actual, expected))
+    throw new Error((message ? message + ": " : "") + "expected " + describe(expected) + " but got " + describe(actual));
 }
 
 function matchOf(re, s) {

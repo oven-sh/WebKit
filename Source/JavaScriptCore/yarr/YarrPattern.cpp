@@ -2696,7 +2696,6 @@ public:
             }
         }
 
-        // The group's captures are exactly those of the alternatives it absorbs:
         // The group's capture span brackets exactly the captures its alternatives
         // contain, computed from the terms themselves (sorting reorders which
         // alternative is first, and the parser leaves the last body alternative's
