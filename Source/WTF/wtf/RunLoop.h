@@ -195,6 +195,11 @@ public:
 #elif USE(BUN_EVENT_LOOP)
         // WTFTimer in Timer.zig
         struct Bun__WTFTimer;
+        // Called from stop() once the backend has removed a still-armed timer
+        // from its heap, i.e. fired() is not running and will not run. Used by
+        // DispatchTimer to drop the self-ref dispatchAfter() stores in
+        // m_function; other subclasses have nothing to release.
+        virtual void didStopWhileActive() { }
 #endif
 
         ASCIILiteral description() const { return m_description; }
@@ -337,6 +342,13 @@ public:
         }
     private:
         void fired() final { m_function(); }
+#if USE(BUN_EVENT_LOOP)
+        // dispatchAfter() captures a Ref to this timer inside m_function;
+        // dropping it here breaks the cycle when a caller stops the timer
+        // before it fires. stop() only calls this once the Bun-side heap has
+        // removed the still-armed node, so m_function is not on any stack.
+        void didStopWhileActive() final { m_function = { }; }
+#endif
 
         Function<void()> m_function;
     };
