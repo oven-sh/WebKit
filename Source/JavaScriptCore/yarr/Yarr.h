@@ -35,7 +35,7 @@ namespace JSC { namespace Yarr {
 
 #define YarrStackSpaceForBackTrackInfoPatternCharacter 2 // Only for !fixed quantifiers.
 #define YarrStackSpaceForBackTrackInfoCharacterClass 2 // Greedy/NonGreedy, or FixedCount with unicode/unicodeSets flag.
-#define YarrStackSpaceForBackTrackInfoBackReference 3
+#define YarrStackSpaceForBackTrackInfoBackReference 4
 #define YarrStackSpaceForBackTrackInfoAlternative 1 // One per alternative.
 #define YarrStackSpaceForBackTrackInfoParentheticalAssertion 1
 #define YarrStackSpaceForBackTrackInfoParenthesesOnce 3

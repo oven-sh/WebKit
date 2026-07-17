@@ -101,9 +101,8 @@ shouldBe(matchOf(/(?<=^x)y/, "xy"), [1, ["y"]]);
 shouldBe(matchOf(/(?<=^x)y/, "axy"), null);
 shouldBe(matchOf(/(?<=^)a/m, "\na"), [1, ["a"]]);
 
-// Bodies the JIT does not compile fall back to the interpreter and must still
-// be correct: backreference, quantified group, nested lookahead, and unicode
-// surrogate-pair bodies.
+// Backreference, quantified group, nested lookahead and unicode surrogate-pair
+// bodies (all compiled natively by the JIT).
 shouldBe(matchOf(/(?<=(a)\1)b/, "aab"), [2, ["b", "a"]]);
 shouldBe(matchOf(/(?<=(?:ab)+)c/, "ababc"), [4, ["c"]]);
 shouldBe(matchOf(/(?<=(?:ab)+)c/, "xc"), null);
@@ -145,19 +144,28 @@ shouldBe(JSON.stringify(/(?<!q)b(^)*c/.exec("abc")), '["bc",null]');
 shouldBe(JSON.stringify(/\w(?<=\d)(^)?/.exec("a1")), '["1",null]');
 shouldBe(JSON.stringify(/z(?<!q)(?=(^)?)/.exec("yz")), '["z",null]');
 shouldBe(JSON.stringify("qxaqxa".split(/a(?<!x)(^)?$/)), '["qxaqx",null,""]');
-// Optional/quantified group whose first term is ^ (no lookbehind): a
-// PRE-EXISTING upstream defect confined to the JIT (the bytecode interpreter and
-// V8 return the spec answers). Pinned per tier so a change in either direction
-// is noticed; when the JIT is fixed both branches expect the interpreter values.
-if (jscOptions().useRegExpJIT) {
-    shouldBe(/(?:^)?a/.exec("ba"), null);
-    shouldBe(/(^)*a/.exec("ba"), null);
-    shouldBe(/\B(?:^)?/.exec("xx"), null);
-} else {
-    shouldBe(JSON.stringify(/(?:^)?a/.exec("ba")), '["a"]');
-    shouldBe(JSON.stringify(/(^)*a/.exec("ba")), '["a",null]');
-    shouldBe(JSON.stringify(/\B(?:^)?/.exec("xx")), '[""]');
-}
+// Optional/quantified group whose first term is ^ (no lookbehind): the anchor is
+// optional, so the alternative is not BOL-anchored and can match anywhere. Once
+// a JIT-only defect (the loop copy dropped the group); both tiers now agree.
+shouldBe(JSON.stringify(/(?:^)?a/.exec("ba")), '["a"]');
+shouldBe(JSON.stringify(/(^)*a/.exec("ba")), '["a",null]');
+shouldBe(JSON.stringify(/\B(?:^)?/.exec("xx")), '[""]');
+shouldBe(JSON.stringify(/(?:^b)?a/.exec("ba")), '["ba"]');
+shouldBe(JSON.stringify("aba".match(/(?:^)?a/g)), '["a","a"]');
+shouldBe(JSON.stringify(/(^){0,2}z/.exec("yz")), '["z",null]');
+shouldBe(JSON.stringify(/(?=^)a/.exec("ba")), "null");
+shouldBe(JSON.stringify(/(?!^)a/.exec("ba")), '["a"]');
+// A REQUIRED all-BOL group still anchors, and a term before it makes the whole
+// alternative unmatchable past position 0 (the loop copy must not over-match).
+shouldBe(/(?:^)a/.exec("ba"), null);
+shouldBe(/(?:^|^)a/.exec("ba"), null);
+shouldBe(/.(^)X/.exec("aX"), null);
+shouldBe(JSON.stringify(/(^)X/.exec("XX")), '["X",""]');
+shouldBe(/y(^\S{2})/.exec("ayzz"), null);
+shouldBe(/\w(?=^[dby]?)/.exec("ab"), null);
+shouldBe(/[^sc](?<a>^)/.exec("qx"), null);
+shouldBe(/c(?:^(?:x))/.exec("acx"), null);
+shouldBe(JSON.stringify(/(\w(^)\s|$)/i.exec("a x")), '["","",null]');
 // Genuine anchoring is unchanged.
 shouldBe(/^a/.exec("ba"), null);
 shouldBe(/(?:^a)/.exec("ba"), null);

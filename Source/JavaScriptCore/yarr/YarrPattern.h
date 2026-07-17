@@ -612,7 +612,6 @@ struct YarrPattern {
 
         m_containsBackreferences = false;
         m_containsBOL = false;
-        m_containsBOLGroupBubble = false;
         m_containsLookbehinds = false;
         m_containsUnsignedLengthPattern = false;
         m_hasCopiedParenSubexpressions = false;
@@ -784,7 +783,6 @@ struct YarrPattern {
 
     bool m_containsBackreferences : 1;
     bool m_containsBOL : 1;
-    bool m_containsBOLGroupBubble : 1; // a group's alternatives all start with BOL (optimizeBOL bubbling)
     bool m_containsLookbehinds : 1;
     bool m_containsUnsignedLengthPattern : 1;
     bool m_containsModifiers : 1;
@@ -851,10 +849,15 @@ private:
         uintptr_t begin; // Not really needed for greedy quantifiers.
         uintptr_t matchAmount; // Not really needed for fixed quantifiers.
         uintptr_t backReferenceSize; // Used by greedy quantifiers to backtrack.
+        // A backward (lookbehind) backreference's span lies left of the cursor;
+        // this holds that span's left edge across the compare walk (the JIT's
+        // forward form gets the equivalent from the moving frontier for free).
+        uintptr_t backwardSpanEdge;
 
         static unsigned beginIndex() { return offsetof(BackTrackInfoBackReference, begin) / sizeof(uintptr_t); }
         static unsigned matchAmountIndex() { return offsetof(BackTrackInfoBackReference, matchAmount) / sizeof(uintptr_t); }
         static unsigned backReferenceSizeIndex() { return offsetof(BackTrackInfoBackReference, backReferenceSize) / sizeof(uintptr_t); }
+        static unsigned backwardSpanEdgeIndex() { return offsetof(BackTrackInfoBackReference, backwardSpanEdge) / sizeof(uintptr_t); }
     };
 
     struct BackTrackInfoAlternative {

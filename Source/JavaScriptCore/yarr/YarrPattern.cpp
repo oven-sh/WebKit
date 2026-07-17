@@ -1268,7 +1268,10 @@ public:
 
     void assertionBOL()
     {
-        if (!m_alternative->m_terms.size() && !parenthesisInvert() && parenthesisMatchDirection() == Forward) {
+        // A ^ anywhere inside a lookbehind (even within a lookahead nested in one)
+        // constrains a position BEHIND the match: it never anchors an alternative to
+        // the match start, so it must not feed the once-through/loop-copy split.
+        if (!m_alternative->m_terms.size() && !parenthesisInvert() && parenthesisMatchDirection() == Forward && !insideLookbehind()) {
             m_alternative->m_startsWithBOL = true;
             m_alternative->m_containsBOL = true;
             m_pattern.m_containsBOL = true;
@@ -1572,15 +1575,18 @@ public:
 
         if (numBOLAnchoredAlts) {
             m_alternative->m_containsBOL = true;
-            // If all the alternatives in parens start with BOL, then so does this one
-            if (numBOLAnchoredAlts == numParenAlternatives) {
+            // The enclosing alternative can only match at the start of input (what
+            // m_startsWithBOL means) if this group requires a BOL and nothing can
+            // match before it: every alternative in the parens starts with BOL, the
+            // group is the alternative's first term, and it is not an inverted
+            // assertion. A later {0,n} / ? / * on this group makes the anchor
+            // optional again; quantifyAtom withdraws the flag in that case.
+            // A BOL matched behind the match (in a lookbehind body) constrains a
+            // position to the left, not where the enclosing alternative starts, so
+            // it never anchors that alternative (copyDisjunction likewise exempts
+            // backward alternatives from the once-through filter).
+            if (numBOLAnchoredAlts == numParenAlternatives && m_alternative->m_terms.size() == 1 && !lastTerm.invert() && lastTerm.matchDirection() != Backward)
                 m_alternative->m_startsWithBOL = true;
-                // A whole group being BOL-anchored feeds optimizeBOL's once-through /
-                // loop-copy split, which the JIT and interpreter treat differently for
-                // some shapes (e.g. an optional (^)? group); noted so a JIT compile can
-                // keep such patterns on the interpreter (see YarrJIT::compile).
-                m_pattern.m_containsBOLGroupBubble = true;
-            }
         }
 
         lastTerm.parentheses.lastSubpatternId = m_pattern.m_numSubpatterns;
@@ -1703,20 +1709,37 @@ public:
         for (unsigned alt = 0; alt < disjunction->m_alternatives.size(); ++alt) {
             PatternAlternative* alternative = disjunction->m_alternatives[alt].get();
             if (!filterStartsWithBOL || !alternative->m_startsWithBOL || alternative->m_direction == Backward) {
+                // Copy the terms first: under filterStartsWithBOL a term can turn out to
+                // be dead (a required group with no satisfiable alternative), which
+                // kills this whole alternative -- it is then omitted, never emitted
+                // with the term silently gone.
+                Vector<PatternTerm> copiedTerms;
+                copiedTerms.reserveInitialCapacity(alternative->m_terms.size());
+                bool alternativeIsDead = false;
+                for (auto& term : alternative->m_terms) {
+                    TermCopy copy = copyTerm(term, filterStartsWithBOL);
+                    if (hasError(error()))
+                        return nullptr;
+                    if (copy.isDead) {
+                        alternativeIsDead = true;
+                        break;
+                    }
+                    if (copy.term)
+                        copiedTerms.append(WTF::move(*copy.term));
+                }
+                if (alternativeIsDead)
+                    continue;
+
                 if (!newDisjunction) {
                     newDisjunction = makeUnique<PatternDisjunction>();
                     newDisjunction->m_parent = disjunction->m_parent;
                 }
                 PatternAlternative* newAlternative = newDisjunction->addNewAlternative(alternative->m_firstSubpatternId, alternative->matchDirection());
                 newAlternative->m_lastSubpatternId = alternative->m_lastSubpatternId;
-                newAlternative->m_terms.reserveCapacity(alternative->m_terms.size());
-                for (auto& term : alternative->m_terms) {
-                    if (auto copied = copyTerm(term, filterStartsWithBOL))
-                        newAlternative->m_terms.append(WTF::move(*copied));
-                }
+                newAlternative->m_terms = WTF::move(copiedTerms);
             }
         }
-        
+
         if (hasError(error())) {
             newDisjunction = nullptr;
             return nullptr;
@@ -1729,30 +1752,59 @@ public:
         m_pattern.m_disjunctions.append(WTF::move(newDisjunction));
         return copiedDisjunction;
     }
-    
-    std::optional<PatternTerm> copyTerm(PatternTerm& term, bool filterStartsWithBOL)
+
+    // A copied term is one of: the term (recursively copied); nothing, when an
+    // optional group's every alternative was filtered away (matching its empty
+    // option is exactly the remaining semantics); or dead, when a REQUIRED group
+    // has no satisfiable alternative left, which makes any alternative
+    // containing it unmatchable (copyDisjunction drops such an alternative).
+    struct TermCopy {
+        std::optional<PatternTerm> term;
+        bool isDead { false };
+    };
+
+    TermCopy copyTerm(PatternTerm& term, bool filterStartsWithBOL)
     {
         if (!isSafeToRecurse()) [[unlikely]] {
             m_error = ErrorCode::PatternTooLarge;
-            return PatternTerm(term);
+            return { PatternTerm(term), false };
         }
 
         if ((term.type != PatternTerm::Type::ParenthesesSubpattern) && (term.type != PatternTerm::Type::ParentheticalAssertion))
-            return PatternTerm(term);
-        
+            return { PatternTerm(term), false };
+
         if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL)) {
             PatternTerm termCopy = term;
             termCopy.parentheses.disjunction = newDisjunction;
             m_pattern.m_hasCopiedParenSubexpressions = true;
-            return termCopy;
+            return { WTF::move(termCopy), false };
         }
-        return std::nullopt;
+        // copyDisjunction produced nothing. On an error (recursion limit) report
+        // no term and no death; the caller checks hasError(). Otherwise every
+        // alternative was filtered away, i.e. the parenthetical construct's body
+        // can never match here:
+        //  - a group that may match zero times (or a NEGATIVE assertion, which is
+        //    satisfied precisely when its body cannot match) reduces to matching
+        //    empty, so the term is simply gone;
+        //  - a group that must match, or a POSITIVE assertion, can never be
+        //    satisfied, so the term -- and any alternative containing it -- is dead.
+        if (hasError(error()))
+            return { std::nullopt, false };
+        bool satisfiedByEmpty = term.type == PatternTerm::Type::ParentheticalAssertion ? term.invert() : !term.quantityMinCount;
+        return { std::nullopt, !satisfiedByEmpty };
     }
     
     void quantifyAtom(unsigned min, unsigned max, bool greedy)
     {
         ASSERT(min <= max);
         ASSERT(m_alternative->m_terms.size());
+
+        // A group or assertion that anchored its alternative to the start of input
+        // (see atomParenthesesEnd) no longer does so once it may match zero times:
+        // the anchor is optional, so the alternative can match anywhere. This must
+        // precede the {0} handling below, which removes the term entirely.
+        if (!min && m_alternative->m_terms.size() == 1)
+            m_alternative->m_startsWithBOL = false;
 
         if (!max) {
             // In a case of backwards parentheses matching, we may have a forward reference that has
@@ -1796,23 +1848,35 @@ public:
         else if (!min
             || (term.type == PatternTerm::Type::ParenthesesSubpattern
                 && (m_pattern.m_hasCopiedParenSubexpressions || term.matchDirection() == Forward))) {
-            // Forward-direction parenthesized subpatterns with non-zero minimum are kept
-            // as a single PatternTerm with quantityMinCount > 0; YarrJIT compiles these
-            // natively (see opCompileParenthesesSubpattern) without splitting into
-            // FixedCount{min} + Greedy/NonGreedy{0,max-min}. The split would deep-copy
-            // the disjunction subtree, which can hit OffsetTooLarge / pattern-size limits
-            // for very large bounds (e.g. (?:x){2147483648,...}). Backward parens
-            // (lookbehinds) still use the expansion path; the JIT's right-to-left
-            // backtracking machinery hasn't been generalized for single-term VariableMin.
+            // A single quantified term, compiled natively by YarrJIT
+            // (opCompileParenthesesSubpattern for groups). Forward parenthesized
+            // subpatterns keep this form even with a non-zero minimum; so does any
+            // group once the pattern already contains a split copy
+            // (m_hasCopiedParenSubexpressions): splitting a body that itself contains
+            // a copy re-copies it, so nested min>0 groups (e.g. (?:(?:(?:a)+)+)+, in a
+            // lookbehind or forward) would grow the pattern -- and both the JIT's op
+            // vector and the interpreter's work -- exponentially in the nesting
+            // depth. Only the innermost quantification of such a nest splits. This
+            // also avoids the split's other copy costs (OffsetTooLarge / size limits
+            // for huge bounds, e.g. (?:x){2147483648,...}).
             term.quantify(min, max, greedy ? QuantifierType::Greedy : QuantifierType::NonGreedy);
         } else {
+            // Split X{min,max} into a mandatory FixedCount piece and an optional
+            // {0,max-min} copy sharing X's capture ids: reached by non-parenthesis
+            // atoms and by the innermost quantified group of a backward (lookbehind)
+            // parenthesized subpattern, whose mirrored body runs through the copy
+            // machinery. Term order is match
+            // order: source order forward, reversed by the mirror for backward
+            // bodies. isCopy marks the optional piece; a copy that ran zero
+            // iterations must not clear the capture ids it shares with the
+            // mandatory piece (see the paren Begin backtrack in YarrJIT).
             if (term.matchDirection() == Forward) {
                 term.quantify(min, min, QuantifierType::FixedCount);
-                auto copied = copyTerm(term, /* filterStartsWithBOL */ false);
+                // Unfiltered copies never come back dead; a missing term is the error path.
+                auto copied = copyTerm(term, /* filterStartsWithBOL */ false).term;
                 if (!copied) [[unlikely]]
                     return;
                 m_alternative->m_terms.append(WTF::move(*copied));
-                // NOTE: this term is interesting from an analysis perspective, in that it can be ignored.....
                 m_alternative->lastTerm().quantify((max == quantifyInfinite) ? max : max - min, greedy ? QuantifierType::Greedy : QuantifierType::NonGreedy);
                 if (m_alternative->lastTerm().type == PatternTerm::Type::ParenthesesSubpattern)
                     m_alternative->lastTerm().parentheses.isCopy = true;
@@ -1820,7 +1884,8 @@ public:
                 term.quantify((max == quantifyInfinite) ? max : max - min, greedy ? QuantifierType::Greedy : QuantifierType::NonGreedy);
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern)
                     term.parentheses.isCopy = true;
-                auto copied = copyTerm(term, /* filterStartsWithBOL */ false);
+                // Unfiltered copies never come back dead; a missing term is the error path.
+                auto copied = copyTerm(term, /* filterStartsWithBOL */ false).term;
                 if (!copied) [[unlikely]]
                     return;
                 m_alternative->m_terms.append(WTF::move(*copied));
@@ -2345,6 +2410,12 @@ public:
         }
     }
 
+    // Below these alternative counts the plainer code shapes the JIT emits
+    // for a short alternation (fused literal compares, the two-alternative
+    // SIMD scan, frame-free inlinable groups) beat the rewrites; the transforms
+    // pay for themselves only on wide alternations.
+    static constexpr size_t alternationFactoringMinRun = 8; // prefix factoring / top-level fold
+
     // Alternation prefix factoring.
     //
     // Alternatives are tried leftmost-first, so their order is observable -- but
@@ -2530,7 +2601,7 @@ public:
             // compares, the two-alternative SIMD scan, frame-free inlinable code)
             // is already optimal there, and factoring would forfeit those. The
             // rewrite pays for itself only on large alternations.
-            if (runEnd - runStart < Options::regExpAlternationGroupThreshold()) {
+            if (runEnd - runStart < alternationFactoringMinRun) {
                 for (size_t j = runStart; j < runEnd; ++j)
                     result.append(WTF::move(alternatives[j]));
                 continue;
@@ -2599,9 +2670,6 @@ public:
     // this) lays out the group like any hand-written one.
     void factorAndWrapAlternatives()
     {
-        if (!Options::useRegExpAlternationFactoring())
-            return;
-
         factorAlternatives(*m_pattern.m_body);
         wrapAlternativesForDispatch();
     }
@@ -2616,10 +2684,7 @@ public:
         while (firstRepeated < alternatives.size() && alternatives[firstRepeated]->onceThrough())
             ++firstRepeated;
         size_t repeatedCount = alternatives.size() - firstRepeated;
-        // Folding one (or no) alternative into a group is meaningless whatever
-        // the configured threshold is (e.g. regExpAlternationGroupThreshold=0
-        // with an all-once-through body).
-        if (repeatedCount < 2 || repeatedCount < Options::regExpAlternationGroupThreshold())
+        if (repeatedCount < alternationFactoringMinRun)
             return;
 
         // A DotStarEnclosure records match bounds through the enclosing body
@@ -3073,19 +3138,21 @@ private:
     private:
         class SavedContext {
         public:
-            SavedContext(bool isModifier, bool invert, MatchDirection matchDirection, OptionSet<Flags> flags)
+            SavedContext(bool isModifier, bool invert, MatchDirection matchDirection, bool insideLookbehind, OptionSet<Flags> flags)
                 : m_isModifier(isModifier)
                 , m_invert(invert)
                 , m_matchDirection(matchDirection)
+                , m_insideLookbehind(insideLookbehind)
                 , m_flags(flags)
             {
             }
 
-            void NODELETE restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, OptionSet<Flags>& flags)
+            void NODELETE restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, bool& insideLookbehind, OptionSet<Flags>& flags)
             {
                 isModifier = m_isModifier;
                 invert = m_invert;
                 matchDirection = m_matchDirection;
+                insideLookbehind = m_insideLookbehind;
                 flags = m_flags;
             }
 
@@ -3093,6 +3160,7 @@ private:
             bool m_isModifier { false };
             bool m_invert { false };
             MatchDirection m_matchDirection { Forward };
+            bool m_insideLookbehind { false };
             OptionSet<Flags> m_flags;
         };
 
@@ -3106,9 +3174,10 @@ private:
             ASSERT(m_stackDepth < std::numeric_limits<unsigned>::max());
 
             if (m_stackDepth++ > 0)
-                m_backingStack.append(SavedContext(m_isModifier, m_invert, m_matchDirection, m_flags));
+                m_backingStack.append(SavedContext(m_isModifier, m_invert, m_matchDirection, m_insideLookbehind, m_flags));
 
-            // isModifier should only apply to one frame at a time
+            // isModifier should only apply to one frame at a time. m_insideLookbehind is
+            // inherited: a nested parenthesis stays inside any enclosing lookbehind.
             m_isModifier = false;
         }
 
@@ -3118,11 +3187,12 @@ private:
 
             if (--m_stackDepth > 0) {
                 SavedContext context = m_backingStack.takeLast();
-                context.restore(m_isModifier, m_invert, m_matchDirection, m_flags);
+                context.restore(m_isModifier, m_invert, m_matchDirection, m_insideLookbehind, m_flags);
             } else {
                 m_isModifier = false;
                 m_invert = false;
                 m_matchDirection = Forward;
+                m_insideLookbehind = false;
                 m_flags = { };
             }
         }
@@ -3150,11 +3220,23 @@ private:
         void setMatchDirection(MatchDirection matchDirection)
         {
             m_matchDirection = matchDirection;
+            // Entering a lookbehind puts every deeper context inside one; the bit is
+            // inherited through push() and cleared only when this frame pops.
+            if (matchDirection == Backward)
+                m_insideLookbehind = true;
         }
 
         MatchDirection matchDirection() const
         {
             return m_matchDirection;
+        }
+
+        // True inside a lookbehind at ANY nesting depth (including within a lookahead
+        // nested in a lookbehind), unlike matchDirection(), which is only the innermost
+        // assertion's own direction.
+        bool NODELETE insideLookbehind() const
+        {
+            return m_insideLookbehind;
         }
 
         void NODELETE setFlags(OptionSet<Flags> flags)
@@ -3175,6 +3257,7 @@ private:
             m_isModifier = false;
             m_invert = false;
             m_matchDirection = Forward;
+            m_insideLookbehind = false;
             m_flags = { };
         }
 
@@ -3184,6 +3267,7 @@ private:
         bool m_isModifier { false };
         bool m_invert { false };
         MatchDirection m_matchDirection { Forward };
+        bool m_insideLookbehind { false };
         OptionSet<Flags> m_flags;
     };
 
@@ -3215,6 +3299,13 @@ private:
     MatchDirection NODELETE parenthesisMatchDirection() const
     {
         return m_parenthesisContext.matchDirection();
+    }
+
+    // Inside a lookbehind at any nesting depth (a lookahead nested within a
+    // lookbehind still counts).
+    bool NODELETE insideLookbehind() const
+    {
+        return m_parenthesisContext.insideLookbehind();
     }
 
     bool ignoreCase() const
@@ -3291,7 +3382,6 @@ ErrorCode YarrPattern::compile(StringView patternString)
 YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode)
     : m_containsBackreferences(false)
     , m_containsBOL(false)
-    , m_containsBOLGroupBubble(false)
     , m_containsLookbehinds(false)
     , m_containsUnsignedLengthPattern(false)
     , m_containsModifiers(false)
