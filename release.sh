@@ -54,6 +54,8 @@ export DEBIAN_VERSION="bookworm"
 
 export temp=${temp:-"$(mktemp -d -t bun-webkit-linux-$BUILDKIT_ARCH-release-$(date +%s)-XXXX)"}
 export ENABLE_SANITIZERS=${ENABLE_SANITIZERS:-}
+export USE_MIMALLOC=${USE_MIMALLOC:-"OFF"}
+export USE_EXTERNAL_MIMALLOC=${USE_EXTERNAL_MIMALLOC:-"OFF"}
 
 mkdir -p $temp
 rm -rf $temp/bun-webkit
@@ -69,6 +71,8 @@ docker buildx build \
   --build-arg RELEASE_FLAGS="$RELEASE_FLAGS" \
   --build-arg WEBKIT_RELEASE_TYPE=$WEBKIT_RELEASE_TYPE \
   --build-arg RELEASE_FLAGS="${RELEASE_FLAGS:-"-O2 -DNDEBUG=1"}" \
+  --build-arg USE_MIMALLOC="$USE_MIMALLOC" \
+  --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
   --progress=plain \
   --platform=linux/$BUILDKIT_ARCH \
   --target=artifact \

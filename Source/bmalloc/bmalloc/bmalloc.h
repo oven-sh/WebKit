@@ -296,7 +296,7 @@ BEXPORT void freeOutOfLine(void* object, HeapKind kind = HeapKind::Primary);
 
 BEXPORT void freeLargeVirtual(void* object, size_t, HeapKind kind = HeapKind::Primary);
 
-BEXPORT void scavengeThisThread();
+BEXPORT void scavengeThisThread(bool force = true);
 
 BEXPORT void scavenge();
 

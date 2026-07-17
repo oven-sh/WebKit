@@ -5,6 +5,8 @@ ARG LLVM_VERSION="21"
 ARG FREEBSD_VERSION="14.3"
 ARG FREEBSD_ARCH="x86_64"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
+ARG USE_MIMALLOC="OFF"
+ARG USE_EXTERNAL_MIMALLOC="OFF"
 # -g is added per-stage below for Debug only — with -O3 + tmpfs, debug info
 # OOMs the linux-x64-gh runner during Release builds (not seen on Android,
 # but FreeBSD's libc++ headers generate notably more DWARF).
@@ -90,9 +92,14 @@ RUN mkdir -p /icu-host && cd /icu-host \
 # Target build.
 #
 # Before configure, filter data/in/icudt75l.dat (using the host icupkg) to drop
-# converters/translit/rbnf/stringprep/confusables/unames. Bun has zero
+# converters/translit/stringprep/confusables/unames. Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU is removed in
 # src/bun.js/bindings/TextEncodingRegistry.cpp). Cuts libicudata.a by ~7.4 MB.
+# Most of rbnf/ goes too, but root/ja/zh/zh_Hant stay: ICU reaches those on its own
+# through the algorithmic numbering systems in numberingSystems.res (see the note and
+# the staleness guard in ./Dockerfile).
+# This image does not run compress-data.ts, so those five items cost their raw
+# 35 KB here rather than the ~8 KB they compress to elsewhere.
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${FREEBSD_SYSROOT}" && \
@@ -100,7 +107,7 @@ RUN --mount=type=tmpfs,target=/icu \
     export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} -fuse-ld=lld" && \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
-    /icu-host/source/bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > data/in/rm.lst && \
+    /icu-host/source/bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     { ./configure --host=${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION} \
@@ -126,6 +133,8 @@ ARG LTO_FLAG
 ARG DEFAULT_CFLAGS
 ARG FREEBSD_VERSION
 ARG FREEBSD_ARCH
+ARG USE_MIMALLOC
+ARG USE_EXTERNAL_MIMALLOC
 
 COPY . /webkit
 WORKDIR /webkit
@@ -156,6 +165,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DUSE_THIN_ARCHIVES=OFF \
     -DUSE_BUN_JSC_ADDITIONS=ON \
     -DUSE_BUN_EVENT_LOOP=ON \
+    -DUSE_MIMALLOC="$USE_MIMALLOC" \
+    -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -DENABLE_FTL_JIT=ON \
     -DENABLE_API_TESTS=OFF \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \

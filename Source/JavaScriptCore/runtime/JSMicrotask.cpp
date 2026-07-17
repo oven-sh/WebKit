@@ -1856,23 +1856,26 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             }
         }
 
+        // Note: Keep async context active during reject/resolve so that a
+        // thenable returned from the async function captures the correct async context
+
         if (error) {
             auto* promise = uncheckedDowncast<JSPromise>(generator->context());
+            scope.release();
+            promise->reject(vm, error);
 #if USE(BUN_JSC_ADDITIONS)
             asyncContextScope.restoreEarly();
 #endif
-            scope.release();
-            promise->reject(vm, error);
             return;
         }
 
         if (generator->state() == static_cast<int32_t>(JSGenerator::State::Executing)) {
             auto* promise = uncheckedDowncast<JSPromise>(generator->context());
+            scope.release();
+            promise->resolve(generatorGlobalObject, vm, value);
 #if USE(BUN_JSC_ADDITIONS)
             asyncContextScope.restoreEarly();
 #endif
-            scope.release();
-            promise->resolve(generatorGlobalObject, vm, value);
             return;
         }
 
