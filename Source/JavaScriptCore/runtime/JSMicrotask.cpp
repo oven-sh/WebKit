@@ -487,13 +487,23 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
     // `target` is the driver. resumed via an AsyncGeneratorDriverResume microtask.
     // resolveWithInternalMicrotask keeps resolvePromise's spec thenable check,
     // so the fast path stays behaviorally identical to a real Promise settlement.
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue wrappedTarget = target;
+    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
+        JSValue asyncContext = asyncContextData->getInternalField(0);
+        if (!asyncContext.isUndefined())
+            wrappedTarget = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), target, asyncContext);
+    }
+#else
+    JSValue wrappedTarget = target;
+#endif
     if (isThrow) {
-        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target);
+        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, wrappedTarget);
         return;
     }
 
     auto* iteratorResult = createIteratorResultObject(globalObject, value, done);
-    JSPromise::resolveWithInternalMicrotask(globalObject, vm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, target);
+    JSPromise::resolveWithInternalMicrotask(globalObject, vm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, wrappedTarget);
 }
 
 // https://tc39.es/ecma262/#sec-asyncgeneratorawaitreturn
@@ -620,7 +630,17 @@ void enqueueAsyncGeneratorDriver(JSGlobalObject* globalObject, JSAsyncGenerator*
     int32_t state = iterator->state();
     if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed)) {
         auto* iteratorResult = createIteratorResultObject(globalObject, jsUndefined(), /* done */ true);
+#if USE(BUN_JSC_ADDITIONS)
+        JSValue wrappedDriver = driver;
+        if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
+            JSValue asyncContext = asyncContextData->getInternalField(0);
+            if (!asyncContext.isUndefined())
+                wrappedDriver = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), driver, asyncContext);
+        }
+        JSPromise::resolveWithInternalMicrotask(globalObject, vm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, wrappedDriver);
+#else
         JSPromise::resolveWithInternalMicrotask(globalObject, vm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, driver);
+#endif
         return;
     }
 
@@ -2178,8 +2198,31 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
     }
 
-    case InternalMicrotask::AsyncGeneratorDriverResume:
+    case InternalMicrotask::AsyncGeneratorDriverResume: {
+#if USE(BUN_JSC_ADDITIONS)
+        JSValue contextArg = arguments[2];
+        InternalFieldTuple* asyncContextData = nullptr;
+        JSValue restoreAsyncContext;
+        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
+            contextArg = tuple->getInternalField(0);
+            JSValue asyncContext = tuple->getInternalField(1);
+            if (!asyncContext.isUndefined()) {
+                asyncContextData = globalObject->m_asyncContextData.get();
+                if (asyncContextData) {
+                    restoreAsyncContext = asyncContextData->getInternalField(0);
+                    asyncContextData->putInternalField(vm, 0, asyncContext);
+                }
+            }
+        }
+        scope.release();
+        asyncGeneratorDriverResume(vm, contextArg, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
+        if (asyncContextData)
+            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+        return;
+#else
         RELEASE_AND_RETURN(scope, asyncGeneratorDriverResume(vm, arguments[2], arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache));
+#endif
+    }
 
     case InternalMicrotask::PromiseFinallyReactionJob: {
         // Phase 1: Original promise settled

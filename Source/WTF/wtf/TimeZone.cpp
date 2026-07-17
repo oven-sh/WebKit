@@ -44,10 +44,12 @@ void timeZoneDidChange()
     g_lastTimeZoneID.fetch_add(1, std::memory_order_relaxed);
 }
 
-#if !USE(TIME_ZONE_CHANGE_NOTIFICATIONS) || (USE(BUN_JSC_ADDITIONS) && !PLATFORM(COCOA) && !USE(GLIB))
+#if !USE(TIME_ZONE_CHANGE_NOTIFICATIONS) || (USE(BUN_JSC_ADDITIONS) && !OS(DARWIN) && !USE(GLIB))
 // Bun enables USE(TIME_ZONE_CHANGE_NOTIFICATIONS) so that DateCache consults
 // lastTimeZoneID(), but the runtime bumps it explicitly via timeZoneDidChange()
-// rather than relying on a platform notifier.
+// rather than relying on a platform notifier. JSCOnly on Darwin compiles
+// cocoa/TimeZoneCocoa.cpp (see PlatformJSCOnly.cmake) so key on OS(DARWIN)
+// rather than PLATFORM(COCOA), which is only set for the Mac/iOS ports.
 void listenForTimeZoneChangeNotifications() { }
 #endif
 
