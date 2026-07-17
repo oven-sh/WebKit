@@ -2950,6 +2950,7 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
 
     // A PropertyCallback builder can enter JS; defer termination (like
     // LazyProperty::callFunc) so it can't return with one pending.
+    auto scope = DECLARE_THROW_SCOPE(vm);
     DeferTerminationForAWhile deferScope(vm);
     for (const ClassInfo* info = classInfo(); info; info = info->parentClass) {
         const HashTable* hashTable = info->staticPropHashTable;
@@ -2963,8 +2964,7 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             if (!isValidOffset(offset)) {
                 reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
                 // Leave the rest lazy on throw; the caller propagates.
-                if (vm.exceptionForInspection()) [[unlikely]]
-                    return;
+                RETURN_IF_EXCEPTION(scope, void());
             }
         }
     }
