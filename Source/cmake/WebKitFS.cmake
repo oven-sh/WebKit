@@ -83,8 +83,11 @@ set(JavaScriptCore_SCRIPTS_DIR "${CMAKE_BINARY_DIR}/JavaScriptCore/Scripts")
 
 # On Apple platforms, some targets build as framework bundles. Point their
 # HEADERS variables to the inside of the framework bundle.
+# Bun's JSCOnly packaging (Dockerfile.macos and the prebuilt tarballs)
+# expects the flat JavaScriptCore/Headers layout on every platform, so
+# keep the non-framework paths when USE_BUN_JSC_ADDITIONS is on.
 set(USE_FRAMEWORK_BUNDLES OFF)
-if (APPLE)
+if (APPLE AND NOT USE_BUN_JSC_ADDITIONS)
     set(USE_FRAMEWORK_BUNDLES ON)
     if (PORT STREQUAL Mac)
         set(_version "Versions/A/")
