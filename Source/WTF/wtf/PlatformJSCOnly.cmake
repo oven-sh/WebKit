@@ -110,7 +110,6 @@ elseif (APPLE)
         VERBATIM)
     list(APPEND WTF_SOURCES
         cocoa/MemoryFootprintCocoa.cpp
-        cocoa/TimeZoneCocoa.cpp
 
         generic/MemoryPressureHandlerGeneric.cpp
 
