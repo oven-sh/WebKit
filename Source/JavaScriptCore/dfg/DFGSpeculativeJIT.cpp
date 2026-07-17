@@ -8540,8 +8540,13 @@ bool SpeculativeJIT::canBeRope(Edge edge)
     if (!((m_state.forNode(edge).m_type & SpecString) & ~SpecStringResolved))
         return false;
     if (JSValue value = m_state.forNode(edge).m_value) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (value.isCell() && value.asCell()->type() == StringType && !asString(value)->isRope() && !asString(value)->isInline())
+            return false;
+#else
         if (value.isCell() && value.asCell()->type() == StringType && !asString(value)->isRope())
             return false;
+#endif
     }
 
     // If this value is LazyValue, it will be converted to JSString, and the result must be non-rope string.

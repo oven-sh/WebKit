@@ -25635,8 +25635,13 @@ IGNORE_CLANG_WARNINGS_END
         if (!((provenType(edge) & SpecString) & ~SpecStringResolved))
             return false;
         if (JSValue value = provenValue(edge)) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (value.isCell() && value.asCell()->type() == StringType && !asString(value)->isRope() && !asString(value)->isInline())
+                return false;
+#else
             if (value.isCell() && value.asCell()->type() == StringType && !asString(value)->isRope())
                 return false;
+#endif
         }
         String value = edge->tryGetString(m_graph);
         if (!value.isNull()) {
