@@ -70,6 +70,68 @@ namespace WTF {
 
 // Number of 100 nanosecond between January 1, 1601 and January 1, 1970.
 static constexpr ULONGLONG epochBias = 116444736000000000ULL;
+
+#if USE(BUN_JSC_ADDITIONS)
+
+// GetSystemTimePreciseAsFileTime (Windows 8+) returns wall-clock time with
+// sub-microsecond precision in a single call. The upstream path below uses
+// GetSystemTimeAsFileTime (15.6ms tick) corrected with QueryPerformanceCounter,
+// which can disagree with the precise system clock by ~1ms and keeps
+// unsynchronized static state across threads. Bun's native clock (Rust's
+// std::time::SystemTime, and Zig's std.time before it) already calls the
+// precise API, so reading it here keeps Date.now() consistent with native
+// timestamps and avoids the shared mutable state.
+//
+// NOTE: GetSystemTimePreciseAsFileTime requires Windows 8 / Server 2012. If
+// Bun ever targets an older Windows, this needs a GetProcAddress fallback to
+// GetSystemTimeAsFileTime (see SpiderMonkey pre-bmo-1843842 for the pattern).
+static constexpr double hundredsOfNanosecondsPerSecond = 10000000;
+
+static inline double currentTime()
+{
+    FILETIME fileTime;
+    GetSystemTimePreciseAsFileTime(&fileTime);
+
+    ULARGE_INTEGER dateTime;
+    static_assert(sizeof(dateTime) == sizeof(fileTime));
+    memcpySpan(asMutableByteSpan(dateTime), asByteSpan(fileTime));
+
+    return (dateTime.QuadPart - epochBias) / hundredsOfNanosecondsPerSecond;
+}
+
+Int128 currentTimeInNanoseconds()
+{
+    FILETIME fileTime;
+    GetSystemTimePreciseAsFileTime(&fileTime);
+
+    ULARGE_INTEGER dateTime;
+    static_assert(sizeof(dateTime) == sizeof(fileTime));
+    memcpySpan(asMutableByteSpan(dateTime), asByteSpan(fileTime));
+
+    return static_cast<Int128>(dateTime.QuadPart - epochBias) * 100;
+}
+
+// QueryPerformanceCounter is the canonical Windows monotonic clock. The
+// frequency is fixed at boot and QueryPerformanceFrequency never fails on
+// XP+ per MSDN, so the reciprocal is computed once (WTF builds with
+// thread-safe local statics; only bmalloc/JSC opt out). This backs
+// MonotonicTime/ContinuousTime/ContinuousApproximateTime::now() below so
+// their Windows paths have no mutable static state and are monotonic by
+// construction instead of wall-clock-clamped.
+static inline double qpcSeconds()
+{
+    static const double secondsPerTick = [] {
+        LARGE_INTEGER freq;
+        QueryPerformanceFrequency(&freq);
+        return 1.0 / static_cast<double>(freq.QuadPart);
+    }();
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return static_cast<double>(now.QuadPart) * secondsPerTick;
+}
+
+#else // !USE(BUN_JSC_ADDITIONS)
+
 static constexpr double hundredsOfNanosecondsPerMillisecond = 10000;
 
 static double lowResUTCTime()
@@ -197,6 +259,8 @@ Int128 currentTimeInNanoseconds()
     return static_cast<Int128>(currentTime() * 1'000'000'000);
 }
 
+#endif // !USE(BUN_JSC_ADDITIONS)
+
 #elif OS(HAIKU)
 
 Int128 currentTimeInNanoseconds()
@@ -309,6 +373,8 @@ MonotonicTime MonotonicTime::now()
     return fromRawSeconds(static_cast<double>(ts.tv_sec) + ts.tv_nsec / 1.0e9);
 #elif OS(HAIKU)
     return fromRawSeconds(static_cast<double>(system_time_nsecs() / 1.0e9));
+#elif OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+    return fromRawSeconds(qpcSeconds());
 #else
     static double lastTime = 0;
     double currentTimeNow = currentTime();
@@ -348,6 +414,8 @@ ContinuousTime ContinuousTime::now()
     struct timespec ts { };
     clock_gettime(CLOCK_BOOTTIME, &ts);
     return fromRawSeconds(static_cast<double>(ts.tv_sec) + ts.tv_nsec / 1.0e9);
+#elif OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+    return fromRawSeconds(qpcSeconds());
 #else
     static double lastTime = 0;
     double currentTimeNow = currentTime();
@@ -366,6 +434,8 @@ ContinuousApproximateTime ContinuousApproximateTime::now()
     struct timespec ts { };
     clock_gettime(CLOCK_BOOTTIME, &ts);
     return fromRawSeconds(static_cast<double>(ts.tv_sec) + ts.tv_nsec / 1.0e9);
+#elif OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+    return fromRawSeconds(qpcSeconds());
 #else
     static double lastTime = 0;
     double currentTimeNow = currentTime();
