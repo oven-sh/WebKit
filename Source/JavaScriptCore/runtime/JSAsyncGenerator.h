@@ -209,4 +209,6 @@ private:
     void finishCreation(VM&);
 };
 
+JSValue asyncGeneratorNext(JSGlobalObject*, JSAsyncGenerator*, JSValue argument, MicrotaskCallCache*);
+
 } // namespace JSC

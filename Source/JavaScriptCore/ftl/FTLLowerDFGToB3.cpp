@@ -105,6 +105,7 @@
 #include "JSWrapForValidIterator.h"
 #include "LLIntThunks.h"
 #include "MegamorphicCache.h"
+#include "MicrotaskCall.h"
 #include "OperandsInlines.h"
 #include "PCToCodeOriginMap.h"
 #include "ProbeContext.h"
@@ -19802,7 +19803,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         vmCall(Void, operationEnqueueAsyncGeneratorDriver, weakPointer(globalObject),
-            lowCell(m_node->child1()), lowCell(m_node->child2()));
+            lowCell(m_node->child1()), lowCell(m_node->child2()), m_out.constIntPtr(&vm().syncResumeCallCache()));
     }
 
     void compileStringReplace()
@@ -21576,6 +21577,29 @@ IGNORE_CLANG_WARNINGS_END
 
                 break;
             }
+            case 8: {
+                LValue loadedValue = m_out.load64(pointer);
+
+                if (data.isLittleEndian == TriState::False)
+                    loadedValue = byteSwap64(loadedValue);
+                else if (data.isLittleEndian == TriState::Indeterminate) {
+                    auto emitLittleEndianCode = [&] {
+                        return loadedValue;
+                    };
+                    auto emitBigEndianCode = [&] {
+                        return byteSwap64(loadedValue);
+                    };
+
+                    loadedValue = emitCodeBasedOnEndiannessBranch(isLittleEndian, emitLittleEndianCode, emitBigEndianCode);
+                }
+
+                JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+                if (data.isSigned)
+                    setJSValue(vmCall(Int64, operationInt64ToBigInt, weakPointer(globalObject), loadedValue));
+                else
+                    setJSValue(vmCall(Int64, operationUInt64ToBigInt, weakPointer(globalObject), loadedValue));
+                break;
+            }
             default:
                 RELEASE_ASSERT_NOT_REACHED();
             }
@@ -21696,6 +21720,9 @@ IGNORE_CLANG_WARNINGS_END
             break;
         case Int52RepUse:
             valueToStore = lowStrictInt52(valueEdge);
+            break;
+        case HeapBigIntUse:
+            valueToStore = lowHeapBigInt(valueEdge);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -21830,6 +21857,29 @@ IGNORE_CLANG_WARNINGS_END
                 };
                 auto emitBigEndianCode = [&] () -> LValue {
                     m_out.store32(byteSwap32(valueToStore), pointer);
+                    return nullptr;
+                };
+
+                if (data.isLittleEndian == TriState::False)
+                    emitBigEndianCode();
+                else if (data.isLittleEndian == TriState::True)
+                    emitLittleEndianCode();
+                else
+                    emitCodeBasedOnEndiannessBranch(isLittleEndian, emitLittleEndianCode, emitBigEndianCode);
+
+                break;
+            }
+            case 8: {
+                RELEASE_ASSERT(valueEdge.useKind() == HeapBigIntUse);
+
+                LValue int64Value = toBigInt64(valueToStore);
+
+                auto emitLittleEndianCode = [&] () -> LValue {
+                    m_out.store64(int64Value, pointer);
+                    return nullptr;
+                };
+                auto emitBigEndianCode = [&] () -> LValue {
+                    m_out.store64(byteSwap64(int64Value), pointer);
                     return nullptr;
                 };
 
@@ -24842,6 +24892,25 @@ IGNORE_CLANG_WARNINGS_END
         LValue result = lowCell(edge, mode);
         speculateHeapBigInt(edge, result);
         return result;
+    }
+
+    LValue toBigInt64(LValue bigInt)
+    {
+        LBasicBlock nonZeroLength = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LValue length = m_out.load32NonNegative(bigInt, m_heaps.JSBigInt_length);
+        ValueFromBlock zeroValue = m_out.anchor(m_out.int64Zero);
+        m_out.branch(m_out.isZero32(length), unsure(continuation), unsure(nonZeroLength));
+
+        LBasicBlock lastNext = m_out.appendTo(nonZeroLength, continuation);
+        LValue digit = m_out.load64(bigInt, m_heaps.JSBigInt_data);
+        LValue isNegative = m_out.testNonZero32(m_out.load8ZeroExt32(bigInt, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(TypeInfoPerCellBit));
+        ValueFromBlock nonZeroValue = m_out.anchor(m_out.select(isNegative, m_out.neg(digit), digit));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(Int64, zeroValue, nonZeroValue);
     }
 
 #if USE(BIGINT32)

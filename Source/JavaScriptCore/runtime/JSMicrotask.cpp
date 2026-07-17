@@ -307,7 +307,7 @@ static void asyncFromSyncIteratorContinueOrDone(JSGlobalObject* globalObject, VM
     }
     case JSPromise::Status::Rejected: {
         JSValue syncIterator = contextObject->getDirect(vm, vm.propertyNames->builtinNames().syncIteratorPrivateName());
-        if (syncIterator.isObject()) {
+        if (!done && syncIterator.isObject()) {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             JSValue returnMethod = asObject(syncIterator)->get(globalObject, vm.propertyNames->returnKeyword);
             if (!catchScope.exception() && returnMethod.isCallable())
@@ -617,7 +617,7 @@ void asyncGeneratorResume(JSGlobalObject* globalObject, JSAsyncGenerator* genera
     asyncGeneratorUnwrapYieldResumption(globalObject, generator, generator->resumeValue(), generator->resumeMode(), microtaskCallCache);
 }
 
-void enqueueAsyncGeneratorDriver(JSGlobalObject* globalObject, JSAsyncGenerator* iterator, JSObject* driver)
+void enqueueAsyncGeneratorDriver(JSGlobalObject* globalObject, JSAsyncGenerator* iterator, JSObject* driver, MicrotaskCallCache* microtaskCallCache)
 {
     VM& vm = globalObject->vm();
 
@@ -637,7 +637,19 @@ void enqueueAsyncGeneratorDriver(JSGlobalObject* globalObject, JSAsyncGenerator*
 
     // https://tc39.es/ecma262/#sec-asyncgeneratorenqueue step 6: a non-busy generator resumes immediately.
     if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Init) || JSAsyncGenerator::isSuspendedYieldState(state))
-        asyncGeneratorResume(globalObject, iterator);
+        asyncGeneratorResume(globalObject, iterator, microtaskCallCache);
+}
+
+JSValue asyncIteratorNextWithDriver(JSGlobalObject* globalObject, JSObject* iterator, JSObject* driver, MicrotaskCallCache* microtaskCallCache)
+{
+    VM& vm = globalObject->vm();
+    auto* generator = uncheckedDowncast<JSAsyncGenerator>(iterator);
+
+    if (globalObject->promiseSpeciesWatchpointSet().state() != IsWatched) [[unlikely]]
+        return asyncGeneratorNext(globalObject, generator, jsUndefined(), microtaskCallCache);
+
+    enqueueAsyncGeneratorDriver(globalObject, generator, driver, microtaskCallCache);
+    return vm.fastAsyncGeneratorSentinel();
 }
 
 // https://tc39.es/ecma262/#sec-asyncgeneratoryield

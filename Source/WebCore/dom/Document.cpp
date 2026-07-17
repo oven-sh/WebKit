@@ -4169,10 +4169,21 @@ bool Document::isFullyActive() const
     if (!frame || frame->document() != this)
         return false;
 
-    RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent());
-    if (!parentFrame)
-        return true;
-    return parentFrame->document() && protect(parentFrame->document())->isFullyActive();
+    // Walk the ancestor chain: the document is fully active only if it reaches the main
+    // frame. A RemoteFrame ancestor lives in another process, but if it became parentless
+    // without being the main frame, its iframe was removed in the parent process and the
+    // chain was severed. (The local chain may briefly lag that removal until this process
+    // receives the IPC; we treat it as up to date.)
+    for (RefPtr ancestor = frame->tree().parent(); ancestor; ancestor = ancestor->tree().parent()) {
+        if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor.get())) {
+            if (!localAncestor->document() || localAncestor->document()->frame() != localAncestor)
+                return false;
+        }
+
+        if (!ancestor->tree().parent())
+            return ancestor->isMainFrame();
+    }
+    return frame->isMainFrame();
 }
 
 void Document::detachParser()
@@ -7621,11 +7632,6 @@ void Document::setBackForwardCacheState(BackForwardCacheState state)
         exitPointerLock();
 #endif
 
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-        if (RefPtr immersive = immersiveIfExists())
-            immersive->clearForBackForwardCache();
-#endif
-
         styleScope().clearResolver();
         m_styleRecalcTimer.stop();
 
@@ -7724,6 +7730,13 @@ void Document::resume(ReasonForSuspension reason)
 
     if (settings().serviceWorkersEnabled() && reason == ReasonForSuspension::BackForwardCache)
         setServiceWorkerConnection(&ServiceWorkerProvider::singleton().serviceWorkerConnection());
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    if (reason == ReasonForSuspension::BackForwardCache) {
+        if (RefPtr immersive = immersiveIfExists())
+            immersive->didResumeFromBackForwardCache();
+    }
+#endif
 }
 
 void Document::registerForDocumentSuspensionCallbacks(Element& element)

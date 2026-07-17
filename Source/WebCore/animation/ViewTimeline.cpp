@@ -33,6 +33,7 @@
 #include "CSSValuePair.h"
 #include "Document.h"
 #include "Element.h"
+#include "FloatQuad.h"
 #include "LegacyRenderSVGModelObject.h"
 #include "RenderBlock.h"
 #include "RenderBoxModelObject.h"
@@ -222,6 +223,8 @@ StickinessAdjustmentData StickinessAdjustmentData::computeStickinessAdjustmentDa
         float subjectPositionInScroller = stickyBoxStuckPosition + subjectOffset - stickyBoxStaticPosition;
         if (subjectPositionInScroller > scrollContainerSize)
             return StickinessLocation::BeforeEntry;
+        if (subjectPositionInScroller < 0 && subjectPositionInScroller + subjectSize > scrollContainerSize)
+            return StickinessLocation::WhileCovering;
         if (subjectPositionInScroller + subjectSize > scrollContainerSize)
             return StickinessLocation::DuringEntry;
         if (subjectPositionInScroller + subjectSize < 0)
@@ -256,9 +259,9 @@ StickinessAdjustmentData StickinessAdjustmentData::computeStickinessAdjustmentDa
 float StickinessAdjustmentData::entryDistanceAdjustment() const
 {
     float entryDistanceAdjustment = 0;
-    if (topOrLeftAdjustmentLocation == StickinessLocation::DuringEntry)
+    if (topOrLeftAdjustmentLocation == StickinessLocation::DuringEntry || topOrLeftAdjustmentLocation == StickinessLocation::WhileCovering)
         entryDistanceAdjustment += stickyTopOrLeftAdjustment;
-    if (bottomOrRightAdjustmentLocation == StickinessLocation::DuringEntry)
+    if (bottomOrRightAdjustmentLocation == StickinessLocation::DuringEntry || bottomOrRightAdjustmentLocation == StickinessLocation::WhileCovering)
         entryDistanceAdjustment -= stickyBottomOrRightAdjustment;
     return entryDistanceAdjustment;
 }
@@ -266,9 +269,9 @@ float StickinessAdjustmentData::entryDistanceAdjustment() const
 float StickinessAdjustmentData::exitDistanceAdjustment() const
 {
     float exitDistanceAdjustment = 0;
-    if (topOrLeftAdjustmentLocation == StickinessLocation::DuringExit)
+    if (topOrLeftAdjustmentLocation == StickinessLocation::DuringExit || topOrLeftAdjustmentLocation == StickinessLocation::WhileCovering)
         exitDistanceAdjustment += stickyTopOrLeftAdjustment;
-    if (bottomOrRightAdjustmentLocation == StickinessLocation::DuringExit)
+    if (bottomOrRightAdjustmentLocation == StickinessLocation::DuringExit || bottomOrRightAdjustmentLocation == StickinessLocation::WhileCovering)
         exitDistanceAdjustment -= stickyBottomOrRightAdjustment;
     return exitDistanceAdjustment;
 }
@@ -335,12 +338,19 @@ void ViewTimeline::cacheCurrentTime()
         subjectOffset -= scrollDirection.isVertical ? scrollerPaddingBoxOrigin.y() : scrollerPaddingBoxOrigin.x();
 
         auto subjectBounds = [&] -> FloatSize {
+            // For an SVG subject, map its local box through the SVG transform chain so the size stays
+            // consistent with the (already transform-aware) offset, e.g. a rotated <foreignObject>.
+            auto svgLocalBounds = [&]() -> std::optional<FloatRect> {
+                if (auto* subjectRenderSVGModelObject = dynamicDowncast<RenderSVGModelObject>(subjectRenderer.get()))
+                    return subjectRenderSVGModelObject->borderBoxRectEquivalent();
+                if (subjectRenderer->isRenderOrLegacyRenderSVGForeignObject() || is<LegacyRenderSVGModelObject>(subjectRenderer.get()))
+                    return subjectRenderer->objectBoundingBox();
+                return std::nullopt;
+            }();
+            if (svgLocalBounds)
+                return subjectRenderer->localToContainerQuad(FloatQuad { *svgLocalBounds }, sourceRenderer.get(), options).boundingBox().size();
             if (CheckedPtr subjectRenderBoxModelObject = dynamicDowncast<RenderBoxModelObject>(subjectRenderer.get()))
                 return subjectRenderBoxModelObject->borderBoundingBox().size();
-            if (auto* subjectRenderSVGModelObject = dynamicDowncast<RenderSVGModelObject>(subjectRenderer.get()))
-                return subjectRenderSVGModelObject->borderBoxRectEquivalent().size();
-            if (is<LegacyRenderSVGModelObject>(subjectRenderer.get()))
-                return subjectRenderer->objectBoundingBox().size();
             return { };
         }();
 
@@ -672,6 +682,7 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, const StickinessAdjustmentData:
     case StickinessAdjustmentData::StickinessLocation::BeforeEntry: ts << "BeforeEntry"_s; break;
     case StickinessAdjustmentData::StickinessLocation::DuringEntry: ts << "DuringEntry"_s; break;
     case StickinessAdjustmentData::StickinessLocation::WhileContained: ts << "WhileContained"_s; break;
+    case StickinessAdjustmentData::StickinessLocation::WhileCovering: ts << "WhileCovering"_s; break;
     case StickinessAdjustmentData::StickinessLocation::DuringExit: ts << "DuringExit"_s; break;
     case StickinessAdjustmentData::StickinessLocation::AfterExit: ts << "AfterExit"_s; break;
     }
