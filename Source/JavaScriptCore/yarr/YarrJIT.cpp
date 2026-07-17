@@ -216,7 +216,7 @@ public:
     void dump(PrintStream&) const;
 
 private:
-    std::tuple<int32_t, unsigned, unsigned> findBestCharacterSequence(const SubjectSampler&, unsigned numberOfCandidatesLimit) const;
+    std::tuple<int32_t, unsigned, unsigned> findBestCharacterSequence(const SubjectSampler&) const;
 
     Vector<BoyerMooreBitmap> m_characters;
     CharSize m_charSize;
@@ -224,33 +224,53 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BoyerMooreInfo);
 
-std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequence(const SubjectSampler& sampler, unsigned numberOfCandidatesLimit) const
+std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequence(const SubjectSampler& sampler) const
 {
+    // The search loop tests one character against the union of the candidate sets in [begin, end)
+    // and shifts by the length of that range, so a longer range shifts further while its union
+    // matches more often. Score every sub-range: restricting the search to maximal runs would miss
+    // a short selective range whose neighbours pollute the union, e.g. the distinct leading
+    // characters of /zalpha|qbravo|xcharlie/, whose union with the following positions matches
+    // almost everything.
+    // A position matching many characters is not worth testing: the sampled frequency underestimates
+    // how often such a set hits when the pattern itself matches often, and the search loop then costs
+    // more than the match attempts it avoids.
+    constexpr unsigned maxCandidatesPerCharacter = 16;
+    static_assert(maxCandidatesPerCharacter < BoyerMooreBitmap::mapSize);
     int32_t biggestPoint = INT32_MIN;
     unsigned beginResult = 0;
     unsigned endResult = 0;
-    for (unsigned index = 0; index < length();) {
-        while (index < length() && m_characters[index].count() > numberOfCandidatesLimit)
-            ++index;
-        if (index == length())
-            break;
-        unsigned begin = index;
+    for (unsigned begin = 0; begin < length(); ++begin) {
         BoyerMooreBitmap::Map map { };
-        for (; index < length() && m_characters[index].count() <= numberOfCandidatesLimit; ++index)
-            map.merge(m_characters[index].map());
-
         int32_t frequency = 0;
-        map.forEachSetBit([&](unsigned index) {
-            frequency += sampler.frequency(index);
-        });
+        for (unsigned end = begin + 1; end <= length(); ++end) {
+            auto& candidates = m_characters[end - 1];
+            if (candidates.count() > maxCandidatesPerCharacter)
+                break;
+            candidates.map().forEachSetBit([&](unsigned character) {
+                if (!map.testAndSet(character))
+                    frequency += sampler.frequency(character);
+            });
 
-        // Cutoff at 50%. If we could encounter the character more than 50%, then BM search would be useless probably.
-        int32_t matchingProbability = (BoyerMooreBitmap::mapSize / 2) - frequency;
-        int32_t point = (index - begin) * matchingProbability;
-        if (point > biggestPoint) {
-            biggestPoint = point;
-            beginResult = begin;
-            endResult = index;
+            // An empty union is not searchable -- the caller needs at least one candidate character to
+            // test against. Its frequency of zero would otherwise score higher than any real range and
+            // suppress the search entirely. This happens in 8-bit compiles of a class holding only
+            // characters above Latin1, where no alternative can match at all.
+            if (map.isEmpty())
+                continue;
+
+            // Cutoff at 50%. If we could encounter the character more than 50%, then BM search would be useless probably.
+            int32_t matchingProbability = (BoyerMooreBitmap::mapSize / 2) - frequency;
+            int32_t point = static_cast<int32_t>(end - begin) * matchingProbability;
+            if (point > biggestPoint) {
+                biggestPoint = point;
+                beginResult = begin;
+                endResult = end;
+            }
+            // Extending the range only adds characters, so the probability never recovers and a
+            // longer stride only scales an already-negative score further down.
+            if (matchingProbability < 0)
+                break;
         }
     }
     return std::tuple { biggestPoint, beginResult, endResult };
@@ -258,23 +278,7 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
 
 std::optional<std::tuple<unsigned, unsigned>> BoyerMooreInfo::findWorthwhileCharacterSequenceForLookahead(const SubjectSampler& sampler) const
 {
-    // If candiates-per-character becomes larger, then sequence is not profitable since this sequence will match against
-    // too many characters. But if we limit candiates-per-character smaller, it is possible that we only find very short
-    // character sequence. We start with low limit, then enlarging the limit to find more and more profitable
-    // character sequence.
-    int32_t biggestPoint = INT32_MIN;
-    unsigned begin = 0;
-    unsigned end = 0;
-    constexpr unsigned maxCandidatesPerCharacter = 32;
-    static_assert(maxCandidatesPerCharacter < BoyerMooreBitmap::mapSize);
-    for (unsigned limit = 4; limit < maxCandidatesPerCharacter; limit *= 2) {
-        auto [newPoint, newBegin, newEnd] = findBestCharacterSequence(sampler, limit);
-        if (newPoint > biggestPoint) {
-            biggestPoint = newPoint;
-            begin = newBegin;
-            end = newEnd;
-        }
-    }
+    auto [biggestPoint, begin, end] = findBestCharacterSequence(sampler);
     if (biggestPoint < 0)
         return std::nullopt;
     return std::tuple { begin, end };
