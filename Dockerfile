@@ -6,6 +6,8 @@ ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
 ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
+ARG USE_MIMALLOC="OFF"
+ARG USE_EXTERNAL_MIMALLOC="OFF"
 
 # Use different base images for ARM64 vs x86_64
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
@@ -21,6 +23,8 @@ ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 ARG TARGETARCH
 ARG ENABLE_SANITIZERS
+ARG USE_MIMALLOC
+ARG USE_EXTERNAL_MIMALLOC
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -197,8 +201,23 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # Bun defines; null in ICU's own tools).
 #
 # After the first `make` (which produces bin/icupkg), filter data/in/icudt75l.dat
-# to drop converters/translit/rbnf/stringprep/confusables/unames — Bun has zero
+# to drop converters/translit/stringprep/confusables/unames — Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers — then rebuild.
+#
+# Most of rbnf/ goes too, but NOT all of it. Nothing in bun calls the
+# RuleBasedNumberFormat API, yet ICU reaches rbnf/ on its own: numberingSystems.res
+# declares 19 algorithmic numbering systems whose rules live there, and
+# SimpleDateFormat applies them via the number overrides CLDR attaches to calendar
+# patterns. ja + the japanese calendar forces "y=jpanyear" (smpdtfmt.cpp hardcodes
+# it), so dropping rbnf/ja.res makes
+# Intl.DateTimeFormat("ja", { calendar: "japanese", year: "numeric" }) throw
+# U_MISSING_RESOURCE_ERROR, and zh + chinese carries "d=hanidays".
+#
+# Only the locales those rulesets name are reachable: root (for the bare
+# "%ruleset" descs), ja, zh, zh_Hant. Keeping those five items costs 35 KB raw
+# (~8 KB after per-item zstd) instead of the 621 KB the whole tree costs. The
+# guard below re-derives that list from the data and fails the build if a CLDR
+# bump ever adds a locale we are not keeping.
 #
 # Finally, repack the filtered .dat with per-item zstd (icu/compress-data.ts).
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
@@ -216,7 +235,10 @@ RUN --mount=type=tmpfs,target=/icu \
     cd source && \
     ./configure --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     make -j$(nproc) && \
-    bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > data/in/rm.lst && \
+    mkdir -p /tmp/ns && bin/icupkg -x numberingSystems.res data/in/icudt75l.dat -d /tmp/ns && \
+    stale=$(strings -el /tmp/ns/numberingSystems.res | sed -n 's|^\([A-Za-z_][A-Za-z_]*\)/.*|\1|p' | sort -u | grep -vxE 'ja|zh|zh_Hant' | tr '\n' ' ') && \
+    { [ -z "$stale" ] || { echo "rbnf keep-list is stale, also reachable: $stale" >&2; exit 1; }; } && \
+    bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
@@ -231,7 +253,11 @@ ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
+# clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
+# resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=haswell)
+# pick up gcc's incompatible copy. clang ships its own; drop it for this step.
 RUN --mount=type=tmpfs,target=/webkitbuild \
+    unset C_INCLUDE_PATH && \
     export CFLAGS="$CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
     export CXXFLAGS="$CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export ENABLE_ASSERTS="AUTO" && \
@@ -262,6 +288,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DICU_ROOT=/icu \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
+    -DUSE_MIMALLOC="$USE_MIMALLOC" \
+    -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \

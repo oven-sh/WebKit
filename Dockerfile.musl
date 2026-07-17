@@ -4,6 +4,8 @@ ARG CPU=native
 ARG LTO_FLAG="-flto=full -fwhole-program-vtables -fforce-emit-vtables "
 ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
+ARG USE_MIMALLOC="OFF"
+ARG USE_EXTERNAL_MIMALLOC="OFF"
 
 FROM alpine:3.23 as base
 
@@ -57,8 +59,12 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 # Bun defines; null in ICU's own tools).
 #
 # After the first `make` (which produces bin/icupkg), filter data/in/icudt75l.dat
-# to drop converters/translit/rbnf/stringprep/confusables/unames — Bun has zero
+# to drop converters/translit/stringprep/confusables/unames — Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers — then rebuild.
+#
+# Most of rbnf/ goes too, but root/ja/zh/zh_Hant stay: ICU reaches those on its own
+# through the algorithmic numbering systems in numberingSystems.res (see the note and
+# the staleness guard in ./Dockerfile).
 #
 # Finally, repack the filtered .dat with per-item zstd (icu/compress-data.ts).
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
@@ -76,7 +82,7 @@ RUN --mount=type=tmpfs,target=/icu \
     cd source && \
     ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \
     make -j$(nproc) && \
-    bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' > data/in/rm.lst && \
+    bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
@@ -91,6 +97,8 @@ ARG CPU
 ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
+ARG USE_MIMALLOC
+ARG USE_EXTERNAL_MIMALLOC
 
 RUN apk add --no-cache cpio curl file gnupg ninja ruby ruby-getoptlong unzip rsync perl python3 openssl-dev openssl linux-headers
 
@@ -116,6 +124,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DUSE_THIN_ARCHIVES=OFF \
     -DUSE_BUN_JSC_ADDITIONS=ON \
     -DUSE_BUN_EVENT_LOOP=ON \
+    -DUSE_MIMALLOC="$USE_MIMALLOC" \
+    -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -DENABLE_FTL_JIT=ON \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \

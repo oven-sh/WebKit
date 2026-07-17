@@ -102,6 +102,7 @@
 #include "WeakMapImplInlines.h"
 #include "WeakSetInlines.h"
 #include <algorithm>
+#include <bmalloc/bmalloc.h>
 #include <wtf/AvailableMemory.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/ListDump.h>
@@ -2647,6 +2648,13 @@ void Heap::didFinishCollection()
 
     for (auto* observer : m_observers)
         observer->didGarbageCollect(scope);
+
+#if USE(MIMALLOC)
+    // Process retired theap pages and queue arena purges; the consumer's
+    // mimalloc scavenger thread does the actual madvise off the GC thread.
+    if (scope == CollectionScope::Full)
+        bmalloc::api::scavengeThisThread(/* force */ false);
+#endif
 }
 
 void Heap::resumeCompilerThreads()
