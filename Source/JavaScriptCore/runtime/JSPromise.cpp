@@ -44,7 +44,7 @@
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
-#include "InternalFieldTuple.h"
+#include "AsyncContextSwapScope.h"
 #endif
 
 namespace JSC {
@@ -345,18 +345,8 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
     bool rejectedCallable = onRejected.isCallable();
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Capture async context for promise reaction
-    // Wrap in InternalFieldTuple: [userContext (undefined), asyncContext]
-    JSValue context = jsUndefined();
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
-        JSValue asyncContext = asyncContextData->getInternalField(0);
-        if (!asyncContext.isUndefined()) {
-            auto* tuple = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
-            tuple->putInternalField(vm, 0, jsUndefined()); // userContext
-            tuple->putInternalField(vm, 1, asyncContext);  // asyncContext
-            context = tuple;
-        }
-    }
+    // Capture async context for promise reaction as [userContext (undefined), asyncContext].
+    JSValue context = AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, jsUndefined());
 #endif
 
     switch (status()) {
@@ -436,18 +426,15 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
     bool fulfilledCallable = onFulfilled.isCallable();
     bool rejectedCallable = onRejected.isCallable();
 
-    // Wrap userContext and asyncContext in InternalFieldTuple: [userContext, asyncContext]
+    // Wrap userContext and asyncContext in InternalFieldTuple: [userContext, asyncContext].
+    // Unlike wrapWithCurrent, this wraps whenever userContext is defined even if
+    // asyncContext is not: callers may pass an InternalFieldTuple as userContext
+    // (e.g. ReadableStream async iterator), which PromiseReactionJob would otherwise
+    // unwrap as if it were [_, asyncContext].
     JSValue context = userContext;
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
-        JSValue asyncContext = asyncContextData->getInternalField(0);
-        // Always create a tuple if there's a user context or async context
-        if (!userContext.isUndefinedOrNull() || !asyncContext.isUndefined()) {
-            auto* tuple = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
-            tuple->putInternalField(vm, 0, userContext);   // userContext
-            tuple->putInternalField(vm, 1, asyncContext);  // asyncContext
-            context = tuple;
-        }
-    }
+    JSValue asyncContext = AsyncContextSwapScope::current(globalObject);
+    if (!userContext.isUndefinedOrNull() || !asyncContext.isUndefined())
+        context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), userContext, asyncContext);
 
     switch (status()) {
     case JSPromise::Status::Pending: {
@@ -689,11 +676,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         auto* promise = uncheckedDowncast<JSPromise>(resolutionObject);
         if (promise->isThenFastAndNonObservable()) {
 #if USE(BUN_JSC_ADDITIONS)
-            // Capture async context for thenable resolution
-            JSValue asyncContext = jsUndefined();
-            if (auto* asyncContextData = globalObject->m_asyncContextData.get())
-                asyncContext = asyncContextData->getInternalField(0);
-            return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, asyncContext);
+            return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, AsyncContextSwapScope::current(globalObject));
 #else
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, jsUndefined());
 #endif
@@ -721,11 +704,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         return fulfillPromise(vm, resolutionObject);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Capture async context for thenable resolution
-    JSValue asyncContext = jsUndefined();
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get())
-        asyncContext = asyncContextData->getInternalField(0);
-    return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, asyncContext);
+    return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, AsyncContextSwapScope::current(globalObject));
 #else
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this);
 #endif
@@ -989,14 +968,7 @@ void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* global
     // Capture Bun's async context at the point of await and wrap it with the generator context.
     // This allows AsyncFunctionResume and related microtasks to restore the async context when
     // resuming the async function.
-    JSValue wrappedContext = context;
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
-        JSValue asyncContext = asyncContextData->getInternalField(0);
-        if (!asyncContext.isUndefined()) {
-            auto* tuple = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), context, asyncContext);
-            wrappedContext = tuple;
-        }
-    }
+    JSValue wrappedContext = AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, context);
 #define BUN_CONTEXT wrappedContext
 #else
 #define BUN_CONTEXT context

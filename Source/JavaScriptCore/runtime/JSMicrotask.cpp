@@ -65,7 +65,7 @@
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
-#include "InternalFieldTuple.h"
+#include "AsyncContextSwapScope.h"
 extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 #endif
 #if ENABLE(WEBASSEMBLY)
@@ -488,12 +488,7 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
     // resolveWithInternalMicrotask keeps resolvePromise's spec thenable check,
     // so the fast path stays behaviorally identical to a real Promise settlement.
 #if USE(BUN_JSC_ADDITIONS)
-    JSValue wrappedTarget = target;
-    if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
-        JSValue asyncContext = asyncContextData->getInternalField(0);
-        if (!asyncContext.isUndefined())
-            wrappedTarget = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), target, asyncContext);
-    }
+    JSValue wrappedTarget = AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, target);
 #else
     JSValue wrappedTarget = target;
 #endif
@@ -631,13 +626,7 @@ void enqueueAsyncGeneratorDriver(JSGlobalObject* globalObject, JSAsyncGenerator*
     if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed)) {
         auto* iteratorResult = createIteratorResultObject(globalObject, jsUndefined(), /* done */ true);
 #if USE(BUN_JSC_ADDITIONS)
-        JSValue wrappedDriver = driver;
-        if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
-            JSValue asyncContext = asyncContextData->getInternalField(0);
-            if (!asyncContext.isUndefined())
-                wrappedDriver = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), driver, asyncContext);
-        }
-        JSPromise::resolveWithInternalMicrotask(globalObject, vm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, wrappedDriver);
+        JSPromise::resolveWithInternalMicrotask(globalObject, vm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, driver));
 #else
         JSPromise::resolveWithInternalMicrotask(globalObject, vm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, driver);
 #endif
@@ -1720,34 +1709,16 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     case InternalMicrotask::PromiseResolveThenableJobFast: {
         auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
         auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
-#if USE(BUN_JSC_ADDITIONS)
-        JSValue asyncContext = arguments[2];
-#endif
 
         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
             RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
 
 #if USE(BUN_JSC_ADDITIONS)
-        // Set up async context for promise resolution
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (!asyncContext.isUndefined()) {
-            asyncContextData = globalObject->m_asyncContextData.get();
-            if (asyncContextData) {
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(vm, 0, asyncContext);
-            }
-        }
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
 #endif
 
         scope.release();
         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
-
-#if USE(BUN_JSC_ADDITIONS)
-        // Restore async context
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
         return;
     }
 
@@ -1768,29 +1739,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         JSValue then = arguments[1];
         JSPromise* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[2]);
 #if USE(BUN_JSC_ADDITIONS)
-        JSValue asyncContext = arguments[3];
-
-        // Set up async context for thenable resolution
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (!asyncContext.isUndefined()) {
-            asyncContextData = globalObject->m_asyncContextData.get();
-            if (asyncContextData) {
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(vm, 0, asyncContext);
-            }
-        }
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
 #endif
 
         auto [resolve, reject] = promiseToResolve->createResolvingFunctions(vm, globalObject);
-        promiseResolveThenableJob(globalObject, promise, then, resolve, reject, microtaskCallCache);
-
-#if USE(BUN_JSC_ADDITIONS)
-        // Restore async context after calling thenable's then method
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
         scope.release();
+        promiseResolveThenableJob(globalObject, promise, then, resolve, reject, microtaskCallCache);
         return;
     }
 
@@ -1801,30 +1755,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         JSValue context = arguments[2];
 
 #if USE(BUN_JSC_ADDITIONS)
-        // Extract async context from the context tuple and set it up before calling thenable's then method
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(context)) {
-            JSValue asyncContext = tuple->getInternalField(1);
-            if (!asyncContext.isUndefined()) {
-                asyncContextData = globalObject->m_asyncContextData.get();
-                if (asyncContextData) {
-                    restoreAsyncContext = asyncContextData->getInternalField(0);
-                    asyncContextData->putInternalField(vm, 0, asyncContext);
-                }
-            }
-        }
+        // context may be an InternalFieldTuple [userContext, asyncContext]; the resolving
+        // functions keep the tuple as-is, so only peek at field 1 for the swap.
+        JSValue peek = context;
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(peek));
 #endif
 
         auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context);
-        promiseResolveThenableJob(globalObject, promise, then, resolve, reject, microtaskCallCache);
-
-#if USE(BUN_JSC_ADDITIONS)
-        // Restore async context after calling thenable's then method
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
         scope.release();
+        promiseResolveThenableJob(globalObject, promise, then, resolve, reject, microtaskCallCache);
         return;
     }
 
@@ -1885,34 +1824,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         JSValue promiseOrCapability = arguments[0];
         JSValue handler = arguments[1];
 #if USE(BUN_JSC_ADDITIONS)
-        // Extract userContext and asyncContext from arguments[3]
-        // If it's an InternalFieldTuple: [userContext, asyncContext]
-        // Otherwise: it's userContext directly (legacy behavior)
-        JSValue contextArg = arguments[3];
-        JSValue userContext = jsUndefined();
-        JSValue asyncContext = jsUndefined();
-
-        if (!contextArg.isEmpty() && contextArg.isCell()) {
-            if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-                userContext = tuple->getInternalField(0);
-                asyncContext = tuple->getInternalField(1);
-            } else {
-                userContext = contextArg;
-            }
-        } else if (!contextArg.isEmpty() && !contextArg.isUndefinedOrNull()) {
-            userContext = contextArg;
-        }
-
-        // Set up async context before calling handler
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (!asyncContext.isUndefined()) {
-            asyncContextData = globalObject->m_asyncContextData.get();
-            if (asyncContextData) {
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(vm, 0, asyncContext);
-            }
-        }
+        // arguments[3] is either an InternalFieldTuple [userContext, asyncContext]
+        // or userContext directly (legacy behavior). The scope stays active through
+        // resolvePromise/rejectPromise so thenables returned from the handler
+        // capture the correct async context, and restores on every return.
+        JSValue userContext = arguments[3];
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(userContext));
 #endif
 
         JSValue result;
@@ -1932,29 +1849,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
             if (catchScope.exception()) {
                 if (promiseOrCapability.isUndefinedOrNull()) {
-#if USE(BUN_JSC_ADDITIONS)
-                    if (asyncContextData)
-                        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
                     scope.release();
                     return;
                 }
                 error = catchScope.exception()->value();
                 if (!catchScope.clearExceptionExceptTermination()) [[unlikely]] {
-#if USE(BUN_JSC_ADDITIONS)
-                    if (asyncContextData)
-                        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
                     scope.release();
                     return;
                 }
             }
 
             if (promiseOrCapability.isUndefinedOrNull()) {
-#if USE(BUN_JSC_ADDITIONS)
-                if (asyncContextData)
-                    asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
                 scope.release();
                 return;
             }
@@ -1962,17 +1867,10 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             ASSERT(result || error);
         }
 
-        // Note: Keep async context active during resolvePromise/rejectPromise
-        // so that any thenables returned from the handler can capture the correct async context
-
         if (error) {
             if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
                 scope.release();
                 promise->rejectPromise(vm, error);
-#if USE(BUN_JSC_ADDITIONS)
-                if (asyncContextData)
-                    asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
                 return;
             }
 
@@ -1984,20 +1882,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             ASSERT(!arguments.hasOverflowed());
             scope.release();
             call(globalObject, reject, jsUndefined(), arguments, "reject is not a function"_s);
-#if USE(BUN_JSC_ADDITIONS)
-            if (asyncContextData)
-                asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
             return;
         }
 
         if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
             scope.release();
             promise->resolvePromise(promise->realm(), vm, result);
-#if USE(BUN_JSC_ADDITIONS)
-            if (asyncContextData)
-                asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
             return;
         }
 
@@ -2009,10 +1899,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         ASSERT(!arguments.hasOverflowed());
         scope.release();
         call(globalObject, resolve, jsUndefined(), arguments, "resolve is not a function"_s);
-#if USE(BUN_JSC_ADDITIONS)
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
         return;
     }
 
@@ -2028,52 +1914,23 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         JSValue contextArg = arguments[2];
 
 #if USE(BUN_JSC_ADDITIONS)
-        // Extract generator and async context from InternalFieldTuple if wrapped
-        JSAsyncFunctionGenerator* generator;
-        JSValue asyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            generator = uncheckedDowncast<JSAsyncFunctionGenerator>(tuple->getInternalField(0));
-            asyncContext = tuple->getInternalField(1);
-        } else {
-            generator = uncheckedDowncast<JSAsyncFunctionGenerator>(contextArg);
-            asyncContext = jsUndefined();
-        }
-
-        // Set up Bun's async context before resuming the async function
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (!asyncContext.isUndefined()) {
-            asyncContextData = globalObject->m_asyncContextData.get();
-            if (asyncContextData) {
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(vm, 0, asyncContext);
-            }
-        }
-#else
-        auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(contextArg);
+        // contextArg may be an InternalFieldTuple [generator, asyncContext].
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
 #endif
+        auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(contextArg);
         JSGlobalObject* generatorGlobalObject = generator->realm();
         JSGenerator::ResumeMode resumeMode = resumeModeForStatus(static_cast<JSPromise::Status>(payload));
 
         scope.release();
         asyncFunctionGeneratorBodyCall(generatorGlobalObject, vm, generator, resolution, resumeMode, microtaskCallCache);
-#if USE(BUN_JSC_ADDITIONS)
-        // Restore async context after the generator body ran (it stays active
-        // through reject/resolve inside asyncFunctionGeneratorBodyCall so
-        // thenables returned from the async function capture the right context).
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#endif
         return;
     }
 
     case InternalMicrotask::AsyncFromSyncIteratorContinue:
     case InternalMicrotask::AsyncFromSyncIteratorDone: {
 #if USE(BUN_JSC_ADDITIONS)
-        // Extract context from InternalFieldTuple if wrapped
         JSValue contextArg = arguments[2];
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg))
-            contextArg = tuple->getInternalField(0);
+        AsyncContextSwapScope::unwrapContextTuple(contextArg);
         auto* promise = uncheckedDowncast<JSPromise>(asObject(contextArg)->getDirect(vm, vm.propertyNames->builtinNames().promisePrivateName()));
         RELEASE_AND_RETURN(scope, asyncFromSyncIteratorContinueOrDone(promise->realm(), vm, promise, contextArg, arguments[1], static_cast<JSPromise::Status>(payload), task == InternalMicrotask::AsyncFromSyncIteratorDone, microtaskCallCache));
 #else
@@ -2083,145 +1940,57 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::AsyncGeneratorYieldAwaited: {
-#if USE(BUN_JSC_ADDITIONS)
-        // Extract generator and async context from InternalFieldTuple if wrapped
         JSValue contextArg = arguments[2];
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            contextArg = tuple->getInternalField(0);
-            JSValue asyncContext = tuple->getInternalField(1);
-            if (!asyncContext.isUndefined()) {
-                asyncContextData = globalObject->m_asyncContextData.get();
-                if (asyncContextData) {
-                    restoreAsyncContext = asyncContextData->getInternalField(0);
-                    asyncContextData->putInternalField(vm, 0, asyncContext);
-                }
-            }
-        }
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
+#endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
         asyncGeneratorYieldAwaited(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
         return;
-#else
-        auto* generator = uncheckedDowncast<JSAsyncGenerator>(arguments[2]);
-        RELEASE_AND_RETURN(scope, asyncGeneratorYieldAwaited(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache));
-#endif
     }
 
     case InternalMicrotask::AsyncGeneratorBodyCallNormal: {
-#if USE(BUN_JSC_ADDITIONS)
-        // Extract generator and async context from InternalFieldTuple if wrapped
         JSValue contextArg = arguments[2];
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            contextArg = tuple->getInternalField(0);
-            JSValue asyncContext = tuple->getInternalField(1);
-            if (!asyncContext.isUndefined()) {
-                asyncContextData = globalObject->m_asyncContextData.get();
-                if (asyncContextData) {
-                    restoreAsyncContext = asyncContextData->getInternalField(0);
-                    asyncContextData->putInternalField(vm, 0, asyncContext);
-                }
-            }
-        }
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
+#endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
         asyncGeneratorBodyCallNormal(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
         return;
-#else
-        auto* generator = uncheckedDowncast<JSAsyncGenerator>(arguments[2]);
-        RELEASE_AND_RETURN(scope, asyncGeneratorBodyCallNormal(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache));
-#endif
     }
 
     case InternalMicrotask::AsyncGeneratorBodyCallReturn: {
-#if USE(BUN_JSC_ADDITIONS)
-        // Extract generator and async context from InternalFieldTuple if wrapped
         JSValue contextArg = arguments[2];
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            contextArg = tuple->getInternalField(0);
-            JSValue asyncContext = tuple->getInternalField(1);
-            if (!asyncContext.isUndefined()) {
-                asyncContextData = globalObject->m_asyncContextData.get();
-                if (asyncContextData) {
-                    restoreAsyncContext = asyncContextData->getInternalField(0);
-                    asyncContextData->putInternalField(vm, 0, asyncContext);
-                }
-            }
-        }
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
+#endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
         asyncGeneratorBodyCallReturn(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
         return;
-#else
-        auto* generator = uncheckedDowncast<JSAsyncGenerator>(arguments[2]);
-        RELEASE_AND_RETURN(scope, asyncGeneratorBodyCallReturn(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache));
-#endif
     }
 
     case InternalMicrotask::AsyncGeneratorAwaitReturn: {
-#if USE(BUN_JSC_ADDITIONS)
-        // Extract generator and async context from InternalFieldTuple if wrapped
         JSValue contextArg = arguments[2];
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            contextArg = tuple->getInternalField(0);
-            JSValue asyncContext = tuple->getInternalField(1);
-            if (!asyncContext.isUndefined()) {
-                asyncContextData = globalObject->m_asyncContextData.get();
-                if (asyncContextData) {
-                    restoreAsyncContext = asyncContextData->getInternalField(0);
-                    asyncContextData->putInternalField(vm, 0, asyncContext);
-                }
-            }
-        }
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
+#endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
         asyncGeneratorAwaitReturnContinuation(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload));
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
         return;
-#else
-        auto* generator = uncheckedDowncast<JSAsyncGenerator>(arguments[2]);
-        RELEASE_AND_RETURN(scope, asyncGeneratorAwaitReturnContinuation(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload)));
-#endif
     }
 
     case InternalMicrotask::AsyncGeneratorDriverResume: {
-#if USE(BUN_JSC_ADDITIONS)
         JSValue contextArg = arguments[2];
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            contextArg = tuple->getInternalField(0);
-            JSValue asyncContext = tuple->getInternalField(1);
-            if (!asyncContext.isUndefined()) {
-                asyncContextData = globalObject->m_asyncContextData.get();
-                if (asyncContextData) {
-                    restoreAsyncContext = asyncContextData->getInternalField(0);
-                    asyncContextData->putInternalField(vm, 0, asyncContext);
-                }
-            }
-        }
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
+#endif
         scope.release();
         asyncGeneratorDriverResume(vm, contextArg, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
         return;
-#else
-        RELEASE_AND_RETURN(scope, asyncGeneratorDriverResume(vm, arguments[2], arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache));
-#endif
     }
 
     case InternalMicrotask::PromiseFinallyReactionJob: {
@@ -2231,56 +2000,18 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         // arguments[2] = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=onFinally)
         //                OR InternalFieldTuple: [context, asyncContext] when Bun async context is present
         // payload = Fulfilled/Rejected status
-#if USE(BUN_JSC_ADDITIONS)
-        // Extract context and async context from InternalFieldTuple if wrapped
         JSValue contextArg = arguments[2];
-        JSSlimPromiseReaction* context;
-        JSValue asyncContext = jsUndefined();
-
-        if (contextArg.isCell()) {
-            if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-                context = uncheckedDowncast<JSSlimPromiseReaction>(tuple->getInternalField(0));
-                asyncContext = tuple->getInternalField(1);
-            } else {
-                context = uncheckedDowncast<JSSlimPromiseReaction>(contextArg);
-            }
-        } else {
-            context = uncheckedDowncast<JSSlimPromiseReaction>(contextArg);
-        }
-
-        // Set up async context before calling onFinally
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (!asyncContext.isUndefined()) {
-            asyncContextData = globalObject->m_asyncContextData.get();
-            if (asyncContextData) {
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(vm, 0, asyncContext);
-            }
-        }
-
-        auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
-        scope.release();
-        promiseFinallyReactionJob(resultPromise->realm(), vm,
-            resultPromise,
-            arguments[1],
-            context,
-            static_cast<JSPromise::Status>(payload),
-            microtaskCallCache);
-
-        // Restore async context
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-#else
-        auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
-        scope.release();
-        promiseFinallyReactionJob(resultPromise->realm(), vm,
-            resultPromise,
-            arguments[1],
-            uncheckedDowncast<JSSlimPromiseReaction>(arguments[2]),
-            static_cast<JSPromise::Status>(payload),
-            microtaskCallCache);
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
 #endif
+        auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
+        scope.release();
+        promiseFinallyReactionJob(resultPromise->realm(), vm,
+            resultPromise,
+            arguments[1],
+            uncheckedDowncast<JSSlimPromiseReaction>(contextArg),
+            static_cast<JSPromise::Status>(payload),
+            microtaskCallCache);
         return;
     }
 
@@ -2315,17 +2046,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         if (callData.type == CallData::Type::None)
             return;
 
-        // Save and set async context
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        JSValue asyncContext = arguments[1];
-        if (!asyncContext.isEmpty() && !asyncContext.isUndefined()) {
-            asyncContextData = globalObject->m_asyncContextData.get();
-            if (asyncContextData) {
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(vm, 0, asyncContext);
-            }
-        }
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[1]);
 
         {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -2340,8 +2061,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                 callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache);
 
             // Restore async context before error reporting
-            if (asyncContextData)
-                asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+            asyncContextScope.restoreEarly();
 
             if (auto* exception = catchScope.exception()) {
                 catchScope.clearException();
@@ -2377,43 +2097,16 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::AsyncModuleExecutionResume: {
-#if USE(BUN_JSC_ADDITIONS)
         // resolveWithInternalMicrotaskForAsyncAwait wraps the module together
         // with Bun's async context in an InternalFieldTuple when an async
-        // context is active at await time. Unwrap it and restore the context
-        // across the resumption, mirroring InternalMicrotask::AsyncFunctionResume.
+        // context is active at await time.
         JSValue contextArg = arguments[2];
-        JSModuleRecord* module;
-        JSValue asyncContext;
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            module = uncheckedDowncast<JSModuleRecord>(tuple->getInternalField(0));
-            asyncContext = tuple->getInternalField(1);
-        } else {
-            module = uncheckedDowncast<JSModuleRecord>(contextArg);
-            asyncContext = jsUndefined();
-        }
-
-        InternalFieldTuple* asyncContextData = nullptr;
-        JSValue restoreAsyncContext;
-        if (!asyncContext.isUndefined()) {
-            asyncContextData = globalObject->m_asyncContextData.get();
-            if (asyncContextData) {
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(vm, 0, asyncContext);
-            }
-        }
-
-        asyncModuleExecutionResume(module->realm(), vm, scope, module, arguments[1], static_cast<JSPromise::Status>(payload));
-
-        // Restore async context after capturing it for the next await iteration.
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-        return;
-#else
-        auto* module = uncheckedDowncast<JSModuleRecord>(arguments[2]);
-        asyncModuleExecutionResume(module->realm(), vm, scope, module, arguments[1], static_cast<JSPromise::Status>(payload));
-        return;
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
 #endif
+        auto* module = uncheckedDowncast<JSModuleRecord>(contextArg);
+        asyncModuleExecutionResume(module->realm(), vm, scope, module, arguments[1], static_cast<JSPromise::Status>(payload));
+        return;
     }
 
     case InternalMicrotask::ModuleRegistryFetchSettled: {
