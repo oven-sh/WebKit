@@ -750,6 +750,7 @@ const CallSiteIndex = ArgumentCountIncludingThis + TagOffset
 
 # String flags.
 const isRopeInPointer = constexpr JSString::isRopeInPointer
+const notStringImplMask = constexpr JSString::notStringImplMask
 const HashFlags8BitBuffer = constexpr StringImpl::s_hashFlag8BitBuffer
 
 # Copied from PropertyOffset.h

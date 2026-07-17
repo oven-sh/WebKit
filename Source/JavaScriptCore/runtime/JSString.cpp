@@ -374,6 +374,10 @@ GCOwnedDataScope<const String&> JSString::tryGetValueWithoutGC() const
         // Pass nullptr for the JSGlobalObject so that resolveRope does not throw in the event of an OOM error.
         return { this, static_cast<const JSRopeString*>(this)->resolveRopeWithoutGC() };
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInline())
+        return { this, resolveInline(nullptr) };
+#endif
     return { this, valueInternal() };
 }
 
