@@ -6223,6 +6223,20 @@ IGNORE_CLANG_WARNINGS_END
                 return;
             }
 
+#if USE(BUN_JSC_ADDITIONS)
+            if (isLikelyInlineString(m_node->child1())) {
+                LValue fiber = m_out.loadPtr(string, m_heaps.JSString_value);
+                speculate(BadType, jsValueValue(string), m_node->child1().node(),
+                    m_out.notEqual(
+                        m_out.bitAnd(fiber, m_out.constIntPtr(JSString::notStringImplMask)),
+                        m_out.constIntPtr(JSString::isInlineInPointer)));
+                setInt32(m_out.bitAnd(
+                    m_out.castToInt32(m_out.lShr(fiber, m_out.constInt32(JSString::inlineLengthShift))),
+                    m_out.constInt32(0x1f)));
+                return;
+            }
+#endif
+
             LBasicBlock ropePath = m_out.newBlock();
             LBasicBlock nonRopePath = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
@@ -25659,6 +25673,16 @@ IGNORE_CLANG_WARNINGS_END
             m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoType),
             m_out.constInt32(StringType));
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    bool isLikelyInlineString(Edge edge)
+    {
+        if (!edge)
+            return false;
+        SpeculatedType type = provenType(edge) & SpecString;
+        return type && !(type & ~SpecStringInline);
+    }
+#endif
 
     bool canBeRope(Edge edge)
     {

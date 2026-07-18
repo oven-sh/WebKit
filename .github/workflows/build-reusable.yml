@@ -32,6 +32,7 @@ jobs:
     name: Linux
     runs-on: ${{matrix.os}}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - lto_flag: ""
