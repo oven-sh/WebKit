@@ -7793,6 +7793,27 @@ void SpeculativeJIT::compileStringEquality(
     };
 
 #if USE(BUN_JSC_ADDITIONS)
+    // Literal-vs-inline fast path: encode the (short, 8-bit) literal as an
+    // inline m_fiber immediate and compare the dynamic side's m_fiber against it.
+    if (leftAtom != rightAtom) {
+        const String& constStr = leftAtom ? leftConst : rightConst;
+        GPRReg dynGPR = leftAtom ? rightGPR : leftGPR;
+        GPRReg dynTemp = leftAtom ? rightTempGPR : leftTempGPR;
+        if (constStr.is8Bit() && constStr.length() >= 2 && constStr.length() <= JSString::maxInlineLength8) {
+            uintptr_t encoded = JSString::encodeInline8(constStr.span8());
+            loadPtr(Address(dynGPR, JSString::offsetOfValue()), dynTemp);
+            Jump notInlineDyn = branchTestPtr(Zero, dynTemp, TrustedImm32(JSString::isInlineInPointer));
+            // Dynamic side is inline (bit 1 set, could be rope+substring too: rule that out).
+            Jump isSubstr = branchTestPtr(NonZero, dynTemp, TrustedImm32(JSString::isRopeInPointer));
+            trueCase.append(branchPtr(Equal, dynTemp, TrustedImmPtr(std::bit_cast<void*>(encoded))));
+            // Dynamic inline, fibers differ: if is8Bit matches, definitely unequal.
+            falseCase.append(branchTestPtr(NonZero, dynTemp, TrustedImm32(JSRopeString::is8BitInPointer)));
+            slowCase.append(jump());
+            isSubstr.link(this);
+            notInlineDyn.link(this);
+        }
+    }
+
     // Inline-vs-inline fast path: two inline small strings with matching is8Bit
     // are equal iff their m_fiber words are identical (encoding packs
     // length|is8Bit|bytes). Mixed 8/16-bit falls through to slowCase via the
@@ -8554,6 +8575,16 @@ void SpeculativeJIT::compileUnwrapGlobalProxy(Node* node)
     cellResult(resultGPR, node);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool SpeculativeJIT::isLikelyInlineString(Edge edge)
+{
+    if (!edge)
+        return false;
+    SpeculatedType type = m_state.forNode(edge).m_type & SpecString;
+    return type && !(type & ~SpecStringInline);
+}
+#endif
+
 bool SpeculativeJIT::canBeRope(Edge edge)
 {
     if (!edge)
@@ -8638,6 +8669,20 @@ void SpeculativeJIT::compileGetArrayLength(Node* node)
         GPRReg tempGPR = temp.gpr();
 
         loadPtr(Address(baseGPR, JSString::offsetOfValue()), tempGPR);
+#if USE(BUN_JSC_ADDITIONS)
+        if (isLikelyInlineString(node->child1())) {
+            // Profile says this site only sees inline small strings. Speculate on
+            // that and emit the branch-free decode; OSR exit if we ever see a rope,
+            // rope-substring, or a resolved StringImpl*.
+            and32(TrustedImm32(JSString::notStringImplMask), tempGPR, resultGPR);
+            speculationCheck(BadType, JSValueSource::unboxedCell(baseGPR), node->child1(),
+                branch32(NotEqual, resultGPR, TrustedImm32(JSString::isInlineInPointer)));
+            urshiftPtr(TrustedImm32(JSString::inlineLengthShift), tempGPR);
+            and32(TrustedImm32(0x1f), tempGPR, resultGPR);
+            strictInt32Result(resultGPR, node);
+            break;
+        }
+#endif
         Jump isRope;
         if (canBeRope(node->child1()))
             isRope = branchIfRopeStringImpl(tempGPR);

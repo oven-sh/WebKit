@@ -271,6 +271,13 @@ void dumpSpeculation(PrintStream& outStream, SpeculatedType value)
                     strOut.print("StringUnresolvedVar");
                 else
                     isTop = false;
+
+#if USE(BUN_JSC_ADDITIONS)
+                if (value & SpecStringInline)
+                    strOut.print("StringInline");
+                else
+                    isTop = false;
+#endif
             }
         }
 
@@ -610,6 +617,10 @@ SpeculatedType speculationFromCell(JSCell* cell)
                 return SpecStringIdent;
             return SpecStringResolved;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (string->isInline())
+            return SpecStringInline;
+#endif
         return SpecString;
     }
 

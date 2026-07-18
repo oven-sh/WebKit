@@ -248,6 +248,7 @@ private:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+public:
     static ALWAYS_INLINE uintptr_t encodeInline8(std::span<const Latin1Character> chars)
     {
         ASSERT(chars.size() >= 2 && chars.size() <= maxInlineLength8);

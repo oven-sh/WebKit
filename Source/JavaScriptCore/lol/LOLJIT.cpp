@@ -2451,12 +2451,17 @@ void LOLJIT::emit_op_switch_char(const JSInstruction* currentInstruction)
 
     isRope.link(this);
 #if USE(BUN_JSC_ADDITIONS)
-    // Inline small string: skip the out-of-bounds rope-length read; operationResolveRope handles it.
-    auto isInline = branchTestPtr(Zero, regT4, TrustedImm32(JSString::isRopeInPointer));
+    // Inline small string: length is in bits 3..7 of regT4. switch_char only matches
+    // length-1; the only inline length-1 case is a single non-Latin-1 code unit.
+    auto notInline = branchTestPtr(NonZero, regT4, TrustedImm32(JSString::isRopeInPointer));
+    and32(TrustedImm32(0x1f << JSString::inlineLengthShift), regT4, s_scratch);
+    addJump(branch32(NotEqual, s_scratch, TrustedImm32(1 << JSString::inlineLengthShift)), defaultOffset);
+    auto resolveInline = jump();
+    notInline.link(this);
 #endif
     addJump(branch32(NotEqual, Address(scrutineeRegs.payloadGPR(), JSRopeString::offsetOfLength()), TrustedImm32(1)), defaultOffset);
 #if USE(BUN_JSC_ADDITIONS)
-    isInline.link(this);
+    resolveInline.link(this);
 #endif
     loadGlobalObject(s_scratch);
     callOperation(operationResolveRope, s_scratch, scrutineeRegs.payloadGPR());

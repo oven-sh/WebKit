@@ -80,7 +80,12 @@ static constexpr SpeculatedType SpecObjectOther                       = 1ull << 
 static constexpr SpeculatedType SpecStringIdent                       = 1ull << 32; // It's definitely a JSString, and it's an identifier.
 static constexpr SpeculatedType SpecStringResolvedVar                 = 1ull << 33; // It's definitely a JSString, and it's not an identifier. And string is resolved.
 static constexpr SpeculatedType SpecStringUnresolvedVar               = 1ull << 34; // It's definitely a JSString, and it's not an identifier. And string is unresolved.
+#if USE(BUN_JSC_ADDITIONS)
+static constexpr SpeculatedType SpecStringInline                      = 1ull << 51; // It's definitely a JSString with inline-small-string storage (not resolved, not a rope).
+static constexpr SpeculatedType SpecStringVar                         = SpecStringUnresolvedVar | SpecStringResolvedVar | SpecStringInline; // It's definitely a JSString, and it's not an identifier.
+#else
 static constexpr SpeculatedType SpecStringVar                         = SpecStringUnresolvedVar | SpecStringResolvedVar; // It's definitely a JSString, and it's not an identifier.
+#endif
 static constexpr SpeculatedType SpecStringResolved                    = SpecStringIdent | SpecStringResolvedVar; // It's definitely a JSString, and it's resolved. May be an identifier or not.
 static constexpr SpeculatedType SpecString                            = SpecStringIdent | SpecStringVar; // It's definitely a JSString.
 static constexpr SpeculatedType SpecSymbol                            = 1ull << 35; // It's definitely a Symbol.
