@@ -7792,6 +7792,28 @@ void SpeculativeJIT::compileStringEquality(
         slowCase.append(branchIfRopeStringImpl(implGPR));
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Inline-vs-inline fast path: two inline small strings with matching is8Bit
+    // are equal iff their m_fiber words are identical (encoding packs
+    // length|is8Bit|bytes). Mixed 8/16-bit falls through to slowCase via the
+    // widened rope check in loadImplAndCheckRope.
+    if (!leftAtom && !rightAtom) {
+        loadPtr(Address(leftGPR, JSString::offsetOfValue()), leftTempGPR);
+        loadPtr(Address(rightGPR, JSString::offsetOfValue()), rightTempGPR);
+        move(leftTempGPR, lengthGPR);
+        andPtr(rightTempGPR, lengthGPR);
+        Jump notBothInline = branchTestPtr(Zero, lengthGPR, TrustedImm32(JSString::isInlineInPointer));
+        trueCase.append(branchPtr(Equal, leftTempGPR, rightTempGPR));
+        // Both inline, fibers differ. If the is8Bit bits also match the strings
+        // are definitely unequal; only a cross-width pair needs the slow compare.
+        move(leftTempGPR, lengthGPR);
+        xorPtr(rightTempGPR, lengthGPR);
+        slowCase.append(branchTestPtr(NonZero, lengthGPR, TrustedImm32(JSRopeString::is8BitInPointer)));
+        falseCase.append(jump());
+        notBothInline.link(this);
+    }
+#endif
+
     auto resolveDataPtr = [&](bool atom, const String& constStr, GPRReg implGPR) {
         if (atom) {
             const void* data = constStr.is8Bit()
