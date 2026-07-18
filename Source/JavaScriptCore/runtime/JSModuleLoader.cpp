@@ -649,6 +649,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         resolved = resolve(globalObject, specifier, referrerKey, scriptFetcher, useImportMap);
         // 9. If the previous step threw an exception, then:
         if (Exception* resolutionError = scope.exception()) {
+            // A TerminationException is not a resolution failure; bail without
+            // caching it or entering FinishLoadingImportedModule with it still
+            // pending on the VM.
+            if (vm.isTerminationException(resolutionError)) [[unlikely]]
+                return nullptr;
             attachErrorInfo(globalObject, resolutionError, nullptr, specifier, moduleRequest.type(), ModuleFailure::Kind::Instantiation);
             // Cache the resolution error so subsequent calls for the same specifier return the same error object.
             JSValue errorValue = resolutionError->value();
