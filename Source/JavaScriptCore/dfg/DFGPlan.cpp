@@ -160,6 +160,23 @@ void Plan::finalizeInGC()
     ASSERT(m_vm);
     if (m_recordedStatuses)
         m_recordedStatuses->finalizeWithoutDeleting(*m_vm);
+
+    // m_mustHandleValues was snapshot from the triggering frame's live locals
+    // so the compiler can seed OSR-entry predictions. It is not a reason to
+    // keep those objects alive on its own: the DFG phases that read it all
+    // treat nullopt as "unknown", so any entry that nothing else marked can be
+    // dropped here (compiler threads are suspended for the duration of GC).
+    cleanMustHandleValuesIfNecessary();
+    {
+        Locker locker { m_mustHandleValueCleaningLock };
+        for (unsigned i = m_mustHandleValues.size(); i--;) {
+            std::optional<JSValue>& value = m_mustHandleValues[i];
+            if (!value || !*value || !value->isCell())
+                continue;
+            if (!m_vm->heap.isMarked(value->asCell()))
+                value = std::nullopt;
+        }
+    }
 }
 
 void Plan::notifyReady()
@@ -658,12 +675,13 @@ bool Plan::checkLivenessAndVisitChildren(AbstractSlotVisitor& visitor)
     if (!Base::checkLivenessAndVisitChildren(visitor))
         return false;
 
+    // m_mustHandleValues is not visited here. It holds whatever JSValues were
+    // live in the frame at the tier-up point, purely to seed OSR-entry
+    // predictions; rooting them would keep arbitrary user objects alive for the
+    // life of a concurrent compile. finalizeInGC() nulls entries that nothing
+    // else marked, and every reader (PredictionInjection, CFA injectOSR,
+    // TypeCheckHoisting) already skips nullopt.
     cleanMustHandleValuesIfNecessary();
-    for (unsigned i = m_mustHandleValues.size(); i--;) {
-        std::optional<JSValue> value = m_mustHandleValues[i];
-        if (value)
-            visitor.appendUnbarriered(value.value());
-    }
 
     if (m_recordedStatuses) {
         m_recordedStatuses->visitAggregate(visitor);
