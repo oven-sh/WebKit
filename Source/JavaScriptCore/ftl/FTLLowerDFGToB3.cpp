@@ -22234,30 +22234,31 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock continuation = m_out.newBlock();
 
 #if USE(BUN_JSC_ADDITIONS)
-        // Inline-vs-inline fast path: identical m_fiber words mean equal strings.
+        // Inline-vs-inline: two inline small strings with matching width are
+        // equal iff their m_fiber words are identical.
+        std::optional<ValueFromBlock> inlineResult;
         if (!leftAtom && !rightAtom) {
-            LBasicBlock bothInlineCase = m_out.newBlock();
-            LBasicBlock bothInlineUnequalCase = m_out.newBlock();
-            LBasicBlock notBothInlineCase = m_out.newBlock();
+            LBasicBlock inlineSameWidth = m_out.newBlock();
+            LBasicBlock inlineDispatch = m_out.newBlock();
+            LBasicBlock notBothInline = m_out.newBlock();
 
             LValue leftFiber = m_out.loadPtr(leftJSString, m_heaps.JSString_value);
             LValue rightFiber = m_out.loadPtr(rightJSString, m_heaps.JSString_value);
-            LValue bothInline = m_out.testNonZeroPtr(
-                m_out.bitAnd(leftFiber, rightFiber),
-                m_out.constIntPtr(JSString::isInlineInPointer));
-            m_out.branch(bothInline, unsure(bothInlineCase), unsure(notBothInlineCase));
+            LValue xored = m_out.bitXor(leftFiber, rightFiber);
+            m_out.branch(
+                m_out.testNonZeroPtr(m_out.bitAnd(leftFiber, rightFiber), m_out.constIntPtr(JSString::isInlineInPointer)),
+                usually(inlineDispatch), unsure(notBothInline));
 
-            m_out.appendTo(bothInlineCase, bothInlineUnequalCase);
-            m_out.branch(m_out.equal(leftFiber, rightFiber), unsure(trueCase), unsure(bothInlineUnequalCase));
+            m_out.appendTo(inlineDispatch, inlineSameWidth);
+            m_out.branch(
+                m_out.testNonZeroPtr(xored, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
+                rarely(slowCase), usually(inlineSameWidth));
 
-            m_out.appendTo(bothInlineUnequalCase, notBothInlineCase);
-            // Same is8Bit bit -> definitely unequal. Cross-width -> slow compare.
-            LValue widthDiffers = m_out.testNonZeroPtr(
-                m_out.bitXor(leftFiber, rightFiber),
-                m_out.constIntPtr(JSRopeString::is8BitInPointer));
-            m_out.branch(widthDiffers, rarely(slowCase), usually(falseCase));
+            m_out.appendTo(inlineSameWidth, notBothInline);
+            inlineResult = m_out.anchor(m_out.isZero64(xored));
+            m_out.jump(continuation);
 
-            m_out.appendTo(notBothInlineCase, leftReadyCase);
+            m_out.appendTo(notBothInline, leftReadyCase);
         }
 #endif
 
@@ -22411,6 +22412,10 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
+#if USE(BUN_JSC_ADDITIONS)
+        if (inlineResult)
+            return m_out.phi(Int32, trueResult, falseResult, slowResult, *inlineResult);
+#endif
         return m_out.phi(Int32, trueResult, falseResult, slowResult);
     }
 
