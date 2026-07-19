@@ -27,6 +27,9 @@
 
 #include "BigIntPrototype.h"
 #include "BrandedStructure.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "JSArrayBufferView.h"
 #include "JSGlobalObject.h"
 #include "JSObjectInlines.h"
@@ -271,7 +274,11 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
 
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_propertyHash = m_propertyHash ^ uidHash(rep);
+#else
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
+#endif
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
 
     auto [offset, attribute, result] = table->add(vm, PropertyTableEntry(rep, newOffset, attributes));
@@ -429,7 +436,11 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
 
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_propertyHash = m_propertyHash ^ uidHash(rep);
+#else
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
+#endif
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
 
     auto [offset, attributes, result] = table->addAfterFind(vm, PropertyTableEntry(rep, newOffset, newAttributes), WTF::move(findResult));
