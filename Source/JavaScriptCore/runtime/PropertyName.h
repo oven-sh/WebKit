@@ -31,6 +31,10 @@
 #include "PrivateName.h"
 #include <wtf/dtoa.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -72,12 +76,20 @@ public:
 
     bool isSymbol() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return m_impl && uidIsSymbol(m_impl);
+#else
         return m_impl && m_impl->isSymbol();
+#endif
     }
 
     bool isPrivateName() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return m_impl && !isInlinePropertyKey(m_impl) && m_impl->isSymbol() && static_cast<const SymbolImpl*>(m_impl)->isPrivate();
+#else
         return isSymbol() && static_cast<const SymbolImpl*>(m_impl)->isPrivate();
+#endif
     }
 
     UniquedStringImpl* uid() const
@@ -87,7 +99,11 @@ public:
 
     AtomStringImpl* publicName() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return (!m_impl || uidIsSymbol(m_impl)) ? nullptr : static_cast<AtomStringImpl*>(m_impl);
+#else
         return (!m_impl || m_impl->isSymbol()) ? nullptr : static_cast<AtomStringImpl*>(m_impl);
+#endif
     }
 
     void dump(PrintStream& out) const
@@ -115,17 +131,30 @@ inline bool operator==(PropertyName a, PropertyName b)
 
 inline bool operator==(PropertyName a, const char* b)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(a.uid()))
+        return false;
+#endif
     return equal(a.uid(), b);
 }
 
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(PropertyName propertyName)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    auto uid = propertyName.uid();
+    if (!uid || uidIsSymbol(uid))
+        return std::nullopt;
+    if (isInlinePropertyKey(uid))
+        return std::nullopt;
+    return parseIndex(*uid);
+#else
     auto uid = propertyName.uid();
     if (!uid)
         return std::nullopt;
     if (uid->isSymbol())
         return std::nullopt;
     return parseIndex(*uid);
+#endif
 }
 
 template<typename CharacterType>
@@ -157,6 +186,10 @@ ALWAYS_INLINE bool isCanonicalNumericIndexString(UniquedStringImpl* propertyName
 {
     if (!propertyName)
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(propertyName))
+        return false;
+#endif
     if (propertyName->isSymbol())
         return false;
     if (!propertyName->length())
