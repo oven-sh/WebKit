@@ -1140,6 +1140,19 @@ private:
                 ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::OutOfBounds) || node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::InBounds));
             else
                 ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read));
+#if USE(BUN_JSC_ADDITIONS)
+            // For StringCharCodeAt on a monomorphic-inline profile, skip the
+            // ResolveRope insertion so compileGetCharCodeAt can read the code
+            // unit straight from the cell without materializing a StringImpl.
+            {
+                SpeculatedType pred = node->child1()->prediction() & SpecString;
+                if (op == StringCharCodeAt && pred && !(pred & ~SpecStringInline)) {
+                    fixEdge<StringUse>(node->child1());
+                    fixEdge<Int32Use>(node->child2());
+                    break;
+                }
+            }
+#endif
             blessArrayOperation(node->child1(), node->child2(), node->child1()); // Rewrite child1 with ResolveRope.
             fixEdge<KnownStringUse>(node->child1());
             fixEdge<Int32Use>(node->child2());

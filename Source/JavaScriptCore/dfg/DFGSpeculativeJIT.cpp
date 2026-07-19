@@ -2726,6 +2726,32 @@ void SpeculativeJIT::compileGetCharCodeAt(Node* node)
 
     loadPtr(Address(stringReg, JSString::offsetOfValue()), scratchReg);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Match the exact condition FixupPhase used to decide whether to skip
+    // ResolveRope (it reads prediction(), which is fixed before AI runs).
+    SpeculatedType inlinePred = node->child1()->prediction() & SpecString;
+    if (inlinePred && !(inlinePred & ~SpecStringInline)) {
+        // FixupPhase skipped ResolveRope; scratchReg holds the raw fiber.
+        GPRTemporary scratch2(this);
+        GPRReg scratch2Reg = scratch2.gpr();
+        and32(TrustedImm32(JSString::notStringImplMask), scratchReg, scratch2Reg);
+        speculationCheck(BadType, JSValueSource::unboxedCell(stringReg), node->child1(),
+            branch32(NotEqual, scratch2Reg, TrustedImm32(JSString::isInlineInPointer)));
+        move(scratchReg, scratch2Reg);
+        urshiftPtr(TrustedImm32(JSString::inlineLengthShift), scratch2Reg);
+        and32(TrustedImm32(0x1f), scratch2Reg);
+        speculationCheck(Uncountable, JSValueRegs(), nullptr, branch32(AboveOrEqual, indexReg, scratch2Reg));
+        Jump is16 = branchTestPtr(Zero, scratchReg, TrustedImm32(JSRopeString::is8BitInPointer));
+        load8(BaseIndex(stringReg, indexReg, TimesOne, JSString::offsetOfValue() + 1), scratchReg);
+        Jump done = jump();
+        is16.link(this);
+        load16(BaseIndex(stringReg, indexReg, TimesTwo, JSString::offsetOfValue() + 2), scratchReg);
+        done.link(this);
+        strictInt32Result(scratchReg, m_currentNode);
+        return;
+    }
+#endif
+
     // unsigned comparison so we can filter out negative indices and indices that are too large
     if (auto stringLength = tryGetConstantStringLength(node->child1()))
         speculationCheck(Uncountable, JSValueRegs(), nullptr, branch32(AboveOrEqual, indexReg, TrustedImm32(*stringLength)));

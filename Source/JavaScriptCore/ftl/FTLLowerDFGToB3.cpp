@@ -12122,6 +12122,40 @@ IGNORE_CLANG_WARNINGS_END
         LValue index = lowInt32(m_node->child2());
 
         LValue stringImpl = m_out.loadPtr(base, m_heaps.JSString_value);
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Match the exact FixupPhase condition that skipped ResolveRope.
+        SpeculatedType pred = m_node->child1()->prediction() & SpecString;
+        if (pred && !(pred & ~SpecStringInline)) {
+            LBasicBlock inline8 = m_out.newBlock();
+            LBasicBlock inline16 = m_out.newBlock();
+            LBasicBlock inlineDone = m_out.newBlock();
+            speculate(BadType, jsValueValue(base), m_node->child1().node(),
+                m_out.notEqual(
+                    m_out.bitAnd(stringImpl, m_out.constIntPtr(JSString::notStringImplMask)),
+                    m_out.constIntPtr(JSString::isInlineInPointer)));
+            LValue inlineLen = m_out.bitAnd(
+                m_out.castToInt32(m_out.lShr(stringImpl, m_out.constInt32(JSString::inlineLengthShift))),
+                m_out.constInt32(0x1f));
+            speculate(Uncountable, noValue(), nullptr, m_out.aboveOrEqual(index, inlineLen));
+            m_out.branch(
+                m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
+                unsure(inline8), unsure(inline16));
+            LBasicBlock lastNextI = m_out.appendTo(inline8, inline16);
+            ValueFromBlock ch8 = m_out.anchor(m_out.load8ZeroExt32(
+                m_out.baseIndex(m_heaps.characters8, base, m_out.zeroExtPtr(index), provenValue(m_node->child2()), JSString::offsetOfValue() + 1)));
+            m_out.jump(inlineDone);
+            m_out.appendTo(inline16, inlineDone);
+            ValueFromBlock ch16 = m_out.anchor(m_out.load16ZeroExt32(
+                m_out.baseIndex(m_heaps.characters16, base, m_out.zeroExtPtr(index), provenValue(m_node->child2()), JSString::offsetOfValue() + 2)));
+            m_out.jump(inlineDone);
+            m_out.appendTo(inlineDone, lastNextI);
+            ensureStillAliveHere(base);
+            setInt32(m_out.phi(Int32, ch8, ch16));
+            return;
+        }
+#endif
+
         LValue data = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
 
         if (!m_node->arrayMode().isInBounds()) {

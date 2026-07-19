@@ -158,6 +158,31 @@ ALWAYS_INLINE JSString* jsString(JSGlobalObject* globalObject, JSString* s1, JSS
         return nullptr;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Short concats: write both sides into a 16-byte inline cell instead of a
+    // 32-byte rope that would need resolving later. Only when both sides'
+    // characters are available without allocation (non-rope).
+    unsigned total = length1 + length2;
+    if (total <= JSString::maxInlineLength8 && !s1->isRope() && !s2->isRope()) {
+        auto view1 = s1->view(globalObject);
+        auto view2 = s2->view(globalObject);
+        if (view1->is8Bit() && view2->is8Bit()) {
+            Latin1Character buf[JSString::maxInlineLength8];
+            memcpy(buf, view1->span8().data(), length1);
+            memcpy(buf + length1, view2->span8().data(), length2);
+            return JSString::createInline8(vm, std::span { buf, total });
+        }
+    }
+    if (total <= JSString::maxInlineLength16 && !s1->isRope() && !s2->isRope()) {
+        auto view1 = s1->view(globalObject);
+        auto view2 = s2->view(globalObject);
+        char16_t buf[JSString::maxInlineLength16];
+        view1->getCharacters(std::span { buf, length1 });
+        view2->getCharacters(std::span { buf + length1, length2 });
+        return JSString::createInline16(vm, std::span { buf, total });
+    }
+#endif
+
     return JSRopeString::create(vm, s1, s2);
 }
 
