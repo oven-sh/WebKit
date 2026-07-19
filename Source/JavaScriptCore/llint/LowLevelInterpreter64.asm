@@ -2446,7 +2446,7 @@ llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
     # bits 3..7 of the fiber in t0; avoid the rope-layout length read below.
     btpnz t0, isRopeInPointer, .opSwitchOnRealRope
     urshiftp 3, t0
-    andp 0x1f, t0
+    andp (constexpr JSString::inlineLengthMask), t0
     bineq t0, 1, .opSwitchCharFallThrough
     jmp .opSwitchSlow
 .opSwitchOnRealRope:

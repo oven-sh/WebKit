@@ -6232,7 +6232,7 @@ IGNORE_CLANG_WARNINGS_END
                         m_out.constIntPtr(JSString::isInlineInPointer)));
                 setInt32(m_out.bitAnd(
                     m_out.castToInt32(m_out.lShr(fiber, m_out.constInt32(JSString::inlineLengthShift))),
-                    m_out.constInt32(0x1f)));
+                    m_out.constInt32(JSString::inlineLengthMask)));
                 return;
             }
 #endif
@@ -6256,7 +6256,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.appendTo(inlinePath, realRopePath);
             ValueFromBlock inlineLength = m_out.anchor(m_out.bitAnd(
                 m_out.castToInt32(m_out.lShr(fiber, m_out.constInt32(JSString::inlineLengthShift))),
-                m_out.constInt32(0x1f)));
+                m_out.constInt32(JSString::inlineLengthMask)));
             m_out.jump(continuation);
 
             m_out.appendTo(realRopePath, nonRopePath);
@@ -12136,7 +12136,7 @@ IGNORE_CLANG_WARNINGS_END
                     m_out.constIntPtr(JSString::isInlineInPointer)));
             LValue inlineLen = m_out.bitAnd(
                 m_out.castToInt32(m_out.lShr(stringImpl, m_out.constInt32(JSString::inlineLengthShift))),
-                m_out.constInt32(0x1f));
+                m_out.constInt32(JSString::inlineLengthMask));
             speculate(Uncountable, noValue(), nullptr, m_out.aboveOrEqual(index, inlineLen));
             m_out.branch(
                 m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSRopeString::is8BitInPointer)),

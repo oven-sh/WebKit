@@ -700,7 +700,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> stringEqualThunkGenerator(VM& vm)
         auto notInline = jit.branchTestPtr(JIT::NonZero, dataGPR, JIT::TrustedImm32(JSString::isRopeInPointer));
         jit.move(dataGPR, lengthGPR);
         jit.urshiftPtr(JIT::TrustedImm32(JSString::inlineLengthShift), lengthGPR);
-        jit.and32(JIT::TrustedImm32(0x1f), lengthGPR);
+        jit.and32(JIT::TrustedImm32(JSString::inlineLengthMask), lengthGPR);
         jit.move(dataGPR, flagsGPR);
         jit.and32(JIT::TrustedImm32(StringImpl::flagIs8Bit()), flagsGPR);
         jit.addPtr(JIT::TrustedImm32(JSString::offsetOfValue() + 1), jsStringGPR, dataGPR);

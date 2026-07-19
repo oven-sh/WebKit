@@ -2739,7 +2739,7 @@ void SpeculativeJIT::compileGetCharCodeAt(Node* node)
             branch32(NotEqual, scratch2Reg, TrustedImm32(JSString::isInlineInPointer)));
         move(scratchReg, scratch2Reg);
         urshiftPtr(TrustedImm32(JSString::inlineLengthShift), scratch2Reg);
-        and32(TrustedImm32(0x1f), scratch2Reg);
+        and32(TrustedImm32(JSString::inlineLengthMask), scratch2Reg);
         speculationCheck(Uncountable, JSValueRegs(), nullptr, branch32(AboveOrEqual, indexReg, scratch2Reg));
         Jump is16 = branchTestPtr(Zero, scratchReg, TrustedImm32(JSRopeString::is8BitInPointer));
         load8(BaseIndex(stringReg, indexReg, TimesOne, JSString::offsetOfValue() + 1), scratchReg);
@@ -8704,7 +8704,7 @@ void SpeculativeJIT::compileGetArrayLength(Node* node)
             speculationCheck(BadType, JSValueSource::unboxedCell(baseGPR), node->child1(),
                 branch32(NotEqual, resultGPR, TrustedImm32(JSString::isInlineInPointer)));
             urshiftPtr(TrustedImm32(JSString::inlineLengthShift), tempGPR);
-            and32(TrustedImm32(0x1f), tempGPR, resultGPR);
+            and32(TrustedImm32(JSString::inlineLengthMask), tempGPR, resultGPR);
             strictInt32Result(resultGPR, node);
             break;
         }
@@ -8719,7 +8719,7 @@ void SpeculativeJIT::compileGetArrayLength(Node* node)
 #if USE(BUN_JSC_ADDITIONS)
             auto realRope = branchTestPtr(NonZero, tempGPR, TrustedImm32(JSString::isRopeInPointer));
             urshiftPtr(TrustedImm32(JSString::inlineLengthShift), tempGPR);
-            and32(TrustedImm32(0x1f), tempGPR, resultGPR);
+            and32(TrustedImm32(JSString::inlineLengthMask), tempGPR, resultGPR);
             auto doneInline = jump();
             realRope.link(this);
 #endif

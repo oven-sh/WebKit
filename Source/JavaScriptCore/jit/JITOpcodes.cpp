@@ -1371,7 +1371,7 @@ void JIT::emit_op_switch_char(const JSInstruction* currentInstruction)
     // Inline small string: length is in bits 3..7 of regT4. switch_char only matches
     // length-1; the only inline length-1 case is a single non-Latin-1 code unit.
     auto notInline = branchTestPtr(NonZero, regT4, TrustedImm32(JSString::isRopeInPointer));
-    and32(TrustedImm32(0x1f << JSString::inlineLengthShift), regT4, regT2);
+    and32(TrustedImm32(JSString::inlineLengthMask << JSString::inlineLengthShift), regT4, regT2);
     addJump(branch32(NotEqual, regT2, TrustedImm32(1 << JSString::inlineLengthShift)), defaultOffset);
     auto resolveInline = jump();
     notInline.link(this);

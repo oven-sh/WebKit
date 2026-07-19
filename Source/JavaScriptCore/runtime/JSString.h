@@ -145,6 +145,9 @@ public:
     static constexpr uintptr_t isInlineInPointer = 0x2;
     static constexpr uintptr_t notStringImplMask = isRopeInPointer | isInlineInPointer;
     static constexpr unsigned inlineLengthShift = 3;
+    // 3-bit mask: an inline fiber can never address more payload bytes than it
+    // holds, regardless of memory corruption in the unused high bits.
+    static constexpr unsigned inlineLengthMask = 0x7;
     static constexpr unsigned maxInlineLength8 = 7;
     static constexpr unsigned maxInlineLength16 = 3;
 #else
@@ -339,7 +342,7 @@ public:
     }
     ALWAYS_INLINE static unsigned inlineLengthFromFiber(uintptr_t fiber)
     {
-        return static_cast<unsigned>(fiber >> inlineLengthShift) & 0x1fu;
+        return static_cast<unsigned>(fiber >> inlineLengthShift) & inlineLengthMask;
     }
     ALWAYS_INLINE const Latin1Character* inlineData8() const
     {
