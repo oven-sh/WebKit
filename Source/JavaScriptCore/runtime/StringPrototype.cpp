@@ -706,10 +706,19 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplaceAll, (JSGlobalObject* globalObjec
             JSValue flagsValue = asObject(searchValue)->get(globalObject, vm.propertyNames->flags);
             RETURN_IF_EXCEPTION(scope, { });
 
+#if USE(BUN_JSC_ADDITIONS)
+            auto* flagsJSString = flagsValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            auto flags = flagsJSString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!flags->contains('g')) [[unlikely]]
+                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+#else
             String flags = flagsValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!flags.contains('g')) [[unlikely]]
                 return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+#endif
         }
 
         JSObject* searchObject = asObject(searchValue);
@@ -1605,10 +1614,19 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatchAll, (JSGlobalObject* globalObject,
         if (isArgRegExp) {
             JSValue flagsValue = asObject(regexpValue)->get(globalObject, vm.propertyNames->flags);
             RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+            auto* flagsJSString = flagsValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            auto flags = flagsJSString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!flags->contains('g')) [[unlikely]]
+                return throwVMTypeError(globalObject, scope, "String.prototype.matchAll argument must not be a non-global regular expression"_s);
+#else
             String flags = flagsValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!flags.contains('g')) [[unlikely]]
                 return throwVMTypeError(globalObject, scope, "String.prototype.matchAll argument must not be a non-global regular expression"_s);
+#endif
         }
 
         JSValue matcher = asObject(regexpValue)->get(globalObject, vm.propertyNames->matchAllSymbol);
@@ -1953,6 +1971,50 @@ static inline JSValue trimString(JSGlobalObject* globalObject, JSValue thisValue
     if (!checkObjectCoercible(thisValue)) [[unlikely]]
         return throwTypeError(globalObject, scope);
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto* jsStr = thisValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto str = jsStr->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    unsigned length = str->length();
+    if (!length) [[unlikely]] {
+        if (thisValue.isString())
+            return thisValue;
+        RELEASE_AND_RETURN(scope, jsEmptyString(vm));
+    }
+
+    unsigned left = 0;
+    unsigned right = length;
+
+    if (str->is8Bit()) {
+        auto characters = str->span8();
+        if constexpr (static_cast<uint8_t>(trimKind) & static_cast<uint8_t>(TrimKind::TrimStart)) {
+            while (left < length && isStrWhiteSpace(characters[left]))
+                left++;
+        }
+        if constexpr (static_cast<uint8_t>(trimKind) & static_cast<uint8_t>(TrimKind::TrimEnd)) {
+            while (right > left && isStrWhiteSpace(characters[right - 1]))
+                right--;
+        }
+    } else {
+        auto characters = str->span16();
+        if constexpr (static_cast<uint8_t>(trimKind) & static_cast<uint8_t>(TrimKind::TrimStart)) {
+            while (left < length && isStrWhiteSpace(characters[left]))
+                left++;
+        }
+        if constexpr (static_cast<uint8_t>(trimKind) & static_cast<uint8_t>(TrimKind::TrimEnd)) {
+            while (right > left && isStrWhiteSpace(characters[right - 1]))
+                right--;
+        }
+    }
+
+    // Don't gc allocate a new string if we don't have to.
+    if (!left && right == length && thisValue.isString())
+        return thisValue;
+
+    RELEASE_AND_RETURN(scope, jsSubstring(globalObject, vm, jsStr, left, right - left));
+#else
     String str = thisValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -1993,6 +2055,7 @@ static inline JSValue trimString(JSGlobalObject* globalObject, JSValue thisValue
         return thisValue;
 
     RELEASE_AND_RETURN(scope, jsString(vm, str.substringSharingImpl(left, right - left)));
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncTrim, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -2362,7 +2425,11 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToWellFormed, (JSGlobalObject* globalObj
     if (stringValue->is8Bit())
         return JSValue::encode(stringValue);
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto string = stringValue->view(globalObject);
+#else
     auto string = stringValue->value(globalObject);
+#endif
     RETURN_IF_EXCEPTION(scope, { });
 
     if (string->is8Bit())
