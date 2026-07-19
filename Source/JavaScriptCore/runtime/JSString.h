@@ -145,14 +145,14 @@ public:
     static constexpr uintptr_t isInlineInPointer = 0x2;
     static constexpr uintptr_t notStringImplMask = isRopeInPointer | isInlineInPointer;
     static constexpr unsigned inlineLengthShift = 3;
-    // 5-bit mask covers both the 16-byte JSString inline (len 2..7) and the
-    // 32-byte JSBigInlineString (len 8..23). Payload is always contiguous
+    // 4-bit mask covers both the 16-byte JSString inline (len 2..7) and the
+    // 24-byte JSBigInlineString (len 8..15). Payload is always contiguous
     // starting at &m_fiber+1; the cell size is determined at creation.
-    static constexpr unsigned inlineLengthMask = 0x1f;
+    static constexpr unsigned inlineLengthMask = 0xf;
     static constexpr unsigned maxInlineLength8 = 7;
     static constexpr unsigned maxInlineLength16 = 3;
-    static constexpr unsigned maxBigInlineLength8 = 23;
-    static constexpr unsigned maxBigInlineLength16 = 11;
+    static constexpr unsigned maxBigInlineLength8 = 15;
+    static constexpr unsigned maxBigInlineLength16 = 7;
     static_assert(maxBigInlineLength8 <= inlineLengthMask);
 #else
     static constexpr uintptr_t notStringImplMask = isRopeInPointer;
@@ -476,14 +476,14 @@ public:
 private:
     JSBigInlineString(VM& vm)
         : JSString(vm, CreateInline, 0)
-        , m_inlinePayloadHigh { 0, 0 }
+        , m_inlinePayloadHigh(0)
     { }
 
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    uintptr_t m_inlinePayloadHigh[2];
+    uintptr_t m_inlinePayloadHigh;
 };
-static_assert(sizeof(JSBigInlineString) == 32);
+static_assert(sizeof(JSBigInlineString) == 24);
 #endif
 
 // NOTE: This class cannot override JSString's destructor. JSString's destructor is called directly
