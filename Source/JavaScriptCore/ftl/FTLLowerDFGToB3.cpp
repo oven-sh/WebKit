@@ -11808,7 +11808,7 @@ IGNORE_CLANG_WARNINGS_END
 
 #if USE(BUN_JSC_ADDITIONS)
         // Short all-8-bit result: defer to operationMakeRope* so jsString() can
-        // emit a 16-byte inline cell.
+        // emit a 16-byte inline cell. Limited to <=7; see DFG compileMakeRope.
         {
             LBasicBlock notShortInline = m_out.newBlock();
             LValue is8Bit = m_out.testNonZero32(flagsAndLength.flags, m_out.constInt32(StringImpl::flagIs8Bit()));
@@ -22310,9 +22310,13 @@ IGNORE_CLANG_WARNINGS_END
                 usually(inlineDispatch), unsure(notBothInline));
 
             m_out.appendTo(inlineDispatch, inlineSameWidth);
-            m_out.branch(
-                m_out.testNonZeroPtr(xored, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
-                rarely(slowCase), usually(inlineSameWidth));
+            // Single-word compare is only sound for 16-byte inline (length <= 7);
+            // big-inline payload extends past m_fiber. Also bail on cross-width.
+            LValue eitherBigOrCrossWidth = m_out.bitOr(
+                m_out.testNonZeroPtr(m_out.bitOr(leftFiber, rightFiber),
+                    m_out.constIntPtr(static_cast<uintptr_t>((JSString::maxInlineLength8 + 1) << JSString::inlineLengthShift))),
+                m_out.testNonZeroPtr(xored, m_out.constIntPtr(JSRopeString::is8BitInPointer)));
+            m_out.branch(eitherBigOrCrossWidth, rarely(slowCase), usually(inlineSameWidth));
 
             m_out.appendTo(inlineSameWidth, notBothInline);
             inlineResult = m_out.anchor(m_out.isZero64(xored));

@@ -7850,9 +7850,14 @@ void SpeculativeJIT::compileStringEquality(
         move(leftTempGPR, lengthGPR);
         andPtr(rightTempGPR, lengthGPR);
         Jump notBothInline = branchTestPtr(Zero, lengthGPR, TrustedImm32(JSString::isInlineInPointer));
+        // Big-inline (length >= 8) has payload beyond m_fiber; a single-word
+        // compare is only sound for the 16-byte variant.
+        move(leftTempGPR, lengthGPR);
+        orPtr(rightTempGPR, lengthGPR);
+        slowCase.append(branchTestPtr(NonZero, lengthGPR,
+            TrustedImm32((JSString::maxInlineLength8 + 1) << JSString::inlineLengthShift)));
         trueCase.append(branchPtr(Equal, leftTempGPR, rightTempGPR));
-        // Both inline, fibers differ. If the is8Bit bits also match the strings
-        // are definitely unequal; only a cross-width pair needs the slow compare.
+        // Both small-inline, fibers differ. Cross-width pair needs the slow compare.
         move(leftTempGPR, lengthGPR);
         xorPtr(rightTempGPR, lengthGPR);
         slowCase.append(branchTestPtr(NonZero, lengthGPR, TrustedImm32(JSRopeString::is8BitInPointer)));
@@ -17854,8 +17859,8 @@ void SpeculativeJIT::compileMakeRope(Node* node)
 #if USE(BUN_JSC_ADDITIONS)
     // Short all-8-bit result: defer to operationMakeRope* so jsString() can emit
     // a 16-byte inline cell instead of the 32-byte rope we've just allocated.
-    // The abandoned rope cell has fiber0==isRopeInPointer with null fiber, which
-    // visitChildren treats as empty.
+    // Limited to <=7: the slow-path call cost outweighs the 32->24 saving for
+    // 8..15, and big-inline coverage comes from the slice/substring hook.
     {
         Jump not8Bit = branchTest32(Zero, scratchGPR);
         slowPath.append(branch32(BelowOrEqual, allocatorGPR, TrustedImm32(JSString::maxInlineLength8)));

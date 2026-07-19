@@ -145,11 +145,15 @@ public:
     static constexpr uintptr_t isInlineInPointer = 0x2;
     static constexpr uintptr_t notStringImplMask = isRopeInPointer | isInlineInPointer;
     static constexpr unsigned inlineLengthShift = 3;
-    // 3-bit mask: an inline fiber can never address more payload bytes than it
-    // holds, regardless of memory corruption in the unused high bits.
-    static constexpr unsigned inlineLengthMask = 0x7;
+    // 4-bit mask covers both the 16-byte JSString inline (len 2..7) and the
+    // 24-byte JSBigInlineString (len 8..15). Payload is always contiguous
+    // starting at &m_fiber+1; the cell size is determined at creation.
+    static constexpr unsigned inlineLengthMask = 0xf;
     static constexpr unsigned maxInlineLength8 = 7;
     static constexpr unsigned maxInlineLength16 = 3;
+    static constexpr unsigned maxBigInlineLength8 = 15;
+    static constexpr unsigned maxBigInlineLength16 = 7;
+    static_assert(maxBigInlineLength8 <= inlineLengthMask);
 #else
     static constexpr uintptr_t notStringImplMask = isRopeInPointer;
 #endif
@@ -190,6 +194,7 @@ private:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+protected:
     enum InlineTag { CreateInline };
     JSString(VM& vm, InlineTag, uintptr_t encodedFiber)
         : JSCell(CreatingWellDefinedBuiltinCell, vm.stringStructure.get()->id(), defaultTypeInfoBlob())
@@ -417,6 +422,65 @@ private:
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*);
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*, JSString*);
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+// 24-byte inline string: same encoding as JSString's inline variant, with an
+// extra 8 bytes of contiguous payload so lengths 8..15 (Latin-1) / 4..7
+// (UTF-16) fit without a StringImpl. inlineData8()/inlineData16() and every
+// JIT decoder already index from &m_fiber+1, so they work unchanged.
+class JSBigInlineString final : public JSString {
+    friend class JSString;
+public:
+    using Base = JSString;
+    static constexpr DestructionMode needsDestruction = MayNeedDestruction;
+    static constexpr uint8_t numberOfLowerTierPreciseCells = 0;
+
+    template<typename, SubspaceAccess>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.bigInlineStringSpace();
+    }
+
+    // After resolveInline() this holds a StringImpl*; reuse JSString::destroy
+    // which already checks notStringImplMask.
+    static void destroy(JSCell* cell) { JSString::destroy(cell); }
+
+    static JSBigInlineString* create8(VM& vm, std::span<const Latin1Character> chars)
+    {
+        ASSERT(chars.size() > maxInlineLength8 && chars.size() <= maxBigInlineLength8);
+        JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm)) JSBigInlineString(vm);
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(&s->m_fiber);
+        bytes[0] = static_cast<uint8_t>(isInlineInPointer | StringImpl::flagIs8Bit()
+            | (chars.size() << inlineLengthShift));
+        memcpy(bytes + 1, chars.data(), chars.size());
+        s->finishCreation(vm);
+        return s;
+    }
+
+    static JSBigInlineString* create16(VM& vm, std::span<const char16_t> chars)
+    {
+        ASSERT(chars.size() > maxInlineLength16 && chars.size() <= maxBigInlineLength16);
+        JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm)) JSBigInlineString(vm);
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(&s->m_fiber);
+        bytes[0] = static_cast<uint8_t>(isInlineInPointer | (chars.size() << inlineLengthShift));
+        bytes[1] = 0;
+        memcpy(bytes + 2, chars.data(), chars.size() * sizeof(char16_t));
+        s->finishCreation(vm);
+        return s;
+    }
+
+private:
+    JSBigInlineString(VM& vm)
+        : JSString(vm, CreateInline, 0)
+        , m_inlinePayloadHigh(0)
+    { }
+
+    DECLARE_DEFAULT_FINISH_CREATION;
+
+    uintptr_t m_inlinePayloadHigh;
+};
+static_assert(sizeof(JSBigInlineString) == 24);
+#endif
 
 // NOTE: This class cannot override JSString's destructor. JSString's destructor is called directly
 // from JSStringSubspace::
@@ -1150,8 +1214,14 @@ inline JSString* jsString(VM& vm, StringView s)
     if (s.is8Bit()) {
         if (static_cast<unsigned>(size) <= JSString::maxInlineLength8)
             return JSString::createInline8(vm, s.span8());
-    } else if (static_cast<unsigned>(size) <= JSString::maxInlineLength16)
-        return JSString::createInline16(vm, s.span16());
+        if (static_cast<unsigned>(size) <= JSString::maxBigInlineLength8)
+            return JSBigInlineString::create8(vm, s.span8());
+    } else {
+        if (static_cast<unsigned>(size) <= JSString::maxInlineLength16)
+            return JSString::createInline16(vm, s.span16());
+        if (static_cast<unsigned>(size) <= JSString::maxBigInlineLength16)
+            return JSBigInlineString::create16(vm, s.span16());
+    }
 #endif
     auto impl = s.is8Bit() ? StringImpl::create(s.span8()) : StringImpl::create(s.span16());
     return JSString::create(vm, WTF::move(impl));

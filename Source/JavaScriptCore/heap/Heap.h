@@ -89,6 +89,9 @@ class JSCell;
 class JSCellButterfly;
 class JSRopeString;
 class JSString;
+#if USE(BUN_JSC_ADDITIONS)
+class JSBigInlineString;
+#endif
 class JSValue;
 class MachineThreads;
 class MarkStackArray;
@@ -124,6 +127,13 @@ namespace GCClient {
 class Heap;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_BIG_INLINE_STRING_SUBSPACE(v) \
+    v(bigInlineStringSpace, bigInlineStringHeapCellType, JSBigInlineString)
+#else
+#define BUN_BIG_INLINE_STRING_SUBSPACE(v)
+#endif
+
 #define FOR_EACH_JSC_COMMON_ISO_SUBSPACE(v) \
     v(arraySpace, cellHeapCellType, JSArray) \
     v(calleeSpace, cellHeapCellType, JSCallee) \
@@ -147,6 +157,7 @@ class Heap;
     v(regExpSpace, destructibleCellHeapCellType, RegExp) \
     v(regExpObjectSpace, cellHeapCellType, RegExpObject) \
     v(ropeStringSpace, ropeStringHeapCellType, JSRopeString) \
+    BUN_BIG_INLINE_STRING_SUBSPACE(v) \
     v(scopedArgumentsSpace, cellHeapCellType, ScopedArguments) \
     v(sparseArrayValueMapSpace, destructibleCellHeapCellType, SparseArrayValueMap) \
     v(stringSpace, stringHeapCellType, JSString) \
@@ -1077,6 +1088,9 @@ public:
     IsoHeapCellType nativeStdFunctionHeapCellType;
     IsoInlinedHeapCellType<JSString> stringHeapCellType;
     IsoInlinedHeapCellType<JSRopeString> ropeStringHeapCellType;
+#if USE(BUN_JSC_ADDITIONS)
+    IsoInlinedHeapCellType<JSBigInlineString> bigInlineStringHeapCellType;
+#endif
     IsoHeapCellType weakMapHeapCellType;
     IsoHeapCellType weakSetHeapCellType;
     JSDestructibleObjectHeapCellType destructibleObjectHeapCellType;

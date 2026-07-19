@@ -892,12 +892,18 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
         }
     }
 #if USE(BUN_JSC_ADDITIONS)
-    // Short substrings: 16-byte inline JSString instead of a 32-byte substring rope.
+    // Short substrings: 16/24-byte inline cell instead of a 32-byte substring rope.
     if (base.is8Bit()) {
         if (length <= JSString::maxInlineLength8)
             return JSString::createInline8(vm, base.span8().subspan(offset, length));
-    } else if (length <= JSString::maxInlineLength16)
-        return JSString::createInline16(vm, base.span16().subspan(offset, length));
+        if (length <= JSString::maxBigInlineLength8)
+            return JSBigInlineString::create8(vm, base.span8().subspan(offset, length));
+    } else {
+        if (length <= JSString::maxInlineLength16)
+            return JSString::createInline16(vm, base.span16().subspan(offset, length));
+        if (length <= JSString::maxBigInlineLength16)
+            return JSBigInlineString::create16(vm, base.span16().subspan(offset, length));
+    }
 #endif
     return JSRopeString::createSubstringOfResolved(vm, deferralContext, s, offset, length, base.is8Bit());
 }
