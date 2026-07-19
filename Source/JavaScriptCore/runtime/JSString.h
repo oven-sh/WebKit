@@ -360,6 +360,7 @@ public:
     JS_EXPORT_PRIVATE const String& resolveInline(JSGlobalObject*) const;
     JS_EXPORT_PRIVATE AtomStringImpl* resolveInlineToAtomString(JSGlobalObject*) const;
     JS_EXPORT_PRIVATE AtomStringImpl* resolveInlineToExistingAtomString() const;
+    ALWAYS_INLINE uintptr_t rawFiber() const { return m_fiber; }
 #endif
     ALWAYS_INLINE JSRopeString* asRope()
     {

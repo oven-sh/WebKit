@@ -28,6 +28,9 @@
 #include "CacheableIdentifier.h"
 
 #include "Identifier.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "JSCJSValueInlines.h"
 #include "JSCell.h"
 #include "VM.h"
@@ -90,12 +93,24 @@ inline UniquedStringImpl* CacheableIdentifier::uid() const
         return &uncheckedDowncast<Symbol>(cell())->uid();
     ASSERT(isStringCell());
     JSString* string = uncheckedDowncast<JSString>(cell());
+#if USE(BUN_JSC_ADDITIONS)
+    // For an inline JSString cell the fiber word itself is the content-unique
+    // key; return it cast as UniquedStringImpl* so IC stubs can pointer-compare
+    // against the runtime string's m_fiber. Dereferencing this value must go
+    // through uidIsSymbol()/uidHash() (see InlinePropertyKey.h).
+    if (string->isInline())
+        return std::bit_cast<UniquedStringImpl*>(string->rawFiber());
+#endif
     return std::bit_cast<UniquedStringImpl*>(string->getValueImpl());
 }
 
 inline bool CacheableIdentifier::isSymbol() const
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return m_bits && uidIsSymbol(uid());
+#else
     return m_bits && uid()->isSymbol();
+#endif
 }
 
 inline bool CacheableIdentifier::isPrivateName() const
@@ -105,7 +120,11 @@ inline bool CacheableIdentifier::isPrivateName() const
 
 inline unsigned CacheableIdentifier::hash() const
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return uidHash(uid());
+#else
     return uid()->symbolAwareHash();
+#endif
 }
 
 inline bool CacheableIdentifier::isCacheableIdentifierCell(JSCell* cell)
@@ -115,6 +134,12 @@ inline bool CacheableIdentifier::isCacheableIdentifierCell(JSCell* cell)
     if (!cell->isString())
         return false;
     JSString* string = uncheckedDowncast<JSString>(cell);
+#if USE(BUN_JSC_ADDITIONS)
+    // A 16-byte inline string's fiber word is content-unique and compares
+    // by identity against a runtime JSString's m_fiber; eligible for IC.
+    if (string->isInline())
+        return string->length() <= JSString::maxInlineLength8;
+#endif
     if (const StringImpl* impl = string->tryGetValueImpl())
         return impl->isAtom();
     return false;
@@ -134,6 +159,10 @@ inline GCOwnedDataScope<const UniquedStringImpl*> CacheableIdentifier::getCachea
     if (!cell->isString())
         return { };
     JSString* string = uncheckedDowncast<JSString>(cell);
+#if USE(BUN_JSC_ADDITIONS)
+    if (string->isInline() && string->length() <= JSString::maxInlineLength8)
+        return { cell, std::bit_cast<const UniquedStringImpl*>(string->rawFiber()) };
+#endif
     if (const StringImpl* impl = string->tryGetValueImpl(); impl && impl->isAtom())
         return { cell, static_cast<const AtomStringImpl*>(impl) };
     return { };
@@ -159,7 +188,11 @@ inline bool CacheableIdentifier::isStringCell() const
 inline void CacheableIdentifier::ensureIsCell(VM& vm)
 {
     if (!isCell()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (uidIsSymbol(uid()))
+#else
         if (uid()->isSymbol())
+#endif
             setCellBits(Symbol::create(vm, static_cast<SymbolImpl&>(*uid())));
         else
             setCellBits(jsString(vm, String(static_cast<AtomStringImpl*>(uid()))));
