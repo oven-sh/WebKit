@@ -28,6 +28,10 @@
 #include "Structure.h"
 #include <wtf/TZoneMalloc.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 namespace JSC {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MegamorphicCache);
@@ -170,7 +174,11 @@ public:
     ALWAYS_INLINE static uint32_t primaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
+#if USE(BUN_JSC_ADDITIONS)
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + uidHash(uid);
+#else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + uid->hash();
+#endif
     }
 
     ALWAYS_INLINE static uint32_t secondaryHash(StructureID structureID, UniquedStringImpl* uid)
@@ -182,7 +190,11 @@ public:
     ALWAYS_INLINE static uint32_t storeCachePrimaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
+#if USE(BUN_JSC_ADDITIONS)
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + uidHash(uid);
+#else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + uid->hash();
+#endif
     }
 
     ALWAYS_INLINE static uint32_t storeCacheSecondaryHash(StructureID structureID, UniquedStringImpl* uid)
@@ -194,7 +206,11 @@ public:
     ALWAYS_INLINE static uint32_t hasCachePrimaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
+#if USE(BUN_JSC_ADDITIONS)
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + uidHash(uid);
+#else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + uid->hash();
+#endif
     }
 
     ALWAYS_INLINE static uint32_t hasCacheSecondaryHash(StructureID structureID, UniquedStringImpl* uid)
