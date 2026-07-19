@@ -2257,8 +2257,15 @@ void Heap::finishRelinquishingConn()
     sanitizeStackForVM(vm());
     
     Locker locker { *m_threadLock };
-    if (!m_requests.isEmpty())
+    if (!m_requests.isEmpty()) {
         m_threadCondition->notifyOne(locker);
+        if (!m_thread->hasUnderlyingThread(locker)) [[unlikely]] {
+            // The collector thread couldn't spawn (pthread_create EAGAIN at a
+            // pids/thread limit). Take the conn back so the mutator drives the
+            // collection; otherwise waitForCollector() would park forever.
+            m_worldState.exchangeOr(mutatorHasConnBit);
+        }
+    }
     ParkingLot::unparkAll(&m_worldState);
 }
 

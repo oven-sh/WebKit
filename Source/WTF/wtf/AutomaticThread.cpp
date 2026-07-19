@@ -180,7 +180,7 @@ void AutomaticThread::start(const AbstractLocker&)
         break;
     }
 
-    Thread::create(
+    RefPtr<Thread> thread = Thread::tryCreate(
         name(),
         [=, this] () {
             if (verbose)
@@ -245,7 +245,15 @@ void AutomaticThread::start(const AbstractLocker&)
                 }
                 RELEASE_ASSERT(result == WorkResult::Continue);
             }
-        }, m_threadType, Thread::defaultQOS, Thread::defaultSchedulingPolicy, stackSpec)->detach();
+        }, m_threadType, Thread::defaultQOS, Thread::defaultSchedulingPolicy, stackSpec);
+    if (!thread) {
+        // pthread_create/_beginthreadex refused (e.g. EAGAIN at a thread/pids
+        // limit). Stay in the no-underlying-thread state so the next notify
+        // retries instead of bringing the whole process down.
+        m_hasUnderlyingThread = false;
+        return;
+    }
+    thread->detach();
 }
 
 void AutomaticThread::threadDidStart()

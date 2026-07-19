@@ -521,8 +521,13 @@ void pas_scavenger_notify_eligibility_if_needed(void)
         int result;
         pas_scavenger_current_state = pas_scavenger_state_polling;
         result = pthread_create(&thread, NULL, scavenger_thread_main, NULL);
-        PAS_ASSERT(!result);
-        pthread_detach(thread);
+        if (PAS_LIKELY(!result))
+            pthread_detach(thread);
+        else {
+            /* EAGAIN at a thread/pids limit: leave memory unscavenged rather
+               than killing the process. The next did_create_eligible retries. */
+            pas_scavenger_current_state = pas_scavenger_state_no_thread;
+        }
     }
 
     if (pas_scavenger_current_state == pas_scavenger_state_deep_sleep) {

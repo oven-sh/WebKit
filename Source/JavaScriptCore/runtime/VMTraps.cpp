@@ -366,6 +366,12 @@ void VMTraps::initializeSignals()
     if (!Options::usePollingTraps()) {
         ASSERT(Options::useJIT());
         SignalSender::initializeSignals();
+        // Create the signal-sender WorkQueue (and its backing thread) now,
+        // while the process still has thread-budget headroom, instead of on
+        // the first fireTrap() which may arrive after workers have consumed
+        // every slot of a cgroup pids.max budget. RunLoop::create() cannot
+        // recover from a failed Thread::create.
+        queue();
     }
 #endif
 }

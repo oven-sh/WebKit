@@ -134,9 +134,13 @@ public:
     static dispatch_qos_class_t dispatchQOSClass(QOS);
 #endif
 
-    // Returns nullptr if thread creation failed.
     // The thread name must be a literal since on some platforms it's passed in to the thread.
+    // Aborts if the OS refuses to create the thread (resource limit, etc.).
     WTF_EXPORT_PRIVATE static Ref<Thread> create(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
+
+    // Returns nullptr if thread creation failed. The caller still owns entryPoint
+    // resources in that case (the moved Function is destroyed, its captures drop).
+    WTF_EXPORT_PRIVATE static RefPtr<Thread> tryCreate(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
 
     // Returns Thread object.
     static Thread& currentSingleton();
