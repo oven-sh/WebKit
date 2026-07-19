@@ -2,12 +2,15 @@
 # exclusively needed in only one subdirectory of Source (e.g. only needed by
 # WebCore), then put it there instead.
 
+set(SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror ExistentialAny -Werror StrictMemorySafety -Werror ForeignReferenceType -Werror NoUseUnstructuredThrowingTask -Werror NoUsage")
+
 macro(WEBKIT_COMPUTE_SOURCES _framework)
     set(_derivedSourcesPath ${${_framework}_DERIVED_SOURCES_DIR})
 
     foreach (_sourcesListFile IN LISTS ${_framework}_UNIFIED_SOURCE_LIST_FILES)
       if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_sourcesListFile}")
           set(_sourcesListInput "${CMAKE_CURRENT_SOURCE_DIR}/${_sourcesListFile}")
+          set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_sourcesListInput}")
       else ()
           set(_sourcesListInput "${_derivedSourcesPath}/${_sourcesListFile}")
       endif ()
@@ -369,7 +372,7 @@ macro(_WEBKIT_TARGET_SETUP _target _logical_name)
         target_compile_options(${_target} PRIVATE
             "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:${DEVELOPER_MODE_CXX_FLAGS}>")
         target_compile_options(${_target} PRIVATE
-            "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Werror ExistentialAny -Werror StrictMemorySafety -Werror ForeignReferenceType>")
+            "$<$<COMPILE_LANGUAGE:Swift>:SHELL:${SWIFT_FATAL_DIAGNOSTIC_FLAGS}>")
     endif ()
 
     target_compile_definitions(${_target} PRIVATE "BUILDING_${_logical_name}")
@@ -572,10 +575,15 @@ macro(_WEBKIT_LIBRARY_LINK_FRAMEWORK _target)
     else ()
         # Include the framework headers but don't try and link the frameworks
         foreach (framework IN LISTS ${_target}_FRAMEWORKS)
-            list(APPEND ${_target}_INCLUDE_DIRECTORIES
-                ${${framework}_FRAMEWORK_HEADERS_DIR}
-                ${${framework}_PRIVATE_FRAMEWORK_HEADERS_DIR}
-            )
+            get_target_property(_is_framework ${framework} FRAMEWORK)
+            if (_is_framework)
+                target_compile_options(${_target} PRIVATE -F${CMAKE_BINARY_DIR})
+            else ()
+                list(APPEND ${_target}_INCLUDE_DIRECTORIES
+                    ${${framework}_FRAMEWORK_HEADERS_DIR}
+                    ${${framework}_PRIVATE_FRAMEWORK_HEADERS_DIR}
+                )
+            endif ()
         endforeach ()
     endif ()
 endmacro()
@@ -621,9 +629,11 @@ macro(WEBKIT_FRAMEWORK _target)
         add_custom_command(TARGET ${_target} POST_BUILD COMMAND ${${_target}_POST_BUILD_COMMAND} VERBATIM)
     endif ()
 
-    if (APPLE AND NOT PORT STREQUAL "GTK" AND NOT ${${_target}_LIBRARY_TYPE} MATCHES STATIC)
+    if (APPLE AND NOT PORT STREQUAL "GTK" AND ${${_target}_LIBRARY_TYPE} MATCHES SHARED)
         set_target_properties(${_target} PROPERTIES FRAMEWORK TRUE)
+        target_compile_options(${_target} BEFORE PUBLIC -F${CMAKE_BINARY_DIR})
         install(TARGETS ${_target} FRAMEWORK DESTINATION ${LIB_INSTALL_DIR})
+        _WEBKIT_CREATE_FRAMEWORK_BUNDLE_STRUCTURE(${_target})
     endif ()
 
     _WEBKIT_TARGET_INTERFACE(${_target})
@@ -679,10 +689,29 @@ function(WEBKIT_PRUNE_STALE_DESTINATION destination flattened)
     endforeach ()
 endfunction()
 
+function(_WEBKIT_CREATE_FRAMEWORK_BUNDLE_STRUCTURE _target)
+    if (PORT STREQUAL Mac)
+        set(_version "Versions/A/")
+        file(MAKE_DIRECTORY
+            "${CMAKE_BINARY_DIR}/${_target}.framework/Versions/A")
+        file(CREATE_LINK "A"
+            "${CMAKE_BINARY_DIR}/${_target}.framework/Versions/Current" SYMBOLIC)
+    endif ()
+
+    foreach (_name Headers Modules PrivateHeaders)
+        file(MAKE_DIRECTORY
+            "${CMAKE_BINARY_DIR}/${_target}.framework/${_version}${_name}")
+        if (PORT STREQUAL Mac)
+            file(CREATE_LINK "Versions/Current/${_name}"
+                "${CMAKE_BINARY_DIR}/${_target}.framework/${_name}" SYMBOLIC)
+        endif ()
+    endforeach ()
+endfunction()
+
 function(WEBKIT_COPY_FILES target_name)
     set(options FLATTENED NO_SYMLINK PRUNE_STALE)
     set(oneValueArgs DESTINATION)
-    set(multiValueArgs FILES)
+    set(multiValueArgs FILES COMMAND)
     cmake_parse_arguments(opt "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     set(files ${opt_FILES})
     set(dst_files)
@@ -708,19 +737,18 @@ function(WEBKIT_COPY_FILES target_name)
         # On macOS, symlink instead of copy so #import deduplicates headers reachable
         # via both forwarded (<WebKit/X.h>) and source-tree paths.
         # NO_SYMLINK for destinations post-processed in-place (e.g. ANGLE headers).
-        if (APPLE AND NOT opt_NO_SYMLINK)
-            add_custom_command(OUTPUT ${dst_file}
-                COMMAND ${CMAKE_COMMAND} -E create_symlink ${src_file} ${dst_file}
-                MAIN_DEPENDENCY ${src_file}
-                VERBATIM
-            )
+        if (opt_COMMAND)
+            set(command ${opt_COMMAND})
+        elseif (APPLE AND NOT opt_NO_SYMLINK)
+            set(command ${CMAKE_COMMAND} -E create_symlink)
         else ()
-            add_custom_command(OUTPUT ${dst_file}
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${src_file} ${dst_file}
-                MAIN_DEPENDENCY ${src_file}
-                VERBATIM
-            )
+            set(command ${CMAKE_COMMAND} -E copy_if_different)
         endif ()
+        add_custom_command(OUTPUT ${dst_file}
+            COMMAND ${command} ${src_file} ${dst_file}
+            MAIN_DEPENDENCY ${src_file}
+            VERBATIM
+        )
         list(APPEND dst_files ${dst_file})
     endforeach ()
     add_custom_target(${target_name} ALL DEPENDS ${dst_files})
@@ -882,8 +910,16 @@ function(_webkit_generate_platform_swift_args _target _resp_path _ordering_dep)
     if (NOT EXISTS "${_empty_input}")
         file(WRITE "${_empty_input}" "")
     endif ()
-    set(_clang_cmd
-        ${CMAKE_CXX_COMPILER}
+    set(_clang_cmd ${CMAKE_CXX_COMPILER})
+    if (COMPILER_IS_CLANG_CL)
+        # clang-cl defaults to the MSVC (cl) driver, which silently ignores the
+        # GCC-style preprocess flags below (-std=, -dM, -MF, -include ...) and
+        # then treats their operands as input files, failing with "no such file
+        # or directory: cmakeconfig.h". Flip it to the GCC driver so the flags
+        # are honored. Must precede the flags it governs.
+        list(APPEND _clang_cmd --driver-mode=gcc)
+    endif ()
+    list(APPEND _clang_cmd
         -x c++ -std=c++2b
         -E -P -dM
         -MD -MF "${_depfile}" -MT "${_resp_path}"
@@ -916,6 +952,8 @@ function(_webkit_generate_platform_swift_args _target _resp_path _ordering_dep)
     if (CMAKE_CXX_FLAGS_${_build_type_upper} MATCHES "NDEBUG" OR CMAKE_CXX_FLAGS MATCHES "NDEBUG")
         list(APPEND _clang_cmd "-DNDEBUG")
     endif ()
+    # -fsanitize=* drives ASAN_ENABLED etc; keep this preprocess in sync with C++.
+    list(APPEND _clang_cmd ${ENABLED_COMPILER_SANITIZERS})
     list(APPEND _clang_cmd "${_empty_input}")
 
     # Order resp generation after the framework's headers are staged: the
@@ -1081,6 +1119,12 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         # apinotes version is keyed off the effective Swift language mode, so
         # this also keeps PAL/WebGPU/WebKit on the same module-cache hash.
         list(APPEND _swift_options "-swift-version" "6")
+        if (APPLE)
+            # Swift modules extend their underlying ObjC++ module.
+            list(APPEND _swift_options "-import-underlying-module")
+            # Don't fire the module's own cross-import overlay while compiling it.
+            list(APPEND _swift_options "-Xfrontend" "-disable-cross-import-overlays")
+        endif ()
         if (${_target}_SWIFT_INTEROP_MODULE_PATH_SWIFT_ONLY)
             list(APPEND _swift_options "-I${_interop_module_path}")
         else ()

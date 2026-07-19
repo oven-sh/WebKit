@@ -40,6 +40,10 @@ class ReducedResolutionSeconds final : public GenericTimeMixin<ReducedResolution
 public:
     static constexpr ClockType clockType = ClockType::Monotonic;
 
+    // Declared here, not inherited: Swift's C++ interop importer mishandles
+    // an `operator bool` inherited from a template base (rdar://181622867).
+    explicit constexpr operator bool() const { return !!m_value; }
+
     constexpr ReducedResolutionSeconds() = default;
 
     static constexpr ReducedResolutionSeconds fromSeconds(Seconds value)

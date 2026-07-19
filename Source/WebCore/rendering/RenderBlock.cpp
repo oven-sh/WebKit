@@ -799,7 +799,7 @@ bool RenderBlock::simplifiedLayout()
     // Make sure a forced break is applied after the content if we are a flow thread in a simplified layout.
     // This ensures the size information is correctly computed for the last auto-height fragment receiving content.
     if (CheckedPtr fragmentedFlow = dynamicDowncast<RenderFragmentedFlow>(*this))
-        fragmentedFlow->applyBreakAfterContent(clientLogicalBottom());
+        fragmentedFlow->applyBreakAfterContent(paddingBoxLogicalBottom());
 
     // Recompute our overflow information.
     // FIXME: Skip recalculation if we didn't actually relayout our in-flow boxes and don't have cached overflow.
@@ -2477,7 +2477,7 @@ std::optional<LayoutUnit> RenderBlock::firstLineBaseline() const
             if (child->isLegend() && child->isExcludedFromNormalLayout())
                 continue;
             if (auto baseline = child->firstLineBaseline())
-                return (settings().subpixelInlineLayoutEnabled() ? LayoutUnit(child->logicalTop()) : LayoutUnit(child->logicalTop().toInt())) + *baseline;
+                return child->logicalTop() + *baseline;
         }
         return { };
     };
@@ -2497,7 +2497,7 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
             if (child->isLegend() && child->isExcludedFromNormalLayout())
                 continue;
             if (auto baseline = child->lastLineBaseline())
-                return (settings().subpixelInlineLayoutEnabled() ? LayoutUnit(child->logicalTop()) : LayoutUnit(child->logicalTop().toInt())) + *baseline;
+                return child->logicalTop() + *baseline;
         }
         return { };
     };
@@ -3044,10 +3044,10 @@ bool RenderBlock::hasDefiniteLogicalHeightForPercentageResolutionFromStyle() con
         auto hasDefiniteHeight = [&] {
             auto& flexContainer = downcast<RenderFlexibleBox>(*parent());
             // §9.8 rule 3: stretched cross-axis items have definite cross size.
-            if (flexContainer.mainAxisIsFlexItemInlineAxis(*this))
-                return flexContainer.alignmentForFlexItem(*this) == ItemPosition::Stretch;
+            if (flexContainer.flexLayoutUtils().mainAxisIsFlexItemInlineAxis(*this))
+                return flexContainer.flexLayoutUtils().alignmentForFlexItem(*this) == ItemPosition::Stretch;
             // §9.8 rule 2: definite flex-basis makes post-flexing main size definite.
-            auto flexBasis = flexContainer.flexBasisForFlexItem(*this);
+            auto flexBasis = flexContainer.flexLayoutUtils().flexBasisForFlexItem(*this);
             if (!flexBasis.isAuto() && !flexBasis.isContent() && !flexBasis.isPercentOrCalculated() && !flexBasis.isIntrinsic())
                 return true;
             // §9.8 rule 1: definite container main size makes all items definite.
@@ -3113,7 +3113,7 @@ std::optional<LayoutUnit> RenderBlock::availableLogicalHeightForPercentageComput
                 // horizontal WM, horizontal for vertical WM). It aligns with the
                 // main axis when they point in different physical directions.
                 auto& flexContainer = downcast<RenderFlexibleBox>(*parent());
-                return !style.flexBasis().isAuto() && flexContainer.isHorizontalFlow() != isHorizontalWritingMode();
+                return !style.flexBasis().isAuto() && flexContainer.flexLayoutUtils().isHorizontalFlow() != isHorizontalWritingMode();
             };
             if (!flexBasisOverridesHeight()) {
                 auto contentBoxHeight = adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedLogicalHeight->resolveZoom(style.usedZoomForLength()) });
@@ -3544,7 +3544,7 @@ LayoutUnit RenderBlock::layoutOverflowLogicalBottom(const RenderBlock& renderer)
         auto childLogicalBottom = renderer.logicalTopForChild(child) + renderer.logicalHeightForChild(child) + renderer.marginAfterForChild(child);
         maxChildLogicalBottom = std::max(maxChildLogicalBottom, childLogicalBottom);
     }
-    return std::max(renderer.clientLogicalBottom(), maxChildLogicalBottom + renderer.paddingAfter());
+    return std::max(renderer.paddingBoxLogicalBottom(), maxChildLogicalBottom + renderer.paddingAfter());
 }
 
 void RenderBlock::updateInFlowDescendantTransformsAfterLayout()

@@ -51,6 +51,7 @@
 #include "NowPlayingInfo.h"
 #include "Page.h"
 #include "PlatformMediaSessionManager.h"
+#include "RenderBoxInlines.h"
 #include "RenderMediaInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
@@ -429,6 +430,23 @@ void MediaElementSession::removeBehaviorRestriction(BehaviorRestrictions restric
     m_restrictions &= ~restriction;
 }
 
+#if !RELEASE_LOG_DISABLED
+
+static ASCIILiteral mediaGestureReasonString(Document::MediaGestureReason reason)
+{
+    switch (reason) {
+    case Document::MediaGestureReason::None: return "None"_s;
+    case Document::MediaGestureReason::ActiveToken: return "ActiveToken"_s;
+    case Document::MediaGestureReason::TransientActivation: return "TransientActivation"_s;
+    case Document::MediaGestureReason::MediaFinishedGrace: return "MediaFinishedGrace"_s;
+    case Document::MediaGestureReason::InheritsFromDocumentSetting: return "InheritsFromDocumentSetting"_s;
+    case Document::MediaGestureReason::InheritedUserGesturesQuirk: return "InheritedUserGesturesQuirk"_s;
+    }
+    return "Unknown"_s;
+}
+
+#endif
+
 Expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStateChangePermitted(MediaPlaybackState state) const
 {
     RefPtr element = m_element.get();
@@ -446,6 +464,19 @@ Expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStat
 
     if (document->isMediaDocument() && !document->ownerElement())
         return { };
+
+    RefPtr mainFrameDocument = document->mainFrameDocument();
+
+    // Deny an audible element from starting while another element in the document is already playing audio,
+    // unless a user gesture is being directly processed.
+    if (mainFrameDocument && mainFrameDocument->quirks().shouldBlockAudiblePlaybackWhileAudioIsPlaying()
+        && state == MediaPlaybackState::Playing
+        && !element->muted() && element->volume() && element->hasAudio() && !element->isPlaying()
+        && document->mediaState().contains(MediaProducerMediaState::IsPlayingAudio)
+        && document->mediaUserGestureReason() != Document::MediaGestureReason::ActiveToken) {
+        ALWAYS_LOG(LOGIDENTIFIER, "denying audible playback while another element is playing audio; gesture reason = ", mediaGestureReasonString(document->mediaUserGestureReason()));
+        return makeUnexpectedDenial(MediaPlaybackDenialReason::UserGestureRequired, "Another audible media element is already playing"_s);
+    }
 
     if (pageExplicitlyAllowsElementToAutoplayInline(*element))
         return { };
@@ -466,7 +497,6 @@ Expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStat
 #endif
 
     // FIXME: Why are we checking top-level document only for PerDocumentAutoplayBehavior?
-    RefPtr mainFrameDocument = document->mainFrameDocument();
     if (!mainFrameDocument) {
         LOG_ONCE(SiteIsolation, "Unable to properly calculate MediaElementSession::playbackStateChangePermitted() without access to the main frame document ");
     }
@@ -1266,8 +1296,8 @@ static bool isElementLargeRelativeToMainFrame(const HTMLMediaElement& element)
     if (!mainFrameView)
         return false;
 
-    auto maxVisibleClientWidth = std::min(renderer->clientWidth().toInt(), mainFrameView->visibleWidth());
-    auto maxVisibleClientHeight = std::min(renderer->clientHeight().toInt(), mainFrameView->visibleHeight());
+    auto maxVisibleClientWidth = std::min(renderer->paddingBoxWidth().toInt(), mainFrameView->visibleWidth());
+    auto maxVisibleClientHeight = std::min(renderer->paddingBoxHeight().toInt(), mainFrameView->visibleHeight());
 
     return maxVisibleClientWidth * maxVisibleClientHeight > minimumPercentageOfMainFrameAreaForMainContent * mainFrameView->visibleWidth() * mainFrameView->visibleHeight();
 }
@@ -1283,8 +1313,8 @@ static bool isElementLargeEnoughForMainContent(const HTMLMediaElement& element, 
     if (!renderer)
         return false;
 
-    double width = renderer->clientWidth();
-    double height = renderer->clientHeight();
+    double width = renderer->paddingBoxWidth();
+    double height = renderer->paddingBoxHeight();
     double area = width * height;
     double aspectRatio = width / height;
 
@@ -1585,7 +1615,7 @@ void MediaElementSession::updateMediaUsageIfChanged()
 #if ENABLE(FULLSCREEN_API)
     if (RefPtr documentFullscreen = document->fullscreenIfExists()) {
         if (RefPtr fullscreenElement = protect(document->fullscreen())->fullscreenElement())
-            isOutsideOfFullscreen = element->isDescendantOf(*fullscreenElement);
+            isOutsideOfFullscreen = !element->isDescendantOf(*fullscreenElement);
     }
 #endif
     bool isAudio = client().presentationType() == MediaType::Audio;

@@ -40,12 +40,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/cf/CFTypeTraits.h>
 
-#if PLATFORM(WATCHOS)
-#define SOFTLINK_AVKIT_FRAMEWORK() SOFT_LINK_PRIVATE_FRAMEWORK_OPTIONAL(AVKit)
-#else
-#define SOFTLINK_AVKIT_FRAMEWORK() SOFT_LINK_FRAMEWORK_OPTIONAL(AVKit)
-#endif
-
 #define CMSAMPLEBUFFERCALL_NOESCAPE CF_NOESCAPE
 
 SOFT_LINK_FRAMEWORK_FOR_HEADER(PAL, CoreMedia)
@@ -173,6 +167,8 @@ SOFT_LINK_CONSTANT_FOR_HEADER(PAL, CoreMedia, kCMTextMarkupAttribute_ItalicStyle
 #define kCMTextMarkupAttribute_ItalicStyle get_CoreMedia_kCMTextMarkupAttribute_ItalicStyleSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, CoreMedia, kCMTextMarkupAttribute_OrthogonalLinePositionPercentageRelativeToWritingDirection, CFStringRef)
 #define kCMTextMarkupAttribute_OrthogonalLinePositionPercentageRelativeToWritingDirection get_CoreMedia_kCMTextMarkupAttribute_OrthogonalLinePositionPercentageRelativeToWritingDirectionSingleton()
+SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(PAL, CoreMedia, kCMTextMarkupAttribute_PreventLineWrapping, CFStringRef)
+#define kCMTextMarkupAttribute_PreventLineWrapping get_CoreMedia_kCMTextMarkupAttribute_PreventLineWrappingSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, CoreMedia, kCMTextMarkupAttribute_RelativeFontSize, CFStringRef)
 #define kCMTextMarkupAttribute_RelativeFontSize get_CoreMedia_kCMTextMarkupAttribute_RelativeFontSizeSingleton()
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, CoreMedia, kCMTextMarkupAttribute_TextPositionPercentageRelativeToWritingDirection, CFStringRef)

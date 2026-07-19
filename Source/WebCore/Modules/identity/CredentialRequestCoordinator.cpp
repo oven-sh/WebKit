@@ -44,6 +44,7 @@
 #include "JSDOMPromiseDeferred.h"
 #include "JSDigitalCredential.h"
 #include "JSValueInWrappedObjectInlines.h"
+#include "LocalFrame.h"
 #include "Page.h"
 #include "SecurityOriginData.h"
 #include <JavaScriptCore/JSObject.h>
@@ -148,6 +149,12 @@ void CredentialRequestCoordinator::prepareCredentialRequests(const Document& doc
 
     auto validatedCredentialRequests = validatedRequestsOrException.releaseReturnValue();
 
+    // FIXME: validatedCredentialRequests only reflects org-iso-mdoc validation, so this
+    // empty check is correct only while mdoc is the sole supported protocol; account for
+    // other protocols' surviving requests once one is added (webkit.org/b/317545).
+    if (validatedCredentialRequests.isEmpty())
+        return rejectTheCredentialRequestWith(Exception { ExceptionCode::TypeError, "No valid credential requests remain after validation"_s });
+
     if (signal) {
         ASSERT(!signal->aborted());
         m_abortSignal = signal;
@@ -175,7 +182,12 @@ void CredentialRequestCoordinator::initiateTheCredentialRequest(const Document& 
 
     auto [requestData, rawRequests] = requestDataAndRawRequests.releaseReturnValue();
 
+    std::optional<FrameIdentifier> requestingFrameID;
+    if (RefPtr frame = document.frame())
+        requestingFrameID = frame->frameID();
+
     m_client->showDigitalCredentialsChooser(
+        requestingFrameID,
         WTF::move(rawRequests),
         requestData,
         [weakThis = WeakPtr { *this }, signal](Expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException) {
@@ -189,6 +201,13 @@ void CredentialRequestCoordinator::processCredentialChooserResponse(Expected<Dig
     if (signal && signal->aborted()) {
         LOG(DigitalCredentials, "Credential chooser response received after AbortSignal aborted");
         abortTheCredentialRequest(ExceptionOr<JSC::JSValue> { signal->reason().getValue() });
+        return;
+    }
+
+    // A parked "wait" reply released during abort/teardown can arrive after the
+    // request already left Requesting; it is moot, so return before the guard.
+    if (m_interactionState != InteractionState::Requesting) {
+        LOG(DigitalCredentials, "Ignoring credential chooser response received while not in the Requesting state.");
         return;
     }
 

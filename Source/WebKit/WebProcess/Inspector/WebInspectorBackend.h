@@ -29,6 +29,7 @@
 #include "Connection.h"
 #include "MessageReceiver.h"
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/HTTPHeaderMap.h>
 #include <WebCore/InspectorBackendClient.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <wtf/HashMap.h>
@@ -38,6 +39,8 @@
 
 namespace Inspector {
 struct FrameResourceData;
+struct SearchMatch;
+struct SearchResult;
 }
 
 namespace WebKit {
@@ -98,9 +101,16 @@ public:
     void disableNetworkInstrumentation();
     void getResponseBody(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&&);
 
+    void setExtraHTTPHeaders(WebCore::HTTPHeaderMap&&);
+    void setResourceCachingDisabled(bool);
+
     void enablePageInstrumentation();
     void disablePageInstrumentation();
     void getFrameResourceData(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>>&&)>&&);
+
+    void searchInRequest(WebCore::ResourceLoaderIdentifier, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
+    void searchInFrameResource(WebCore::FrameIdentifier, const String& url, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
+    void searchInFramesAndRequests(Vector<WebCore::FrameIdentifier>&& frameIDs, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchResult>&&)>&&);
 
     // Set up / tear down every per-frame instrumentation agent for a frame. Callers
     // don't need to know which agents are frame-scoped; each helper no-ops unless its
@@ -137,6 +147,11 @@ private:
 
     bool m_attached { false };
     bool m_previousCanAttach { false };
+
+    // Must outlive m_frameNetworkAgentProxies below: each proxy holds a reference to
+    // m_extraRequestHeaders and reads it in willSendRequest.
+    WebCore::HTTPHeaderMap m_extraRequestHeaders;
+    bool m_resourceCachingDisabled { false };
 
     HashMap<WebCore::FrameIdentifier, std::unique_ptr<FrameNetworkAgentProxy>> m_frameNetworkAgentProxies;
     UniqueRef<BackendResourceDataStore> m_resourceDataStore;

@@ -2659,6 +2659,48 @@ class TestRunWebKitTestsWithoutChange(BuildStepMixinAdditions, unittest.TestCase
         with current_hostname(EWS_BUILD_HOSTNAMES[0]):
             return self.run_step()
 
+    def test_run_subtest_tests_strips_wpt_directory_from_additional_arguments(self):
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.setProperty('additionalArguments', ['--child-processes=4', 'imported/w3c/web-platform-tests'])
+        self.setProperty('first_run_failures', ['imported/w3c/web-platform-tests/test1.html', 'imported/w3c/web-platform-tests/test2.html'])
+        self.setProperty('second_run_failures', ['imported/w3c/web-platform-tests/test2.html', 'imported/w3c/web-platform-tests/test3.html'])
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --results-directory layout-test-results --debug-rwt-logging --exit-after-n-failures 60 --skip-failing-tests --child-processes=4 --builder-name iOS-13-Simulator-WK2-Tests-EWS --build-number 123 --buildbot-worker ews126 --buildbot-master {EWS_BUILD_HOSTNAMES[0]} --report https://results.webkit.org/ --skipped=always imported/w3c/web-platform-tests/test1.html imported/w3c/web-platform-tests/test2.html imported/w3c/web-platform-tests/test3.html 2>&1 | Tools/Scripts/filter-test-logs layout'],
+                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'},
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        with current_hostname(EWS_BUILD_HOSTNAMES[0]):
+            return self.run_step()
+
+    def test_run_subtest_tests_preserves_flags_and_exclude_value(self):
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.setProperty('additionalArguments', ['imported/w3c/web-platform-tests', '--site-isolation-enabled-by-default', '--exclude-tests', 'imported/w3c/web-platform-tests/css'])
+        self.setProperty('first_run_failures', ['imported/w3c/web-platform-tests/test1.html'])
+        self.setProperty('second_run_failures', ['imported/w3c/web-platform-tests/test1.html'])
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --results-directory layout-test-results --debug-rwt-logging --exit-after-n-failures 60 --skip-failing-tests --site-isolation-enabled-by-default --exclude-tests imported/w3c/web-platform-tests/css --builder-name iOS-13-Simulator-WK2-Tests-EWS --build-number 123 --buildbot-worker ews126 --buildbot-master {EWS_BUILD_HOSTNAMES[0]} --report https://results.webkit.org/ --skipped=always imported/w3c/web-platform-tests/test1.html 2>&1 | Tools/Scripts/filter-test-logs layout'],
+                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'},
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        with current_hostname(EWS_BUILD_HOSTNAMES[0]):
+            return self.run_step()
+
     def test_run_subtest_tests_removes_skipped_that_fails(self):
         self.configureStep()
         self.setProperty('fullPlatform', 'ios-simulator')
@@ -5721,6 +5763,72 @@ All tests successfully passed!
         self.expect_outcome(result=SUCCESS, state_string='run-api-tests')
         return self.run_step()
 
+    def test_expected_failures_only_not_blocking(self):
+        self.setup_step(RunAPITests())
+        self.setProperty('fullPlatform', 'mac-catalina')
+        self.setProperty('platform', 'mac')
+        self.setProperty('configuration', 'debug')
+
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        logfiles={'json': self.jsonFileName},
+                        timeout=20 * 60
+                        )
+            .log('stdio', stdout='''...
+worker/0 TestWTF.WTF_Variant.VisitorUsingSwitchOn Passed
+worker/0 exiting
+Ran 1888 tests of 1888 with 1882 successful (6 expected failures)
+------------------------------
+All tests passed! (6 expected failures)
+
+Expected failures (not blocking):
+    TestWebKitAPI.MediaSessionTest.MinimalCommands
+    TestWebKitAPI.NowPlayingTest.VideoElementWithMutedAudio
+    TestWebKitAPI.NowPlayingTest.VideoElementWithoutAudio
+    TestWebKitAPI.NowPlayingTest.VideoElementWithoutAudioPlayWithUserGesture
+    TestWebKitAPI.WKHTTPCookieStore.WebSocketCookiesFromRedirect
+    TestWebKitAPI.WKHTTPCookieStore.WebSocketCookiesThroughRedirect
+''')
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='run-api-tests')
+        return self.run_step()
+
+    def test_unexpected_failures_counted_excluding_expected(self):
+        self.setup_step(RunAPITests())
+        self.setProperty('fullPlatform', 'mac-catalina')
+        self.setProperty('platform', 'mac')
+        self.setProperty('configuration', 'debug')
+
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        logfiles={'json': self.jsonFileName},
+                        timeout=20 * 60
+                        )
+            .log('stdio', stdout='''...
+worker/0 TestWTF.WTF_Variant.VisitorUsingSwitchOn Passed
+worker/0 exiting
+Ran 1888 tests of 1888 with 1880 successful (6 expected failures)
+------------------------------
+Test suite failed
+
+** UNEXPECTED FAILURES **
+
+    TestWTF.WTF.StringConcatenate_Unsigned
+    TestWTF.WTF_Expected.Unexpected
+
+Expected failures (not blocking):
+    TestWebKitAPI.MediaSessionTest.MinimalCommands
+''')
+            .exit(2),
+        )
+        self.expect_outcome(result=FAILURE, state_string='2 api tests failed or timed out')
+        return self.run_step()
+
 
 class TestRunAPITestsWithoutChange(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
@@ -6706,6 +6814,50 @@ class TestCleanGitRepo(BuildStepMixinAdditions, unittest.TestCase):
             .log('stdio', stdout=''),
         )
         self.expect_outcome(result=SUCCESS, state_string='Cleaned up git repository')
+        return self.run_step()
+
+
+class TestCleanWebKitBuildIfBaseChanged(BuildStepMixinAdditions, unittest.TestCase):
+    def setUp(self):
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self):
+        return self.tear_down_test_build_step()
+
+    def test_passes_base_ref_to_script(self):
+        self.setup_step(CleanWebKitBuildIfBaseChanged())
+        self.setProperty('github.base.ref', 'safari-7625-branch')
+
+        self.expectRemoteCommands(
+            ExpectShell(command=['python3', 'Tools/CISupport/clean-webkitbuild-if-base-changed', '--current-branch', 'safari-7625-branch'], workdir='wkdir', timeout=900, log_environ=False).exit(0)
+            .log('stdio', stdout="Base branch unchanged or first build ('safari-7625-branch'); keeping WebKitBuild\n"),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Checked base branch for WebKitBuild reuse')
+        return self.run_step()
+
+    def test_defaults_to_main_when_base_ref_unset(self):
+        self.setup_step(CleanWebKitBuildIfBaseChanged())
+
+        self.expectRemoteCommands(
+            ExpectShell(command=['python3', 'Tools/CISupport/clean-webkitbuild-if-base-changed', '--current-branch', DEFAULT_BRANCH], workdir='wkdir', timeout=900, log_environ=False).exit(0)
+            .log('stdio', stdout="Base branch unchanged or first build ('main'); keeping WebKitBuild\n"),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Checked base branch for WebKitBuild reuse')
+        return self.run_step()
+
+    def test_failure_does_not_flunk_build(self):
+        # The script always exits 0 in practice, and the step sets
+        # haltOnFailure/flunkOnFailure/warnOnFailure to False, so even if the script
+        # were to fail it reports an ignored issue rather than blaming the change.
+        self.setup_step(CleanWebKitBuildIfBaseChanged())
+        self.setProperty('github.base.ref', 'main')
+
+        self.expectRemoteCommands(
+            ExpectShell(command=['python3', 'Tools/CISupport/clean-webkitbuild-if-base-changed', '--current-branch', 'main'], workdir='wkdir', timeout=900, log_environ=False).exit(2)
+            .log('stdio', stdout=''),
+        )
+        self.expect_outcome(result=FAILURE, state_string='Encountered an issue checking the base branch (ignored)')
         return self.run_step()
 
 

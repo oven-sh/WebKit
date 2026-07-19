@@ -100,10 +100,10 @@ struct WebPageTests {
     }
 
     @Test(arguments: [true, false])
-    func globalPrivacyControlStatusForNavigation(enabled: Bool) async throws {
+    func globalPrivacyControlEnabledForNavigation(enabled: Bool) async throws {
         let decider = TestNavigationDecider()
         decider.preferencesMutation = { preferences in
-            preferences.globalPrivacyControlStatus = enabled
+            preferences.isGlobalPrivacyControlEnabled = enabled
         }
 
         let page = WebPage(navigationDecider: decider)
@@ -150,9 +150,9 @@ struct WebPageTests {
 
     @Test
     func clearContentWorld() async throws {
-        let worldConfiguration = WKContentWorldConfiguration()
-        worldConfiguration.nodeSerializationEnabled = true
-        let world = WKContentWorld.world(configuration: worldConfiguration)
+        let worldConfiguration = WKContentWorld.Configuration()
+        worldConfiguration.nodeSnapshotCreationEnabled = true
+        let world = WKContentWorld(configuration: worldConfiguration)
 
         let page = WebPage()
         try await page.load(html: "<body></body>").wait()

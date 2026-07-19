@@ -437,9 +437,9 @@ PlatformTimeRanges TrackBuffer::removeSamples(const DecodeOrderSampleMap::MapTyp
     //     allowed by contiguousFrameTolerance).
     PlatformTimeRanges clippedErasedRanges;
     PlatformTimeRanges additionalErasedRanges;
-    for (unsigned i = 0; i < erasedRanges.length(); ++i) {
-        auto erasedStart = erasedRanges.start(i);
-        auto erasedEnd = erasedRanges.end(i);
+    for (auto& range : erasedRanges.span()) {
+        auto erasedStart = range.start;
+        auto erasedEnd = range.end;
 
         auto startIterator = m_samples.presentationOrder().reverseFindSampleBeforePresentationTime(erasedStart);
         if (startIterator == m_samples.presentationOrder().rend())

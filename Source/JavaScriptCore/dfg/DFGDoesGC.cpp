@@ -264,7 +264,6 @@ bool doesGC(Graph& graph, Node* node)
     case FilterSetPrivateBrandStatus:
     case DateGetInt32OrNaN:
     case DateGetTime:
-    case DataViewGetInt:
     case DataViewGetFloat:
     case DataViewSet:
     case PutByOffset:
@@ -376,6 +375,7 @@ bool doesGC(Graph& graph, Node* node)
     case PutToArguments:
     case RegExpExec:
     case RegExpExecNonGlobalOrSticky:
+    case RegExpExecSticky:
     case RegExpMatchFast:
     case RegExpMatchFastGlobal:
     case RegExpSplitFast:
@@ -403,7 +403,6 @@ bool doesGC(Graph& graph, Node* node)
     case ToPropertyKey:
     case ToPropertyKeyOrNumber:
     case ToThis:
-    case TryGetById:
     case CreateThis:
     case CreatePromise:
     case CreateGenerator:
@@ -461,6 +460,7 @@ bool doesGC(Graph& graph, Node* node)
     case MaterializeNewInternalFieldObject:
     case MaterializeCreateActivation:
     case SetFunctionName:
+    case EnqueueAsyncGeneratorDriver:
     case StrCat:
     case StringReplace:
     case StringReplaceAll:
@@ -475,6 +475,7 @@ bool doesGC(Graph& graph, Node* node)
     case CreateRest:
     case ToUpperCase:
     case ToLowerCase:
+    case StringTrim:
     case CallDOMGetter:
     case CallDOM:
     case ArraySlice:
@@ -533,6 +534,9 @@ bool doesGC(Graph& graph, Node* node)
     case GlobalIsFinite:
     case GlobalIsNaN:
         return node->child1().useKind() == UntypedUse;
+
+    case DataViewGetInt:
+        return node->dataViewData().byteSize == 8;
 
     case CallNumberConstructor:
         switch (node->child1().useKind()) {

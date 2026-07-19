@@ -2156,7 +2156,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatement(Tre
         JSTokenLocation location(tokenLocation());
         next();
         result = context.createEmptyStatement(location);
-        shouldSetPauseLocation = true;
         break;
     }
     case IF:

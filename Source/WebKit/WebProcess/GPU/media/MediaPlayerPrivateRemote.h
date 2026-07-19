@@ -119,7 +119,6 @@ public:
     void readyStateChanged(RemoteMediaPlayerState&&, WebCore::MediaPlayer::ReadyState);
     void volumeChanged(double);
     void muteChanged(bool);
-    void seeked(MediaTimeUpdateData&&);
     void timeChanged(RemoteMediaPlayerState&&, MediaTimeUpdateData&&);
     void durationChanged(RemoteMediaPlayerState&&);
     void rateChanged(double, MediaTimeUpdateData&&);
@@ -196,7 +195,7 @@ public:
     const Logger& mediaPlayerLogger() const { return logger(); }
 #endif
 
-    void requestHostingContext(LayerHostingContextCallback&&) override;
+    Ref<HostingContextPromise> requestHostingContext() override;
     WebCore::HostingContext hostingContext() const override;
     void setLayerHostingContext(WebCore::HostingContext&&);
 
@@ -313,8 +312,7 @@ private:
 
     void willSeekToTarget(const MediaTime&) final;
     MediaTime pendingSeekTime() const final;
-    void seekToTarget(const WebCore::SeekTarget&) final;
-    bool seeking() const final;
+    Ref<WebCore::MediaTimePromise> seekToTarget(const WebCore::SeekTarget&) final;
 
     MediaTime startTime() const final;
 
@@ -362,6 +360,7 @@ private:
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     String wirelessPlaybackTargetName() const final;
+    String wirelessPlaybackRouteName() const final;
     WebCore::MediaPlayer::WirelessPlaybackTargetType wirelessPlaybackTargetType() const final;
 
     bool wirelessVideoPlaybackDisabled() const final;
@@ -545,7 +544,6 @@ private:
     RefPtr<RemoteVideoFrameProxy> m_videoFrameGatheredWithVideoFrameMetadata;
 #endif
 
-    Vector<LayerHostingContextCallback> m_layerHostingContextRequests;
     WebCore::HostingContext m_layerHostingContext;
     std::optional<WebCore::VideoFrameMetadata> m_videoFrameMetadata;
     bool m_isGatheringVideoFrameMetadata { false };

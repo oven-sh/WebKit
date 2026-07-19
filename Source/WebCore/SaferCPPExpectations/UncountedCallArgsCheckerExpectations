@@ -7,7 +7,6 @@ Modules/filesystem/FileSystemFileHandle.cpp
 Modules/mediastream/RTCEncodedFrame.cpp
 Modules/mediastream/RTCPeerConnection.cpp
 Modules/mediastream/RTCRtpReceiver.cpp
-Modules/mediastream/RTCRtpSFrameTransform.cpp
 Modules/mediastream/RTCRtpSender.cpp
 Modules/mediastream/libwebrtc/LibWebRTCObservers.h
 Modules/pictureinpicture/HTMLVideoElementPictureInPicture.cpp
@@ -84,7 +83,6 @@ bindings/js/JSNodeCustom.cpp
 bindings/js/JSObservableArray.h
 bindings/js/JSOffscreenCanvasRenderingContext2DCustom.cpp
 bindings/js/JSPopStateEventCustom.cpp
-bindings/js/JSRTCRtpSFrameTransformCustom.cpp
 bindings/js/JSRangeCustom.cpp
 bindings/js/JSSVGViewSpecCustom.cpp
 bindings/js/JSStaticRangeCustom.cpp
@@ -173,7 +171,6 @@ html/CachedHTMLCollectionInlines.h
 html/CollectionTraversalInlines.h
 html/CustomPaintCanvas.cpp
 html/HTMLCanvasElement.cpp
-html/HTMLFormElement.cpp
 html/HTMLInputElement.cpp
 html/HTMLLinkElement.cpp
 html/HTMLMaybeFormAssociatedCustomElement.cpp
@@ -216,6 +213,7 @@ inspector/agents/InspectorPageAgent.cpp
 inspector/agents/InspectorTimelineAgent.cpp
 inspector/agents/InspectorWorkerAgent.cpp
 inspector/agents/page/PageConsoleAgent.cpp
+inspector/agents/page/PageDOMDebuggerAgent.cpp
 inspector/agents/page/PageNetworkAgent.cpp
 inspector/agents/page/PageRuntimeAgent.cpp
 inspector/agents/worker/ServiceWorkerAgent.cpp
@@ -242,7 +240,6 @@ page/LocalDOMWindow.cpp
 page/LocalFrame.cpp
 page/LocalFrameView.cpp
 page/LocalFrameViewLayoutContext.cpp
-page/NavigateEvent.cpp
 page/NavigationDestination.h
 page/PartitionedSecurityOrigin.h
 page/Performance.cpp
@@ -317,7 +314,6 @@ rendering/LegacyLineLayout.cpp
 rendering/MarkedText.cpp
 rendering/RenderBlock.cpp
 rendering/RenderBox.cpp
-rendering/RenderBoxModelObject.cpp
 rendering/RenderElement.cpp
 rendering/RenderEmbeddedObject.cpp
 rendering/RenderFragmentContainer.cpp
@@ -359,6 +355,7 @@ rendering/svg/legacy/LegacyRenderSVGImage.cpp
 rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
 rendering/svg/legacy/LegacyRenderSVGRoot.cpp
 rendering/svg/legacy/SVGResourcesCache.cpp
+rendering/updating/RenderTreeBuilderList.cpp
 rendering/updating/RenderTreeBuilderMathML.cpp
 rendering/updating/RenderTreeBuilderMultiColumn.cpp
 rendering/updating/RenderTreeBuilderTable.cpp
@@ -370,7 +367,6 @@ style/ChildChangeInvalidation.h
 style/ElementRuleCollector.cpp
 style/RuleData.h
 style/RuleSet.cpp
-style/RuleSetBuilder.cpp
 style/StyleAdjuster.cpp
 style/StyleDocumentScope.cpp
 style/StyleExtractorCustom.h

@@ -47,6 +47,7 @@ public:
             // Note that <span>this is text</span> returns true as inline boxes are not considered 'content' here.
             bool hasTextAndLineBreakOnlyContent { false };
             bool hasTextAutospace { false };
+            bool hasWhiteSpaceTrim { false };
             size_t inlineBoxCount { 0 };
         };
         enum class IsPopulatedFromCache : bool { No, Yes };
@@ -62,6 +63,7 @@ public:
         bool hasTextAutospace() const { return m_contentAttributes.hasTextAutospace; }
         bool hasInlineBoxes() const { return !!inlineBoxCount(); }
         size_t inlineBoxCount() const { return m_contentAttributes.inlineBoxCount; }
+        bool hasWhiteSpaceTrim() const { return m_contentAttributes.hasWhiteSpaceTrim; }
         bool isPopulatedFromCache() const { return m_isPopulatedFromCache; }
 
     private:

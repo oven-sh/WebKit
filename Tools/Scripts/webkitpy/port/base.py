@@ -183,6 +183,8 @@ class Port(object):
             self._filesystem,
             self.port_name,
             use_cmake=bool(getattr(self._options, 'use_cmake', False)),
+            use_xcode=bool(getattr(self._options, 'use_xcode', False)),
+            asan=bool(getattr(self._options, 'asan', False)),
         )
         self.pretty_patch = PrettyPatch(self._executive, self.path_from_webkit_base(), self._filesystem)
 
@@ -1346,6 +1348,10 @@ class Port(object):
 
         if hasattr(self, 'architecture') and self.architecture():
             config['architecture'] = self.architecture()
+
+        if self.get_option('site_isolation_enabled_by_default'):
+            # No hyphen: an interior '-' would be parsed as a version specifier rather than a flavor.
+            config['flavor'] = 'siteisolation'
 
         return config
 

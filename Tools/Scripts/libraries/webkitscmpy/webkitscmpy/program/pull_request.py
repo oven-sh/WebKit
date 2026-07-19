@@ -127,8 +127,8 @@ class PullRequest(Command):
         )
         parser.add_argument(
             '--update-title', '--no-update-title',
-            dest='update_title', default=True,
-            help="When updating a pull request, update (or do not update) its title with the commits' common prefix.",
+            dest='update_title', default=None,
+            help="When updating a pull request, update (or don't update) its title with the commits' common prefix (also configurable via webkitscmpy.update-title).",
             action=arguments.NoAction,
         )
         parser.add_argument(
@@ -735,6 +735,8 @@ class PullRequest(Command):
             sys.stderr.write("'{}' does not support draft pull requests, aborting\n".format(remote_repo.url))
             return 1
 
+        if args.update_title is None:
+            args.update_title = repository.config().get('webkitscmpy.update-title', 'true') == 'true'
 
         if existing_pr:
             log.info("Updating pull-request for '{}'...".format(repository.branch))
@@ -785,11 +787,12 @@ class PullRequest(Command):
         if radar_issue and update_issue and radar_issue.tracker.radarclient():
             if args.update_radar and radar_issue.state == 'Analyze' and radar_issue.substate in ['Investigate', 'Fix']:
                 try:
-                    radar_issue.set_state(state='Analyze', substate='Review')
-                    print('Updated {} to Analyze/Review'.format(radar_issue.link))
+                    new_state = 'Fix' if pr.draft else 'Review'
+                    radar_issue.set_state(state='Analyze', substate=new_state)
+                    print(f'Updated {radar_issue.link} to Analyze/{new_state}')
                 except radar_issue.tracker.radarclient().exceptions.UnsuccessfulResponseException as e:
-                    sys.stderr.write('Failed to update {}:\n'.format(radar_issue.link))
-                    sys.stderr.write('{}\n'.format(e))
+                    sys.stderr.write(f'Failed to update {radar_issue.link}:\n')
+                    sys.stderr.write(f'{e}\n')
 
         if issue and pr._metadata and pr._metadata.get('issue'):
             log.info('Syncing PR labels with issue component...')

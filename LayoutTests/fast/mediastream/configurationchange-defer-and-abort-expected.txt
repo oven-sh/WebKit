@@ -1,5 +1,5 @@
 
 
-FAIL configurationchange task is deferred until track is no longer muted promise_test: Unhandled rejection with value: object "Error: timeout waiting for configurationchange after deferred unmute"
+PASS configurationchange task is deferred until track is no longer muted
 PASS configurationchange task aborts if track readyState is 'ended'
 

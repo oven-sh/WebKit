@@ -21,6 +21,7 @@ PASS animation-range-end
 PASS animation-range-start
 PASS animation-timeline
 PASS animation-timing-function
+PASS animation-trigger
 PASS appearance
 PASS aspect-ratio
 PASS backdrop-filter
@@ -351,6 +352,7 @@ PASS text-box-edge
 PASS text-box-trim
 PASS text-combine-upright
 PASS text-decoration-color
+PASS text-decoration-inset
 PASS text-decoration-line
 PASS text-decoration-skip-ink
 PASS text-decoration-style
@@ -372,6 +374,12 @@ PASS text-underline-position
 PASS text-wrap-mode
 PASS text-wrap-style
 PASS timeline-scope
+PASS timeline-trigger-activation-range-end
+PASS timeline-trigger-activation-range-start
+PASS timeline-trigger-active-range-end
+PASS timeline-trigger-active-range-start
+PASS timeline-trigger-name
+PASS timeline-trigger-source
 PASS top
 PASS touch-action
 PASS transform
@@ -384,6 +392,7 @@ PASS transition-duration
 PASS transition-property
 PASS transition-timing-function
 PASS translate
+PASS trigger-scope
 PASS unicode-bidi
 PASS vector-effect
 PASS vertical-align
@@ -394,11 +403,13 @@ PASS view-transition-class
 PASS view-transition-name
 PASS visibility
 PASS white-space-collapse
+PASS white-space-trim
 PASS widows
 PASS width
 PASS will-change
 PASS word-break
 PASS word-spacing
+PASS wrap-inside
 PASS writing-mode
 PASS x
 PASS y

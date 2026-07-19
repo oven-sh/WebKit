@@ -307,8 +307,9 @@ bool PlatformTimeRanges::containWithEpsilon(const PlatformTimeRanges& ranges, NO
         return true;
 
     // Ensure that if we have a gap in the buffered range, it is smaller than the epsilon tolerance at the gap's start;
-    for (unsigned i = 1; i < bufferedRanges.length(); i++) {
-        if (bufferedRanges.start(i) - bufferedRanges.end(i - 1) > epsilonAtTime(bufferedRanges.end(i - 1)))
+    auto rangesSpan = bufferedRanges.span();
+    for (size_t i = 1; i < rangesSpan.size(); i++) {
+        if (rangesSpan[i].start - rangesSpan[i - 1].end > epsilonAtTime(rangesSpan[i - 1].end))
             return false;
     }
 

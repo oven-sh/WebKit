@@ -34,6 +34,7 @@
 #if PLATFORM(MAC)
 
 #import "AppKitSPI.h"
+#import "CompletionHandlerCallChecker.h"
 #import "PDFPluginIdentifier.h"
 #import "WKAPICast.h"
 #import "WKIntelligenceTextEffectCoordinator.h"
@@ -50,6 +51,7 @@
 #import "_WKWarningView.h"
 #import <WebCore/CGWindowUtilities.h>
 #import <WebCore/CornerRadii.h>
+#import <WebCore/FloatPoint.h>
 #import <WebCore/FrameIdentifier.h>
 #import <WebCore/LegacyNSPasteboardTypes.h>
 #import <WebKit/WKUIDelegatePrivate.h>
@@ -823,8 +825,12 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 }
 #endif // ENABLE(DRAG_SUPPORT)
 
+// FIXME: This is no longer actually called. Should it instead be replaced by `-[NSView _hitTestToBlockWindowResizing:forResizeDirection:]`? Or removed entirely?
+// This was originally added to resolve <rdar://9211232>.
 - (BOOL)_windowResizeMouseLocationIsInVisibleScrollerThumb:(NSPoint)point
 {
+    // FIXME: Consider using the new `isPointInScrollbar` path, which works for both axes,
+    // and leverages UI-side scrolling instead of cached web content information.
     return _impl->windowResizeMouseLocationIsInVisibleScrollerThumb(NSPointToCGPoint(point));
 }
 
@@ -1108,6 +1114,11 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context
 {
     return _impl->dragSourceOperationMask(session, context);
+}
+
+- (void)draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)screenPoint
+{
+    _impl->draggingSessionWillBegin(session, screenPoint);
 }
 
 - (void)draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation
@@ -1492,6 +1503,45 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if ([uiDelegate respondsToSelector:@selector(_webView:didPerformDragOperation:)])
         [uiDelegate _webView:self didPerformDragOperation:handled];
 }
+
+#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
+- (void)_web_draggingItemsForDraggingItem:(NSDraggingItem *)draggingItem atLocation:(NSPoint)viewLocation completionHandler:(void (^)(NSArray<NSDraggingItem *> *draggingItems))completionHandler
+{
+    RetainPtr uiDelegate = static_cast<id<WKUIDelegatePrivate>>([self UIDelegate]);
+    if (![uiDelegate respondsToSelector:@selector(_webView:draggingItemsForDraggingItem:atLocation:completionHandler:)]) {
+        completionHandler(nil);
+        return;
+    }
+    [uiDelegate _webView:self draggingItemsForDraggingItem:draggingItem atLocation:viewLocation completionHandler:makeBlockPtr([completionHandler = makeBlockPtr(completionHandler), checker = WebKit::CompletionHandlerCallChecker::create(uiDelegate, @selector(_webView:draggingItemsForDraggingItem:atLocation:completionHandler:))](NSArray<NSDraggingItem *> *draggingItems) {
+        if (checker->completionHandlerHasBeenCalled())
+            return;
+        checker->didCallCompletionHandler();
+        completionHandler(draggingItems);
+    }).get()];
+}
+
+- (NSDragOperation)_web_dragSourceOperationMaskForDraggingContext:(NSDraggingContext)context defaultMask:(NSDragOperation)defaultMask
+{
+    RetainPtr uiDelegate = static_cast<id<WKUIDelegatePrivate>>([self UIDelegate]);
+    if (![uiDelegate respondsToSelector:@selector(_webView:sourceOperationMaskForDraggingContext:defaultOperationMask:)])
+        return defaultMask;
+    return [uiDelegate _webView:self sourceOperationMaskForDraggingContext:context defaultOperationMask:defaultMask];
+}
+
+- (void)_web_draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)point
+{
+    RetainPtr uiDelegate = static_cast<id<WKUIDelegatePrivate>>([self UIDelegate]);
+    if ([uiDelegate respondsToSelector:@selector(_webView:draggingSession:willBeginAtPoint:)])
+        [uiDelegate _webView:self draggingSession:session willBeginAtPoint:point];
+}
+
+- (void)_web_draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation
+{
+    RetainPtr uiDelegate = static_cast<id<WKUIDelegatePrivate>>([self UIDelegate]);
+    if ([uiDelegate respondsToSelector:@selector(_webView:draggingSession:endedAtPoint:operation:)])
+        [uiDelegate _webView:self draggingSession:session endedAtPoint:point operation:operation];
+}
+#endif
 
 #endif // ENABLE(DRAG_SUPPORT)
 

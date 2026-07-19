@@ -587,10 +587,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeAddToReadingList info:elementInfo assistant:self]];
 #endif
 
-    if ([elementInfo imageURL]) {
-        if ([self _canShowSaveImageActionForImageURL:elementInfo.imageURL])
-            [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeSaveImage info:elementInfo assistant:self]];
-    }
+    if (elementInfo._hasSaveableImage && [self _canShowSaveImageActionForImageURL:elementInfo.imageURL])
+        [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeSaveImage info:elementInfo assistant:self]];
 
     if (!isJavaScriptURL(targetURL)) {
         [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeCopy info:elementInfo assistant:self]];
@@ -599,7 +597,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     if (elementInfo.type == _WKActivatedElementTypeImage || elementInfo._isImage) {
         RetainPtr protectedDelegate = _delegate.get();
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
         if ([protectedDelegate respondsToSelector:@selector(actionSheetAssistantShouldIncludeCopySubjectAction:)] && [protectedDelegate actionSheetAssistantShouldIncludeCopySubjectAction:self])
             [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeCopyCroppedImage info:elementInfo assistant:self]];
 #endif
@@ -623,6 +621,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (BOOL)_canShowSaveImageActionForImageURL:(NSURL *)imageURL
 {
+    if (!imageURL)
+        return NO;
+
     if ([self _isPhotoLibraryAccessDenied])
         return NO;
 
@@ -652,7 +653,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if ([getSSReadingListClassSingleton() supportsURL:targetURL])
         [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeAddToReadingList info:elementInfo assistant:self]];
 #endif
-    if ([self _canShowSaveImageActionForImageURL:elementInfo.imageURL])
+    if (elementInfo._hasSaveableImage && [self _canShowSaveImageActionForImageURL:elementInfo.imageURL])
         [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeSaveImage info:elementInfo assistant:self]];
 
     [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeCopy info:elementInfo assistant:self]];
@@ -663,7 +664,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 
     RetainPtr protectedDelegate = _delegate.get();
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     BOOL enableCopySubjectItem = [protectedDelegate respondsToSelector:@selector(actionSheetAssistantShouldIncludeCopySubjectAction:)] && [protectedDelegate actionSheetAssistantShouldIncludeCopySubjectAction:self];
     [defaultActions addObject:[_WKElementAction _elementActionWithType:_WKElementActionTypeCopyCroppedImage info:elementInfo assistant:self disabled:!enableCopySubjectItem]];
 #endif
@@ -1223,7 +1224,7 @@ static NSMutableArray<UIMenuElement *> *menuElementsFromDefaultActions(RetainPtr
 #endif
         break;
     case _WKElementActionTypeCopyCroppedImage:
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
         [delegate actionSheetAssistant:self copySubject:element.image sourceMIMEType:element.imageMIMEType];
 #endif
         break;

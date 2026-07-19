@@ -33,6 +33,7 @@
 #import "InteractionInformationAtPosition.h"
 #import "InteractionInformationRequest.h"
 #import "NativeWebWheelEvent.h"
+#import "PositionInformationManager.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
 #import "ScrollingAccelerationCurve.h"
 #import "ViewGestureController.h"
@@ -110,25 +111,14 @@ static WebCore::FloatSize toRawPlatformDelta(WebCore::FloatSize delta)
     return -delta;
 }
 
-using InteractionInformationCallback = Function<void(const WebKit::InteractionInformationAtPosition&)>;
-
-struct InteractionInformationRequestAndCallback {
-    WebKit::InteractionInformationRequest request;
-    InteractionInformationCallback callback;
-};
-
 static bool representsDraggableElement(const WebKit::InteractionInformationAtPosition& info)
 {
     return info.isLink || info.isImage || info.isAttachment || info.isDHTMLDraggable || info.isColorInput || info.prefersDraggingOverTextSelection;
 }
 
-static NSString *gestureLogName(NSGestureRecognizer *gesture)
+static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
 {
-    if (!gesture)
-        return @"(null)";
-    if (RetainPtr<NSString> name = gesture.name)
-        return name.autorelease();
-    return NSStringFromClass(gesture.class);
+    return [WKAppKitGestureController loggingDescriptionForGestureRecognizer:gesture];
 }
 
 @interface WKAppKitGestureController () <NSGestureRecognizerDelegatePrivate, WKDeferringGestureRecognizerDelegate>
@@ -143,7 +133,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
     RetainPtr<NSPressGestureRecognizer> _singleClickGestureRecognizer;
     RetainPtr<NSClickGestureRecognizer> _doubleClickGestureRecognizer;
 
-    //  Auxiliary gesture recognizers to support context menus.
+    // Auxiliary gesture recognizers to support context menus.
     RetainPtr<NSPressGestureRecognizer> _secondaryClickGestureRecognizer;
     RetainPtr<WKDeferringGestureRecognizer> _secondaryClickDeferringGestureRecognizer;
 
@@ -174,11 +164,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
     BlockPtr<void(NSDraggingSession *)> _textSelectionDragCompletionHandler;
     bool _dragGestureHasSentMouseDown;
 
-    WebKit::InteractionInformationAtPosition _positionInformation;
-    std::optional<WebKit::InteractionInformationRequest> _lastOutstandingPositionInformationRequest;
-    Vector<std::optional<InteractionInformationRequestAndCallback>> _pendingPositionInformationHandlers;
-    uint64_t _positionInformationCallbackDepth;
-    bool _hasValidPositionInformation;
+    std::unique_ptr<WebKit::PositionInformationManager> _positionInformationManager;
 }
 
 #if __has_include(<WebKitAdditions/WKAppKitGestureControllerAdditionsImpl.mm>)
@@ -194,6 +180,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
 
     _page = page.get();
     _viewImpl = viewImpl.get();
+    _positionInformationManager = makeUnique<WebKit::PositionInformationManager>(page.get());
 
     [self setUpGestureRecognizers];
     [self addGesturesToWebView];
@@ -353,7 +340,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
     if (!page)
         return;
     bool gestureEnabled = protect(page->preferences())->useAppKitGestures();
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(page->logIdentifier(), "%@ setEnabled:%d", gestureLogName(gesture), static_cast<int>(gestureEnabled));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(page->logIdentifier(), "%@ setEnabled:%d", gestureLogDescription(gesture), static_cast<int>(gestureEnabled));
     [gesture setEnabled:gestureEnabled];
 }
 
@@ -398,7 +385,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
     if (!page)
         return;
 
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@ state=%ld", gestureLogName(gesture), static_cast<long>(gesture.state));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@", gestureLogDescription(gesture));
 
     RELEASE_ASSERT(_panGestureRecognizer == gesture);
 
@@ -442,7 +429,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
     if (!page)
         return;
 
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@ state=%ld", gestureLogName(gesture), static_cast<long>(gesture.state));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@", gestureLogDescription(gesture));
 
     RELEASE_ASSERT(_singleClickGestureRecognizer == gesture);
 
@@ -505,7 +492,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
     if (!page)
         return;
 
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@ state=%ld", gestureLogName(gesture), static_cast<long>(gesture.state));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@", gestureLogDescription(gesture));
 
     RELEASE_ASSERT(_doubleClickGestureRecognizer == gesture);
 
@@ -529,7 +516,7 @@ static NSString *gestureLogName(NSGestureRecognizer *gesture)
     if (!page)
         return;
 
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@ state=%ld", gestureLogName(gesture), static_cast<long>(gesture.state));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@", gestureLogDescription(gesture));
 
     RELEASE_ASSERT(_secondaryClickGestureRecognizer == gesture);
 
@@ -574,7 +561,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         return;
     }
 
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@ state=%ld", gestureLogName(gesture), static_cast<long>(gesture.state));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@", gestureLogDescription(gesture));
 
     if (_dragGestureHasSentMouseDown) {
         WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "Exiting early because _dragGestureHasSentMouseDown is true");
@@ -702,15 +689,22 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         return NO;
 
     NSPoint locationInView = [webView convertPoint:[event locationInWindow] fromView:nil];
-    if (viewImpl->isTextSelectedAtPoint(locationInView)) {
-        WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(RefPtr { _page.get() }->logIdentifier(), "deferral: not deferring; text already selected at %@", NSStringFromPoint(locationInView));
+
+    const auto isInScrollbar = [self _isPointInScrollbar:locationInView];
+
+    if (!isInScrollbar && viewImpl->isTextSelectedAtPoint(locationInView)) {
+        WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "deferral: not deferring; text already selected at %@", NSStringFromPoint(locationInView));
         return NO;
     }
 
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(RefPtr { _page.get() }->logIdentifier(), "deferral: deferring; awaiting position info at %@", NSStringFromPoint(locationInView));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "deferral: deferring; awaiting position info at %@", NSStringFromPoint(locationInView));
 
     WebKit::InteractionInformationRequest request { WebCore::IntPoint { locationInView } };
-    [self doAfterPositionInformationUpdate:[weakSelf = WeakObjCPtr<WKAppKitGestureController>(self), weakDeferring = WeakObjCPtr<WKDeferringGestureRecognizer>(deferringGestureRecognizer)](const auto &info) {
+    _positionInformationManager->doAfterUpdate(request, [weakSelf = WeakObjCPtr<WKAppKitGestureController>(self), weakDeferring = WeakObjCPtr<WKDeferringGestureRecognizer>(deferringGestureRecognizer), isInScrollbar](const std::optional<WebKit::InteractionInformationAtPosition>& optionalInfo) {
+        if (!optionalInfo)
+            return;
+        const auto& info = *optionalInfo;
+
         RetainPtr strongSelf = weakSelf.get();
         RetainPtr strongDeferring = weakDeferring.get();
         if (!strongSelf || !strongDeferring)
@@ -718,21 +712,28 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
         auto deferralState = [strongDeferring state];
         if (deferralState != NSGestureRecognizerStatePossible) {
-            WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(RefPtr { strongSelf->_page.get() }->logIdentifier(),
+            WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { strongSelf->_page.get() }->logIdentifier(),
                 "deferral: position info arrived after deferring gesture exited Possible (state=%ld); skipping resolution", static_cast<long>(deferralState));
             return;
         }
 
         auto shouldPreventGestures = [&] {
+            // An event over a scrollbar should drive the scrollbar, not select text; prevent the deferred
+            // text-selection gestures so the mouse-tracking -> `Scrollbar::mouseDown` path wins.
+            if (isInScrollbar) {
+                WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "deferral resolved: over scrollbar; preventing text-selection gestures");
+                return true;
+            }
+
             if (strongDeferring == strongSelf->_dragDeferringGestureRecognizer) {
                 auto isDraggable = representsDraggableElement(info);
-                WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "deferral resolved: isDraggable=%d (link=%d image=%d attachment=%d dhtml=%d color=%d prefersDrag=%d)", isDraggable, info.isLink, info.isImage, info.isAttachment, info.isDHTMLDraggable, info.isColorInput, info.prefersDraggingOverTextSelection);
+                WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "deferral resolved: isDraggable=%d (link=%d image=%d attachment=%d dhtml=%d color=%d prefersDrag=%d)", isDraggable, info.isLink, info.isImage, info.isAttachment, info.isDHTMLDraggable, info.isColorInput, info.prefersDraggingOverTextSelection);
                 return isDraggable;
             }
 
             if (strongDeferring == strongSelf->_secondaryClickDeferringGestureRecognizer) {
                 bool isSelectable = info.isSelectable();
-                WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "Resolved deferral: isSelectable=%d", isSelectable);
+                WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "Resolved deferral: isSelectable=%d", isSelectable);
                 return !isSelectable;
             }
 
@@ -740,7 +741,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         }();
 
         [strongDeferring endDeferralShouldPreventGestures:shouldPreventGestures];
-    } forRequest:request];
+    });
 
     return YES;
 }
@@ -751,12 +752,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         return;
 
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(RefPtr { _page.get() }->logIdentifier(), "deferral: press ended before position info arrived; unblocking text selection");
-    if (auto abandonedRequest = std::exchange(_lastOutstandingPositionInformationRequest, std::nullopt)) {
-        for (auto& slot : _pendingPositionInformationHandlers) {
-            if (slot && slot->request.isValidForRequest(*abandonedRequest))
-                slot.reset();
-        }
-    }
+    _positionInformationManager->abandonOutstandingRequest();
 
     [deferringGestureRecognizer endDeferralShouldPreventGestures:NO];
 }
@@ -767,109 +763,32 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
 #pragma mark - Position Information
 
-- (void)_invalidateCurrentPositionInformation
-{
-    _hasValidPositionInformation = false;
-    _positionInformation = { };
-}
-
 - (void)didCommitLoadForMainFrame
 {
-    [self _invalidateCurrentPositionInformation];
-}
-
-- (void)requestAsynchronousPositionInformationUpdate:(WebKit::InteractionInformationRequest)request
-{
-    if ([self _currentPositionInformationIsValidForRequest:request])
-        return;
-
-    RefPtr page = _page.get();
-    if (!page || !page->hasRunningProcess())
-        return;
-
-    _lastOutstandingPositionInformationRequest = request;
-    page->requestPositionInformation(request);
-}
-
-- (void)doAfterPositionInformationUpdate:(Function<void(const WebKit::InteractionInformationAtPosition&)>&&)handler forRequest:(WebKit::InteractionInformationRequest)request
-{
-    if ([self _currentPositionInformationIsValidForRequest:request]) {
-        handler(_positionInformation);
-        return;
-    }
-
-    _pendingPositionInformationHandlers.constructAndAppend(std::in_place, request, WTF::move(handler));
-
-    if (![self _hasValidOutstandingPositionInformationRequest:request])
-        [self requestAsynchronousPositionInformationUpdate:request];
-}
-
-- (BOOL)_currentPositionInformationIsValidForRequest:(const WebKit::InteractionInformationRequest&)request
-{
-    return _hasValidPositionInformation && _positionInformation.request.isValidForRequest(request);
-}
-
-- (BOOL)_hasValidOutstandingPositionInformationRequest:(const WebKit::InteractionInformationRequest&)request
-{
-    return _lastOutstandingPositionInformationRequest.and_then([&request](const auto& outstandingRequest) -> std::optional<bool> {
-        return outstandingRequest.isValidForRequest(request);
-    }).value_or(false);
-}
-
-- (void)_invokeAndRemovePendingHandlersValidForCurrentPositionInformation
-{
-    ASSERT(_hasValidPositionInformation);
-
-    ++_positionInformationCallbackDepth;
-    auto updatedPositionInformation = _positionInformation;
-
-    for (size_t index = 0; index < _pendingPositionInformationHandlers.size(); ++index) {
-        auto& slot = _pendingPositionInformationHandlers[index];
-        if (!slot)
-            continue;
-        if (![self _currentPositionInformationIsValidForRequest:slot->request])
-            continue;
-
-        auto requestAndHandler = std::exchange(slot, std::nullopt);
-        if (requestAndHandler->callback)
-            requestAndHandler->callback(updatedPositionInformation);
-    }
-
-    if (--_positionInformationCallbackDepth)
-        return;
-
-    for (int index = _pendingPositionInformationHandlers.size() - 1; index >= 0; --index) {
-        if (!_pendingPositionInformationHandlers[index])
-            _pendingPositionInformationHandlers.removeAt(index);
-    }
+    _positionInformationManager->invalidate();
 }
 
 - (void)positionInformationDidChange:(const WebKit::InteractionInformationAtPosition&)info
 {
-    // Handlers run in `_invokeAndRemovePendingHandlersValidForCurrentPositionInformation`
-    // can re-enter into client code (e.g. UI delegate callbacks), which may release
-    // the WKWebView and tear `self` down before this method returns.
+    // Resolving queued callbacks can re-enter into client code (e.g. UI delegate callbacks), which
+    // may release the WKWebView and tear `self` down before this method returns.
     RetainPtr protectedSelf = self;
+    _positionInformationManager->didChange(info);
+}
 
-    if (_lastOutstandingPositionInformationRequest && info.request.isValidForRequest(*_lastOutstandingPositionInformationRequest))
-        _lastOutstandingPositionInformationRequest = std::nullopt;
-
-    auto newInfo = info;
-    newInfo.mergeCompatibleOptionalInformation(_positionInformation);
-
-    _positionInformation = newInfo;
-    _hasValidPositionInformation = _positionInformation.canBeValid;
-
-    [self _invokeAndRemovePendingHandlersValidForCurrentPositionInformation];
+- (BOOL)_isPointInScrollbar:(NSPoint)locationInViewCoordinates
+{
+    CheckedPtr viewImpl = _viewImpl.get();
+    return viewImpl && viewImpl->isPointInScrollbar(locationInViewCoordinates);
 }
 
 - (BOOL)_secondaryClickShouldBeginAtLocation:(NSPoint)locationInViewCoordinates
 {
     WebKit::InteractionInformationRequest request { WebCore::IntPoint { locationInViewCoordinates } };
 
-    bool requestIsValid = _hasValidPositionInformation && _positionInformation.request.isValidForRequest(request);
-    bool isSelectable = _positionInformation.isSelectable();
-    bool isOverSelectableText = _positionInformation.isOverSelectableText;
+    bool requestIsValid = _positionInformationManager->currentIsValid(request);
+    bool isSelectable = _positionInformationManager->currentInformation().isSelectable();
+    bool isOverSelectableText = _positionInformationManager->currentInformation().isOverSelectableText;
 
     // The secondary click owns selectable points that are not over actual text (e.g. the page
     // background). Over a run of selectable text, the text selection manager should win so that a
@@ -877,7 +796,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     bool shouldBegin = requestIsValid && isSelectable && !isOverSelectableText;
 
     if (!requestIsValid)
-        [self _invalidateCurrentPositionInformation];
+        _positionInformationManager->invalidate();
 
     return shouldBegin;
 }
@@ -885,16 +804,18 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 - (BOOL)_positionInformationRequestIsValidAtLocation:(NSPoint)locationInViewCoordinates withRadius:(NSInteger)radius
 {
     WebKit::InteractionInformationRequest request { WebCore::IntPoint { locationInViewCoordinates } };
-    return _hasValidPositionInformation && _positionInformation.request.isApproximatelyValidForRequest(request, radius);
+    return _positionInformationManager->currentIsApproximatelyValid(request, radius);
 }
 
 - (BOOL)_dragPressShouldBeginAtLocation:(NSPoint)locationInViewCoordinates
 {
     int radius = static_cast<int>(std::ceil([_dragPressGestureRecognizer allowableMovement]));
 
+    const auto& information = _positionInformationManager->currentInformation();
+
     // FIXME: Migrate to requestDragStart: IPC for an authoritative decision.
     // The heuristic below approximates DragController::draggableElement() by consulting the same element-type and style signals.
-    bool isDraggable = representsDraggableElement(_positionInformation);
+    bool isDraggable = representsDraggableElement(information);
     bool requestIsValid = [self _positionInformationRequestIsValidAtLocation:locationInViewCoordinates withRadius:radius];
     bool shouldDrag = requestIsValid && isDraggable;
 
@@ -902,18 +823,18 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         RefPtr { _page.get() }->logIdentifier(),
         "Drag-press shouldBegin → %d (hasInfo=%d link=%d image=%d attachment=%d dhtml=%d color=%d prefersDrag=%d radius=%d)",
         shouldDrag,
-        _hasValidPositionInformation,
-        _positionInformation.isLink,
-        _positionInformation.isImage,
-        _positionInformation.isAttachment,
-        _positionInformation.isDHTMLDraggable,
-        _positionInformation.isColorInput,
-        _positionInformation.prefersDraggingOverTextSelection,
+        _positionInformationManager->hasValidCurrentInformation(),
+        information.isLink,
+        information.isImage,
+        information.isAttachment,
+        information.isDHTMLDraggable,
+        information.isColorInput,
+        information.prefersDraggingOverTextSelection,
         radius
     );
 
     if (!requestIsValid)
-        [self _invalidateCurrentPositionInformation];
+        _positionInformationManager->invalidate();
 
     return shouldDrag;
 }
@@ -923,14 +844,17 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     static constexpr int panPositionInformationToleranceRadius = 15;
     bool requestIsValid = [self _positionInformationRequestIsValidAtLocation:locationInViewCoordinates withRadius:panPositionInformationToleranceRadius];
 
-    bool prefersInteraction = _positionInformation.isRangeInput;
+    const auto& information = _positionInformationManager->currentInformation();
+
+    // FIXME: (rdar://181964604) Because of this logic, vertically scrolling over these elements likely will not work.
+    bool prefersInteraction = information.isRangeInput || information.isARIASlider;
     bool yieldToContent = requestIsValid && prefersInteraction;
 
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(
         RefPtr { _page.get() }->logIdentifier(),
         "Pan shouldBegin → %d (hasInfo=%d valid=%d prefersInteraction=%d)",
         !yieldToContent,
-        _hasValidPositionInformation,
+        _positionInformationManager->hasValidCurrentInformation(),
         requestIsValid,
         prefersInteraction
     );
@@ -950,7 +874,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     if (!page)
         return;
 
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@ state=%ld", gestureLogName(gesture), static_cast<long>(gesture.state));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(page->logIdentifier(), "%@", gestureLogDescription(gesture));
 
     if (_dragPressGestureRecognizer != gesture)
         return;
@@ -1316,6 +1240,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 - (void)didEndSyntheticMomentumScrolling
 {
     _isMomentumActive = false;
+    [self _resetCaughtDeceleratingScroll];
 }
 
 - (void)_resetCaughtDeceleratingScroll
@@ -1340,7 +1265,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     if (_textSelectionDragGesture) {
         WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_ERROR(RefPtr { _page.get() }->logIdentifier(),
             "Replacing prior text-selection drag gesture %@ (completion handler set: %d); prior drag never reached setGestureDraggingSession:",
-            gestureLogName(_textSelectionDragGesture), !!_textSelectionDragCompletionHandler);
+            gestureLogDescription(_textSelectionDragGesture), !!_textSelectionDragCompletionHandler);
         ASSERT_NOT_REACHED();
     }
 
@@ -1377,9 +1302,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     _isSuppressingSingleClickGestureForTextSelection = false;
     _latestClickID.reset();
     _layerTreeTransactionIdAtLastInteractionStart.reset();
-    [self _invalidateCurrentPositionInformation];
-    _lastOutstandingPositionInformationRequest.reset();
-    _pendingPositionInformationHandlers.clear();
+    _positionInformationManager->reset();
 }
 
 #pragma mark - NSGestureRecognizerDelegate
@@ -1397,7 +1320,7 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
 - (BOOL)gestureRecognizer:(NSGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(NSGestureRecognizer *)otherGestureRecognizer
 {
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@, Other gesture: %@", gestureLogName(gestureRecognizer), gestureLogName(otherGestureRecognizer));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@, Other gesture: %@", gestureLogDescription(gestureRecognizer), gestureLogDescription(otherGestureRecognizer));
 
     if (isSamePair(gestureRecognizer, otherGestureRecognizer, _singleClickGestureRecognizer.get(), _panGestureRecognizer.get()))
         return YES;
@@ -1417,6 +1340,10 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
     if (gestureRecognizer == _singleClickGestureRecognizer
         && isBuiltInScrollViewPanGestureRecognizer(otherGestureRecognizer)
         && [otherGestureRecognizer.view isKindOfClass:NSScrollView.class])
+        return YES;
+
+    // Don't prevent the scrollbar from scrolling even if the window resize recognizer is active.
+    if (gestureRecognizer == _mouseTrackingGestureRecognizer && isSystemWindowResizeGestureRecognizer(otherGestureRecognizer))
         return YES;
 
     CheckedPtr viewImpl = _viewImpl.get();
@@ -1441,7 +1368,7 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
 - (BOOL)gestureRecognizer:(NSGestureRecognizer *)gestureRecognizer shouldBeRequiredToFailByGestureRecognizer:(NSGestureRecognizer *)otherGestureRecognizer
 {
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@, Other gesture: %@", gestureLogName(gestureRecognizer), gestureLogName(otherGestureRecognizer));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@, Other gesture: %@", gestureLogDescription(gestureRecognizer), gestureLogDescription(otherGestureRecognizer));
 
     CheckedPtr viewImpl = _viewImpl.get();
     if (!viewImpl)
@@ -1465,7 +1392,7 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
 - (BOOL)gestureRecognizer:(NSGestureRecognizer *)gestureRecognizer shouldRequireFailureOfGestureRecognizer:(NSGestureRecognizer *)otherGestureRecognizer
 {
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@, Other gesture: %@", gestureLogName(gestureRecognizer), gestureLogName(otherGestureRecognizer));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@, Other gesture: %@", gestureLogDescription(gestureRecognizer), gestureLogDescription(otherGestureRecognizer));
 
     CheckedPtr viewImpl = _viewImpl.get();
     if (!viewImpl)
@@ -1489,7 +1416,7 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
 - (BOOL)gestureRecognizerShouldBegin:(NSGestureRecognizer *)gestureRecognizer
 {
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@", gestureLogName(gestureRecognizer));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Gesture: %@", gestureLogDescription(gestureRecognizer));
 
     CheckedPtr viewImpl = _viewImpl.get();
     if (!viewImpl)
@@ -1509,6 +1436,14 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
             return YES;
         if (gestureRecognizer != _panGestureRecognizer)
             return NO;
+    }
+
+    // An event over a scrollbar is a scrollbar interaction; only the mouse-tracking gesture (which drives
+    // `Scrollbar::mouseDown` -> thumb drag) should handle it. The AppKit text-selection/context-menu gestures
+    // are handled separately in the deferral delegate.
+    if ([self _isPointInScrollbar:locationInViewCoordinates] && gestureRecognizer != _mouseTrackingGestureRecognizer) {
+        WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Denying gesture over scrollbar: %@", gestureLogDescription(gestureRecognizer));
+        return NO;
     }
 
     if (gestureRecognizer == _doubleClickGestureRecognizer)
@@ -1539,7 +1474,7 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
 - (BOOL)_gestureRecognizer:(NSGestureRecognizer *)preventingGestureRecognizer canPreventGestureRecognizer:(NSGestureRecognizer *)preventedGestureRecognizer
 {
-    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Preventing gesture: %@, Prevented gesture: %@", gestureLogName(preventingGestureRecognizer), gestureLogName(preventedGestureRecognizer));
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "Preventing gesture: %@, Prevented gesture: %@", gestureLogDescription(preventingGestureRecognizer), gestureLogDescription(preventedGestureRecognizer));
 
     CheckedPtr viewImpl = _viewImpl.get();
     if (!viewImpl)

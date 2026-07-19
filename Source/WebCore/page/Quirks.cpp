@@ -1821,24 +1821,27 @@ bool Quirks::shouldDisableLazyIframeLoadingQuirk() const
     return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldDisableLazyIframeLoadingQuirk);
 }
 
-// reddit.com with Sink It extension (rdar://176377447).
+// reddit.com with Sink It extension (rdar://176377447) and apple.com/retail (rdar://181007316).
 bool Quirks::shouldDisableScrollAnchoringQuirk() const
 {
-#if PLATFORM(IOS_FAMILY)
     QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
 
     if (!m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldDisableScrollAnchoringQuirk))
         return false;
 
-    RefPtr document = m_document.get();
-    if (!document)
-        return false;
+#if PLATFORM(IOS_FAMILY)
+    // reddit.com only disables scroll anchoring while the Sink It extension's element is present.
+    if (isDomain("reddit.com"_s)) {
+        RefPtr document = m_document.get();
+        if (!document)
+            return false;
 
-    static MainThreadNeverDestroyed<const AtomString> sinkItBackToTopID("sink-it-back-to-top"_s);
-    return !!document->getElementById(sinkItBackToTopID.get());
-#else
-    return false;
+        static MainThreadNeverDestroyed<const AtomString> sinkItBackToTopID("sink-it-back-to-top"_s);
+        return !!document->getElementById(sinkItBackToTopID.get());
+    }
 #endif
+
+    return true;
 }
 
 // Breaks express checkout on victoriassecret.com (rdar://104818312).
@@ -2055,6 +2058,21 @@ std::optional<String> Quirks::needsCustomUserAgentOverride(const URL& url, const
     if (domainString == "tiktok.com"_s) {
         auto baseUA = currentUserAgent.isEmpty() ? standardUserAgentWithApplicationName(applicationNameForUserAgent) : currentUserAgent;
         return makeStringByReplacingAll(baseUA, "like Gecko"_s, "like Gecko, like Chrome/136."_s);
+    }
+
+    // mms.pinduoduo.com https://bugs.webkit.org/b/318201
+    if (url.host() == "mms.pinduoduo.com"_s) {
+        auto baseUA = currentUserAgent.isEmpty() ? standardUserAgentWithApplicationName(applicationNameForUserAgent) : currentUserAgent;
+        return makeStringByReplacingAll(baseUA, "like Gecko"_s, "like Gecko, like Chrome/149."_s);
+    }
+
+    // FIXME(https://bugs.webkit.org/show_bug.cgi?id=319011 or rdar://181825035):
+    // github.com serves Safari some JS that tries to adjust the scroll position
+    // which interferes with WebKit's scroll to fragment implementation.
+    // Presenting a Chrome-like UA takes the working code path.
+    if (domainString == "github.com"_s) {
+        auto baseUA = currentUserAgent.isEmpty() ? standardUserAgentWithApplicationName(applicationNameForUserAgent) : currentUserAgent;
+        return makeStringByReplacingAll(baseUA, "like Gecko"_s, "like Gecko, like Chrome/151."_s);
     }
 #else
     UNUSED_PARAM(applicationNameForUserAgent);
@@ -2444,6 +2462,14 @@ bool Quirks::shouldSuppressHLSSubtitles() const
     QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
 
     return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldSuppressHLSSubtitles);
+}
+
+// spotify.com: block additive audible playback (e.g. Home-page track previews) while another
+// audible media element is already playing in the document.
+bool Quirks::shouldBlockAudiblePlaybackWhileAudioIsPlaying() const
+{
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
+    return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldBlockAudiblePlaybackWhileAudioIsPlaying);
 }
 
 bool Quirks::shouldSuppressMediaSessionPauseActionOnInterruption() const
@@ -2958,10 +2984,6 @@ static void handleCNNQuirks(QuirksData& quirksData, const URL& /* quirksURL */, 
 
     // cnn.com rdar://119640248
     quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::NeedsFullscreenObjectFitQuirk);
-    // cnn.com rdar://176539646
-#if ENABLE(THREADED_ANIMATIONS)
-    quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::ShouldDisableThreadedAnimationsQuirk);
-#endif
 #if PLATFORM(COCOA)
     quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::NeedsCNNCaptionQuirk);
 #endif
@@ -3806,8 +3828,13 @@ static void handlePinterestQuirks(QuirksData& quirksData, const URL& /* quirksUR
     quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::ShouldAllowNotificationPermissionWithoutUserGesture);
 }
 
-static void handleAppleQuirks(QuirksData& quirksData, const URL& /* quirksURL */, const String& quirksDomainString, const URL&  /* documentURL */)
+static void handleAppleQuirks(QuirksData& quirksData, const URL& quirksURL, const String& quirksDomainString, const URL&  /* documentURL */)
 {
+    // Quirk added for rdar://181007316, remove when rdar://182134549 is fixed.
+    if (quirksURL.path().contains("/retail"_s))
+        quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::ShouldDisableScrollAnchoringQuirk);
+
+    // FIXME: Maybe EnsureCaptionVisibilityInFullscreenAndPictureInPicture should apply to apple.com.cn too?
     QUIRKS_EARLY_RETURN_IF_NOT_DOMAIN("apple.com"_s);
 
     // apple.com rdar://154434137
@@ -3871,6 +3898,7 @@ static void handleSpotifyQuirks(QuirksData& quirksData, const URL& quirksURL, co
         QuirksData::SiteSpecificQuirk::ShouldLimitHLSPlaybackRate,
         QuirksData::SiteSpecificQuirk::NeedsWebKitMediaTextTrackDisplayQuirk,
         QuirksData::SiteSpecificQuirk::ShouldDeferIntersectionObserversDuringResize,
+        QuirksData::SiteSpecificQuirk::ShouldBlockAudiblePlaybackWhileAudioIsPlaying,
     });
 }
 

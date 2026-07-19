@@ -22,6 +22,10 @@ macro(WEBKIT_TEST _target)
     if (COMPILER_IS_GCC_OR_CLANG)
         WEBKIT_ADD_TARGET_CXX_FLAGS(${_target} ${TestWebKitAPI_DISABLED_WARNINGS})
     endif ()
+
+    if (COMMAND WEBKIT_TEST_ENABLE_SWIFT)
+        WEBKIT_TEST_ENABLE_SWIFT(${_target})
+    endif ()
 endmacro()
 
 # TestWTF definitions
@@ -35,6 +39,7 @@ set(TestWTF_SOURCES
     Tests/WTF/BitSet.cpp
     Tests/WTF/BitVector.cpp
     Tests/WTF/BloomFilter.cpp
+    Tests/WTF/BorrowedBytes.cpp
     Tests/WTF/BoxPtr.cpp
     Tests/WTF/BumpPointerAllocator.cpp
     Tests/WTF/CString.cpp
@@ -212,6 +217,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/AudioSampleFormat.cpp
         Tests/WebCore/CSSParser.cpp
         Tests/WebCore/CSSTokenizerTests.cpp
+        Tests/WebCore/CachedMatchFinder.cpp
         Tests/WebCore/ColorTests.cpp
         Tests/WebCore/ComplexTextController.cpp
         Tests/WebCore/ContextMenuAction.cpp
@@ -219,6 +225,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/Decimal.cpp
         Tests/WebCore/FileMonitor.cpp
         Tests/WebCore/FloatPointTests.cpp
+        Tests/WebCore/FloatQuadTests.cpp
         Tests/WebCore/FloatRectTests.cpp
         Tests/WebCore/FloatSegmentTest.cpp
         Tests/WebCore/FloatSizeTests.cpp
@@ -240,6 +247,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/MixedContentChecker.cpp
         Tests/WebCore/MonospaceFontTests.cpp
         Tests/WebCore/NowPlayingInfoTests.cpp
+        Tests/WebCore/PODIntervalTree.cpp
         Tests/WebCore/ParsedContentRange.cpp
         Tests/WebCore/PathTests.cpp
         Tests/WebCore/PixelBufferConversionTests.cpp
@@ -252,6 +260,8 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/SharedBuffer.cpp
         Tests/WebCore/SharedBufferTest.cpp
         Tests/WebCore/StyleGradient.cpp
+        Tests/WebCore/TestPlatformStrategies.cpp
+        Tests/WebCore/TextIterator.cpp
         Tests/WebCore/TimeRanges.cpp
         Tests/WebCore/TransformationMatrix.cpp
         Tests/WebCore/URLParserTextEncoding.cpp
@@ -266,6 +276,7 @@ if (ENABLE_WEBCORE)
     endif ()
 
     set(TestWebCore_LIBRARIES
+        WebKit::WebCoreTestSupport
         WebKit::gtest
     )
     set(TestWebCore_FRAMEWORKS
@@ -383,6 +394,7 @@ if (ENABLE_WEBKIT)
         ${TESTWEBKITAPI_DIR}
         ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
         ${WebKit_FRAMEWORK_HEADERS_DIR}
+        ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}
     )
 
     set(TestWebKit_LIBRARIES

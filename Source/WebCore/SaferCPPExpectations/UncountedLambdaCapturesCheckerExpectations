@@ -1,7 +1,6 @@
 Modules/WebGPU/Implementation/WebGPUDeviceImpl.cpp
 Modules/cache/DOMCache.cpp
 Modules/cache/DOMCacheStorage.cpp
-Modules/mediasession/MediaMetadata.cpp
 Modules/mediastream/PeerConnectionBackend.cpp
 Modules/mediastream/RTCDataChannel.cpp
 Modules/mediastream/RTCPeerConnection.cpp
@@ -46,7 +45,6 @@ rendering/BackgroundPainter.cpp
 rendering/BorderPainter.cpp
 rendering/RenderBox.cpp
 rendering/RenderElement.cpp
-rendering/RenderFlexibleBox.cpp
 rendering/RenderGrid.cpp
 rendering/RenderLayer.cpp
 rendering/RenderLayerCompositor.cpp

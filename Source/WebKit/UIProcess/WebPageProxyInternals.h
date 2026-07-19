@@ -25,6 +25,9 @@
 
 #pragma once
 
+#if ENABLE(WEBDRIVER_BIDI)
+#include "BidiDigitalCredentialsAgent.h"
+#endif
 #include "ContextMenuContextData.h"
 #include "EditorState.h"
 #include "EnhancedSecurityTracking.h"
@@ -186,6 +189,11 @@ struct WebPageProxy::Internals final : WebPopupMenuProxy::Client
 public:
     virtual ~Internals();
 
+#if ENABLE(WEB_AUTHN) && ENABLE(WEBDRIVER_BIDI)
+    std::optional<VirtualWalletBehavior> testingVirtualWalletBehavior;
+    CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)> testingPendingDigitalCredentialHandler;
+#endif
+
     uint32_t checkedPtrCount() const { return WebPopupMenuProxy::Client::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const { return WebPopupMenuProxy::Client::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const { WebPopupMenuProxy::Client::incrementCheckedPtrCount(); }
@@ -217,6 +225,10 @@ public:
     std::optional<WebCore::FontAttributes> cachedFontAttributesAtSelectionStart;
     Vector<Function<void()>> callbackHandlersAfterProcessingPendingMouseEvents;
     Vector<Function<void()>> callbackHandlersAfterProcessingPendingKeyEvents;
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+    Vector<Function<void()>> callbackHandlersAfterProcessingPendingWheelEvents;
+    Vector<Function<void()>> callbackHandlersAfterProcessingPendingTouchEvents;
+#endif
     WebCore::FloatSize defaultUnobscuredSize;
     EditorState editorState;
     WebCore::IntSize fixedLayoutSize;
@@ -358,6 +370,7 @@ public:
 
     MonotonicTime didFinishDocumentLoadForMainFrameTimestamp;
     MonotonicTime lastActivationTimestamp;
+    MonotonicTime lastConsumedDigitalCredentialsActivationTimestamp;
     MonotonicTime didCommitLoadForMainFrameTimestamp;
 
 #if ENABLE(UI_SIDE_COMPOSITING)

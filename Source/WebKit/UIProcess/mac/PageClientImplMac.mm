@@ -911,6 +911,15 @@ void PageClientImpl::beganExitFullScreen(const IntRect& initialFrame, const IntR
         return completionHandler();
 }
 
+WebCore::IntRect PageClientImpl::convertMainFrameCoordinatesInFullscreenPlaceholderViewToScreen(WebPageProxy& page, WebCore::IntRect mainFrameCoordinates) const
+{
+    if (RetainPtr fullScreenWindowController = protect(m_impl)->fullScreenWindowController()) {
+        if (auto screenCoordinates = [fullScreenWindowController convertMainFrameCoordinatesInFullscreenPlaceholderViewToScreen:mainFrameCoordinates])
+            return *screenCoordinates;
+    }
+    return page.syncRootViewToScreen(mainFrameCoordinates);
+}
+
 #endif // ENABLE(FULLSCREEN_API)
 
 void PageClientImpl::navigationGestureDidBegin()
@@ -1068,11 +1077,6 @@ void PageClientImpl::didPerformDragOperation(bool handled)
 RetainPtr<NSView> PageClientImpl::inspectorAttachmentView()
 {
     return protect(m_impl)->inspectorAttachmentView();
-}
-
-_WKRemoteObjectRegistry *PageClientImpl::remoteObjectRegistry()
-{
-    return protect(m_impl)->remoteObjectRegistry();
 }
 
 void PageClientImpl::pageDidScroll(const WebCore::IntPoint& scrollOffset)

@@ -92,7 +92,7 @@ WI.DOMManager = class DOMManager extends WI.Object
     {
         console.assert(target instanceof WI.FrameTarget);
 
-        let data = {document: null, target: target};
+        let data = {document: null, target: target, attributeLoadNodeIds: {}, loadNodeAttributesTimeout: 0};
         this._frameTargetDOMData.set(target, data);
 
         target.DOMAgent.getDocument((error, root) => {
@@ -237,6 +237,11 @@ WI.DOMManager = class DOMManager extends WI.Object
         if (!data)
             return;
 
+        if (data.loadNodeAttributesTimeout) {
+            clearTimeout(data.loadNodeAttributesTimeout);
+            data.loadNodeAttributesTimeout = 0;
+        }
+
         let frameDocument = data.document;
         if (frameDocument && frameDocument.parentNode) {
             let iframeElement = frameDocument.parentNode;
@@ -337,27 +342,47 @@ WI.DOMManager = class DOMManager extends WI.Object
 
     _frameTargetInlineStyleInvalidated(target, nodeIds)
     {
-        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=316416 The page-target variant 
-        // (`_inlineStyleInvalidated`) debounces and batches the `DOM.getAttributes` calls 
-        // so they run at most once per tick. Mimic that here to avoid
-        // issuing one command per invalidated node.
-        for (let nodeId of nodeIds) {
+        let data = this._frameTargetDOMData.get(target);
+        if (!data)
+            return;
+
+        // Batch the DOM.getAttributes calls so they run at most once per tick, mirroring the
+        // page-target `_inlineStyleInvalidated`.
+        for (let nodeId of nodeIds)
+            data.attributeLoadNodeIds[nodeId] = true;
+        if (data.loadNodeAttributesTimeout)
+            return;
+        data.loadNodeAttributesTimeout = setTimeout(this._loadFrameTargetNodeAttributes.bind(this, target), 0);
+    }
+
+    _loadFrameTargetNodeAttributes(target)
+    {
+        let data = this._frameTargetDOMData.get(target);
+        if (!data)
+            return;
+
+        data.loadNodeAttributesTimeout = 0;
+
+        let nodeIds = data.attributeLoadNodeIds;
+        data.attributeLoadNodeIds = {};
+
+        for (let nodeId in nodeIds) {
             let scopedId = target.identifier + ":" + nodeId;
-            let node = this._idToDOMNode[scopedId];
-            if (!node)
+            if (!this._idToDOMNode[scopedId])
                 continue;
 
-            target.DOMAgent.getAttributes(nodeId, (error, attributes) => {
+            let nodeIdAsNumber = parseInt(nodeId);
+            target.DOMAgent.getAttributes(nodeIdAsNumber, (error, attributes) => {
                 if (error || !attributes)
                     return;
 
-                let currentNode = this._idToDOMNode[scopedId];
-                if (!currentNode)
+                let node = this._idToDOMNode[scopedId];
+                if (!node)
                     return;
 
-                currentNode._setAttributesPayload(attributes);
-                this.dispatchEventToListeners(WI.DOMManager.Event.AttributeModified, {node: currentNode, name: "style"});
-                currentNode.dispatchEventToListeners(WI.DOMNode.Event.AttributeModified, {name: "style"});
+                node._setAttributesPayload(attributes);
+                this.dispatchEventToListeners(WI.DOMManager.Event.AttributeModified, {node, name: "style"});
+                node.dispatchEventToListeners(WI.DOMNode.Event.AttributeModified, {name: "style"});
             });
         }
     }
@@ -576,11 +601,30 @@ WI.DOMManager = class DOMManager extends WI.Object
         this.requestDocument(function(){});
     }
 
-    pushNodeToFrontend(objectId, callback)
+    pushNodeToFrontend(objectId, callback, target)
     {
-        let target = WI.assumingMainTarget();
-        this._dispatchWhenDocumentAvailable((callbackWrapper) => {
-            target.DOMAgent.requestNode(objectId, callbackWrapper);
+        target ||= WI.assumingMainTarget();
+
+        let callbackWrapper = DOMManager.wrapClientCallback(callback);
+        let dispatch = () => target.DOMAgent.requestNode(objectId, callbackWrapper);
+
+        if (target.type === WI.TargetType.Frame) {
+            if (this._frameTargetDOMData.get(target)?.document) {
+                dispatch();
+                return;
+            }
+            let handler = (event) => {
+                if (event.data.target !== target)
+                    return;
+                this.removeEventListener(WI.DOMManager.Event.FrameDocumentAvailable, handler);
+                dispatch();
+            };
+            this.addEventListener(WI.DOMManager.Event.FrameDocumentAvailable, handler);
+            return;
+        }
+
+        this._dispatchWhenDocumentAvailable((wrapper) => {
+            target.DOMAgent.requestNode(objectId, wrapper);
         }, callback);
     }
 
@@ -1112,17 +1156,8 @@ WI.DOMManager = class DOMManager extends WI.Object
             this.dispatchEventToListeners(WI.DOMManager.Event.InspectedNodeChanged, {lastInspectedNode});
         };
 
-        // FIXME: <https://webkit.org/b/298980> `DOM.setInspectedNode` for cross-origin frame nodes is not yet supported;
-        // `node.id` for frame-owned nodes is a composite "frameId:nodeId" string, not a numeric backend node id.
-        if (node.owningTarget) {
-            let lastInspectedNode = this._inspectedNode;
-            this._inspectedNode = node;
-            this.dispatchEventToListeners(WI.DOMManager.Event.InspectedNodeChanged, {lastInspectedNode});
-            return;
-        }
-
-        let target = WI.assumingMainTarget();
-        target.DOMAgent.setInspectedNode(node.id, callback);
+        let target = node.owningTarget || WI.assumingMainTarget();
+        target.DOMAgent.setInspectedNode(node.backendNodeId, callback);
     }
 
     getSupportedEventNames(callback)

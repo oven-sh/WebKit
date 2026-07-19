@@ -121,7 +121,7 @@ class Region;
 class TextIndicator;
 class WebMediaSessionManager;
 
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || PLATFORM(WPE)
 class SelectionData;
 #endif
 
@@ -364,7 +364,7 @@ public:
     virtual bool canStartNavigationSwipeAtLastInteractionLocation() const { return true; }
     
 #if ENABLE(DRAG_SUPPORT)
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || PLATFORM(WPE)
     virtual void startDrag(WebCore::SelectionData&&, OptionSet<WebCore::DragOperation>, RefPtr<WebCore::ShareableBitmap>&& dragImage, WebCore::IntPoint&& dragImageHotspot) = 0;
 #else
     virtual void startDrag(const WebCore::DragItem&, WebCore::ShareableBitmap::Handle&&, const std::optional<WebCore::NodeIdentifier>&, const std::optional<WebCore::FrameIdentifier>&) { }
@@ -555,7 +555,6 @@ public:
     virtual void setShouldSuppressFirstResponderChanges(bool) = 0;
 
     virtual RetainPtr<NSView> inspectorAttachmentView() = 0;
-    virtual _WKRemoteObjectRegistry *remoteObjectRegistry() = 0;
 
     virtual void intrinsicContentSizeDidChange(const WebCore::IntSize& intrinsicContentSize) = 0;
 

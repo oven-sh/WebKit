@@ -925,7 +925,7 @@ Ref<Inspector::Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties()
                         }
                     } else {
                         auto previousParsedOk = activeIt->value->getBoolean("parsedOk"_s);
-                        if (previousParsedOk && !previousParsedOk)
+                        if (previousParsedOk && !*previousParsedOk)
                             shouldInactivate = true;
                     }
                 } else
@@ -1371,8 +1371,6 @@ Vector<Ref<CSSStyleRule>> InspectorStyleSheet::cssStyleRulesSplitFromSameRule(CS
 
 Vector<const CSSSelector*> InspectorStyleSheet::selectorsForCSSStyleRule(CSSStyleRule& rule)
 {
-    auto rules = cssStyleRulesSplitFromSameRule(rule);
-
     Vector<const CSSSelector*> selectors;
     for (auto& rule : cssStyleRulesSplitFromSameRule(rule)) {
         for (auto& selector : rule->styleRule().selectorList())

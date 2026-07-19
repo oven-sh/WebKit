@@ -64,7 +64,7 @@ namespace WTF {
         uint64_t longRandom = 19248658165952622LL; // A random 64-bit value.
 
         uint64_t product = longRandom * (shortRandom1 * key1 + shortRandom2 * key2);
-        unsigned highBits = static_cast<unsigned>(product >> (sizeof(uint64_t) - sizeof(unsigned)));
+        unsigned highBits = static_cast<unsigned>(product >> ((sizeof(uint64_t) - sizeof(unsigned)) * 8));
         return highBits;
     }
 
@@ -141,7 +141,7 @@ namespace WTF {
 
     template<typename T, typename U> struct IntPairHash {
         static unsigned hash(const std::pair<T, U>& p) { return pairIntHash(p.first, p.second); }
-        static bool equal(const std::pair<T, U>& a, const std::pair<T, U>& b) { return PairHash<T, T>::equal(a, b); }
+        static bool equal(const std::pair<T, U>& a, const std::pair<T, U>& b) { return PairHash<T, U>::equal(a, b); }
         static constexpr bool safeToCompareToEmptyOrDeleted = PairHash<T, U>::safeToCompareToEmptyOrDeleted;
     };
 
@@ -227,7 +227,7 @@ namespace WTF {
     template<> struct DefaultHash<std::pair<int, short>> : IntPairHash<int, short> { };
     template<> struct DefaultHash<std::pair<int, unsigned short>> : IntPairHash<int, unsigned short> { };
     template<> struct DefaultHash<std::pair<int, int>> : IntPairHash<int, int> { };
-    template<> struct DefaultHash<std::pair<int, unsigned>> : IntPairHash<unsigned, unsigned> { };
+    template<> struct DefaultHash<std::pair<int, unsigned>> : IntPairHash<int, unsigned> { };
     template<> struct DefaultHash<std::pair<unsigned, short>> : IntPairHash<unsigned, short> { };
     template<> struct DefaultHash<std::pair<unsigned, unsigned short>> : IntPairHash<unsigned, unsigned short> { };
     template<> struct DefaultHash<std::pair<unsigned, int>> : IntPairHash<unsigned, int> { };

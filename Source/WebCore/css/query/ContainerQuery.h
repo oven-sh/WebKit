@@ -26,6 +26,7 @@
 
 #include <WebCore/GenericMediaQueryTypes.h>
 #include <wtf/Forward.h>
+#include <wtf/HashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/text/AtomString.h>
 
@@ -53,12 +54,22 @@ enum class Axis : uint8_t {
 };
 OptionSet<Axis> requiredAxesForFeature(const MQ::Feature&);
 
+// Custom properties a feature reads, so changes to them on a container re-evaluate style queries:
+// the queried property and, for style ranges, bare <custom-property-name> operands and var() references.
+void collectCustomPropertyNames(const MQ::Feature&, HashSet<AtomString>&);
+
+struct ContainerRequirements {
+    OptionSet<Axis> sizeAxes;
+    bool scrollState { false };
+    bool needsSizeContainer() const { return !sizeAxes.isEmpty(); }
+};
+
 enum class ContainsUnknownFeature : bool { No, Yes };
 
 struct ContainerQuery {
     AtomString name;
     MQ::Condition condition;
-    OptionSet<CQ::Axis> requiredAxes;
+    ContainerRequirements requirements;
     ContainsUnknownFeature containsUnknownFeature;
 };
 

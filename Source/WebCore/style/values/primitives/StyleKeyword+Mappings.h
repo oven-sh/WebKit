@@ -67,6 +67,7 @@
 #include "StyleWebKitLineBoxContain.h"
 #include "StyleWebKitOverflowScrolling.h"
 #include "StyleWebKitTouchCallout.h"
+#include "StyleWhiteSpaceTrim.h"
 #include "TextFlags.h"
 #include "TextSpacing.h"
 #include "ThemeTypes.h"
@@ -747,6 +748,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 
 #define TYPE Style::HangingPunctuationValue
 #define FOR_EACH(CASE) CASE(First) CASE(ForceEnd) CASE(AllowEnd) CASE(Last)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE Style::WhiteSpaceTrimValue
+#define FOR_EACH(CASE) CASE(DiscardBefore) CASE(DiscardAfter) CASE(DiscardInner)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
@@ -1443,6 +1450,12 @@ template<> constexpr TextWrapMode fromCSSValueID(CSSValueID valueID)
 
 #define TYPE TextWrapStyle
 #define FOR_EACH(CASE) CASE(Auto) CASE(Balance) CASE(Pretty) CASE(Stable)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE WrapInside
+#define FOR_EACH(CASE) CASE(Auto) CASE(Avoid)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

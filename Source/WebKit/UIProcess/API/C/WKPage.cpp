@@ -3241,6 +3241,18 @@ void WKPageSetUseDarkAppearanceForTesting(WKPageRef pageRef, bool useDarkAppeara
     protect(toImpl(pageRef))->setUseDarkAppearanceForTesting(useDarkAppearance);
 }
 
+void WKPageSetVirtualWalletBehaviorForTesting(WKPageRef pageRef, WKStringRef action, WKStringRef protocol, WKStringRef responseJSON)
+{
+#if ENABLE(WEB_AUTHN) && ENABLE(WEBDRIVER_BIDI)
+    protect(toImpl(pageRef))->setVirtualWalletBehaviorForTesting(toWTFString(action), toWTFString(protocol), toWTFString(responseJSON));
+#else
+    UNUSED_PARAM(pageRef);
+    UNUSED_PARAM(action);
+    UNUSED_PARAM(protocol);
+    UNUSED_PARAM(responseJSON);
+#endif
+}
+
 ProcessID WKPageGetProcessIdentifier(WKPageRef page)
 {
     return toImpl(page)->legacyMainFrameProcessID();
@@ -3610,6 +3622,22 @@ void WKPageDoAfterProcessingAllPendingMouseEvents(WKPageRef page, void* context,
 void WKPageDoAfterProcessingAllPendingKeyEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingKeyEventsFunction completionHandler)
 {
     protect(toImpl(page))->doAfterProcessingAllPendingKeyEvents([context, completionHandler] {
+        completionHandler(context);
+    });
+}
+#endif
+
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+void WKPageDoAfterProcessingAllPendingWheelEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingWheelEventsFunction completionHandler)
+{
+    protect(toImpl(page))->doAfterProcessingAllPendingWheelEvents([context, completionHandler] {
+        completionHandler(context);
+    });
+}
+
+void WKPageDoAfterProcessingAllPendingTouchEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingTouchEventsFunction completionHandler)
+{
+    protect(toImpl(page))->doAfterProcessingAllPendingTouchEvents([context, completionHandler] {
         completionHandler(context);
     });
 }

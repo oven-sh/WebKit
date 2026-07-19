@@ -16,7 +16,6 @@ b3/B3PatchpointSpecial.cpp
 b3/B3Procedure.cpp
 b3/air/AirAllocateRegistersAndStackAndGenerateCode.cpp
 b3/air/AirGenerate.cpp
-builtins/BuiltinNames.cpp
 bytecode/AccessCase.cpp
 bytecode/BytecodeDumper.cpp
 bytecode/CallLinkInfo.cpp
@@ -50,7 +49,6 @@ dfg/DFGJITCompiler.cpp
 dfg/DFGJITCompiler.h
 dfg/DFGJITFinalizer.cpp
 dfg/DFGLazyJSValue.cpp
-dfg/DFGOperations.cpp
 dfg/DFGPlan.cpp
 dfg/DFGSpeculativeJIT.cpp
 dfg/DFGSpeculativeJIT.h
@@ -123,7 +121,6 @@ runtime/JSCustomSetterFunction.cpp
 runtime/JSGenericTypedArrayViewInlines.h
 runtime/JSGenericTypedArrayViewPrototypeFunctions.h
 runtime/JSGlobalObject.cpp
-runtime/JSModuleEnvironment.cpp
 runtime/JSObject.cpp
 runtime/JSObjectInlines.h
 runtime/JSRunLoopTimer.cpp
@@ -131,14 +128,12 @@ runtime/JSSymbolTableObject.cpp
 runtime/ModuleProgramExecutable.cpp
 runtime/NativeExecutable.cpp
 runtime/ProgramExecutable.cpp
-runtime/ProxyObject.cpp
 runtime/RegExpKey.h
 runtime/SamplingProfiler.cpp
 runtime/ScriptExecutable.h
 runtime/Structure.cpp
 runtime/StructureInlines.h
 runtime/SymbolTable.cpp
-runtime/TemporalObject.cpp
 runtime/TypeProfiler.cpp
 runtime/TypeProfilerLog.cpp
 runtime/TypeSet.cpp

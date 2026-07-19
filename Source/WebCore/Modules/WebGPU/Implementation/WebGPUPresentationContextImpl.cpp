@@ -32,7 +32,6 @@
 #include "WebGPUCanvasConfiguration.h"
 #include "WebGPUConvertToBackingContext.h"
 #include "WebGPUDeviceImpl.h"
-#include "WebGPUTextureDescriptor.h"
 #include "WebGPUTextureImpl.h"
 #include <WebGPU/WebGPUExt.h>
 
@@ -137,11 +136,10 @@ void PresentationContextImpl::unconfigure()
         return;
 
     m_swapChain = nullptr;
-    
+
     m_format = TextureFormat::Bgra8unorm;
     m_width = 0;
     m_height = 0;
-    m_swapChain = nullptr;
     m_currentTexture = nullptr;
 }
 

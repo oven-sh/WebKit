@@ -58,24 +58,13 @@ void lowerAfterRegAlloc(Code& code)
 
     if (AirLowerAfterRegAllocInternal::verbose)
         dataLog("Code before lowerAfterRegAlloc:\n", code);
-    
+
+    if (!code.proc().usesColdCCall() && !code.proc().usesShuffle())
+        return;
+
     auto isRelevant = [] (Inst& inst) -> bool {
         return inst.kind.opcode == Shuffle || inst.kind.opcode == ColdCCall;
     };
-    
-    bool haveAnyRelevant = false;
-    for (BasicBlock* block : code) {
-        for (Inst& inst : *block) {
-            if (isRelevant(inst)) {
-                haveAnyRelevant = true;
-                break;
-            }
-        }
-        if (haveAnyRelevant)
-            break;
-    }
-    if (!haveAnyRelevant)
-        return;
 
     padInterference(code);
 
@@ -153,10 +142,10 @@ void lowerAfterRegAlloc(Code& code)
             case Shuffle: {
                 ScalarRegisterSet set = usedRegisters.get(&inst).toScalarRegisterSet();
                 Vector<ShufflePair> pairs;
-                for (unsigned i = 0; i < inst.args.size(); i += 3) {
-                    Arg src = inst.args[i + 0];
-                    Arg dst = inst.args[i + 1];
-                    Width width = inst.args[i + 2].width();
+                for (unsigned i = 0; i < inst.args().size(); i += 3) {
+                    Arg src = inst.args()[i + 0];
+                    Arg dst = inst.args()[i + 1];
+                    Width width = inst.args()[i + 2].width();
 
                     // The used register set contains things live after the shuffle. But
                     // emitShuffle() wants a scratch register that is not just dead but also does not
@@ -198,13 +187,13 @@ void lowerAfterRegAlloc(Code& code)
                 Vector<Arg, 2> originalResults;
                 for (unsigned i = 0; i < cCallResultCount(code, value); ++i) {
                     results.append(cCallResult(code, value, i));
-                    originalResults.append(inst.args[i + 2]);
+                    originalResults.append(inst.args()[i + 2]);
                 }
                 
                 Vector<ShufflePair> pairs;
                 for (unsigned i = 0; i < destinations.size(); ++i) {
                     Value* child = value->child(i);
-                    Arg src = inst.args[i >= 1 ? i + results.size() + 1 : i + 1];
+                    Arg src = inst.args()[i >= 1 ? i + results.size() + 1 : i + 1];
                     Arg dst = destinations[i];
                     Width width = widthForType(child->type());
                     pairs.append(ShufflePair(src, dst, width));

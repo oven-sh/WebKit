@@ -1,16 +1,32 @@
 accessibility/AXObjectCache.cpp
+accessibility/AXTableHelpers.cpp
 accessibility/AccessibilityRenderObject.cpp
+accessibility/AccessibilitySVGObject.cpp
+accessibility/AccessibilityScrollView.cpp
 [ iOS ] accessibility/cocoa/AXTextMarkerCocoa.mm
 [ iOS ] accessibility/ios/AccessibilityObjectIOS.mm
 [ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.mm
+css/SelectorChecker.cpp
 dom/ContainerNode.cpp
 dom/Document.cpp
+dom/DocumentFragment.cpp
+dom/Element.cpp
+dom/ElementAndTextDescendantIterator.h
+dom/ImageOverlay.cpp
 dom/Position.cpp
+dom/TreeScope.cpp
 editing/Editing.cpp
+editing/FrameSelection.cpp
 [ iOS ] editing/cocoa/EditorCocoa.mm
+editing/cocoa/WebContentReaderCocoa.mm
+html/HTMLFormControlsCollection.cpp
 html/HTMLFormElement.cpp
+html/HTMLMediaElement.cpp
+html/HTMLObjectElement.cpp
+html/HTMLTableElement.cpp
 html/canvas/CanvasRenderingContext2DBase.cpp
 inspector/InspectorOverlay.cpp
+inspector/agents/InspectorCSSAgent.cpp
 inspector/agents/InspectorDOMAgent.cpp
 layout/formattingContexts/FormattingGeometry.cpp
 layout/formattingContexts/inline/InlineLineBoxBuilder.cpp
@@ -23,7 +39,9 @@ layout/formattingContexts/table/TableFormattingContext.cpp
 layout/formattingContexts/table/TableLayout.cpp
 layout/integration/LayoutIntegrationBoxGeometryUpdater.cpp
 layout/integration/LayoutIntegrationBoxTreeUpdater.cpp
+loader/cache/CachedSVGFont.cpp
 [ iOS ] page/DOMTimer.cpp
+page/DragController.cpp
 page/ElementTargetingController.cpp
 page/EventHandler.cpp
 page/IntersectionObserver.cpp
@@ -59,6 +77,7 @@ rendering/RenderDeprecatedFlexibleBox.cpp
 rendering/RenderElement.cpp
 rendering/RenderElementStyleInlines.h
 rendering/RenderFileUploadControl.cpp
+rendering/RenderFlexLayout.cpp
 rendering/RenderFlexibleBox.cpp
 rendering/RenderFragmentedFlow.cpp
 rendering/RenderFrameSet.cpp
@@ -153,6 +172,7 @@ style/AnchorPositionEvaluator.cpp
 style/ChildChangeInvalidation.cpp
 style/ElementRuleCollector.cpp
 style/InlineTextBoxStyle.cpp
+style/PseudoElementUtilities.cpp
 style/StyleAdjuster.cpp
 style/StyleBuilder.cpp
 style/StyleBuilderCustom.h
@@ -170,10 +190,13 @@ style/computed/StyleComputedStyleBase.cpp
 style/values/grid/StyleGridPositionsResolver.cpp
 style/values/images/kinds/StyleCanvasImage.cpp
 style/values/primitives/StyleLengthResolution.cpp
+svg/SVGFELightElement.cpp
 svg/SVGFilterPrimitiveStandardAttributes.cpp
 svg/SVGGeometryElement.cpp
 svg/SVGLengthContext.cpp
+svg/SVGSVGElement.cpp
 svg/SVGUseElement.cpp
+svg/animation/SMILTimeContainer.cpp
 testing/Internals.cpp
 workers/WorkerGlobalScope.cpp
 workers/WorkerOrWorkletThread.cpp

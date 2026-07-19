@@ -104,6 +104,7 @@ BEGIN {
        &determineCurrentSVNRevision
        &determineCrossTarget
        &determineXcodeSDK
+       &enableLastBuiltTiebreaker
        &executableProductDir
        &exitStatus
        &extractNonMacOSHostConfiguration
@@ -279,6 +280,7 @@ my $osXVersion;
 my $iosVersion;
 my $generateDsym;
 my $isCMakeBuild;
+my $shouldPickLastBuilt = 0;
 my $isGenerateProjectOnly;
 my $shouldBuild32Bit;
 my $isInspectorFrontend;
@@ -718,14 +720,15 @@ sub determineASanIsEnabled
 {
     return if defined $asanIsEnabled;
     determineBaseProductDir();
-    $asanIsEnabled = readSanitizerConfiguration("ASan");
+    # Honor an explicit --asan (like --cmake) in addition to the marker file.
+    $asanIsEnabled = checkForArgumentAndRemoveFromARGV("--asan") || readSanitizerConfiguration("ASan");
 }
 
 sub determineTSanIsEnabled
 {
     return if defined $tsanIsEnabled;
     determineBaseProductDir();
-    $tsanIsEnabled = readSanitizerConfiguration("TSan");
+    $tsanIsEnabled = checkForArgumentAndRemoveFromARGV("--tsan") || readSanitizerConfiguration("TSan");
 }
 
 sub determineUBSanIsEnabled
@@ -1195,7 +1198,11 @@ sub determineConfigurationProductDir
             if (isGtk() or isWPE() or isJSCOnly() or shouldBuildForCrossTarget() or inCrossTargetEnvironment()) {
                 $configurationProductDir = "$baseProductDir/$portName/$configuration";
             } elsif (isAppleCocoaWebKit() && isCMakeBuild()) {
-                $configurationProductDir = "$baseProductDir/cmake-mac/$configuration";
+                # Sanitizer presets build into a dedicated dir, e.g. cmake-mac/ASan.
+                my $cmakeConfiguration = $configuration;
+                $cmakeConfiguration = "ASan" if asanIsEnabled();
+                $cmakeConfiguration = "TSan" if tsanIsEnabled();
+                $configurationProductDir = "$baseProductDir/cmake-mac/$cmakeConfiguration";
             } else {
                 $configurationProductDir = "$baseProductDir/$configuration";
             }
@@ -3106,20 +3113,59 @@ sub determineIsCMakeBuild()
     return if defined($isCMakeBuild);
     $isCMakeBuild = checkForArgumentAndRemoveFromARGV("--cmake");
     return if $isCMakeBuild;
+    if (checkForArgumentAndRemoveFromARGV("--xcode")) {
+        $isCMakeBuild = 0;
+        return;
+    }
 
-    # Auto-detect a CMake macOS build when no Xcode build is present at the
-    # expected path. The CMake macOS presets place artifacts under
-    # WebKitBuild/cmake-mac/<Configuration>; an Xcode build, if present,
-    # always wins to preserve existing workflows.
+    # CMake macOS presets build into WebKitBuild/cmake-mac/<Configuration>. When
+    # both trees exist, Xcode wins unless a caller opts into the last-built
+    # tiebreaker via enableLastBuiltTiebreaker() (build drivers do not, so they
+    # never auto-flip).
     if (isAppleCocoaWebKit()) {
         determineBaseProductDir();
         determineConfiguration();
-        my $cmakeMacBuild = File::Spec->catdir($baseProductDir, "cmake-mac", $configuration);
+
+        # CMake sanitizer presets build into cmake-mac/ASan or cmake-mac/TSan, so
+        # resolve the tree the way determineConfigurationProductDir() does. Xcode
+        # toggles ASan within Debug/Release, so its path is unchanged.
+        my $cmakeConfiguration = $configuration;
+        $cmakeConfiguration = "ASan" if asanIsEnabled();
+        $cmakeConfiguration = "TSan" if tsanIsEnabled();
+        my $cmakeMacBuild = File::Spec->catdir($baseProductDir, "cmake-mac", $cmakeConfiguration);
         my $xcodeBuild = File::Spec->catdir($baseProductDir, $configuration);
+
         if (-f File::Spec->catfile($cmakeMacBuild, "CMakeCache.txt") && !-d $xcodeBuild) {
             $isCMakeBuild = 1;
+            return;
+        }
+
+        # Prefer whichever tree was built most recently, comparing each build
+        # system's log rather than a product binary (which goes stale after a
+        # partial build like JSC-only): cmake-mac's .ninja_log vs Xcode's
+        # XCBuildData/build.db. A missing log is mtime 0, degrading to the
+        # Xcode-wins default. build.db is shared across Xcode configurations.
+        if ($shouldPickLastBuilt && -d $cmakeMacBuild && -d $xcodeBuild) {
+            my $cmakeMarker = File::Spec->catfile($cmakeMacBuild, ".ninja_log");
+            my $xcodeMarker = File::Spec->catfile($baseProductDir, "XCBuildData", "build.db");
+            my $cmakeMtime = -f $cmakeMarker ? stat($cmakeMarker)->mtime : 0;
+            my $xcodeMtime = -f $xcodeMarker ? stat($xcodeMarker)->mtime : 0;
+            if ($cmakeMtime > $xcodeMtime) {
+                $isCMakeBuild = 1;
+                print STDERR "Using last-built tree: cmake-mac/$cmakeConfiguration (CMake)\n";
+            } elsif ($xcodeMtime && $cmakeMtime) {
+                print STDERR "Using last-built tree: $configuration (Xcode)\n";
+            }
         }
     }
+}
+
+# Opt a read-only path resolver (e.g. webkit-build-directory) into the
+# last-built tiebreaker in determineIsCMakeBuild(). Must be called before the
+# first isCMakeBuild()/product-directory query, since the result is cached.
+sub enableLastBuiltTiebreaker
+{
+    $shouldPickLastBuilt = 1;
 }
 
 sub isCMakeBuild()

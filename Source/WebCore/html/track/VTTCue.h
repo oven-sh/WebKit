@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011, 2013 Google Inc. All rights reserved.
- * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -103,9 +103,6 @@ protected:
     VTTCueBox(Document&, VTTCue&);
 
     RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
-
-private:
-    WeakPtr<VTTCue> m_cue;
 };
 
 // ----------------------------
@@ -222,6 +219,8 @@ public:
     const LineAndPositionSetting& width() const LIFETIME_BOUND { return m_width; }
     const LineAndPositionSetting& height() const LIFETIME_BOUND { return m_height; }
 
+    virtual bool preventLineWrapping() const { return false; }
+
 protected:
     VTTCue(Document&, const MediaTime& start, const MediaTime& end, String&& content);
 
@@ -236,8 +235,6 @@ private:
     VTTCue(Document&, Ref<WebVTTCueData>&&);
 
     void createWebVTTNodeTree();
-
-    void parseSettings(const String&);
 
     void determineTextDirection();
     void calculateDisplayParameters();
@@ -276,6 +273,7 @@ private:
 
     DirectionSetting m_writingDirection { DirectionSetting::Horizontal };
     AlignSetting m_cueAlignment { AlignSetting::Center };
+    CSSValueID m_displayDirection { CSSValueLtr };
 
     RefPtr<VTTRegion> m_region;
     String m_parsedRegionId;
@@ -289,7 +287,6 @@ private:
     RefPtr<SpeechSynthesisUtterance> m_speechUtterance;
 #endif
 
-    CSSValueID m_displayDirection { CSSValueLtr };
     double m_displaySize { 0 };
     DisplayPosition m_displayPosition;
 

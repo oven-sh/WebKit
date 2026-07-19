@@ -77,7 +77,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     [coder encodeBool:configuration->allowElementUserInfo() forKey:@"allowElementUserInfo"];
     [coder encodeBool:configuration->disableLegacyBuiltinOverrides() forKey:@"disableLegacyBuiltinOverrides"];
     [coder encodeBool:configuration->allowJSHandleCreation() forKey:@"allowJSHandleCreation"];
-    [coder encodeBool:configuration->allowNodeSerialization() forKey:@"allowNodeSerialization"];
+    [coder encodeBool:configuration->allowNodeSnapshotCreation() forKey:@"allowNodeSnapshotCreation"];
     [coder encodeBool:configuration->isInspectable() forKey:@"inspectable"];
 }
 
@@ -94,7 +94,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     configuration->setAllowElementUserInfo([coder decodeBoolForKey:@"allowElementUserInfo"]);
     configuration->setDisableLegacyBuiltinOverrides([coder decodeBoolForKey:@"disableLegacyBuiltinOverrides"]);
     configuration->setAllowJSHandleCreation([coder decodeBoolForKey:@"allowJSHandleCreation"]);
-    configuration->setAllowNodeSerialization([coder decodeBoolForKey:@"allowNodeSerialization"]);
+    configuration->setAllowNodeSnapshotCreation([coder decodeBoolForKey:@"allowNodeSnapshotCreation"]);
     configuration->setInspectable([coder decodeBoolForKey:@"inspectable"]);
 
     return self;
@@ -107,17 +107,17 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     return *_worldConfiguration;
 }
 
-- (BOOL)openClosedShadowRootsEnabled
+- (BOOL)allowAccessingClosedShadowRoots
 {
     return _worldConfiguration->allowAccessToClosedShadowRoots();
 }
 
-- (void)setOpenClosedShadowRootsEnabled:(BOOL)allow
+- (void)setAllowAccessingClosedShadowRoots:(BOOL)allow
 {
     _worldConfiguration->setAllowAccessToClosedShadowRoots(allow);
 }
 
-- (BOOL)autofillScriptingEnabled
+- (BOOL)isAutofillScriptingEnabled
 {
     return _worldConfiguration->allowAutofill();
 }
@@ -127,7 +127,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setAllowAutofill(enabled);
 }
 
-- (BOOL)elementUserInfoEnabled
+- (BOOL)isElementUserInfoEnabled
 {
     return _worldConfiguration->allowElementUserInfo();
 }
@@ -137,7 +137,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setAllowElementUserInfo(enabled);
 }
 
-- (BOOL)legacyBuiltinOverridesEnabled
+- (BOOL)isLegacyBuiltinOverridesEnabled
 {
     return !_worldConfiguration->disableLegacyBuiltinOverrides();
 }
@@ -147,7 +147,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setDisableLegacyBuiltinOverrides(!enabled);
 }
 
-- (BOOL)jsHandleCreationEnabled
+- (BOOL)isJSHandleCreationEnabled
 {
     return _worldConfiguration->allowJSHandleCreation();
 }
@@ -167,14 +167,14 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setInspectable(inspectable);
 }
 
-- (BOOL)nodeSerializationEnabled
+- (BOOL)isNodeSnapshotCreationEnabled
 {
-    return _worldConfiguration->allowNodeSerialization();
+    return _worldConfiguration->allowNodeSnapshotCreation();
 }
 
-- (void)setNodeSerializationEnabled:(BOOL)allow
+- (void)setNodeSnapshotCreationEnabled:(BOOL)allow
 {
-    _worldConfiguration->setAllowNodeSerialization(allow);
+    _worldConfiguration->setAllowNodeSnapshotCreation(allow);
 }
 
 @end
@@ -251,14 +251,14 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     _worldConfiguration->setAllowJSHandleCreation(allow);
 }
 
-- (BOOL)allowNodeSerialization
+- (BOOL)allowNodeSnapshotCreation
 {
-    return [self nodeSerializationEnabled];
+    return [self isNodeSnapshotCreationEnabled];
 }
 
-- (void)setAllowNodeSerialization:(BOOL)allow
+- (void)setAllowNodeSnapshotCreation:(BOOL)allow
 {
-    [self setNodeSerializationEnabled:allow];
+    [self setNodeSnapshotCreationEnabled:allow];
 }
 
 @end

@@ -28,6 +28,7 @@
 #include "CSSParserTokenRange.h"
 #include "StyleCustomProperty.h"
 #include "StyleRuleFunction.h"
+#include "StyleScopeOrdinal.h"
 
 namespace WebCore {
 
@@ -66,9 +67,12 @@ private:
     bool substituteVariableFunction(CSSParserTokenRange, CSSValueID, Vector<CSSParserToken>&, const CSSParserContext&);
     bool substituteFirstValid(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
     bool substituteDashedFunction(StringView functionName, CSSParserTokenRange, Vector<CSSParserToken>&);
-    RefPtr<MutableStyleProperties> resolveAndRegisterDashedFunctionArguments(const Vector<StyleRuleFunction::Parameter>&, const Vector<Vector<CSSParserToken>>&, LocalPropertyRegistry&);
+    RefPtr<MutableStyleProperties> resolveAndRegisterDashedFunctionArguments(const Vector<StyleRuleFunction::Parameter>&, const Vector<Vector<CSSParserToken>>&, LocalPropertyRegistry&, ScopeOrdinal definitionScope);
     bool substituteAttrFunction(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
+    bool substituteIfFunction(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
     bool substituteInternalAutoBaseFunction(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
+    bool substituteRandomItemFunction(CSSParserTokenRange, Vector<CSSParserToken>&, const CSSParserContext&);
+    std::optional<double> randomItemBaseValue(Vector<CSSParserToken> randomKey);
 
     struct AttrArgumentGrammarSubstitution {
         Vector<CSSParserToken> firstArg;
@@ -76,8 +80,18 @@ private:
     };
     std::optional<AttrArgumentGrammarSubstitution> substituteAttrArgumentGrammar(CSSParserTokenRange, const CSSParserContext&);
 
-    enum class FallbackResult : uint8_t { None, Valid, Invalid };
-    std::pair<FallbackResult, Vector<CSSParserToken>> substituteVariableFallback(const AtomString& variableName, CSSParserTokenRange, CSSValueID functionId, const CSSParserContext&);
+    struct RandomItemArgumentGrammarSubstitution {
+        Vector<CSSParserToken> randomKey;
+        Vector<CSSParserTokenRange> items;
+    };
+    std::optional<RandomItemArgumentGrammarSubstitution> substituteRandomItemArgumentGrammar(CSSParserTokenRange, const CSSParserContext&);
+
+    struct IfBranch {
+        // A null condition is the `else` keyword, which always matches.
+        std::optional<Vector<CSSParserToken>> condition;
+        CSSParserTokenRange valueRange;
+    };
+    std::optional<Vector<IfBranch>> substituteIfArgumentGrammar(CSSParserTokenRange, const CSSParserContext&);
 
     RefPtr<const CustomProperty> propertyValueForVariableName(const AtomString&, CSSValueID);
     RefPtr<CSSVariableData> trySimpleSubstitution(const CSSSubstitutionValue&);
@@ -92,6 +106,7 @@ private:
     Vector<String> m_intermediateTokenStrings;
     Vector<RefPtr<const CustomProperty>> m_intermediateCustomProperties;
     unsigned m_urlContextDepth { 0 };
+    unsigned m_randomItemAutoIndex { 0 };
     bool m_isAttrTainted { false };
     bool m_hasTaintedURL { false };
 };

@@ -58,6 +58,7 @@ bool isValidHighlightStyleProperty(CSSPropertyID id)
     case CSSPropertyStrokeWidth:
     case CSSPropertyTextDecoration:
     case CSSPropertyTextDecorationColor:
+    case CSSPropertyTextDecorationInset:
     case CSSPropertyTextDecorationLine:
     case CSSPropertyTextDecorationSkip:
     case CSSPropertyTextDecorationSkipInk:
@@ -112,6 +113,7 @@ bool isValidMarkerStyleProperty(CSSPropertyID id)
     case CSSPropertyLineHeight:
     case CSSPropertyListStyle:
     case CSSPropertyOverflowWrap:
+    case CSSPropertyQuotes:
     case CSSPropertyTabSize:
     case CSSPropertyTextCombineUpright:
     case CSSPropertyTextDecorationSkipInk:
@@ -180,6 +182,7 @@ bool isValidCueStyleProperty(CSSPropertyID id)
     case CSSPropertyWhiteSpaceCollapse:
     case CSSPropertyTextCombineUpright:
     case CSSPropertyTextDecorationColor:
+    case CSSPropertyTextDecorationInset:
     case CSSPropertyTextDecorationLine:
     case CSSPropertyTextDecorationStyle:
     case CSSPropertyTextDecorationThickness:
@@ -235,6 +238,7 @@ bool isValidCueSelectorStyleProperty(CSSPropertyID id)
     case CSSPropertyWhiteSpaceCollapse:
     case CSSPropertyTextCombineUpright:
     case CSSPropertyTextDecorationColor:
+    case CSSPropertyTextDecorationInset:
     case CSSPropertyTextDecorationLine:
     case CSSPropertyTextDecorationStyle:
     case CSSPropertyTextDecorationThickness:

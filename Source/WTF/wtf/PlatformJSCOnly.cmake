@@ -55,8 +55,10 @@ else ()
 
     if (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
         list(APPEND WTF_SOURCES
+            glib/FilePathWatcher.cpp
             glib/FileSystemGlib.cpp
             glib/Sandbox.cpp
+            glib/TimeZoneGLib.cpp
         )
     endif ()
 
@@ -146,6 +148,7 @@ endif ()
 
 if (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
     list(APPEND WTF_PUBLIC_HEADERS
+        glib/FilePathWatcher.h
         glib/GRefPtr.h
         glib/GSpanExtras.h
         glib/GTypedefs.h

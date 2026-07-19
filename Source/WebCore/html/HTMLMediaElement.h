@@ -237,7 +237,9 @@ public:
     using PlayPromiseVector = Vector<DOMPromiseDeferred<void>>;
     void rejectPendingPlayPromises(PlayPromiseVector&&, Ref<DOMException>&&);
     void resolvePendingPlayPromises(PlayPromiseVector&&);
-    void scheduleNotifyAboutPlaying();
+    void scheduleNotifyAboutPlaying(bool deferWhileSeeking = true);
+    void maybeFirePendingPlaying();
+    void handlePlaybackPositionChanged();
     void notifyAboutPlaying(PlayPromiseVector&&);
     void durationChanged();
     
@@ -697,7 +699,8 @@ public:
 
     bool hasSource() const { return hasCurrentSrc() || srcObject(); }
 
-    WEBCORE_EXPORT void requestHostingContext(Function<void(HostingContext)>&&);
+    using HostingContextPromise = MediaPlayer::HostingContextPromise;
+    WEBCORE_EXPORT Ref<HostingContextPromise> requestHostingContext();
     WEBCORE_EXPORT WebCore::HostingContext layerHostingContext();
     WEBCORE_EXPORT WebCore::FloatSize naturalSize();
     WEBCORE_EXPORT WebCore::FloatSize NODELETE videoLayerSize() const;
@@ -784,7 +787,7 @@ protected:
     bool showPosterFlag() const { return m_showPoster; }
     void setShowPosterFlag(bool);
 
-    void setChangingVideoFullscreenMode(bool value) { m_changingVideoFullscreenMode = value; }
+    void setChangingVideoFullscreenMode(bool);
     bool isChangingVideoFullscreenMode() const { return m_changingVideoFullscreenMode; }
 
     void mediaPlayerEngineUpdated() override;
@@ -794,7 +797,6 @@ protected:
     void mediaPlayerTimeChanged() final;
     void mediaPlayerVolumeChanged() final;
     void mediaPlayerMuteChanged() final;
-    void mediaPlayerSeeked(const MediaTime&) final;
     void mediaPlayerDurationChanged() final;
     void mediaPlayerRateChanged() final;
     void mediaPlayerPlaybackStateChanged() final;
@@ -815,6 +817,8 @@ protected:
 
     SoundStageSize soundStageSize() const { return m_soundStageSize; }
     void setSoundStageSize(SoundStageSize);
+
+    void scheduleUpdateAcceleratedRenderingState();
 
 protected:
     // ActiveDOMObject
@@ -1209,10 +1213,12 @@ private:
     TaskCancellationGroup m_updatePlayStateTaskCancellationGroup;
     TaskCancellationGroup m_resumeTaskCancellationGroup;
     TaskCancellationGroup m_seekTaskCancellationGroup;
+    const Ref<NativePromiseRequest> m_seekRequest;
     TaskCancellationGroup m_playbackControlsManagerBehaviorRestrictionsTaskCancellationGroup;
     TaskCancellationGroup m_bufferedTimeRangesChangedTaskCancellationGroup;
     TaskCancellationGroup m_resourceSelectionTaskCancellationGroup;
     TaskCancellationGroup m_updateShouldAutoplayTaskCancellationGroup;
+    TaskCancellationGroup m_updateAcceleratedRenderingStateTaskCancellationGroup;
     RefPtr<TimeRanges> m_playedTimeRanges;
     TaskCancellationGroup m_asyncEventsCancellationGroup;
     TaskCancellationGroup m_periodicTimeupdateCancellationGroup;
@@ -1327,8 +1333,8 @@ private:
     bool m_seeking : 1;
     bool m_buffering : 1;
     bool m_stalled : 1;
-    bool m_seekRequested : 1;
     bool m_wasPlayingBeforeSeeking : 1;
+    bool m_pendingNotifyAboutPlaying : 1;
 
     // data has not been loaded since sending a "stalled" event
     bool m_sentStalledEvent : 1;

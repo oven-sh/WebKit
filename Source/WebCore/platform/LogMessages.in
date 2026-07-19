@@ -41,6 +41,7 @@ FontCacheCoreTextRegisterFont, "Registering font %" PRIVATE_LOG_STRING " with fo
 FrameLoaderChangeLocation, "[pageID=%" PRIu64 " frameID=%" PRIu64 " isMainFrame=%d] FrameLoader::changeLocation: frame load started", (uint64_t, uint64_t, int), DEFAULT, ResourceLoading
 FrameLoaderCheckLoadCompleteForThisFrame, "[pageID=%" PRIu64 " frameID=%" PRIu64 " isMainFrame=%d] FrameLoader::checkLoadCompleteForThisFrame: Finished frame load", (uint64_t, uint64_t, int), DEFAULT, ResourceLoading
 FrameLoaderCheckLoadCompleteForThisFrameFailedProvisionalLoad, "[pageID=%" PRIu64 " frameID=%" PRIu64 " isMainFrame=%d] FrameLoader::checkLoadCompleteForThisFrame: Failed provisional load (isTimeout = %d, isCancellation = %d, errorCode = %d, httpsFirstApplicable = %d)", (uint64_t, uint64_t, int, int, int, int, int), DEFAULT, ResourceLoading
+FrameLoaderClearProvisionalLoad, "[pageID=%" PRIu64 " frameID=%" PRIu64 " isMainFrame=%d] FrameLoader::clearProvisionalLoad: Clearing provisional document loader (navigationID=%" PRIu64 ")", (uint64_t, uint64_t, int, uint64_t), DEFAULT, ResourceLoading
 FrameLoaderContinueLoadAfterNavigationPolicy, "[pageID=%" PRIu64 " frameID=%" PRIu64 " isMainFrame=%d] FrameLoader::continueLoadAfterNavigationPolicy: Setting provisional document loader (m_provisionalDocumentLoader=%" PRIu64 ")", (uint64_t, uint64_t, int, uint64_t), DEFAULT, ResourceLoading
 FrameLoaderContinueLoadAfterNavigationPolicyCannotContinue, "[pageID=%" PRIu64 " frameID=%" PRIu64 " isMainFrame=%d] FrameLoader::continueLoadAfterNavigationPolicy: can't continue loading frame due to the following reasons (allowNavigationToInvalidURL = %d, requestURLIsValid = %d, navigationPolicyDecision = %d)", (uint64_t, uint64_t, int, int, int, int), DEFAULT, ResourceLoading
 FrameLoaderLoadDocumentLoader, "[pageID=%" PRIu64 " frameID=%" PRIu64 " isMainFrame=%d] FrameLoader::load (DocumentLoader): frame load started", (uint64_t, uint64_t, int), DEFAULT, ResourceLoading
@@ -89,7 +90,6 @@ HTMLMediaElementMediaPlayerEngineUpdated, "HTMLMediaElement::mediaPlayerEngineUp
 HTMLMediaElementMediaPlayerMuteChanged, "HTMLMediaElement::mediaPlayerMuteChanged(%" PRIX64 ")", (uint64_t), DEFAULT, Media
 HTMLMediaElementMediaPlayerRateChanged, "HTMLMediaElement::mediaPlayerRateChanged(%" PRIX64 ") rate: %f", (uint64_t, double), DEFAULT, Media
 HTMLMediaElementMediaPlayerResourceNotSupported, "HTMLMediaElement::mediaPlayerResourceNotSupported(%" PRIX64 ")", (uint64_t), DEFAULT, Media
-HTMLMediaElementMediaPlayerSeeked, "HTMLMediaElement::mediaPlayerSeeked(%" PRIX64 ")", (uint64_t), DEFAULT, Media
 HTMLMediaElementMediaPlayerSizeChanged, "HTMLMediaElement::mediaPlayerSizeChanged(%" PRIX64 ") w = %f, h = %f", (uint64_t, float, float), DEFAULT, Media
 HTMLMediaElementMediaPlayerTimeChanged, "HTMLMediaElement::mediaPlayerTimeChanged(%" PRIX64 ")", (uint64_t), DEFAULT, Media
 HTMLMediaElementMediaPlayerTimeChangedLooping, "HTMLMediaElement::mediaPlayerTimeChanged(%" PRIX64 ") current time (%f) is greater then duration (%f), looping", (uint64_t, double, double), DEFAULT, Media

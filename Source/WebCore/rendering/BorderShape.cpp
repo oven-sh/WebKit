@@ -300,6 +300,10 @@ static void buildScaledCornerInputs(const FloatRoundedRect& outerSnapped, const 
 
     for (auto key : { BoxCorner::TopLeft, BoxCorner::TopRight, BoxCorner::BottomLeft, BoxCorner::BottomRight }) {
         CornerInput& corner = cornerRects[key];
+
+        if (!corner.startInset && !corner.endInset)
+            continue;
+
         double scaledWidth = corner.width * scale;
         double scaledHeight = corner.height * scale;
 
@@ -343,7 +347,7 @@ Path BorderShape::pathForInnerRoundedRect(const FloatRoundedRect& innerSnapped) 
 static void addOuterCornerShapeToPath(Path& path, const FloatRoundedRect& outerSnapped, const RectCorners<float>& cornerCurvatures)
 {
     RectCorners<CornerInput> cornerRects;
-    buildScaledCornerInputs(outerSnapped, cornerCurvatures, 0, 0, 0, 0, cornerRects);
+    buildCornerInputs(outerSnapped, cornerCurvatures, 0, 0, 0, 0, cornerRects);
     borderContourPath(path, cornerRects);
 }
 
@@ -557,9 +561,36 @@ void BorderShape::fillRectWithInnerHoleShape(GraphicsContext& context, const Lay
         return;
     }
 
-    auto innerSnapped = m_innerEdgeRect.pixelSnappedRoundedRectForPainting(deviceScaleFactor);
+    auto innerSnapped = snappedInnerEdgeRectForPainting(deviceScaleFactor);
     ASSERT(innerSnapped.isRenderable());
     context.fillRectWithRoundedHole(outerSnapped, innerSnapped, color);
+}
+
+FloatRoundedRect BorderShape::snappedInnerEdgeRectForPainting(float deviceScaleFactor) const
+{
+    // Derive the inner rect from the already-snapped outer rect, insetting each side by the width
+    // rounded to whole device pixels, so the gap (border/spread thickness) is equal on every side
+    // regardless of sub-pixel position.
+    auto outerSnapped = m_borderRect.pixelSnappedRoundedRectForPainting(deviceScaleFactor);
+    auto outerRect = outerSnapped.rect();
+
+    auto topWidth = roundToDevicePixel(m_borderWidths.top(), deviceScaleFactor);
+    auto rightWidth = roundToDevicePixel(m_borderWidths.right(), deviceScaleFactor);
+    auto bottomWidth = roundToDevicePixel(m_borderWidths.bottom(), deviceScaleFactor);
+    auto leftWidth = roundToDevicePixel(m_borderWidths.left(), deviceScaleFactor);
+
+    FloatRect innerRect {
+        outerRect.x() + leftWidth,
+        outerRect.y() + topWidth,
+        std::max(0.0f, outerRect.width() - leftWidth - rightWidth),
+        std::max(0.0f, outerRect.height() - topWidth - bottomWidth),
+    };
+
+    auto innerSnapped = m_innerEdgeRect.pixelSnappedRoundedRectForPainting(deviceScaleFactor);
+    innerSnapped.setRect(innerRect);
+    if (!innerSnapped.isRenderable())
+        innerSnapped.adjustRadii();
+    return innerSnapped;
 }
 
 LayoutRoundedRect BorderShape::computeInnerEdgeRoundedRect(const LayoutRoundedRect& borderRoundedRect, const RectEdges<LayoutUnit>& borderWidths)

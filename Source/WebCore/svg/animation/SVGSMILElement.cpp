@@ -239,6 +239,7 @@ void SVGSMILElement::reset()
     stopAnimation(protect(targetElement()).get());
 
     m_activeState = Inactive;
+    m_previousActiveState = Inactive;
     m_isWaitingForFirstInterval = true;
     m_intervalBegin = SMILTime::unresolved();
     m_intervalEnd = SMILTime::unresolved();
@@ -636,7 +637,7 @@ void SVGSMILElement::disconnectConditions()
             // our condition event listener, in case it later fires.
             RefPtr eventBase = eventBaseFor(condition);
             if (eventBase)
-                eventBase->removeEventListener(condition.m_name, Ref { *condition.m_eventListener }, { .capture = false });
+                eventBase->removeEventListener(condition.m_name, protect(*condition.m_eventListener), { .capture = false });
             protect(condition.m_eventListener)->disconnectAnimation();
             condition.m_eventListener = nullptr;
         } else if (condition.m_type == Condition::Syncbase) {
@@ -772,10 +773,21 @@ SMILTime SVGSMILElement::simpleDuration() const
     return std::min(dur(), SMILTime::indefinite());
 }
 
-static void insertSorted(Vector<SMILTimeWithOrigin>& list, SMILTimeWithOrigin time)
+static void insertSortedAndUnique(Vector<SMILTimeWithOrigin>& list, SMILTimeWithOrigin time)
 {
     ASSERT(std::is_sorted(list.begin(), list.end()));
-    list.insert(std::lower_bound(list.begin(), list.end(), time) - list.begin(), time);
+    size_t position = std::lower_bound(list.begin(), list.end(), time) - list.begin();
+    // The list is only ordered by time, so entries sharing this time are contiguous
+    // starting at `position`. Skip the insertion if the same (time, origin) pair is
+    // already present to keep repeated beginElementAt/endElementAt calls from ballooning
+    // the list with duplicates.
+    for (auto& existing : list.subspan(position)) {
+        if (existing.time() != time.time())
+            break;
+        if (existing.originIsScript() == time.originIsScript())
+            return;
+    }
+    list.insert(position, time);
 }
 
 void SVGSMILElement::addInstanceTime(BeginOrEnd beginOrEnd, SMILTime time, SMILTimeWithOrigin::Origin origin)
@@ -783,7 +795,7 @@ void SVGSMILElement::addInstanceTime(BeginOrEnd beginOrEnd, SMILTime time, SMILT
     SMILTime elapsed = this->elapsed();
     if (elapsed.isUnresolved())
         return;
-    insertSorted(beginOrEnd == Begin ? m_beginTimes : m_endTimes, SMILTimeWithOrigin(time, origin));
+    insertSortedAndUnique(beginOrEnd == Begin ? m_beginTimes : m_endTimes, SMILTimeWithOrigin(time, origin));
     if (beginOrEnd == Begin)
         beginListChanged(elapsed);
     else
@@ -854,7 +866,18 @@ void SVGSMILElement::resolveInterval(bool first, SMILTime& beginResult, SMILTime
     // See the pseudocode in http://www.w3.org/TR/SMIL3/smil-timing.html#q90.
     SMILTime beginAfter = first ? -std::numeric_limits<double>::infinity() : m_intervalEnd;
     SMILTime lastIntervalTempEnd = std::numeric_limits<double>::infinity();
+
+    // Defensively bound the walk: a malformed or non-advancing begin/end list must never spin
+    // here indefinitely. Falling out leaves the interval unresolved.
+    size_t currentIteration = 0;
+    // Allow 4x the begin-time count for end-time refinement retries, but never fewer than 1M
+    // iterations so small/empty lists driven by dynamic or event-based times aren't capped early.
+    size_t maxIterations = std::max<size_t>(m_beginTimes.size() * 4, 1000000);
     while (true) {
+        if (currentIteration++ >= maxIterations) [[unlikely]] {
+            ASSERT_NOT_REACHED();
+            break;
+        }
         bool equalsMinimumOK = !first || m_intervalEnd > m_intervalBegin;
         SMILTime tempBegin = findInstanceTime(Begin, beginAfter, equalsMinimumOK);
         if (tempBegin.isUnresolved())
@@ -986,7 +1009,7 @@ void SVGSMILElement::checkRestart(SMILTime elapsed)
         if (restart != RestartAlways)
             return;
         SMILTime nextBegin = findInstanceTime(Begin, m_intervalBegin, false);
-        if (nextBegin < m_intervalEnd) { 
+        if (nextBegin < m_intervalEnd) {
             m_intervalEnd = nextBegin;
             notifyDependentsIntervalChanged();
         }
@@ -1002,7 +1025,17 @@ void SVGSMILElement::seekToIntervalCorrespondingToTime(SMILTime elapsed)
     ASSERT(elapsed >= m_intervalBegin);
 
     // Manually seek from interval to interval, just as if the animation would run regulary.
+    // Defensively bound the walk so a non-advancing interval list can't spin here indefinitely.
+    // Falling out simply stops seeking at the current interval.
+    size_t currentIteration = 0;
+    // Allow 4x the begin-time count for end-time refinement retries, but never fewer than 1M
+    // iterations so small/empty lists driven by dynamic or event-based times aren't capped early.
+    size_t maxIterations = std::max<size_t>(m_beginTimes.size() * 4, 1000000);
     while (true) {
+        if (currentIteration++ >= maxIterations) [[unlikely]] {
+            ASSERT_NOT_REACHED();
+            return;
+        }
         // Figure out the next value in the begin time list after the current interval begin.
         SMILTime nextBegin = findInstanceTime(Begin, m_intervalBegin, false);
 
@@ -1102,21 +1135,69 @@ bool SVGSMILElement::isContributing(SMILTime elapsed) const
     return (m_activeState == Active && (fill() == FillFreeze || elapsed <= m_intervalBegin + repeatingDuration())) || m_activeState == Frozen;
 }
     
+void SVGSMILElement::updateIntervalForProgress(SMILTime elapsed, bool seekToTime)
+{
+    ASSERT(m_timeContainer);
+
+    if (!m_conditionsConnected)
+        connectConditions();
+
+    // Remember the state at the start of the frame so progress() can fire begin/end events for
+    // whatever transition happens now.
+    m_previousActiveState = m_activeState;
+
+    if (!m_intervalBegin.isFinite()) {
+        m_progressDisposition = ProgressDisposition::NotContributing;
+        return;
+    }
+
+    // The interval hasn't begun yet: keep the current (frozen or inactive) state.
+    if (elapsed < m_intervalBegin) {
+        m_progressDisposition = ProgressDisposition::BeforeInterval;
+        return;
+    }
+
+    m_previousIntervalBegin = m_intervalBegin;
+
+    if (m_isWaitingForFirstInterval) {
+        m_isWaitingForFirstInterval = false;
+        resolveFirstInterval();
+    }
+
+    if (seekToTime) {
+        seekToIntervalCorrespondingToTime(elapsed);
+        if (elapsed < m_intervalBegin) {
+            // elapsed is not within an interval.
+            m_progressDisposition = ProgressDisposition::NotContributing;
+            return;
+        }
+    }
+
+    // Resolve the current interval before progress() computes the animation percent. checkRestart()
+    // may end the current interval and start a new one; computing the percent afterwards (in
+    // progress(), against the resolved interval) ensures a just-restarted interval yields ~0 rather
+    // than the previous interval's end value. See https://bugs.webkit.org/show_bug.cgi?id=196596
+    checkRestart(elapsed);
+
+    m_activeState = determineActiveState(elapsed);
+    m_progressDisposition = ProgressDisposition::Resolved;
+}
+
 bool SVGSMILElement::progress(SMILTime elapsed, SVGSMILElement& firstAnimation, bool seekToTime)
 {
     ASSERT(m_timeContainer);
     ASSERT(m_isWaitingForFirstInterval || m_intervalBegin.isFinite());
 
-    if (!m_conditionsConnected)
-        connectConditions();
-
-    if (!m_intervalBegin.isFinite()) {
-        ASSERT(m_activeState == Inactive);
-        m_nextProgressTime = SMILTime::unresolved();
+    // The interval and active state for this frame were resolved by updateIntervalForProgress(),
+    // which runs for every scheduled animation before they are sorted by priority.
+    switch (m_progressDisposition) {
+    case ProgressDisposition::NotContributing:
+        // Either the interval is unresolved (m_intervalBegin is unresolved) or a seek landed before
+        // the interval began; in both cases m_intervalBegin is the next time worth revisiting.
+        m_nextProgressTime = m_intervalBegin;
         return false;
-    }
 
-    if (elapsed < m_intervalBegin) {
+    case ProgressDisposition::BeforeInterval: {
         ASSERT(m_activeState != Active);
         bool isFrozen = (m_activeState == Frozen);
         if (isFrozen) {
@@ -1129,29 +1210,22 @@ bool SVGSMILElement::progress(SMILTime elapsed, SVGSMILElement& firstAnimation, 
         return isFrozen;
     }
 
-    m_previousIntervalBegin = m_intervalBegin;
-
-    if (m_isWaitingForFirstInterval) {
-        m_isWaitingForFirstInterval = false;
-        resolveFirstInterval();
+    case ProgressDisposition::Resolved:
+        break;
     }
 
-    // This call may obtain a new interval -- never call calculateAnimationPercentAndRepeat() before!
-    if (seekToTime) {
-        seekToIntervalCorrespondingToTime(elapsed);
-        if (elapsed < m_intervalBegin) {
-            // elapsed is not within an interval.
-            m_nextProgressTime = m_intervalBegin;
-            return false;
-        }
-    }
-
+    // Compute the percent/repeat against the interval resolved by updateIntervalForProgress().
     unsigned repeat = 0;
-    float percent = calculateAnimationPercentAndRepeat(elapsed, repeat);
-    checkRestart(elapsed);
+    float percent = 0;
+    if (elapsed < m_intervalBegin) {
+        // checkRestart() advanced us to an interval that begins in the future (a gap between
+        // intervals); a frozen element holds its last value until that interval begins.
+        percent = m_lastPercent;
+        repeat = m_lastRepeat;
+    } else
+        percent = calculateAnimationPercentAndRepeat(elapsed, repeat);
 
-    ActiveState oldActiveState = m_activeState;
-    m_activeState = determineActiveState(elapsed);
+    ActiveState oldActiveState = m_previousActiveState;
     bool animationIsContributing = isContributing(elapsed);
 
     if (animationIsContributing) {

@@ -429,7 +429,6 @@ namespace WebCore {
     macro(RemotePlayback) \
     macro(Request) \
     macro(Response) \
-    macro(SFrameTransform) \
     macro(SFrameTransformErrorEvent) \
     macro(SQLError) \
     macro(SQLResultSet) \
@@ -514,7 +513,7 @@ namespace WebCore {
     macro(WebKitMediaKeyNeededEvent) \
     macro(WebKitMediaKeySession) \
     macro(WebKitMediaKeys) \
-    macro(WebKitSerializedNode) \
+    macro(WebKitNodeSnapshot) \
     macro(WebKitJSHandle) \
     macro(WebSocket) \
     macro(WebTransport) \

@@ -1,2 +1,5 @@
-[ macOS ] Buffer.mm
+Buffer.mm
+CommandEncoder.mm
+CommandsMixin.mm
 [ macOS ] HardwareCapabilities.mm
+Texture.mm

@@ -624,7 +624,7 @@ static TemporalResult<std::optional<NudgeWindow>> computeNudgeWindow(
         startEpochNs = originEpochNs;
     else {
         auto startResult = TemporalCore::calendarDateAdd(calendarId, isoDate, startDuration, TemporalOverflow::Constrain);
-        if (!startResult)
+        if (!startResult) [[unlikely]]
             return makeUnexpected(startResult.error());
         auto start = *startResult;
         double startDayCount = dateToDaysFrom1970(start.year(), static_cast<int>(start.month()) - 1, static_cast<int>(start.day()));
@@ -637,7 +637,7 @@ static TemporalResult<std::optional<NudgeWindow>> computeNudgeWindow(
     }
     // Step 9: end = CalendarDateAdd(calendar, isoDateTime.[[ISODate]], endDuration, constrain).
     auto endResult = TemporalCore::calendarDateAdd(calendarId, isoDate, endDuration, TemporalOverflow::Constrain);
-    if (!endResult)
+    if (!endResult) [[unlikely]]
         return makeUnexpected(endResult.error());
     auto end = *endResult;
     double endDayCount = dateToDaysFrom1970(end.year(), static_cast<int>(end.month()) - 1, static_cast<int>(end.day()));
@@ -683,17 +683,19 @@ TemporalResult<Nudged> nudgeToCalendarUnit(int32_t sign,
             return makeUnexpected(retried.error());
         ASSERT(retried->has_value());
         nudgeWindow = **retried;
-        // Step 5.a.ii / 6.a.ii: Assert bounds hold after retry. Set didExpandCalendarUnit to true.
-        ASSERT(sign != 1 || (nudgeWindow.startEpochNs <= destEpochNs && destEpochNs <= nudgeWindow.endEpochNs));
-        ASSERT(sign != -1 || (nudgeWindow.endEpochNs <= destEpochNs && destEpochNs <= nudgeWindow.startEpochNs));
+        // Step 5.a.ii / 6.a.ii: Set didExpandCalendarUnit to true. (The spec also asserts bounds
+        // hold after retry, but the assertion is violable: https://github.com/tc39/proposal-temporal/issues/3310)
         didExpandCalendarUnit = true;
     }
 
     // Steps 7-12: Extract r1, r2, startEpochNs, endEpochNs, startDuration, endDuration from nudgeWindow.
     auto& startDuration = nudgeWindow.startDuration;
     auto& endDuration = nudgeWindow.endDuration;
-    // Step 13: Assert: startEpochNs ≠ endEpochNs.
-    ASSERT(nudgeWindow.startEpochNs != nudgeWindow.endEpochNs);
+    // Step 13: Assert: startEpochNs ≠ endEpochNs. The assertion is violable when a time zone
+    // transition skips the entire calendar day (https://github.com/tc39/proposal-temporal/issues/3310).
+    // FIXME: RangeError matches the polyfill, not the spec; revisit once the issue above settles.
+    if (nudgeWindow.startEpochNs == nudgeWindow.endEpochNs)
+        return makeUnexpected(rangeError("cannot round relative to a time zone transition that skips an entire day"_s));
     // Step 14: Let progress be (destEpochNs - startEpochNs) / (endEpochNs - startEpochNs).
     Int128 progressNumerator = destEpochNs - nudgeWindow.startEpochNs;
     Int128 progressDenominator = nudgeWindow.endEpochNs - nudgeWindow.startEpochNs;
@@ -732,7 +734,7 @@ TemporalResult<NudgeResult> nudgeToZonedTime(int32_t sign,
 {
     // Step 1: Let start be ? CalendarDateAdd(calendar, isoDateTime.[[ISODate]], duration.[[Date]], ~constrain~).
     auto startResult = TemporalCore::calendarDateAdd(calendarId, isoDate, duration.dateDuration(), TemporalOverflow::Constrain);
-    if (!startResult)
+    if (!startResult) [[unlikely]]
         return makeUnexpected(startResult.error());
     auto start = *startResult;
     // Step 2: startDateTime = CombineISODateAndTimeRecord(start, isoDateTime.[[Time]]).
@@ -882,7 +884,7 @@ TemporalResult<ISO8601::InternalDuration> bubbleRelativeDuration(
             }
             // Step 6.b.iv: Let end be ? CalendarDateAdd(calendar, isoDateTime.[[ISODate]], endDuration, ~constrain~).
             auto endResult = TemporalCore::calendarDateAdd(calendarId, isoDate, endDuration, TemporalOverflow::Constrain);
-            if (!endResult)
+            if (!endResult) [[unlikely]]
                 return makeUnexpected(endResult.error());
             // Step 6.b.v: endDateTime = CombineISODateAndTimeRecord(end, isoDateTime.[[Time]]).
             // Step 6.b.vi: endEpochNs = GetUTCEpochNanoseconds/GetEpochNanosecondsFor. (v+vi fused)

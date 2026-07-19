@@ -703,6 +703,15 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         return nullptr;
     }
 
+    if (WKStringIsEqualToUTF8CString(messageName, "SetVirtualWalletBehavior")) {
+        auto dictionary = dictionaryValue(messageBody);
+        TestController::singleton().setVirtualWalletBehavior(
+            stringValue(dictionary, "Action"),
+            stringValue(dictionary, "Protocol"),
+            stringValue(dictionary, "ResponseJSON"));
+        return nullptr;
+    }
+
     if (WKStringIsEqualToUTF8CString(messageName, "GetBackgroundFetchIdentifier"))
         return TestController::singleton().getBackgroundFetchIdentifier();
 
@@ -1349,12 +1358,12 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
     }
 
     if (WKStringIsEqualToUTF8CString(messageName, "GetGlobalPrivacyControl")) {
-        bool value = WKPreferencesGetBoolValueForKeyForTesting(TestController::singleton().platformPreferences(), toWK("GlobalPrivacyControlStatus").get());
+        bool value = WKPreferencesGetBoolValueForKeyForTesting(TestController::singleton().platformPreferences(), toWK("GlobalPrivacyControlEnabled").get());
         return adoptWK(WKBooleanCreate(value)).leakRef();
     }
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetGlobalPrivacyControl")) {
-        WKPreferencesSetBoolValueForKeyForTesting(TestController::singleton().platformPreferences(), booleanValue(messageBody), toWK("GlobalPrivacyControlStatus").get());
+        WKPreferencesSetBoolValueForKeyForTesting(TestController::singleton().platformPreferences(), booleanValue(messageBody), toWK("GlobalPrivacyControlEnabled").get());
         return nullptr;
     }
 

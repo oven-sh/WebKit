@@ -188,8 +188,10 @@ enum class AXProperty : uint16_t {
 #endif
     TextColor,
     HasApplePDFAnnotationAttribute,
+    HasExplicitGroupRole,
     HasLinethrough,
     HasRemoteFrameChild,
+    HeadingLevel,
     InputType,
     IsEditableWebArea,
     IsSubscript,

@@ -103,7 +103,7 @@ public:
     friend class RenderView;
 
     WEBCORE_EXPORT static Ref<LocalFrameView> create(LocalFrame&);
-    static Ref<LocalFrameView> create(LocalFrame&, const IntSize& initialSize);
+    WEBCORE_EXPORT static Ref<LocalFrameView> create(LocalFrame&, const IntSize& initialSize);
 
     virtual ~LocalFrameView();
 
@@ -215,7 +215,9 @@ public:
     // True if the FrameView is not transparent, and the base background color is opaque.
     bool NODELETE hasOpaqueBackground() const;
 
-    WEBCORE_EXPORT void invalidateForBaseBackgroundOrColorSchemeChange();
+    void invalidateForFrameOwnerColorSchemeChange();
+
+    void invalidateForBaseBackgroundChange();
     WEBCORE_EXPORT Color NODELETE baseBackgroundColor() const;
     WEBCORE_EXPORT void setBaseBackgroundColor(const Color&);
     WEBCORE_EXPORT void updateBackgroundRecursively(const std::optional<Color>& backgroundColor);

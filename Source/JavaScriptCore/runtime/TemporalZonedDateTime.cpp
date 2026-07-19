@@ -89,14 +89,10 @@ TemporalZonedDateTime::TemporalZonedDateTime(VM& vm, Structure* structure, ISO86
 {
 }
 
-// https://tc39.es/proposal-temporal/#sec-temporal-getoffsetnanosecondsfor
 std::optional<int64_t> TemporalZonedDateTime::getOffsetNanoseconds(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Step 1: If timeZone is an offset timezone, return offsetMinutes × 60 × 10⁹.
-    // Step 2: Return GetNamedTimeZoneOffsetNanoseconds(timeZone, epochNanoseconds).
-    // (Both paths are handled by TemporalCore::getOffsetNanosecondsFor.)
     auto result = TemporalCore::getOffsetNanosecondsFor(m_timeZone, exactTime());
     if (!result) [[unlikely]] {
         if (result.error().kind == TemporalErrorKind::RangeError)
@@ -109,15 +105,20 @@ std::optional<int64_t> TemporalZonedDateTime::getOffsetNanoseconds(JSGlobalObjec
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-getisodatetimefor
-void TemporalZonedDateTime::getLocalDateAndTime(JSGlobalObject* globalObject, ISO8601::PlainDate& outDate, ISO8601::PlainTime& outTime) const
+// Thin JS-side wrapper: forwards TemporalResult errors to the caller's ThrowScope.
+ISO8601::PlainDateTime TemporalZonedDateTime::getLocalDateTime(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Step 1: Let offsetNanoseconds be ! GetOffsetNanosecondsFor(timeZone, epochNanoseconds).
-    auto offsetOpt = getOffsetNanoseconds(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    // Step 2: Return BalanceISODateTime(epochNanoseconds + offsetNanoseconds).
-    TemporalCore::exactTimeToLocalDateAndTime(exactTime(), *offsetOpt, outDate, outTime);
+    auto result = TemporalCore::getISODateTimeFor(m_timeZone, exactTime());
+    if (!result) [[unlikely]] {
+        if (result.error().kind == TemporalErrorKind::RangeError)
+            throwRangeError(globalObject, scope, result.error().message);
+        else
+            throwTypeError(globalObject, scope, result.error().message);
+        return { };
+    }
+    return *result;
 }
 
 // Internal helper: extracts the runtime TimeZone handle from an already-parsed TimeZoneRecord.
@@ -267,9 +268,11 @@ static std::optional<ZDTEpochArgs> toEpochArgsFromPropertyBag(JSGlobalObject* gl
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Steps 4.b+4.c: GetTemporalCalendarIdentifierWithISODefault + PrepareCalendarFields
-    //                (all 15 ZDT fields read alphabetically in one pass).
-    CalendarID calendarID = iso8601CalendarID();
+    // Step 4.b: calendar = ? GetTemporalCalendarIdentifierWithISODefault(item).
+    CalendarID calendarID = getTemporalCalendarIdentifierWithISODefault(globalObject, bag);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    // Step 4.c: PrepareCalendarFields — all 15 ZDT fields read alphabetically in one pass.
     auto fields = readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::Full>(globalObject, bag, calendarID);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
@@ -298,95 +301,14 @@ static std::optional<ZDTEpochArgs> toEpochArgsFromPropertyBag(JSGlobalObject* gl
     }
 
     // Steps 4.j-4.k: dateTimeResult = ? InterpretTemporalDateTimeFields(calendar, fields, overflow).
-    auto& dateFields = fields.dateFields;
-    bool zdtIsNonISO = !TemporalCore::calendarIsISO(calendarID);
-    double month = dateFields.month.value_or(0);
-    double day = dateFields.day.value_or(0);
-    double year = dateFields.year.value_or(0);
-    auto& parsedMonthCode = dateFields.monthCode;
-
-    // day and year are not in PrepareCalendarFields' requiredFieldNames, but CalendarResolveFields
-    // (inside InterpretTemporalDateTimeFields) requires them — throw TypeError here to surface the
-    // right error type before CalendarDateFromFields produces a RangeError from day/year = 0.
-    if (!(day > 0)) [[unlikely]] {
-        throwTypeError(globalObject, scope, "day property must be present"_s);
-        return std::nullopt;
-    }
-    // year is required unless era+eraYear are both provided (calendar-specific substitution).
-    if (!fields.yearPresent && !(dateFields.era && dateFields.eraYear)) [[unlikely]] {
-        throwTypeError(globalObject, scope, "year property must be present"_s);
-        return std::nullopt;
-    }
-
-    if (fields.monthCodePresent) {
-        ASSERT(parsedMonthCode);
-        if (!zdtIsNonISO && (parsedMonthCode->isLeapMonth || parsedMonthCode->monthNumber < 1 || parsedMonthCode->monthNumber > 12)) [[unlikely]] {
-            throwRangeError(globalObject, scope, "month code is not valid for ISO 8601 calendar"_s);
-            return std::nullopt;
-        }
-        if (!fields.monthPresent)
-            month = parsedMonthCode->monthNumber;
-        else if (month != static_cast<double>(parsedMonthCode->monthNumber)) [[unlikely]] {
-            throwRangeError(globalObject, scope, "month and monthCode properties must match if both are provided"_s);
-            return std::nullopt;
-        }
-    } else {
-        if (!fields.monthPresent) [[unlikely]] {
-            throwTypeError(globalObject, scope, "Either month or monthCode property must be provided"_s);
-            return std::nullopt;
-        }
-        if (!(month > 0 && std::isfinite(month))) [[unlikely]] {
-            throwRangeError(globalObject, scope, "month property must be positive and finite"_s);
-            return std::nullopt;
-        }
-    }
-
-    // Step 4.j: InterpretTemporalDateTimeFields → CalendarDateFromFields → isoDate.
-    ISO8601::PlainDate plainDate;
-    if (dateFields.era || dateFields.eraYear) {
-        std::optional<StringView> era;
-        if (dateFields.era)
-            era = StringView(*dateFields.era);
-        auto result = TemporalCore::calendarDateFromFields(
-            calendarID, dateFields.year, clampTo<uint8_t>(month),
-            clampTo<uint8_t>(day), era, dateFields.eraYear, parsedMonthCode, overflow);
-        if (!result) [[unlikely]] {
-            throwRangeError(globalObject, scope, String(result.error().message));
-            return std::nullopt;
-        }
-        plainDate = *result;
-    } else {
-        if (!zdtIsNonISO) {
-            if (overflow == TemporalOverflow::Constrain) {
-                month = std::clamp(month, 1.0, 12.0);
-                day = std::clamp(day, 1.0, 31.0);
-            } else {
-                if (!(month >= 1 && month <= 12)) [[unlikely]] {
-                    throwRangeError(globalObject, scope, "month is out of range"_s);
-                    return std::nullopt;
-                }
-                if (!(day >= 1 && day <= 31)) [[unlikely]] {
-                    throwRangeError(globalObject, scope, "day is out of range"_s);
-                    return std::nullopt;
-                }
-            }
-        }
-        plainDate = isoDateFromFields(globalObject, TemporalDateFormat::Date,
-            clampTo<int32_t>(year), clampTo<uint32_t>(month), clampTo<uint32_t>(day),
-            parsedMonthCode, overflow, calendarID);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-    }
-
-    // Step 4.l: time = result.[[Time]] → build PlainTime with overflow.
-    ISO8601::Duration timeDur;
-    timeDur.setField(TemporalUnit::Hour, fields.hour.value_or(0));
-    timeDur.setField(TemporalUnit::Minute, fields.minute.value_or(0));
-    timeDur.setField(TemporalUnit::Second, fields.second.value_or(0));
-    timeDur.setField(TemporalUnit::Millisecond, fields.millisecond.value_or(0));
-    timeDur.setField(TemporalUnit::Microsecond, fields.microsecond.value_or(0));
-    timeDur.setField(TemporalUnit::Nanosecond, fields.nanosecond.value_or(0));
-    auto plainTime = TemporalPlainTime::regulateTime(globalObject, WTF::move(timeDur), overflow);
+    TemporalCore::TimeFieldsIn timeFields {
+        fields.hour, fields.minute, fields.second,
+        fields.millisecond, fields.microsecond, fields.nanosecond,
+    };
+    auto pdt = interpretTemporalDateTimeFields(globalObject, calendarID, fields.dateFields, timeFields, overflow);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
+    ISO8601::PlainDate plainDate = pdt.date;
+    ISO8601::PlainTime plainTime = pdt.time;
 
     // Steps 6-8: offsetBehaviour from offsetString (fields.[[OffsetString]]).
     // No offset string → Wall; offset string present → Option (caller's offsetOpt drives prefer/reject/use/ignore).
@@ -474,9 +396,8 @@ TemporalZonedDateTime* TemporalZonedDateTime::from(JSGlobalObject* globalObject,
             return nullptr;
     }
 
-    // Steps 10-12 (unified epilogue — both string and property-bag paths converge here).
-    // Steps 6-9 are encoded in args: offsetBehaviour (steps 6-8) and inlineOffsetNs (steps 9-10).
-    // Step 10: epochNanoseconds = ? InterpretISODateTimeOffset(...).
+    // Steps 6-10 are encoded in args: offsetBehaviour (Steps 6-8: exact/wall/option) and inlineOffsetNs (Steps 9-10: default 0, or ParseDateTimeUTCOffset(offsetString) when option).
+    // Step 11: epochNanoseconds = ? InterpretISODateTimeOffset(...).
     auto exactTimeResult = TemporalCore::interpretISODateTimeOffset(
         args->plainDate, args->plainTime, args->useStartOfDay,
         args->offsetBehaviour, args->offsetOpt, args->inlineOffsetNs,

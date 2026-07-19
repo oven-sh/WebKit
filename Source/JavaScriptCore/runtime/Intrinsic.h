@@ -147,6 +147,9 @@ namespace JSC {
     macro(StringPrototypeSubstrIntrinsic) \
     macro(StringPrototypeToLowerCaseIntrinsic) \
     macro(StringPrototypeToUpperCaseIntrinsic) \
+    macro(StringPrototypeTrimIntrinsic) \
+    macro(StringPrototypeTrimStartIntrinsic) \
+    macro(StringPrototypeTrimEndIntrinsic) \
     macro(SymbolPrototypeToStringIntrinsic) \
     macro(NumberPrototypeToStringIntrinsic) \
     macro(NumberIsFiniteIntrinsic) \
@@ -276,6 +279,8 @@ namespace JSC {
     macro(DataViewGetFloat16) \
     macro(DataViewGetFloat32) \
     macro(DataViewGetFloat64) \
+    macro(DataViewGetBigInt64) \
+    macro(DataViewGetBigUint64) \
     macro(DataViewSetInt8) \
     macro(DataViewSetUint8) \
     macro(DataViewSetInt16) \
@@ -285,6 +290,8 @@ namespace JSC {
     macro(DataViewSetFloat16) \
     macro(DataViewSetFloat32) \
     macro(DataViewSetFloat64) \
+    macro(DataViewSetBigInt64) \
+    macro(DataViewSetBigUint64) \
     \
     macro(WasmFunctionIntrinsic) \
 

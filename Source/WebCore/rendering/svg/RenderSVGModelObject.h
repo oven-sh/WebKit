@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include <WebCore/FloatPoint3D.h>
 #include <WebCore/RenderBox.h>
 #include <WebCore/RenderLayerModelObject.h>
 #include <WebCore/SVGBoundingBoxComputation.h>
@@ -83,6 +84,8 @@ public:
             m_cachedVisualOverflowRect = SVGBoundingBoxComputation::computeVisualOverflowRect(*this);
         return *m_cachedVisualOverflowRect;
     }
+
+    void updateCachedVisualOverflowRect() { m_cachedVisualOverflowRect = SVGBoundingBoxComputation::computeVisualOverflowRect(*this); }
     LayoutSize locationOffsetEquivalent() const { return toLayoutSize(currentSVGLayoutLocation()); }
 
     bool hasVisualOverflow() const { return !borderBoxRectEquivalent().contains(visualOverflowRectEquivalent()); }
@@ -93,10 +96,14 @@ public:
     virtual LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const;
     LayoutRect overflowClipRectForChildLayers(const LayoutPoint& location, OverlayScrollbarSizeRelevancy relevancy) { return overflowClipRect(location, relevancy); }
 
-    virtual Path computeClipPath(AffineTransform&) const;
+    Path computeClipPathGeometry() const;
+    void computeClipContentTransform(AffineTransform&) const;
     virtual void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer) const;
 
     void invalidateCachedVisualOverflowRect() override { m_cachedVisualOverflowRect = std::nullopt; }
+
+    std::optional<FloatPoint3D> cachedTransformOriginForReferenceBox(const Style::ComputedStyle&, const FloatRect& referenceBox) const override;
+    void invalidateCachedTransformOrigin() const { m_cachedTransformOrigin = std::nullopt; }
 
 protected:
     RenderSVGModelObject(Type, Document&, Style::ComputedStyle&&, OptionSet<SVGModelObjectFlag> = { });
@@ -130,6 +137,9 @@ private:
 
     LayoutRect m_layoutRect;
     std::optional<AffineTransform> m_localTransform;
+
+    mutable std::optional<FloatPoint3D> m_cachedTransformOrigin;
+    mutable FloatRect m_cachedTransformOriginBox;
 };
 
 } // namespace WebCore

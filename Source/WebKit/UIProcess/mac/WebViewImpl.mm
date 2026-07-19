@@ -111,6 +111,7 @@
 #import <WebCore/CompositionHighlight.h>
 #import <WebCore/DataDetectorElementInfo.h>
 #import <WebCore/DestinationColorSpace.h>
+#import <WebCore/DiagnosticLoggingClient.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DigitalCredentialsRequestData.h>
 #import <WebCore/DragData.h>
@@ -1211,7 +1212,7 @@ static NSArray<NSString *> *passwordTextTouchBarDefaultItemIdentifiers()
 
 #endif // HAVE(TOUCH_BAR)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 @interface WKImageAnalysisOverlayViewDelegate : NSObject<VKCImageAnalysisOverlayViewDelegate>
 - (instancetype)initWithWebViewImpl:(WebKit::WebViewImpl&)impl;
@@ -1295,7 +1296,7 @@ static void* imageOverlayObservationContext = &imageOverlayObservationContext;
 
 @end
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 namespace WebKit {
 
@@ -1409,6 +1410,10 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     auto& pageConfiguration = m_page->configuration();
     m_page->initializeWebPage(pageConfiguration.openedSite(), pageConfiguration.initialSandboxFlags(), pageConfiguration.initialReferrerPolicy());
 
+    // This will ensure that DisplayID is set. This default is important so that offscreen webviews
+    // can schedule presentation updates.
+    windowDidChangeScreen();
+
     registerDraggedTypes();
 
     view.wantsLayer = YES;
@@ -1442,7 +1447,6 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
 WebViewImpl::~WebViewImpl()
 {
     if (m_remoteObjectRegistry) {
-        protect(m_page->configuration().processPool())->removeMessageReceiver(Messages::RemoteObjectRegistry::messageReceiverName(), m_page->identifier());
         [m_remoteObjectRegistry _invalidate];
         m_remoteObjectRegistry = nil;
     }
@@ -1504,6 +1508,8 @@ void WebViewImpl::handleProcessSwapOrExit()
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     [m_appKitGestureController reset];
 #endif
+
+    m_contentRelativeViewsNeedToBeRepositioned = false;
 }
 
 void WebViewImpl::processWillSwap()
@@ -1833,6 +1839,15 @@ RetainPtr<NSView> WebViewImpl::hitTestPDFHUD(WebCore::FloatPoint locationInView)
 bool WebViewImpl::isPointOnPDFHUD(WebCore::FloatPoint locationInView)
 {
     return !!hitTestPDFHUD(locationInView);
+}
+
+bool WebViewImpl::isPointInScrollbar(CGPoint locationInView)
+{
+    CheckedPtr scrollingCoordinatorProxy = m_page->scrollingCoordinatorProxy();
+    if (!scrollingCoordinatorProxy)
+        return false;
+
+    return scrollingCoordinatorProxy->isPointInScrollbar(locationInView);
 }
 
 bool WebViewImpl::isViewVisible(NSView *view)
@@ -3862,7 +3877,7 @@ bool WebViewImpl::hasContentRelativeChildViews() const
 
 void WebViewImpl::suppressContentRelativeChildViews(ContentRelativeChildViewsSuppressionType type)
 {
-    if (!hasContentRelativeChildViews())
+    if (!hasContentRelativeChildViews() && !inputContextForSelectionUpdates())
         return;
 
     switch (type) {
@@ -3879,13 +3894,16 @@ void WebViewImpl::suppressContentRelativeChildViews(ContentRelativeChildViewsSup
 
 void WebViewImpl::contentRelativeViewsHysteresisTimerFired(PAL::HysteresisState state)
 {
-    if (!hasContentRelativeChildViews())
-        return;
+    bool started = state == PAL::HysteresisState::Started;
+    if (hasContentRelativeChildViews()) {
+        if (started)
+            suppressContentRelativeChildViews();
+        else
+            restoreContentRelativeChildViews();
+    }
 
-    if (state == PAL::HysteresisState::Started)
-        suppressContentRelativeChildViews();
-    else
-        restoreContentRelativeChildViews();
+    if (m_contentRelativeViewsNeedToBeRepositioned != started && std::exchange(m_contentRelativeViewsNeedToBeRepositioned, started))
+        [inputContextForSelectionUpdates() textInputClientDidUpdateSelection];
 }
 
 void WebViewImpl::pageScrollingHysteresisFired(PAL::HysteresisState state)
@@ -4443,11 +4461,8 @@ RetainPtr<NSView> WebViewImpl::inspectorAttachmentView()
 
 _WKRemoteObjectRegistry *WebViewImpl::remoteObjectRegistry()
 {
-    if (!m_remoteObjectRegistry) {
+    if (!m_remoteObjectRegistry)
         m_remoteObjectRegistry = adoptNS([[_WKRemoteObjectRegistry alloc] _initWithWebPageProxy:m_page.get()]);
-        Ref webRemoteObjectRegistry = [m_remoteObjectRegistry remoteObjectRegistry];
-        protect(m_page->configuration().processPool())->addMessageReceiver(Messages::RemoteObjectRegistry::messageReceiverName(), m_page->identifier(), webRemoteObjectRegistry);
-    }
 
     return m_remoteObjectRegistry.get();
 }
@@ -4787,16 +4802,29 @@ void WebViewImpl::writeToURLForFilePromiseProvider(NSFilePromiseProvider *provid
 
 NSDragOperation WebViewImpl::dragSourceOperationMask(NSDraggingSession *, NSDraggingContext context)
 {
-    if (context == NSDraggingContextOutsideApplication || m_page->currentDragIsOverFileInput())
-        return NSDragOperationCopy;
-    return NSDragOperationGeneric | NSDragOperationMove | NSDragOperationCopy;
+    NSDragOperation defaultOperationMask = (context == NSDraggingContextOutsideApplication || m_page->currentDragIsOverFileInput()) ? NSDragOperationCopy : (NSDragOperationGeneric | NSDragOperationMove | NSDragOperationCopy);
+#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
+    if (RetainPtr view = this->view())
+        return [view _web_dragSourceOperationMaskForDraggingContext:context defaultMask:defaultOperationMask];
+#endif
+    return defaultOperationMask;
 }
 
-void WebViewImpl::draggingSessionEnded(NSDraggingSession *, NSPoint endPoint, NSDragOperation operation)
+void WebViewImpl::draggingSessionWillBegin(NSDraggingSession *session, NSPoint point)
+{
+#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
+    [view() _web_draggingSession:session willBeginAtPoint:point];
+#endif
+}
+
+void WebViewImpl::draggingSessionEnded(NSDraggingSession *session, NSPoint endPoint, NSDragOperation operation)
 {
     sendDragEndToPage(NSPointToCGPoint(endPoint), operation);
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     [appKitGestureController() clearGestureDragState];
+#endif
+#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
+    [view() _web_draggingSession:session endedAtPoint:endPoint operation:operation];
 #endif
 }
 
@@ -4836,15 +4864,13 @@ void WebViewImpl::startDrag(const WebCore::DragItem& item, ShareableBitmap::Hand
     if (RefPtr frame = WebFrameProxy::webFrame(item.rootFrameID)) {
         // FIXME: The `dragLocationInWindowCoordinates` is in window coordinates (equivalent to root view), but `convertPointToMainFrameCoordinates`
         // expects the input to be in content coordinates of the frame corresponding to the given frame ID.
-        m_page->convertPointToMainFrameCoordinates(item.dragLocationInWindowCoordinates, item.rootFrameID, [weakThis = WeakPtr { *this }, promisedAttachmentInfo = item.promisedAttachmentInfo, dragNSImage = WTF::move(dragNSImage), size, lastMouseDownEvent = m_lastMouseDownEvent, frameID](std::optional<FloatPoint> dragLocationInMainFrameCoordinates) mutable {
+        m_page->convertPointToMainFrameCoordinates(item.dragLocationInWindowCoordinates, item.rootFrameID, [weakThis = WeakPtr { *this }, promisedAttachmentInfo = item.promisedAttachmentInfo, dragNSImage = WTF::move(dragNSImage), size, lastMouseDownEvent = m_lastMouseDownEvent, frameID, eventPositionInRootViewCoordinates = item.eventPositionInRootViewCoordinates](std::optional<FloatPoint> dragLocationInMainFrameCoordinates) mutable {
 
             BEGIN_BLOCK_OBJC_EXCEPTIONS
 
             CheckedPtr protectedThis = weakThis.get();
             if (!protectedThis || !dragLocationInMainFrameCoordinates)
                 return;
-            RefPtr page = protectedThis->page();
-            RetainPtr view = protectedThis->view();
 
             // clientDragLocation is the bottom-left of the image, but setDraggingFrame: expects a top-left origin.
             auto clientDragLocation = IntPoint(dragLocationInMainFrameCoordinates.value());
@@ -4866,93 +4892,135 @@ void WebViewImpl::startDrag(const WebCore::DragItem& item, ShareableBitmap::Hand
                 return;
             }
 
-            RetainPtr<NSDraggingItem> draggingItem;
+            auto startDraggingSessionWithItems = makeBlockPtr([weakThis, promisedAttachmentInfo, dragNSImage, draggingFrame, isImageDrag, canUseFilePromiseForImageDrag, pasteboard, lastMouseDownEvent, frameID](NSArray<NSDraggingItem *> *adjustedItems) {
+                BEGIN_BLOCK_OBJC_EXCEPTIONS
 
-            // beginDraggingSessionWithItems: clears the pasteboard and populates it with
-            // UTI-typed data from NSPasteboardItems. We want to restore the legacy-typed
-            // pasteboard data afterwards so that WP read paths (which expect legacy types)
-            // can find this data in the original order.
-            RetainPtr<NSArray<NSString *>> savedLegacyPasteboardTypes;
-            RetainPtr<NSMutableDictionary<NSString *, NSData *>> savedLegacyPasteboardData;
-            if (promisedAttachmentInfo) {
-                RefPtr attachment = page->attachmentForIdentifier(promisedAttachmentInfo.attachmentIdentifier);
-                if (!attachment) {
+                CheckedPtr protectedThis = weakThis.get();
+                if (!protectedThis)
+                    return;
+                RefPtr page = protectedThis->page();
+                RetainPtr view = protectedThis->view();
+                if (!page || !view) {
                     protectedThis->cancelDrag();
                     return;
                 }
 
-                RetainPtr utiType = attachment->utiType().createNSString();
-                if (![utiType length]) {
-                    protectedThis->cancelDrag();
-                    return;
+                bool delegateSubstituted = adjustedItems.count;
+                RetainPtr<NSArray<NSDraggingItem *>> draggingItems;
+
+                // beginDraggingSessionWithItems: clears the pasteboard and populates it with UTI-typed data
+                // from NSPasteboardItems. We restore the legacy-typed pasteboard data afterwards so that WP
+                // read paths (which expect legacy types) can find this data in the original order.
+                RetainPtr<NSArray<NSString *>> savedLegacyPasteboardTypes;
+                RetainPtr<NSMutableDictionary<NSString *, NSData *>> savedLegacyPasteboardData;
+
+                if (delegateSubstituted) {
+                    // The delegate supplied its own items and owns the pasteboard, so WebKit's promised-image
+                    // data (if any) is unused for this drag. Clear it so it cannot leak into a later drag.
+                    protectedThis->clearPromisedImageDragData();
+                    draggingItems = adjustedItems;
+                } else if (promisedAttachmentInfo) {
+                    RefPtr attachment = page->attachmentForIdentifier(promisedAttachmentInfo.attachmentIdentifier);
+                    if (!attachment) {
+                        protectedThis->cancelDrag();
+                        return;
+                    }
+                    RetainPtr utiType = attachment->utiType().createNSString();
+                    if (![utiType length]) {
+                        protectedThis->cancelDrag();
+                        return;
+                    }
+                    RetainPtr fileName = attachment->fileName().createNSString();
+                    RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:utiType.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
+                    RetainPtr context = adoptNS([[WKPromisedAttachmentContext alloc] initWithIdentifier:promisedAttachmentInfo.attachmentIdentifier.createNSString().get() fileName:fileName.get()]);
+                    [provider setUserInfo:context.get()];
+                    RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
+                    [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+                    draggingItems = @[ defaultDraggingItem.get() ];
+                } else if (canUseFilePromiseForImageDrag) {
+                    RetainPtr imageUTI = protectedThis->m_promisedImageDragData->imageUTI.createNSString();
+                    RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:imageUTI.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
+                    RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
+                    [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+                    draggingItems = @[ defaultDraggingItem.get() ];
+                } else {
+                    protectedThis->clearPromisedImageDragData();
+
+                    // NSPasteboardItem here is a placeholder to satisfy the NSDraggingItem initializer.
+                    // The real data lives in the saved legacy state and is restored once the drag session starts.
+                    savedLegacyPasteboardTypes = adoptNS([[pasteboard types] copy]);
+                    savedLegacyPasteboardData = adoptNS([[NSMutableDictionary alloc] init]);
+                    for (NSString *type in [pasteboard types]) {
+                        if (RetainPtr data = [pasteboard dataForType:type])
+                            [savedLegacyPasteboardData setObject:data.get() forKey:type];
+                    }
+                    RetainPtr pasteboardItem = adoptNS([[NSPasteboardItem alloc] init]);
+                    [pasteboardItem setData:[NSData data] forType:UTTypeData.identifier];
+                    RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:pasteboardItem.get()]);
+                    [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+                    draggingItems = @[ defaultDraggingItem.get() ];
                 }
 
-                RetainPtr fileName = attachment->fileName().createNSString();
-                RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:utiType.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
-                RetainPtr context = adoptNS([[WKPromisedAttachmentContext alloc] initWithIdentifier:promisedAttachmentInfo.attachmentIdentifier.createNSString().get() fileName:fileName.get()]);
-                [provider setUserInfo:context.get()];
-                draggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
-                [draggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
-            } else if (canUseFilePromiseForImageDrag) {
-                RetainPtr imageUTI = protectedThis->m_promisedImageDragData->imageUTI.createNSString();
-                RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:imageUTI.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
-                draggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
-                [draggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
-            } else {
-                protectedThis->clearPromisedImageDragData();
-
-                // NSPasteboardItem here is a placeholder to satisfy the NSDraggingItem initializer.
-                // The real data lives in the saved legacy state and is restored once the drag session starts.
-                savedLegacyPasteboardTypes = adoptNS([[pasteboard types] copy]);
-                savedLegacyPasteboardData = adoptNS([[NSMutableDictionary alloc] init]);
-                for (NSString *type in [pasteboard types]) {
-                    if (RetainPtr data = [pasteboard dataForType:type])
-                        [savedLegacyPasteboardData setObject:data.get() forKey:type];
-                }
-                RetainPtr pasteboardItem = adoptNS([[NSPasteboardItem alloc] init]);
-                [pasteboardItem setData:[NSData data] forType:UTTypeData.identifier];
-                draggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:pasteboardItem.get()]);
-                [draggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
-            }
 #if HAVE(APPKIT_GESTURES_SUPPORT)
-            if (RetainPtr gesture = [gestureController activeDragGestureRecognizer]) {
-                RetainPtr session = [view beginDraggingSessionWithItems:@[ draggingItem ] gesture:gesture source:static_cast<id<NSDraggingSource>>(view.get())];
-                [gestureController setGestureDraggingSession:session.get()];
-                if (!session) {
-                    protectedThis->cancelDrag();
-                    return;
+                RetainPtr gestureController = protectedThis->appKitGestureController();
+                if (RetainPtr gesture = [gestureController activeDragGestureRecognizer]) {
+                    RetainPtr session = [view beginDraggingSessionWithItems:draggingItems.get() gesture:gesture source:static_cast<id<NSDraggingSource>>(view.get())];
+                    [gestureController setGestureDraggingSession:session.get()];
+                    if (!session) {
+                        protectedThis->cancelDrag();
+                        return;
+                    }
+                } else
+#endif
+                {
+                    [view beginDraggingSessionWithItems:draggingItems.get() event:lastMouseDownEvent source:static_cast<id<NSDraggingSource>>(view.get())];
                 }
+
+                if (delegateSubstituted) {
+                    // The delegate's writers own the pasteboard; skip WebKit's own data population.
+                    page->didStartDrag(frameID);
+                } else if (promisedAttachmentInfo) {
+                    for (auto& [type, data] : promisedAttachmentInfo.additionalTypesAndData) {
+                        RetainPtr nsData = protect(*data)->createNSData();
+                        [pasteboard setData:nsData.get() forType:type.createNSString().get()];
+                    }
+                    // FIXME: should we plumb the frameID for promised blobs?
+                    page->didStartDrag();
+                } else if (isImageDrag) {
+                    protectedThis->writePromisedImageDragDataToPasteboard(pasteboard.get());
+                    if (page->sessionID().isEphemeral())
+                        [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
+                    page->didStartDrag(frameID);
+                } else {
+                    if (savedLegacyPasteboardTypes && [savedLegacyPasteboardTypes count]) {
+                        [pasteboard clearContents];
+                        [pasteboard addTypes:savedLegacyPasteboardTypes.get() owner:nil];
+                        for (NSString *type in savedLegacyPasteboardTypes.get()) {
+                            if (RetainPtr data = [savedLegacyPasteboardData objectForKey:type])
+                                [pasteboard setData:data.get() forType:type];
+                        }
+                        if (page->sessionID().isEphemeral())
+                            [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
+                    }
+                    [pasteboard setString:@"" forType:PasteboardTypes::WebDummyPboardType];
+                    page->didStartDrag(frameID);
+                }
+
+                END_BLOCK_OBJC_EXCEPTIONS
+            });
+
+#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
+            if (RetainPtr view = protectedThis->view()) {
+                RetainPtr placeholderWriter = adoptNS([[NSPasteboardItem alloc] init]);
+                [placeholderWriter setData:[NSData data] forType:UTTypeData.identifier];
+                RetainPtr contextDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:placeholderWriter]);
+                [contextDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+                [view _web_draggingItemsForDraggingItem:contextDraggingItem atLocation:eventPositionInRootViewCoordinates completionHandler:startDraggingSessionWithItems.get()];
             } else
 #endif
             {
-                [view beginDraggingSessionWithItems:@[ draggingItem ] event:lastMouseDownEvent source:static_cast<id<NSDraggingSource>>(view.get())];
-            }
-
-            if (promisedAttachmentInfo) {
-                for (size_t index = 0; index < promisedAttachmentInfo.additionalTypesAndData.size(); ++index) {
-                    RetainPtr nsData = protect(*promisedAttachmentInfo.additionalTypesAndData[index].second)->createNSData();
-                    [pasteboard setData:nsData.get() forType:promisedAttachmentInfo.additionalTypesAndData[index].first.createNSString().get()];
-                }
-                // FIXME: should we plumb the frameID for promised blobs?
-                page->didStartDrag();
-            } else if (isImageDrag) {
-                protectedThis->writePromisedImageDragDataToPasteboard(pasteboard.get());
-                if (page->sessionID().isEphemeral())
-                    [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
-                page->didStartDrag(frameID);
-            } else {
-                if (savedLegacyPasteboardTypes && [savedLegacyPasteboardTypes count]) {
-                    [pasteboard clearContents];
-                    [pasteboard addTypes:savedLegacyPasteboardTypes.get() owner:nil];
-                    for (NSString *type in savedLegacyPasteboardTypes.get()) {
-                        if (RetainPtr data = [savedLegacyPasteboardData objectForKey:type])
-                            [pasteboard setData:data.get() forType:type];
-                    }
-                    if (page->sessionID().isEphemeral())
-                        [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
-                }
-                [pasteboard setString:@"" forType:PasteboardTypes::WebDummyPboardType];
-                page->didStartDrag(frameID);
+                UNUSED_PARAM(eventPositionInRootViewCoordinates);
+                startDraggingSessionWithItems(nil);
             }
 
             END_BLOCK_OBJC_EXCEPTIONS
@@ -5180,8 +5248,11 @@ void WebViewImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory pasteAcc
 
 void WebViewImpl::handleDOMPasteRequestForCategoryWithResult(WebCore::DOMPasteAccessCategory pasteAccessCategory, WebCore::DOMPasteAccessResponse response)
 {
-    if (response == WebCore::DOMPasteAccessResponse::GrantedForCommand || response == WebCore::DOMPasteAccessResponse::GrantedForGesture)
-        m_page->grantAccessToCurrentPasteboardData(pasteboardNameForAccessCategory(pasteAccessCategory), [] () { });
+    if (response == WebCore::DOMPasteAccessResponse::GrantedForCommand || response == WebCore::DOMPasteAccessResponse::GrantedForGesture) {
+        m_page->grantAccessToCurrentPasteboardData(pasteboardNameForAccessCategory(pasteAccessCategory), [] { }, m_domPasteState.transform([](const auto& state) {
+            return state.requestFrame;
+        }));
+    }
 
     hideDOMPasteMenuWithResult(response);
 }
@@ -6846,7 +6917,7 @@ void WebViewImpl::mouseUp(NSEvent *event, WebEventInputSource inputSource, WebCo
 
     setLastMouseDownEvent(nil);
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     fulfillDeferredImageAnalysisOverlayViewHierarchyTask();
 #endif
 
@@ -7596,7 +7667,7 @@ void WebViewImpl::didFinishPresentation(WKRevealItemPresenter *presenter)
 
 #if ENABLE(IMAGE_ANALYSIS)
 
-CocoaImageAnalyzer* WebViewImpl::ensureImageAnalyzer()
+VKCImageAnalyzer* WebViewImpl::ensureImageAnalyzer()
 {
     if (!m_imageAnalyzer) {
         lazyInitialize(m_imageAnalyzerQueue, WorkQueue::create("WebKit image analyzer queue"_s));
@@ -7606,16 +7677,16 @@ CocoaImageAnalyzer* WebViewImpl::ensureImageAnalyzer()
     return m_imageAnalyzer.get();
 }
 
-int32_t WebViewImpl::processImageAnalyzerRequest(CocoaImageAnalyzerRequest *request, CompletionHandler<void(RetainPtr<CocoaImageAnalysis>&&, NSError *)>&& completion)
+int32_t WebViewImpl::processImageAnalyzerRequest(VKCImageAnalyzerRequest *request, CompletionHandler<void(RetainPtr<VKCImageAnalysis>&&, NSError *)>&& completion)
 {
-    return [protect(ensureImageAnalyzer()) processRequest:request progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion)](CocoaImageAnalysis *result, NSError *error) mutable {
+    return [protect(ensureImageAnalyzer()) processRequest:request progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion)](VKCImageAnalysis *result, NSError *error) mutable {
         callOnMainRunLoop([completion = WTF::move(completion), result = RetainPtr { result }, error = RetainPtr { error }] mutable {
             completion(WTF::move(result), error.get());
         });
     }).get()];
 }
 
-static RetainPtr<CocoaImageAnalyzerRequest> createImageAnalyzerRequest(CGImageRef image, const URL& imageURL, const URL& pageURL, VKAnalysisTypes types)
+static RetainPtr<VKCImageAnalyzerRequest> createImageAnalyzerRequest(CGImageRef image, const URL& imageURL, const URL& pageURL, VKAnalysisTypes types)
 {
     auto request = createImageAnalyzerRequest(image, types);
     [request setImageURL:imageURL.createNSURL().get()];
@@ -7638,17 +7709,12 @@ void WebViewImpl::requestTextRecognition(const URL& imageURL, ShareableBitmap::H
 
     RetainPtr cgImage = imageBitmap->createPlatformImage(DontCopyBackingStore);
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     if (!targetLanguageIdentifier.isEmpty())
         return requestVisualTranslation(protect(ensureImageAnalyzer()).get(), imageURL.createNSURL().get(), sourceLanguageIdentifier, targetLanguageIdentifier, cgImage.get(), WTF::move(completion));
-#else
-    UNUSED_PARAM(sourceLanguageIdentifier);
-    UNUSED_PARAM(targetLanguageIdentifier);
-#endif
 
     auto request = createImageAnalyzerRequest(cgImage.get(), imageURL, [NSURL _web_URLWithWTFString:m_page->currentURL()], VKAnalysisTypeText);
     auto startTime = MonotonicTime::now();
-    processImageAnalyzerRequest(request.get(), [completion = WTF::move(completion), startTime](RetainPtr<CocoaImageAnalysis>&& analysis, NSError *) mutable {
+    processImageAnalyzerRequest(request.get(), [completion = WTF::move(completion), startTime](RetainPtr<VKCImageAnalysis>&& analysis, NSError *) mutable {
         auto result = makeTextRecognitionResult(analysis.get());
         RELEASE_LOG(ImageAnalysis, "Image analysis completed in %.0f ms (found text? %d)", (MonotonicTime::now() - startTime).milliseconds(), !result.isEmpty());
         completion(WTF::move(result));
@@ -7665,7 +7731,7 @@ void WebViewImpl::computeHasVisualSearchResults(const URL& imageURL, ShareableBi
     RetainPtr cgImage = imageBitmap.createPlatformImage(DontCopyBackingStore);
     auto request = createImageAnalyzerRequest(cgImage.get(), imageURL, [NSURL _web_URLWithWTFString:m_page->currentURL()], VKAnalysisTypeVisualSearch);
     auto startTime = MonotonicTime::now();
-    [protect(ensureImageAnalyzer()) processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion), startTime] (CocoaImageAnalysis *analysis, NSError *) mutable {
+    [protect(ensureImageAnalyzer()) processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion), startTime] (VKCImageAnalysis *analysis, NSError *) mutable {
         BOOL result = [analysis hasResultsForAnalysisTypes:VKAnalysisTypeVisualSearch];
         RetainPtr loop = CFRunLoopGetMain();
         CFRunLoopPerformBlock(loop.get(), RetainPtr { bridge_cast(NSEventTrackingRunLoopMode) }.get(), makeBlockPtr([completion = WTF::move(completion), result, startTime] () mutable {
@@ -7680,7 +7746,7 @@ void WebViewImpl::computeHasVisualSearchResults(const URL& imageURL, ShareableBi
 
 bool WebViewImpl::imageAnalysisOverlayViewHasCursorAtPoint(NSPoint locationInView) const
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     return [m_imageAnalysisOverlayView interactableItemExistsAtPoint:locationInView];
 #else
     UNUSED_PARAM(locationInView);
@@ -7690,7 +7756,7 @@ bool WebViewImpl::imageAnalysisOverlayViewHasCursorAtPoint(NSPoint locationInVie
 
 void WebViewImpl::beginTextRecognitionForVideoInElementFullscreen(ShareableBitmap::Handle&& bitmapHandle, WebCore::FloatRect bounds)
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     auto imageBitmap = ShareableBitmap::create(WTF::move(bitmapHandle));
     if (!imageBitmap)
         return;
@@ -7700,7 +7766,7 @@ void WebViewImpl::beginTextRecognitionForVideoInElementFullscreen(ShareableBitma
         return;
 
     auto request = WebKit::createImageAnalyzerRequest(image.get(), VKAnalysisTypeText);
-    m_currentImageAnalysisRequestID = processImageAnalyzerRequest(request.get(), [weakThis = WeakPtr { *this }, bounds](RetainPtr<CocoaImageAnalysis>&& result, NSError *error) {
+    m_currentImageAnalysisRequestID = processImageAnalyzerRequest(request.get(), [weakThis = WeakPtr { *this }, bounds](RetainPtr<VKCImageAnalysis>&& result, NSError *error) {
         CheckedPtr checkedThis = weakThis.get();
         if (!checkedThis || !checkedThis->m_currentImageAnalysisRequestID)
             return;
@@ -7720,14 +7786,14 @@ void WebViewImpl::beginTextRecognitionForVideoInElementFullscreen(ShareableBitma
 
 void WebViewImpl::cancelTextRecognitionForVideoInElementFullscreen()
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     if (auto identifier = std::exchange(m_currentImageAnalysisRequestID, 0))
         [m_imageAnalyzer cancelRequestID:identifier];
     uninstallImageAnalysisOverlayView();
 #endif
 }
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 void WebViewImpl::installImageAnalysisOverlayView(RetainPtr<VKCImageAnalysis>&& analysis)
 {
@@ -7783,7 +7849,7 @@ void WebViewImpl::fulfillDeferredImageAnalysisOverlayViewHierarchyTask()
         task();
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
 

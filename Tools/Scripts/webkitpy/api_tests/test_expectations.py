@@ -78,7 +78,7 @@ class APITestExpectations:
         config = set()
         port_config = self._port.api_test_current_configuration()
 
-        for key in ('platform', 'version', 'style', 'architecture', 'hardware', 'hardware_type'):
+        for key in ('platform', 'version', 'style', 'architecture', 'hardware', 'hardware_type', 'flavor'):
             value = port_config.get(key)
             if value:
                 config.add(value.lower())
@@ -102,3 +102,19 @@ class APITestExpectations:
 
     def lint(self, all_tests=None):
         return self._manager.lint(all_tests=all_tests)
+
+    def fix(self):
+        """Rewrite loaded expectations files in place with reordered/normalized content.
+
+        Returns the sorted list of filenames that changed.
+        """
+        filesystem = self._port.host.filesystem
+        changed = []
+        for filepath, fixed_content in self._manager.fix().items():
+            if fixed_content and not fixed_content.endswith('\n'):
+                fixed_content += '\n'
+            current = filesystem.read_text_file(filepath) if filesystem.exists(filepath) else None
+            if current != fixed_content:
+                filesystem.write_text_file(filepath, fixed_content)
+                changed.append(filepath)
+        return sorted(changed)

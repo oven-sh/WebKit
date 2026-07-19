@@ -24,6 +24,9 @@
 import Testing
 import WebKit
 
+// This file should only be used to test WKWebView-specific API that differs between Swift and Objective-C,
+// and nothing else.
+
 @MainActor
 struct WKWebViewSwiftOverlayTests {
     @Test

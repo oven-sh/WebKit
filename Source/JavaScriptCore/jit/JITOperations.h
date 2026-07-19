@@ -65,6 +65,7 @@ class JSRemoteFunction;
 class JSScope;
 class JSString;
 class JSValue;
+class MicrotaskCallCache;
 class RegExp;
 class RegExpObject;
 class Register;
@@ -181,10 +182,6 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationThrowOutOfMemoryError, void, (VM*));
 //   4. Generic is unrelated to IC: used outside of IC, just a generic operation.
 //
 // So, 1-3 functions take PropertyInlineCache* since it is IC slow path. Generic one does not.
-
-JSC_DECLARE_JIT_OPERATION(operationTryGetByIdOptimize, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
-JSC_DECLARE_JIT_OPERATION(operationTryGetByIdGaveUp, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
-JSC_DECLARE_JIT_OPERATION(operationTryGetByIdGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uintptr_t));
 
 JSC_DECLARE_JIT_OPERATION(operationGetByIdOptimize, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetByIdMegamorphic, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
@@ -362,6 +359,8 @@ JSC_DECLARE_JIT_OPERATION(operationNewAsyncFunctionWithInvalidatedReallocationWa
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncGeneratorFunction, EncodedJSValue, (JSGlobalObject*, JSScope*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncGeneratorFunctionWithInvalidatedReallocationWatchpoint, EncodedJSValue, (JSGlobalObject*, JSScope*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationSetFunctionName, void, (JSGlobalObject*, JSCell*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationEnqueueAsyncGeneratorDriver, void, (JSGlobalObject*, JSAsyncGenerator*, JSObject*, MicrotaskCallCache*));
+JSC_DECLARE_JIT_OPERATION(operationAsyncIteratorNextWithDriver, EncodedJSValue, (JSGlobalObject*, JSObject*, JSObject*, MicrotaskCallCache*));
 JSC_DECLARE_JIT_OPERATION(operationNewObject, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewPromise, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewGenerator, JSCell*, (VM*, Structure*));

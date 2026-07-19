@@ -20,6 +20,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import base64
 import calendar
 import re
 import sys
@@ -47,6 +48,7 @@ class Tracker(GenericTracker):
     ]
     NAME = 'Bugzilla'
     DEFAULT_TIMEOUT = 30
+    MAX_SUMMARY_LENGTH = 255
 
     # Security keywords to detect in title/description.
     # These trigger a prompt to use Security product.
@@ -415,7 +417,48 @@ class Tracker(GenericTracker):
                 if issue.link not in refs:
                     issue._references.append(dupe)
 
+        if member == 'attachments':
+            issue._attachments = []
+            response = self.session.get(
+                '{url}/rest/bug/{id}/attachment{query}'.format(
+                    url=self.url, id=issue.id,
+                    query=self._login_arguments(required=False, query='exclude_fields=data'),
+                ), timeout=self.timeout,
+            )
+            if response.status_code // 100 == 4 and self._logins_left:
+                self._logins_left -= 1
+            attachments = response.json().get('bugs', {}).get(str(issue.id)) if response.status_code == 200 else None
+            if attachments is None:
+                sys.stderr.write("Failed to fetch attachments for '{}'\n".format(issue.link))
+            else:
+                for attachment in attachments:
+                    if attachment.get('is_obsolete'):
+                        continue
+                    issue._attachments.append(Issue.Attachment(
+                        name=attachment.get('file_name'),
+                        content_type=attachment.get('content_type'),
+                        contents=lambda id=attachment.get('id'): self._attachment_contents(id),
+                    ))
+
         return issue
+
+    def _attachment_contents(self, attachment_id):
+        '''Download a single attachment's bytes, or None. Fetched lazily so that listing an issue's
+        attachments does not download every attachment's content.'''
+        response = self.session.get(
+            '{url}/rest/bug/attachment/{id}{query}'.format(
+                url=self.url, id=attachment_id,
+                query=self._login_arguments(required=False, query='include_fields=data'),
+            ), timeout=self.timeout,
+        )
+        if response.status_code // 100 == 4 and self._logins_left:
+            self._logins_left -= 1
+        if response.status_code // 100 != 2:
+            sys.stderr.write('Failed to download attachment {}\n'.format(attachment_id))
+            return None
+        data = response.json().get('attachments', {}).get(str(attachment_id), {}).get('data')
+        return base64.b64decode(data) if data is not None else None
+
 
     def set(self, issue, assignee=None, opened=None, why=None, project=None, component=None, version=None, original=None, keywords=None, source_changes=None, state=None, substate=None, cc=None, see_also=None, **properties):
         update_dict = dict()
@@ -496,9 +539,9 @@ class Tracker(GenericTracker):
                 )
             except RuntimeError as e:
                 sys.stderr.write('{}\n'.format(e))
-            if response and response.status_code // 100 == 4 and self._logins_left:
+            if response is not None and response.status_code // 100 == 4 and self._logins_left:
                 self._logins_left -= 1
-            if not response or response.status_code // 100 != 2:
+            if response is None or response.status_code // 100 != 2:
                 if assignee:
                     issue._assignee = None
                 if opened is not None:
@@ -534,9 +577,9 @@ class Tracker(GenericTracker):
         except RuntimeError as e:
             sys.stderr.write('{}\n'.format(e))
 
-        if response and response.status_code // 100 == 4 and self._logins_left:
+        if response is not None and response.status_code // 100 == 4 and self._logins_left:
             self._logins_left -= 1
-        if not response or response.status_code // 100 != 2:
+        if response is None or response.status_code // 100 != 2:
             sys.stderr.write("Failed to add comment to '{}'\n".format(issue))
             return None
 
@@ -581,9 +624,9 @@ class Tracker(GenericTracker):
             )
         except requests.exceptions.RequestException as e:
             sys.stderr.write('Request Error: {}\n'.format(e))
-        if response and response.status_code // 100 == 4 and self._logins_left:
+        if response is not None and response.status_code // 100 == 4 and self._logins_left:
             self._logins_left -= 1
-        if not response or response.status_code // 100 != 2:
+        if response is None or response.status_code // 100 != 2:
             sys.stderr.write("Failed to modify '{}'\n".format(issue))
             return None
 
@@ -695,6 +738,9 @@ class Tracker(GenericTracker):
             if keyword not in self.valid_keywords():
                 raise ValueError(f"'{keyword}' is not a valid keyword for '{project}'")
 
+        if len(title) > self.MAX_SUMMARY_LENGTH:
+            title = title[:self.MAX_SUMMARY_LENGTH - 3] + '...'
+
         params = dict(
             summary=title,
             description=description,
@@ -716,11 +762,11 @@ class Tracker(GenericTracker):
             )
         except RuntimeError as e:
             sys.stderr.write('{}\n'.format(e))
-        if response and response.status_code // 100 == 4 and self._logins_left:
+        if response is not None and response.status_code // 100 == 4 and self._logins_left:
             self._logins_left -= 1
-        if not response or response.status_code // 100 != 2:
+        if response is None or response.status_code // 100 != 2:
             sys.stderr.write("Failed to create bug: {}\n".format(
-                response.json().get('message', '?') if response else 'Login attempts exhausted'),
+                response.json().get('message', '?') if response is not None else 'Login attempts exhausted'),
             )
             return None
         return self.issue(response.json()['id'])
@@ -799,9 +845,9 @@ class Tracker(GenericTracker):
                 )
             except RuntimeError as e:
                 sys.stderr.write('{}\n'.format(e))
-            if response and response.status_code // 100 == 4 and self._logins_left:
+            if response is not None and response.status_code // 100 == 4 and self._logins_left:
                 self._logins_left -= 1
-            if not response or response.status_code // 100 != 2:
+            if response is None or response.status_code // 100 != 2:
                 sys.stderr.write("Failed to cc {} on '{}'\n".format(self.radar_importer.name, issue))
             elif radar and isinstance(radar.tracker, RadarTracker):
                 if comment_to_make:

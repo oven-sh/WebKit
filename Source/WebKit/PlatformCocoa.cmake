@@ -90,6 +90,8 @@ list(APPEND WebKit_SOURCES
     WebProcess/cocoa/LaunchServicesDatabaseManager.mm
 )
 
+# FIXME: Add the remaining `${WEBKIT_DIR}/UIProcess/API/Swift/` files once CMake has proper framework directories.
+
 list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${CMAKE_BINARY_DIR}/libwebrtc/PrivateHeaders"
     "${WEBKIT_DIR}/GPUProcess/graphics/Model"
@@ -122,11 +124,13 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/Platform/ios"
     "${WEBKIT_DIR}/Platform/mac"
     "${WEBKIT_DIR}/Platform/unix"
+    "${WEBKIT_DIR}/WebKitSwift/GroupActivities"
     "${WEBKIT_DIR}/WebKitSwift/MarketplaceKit"
     "${WEBKIT_DIR}/WebKitSwift/WritingTools"
     "${WEBKIT_DIR}/Platform/spi/Cocoa"
     "${WEBKIT_DIR}/Platform/spi/ios"
     "${WEBKIT_DIR}/Platform/spi/mac"
+    "${WEBKIT_DIR}/Platform/spi/visionos"
     "${WEBKIT_DIR}/Platform/IPC/darwin"
     "${WEBKIT_DIR}/Platform/IPC/mac"
     "${WEBKIT_DIR}/Platform/IPC/cocoa"

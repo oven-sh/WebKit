@@ -893,6 +893,14 @@ preserve-breaks
 // preserve-spaces
 
 //
+// CSS_PROP_WHITE_SPACE_TRIM
+//
+// none
+discard-before
+discard-after
+discard-inner
+
+//
 // CSS_PROP__KHTML_NBSP_MODE
 //
 space
@@ -986,6 +994,7 @@ exclude
 var
 env
 random-item
+if
 -internal-auto-base
 
 //
@@ -1091,6 +1100,18 @@ exit
 entry-crossing
 exit-crossing
 // scroll
+
+//
+// animation-trigger
+//
+// none
+play
+play-once
+play-forwards
+play-backwards
+pause
+// reset
+replay
 
 //
 // CSS_PROP_ZOOM
@@ -1553,6 +1574,9 @@ infinity
 -infinity id=NegativeInfinity
 NaN
 
+// ident()
+ident
+
 from-image
 
 // overflow
@@ -1819,6 +1843,9 @@ or
 not
 only
 
+// for if()
+else
+
 // overflow-anchor
 // none
 // auto
@@ -1856,7 +1883,7 @@ allow-discrete
 -internal-textarea-auto
 
 // outline-offset
--internal-inset
+// inset
 
 // CSS Anchor Positioning
 anchor
@@ -1949,3 +1976,6 @@ unsafe-url
 
 // <will-change>
 will-change
+
+// block-ellipsis
+no-ellipsis

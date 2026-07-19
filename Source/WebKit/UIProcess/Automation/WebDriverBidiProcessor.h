@@ -38,6 +38,7 @@ namespace WebKit {
 
 class BidiBrowserAgent;
 class BidiBrowsingContextAgent;
+class BidiDigitalCredentialsAgent;
 class BidiPermissionsAgent;
 class BidiScriptAgent;
 class BidiSessionAgent;
@@ -55,6 +56,7 @@ public:
     void sendBidiMessage(const String&);
 
     BidiBrowserAgent& browserAgent() const LIFETIME_BOUND { return m_browserAgent; }
+    BidiDigitalCredentialsAgent& digitalCredentialsAgent() const LIFETIME_BOUND { return m_digitalCredentialsAgent; }
     BidiScriptAgent& scriptAgent() const LIFETIME_BOUND { return m_scriptAgent; }
 
     // Inspector::FrontendChannel methods. Domain events sent via WebDriverBidi domain notifiers are packaged up
@@ -70,6 +72,9 @@ public:
     bool eventIsEnabled(const String& eventName, const HashSet<String>& contexts);
     void emitEventIfEnabled(const String& eventName, const HashSet<String>& browsingContexts, NOESCAPE const Function<void()>&);
 
+    // Shared validation helpers for BiDi protocol
+    static Inspector::CommandResult<void> validateSerializationOptions(const JSON::Object&);
+
 private:
     WeakPtr<WebAutomationSession> m_session;
 
@@ -78,6 +83,7 @@ private:
 
     const UniqueRef<BidiBrowserAgent> m_browserAgent;
     const UniqueRef<BidiBrowsingContextAgent> m_browsingContextAgent;
+    const UniqueRef<BidiDigitalCredentialsAgent> m_digitalCredentialsAgent;
     const UniqueRef<BidiPermissionsAgent> m_permissionsAgent;
     const UniqueRef<BidiScriptAgent> m_scriptAgent;
     const UniqueRef<BidiSessionAgent> m_sessionAgent;

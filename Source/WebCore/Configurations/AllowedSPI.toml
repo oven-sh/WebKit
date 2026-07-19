@@ -10,6 +10,13 @@ selectors = [
     { name = "initWithUUID:andRemotePid:andContextId:", class = "?" },
 ]
 
+[[temporary-usage]]
+request = "rdar://181067589"
+cleanup = "rdar://181067932"
+symbols = [
+    "kCMTextMarkupAttribute_PreventLineWrapping",
+]
+
 [[not-web-essential]]
 request = "rdar://157890384"
 classes = ["MTMaterialLayer"]
@@ -166,3 +173,12 @@ cleanup = "rdar://170480216"
 symbols = [
     "CTFontHasComplexColorFormatForGlyph",
 ]
+
+[[staging]]
+request = "rdar://160159492"
+classes = [
+    "AVInterfaceMediaSelectionOptionSource",
+    "AVInterfaceMetadata",
+    "AVInterfaceTimelineSegment",
+]
+requires-sdk = ["iOS < 27.0"]
