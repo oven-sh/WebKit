@@ -4659,6 +4659,15 @@ JSC_DEFINE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlob
         unsigned length = string->length();
         if (length < unlinkedTable.minLength() || length > unlinkedTable.maxLength())
             result = linkedTable.ctiDefault().taggedPtr();
+#if USE(BUN_JSC_ADDITIONS)
+        else if (string->isInline()) {
+            RefPtr<AtomStringImpl> atom = string->is8Bit()
+                ? AtomStringImpl::lookUp(std::span { string->inlineData8(), length })
+                : AtomStringImpl::lookUp(std::span { string->inlineData16(), length });
+            result = atom ? linkedTable.ctiForValue(unlinkedTable, atom.get()).taggedPtr()
+                          : linkedTable.ctiDefault().taggedPtr();
+        }
+#endif
         else {
             auto value = string->value(globalObject);
             OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);

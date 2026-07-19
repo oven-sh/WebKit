@@ -2347,6 +2347,9 @@ void Heap::finalize()
         vm().jsonAtomStringCache.clear();
         vm().numericStrings.clearOnGarbageCollection();
         vm().stringReplaceCache.clear();
+#if USE(BUN_JSC_ADDITIONS)
+        vm().inlineAtomCache.clear();
+#endif
     }
     vm().keyAtomStringCache.clear();
 #if USE(BUN_JSC_ADDITIONS)

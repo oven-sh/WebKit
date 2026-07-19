@@ -17902,17 +17902,10 @@ void SpeculativeJIT::compileMakeRope(Node* node)
 
     static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
     and32(TrustedImm32(StringImpl::flagIs8Bit()), scratchGPR);
-#if USE(BUN_JSC_ADDITIONS)
-    // Short all-8-bit result: defer to operationMakeRope* so jsString() can emit
-    // a 16-byte inline cell instead of the 32-byte rope we've just allocated.
-    // Limited to <=7: the slow-path call cost outweighs the 32->24 saving for
-    // 8..15, and big-inline coverage comes from the slice/substring hook.
-    {
-        Jump not8Bit = branchTest32(Zero, scratchGPR);
-        slowPath.append(branch32(BelowOrEqual, allocatorGPR, TrustedImm32(JSString::maxInlineLength8)));
-        not8Bit.link(this);
-    }
-#endif
+    // No short-result slow-path bail here: the rope cell is already allocated
+    // above (emitAllocateJSCell reuses allocatorGPR/scratchGPR so the
+    // allocation cannot be deferred), and routing to operationMakeRope* would
+    // allocate a second cell and leave this one as garbage.
     orPtr(opGPRs[0], scratchGPR);
     orPtr(TrustedImmPtr(JSString::isRopeInPointer), scratchGPR);
     storePtr(scratchGPR, Address(resultGPR, JSRopeString::offsetOfFiber0()));

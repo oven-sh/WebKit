@@ -4800,11 +4800,22 @@ JSC_DEFINE_JIT_OPERATION(operationSwitchString, char*, (JSGlobalObject* globalOb
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    const StringJumpTable& linkedTable = codeBlock->dfgStringSwitchJumpTable(tableIndex);
+#if USE(BUN_JSC_ADDITIONS)
+    if (string->isInline()) {
+        unsigned length = string->length();
+        RefPtr<AtomStringImpl> atom = string->is8Bit()
+            ? AtomStringImpl::lookUp(std::span { string->inlineData8(), length })
+            : AtomStringImpl::lookUp(std::span { string->inlineData16(), length });
+        OPERATION_RETURN(scope, atom
+            ? linkedTable.ctiForValue(*unlinkedTable, atom.get()).taggedPtr<char*>()
+            : linkedTable.ctiDefault().taggedPtr<char*>());
+    }
+#endif
     auto str = string->value(globalObject);
 
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    CodeBlock* codeBlock = callFrame->codeBlock();
-    const StringJumpTable& linkedTable = codeBlock->dfgStringSwitchJumpTable(tableIndex);
     OPERATION_RETURN(scope, linkedTable.ctiForValue(*unlinkedTable, str->impl()).taggedPtr<char*>());
 }
 

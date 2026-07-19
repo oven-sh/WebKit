@@ -1117,10 +1117,8 @@ inline GCOwnedDataScope<const String&> JSString::value(JSGlobalObject* globalObj
     if (isRope())
         return { this, static_cast<const JSRopeString*>(this)->resolveRope(globalObject) };
 #if USE(BUN_JSC_ADDITIONS)
-    if (isInline()) {
-        BUN_INLINE_COUNT(g_bunInlineResolvedValue);
+    if (isInline())
         return { this, resolveInline(globalObject) };
-    }
 #endif
     return { this, valueInternal() };
 }

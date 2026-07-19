@@ -1896,6 +1896,16 @@ LLINT_SLOW_PATH_DECL(slow_path_switch_string)
         unsigned length = string->length();
         if (length < unlinkedTable.minLength() || length > unlinkedTable.maxLength())
             JUMP_TO(defaultOffset);
+#if USE(BUN_JSC_ADDITIONS)
+        // Inline scrutinee: look up the atom directly from the in-cell bytes.
+        // Case labels are parser atoms, so a miss means no case matches.
+        else if (string->isInline()) {
+            RefPtr<AtomStringImpl> atom = string->is8Bit()
+                ? AtomStringImpl::lookUp(std::span { string->inlineData8(), length })
+                : AtomStringImpl::lookUp(std::span { string->inlineData16(), length });
+            JUMP_TO(atom ? unlinkedTable.offsetForValue(atom.get()) : defaultOffset);
+        }
+#endif
         else {
             auto scrutineeString = string->value(globalObject);
             LLINT_CHECK_EXCEPTION();

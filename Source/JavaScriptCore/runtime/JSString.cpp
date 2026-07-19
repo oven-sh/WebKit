@@ -168,16 +168,27 @@ AtomStringImpl* JSString::resolveInlineToAtomString(JSGlobalObject* globalObject
     ASSERT(isInline());
     uintptr_t fiber = m_fiber;
     unsigned len = inlineLengthFromFiber(fiber);
+    bool is8Bit = fiber & JSRopeString::is8BitInPointer;
+    // 16-byte inline: consult the fiber-word-keyed atom cache first.
+    VM& vm = globalObject ? getVM(globalObject) : this->vm();
+    if ((is8Bit && len <= maxInlineLength8) || (!is8Bit && len <= maxInlineLength16)) {
+        if (auto* cached = vm.inlineAtomCache.lookup(fiber)) {
+            WTF::storeStoreFence();
+            new (&uninitializedValueInternal()) String(RefPtr { cached });
+            return cached;
+        }
+    }
     // Look up (or create) the atom directly from the in-cell bytes; no
     // intermediate non-atom StringImpl is allocated.
-    AtomString atom = (fiber & JSRopeString::is8BitInPointer)
+    AtomString atom = is8Bit
         ? AtomString(std::span { inlineData8(), len })
         : AtomString(std::span { inlineData16(), len });
+    if ((is8Bit && len <= maxInlineLength8) || (!is8Bit && len <= maxInlineLength16))
+        vm.inlineAtomCache.insert(fiber, atom.impl());
     size_t sizeToReport = atom.impl()->hasOneRef() ? atom.impl()->cost() : 0;
     WTF::storeStoreFence();
     new (&uninitializedValueInternal()) String(atom.releaseImpl());
-    if (globalObject)
-        getVM(globalObject).heap.reportExtraMemoryAllocated(this, sizeToReport);
+    vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
     return static_cast<AtomStringImpl*>(valueInternal().impl());
 }
 

@@ -106,6 +106,21 @@ Ref<AtomStringImpl> Identifier::add(VM& vm, std::span<const T> string)
     if (string.empty())
         return *static_cast<AtomStringImpl*>(StringImpl::empty());
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Short Latin-1: the inline fiber word is a content-unique key. One
+    // direct-mapped compare replaces AtomStringImpl::add's hash+probe.
+    if constexpr (std::is_same_v<T, Latin1Character>) {
+        if (string.size() <= JSString::maxInlineLength8) {
+            uintptr_t fiber = JSString::encodeInline8(string);
+            if (auto* cached = vm.inlineAtomCache.lookup(fiber))
+                return *cached;
+            auto atom = AtomStringImpl::add(string);
+            vm.inlineAtomCache.insert(fiber, atom.get());
+            return atom.releaseNonNull();
+        }
+    }
+#endif
+
     return *AtomStringImpl::add(string);
 }
 

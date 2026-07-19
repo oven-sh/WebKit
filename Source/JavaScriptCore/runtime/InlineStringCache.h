@@ -29,6 +29,8 @@
 
 #include <array>
 #include <cstdint>
+#include <wtf/RefPtr.h>
+#include <wtf/text/AtomStringImpl.h>
 
 namespace JSC {
 
@@ -74,6 +76,46 @@ private:
 
     std::array<uintptr_t, capacity> m_keys { };
     std::array<JSString*, capacity> m_values { };
+};
+
+// Direct-mapped AtomStringImpl* cache keyed by the inline fiber word, so
+// Identifier::add/fromString for repeated short names skips the atom-table
+// hash+probe. Holds a ref per slot; cleared on full GC.
+class InlineAtomCache {
+public:
+    static constexpr unsigned capacity = 512;
+
+    ALWAYS_INLINE AtomStringImpl* lookup(uintptr_t fiber) const
+    {
+        unsigned index = indexFor(fiber);
+        if (m_keys[index] == fiber)
+            return m_values[index].get();
+        return nullptr;
+    }
+
+    ALWAYS_INLINE void insert(uintptr_t fiber, AtomStringImpl* atom)
+    {
+        unsigned index = indexFor(fiber);
+        m_keys[index] = fiber;
+        m_values[index] = atom;
+    }
+
+    ALWAYS_INLINE void clear()
+    {
+        m_keys.fill(0);
+        for (auto& slot : m_values)
+            slot = nullptr;
+    }
+
+private:
+    ALWAYS_INLINE static unsigned indexFor(uintptr_t fiber)
+    {
+        uintptr_t mixed = fiber ^ (fiber >> 32);
+        return static_cast<unsigned>((mixed >> 8) % capacity);
+    }
+
+    std::array<uintptr_t, capacity> m_keys { };
+    std::array<RefPtr<AtomStringImpl>, capacity> m_values { };
 };
 
 } // namespace JSC

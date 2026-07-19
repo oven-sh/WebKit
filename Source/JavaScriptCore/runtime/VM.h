@@ -638,6 +638,7 @@ public:
     KeyAtomStringCache keyAtomStringCache;
 #if USE(BUN_JSC_ADDITIONS)
     InlineStringCache inlineStringCache;
+    InlineAtomCache inlineAtomCache;
 #endif
     StringSplitCache stringSplitCache;
     Vector<unsigned> stringSplitIndice;
