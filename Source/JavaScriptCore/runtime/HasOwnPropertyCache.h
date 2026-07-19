@@ -30,6 +30,10 @@
 #include "Structure.h"
 #include <wtf/UniqueRef.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -70,7 +74,13 @@ public:
 
     ALWAYS_INLINE static uint32_t hash(StructureID structureID, UniquedStringImpl* impl)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (isInlinePropertyKey(impl))
+            return std::bit_cast<uint32_t>(structureID) + inlinePropertyKeyHash(inlinePropertyKeyWord(impl));
         return std::bit_cast<uint32_t>(structureID) + impl->hash();
+#else
+        return std::bit_cast<uint32_t>(structureID) + impl->hash();
+#endif
     }
 
     ALWAYS_INLINE std::optional<bool> get(Structure* structure, PropertyName propName)
