@@ -2349,6 +2349,9 @@ void Heap::finalize()
         vm().stringReplaceCache.clear();
     }
     vm().keyAtomStringCache.clear();
+#if USE(BUN_JSC_ADDITIONS)
+    vm().inlineStringCache.clear();
+#endif
     vm().stringSplitCache.clear();
     vm().jsonAtomStringCache.clearJSStrings();
 

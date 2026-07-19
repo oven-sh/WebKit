@@ -822,6 +822,36 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncCodePointAt, (JSGlobalObject* globalObje
     if (!checkObjectCoercible(thisValue)) [[unlikely]]
         return throwVMTypeError(globalObject, scope);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Fast path for inline small strings: read the code unit from the cell
+    // bytes without materializing a StringImpl.
+    if (thisValue.isString() && asString(thisValue)->isInline()) {
+        auto* jsString = asString(thisValue);
+        auto view = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        unsigned length = view->length();
+        JSValue argument0 = callFrame->argument(0);
+        unsigned position;
+        if (argument0.isUInt32())
+            position = argument0.asUInt32();
+        else {
+            double d = argument0.toIntegerOrInfinity(globalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (!(d >= 0 && d < length))
+                return JSValue::encode(jsUndefined());
+            position = static_cast<unsigned>(d);
+        }
+        if (position >= length)
+            return JSValue::encode(jsUndefined());
+        if (view->is8Bit())
+            return JSValue::encode(jsNumber(static_cast<char32_t>(view->span8()[position])));
+        char32_t c;
+        auto chars = view->span16();
+        U16_NEXT(chars, position, length, c);
+        return JSValue::encode(jsNumber(c));
+    }
+#endif
+
     String string = thisValue.toWTFString(globalObject); // Intentionally resolving as codePointAt requires resolved strings in the higher tiers.
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     unsigned length = string.length();

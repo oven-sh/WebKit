@@ -149,12 +149,14 @@ ALWAYS_INLINE bool JSStringJoiner::appendWithoutSideEffects(JSGlobalObject* glob
         // https://bugs.webkit.org/show_bug.cgi?id=211173
         if (JSString* jsString = dynamicDowncast<JSString>(value)) {
 #if USE(BUN_JSC_ADDITIONS)
-            // view() for an inline small string points at the cell's m_fiber bytes.
-            // tryGetValue() (below) would then overwrite m_fiber in place and the
-            // stored view would read pointer bytes. Resolve first so the view
-            // points at stable StringImpl storage that tryGetValue() also returns.
-            if (jsString->isInline())
-                jsString->resolveInline(globalObject);
+            // view() for an inline cell points at &m_fiber+1, which tryGetValue()
+            // below would overwrite. Resolve directly to an atom so repeated
+            // short contents share a single AtomStringImpl instead of allocating
+            // a throwaway StringImpl per element.
+            if (jsString->isInline()) {
+                BUN_INLINE_COUNT(g_bunInlineResolvedJoiner);
+                jsString->resolveInlineToAtomString(globalObject);
+            }
 #endif
             auto view = jsString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
@@ -210,7 +212,7 @@ ALWAYS_INLINE bool JSStringJoiner::append(JSGlobalObject* globalObject, JSValue 
         RETURN_IF_EXCEPTION(scope, false);
 #if USE(BUN_JSC_ADDITIONS)
         if (jsString->isInline())
-            jsString->resolveInline(globalObject);
+            jsString->resolveInlineToAtomString(globalObject);
 #endif
         auto view = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);

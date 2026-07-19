@@ -2031,6 +2031,42 @@ void SpeculativeJIT::compileStringCodePointAt(Node* node)
     GPRReg scratch4GPR = scratch4.gpr();
 
     loadPtr(Address(stringGPR, JSString::offsetOfValue()), scratch1GPR);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Same condition FixupPhase used to skip ResolveRope for this node.
+    SpeculatedType inlinePred = node->child1()->prediction() & SpecString;
+    if (inlinePred && !(inlinePred & ~SpecStringInline)) {
+        and32(TrustedImm32(JSString::notStringImplMask), scratch1GPR, scratch2GPR);
+        speculationCheck(BadType, JSValueSource::unboxedCell(stringGPR), node->child1(),
+            branch32(NotEqual, scratch2GPR, TrustedImm32(JSString::isInlineInPointer)));
+        // scratch2 = length, scratch4 = &payload
+        move(scratch1GPR, scratch2GPR);
+        urshiftPtr(TrustedImm32(JSString::inlineLengthShift), scratch2GPR);
+        and32(TrustedImm32(JSString::inlineLengthMask), scratch2GPR);
+        speculationCheck(Uncountable, JSValueRegs(), nullptr, branch32(AboveOrEqual, indexGPR, scratch2GPR));
+        Jump is16 = branchTestPtr(Zero, scratch1GPR, TrustedImm32(JSRopeString::is8BitInPointer));
+        // 8-bit: no surrogate handling.
+        load8(BaseIndex(stringGPR, indexGPR, TimesOne, JSString::offsetOfValue() + 1), scratch1GPR);
+        Jump done = jump();
+        is16.link(this);
+        addPtr(TrustedImm32(JSString::offsetOfValue() + 2), stringGPR, scratch4GPR);
+        load16(BaseIndex(scratch4GPR, indexGPR, TimesTwo, 0), scratch1GPR);
+        add32(TrustedImm32(1), indexGPR, scratch3GPR);
+        JumpList doneList;
+        doneList.append(branch32(AboveOrEqual, scratch3GPR, scratch2GPR));
+        and32(TrustedImm32(0xfffffc00), scratch1GPR, scratch2GPR);
+        doneList.append(branch32(NotEqual, scratch2GPR, TrustedImm32(0xd800)));
+        load16(BaseIndex(scratch4GPR, scratch3GPR, TimesTwo, 0), scratch3GPR);
+        and32(TrustedImm32(0xfffffc00), scratch3GPR, scratch2GPR);
+        doneList.append(branch32(NotEqual, scratch2GPR, TrustedImm32(0xdc00)));
+        lshift32(TrustedImm32(10), scratch1GPR);
+        getEffectiveAddress(BaseIndex(scratch1GPR, scratch3GPR, TimesOne, -U16_SURROGATE_OFFSET), scratch1GPR);
+        doneList.link(this);
+        done.link(this);
+        strictInt32Result(scratch1GPR, m_currentNode);
+        return;
+    }
+#endif
     if (auto stringLength = tryGetConstantStringLength(node->child1()))
         move(TrustedImm32(*stringLength), scratch2GPR);
     else
@@ -7850,12 +7886,22 @@ void SpeculativeJIT::compileStringEquality(
         move(leftTempGPR, lengthGPR);
         andPtr(rightTempGPR, lengthGPR);
         Jump notBothInline = branchTestPtr(Zero, lengthGPR, TrustedImm32(JSString::isInlineInPointer));
-        // Big-inline (length >= 8) has payload beyond m_fiber; a single-word
-        // compare is only sound for the 16-byte variant.
+        // A single-word compare is only sound for 16-byte inline: len <= 7
+        // Latin-1 or len <= 3 UTF-16. lengthGPR still holds AND(left, right);
+        // is8Bit is set here iff both sides are 8-bit.
+        Jump both8Bit = branchTestPtr(NonZero, lengthGPR, TrustedImm32(JSRopeString::is8BitInPointer));
+        // At least one 16-bit: bail if either length >= 4.
         move(leftTempGPR, lengthGPR);
         orPtr(rightTempGPR, lengthGPR);
         slowCase.append(branchTestPtr(NonZero, lengthGPR,
-            TrustedImm32((JSString::maxInlineLength8 + 1) << JSString::inlineLengthShift)));
+            TrustedImm32((JSString::inlineLengthMask & ~JSString::maxInlineLength16) << JSString::inlineLengthShift)));
+        Jump widthChecked = jump();
+        both8Bit.link(this);
+        move(leftTempGPR, lengthGPR);
+        orPtr(rightTempGPR, lengthGPR);
+        slowCase.append(branchTestPtr(NonZero, lengthGPR,
+            TrustedImm32((JSString::inlineLengthMask & ~JSString::maxInlineLength8) << JSString::inlineLengthShift)));
+        widthChecked.link(this);
         trueCase.append(branchPtr(Equal, leftTempGPR, rightTempGPR));
         // Both small-inline, fibers differ. Cross-width pair needs the slow compare.
         move(leftTempGPR, lengthGPR);

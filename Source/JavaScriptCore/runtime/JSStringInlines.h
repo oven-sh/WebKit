@@ -868,8 +868,25 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
 
     ASSERT(!s->isRope());
 #if USE(BUN_JSC_ADDITIONS)
-    if (s->isInline())
-        s->resolveInline(nullptr);
+    // Substring of an inline input: copy the bytes into a fresh inline cell
+    // without resolving the input (no StringImpl allocation).
+    if (s->isInline()) {
+        uintptr_t fiber = s->fiberConcurrently();
+        if (fiber & JSRopeString::is8BitInPointer) {
+            auto span = std::span { s->inlineData8(), JSString::inlineLengthFromFiber(fiber) }.subspan(offset, length);
+            if (length == 1)
+                return vm.smallStrings.singleCharacterString(span[0]);
+            if (length <= JSString::maxInlineLength8)
+                return JSString::createInline8(vm, span);
+            return JSBigInlineString::create8(vm, span);
+        }
+        auto span = std::span { s->inlineData16(), JSString::inlineLengthFromFiber(fiber) }.subspan(offset, length);
+        if (length == 1 && span[0] <= maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(span[0]);
+        if (length <= JSString::maxInlineLength16)
+            return JSString::createInline16(vm, span);
+        return JSBigInlineString::create16(vm, span);
+    }
 #endif
     auto& base = s->valueInternal();
     if (!offset && length == base.length())

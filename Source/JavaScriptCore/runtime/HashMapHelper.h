@@ -90,6 +90,15 @@ ALWAYS_INLINE uint32_t jsMapHashImpl(JSGlobalObject* globalObject, VM& vm, JSVal
 
     if (value.isString()) {
         auto scope = DECLARE_THROW_SCOPE(vm);
+#if USE(BUN_JSC_ADDITIONS)
+        // Hash inline bytes directly; resolving would allocate a StringImpl.
+        if (JSString* str = asString(value); str->isInline()) {
+            unsigned len = str->length();
+            if (str->is8Bit())
+                return StringHasher::computeHashAndMaskTop8Bits(std::span { str->inlineData8(), len });
+            return StringHasher::computeHashAndMaskTop8Bits(std::span { str->inlineData16(), len });
+        }
+#endif
         auto wtfString = asString(value)->value(globalObject);
         if constexpr (expection == ExceptionExpectation::CanThrow)
             RETURN_IF_EXCEPTION(scope, UINT_MAX);

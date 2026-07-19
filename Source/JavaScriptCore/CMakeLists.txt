@@ -1330,6 +1330,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/InferredValueInlines.h
     runtime/InitializeThreading.h
     runtime/InlineAttribute.h
+    runtime/InlineStringCache.h
     runtime/Int16Array.h
     runtime/Int32Array.h
     runtime/Int8Array.h

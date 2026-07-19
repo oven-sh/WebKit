@@ -162,6 +162,39 @@ const String& JSString::resolveInline(JSGlobalObject* globalObject) const
         getVM(globalObject).heap.reportExtraMemoryAllocated(this, valueInternal().impl()->cost());
     return valueInternal();
 }
+
+AtomStringImpl* JSString::resolveInlineToAtomString(JSGlobalObject* globalObject) const
+{
+    ASSERT(isInline());
+    uintptr_t fiber = m_fiber;
+    unsigned len = inlineLengthFromFiber(fiber);
+    // Look up (or create) the atom directly from the in-cell bytes; no
+    // intermediate non-atom StringImpl is allocated.
+    AtomString atom = (fiber & JSRopeString::is8BitInPointer)
+        ? AtomString(std::span { inlineData8(), len })
+        : AtomString(std::span { inlineData16(), len });
+    size_t sizeToReport = atom.impl()->hasOneRef() ? atom.impl()->cost() : 0;
+    WTF::storeStoreFence();
+    new (&uninitializedValueInternal()) String(atom.releaseImpl());
+    if (globalObject)
+        getVM(globalObject).heap.reportExtraMemoryAllocated(this, sizeToReport);
+    return static_cast<AtomStringImpl*>(valueInternal().impl());
+}
+
+AtomStringImpl* JSString::resolveInlineToExistingAtomString() const
+{
+    ASSERT(isInline());
+    uintptr_t fiber = m_fiber;
+    unsigned len = inlineLengthFromFiber(fiber);
+    RefPtr<AtomStringImpl> atom = (fiber & JSRopeString::is8BitInPointer)
+        ? AtomStringImpl::lookUp(std::span { inlineData8(), len })
+        : AtomStringImpl::lookUp(std::span { inlineData16(), len });
+    if (!atom)
+        return nullptr;
+    WTF::storeStoreFence();
+    new (&uninitializedValueInternal()) String(WTF::move(atom));
+    return static_cast<AtomStringImpl*>(valueInternal().impl());
+}
 #endif
 
 DEFINE_VISIT_CHILDREN(JSString);

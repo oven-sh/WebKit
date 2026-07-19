@@ -12214,6 +12214,53 @@ IGNORE_CLANG_WARNINGS_END
         LValue index = lowInt32(m_node->child2());
 
         LValue stringImpl = m_out.loadPtr(base, m_heaps.JSString_value);
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Match the FixupPhase condition that skipped ResolveRope.
+        SpeculatedType pred = m_node->child1()->prediction() & SpecString;
+        if (pred && !(pred & ~SpecStringInline)) {
+            speculate(BadType, jsValueValue(base), m_node->child1().node(),
+                m_out.notEqual(
+                    m_out.bitAnd(stringImpl, m_out.constIntPtr(JSString::notStringImplMask)),
+                    m_out.constIntPtr(JSString::isInlineInPointer)));
+            LValue inlineLen = m_out.bitAnd(
+                m_out.castToInt32(m_out.lShr(stringImpl, m_out.constInt32(JSString::inlineLengthShift))),
+                m_out.constInt32(JSString::inlineLengthMask));
+            speculate(Uncountable, noValue(), nullptr, m_out.aboveOrEqual(index, inlineLen));
+            LValue data16 = m_out.add(base, m_out.constIntPtr(JSString::offsetOfValue() + 2));
+            m_out.branch(
+                m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
+                unsure(is8Bit), unsure(is16Bit));
+
+            LBasicBlock lastNextI = m_out.appendTo(is8Bit, is16Bit);
+            ValueFromBlock c8 = m_out.anchor(m_out.load8ZeroExt32(
+                m_out.baseIndex(m_heaps.characters8, base, m_out.zeroExtPtr(index), provenValue(m_node->child2()), JSString::offsetOfValue() + 1)));
+            m_out.jump(continuation);
+
+            m_out.appendTo(is16Bit, isLeadSurrogate);
+            LValue lead = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, data16, m_out.zeroExtPtr(index), provenValue(m_node->child2())));
+            ValueFromBlock c16 = m_out.anchor(lead);
+            LValue nextIndex = m_out.add(index, m_out.int32One);
+            m_out.branch(m_out.aboveOrEqual(nextIndex, inlineLen), unsure(continuation), unsure(isLeadSurrogate));
+
+            m_out.appendTo(isLeadSurrogate, mayHaveTrailSurrogate);
+            m_out.branch(m_out.notEqual(m_out.bitAnd(lead, m_out.constInt32(0xfffffc00)), m_out.constInt32(0xd800)), unsure(continuation), unsure(mayHaveTrailSurrogate));
+
+            m_out.appendTo(mayHaveTrailSurrogate, hasTrailSurrogate);
+            LValue trail = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, data16, m_out.zeroExtPtr(nextIndex)));
+            m_out.branch(m_out.notEqual(m_out.bitAnd(trail, m_out.constInt32(0xfffffc00)), m_out.constInt32(0xdc00)), unsure(continuation), unsure(hasTrailSurrogate));
+
+            m_out.appendTo(hasTrailSurrogate, continuation);
+            ValueFromBlock cSurr = m_out.anchor(m_out.sub(m_out.add(m_out.shl(lead, m_out.constInt32(10)), trail), m_out.constInt32(U16_SURROGATE_OFFSET)));
+            m_out.jump(continuation);
+
+            m_out.appendTo(continuation, lastNextI);
+            ensureStillAliveHere(base);
+            setInt32(m_out.phi(Int32, c8, c16, cSurr));
+            return;
+        }
+#endif
+
         LValue length;
         if (auto stringLength = tryGetConstantStringLength(m_node->child1()))
             length = m_out.constInt32(*stringLength);
@@ -22310,11 +22357,17 @@ IGNORE_CLANG_WARNINGS_END
                 usually(inlineDispatch), unsure(notBothInline));
 
             m_out.appendTo(inlineDispatch, inlineSameWidth);
-            // Single-word compare is only sound for 16-byte inline (length <= 7);
-            // big-inline payload extends past m_fiber. Also bail on cross-width.
+            // Single-word compare is only sound for 16-byte inline: len <= 7
+            // Latin-1 or len <= 3 UTF-16. Pick the length mask by the AND'd
+            // is8Bit bit (set iff both sides are 8-bit). Also bail on cross-width.
+            LValue ored = m_out.bitOr(leftFiber, rightFiber);
+            LValue anded = m_out.bitAnd(leftFiber, rightFiber);
+            LValue both8Bit = m_out.testNonZeroPtr(anded, m_out.constIntPtr(JSRopeString::is8BitInPointer));
+            LValue bigMask = m_out.select(both8Bit,
+                m_out.constIntPtr(static_cast<uintptr_t>((JSString::inlineLengthMask & ~JSString::maxInlineLength8) << JSString::inlineLengthShift)),
+                m_out.constIntPtr(static_cast<uintptr_t>((JSString::inlineLengthMask & ~JSString::maxInlineLength16) << JSString::inlineLengthShift)));
             LValue eitherBigOrCrossWidth = m_out.bitOr(
-                m_out.testNonZeroPtr(m_out.bitOr(leftFiber, rightFiber),
-                    m_out.constIntPtr(static_cast<uintptr_t>((JSString::maxInlineLength8 + 1) << JSString::inlineLengthShift))),
+                m_out.testNonZeroPtr(ored, bigMask),
                 m_out.testNonZeroPtr(xored, m_out.constIntPtr(JSRopeString::is8BitInPointer)));
             m_out.branch(eitherBigOrCrossWidth, rarely(slowCase), usually(inlineSameWidth));
 

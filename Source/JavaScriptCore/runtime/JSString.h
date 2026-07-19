@@ -145,14 +145,14 @@ public:
     static constexpr uintptr_t isInlineInPointer = 0x2;
     static constexpr uintptr_t notStringImplMask = isRopeInPointer | isInlineInPointer;
     static constexpr unsigned inlineLengthShift = 3;
-    // 4-bit mask covers both the 16-byte JSString inline (len 2..7) and the
-    // 24-byte JSBigInlineString (len 8..15). Payload is always contiguous
+    // 5-bit mask covers both the 16-byte JSString inline (len 2..7) and the
+    // 32-byte JSBigInlineString (len 8..23). Payload is always contiguous
     // starting at &m_fiber+1; the cell size is determined at creation.
-    static constexpr unsigned inlineLengthMask = 0xf;
+    static constexpr unsigned inlineLengthMask = 0x1f;
     static constexpr unsigned maxInlineLength8 = 7;
     static constexpr unsigned maxInlineLength16 = 3;
-    static constexpr unsigned maxBigInlineLength8 = 15;
-    static constexpr unsigned maxBigInlineLength16 = 7;
+    static constexpr unsigned maxBigInlineLength8 = 23;
+    static constexpr unsigned maxBigInlineLength16 = 11;
     static_assert(maxBigInlineLength8 <= inlineLengthMask);
 #else
     static constexpr uintptr_t notStringImplMask = isRopeInPointer;
@@ -203,6 +203,8 @@ protected:
     }
 #endif
 
+#define BUN_INLINE_COUNT(name) ((void)0)
+
     void finishCreation(VM& vm, unsigned length)
     {
         ASSERT_UNUSED(length, length > 0);
@@ -230,6 +232,7 @@ protected:
 
     static JSString* create(VM& vm, Ref<StringImpl>&& value)
     {
+        BUN_INLINE_COUNT(g_bunJSStringCreate);
         unsigned length = value->length();
         ASSERT(length > 0);
         size_t cost = value->cost();
@@ -275,16 +278,13 @@ public:
         return fiber;
     }
 
-    static JSString* createInline8(VM& vm, std::span<const Latin1Character> chars)
-    {
-        JSString* s = new (NotNull, allocateCell<JSString>(vm)) JSString(vm, CreateInline, encodeInline8(chars));
-        s->Base::finishCreation(vm);
-        return s;
-    }
+    static JSString* createInline8(VM& vm, std::span<const Latin1Character> chars);
+    static JSString* createInline16(VM& vm, std::span<const char16_t> chars);
 
-    static JSString* createInline16(VM& vm, std::span<const char16_t> chars)
+    static ALWAYS_INLINE JSString* createInlineFromFiber(VM& vm, uintptr_t fiber)
     {
-        JSString* s = new (NotNull, allocateCell<JSString>(vm)) JSString(vm, CreateInline, encodeInline16(chars));
+        BUN_INLINE_COUNT(g_bunInlineCreated);
+        JSString* s = new (NotNull, allocateCell<JSString>(vm)) JSString(vm, CreateInline, fiber);
         s->Base::finishCreation(vm);
         return s;
     }
@@ -358,6 +358,8 @@ public:
         return reinterpret_cast<const char16_t*>(reinterpret_cast<const uint8_t*>(&m_fiber) + 2);
     }
     JS_EXPORT_PRIVATE const String& resolveInline(JSGlobalObject*) const;
+    JS_EXPORT_PRIVATE AtomStringImpl* resolveInlineToAtomString(JSGlobalObject*) const;
+    JS_EXPORT_PRIVATE AtomStringImpl* resolveInlineToExistingAtomString() const;
 #endif
     ALWAYS_INLINE JSRopeString* asRope()
     {
@@ -447,6 +449,7 @@ public:
 
     static JSBigInlineString* create8(VM& vm, std::span<const Latin1Character> chars)
     {
+        BUN_INLINE_COUNT(g_bunBigInlineCreated);
         ASSERT(chars.size() > maxInlineLength8 && chars.size() <= maxBigInlineLength8);
         JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm)) JSBigInlineString(vm);
         uint8_t* bytes = reinterpret_cast<uint8_t*>(&s->m_fiber);
@@ -459,6 +462,7 @@ public:
 
     static JSBigInlineString* create16(VM& vm, std::span<const char16_t> chars)
     {
+        BUN_INLINE_COUNT(g_bunBigInlineCreated);
         ASSERT(chars.size() > maxInlineLength16 && chars.size() <= maxBigInlineLength16);
         JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm)) JSBigInlineString(vm);
         uint8_t* bytes = reinterpret_cast<uint8_t*>(&s->m_fiber);
@@ -472,14 +476,14 @@ public:
 private:
     JSBigInlineString(VM& vm)
         : JSString(vm, CreateInline, 0)
-        , m_inlinePayloadHigh(0)
+        , m_inlinePayloadHigh { 0, 0 }
     { }
 
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    uintptr_t m_inlinePayloadHigh;
+    uintptr_t m_inlinePayloadHigh[2];
 };
-static_assert(sizeof(JSBigInlineString) == 24);
+static_assert(sizeof(JSBigInlineString) == 32);
 #endif
 
 // NOTE: This class cannot override JSString's destructor. JSString's destructor is called directly
@@ -795,6 +799,7 @@ private:
 
     static JSRopeString* create(VM& vm, JSString* s1, JSString* s2)
     {
+        BUN_INLINE_COUNT(g_bunRopeCreated);
         unsigned length = s1->length() + s2->length();
         bool is8Bit = !!(static_cast<unsigned>(!!s1->is8Bit()) & static_cast<unsigned>(!!s2->is8Bit()));
         JSRopeString* newString = new (NotNull, allocateCell<JSRopeString>(vm)) JSRopeString(vm, length, is8Bit, s1, s2);
@@ -805,6 +810,7 @@ private:
     }
     static JSRopeString* create(VM& vm, JSString* s1, JSString* s2, JSString* s3)
     {
+        BUN_INLINE_COUNT(g_bunRopeCreated);
         unsigned length = s1->length() + s2->length() + s3->length();
         bool is8Bit = !!(static_cast<unsigned>(!!s1->is8Bit()) & static_cast<unsigned>(!!s2->is8Bit()) & static_cast<unsigned>(!!s3->is8Bit()));
         JSRopeString* newString = new (NotNull, allocateCell<JSRopeString>(vm)) JSRopeString(vm, length, is8Bit, s1, s2, s3);
@@ -816,6 +822,7 @@ private:
 
     ALWAYS_INLINE static JSRopeString* createSubstringOfResolved(VM& vm, GCDeferralContext* deferralContext, JSString* base, unsigned offset, unsigned length, bool is8Bit)
     {
+        BUN_INLINE_COUNT(g_bunRopeSubstringCreated);
         JSRopeString* newString = new (NotNull, allocateCell<JSRopeString>(vm, deferralContext)) JSRopeString(vm, length, is8Bit, base, offset);
         newString->finishCreationSubstringOfResolved(vm);
         ASSERT(newString->length());
@@ -1048,7 +1055,7 @@ ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) co
         return static_cast<const JSRopeString*>(this)->toIdentifier(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
     if (isInline())
-        resolveInline(globalObject);
+        return Identifier::fromString(getVM(globalObject), Ref { *resolveInlineToAtomString(globalObject) });
 #endif
     VM& vm = getVM(globalObject);
     if (valueInternal().impl()->isAtom())
@@ -1072,7 +1079,7 @@ ALWAYS_INLINE GCOwnedDataScope<AtomStringImpl*> JSString::toAtomString(JSGlobalO
         return { this, static_cast<const JSRopeString*>(this)->resolveRopeToAtomString(globalObject) };
 #if USE(BUN_JSC_ADDITIONS)
     if (isInline())
-        resolveInline(globalObject);
+        return { this, resolveInlineToAtomString(globalObject) };
 #endif
     if (valueInternal().impl()->isAtom())
         return { this, static_cast<AtomStringImpl*>(valueInternal().impl()) };
@@ -1088,8 +1095,11 @@ ALWAYS_INLINE GCOwnedDataScope<AtomStringImpl*> JSString::toExistingAtomString(J
     if (isRope())
         return static_cast<const JSRopeString*>(this)->resolveRopeToExistingAtomString(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
-    if (isInline())
-        resolveInline(globalObject);
+    if (isInline()) {
+        if (auto* atom = resolveInlineToExistingAtomString())
+            return { this, atom };
+        return { };
+    }
 #endif
     if (valueInternal().impl()->isAtom())
         return { this, static_cast<AtomStringImpl*>(valueInternal().impl()) };
@@ -1107,8 +1117,10 @@ inline GCOwnedDataScope<const String&> JSString::value(JSGlobalObject* globalObj
     if (isRope())
         return { this, static_cast<const JSRopeString*>(this)->resolveRope(globalObject) };
 #if USE(BUN_JSC_ADDITIONS)
-    if (isInline())
+    if (isInline()) {
+        BUN_INLINE_COUNT(g_bunInlineResolvedValue);
         return { this, resolveInline(globalObject) };
+    }
 #endif
     return { this, valueInternal() };
 }
@@ -1149,8 +1161,10 @@ inline GCOwnedDataScope<const String&> JSString::tryGetValue(bool allocationAllo
             return { this, static_cast<const JSRopeString*>(this)->resolveRope(nullptr) };
         }
 #if USE(BUN_JSC_ADDITIONS)
-        if (isInline())
+        if (isInline()) {
+            BUN_INLINE_COUNT(g_bunInlineResolvedTryGetValue);
             return { this, resolveInline(nullptr) };
+        }
 #endif
     } else
         RELEASE_ASSERT(!(m_fiber & notStringImplMask));
@@ -1226,6 +1240,30 @@ inline JSString* jsString(VM& vm, StringView s)
     auto impl = s.is8Bit() ? StringImpl::create(s.span8()) : StringImpl::create(s.span16());
     return JSString::create(vm, WTF::move(impl));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+ALWAYS_INLINE JSString* JSString::createInline8(VM& vm, std::span<const Latin1Character> chars)
+{
+    uintptr_t fiber = encodeInline8(chars);
+    if (JSString* cached = vm.inlineStringCache.lookup(fiber)) {
+        BUN_INLINE_COUNT(g_bunInlineCacheHit);
+        return cached;
+    }
+    JSString* s = createInlineFromFiber(vm, fiber);
+    vm.inlineStringCache.insert(fiber, s);
+    return s;
+}
+
+ALWAYS_INLINE JSString* JSString::createInline16(VM& vm, std::span<const char16_t> chars)
+{
+    uintptr_t fiber = encodeInline16(chars);
+    if (JSString* cached = vm.inlineStringCache.lookup(fiber))
+        return cached;
+    JSString* s = createInlineFromFiber(vm, fiber);
+    vm.inlineStringCache.insert(fiber, s);
+    return s;
+}
+#endif
 
 ALWAYS_INLINE JSString* jsString(VM& vm, RefPtr<AtomStringImpl>&& s)
 {
