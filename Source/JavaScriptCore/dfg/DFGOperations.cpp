@@ -49,6 +49,9 @@
 #include "FTLOSREntry.h"
 #include "FrameTracers.h"
 #include "HasOwnPropertyCache.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "Interpreter.h"
 #include "InterpreterInlines.h"
 #include "IntlCollator.h"
@@ -4819,24 +4822,63 @@ JSC_DEFINE_JIT_OPERATION(operationSwitchString, char*, (JSGlobalObject* globalOb
     OPERATION_RETURN(scope, linkedTable.ctiForValue(*unlinkedTable, str->impl()).taggedPtr<char*>());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Phase C.1 lets fiber words pass speculateStringIdentAndLoadStorage, so either
+// argument here may be a bit-1-tagged inline property key rather than a heap
+// StringImpl*. Decode to a StringView over the word's embedded bytes before
+// handing off to codePointCompare.
+static ALWAYS_INLINE std::strong_ordering codePointCompareMaybeInline(StringImpl* a, StringImpl* b)
+{
+    uintptr_t aWord = reinterpret_cast<uintptr_t>(a);
+    uintptr_t bWord = reinterpret_cast<uintptr_t>(b);
+    auto viewFor = [](const uintptr_t& word, StringImpl* impl) ALWAYS_INLINE_LAMBDA -> StringView {
+        if (isInlinePropertyKey(word)) [[unlikely]] {
+            unsigned len = inlinePropertyKeyLength(word);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+            if (inlinePropertyKeyIs8Bit(word))
+                return StringView { std::span<const Latin1Character> { bytes + 1, len } };
+            return StringView { std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len } };
+        }
+        return StringView { impl };
+    };
+    return codePointCompare(viewFor(aWord, a), viewFor(bWord, b));
+}
+#endif
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplLess, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) < 0;
+#else
     return codePointCompare(a, b) < 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplLessEq, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) <= 0;
+#else
     return codePointCompare(a, b) <= 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplGreater, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) > 0;
+#else
     return codePointCompare(a, b) > 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplGreaterEq, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) >= 0;
+#else
     return codePointCompare(a, b) >= 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareHeapBigIntLess, uintptr_t, (JSCell* a, JSCell* b))

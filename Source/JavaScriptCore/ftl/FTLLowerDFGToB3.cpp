@@ -4880,9 +4880,17 @@ private:
             slowCases.append(jit.branchIfNotCell(subscriptGPR));
             slowCases.append(jit.branchIfNotString(subscriptGPR));
             jit.loadPtr(CCallHelpers::Address(subscriptGPR, JSString::offsetOfValue()), scratch4GPR);
+#if USE(BUN_JSC_ADDITIONS)
+            if (needsRopeCase)
+                slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, scratch4GPR, CCallHelpers::TrustedImm32(JSString::isRopeInPointer)));
+            auto isInline = jit.branchTestPtr(CCallHelpers::NonZero, scratch4GPR, CCallHelpers::TrustedImm32(JSString::isInlineInPointer));
+            slowCases.append(jit.branchTest32(CCallHelpers::Zero, CCallHelpers::Address(scratch4GPR, StringImpl::flagsOffset()), CCallHelpers::TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(&jit);
+#else
             if (needsRopeCase)
                 slowCases.append(jit.branchIfRopeStringImpl(scratch4GPR));
             slowCases.append(jit.branchTest32(CCallHelpers::Zero, CCallHelpers::Address(scratch4GPR, StringImpl::flagsOffset()), CCallHelpers::TrustedImm32(StringImpl::flagIsAtom())));
+#endif
 
             slowCases.append(jit.loadMegamorphicProperty(state->vm(), baseGPR, scratch4GPR, nullptr, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR));
             CCallHelpers::Label doneForSlow = jit.label();
@@ -17595,6 +17603,24 @@ IGNORE_CLANG_WARNINGS_END
         LValue keyAsValue = nullptr;
         switch (m_node->child2().useKind()) {
         case StringUse: {
+#if USE(BUN_JSC_ADDITIONS)
+            LBasicBlock isNonEmptyString = m_out.newBlock();
+            LBasicBlock isNotInline = m_out.newBlock();
+            LBasicBlock isAtomString = m_out.newBlock();
+
+            keyAsValue = lowString(m_node->child2());
+            uniquedStringImpl = m_out.loadPtr(keyAsValue, m_heaps.JSString_value);
+            m_out.branch(isActualRopeStringImplPtr(uniquedStringImpl), rarely(slowCase), usually(isNonEmptyString));
+
+            lastNext = m_out.appendTo(isNonEmptyString, isNotInline);
+            m_out.branch(isInlineStringImplPtr(uniquedStringImpl), unsure(isAtomString), unsure(isNotInline));
+
+            m_out.appendTo(isNotInline, isAtomString);
+            LValue isNotAtomic = m_out.testIsZero32(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom()));
+            m_out.branch(isNotAtomic, rarely(slowCase), usually(isAtomString));
+
+            m_out.appendTo(isAtomString, slowCase);
+#else
             LBasicBlock isNonEmptyString = m_out.newBlock();
             LBasicBlock isAtomString = m_out.newBlock();
 
@@ -17607,6 +17633,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isNotAtomic, rarely(slowCase), usually(isAtomString));
 
             m_out.appendTo(isAtomString, slowCase);
+#endif
             break;
         }
         case SymbolUse: {
@@ -17620,6 +17647,9 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock isStringCase = m_out.newBlock();
             LBasicBlock notStringCase = m_out.newBlock();
             LBasicBlock isNonEmptyString = m_out.newBlock();
+#if USE(BUN_JSC_ADDITIONS)
+            LBasicBlock isNotInline = m_out.newBlock();
+#endif
             LBasicBlock isSymbolCase = m_out.newBlock();
             LBasicBlock hasUniquedStringImpl = m_out.newBlock();
 
@@ -17629,6 +17659,20 @@ IGNORE_CLANG_WARNINGS_END
             lastNext = m_out.appendTo(isCellCase, isStringCase);
             m_out.branch(isString(keyAsValue), unsure(isStringCase), unsure(notStringCase));
 
+#if USE(BUN_JSC_ADDITIONS)
+            m_out.appendTo(isStringCase, isNonEmptyString);
+            LValue implFromString = m_out.loadPtr(keyAsValue, m_heaps.JSString_value);
+            m_out.branch(isActualRopeStringImplPtr(implFromString), rarely(slowCase), usually(isNonEmptyString));
+
+            m_out.appendTo(isNonEmptyString, isNotInline);
+            ValueFromBlock stringInlineResult = m_out.anchor(implFromString);
+            m_out.branch(isInlineStringImplPtr(implFromString), unsure(hasUniquedStringImpl), unsure(isNotInline));
+
+            m_out.appendTo(isNotInline, notStringCase);
+            ValueFromBlock stringResult = m_out.anchor(implFromString);
+            LValue isNotAtomic = m_out.testIsZero32(m_out.load32(implFromString, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom()));
+            m_out.branch(isNotAtomic, rarely(slowCase), usually(hasUniquedStringImpl));
+#else
             m_out.appendTo(isStringCase, isNonEmptyString);
             m_out.branch(isNotRopeString(keyAsValue, m_node->child2()), usually(isNonEmptyString), rarely(slowCase));
 
@@ -17637,6 +17681,7 @@ IGNORE_CLANG_WARNINGS_END
             ValueFromBlock stringResult = m_out.anchor(implFromString);
             LValue isNotAtomic = m_out.testIsZero32(m_out.load32(implFromString, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom()));
             m_out.branch(isNotAtomic, rarely(slowCase), usually(hasUniquedStringImpl));
+#endif
 
             m_out.appendTo(notStringCase, isSymbolCase);
             m_out.branch(isSymbol(keyAsValue), unsure(isSymbolCase), unsure(slowCase));
@@ -17646,7 +17691,11 @@ IGNORE_CLANG_WARNINGS_END
             m_out.jump(hasUniquedStringImpl);
 
             m_out.appendTo(hasUniquedStringImpl, slowCase);
+#if USE(BUN_JSC_ADDITIONS)
+            uniquedStringImpl = m_out.phi(pointerType(), stringInlineResult, stringResult, symbolResult);
+#else
             uniquedStringImpl = m_out.phi(pointerType(), stringResult, symbolResult);
+#endif
             break;
         }
         default:
@@ -17661,7 +17710,27 @@ IGNORE_CLANG_WARNINGS_END
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // uniquedStringImpl may be an inline fiber word (bit 1 set) after the atom-check bypass above.
+        LBasicBlock realImplCase = m_out.newBlock();
+        LBasicBlock inlineImplCase = m_out.newBlock();
+        LBasicBlock haveHashBlock = m_out.newBlock();
+
+        m_out.branch(isInlineStringImplPtr(uniquedStringImpl), rarely(inlineImplCase), usually(realImplCase));
+
+        m_out.appendTo(realImplCase, inlineImplCase);
+        ValueFromBlock realImplHash = m_out.anchor(m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount)));
+        m_out.jump(haveHashBlock);
+
+        m_out.appendTo(inlineImplCase, haveHashBlock);
+        ValueFromBlock inlineImplHash = m_out.anchor(vmCall(Int32, operationInlinePropertyKeyHash, uniquedStringImpl));
+        m_out.jump(haveHashBlock);
+
+        m_out.appendTo(haveHashBlock, slowCase);
+        LValue hash = m_out.phi(Int32, realImplHash, inlineImplHash);
+#else
         LValue hash = m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
+#endif
 
         LValue structureID = m_out.load32(object, m_heaps.JSCell_structureID);
         LValue index = m_out.add(hash, structureID);
@@ -25841,6 +25910,18 @@ IGNORE_CLANG_WARNINGS_END
         return m_out.testIsZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::notStringImplMask));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    LValue isInlineStringImplPtr(LValue stringImpl)
+    {
+        return m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSString::isInlineInPointer));
+    }
+
+    LValue isActualRopeStringImplPtr(LValue stringImpl)
+    {
+        return m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSString::isRopeInPointer));
+    }
+#endif
+
     LValue isNotSymbol(LValue cell, SpeculatedType type = SpecFullTop)
     {
         if (LValue proven = isProvenValue(type & SpecCell, ~SpecSymbol))
@@ -26330,12 +26411,30 @@ IGNORE_CLANG_WARNINGS_END
         if (!m_interpreter.needsTypeCheck(edge, SpecStringIdent | ~SpecString))
             return;
 
+#if USE(BUN_JSC_ADDITIONS)
+        speculate(BadStringType, jsValueValue(string), edge.node(), isActualRopeStringImplPtr(stringImpl));
+
+        LBasicBlock notInline = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isInlineStringImplPtr(stringImpl), unsure(continuation), unsure(notInline));
+
+        LBasicBlock lastNext = m_out.appendTo(notInline, continuation);
+        speculate(
+            BadStringType, jsValueValue(string), edge.node(),
+            m_out.testIsZero32(
+                m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
+                m_out.constInt32(StringImpl::flagIsAtom())));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+#else
         speculate(BadStringType, jsValueValue(string), edge.node(), isRopeString(string));
         speculate(
             BadStringType, jsValueValue(string), edge.node(),
             m_out.testIsZero32(
                 m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
                 m_out.constInt32(StringImpl::flagIsAtom())));
+#endif
         m_interpreter.filter(edge, SpecStringIdent | ~SpecString);
     }
 

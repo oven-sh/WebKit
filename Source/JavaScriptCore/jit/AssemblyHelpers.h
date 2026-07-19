@@ -1256,6 +1256,20 @@ public:
         return branchTestPtr(Zero, stringImplGPR, TrustedImm32(JSString::notStringImplMask));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Tests only the rope bit (bit 0); inline small strings (bit 1) are not ropes.
+    Jump branchIfActualRopeStringImpl(GPRReg stringImplGPR)
+    {
+        return branchTestPtr(NonZero, stringImplGPR, TrustedImm32(JSString::isRopeInPointer));
+    }
+
+    // Tests only the inline-small-string bit (bit 1).
+    Jump branchIfInlineStringImpl(GPRReg stringImplGPR)
+    {
+        return branchTestPtr(NonZero, stringImplGPR, TrustedImm32(JSString::isInlineInPointer));
+    }
+#endif
+
 #if USE(JSVALUE64)
     JumpList branchIfResizableOrGrowableSharedTypedArrayIsOutOfBounds(GPRReg baseGPR, GPRReg scratchGPR, GPRReg scratch2GPR, std::optional<TypedArrayType>);
     void loadTypedArrayByteLength(GPRReg baseGPR, GPRReg valueGPR, GPRReg scratchGPR, GPRReg scratch2GPR, TypedArrayType);

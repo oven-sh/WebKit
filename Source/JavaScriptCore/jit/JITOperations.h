@@ -445,6 +445,10 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationDebuggerWillCallNativeExecutable, vo
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationProcessTypeProfilerLog, void, (VM*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationProcessShadowChickenLog, void, (VM*));
 
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationInlinePropertyKeyHash, UCPUStrictInt32, (uintptr_t));
+#endif
+
 inline decltype(auto) selectNewFunctionOperation(auto* executable)
 {
     auto function = operationNewFunction;

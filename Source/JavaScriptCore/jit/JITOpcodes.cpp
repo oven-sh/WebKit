@@ -796,8 +796,15 @@ void JIT::compileOpStrictEq(const JSInstruction* currentInstruction)
 
         fallThrough.append(branchIfNotString(stringGPR));
         loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT5);
+#if USE(BUN_JSC_ADDITIONS)
+        addSlowCase(branchIfActualRopeStringImpl(regT5));
+        Jump isInline = branchIfInlineStringImpl(regT5);
+        addSlowCase(branchTest32(Zero, Address(regT5, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        isInline.link(this);
+#else
         addSlowCase(branchIfRopeStringImpl(regT5));
         addSlowCase(branchTest32(Zero, Address(regT5, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
         fallThrough.append(branchPtr(NotEqual, regT5, TrustedImmPtr(string->tryGetValueImpl())));
 
         equals.link(this);
@@ -971,8 +978,15 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
 
             fallThrough.append(branchIfNotString(stringGPR));
             loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT2);
+#if USE(BUN_JSC_ADDITIONS)
+            addSlowCase(branchIfActualRopeStringImpl(regT2));
+            Jump isInline = branchIfInlineStringImpl(regT2);
+            addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(this);
+#else
             addSlowCase(branchIfRopeStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             addJump(branchPtr(Equal, regT2, TrustedImmPtr(string->tryGetValueImpl())), target);
         } else {
             fallThrough.append(branch64(Equal, stringGPR, knownStringGPR));
@@ -980,8 +994,15 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
 
             addJump(branchIfNotString(stringGPR), target);
             loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT2);
+#if USE(BUN_JSC_ADDITIONS)
+            addSlowCase(branchIfActualRopeStringImpl(regT2));
+            Jump isInline = branchIfInlineStringImpl(regT2);
+            addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(this);
+#else
             addSlowCase(branchIfRopeStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             addJump(branchPtr(NotEqual, regT2, TrustedImmPtr(string->tryGetValueImpl())), target);
         }
         fallThrough.link(this);

@@ -517,9 +517,18 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // uidGPR may hold an inline fiber word (bit 1 set); dereferencing it would fault.
+        // No silent-spill machinery here, so take the C++ slow path for inline keys.
+        slowCases.append(branchIfInlineStringImpl(uidGPR));
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
+#else
+        load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+        urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+        add32(scratch2GPR, scratch3GPR);
+#endif
     }
 
     and32(TrustedImm32(MegamorphicCache::loadCachePrimaryMask), scratch3GPR);
@@ -614,9 +623,18 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // uidGPR may hold an inline fiber word (bit 1 set); dereferencing it would fault.
+        // No silent-spill machinery here, so take the C++ slow path for inline keys.
+        slowCases.append(branchIfInlineStringImpl(uidGPR));
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
+#else
+        load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+        urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+        add32(scratch2GPR, scratch3GPR);
+#endif
     }
 
     and32(TrustedImm32(MegamorphicCache::storeCachePrimaryMask), scratch3GPR);
@@ -709,9 +727,18 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // uidGPR may hold an inline fiber word (bit 1 set); dereferencing it would fault.
+        // No silent-spill machinery here, so take the C++ slow path for inline keys.
+        slowCases.append(branchIfInlineStringImpl(uidGPR));
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
+#else
+        load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+        urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+        add32(scratch2GPR, scratch3GPR);
+#endif
     }
 
     and32(TrustedImm32(MegamorphicCache::hasCachePrimaryMask), scratch3GPR);
@@ -776,9 +803,17 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
     JumpList slowCases;
     if (propertyIsString) {
         loadPtr(Address(propertyGPR, JSString::offsetOfValue()), destGPR);
+#if USE(BUN_JSC_ADDITIONS)
+        if (canBeRope)
+            slowCases.append(branchIfActualRopeStringImpl(destGPR));
+        Jump isInline = branchIfInlineStringImpl(destGPR);
+        slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        isInline.link(this);
+#else
         if (canBeRope)
             slowCases.append(branchIfRopeStringImpl(destGPR));
         slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
     } else if (propertyIsSymbol)
         loadPtr(Address(propertyGPR, Symbol::offsetOfSymbolImpl()), destGPR);
     else {
@@ -790,9 +825,17 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
 
         isString.link(this);
         loadPtr(Address(propertyGPR, JSString::offsetOfValue()), destGPR);
+#if USE(BUN_JSC_ADDITIONS)
+        if (canBeRope)
+            slowCases.append(branchIfActualRopeStringImpl(destGPR));
+        Jump isInline = branchIfInlineStringImpl(destGPR);
+        slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        isInline.link(this);
+#else
         if (canBeRope)
             slowCases.append(branchIfRopeStringImpl(destGPR));
         slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
 
         done.link(this);
     }

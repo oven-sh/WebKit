@@ -6053,22 +6053,46 @@ void SpeculativeJIT::compile(Node* node)
         case StringUse: {
             speculateString(node->child2(), keyGPR);
             loadPtr(Address(keyGPR, JSString::offsetOfValue()), implGPR);
+#if USE(BUN_JSC_ADDITIONS)
+            if (canBeRope(node->child2()))
+                slowPath.append(branchIfActualRopeStringImpl(implGPR));
+            {
+                Jump isInline = branchIfInlineStringImpl(implGPR);
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+                isInline.link(this);
+            }
+#else
             if (canBeRope(node->child2()))
                 slowPath.append(branchIfRopeStringImpl(implGPR));
             slowPath.append(branchTest32(
                 Zero, Address(implGPR, StringImpl::flagsOffset()),
                 TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             break;
         }
         case UntypedUse: {
             slowPath.append(branchIfNotCell(JSValueRegs(keyGPR)));
             auto isNotString = branchIfNotString(keyGPR);
             loadPtr(Address(keyGPR, JSString::offsetOfValue()), implGPR);
+#if USE(BUN_JSC_ADDITIONS)
+            if (canBeRope(node->child2()))
+                slowPath.append(branchIfActualRopeStringImpl(implGPR));
+            {
+                Jump isInline = branchIfInlineStringImpl(implGPR);
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+                isInline.link(this);
+            }
+#else
             if (canBeRope(node->child2()))
                 slowPath.append(branchIfRopeStringImpl(implGPR));
             slowPath.append(branchTest32(
                 Zero, Address(implGPR, StringImpl::flagsOffset()),
                 TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             auto hasUniquedImpl = jump();
 
             isNotString.link(this);
@@ -6088,8 +6112,21 @@ void SpeculativeJIT::compile(Node* node)
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        {
+            // implGPR may hold an inline fiber word (bit 1 set) after the atom-check bypass above.
+            Jump isInline = branchIfInlineStringImpl(implGPR);
+            load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
+            Jump haveHash = jump();
+            isInline.link(this);
+            callOperationWithSilentSpill(operationInlinePropertyKeyHash, hashGPR, implGPR);
+            haveHash.link(this);
+        }
+#else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
+#endif
         load32(Address(objectGPR, JSCell::structureIDOffset()), structureIDGPR);
         add32(structureIDGPR, hashGPR);
         and32(TrustedImm32(HasOwnPropertyCache::mask), hashGPR);
@@ -8400,9 +8437,19 @@ void SpeculativeJIT::compileGetByValWithThisMegamorphic(Node* node)
     slowCases.append(branchIfNotCell(subscriptRegs));
     slowCases.append(branchIfNotString(subscriptRegs.payloadGPR()));
     loadPtr(Address(subscriptRegs.payloadGPR(), JSString::offsetOfValue()), scratch4GPR);
+#if USE(BUN_JSC_ADDITIONS)
+    if (canBeRope(m_graph.child(node, 2)))
+        slowCases.append(branchIfActualRopeStringImpl(scratch4GPR));
+    {
+        Jump isInline = branchIfInlineStringImpl(scratch4GPR);
+        slowCases.append(branchTest32(Zero, Address(scratch4GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        isInline.link(this);
+    }
+#else
     if (canBeRope(m_graph.child(node, 2)))
         slowCases.append(branchIfRopeStringImpl(scratch4GPR));
     slowCases.append(branchTest32(Zero, Address(scratch4GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
 
     slowCases.append(loadMegamorphicProperty(vm(), baseGPR, scratch4GPR, nullptr, scratch3GPR, scratch1GPR, scratch2GPR, scratch3GPR));
     addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValWithThisMegamorphicGeneric, scratch3GPR, LinkableConstant::globalObject(*this, node), baseGPR, subscriptRegs, thisValueRegs));

@@ -45,6 +45,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "GetterSetter.h"
 #include "ICStats.h"
 #include "InlineCacheCompiler.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "Interpreter.h"
 #include "JIT.h"
 #include "JITExceptions.h"
@@ -4907,6 +4910,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWriteBarrierSlowPath, void, (VM* vmPo
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     vm.writeBarrierSlowPath(cell);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationInlinePropertyKeyHash, UCPUStrictInt32, (uintptr_t word))
+{
+    return toUCPUStrictInt32(inlinePropertyKeyHash(word));
+}
+#endif
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationLookupExceptionHandler, void, (VM* vmPointer))
 {

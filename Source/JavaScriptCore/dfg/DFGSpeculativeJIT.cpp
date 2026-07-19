@@ -12878,9 +12878,17 @@ void SpeculativeJIT::speculateStringIdentAndLoadStorage(Edge edge, GPRReg string
     if (!needsTypeCheck(edge, SpecStringIdent | ~SpecString))
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (canBeRope(edge))
+        speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchIfActualRopeStringImpl(storage));
+    Jump isInline = branchIfInlineStringImpl(storage);
+    speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchTest32(Zero, Address(storage, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    isInline.link(this);
+#else
     if (canBeRope(edge))
         speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchIfRopeStringImpl(storage));
     speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchTest32(Zero, Address(storage, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
 
     m_interpreter.filter(edge, SpecStringIdent | ~SpecString);
 }
