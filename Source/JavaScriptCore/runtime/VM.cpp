@@ -1219,7 +1219,15 @@ void VM::updateStackLimits()
         // In contrast, we do not need to worry about VM::m_stackLimit because that limit is
         // used exclusively by C++ code, and the C++ compiler will automatically commit the
         // needed stack pages.
-        preCommitStackMemory(newSoftStackLimit);
+        //
+        // LLInt/JIT code cannot run before the VM has been entered, at which point
+        // setStackPointerAtVMEntry() recomputes the limit here against maxPerThreadStackUsage.
+        // Skipping the pre-entry commit avoids eagerly committing the entire stack reserve
+        // (StackBounds on Windows reports the full reserve via GetCurrentThreadStackLimits),
+        // which raises EXCEPTION_STACK_OVERFLOW on commit-constrained hosts when the reserve
+        // is large.
+        if (m_stackPointerAtVMEntry)
+            preCommitStackMemory(newSoftStackLimit);
 #endif
     }
 }

@@ -65,19 +65,18 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             DeferTerminationForAWhile deferScope(vm);
             reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
         }
+        // The builder may still throw a non-termination exception; report the
+        // slot as not found so JSValue::get / getOwnPropertyDescriptor's
+        // EXCEPTION_ASSERT(!scope.exception() || !result) holds. No ThrowScope
+        // here: a ThrowScope would simulate a throw on every first static-table
+        // lookup, and callers of getOwnPropertySlot don't check for one.
+        if (vm.exceptionForInspection()) [[unlikely]]
+            return false;
 
         offset = thisObject->getDirectOffset(vm, propertyName, attributes);
         if (!isValidOffset(offset)) {
-            // reifyStaticProperty skips the putDirect when a PropertyCallback
-            // builder throws (returns empty) or when the defer scope re-throws
-            // a suspended termination. Report the slot as not found so
-            // JSValue::get / getOwnPropertyDescriptor's
-            // EXCEPTION_ASSERT(!scope.exception() || !result) still holds. A
-            // ThrowScope here would force every getOwnNonIndexPropertySlot
-            // caller to add an exception check on the property-lookup fast
-            // path, so key on the missing offset instead.
-            ASSERT(vm.exceptionForInspection());
-            return false;
+            dataLog("Static hashtable initialiation for ", propertyName, " did not produce a property.\n");
+            RELEASE_ASSERT_NOT_REACHED();
         }
     }
 
