@@ -61,12 +61,9 @@ inline CacheableIdentifier CacheableIdentifier::createFromSharedStub(UniquedStri
 inline CacheableIdentifier CacheableIdentifier::createFromCell(JSCell* i)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    // Resolve inline JSStrings so uid()/getValueImpl() see a real atom.
-    if (i->isString()) {
-        JSString* s = uncheckedDowncast<JSString>(i);
-        if (s->isInline())
-            s->resolveInlineToAtomString(nullptr);
-    }
+    // Phase D: inline JSStrings are stored as-is; uid() returns the fiber word
+    // (tagged UniquedStringImpl*) and isSymbol()/hash() branch on the tag via
+    // uidIsSymbol/uidHash so no atom materialization is required here.
 #endif
     return CacheableIdentifier(i);
 }
@@ -98,12 +95,25 @@ inline UniquedStringImpl* CacheableIdentifier::uid() const
         return &uncheckedDowncast<Symbol>(cell())->uid();
     ASSERT(isStringCell());
     JSString* string = uncheckedDowncast<JSString>(cell());
+#if USE(BUN_JSC_ADDITIONS)
+    // Phase D: an inline JSString's fiber word is itself the uniqued key
+    // (content-unique, bit 1 tagged). Return it directly as a tagged
+    // UniquedStringImpl*; callers use uidIsSymbol/uidHash to branch.
+    if (string->isInline())
+        return std::bit_cast<UniquedStringImpl*>(string->inlineFiberWord());
     return std::bit_cast<UniquedStringImpl*>(string->getValueImpl());
+#else
+    return std::bit_cast<UniquedStringImpl*>(string->getValueImpl());
+#endif
 }
 
 inline bool CacheableIdentifier::isSymbol() const
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return m_bits && uidIsSymbol(uid());
+#else
     return m_bits && uid()->isSymbol();
+#endif
 }
 
 inline bool CacheableIdentifier::isPrivateName() const
@@ -113,7 +123,11 @@ inline bool CacheableIdentifier::isPrivateName() const
 
 inline unsigned CacheableIdentifier::hash() const
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return uidHash(uid());
+#else
     return uid()->symbolAwareHash();
+#endif
 }
 
 inline bool CacheableIdentifier::isCacheableIdentifierCell(JSCell* cell)
@@ -124,8 +138,8 @@ inline bool CacheableIdentifier::isCacheableIdentifierCell(JSCell* cell)
         return false;
     JSString* string = uncheckedDowncast<JSString>(cell);
 #if USE(BUN_JSC_ADDITIONS)
-    // Inline strings become cacheable after resolveInlineToAtomString; see
-    // getCacheableIdentifier below.
+    // Phase D: an inline JSString's fiber word is content-unique and acts as
+    // its own uniqued key, so it is cacheable without atom materialization.
     if (string->isInline())
         return true;
 #endif
@@ -149,11 +163,11 @@ inline GCOwnedDataScope<const UniquedStringImpl*> CacheableIdentifier::getCachea
         return { };
     JSString* string = uncheckedDowncast<JSString>(cell);
 #if USE(BUN_JSC_ADDITIONS)
-    // Resolve inline strings to atoms so the IC can cache them. The cell is
-    // mutated in place; subsequent accesses via InlineStringCache return the
-    // same (now-resolved) cell and hit the IC's atom-pointer compare.
+    // Phase D: return the fiber word itself as the uniqued key. It is
+    // content-unique so pointer-identity IC compares remain sound, and
+    // downstream hash/isSymbol queries branch via uidHash/uidIsSymbol.
     if (string->isInline())
-        return { cell, string->resolveInlineToAtomString(nullptr) };
+        return { cell, std::bit_cast<const UniquedStringImpl*>(string->inlineFiberWord()) };
 #endif
     if (const StringImpl* impl = string->tryGetValueImpl(); impl && impl->isAtom())
         return { cell, static_cast<const AtomStringImpl*>(impl) };
@@ -180,10 +194,20 @@ inline bool CacheableIdentifier::isStringCell() const
 inline void CacheableIdentifier::ensureIsCell(VM& vm)
 {
     if (!isCell()) {
+#if USE(BUN_JSC_ADDITIONS)
+        UniquedStringImpl* rep = uid();
+        if (uidIsSymbol(rep))
+            setCellBits(Symbol::create(vm, static_cast<SymbolImpl&>(*rep)));
+        else if (isInlinePropertyKey(rep))
+            setCellBits(JSString::createInlineFromFiber(vm, reinterpret_cast<uintptr_t>(rep)));
+        else
+            setCellBits(jsString(vm, String(static_cast<AtomStringImpl*>(rep))));
+#else
         if (uid()->isSymbol())
             setCellBits(Symbol::create(vm, static_cast<SymbolImpl&>(*uid())));
         else
             setCellBits(jsString(vm, String(static_cast<AtomStringImpl*>(uid()))));
+#endif
     }
     ASSERT(isCell());
 }

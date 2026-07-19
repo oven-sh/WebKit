@@ -61,11 +61,19 @@ SymbolImpl::StaticSymbolImpl polyProtoPrivateName { "PolyProto", SymbolImpl::s_f
         m_privateNameSet.add(symbol); \
     } while (0);
 
+#if USE(BUN_JSC_ADDITIONS)
+#define INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY(name) \
+    do { \
+        SymbolImpl* symbol = static_cast<SymbolImpl*>(m_##name##Symbol.impl()); \
+        m_wellKnownSymbolsMap.add(m_##name##SymbolPrivateIdentifier.string(), symbol); \
+    } while (0);
+#else
 #define INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY(name) \
     do { \
         SymbolImpl* symbol = static_cast<SymbolImpl*>(m_##name##Symbol.impl()); \
         m_wellKnownSymbolsMap.add(m_##name##SymbolPrivateIdentifier.impl(), symbol); \
     } while (0);
+#endif
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuiltinNames);
 
