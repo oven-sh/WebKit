@@ -1525,6 +1525,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSSourceCode.h
     runtime/JSSourceCodeInlines.h
     runtime/JSString.h
+    runtime/JSStringBuilder.h
     runtime/JSStringInlines.h
     runtime/JSStringIterator.h
     runtime/JSStringIteratorInlines.h
