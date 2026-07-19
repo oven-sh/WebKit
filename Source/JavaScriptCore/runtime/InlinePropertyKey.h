@@ -12,6 +12,9 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include <cstdint>
+#include <wtf/Packed.h>
+#include <wtf/RawPtrTraits.h>
+#include <wtf/RefPtr.h>
 #include <wtf/text/StringHasher.h>
 #include <wtf/text/UniquedStringImpl.h>
 
@@ -54,6 +57,16 @@ ALWAYS_INLINE UniquedStringImpl* inlinePropertyKeyAsImpl(uintptr_t word)
 // length, payload at byte 1 (8-bit) or byte 2 (16-bit).
 ALWAYS_INLINE bool inlinePropertyKeyIs8Bit(uintptr_t word) { return word & 0x4; }
 ALWAYS_INLINE unsigned inlinePropertyKeyLength(uintptr_t word) { return static_cast<unsigned>(word >> 3) & 0xf; }
+
+// Span into the caller's fiber-word storage (taken by reference so the returned
+// span stays valid for the enclosing full-expression / member lifetime).
+ALWAYS_INLINE std::span<const Latin1Character> inlinePropertyKeySpan8(const uintptr_t& word)
+{
+    ASSERT(isInlinePropertyKey(word));
+    ASSERT(inlinePropertyKeyIs8Bit(word));
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+    return std::span<const Latin1Character> { bytes + 1, inlinePropertyKeyLength(word) };
+}
 
 ALWAYS_INLINE unsigned inlinePropertyKeyHash(uintptr_t word)
 {
@@ -100,6 +113,31 @@ ALWAYS_INLINE void uidDeref(UniquedStringImpl* impl)
     if (!isInlinePropertyKey(impl)) [[likely]]
         impl->deref();
 }
+
+// RefDerefTraits for RefPtr<UniquedStringImpl, ...> slots that may hold a
+// fiber word instead of a real heap pointer. Matches DefaultRefDerefTraits
+// shape so RefPtr/HashTable machinery works unchanged; only ref/deref branch.
+struct FiberAwareRefDerefTraits {
+    static ALWAYS_INLINE UniquedStringImpl* refIfNotNull(UniquedStringImpl* ptr)
+    {
+        if (ptr) [[likely]]
+            uidRef(ptr);
+        return ptr;
+    }
+    static ALWAYS_INLINE UniquedStringImpl& ref(UniquedStringImpl& r)
+    {
+        uidRef(&r);
+        return r;
+    }
+    static ALWAYS_INLINE void derefIfNotNull(UniquedStringImpl* ptr)
+    {
+        if (ptr) [[likely]]
+            uidDeref(ptr);
+    }
+};
+
+using FiberAwareRefPtr = RefPtr<UniquedStringImpl, WTF::RawPtrTraits<UniquedStringImpl>, FiberAwareRefDerefTraits>;
+using FiberAwarePackedRefPtr = RefPtr<UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>, FiberAwareRefDerefTraits>;
 
 } // namespace JSC
 

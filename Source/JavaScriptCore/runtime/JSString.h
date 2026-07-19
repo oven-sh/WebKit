@@ -341,6 +341,11 @@ public:
     {
         return (fiberConcurrently() & notStringImplMask) == isInlineInPointer;
     }
+    ALWAYS_INLINE uintptr_t inlineFiberWord() const
+    {
+        ASSERT(isInline());
+        return fiberConcurrently();
+    }
     ALWAYS_INLINE static bool isInlineFiber(uintptr_t fiber)
     {
         return (fiber & notStringImplMask) == isInlineInPointer;
@@ -1054,8 +1059,15 @@ ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) co
     if (isRope())
         return static_cast<const JSRopeString*>(this)->toIdentifier(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
-    if (isInline())
+    if (isInline()) {
+        // Phase D.2 producer + D.4 coherence: only the 8-bit small-inline
+        // encoding is the canonical Identifier form. 16-bit inline and
+        // big-inline (8..15) atomize, then fromString() re-canonicalizes
+        // to encodeInline8 if the content is 2..7 Latin-1.
+        if (is8Bit() && length() <= maxInlineLength8)
+            return Identifier::fromFiberWord(m_fiber);
         return Identifier::fromString(getVM(globalObject), Ref { *resolveInlineToAtomString(globalObject) });
+    }
 #endif
     VM& vm = getVM(globalObject);
     if (valueInternal().impl()->isAtom())
