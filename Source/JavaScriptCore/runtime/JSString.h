@@ -1370,13 +1370,12 @@ ALWAYS_INLINE GCOwnedDataScope<StringView> JSString::view(JSGlobalObject* global
     if (isRope())
         return static_cast<const JSRopeString&>(*this).view(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
-    uintptr_t fiber = fiberConcurrently();
-    if (isInlineFiber(fiber)) {
-        unsigned len = inlineLengthFromFiber(fiber);
-        if (fiber & JSRopeString::is8BitInPointer)
-            return { this, StringView { std::span { inlineData8(), len } } };
-        return { this, StringView { std::span { inlineData16(), len } } };
-    }
+    // A StringView into inlineData8()/inlineData16() would point at &m_fiber+1,
+    // which is invalidated the moment anything resolves the inline string in
+    // place (JSStringJoiner calls tryGetValue() right after view(), for one).
+    // Materialize here so the returned view points at stable StringImpl storage.
+    if (isInline())
+        return { this, resolveInline(globalObject) };
 #endif
     return { this, valueInternal() };
 }
