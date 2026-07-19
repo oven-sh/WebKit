@@ -28,6 +28,10 @@
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 namespace JSC {
 
 class CallFrame;
@@ -214,12 +218,21 @@ inline bool Identifier::equal(const StringImpl* r, std::span<const char16_t> s)
 
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(const Identifier& identifier)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    auto uid = identifier.impl();
+    if (!uid || uidIsSymbol(uid))
+        return std::nullopt;
+    if (isInlinePropertyKey(uid))
+        return std::nullopt;
+    return parseIndex(*uid);
+#else
     auto uid = identifier.impl();
     if (!uid)
         return std::nullopt;
     if (uid->isSymbol())
         return std::nullopt;
     return parseIndex(*uid);
+#endif
 }
 
 JSValue identifierToJSValue(VM&, const Identifier&);
@@ -232,7 +245,14 @@ JSValue identifierToSafePublicJSValue(VM&, const Identifier&);
 // crashes in code that somehow dangled a StringImpl.
 // https://bugs.webkit.org/show_bug.cgi?id=150137
 struct IdentifierRepHash : PtrHash<RefPtr<UniquedStringImpl>> {
-    static unsigned hash(const UniquedStringImpl* key) { return key->existingSymbolAwareHash(); }
+    static unsigned hash(const UniquedStringImpl* key)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        return uidHash(key);
+#else
+        return key->existingSymbolAwareHash();
+#endif
+    }
     static constexpr bool hasHashInValue = true;
 };
 
