@@ -11806,6 +11806,18 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Short all-8-bit result: defer to operationMakeRope* so jsString() can
+        // emit a 16-byte inline cell.
+        {
+            LBasicBlock notShortInline = m_out.newBlock();
+            LValue is8Bit = m_out.testNonZero32(flagsAndLength.flags, m_out.constInt32(StringImpl::flagIs8Bit()));
+            LValue shortEnough = m_out.belowOrEqual(flagsAndLength.length, m_out.constInt32(JSString::maxInlineLength8));
+            m_out.branch(m_out.bitAnd(is8Bit, shortEnough), rarely(slowPath), usually(notShortInline));
+            m_out.appendTo(notShortInline);
+        }
+#endif
+
         m_out.storePtr(
             m_out.bitOr(
                 m_out.bitOr(kids[0], m_out.constIntPtr(JSString::isRopeInPointer)),

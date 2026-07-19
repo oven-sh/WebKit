@@ -209,6 +209,22 @@ ALWAYS_INLINE JSString* jsString(JSGlobalObject* globalObject, JSString* s1, JSS
         return nullptr;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned total = length1 + length2 + length3;
+    if (total <= JSString::maxInlineLength8 && !s1->isRope() && !s2->isRope() && !s3->isRope()) {
+        auto v1 = s1->view(globalObject);
+        auto v2 = s2->view(globalObject);
+        auto v3 = s3->view(globalObject);
+        if (v1->is8Bit() && v2->is8Bit() && v3->is8Bit()) {
+            Latin1Character buf[JSString::maxInlineLength8];
+            memcpy(buf, v1->span8().data(), length1);
+            memcpy(buf + length1, v2->span8().data(), length2);
+            memcpy(buf + length1 + length2, v3->span8().data(), length3);
+            return JSString::createInline8(vm, std::span { buf, total });
+        }
+    }
+#endif
+
     return JSRopeString::create(vm, s1, s2, s3);
 }
 
