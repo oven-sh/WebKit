@@ -103,6 +103,11 @@ public:
     void setSharedPolyProtoWatchpoint(Box<InlineWatchpointSet>&& sharedPolyProtoWatchpoint) { m_polyProtoWatchpoint = WTF::move(sharedPolyProtoWatchpoint); }
     bool hasSharedPolyProtoWatchpoint() const { return static_cast<bool>(m_polyProtoWatchpoint); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    const String& sourceConstructorName() const { return m_sourceConstructorName; }
+    void setSourceConstructorName(String&& name) { m_sourceConstructorName = WTF::move(name); }
+#endif
+
     static JSCellButterfly* cachedPropertyNamesSentinel() { return std::bit_cast<JSCellButterfly*>(static_cast<uintptr_t>(1)); }
 
     static constexpr ptrdiff_t offsetOfCachedPropertyNames(CachedPropertyNamesKind kind)
@@ -174,6 +179,9 @@ private:
     PropertyWatchpointMap m_replacementWatchpointSets;
     std::unique_ptr<SpecialPropertyCache> m_specialPropertyCache;
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
+#if USE(BUN_JSC_ADDITIONS)
+    String m_sourceConstructorName;
+#endif
 
     WriteBarrierStructureID m_previous;
     PropertyOffset m_maxOffset;
