@@ -70,34 +70,34 @@ ALWAYS_INLINE unsigned inlinePropertyKeyHash(uintptr_t word)
 
 ALWAYS_INLINE bool uidIsSymbol(const UniquedStringImpl* impl)
 {
-    if (isInlinePropertyKey(impl))
+    if (isInlinePropertyKey(impl)) [[unlikely]]
         return false;
     return impl->isSymbol();
 }
 
 ALWAYS_INLINE unsigned uidHash(const UniquedStringImpl* impl)
 {
-    if (isInlinePropertyKey(impl))
+    if (isInlinePropertyKey(impl)) [[unlikely]]
         return inlinePropertyKeyHash(inlinePropertyKeyWord(impl));
     return impl->existingSymbolAwareHash();
 }
 
 ALWAYS_INLINE unsigned uidLength(const UniquedStringImpl* impl)
 {
-    if (isInlinePropertyKey(impl))
+    if (isInlinePropertyKey(impl)) [[unlikely]]
         return inlinePropertyKeyLength(inlinePropertyKeyWord(impl));
     return impl->length();
 }
 
 ALWAYS_INLINE void uidRef(UniquedStringImpl* impl)
 {
-    if (!isInlinePropertyKey(impl))
+    if (!isInlinePropertyKey(impl)) [[likely]]
         impl->ref();
 }
 
 ALWAYS_INLINE void uidDeref(UniquedStringImpl* impl)
 {
-    if (!isInlinePropertyKey(impl))
+    if (!isInlinePropertyKey(impl)) [[likely]]
         impl->deref();
 }
 
