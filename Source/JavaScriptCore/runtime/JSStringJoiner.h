@@ -148,6 +148,14 @@ ALWAYS_INLINE bool JSStringJoiner::appendWithoutSideEffects(JSGlobalObject* glob
         // FIXME: Support JSBigInt in side-effect-free append.
         // https://bugs.webkit.org/show_bug.cgi?id=211173
         if (JSString* jsString = dynamicDowncast<JSString>(value)) {
+#if USE(BUN_JSC_ADDITIONS)
+            // view() for an inline small string points at the cell's m_fiber bytes.
+            // tryGetValue() (below) would then overwrite m_fiber in place and the
+            // stored view would read pointer bytes. Resolve first so the view
+            // points at stable StringImpl storage that tryGetValue() also returns.
+            if (jsString->isInline())
+                jsString->resolveInline(globalObject);
+#endif
             auto view = jsString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
             // Since getting the view didn't OOM, we know that the underlying String exists and isn't
@@ -200,6 +208,10 @@ ALWAYS_INLINE bool JSStringJoiner::append(JSGlobalObject* globalObject, JSValue 
         ASSERT(!value.isString());
         JSString* jsString = value.asCell()->toStringInline(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+#if USE(BUN_JSC_ADDITIONS)
+        if (jsString->isInline())
+            jsString->resolveInline(globalObject);
+#endif
         auto view = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         scope.release();
