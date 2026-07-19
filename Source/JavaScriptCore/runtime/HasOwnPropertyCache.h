@@ -51,7 +51,11 @@ public:
         static constexpr ptrdiff_t offsetOfImpl() { return OBJECT_OFFSETOF(Entry, impl); }
         static constexpr ptrdiff_t offsetOfResult() { return OBJECT_OFFSETOF(Entry, result); }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr impl;
+#else
         RefPtr<UniquedStringImpl> impl;
+#endif
         StructureID structureID;
         bool result { false };
     };
@@ -120,7 +124,11 @@ public:
             UniquedStringImpl* impl = propName.uid();
             StructureID id = structure->id();
             uint32_t index = HasOwnPropertyCache::hash(id, impl) & mask;
+#if USE(BUN_JSC_ADDITIONS)
+            std::bit_cast<Entry*>(this)[index] = Entry { FiberAwareRefPtr(impl), id, result };
+#else
             std::bit_cast<Entry*>(this)[index] = Entry { RefPtr<UniquedStringImpl>(impl), id, result };
+#endif
         }
     }
 

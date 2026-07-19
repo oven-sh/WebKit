@@ -142,7 +142,11 @@ struct PrivateNameEntryHashTraits : HashTraits<PrivateNameEntry> {
     static constexpr bool needsDestruction = false;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+typedef UncheckedKeyHashMap<FiberAwarePackedRefPtr, PrivateNameEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, PrivateNameEntryHashTraits> PrivateNameEnvironment;
+#else
 typedef UncheckedKeyHashMap<PackedRefPtr<UniquedStringImpl>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> PrivateNameEnvironment;
+#endif
 
 class VariableEnvironment {
     WTF_MAKE_TZONE_ALLOCATED(VariableEnvironment);
@@ -151,7 +155,11 @@ public:
     static constexpr unsigned inlineMapCapacity = 9;
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    typedef InlineMap<FiberAwarePackedRefPtr, VariableEnvironmentEntry, inlineMapCapacity, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, VariableEnvironmentEntryHashTraits> Map;
+#else
     typedef InlineMap<PackedRefPtr<UniquedStringImpl>, VariableEnvironmentEntry, inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> Map;
+#endif
 
 public:
 
@@ -342,7 +350,11 @@ private:
     std::unique_ptr<VariableEnvironment::RareData> m_rareData;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+using TDZEnvironment = UncheckedKeyHashSet<FiberAwareRefPtr, IdentifierRepHash>;
+#else
 using TDZEnvironment = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
+#endif
 
 class CompactTDZEnvironment {
     WTF_MAKE_TZONE_ALLOCATED(CompactTDZEnvironment);
@@ -350,7 +362,11 @@ class CompactTDZEnvironment {
 
     friend class CachedCompactTDZEnvironment;
 
+#if USE(BUN_JSC_ADDITIONS)
+    using Compact = Vector<FiberAwarePackedRefPtr>;
+#else
     using Compact = Vector<PackedRefPtr<UniquedStringImpl>>;
+#endif
     using Inflated = TDZEnvironment;
     using Variables = Variant<Compact, Inflated>;
 

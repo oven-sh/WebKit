@@ -226,10 +226,17 @@ void CompactTDZEnvironment::sortCompact(Compact& compact)
 CompactTDZEnvironment::CompactTDZEnvironment(const TDZEnvironment& env)
 {
     m_hash = 0; // Note: XOR is commutative so order doesn't matter here.
+#if USE(BUN_JSC_ADDITIONS)
+    Compact variables = WTF::map(env, [this](auto& key) -> FiberAwarePackedRefPtr {
+        m_hash ^= uidHash(key.get());
+        return key.get();
+    });
+#else
     Compact variables = WTF::map(env, [this](auto& key) -> PackedRefPtr<UniquedStringImpl> {
         m_hash ^= key->hash();
         return key.get();
     });
+#endif
 
     sortCompact(variables);
     m_variables = WTF::move(variables);

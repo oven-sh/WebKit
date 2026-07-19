@@ -86,6 +86,26 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
     UncheckedKeyHashSet<UniquedStringImpl*> seenProperties;
 
     for (auto* structure : structures) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!structure->transitionPropertyName() || seenProperties.contains(structure->transitionPropertyName()))
+            continue;
+
+        seenProperties.add(structure->transitionPropertyName());
+
+        switch (structure->transitionKind()) {
+        case TransitionKind::PropertyAddition:
+        case TransitionKind::PropertyAttributeChange:
+            break;
+        case TransitionKind::PropertyDeletion:
+        case TransitionKind::SetBrand:
+            continue;
+        default:
+            ASSERT_NOT_REACHED();
+            break;
+        }
+
+        if (!functor(PropertyTableEntry(structure->transitionPropertyName(), structure->transitionOffset(), structure->transitionPropertyAttributes()))) {
+#else
         if (!structure->m_transitionPropertyName || seenProperties.contains(structure->m_transitionPropertyName.get()))
             continue;
 
@@ -104,6 +124,7 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
         }
 
         if (!functor(PropertyTableEntry(structure->m_transitionPropertyName.get(), structure->transitionOffset(), structure->transitionPropertyAttributes()))) {
+#endif
             if (didFindStructure) {
                 assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
                 tableStructure->m_lock.unlock();
@@ -492,7 +513,11 @@ inline void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)
     setIsPinnedPropertyTable(true);
     setPropertyTable(vm, table);
     clearPreviousID();
+#if USE(BUN_JSC_ADDITIONS)
+    clearTransitionPropertyName();
+#else
     m_transitionPropertyName = nullptr;
+#endif
 }
 
 ALWAYS_INLINE bool Structure::shouldConvertToPolyProto(const Structure* a, const Structure* b)
@@ -596,7 +621,11 @@ ALWAYS_INLINE StructureTransitionTable::Hash::Key StructureTransitionTable::Hash
     case TransitionKind::ChangePrototype:
         return StructureTransitionTable::Hash::createKey(structure->storedPrototype().isNull() ? nullptr : asObject(structure->storedPrototype()), structure->transitionPropertyAttributes(), structure->transitionKind());
     default:
+#if USE(BUN_JSC_ADDITIONS)
+        return StructureTransitionTable::Hash::createKey(structure->transitionPropertyName(), structure->transitionPropertyAttributes(), structure->transitionKind());
+#else
         return StructureTransitionTable::Hash::createKey(structure->m_transitionPropertyName.get(), structure->transitionPropertyAttributes(), structure->transitionKind());
+#endif
     }
 }
 

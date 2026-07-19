@@ -787,7 +787,20 @@ public:
 
     static bool shouldConvertToPolyProto(const Structure* a, const Structure* b);
 
+#if USE(BUN_JSC_ADDITIONS)
+    UniquedStringImpl* transitionPropertyName() const { return reinterpret_cast<UniquedStringImpl*>(m_transitionPropertyNameBits); }
+    void setTransitionPropertyName(UniquedStringImpl* rep)
+    {
+        if (auto* old = transitionPropertyName())
+            uidDeref(old);
+        if (rep)
+            uidRef(rep);
+        m_transitionPropertyNameBits = reinterpret_cast<uintptr_t>(rep);
+    }
+    void clearTransitionPropertyName() { setTransitionPropertyName(nullptr); }
+#else
     UniquedStringImpl* transitionPropertyName() const { return m_transitionPropertyName.get(); }
+#endif
 
     struct PropertyHashEntry {
         const HashTable* table;
@@ -1027,7 +1040,11 @@ private:
 
     WriteBarrier<JSCell> m_previousOrRareData;
 
+#if USE(BUN_JSC_ADDITIONS)
+    uintptr_t m_transitionPropertyNameBits { 0 };
+#else
     CompactRefPtr<UniquedStringImpl> m_transitionPropertyName;
+#endif
 
     const ClassInfo* m_classInfo;
 

@@ -93,7 +93,11 @@ bool StructureTransitionTable::contains(PointerKey rep, unsigned attributes, Tra
 {
     if (isUsingSingleSlot()) {
         Structure* transition = trySingleTransition();
+#if USE(BUN_JSC_ADDITIONS)
+        return transition && transition->transitionPropertyName() == rep.pointer() && transition->transitionPropertyAttributes() == attributes && transition->transitionKind() == transitionKind;
+#else
         return transition && transition->m_transitionPropertyName == rep.pointer() && transition->transitionPropertyAttributes() == attributes && transition->transitionKind() == transitionKind;
+#endif
     }
     return map()->get(StructureTransitionTable::Hash::createKey(rep, attributes, transitionKind));
 }
@@ -383,7 +387,14 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+Structure::~Structure()
+{
+    clearTransitionPropertyName();
+}
+#else
 Structure::~Structure() = default;
+#endif
 
 void Structure::destroy(JSCell* cell)
 {
@@ -484,6 +495,33 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
 
     for (size_t i = structures.size(); i--;) {
         structure = structures[i];
+#if USE(BUN_JSC_ADDITIONS)
+        if (!structure->transitionPropertyName())
+            continue;
+        switch (structure->transitionKind()) {
+        case TransitionKind::PropertyAddition: {
+            PropertyTableEntry entry(structure->transitionPropertyName(), structure->transitionOffset(), structure->transitionPropertyAttributes());
+            auto nextOffset = table->nextOffset(structure->inlineCapacity());
+            ASSERT_UNUSED(nextOffset, nextOffset == structure->transitionOffset());
+            auto [offset, attribute, result] = table->add(vm, entry);
+            ASSERT_UNUSED(result, result);
+            ASSERT_UNUSED(offset, offset == nextOffset);
+            UNUSED_VARIABLE(attribute);
+            break;
+        }
+        case TransitionKind::PropertyDeletion: {
+            auto [offset, attributes] = table->take(vm, structure->transitionPropertyName());
+            ASSERT_UNUSED(offset, offset != invalidOffset);
+            UNUSED_VARIABLE(attributes);
+            table->addDeletedOffset(structure->transitionOffset());
+            break;
+        }
+        case TransitionKind::PropertyAttributeChange: {
+            PropertyOffset offset = table->updateAttributeIfExists(structure->transitionPropertyName(), structure->transitionPropertyAttributes());
+            ASSERT_UNUSED(offset, offset == structure->transitionOffset());
+            break;
+        }
+#else
         if (!structure->m_transitionPropertyName)
             continue;
         switch (structure->transitionKind()) {
@@ -509,6 +547,7 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
             ASSERT_UNUSED(offset, offset == structure->transitionOffset());
             break;
         }
+#endif
         case TransitionKind::SetBrand: {
             continue;
         }
@@ -601,7 +640,11 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     }
 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
+#if USE(BUN_JSC_ADDITIONS)
+    transition->setTransitionPropertyName(propertyName.uid());
+#else
     transition->m_transitionPropertyName = propertyName.uid();
+#endif
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAddition);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
@@ -698,7 +741,11 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     }
 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
+#if USE(BUN_JSC_ADDITIONS)
+    transition->setTransitionPropertyName(propertyName.uid());
+#else
     transition->m_transitionPropertyName = propertyName.uid();
+#endif
     transition->setTransitionKind(TransitionKind::PropertyDeletion);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
     transition->setMaxOffset(vm, structure->maxOffset());
@@ -839,7 +886,11 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
     }
 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
+#if USE(BUN_JSC_ADDITIONS)
+    transition->setTransitionPropertyName(propertyName.uid());
+#else
     transition->m_transitionPropertyName = propertyName.uid();
+#endif
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAttributeChange);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
@@ -1114,7 +1165,11 @@ void Structure::pinForCaching(const AbstractLocker&, VM& vm, PropertyTable* tabl
 {
     setIsPinnedPropertyTable(true);
     setPropertyTable(vm, table);
+#if USE(BUN_JSC_ADDITIONS)
+    clearTransitionPropertyName();
+#else
     m_transitionPropertyName = nullptr;
+#endif
 }
 
 void Structure::allocateRareData(VM& vm)
@@ -1233,6 +1288,32 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
     bool didFindStructure = findStructuresAndMapForMaterialization(structures, tableStructure, table);
 
     for (auto* structure : structures) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!structure->transitionPropertyName())
+            continue;
+
+        switch (structure->transitionKind()) {
+        case TransitionKind::PropertyAddition:
+        case TransitionKind::PropertyAttributeChange:
+            break;
+        case TransitionKind::PropertyDeletion:
+            if (structure->transitionPropertyName() == uid) {
+                if (didFindStructure) {
+                    assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
+                    tableStructure->m_lock.unlock();
+                }
+                return invalidOffset;
+            }
+            continue;
+        case TransitionKind::SetBrand:
+            continue;
+        default:
+            ASSERT_NOT_REACHED();
+            break;
+        }
+
+        if (structure->transitionPropertyName() == uid) {
+#else
         if (!structure->m_transitionPropertyName)
             continue;
 
@@ -1257,6 +1338,7 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
         }
 
         if (structure->m_transitionPropertyName.get() == uid) {
+#endif
             PropertyOffset result = structure->transitionOffset();
             attributes = structure->transitionPropertyAttributes();
             if (didFindStructure) {
@@ -1718,7 +1800,11 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
 
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory());
+#if USE(BUN_JSC_ADDITIONS)
+    transition->setTransitionPropertyName(&brand->uid());
+#else
     transition->m_transitionPropertyName = &brand->uid();
+#endif
     transition->setTransitionPropertyAttributes(0);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
     transition->setMaxOffset(vm, structure->maxOffset());

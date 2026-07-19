@@ -89,7 +89,11 @@ public:
             m_holder = (ownProperty) ? JSCell::seenMultipleCalleeObjects() : holder;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr m_uid;
+#else
         RefPtr<UniquedStringImpl> m_uid;
+#endif
         StructureID m_structureID { };
         uint16_t m_epoch { invalidEpoch };
         uint16_t m_offset { 0 };
@@ -114,7 +118,11 @@ public:
             m_reallocating = reallocating;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr m_uid;
+#else
         RefPtr<UniquedStringImpl> m_uid;
+#endif
         StructureID m_oldStructureID { };
         StructureID m_newStructureID { };
         uint16_t m_epoch { invalidEpoch };
@@ -136,7 +144,11 @@ public:
             m_result = !!result;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr m_uid;
+#else
         RefPtr<UniquedStringImpl> m_uid;
+#endif
         StructureID m_structureID { };
         uint16_t m_epoch { invalidEpoch };
         uint16_t m_result { false };

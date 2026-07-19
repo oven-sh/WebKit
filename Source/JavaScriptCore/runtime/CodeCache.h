@@ -54,7 +54,11 @@ class ProgramExecutable;
 class SourceCode;
 class VM;
 
+#if USE(BUN_JSC_ADDITIONS)
+// TDZEnvironment is defined in VariableEnvironment.h with FiberAwareRefPtr; avoid a conflicting redefinition here.
+#else
 using TDZEnvironment = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
+#endif
 
 namespace CodeCacheInternal {
 static constexpr bool verbose = false;

@@ -44,6 +44,9 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
 #include "VariableEnvironmentInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include <wtf/FileHandle.h>
 #include <wtf/InlineMap.h>
 #include <wtf/MallocSpan.h>
@@ -828,6 +831,61 @@ private:
 class CachedUniquedStringImpl : public CachedUniquedStringImplBase<UniquedStringImpl> { };
 class CachedStringImpl : public CachedUniquedStringImplBase<StringImpl> { };
 
+#if USE(BUN_JSC_ADDITIONS)
+// Serializer for FiberAwareRefPtr / FiberAwarePackedRefPtr keys. After the
+// Phase-D typedef swap these slots may hold an inline fiber word (bit 1 set)
+// instead of a real UniquedStringImpl*. Encode stores the raw word; decode
+// reconstitutes the fiber word directly. Real impls fall through to the
+// existing CachedUniquedStringImpl path.
+template<typename PtrTraits = WTF::RawPtrTraits<UniquedStringImpl>>
+class CachedFiberAwareRefPtr : public CachedObject<RefPtr<UniquedStringImpl, PtrTraits, FiberAwareRefDerefTraits>> {
+    using SourceRefPtr = RefPtr<UniquedStringImpl, PtrTraits, FiberAwareRefDerefTraits>;
+
+public:
+    void encode(Encoder& encoder, const UniquedStringImpl* src)
+    {
+        if (src && isInlinePropertyKey(src)) {
+            m_fiberWord = reinterpret_cast<uintptr_t>(src);
+            return;
+        }
+        m_fiberWord = 0;
+        m_ptr.encode(encoder, src);
+    }
+
+    void encode(Encoder& encoder, const SourceRefPtr src)
+    {
+        encode(encoder, src.get());
+    }
+
+    SourceRefPtr decode(Decoder& decoder) const
+    {
+        if (m_fiberWord)
+            return SourceRefPtr(inlinePropertyKeyAsImpl(m_fiberWord));
+        bool isNewAllocation;
+        UniquedStringImpl* decodedPtr = m_ptr.decode(decoder, isNewAllocation);
+        if (!decodedPtr)
+            return nullptr;
+        if (isNewAllocation) {
+            decoder.addFinalizer([=] {
+                WTF::DefaultRefDerefTraits<UniquedStringImpl>::derefIfNotNull(decodedPtr);
+            });
+        }
+        auto result = adoptRef<UniquedStringImpl, PtrTraits, FiberAwareRefDerefTraits>(decodedPtr);
+        result->ref();
+        return result;
+    }
+
+    void decode(Decoder& decoder, SourceRefPtr& src) const
+    {
+        src = decode(decoder);
+    }
+
+private:
+    uintptr_t m_fiberWord { 0 };
+    CachedPtr<CachedUniquedStringImpl, UniquedStringImpl> m_ptr;
+};
+#endif
+
 class CachedString : public VariableLengthObject<String> {
 public:
     void encode(Encoder& encoder, const String& string)
@@ -1049,7 +1107,11 @@ private:
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
     CachedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
     CachedVector<CachedBitVector> m_bitVectors;
+#if USE(BUN_JSC_ADDITIONS)
+    CachedVector<CachedHashSet<CachedFiberAwareRefPtr<>, IdentifierRepHash>> m_constantIdentifierSets;
+#else
     CachedVector<CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, IdentifierRepHash>> m_constantIdentifierSets;
+#endif
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_privateBrandRequirement : 1;
 };
@@ -1078,7 +1140,11 @@ private:
     CachedArray<unsigned> m_storage;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+typedef CachedHashMap<CachedFiberAwareRefPtr<WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+#else
 typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+#endif
 
 class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
 public:
@@ -1120,7 +1186,11 @@ public:
 private:
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
+#if USE(BUN_JSC_ADDITIONS)
+    CachedInlineMap<CachedFiberAwareRefPtr<WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, VariableEnvironmentEntryHashTraits> m_map;
+#else
     CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
+#endif
     CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
 };
 
@@ -1158,7 +1228,11 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    CachedVector<CachedFiberAwareRefPtr<WTF::PackedPtrTraits<UniquedStringImpl>>> m_variables;
+#else
     CachedVector<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>> m_variables;
+#endif
     unsigned m_hash;
 };
 
@@ -1286,7 +1360,11 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    CachedHashMap<CachedFiberAwareRefPtr<>, CachedSymbolTableEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, SymbolTableIndexHashTraits> m_map;
+#else
     CachedHashMap<CachedRefPtr<CachedUniquedStringImpl>, CachedSymbolTableEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, SymbolTableIndexHashTraits> m_map;
+#endif
     ScopeOffset m_maxScopeOffset;
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1;

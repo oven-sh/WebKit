@@ -434,10 +434,17 @@ public:
     typedef JSCell Base;
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
 
+#if USE(BUN_JSC_ADDITIONS)
+    typedef UncheckedKeyHashMap<FiberAwareRefPtr, SymbolTableEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, SymbolTableIndexHashTraits> Map;
+    typedef UncheckedKeyHashMap<FiberAwareRefPtr, GlobalVariableID, IdentifierRepHash> UniqueIDMap;
+    typedef UncheckedKeyHashMap<FiberAwareRefPtr, RefPtr<TypeSet>, IdentifierRepHash> UniqueTypeSetMap;
+    typedef UncheckedKeyHashMap<VarOffset, FiberAwareRefPtr> OffsetToVariableMap;
+#else
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, SymbolTableEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, SymbolTableIndexHashTraits> Map;
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, GlobalVariableID, IdentifierRepHash> UniqueIDMap;
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<TypeSet>, IdentifierRepHash> UniqueTypeSetMap;
     typedef UncheckedKeyHashMap<VarOffset, RefPtr<UniquedStringImpl>> OffsetToVariableMap;
+#endif
     typedef Vector<SymbolTableEntry*> LocalToEntryVec;
     typedef WTF::IteratorRange<typename PrivateNameEnvironment::iterator> PrivateNameIteratorRange;
 
