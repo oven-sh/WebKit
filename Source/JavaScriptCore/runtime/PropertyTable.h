@@ -30,6 +30,9 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 
 #define DUMP_PROPERTYMAP_STATS 0
 #define DUMP_PROPERTYMAP_COLLISIONS 0
@@ -335,7 +338,11 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
 inline PropertyTable::FindResult PropertyTable::find(const KeyType& key)
 {
     ASSERT(key);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(isInlinePropertyKey(key) || key->isAtom() || key->isSymbol());
+#else
     ASSERT(key->isAtom() || key->isSymbol());
+#endif
     return withIndexVector([&](auto* vector) {
         return findImpl(vector, tableFromIndexVector(vector), key);
     });
@@ -344,7 +351,11 @@ inline PropertyTable::FindResult PropertyTable::find(const KeyType& key)
 inline std::tuple<PropertyOffset, unsigned> PropertyTable::get(const KeyType& key)
 {
     ASSERT(key);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(isInlinePropertyKey(key) || key->isAtom() || key->isSymbol());
+#else
     ASSERT(key->isAtom() || key->isSymbol());
+#endif
     ASSERT(key != PROPERTY_MAP_DELETED_ENTRY_KEY);
 
     if (!m_keyCount)
@@ -372,7 +383,11 @@ ALWAYS_INLINE std::tuple<PropertyOffset, unsigned, bool> PropertyTable::addAfter
 #endif
 
     // Ref the key
+#if USE(BUN_JSC_ADDITIONS)
+    uidRef(entry.key());
+#else
     entry.key()->ref();
+#endif
 
     // ensure capacity is available.
     if (!canInsert(entry)) {
@@ -408,7 +423,11 @@ inline void PropertyTable::remove(VM& vm, KeyType key, unsigned entryIndex, unsi
         vector[index] = deletedEntryIndex();
         tableFromIndexVector(vector)[entryIndex - 1].setKey(PROPERTY_MAP_DELETED_ENTRY_KEY);
     });
+#if USE(BUN_JSC_ADDITIONS)
+    uidDeref(key);
+#else
     key->deref();
+#endif
 
     ASSERT(m_keyCount >= 1);
     --m_keyCount;

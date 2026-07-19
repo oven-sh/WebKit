@@ -85,7 +85,11 @@ PropertyTable::PropertyTable(VM& vm, const PropertyTable& other)
     memcpy(std::bit_cast<void*>(m_indexVector & indexVectorMask), std::bit_cast<void*>(other.m_indexVector & indexVectorMask), dataSize(isCompact()));
 
     forEachProperty([&](auto& entry) {
+#if USE(BUN_JSC_ADDITIONS)
+        uidRef(entry.key());
+#else
         entry.key()->ref();
+#endif
         return IterationStatus::Continue;
     });
 
@@ -114,7 +118,11 @@ PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity, const PropertyTab
         other.forEachProperty([&](auto& entry) {
             ASSERT(canInsert(entry));
             reinsert(vector, table, entry);
+#if USE(BUN_JSC_ADDITIONS)
+            uidRef(entry.key());
+#else
             entry.key()->ref();
+#endif
             return IterationStatus::Continue;
         });
     });
@@ -150,7 +158,11 @@ void PropertyTable::destroy(JSCell* cell)
 PropertyTable::~PropertyTable()
 {
     forEachProperty([&](auto& entry) {
+#if USE(BUN_JSC_ADDITIONS)
+        uidDeref(entry.key());
+#else
         entry.key()->deref();
+#endif
         return IterationStatus::Continue;
     });
     destroyIndexVector(m_indexVector);
