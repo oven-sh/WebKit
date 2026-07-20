@@ -81,18 +81,7 @@ void JSPropertyNameEnumerator::finishCreation(VM& vm, RefPtr<PropertyNameArray>&
     ASSERT(m_endGenericPropertyIndex == vector.size());
     for (unsigned i = 0; i < vector.size(); ++i) {
         const Identifier& identifier = vector[i];
-#if USE(BUN_JSC_ADDITIONS)
-        // Produce an inline JSString straight from the fiber word so the
-        // baseline op_enumerator_get_by_val generic-IC key compares against
-        // fiber-word-keyed structures / handler m_uid match.
-        UniquedStringImpl* uid = identifier.impl();
-        JSString* str = isInlinePropertyKey(uid)
-            ? JSString::createInlineFromFiber(vm, inlinePropertyKeyWord(uid))
-            : jsString(vm, identifier.string());
-        m_propertyNames.get()[i].set(vm, this, str);
-#else
         m_propertyNames.get()[i].set(vm, this, jsString(vm, identifier.string()));
-#endif
     }
 }
 

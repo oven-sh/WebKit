@@ -510,7 +510,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
 #endif
     if (uid)
 #if USE(BUN_JSC_ADDITIONS)
-        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+        add32(TrustedImm32(isInlinePropertyKey(uid) ? inlinePropertyKeyHash(inlinePropertyKeyWord(uid)) : uid->hash()), scratch3GPR);
 #else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
 #endif
@@ -620,7 +620,7 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
 
     if (uid)
 #if USE(BUN_JSC_ADDITIONS)
-        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+        add32(TrustedImm32(isInlinePropertyKey(uid) ? inlinePropertyKeyHash(inlinePropertyKeyWord(uid)) : uid->hash()), scratch3GPR);
 #else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
 #endif
@@ -728,7 +728,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
 #endif
     if (uid)
 #if USE(BUN_JSC_ADDITIONS)
-        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+        add32(TrustedImm32(isInlinePropertyKey(uid) ? inlinePropertyKeyHash(inlinePropertyKeyWord(uid)) : uid->hash()), scratch3GPR);
 #else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
 #endif
