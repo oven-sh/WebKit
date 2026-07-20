@@ -17712,22 +17712,8 @@ IGNORE_CLANG_WARNINGS_END
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
         // uniquedStringImpl may be an inline fiber word (bit 1 set) after the atom-check bypass above.
-        LBasicBlock realImplCase = m_out.newBlock();
-        LBasicBlock inlineImplCase = m_out.newBlock();
-        LBasicBlock haveHashBlock = m_out.newBlock();
-
-        m_out.branch(isInlineStringImplPtr(uniquedStringImpl), rarely(inlineImplCase), usually(realImplCase));
-
-        m_out.appendTo(realImplCase, inlineImplCase);
-        ValueFromBlock realImplHash = m_out.anchor(m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount)));
-        m_out.jump(haveHashBlock);
-
-        m_out.appendTo(inlineImplCase, haveHashBlock);
-        ValueFromBlock inlineImplHash = m_out.anchor(vmCall(Int32, operationInlinePropertyKeyHash, uniquedStringImpl));
-        m_out.jump(haveHashBlock);
-
-        m_out.appendTo(haveHashBlock, slowCase);
-        LValue hash = m_out.phi(Int32, realImplHash, inlineImplHash);
+        // Hash the raw pointer word branch-free; this mirrors uidHash()/WTF::intHash so it matches HasOwnPropertyCache::hash().
+        LValue hash = rapidHashMix64(uniquedStringImpl);
 #else
         LValue hash = m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
 #endif

@@ -79,9 +79,7 @@ public:
     ALWAYS_INLINE static uint32_t hash(StructureID structureID, UniquedStringImpl* impl)
     {
 #if USE(BUN_JSC_ADDITIONS)
-        if (isInlinePropertyKey(impl))
-            return std::bit_cast<uint32_t>(structureID) + inlinePropertyKeyHash(inlinePropertyKeyWord(impl));
-        return std::bit_cast<uint32_t>(structureID) + impl->hash();
+        return std::bit_cast<uint32_t>(structureID) + uidHash(impl);
 #else
         return std::bit_cast<uint32_t>(structureID) + impl->hash();
 #endif

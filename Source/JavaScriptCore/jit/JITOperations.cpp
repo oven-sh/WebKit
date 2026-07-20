@@ -47,6 +47,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "InlineCacheCompiler.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "InlinePropertyKey.h"
+#include <wtf/HashFunctions.h>
 #endif
 #include "Interpreter.h"
 #include "JIT.h"
@@ -4986,7 +4987,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWriteBarrierSlowPath, void, (VM* vmPo
 #if USE(BUN_JSC_ADDITIONS)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationInlinePropertyKeyHash, UCPUStrictInt32, (uintptr_t word))
 {
-    return toUCPUStrictInt32(inlinePropertyKeyHash(word));
+    return toUCPUStrictInt32(WTF::intHash(word));
 }
 #endif
 

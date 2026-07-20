@@ -12,6 +12,7 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include <cstdint>
+#include <wtf/HashFunctions.h>
 #include <wtf/Packed.h>
 #include <wtf/RawPtrTraits.h>
 #include <wtf/RefPtr.h>
@@ -94,16 +95,17 @@ ALWAYS_INLINE unsigned inlinePropertyKeyHash(uintptr_t word)
 
 ALWAYS_INLINE bool uidIsSymbol(const UniquedStringImpl* impl)
 {
-    if (isInlinePropertyKey(impl)) [[unlikely]]
+    uintptr_t bits = reinterpret_cast<uintptr_t>(impl);
+    if (bits & inlinePropertyKeyTag)
         return false;
     return impl->isSymbol();
 }
 
 ALWAYS_INLINE unsigned uidHash(const UniquedStringImpl* impl)
 {
-    if (isInlinePropertyKey(impl)) [[unlikely]]
-        return inlinePropertyKeyHash(inlinePropertyKeyWord(impl));
-    return impl->existingSymbolAwareHash();
+    // canonicalFiberWordFor guarantees one m_bits value per content, so hashing
+    // the raw pointer word is sound for both real impls and fiber words.
+    return WTF::intHash(reinterpret_cast<uintptr_t>(impl));
 }
 
 ALWAYS_INLINE unsigned uidLength(const UniquedStringImpl* impl)

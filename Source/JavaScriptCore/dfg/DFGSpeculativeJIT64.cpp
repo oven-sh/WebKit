@@ -6113,16 +6113,10 @@ void SpeculativeJIT::compile(Node* node)
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        {
-            // implGPR may hold an inline fiber word (bit 1 set) after the atom-check bypass above.
-            Jump isInline = branchIfInlineStringImpl(implGPR);
-            load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
-            Jump haveHash = jump();
-            isInline.link(this);
-            callOperationWithSilentSpill(operationInlinePropertyKeyHash, hashGPR, implGPR);
-            haveHash.link(this);
-        }
+        // Branch-free uid hash: WTF::intHash of the raw UniquedStringImpl* bits (matches
+        // HasOwnPropertyCache::hash()). tempGPR and structureIDGPR are dead scratch here.
+        move(implGPR, hashGPR);
+        rapidHashMix64(hashGPR, tempGPR, structureIDGPR);
 #else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);

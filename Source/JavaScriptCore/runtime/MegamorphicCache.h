@@ -187,7 +187,7 @@ public:
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
 #if USE(BUN_JSC_ADDITIONS)
-        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + (isInlinePropertyKey(uid) ? inlinePropertyKeyHash(inlinePropertyKeyWord(uid)) : uid->hash());
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + uidHash(uid);
 #else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + uid->hash();
 #endif
@@ -203,7 +203,7 @@ public:
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
 #if USE(BUN_JSC_ADDITIONS)
-        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + (isInlinePropertyKey(uid) ? inlinePropertyKeyHash(inlinePropertyKeyWord(uid)) : uid->hash());
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + uidHash(uid);
 #else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + uid->hash();
 #endif
@@ -219,7 +219,7 @@ public:
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
 #if USE(BUN_JSC_ADDITIONS)
-        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + (isInlinePropertyKey(uid) ? inlinePropertyKeyHash(inlinePropertyKeyWord(uid)) : uid->hash());
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + uidHash(uid);
 #else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + uid->hash();
 #endif

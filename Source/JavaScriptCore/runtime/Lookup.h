@@ -347,13 +347,20 @@ struct HashTable {
         if (!uid)
             return nullptr;
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Static tables are indexed by the build-time content hash (create_hash_table's
+        // perl rapidhash), NOT uidHash() which is intHash(pointer-bits). Probe with the
+        // StringImpl content hash / inlinePropertyKeyHash so we match the generated index.
+        uintptr_t uidWord = reinterpret_cast<uintptr_t>(uid);
+        int indexEntry = (isInlinePropertyKey(uidWord) ? inlinePropertyKeyHash(uidWord) : uid->hash()) & indexMask;
+#else
         int indexEntry = IdentifierRepHash::hash(uid) & indexMask;
+#endif
         int valueIndex = index[indexEntry].value;
         if (valueIndex == -1)
             return nullptr;
 
 #if USE(BUN_JSC_ADDITIONS)
-        uintptr_t uidWord = reinterpret_cast<uintptr_t>(uid);
         if (isInlinePropertyKey(uidWord)) [[unlikely]] {
             auto keySpan = inlinePropertyKeySpan8(uidWord);
             while (true) {
