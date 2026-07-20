@@ -280,11 +280,24 @@ public:
 
     static JSString* createInline8(VM& vm, std::span<const Latin1Character> chars);
     static JSString* createInline16(VM& vm, std::span<const char16_t> chars);
+    static JSString* createInline8(VM& vm, GCDeferralContext*, std::span<const Latin1Character> chars);
+    static JSString* createInline16(VM& vm, GCDeferralContext*, std::span<const char16_t> chars);
 
     static ALWAYS_INLINE JSString* createInlineFromFiber(VM& vm, uintptr_t fiber)
     {
         BUN_INLINE_COUNT(g_bunInlineCreated);
         JSString* s = new (NotNull, allocateCell<JSString>(vm)) JSString(vm, CreateInline, fiber);
+        s->Base::finishCreation(vm);
+        return s;
+    }
+
+    // jsSubstringOfResolved is called with a live GCDeferralContext while
+    // RegExpMatchesArray slots are still uninitialised; route allocations
+    // through it so a slow-path GC defers instead of visiting garbage.
+    static ALWAYS_INLINE JSString* createInlineFromFiber(VM& vm, GCDeferralContext* deferralContext, uintptr_t fiber)
+    {
+        BUN_INLINE_COUNT(g_bunInlineCreated);
+        JSString* s = new (NotNull, allocateCell<JSString>(vm, deferralContext)) JSString(vm, CreateInline, fiber);
         s->Base::finishCreation(vm);
         return s;
     }
@@ -452,11 +465,12 @@ public:
     // which already checks notStringImplMask.
     static void destroy(JSCell* cell) { JSString::destroy(cell); }
 
-    static JSBigInlineString* create8(VM& vm, std::span<const Latin1Character> chars)
+    static JSBigInlineString* create8(VM& vm, std::span<const Latin1Character> chars) { return create8(vm, nullptr, chars); }
+    static JSBigInlineString* create8(VM& vm, GCDeferralContext* deferralContext, std::span<const Latin1Character> chars)
     {
         BUN_INLINE_COUNT(g_bunBigInlineCreated);
         ASSERT(chars.size() > maxInlineLength8 && chars.size() <= maxBigInlineLength8);
-        JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm)) JSBigInlineString(vm);
+        JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm, deferralContext)) JSBigInlineString(vm);
         uint8_t* bytes = reinterpret_cast<uint8_t*>(&s->m_fiber);
         bytes[0] = static_cast<uint8_t>(isInlineInPointer | StringImpl::flagIs8Bit()
             | (chars.size() << inlineLengthShift));
@@ -465,11 +479,12 @@ public:
         return s;
     }
 
-    static JSBigInlineString* create16(VM& vm, std::span<const char16_t> chars)
+    static JSBigInlineString* create16(VM& vm, std::span<const char16_t> chars) { return create16(vm, nullptr, chars); }
+    static JSBigInlineString* create16(VM& vm, GCDeferralContext* deferralContext, std::span<const char16_t> chars)
     {
         BUN_INLINE_COUNT(g_bunBigInlineCreated);
         ASSERT(chars.size() > maxInlineLength16 && chars.size() <= maxBigInlineLength16);
-        JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm)) JSBigInlineString(vm);
+        JSBigInlineString* s = new (NotNull, allocateCell<JSBigInlineString>(vm, deferralContext)) JSBigInlineString(vm);
         uint8_t* bytes = reinterpret_cast<uint8_t*>(&s->m_fiber);
         bytes[0] = static_cast<uint8_t>(isInlineInPointer | (chars.size() << inlineLengthShift));
         bytes[1] = 0;
@@ -1272,6 +1287,28 @@ ALWAYS_INLINE JSString* JSString::createInline16(VM& vm, std::span<const char16_
     if (JSString* cached = vm.inlineStringCache.lookup(fiber))
         return cached;
     JSString* s = createInlineFromFiber(vm, fiber);
+    vm.inlineStringCache.insert(fiber, s);
+    return s;
+}
+
+ALWAYS_INLINE JSString* JSString::createInline8(VM& vm, GCDeferralContext* deferralContext, std::span<const Latin1Character> chars)
+{
+    uintptr_t fiber = encodeInline8(chars);
+    if (JSString* cached = vm.inlineStringCache.lookup(fiber)) {
+        BUN_INLINE_COUNT(g_bunInlineCacheHit);
+        return cached;
+    }
+    JSString* s = createInlineFromFiber(vm, deferralContext, fiber);
+    vm.inlineStringCache.insert(fiber, s);
+    return s;
+}
+
+ALWAYS_INLINE JSString* JSString::createInline16(VM& vm, GCDeferralContext* deferralContext, std::span<const char16_t> chars)
+{
+    uintptr_t fiber = encodeInline16(chars);
+    if (JSString* cached = vm.inlineStringCache.lookup(fiber))
+        return cached;
+    JSString* s = createInlineFromFiber(vm, deferralContext, fiber);
     vm.inlineStringCache.insert(fiber, s);
     return s;
 }

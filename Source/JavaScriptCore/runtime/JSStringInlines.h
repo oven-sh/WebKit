@@ -869,7 +869,9 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
     ASSERT(!s->isRope());
 #if USE(BUN_JSC_ADDITIONS)
     // Substring of an inline input: copy the bytes into a fresh inline cell
-    // without resolving the input (no StringImpl allocation).
+    // without resolving the input (no StringImpl allocation). Must honour
+    // deferralContext — callers like createRegExpMatchesArray have an
+    // uninitialised-butterfly array live on the stack.
     if (s->isInline()) {
         uintptr_t fiber = s->fiberConcurrently();
         if (fiber & JSRopeString::is8BitInPointer) {
@@ -877,15 +879,15 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
             if (length == 1)
                 return vm.smallStrings.singleCharacterString(span[0]);
             if (length <= JSString::maxInlineLength8)
-                return JSString::createInline8(vm, span);
-            return JSBigInlineString::create8(vm, span);
+                return JSString::createInline8(vm, deferralContext, span);
+            return JSBigInlineString::create8(vm, deferralContext, span);
         }
         auto span = std::span { s->inlineData16(), JSString::inlineLengthFromFiber(fiber) }.subspan(offset, length);
         if (length == 1 && span[0] <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(span[0]);
         if (length <= JSString::maxInlineLength16)
-            return JSString::createInline16(vm, span);
-        return JSBigInlineString::create16(vm, span);
+            return JSString::createInline16(vm, deferralContext, span);
+        return JSBigInlineString::create16(vm, deferralContext, span);
     }
 #endif
     auto& base = s->valueInternal();
@@ -912,14 +914,14 @@ inline JSString* jsSubstringOfResolved(VM& vm, GCDeferralContext* deferralContex
     // Short substrings: 16/24-byte inline cell instead of a 32-byte substring rope.
     if (base.is8Bit()) {
         if (length <= JSString::maxInlineLength8)
-            return JSString::createInline8(vm, base.span8().subspan(offset, length));
+            return JSString::createInline8(vm, deferralContext, base.span8().subspan(offset, length));
         if (length <= JSString::maxBigInlineLength8)
-            return JSBigInlineString::create8(vm, base.span8().subspan(offset, length));
+            return JSBigInlineString::create8(vm, deferralContext, base.span8().subspan(offset, length));
     } else {
         if (length <= JSString::maxInlineLength16)
-            return JSString::createInline16(vm, base.span16().subspan(offset, length));
+            return JSString::createInline16(vm, deferralContext, base.span16().subspan(offset, length));
         if (length <= JSString::maxBigInlineLength16)
-            return JSBigInlineString::create16(vm, base.span16().subspan(offset, length));
+            return JSBigInlineString::create16(vm, deferralContext, base.span16().subspan(offset, length));
     }
 #endif
     return JSRopeString::createSubstringOfResolved(vm, deferralContext, s, offset, length, base.is8Bit());
