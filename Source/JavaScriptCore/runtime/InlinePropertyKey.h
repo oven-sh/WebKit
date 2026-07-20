@@ -101,11 +101,22 @@ ALWAYS_INLINE bool uidIsSymbol(const UniquedStringImpl* impl)
     return impl->isSymbol();
 }
 
+// 64-bit Fibonacci / golden-ratio multiplicative hash constant (2^64 / phi, odd).
+// Kept here so the C++ uidHash() and its DFG/FTL/AssemblyHelpers JIT mirrors all
+// reference the same value.
+static constexpr uint64_t uidHashMultiplier = 0x9E3779B97F4A7C15ULL;
+
 ALWAYS_INLINE unsigned uidHash(const UniquedStringImpl* impl)
 {
     // canonicalFiberWordFor guarantees one m_bits value per content, so hashing
     // the raw pointer word is sound for both real impls and fiber words.
-    return WTF::intHash(reinterpret_cast<uintptr_t>(impl));
+    // Cheap branch-free Fibonacci mix: top 32 bits of the 64-bit product depend on
+    // all input bits (so fiber-word payload bytes and atom-pointer address bits both
+    // spread into the low mask). Emitted identically at every JIT site that mirrors a
+    // uidHash()-keyed cache — keep in sync with AssemblyHelpers load/store/has
+    // MegamorphicProperty and DFG/FTL compileHasOwnProperty.
+    uint64_t bits = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(impl));
+    return static_cast<unsigned>((bits * uidHashMultiplier) >> 32);
 }
 
 ALWAYS_INLINE unsigned uidLength(const UniquedStringImpl* impl)

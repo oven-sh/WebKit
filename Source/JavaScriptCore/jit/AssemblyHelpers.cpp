@@ -522,21 +522,12 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free: WTF::intHash of the raw uid pointer word (== uidHash(), matches
-        // MegamorphicCache::primaryHash()). rapidHashMix64 needs three GPRs, so clobber
-        // scratch1/scratch3 and re-derive StructureID + the sid-xor accumulator from baseGPR.
-        move(uidGPR, scratch2GPR);
-        rapidHashMix64(scratch2GPR, scratch1GPR, scratch3GPR);
-        load32(Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
-#if CPU(ARM64)
-        extractUnsignedBitfield32(scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift1), TrustedImm32(32 - MegamorphicCache::structureIDHashShift1), scratch3GPR);
-        xorUnsignedRightShift32(scratch3GPR, scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift2), scratch3GPR);
-#else
-        urshift32(scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift2), scratch3GPR);
-        urshift32(TrustedImm32(MegamorphicCache::structureIDHashShift1), scratch1GPR);
-        xor32(scratch1GPR, scratch3GPR);
-        load32(Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
-#endif
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::primaryHash(). Only scratch2 is consumed (imul64 preserves
+        // uidGPR), so scratch1 (StructureID) and scratch3 (sid-xor) survive untouched.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
@@ -642,21 +633,12 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free: WTF::intHash of the raw uid pointer word (== uidHash(), matches
-        // MegamorphicCache::storeCachePrimaryHash()). rapidHashMix64 needs three GPRs, so
-        // clobber scratch1/scratch3 and re-derive StructureID + the sid-xor accumulator.
-        move(uidGPR, scratch2GPR);
-        rapidHashMix64(scratch2GPR, scratch1GPR, scratch3GPR);
-        load32(Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
-#if CPU(ARM64)
-        extractUnsignedBitfield32(scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift1), TrustedImm32(32 - MegamorphicCache::structureIDHashShift1), scratch3GPR);
-        xorUnsignedRightShift32(scratch3GPR, scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift4), scratch3GPR);
-#else
-        urshift32(scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift4), scratch3GPR);
-        urshift32(TrustedImm32(MegamorphicCache::structureIDHashShift1), scratch1GPR);
-        xor32(scratch1GPR, scratch3GPR);
-        load32(Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
-#endif
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::storeCachePrimaryHash(). Only scratch2 is consumed; scratch1
+        // (StructureID) and scratch3 (sid-xor) survive untouched.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
@@ -760,21 +742,12 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free: WTF::intHash of the raw uid pointer word (== uidHash(), matches
-        // MegamorphicCache::hasCachePrimaryHash()). rapidHashMix64 needs three GPRs, so
-        // clobber scratch1/scratch3 and re-derive StructureID + the sid-xor accumulator.
-        move(uidGPR, scratch2GPR);
-        rapidHashMix64(scratch2GPR, scratch1GPR, scratch3GPR);
-        load32(Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
-#if CPU(ARM64)
-        extractUnsignedBitfield32(scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift1), TrustedImm32(32 - MegamorphicCache::structureIDHashShift1), scratch3GPR);
-        xorUnsignedRightShift32(scratch3GPR, scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift6), scratch3GPR);
-#else
-        urshift32(scratch1GPR, TrustedImm32(MegamorphicCache::structureIDHashShift6), scratch3GPR);
-        urshift32(TrustedImm32(MegamorphicCache::structureIDHashShift1), scratch1GPR);
-        xor32(scratch1GPR, scratch3GPR);
-        load32(Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
-#endif
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::hasCachePrimaryHash(). Only scratch2 is consumed; scratch1
+        // (StructureID) and scratch3 (sid-xor) survive untouched.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);

@@ -6113,10 +6113,11 @@ void SpeculativeJIT::compile(Node* node)
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free uid hash: WTF::intHash of the raw UniquedStringImpl* bits (matches
-        // HasOwnPropertyCache::hash()). tempGPR and structureIDGPR are dead scratch here.
-        move(implGPR, hashGPR);
-        rapidHashMix64(hashGPR, tempGPR, structureIDGPR);
+        // Branch-free uidHash() = (bits * uidHashMultiplier) >> 32; matches
+        // HasOwnPropertyCache::hash(). implGPR is the imul src, preserved.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), hashGPR);
+        mul64(implGPR, hashGPR);
+        urshift64(TrustedImm32(32), hashGPR);
 #else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);

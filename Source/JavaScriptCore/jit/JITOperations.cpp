@@ -4987,7 +4987,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWriteBarrierSlowPath, void, (VM* vmPo
 #if USE(BUN_JSC_ADDITIONS)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationInlinePropertyKeyHash, UCPUStrictInt32, (uintptr_t word))
 {
-    return toUCPUStrictInt32(WTF::intHash(word));
+    return toUCPUStrictInt32(uidHash(reinterpret_cast<const UniquedStringImpl*>(word)));
 }
 #endif
 

@@ -5001,16 +5001,23 @@ JSC_DEFINE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject* globa
         OPERATION_RETURN_IF_EXCEPTION(scope, false);
 
 #if USE(BUN_JSC_ADDITIONS)
-        UniquedStringImpl* uid = propertyName.data;
-        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
-            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        // toAtomString() above swapped JSString::m_fiber to the AtomStringImpl*,
+        // so the DFG/FTL fast path will loadPtr(JSString::offsetOfValue()) == atom
+        // on the next iteration. Key the cache by that atom so branchPtr(NotEqual,
+        // Entry::impl, implGPR) hits. Keep the canonical fiber word for the
+        // hasOwnProperty() object lookup (Structure bloom / PropertyTable key by
+        // fiber word).
+        UniquedStringImpl* cacheUid = propertyName.data;
+        UniquedStringImpl* lookupUid = cacheUid;
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(cacheUid))
+            lookupUid = reinterpret_cast<UniquedStringImpl*>(fiber);
         PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
-        bool result = thisObject->hasOwnProperty(globalObject, uid, slot);
+        bool result = thisObject->hasOwnProperty(globalObject, lookupUid, slot);
         OPERATION_RETURN_IF_EXCEPTION(scope, false);
 
         HasOwnPropertyCache* hasOwnPropertyCache = vm.hasOwnPropertyCache();
         ASSERT(hasOwnPropertyCache);
-        hasOwnPropertyCache->tryAdd(slot, thisObject, uid, result);
+        hasOwnPropertyCache->tryAdd(slot, thisObject, cacheUid, result);
         OPERATION_RETURN(scope, result);
 #else
         PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);

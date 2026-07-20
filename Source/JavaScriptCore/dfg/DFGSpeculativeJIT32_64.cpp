@@ -4310,8 +4310,8 @@ void SpeculativeJIT::compile(Node* node)
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // AssemblyHelpers::rapidHashMix64 is JSVALUE64-only, so compute WTF::intHash(word)
-        // via the operation unconditionally on 32-bit (matches uidHash()).
+        // 64-bit mul64/urshift64 are JSVALUE64-only, so compute uidHash(word)
+        // via the operation unconditionally on 32-bit (matches HasOwnPropertyCache::hash()).
         callOperationWithSilentSpill(operationInlinePropertyKeyHash, hashGPR, implGPR);
 #else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);

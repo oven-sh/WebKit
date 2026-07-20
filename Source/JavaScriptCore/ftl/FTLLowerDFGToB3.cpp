@@ -17712,8 +17712,8 @@ IGNORE_CLANG_WARNINGS_END
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
         // uniquedStringImpl may be an inline fiber word (bit 1 set) after the atom-check bypass above.
-        // Hash the raw pointer word branch-free; this mirrors uidHash()/WTF::intHash so it matches HasOwnPropertyCache::hash().
-        LValue hash = rapidHashMix64(uniquedStringImpl);
+        // Branch-free uidHash() = (bits * uidHashMultiplier) >> 32; matches HasOwnPropertyCache::hash().
+        LValue hash = m_out.castToInt32(m_out.lShr(m_out.mul(uniquedStringImpl, m_out.constInt64(uidHashMultiplier)), m_out.constInt32(32)));
 #else
         LValue hash = m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
 #endif
