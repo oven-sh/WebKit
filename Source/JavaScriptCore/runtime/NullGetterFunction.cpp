@@ -31,6 +31,7 @@
 namespace JSC {
 
 const ClassInfo NullGetterFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NullGetterFunction) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(NullGetterFunction);
 
 namespace NullGetterFunctionInternal {
 

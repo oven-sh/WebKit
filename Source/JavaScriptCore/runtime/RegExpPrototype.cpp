@@ -66,6 +66,7 @@ static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncMatchAll);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncSplit);
 
 const ClassInfo RegExpPrototype::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RegExpPrototype) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(RegExpPrototype);
 
 RegExpPrototype::RegExpPrototype(VM& vm, Structure* structure)
     : JSNonFinalObject(vm, structure)

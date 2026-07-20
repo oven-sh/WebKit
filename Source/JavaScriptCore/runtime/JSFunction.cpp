@@ -58,8 +58,11 @@ JSC_DEFINE_HOST_FUNCTION(callHostFunctionAsConstructor, (JSGlobalObject* globalO
 
 const ClassInfo JSFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFunction) };
 const ClassInfo JSStrictFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStrictFunction) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(JSStrictFunction);
 const ClassInfo JSSloppyFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSloppyFunction) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(JSSloppyFunction);
 const ClassInfo JSArrowFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSArrowFunction) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(JSArrowFunction);
 
 bool JSFunction::isHostFunctionNonInline() const
 {

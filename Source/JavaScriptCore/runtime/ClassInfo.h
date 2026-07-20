@@ -127,6 +127,10 @@ struct MethodTable {
 
 #undef METHOD_TABLE_ENTRY
 
+// Keeps &Class::s_info address-significant so LTO can't unnamed_addr-merge byte-identical ClassInfos (JSC compares s_info by address).
+#define CLASSINFO_KEEP_ADDRESS_UNIQUE(ClassName) \
+    __attribute__((used)) static void classInfoAddressKeeperFor##ClassName() { asm volatile("" : : "X"(ClassName::info())); }
+
 #define CREATE_METHOD_TABLE(ClassName) \
     JSCastingHelpers::InheritsTraits<ClassName>::typeRange, \
     { \

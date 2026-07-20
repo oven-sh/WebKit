@@ -60,7 +60,7 @@ jobs:
             CMAKE_BUILD_TYPE: "Debug"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
             ENABLE_SANITIZERS: "address,undefined"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-arm64-lto
             os: linux-arm64-gh
             package_json_arch: "arm64"
@@ -76,7 +76,7 @@ jobs:
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-lto
             os: linux-x64-gh
             package_json_arch: "x64"
@@ -92,7 +92,7 @@ jobs:
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-baseline-lto
             os: linux-x64-gh
             package_json_arch: "x64"
@@ -356,7 +356,7 @@ jobs:
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Debug"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-arm64-musl-lto
             os: linux-arm64-gh
             package_json_arch: "arm64"
@@ -370,7 +370,7 @@ jobs:
             CMAKE_BUILD_TYPE: "MinSizeRel"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-musl-lto
             os: linux-x64-gh
             package_json_arch: "x64"
@@ -384,7 +384,7 @@ jobs:
             CMAKE_BUILD_TYPE: "MinSizeRel"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
+          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-musl-baseline-lto
             os: linux-x64-gh
             package_json_arch: "x64"

@@ -35,6 +35,7 @@
 namespace JSC {
 
 const ClassInfo SetConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SetConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(SetConstructor);
 
 void SetConstructor::finishCreation(VM& vm, SetPrototype* setPrototype)
 {

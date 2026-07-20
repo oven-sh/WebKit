@@ -194,14 +194,14 @@ const getBuildFlags = (config: BuildConfig) => {
       if (IS_WINDOWS) {
         // On Windows, append LTO flags to existing Windows-specific flags
         flags.push(
-          "-DCMAKE_C_FLAGS=/DU_STATIC_IMPLEMENTATION -flto=full",
-          "-DCMAKE_CXX_FLAGS=/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors -flto=full",
+          "-DCMAKE_C_FLAGS=/DU_STATIC_IMPLEMENTATION -flto=thin -fno-split-lto-unit",
+          "-DCMAKE_CXX_FLAGS=/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors -flto=thin -fno-split-lto-unit",
           "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
         );
       } else {
         flags.push(
-          "-DCMAKE_C_FLAGS=-flto=full",
-          "-DCMAKE_CXX_FLAGS=-flto=full"
+          "-DCMAKE_C_FLAGS=-flto=thin -fno-split-lto-unit",
+          "-DCMAKE_CXX_FLAGS=-flto=thin -fno-split-lto-unit"
         );
       }
       break;
