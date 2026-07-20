@@ -583,7 +583,22 @@ void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
         if (!firstEdgeName)
             out.print(',');
         firstEdgeName = false;
+#if USE(BUN_JSC_ADDITIONS)
+        // edge.name came from JSObject/JSLexicalEnvironment analyzeHeap and may
+        // hold a fiber-word-tagged uid; String(StringImpl*) would ref-deref it.
+        if (isInlinePropertyKey(edgeName)) [[unlikely]] {
+            uintptr_t word = inlinePropertyKeyWord(edgeName);
+            unsigned len = inlinePropertyKeyLength(word);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+            if (inlinePropertyKeyIs8Bit(word))
+                printJSONString(String(std::span<const Latin1Character> { bytes + 1, len }));
+            else
+                printJSONString(String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len }));
+        } else
+            printJSONString(edgeName);
+#else
         printJSONString(edgeName);
+#endif
     }
     orderedEdgeNames.clear();
     out.print(']');
