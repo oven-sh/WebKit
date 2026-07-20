@@ -1154,9 +1154,22 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                     auto identifier = subView.is8Bit() ? Identifier::fromString(vm, subView.span8()) : Identifier::fromString(vm, subView.span16());
 
                     DeferGC defer(vm);
+#if USE(BUN_JSC_ADDITIONS)
+                    // atomStringToJSStringMap's contract is AtomStringImpl*-identity (its
+                    // only reader, arrayProtoFuncIndexOf, compares getValueImpl() against a
+                    // toAtomString() result). Identifier::fromString fiber-words 2..5-char
+                    // names, so impl() is a tagged word there; this is a site that needs
+                    // the AtomStringImpl* specifically, so route through string() — which
+                    // the lambda already does for the JSString payload.
+                    AtomStringImpl* atom = identifier.string().impl();
+                    string = vm.atomStringToJSStringMap.ensureValue(atom, [&] {
+                        return jsString(vm, identifier.string());
+                    });
+#else
                     string = vm.atomStringToJSStringMap.ensureValue(identifier.impl(), [&] {
                         return jsString(vm, identifier.string());
                     });
+#endif
                 } else {
                     string = jsSubstring(globalObject, thisString, start, end - start);
                     RETURN_IF_EXCEPTION(scope, { });
