@@ -359,6 +359,7 @@ public:
         ASSERT(isInline());
         return fiberConcurrently();
     }
+    ALWAYS_INLINE uintptr_t tryGetCanonicalInlineFiberWord() const;
     ALWAYS_INLINE static bool isInlineFiber(uintptr_t fiber)
     {
         return (fiber & notStringImplMask) == isInlineInPointer;
@@ -1066,6 +1067,26 @@ ALWAYS_INLINE void JSString::swapToAtomString(VM& vm, RefPtr<AtomStringImpl>&& a
     valueInternal().swap(target);
     vm.heap.appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(this, WTF::move(target));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// D.4 fast path: when this cell is an 8-bit small-inline of length 2..5, m_fiber
+// IS the canonical fiber-word key. Returning it lets the JIT-operation slow paths
+// (getByVal*/putByVal*/HasOwnProperty) skip the resolveInlineToAtomString() +
+// canonicalFiberWordFor() round-trip, and — critically — leaves m_fiber unmutated
+// so the next JIT fast-path probe for this cell (and any other cell with the same
+// content) sees the same bits and hits the MegamorphicCache/HasOwnPropertyCache.
+ALWAYS_INLINE uintptr_t JSString::tryGetCanonicalInlineFiberWord() const
+{
+    if constexpr (!enableIdentifierFiberWords)
+        return 0;
+    uintptr_t f = fiberConcurrently();
+    if ((f & (notStringImplMask | JSRopeString::is8BitInPointer)) != (isInlineInPointer | JSRopeString::is8BitInPointer))
+        return 0;
+    if (inlineLengthFromFiber(f) > maxFiberWordKeyLength)
+        return 0;
+    return f;
+}
+#endif
 
 ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) const
 {

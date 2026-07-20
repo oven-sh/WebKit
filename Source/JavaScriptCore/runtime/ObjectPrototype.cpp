@@ -134,11 +134,18 @@ JSC_DEFINE_HOST_FUNCTION(objectProtoFuncHasOwnProperty, (JSGlobalObject* globalO
     Identifier propertyKey;
     SUPPRESS_UNCOUNTED_LOCAL UniquedStringImpl* uid = nullptr;
     if (subscript.isString()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (uintptr_t fiber = asString(subscript)->tryGetCanonicalInlineFiberWord())
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        else {
+            propertyName = asString(subscript)->toAtomString(globalObject);
+            uid = propertyName.data;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+                uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        }
+#else
         propertyName = asString(subscript)->toAtomString(globalObject);
         uid = propertyName.data;
-#if USE(BUN_JSC_ADDITIONS)
-        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
-            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
 #endif
     } else {
         propertyKey = subscript.toPropertyKey(globalObject);

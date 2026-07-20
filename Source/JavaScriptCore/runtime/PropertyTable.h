@@ -306,6 +306,9 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
     unsigned indexMask = m_indexMask;
     unsigned probeCount = 0;
     unsigned index = hash & indexMask;
+#if USE(BUN_JSC_ADDITIONS)
+    bool keyIsFiber = isInlinePropertyKey(key);
+#endif
 
 #if DUMP_PROPERTYMAP_STATS
     ++propertyTableStats->numFinds;
@@ -326,7 +329,6 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
         // or vice-versa), content-compare when exactly one side is a fiber word.
         else {
             UniquedStringImpl* entryKey = entry.key();
-            bool keyIsFiber = isInlinePropertyKey(key);
             bool entryIsFiber = isInlinePropertyKey(entryKey);
             if (keyIsFiber != entryIsFiber) [[unlikely]] {
                 const UniquedStringImpl* implSide = keyIsFiber ? entryKey : key;

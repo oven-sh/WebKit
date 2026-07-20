@@ -922,18 +922,25 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValObjectString, EncodedJSValue, (JSGloba
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // D.4 coherence + perf: grab the canonical fiber word straight from an
+    // inline cell's m_fiber (no toAtomString round-trip, m_fiber left unmutated).
+    GCOwnedDataScope<AtomStringImpl*> propertyName;
+    UniquedStringImpl* uid;
+    if (uintptr_t fiber = asString(string)->tryGetCanonicalInlineFiberWord())
+        uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+    else {
+        propertyName = asString(string)->toAtomString(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        uid = propertyName.data;
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+    }
+    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), uid)));
+#else
     auto propertyName = asString(string)->toAtomString(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-#if USE(BUN_JSC_ADDITIONS)
-    // D.4 coherence: Structure::get()'s m_seenProperties bloom filter and
-    // PropertyTable are keyed by the canonical fiber word for 2..5-char
-    // Latin-1 names, so look up with that — not the raw AtomStringImpl*.
-    UniquedStringImpl* uid = propertyName.data;
-    if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
-        uid = reinterpret_cast<UniquedStringImpl*>(fiber);
-    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), uid)));
-#else
     OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), propertyName.data)));
 #endif
 }
@@ -4997,20 +5004,28 @@ JSC_DEFINE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject* globa
     JSValue key = JSValue::decode(encodedKey);
 
     if (key.isString()) [[likely]] {
-        auto propertyName = asString(key)->toAtomString(globalObject);
-        OPERATION_RETURN_IF_EXCEPTION(scope, false);
-
 #if USE(BUN_JSC_ADDITIONS)
-        // toAtomString() above swapped JSString::m_fiber to the AtomStringImpl*,
-        // so the DFG/FTL fast path will loadPtr(JSString::offsetOfValue()) == atom
-        // on the next iteration. Key the cache by that atom so branchPtr(NotEqual,
-        // Entry::impl, implGPR) hits. Keep the canonical fiber word for the
-        // hasOwnProperty() object lookup (Structure bloom / PropertyTable key by
-        // fiber word).
-        UniquedStringImpl* cacheUid = propertyName.data;
-        UniquedStringImpl* lookupUid = cacheUid;
-        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(cacheUid))
-            lookupUid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        // DFG/FTL compileHasOwnProperty loads m_fiber and probes the cache at
+        // uidHash(m_fiber). A fresh inline cell's m_fiber is the fiber word;
+        // if we call toAtomString() that word is overwritten with the atom
+        // pointer, and the cache ends up keyed by atom — so every *new* inline
+        // cell (same content, same fiber word) misses. Key BOTH the object
+        // lookup and the HasOwnPropertyCache by whatever m_fiber currently
+        // holds so the next JIT probe (same bits) hits.
+        GCOwnedDataScope<AtomStringImpl*> propertyName;
+        UniquedStringImpl* cacheUid;
+        UniquedStringImpl* lookupUid;
+        if (uintptr_t fiber = asString(key)->tryGetCanonicalInlineFiberWord()) {
+            cacheUid = reinterpret_cast<UniquedStringImpl*>(fiber);
+            lookupUid = cacheUid;
+        } else {
+            propertyName = asString(key)->toAtomString(globalObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope, false);
+            cacheUid = propertyName.data;
+            lookupUid = cacheUid;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(cacheUid))
+                lookupUid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        }
         PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
         bool result = thisObject->hasOwnProperty(globalObject, lookupUid, slot);
         OPERATION_RETURN_IF_EXCEPTION(scope, false);
@@ -5020,6 +5035,9 @@ JSC_DEFINE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject* globa
         hasOwnPropertyCache->tryAdd(slot, thisObject, cacheUid, result);
         OPERATION_RETURN(scope, result);
 #else
+        auto propertyName = asString(key)->toAtomString(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+
         PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
         bool result = thisObject->hasOwnProperty(globalObject, propertyName.data, slot);
         OPERATION_RETURN_IF_EXCEPTION(scope, false);
