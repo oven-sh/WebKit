@@ -500,8 +500,17 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                 JSString* key = nullptr;
                 if (cachedButterfly) {
                     auto* cachedKey = asString(cachedButterfly->get(i));
+#if USE(BUN_JSC_ADDITIONS)
+                    UniquedStringImpl* uid = properties[i].get();
+                    bool hit = isInlinePropertyKey(uid)
+                        ? (cachedKey->isInline() && cachedKey->inlineFiberWord() == inlinePropertyKeyWord(uid))
+                        : (cachedKey->tryGetValueImpl() == uid);
+                    if (hit)
+                        key = cachedKey;
+#else
                     if (cachedKey->tryGetValueImpl() == properties[i].get())
                         key = cachedKey;
+#endif
                 }
 
                 if (!key) {

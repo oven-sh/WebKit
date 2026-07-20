@@ -475,7 +475,22 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction())
             return actualName;
 
+#if USE(BUN_JSC_ADDITIONS)
+        const Identifier& ecmaName = function->jsExecutable()->ecmaName();
+        if (UniquedStringImpl* uid = ecmaName.impl(); isInlinePropertyKey(uid)) {
+            // This runs off the mutator (see comment above) with no AtomStringTable, so build a
+            // plain String from the fiber payload instead of Identifier::string()'s AtomString(span).
+            uintptr_t word = inlinePropertyKeyWord(uid);
+            unsigned len = inlinePropertyKeyLength(word);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+            if (inlinePropertyKeyIs8Bit(word))
+                return String(std::span<const Latin1Character> { bytes + 1, len });
+            return String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+        }
+        return ecmaName.string();
+#else
         return function->jsExecutable()->ecmaName().string();
+#endif
     }
     if (auto* function = dynamicDowncast<InternalFunction>(object))
         return function->name();

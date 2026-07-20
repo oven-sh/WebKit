@@ -331,7 +331,7 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
             if (keyIsFiber != entryIsFiber) [[unlikely]] {
                 const UniquedStringImpl* implSide = keyIsFiber ? entryKey : key;
                 uintptr_t fiberWord = inlinePropertyKeyWord(keyIsFiber ? key : entryKey);
-                if (!implSide->isSymbol() && inlinePropertyKeyIs8Bit(fiberWord)
+                if (implSide && !implSide->isSymbol() && inlinePropertyKeyIs8Bit(fiberWord)
                     && WTF::equal(implSide, inlinePropertyKeySpan8(fiberWord))) {
                     ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
                     return FindResult { entryIndex, index, entry.offset(), entry.attributes() };
