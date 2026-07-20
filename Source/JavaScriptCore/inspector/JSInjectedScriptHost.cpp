@@ -38,6 +38,9 @@
 #include "HeapIterationScope.h"
 #include "HeapProfiler.h"
 #include "InjectedScriptHost.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "IterationKind.h"
 #include "IteratorOperations.h"
 #include "JSArray.h"
@@ -372,7 +375,11 @@ JSValue JSInjectedScriptHost::getOwnPrivatePropertyMethods(JSGlobalObject* globa
         if (!symbolTable)
             return;
 
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<std::pair<FiberAwareRefPtr, PrivateNameEntry>> members;
+#else
         Vector<std::pair<RefPtr<UniquedStringImpl>, PrivateNameEntry>> members;
+#endif
         {
             ConcurrentJSLocker locker(symbolTable->m_lock);
             if (!symbolTable->hasPrivateNames())
@@ -386,9 +393,15 @@ JSValue JSInjectedScriptHost::getOwnPrivatePropertyMethods(JSGlobalObject* globa
             }
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        std::sort(members.begin(), members.end(), [&vm](const auto& a, const auto& b) {
+            return codePointCompareLessThan(StringView(Identifier::fromUid(vm, a.first.get()).string()), StringView(Identifier::fromUid(vm, b.first.get()).string()));
+        });
+#else
         std::sort(members.begin(), members.end(), [](const auto& a, const auto& b) {
             return codePointCompareLessThan(StringView(a.first.get()), StringView(b.first.get()));
         });
+#endif
 
         for (const auto& [name, entry] : members) {
             Identifier memberIdentifier = Identifier::fromUid(vm, name.get());
