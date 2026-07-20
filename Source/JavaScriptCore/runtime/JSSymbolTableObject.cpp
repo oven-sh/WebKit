@@ -66,8 +66,13 @@ void JSSymbolTableObject::getOwnSpecialPropertyNames(JSObject* object, JSGlobalO
         SymbolTable::Map::iterator end = symbolTable->end(locker);
         for (SymbolTable::Map::iterator it = symbolTable->begin(locker); it != end; ++it) {
             if (mode == DontEnumPropertiesMode::Include || !it->value.isDontEnum()) {
+#if USE(BUN_JSC_ADDITIONS)
+                if (!propertyNames.includeSymbolProperties() && uidIsSymbol(it->key.get()))
+                    continue;
+#else
                 if (!propertyNames.includeSymbolProperties() && it->key->isSymbol())
                     continue;
+#endif
                 if (propertyNames.privateSymbolMode() == PrivateSymbolMode::Exclude && symbolTable->hasPrivateName(it->key))
                     continue;
                 propertyNames.add(Identifier::fromUid(vm, it->key.get()));
