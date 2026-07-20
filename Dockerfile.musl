@@ -16,8 +16,13 @@ ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 
+# alpine 3.24 ships clang22/llvm22/lld22 at 22.1.3; edge has 22.1.8. Tag the
+# edge repo so only the llvm packages come from there (musl is the same
+# version in both, so edge's binaries run on 3.24). Everything else stays on
+# 3.24 stable.
+RUN echo "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main" >> /etc/apk/repositories
 RUN apk update
-RUN apk add --no-cache cmake make clang22 clang22-static clang22-dev llvm22-dev llvm22-static musl-dev git lld libgcc gcc g++ libstdc++ build-base lld-dev llvm22-libs libc-dev xz zlib zlib-dev libxml2 libxml2-dev
+RUN apk add --no-cache cmake make clang22@edge clang22-static@edge clang22-dev@edge llvm22-dev@edge llvm22-static@edge lld22@edge lld22-dev@edge llvm22-libs@edge musl-dev git libgcc gcc g++ libstdc++ build-base libc-dev xz zlib zlib-dev libxml2 libxml2-dev
 
 ENV CXX=clang++-22
 ENV CC=clang-22
