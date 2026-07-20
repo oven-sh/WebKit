@@ -186,6 +186,30 @@ FunctionRareData* JSFunction::initializeRareData(JSGlobalObject* globalObject, s
     return rareData;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Heap::runEndPhase nulls the thread AtomStringTable around finalizers, and
+// ErrorInstance::finalizeUnconditionally builds stack traces there. For
+// fiber-word Identifiers, Identifier::string() would materialize via
+// AtomString(span) -> AtomStringImpl::add -> null table crash. Decode the
+// payload to a plain String (heap copy, no atom table) instead.
+static ALWAYS_INLINE String identifierToStringWithoutAtomizing(const Identifier& ident)
+{
+    UniquedStringImpl* uid = ident.impl();
+    if (!uid)
+        return String();
+    if (isInlinePropertyKey(uid)) {
+        uintptr_t word = inlinePropertyKeyWord(uid);
+        unsigned len = inlinePropertyKeyLength(word);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+        if (inlinePropertyKeyIs8Bit(word))
+            return String(std::span<const Latin1Character> { bytes + 1, len });
+        return String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+    }
+    // Real UniquedStringImpl*: wrap directly, no atom-table lookup.
+    return String(static_cast<StringImpl*>(uid));
+}
+#endif
+
 String JSFunction::name(VM& vm)
 {
     if (isHostFunction()) {
@@ -209,10 +233,17 @@ String JSFunction::nameWithoutGC(VM& vm)
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
         return executable->name();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    const Identifier& identifier = jsExecutable()->name();
+    if (identifier == vm.propertyNames->starDefaultPrivateName)
+        return emptyString();
+    return identifierToStringWithoutAtomizing(identifier);
+#else
     const Identifier identifier = jsExecutable()->name();
     if (identifier == vm.propertyNames->starDefaultPrivateName)
         return emptyString();
     return identifier.string();
+#endif
 }
 
 String JSFunction::displayName(VM& vm)
@@ -476,18 +507,9 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
             return actualName;
 
 #if USE(BUN_JSC_ADDITIONS)
-        const Identifier& ecmaName = function->jsExecutable()->ecmaName();
-        if (UniquedStringImpl* uid = ecmaName.impl(); isInlinePropertyKey(uid)) {
-            // This runs off the mutator (see comment above) with no AtomStringTable, so build a
-            // plain String from the fiber payload instead of Identifier::string()'s AtomString(span).
-            uintptr_t word = inlinePropertyKeyWord(uid);
-            unsigned len = inlinePropertyKeyLength(word);
-            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
-            if (inlinePropertyKeyIs8Bit(word))
-                return String(std::span<const Latin1Character> { bytes + 1, len });
-            return String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
-        }
-        return ecmaName.string();
+        // Runs off the mutator (see comment above) with the AtomStringTable nulled
+        // by Heap::runEndPhase; avoid Identifier::string()'s AtomString(span) path.
+        return identifierToStringWithoutAtomizing(function->jsExecutable()->ecmaName());
 #else
         return function->jsExecutable()->ecmaName().string();
 #endif

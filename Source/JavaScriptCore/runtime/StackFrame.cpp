@@ -222,8 +222,25 @@ String StackFrame::functionName(VM& vm) const
             if (jsFrame.callee && jsFrame.callee->isObject())
                 name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();
             else if (jsFrame.codeBlock) {
-                if (auto* executable = dynamicDowncast<FunctionExecutable>(jsFrame.codeBlock->ownerExecutable()))
+                if (auto* executable = dynamicDowncast<FunctionExecutable>(jsFrame.codeBlock->ownerExecutable())) {
+#if USE(BUN_JSC_ADDITIONS)
+                    // ecmaName().impl() may be a fiber-word-tagged pointer; decode
+                    // instead of letting String(StringImpl*) ref() a non-pointer.
+                    UniquedStringImpl* uid = executable->ecmaName().impl();
+                    if (isInlinePropertyKey(uid)) {
+                        uintptr_t word = inlinePropertyKeyWord(uid);
+                        unsigned len = inlinePropertyKeyLength(word);
+                        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+                        if (inlinePropertyKeyIs8Bit(word))
+                            name = String(std::span<const Latin1Character> { bytes + 1, len });
+                        else
+                            name = String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+                    } else
+                        name = uid;
+#else
                     name = executable->ecmaName().impl();
+#endif
+                }
             }
 
             if (name.isNull())
