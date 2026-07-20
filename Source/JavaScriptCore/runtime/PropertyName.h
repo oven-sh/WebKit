@@ -100,9 +100,21 @@ public:
     AtomStringImpl* publicName() const
     {
 #if USE(BUN_JSC_ADDITIONS)
-        // A fiber-word key has no real AtomStringImpl*; callers needing the text
-        // must go through Identifier::string() which materializes on demand.
-        return (!m_impl || isInlinePropertyKey(m_impl) || m_impl->isSymbol()) ? nullptr : static_cast<AtomStringImpl*>(m_impl);
+        if (!m_impl)
+            return nullptr;
+        if (isInlinePropertyKey(m_impl)) [[unlikely]] {
+            // Callers (Bun bindings, Lookup.cpp, JSCustom*Function) assume
+            // "not symbol ⇒ non-null". Materialize the atom; the leaked ref
+            // just pins one interned 2..5-char string — pre-fiber behaviour.
+            uintptr_t w = reinterpret_cast<uintptr_t>(m_impl);
+            unsigned len = inlinePropertyKeyLength(w);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&w);
+            RefPtr<AtomStringImpl> atom = inlinePropertyKeyIs8Bit(w)
+                ? AtomStringImpl::add(std::span<const Latin1Character> { bytes + 1, len })
+                : AtomStringImpl::add(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+            return atom.leakRef();
+        }
+        return m_impl->isSymbol() ? nullptr : static_cast<AtomStringImpl*>(m_impl);
 #else
         return (!m_impl || m_impl->isSymbol()) ? nullptr : static_cast<AtomStringImpl*>(m_impl);
 #endif
