@@ -3607,7 +3607,29 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
     if (subscript.isString()) {
         auto propertyName = asString(subscript)->toAtomString(globalObject);
         RETURN_IF_EXCEPTION(scope, JSValue());
+#if USE(BUN_JSC_ADDITIONS)
+        // D.4 coherence: Structure::get()'s m_seenProperties bloom filter and
+        // PropertyTable are keyed by the canonical fiber word for 2..5-char
+        // Latin-1 names, so look up with that — not the raw AtomStringImpl*.
+        UniquedStringImpl* uid = propertyName.data;
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
 
+        if (baseValue.isCell()) [[likely]] {
+            Structure& structure = *baseValue.asCell()->structure();
+            if (JSCell::canUseFastGetOwnProperty(structure)) {
+                if (JSValue result = baseValue.asCell()->fastGetOwnProperty(vm, structure, uid)) {
+                    ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+                    return result;
+                }
+            }
+
+            RELEASE_AND_RETURN(scope, baseValue.get(globalObject, uid));
+        }
+
+        ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+        RELEASE_AND_RETURN(scope, baseValue.get(globalObject, uid));
+#else
         if (baseValue.isCell()) [[likely]] {
             Structure& structure = *baseValue.asCell()->structure();
             if (JSCell::canUseFastGetOwnProperty(structure)) {
@@ -3622,6 +3644,7 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
 
         ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
         RELEASE_AND_RETURN(scope, baseValue.get(globalObject, propertyName.data));
+#endif
     } else if (std::optional<uint32_t> index = subscript.tryGetAsUint32Index()) {
         uint32_t i = *index;
         if (isJSString(baseValue)) {
@@ -3755,7 +3778,27 @@ ALWAYS_INLINE static JSValue getByValWithThis(JSGlobalObject* globalObject, Call
     if (subscript.isString()) {
         auto propertyName = asString(subscript)->toAtomString(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+        // D.4 coherence: Structure::get()'s m_seenProperties bloom filter and
+        // PropertyTable are keyed by the canonical fiber word for 2..5-char
+        // Latin-1 names, so look up with that — not the raw AtomStringImpl*.
+        UniquedStringImpl* uid = propertyName.data;
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
 
+        if (baseValue.isCell()) [[likely]] {
+            Structure& structure = *baseValue.asCell()->structure();
+            if (JSCell::canUseFastGetOwnProperty(structure)) {
+                if (JSValue result = baseValue.asCell()->fastGetOwnProperty(vm, structure, uid)) {
+                    ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+                    return result;
+                }
+            }
+        }
+
+        ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+        RELEASE_AND_RETURN(scope, baseValue.get(globalObject, uid, slot));
+#else
         if (baseValue.isCell()) [[likely]] {
             Structure& structure = *baseValue.asCell()->structure();
             if (JSCell::canUseFastGetOwnProperty(structure)) {
@@ -3768,6 +3811,7 @@ ALWAYS_INLINE static JSValue getByValWithThis(JSGlobalObject* globalObject, Call
 
         ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
         RELEASE_AND_RETURN(scope, baseValue.get(globalObject, propertyName.data, slot));
+#endif
     } else if (std::optional<uint32_t> index = subscript.tryGetAsUint32Index()) {
         uint32_t i = *index;
         if (isJSString(baseValue)) {

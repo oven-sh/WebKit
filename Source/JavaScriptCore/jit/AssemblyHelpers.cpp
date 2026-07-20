@@ -509,7 +509,11 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
     xor32(scratch2GPR, scratch3GPR);
 #endif
     if (uid)
+#if USE(BUN_JSC_ADDITIONS)
+        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+#else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
+#endif
     else {
         // Note that we don't test if the hash is zero here. AtomStringImpl's can't have a zero
         // hash, however, a SymbolImpl may. But, because this is a cache, we don't care. We only
@@ -615,7 +619,11 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
 #endif
 
     if (uid)
+#if USE(BUN_JSC_ADDITIONS)
+        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+#else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
+#endif
     else {
         // Note that we don't test if the hash is zero here. AtomStringImpl's can't have a zero
         // hash, however, a SymbolImpl may. But, because this is a cache, we don't care. We only
@@ -719,7 +727,11 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
     xor32(scratch2GPR, scratch3GPR);
 #endif
     if (uid)
+#if USE(BUN_JSC_ADDITIONS)
+        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+#else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
+#endif
     else {
         // Note that we don't test if the hash is zero here. AtomStringImpl's can't have a zero
         // hash, however, a SymbolImpl may. But, because this is a cache, we don't care. We only

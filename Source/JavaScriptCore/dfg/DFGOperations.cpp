@@ -925,7 +925,17 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValObjectString, EncodedJSValue, (JSGloba
     auto propertyName = asString(string)->toAtomString(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
+#if USE(BUN_JSC_ADDITIONS)
+    // D.4 coherence: Structure::get()'s m_seenProperties bloom filter and
+    // PropertyTable are keyed by the canonical fiber word for 2..5-char
+    // Latin-1 names, so look up with that — not the raw AtomStringImpl*.
+    UniquedStringImpl* uid = propertyName.data;
+    if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+        uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), uid)));
+#else
     OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), propertyName.data)));
+#endif
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValObjectSymbol, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* base, JSCell* symbol))
