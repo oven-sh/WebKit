@@ -27,6 +27,10 @@
 #include "JSPropertyNameEnumerator.h"
 
 #include "JSObjectInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "IdentifierInlines.h"
+#include "InlinePropertyKey.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -204,8 +208,19 @@ JSString* JSPropertyNameEnumerator::computeNext(JSGlobalObject* globalObject, JS
                 break;
             auto id = name->toAtomString(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+            // D.4 coherence: id.data is an AtomStringImpl*; Structure::get's
+            // seenProperties bloom filter was keyed on the canonical fiber word
+            // at add() time, so re-encode here or the bloom filter rules us out.
+            UniquedStringImpl* uid = id.data;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+                uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+            if (base->hasEnumerableProperty(globalObject, uid))
+                break;
+#else
             if (base->hasEnumerableProperty(globalObject, id.data))
                 break;
+#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
             name = nullptr;
             index++;
