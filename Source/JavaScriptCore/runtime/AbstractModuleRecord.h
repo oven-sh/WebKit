@@ -113,9 +113,15 @@ public:
         Identifier localName;
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    using OrderedIdentifierSet = OrderedHashSet<FiberAwareRefPtr, IdentifierRepHash>;
+    using ImportEntries = OrderedHashMap<FiberAwareRefPtr, ImportEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>>;
+    using ExportEntries = OrderedHashMap<FiberAwareRefPtr, ExportEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>>;
+#else
     using OrderedIdentifierSet = OrderedHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
     using ImportEntries = OrderedHashMap<RefPtr<UniquedStringImpl>, ImportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;
     using ExportEntries = OrderedHashMap<RefPtr<UniquedStringImpl>, ExportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;
+#endif
 
     struct ModuleRequest {
         Identifier m_specifier;
@@ -298,7 +304,11 @@ private:
     // So here, we don't visit each object for GC. The resolution cache map caches the once
     // looked up correctly resolved resolution, since (1) we rarely looked up the non-resolved one,
     // and (2) if we cache all the attempts the size of the map becomes infinitely large.
+#if USE(BUN_JSC_ADDITIONS)
+    typedef UncheckedKeyHashMap<FiberAwareRefPtr, Resolution, IdentifierRepHash, HashTraits<FiberAwareRefPtr>> Resolutions;
+#else
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
+#endif
     Resolutions m_resolutionCache;
 
 protected:

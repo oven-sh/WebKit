@@ -219,7 +219,9 @@ public:
     }
 
     bool isNull() const { return !m_bits; }
-    bool isEmpty() const { return m_bits && !isInlinePropertyKey(m_bits) && !reinterpret_cast<StringImpl*>(m_bits)->length(); }
+    // Matches AtomString::isEmpty(): null OR zero-length. BreakNode/ContinueNode
+    // pass a null-m_bits Identifier for the unlabeled case and test isEmpty().
+    bool isEmpty() const { return !m_bits || (!isInlinePropertyKey(m_bits) && !reinterpret_cast<StringImpl*>(m_bits)->length()); }
     bool isSymbol() const { return m_bits && uidIsSymbol(reinterpret_cast<UniquedStringImpl*>(m_bits)); }
     bool isPrivateName() const { return isSymbol() && static_cast<const SymbolImpl*>(impl())->isPrivate(); }
 
@@ -230,6 +232,11 @@ public:
     static bool equal(const StringImpl* a, const StringImpl* b) { return ::equal(a, b); }
 
     void dump(PrintStream&) const;
+
+    // Phase D.4 coherence: every construction path for a 2..5-char Latin-1
+    // name must yield the same encodeInline8 fiber word so PropertyTable's
+    // pointer-identity compare hits regardless of which producer ran.
+    static uintptr_t canonicalFiberWordFor(const StringImpl*); // Defined in IdentifierInlines.h
 
 private:
     uintptr_t m_bits { 0 };
@@ -249,11 +256,6 @@ private:
     inline Identifier(VM&, const String&);
     inline Identifier(VM&, StringImpl*);
     inline Identifier(VM&, Ref<AtomStringImpl>&&); // Defined in IdentifierInlines.h
-
-    // Phase D.4 coherence: every construction path for a 2..7-char Latin-1
-    // name must yield the same encodeInline8 fiber word so PropertyTable's
-    // pointer-identity compare hits regardless of which producer ran.
-    static uintptr_t canonicalFiberWordFor(const StringImpl*); // Defined in IdentifierInlines.h
 
     Identifier(SymbolImpl& uid)
     {
@@ -398,11 +400,34 @@ inline bool operator==(const Identifier& a, const Identifier& b)
 
 inline bool Identifier::equal(const StringImpl* r, std::span<const Latin1Character> s)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(reinterpret_cast<const UniquedStringImpl*>(r))) [[unlikely]] {
+        uintptr_t w = reinterpret_cast<uintptr_t>(r);
+        if (!inlinePropertyKeyIs8Bit(w))
+            return false;
+        auto span = inlinePropertyKeySpan8(w);
+        return span.size() == s.size() && !memcmp(span.data(), s.data(), s.size());
+    }
+#endif
     return WTF::equal(r, s);
 }
 
 inline bool Identifier::equal(const StringImpl* r, std::span<const char16_t> s)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(reinterpret_cast<const UniquedStringImpl*>(r))) [[unlikely]] {
+        uintptr_t w = reinterpret_cast<uintptr_t>(r);
+        if (!inlinePropertyKeyIs8Bit(w))
+            return false;
+        auto span = inlinePropertyKeySpan8(w);
+        if (span.size() != s.size())
+            return false;
+        for (size_t i = 0; i < s.size(); ++i)
+            if (span[i] != s[i])
+                return false;
+        return true;
+    }
+#endif
     return WTF::equal(r, s);
 }
 
@@ -412,8 +437,14 @@ ALWAYS_INLINE std::optional<uint32_t> parseIndex(const Identifier& identifier)
     auto uid = identifier.impl();
     if (!uid || uidIsSymbol(uid))
         return std::nullopt;
-    if (isInlinePropertyKey(uid))
+    if (isInlinePropertyKey(uid)) {
+        // D.4 coherence means numeric strings "42".."9999999" arrive here as
+        // fiber words; decode so obj["42"] still hits the indexed-property path.
+        uintptr_t w = reinterpret_cast<uintptr_t>(uid);
+        if (inlinePropertyKeyIs8Bit(w))
+            return parseIndex(inlinePropertyKeySpan8(w));
         return std::nullopt;
+    }
     return parseIndex(*uid);
 #else
     auto uid = identifier.impl();
@@ -465,6 +496,14 @@ typedef UncheckedKeyHashMap<UniquedStringImpl*, int, IdentifierRepHash, HashTrai
 
 namespace WTF {
 
+#if USE(BUN_JSC_ADDITIONS)
+// m_bits equality defines Identifier equality, but m_materializedString is a
+// lazily-populated cache — two equal Identifiers can differ byte-wise there.
+template <> struct VectorTraits<JSC::Identifier> : SimpleClassVectorTraits {
+    static constexpr bool canCompareWithMemcmp = false;
+};
+#else
 template <> struct VectorTraits<JSC::Identifier> : SimpleClassVectorTraits { };
+#endif
 
 } // namespace WTF

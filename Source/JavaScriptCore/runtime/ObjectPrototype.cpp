@@ -136,6 +136,10 @@ JSC_DEFINE_HOST_FUNCTION(objectProtoFuncHasOwnProperty, (JSGlobalObject* globalO
     if (subscript.isString()) {
         propertyName = asString(subscript)->toAtomString(globalObject);
         uid = propertyName.data;
+#if USE(BUN_JSC_ADDITIONS)
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+#endif
     } else {
         propertyKey = subscript.toPropertyKey(globalObject);
         uid = propertyKey.impl();

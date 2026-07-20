@@ -1141,7 +1141,7 @@ private:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
-typedef CachedHashMap<CachedFiberAwareRefPtr<WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+typedef CachedHashMap<CachedFiberAwareRefPtr<>, PrivateNameEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
 #else
 typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
 #endif
@@ -1187,7 +1187,7 @@ private:
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
 #if USE(BUN_JSC_ADDITIONS)
-    CachedInlineMap<CachedFiberAwareRefPtr<WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, VariableEnvironmentEntryHashTraits> m_map;
+    CachedInlineMap<CachedFiberAwareRefPtr<>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, VariableEnvironmentEntryHashTraits> m_map;
 #else
     CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
 #endif
@@ -1229,7 +1229,7 @@ public:
 
 private:
 #if USE(BUN_JSC_ADDITIONS)
-    CachedVector<CachedFiberAwareRefPtr<WTF::PackedPtrTraits<UniquedStringImpl>>> m_variables;
+    CachedVector<CachedFiberAwareRefPtr<>> m_variables;
 #else
     CachedVector<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>> m_variables;
 #endif

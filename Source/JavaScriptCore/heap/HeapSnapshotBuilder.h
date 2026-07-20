@@ -26,6 +26,9 @@
 #pragma once
 
 #include "HeapAnalyzer.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "JSExportMacros.h"
 #include <functional>
 #include <wtf/CheckedPtr.h>
@@ -99,7 +102,11 @@ struct HeapSnapshotEdge {
     } to;
 
     EdgeType type;
+#if USE(BUN_JSC_ADDITIONS)
+    FiberAwareRefPtr name;
+#else
     RefPtr<UniquedStringImpl> name;
+#endif
     uint32_t index { 0 };
 };
 

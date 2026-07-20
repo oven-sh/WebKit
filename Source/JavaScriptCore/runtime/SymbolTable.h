@@ -590,6 +590,15 @@ public:
         return makeIteratorRange(rareData.m_privateNames.begin(), rareData.m_privateNames.end());
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void addPrivateName(UniquedStringImpl* key, PrivateNameEntry value)
+    {
+        ASSERT(key && !uidIsSymbol(key));
+        auto& rareData = ensureRareData();
+        ASSERT(rareData.m_privateNames.find(key) == rareData.m_privateNames.end());
+        rareData.m_privateNames.add(FiberAwareRefPtr(key), value);
+    }
+#else
     void addPrivateName(const RefPtr<UniquedStringImpl>& key, PrivateNameEntry value)
     {
         ASSERT(key && !key->isSymbol());
@@ -597,13 +606,23 @@ public:
         ASSERT(rareData.m_privateNames.find(key) == rareData.m_privateNames.end());
         rareData.m_privateNames.add(key, value);
     }
+#endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasPrivateName(const FiberAwareRefPtr& key) const
+    {
+        if (auto* rareData = m_rareData.get())
+            return rareData->m_privateNames.contains(key);
+        return false;
+    }
+#else
     bool hasPrivateName(const RefPtr<UniquedStringImpl>& key) const
     {
         if (auto* rareData = m_rareData.get())
             return rareData->m_privateNames.contains(key);
         return false;
     }
+#endif
 
     template<typename Entry>
     void set(const ConcurrentJSLocker&, UniquedStringImpl* key, Entry&& entry)

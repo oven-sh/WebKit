@@ -12881,9 +12881,10 @@ void SpeculativeJIT::speculateStringIdentAndLoadStorage(Edge edge, GPRReg string
 #if USE(BUN_JSC_ADDITIONS)
     if (canBeRope(edge))
         speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchIfActualRopeStringImpl(storage));
-    Jump isInline = branchIfInlineStringImpl(storage);
+    // Inline small strings are SpecStringInline, not SpecStringIdent; downstream callers pointer-compare against
+    // heap AtomStringImpl* (compileStringIdentEquality, emitSwitchString), so OSR-exit here to preserve correctness.
+    speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchIfInlineStringImpl(storage));
     speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchTest32(Zero, Address(storage, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
-    isInline.link(this);
 #else
     if (canBeRope(edge))
         speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchIfRopeStringImpl(storage));

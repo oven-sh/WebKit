@@ -1875,11 +1875,22 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
         GPRReg propertyGPR = m_propertyCache.propertyGPR();
         // non-rope string check done inside polymorphic access.
 
+#if USE(BUN_JSC_ADDITIONS)
+        UniquedStringImpl* icUid = accessCase.uid();
+        if (uidIsSymbol(icUid))
+            jit.loadPtr(MacroAssembler::Address(propertyGPR, Symbol::offsetOfSymbolImpl()), scratchGPR);
+        else
+            jit.loadPtr(MacroAssembler::Address(propertyGPR, JSString::offsetOfValue()), scratchGPR);
+        // If the cached key is a canonical fiber word, an incoming atom-backed
+        // JSString for the same content won't pointer-match — slow path handles it.
+        fallThrough.append(jit.branchPtr(CCallHelpers::NotEqual, scratchGPR, CCallHelpers::TrustedImmPtr(icUid)));
+#else
         if (accessCase.uid()->isSymbol())
             jit.loadPtr(MacroAssembler::Address(propertyGPR, Symbol::offsetOfSymbolImpl()), scratchGPR);
         else
             jit.loadPtr(MacroAssembler::Address(propertyGPR, JSString::offsetOfValue()), scratchGPR);
         fallThrough.append(jit.branchPtr(CCallHelpers::NotEqual, scratchGPR, CCallHelpers::TrustedImmPtr(accessCase.uid())));
+#endif
     }
 
     auto emitDefaultGuard = [&] () {
@@ -5129,7 +5140,7 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
 
         if (!hasConstantIdentifier) {
             if (entry->requiresIdentifierNameMatch()) {
-                if (entry->uid()->isSymbol())
+                if (uidIsSymbol(entry->uid()))
                     needsSymbolPropertyCheck = true;
                 else
                     needsStringPropertyCheck = true;
@@ -5214,7 +5225,7 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
                 for (unsigned i = keys.size(); i--;) {
                     fallThrough.link(&jit);
                     fallThrough.shrink(0);
-                    if (keys[i]->requiresIdentifierNameMatch() && !keys[i]->uid()->isSymbol())
+                    if (keys[i]->requiresIdentifierNameMatch() && !uidIsSymbol(keys[i]->uid()))
                         generateWithGuard(i, keys[i].get(), fallThrough);
                 }
 
@@ -5243,7 +5254,7 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
                 for (unsigned i = keys.size(); i--;) {
                     fallThrough.link(&jit);
                     fallThrough.shrink(0);
-                    if (keys[i]->requiresIdentifierNameMatch() && keys[i]->uid()->isSymbol())
+                    if (keys[i]->requiresIdentifierNameMatch() && uidIsSymbol(keys[i]->uid()))
                         generateWithGuard(i, keys[i].get(), fallThrough);
                 }
 
@@ -7715,7 +7726,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                                 switch (accessCase.m_type) {
                                 case AccessCase::GetGetter:
                                 case AccessCase::Load:
-                                    code = vm.getCTIStub(accessCase.uid()->isSymbol() ? CommonJITThunkID::GetByValWithSymbolLoadOwnPropertyHandler : CommonJITThunkID::GetByValWithStringLoadOwnPropertyHandler).retagged<JITStubRoutinePtrTag>();
+                                    code = vm.getCTIStub(uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::GetByValWithSymbolLoadOwnPropertyHandler : CommonJITThunkID::GetByValWithStringLoadOwnPropertyHandler).retagged<JITStubRoutinePtrTag>();
                                     break;
                                 case AccessCase::IndexedUndefinedKeyLoad:
                                     code = vm.getCTIStub(CommonJITThunkID::GetByValWithUndefinedKeyLoadOwnPropertyHandler).retagged<JITStubRoutinePtrTag>();
@@ -7736,7 +7747,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                                 switch (accessCase.m_type) {
                                 case AccessCase::GetGetter:
                                 case AccessCase::Load:
-                                    code = vm.getCTIStub(accessCase.uid()->isSymbol() ? CommonJITThunkID::GetByValWithSymbolLoadPrototypePropertyHandler : CommonJITThunkID::GetByValWithStringLoadPrototypePropertyHandler).retagged<JITStubRoutinePtrTag>();
+                                    code = vm.getCTIStub(uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::GetByValWithSymbolLoadPrototypePropertyHandler : CommonJITThunkID::GetByValWithStringLoadPrototypePropertyHandler).retagged<JITStubRoutinePtrTag>();
                                     break;
                                 case AccessCase::IndexedUndefinedKeyLoad:
                                     code = vm.getCTIStub(CommonJITThunkID::GetByValWithUndefinedKeyLoadPrototypePropertyHandler).retagged<JITStubRoutinePtrTag>();
@@ -7773,7 +7784,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                             MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                             switch (accessCase.m_type) {
                             case AccessCase::Miss:
-                                code = vm.getCTIStub(accessCase.uid()->isSymbol() ? CommonJITThunkID::GetByValWithSymbolMissHandler : CommonJITThunkID::GetByValWithStringMissHandler).retagged<JITStubRoutinePtrTag>();
+                                code = vm.getCTIStub(uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::GetByValWithSymbolMissHandler : CommonJITThunkID::GetByValWithStringMissHandler).retagged<JITStubRoutinePtrTag>();
                                 break;
                             case AccessCase::IndexedUndefinedKeyMiss:
                                 code = vm.getCTIStub(CommonJITThunkID::GetByValWithUndefinedKeyMissHandler).retagged<JITStubRoutinePtrTag>();
@@ -7821,17 +7832,17 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                             MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                             if (accessCase.m_type == AccessCase::CustomAccessorGetter) {
                                 if (Options::useDOMJIT() && access.domAttribute() && access.domAttribute()->domJIT) {
-                                    code = compileGetByDOMJITHandler(codeBlock, access.domAttribute()->domJIT, accessCase.uid()->isSymbol());
+                                    code = compileGetByDOMJITHandler(codeBlock, access.domAttribute()->domJIT, uidIsSymbol(accessCase.uid()));
                                     if (!code)
                                         return AccessGenerationResult::GaveUp;
                                 } else {
-                                    if (accessCase.uid()->isSymbol())
+                                    if (uidIsSymbol(accessCase.uid()))
                                         code = vm.getCTIStub(CommonJITThunkID::GetByValWithSymbolCustomAccessorHandler).retagged<JITStubRoutinePtrTag>();
                                     else
                                         code = vm.getCTIStub(CommonJITThunkID::GetByValWithStringCustomAccessorHandler).retagged<JITStubRoutinePtrTag>();
                                 }
                             } else {
-                                if (accessCase.uid()->isSymbol())
+                                if (uidIsSymbol(accessCase.uid()))
                                     code = vm.getCTIStub(CommonJITThunkID::GetByValWithSymbolCustomValueHandler).retagged<JITStubRoutinePtrTag>();
                                 else
                                     code = vm.getCTIStub(CommonJITThunkID::GetByValWithStringCustomValueHandler).retagged<JITStubRoutinePtrTag>();
@@ -7853,7 +7864,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                                 currStructure = object->structure();
                             if (isValidOffset(accessCase.m_offset))
                                 currStructure->startWatchingPropertyForReplacements(vm, accessCase.offset());
-                            auto code = vm.getCTIStub(accessCase.uid()->isSymbol() ? CommonJITThunkID::GetByValWithSymbolGetterHandler : CommonJITThunkID::GetByValWithStringGetterHandler).retagged<JITStubRoutinePtrTag>();
+                            auto code = vm.getCTIStub(uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::GetByValWithSymbolGetterHandler : CommonJITThunkID::GetByValWithStringGetterHandler).retagged<JITStubRoutinePtrTag>();
                             auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
                             connectWatchpointSets(stub.get(), WTF::move(watchedConditions), WTF::move(additionalWatchpointSets));
                             return finishPreCompiledCodeGeneration(WTF::move(stub));
@@ -7886,7 +7897,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                         MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                         switch (accessCase.m_type) {
                         case AccessCase::Replace:
-                            code = vm.getCTIStub(accessCase.uid()->isSymbol() ? CommonJITThunkID::PutByValWithSymbolReplaceHandler : CommonJITThunkID::PutByValWithStringReplaceHandler).retagged<JITStubRoutinePtrTag>();
+                            code = vm.getCTIStub(uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::PutByValWithSymbolReplaceHandler : CommonJITThunkID::PutByValWithStringReplaceHandler).retagged<JITStubRoutinePtrTag>();
                             break;
                         case AccessCase::IndexedUndefinedKeyReplace:
                             code = vm.getCTIStub(CommonJITThunkID::PutByValWithUndefinedKeyReplaceHandler).retagged<JITStubRoutinePtrTag>();
@@ -7933,7 +7944,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                         MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                         switch (accessCase.m_type) {
                         case AccessCase::Transition:
-                            if (accessCase.uid()->isSymbol())
+                            if (uidIsSymbol(accessCase.uid()))
                                 code = selectTransitionHandler(CommonJITThunkID::PutByValWithSymbolTransitionNonAllocatingHandler, CommonJITThunkID::PutByValWithSymbolTransitionReallocatingOutOfLineHandler, CommonJITThunkID::PutByValWithSymbolTransitionNewlyAllocatingHandler, CommonJITThunkID::PutByValWithSymbolTransitionReallocatingHandler);
                             else
                                 code = selectTransitionHandler(CommonJITThunkID::PutByValWithStringTransitionNonAllocatingHandler, CommonJITThunkID::PutByValWithStringTransitionReallocatingOutOfLineHandler, CommonJITThunkID::PutByValWithStringTransitionNewlyAllocatingHandler, CommonJITThunkID::PutByValWithStringTransitionReallocatingHandler);
@@ -7973,12 +7984,12 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
 
                             MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                             if (accessCase.m_type == AccessCase::CustomAccessorSetter) {
-                                if (accessCase.uid()->isSymbol())
+                                if (uidIsSymbol(accessCase.uid()))
                                     code = vm.getCTIStub(CommonJITThunkID::PutByValWithSymbolCustomAccessorHandler).retagged<JITStubRoutinePtrTag>();
                                 else
                                     code = vm.getCTIStub(CommonJITThunkID::PutByValWithStringCustomAccessorHandler).retagged<JITStubRoutinePtrTag>();
                             } else {
-                                if (accessCase.uid()->isSymbol())
+                                if (uidIsSymbol(accessCase.uid()))
                                     code = vm.getCTIStub(CommonJITThunkID::PutByValWithSymbolCustomValueHandler).retagged<JITStubRoutinePtrTag>();
                                 else
                                     code = vm.getCTIStub(CommonJITThunkID::PutByValWithStringCustomValueHandler).retagged<JITStubRoutinePtrTag>();
@@ -8003,9 +8014,9 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
 
                             MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                             if (isStrict)
-                                code = vm.getCTIStub(accessCase.uid()->isSymbol() ? CommonJITThunkID::PutByValWithSymbolStrictSetterHandler : CommonJITThunkID::PutByValWithStringStrictSetterHandler).retagged<JITStubRoutinePtrTag>();
+                                code = vm.getCTIStub(uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::PutByValWithSymbolStrictSetterHandler : CommonJITThunkID::PutByValWithStringStrictSetterHandler).retagged<JITStubRoutinePtrTag>();
                             else
-                                code = vm.getCTIStub(accessCase.uid()->isSymbol() ? CommonJITThunkID::PutByValWithSymbolSloppySetterHandler : CommonJITThunkID::PutByValWithStringSloppySetterHandler).retagged<JITStubRoutinePtrTag>();
+                                code = vm.getCTIStub(uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::PutByValWithSymbolSloppySetterHandler : CommonJITThunkID::PutByValWithStringSloppySetterHandler).retagged<JITStubRoutinePtrTag>();
                             auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
                             connectWatchpointSets(stub.get(), WTF::move(watchedConditions), WTF::move(additionalWatchpointSets));
                             return finishPreCompiledCodeGeneration(WTF::move(stub));
@@ -8029,7 +8040,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                     collectConditions(accessCase, watchedConditions, checkingConditions);
                     if (checkingConditions.isEmpty()) {
                         MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
-                        if (accessCase.uid()->isSymbol())
+                        if (uidIsSymbol(accessCase.uid()))
                             code = vm.getCTIStub(accessCase.m_type == AccessCase::InHit ? CommonJITThunkID::InByValWithSymbolHitHandler : CommonJITThunkID::InByValWithSymbolMissHandler).retagged<JITStubRoutinePtrTag>();
                         else
                             code = vm.getCTIStub(accessCase.m_type == AccessCase::InHit ? CommonJITThunkID::InByValWithStringHitHandler : CommonJITThunkID::InByValWithStringMissHandler).retagged<JITStubRoutinePtrTag>();
@@ -8056,13 +8067,13 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                     CommonJITThunkID thunkID = CommonJITThunkID::DeleteByValWithStringDeleteHandler;
                     switch (accessCase.m_type) {
                     case AccessCase::Delete:
-                        thunkID = accessCase.uid()->isSymbol() ? CommonJITThunkID::DeleteByValWithSymbolDeleteHandler : CommonJITThunkID::DeleteByValWithStringDeleteHandler;
+                        thunkID = uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::DeleteByValWithSymbolDeleteHandler : CommonJITThunkID::DeleteByValWithStringDeleteHandler;
                         break;
                     case AccessCase::DeleteNonConfigurable:
-                        thunkID = accessCase.uid()->isSymbol() ? CommonJITThunkID::DeleteByValWithSymbolDeleteNonConfigurableHandler : CommonJITThunkID::DeleteByValWithStringDeleteNonConfigurableHandler;
+                        thunkID = uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::DeleteByValWithSymbolDeleteNonConfigurableHandler : CommonJITThunkID::DeleteByValWithStringDeleteNonConfigurableHandler;
                         break;
                     case AccessCase::DeleteMiss:
-                        thunkID = accessCase.uid()->isSymbol() ? CommonJITThunkID::DeleteByValWithSymbolDeleteMissHandler : CommonJITThunkID::DeleteByValWithStringDeleteMissHandler;
+                        thunkID = uidIsSymbol(accessCase.uid()) ? CommonJITThunkID::DeleteByValWithSymbolDeleteMissHandler : CommonJITThunkID::DeleteByValWithStringDeleteMissHandler;
                         break;
                     default:
                         break;
@@ -8159,7 +8170,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
 #endif
             }
             m_failAndRepatch.append(notInt32);
-        } else if (accessCase.requiresIdentifierNameMatch() && !accessCase.uid()->isSymbol()) {
+        } else if (accessCase.requiresIdentifierNameMatch() && !uidIsSymbol(accessCase.uid())) {
             CCallHelpers::JumpList notString;
             GPRReg propertyGPR = m_propertyCache.propertyGPR();
             if (!m_propertyCache.propertyIsString) {
@@ -8174,7 +8185,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
             jit.loadPtr(MacroAssembler::Address(propertyGPR, JSString::offsetOfValue()), m_scratchGPR);
             m_failAndRepatch.append(jit.branchIfRopeStringImpl(m_scratchGPR));
             m_failAndRepatch.append(notString);
-        } else if (accessCase.requiresIdentifierNameMatch() && accessCase.uid()->isSymbol()) {
+        } else if (accessCase.requiresIdentifierNameMatch() && uidIsSymbol(accessCase.uid())) {
             CCallHelpers::JumpList notSymbol;
             if (!m_propertyCache.propertyIsSymbol) {
                 GPRReg propertyGPR = m_propertyCache.propertyGPR();

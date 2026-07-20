@@ -318,7 +318,11 @@ struct AbstractModuleRecord::ResolveQuery {
     // The module record is not marked from the GC. But these records are reachable from the JSGlobalObject.
     // So we don't care the reachability to this record.
     AbstractModuleRecord* moduleRecord;
+#if USE(BUN_JSC_ADDITIONS)
+    FiberAwareRefPtr exportName;
+#else
     RefPtr<UniquedStringImpl> exportName;
+#endif
 };
 
 inline unsigned NODELETE AbstractModuleRecord::ResolveQuery::Hash::hash(const ResolveQuery& query)
@@ -1497,14 +1501,35 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
 
 static String printableName(const RefPtr<UniquedStringImpl>& uid)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(uid.get())) {
+        uintptr_t word = reinterpret_cast<uintptr_t>(uid.get());
+        unsigned len = inlinePropertyKeyLength(word);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+        if (inlinePropertyKeyIs8Bit(word))
+            return WTF::makeString('\'', StringView(std::span<const Latin1Character> { bytes + 1, len }), '\'');
+        return WTF::makeString('\'', StringView(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len }), '\'');
+    }
     if (uid->isSymbol())
         return uid.get();
     return WTF::makeString('\'', StringView(uid.get()), '\'');
+#else
+    if (uid->isSymbol())
+        return uid.get();
+    return WTF::makeString('\'', StringView(uid.get()), '\'');
+#endif
 }
 
 static String printableName(const Identifier& ident)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    UniquedStringImpl* impl = ident.impl();
+    if (isInlinePropertyKey(impl))
+        return WTF::makeString('\'', ident.string(), '\'');
+    return printableName(RefPtr<UniquedStringImpl>(impl));
+#else
     return printableName(ident.impl());
+#endif
 }
 
 ScriptFetchParameters::Type AbstractModuleRecord::moduleType() const

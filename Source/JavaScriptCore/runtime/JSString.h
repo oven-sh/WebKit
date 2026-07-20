@@ -1063,9 +1063,11 @@ ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) co
         // Phase D.2 producer + D.4 coherence: only the 8-bit small-inline
         // encoding is the canonical Identifier form. 16-bit inline and
         // big-inline (8..15) atomize, then fromString() re-canonicalizes
-        // to encodeInline8 if the content is 2..7 Latin-1.
-        if (is8Bit() && length() <= maxInlineLength8)
-            return Identifier::fromFiberWord(m_fiber);
+        // to encodeInline8 if the content is 2..5 Latin-1.
+        if constexpr (enableIdentifierFiberWords) {
+            if (is8Bit() && length() <= maxFiberWordKeyLength)
+                return Identifier::fromFiberWord(m_fiber);
+        }
         return Identifier::fromString(getVM(globalObject), Ref { *resolveInlineToAtomString(globalObject) });
     }
 #endif

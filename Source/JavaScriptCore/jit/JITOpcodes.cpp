@@ -798,9 +798,9 @@ void JIT::compileOpStrictEq(const JSInstruction* currentInstruction)
         loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT5);
 #if USE(BUN_JSC_ADDITIONS)
         addSlowCase(branchIfActualRopeStringImpl(regT5));
-        Jump isInline = branchIfInlineStringImpl(regT5);
+        // Inline small strings cannot pointer-equal the heap AtomStringImpl* constant below; route to slow path.
+        addSlowCase(branchIfInlineStringImpl(regT5));
         addSlowCase(branchTest32(Zero, Address(regT5, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
-        isInline.link(this);
 #else
         addSlowCase(branchIfRopeStringImpl(regT5));
         addSlowCase(branchTest32(Zero, Address(regT5, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
@@ -980,9 +980,9 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
             loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT2);
 #if USE(BUN_JSC_ADDITIONS)
             addSlowCase(branchIfActualRopeStringImpl(regT2));
-            Jump isInline = branchIfInlineStringImpl(regT2);
+            // Inline small strings cannot pointer-equal the heap AtomStringImpl* constant below; route to slow path.
+            addSlowCase(branchIfInlineStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
-            isInline.link(this);
 #else
             addSlowCase(branchIfRopeStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
@@ -996,9 +996,9 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
             loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT2);
 #if USE(BUN_JSC_ADDITIONS)
             addSlowCase(branchIfActualRopeStringImpl(regT2));
-            Jump isInline = branchIfInlineStringImpl(regT2);
+            // Inline small strings cannot pointer-equal the heap AtomStringImpl* constant below; route to slow path.
+            addSlowCase(branchIfInlineStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
-            isInline.link(this);
 #else
             addSlowCase(branchIfRopeStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));

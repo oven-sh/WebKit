@@ -271,9 +271,15 @@ template<typename T>
 template<typename U>
 inline unsigned JSGlobalObject::WeakCustomGetterOrSetterHash<T>::hash(const PropertyName& propertyName, typename U::CustomFunctionPointer functionPointer, const ClassInfo* classInfo)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (!propertyName.isNull())
+        return WTF::computeHash(functionPointer, uidHash(propertyName.uid()), classInfo);
+    return WTF::computeHash(functionPointer, classInfo);
+#else
     if (!propertyName.isNull())
         return WTF::computeHash(functionPointer, propertyName.uid()->existingSymbolAwareHash(), classInfo);
     return WTF::computeHash(functionPointer, classInfo);
+#endif
 }
 
 inline JSArray* constructEmptyArray(JSGlobalObject* globalObject, ArrayAllocationProfile* profile, unsigned initialLength = 0, JSValue newTarget = JSValue())

@@ -26,6 +26,9 @@
 #pragma once
 
 #include "ImplementationVisibility.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "ParserModes.h"
 #include "ParserTokens.h"
 #include <JavaScriptCore/ConstructorKind.h>
@@ -119,8 +122,13 @@ private:
 
 inline SourceProviderCacheItem::~SourceProviderCacheItem()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    for (unsigned i = 0; i < usedVariablesCount; ++i)
+        uidDeref(m_variables[i].get());
+#else
     for (unsigned i = 0; i < usedVariablesCount; ++i)
         m_variables[i]->deref();
+#endif
 }
 
 inline std::unique_ptr<SourceProviderCacheItem> SourceProviderCacheItem::create(const SourceProviderCacheItemCreationParameters& parameters)
@@ -159,7 +167,11 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
     ASSERT(expectedSuperBinding == static_cast<unsigned>(parameters.expectedSuperBinding));
     for (unsigned i = 0; i < usedVariablesCount; ++i) {
         auto* pointer = parameters.usedVariables[i];
+#if USE(BUN_JSC_ADDITIONS)
+        uidRef(pointer);
+#else
         pointer->ref();
+#endif
         m_variables[i] = pointer;
     }
 }

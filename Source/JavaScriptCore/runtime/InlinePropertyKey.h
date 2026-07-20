@@ -33,6 +33,17 @@ namespace JSC {
 static constexpr uintptr_t inlinePropertyKeyTag = 0x2;
 static constexpr uintptr_t inlinePropertyKeyTagMask = 0x3;
 
+// Canonical fiber-word keys cap at 5 chars so the whole word fits in bits 0..47.
+// CompactPropertyTableEntry / StructureTransitionTable::Hash::Key pack attributes
+// into bits 48..63 of a UniquedStringImpl* slot; a 6/7-char payload there would
+// be truncated. 6..7-char names stay atom-backed for D.4 coherence.
+static constexpr unsigned maxFiberWordKeyLength = 5;
+
+// Compile-time killswitch for the D.2/D.4 producer paths. Flip to false to
+// disable fiber-word Identifiers in one place (debug: 'shims broken' vs
+// 'producer reached unguarded site') without reverting commits.
+static constexpr bool enableIdentifierFiberWords = true;
+
 ALWAYS_INLINE bool isInlinePropertyKey(const UniquedStringImpl* impl)
 {
     return (reinterpret_cast<uintptr_t>(impl) & inlinePropertyKeyTagMask) == inlinePropertyKeyTag;
@@ -137,8 +148,20 @@ struct FiberAwareRefDerefTraits {
 };
 
 using FiberAwareRefPtr = RefPtr<UniquedStringImpl, WTF::RawPtrTraits<UniquedStringImpl>, FiberAwareRefDerefTraits>;
-using FiberAwarePackedRefPtr = RefPtr<UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>, FiberAwareRefDerefTraits>;
+// PackedPtrTraits stores only EFFECTIVE_ADDRESS_WIDTH/8 = 6 bytes; a 6-7 char
+// Latin-1 fiber word uses bytes 6-7, so Packed storage would truncate it.
+// Alias to the full-width RawPtrTraits RefPtr and accept +2 bytes per entry.
+using FiberAwarePackedRefPtr = FiberAwareRefPtr;
 
+} // namespace JSC
+
+#else // USE(BUN_JSC_ADDITIONS)
+
+namespace JSC {
+// Transparent fallbacks so bare uidIsSymbol() / isInlinePropertyKey() at call
+// sites compile in non-BUN builds without #if guards at each one.
+ALWAYS_INLINE bool isInlinePropertyKey(const WTF::UniquedStringImpl*) { return false; }
+ALWAYS_INLINE bool uidIsSymbol(const WTF::UniquedStringImpl* impl) { return impl->isSymbol(); }
 } // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)

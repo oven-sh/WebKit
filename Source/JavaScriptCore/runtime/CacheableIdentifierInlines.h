@@ -28,6 +28,9 @@
 #include "CacheableIdentifier.h"
 
 #include "Identifier.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "IdentifierInlines.h"
+#endif
 #include "JSCJSValueInlines.h"
 #include "JSCell.h"
 #include "VM.h"
@@ -61,9 +64,14 @@ inline CacheableIdentifier CacheableIdentifier::createFromSharedStub(UniquedStri
 inline CacheableIdentifier CacheableIdentifier::createFromCell(JSCell* i)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    // Phase D: inline JSStrings are stored as-is; uid() returns the fiber word
-    // (tagged UniquedStringImpl*) and isSymbol()/hash() branch on the tag via
-    // uidIsSymbol/uidHash so no atom materialization is required here.
+    // Phase D: only the small-8-bit-inline form (2..5 Latin-1 chars) is a
+    // canonical fiber-word key; big-inline / 16-bit-inline span two words and
+    // must be atomized in place so uid()/getValueImpl() yield a real atom.
+    if (i->isString()) {
+        JSString* s = uncheckedDowncast<JSString>(i);
+        if (s->isInline() && !(s->is8Bit() && s->length() <= maxFiberWordKeyLength))
+            s->resolveInlineToAtomString(nullptr);
+    }
 #endif
     return CacheableIdentifier(i);
 }
@@ -96,12 +104,15 @@ inline UniquedStringImpl* CacheableIdentifier::uid() const
     ASSERT(isStringCell());
     JSString* string = uncheckedDowncast<JSString>(cell());
 #if USE(BUN_JSC_ADDITIONS)
-    // Phase D: an inline JSString's fiber word is itself the uniqued key
-    // (content-unique, bit 1 tagged). Return it directly as a tagged
-    // UniquedStringImpl*; callers use uidIsSymbol/uidHash to branch.
-    if (string->isInline())
+    // D.4 coherence: return the canonical fiber word for any 2..5-char Latin-1
+    // key so PropertyName / PropertyTable::find hit regardless of whether the
+    // cell is inline or already atom-backed (string literals).
+    if (string->isInline() && string->is8Bit() && string->length() <= maxFiberWordKeyLength)
         return std::bit_cast<UniquedStringImpl*>(string->inlineFiberWord());
-    return std::bit_cast<UniquedStringImpl*>(string->getValueImpl());
+    StringImpl* impl = string->getValueImpl();
+    if (uintptr_t fiber = Identifier::canonicalFiberWordFor(impl))
+        return std::bit_cast<UniquedStringImpl*>(fiber);
+    return std::bit_cast<UniquedStringImpl*>(impl);
 #else
     return std::bit_cast<UniquedStringImpl*>(string->getValueImpl());
 #endif
@@ -138,9 +149,9 @@ inline bool CacheableIdentifier::isCacheableIdentifierCell(JSCell* cell)
         return false;
     JSString* string = uncheckedDowncast<JSString>(cell);
 #if USE(BUN_JSC_ADDITIONS)
-    // Phase D: an inline JSString's fiber word is content-unique and acts as
-    // its own uniqued key, so it is cacheable without atom materialization.
-    if (string->isInline())
+    // Phase D: only small-8-bit-inline (2..5 Latin-1) has a content-unique
+    // single-word key usable as a uid without atomization.
+    if (string->isInline() && string->is8Bit() && string->length() <= maxFiberWordKeyLength)
         return true;
 #endif
     if (const StringImpl* impl = string->tryGetValueImpl())
@@ -163,15 +174,24 @@ inline GCOwnedDataScope<const UniquedStringImpl*> CacheableIdentifier::getCachea
         return { };
     JSString* string = uncheckedDowncast<JSString>(cell);
 #if USE(BUN_JSC_ADDITIONS)
-    // Phase D: return the fiber word itself as the uniqued key. It is
-    // content-unique so pointer-identity IC compares remain sound, and
-    // downstream hash/isSymbol queries branch via uidHash/uidIsSymbol.
-    if (string->isInline())
-        return { cell, std::bit_cast<const UniquedStringImpl*>(string->inlineFiberWord()) };
-#endif
+    // D.4 coherence: hand back the canonical fiber word so downstream
+    // PropertyName / CacheableIdentifier::uid() match the parser's key.
+    if (string->isInline()) {
+        if (string->is8Bit() && string->length() <= maxFiberWordKeyLength)
+            return { cell, std::bit_cast<const UniquedStringImpl*>(string->inlineFiberWord()) };
+        return { cell, string->resolveInlineToAtomString(nullptr) };
+    }
+    if (const StringImpl* impl = string->tryGetValueImpl(); impl && impl->isAtom()) {
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(impl))
+            return { cell, std::bit_cast<const UniquedStringImpl*>(fiber) };
+        return { cell, static_cast<const AtomStringImpl*>(impl) };
+    }
+    return { };
+#else
     if (const StringImpl* impl = string->tryGetValueImpl(); impl && impl->isAtom())
         return { cell, static_cast<const AtomStringImpl*>(impl) };
     return { };
+#endif
 }
 
 inline GCOwnedDataScope<const UniquedStringImpl*> CacheableIdentifier::getCacheableIdentifier(JSValue value)

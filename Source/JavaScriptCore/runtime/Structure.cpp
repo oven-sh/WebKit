@@ -1426,8 +1426,8 @@ void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArrayBuilder& 
     
     table->forEachProperty([&](const auto& entry) {
         ASSERT(!isQuickPropertyAccessAllowedForEnumeration() || !(entry.attributes() & PropertyAttribute::DontEnum));
-        ASSERT(!isQuickPropertyAccessAllowedForEnumeration() || !entry.key()->isSymbol());
-        if (entry.key()->isSymbol()) {
+        ASSERT(!isQuickPropertyAccessAllowedForEnumeration() || !uidIsSymbol(entry.key()));
+        if (uidIsSymbol(entry.key())) {
             foundSymbol = true;
             if (propertyNames.propertyNameMode() != PropertyNameMode::Symbols)
                 return IterationStatus::Continue;
@@ -1440,7 +1440,7 @@ void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArrayBuilder& 
         // To ensure the order defined in the spec, we append symbols at the last elements of keys.
         // https://tc39.es/ecma262/#sec-ordinaryownpropertykeys
         table->forEachProperty([&](const auto& entry) {
-            if (entry.key()->isSymbol())
+            if (uidIsSymbol(entry.key()))
                 checkDontEnumAndAdd(entry);
             return IterationStatus::Continue;
         });

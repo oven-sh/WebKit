@@ -2628,7 +2628,7 @@ private:
         }
 
         case CheckIdent: {
-            if (node->uidOperand()->isSymbol())
+            if (uidIsSymbol(node->uidOperand()))
                 fixEdge<SymbolUse>(node->child1());
             else
                 fixEdge<StringIdentUse>(node->child1());

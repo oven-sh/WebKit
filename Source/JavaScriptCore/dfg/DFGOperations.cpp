@@ -4990,6 +4990,19 @@ JSC_DEFINE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject* globa
         auto propertyName = asString(key)->toAtomString(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, false);
 
+#if USE(BUN_JSC_ADDITIONS)
+        UniquedStringImpl* uid = propertyName.data;
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool result = thisObject->hasOwnProperty(globalObject, uid, slot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+
+        HasOwnPropertyCache* hasOwnPropertyCache = vm.hasOwnPropertyCache();
+        ASSERT(hasOwnPropertyCache);
+        hasOwnPropertyCache->tryAdd(slot, thisObject, uid, result);
+        OPERATION_RETURN(scope, result);
+#else
         PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
         bool result = thisObject->hasOwnProperty(globalObject, propertyName.data, slot);
         OPERATION_RETURN_IF_EXCEPTION(scope, false);
@@ -4998,6 +5011,7 @@ JSC_DEFINE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject* globa
         ASSERT(hasOwnPropertyCache);
         hasOwnPropertyCache->tryAdd(slot, thisObject, propertyName.data, result);
         OPERATION_RETURN(scope, result);
+#endif
     }
 
     Identifier propertyName = key.toPropertyKey(globalObject);

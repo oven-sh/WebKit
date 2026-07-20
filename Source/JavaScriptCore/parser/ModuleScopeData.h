@@ -36,7 +36,12 @@ class ModuleScopeData : public RefCounted<ModuleScopeData> {
     WTF_MAKE_NONCOPYABLE(ModuleScopeData);
     WTF_MAKE_TZONE_ALLOCATED(ModuleScopeData);
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Keys/values may be inline fiber words (not real StringImpl*); FiberAwareRefPtr skips ref()/deref() on those.
+    typedef UncheckedKeyHashMap<FiberAwareRefPtr, Vector<FiberAwareRefPtr>, IdentifierRepHash, HashTraits<FiberAwareRefPtr>> IdentifierAliasMap;
+#else
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Vector<RefPtr<UniquedStringImpl>>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> IdentifierAliasMap;
+#endif
 
     static Ref<ModuleScopeData> create() { return adoptRef(*new ModuleScopeData); }
 
@@ -49,7 +54,11 @@ public:
 
     void exportBinding(const Identifier& localName, const Identifier& exportedName)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        m_exportedBindings.add(localName.impl(), Vector<FiberAwareRefPtr>()).iterator->value.append(exportedName.impl());
+#else
         m_exportedBindings.add(localName.impl(), Vector<RefPtr<UniquedStringImpl>>()).iterator->value.append(exportedName.impl());
+#endif
     }
 
     void exportBinding(const Identifier& localName)

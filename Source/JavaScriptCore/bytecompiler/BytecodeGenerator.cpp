@@ -5046,11 +5046,19 @@ RegisterID* BytecodeGenerator::emitGetTemplateObject(RegisterID* dst, TaggedTemp
     for (; templateString; templateString = templateString->next()) {
         auto* string = templateString->value();
         ASSERT(string->raw());
+#if USE(BUN_JSC_ADDITIONS)
+        rawStrings.append(string->raw()->string());
+        if (!string->cooked())
+            cookedStrings.append(std::nullopt);
+        else
+            cookedStrings.append(string->cooked()->string());
+#else
         rawStrings.append(string->raw()->impl());
         if (!string->cooked())
             cookedStrings.append(std::nullopt);
         else
             cookedStrings.append(string->cooked()->impl());
+#endif
     }
     RefPtr<RegisterID> constant = addTemplateObjectConstant(TemplateObjectDescriptor::create(WTF::move(rawStrings), WTF::move(cookedStrings)), taggedTemplate->endOffset());
     if (!dst)

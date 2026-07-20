@@ -352,6 +352,23 @@ struct HashTable {
         if (valueIndex == -1)
             return nullptr;
 
+#if USE(BUN_JSC_ADDITIONS)
+        uintptr_t uidWord = reinterpret_cast<uintptr_t>(uid);
+        if (isInlinePropertyKey(uidWord)) [[unlikely]] {
+            auto keySpan = inlinePropertyKeySpan8(uidWord);
+            while (true) {
+                auto& tableKey = values[valueIndex].m_key;
+                if (!tableKey.isNull() && tableKey.length() == keySpan.size()
+                    && !memcmp(tableKey.characters(), keySpan.data(), keySpan.size()))
+                    return &values[valueIndex];
+                indexEntry = index[indexEntry].next;
+                if (indexEntry == -1)
+                    return nullptr;
+                valueIndex = index[indexEntry].value;
+                ASSERT(valueIndex != -1);
+            }
+        }
+#endif
         while (true) {
             if (!values[valueIndex].m_key.isNull() && WTF::equal(uid, values[valueIndex].m_key))
                 return &values[valueIndex];

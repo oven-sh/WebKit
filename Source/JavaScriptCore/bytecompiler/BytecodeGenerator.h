@@ -1280,7 +1280,11 @@ namespace JSC {
             Optimize,
             DoNotOptimize
         };
+#if USE(BUN_JSC_ADDITIONS)
+        typedef UncheckedKeyHashMap<FiberAwareRefPtr, TDZNecessityLevel, IdentifierRepHash> TDZMap;
+#else
         typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, TDZNecessityLevel, IdentifierRepHash> TDZMap;
+#endif
 
     public:
         JSString* addStringConstant(const Identifier&);
@@ -1355,7 +1359,11 @@ namespace JSC {
 
         // Some of these objects keep pointers to one another. They are arranged
         // to ensure a sane destruction order that avoids references to freed memory.
+#if USE(BUN_JSC_ADDITIONS)
+        UncheckedKeyHashSet<FiberAwareRefPtr, IdentifierRepHash> m_functions;
+#else
         UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash> m_functions;
+#endif
         RegisterID m_ignoredResultRegister;
         RegisterID m_thisRegister;
         RegisterID m_calleeRegister;

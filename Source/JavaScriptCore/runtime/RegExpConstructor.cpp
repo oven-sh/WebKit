@@ -187,7 +187,13 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorDollar, (JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.$N getters require RegExp constructor as |this|"_s);
+#if USE(BUN_JSC_ADDITIONS)
+    // "$1".."$9" are 2-char fiber-word keys; second char is at payload byte 2.
+    auto* uid = propertyName.uid();
+    unsigned N = (isInlinePropertyKey(uid) ? inlinePropertyKeySpan8(reinterpret_cast<const uintptr_t&>(uid))[1] : uid->at(1)) - '0';
+#else
     unsigned N = propertyName.uid()->at(1) - '0';
+#endif
     ASSERT(N >= 1 && N <= 9);
     RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->regExpGlobalData().getBackref(globalObject, N)));
 }

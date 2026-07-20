@@ -320,6 +320,25 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
             ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
             return FindResult { entryIndex, index, entry.offset(), entry.attributes() };
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // Defensive fiber↔atom bridge: if dual representation survives anywhere
+        // (an atom entered the table via a path that bypassed canonicalFiberWordFor,
+        // or vice-versa), content-compare when exactly one side is a fiber word.
+        else {
+            UniquedStringImpl* entryKey = entry.key();
+            bool keyIsFiber = isInlinePropertyKey(key);
+            bool entryIsFiber = isInlinePropertyKey(entryKey);
+            if (keyIsFiber != entryIsFiber) [[unlikely]] {
+                const UniquedStringImpl* implSide = keyIsFiber ? entryKey : key;
+                uintptr_t fiberWord = inlinePropertyKeyWord(keyIsFiber ? key : entryKey);
+                if (!implSide->isSymbol() && inlinePropertyKeyIs8Bit(fiberWord)
+                    && WTF::equal(implSide, inlinePropertyKeySpan8(fiberWord))) {
+                    ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
+                    return FindResult { entryIndex, index, entry.offset(), entry.attributes() };
+                }
+            }
+        }
+#endif
 
 #if DUMP_PROPERTYMAP_STATS
         ++propertyTableStats->numCollisions;

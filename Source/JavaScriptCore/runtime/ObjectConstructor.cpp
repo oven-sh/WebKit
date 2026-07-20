@@ -421,7 +421,12 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
     }
 
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // entry.key() may be a fiber-word-tagged UniquedStringImpl*; use fiber-aware ref/deref.
+        Vector<FiberAwareRefPtr, 8> properties;
+#else
         Vector<RefPtr<UniquedStringImpl>, 8> properties;
+#endif
         MarkedArgumentBuffer values;
         bool canUseFastPath = false;
         if (!target->canHaveExistingOwnIndexedProperties() && !target->hasNonReifiedStaticProperties()) {
@@ -432,8 +437,13 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
 
+#if USE(BUN_JSC_ADDITIONS)
+                    if (uidIsSymbol(entry.key()))
+                        return true;
+#else
                     if (entry.key()->isSymbol())
                         return true;
+#endif
 
                     properties.append(entry.key());
                     values.appendWithCrashOnOverflow(target->getDirect(entry.offset()));
@@ -469,7 +479,15 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     auto* newButterfly = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numProperties);
                     for (size_t i = 0; i < numProperties; i++) {
                         const auto& identifier = properties[i];
+#if USE(BUN_JSC_ADDITIONS)
+                        UniquedStringImpl* uid = identifier.get();
+                        JSString* keyString = isInlinePropertyKey(uid)
+                            ? JSString::createInlineFromFiber(vm, inlinePropertyKeyWord(uid))
+                            : jsOwnedString(vm, uid);
+                        newButterfly->setIndex(vm, i, keyString);
+#else
                         newButterfly->setIndex(vm, i, jsOwnedString(vm, identifier.get()));
+#endif
                     }
 
                     targetStructure->setCachedPropertyNames(vm, CachedPropertyNamesKind::EnumerableStrings, newButterfly);
@@ -486,8 +504,16 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                         key = cachedKey;
                 }
 
-                if (!key)
+                if (!key) {
+#if USE(BUN_JSC_ADDITIONS)
+                    UniquedStringImpl* uid = properties[i].get();
+                    key = isInlinePropertyKey(uid)
+                        ? JSString::createInlineFromFiber(vm, inlinePropertyKeyWord(uid))
+                        : jsOwnedString(vm, uid);
+#else
                     key = jsOwnedString(vm, properties[i].get());
+#endif
+                }
 
                 JSArray* entry = nullptr;
                 {
@@ -580,8 +606,13 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
 
+#if USE(BUN_JSC_ADDITIONS)
+                    if (uidIsSymbol(entry.key()))
+                        return true;
+#else
                     if (entry.key()->isSymbol())
                         return true;
+#endif
 
                     namedPropertyValues.appendWithCrashOnOverflow(target->getDirect(entry.offset()));
                     return true;
@@ -885,7 +916,12 @@ static JSValue defineProperties(JSGlobalObject* globalObject, JSObject* object, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // entry.key() may be a fiber-word-tagged UniquedStringImpl*; DefaultRefDerefTraits::refIfNotNull would deref it.
+    Vector<FiberAwareRefPtr, 8> propertyNames;
+#else
     Vector<RefPtr<UniquedStringImpl>, 8> propertyNames;
+#endif
     MarkedArgumentBuffer values;
     bool canUseFastPath = false;
     if (!hasIndexedProperties(properties->indexingType())) {

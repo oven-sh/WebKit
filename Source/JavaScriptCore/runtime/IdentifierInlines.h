@@ -41,10 +41,12 @@ namespace JSC  {
 // JSString::toIdentifier, or any fromString()/fromUid() caller.
 ALWAYS_INLINE uintptr_t Identifier::canonicalFiberWordFor(const StringImpl* impl)
 {
+    if constexpr (!enableIdentifierFiberWords)
+        return 0;
     if (!impl || impl->isSymbol())
         return 0;
     unsigned len = impl->length();
-    if (len < 2 || len > JSString::maxInlineLength8)
+    if (len < 2 || len > maxFiberWordKeyLength)
         return 0;
     if (impl->is8Bit()) [[likely]]
         return JSString::encodeInline8(impl->span8());
@@ -62,10 +64,12 @@ ALWAYS_INLINE uintptr_t Identifier::canonicalFiberWordFor(const StringImpl* impl
 inline Identifier::Identifier(VM& vm, std::span<const Latin1Character> string)
 {
     // Phase D.2 producer: short Latin-1 identifiers live as a tagged fiber word
-    // (no AtomStringImpl materialized). size 0/1 and >7 fall through to add().
-    if (string.size() >= 2 && string.size() <= JSString::maxInlineLength8) {
-        m_bits = JSString::encodeInline8(string);
-        return;
+    // (no AtomStringImpl materialized). size 0/1 and >5 fall through to add().
+    if constexpr (enableIdentifierFiberWords) {
+        if (string.size() >= 2 && string.size() <= maxFiberWordKeyLength) {
+            m_bits = JSString::encodeInline8(string);
+            return;
+        }
     }
     m_bits = reinterpret_cast<uintptr_t>(&add(vm, string).leakRef());
 }
@@ -82,17 +86,19 @@ inline Identifier::Identifier(VM& vm, std::span<const char16_t> string)
 {
     // D.4 coherence: a 16-bit span whose content fits Latin-1 must yield the
     // same fiber word the Latin-1 span ctor would.
-    if (string.size() >= 2 && string.size() <= JSString::maxInlineLength8) {
-        Latin1Character narrowed[JSString::maxInlineLength8];
-        bool allLatin1 = true;
-        for (size_t i = 0; i < string.size(); ++i) {
-            char16_t c = string[i];
-            if (c > 0xff) { allLatin1 = false; break; }
-            narrowed[i] = static_cast<Latin1Character>(c);
-        }
-        if (allLatin1) {
-            m_bits = JSString::encodeInline8({ narrowed, string.size() });
-            return;
+    if constexpr (enableIdentifierFiberWords) {
+        if (string.size() >= 2 && string.size() <= maxFiberWordKeyLength) {
+            Latin1Character narrowed[JSString::maxInlineLength8];
+            bool allLatin1 = true;
+            for (size_t i = 0; i < string.size(); ++i) {
+                char16_t c = string[i];
+                if (c > 0xff) { allLatin1 = false; break; }
+                narrowed[i] = static_cast<Latin1Character>(c);
+            }
+            if (allLatin1) {
+                m_bits = JSString::encodeInline8({ narrowed, string.size() });
+                return;
+            }
         }
     }
     m_bits = reinterpret_cast<uintptr_t>(&add(vm, string).leakRef());
@@ -101,11 +107,13 @@ inline Identifier::Identifier(VM& vm, std::span<const char16_t> string)
 
 ALWAYS_INLINE Identifier::Identifier(VM& vm, ASCIILiteral literal)
 {
-    // D.4 coherence: ASCII is Latin-1; 2..7 chars must be a fiber word.
-    size_t len = literal.length();
-    if (len >= 2 && len <= JSString::maxInlineLength8) {
-        m_bits = JSString::encodeInline8(literal.span8());
-        return;
+    // D.4 coherence: ASCII is Latin-1; 2..5 chars must be a fiber word.
+    if constexpr (enableIdentifierFiberWords) {
+        size_t len = literal.length();
+        if (len >= 2 && len <= maxFiberWordKeyLength) {
+            m_bits = JSString::encodeInline8(literal.span8());
+            return;
+        }
     }
     m_bits = reinterpret_cast<uintptr_t>(&add(vm, literal).leakRef());
     ASSERT(reinterpret_cast<StringImpl*>(m_bits)->isAtom());
@@ -283,10 +291,28 @@ inline Identifier Identifier::createLatin1(VM& vm, std::span<const char16_t> str
 SUPPRESS_NODELETE inline Identifier Identifier::fromUid(VM& vm, UniquedStringImpl* uid)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    // D.4 coherence: uid may already be a fiber word (from Identifier::impl())
-    // — keep it verbatim. A real impl funnels through the canonicalizing ctor.
-    if (isInlinePropertyKey(uid))
-        return fromFiberWord(reinterpret_cast<uintptr_t>(uid));
+    // D.4 coherence: uid may be a fiber word (from Identifier::impl() or
+    // CacheableIdentifier::uid()). Only the encodeInline8 form (8-bit, 2..7
+    // chars) is canonical for m_bits — encodeInline16 / big-inline words must
+    // be decoded and re-routed so PropertyTable pointer compares still hit.
+    if (isInlinePropertyKey(uid)) {
+        uintptr_t w = reinterpret_cast<uintptr_t>(uid);
+        unsigned len = inlinePropertyKeyLength(w);
+        if (inlinePropertyKeyIs8Bit(w) && len >= 2 && len <= maxFiberWordKeyLength)
+            return fromFiberWord(w);
+        // Non-canonical inline. A big-inline word is detached from its cell
+        // and payload exceeds the 8-byte word — upstream producer bug; ASSERT
+        // and cap the read to stay in-bounds.
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&w);
+        if (inlinePropertyKeyIs8Bit(w)) {
+            ASSERT_WITH_MESSAGE(len <= JSString::maxInlineLength8, "big-inline fiber word detached from cell");
+            unsigned take = len <= JSString::maxInlineLength8 ? len : JSString::maxInlineLength8;
+            return Identifier(vm, std::span<const Latin1Character> { bytes + 1, take });
+        }
+        ASSERT_WITH_MESSAGE(len <= JSString::maxInlineLength16, "big-inline fiber word detached from cell");
+        unsigned take = len <= JSString::maxInlineLength16 ? len : JSString::maxInlineLength16;
+        return Identifier(vm, std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), take });
+    }
     if (!uid || !uid->isSymbol())
         return Identifier(vm, static_cast<StringImpl*>(uid));
     return static_cast<SymbolImpl&>(*uid);

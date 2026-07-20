@@ -26413,20 +26413,14 @@ IGNORE_CLANG_WARNINGS_END
 
 #if USE(BUN_JSC_ADDITIONS)
         speculate(BadStringType, jsValueValue(string), edge.node(), isActualRopeStringImplPtr(stringImpl));
-
-        LBasicBlock notInline = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        m_out.branch(isInlineStringImplPtr(stringImpl), unsure(continuation), unsure(notInline));
-
-        LBasicBlock lastNext = m_out.appendTo(notInline, continuation);
+        // Inline small strings are SpecStringInline, not SpecStringIdent; downstream callers pointer-compare against
+        // heap AtomStringImpl* (CompareStrictEq StringIdentUse, SwitchString), so OSR-exit here to match DFG.
+        speculate(BadStringType, jsValueValue(string), edge.node(), isInlineStringImplPtr(stringImpl));
         speculate(
             BadStringType, jsValueValue(string), edge.node(),
             m_out.testIsZero32(
                 m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
                 m_out.constInt32(StringImpl::flagIsAtom())));
-        m_out.jump(continuation);
-
-        m_out.appendTo(continuation, lastNext);
 #else
         speculate(BadStringType, jsValueValue(string), edge.node(), isRopeString(string));
         speculate(

@@ -1701,6 +1701,10 @@ static ALWAYS_INLINE void putByVal(JSGlobalObject* globalObject, JSValue baseVal
     if (subscript.isString()) {
         propertyName = asString(subscript)->toAtomString(globalObject);
         uid = propertyName.data;
+#if USE(BUN_JSC_ADDITIONS)
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+#endif
     } else {
         propertyKey = subscript.toPropertyKey(globalObject);
         uid = propertyKey.impl();
@@ -1799,7 +1803,11 @@ static ALWAYS_INLINE void putByValOptimize(JSGlobalObject* globalObject, CodeBlo
             bool isNonStringPrimitiveKey = false;
             if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
                 RETURN_IF_EXCEPTION(scope, void());
+#if USE(BUN_JSC_ADDITIONS)
+                if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
                 if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                     identifier = CacheableIdentifier::createFromCell(subscript.asCell());
             } else {
                 identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);
@@ -1882,7 +1890,11 @@ static ALWAYS_INLINE void directPutByValOptimize(JSGlobalObject* globalObject, C
         bool isNonStringPrimitiveKey = false;
         if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
             RETURN_IF_EXCEPTION(scope, void());
+#if USE(BUN_JSC_ADDITIONS)
+            if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
             if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                 identifier = CacheableIdentifier::createFromCell(subscript.asCell());
         } else {
             identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);
@@ -3705,7 +3717,11 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValOptimize, EncodedJSValue, (EncodedJSVa
             bool isNonStringPrimitiveKey = false;
             if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+#if USE(BUN_JSC_ADDITIONS)
+                if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
                 if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                     identifier = CacheableIdentifier::createFromCell(subscript.asCell());
             } else {
                 identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);
@@ -3819,6 +3835,10 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
     if (subscript.isString()) {
         propertyName = asString(subscript)->toAtomString(globalObject);
         uid = propertyName.data;
+#if USE(BUN_JSC_ADDITIONS)
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+#endif
     } else {
         propertyKey = subscript.toPropertyKey(globalObject);
         uid = propertyKey.impl();
@@ -3833,7 +3853,11 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
         RELEASE_AND_RETURN(scope, getByValWithThis(globalObject, callFrame, profile, baseValue, subscript, thisValue));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto index = parseIndex(PropertyName(uid)); index) [[unlikely]] {
+#else
     if (auto index = parseIndex(*uid); index) [[unlikely]] {
+#endif
         if (!baseObject->structure()->isCacheableDictionary() || index.value() >= 100) {
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
                 repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
@@ -3995,7 +4019,11 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValWithThisOptimize, EncodedJSValue, (Enc
             bool isNonStringPrimitiveKey = false;
             if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+#if USE(BUN_JSC_ADDITIONS)
+                if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
                 if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                     identifier = CacheableIdentifier::createFromCell(subscript.asCell());
             } else {
                 identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);

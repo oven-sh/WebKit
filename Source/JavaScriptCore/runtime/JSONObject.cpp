@@ -221,9 +221,17 @@ inline PropertyNameForFunctionCall::PropertyNameForFunctionCall(unsigned number)
 JSValue PropertyNameForFunctionCall::value(VM& vm) const
 {
     if (!m_value) {
-        if (!m_propertyName.isNull())
+        if (!m_propertyName.isNull()) {
+#if USE(BUN_JSC_ADDITIONS)
+            UniquedStringImpl* uid = m_propertyName.uid();
+            if (isInlinePropertyKey(uid))
+                m_value = JSString::createInlineFromFiber(vm, inlinePropertyKeyWord(uid));
+            else
+                m_value = jsString(vm, String { uid });
+#else
             m_value = jsString(vm, String { m_propertyName.uid() });
-        else {
+#endif
+        } else {
             if (m_number <= 9)
                 return vm.smallStrings.singleCharacterString(m_number + '0');
             m_value = jsNontrivialString(vm, vm.numericStrings.add(m_number));
@@ -640,7 +648,18 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
         stringifier.startNewLine(builder);
 
         // Append the property name, colon, and space.
+#if USE(BUN_JSC_ADDITIONS)
+        {
+            UniquedStringImpl* uid = propertyName.uid();
+            if (isInlinePropertyKey(uid)) {
+                uintptr_t word = inlinePropertyKeyWord(uid);
+                builder.appendQuotedJSONString(String(inlinePropertyKeySpan8(word)));
+            } else
+                builder.appendQuotedJSONString(*uid);
+        }
+#else
         builder.appendQuotedJSONString(*propertyName.uid());
+#endif
         builder.append(':');
         if (stringifier.willIndent())
             builder.append(' ');
@@ -1426,6 +1445,29 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
         structure.forEachProperty(m_vm, [&](const auto& entry) -> bool {
             if (entry.attributes() & PropertyAttribute::DontEnum)
                 return true;
+#if USE(BUN_JSC_ADDITIONS)
+            UniquedStringImpl* nameUID = entry.key();
+            uintptr_t nameWord = inlinePropertyKeyWord(nameUID);
+            std::span<const Latin1Character> span;
+            if (isInlinePropertyKey(nameUID)) {
+                if (!inlinePropertyKeyIs8Bit(nameWord)) [[unlikely]] {
+                    recordFailure("16-bit property name"_s);
+                    return false;
+                }
+                span = inlinePropertyKeySpan8(nameWord);
+            } else {
+                auto& name = *nameUID;
+                if (name.isSymbol()) [[unlikely]] {
+                    recordFailure("symbol"_s);
+                    return false;
+                }
+                if (!name.is8Bit()) [[unlikely]] {
+                    recordFailure("16-bit property name"_s);
+                    return false;
+                }
+                span = name.span8();
+            }
+#else
             auto& name = *entry.key();
             if (name.isSymbol()) [[unlikely]] {
                 recordFailure("symbol"_s);
@@ -1439,6 +1481,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 return false;
             }
             auto span = name.span8();
+#endif
 
             // The structure cannot transition mid-iteration on FastStringifier's case.
             // canPerformFastPropertyEnumeration ruled out getters/setters and
