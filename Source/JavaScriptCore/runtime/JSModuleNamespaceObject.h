@@ -90,7 +90,11 @@ private:
         WriteBarrier<AbstractModuleRecord> moduleRecord;
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    using ExportMap = OrderedHashMap<FiberAwareRefPtr, ExportEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>>;
+#else
     using ExportMap = OrderedHashMap<RefPtr<UniquedStringImpl>, ExportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;
+#endif
 
     ExportMap m_exports;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;

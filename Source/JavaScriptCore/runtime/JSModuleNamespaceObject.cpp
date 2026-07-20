@@ -49,7 +49,11 @@ JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, A
     //
     // Sort the exported names by the code point order.
     std::ranges::sort(resolutions, WTF::codePointCompareLessThan, [](const auto& resolution) {
+#if USE(BUN_JSC_ADDITIONS)
+        return StringView(resolution.first.string());
+#else
         return StringView(resolution.first.impl());
+#endif
     });
 
     for (const auto& pair : resolutions) {
