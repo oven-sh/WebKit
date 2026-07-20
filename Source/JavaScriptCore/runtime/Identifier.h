@@ -178,8 +178,26 @@ public:
 
     int length() const { return m_bits ? static_cast<int>(uidLength(reinterpret_cast<UniquedStringImpl*>(m_bits))) : 0; }
 
-    CString ascii() const { return string().string().ascii(); }
-    CString utf8() const { return string().string().utf8(); }
+    // Bypass string() so a fiber-word decode never touches the thread-local
+    // AtomStringTable: FTL compiler threads reach here via
+    // CodeBlock::inferredName() -> ecmaName().utf8(), and an atom materialized
+    // there would later be destroyed on the main thread's GC sweep.
+    CString ascii() const { return stringWithoutAtomizing().ascii(); }
+    CString utf8() const { return stringWithoutAtomizing().utf8(); }
+
+    String stringWithoutAtomizing() const
+    {
+        if (!m_bits)
+            return String();
+        if (isInlinePropertyKey(m_bits)) {
+            unsigned len = inlinePropertyKeyLength(m_bits);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&m_bits);
+            if (inlinePropertyKeyIs8Bit(m_bits))
+                return String(std::span<const Latin1Character> { bytes + 1, len });
+            return String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+        }
+        return String(reinterpret_cast<StringImpl*>(m_bits));
+    }
 
     // There's 2 functions to construct Identifier from string, (1) fromString and (2) fromUid.
     // They have different meanings in keeping or discarding symbol-ness of strings.

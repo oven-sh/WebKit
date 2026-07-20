@@ -60,7 +60,9 @@ void Identifier::dump(PrintStream& out) const
 #if USE(BUN_JSC_ADDITIONS)
     if (impl()) {
         if (isInlinePropertyKey(impl())) {
-            out.print(string().impl());
+            // Avoid string(): dump() runs on JIT compiler threads and must not
+            // populate m_materializedString via the thread-local atom table.
+            out.print(stringWithoutAtomizing());
             return;
         }
         if (uidIsSymbol(impl())) {
