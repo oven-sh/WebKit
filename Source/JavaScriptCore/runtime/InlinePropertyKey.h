@@ -47,12 +47,14 @@ static constexpr bool enableIdentifierFiberWords = true;
 
 ALWAYS_INLINE bool isInlinePropertyKey(const UniquedStringImpl* impl)
 {
-    return (reinterpret_cast<uintptr_t>(impl) & inlinePropertyKeyTagMask) == inlinePropertyKeyTag;
+    // Real impls are 8-byte aligned (low 3 bits == 0) and fiber words set bit 1,
+    // so a single bit-test on the tag bit suffices — cheaper than mask-then-compare.
+    return reinterpret_cast<uintptr_t>(impl) & inlinePropertyKeyTag;
 }
 
 ALWAYS_INLINE bool isInlinePropertyKey(uintptr_t word)
 {
-    return (word & inlinePropertyKeyTagMask) == inlinePropertyKeyTag;
+    return word & inlinePropertyKeyTag;
 }
 
 ALWAYS_INLINE uintptr_t inlinePropertyKeyWord(const UniquedStringImpl* impl)
@@ -102,21 +104,26 @@ ALWAYS_INLINE bool uidIsSymbol(const UniquedStringImpl* impl)
 }
 
 // 64-bit Fibonacci / golden-ratio multiplicative hash constant (2^64 / phi, odd).
-// Kept here so the C++ uidHash() and its DFG/FTL/AssemblyHelpers JIT mirrors all
-// reference the same value.
+// Used only for the fiber-word arm of uidHash() and its JIT mirrors so the
+// inline-encoded payload bytes spread into the low mask without a deref.
 static constexpr uint64_t uidHashMultiplier = 0x9E3779B97F4A7C15ULL;
 
 ALWAYS_INLINE unsigned uidHash(const UniquedStringImpl* impl)
 {
-    // canonicalFiberWordFor guarantees one m_bits value per content, so hashing
-    // the raw pointer word is sound for both real impls and fiber words.
-    // Cheap branch-free Fibonacci mix: top 32 bits of the 64-bit product depend on
-    // all input bits (so fiber-word payload bytes and atom-pointer address bits both
-    // spread into the low mask). Emitted identically at every JIT site that mirrors a
-    // uidHash()-keyed cache — keep in sync with AssemblyHelpers load/store/has
-    // MegamorphicProperty and DFG/FTL compileHasOwnProperty.
-    uint64_t bits = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(impl));
-    return static_cast<unsigned>((bits * uidHashMultiplier) >> 32);
+    // Option B (Babylon/pdfjs/richards regressor fix): branch on the tag bit.
+    // Real AtomStringImpl*/SymbolImpl* (common): return impl->hash() — NOT
+    // existingSymbolAwareHash(): the JIT mirrors load m_hashAndFlags>>s_flagCount
+    // (= rawHash()), and for a SymbolImpl hashForSymbol() lives in a *separate*
+    // field, so symbol-aware here would desync symbol-keyed MegamorphicCache /
+    // HasOwnPropertyCache probes vs their C++ fill path. hash() ≡ rawHash() once
+    // computed and matches upstream MegamorphicCache::primaryHash. Fiber word
+    // (rare, 2..5 chars): branch-free Fibonacci intHash of the raw bits. Keep
+    // AssemblyHelpers load/store/hasMegamorphicProperty and DFG/FTL
+    // compileHasOwnProperty in lockstep with this body.
+    uintptr_t bits = reinterpret_cast<uintptr_t>(impl);
+    if (bits & inlinePropertyKeyTag) [[unlikely]]
+        return static_cast<unsigned>((static_cast<uint64_t>(bits) * uidHashMultiplier) >> 32);
+    return impl->hash();
 }
 
 ALWAYS_INLINE unsigned uidLength(const UniquedStringImpl* impl)
@@ -128,13 +135,13 @@ ALWAYS_INLINE unsigned uidLength(const UniquedStringImpl* impl)
 
 ALWAYS_INLINE void uidRef(UniquedStringImpl* impl)
 {
-    if (!isInlinePropertyKey(impl)) [[likely]]
+    if (!(reinterpret_cast<uintptr_t>(impl) & inlinePropertyKeyTag)) [[likely]]
         impl->ref();
 }
 
 ALWAYS_INLINE void uidDeref(UniquedStringImpl* impl)
 {
-    if (!isInlinePropertyKey(impl)) [[likely]]
+    if (!(reinterpret_cast<uintptr_t>(impl) & inlinePropertyKeyTag)) [[likely]]
         impl->deref();
 }
 
@@ -144,19 +151,24 @@ ALWAYS_INLINE void uidDeref(UniquedStringImpl* impl)
 struct FiberAwareRefDerefTraits {
     static ALWAYS_INLINE UniquedStringImpl* refIfNotNull(UniquedStringImpl* ptr)
     {
-        if (ptr) [[likely]]
-            uidRef(ptr);
+        // Fuse the null-check and tag-check onto one register so clang emits
+        // test+jz; test+jnz with no redundant reload between them.
+        uintptr_t b = reinterpret_cast<uintptr_t>(ptr);
+        if (b && !(b & inlinePropertyKeyTag)) [[likely]]
+            ptr->ref();
         return ptr;
     }
     static ALWAYS_INLINE UniquedStringImpl& ref(UniquedStringImpl& r)
     {
-        uidRef(&r);
+        if (!(reinterpret_cast<uintptr_t>(&r) & inlinePropertyKeyTag)) [[likely]]
+            r.ref();
         return r;
     }
     static ALWAYS_INLINE void derefIfNotNull(UniquedStringImpl* ptr)
     {
-        if (ptr) [[likely]]
-            uidDeref(ptr);
+        uintptr_t b = reinterpret_cast<uintptr_t>(ptr);
+        if (b && !(b & inlinePropertyKeyTag)) [[likely]]
+            ptr->deref();
     }
 };
 

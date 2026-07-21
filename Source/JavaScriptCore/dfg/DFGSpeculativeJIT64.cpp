@@ -6056,12 +6056,18 @@ void SpeculativeJIT::compile(Node* node)
 #if USE(BUN_JSC_ADDITIONS)
             if (canBeRope(node->child2()))
                 slowPath.append(branchIfActualRopeStringImpl(implGPR));
-            {
+            if constexpr (enableIdentifierFiberWords) {
                 Jump isInline = branchIfInlineStringImpl(implGPR);
                 slowPath.append(branchTest32(
                     Zero, Address(implGPR, StringImpl::flagsOffset()),
                     TrustedImm32(StringImpl::flagIsAtom())));
                 isInline.link(this);
+            } else {
+                // Producer disabled: inline small-string cells must not flow through as a uid.
+                slowPath.append(branchIfInlineStringImpl(implGPR));
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
             }
 #else
             if (canBeRope(node->child2()))
@@ -6079,12 +6085,18 @@ void SpeculativeJIT::compile(Node* node)
 #if USE(BUN_JSC_ADDITIONS)
             if (canBeRope(node->child2()))
                 slowPath.append(branchIfActualRopeStringImpl(implGPR));
-            {
+            if constexpr (enableIdentifierFiberWords) {
                 Jump isInline = branchIfInlineStringImpl(implGPR);
                 slowPath.append(branchTest32(
                     Zero, Address(implGPR, StringImpl::flagsOffset()),
                     TrustedImm32(StringImpl::flagIsAtom())));
                 isInline.link(this);
+            } else {
+                // Producer disabled: inline small-string cells must not flow through as a uid.
+                slowPath.append(branchIfInlineStringImpl(implGPR));
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
             }
 #else
             if (canBeRope(node->child2()))
@@ -6113,11 +6125,23 @@ void SpeculativeJIT::compile(Node* node)
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free uidHash() = (bits * uidHashMultiplier) >> 32; matches
-        // HasOwnPropertyCache::hash(). implGPR is the imul src, preserved.
-        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), hashGPR);
-        mul64(implGPR, hashGPR);
-        urshift64(TrustedImm32(32), hashGPR);
+        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
+        // m_hashAndFlags >> s_flagCount; fiber word: (bits * uidHashMultiplier) >> 32.
+        // Matches HasOwnPropertyCache::hash(). implGPR preserved (imul src / addr base).
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isFiber = branchIfInlineStringImpl(implGPR);
+            load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
+            Jump haveHash = jump();
+            isFiber.link(this);
+            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), hashGPR);
+            mul64(implGPR, hashGPR);
+            urshift64(TrustedImm32(32), hashGPR);
+            haveHash.link(this);
+        } else {
+            load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
+        }
 #else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
@@ -8435,10 +8459,14 @@ void SpeculativeJIT::compileGetByValWithThisMegamorphic(Node* node)
 #if USE(BUN_JSC_ADDITIONS)
     if (canBeRope(m_graph.child(node, 2)))
         slowCases.append(branchIfActualRopeStringImpl(scratch4GPR));
-    {
+    if constexpr (enableIdentifierFiberWords) {
         Jump isInline = branchIfInlineStringImpl(scratch4GPR);
         slowCases.append(branchTest32(Zero, Address(scratch4GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
         isInline.link(this);
+    } else {
+        // Producer disabled: inline small-string cells must not flow through as a uid.
+        slowCases.append(branchIfInlineStringImpl(scratch4GPR));
+        slowCases.append(branchTest32(Zero, Address(scratch4GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
     }
 #else
     if (canBeRope(m_graph.child(node, 2)))

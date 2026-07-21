@@ -522,12 +522,24 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
-        // MegamorphicCache::primaryHash(). Only scratch2 is consumed (imul64 preserves
-        // uidGPR), so scratch1 (StructureID) and scratch3 (sid-xor) survive untouched.
-        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
-        mul64(uidGPR, scratch2GPR);
-        urshift64(TrustedImm32(32), scratch2GPR);
+        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
+        // m_hashAndFlags >> s_flagCount, same as upstream. Fiber word (rare):
+        // (bits * uidHashMultiplier) >> 32. Only scratch2 is consumed (imul64/load
+        // preserves uidGPR); scratch1 (StructureID) and scratch3 (sid-xor) survive.
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isFiber = branchIfInlineStringImpl(uidGPR);
+            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+            Jump haveHash = jump();
+            isFiber.link(this);
+            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+            mul64(uidGPR, scratch2GPR);
+            urshift64(TrustedImm32(32), scratch2GPR);
+            haveHash.link(this);
+        } else {
+            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+        }
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
@@ -633,12 +645,24 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
-        // MegamorphicCache::storeCachePrimaryHash(). Only scratch2 is consumed; scratch1
+        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
+        // m_hashAndFlags >> s_flagCount, same as upstream. Fiber word (rare):
+        // (bits * uidHashMultiplier) >> 32. Only scratch2 is consumed; scratch1
         // (StructureID) and scratch3 (sid-xor) survive untouched.
-        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
-        mul64(uidGPR, scratch2GPR);
-        urshift64(TrustedImm32(32), scratch2GPR);
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isFiber = branchIfInlineStringImpl(uidGPR);
+            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+            Jump haveHash = jump();
+            isFiber.link(this);
+            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+            mul64(uidGPR, scratch2GPR);
+            urshift64(TrustedImm32(32), scratch2GPR);
+            haveHash.link(this);
+        } else {
+            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+        }
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
@@ -742,12 +766,24 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
-        // MegamorphicCache::hasCachePrimaryHash(). Only scratch2 is consumed; scratch1
+        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
+        // m_hashAndFlags >> s_flagCount, same as upstream. Fiber word (rare):
+        // (bits * uidHashMultiplier) >> 32. Only scratch2 is consumed; scratch1
         // (StructureID) and scratch3 (sid-xor) survive untouched.
-        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
-        mul64(uidGPR, scratch2GPR);
-        urshift64(TrustedImm32(32), scratch2GPR);
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isFiber = branchIfInlineStringImpl(uidGPR);
+            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+            Jump haveHash = jump();
+            isFiber.link(this);
+            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+            mul64(uidGPR, scratch2GPR);
+            urshift64(TrustedImm32(32), scratch2GPR);
+            haveHash.link(this);
+        } else {
+            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
+            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
+        }
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
@@ -821,9 +857,15 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
 #if USE(BUN_JSC_ADDITIONS)
         if (canBeRope)
             slowCases.append(branchIfActualRopeStringImpl(destGPR));
-        Jump isInline = branchIfInlineStringImpl(destGPR);
-        slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
-        isInline.link(this);
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isInline = branchIfInlineStringImpl(destGPR);
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(this);
+        } else {
+            // Producer disabled: inline small-string cells must not flow through as a uid.
+            slowCases.append(branchIfInlineStringImpl(destGPR));
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        }
 #else
         if (canBeRope)
             slowCases.append(branchIfRopeStringImpl(destGPR));
@@ -843,9 +885,15 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
 #if USE(BUN_JSC_ADDITIONS)
         if (canBeRope)
             slowCases.append(branchIfActualRopeStringImpl(destGPR));
-        Jump isInline = branchIfInlineStringImpl(destGPR);
-        slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
-        isInline.link(this);
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isInline = branchIfInlineStringImpl(destGPR);
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(this);
+        } else {
+            // Producer disabled: inline small-string cells must not flow through as a uid.
+            slowCases.append(branchIfInlineStringImpl(destGPR));
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        }
 #else
         if (canBeRope)
             slowCases.append(branchIfRopeStringImpl(destGPR));

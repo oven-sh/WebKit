@@ -17613,7 +17613,10 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isActualRopeStringImplPtr(uniquedStringImpl), rarely(slowCase), usually(isNonEmptyString));
 
             lastNext = m_out.appendTo(isNonEmptyString, isNotInline);
-            m_out.branch(isInlineStringImplPtr(uniquedStringImpl), unsure(isAtomString), unsure(isNotInline));
+            if constexpr (enableIdentifierFiberWords)
+                m_out.branch(isInlineStringImplPtr(uniquedStringImpl), unsure(isAtomString), unsure(isNotInline));
+            else
+                m_out.branch(isInlineStringImplPtr(uniquedStringImpl), rarely(slowCase), usually(isNotInline));
 
             m_out.appendTo(isNotInline, isAtomString);
             LValue isNotAtomic = m_out.testIsZero32(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom()));
@@ -17666,7 +17669,10 @@ IGNORE_CLANG_WARNINGS_END
 
             m_out.appendTo(isNonEmptyString, isNotInline);
             ValueFromBlock stringInlineResult = m_out.anchor(implFromString);
-            m_out.branch(isInlineStringImplPtr(implFromString), unsure(hasUniquedStringImpl), unsure(isNotInline));
+            if constexpr (enableIdentifierFiberWords)
+                m_out.branch(isInlineStringImplPtr(implFromString), unsure(hasUniquedStringImpl), unsure(isNotInline));
+            else
+                m_out.branch(isInlineStringImplPtr(implFromString), rarely(slowCase), usually(isNotInline));
 
             m_out.appendTo(isNotInline, notStringCase);
             ValueFromBlock stringResult = m_out.anchor(implFromString);
@@ -17712,8 +17718,29 @@ IGNORE_CLANG_WARNINGS_END
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
         // uniquedStringImpl may be an inline fiber word (bit 1 set) after the atom-check bypass above.
-        // Branch-free uidHash() = (bits * uidHashMultiplier) >> 32; matches HasOwnPropertyCache::hash().
-        LValue hash = m_out.castToInt32(m_out.lShr(m_out.mul(uniquedStringImpl, m_out.constInt64(uidHashMultiplier)), m_out.constInt32(32)));
+        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
+        // m_hashAndFlags >> s_flagCount; fiber word: (bits * uidHashMultiplier) >> 32.
+        // Matches HasOwnPropertyCache::hash().
+        LValue hash;
+        if constexpr (enableIdentifierFiberWords) {
+            LBasicBlock realImplCase = m_out.newBlock();
+            LBasicBlock inlineImplCase = m_out.newBlock();
+            LBasicBlock haveHashBlock = m_out.newBlock();
+
+            m_out.branch(isInlineStringImplPtr(uniquedStringImpl), rarely(inlineImplCase), usually(realImplCase));
+
+            m_out.appendTo(realImplCase, inlineImplCase);
+            ValueFromBlock realImplHash = m_out.anchor(m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount)));
+            m_out.jump(haveHashBlock);
+
+            m_out.appendTo(inlineImplCase, haveHashBlock);
+            ValueFromBlock inlineImplHash = m_out.anchor(m_out.castToInt32(m_out.lShr(m_out.mul(uniquedStringImpl, m_out.constInt64(uidHashMultiplier)), m_out.constInt32(32))));
+            m_out.jump(haveHashBlock);
+
+            m_out.appendTo(haveHashBlock, slowCase);
+            hash = m_out.phi(Int32, realImplHash, inlineImplHash);
+        } else
+            hash = m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
 #else
         LValue hash = m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
 #endif
