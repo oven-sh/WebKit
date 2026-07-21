@@ -1487,9 +1487,12 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
         JSValue matchValue = resultObject->get(globalObject, static_cast<unsigned>(0));
         RETURN_IF_EXCEPTION(scope, { });
 #if USE(BUN_JSC_ADDITIONS)
+        // phase-3 audit: all 9 view() swaps of 96decd2dc1 here are KEEP — none sit
+        // in JetStream's fast path (stringProtoFuncReplace → replaceUsingRegExpSearch,
+        // not this slow generic). −13% regexp regression lives in StringPrototype.cpp
+        // replaceUsingRegExpSearch / ed331542f6 jsSubstringOfResolved, not this file.
+        // length() below is a harmless local micro-opt, not the regression fix.
         auto* matchJSString = matchValue.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        auto matchStr = matchJSString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
 
         //         2. If matchStr is the empty String, then
@@ -1497,7 +1500,7 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
         //            b. If flags contains "u" or flags contains "v", let fullUnicode be true; otherwise let fullUnicode be false.
         //            c. Let nextIndex be AdvanceStringIndex(S, thisIndex, fullUnicode).
         //            d. Perform ? Set(rx, "lastIndex", F(nextIndex), true).
-        if (matchStr->isEmpty()) {
+        if (!matchJSString->length()) {
 #else
         String matchStr = matchValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
