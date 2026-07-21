@@ -522,24 +522,14 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
-        // m_hashAndFlags >> s_flagCount, same as upstream. Fiber word (rare):
-        // (bits * uidHashMultiplier) >> 32. Only scratch2 is consumed (imul64/load
-        // preserves uidGPR); scratch1 (StructureID) and scratch3 (sid-xor) survive.
-        if constexpr (enableIdentifierFiberWords) {
-            Jump isFiber = branchIfInlineStringImpl(uidGPR);
-            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-            Jump haveHash = jump();
-            isFiber.link(this);
-            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
-            mul64(uidGPR, scratch2GPR);
-            urshift64(TrustedImm32(32), scratch2GPR);
-            haveHash.link(this);
-        } else {
-            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-        }
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::primaryHash(). Only scratch2 is consumed (imul64 preserves
+        // uidGPR), so scratch1 (StructureID) and scratch3 (sid-xor) survive untouched.
+        // Option A; not gated on enableIdentifierFiberWords — correct for both reps,
+        // and JIT stays in lockstep with C++ uidHash() under either flag value.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
@@ -645,24 +635,12 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
-        // m_hashAndFlags >> s_flagCount, same as upstream. Fiber word (rare):
-        // (bits * uidHashMultiplier) >> 32. Only scratch2 is consumed; scratch1
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::storeCachePrimaryHash(). Only scratch2 is consumed; scratch1
         // (StructureID) and scratch3 (sid-xor) survive untouched.
-        if constexpr (enableIdentifierFiberWords) {
-            Jump isFiber = branchIfInlineStringImpl(uidGPR);
-            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-            Jump haveHash = jump();
-            isFiber.link(this);
-            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
-            mul64(uidGPR, scratch2GPR);
-            urshift64(TrustedImm32(32), scratch2GPR);
-            haveHash.link(this);
-        } else {
-            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-        }
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
@@ -766,24 +744,12 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
-        // m_hashAndFlags >> s_flagCount, same as upstream. Fiber word (rare):
-        // (bits * uidHashMultiplier) >> 32. Only scratch2 is consumed; scratch1
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::hasCachePrimaryHash(). Only scratch2 is consumed; scratch1
         // (StructureID) and scratch3 (sid-xor) survive untouched.
-        if constexpr (enableIdentifierFiberWords) {
-            Jump isFiber = branchIfInlineStringImpl(uidGPR);
-            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-            Jump haveHash = jump();
-            isFiber.link(this);
-            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
-            mul64(uidGPR, scratch2GPR);
-            urshift64(TrustedImm32(32), scratch2GPR);
-            haveHash.link(this);
-        } else {
-            load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-        }
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
 #else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);

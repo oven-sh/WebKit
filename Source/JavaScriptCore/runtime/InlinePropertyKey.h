@@ -43,6 +43,11 @@ static constexpr unsigned maxFiberWordKeyLength = 5;
 // Compile-time killswitch for the D.2/D.4 producer paths. Flip to false to
 // disable fiber-word Identifiers in one place (debug: 'shims broken' vs
 // 'producer reached unguarded site') without reverting commits.
+// NOT a perf escape hatch on its own: with this =false and no other change,
+// JetStream2 Total Score was 188.004 vs baseline median 200.169 (−6.1%,
+// /tmp/killswitch-survey2.log) — the phase-A shim overhead persists with zero
+// fiber words produced. synthesize-measure-commit therefore CANNOT fall back to
+// this flag alone to reach baseline+2%; the targeted perf fixes must stay.
 static constexpr bool enableIdentifierFiberWords = true;
 
 ALWAYS_INLINE bool isInlinePropertyKey(const UniquedStringImpl* impl)
@@ -104,26 +109,24 @@ ALWAYS_INLINE bool uidIsSymbol(const UniquedStringImpl* impl)
 }
 
 // 64-bit Fibonacci / golden-ratio multiplicative hash constant (2^64 / phi, odd).
-// Used only for the fiber-word arm of uidHash() and its JIT mirrors so the
-// inline-encoded payload bytes spread into the low mask without a deref.
+// Kept here so the C++ uidHash() and its DFG/FTL/AssemblyHelpers JIT mirrors all
+// reference the same value.
 static constexpr uint64_t uidHashMultiplier = 0x9E3779B97F4A7C15ULL;
 
 ALWAYS_INLINE unsigned uidHash(const UniquedStringImpl* impl)
 {
-    // Option B (Babylon/pdfjs/richards regressor fix): branch on the tag bit.
-    // Real AtomStringImpl*/SymbolImpl* (common): return impl->hash() — NOT
-    // existingSymbolAwareHash(): the JIT mirrors load m_hashAndFlags>>s_flagCount
-    // (= rawHash()), and for a SymbolImpl hashForSymbol() lives in a *separate*
-    // field, so symbol-aware here would desync symbol-keyed MegamorphicCache /
-    // HasOwnPropertyCache probes vs their C++ fill path. hash() ≡ rawHash() once
-    // computed and matches upstream MegamorphicCache::primaryHash. Fiber word
-    // (rare, 2..5 chars): branch-free Fibonacci intHash of the raw bits. Keep
-    // AssemblyHelpers load/store/hasMegamorphicProperty and DFG/FTL
-    // compileHasOwnProperty in lockstep with this body.
-    uintptr_t bits = reinterpret_cast<uintptr_t>(impl);
-    if (bits & inlinePropertyKeyTag) [[unlikely]]
-        return static_cast<unsigned>((static_cast<uint64_t>(bits) * uidHashMultiplier) >> 32);
-    return impl->hash();
+    // Option A — branch-free Fibonacci mix of the raw pointer word. D.4 single-rep
+    // guarantees one m_bits per content, so hashing the word is sound for both real
+    // impls and fiber words. Picked over Option B (tag-branch → real impl->hash()):
+    // B adds a cond+uncond jump to every JIT MegamorphicCache/HasOwnProperty probe,
+    // and /tmp/fix3-pertest3.log (post-8f5292b1d0 stack) showed Babylon −9.56% with B
+    // in place; /tmp/killswitch-result.txt records A as a required shim-cost fix.
+    // Not gated on enableIdentifierFiberWords: A is correct for both reps, and the
+    // killswitch is not a standalone escape hatch. Keep AssemblyHelpers
+    // load/store/hasMegamorphicProperty and DFG/FTL compileHasOwnProperty in lockstep
+    // with this body (mov+mul64+urshift64, no tag test).
+    uint64_t bits = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(impl));
+    return static_cast<unsigned>((bits * uidHashMultiplier) >> 32);
 }
 
 ALWAYS_INLINE unsigned uidLength(const UniquedStringImpl* impl)

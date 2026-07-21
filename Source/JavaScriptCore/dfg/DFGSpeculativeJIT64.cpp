@@ -6125,23 +6125,13 @@ void SpeculativeJIT::compile(Node* node)
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
 #if USE(BUN_JSC_ADDITIONS)
-        // Mirror uidHash(): tag-branch. Real impl (common): cached content hash via
-        // m_hashAndFlags >> s_flagCount; fiber word: (bits * uidHashMultiplier) >> 32.
-        // Matches HasOwnPropertyCache::hash(). implGPR preserved (imul src / addr base).
-        if constexpr (enableIdentifierFiberWords) {
-            Jump isFiber = branchIfInlineStringImpl(implGPR);
-            load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
-            Jump haveHash = jump();
-            isFiber.link(this);
-            move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), hashGPR);
-            mul64(implGPR, hashGPR);
-            urshift64(TrustedImm32(32), hashGPR);
-            haveHash.link(this);
-        } else {
-            load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
-            urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
-        }
+        // Branch-free uidHash() = (bits * uidHashMultiplier) >> 32; matches
+        // HasOwnPropertyCache::hash(). implGPR is the imul src, preserved.
+        // Option A; not gated on enableIdentifierFiberWords — correct for both reps,
+        // and JIT stays in lockstep with C++ uidHash() under either flag value.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), hashGPR);
+        mul64(implGPR, hashGPR);
+        urshift64(TrustedImm32(32), hashGPR);
 #else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
