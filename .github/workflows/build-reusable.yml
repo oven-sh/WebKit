@@ -133,7 +133,7 @@ jobs:
         env:
           RELEASE_FLAGS: ${{matrix.RELEASE_FLAGS}}
           ENABLE_SANITIZERS: ${{matrix.ENABLE_SANITIZERS}}
-          WKLINT_TAG: ${{ (matrix.wklint == 'true' && (inputs.wklint_tag || vars.WKLINT_TAG || 'latest') != 'off') && (inputs.wklint_tag || vars.WKLINT_TAG || 'latest') || '' }}
+          WKLINT_TAG: ${{ matrix.wklint == 'true' && (inputs.wklint_tag || vars.WKLINT_TAG || 'latest') != 'off' && (inputs.wklint_tag || vars.WKLINT_TAG || 'latest') || '' }}
           WEBKIT_LINT_RELEASE_TOKEN: ${{ secrets.WEBKIT_LINT_RELEASE_TOKEN }}
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz

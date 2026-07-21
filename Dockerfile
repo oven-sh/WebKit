@@ -7,8 +7,9 @@ ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
 # wklint (JSC exception-check linter) release from oven-sh/webkit-lint:
-# "latest" (default), a specific "autobuild-<sha>" tag, or "" to not lint.
-ARG WKLINT_TAG="latest"
+# "latest", a specific "autobuild-<sha>" tag, or "" (default: do not lint).
+# The prebuilt is x86-64 only, so it also stays off on non-amd64 builds.
+ARG WKLINT_TAG=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 
@@ -117,7 +118,7 @@ RUN wget https://apt.llvm.org/llvm.sh \
 # Fetched only when WKLINT_TAG is set; the token is a BuildKit secret because
 # the release lives in an internal repository.
 RUN --mount=type=secret,id=WEBKIT_LINT_RELEASE_TOKEN \
-    if [ -n "$WKLINT_TAG" ]; then \
+    if [ -n "$WKLINT_TAG" ] && [ "$TARGETARCH" = "amd64" ]; then \
         set -eu; \
         token=$(cat /run/secrets/WEBKIT_LINT_RELEASE_TOKEN); \
         if [ "$WKLINT_TAG" = "latest" ]; then \
