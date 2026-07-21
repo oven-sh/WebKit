@@ -119,6 +119,10 @@ RUN wget https://apt.llvm.org/llvm.sh \
 # the release lives in an internal repository.
 RUN --mount=type=secret,id=WEBKIT_LINT_RELEASE_TOKEN \
     if [ -n "$WKLINT_TAG" ] && [ "$TARGETARCH" = "amd64" ]; then \
+        if [ ! -f /run/secrets/WEBKIT_LINT_RELEASE_TOKEN ]; then \
+            echo "wklint: WKLINT_TAG is set but the WEBKIT_LINT_RELEASE_TOKEN secret is missing; skipping the linter."; \
+            exit 0; \
+        fi; \
         set -eu; \
         token=$(cat /run/secrets/WEBKIT_LINT_RELEASE_TOKEN); \
         if [ "$WKLINT_TAG" = "latest" ]; then \
@@ -130,7 +134,7 @@ RUN --mount=type=secret,id=WEBKIT_LINT_RELEASE_TOKEN \
             | python3 -c 'import json,sys; print([a["url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith("-linux-x64.tar.zst")][0])'); \
         curl -fsSL -H "Authorization: token ${token}" -H "Accept: application/octet-stream" \
             -o /tmp/wklint.tar.zst "$asset_url"; \
-        mkdir -p /opt && tar --zstd -xf /tmp/wklint.tar.zst -C /opt && rm /tmp/wklint.tar.zst; \
+        mkdir -p /opt && tar -I zstd -xf /tmp/wklint.tar.zst -C /opt && rm /tmp/wklint.tar.zst; \
         /opt/wklint-linux-x64/bin/wklint --version; \
     fi
 

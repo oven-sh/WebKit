@@ -23,9 +23,9 @@ on:
         type: string
         default: '19'
       wklint_tag:
-        description: 'oven-sh/webkit-lint release for the JSC exception-check linter: "latest", an "autobuild-<sha>" tag, or "off"'
+        description: 'oven-sh/webkit-lint release for the JSC exception-check linter: "latest", an "autobuild-<sha>" tag, or "off" (empty falls back to the WKLINT_TAG repo variable, then latest)'
         type: string
-        default: 'latest'
+        default: ''
     secrets:
       WEBKIT_LINT_RELEASE_TOKEN:
         description: 'Read access to oven-sh/webkit-lint releases (optional; the linter is skipped without it)'
@@ -148,9 +148,11 @@ jobs:
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so
           rm -rf bun-webkit/lib/*.so.*
-          # wklint results (if the linter ran) live in the artifact output dir.
-          if [ -f bun-webkit/wklint-findings.json ]; then
-            cp bun-webkit/wklint-findings.json bun-webkit/wklint-report.txt bun-webkit/wklint-exit-code . 2>/dev/null || true
+          # wklint results live in the artifact output dir whenever the linter was
+          # invoked (the exit-code file is written even if the run failed early).
+          if [ -f bun-webkit/wklint-exit-code ]; then
+            cp bun-webkit/wklint-exit-code . 2>/dev/null || true
+            cp bun-webkit/wklint-findings.json bun-webkit/wklint-report.txt bun-webkit/wklint-log.txt . 2>/dev/null || true
             rm -f bun-webkit/wklint-findings.json bun-webkit/wklint-report.txt bun-webkit/wklint-log.txt bun-webkit/wklint-exit-code
           fi
           tar -czf bun-webkit.tar.gz bun-webkit
@@ -170,6 +172,13 @@ jobs:
           exit_code=$(cat wklint-exit-code)
           echo "wklint exit code: $exit_code"
           cat wklint-report.txt || true
+          if [ "$exit_code" != "0" ] && [ "$exit_code" != "1" ]; then
+            # Tool / infrastructure error (parse failures, crash): surface it without
+            # blocking the build during the soft launch.
+            echo "::warning title=wklint::wklint exited with $exit_code (tool error); see wklint-log.txt in the wklint-findings artifact"
+            tail -40 wklint-log.txt 2>/dev/null || true
+            exit 0
+          fi
           if [ "$exit_code" = "1" ]; then
             new=$(grep -c ' warning: ' wklint-report.txt || true)
             {

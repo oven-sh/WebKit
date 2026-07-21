@@ -58,7 +58,8 @@ export ENABLE_SANITIZERS=${ENABLE_SANITIZERS:-}
 # and WEBKIT_LINT_RELEASE_TOKEN in the environment to run it during the build.
 export WKLINT_TAG=${WKLINT_TAG:-""}
 WKLINT_SECRET_ARGS=""
-if [ -n "${WEBKIT_LINT_RELEASE_TOKEN:-}" ]; then
+# `:+x` keeps the token out of the xtrace output (only a literal "x" is traced).
+if [ -n "${WEBKIT_LINT_RELEASE_TOKEN:+x}" ]; then
     WKLINT_SECRET_ARGS="--secret id=WEBKIT_LINT_RELEASE_TOKEN,env=WEBKIT_LINT_RELEASE_TOKEN"
 else
     # No token available (e.g. a fork PR without secrets): skip the linter.
