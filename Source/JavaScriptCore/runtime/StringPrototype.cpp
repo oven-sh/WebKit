@@ -1161,9 +1161,9 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                     // names, so impl() is a tagged word there; this is a site that needs
                     // the AtomStringImpl* specifically, so route through string() — which
                     // the lambda already does for the JSString payload.
-                    AtomStringImpl* atom = identifier.string().impl();
-                    string = vm.atomStringToJSStringMap.ensureValue(atom, [&] {
-                        return jsString(vm, identifier.string());
+                    AtomString atom = identifier.string();
+                    string = vm.atomStringToJSStringMap.ensureValue(atom.impl(), [&] {
+                        return jsString(vm, atom);
                     });
 #else
                     string = vm.atomStringToJSStringMap.ensureValue(identifier.impl(), [&] {

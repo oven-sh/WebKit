@@ -4533,7 +4533,10 @@ void BytecodeGenerator::endSwitch(const Vector<Ref<Label>, 8>& labels, Expressio
             // compares real StringImpl*, so materialize the fiber word here instead
             // of letting a tagged pointer reach DefaultRefDerefTraits::refIfNotNull.
             const Identifier& caseIdent = static_cast<StringNode*>(nodes[i])->value();
-            UniquedStringImpl* clause = caseIdent.string().impl();
+            // string() is by-value now; keep the atom alive across add() so a
+            // fiber-word materialization survives until the table takes its ref.
+            AtomString clauseAtom = caseIdent.string();
+            UniquedStringImpl* clause = clauseAtom.impl();
             ASSERT(!isInlinePropertyKey(clause));
             ASSERT(clause->isAtom());
             auto result = jumpTable.m_offsetTable.add(clause, UnlinkedStringJumpTable::OffsetLocation { labels[i]->bind(switchInfo.bytecodeOffset), 0 });

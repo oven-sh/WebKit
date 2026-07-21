@@ -61,7 +61,7 @@ void Identifier::dump(PrintStream& out) const
     if (impl()) {
         if (isInlinePropertyKey(impl())) {
             // Avoid string(): dump() runs on JIT compiler threads and must not
-            // populate m_materializedString via the thread-local atom table.
+            // materialize the fiber word via the thread-local atom table.
             out.print(stringWithoutAtomizing());
             return;
         }

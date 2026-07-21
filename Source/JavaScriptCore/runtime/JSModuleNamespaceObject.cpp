@@ -50,7 +50,11 @@ JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, A
     // Sort the exported names by the code point order.
     std::ranges::sort(resolutions, WTF::codePointCompareLessThan, [](const auto& resolution) {
 #if USE(BUN_JSC_ADDITIONS)
-        return StringView(resolution.first.string());
+        // Identifier::string() now returns AtomString by value, so wrapping it in
+        // StringView would dangle once the lambda returns. Return an owning String
+        // instead; std::ranges::sort keeps both projected temporaries alive across
+        // comp(proj(a), proj(b)), and String implicitly converts to StringView.
+        return resolution.first.stringWithoutAtomizing();
 #else
         return StringView(resolution.first.impl());
 #endif
