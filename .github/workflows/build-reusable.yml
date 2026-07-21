@@ -26,6 +26,10 @@ on:
         description: 'oven-sh/webkit-lint release for the JSC exception-check linter: "latest", an "autobuild-<sha>" tag, or "off"'
         type: string
         default: 'latest'
+    secrets:
+      WEBKIT_LINT_RELEASE_TOKEN:
+        description: 'Read access to oven-sh/webkit-lint releases (optional; the linter is skipped without it)'
+        required: false
     outputs:
       release_tag:
         description: 'The release tag that was created'
