@@ -39,14 +39,18 @@ namespace JSC  {
 // construction path funnels through this so PropertyTable's key==entry.key()
 // pointer compare hits whether the key came from the parser span ctor,
 // JSString::toIdentifier, or any fromString()/fromUid() caller.
-ALWAYS_INLINE uintptr_t Identifier::canonicalFiberWordFor(const StringImpl* impl)
+[[gnu::hot]] ALWAYS_INLINE uintptr_t Identifier::canonicalFiberWordFor(const StringImpl* impl)
 {
     if constexpr (!enableIdentifierFiberWords)
         return 0;
-    if (!impl || impl->isSymbol())
+    if (!impl)
         return 0;
+    // Length bail first: real-world identifiers are overwhelmingly >5 chars, so
+    // take the cheap m_length load before touching m_hashAndFlags for isSymbol().
     unsigned len = impl->length();
-    if (len < 2 || len > maxFiberWordKeyLength)
+    if (len < 2 || len > maxFiberWordKeyLength) [[likely]]
+        return 0;
+    if (impl->isSymbol()) [[unlikely]]
         return 0;
     if (impl->is8Bit()) [[likely]]
         return JSString::encodeInline8(impl->span8());

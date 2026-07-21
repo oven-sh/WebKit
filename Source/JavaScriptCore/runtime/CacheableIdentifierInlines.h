@@ -69,7 +69,7 @@ inline CacheableIdentifier CacheableIdentifier::createFromCell(JSCell* i)
     // must be atomized in place so uid()/getValueImpl() yield a real atom.
     if (i->isString()) {
         JSString* s = uncheckedDowncast<JSString>(i);
-        if (s->isInline() && !(s->is8Bit() && s->length() <= maxFiberWordKeyLength))
+        if (s->isInline() && !(enableIdentifierFiberWords && s->is8Bit() && s->length() <= maxFiberWordKeyLength))
             s->resolveInlineToAtomString(nullptr);
     }
 #endif
@@ -107,9 +107,13 @@ inline UniquedStringImpl* CacheableIdentifier::uid() const
     // D.4 coherence: return the canonical fiber word for any 2..5-char Latin-1
     // key so PropertyName / PropertyTable::find hit regardless of whether the
     // cell is inline or already atom-backed (string literals).
-    if (string->isInline() && string->is8Bit() && string->length() <= maxFiberWordKeyLength)
+    if (enableIdentifierFiberWords && string->isInline() && string->is8Bit() && string->length() <= maxFiberWordKeyLength)
         return std::bit_cast<UniquedStringImpl*>(string->inlineFiberWord());
     StringImpl* impl = string->getValueImpl();
+    // Fast-bail: a non-inline atom-backed cell with len>5 can never encode as a
+    // fiber word — return the atom impl directly and skip canonicalFiberWordFor.
+    if (!string->isInline() && impl->length() > maxFiberWordKeyLength && impl->isAtom()) [[likely]]
+        return std::bit_cast<UniquedStringImpl*>(impl);
     if (uintptr_t fiber = Identifier::canonicalFiberWordFor(impl))
         return std::bit_cast<UniquedStringImpl*>(fiber);
     return std::bit_cast<UniquedStringImpl*>(impl);
@@ -151,7 +155,7 @@ inline bool CacheableIdentifier::isCacheableIdentifierCell(JSCell* cell)
 #if USE(BUN_JSC_ADDITIONS)
     // Phase D: only small-8-bit-inline (2..5 Latin-1) has a content-unique
     // single-word key usable as a uid without atomization.
-    if (string->isInline() && string->is8Bit() && string->length() <= maxFiberWordKeyLength)
+    if (enableIdentifierFiberWords && string->isInline() && string->is8Bit() && string->length() <= maxFiberWordKeyLength)
         return true;
 #endif
     if (const StringImpl* impl = string->tryGetValueImpl())
@@ -177,7 +181,7 @@ inline GCOwnedDataScope<const UniquedStringImpl*> CacheableIdentifier::getCachea
     // D.4 coherence: hand back the canonical fiber word so downstream
     // PropertyName / CacheableIdentifier::uid() match the parser's key.
     if (string->isInline()) {
-        if (string->is8Bit() && string->length() <= maxFiberWordKeyLength)
+        if (enableIdentifierFiberWords && string->is8Bit() && string->length() <= maxFiberWordKeyLength)
             return { cell, std::bit_cast<const UniquedStringImpl*>(string->inlineFiberWord()) };
         return { cell, string->resolveInlineToAtomString(nullptr) };
     }
