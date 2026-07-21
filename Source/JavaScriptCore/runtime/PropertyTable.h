@@ -306,7 +306,7 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
     unsigned indexMask = m_indexMask;
     unsigned probeCount = 0;
     unsigned index = hash & indexMask;
-#if USE(BUN_JSC_ADDITIONS)
+#if USE(BUN_JSC_ADDITIONS) && ASSERT_ENABLED
     bool keyIsFiber = isInlinePropertyKey(key);
 #endif
 
@@ -323,10 +323,10 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
             ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
             return FindResult { entryIndex, index, entry.offset(), entry.attributes() };
         }
-#if USE(BUN_JSC_ADDITIONS)
-        // Defensive fiber↔atom bridge: if dual representation survives anywhere
-        // (an atom entered the table via a path that bypassed canonicalFiberWordFor,
-        // or vice-versa), content-compare when exactly one side is a fiber word.
+#if USE(BUN_JSC_ADDITIONS) && ASSERT_ENABLED
+        // D.4 single-rep coherence guarantees one uid per key content (fiber XOR atom).
+        // A cross-rep content match means a producer bypassed canonicalFiberWordFor —
+        // assert in debug so it gets fixed; release builds pay nothing for this check.
         else {
             UniquedStringImpl* entryKey = entry.key();
             bool entryIsFiber = isInlinePropertyKey(entryKey);
@@ -334,10 +334,8 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
                 const UniquedStringImpl* implSide = keyIsFiber ? entryKey : key;
                 uintptr_t fiberWord = inlinePropertyKeyWord(keyIsFiber ? key : entryKey);
                 if (implSide && !implSide->isSymbol() && inlinePropertyKeyIs8Bit(fiberWord)
-                    && WTF::equal(implSide, inlinePropertyKeySpan8(fiberWord))) {
-                    ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
-                    return FindResult { entryIndex, index, entry.offset(), entry.attributes() };
-                }
+                    && WTF::equal(implSide, inlinePropertyKeySpan8(fiberWord)))
+                    ASSERT_NOT_REACHED_WITH_MESSAGE("dual-rep key reached PropertyTable");
             }
         }
 #endif
