@@ -1481,13 +1481,13 @@ inline JSString* jsOwnedString(VM& vm, const String& s)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// audit-string-materialize: central helper so ownPropertyKeys / for-in /
-// Object.entries stop materializing an AtomString via Identifier::string()
-// when the uid is already a fiber word.
-//
-// Keep/rewrite decisions for the remaining identifier.string() consumers:
-//   - ObjectConstructor.cpp ownPropertyKeys loop       → REWRITE (here)
-//   - JSPropertyNameEnumerator.cpp:finishCreation       → REWRITE (for-in hot)
+// audit-string-materialize: central helper so Object.entries' pre-existing
+// inline-cell sites share one fiber→JSString path. Inline-fiber JSString cells
+// are NOT DFG-safe (StringCharAt/substring/length inline m_fiber→m_length with
+// no inline-cell guard), so keys that flow into user JS stay atom-backed:
+//   - ObjectConstructor.cpp objectConstructorEntries    → REWRITE (here)
+//   - ObjectConstructor.cpp getPropertyKeys             → KEEP (Object.keys→user JS)
+//   - JSPropertyNameEnumerator.cpp:finishCreation       → KEEP (for-in→user JS)
 //   - Lookup.h reifyStaticProperty → publicName()       → KEEP (cold host-fn)
 //   - LiteralParser.cpp                                 → KEEP (span→Identifier only)
 //   - PropertyName::publicName()                        → KEEP (already fiber-aware)

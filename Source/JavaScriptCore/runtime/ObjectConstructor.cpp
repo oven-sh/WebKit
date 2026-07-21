@@ -1364,11 +1364,7 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                     ASSERT(!identifier.isPrivateName());
                     buffer[i].set(vm, owner, Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl())));
                 } else
-#if USE(BUN_JSC_ADDITIONS)
-                    buffer[i].set(vm, owner, jsStringFromFiberOrImpl(vm, identifier.impl()));
-#else
                     buffer[i].set(vm, owner, jsOwnedString(vm, identifier.string()));
-#endif
             }
         };
 
@@ -1405,11 +1401,7 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
         for (size_t i = 0; i < numProperties; i++) {
             const auto& identifier = properties[i];
             ASSERT(!identifier.isSymbol());
-#if USE(BUN_JSC_ADDITIONS)
-            pushDirect(globalObject, keys, jsStringFromFiberOrImpl(vm, identifier.impl()));
-#else
             pushDirect(globalObject, keys, jsOwnedString(vm, identifier.string()));
-#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         break;
@@ -1433,11 +1425,7 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                 ASSERT(!identifier.isPrivateName());
                 pushDirect(globalObject, keys, Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl())));
             } else
-#if USE(BUN_JSC_ADDITIONS)
-                pushDirect(globalObject, keys, jsStringFromFiberOrImpl(vm, identifier.impl()));
-#else
                 pushDirect(globalObject, keys, jsOwnedString(vm, identifier.string()));
-#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         break;
