@@ -387,14 +387,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-Structure::~Structure()
-{
-    clearTransitionPropertyName();
-}
-#else
 Structure::~Structure() = default;
-#endif
 
 void Structure::destroy(JSCell* cell)
 {

@@ -788,16 +788,13 @@ public:
     static bool shouldConvertToPolyProto(const Structure* a, const Structure* b);
 
 #if USE(BUN_JSC_ADDITIONS)
-    UniquedStringImpl* transitionPropertyName() const { return reinterpret_cast<UniquedStringImpl*>(m_transitionPropertyNameBits); }
-    void setTransitionPropertyName(UniquedStringImpl* rep)
-    {
-        if (auto* old = transitionPropertyName())
-            uidDeref(old);
-        if (rep)
-            uidRef(rep);
-        m_transitionPropertyNameBits = reinterpret_cast<uintptr_t>(rep);
-    }
-    void clearTransitionPropertyName() { setTransitionPropertyName(nullptr); }
+    // Back to the upstream CompactRefPtr layout with fiber-aware ref/deref traits:
+    // RAII dtor handles the deref (so ~Structure stays = default and GC sweep is
+    // trivially destructible when enableIdentifierFiberWords is off), and operator=
+    // replaces the manual uidRef/uidDeref setter.
+    UniquedStringImpl* transitionPropertyName() const { return m_transitionPropertyName.get(); }
+    void setTransitionPropertyName(UniquedStringImpl* rep) { m_transitionPropertyName = rep; }
+    void clearTransitionPropertyName() { m_transitionPropertyName = nullptr; }
 #else
     UniquedStringImpl* transitionPropertyName() const { return m_transitionPropertyName.get(); }
 #endif
@@ -1041,7 +1038,10 @@ private:
     WriteBarrier<JSCell> m_previousOrRareData;
 
 #if USE(BUN_JSC_ADDITIONS)
-    uintptr_t m_transitionPropertyNameBits { 0 };
+    // CompactRefPtr storage + FiberAwareRefDerefTraits: same packing as upstream,
+    // fiber-safe when enableIdentifierFiberWords is on, identical to CompactRefPtr
+    // (tag-bit test is always false) when off.
+    RefPtr<UniquedStringImpl, CompactPtrTraits<UniquedStringImpl>, FiberAwareRefDerefTraits> m_transitionPropertyName;
 #else
     CompactRefPtr<UniquedStringImpl> m_transitionPropertyName;
 #endif
