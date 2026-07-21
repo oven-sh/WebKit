@@ -87,6 +87,7 @@ JSString* jsOwnedString(VM&, const String&);
 // interned atoms owned elsewhere, so take the createHasOtherOwner path.
 JSString* jsStringFromFiberOrImpl(VM&, UniquedStringImpl*);
 JSString* jsStringFromFiberOrImpl(VM&, const Identifier&);
+JSString* jsOwnedAtomBackedString(VM&, const Identifier&);
 #endif
 
 bool isJSString(JSCell*);
@@ -451,6 +452,7 @@ private:
     friend JSString* jsOwnedString(VM&, const String&);
 #if USE(BUN_JSC_ADDITIONS)
     friend JSString* jsStringFromFiberOrImpl(VM&, UniquedStringImpl*);
+    friend JSString* jsOwnedAtomBackedString(VM&, const Identifier&);
 #endif
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*);
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*);
@@ -1486,7 +1488,7 @@ inline JSString* jsOwnedString(VM& vm, const String& s)
 // are NOT DFG-safe (StringCharAt/substring/length inline m_fiber→m_length with
 // no inline-cell guard), so keys that flow into user JS stay atom-backed:
 //   - ObjectConstructor.cpp objectConstructorEntries    → REWRITE (here)
-//   - ObjectConstructor.cpp getPropertyKeys             → KEEP (Object.keys→user JS)
+//   - ObjectConstructor.cpp getPropertyKeys             → jsOwnedAtomBackedString (user JS)
 //   - JSPropertyNameEnumerator.cpp:finishCreation       → KEEP (for-in→user JS)
 //   - Lookup.h reifyStaticProperty → publicName()       → KEEP (cold host-fn)
 //   - LiteralParser.cpp                                 → KEEP (span→Identifier only)
@@ -1516,6 +1518,26 @@ ALWAYS_INLINE JSString* jsStringFromFiberOrImpl(VM& vm, UniquedStringImpl* uid)
 ALWAYS_INLINE JSString* jsStringFromFiberOrImpl(VM& vm, const Identifier& identifier)
 {
     return jsStringFromFiberOrImpl(vm, identifier.impl());
+}
+
+// DFG-safe (always atom-backed) variant of jsStringFromFiberOrImpl for keys that
+// flow into user JS: fiber words materialize via string(); real impls skip the
+// by-value string() AtomString temporary (splay/raytrace protected-win regressor).
+ALWAYS_INLINE JSString* jsOwnedAtomBackedString(VM& vm, const Identifier& identifier)
+{
+    UniquedStringImpl* uid = identifier.impl();
+    if (isInlinePropertyKey(uid)) [[unlikely]]
+        return jsOwnedString(vm, identifier.string()); // materialize atom; DFG-safe
+    ASSERT(uid);
+    unsigned length = uid->length();
+    if (!length)
+        return vm.smallStrings.emptyString();
+    if (length == 1) {
+        char16_t c = uid->is8Bit() ? uid->span8()[0] : uid->span16()[0];
+        if (c <= maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(c);
+    }
+    return JSString::createHasOtherOwner(vm, *uid);
 }
 #endif
 
