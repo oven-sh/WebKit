@@ -44,6 +44,7 @@ Usage:
 Set CLASSINFO_UNIQUENESS_CHECK=0 to skip (for bisecting an unrelated failure).
 """
 
+import glob
 import os
 import re
 import subprocess
@@ -74,16 +75,24 @@ UNDEFINED_TYPES = frozenset("Uuvw?")
 MINIMUM_EXPECTED_CLASSINFO = 200
 
 
-def find_nm():
-    for candidate in (os.environ.get("NM"), "llvm-nm", "nm"):
-        if not candidate:
-            continue
-        try:
-            subprocess.run([candidate, "--version"], capture_output=True, check=True)
-            return candidate
-        except (OSError, subprocess.CalledProcessError):
-            continue
-    return None
+def nm_candidates():
+    """Every plausible nm, best first.
+
+    Prefer llvm-nm: the cross-build images link Mach-O with ld64.lld on a Linux
+    host, and GNU nm there cannot read the result. Versioned names and the
+    llvm-*/bin directories are searched because apt.llvm.org installs
+    `llvm-nm-21` and does not always provide an unsuffixed alias.
+    """
+    seen = set()
+    ordered = [os.environ.get("NM"), "llvm-nm"]
+    ordered += sorted(glob.glob("/usr/lib/llvm-*/bin/llvm-nm"), reverse=True)
+    ordered += sorted(glob.glob("/usr/lib/llvm*/bin/llvm-nm"), reverse=True)
+    ordered += ["llvm-nm-%d" % v for v in range(25, 16, -1)]
+    ordered.append("nm")
+    for c in ordered:
+        if c and c not in seen:
+            seen.add(c)
+            yield c
 
 
 def demangle(names):
@@ -118,13 +127,16 @@ def demangle(names):
     return {name: name for name in names}
 
 
-def collisions_in(nm, binary):
-    """Return {address: sorted set of s_info symbol names} for shared addresses."""
-    result = subprocess.run(
-        [nm, "--defined-only", binary], capture_output=True, text=True
-    )
+def read_symbols(nm, binary):
+    """{address: {s_info names}} via `nm`, or None if this nm cannot read it."""
+    try:
+        result = subprocess.run(
+            [nm, "--defined-only", binary], capture_output=True, text=True
+        )
+    except OSError:
+        return None
     if result.returncode != 0:
-        raise RuntimeError(f"{nm} failed on {binary}: {result.stderr.strip()}")
+        return None
 
     by_address = defaultdict(set)
     for line in result.stdout.splitlines():
@@ -137,6 +149,28 @@ def collisions_in(nm, binary):
         if not S_INFO_SYMBOL.match(name):
             continue
         by_address[address].add(name)
+    return by_address
+
+
+def collisions_in(binary):
+    """Return (collisions, total, nm). Raises if no nm can read the binary."""
+    tried = []
+    by_address = None
+    for nm in nm_candidates():
+        found = read_symbols(nm, binary)
+        tried.append(nm)
+        # A candidate that runs but reports no ClassInfo at all is the wrong
+        # tool for this object format, not proof the binary is empty -- keep
+        # looking before concluding anything.
+        if found:
+            by_address = found
+            break
+    if by_address is None:
+        raise RuntimeError(
+            f"no usable nm for {binary}. Tried: {', '.join(tried)}. Install "
+            "llvm-nm (GNU nm cannot read Mach-O produced by ld64.lld), or set "
+            "NM to one that can."
+        )
 
     total = sum(len(names) for names in by_address.values())
     if total < MINIMUM_EXPECTED_CLASSINFO:
@@ -153,7 +187,7 @@ def collisions_in(nm, binary):
         for address, names in by_address.items()
         if len(names) > 1
     }
-    return collisions, total
+    return collisions, total, nm
 
 
 def main(argv):
@@ -166,14 +200,6 @@ def main(argv):
         print(__doc__, file=sys.stderr)
         return 2
 
-    nm = find_nm()
-    if nm is None:
-        print(
-            "check-classinfo-uniqueness: neither llvm-nm nor nm is available",
-            file=sys.stderr,
-        )
-        return 2
-
     failed = False
     for binary in binaries:
         if not os.path.exists(binary):
@@ -182,14 +208,14 @@ def main(argv):
             continue
 
         try:
-            collisions, total = collisions_in(nm, binary)
+            collisions, total, nm = collisions_in(binary)
         except RuntimeError as error:
             print(f"check-classinfo-uniqueness: {error}", file=sys.stderr)
             failed = True
             continue
 
         if not collisions:
-            print(f"check-classinfo-uniqueness: {binary}: {total} ClassInfo, all distinct")
+            print(f"check-classinfo-uniqueness: {binary}: {total} ClassInfo, all distinct (via {nm})")
             continue
 
         failed = True

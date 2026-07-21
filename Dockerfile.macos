@@ -73,7 +73,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Host clang (same version Bun uses) — we cross-compile via --target/-isysroot
 # and link with ld64.lld (lld's Mach-O port).
 RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
-    for t in clang clang++ ld64.lld lld llvm-ar llvm-ranlib; do \
+    for t in clang clang++ ld64.lld lld llvm-ar llvm-ranlib llvm-nm llvm-cxxfilt; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done
 ENV CC=clang-${LLVM_VERSION}
