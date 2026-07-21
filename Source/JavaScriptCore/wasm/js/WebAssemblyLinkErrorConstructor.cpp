@@ -35,6 +35,7 @@
 namespace JSC {
 
 const ClassInfo WebAssemblyLinkErrorConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebAssemblyLinkErrorConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(WebAssemblyLinkErrorConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(constructJSWebAssemblyLinkError);
 static JSC_DECLARE_HOST_FUNCTION(callJSWebAssemblyLinkError);

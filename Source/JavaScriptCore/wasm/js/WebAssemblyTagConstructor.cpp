@@ -37,6 +37,7 @@
 namespace JSC {
 
 const ClassInfo WebAssemblyTagConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebAssemblyTagConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(WebAssemblyTagConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(callJSWebAssemblyTag);
 static JSC_DECLARE_HOST_FUNCTION(constructJSWebAssemblyTag);

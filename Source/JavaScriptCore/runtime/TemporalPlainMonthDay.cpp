@@ -36,6 +36,7 @@
 namespace JSC {
 
 const ClassInfo TemporalPlainMonthDay::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TemporalPlainMonthDay) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(TemporalPlainMonthDay);
 
 TemporalPlainMonthDay* TemporalPlainMonthDay::create(VM& vm, Structure* structure, ISO8601::PlainMonthDay&& plainMonthDay)
 {

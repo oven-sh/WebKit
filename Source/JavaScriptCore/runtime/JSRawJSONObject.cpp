@@ -35,6 +35,7 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSRawJSONObject);
 
 const ClassInfo JSRawJSONObject::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSRawJSONObject) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(JSRawJSONObject);
 
 JSRawJSONObject::JSRawJSONObject(VM& vm, Structure* structure, Butterfly* butterfly)
     : Base(vm, structure, butterfly)

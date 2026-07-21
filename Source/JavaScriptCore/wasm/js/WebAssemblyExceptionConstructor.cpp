@@ -39,6 +39,7 @@
 namespace JSC {
 
 const ClassInfo WebAssemblyExceptionConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebAssemblyExceptionConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(WebAssemblyExceptionConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(constructJSWebAssemblyException);
 static JSC_DECLARE_HOST_FUNCTION(callJSWebAssemblyException);

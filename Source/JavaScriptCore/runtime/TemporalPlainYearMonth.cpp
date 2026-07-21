@@ -40,6 +40,7 @@
 namespace JSC {
 
 const ClassInfo TemporalPlainYearMonth::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TemporalPlainYearMonth) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(TemporalPlainYearMonth);
 
 TemporalPlainYearMonth* TemporalPlainYearMonth::create(VM& vm, Structure* structure, ISO8601::PlainYearMonth&& plainYearMonth)
 {

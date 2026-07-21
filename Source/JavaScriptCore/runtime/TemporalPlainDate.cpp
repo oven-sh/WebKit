@@ -44,6 +44,7 @@
 namespace JSC {
 
 const ClassInfo TemporalPlainDate::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TemporalPlainDate) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(TemporalPlainDate);
 
 TemporalPlainDate* TemporalPlainDate::create(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate)
 {

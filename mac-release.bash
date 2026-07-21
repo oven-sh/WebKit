@@ -66,6 +66,10 @@ cmake \
     $THIS_DIR \
     $RUNNER_TEMP/webkit-release &&
     cmake --build $RUNNER_TEMP/webkit-release --config $CMAKE_BUILD_TYPE --target jsc
+
+# JSC compares ClassInfo by address; LTO can fold byte-identical ones together.
+python3 $THIS_DIR/Tools/Scripts/check-classinfo-uniqueness.py $RUNNER_TEMP/webkit-release/bin/jsc
+
 mkdir -p $RUNNER_TEMP/bun-webkit/lib $RUNNER_TEMP/bun-webkit/include $RUNNER_TEMP/bun-webkit/include/JavaScriptCore $RUNNER_TEMP/bun-webkit/include/wtf $RUNNER_TEMP/bun-webkit/include/bmalloc
 cp $RUNNER_TEMP/webkit-release/lib/* $RUNNER_TEMP/bun-webkit/lib
 cp -r $RUNNER_TEMP/webkit-release/cmakeconfig.h $RUNNER_TEMP/bun-webkit/include/cmakeconfig.h
