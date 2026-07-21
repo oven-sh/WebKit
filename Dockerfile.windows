@@ -27,8 +27,8 @@ ARG WIN_ARCH="x64"
 ARG WIN_TRIPLE_ARCH="x86_64"
 ARG WEBKIT_RELEASE_TYPE="Release"
 ARG LTO_FLAG=""
-ARG MARCH_FLAG="/clang:-march=haswell"
-ARG ICU_MARCH_FLAG="-march=haswell"
+ARG MARCH_FLAG="/clang:-march=nehalem"
+ARG ICU_MARCH_FLAG="-march=nehalem"
 # "address,undefined" for the -asan variant. x64 only: LLVM does not ship a
 # Windows ARM64 ASAN runtime.
 ARG ENABLE_SANITIZERS=""

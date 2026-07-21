@@ -16,10 +16,10 @@ export USE_MIMALLOC="${USE_MIMALLOC:-OFF}"
 export USE_EXTERNAL_MIMALLOC="${USE_EXTERNAL_MIMALLOC:-OFF}"
 
 # Match the native macOS lanes: apple-m1 on the arm64 runners (`cpu: native`
-# on macos-14-xlarge), haswell on the amd64 ones.
+# on macos-14-xlarge), nehalem on the amd64 ones.
 case "$MACOS_ARCH" in
     arm64)  : "${MARCH_FLAG:="-mcpu=apple-m1"}" ;;
-    x86_64) : "${MARCH_FLAG:="-march=haswell"}" ;;
+    x86_64) : "${MARCH_FLAG:="-march=nehalem"}" ;;
     *) echo "error: MACOS_ARCH must be arm64 or x86_64, got '$MACOS_ARCH'" >&2; exit 1 ;;
 esac
 export MARCH_FLAG

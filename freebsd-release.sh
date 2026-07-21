@@ -14,7 +14,7 @@ export USE_MIMALLOC="${USE_MIMALLOC:-OFF}"
 export USE_EXTERNAL_MIMALLOC="${USE_EXTERNAL_MIMALLOC:-OFF}"
 
 case "$FREEBSD_ARCH" in
-    x86_64)  : "${MARCH_FLAG:="-march=haswell"}" ;;
+    x86_64)  : "${MARCH_FLAG:="-march=nehalem"}" ;;
     aarch64) : "${MARCH_FLAG:="-march=armv8-a+crc -mtune=ampere1"}" ;;
     *) echo "error: FREEBSD_ARCH must be x86_64 or aarch64, got '$FREEBSD_ARCH'" >&2; exit 1 ;;
 esac

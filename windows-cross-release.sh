@@ -13,16 +13,18 @@ export ENABLE_SANITIZERS="${ENABLE_SANITIZERS:-}"
 export USE_MIMALLOC="${USE_MIMALLOC:-OFF}"
 export USE_EXTERNAL_MIMALLOC="${USE_EXTERNAL_MIMALLOC:-OFF}"
 
-# Codegen floor per arch, matching windows-release.ps1:
-#   x64 -> haswell, x64 baseline -> nehalem, arm64 -> armv8-a+crc.
+# Codegen floor per arch: x64 -> nehalem, arm64 -> armv8-a+crc.
+#
+# There is only one x64 floor now. WebKit used to ship a haswell build next to a
+# nehalem "baseline" one, which meant every x64 consumer had to pick, and a
+# consumer that picked wrong either raised its CPU requirement silently or gave
+# up cross-language LTO because the matching variant did not exist. Building
+# only nehalem removes the choice; a consumer that wants a higher floor for its
+# own code can still set one, it just does not get it inside JSC.
 case "$WIN_ARCH" in
     x64)
         WIN_TRIPLE_ARCH="x86_64"
-        if [ "${BASELINE:-}" = "true" ] || [ "${BASELINE:-}" = "1" ]; then
-            : "${MARCH:=nehalem}"
-        else
-            : "${MARCH:=haswell}"
-        fi
+        : "${MARCH:=nehalem}"
         : "${MARCH_FLAG:="/clang:-march=${MARCH}"}"
         : "${ICU_MARCH_FLAG:="-march=${MARCH}"}"
         ;;

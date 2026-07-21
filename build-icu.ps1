@@ -16,9 +16,7 @@ param(
     [ValidateSet("Release", "Debug")]
     [string]$BuildType = "Release",
 
-    [string]$OutputDir = "",
-
-    [switch]$Baseline
+    [string]$OutputDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,7 +74,7 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
 }
 
 if ($Platform -eq "x64") {
-    $ArchFlag = if ($Baseline) { "/clang:-march=nehalem" } else { "/clang:-march=haswell" }
+    $ArchFlag = "/clang:-march=nehalem"
 } else {
     $ArchFlag = ""
 }

@@ -1,4 +1,4 @@
-ARG MARCH_FLAG="-march=haswell"
+ARG MARCH_FLAG="-march=nehalem"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG LLVM_VERSION="21"

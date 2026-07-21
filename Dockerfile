@@ -254,7 +254,7 @@ ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
-# resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=haswell)
+# resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \

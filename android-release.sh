@@ -16,7 +16,7 @@ export USE_EXTERNAL_MIMALLOC="${USE_EXTERNAL_MIMALLOC:-OFF}"
 
 case "$ANDROID_ARCH" in
     aarch64) : "${MARCH_FLAG:="-march=armv8-a+crc -mtune=cortex-a78"}" ;;
-    x86_64)  : "${MARCH_FLAG:="-march=x86-64-v2"}" ;;
+    x86_64)  : "${MARCH_FLAG:="-march=nehalem"}" ;;
     *) echo "error: ANDROID_ARCH must be aarch64 or x86_64, got '$ANDROID_ARCH'" >&2; exit 1 ;;
 esac
 export MARCH_FLAG
