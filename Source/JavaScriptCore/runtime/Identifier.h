@@ -102,9 +102,11 @@ public:
         ASSERT(empty->isAtom());
     }
 
+    // m_materializedString is a lazy cache for string(); never copy/move it so
+    // Identifier copy/move/assign stay single-word and skip the extra AtomString
+    // ref/deref. The cache re-populates on first string() per instance.
     Identifier(const Identifier& other)
         : m_bits(other.m_bits)
-        , m_materializedString(other.m_materializedString)
     {
         if (m_bits)
             uidRef(reinterpret_cast<UniquedStringImpl*>(m_bits));
@@ -112,7 +114,6 @@ public:
 
     Identifier(Identifier&& other)
         : m_bits(std::exchange(other.m_bits, 0))
-        , m_materializedString(WTF::move(other.m_materializedString))
     {
     }
 
@@ -130,7 +131,9 @@ public:
         uintptr_t oldBits = std::exchange(m_bits, newBits);
         if (oldBits)
             uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
-        m_materializedString = other.m_materializedString;
+        // m_bits changed → cache is stale. Common case was already null so this
+        // is a single predictable branch inside AtomString::operator=.
+        m_materializedString = AtomString();
         return *this;
     }
 
@@ -139,7 +142,7 @@ public:
         uintptr_t oldBits = std::exchange(m_bits, std::exchange(other.m_bits, 0));
         if (oldBits)
             uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
-        m_materializedString = WTF::move(other.m_materializedString);
+        m_materializedString = AtomString();
         return *this;
     }
 
