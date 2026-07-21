@@ -546,8 +546,6 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncPop, (JSGlobalObject* globalObject, CallF
     EXCEPTION_ASSERT(!!scope.exception() == !thisObj);
     if (!thisObj) [[unlikely]]
         return encodedJSValue();
-    uint64_t wklintProbe = toLength(globalObject, thisObj); // WKLINT-CI-PROBE: intentionally unchecked
-    (void)wklintProbe;
     uint64_t length = toLength(globalObject, thisObj);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
