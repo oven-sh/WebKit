@@ -6,9 +6,9 @@ ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
 ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
-# wklint (JSC exception-check linter) release tag from oven-sh/webkit-lint,
-# e.g. "autobuild-<sha>". Empty = do not lint.
-ARG WKLINT_TAG=""
+# wklint (JSC exception-check linter) release from oven-sh/webkit-lint:
+# "latest" (default), a specific "autobuild-<sha>" tag, or "" to not lint.
+ARG WKLINT_TAG="latest"
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 
@@ -120,7 +120,11 @@ RUN --mount=type=secret,id=WEBKIT_LINT_RELEASE_TOKEN \
     if [ -n "$WKLINT_TAG" ]; then \
         set -eu; \
         token=$(cat /run/secrets/WEBKIT_LINT_RELEASE_TOKEN); \
-        api="https://api.github.com/repos/oven-sh/webkit-lint/releases/tags/${WKLINT_TAG}"; \
+        if [ "$WKLINT_TAG" = "latest" ]; then \
+            api="https://api.github.com/repos/oven-sh/webkit-lint/releases/latest"; \
+        else \
+            api="https://api.github.com/repos/oven-sh/webkit-lint/releases/tags/${WKLINT_TAG}"; \
+        fi; \
         asset_url=$(curl -fsSL -H "Authorization: token ${token}" "$api" \
             | python3 -c 'import json,sys; print([a["url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith("-linux-x64.tar.zst")][0])'); \
         curl -fsSL -H "Authorization: token ${token}" -H "Accept: application/octet-stream" \
