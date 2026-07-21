@@ -1042,6 +1042,13 @@ private:
     // fiber-safe when enableIdentifierFiberWords is on, identical to CompactRefPtr
     // (tag-bit test is always false) when off.
     RefPtr<UniquedStringImpl, CompactPtrTraits<UniquedStringImpl>, FiberAwareRefDerefTraits> m_transitionPropertyName;
+    // A maxFiberWordKeyLength (5-char, 8-bit) fiber word occupies byte0 tag|is8Bit|len
+    // + bytes1..5 payload = 48 bits; CompactPtr on !HAVE(36BIT_ADDRESS) stores a raw
+    // uintptr_t so encode/decode is the identity and the word round-trips losslessly.
+    static_assert(!enableIdentifierFiberWords
+        || (!CompactPtrTraits<UniquedStringImpl>::is32Bit
+            && (1 + maxFiberWordKeyLength) * 8 <= sizeof(CompactPtr<UniquedStringImpl>::StorageType) * 8),
+        "CompactPtrTraits must round-trip a 48-bit fiber-word m_transitionPropertyName");
 #else
     CompactRefPtr<UniquedStringImpl> m_transitionPropertyName;
 #endif

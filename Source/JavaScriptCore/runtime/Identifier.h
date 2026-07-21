@@ -102,9 +102,9 @@ public:
         ASSERT(empty->isAtom());
     }
 
-    // m_materializedString is a lazy cache for string(); never copy/move it so
-    // Identifier copy/move/assign stay single-word and skip the extra AtomString
-    // ref/deref. The cache re-populates on first string() per instance.
+    // Single-word storage (sizeof(Identifier) == sizeof(void*)): copy/move/
+    // assign/dtor touch only m_bits plus a fiber-aware ref/deref. string() is
+    // by-value so no per-instance materialization cache is needed.
     Identifier(const Identifier& other)
         : m_bits(other.m_bits)
     {
@@ -131,9 +131,6 @@ public:
         uintptr_t oldBits = std::exchange(m_bits, newBits);
         if (oldBits)
             uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
-        // m_bits changed → cache is stale. Common case was already null so this
-        // is a single predictable branch inside AtomString::operator=.
-        m_materializedString = AtomString();
         return *this;
     }
 
@@ -142,29 +139,24 @@ public:
         uintptr_t oldBits = std::exchange(m_bits, std::exchange(other.m_bits, 0));
         if (oldBits)
             uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
-        m_materializedString = AtomString();
         return *this;
     }
 
     enum class FromFiberWordTag { T };
     static Identifier fromFiberWord(uintptr_t word) { return Identifier(FromFiberWordTag::T, word); }
 
-    const AtomString& string() const LIFETIME_BOUND
+    AtomString string() const
     {
         if (!m_bits)
-            return m_materializedString;
-        if (m_materializedString.isNull()) {
-            if (isInlinePropertyKey(m_bits)) {
-                unsigned len = inlinePropertyKeyLength(m_bits);
-                const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&m_bits);
-                if (inlinePropertyKeyIs8Bit(m_bits))
-                    m_materializedString = AtomString(std::span<const Latin1Character> { bytes + 1, len });
-                else
-                    m_materializedString = AtomString(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
-            } else
-                m_materializedString = AtomString(reinterpret_cast<UniquedStringImpl*>(m_bits));
+            return nullAtom();
+        if (isInlinePropertyKey(m_bits)) [[unlikely]] {
+            unsigned len = inlinePropertyKeyLength(m_bits);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&m_bits);
+            if (inlinePropertyKeyIs8Bit(m_bits))
+                return AtomString(std::span<const Latin1Character> { bytes + 1, len });
+            return AtomString(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
         }
-        return m_materializedString;
+        return AtomString(reinterpret_cast<UniquedStringImpl*>(m_bits));
     }
 
     // May return a fiber-word-tagged pointer; callers are phase-A shimmed.
@@ -172,11 +164,11 @@ public:
 
     RefPtr<AtomStringImpl> releaseImpl()
     {
-        string();
+        AtomString result = string();
         uintptr_t oldBits = std::exchange(m_bits, 0);
         if (oldBits)
             uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
-        return m_materializedString.releaseImpl();
+        return result.releaseImpl();
     }
 
     int length() const { return m_bits ? static_cast<int>(uidLength(reinterpret_cast<UniquedStringImpl*>(m_bits))) : 0; }
@@ -261,7 +253,6 @@ public:
 
 private:
     uintptr_t m_bits { 0 };
-    mutable AtomString m_materializedString;
 
     Identifier(FromFiberWordTag, uintptr_t word)
         : m_bits(word)
@@ -299,6 +290,7 @@ private:
     JS_EXPORT_PRIVATE NO_RETURN_DUE_TO_CRASH static void checkCurrentAtomStringTable(VM&);
 #endif
 };
+static_assert(sizeof(Identifier) == sizeof(void*), "Identifier must stay single-word so parser/bytecompiler copies are one ref/deref");
 #else
 class Identifier {
     friend class Structure;
@@ -517,14 +509,8 @@ typedef UncheckedKeyHashMap<UniquedStringImpl*, int, IdentifierRepHash, HashTrai
 
 namespace WTF {
 
-#if USE(BUN_JSC_ADDITIONS)
-// m_bits equality defines Identifier equality, but m_materializedString is a
-// lazily-populated cache — two equal Identifiers can differ byte-wise there.
-template <> struct VectorTraits<JSC::Identifier> : SimpleClassVectorTraits {
-    static constexpr bool canCompareWithMemcmp = false;
-};
-#else
+// Identifier is a single uintptr_t (m_bits); equality is m_bits == m_bits, so
+// memcmp comparison is sound again now that the materialized-string cache is gone.
 template <> struct VectorTraits<JSC::Identifier> : SimpleClassVectorTraits { };
-#endif
 
 } // namespace WTF
