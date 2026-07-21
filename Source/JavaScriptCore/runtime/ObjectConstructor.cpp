@@ -480,11 +480,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     for (size_t i = 0; i < numProperties; i++) {
                         const auto& identifier = properties[i];
 #if USE(BUN_JSC_ADDITIONS)
-                        UniquedStringImpl* uid = identifier.get();
-                        JSString* keyString = isInlinePropertyKey(uid)
-                            ? JSString::createInlineFromFiber(vm, inlinePropertyKeyWord(uid))
-                            : jsOwnedString(vm, uid);
-                        newButterfly->setIndex(vm, i, keyString);
+                        newButterfly->setIndex(vm, i, jsStringFromFiberOrImpl(vm, identifier.get()));
 #else
                         newButterfly->setIndex(vm, i, jsOwnedString(vm, identifier.get()));
 #endif
@@ -515,10 +511,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
 
                 if (!key) {
 #if USE(BUN_JSC_ADDITIONS)
-                    UniquedStringImpl* uid = properties[i].get();
-                    key = isInlinePropertyKey(uid)
-                        ? JSString::createInlineFromFiber(vm, inlinePropertyKeyWord(uid))
-                        : jsOwnedString(vm, uid);
+                    key = jsStringFromFiberOrImpl(vm, properties[i].get());
 #else
                     key = jsOwnedString(vm, properties[i].get());
 #endif
@@ -568,7 +561,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
             value = target->get(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, void());
 
+#if USE(BUN_JSC_ADDITIONS)
+        JSString* key = jsStringFromFiberOrImpl(vm, propertyName.uid());
+#else
         JSString* key = jsOwnedString(vm, propertyName.uid());
+#endif
         JSArray* entry = nullptr;
         {
             ObjectInitializationScope initializationScope(vm);
@@ -1367,7 +1364,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                     ASSERT(!identifier.isPrivateName());
                     buffer[i].set(vm, owner, Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl())));
                 } else
+#if USE(BUN_JSC_ADDITIONS)
+                    buffer[i].set(vm, owner, jsStringFromFiberOrImpl(vm, identifier.impl()));
+#else
                     buffer[i].set(vm, owner, jsOwnedString(vm, identifier.string()));
+#endif
             }
         };
 
@@ -1404,7 +1405,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
         for (size_t i = 0; i < numProperties; i++) {
             const auto& identifier = properties[i];
             ASSERT(!identifier.isSymbol());
+#if USE(BUN_JSC_ADDITIONS)
+            pushDirect(globalObject, keys, jsStringFromFiberOrImpl(vm, identifier.impl()));
+#else
             pushDirect(globalObject, keys, jsOwnedString(vm, identifier.string()));
+#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         break;
@@ -1428,7 +1433,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                 ASSERT(!identifier.isPrivateName());
                 pushDirect(globalObject, keys, Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl())));
             } else
+#if USE(BUN_JSC_ADDITIONS)
+                pushDirect(globalObject, keys, jsStringFromFiberOrImpl(vm, identifier.impl()));
+#else
                 pushDirect(globalObject, keys, jsOwnedString(vm, identifier.string()));
+#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         break;

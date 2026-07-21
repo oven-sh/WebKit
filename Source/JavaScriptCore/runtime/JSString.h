@@ -79,6 +79,16 @@ JSString* jsNontrivialString(VM&, String&&);
 // DOM object that contains a String
 JSString* jsOwnedString(VM&, const String&);
 
+#if USE(BUN_JSC_ADDITIONS)
+// Build a JSString for a property key that may be a fiber-word-tagged
+// UniquedStringImpl* (Identifier::impl() / PropertyName::uid()). Fiber words
+// share JSString's inline m_fiber layout, so they flow straight into
+// createInlineFromFiber — no AtomStringTable round-trip. Real impls are
+// interned atoms owned elsewhere, so take the createHasOtherOwner path.
+JSString* jsStringFromFiberOrImpl(VM&, UniquedStringImpl*);
+JSString* jsStringFromFiberOrImpl(VM&, const Identifier&);
+#endif
+
 bool isJSString(JSCell*);
 bool isJSString(JSValue);
 JSString* asString(JSValue);
@@ -439,6 +449,9 @@ private:
     friend JSString* tryJSSubstringImpl(VM&, JSString*, unsigned, unsigned);
     friend JSString* jsSubstringOfResolved(VM&, GCDeferralContext*, JSString*, unsigned, unsigned);
     friend JSString* jsOwnedString(VM&, const String&);
+#if USE(BUN_JSC_ADDITIONS)
+    friend JSString* jsStringFromFiberOrImpl(VM&, UniquedStringImpl*);
+#endif
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*);
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*);
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*, JSString*);
@@ -1466,6 +1479,45 @@ inline JSString* jsOwnedString(VM& vm, const String& s)
     }
     return JSString::createHasOtherOwner(vm, *s.impl());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// audit-string-materialize: central helper so ownPropertyKeys / for-in /
+// Object.entries stop materializing an AtomString via Identifier::string()
+// when the uid is already a fiber word.
+//
+// Keep/rewrite decisions for the remaining identifier.string() consumers:
+//   - ObjectConstructor.cpp ownPropertyKeys loop       → REWRITE (here)
+//   - JSPropertyNameEnumerator.cpp:finishCreation       → REWRITE (for-in hot)
+//   - Lookup.h reifyStaticProperty → publicName()       → KEEP (cold host-fn)
+//   - LiteralParser.cpp                                 → KEEP (span→Identifier only)
+//   - PropertyName::publicName()                        → KEEP (already fiber-aware)
+ALWAYS_INLINE JSString* jsStringFromFiberOrImpl(VM& vm, UniquedStringImpl* uid)
+{
+    uintptr_t bits = reinterpret_cast<uintptr_t>(uid);
+    if (isInlinePropertyKey(bits)) {
+        if (JSString* cached = vm.inlineStringCache.lookup(bits))
+            return cached;
+        JSString* s = JSString::createInlineFromFiber(vm, bits);
+        vm.inlineStringCache.insert(bits, s);
+        return s;
+    }
+    ASSERT(uid);
+    unsigned length = uid->length();
+    if (!length)
+        return vm.smallStrings.emptyString();
+    if (length == 1) {
+        char16_t c = uid->is8Bit() ? uid->span8()[0] : uid->span16()[0];
+        if (c <= maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(c);
+    }
+    return JSString::createHasOtherOwner(vm, *uid);
+}
+
+ALWAYS_INLINE JSString* jsStringFromFiberOrImpl(VM& vm, const Identifier& identifier)
+{
+    return jsStringFromFiberOrImpl(vm, identifier.impl());
+}
+#endif
 
 ALWAYS_INLINE JSString* jsStringWithCache(VM& vm, const String& s)
 {

@@ -85,6 +85,9 @@ void JSPropertyNameEnumerator::finishCreation(VM& vm, RefPtr<PropertyNameArray>&
     ASSERT(m_endGenericPropertyIndex == vector.size());
     for (unsigned i = 0; i < vector.size(); ++i) {
         const Identifier& identifier = vector[i];
+        // audit-string-materialize: KEEP atom-backed here. for-in keys flow into
+        // user JS where DFG StringCharAt / substring / length inline the m_fiber
+        // → StringImpl::m_length load without an inline-cell guard.
         m_propertyNames.get()[i].set(vm, this, jsString(vm, identifier.string()));
     }
 }
