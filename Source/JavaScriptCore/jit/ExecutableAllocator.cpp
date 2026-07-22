@@ -57,6 +57,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <wtf/MetaAllocator.h>
 #endif
 
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
+
 #if HAVE(IOS_JIT_RESTRICTIONS) || HAVE(MAC_JIT_RESTRICTIONS)
 #include <wtf/cocoa/Entitlements.h>
 #endif
@@ -358,6 +362,102 @@ struct JITReservation {
     size_t size { 0 };
 };
 
+#if OS(WINDOWS) && CPU(X86_64)
+
+// Language-specific SEH handler for the JIT code range. The OS calls it during
+// exception dispatch when the faulting/unwinding frame's PC is inside the
+// fixed executable memory pool (via the RUNTIME_FUNCTION registered below).
+// It lets the embedder observe exceptions that reach a JIT frame; by default
+// it just continues the search so the unwind codes take over.
+static std::atomic<PRUNTIME_FUNCTION> g_jitSEHFunctionTable { nullptr };
+static std::atomic<JITExceptionHandlerWin> g_jitSEHCallback { nullptr };
+
+static EXCEPTION_DISPOSITION jscJITSEHHandler(PEXCEPTION_RECORD exceptionRecord, PVOID establisherFrame, PCONTEXT contextRecord, PDISPATCHER_CONTEXT dispatcherContext)
+{
+    if (auto callback = g_jitSEHCallback.load(std::memory_order_acquire))
+        return static_cast<EXCEPTION_DISPOSITION>(callback(exceptionRecord, establisherFrame, contextRecord, dispatcherContext));
+    return ExceptionContinueSearch;
+}
+
+// Layout of the first page of the reservation. RVAs in RUNTIME_FUNCTION and
+// UNWIND_INFO are relative to the function-table base (the original pool base),
+// so both the unwind info and the handler thunk must live inside the pool;
+// the thunk is a 12-byte absolute jump to jscJITSEHHandler in the image.
+#pragma pack(push, 1)
+struct JITUnwindRecord {
+    RUNTIME_FUNCTION runtimeFunction;
+    struct {
+        uint8_t versionAndFlags;     // Version(3) | Flags(5)
+        uint8_t sizeOfProlog;
+        uint8_t countOfCodes;
+        uint8_t frameRegisterAndOffset;
+        uint16_t unwindCodes[2];
+        uint32_t exceptionHandlerRva;
+    } unwindInfo;
+    alignas(16) uint8_t thunk[16];
+};
+#pragma pack(pop)
+
+static_assert(offsetof(JITUnwindRecord, unwindInfo) % sizeof(uint32_t) == 0, "UNWIND_INFO must be DWORD-aligned");
+static_assert(sizeof(JITUnwindRecord) <= 64, "record should fit well inside one page");
+
+static constexpr uint8_t kUnwFlagEHandler = 0x1;
+static constexpr uint8_t kUwopPushNonvol = 0;
+static constexpr uint8_t kUwopSetFpreg = 3;
+static constexpr uint8_t kRbp = 5;
+// push rbp (1 byte) + mov rbp, rsp (3 bytes)
+static constexpr uint8_t kPrologSize = 4;
+
+static inline uint16_t unwindCode(uint8_t codeOffset, uint8_t op, uint8_t info)
+{
+    return static_cast<uint16_t>(codeOffset) | (static_cast<uint16_t>(op | (info << 4)) << 8);
+}
+
+static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base, size_t& size)
+{
+    size_t pageSize = executablePageSize();
+    if (size <= pageSize * 2 || size > UINT32_MAX)
+        return;
+
+    void* recordPage = base;
+    pageReservation.commit(recordPage, pageSize);
+
+    auto* record = new (recordPage) JITUnwindRecord();
+    record->runtimeFunction.BeginAddress = static_cast<DWORD>(pageSize);
+    record->runtimeFunction.EndAddress = static_cast<DWORD>(size);
+    record->runtimeFunction.UnwindData = static_cast<DWORD>(offsetof(JITUnwindRecord, unwindInfo));
+
+    // Every JIT entry prologue is `push rbp; mov rbp, rsp`
+    // (AssemblyHelpers::emitFunctionPrologue / LLInt functionPrologue), so
+    // rbp-chain unwinding is valid for the whole range.
+    record->unwindInfo.versionAndFlags = 1 | (kUnwFlagEHandler << 3);
+    record->unwindInfo.sizeOfProlog = kPrologSize;
+    record->unwindInfo.countOfCodes = 2;
+    record->unwindInfo.frameRegisterAndOffset = kRbp; // FrameOffset = 0
+    record->unwindInfo.unwindCodes[0] = unwindCode(kPrologSize, kUwopSetFpreg, 0);
+    record->unwindInfo.unwindCodes[1] = unwindCode(1, kUwopPushNonvol, kRbp);
+    record->unwindInfo.exceptionHandlerRva = static_cast<DWORD>(offsetof(JITUnwindRecord, thunk));
+
+    // mov rax, imm64; jmp rax
+    uint8_t* t = record->thunk;
+    t[0] = 0x48; t[1] = 0xB8;
+    *reinterpret_cast<uint64_t*>(t + 2) = reinterpret_cast<uint64_t>(&jscJITSEHHandler);
+    t[10] = 0xFF; t[11] = 0xE0;
+
+    DWORD oldProtect;
+    VirtualProtect(recordPage, pageSize, PAGE_EXECUTE_READ, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), recordPage, pageSize);
+
+    if (!RtlAddFunctionTable(&record->runtimeFunction, 1, reinterpret_cast<DWORD64>(recordPage)))
+        return;
+
+    g_jitSEHFunctionTable.store(&record->runtimeFunction, std::memory_order_release);
+    base = static_cast<uint8_t*>(base) + pageSize;
+    size -= pageSize;
+}
+
+#endif // OS(WINDOWS) && CPU(X86_64)
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 static ALWAYS_INLINE JITReservation initializeJITPageReservation()
@@ -427,6 +527,10 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
             reservation.size -= executablePageSize();
             initializeSeparatedWXHeaps(reservation.pageReservation.base(), executablePageSize(), reservation.base, reservation.size);
         }
+#endif
+
+#if OS(WINDOWS) && CPU(X86_64)
+        registerJITUnwindInfo(reservation.pageReservation, reservation.base, reservation.size);
 #endif
 
         void* reservationEnd = static_cast<uint8_t*>(reservation.base) + reservation.size;
@@ -1318,6 +1422,18 @@ void* endOfFixedExecutableMemoryPoolImpl()
         return nullptr;
     return allocator->memoryEnd();
 }
+
+#if OS(WINDOWS) && CPU(X86_64)
+void setJITExceptionHandlerWin(JITExceptionHandlerWin callback)
+{
+    g_jitSEHCallback.store(callback, std::memory_order_release);
+}
+
+bool hasJITUnwindInfoWin()
+{
+    return g_jitSEHFunctionTable.load(std::memory_order_acquire);
+}
+#endif
 
 void dumpJITMemory(const void* dst, const void* src, size_t size)
 {

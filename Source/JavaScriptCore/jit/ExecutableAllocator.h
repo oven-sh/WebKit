@@ -97,6 +97,16 @@ private:
 JS_EXPORT_PRIVATE void* NODELETE startOfFixedExecutableMemoryPoolImpl();
 JS_EXPORT_PRIVATE void* NODELETE endOfFixedExecutableMemoryPoolImpl();
 
+#if OS(WINDOWS) && CPU(X86_64)
+// Set the language-specific SEH handler invoked when exception dispatch
+// reaches a JIT frame. See registerJITUnwindInfo in ExecutableAllocator.cpp.
+// Signature: EXCEPTION_DISPOSITION(PEXCEPTION_RECORD, PVOID establisherFrame,
+// PCONTEXT, PDISPATCHER_CONTEXT).
+using JITExceptionHandlerWin = long(__cdecl*)(void*, void*, void*, void*);
+JS_EXPORT_PRIVATE void setJITExceptionHandlerWin(JITExceptionHandlerWin);
+JS_EXPORT_PRIVATE bool hasJITUnwindInfoWin();
+#endif
+
 template<typename T = void*>
 T startOfFixedExecutableMemoryPool()
 {
