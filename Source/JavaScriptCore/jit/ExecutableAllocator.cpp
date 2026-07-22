@@ -380,9 +380,12 @@ struct JITReservation {
 // top-level filter (it cannot when the SEH walk derails).
 //
 // This mirrors V8's RegisterNonABICompliantCodeRange
-// (src/diagnostics/unwinding-info-win64.cc).
+// (src/diagnostics/unwinding-info-win64.cc) and SpiderMonkey's
+// RegisterExecutableMemory (js/src/jit/ProcessExecutableMemory.cpp).
+// RtlAddGrowableFunctionTable rather than RtlAddFunctionTable so that
+// out-of-process stack walkers (ETW, WPA, WinDbg) see the entry too.
 
-static Atomic<PRUNTIME_FUNCTION> g_jitSEHFunctionTable { nullptr };
+static Atomic<void*> g_jitSEHFunctionTable { nullptr };
 static Atomic<JITExceptionHandlerWin> g_jitSEHCallback { nullptr };
 
 static EXCEPTION_DISPOSITION jscJITSEHHandler(PEXCEPTION_RECORD exceptionRecord, PVOID establisherFrame, PCONTEXT contextRecord, PDISPATCHER_CONTEXT dispatcherContext)
@@ -449,14 +452,19 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
     thunk[10] = 0xFF;
     thunk[11] = 0xE0;
 
-    DWORD oldProtect;
-    VirtualProtect(recordBase, pageSize, PAGE_EXECUTE_READ, &oldProtect);
     FlushInstructionCache(GetCurrentProcess(), recordBase, pageSize);
 
-    if (!RtlAddFunctionTable(&record->runtimeFunction, 1, reinterpret_cast<DWORD64>(recordBase)))
+    // RtlAddGrowableFunctionTable writes into the region, so write-protect
+    // only after it returns.
+    void* dynamicTable = nullptr;
+    DWORD result = RtlAddGrowableFunctionTable(&dynamicTable, &record->runtimeFunction, 1, 1, reinterpret_cast<ULONG_PTR>(recordBase), reinterpret_cast<ULONG_PTR>(recordBase) + size);
+    if (result)
         return;
 
-    g_jitSEHFunctionTable.storeRelaxed(&record->runtimeFunction);
+    DWORD oldProtect;
+    VirtualProtect(recordBase, pageSize, PAGE_EXECUTE_READ, &oldProtect);
+
+    g_jitSEHFunctionTable.storeRelaxed(dynamicTable);
     base = static_cast<uint8_t*>(base) + pageSize;
     size -= pageSize;
 }
@@ -549,14 +557,19 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
     }
     RELEASE_ASSERT(entryCount <= maxEntries);
 
-    DWORD oldProtect;
-    VirtualProtect(recordBase, recordSize, PAGE_EXECUTE_READ, &oldProtect);
     FlushInstructionCache(GetCurrentProcess(), recordBase, recordSize);
 
-    if (!RtlAddFunctionTable(entries, entryCount, reinterpret_cast<ULONG_PTR>(recordBase)))
+    // RtlAddGrowableFunctionTable writes into the region, so write-protect
+    // only after it returns.
+    void* dynamicTable = nullptr;
+    DWORD result = RtlAddGrowableFunctionTable(&dynamicTable, entries, entryCount, entryCount, reinterpret_cast<ULONG_PTR>(recordBase), reinterpret_cast<ULONG_PTR>(recordBase) + size);
+    if (result)
         return;
 
-    g_jitSEHFunctionTable.storeRelaxed(entries);
+    DWORD oldProtect;
+    VirtualProtect(recordBase, recordSize, PAGE_EXECUTE_READ, &oldProtect);
+
+    g_jitSEHFunctionTable.storeRelaxed(dynamicTable);
     base = static_cast<uint8_t*>(base) + recordSize;
     size -= recordSize;
 }
