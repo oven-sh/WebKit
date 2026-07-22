@@ -95,8 +95,14 @@ ALWAYS_INLINE JSString* JSONAtomStringCache::makeJSString(std::span<const Charac
     if (characters.size() == 1) {
         if (firstCharacter <= maxSingleCharacterString)
             return jsSingleCharacterString(vm, firstCharacter);
-    } else if (characters.size() > maxAtomizeStringLength)
-        return jsNontrivialString(vm, String(characters));
+    } else if (characters.size() > maxAtomizeStringLength) {
+        std::span<CharacterType> buffer;
+        auto impl = StringImpl::tryCreateUninitialized(characters.size(), buffer);
+        if (!impl) [[unlikely]]
+            return nullptr;
+        WTF::copyElements(buffer, characters);
+        return jsNontrivialString(vm, String(WTF::move(impl)));
+    }
 
     auto lastCharacter = characters.back();
     unsigned index = cacheIndex(firstCharacter, lastCharacter, characters.size());

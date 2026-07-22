@@ -1249,6 +1249,11 @@ ALWAYS_INLINE JSValue LiteralParser<CharType, reviverMode>::parsePrimitiveValue(
     switch (m_lexer.currentToken()->type) {
     case TokString: {
         JSString* result = makeJSString(vm, m_lexer.currentToken());
+        if (!result) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwOutOfMemoryError(m_globalObject, scope);
+            return { };
+        }
         m_lexer.next();
         return result;
     }
