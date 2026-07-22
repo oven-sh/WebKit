@@ -97,7 +97,7 @@ private:
 JS_EXPORT_PRIVATE void* NODELETE startOfFixedExecutableMemoryPoolImpl();
 JS_EXPORT_PRIVATE void* NODELETE endOfFixedExecutableMemoryPoolImpl();
 
-#if OS(WINDOWS) && CPU(X86_64)
+#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 // Set the language-specific SEH handler invoked when exception dispatch
 // reaches a JIT frame. See registerJITUnwindInfo in ExecutableAllocator.cpp.
 // Signature: EXCEPTION_DISPOSITION(PEXCEPTION_RECORD, PVOID establisherFrame,
