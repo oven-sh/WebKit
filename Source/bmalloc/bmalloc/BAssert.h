@@ -60,7 +60,13 @@
 #define BCRASH() __builtin_trap()
 #else
 
-#if defined(__GNUC__) // GCC or Clang
+// clang-cl defines __clang__ but not __GNUC__. With only defined(__GNUC__),
+// clang-cl fell into the #else and compiled BCRASH() as ((void(*)())0)(),
+// which clang treats as unconditional UB and uses to prove the surrounding
+// branch unreachable. Every RELEASE_BASSERT(x) in bmalloc compiled to nothing
+// at -O2, so e.g. fastCompactMalloc became a bare `jmp mi_malloc` with the
+// OOM null check deleted. https://bun.com/issues/sentry/BUN-2Z94.
+#if defined(__GNUC__) || defined(__clang__)
 #define BCRASH() do { \
     BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("core.FixedAddressDereference") *(int*)0xbbadbeef = 0; \
     __builtin_trap(); \
@@ -70,7 +76,7 @@
     BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("core.FixedAddressDereference") *(int*)0xbbadbeef = 0; \
     ((void(*)())0)(); \
 } while (0)
-#endif // defined(__GNUC__)
+#endif // defined(__GNUC__) || defined(__clang__)
 #endif // BASAN_ENABLED
 
 #endif // defined(NDEBUG) && (BOS(DARWIN) || BPLATFORM(PLAYSTATION))
