@@ -36,6 +36,7 @@
 #include "JSCConfig.h"
 #include "JSCPtrTag.h"
 #include "LLIntData.h"
+#include "LLIntPCRanges.h"
 #include "NativeCalleeRegistry.h"
 #include "Options.h"
 #include "StructureAlignedMemoryAllocator.h"
@@ -122,6 +123,12 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
 
         AssemblyCommentRegistry::initialize();
         LLInt::initialize();
+#if ENABLE(JIT) && OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+        registerImageUnwindInfoWin(reinterpret_cast<void*>(LLInt::llintPCRangeStart), reinterpret_cast<void*>(LLInt::llintPCRangeEnd));
+#if ENABLE(WEBASSEMBLY)
+        registerImageUnwindInfoWin(reinterpret_cast<void*>(LLInt::wasmIPIntPCRangeStart), reinterpret_cast<void*>(LLInt::wasmIPIntPCRangeEnd));
+#endif
+#endif
         AssertNoGC::initialize();
 
         initializeSuperSampler();
