@@ -387,7 +387,7 @@ static std::atomic<JITExceptionHandlerWin> g_jitSEHCallback { nullptr };
 
 static EXCEPTION_DISPOSITION jscJITSEHHandler(PEXCEPTION_RECORD exceptionRecord, PVOID establisherFrame, PCONTEXT contextRecord, PDISPATCHER_CONTEXT dispatcherContext)
 {
-    if (auto callback = g_jitSEHCallback.load(std::memory_order_acquire))
+    if (auto callback = g_jitSEHCallback.load(std::memory_order_relaxed))
         return static_cast<EXCEPTION_DISPOSITION>(callback(exceptionRecord, establisherFrame, contextRecord, dispatcherContext));
     return ExceptionContinueSearch;
 }
@@ -456,7 +456,7 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
     if (!RtlAddFunctionTable(&record->runtimeFunction, 1, reinterpret_cast<DWORD64>(recordBase)))
         return;
 
-    g_jitSEHFunctionTable.store(&record->runtimeFunction, std::memory_order_release);
+    g_jitSEHFunctionTable.store(&record->runtimeFunction, std::memory_order_relaxed);
     base = static_cast<uint8_t*>(base) + pageSize;
     size -= pageSize;
 }
@@ -556,7 +556,7 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
     if (!RtlAddFunctionTable(entries, entryCount, reinterpret_cast<ULONG_PTR>(recordBase)))
         return;
 
-    g_jitSEHFunctionTable.store(entries, std::memory_order_release);
+    g_jitSEHFunctionTable.store(entries, std::memory_order_relaxed);
     base = static_cast<uint8_t*>(base) + recordSize;
     size -= recordSize;
 }
@@ -1533,12 +1533,12 @@ void* endOfFixedExecutableMemoryPoolImpl()
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 void setJITExceptionHandlerWin(JITExceptionHandlerWin callback)
 {
-    g_jitSEHCallback.store(callback, std::memory_order_release);
+    g_jitSEHCallback.store(callback, std::memory_order_relaxed);
 }
 
 bool hasJITUnwindInfoWin()
 {
-    return g_jitSEHFunctionTable.load(std::memory_order_acquire);
+    return g_jitSEHFunctionTable.load(std::memory_order_relaxed);
 }
 #endif
 
