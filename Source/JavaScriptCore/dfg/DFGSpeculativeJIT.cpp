@@ -11341,7 +11341,7 @@ void SpeculativeJIT::compileCallDOM(Node* node)
 
     // FIXME: We should have a way to call functions with the vector of registers.
     // https://bugs.webkit.org/show_bug.cgi?id=163099
-    using OperandVariant = Variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand>;
+    using OperandVariant = Variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand, SpeculateStrictInt52Operand>;
     Vector<OperandVariant, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> operands;
     Vector<GPRReg, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> regs;
 
@@ -11371,6 +11371,20 @@ void SpeculativeJIT::compileCallDOM(Node* node)
         operands.append(OperandVariant(WTF::InPlaceType<SpeculateBooleanOperand>, WTF::move(operand)));
     };
 
+    auto appendTypedArray = [&](Edge& edge, JSType type) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, type);
+        operands.append(OperandVariant(WTF::InPlaceType<SpeculateCellOperand>, WTF::move(operand)));
+    };
+
+    auto appendStrictInt52 = [&](Edge& edge) {
+        SpeculateStrictInt52Operand operand(this, edge);
+        regs.append(operand.gpr());
+        operands.append(OperandVariant(WTF::InPlaceType<SpeculateStrictInt52Operand>, WTF::move(operand)));
+    };
+
     unsigned index = 0;
     m_graph.doToChildren(node, [&](Edge edge) {
         if (!index)
@@ -11385,6 +11399,39 @@ void SpeculativeJIT::compileCallDOM(Node* node)
                 break;
             case SpecBoolean:
                 appendBoolean(edge);
+                break;
+            case SpecInt8Array:
+                appendTypedArray(edge, JSType::Int8ArrayType);
+                break;
+            case SpecInt16Array:
+                appendTypedArray(edge, JSType::Int16ArrayType);
+                break;
+            case SpecInt32Array:
+                appendTypedArray(edge, JSType::Int32ArrayType);
+                break;
+            case SpecUint8Array:
+                appendTypedArray(edge, JSType::Uint8ArrayType);
+                break;
+            case SpecUint8ClampedArray:
+                appendTypedArray(edge, JSType::Uint8ClampedArrayType);
+                break;
+            case SpecUint16Array:
+                appendTypedArray(edge, JSType::Uint16ArrayType);
+                break;
+            case SpecUint32Array:
+                appendTypedArray(edge, JSType::Uint32ArrayType);
+                break;
+            case SpecFloat32Array:
+                appendTypedArray(edge, JSType::Float32ArrayType);
+                break;
+            case SpecFloat64Array:
+                appendTypedArray(edge, JSType::Float64ArrayType);
+                break;
+            case SpecInt52Any:
+            case SpecInt32AsInt52:
+            case SpecNonInt32AsInt52:
+            case SpecAnyIntAsDouble:
+                appendStrictInt52(edge);
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
