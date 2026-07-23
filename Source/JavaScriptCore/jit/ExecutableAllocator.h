@@ -105,7 +105,6 @@ JS_EXPORT_PRIVATE void* NODELETE endOfFixedExecutableMemoryPoolImpl();
 using JITExceptionHandlerWin = long(__cdecl*)(void*, void*, void*, void*);
 JS_EXPORT_PRIVATE void setJITExceptionHandlerWin(JITExceptionHandlerWin);
 JS_EXPORT_PRIVATE bool hasJITUnwindInfoWin();
-void registerImageUnwindInfoWin(void* rangeStart, void* rangeEnd);
 #endif
 
 template<typename T = void*>

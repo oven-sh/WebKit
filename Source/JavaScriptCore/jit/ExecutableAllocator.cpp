@@ -576,84 +576,13 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 
 #endif
 
-// Cover a range inside the loaded image (LLInt, wasm IPInt) with the same
-// prologue unwind info. offlineasm emits those into .text without .seh_*
-// directives (and ARM64 builds the LLInt TU with -fno-unwind-tables), so they
-// have no static .pdata. The unwind info here must itself live inside the
-// image so that RUNTIME_FUNCTION.UnwindData (a base-relative u32 RVA) can
-// address it; the LLInt range is the one caller (it encloses the wasm IPInt
-// range), so a single .data slot suffices.
-extern "C" IMAGE_DOS_HEADER __ImageBase;
-
-#if CPU(X86_64)
-alignas(uint32_t) static decltype(JITUnwindRecord::unwindInfo) g_imageUnwindInfo { };
-#else
-alignas(uint32_t) static decltype(JITUnwindHeader::unwindInfoFull) g_imageUnwindInfo[2] { };
-#endif
-
-void registerImageUnwindInfoWin(void* rangeStart, void* rangeEnd)
-{
-    // __ImageBase resolves to the base of whichever PE this TU links into
-    // (EXE or DLL); GetModuleHandleW(nullptr) would be the process EXE base.
-    auto imageBase = reinterpret_cast<uintptr_t>(&__ImageBase);
-    auto rva = [&](const void* p) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(p) - imageBase); };
-    auto begin = rva(rangeStart);
-    auto end = rva(rangeEnd);
-    if (begin >= end)
-        return;
-
-#if CPU(X86_64)
-    auto& unwindInfo = g_imageUnwindInfo;
-    constexpr uint8_t prologSize = 4;
-    auto unwindCode = [](uint8_t codeOffset, uint8_t op, uint8_t opInfo) -> uint16_t {
-        return static_cast<uint16_t>(codeOffset) | (static_cast<uint16_t>(op | (opInfo << 4)) << 8);
-    };
-    unwindInfo.versionAndFlags = 1 | (UNW_FLAG_EHANDLER << 3);
-    unwindInfo.sizeOfProlog = prologSize;
-    unwindInfo.countOfCodes = 2;
-    unwindInfo.frameRegisterAndOffset = 5;
-    unwindInfo.unwindCodes[0] = unwindCode(prologSize, 3, 0);
-    unwindInfo.unwindCodes[1] = unwindCode(1, 0, 5);
-    unwindInfo.exceptionHandlerRVA = rva(reinterpret_cast<const void*>(&jscJITSEHHandler));
-
-    auto* entry = static_cast<RUNTIME_FUNCTION*>(fastZeroedMalloc(sizeof(RUNTIME_FUNCTION)));
-    entry->BeginAddress = begin;
-    entry->EndAddress = end;
-    entry->UnwindData = rva(&unwindInfo);
-
-    void* dynamicTable = nullptr;
-    RtlAddGrowableFunctionTable(&dynamicTable, entry, 1, 1, imageBase, imageBase + end);
-#else
-    auto& unwindInfoFull = g_imageUnwindInfo[0];
-    auto& unwindInfoTail = g_imageUnwindInfo[1];
-    unwindInfoFull.header = arm64XdataHeader(arm64MaxFunctionLength);
-    unwindInfoFull.unwindCodes = arm64JITUnwindCodes();
-    unwindInfoFull.exceptionHandlerRVA = rva(reinterpret_cast<const void*>(&jscJITSEHHandler));
-    unwindInfoTail.unwindCodes = arm64JITUnwindCodes();
-    unwindInfoTail.exceptionHandlerRVA = unwindInfoFull.exceptionHandlerRVA;
-
-    size_t rangeSize = end - begin;
-    DWORD maxEntries = static_cast<DWORD>((rangeSize + arm64MaxFunctionLength - 1) / arm64MaxFunctionLength);
-    auto* entries = static_cast<RUNTIME_FUNCTION*>(fastZeroedMalloc(maxEntries * sizeof(RUNTIME_FUNCTION)));
-    size_t remaining = rangeSize;
-    DWORD entryCount = 0;
-    while (remaining > arm64MaxFunctionLength) {
-        entries[entryCount].BeginAddress = begin;
-        entries[entryCount].UnwindData = rva(&unwindInfoFull);
-        begin += static_cast<uint32_t>(arm64MaxFunctionLength);
-        remaining -= arm64MaxFunctionLength;
-        entryCount++;
-    }
-    unwindInfoTail.header = arm64XdataHeader(remaining);
-    entries[entryCount].BeginAddress = begin;
-    entries[entryCount].UnwindData = rva(&unwindInfoTail);
-    entryCount++;
-    RELEASE_ASSERT(entryCount <= maxEntries);
-
-    void* dynamicTable = nullptr;
-    RtlAddGrowableFunctionTable(&dynamicTable, entries, entryCount, entryCount, imageBase, imageBase + end);
-#endif
-}
+// LLInt / vmEntryToJavaScript live in image .text with no .pdata of their own
+// (offlineasm emits no .seh_* directives). A dynamic function table cannot
+// cover those: RtlLookupFunctionEntry for a PC inside a loaded module consults
+// only that module's static .pdata. V8 solves this at build time by emitting
+// .pdata/.xdata for its embedded builtins (platform-embedded-file-writer-
+// win.cc); the JSC equivalent is offlineasm emitting .seh_* directives, which
+// is a separate change.
 
 #endif // OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 
