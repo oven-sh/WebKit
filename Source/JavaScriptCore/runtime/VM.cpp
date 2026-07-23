@@ -547,11 +547,21 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     Config::finalize();
 
+#if !USE(BUN_JSC_ADDITIONS)
+    // Upstream (311982@main) warms the IANA timezone table and the local-zone
+    // display name here so the cost lands at process start instead of on a later
+    // critical path. For Bun that tradeoff is backwards: a short-lived CLI process
+    // may never format a date, and on Linux the timeZoneDisplayName warm drags in
+    // ucal_getHostTimeZone, which walks /usr/share/zoneinfo when /etc/localtime is
+    // a regular file (Amazon Linux, many container images). Both underlying caches
+    // are std::call_once / per-VM, so skip the prewarm and let the first Date /
+    // Intl access pay for it.
     if (!isInMiniMode()) {
         initializeAvailableTimeZones();
         if (heapType == HeapType::Large)
             dateCache.timeZoneDisplayName(/* isDST */ false);
     }
+#endif
 
     // We must set this at the end only after the VM is fully initialized.
     WTF::storeStoreFence();
