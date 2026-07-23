@@ -124,10 +124,10 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
         AssemblyCommentRegistry::initialize();
         LLInt::initialize();
 #if ENABLE(JIT) && OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+        // The LLInt range encloses the wasm IPInt range (LowLevelInterpreter
+        // .asm places wasmIPIntPCRangeStart/End between llintPCRangeStart/End),
+        // so one registration covers both.
         registerImageUnwindInfoWin(reinterpret_cast<void*>(LLInt::llintPCRangeStart), reinterpret_cast<void*>(LLInt::llintPCRangeEnd));
-#if ENABLE(WEBASSEMBLY)
-        registerImageUnwindInfoWin(reinterpret_cast<void*>(LLInt::wasmIPIntPCRangeStart), reinterpret_cast<void*>(LLInt::wasmIPIntPCRangeEnd));
-#endif
 #endif
         AssertNoGC::initialize();
 

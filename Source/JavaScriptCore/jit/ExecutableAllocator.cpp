@@ -580,33 +580,30 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 // prologue unwind info. offlineasm emits those into .text without .seh_*
 // directives (and ARM64 builds the LLInt TU with -fno-unwind-tables), so they
 // have no static .pdata. The unwind info here must itself live inside the
-// image so that RUNTIME_FUNCTION.UnwindData (an image-base-relative u32 RVA)
-// can address it; a fixed set of .data slots covers the two known callers.
-static constexpr unsigned imageUnwindSlotCount = 2;
-static Atomic<unsigned> g_imageUnwindSlotNext { 0 };
+// image so that RUNTIME_FUNCTION.UnwindData (a base-relative u32 RVA) can
+// address it; the LLInt range is the one caller (it encloses the wasm IPInt
+// range), so a single .data slot suffices.
+extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 #if CPU(X86_64)
-alignas(uint32_t) static decltype(JITUnwindRecord::unwindInfo) g_imageUnwindInfo[imageUnwindSlotCount] { };
+alignas(uint32_t) static decltype(JITUnwindRecord::unwindInfo) g_imageUnwindInfo { };
 #else
-alignas(uint32_t) static decltype(JITUnwindHeader::unwindInfoFull) g_imageUnwindInfo[imageUnwindSlotCount][2] { };
+alignas(uint32_t) static decltype(JITUnwindHeader::unwindInfoFull) g_imageUnwindInfo[2] { };
 #endif
 
 void registerImageUnwindInfoWin(void* rangeStart, void* rangeEnd)
 {
-    auto imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    if (!imageBase)
-        return;
+    // __ImageBase resolves to the base of whichever PE this TU links into
+    // (EXE or DLL); GetModuleHandleW(nullptr) would be the process EXE base.
+    auto imageBase = reinterpret_cast<uintptr_t>(&__ImageBase);
     auto rva = [&](const void* p) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(p) - imageBase); };
     auto begin = rva(rangeStart);
     auto end = rva(rangeEnd);
     if (begin >= end)
         return;
 
-    unsigned slot = g_imageUnwindSlotNext.exchangeAdd(1);
-    RELEASE_ASSERT(slot < imageUnwindSlotCount);
-
 #if CPU(X86_64)
-    auto& unwindInfo = g_imageUnwindInfo[slot];
+    auto& unwindInfo = g_imageUnwindInfo;
     constexpr uint8_t prologSize = 4;
     auto unwindCode = [](uint8_t codeOffset, uint8_t op, uint8_t opInfo) -> uint16_t {
         return static_cast<uint16_t>(codeOffset) | (static_cast<uint16_t>(op | (opInfo << 4)) << 8);
@@ -625,10 +622,10 @@ void registerImageUnwindInfoWin(void* rangeStart, void* rangeEnd)
     entry->UnwindData = rva(&unwindInfo);
 
     void* dynamicTable = nullptr;
-    RtlAddGrowableFunctionTable(&dynamicTable, entry, 1, 1, imageBase + begin, imageBase + end);
+    RtlAddGrowableFunctionTable(&dynamicTable, entry, 1, 1, imageBase, imageBase + end);
 #else
-    auto& unwindInfoFull = g_imageUnwindInfo[slot][0];
-    auto& unwindInfoTail = g_imageUnwindInfo[slot][1];
+    auto& unwindInfoFull = g_imageUnwindInfo[0];
+    auto& unwindInfoTail = g_imageUnwindInfo[1];
     unwindInfoFull.header = arm64XdataHeader(arm64MaxFunctionLength);
     unwindInfoFull.unwindCodes = arm64JITUnwindCodes();
     unwindInfoFull.exceptionHandlerRVA = rva(reinterpret_cast<const void*>(&jscJITSEHHandler));
@@ -654,7 +651,7 @@ void registerImageUnwindInfoWin(void* rangeStart, void* rangeEnd)
     RELEASE_ASSERT(entryCount <= maxEntries);
 
     void* dynamicTable = nullptr;
-    RtlAddGrowableFunctionTable(&dynamicTable, entries, entryCount, entryCount, imageBase + end - rangeSize, imageBase + end);
+    RtlAddGrowableFunctionTable(&dynamicTable, entries, entryCount, entryCount, imageBase, imageBase + end);
 #endif
 }
 
