@@ -101,6 +101,9 @@ public:
 
     TimeZone defaultTimeZone();
     String timeZoneDisplayName(bool isDST);
+#if USE(BUN_JSC_ADDITIONS)
+    String timeZoneDisplayName(double millisecondsFromEpoch);
+#endif
     Ref<DateInstanceData> NODELETE cachedDateInstanceData(double millisecondsFromEpoch);
 
     void msToGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType, GregorianDateTime&);

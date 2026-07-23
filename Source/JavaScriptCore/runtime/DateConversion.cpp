@@ -95,7 +95,14 @@ String formatDateTime(const GregorianDateTime& t, DateTimeFormat format, bool as
             builder.append(t.utcOffsetInMinute() < 0 ? '-' : '+');
             appendNumber<2>(builder, offset / 60);
             appendNumber<2>(builder, offset % 60);
+#if USE(BUN_JSC_ADDITIONS)
+            double localMs = WTF::dateToDaysFrom1970(t.year(), t.month(), t.monthDay()) * WTF::msPerDay
+                + t.hour() * WTF::msPerHour + t.minute() * WTF::msPerMinute + t.second() * WTF::msPerSecond;
+            double millisecondsFromEpoch = localMs - t.utcOffsetInMinute() * WTF::msPerMinute;
+            String timeZoneName = dateCache.timeZoneDisplayName(millisecondsFromEpoch);
+#else
             String timeZoneName = dateCache.timeZoneDisplayName(t.isDST());
+#endif
             if (!timeZoneName.isEmpty())
                 builder.append(" ("_s, timeZoneName, ')');
         }
