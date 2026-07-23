@@ -5750,16 +5750,18 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     case FFIRawRead: {
+#if USE(BUN_JSC_ADDITIONS)
         DataViewData data = node->dataViewData();
         if (!data.isFloatingPoint && (data.byteSize < 4 || data.isSigned))
             setNonCellTypeForNode(node, SpecInt32Only);
         else
             setNonCellTypeForNode(node, SpecFullDouble);
+#else
+        DFG_CRASH(m_graph, node, "Unexpected node type");
+#endif
         break;
     }
-#endif
 
     case CallFFI: {
 #if USE(BUN_JSC_ADDITIONS)

@@ -83,6 +83,12 @@ Structure* JSFFICallback::createStructure(VM& vm, JSGlobalObject* globalObject, 
 
 JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* callable, Ref<FFI::Signature>&& signature)
 {
+    // Materialize the per-global FFIContext eagerly on the mutator (parity with
+    // JSFFIFunction::create): ffiCallbackDispatch reads globalObject->ffiContext() from a
+    // callback that native code may fire before any JSFFIFunction was ever created, and the
+    // lazy first-creation must never run there (nor race a mutator ffiContext()).
+    globalObject->ffiContext();
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // bun:ffi requires the JIT (SPEC section 0.1): the callback entry thunk is

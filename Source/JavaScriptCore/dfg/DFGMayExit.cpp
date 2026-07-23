@@ -222,17 +222,16 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case RegExpMatchFastGlobal:
     case CallWasm:
     case TailCallInlinedCallerWasm:
-#if USE(BUN_JSC_ADDITIONS)
-    case FFIRawRead: // argument speculation (Int32Use / Int52RepUse / DoubleRepUse) can exit; no exceptions.
-        result = Exits;
-        break;
-#endif
     case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case AllocatePropertyStorage:
     case ReallocatePropertyStorage:
         result = ExitsForExceptions;
+        break;
+
+    case FFIRawRead: // argument speculation (Int32Use / Int52RepUse / DoubleRepUse) can exit; no exceptions.
+        result = Exits;
         break;
 
     case NewRegExpUntyped: {

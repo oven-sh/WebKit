@@ -99,6 +99,14 @@ static ALWAYS_INLINE EncodedJSValue rawRead(JSGlobalObject* globalObject, CallFr
         slot = WTF::unalignedLoad<uint64_t>(address);
     }
 
+    // read.ptr / read.intptr are 8-byte reads surfaced as a plain double at EVERY tier (Bun's
+    // reader contract: from_ptr_address -> jsDoubleNumber, so a zero read is 0.0 -- not null -- and
+    // there is no BigInt boundary). This deliberately differs from the FFI `ptr` RETURN rule and is
+    // exactly what the DFG/FTL FFIRawRead lowering emits (convertInt64ToDouble), keeping the tiers
+    // observationally identical.
+    if constexpr (type == Type::Pointer || type == Type::Int64Fast)
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsDoubleNumber(static_cast<double>(static_cast<int64_t>(slot)))));
+
     RELEASE_AND_RETURN(scope, JSValue::encode(jsValueFromSlot(globalObject, context, type, slot)));
 }
 
@@ -149,8 +157,8 @@ static const RawReaderEntry* rawReaderTable(unsigned& count)
         { "u64"_s, ffiRawReadU64, 8, false, false, false },
         { "f32"_s, ffiRawReadF32, 4, false, true, true },
         { "f64"_s, ffiRawReadF64, 8, false, true, true },
-        { "ptr"_s, ffiRawReadPtr, 8, false, false, true },
-        { "intptr"_s, ffiRawReadIntPtr, 8, false, false, true },
+        { "ptr"_s, ffiRawReadPtr, 8, true, false, true },      // signed int64 -> double (all tiers)
+        { "intptr"_s, ffiRawReadIntPtr, 8, true, false, true },   // signed int64 -> double (all tiers)
     };
     count = std::size(table);
     return table;

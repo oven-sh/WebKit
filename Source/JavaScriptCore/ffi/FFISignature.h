@@ -33,6 +33,7 @@
 #include "JSCPtrTag.h"
 #include "JSExportMacros.h"
 #include "MacroAssemblerCodeRef.h"
+#include <atomic>
 #include <span>
 #include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
@@ -142,6 +143,9 @@ private:
 
     Lock m_codeLock;
     MacroAssemblerCodeRef<JITThunkPtrTag> m_invokeThunkCode WTF_GUARDED_BY_LOCK(m_codeLock);
+    // Lock-free published copy of m_invokeThunkCode's code pointer for the per-call fast path
+    // in invokeThunk(); written once (release) under m_codeLock after successful generation.
+    std::atomic<void*> m_publishedInvokeThunk { nullptr };
 };
 
 // Hashes/compares registry entries by the referenced signature's structure

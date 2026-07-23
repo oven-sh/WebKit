@@ -346,9 +346,12 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case MatchStructure:
     case DateGetInt32OrNaN:
     case DateGetTime:
-#if USE(BUN_JSC_ADDITIONS)
     case FFIRawRead:
-#endif
+        // A bare dereference of a caller-supplied raw address: unlike DataViewGetInt (which bounds-
+        // checks and OSR-exits), speculatively executing it -- e.g. LICM hoisting it above a
+        // `p !== 0` guard -- can fault. Never safe to execute outside its guarding control flow.
+        return false;
+
     case DataViewGetInt:
     case DataViewGetFloat:
     case ResolveRope:

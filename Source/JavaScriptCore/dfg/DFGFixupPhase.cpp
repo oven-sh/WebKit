@@ -3707,8 +3707,8 @@ private:
             break;
         }
 
-#if USE(BUN_JSC_ADDITIONS)
         case FFIRawRead: {
+#if USE(BUN_JSC_ADDITIONS)
             // Address: an int52 (the common case for an integral-valued double address / a computed
             // pointer), an int32 literal, or an arbitrary number truncated to int64. Offset: int32.
             Edge& address = node->child1();
@@ -3725,9 +3725,11 @@ private:
                 node->setResult(NodeResultInt32);
             else
                 node->setResult(NodeResultDouble); // u32 / ptr / intptr / f32 / f64.
+#else
+            DFG_CRASH(m_graph, node, "Unexpected node type");
+#endif
             break;
         }
-#endif
 
         case DataViewSet: {
             fixEdge<DataViewObjectUse>(m_graph.varArgChild(node, 0));

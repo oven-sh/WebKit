@@ -220,8 +220,10 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
     case Type::CString:
     case Type::Function:
     case Type::Buffer:
-        // A null pointer boxes to jsNull(), everything else to a number (SPEC section 5).
-        return SpecBytecodeNumber | SpecOther;
+        // A null pointer boxes to jsNull(); an address <= 2^53 to a number; an address > 2^53
+        // to an exact HeapBigInt (SPEC section 5, oven-sh/bun#28068). All three must be in the
+        // proven type or the abstract interpreter would let `typeof x === "bigint"` fold to false.
+        return SpecBytecodeNumber | SpecOther | SpecBigInt;
     case Type::NapiValue:
         return SpecBytecodeTop;
     case Type::NapiEnv:

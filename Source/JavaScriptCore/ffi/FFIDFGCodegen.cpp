@@ -602,6 +602,9 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         GPRReg resultGPR = result.gpr();
         load64(returnSlot, slotValueGPR);
         callOperation(operationFFIBoxSlot, resultGPR, TrustedImmPtr(frozenGlobalObject), TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(signature.returnType()))), slotValueGPR);
+        // operationFFIBoxSlot allocates (heap BigInts) and can throw OOM; the FTL and IC-stub twins
+        // of this path check, so must the DFG.
+        exceptionCheck();
         jsValueResult(resultGPR, node);
         break;
     }

@@ -127,6 +127,11 @@ String Signature::toString() const
 
 CodePtr<JITThunkPtrTag> Signature::invokeThunk()
 {
+    // Fast path (every host-path FFI call): the thunk is published once and never changes,
+    // so read it lock-free; only the one-time generation takes the lock (double-checked).
+    if (auto* published = m_publishedInvokeThunk.load(std::memory_order_acquire)) [[likely]]
+        return CodePtr<JITThunkPtrTag>::fromTaggedPtr(published);
+
     Locker locker { m_codeLock };
 #if ENABLE(JIT) && USE(JSVALUE64) && !ENABLE(JIT_CAGE)
     // The thunk is signature-pure (target and slots are runtime parameters),
@@ -135,8 +140,10 @@ CodePtr<JITThunkPtrTag> Signature::invokeThunk()
     // empty and is retried on the next call.
     if (!m_invokeThunkCode) {
         m_invokeThunkCode = generateInvokeThunk(*this);
-        if (m_invokeThunkCode)
+        if (m_invokeThunkCode) {
             dataLogLnIf(Options::verboseFFI(), "FFI: generated invoke thunk for ", toString(), " at ", RawPointer(m_invokeThunkCode.code().taggedPtr()));
+            m_publishedInvokeThunk.store(m_invokeThunkCode.code().taggedPtr(), std::memory_order_release);
+        }
     }
 #endif
     return m_invokeThunkCode.code();
