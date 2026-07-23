@@ -76,6 +76,7 @@
 #include "ExceptionHelpers.h"
 #include "ISO8601.h"
 #include "IntlObject.h"
+#include "Lexer.h"
 #include "VM.h"
 #include <limits>
 #include <wtf/DateMath.h>
@@ -390,11 +391,26 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
     if (date == m_cachedDateString)
         return m_cachedDateStringValue;
 
-    // After ICU 72, CLDR generates narrowNoBreakSpace for date time format. Thus, `new Date().toLocaleString('en-US')` starts generating
-    // a string including narrowNoBreakSpaces instead of simple spaces. However since code in the wild assumes `new Date(new Date().toLocaleString('en-US'))`
-    // works, we need to maintain the ability to parse string including narrowNoBreakSpaces. Rough consensus among implementaters is replacing narrowNoBreakSpaces
-    // with simple spaces before parsing.
-    String updatedString = makeStringByReplacingAll(date, narrowNoBreakSpace, space);
+    // V8's date parser (and useful web compat) treats every ECMAScript WhiteSpace code point as a
+    // separator: TAB/VT/FF/SP, NBSP, BOM, and every Unicode Zs character including the
+    // narrowNoBreakSpace that ICU >= 72 emits from toLocaleString. Both parsers below scan the
+    // UTF-8 encoding one byte at a time, so fold all of those into ASCII spaces here. Line
+    // terminators (LS/PS) are intentionally left alone so they continue to reject, matching V8.
+    String updatedString = date;
+    if (!date.containsOnlyASCII()) {
+        if (date.is8Bit())
+            updatedString = makeStringByReplacingAll(date, noBreakSpace, space);
+        else {
+            auto characters = date.span16();
+            std::span<char16_t> buffer;
+            auto result = StringImpl::createUninitialized(characters.size(), buffer);
+            for (size_t i = 0; i < characters.size(); ++i) {
+                char16_t c = characters[i];
+                buffer[i] = Lexer<char16_t>::isWhiteSpace(c) ? static_cast<char16_t>(space) : c;
+            }
+            updatedString = WTF::move(result);
+        }
+    }
 
     auto expectedString = updatedString.tryGetUTF8();
     if (!expectedString) {
