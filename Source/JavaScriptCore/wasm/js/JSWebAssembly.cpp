@@ -126,8 +126,11 @@ void JSWebAssembly::finishCreation(VM& vm, JSGlobalObject* globalObject)
     if (globalObject->globalObjectMethodTable()->instantiateStreaming)
         JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("instantiateStreaming"_s, webAssemblyInstantiateStreamingFunc, static_cast<unsigned>(PropertyAttribute::None), 1, ImplementationVisibility::Public);
     JSC_NATIVE_GETTER_WITHOUT_TRANSITION("JSTag"_s, webAssemblyGetterJSTag, PropertyAttribute::ReadOnly);
-    if (Options::useJSPI())
+    if (Options::useJSPI()) {
         JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("promising"_s, webAssemblyPromisingFunc, static_cast<unsigned>(PropertyAttribute::None), 0, ImplementationVisibility::Public);
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "Suspending"_s), globalObject->webAssemblySuspendingConstructor(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "SuspendError"_s), globalObject->webAssemblySuspendErrorConstructor(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    }
 }
 
 JSWebAssembly::JSWebAssembly(VM& vm, Structure* structure)
