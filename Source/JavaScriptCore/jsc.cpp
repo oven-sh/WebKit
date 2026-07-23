@@ -4489,7 +4489,10 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
             JSLockHolder locker(vm);
 
             startTimeoutThreadIfNeeded(vm);
+            auto tGO = MonotonicTime::now();
             globalObject = GlobalObject::create(vm, GlobalObject::createStructure(vm, jsNull()), options.m_arguments);
+            if (getenv("BUN_startupTrace"))
+                dataLogLn("[GlobalObject::create] total ", (MonotonicTime::now() - tGO).microseconds(), "us");
             globalObject->setInspectable(options.m_inspectable);
 
 #if ENABLE(WEBASSEMBLY_DEBUGGER) && CPU(ARM64)
@@ -4617,7 +4620,9 @@ int jscmain(int argc, char** argv)
     JSC::Config::enableRestrictedOptions();
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 
+    auto tStart = MonotonicTime::now();
     WTF::initializeMainThread();
+    auto tWTF = MonotonicTime::now();
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
@@ -4634,7 +4639,13 @@ int jscmain(int argc, char** argv)
         processConfigFile(Options::configFile(), "jsc");
     }
 
+    auto tPreJSC = MonotonicTime::now();
     JSC::initialize();
+    if (getenv("BUN_startupTrace")) {
+        dataLogLn("[WTF::initializeMainThread] ", (tWTF - tStart).microseconds(), "us");
+        dataLogLn("[options parsing] ", (tPreJSC - tWTF).microseconds(), "us");
+        dataLogLn("[JSC::initialize] ", (MonotonicTime::now() - tPreJSC).microseconds(), "us");
+    }
 #if ENABLE(JIT_OPERATION_VALIDATION)
     JSC::JITOperationList::populatePointersInEmbedder(&startOfJITOperationsInShell, &endOfJITOperationsInShell);
 #endif

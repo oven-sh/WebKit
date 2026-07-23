@@ -443,20 +443,27 @@ TimeZone DateCache::defaultTimeZone()
 String DateCache::timeZoneDisplayName(bool isDST)
 {
     if (m_timeZoneStandardDisplayNameCache.isNull()) {
+        auto t0 = MonotonicTime::now();
         auto& timeZoneCache = *this->timeZoneCache();
+        auto t1 = MonotonicTime::now();
         CString language = defaultLanguage().utf8();
+        auto t2 = MonotonicTime::now();
         {
             Vector<char16_t, 32> standardDisplayNameBuffer;
             auto status = callBufferProducingFunction(ucal_getTimeZoneDisplayName, timeZoneCache.m_calendar.get(), UCAL_STANDARD, language.data(), standardDisplayNameBuffer);
             if (U_SUCCESS(status))
                 m_timeZoneStandardDisplayNameCache = String::adopt(WTF::move(standardDisplayNameBuffer));
         }
+        auto t3 = MonotonicTime::now();
         {
             Vector<char16_t, 32> dstDisplayNameBuffer;
             auto status = callBufferProducingFunction(ucal_getTimeZoneDisplayName, timeZoneCache.m_calendar.get(), UCAL_DST, language.data(), dstDisplayNameBuffer);
             if (U_SUCCESS(status))
                 m_timeZoneDSTDisplayNameCache = String::adopt(WTF::move(dstDisplayNameBuffer));
         }
+        auto t4 = MonotonicTime::now();
+        if (getenv("BUN_startupTrace"))
+            dataLogLn("  [timeZoneDisplayName] timeZoneCache=", (t1-t0).microseconds(), "us defaultLanguage=", (t2-t1).microseconds(), "us ucal_getTZDisplayName(STD)=", (t3-t2).microseconds(), "us ucal_getTZDisplayName(DST)=", (t4-t3).microseconds(), "us");
     }
     if (isDST)
         return m_timeZoneDSTDisplayNameCache;

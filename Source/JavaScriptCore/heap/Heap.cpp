@@ -115,6 +115,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 #include "InternalFieldTuple.h"
+#include "StartupTrace.h"
 
 #if USE(BUN_JSC_ADDITIONS)
 #include "JSString.h"
@@ -343,13 +344,13 @@ private:
     , name(#name, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, makeUnique<StructureAlignedMemoryAllocator>())
 
 Heap::Heap(VM& vm, HeapType heapType)
-    : m_heapType(heapType)
+    : m_heapType((lap("Heap ctor begin"), heapType))
     , m_ramSize(Options::forceRAMSize() ? Options::forceRAMSize() : ramSize())
     , m_minBytesPerCycle(minHeapSize(m_heapType, m_ramSize))
     , m_maxEdenSize(m_minBytesPerCycle)
     , m_maxHeapSize(m_minBytesPerCycle)
     , m_objectSpace(this)
-    , m_machineThreads(makeUnique<MachineThreads>())
+    , m_machineThreads((lap("m_objectSpace (MarkedSpace)"), makeUnique<MachineThreads>()))
     , m_collectorSlotVisitor(makeUnique<SlotVisitor>(*this, "C"_s))
     , m_mutatorSlotVisitor(makeUnique<SlotVisitor>(*this, "M"_s))
     , m_mutatorMarkStack(makeUnique<MarkStackArray>())
@@ -366,7 +367,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , m_stopIfNecessaryTimer(adoptRef(*new StopIfNecessaryTimer(vm)))
     , m_sharedCollectorMarkStack(makeUnique<MarkStackArray>())
     , m_sharedMutatorMarkStack(makeUnique<MarkStackArray>())
-    , m_helperClient(&heapHelperPool())
+    , m_helperClient((lap("slot visitors+timers"), &heapHelperPool()))
     , m_threadLock(Box<Lock>::create())
     , m_threadCondition(AutomaticThreadCondition::create())
 
@@ -427,11 +428,11 @@ Heap::Heap(VM& vm, HeapType heapType)
     , webAssemblyTagHeapCellType(IsoHeapCellType::Args<JSWebAssemblyTag>())
 #endif
     // AlignedMemoryAllocators
-    , fastMallocAllocator(makeUnique<FastMallocAlignedMemoryAllocator>())
+    , fastMallocAllocator((lap("helperClient+HeapCellTypes"), makeUnique<FastMallocAlignedMemoryAllocator>()))
     , primitiveGigacageAllocator(makeUnique<GigacageAlignedMemoryAllocator>(Gigacage::Primitive))
 
     // Subspaces
-    , primitiveGigacageAuxiliarySpace("Primitive Gigacage Auxiliary"_s, *this, auxiliaryHeapCellType, primitiveGigacageAllocator.get()) // Hash:0x3e7cd762
+    , primitiveGigacageAuxiliarySpace((lap("allocators"), "Primitive Gigacage Auxiliary"_s), *this, auxiliaryHeapCellType, primitiveGigacageAllocator.get()) // Hash:0x3e7cd762
     , auxiliarySpace("Auxiliary"_s, *this, auxiliaryHeapCellType, fastMallocAllocator.get()) // Hash:0x96255ba1
     , immutableButterflyAuxiliarySpace("ImmutableButterfly JSCellWithIndexingHeader"_s, *this, immutableButterflyHeapCellType, fastMallocAllocator.get()) // Hash:0xaadcb3c1
     , cellSpace("JSCell"_s, *this, cellHeapCellType, fastMallocAllocator.get()) // Hash:0xadfb5a79
@@ -444,6 +445,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , unlinkedFunctionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, UnlinkedFunctionExecutable) // Hash:0x3ba0f4e1
 
 {
+    lap("iso subspaces");
     if (Options::forceFencedBarrier()) {
         m_mutatorShouldBeFenced = true;
         m_barrierThreshold = tautologicalThreshold;
@@ -481,6 +483,7 @@ Heap::Heap(VM& vm, HeapType heapType)
 
     Locker locker { *m_threadLock };
     lazyInitialize(m_thread, adoptRef(*new HeapThread(locker, *this)));
+    lap("Heap ctor body (parallel visitors+HeapThread)");
 }
 
 #undef INIT_SERVER_ISO_SUBSPACE

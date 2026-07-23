@@ -125,6 +125,7 @@
 #include "SideDataRepository.h"
 #include "SimpleTypedArrayController.h"
 #include "SourceProviderCache.h"
+#include "StartupTrace.h"
 #include "StrongInlines.h"
 #include "StructureChainInlines.h"
 #include "StructureInlines.h"
@@ -249,15 +250,15 @@ void VM::computeCanUseJIT()
 static bool vmCreationShouldCrash = false;
 
 VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
-    : topCallFrame(CallFrame::noCaller())
+    : topCallFrame((lap("VM ctor begin"), CallFrame::noCaller()))
     , m_identifier(VMIdentifier::generate())
     , m_apiLock(adoptRef(*new JSLock(this)))
     , m_runLoop(runLoop ? *runLoop : WTF::RunLoop::currentSingleton())
     , m_random(Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint32_t>())
     , m_heapRandom(Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint32_t>())
-    , m_integrityRandom(*this)
+    , m_integrityRandom((lap("runloop+random"), *this))
     , heap(*this, heapType)
-    , clientHeap(heap)
+    , clientHeap((lap("Heap::Heap"), heap))
     , vmType(vmType)
     , deferredWorkTimer(DeferredWorkTimer::create(*this))
     , m_atomStringTable(vmType == VMType::Default ? Thread::currentSingleton().atomStringTable() : new AtomStringTable)
@@ -275,10 +276,12 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
     , m_codeCache(makeUnique<CodeCache>())
     , m_intlCache(makeUnique<IntlCache>())
-    , m_builtinExecutables(makeUnique<BuiltinExecutables>(*this))
-    , m_defaultMicrotaskQueue(MicrotaskQueue::create(*this))
+    , m_builtinExecutables((lap("caches (codeCache/intl/etc)"), makeUnique<BuiltinExecutables>(*this)))
+    , m_defaultMicrotaskQueue((lap("BuiltinExecutables"), MicrotaskQueue::create(*this)))
     , m_syncWaiter(adoptRef(*new Waiter(this)))
 {
+    lap("remaining VM member init");
+    StartupTrace trace("VM::VM body");
     if (vmCreationShouldCrash || g_jscConfig.vmCreationDisallowed) [[unlikely]]
         CRASH_WITH_EXTRA_SECURITY_IMPLICATION_AND_INFO(VMCreationDisallowed, "VM creation disallowed"_s, 0x4242424220202020, 0xbadbeef0badbeef, 0x1234123412341234, 0x1337133713371337);
 
@@ -311,12 +314,14 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         });
     }
 
+    trace.mark("lazy initializers");
     updateSoftReservedZoneSize(Options::softReservedZoneSize());
     setLastStackTop(Thread::currentSingleton());
     stringSplitIndice.reserveInitialCapacity(256);
 
     JSRunLoopTimer::Manager::singleton().registerVM(*this);
 
+    trace.mark("registerVM");
     // Need to be careful to keep everything consistent here
     JSLockHolder lock(this);
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
@@ -324,10 +329,14 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
     stringStructure.setWithoutWriteBarrier(JSString::createStructure(*this, nullptr, jsNull()));
 
+    trace.mark("structure/string structures");
     smallStrings.initializeCommonStrings(*this);
+    trace.mark("smallStrings.initializeCommonStrings");
     numericStrings.initializeSmallIntCache(*this);
+    trace.mark("numericStrings.initializeSmallIntCache");
 
     propertyNames = new CommonIdentifiers(*this);
+    trace.mark("CommonIdentifiers");
     propertyNameEnumeratorStructure.setWithoutWriteBarrier(JSPropertyNameEnumerator::createStructure(*this, nullptr, jsNull()));
     getterSetterStructure.setWithoutWriteBarrier(GetterSetter::createStructure(*this, nullptr, jsNull()));
     customGetterSetterStructure.setWithoutWriteBarrier(CustomGetterSetter::createStructure(*this, nullptr, jsNull()));
@@ -403,11 +412,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         m_fastAsyncGeneratorSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
     }
 
+    trace.mark("core structures");
     // Eagerly initialize constant cells since the concurrent compiler can access them.
     if (Options::useJIT()) {
         emptyPropertyNameEnumerator();
         ensureMegamorphicCache();
     }
+    trace.mark("emptyPropertyNameEnumerator+MegamorphicCache");
     {
         auto* bigInt = JSBigInt::tryCreateFrom(*this, 1);
         if (bigInt)
@@ -431,11 +442,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
     }
 
+    trace.mark("bigInt constants");
     Thread::currentSingleton().setCurrentAtomStringTable(existingEntryAtomStringTable);
     
     Gigacage::addPrimitiveDisableCallback(primitiveGigacageDisabledCallback, this);
 
     heap.notifyIsSafeToCollect();
+    trace.mark("heap.notifyIsSafeToCollect");
     
     if (Options::useProfiler()) [[unlikely]] {
         m_perBytecodeProfiler = makeUnique<Profiler::Database>(*this);
@@ -478,6 +491,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     m_typedArrayController = adoptRef(new SimpleTypedArrayController());
 
     m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
+    trace.mark("BytecodeIntrinsicRegistry");
 
     if (Options::useTypeProfiler())
         enableTypeProfiler();
@@ -529,11 +543,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     if (Options::useJIT()) {
         jitStubs = makeUnique<JITThunks>();
         jitStubs->initialize(*this);
+        trace.mark("JITThunks::initialize");
 #if ENABLE(FTL_JIT)
         ftlThunks = makeUnique<FTL::Thunks>();
 #endif // ENABLE(FTL_JIT)
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
+        trace.mark("getBoundFunction");
     }
 #endif // ENABLE(JIT)
 
@@ -546,11 +562,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
     Config::finalize();
+    trace.mark("Config::finalize");
 
     if (!isInMiniMode()) {
         initializeAvailableTimeZones();
+        trace.mark("initializeAvailableTimeZones");
         if (heapType == HeapType::Large)
             dateCache.timeZoneDisplayName(/* isDST */ false);
+        trace.mark("dateCache.timeZoneDisplayName");
     }
 
     // We must set this at the end only after the VM is fully initialized.
@@ -560,6 +579,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Register after all VM state is initialized so that a stop-the-world triggered
     // immediately on registration sees a fully constructed VM.
     VMManager::singleton().notifyVMConstruction(*this);
+    trace.mark("VMManager::notifyVMConstruction");
 }
 
 static ReadWriteLock s_destructionLock;
@@ -693,7 +713,11 @@ Ref<VM> VM::createContextGroup(HeapType heapType)
 
 Ref<VM> VM::create(HeapType heapType, WTF::RunLoop* runLoop)
 {
-    return adoptRef(*new VM(VMType::Default, heapType, runLoop));
+    auto t0 = MonotonicTime::now();
+    auto result = adoptRef(*new VM(VMType::Default, heapType, runLoop));
+    if (getenv("BUN_startupTrace"))
+        dataLogLn("[VM::create] total ", (MonotonicTime::now() - t0).microseconds(), "us (including member init)");
+    return result;
 }
 
 RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
