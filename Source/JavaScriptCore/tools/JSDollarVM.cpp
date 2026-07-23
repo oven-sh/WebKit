@@ -107,6 +107,23 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include "WasmDebugServer.h"
 #endif
 
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+#include "BunFFI.h"
+#include "FFIContext.h"
+#include "FFIConversions.h"
+#include "FFIRawMemory.h"
+#include "FFISignature.h"
+#include "FFITestFixtures.h"
+#include "FFIType.h"
+#include "JSFFICallback.h"
+#include "JSFFIFunction.h"
+#include "ObjectConstructor.h"
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <optional>
+#endif
+
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/CrashReporter.h>
 #endif
@@ -2265,6 +2282,19 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionCachedCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpLineBreakData);
 static JSC_DECLARE_HOST_FUNCTION(functionWeakCreate);
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
+static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
+static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIRead);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIReadObject);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
+static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
+static JSC_DECLARE_HOST_FUNCTION(functionFFISetNapiEnv);
+static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
+#endif
 
 const ClassInfo JSDollarVM::s_info = { "DollarVM"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDollarVM) };
 
@@ -4495,6 +4525,410 @@ JSC_DEFINE_HOST_FUNCTION(functionWeakCreate, (JSGlobalObject* globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+
+// bun:ffi $vm test API (docs/ffi/SPEC.md section 11.2).
+
+// JSFFIFunction / JSFFICallback creation must throw a TypeError when the JIT
+// is unavailable ("bun:ffi requires the JIT", SPEC section 0.1).
+// FFI-SPEC-GAP: SPEC sections 0.1/11.2 do not name the C++ function that owns
+// the no-JIT TypeError, so the $vm surface performs the check itself before
+// reaching the creation entry points; a matching check inside creation is harmless.
+static bool dollarVMFFIJITIsUnavailable()
+{
+    return !Options::useJIT() || !VM::canUseAssembler();
+}
+
+// Parses a $vm-facing FFI type descriptor: a canonical name / alias string
+// (FFI::parseType) or a raw FFI::Type tag number (SPEC section 2). Throws a
+// TypeError and returns nullopt on failure.
+static std::optional<FFI::Type> dollarVMParseFFIType(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (value.isNumber()) {
+        double tag = value.asNumber();
+        if (tag >= 0 && tag < FFI::numberOfTypes && tag == std::floor(tag))
+            return static_cast<FFI::Type>(static_cast<uint8_t>(tag));
+        throwTypeError(globalObject, scope, "Invalid FFI type tag"_s);
+        return std::nullopt;
+    }
+
+    if (value.isString()) {
+        String name = asString(value)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (auto type = FFI::parseType(name))
+            return type;
+        throwTypeError(globalObject, scope, makeString("Unknown FFI type '"_s, name, "'"_s));
+        return std::nullopt;
+    }
+
+    throwTypeError(globalObject, scope, "FFI type must be a string or a number"_s);
+    return std::nullopt;
+}
+
+// Converts a JS value to a raw pointer with the SPEC section 5 pointer rule
+// (int32 sign-extended, double truncated, TypedArray/DataView/ArrayBuffer data,
+// JSFFICallback entry point, null/undefined -> nullptr) by reusing the shared
+// FFI conversion so $vm behaves identically to every engine tier.
+//
+// A close()d JSFFICallback must be rejected as an argument by the $vm glue
+// (SPEC section 9.1: m_closed makes further $vm / Bun glue reject the object);
+// the engine conversion itself deliberately delegates that check here (see the
+// FFIConversions.cpp JSFFICallback case), so every pointer-consuming $vm entry
+// point (ffiFunction, ffiRead, ffiWrite, ffiCString, ffiSetNapiEnv) funnels
+// through this helper and rejects closed callbacks identically.
+static void* dollarVMFFIPointerFromJS(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* callback = dynamicDowncast<JSFFICallback>(value); callback && callback->isClosed()) {
+        throwTypeError(globalObject, scope, "bun:ffi: the JSFFICallback has been closed"_s);
+        return nullptr;
+    }
+
+    uint64_t slot = 0;
+    FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), FFI::Type::Pointer, value, slot, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(slot));
+}
+
+// $vm.ffiRead / $vm.ffiWrite accept the plain scalar and pointer types only
+// (SPEC section 11.2: "u8..f64, ptr"); char/i8/bool and the *_fast variants are
+// the same scalars. void, cstring/function/buffer/napi_env carry no meaningful
+// raw poke/peek, and napi_value would let a test forge JSValues from memory.
+// FFI-SPEC-GAP: the spec does not enumerate the accepted set beyond "u8..f64, ptr".
+static bool dollarVMFFIIsRawMemoryType(FFI::Type type)
+{
+    switch (type) {
+    case FFI::Type::Char:
+    case FFI::Type::Int8:
+    case FFI::Type::Uint8:
+    case FFI::Type::Int16:
+    case FFI::Type::Uint16:
+    case FFI::Type::Int32:
+    case FFI::Type::Uint32:
+    case FFI::Type::Int64:
+    case FFI::Type::Uint64:
+    case FFI::Type::Double:
+    case FFI::Type::Float:
+    case FFI::Type::Bool:
+    case FFI::Type::Pointer:
+    case FFI::Type::Int64Fast:
+    case FFI::Type::Uint64Fast:
+        return true;
+    case FFI::Type::Void:
+    case FFI::Type::CString:
+    case FFI::Type::Function:
+    case FFI::Type::NapiEnv:
+    case FFI::Type::NapiValue:
+    case FFI::Type::Buffer:
+        return false;
+    }
+    return false;
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+// Loads a native value of `type` from `address` and returns it in the
+// canonical slot encoding of SPEC section 4 (sub-word ints sign/zero-extended,
+// bool normalized to {0,1}, f32 bits in [31:0] with a zero upper half). Only
+// the raw-memory types (dollarVMFFIIsRawMemoryType) are valid here.
+static uint64_t dollarVMFFILoadSlot(FFI::Type type, const void* address)
+{
+    switch (type) {
+    case FFI::Type::Char:
+    case FFI::Type::Int8: {
+        int8_t value;
+        memcpy(&value, address, sizeof(value));
+        return static_cast<uint64_t>(static_cast<int64_t>(value));
+    }
+    case FFI::Type::Uint8: {
+        uint8_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Bool: {
+        uint8_t value;
+        memcpy(&value, address, sizeof(value));
+        return value ? 1 : 0;
+    }
+    case FFI::Type::Int16: {
+        int16_t value;
+        memcpy(&value, address, sizeof(value));
+        return static_cast<uint64_t>(static_cast<int64_t>(value));
+    }
+    case FFI::Type::Uint16: {
+        uint16_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Int32: {
+        int32_t value;
+        memcpy(&value, address, sizeof(value));
+        return static_cast<uint64_t>(static_cast<int64_t>(value));
+    }
+    case FFI::Type::Uint32:
+    case FFI::Type::Float: {
+        uint32_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Int64:
+    case FFI::Type::Uint64:
+    case FFI::Type::Int64Fast:
+    case FFI::Type::Uint64Fast:
+    case FFI::Type::Double:
+    case FFI::Type::Pointer: {
+        uint64_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Void:
+    case FFI::Type::CString:
+    case FFI::Type::Function:
+    case FFI::Type::NapiEnv:
+    case FFI::Type::NapiValue:
+    case FFI::Type::Buffer:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return 0;
+}
+
+// Stores the canonical slot encoding of `type` (SPEC section 4) to `address`
+// at the type's native width. bun:ffi only targets little-endian x86-64/arm64,
+// so the native bytes are exactly the low nativeSizeInBytes(type) bytes of the
+// slot (f32: bits [31:0]; bool: the normalized 0/1 low byte).
+static void dollarVMFFIStoreSlot(FFI::Type type, uint64_t slot, void* address)
+{
+    static_assert(std::endian::native == std::endian::little, "bun:ffi $vm raw memory helpers assume little-endian");
+    memcpy(address, &slot, FFI::nativeSizeInBytes(type));
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+// Usage: $vm.ffiFunction({ args: [...], returns: ... }, ptr, name?) -> JSFFIFunction
+// `ptr` is a double-encoded pointer (or anything the SPEC section 5 pointer rule
+// accepts, including a JSFFICallback). Invalid descriptors throw a TypeError via
+// FFI::signatureFromJS; --useJIT=0 throws "bun:ffi requires the JIT".
+JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (dollarVMFFIJITIsUnavailable())
+        return throwVMTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
+
+    RefPtr<FFI::Signature> signature = FFI::signatureFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_ASSERT(signature); // FFI::signatureFromJS throws on every failure.
+
+    // dollarVMFFIPointerFromJS rejects a close()d JSFFICallback (SPEC section 9.1).
+    void* target = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!target)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiFunction: null pointer"_s);
+
+    // FFI-SPEC-GAP: the default function name when none is supplied is not
+    // specified; use the signature's canonical string (e.g. "f64(i32,f64)").
+    String name;
+    JSValue nameValue = callFrame->argument(2);
+    if (nameValue.isUndefinedOrNull())
+        name = signature->toString();
+    else {
+        name = nameValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name)));
+}
+
+// Usage: $vm.ffiCallback({ args: [...], returns: ... }, jsFunction) -> JSFFICallback
+// (JSFFICallback::finishCreation installs its `ptr` / `threadsafe` own properties.)
+JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (dollarVMFFIJITIsUnavailable())
+        return throwVMTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
+
+    RefPtr<FFI::Signature> signature = FFI::signatureFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_ASSERT(signature); // FFI::signatureFromJS throws on every failure.
+
+    JSValue callableValue = callFrame->argument(1);
+    if (!callableValue.isCallable())
+        return throwVMTypeError(globalObject, scope, "$vm.ffiCallback: expected a callable"_s);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), asObject(callableValue), signature.releaseNonNull())));
+}
+
+// Usage: $vm.ffiFixture(name) -> number (double-encoded pointer to the named
+// native test fixture, SPEC section 11.1); throws if the fixture is unknown.
+// FFI-SPEC-GAP: FFITestFixtures.h declares ffiTestFixtures() unqualified (the
+// fixtures TU has no JSC dependencies), i.e. at global namespace scope.
+JSC_DEFINE_HOST_FUNCTION(functionFFIFixture, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    for (auto& entry : ffiTestFixtures()) {
+        if (name == String::fromLatin1(entry.name))
+            return JSValue::encode(jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(entry.address))));
+    }
+
+    return throwVMTypeError(globalObject, scope, makeString("Unknown FFI fixture '"_s, name, "'"_s));
+}
+
+// Usage: $vm.ffiFixtures() -> array of all native test fixture names.
+JSC_DEFINE_HOST_FUNCTION(functionFFIFixtures, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& entry : ffiTestFixtures()) {
+        result->push(globalObject, jsString(vm, String::fromUTF8(entry.name)));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.ffiSignatureString({ args: [...], returns: ... }) -> string
+// The canonical interned form (e.g. "f64(i32,f64)"), a signature-interning smoke test.
+JSC_DEFINE_HOST_FUNCTION(functionFFISignatureString, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    RefPtr<FFI::Signature> signature = FFI::signatureFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_ASSERT(signature); // FFI::signatureFromJS throws on every failure.
+
+    return JSValue::encode(jsString(vm, signature->toString()));
+}
+
+// Usage: $vm.ffiRead(ptr, type) -> value read from raw memory using the SPEC
+// section 5 native->JS conversion.
+// Usage: $vm.ffiReadObject() -> bun:ffi's `read` singleton (FFI::createReadObject), whose readers
+// carry FFIRawReadIntrinsic so a hot read.u32(addr, off) compiles to a bare load (FFIRawRead).
+JSC_DEFINE_HOST_FUNCTION(functionFFIReadObject, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(FFI::createReadObject(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFIRead, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    void* address = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!address)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiRead: null pointer"_s);
+
+    auto type = dollarVMParseFFIType(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(type);
+    if (!dollarVMFFIIsRawMemoryType(*type))
+        return throwVMTypeError(globalObject, scope, makeString("$vm.ffiRead: unsupported type "_s, FFI::name(*type)));
+
+    uint64_t slot = dollarVMFFILoadSlot(*type, address);
+    RELEASE_AND_RETURN(scope, JSValue::encode(FFI::jsValueFromSlot(globalObject, globalObject->ffiContext(), *type, slot)));
+}
+
+// Usage: $vm.ffiWrite(ptr, type, value) -> undefined; converts `value` with the
+// SPEC section 5 JS->native conversion and pokes it into raw memory.
+JSC_DEFINE_HOST_FUNCTION(functionFFIWrite, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    void* address = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!address)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiWrite: null pointer"_s);
+
+    auto type = dollarVMParseFFIType(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(type);
+    if (!dollarVMFFIIsRawMemoryType(*type))
+        return throwVMTypeError(globalObject, scope, makeString("$vm.ffiWrite: unsupported type "_s, FFI::name(*type)));
+
+    uint64_t slot = 0;
+    FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), *type, callFrame->argument(2), slot, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    dollarVMFFIStoreSlot(*type, slot, address);
+    return JSValue::encode(jsUndefined());
+}
+
+// Usage: $vm.ffiCString(ptr) -> string decoded from a NUL-terminated UTF-8
+// buffer; a null pointer yields null.
+// FFI-SPEC-GAP: the null-pointer result is unspecified; null mirrors the
+// pointer-family boxing rule of SPEC section 5.
+JSC_DEFINE_HOST_FUNCTION(functionFFICString, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    void* address = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!address)
+        return JSValue::encode(jsNull());
+
+    return JSValue::encode(jsString(vm, String::fromUTF8(static_cast<const char*>(address))));
+}
+
+// Usage: $vm.ffiSetNapiEnv(ptr) -> undefined; sets the current global's
+// FFIContext napi env pointer (SPEC section 6), read live by every tier.
+JSC_DEFINE_HOST_FUNCTION(functionFFISetNapiEnv, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    void* env = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+
+    FFI::setNapiEnv(globalObject, env);
+    return JSValue::encode(jsUndefined());
+}
+
+// Usage: $vm.ffiCompileCounts() -> { icStub, dfgCallFFI, ftlCallFFI }, read from
+// the process-global FFI::g_ffiCompileCounts atomics -- the only way tests can
+// prove the IC stub / DFG / FTL tiers were actually compiled (SPEC section 11.2).
+JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+
+    JSObject* counts = constructEmptyObject(globalObject);
+    counts->putDirect(vm, Identifier::fromString(vm, "icStub"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.icStub.load())));
+    counts->putDirect(vm, Identifier::fromString(vm, "dfgCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.dfgCallFFI.load())));
+    counts->putDirect(vm, Identifier::fromString(vm, "ftlCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.ftlCallFFI.load())));
+    return JSValue::encode(counts);
+}
+
+#endif // USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
 
 void JSDollarVM::finishCreation(VM& vm)
@@ -4712,6 +5146,23 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "cachedCallFromCPP"_s, functionCachedCallFromCPP, 2);
     addFunction(vm, alwaysAllow, "dumpLineBreakData"_s, functionDumpLineBreakData, 0);
     addFunction(vm, alwaysAllow, "weakCreate"_s, functionWeakCreate, 0);
+
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+    // bun:ffi $vm test API (SPEC section 11.2). These call arbitrary native code
+    // and poke raw memory, so they are off in fuzzer mode like the other unsafe
+    // $vm helpers.
+    addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 3);
+    addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 2);
+    addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiFixtures"_s, functionFFIFixtures, 0);
+    addFunction(vm, allowIfNotFuzz, "ffiSignatureString"_s, functionFFISignatureString, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiRead"_s, functionFFIRead, 2);
+    addFunction(vm, allowIfNotFuzz, "ffiReadObject"_s, functionFFIReadObject, 0);
+    addFunction(vm, allowIfNotFuzz, "ffiWrite"_s, functionFFIWrite, 3);
+    addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiSetNapiEnv"_s, functionFFISetNapiEnv, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiCompileCounts"_s, functionFFICompileCounts, 0);
+#endif
 
     if (allowIfNotFuzz) {
         m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID.set(vm, this, ObjectDoingSideEffectPutWithoutCorrectSlotStatus::createStructure(vm, globalObject, jsNull()));

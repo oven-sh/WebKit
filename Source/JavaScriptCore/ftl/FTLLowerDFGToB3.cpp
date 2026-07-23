@@ -120,6 +120,13 @@
 #include "WasmModuleInformation.h"
 #include "WebAssemblyFunction.h"
 #include "YarrJITRegisters.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIContext.h"
+#include "FFIConversions.h"
+#include "FFISignature.h"
+#include "FFIType.h"
+#include "JSFFIFunction.h"
+#endif
 #include <array>
 #include <atomic>
 #include <span>
@@ -1564,6 +1571,18 @@ private:
         case CallWasm:
         case TailCallInlinedCallerWasm:
             compileCallWasm();
+            break;
+#if USE(BUN_JSC_ADDITIONS)
+        case FFIRawRead:
+            compileFFIRawRead();
+            break;
+#endif
+        case CallFFI:
+#if USE(BUN_JSC_ADDITIONS)
+            compileCallFFI();
+#else
+            DFG_CRASH(m_graph, m_node, "CallFFI is unreachable without USE(BUN_JSC_ADDITIONS)");
+#endif
             break;
         case CallCustomAccessorGetter:
             compileCallCustomAccessorGetter();
@@ -15176,6 +15195,373 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // CallFFI (docs/ffi/SPEC.md 10.5): marshal the typed DFG operands into the canonical slot
+    // buffer (spec 4), call the signature's invoke thunk with the JSC operation calling
+    // convention, and box the return slot. This never speculates or OSR-exits: typed edges are
+    // Known*Use / DoubleRepUse (the checks were inserted at conversion time, spec 10.2) and
+    // UntypedUse children convert out of line via operationFFIWriteSlot with an exception check.
+    // read.<t>(address, byteOffset): the DataView load with the base taken from the unboxed address
+    // operand -- no vector load, no bounds/detach checks (raw caller-owned memory), native endianness.
+    void compileFFIRawRead()
+    {
+        DataViewData data = m_node->dataViewData();
+
+        LValue address;
+        switch (m_node->child1().useKind()) {
+        case Int32Use:
+            address = m_out.signExt32To64(lowInt32(m_node->child1()));
+            break;
+        case Int52RepUse:
+            address = lowStrictInt52(m_node->child1());
+            break;
+        case DoubleRepUse:
+            // Value truncation toward zero (same instruction/semantics as FFI::doubleToInt64), NOT a bitcast.
+            address = m_out.doubleToInt64(lowDouble(m_node->child1()));
+            break;
+        default:
+            DFG_CRASH(m_graph, m_node, "Bad use kind for FFIRawRead address");
+            return;
+        }
+        LValue pointer = m_out.add(address, m_out.signExt32To64(lowInt32(m_node->child2())));
+        TypedPointer typedPointer(m_heaps.root, pointer); // foreign memory: not a modeled abstract heap
+
+        if (data.isFloatingPoint) {
+            if (data.byteSize == 4)
+                setDouble(m_out.floatToDouble(m_out.loadFloat(typedPointer)));
+            else
+                setDouble(m_out.loadDouble(typedPointer));
+            return;
+        }
+
+        switch (data.byteSize) {
+        case 1:
+            setInt32(data.isSigned ? m_out.load8SignExt32(typedPointer) : m_out.load8ZeroExt32(typedPointer));
+            return;
+        case 2:
+            setInt32(data.isSigned ? m_out.load16SignExt32(typedPointer) : m_out.load16ZeroExt32(typedPointer));
+            return;
+        case 4:
+            if (data.isSigned)
+                setInt32(m_out.load32(typedPointer));
+            else
+                setDouble(m_out.unsignedToDouble(m_out.load32(typedPointer))); // u32: exact as a double
+            return;
+        case 8:
+            // ptr / intptr: the 64-bit value surfaced as a double (host-path parity).
+            setDouble(m_out.intToDouble(m_out.load64(typedPointer)));
+            return;
+        default:
+            DFG_CRASH(m_graph, m_node, "Bad FFIRawRead byte size");
+        }
+    }
+
+    void compileCallFFI()
+    {
+        Node* node = m_node;
+        JSFFIFunction* ffiFunction = node->ffiFunction();
+        // The callee's global object is the realm every tier uses for conversions, the napi
+        // env, the string arena and TypeErrors: the C++ host path receives the callee's realm
+        // (spec 8.2), the IC stub bakes the creation global (spec 8.3) and the DFG codegen uses
+        // ffiFunction->globalObject() (spec 10.4) -- never the caller's semantic-origin realm.
+        // Its FFIContext already exists (JSFFIFunction::create materializes it on the mutator
+        // thread), so reading &globalObject->ffiContext() here on the compiler thread is a
+        // plain load, never a lazy creation.
+        JSGlobalObject* globalObject = ffiFunction->globalObject();
+        FFI::Signature& signature = node->ffiSignature();
+        void* target = ffiFunction->target();
+        unsigned nativeArgumentCount = signature.argumentCount();
+
+        DFG_ASSERT(m_graph, node, node->numChildren() >= 2);
+        DFG_ASSERT(m_graph, node, node->numChildren() - 2 == signature.jsArgumentCount(), node->numChildren(), signature.jsArgumentCount());
+
+        CodePtr<JITThunkPtrTag> invokeThunk = signature.invokeThunk();
+        if (!invokeThunk) {
+            // FFI-SPEC-GAP: spec 7.2 lets invoke thunk generation fail on executable memory exhaustion
+            // but spec 10.5 does not say what the FTL does when Signature::invokeThunk() is null. We
+            // follow the FTL's own allocation-failure protocol (FTL::State::allocationFailed, checked
+            // in FTLCompile.cpp) so the whole compilation is thrown out and the callee keeps running
+            // through the lower tiers, while still emitting valid IR for this node.
+            m_ftlState.allocationFailed = true;
+            setJSValue(m_out.constInt64(JSValue::encode(jsUndefined())));
+            return;
+        }
+
+        FFI::g_ffiCompileCounts.ftlCallFFI++; // spec 11.2: proves an FFI call reached the FTL.
+
+        FFI::FFIContext& context = globalObject->ffiContext();
+
+        // Spec 4: uint64_t slots[argumentCount() + 1], 8-byte aligned; the last slot is the return slot.
+        LValue slots = m_out.lockedStackSlot(signature.slotBufferBytes());
+        auto slotOffset = [](unsigned index) -> ptrdiff_t {
+            return static_cast<ptrdiff_t>(index * FFI::slotSize);
+        };
+        auto slotPointer = [&](unsigned index, ptrdiff_t extraOffset = 0) -> TypedPointer {
+            return m_out.address(m_heaps.root, slots, slotOffset(index) + extraOffset);
+        };
+        auto slotAddress = [&](unsigned index) -> LValue {
+            return m_out.addPtr(slots, slotOffset(index));
+        };
+
+        // Spec 5: the call is arena-bracketed iff any UntypedUse child has a CString / pointer-family
+        // type (operationFFIWriteSlot may transcode a JS string into the call-scoped StringArena).
+        bool needsArena = false;
+        {
+            unsigned jsIndex = 0;
+            for (unsigned i = 0; i < nativeArgumentCount; ++i) {
+                FFI::Type type = signature.argumentType(i);
+                if (FFI::isSyntheticArgument(type))
+                    continue;
+                Edge edge = m_graph.varArgChild(node, 2 + jsIndex++);
+                if (edge.useKind() != UntypedUse)
+                    continue;
+                switch (type) {
+                case FFI::Type::Pointer:
+                case FFI::Type::CString:
+                case FFI::Type::Function:
+                case FFI::Type::Buffer:
+                    needsArena = true;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+
+        // Exception check for calls made inside the arena bracket: on the exception path we must
+        // call operationFFIArenaExit BEFORE the exception jump (spec 5), then dispatch the pending
+        // exception exactly like operationExceptionCheck() does for an ordinary operation.
+        // `exception` is the operation's returned exception register when the caller has one
+        // (operation return convention, jit/OperationResult.h), or nullptr to reload
+        // vm.exception (the invoke thunk is not an operation and returns nothing).
+        auto exceptionCheckWithArenaExit = [&](LValue exception) {
+            if (!exception)
+                exception = m_out.load64(m_vmValue, m_heaps.VM_exception);
+#if ASSERT_ENABLED
+            LValue vmException = m_out.load64(m_vmValue, m_heaps.VM_exception);
+            m_out.verify(m_out.equal(exception, vmException));
+#endif
+            LBasicBlock cleanup = m_out.newBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            m_out.branch(m_out.notZero64(exception), rarely(cleanup), usually(continuation));
+
+            LBasicBlock lastNext = m_out.appendTo(cleanup, continuation);
+            callPreflight();
+            m_out.call(Void, m_out.operation(operationFFIArenaExit), weakPointer(globalObject));
+            // The exception is still pending on the VM; this reloads it and jumps to the handler
+            // (or OSR-exits when the machine frame catches it).
+            operationExceptionCheck<void>(nullptr);
+            // Dynamically unreachable (the check above always dispatches the pending exception),
+            // but the cleanup block still needs a terminator.
+            m_out.jump(continuation);
+
+            m_out.appendTo(continuation, lastNext);
+        };
+
+        if (needsArena)
+            vmCall(Void, operationFFIArenaEnter, weakPointer(globalObject));
+
+        Vector<LValue> keepAliveValues;
+        unsigned jsArgumentIndex = 0;
+        for (unsigned i = 0; i < nativeArgumentCount; ++i) {
+            FFI::Type type = signature.argumentType(i);
+            TypedPointer slot = slotPointer(i);
+
+            if (FFI::isSyntheticArgument(type)) {
+                // Type::NapiEnv is supplied by the engine: load the embedder's napi env LIVE at
+                // call time (spec 6), never as an immediate baked at compile time.
+                m_out.store64(m_out.load64(m_out.absolute(context.addressOfNapiEnv())), slot);
+                continue;
+            }
+
+            Edge edge = m_graph.varArgChild(node, 2 + jsArgumentIndex++);
+            switch (edge.useKind()) {
+            case KnownInt32Use: {
+                LValue value = lowInt32(edge);
+                LValue slotValue = nullptr;
+                switch (type) {
+                case FFI::Type::Char:
+                case FFI::Type::Int8:
+                    // Spec 4/5: toInt32 then wrap to the width -> the low 8 bits, sign-extended to 64 bits.
+                    slotValue = m_out.signExt32To64(m_out.aShr(m_out.shl(value, m_out.constInt32(24)), m_out.constInt32(24)));
+                    break;
+                case FFI::Type::Uint8:
+                    slotValue = m_out.zeroExt(m_out.bitAnd(value, m_out.constInt32(0xff)), Int64);
+                    break;
+                case FFI::Type::Int16:
+                    slotValue = m_out.signExt32To64(m_out.aShr(m_out.shl(value, m_out.constInt32(16)), m_out.constInt32(16)));
+                    break;
+                case FFI::Type::Uint16:
+                    slotValue = m_out.zeroExt(m_out.bitAnd(value, m_out.constInt32(0xffff)), Int64);
+                    break;
+                case FFI::Type::Int32:
+                    slotValue = m_out.signExt32To64(value);
+                    break;
+                case FFI::Type::Uint32:
+                    slotValue = m_out.zeroExt(value, Int64);
+                    break;
+                case FFI::Type::Bool:
+                    // toBoolean semantics on an int32: any non-zero value is true. Never and32(1),
+                    // which would mis-convert non-zero even values (spec 8.3 step 4 / 10.4 step 4).
+                    slotValue = m_out.zeroExt(m_out.notEqual(value, m_out.int32Zero), Int64);
+                    break;
+                default:
+                    DFG_CRASH(m_graph, node, "Bad FFI argument type for a KnownInt32Use CallFFI child");
+                    break;
+                }
+                m_out.store64(slotValue, slot);
+                break;
+            }
+            case KnownBooleanUse: {
+                DFG_ASSERT(m_graph, node, type == FFI::Type::Bool);
+                // The boolean payload is 0/1, which is exactly the canonical bool slot encoding (spec 4).
+                m_out.store64(m_out.zeroExt(lowBoolean(edge), Int64), slot);
+                break;
+            }
+            case DoubleRepUse: {
+                LValue value = lowDouble(edge);
+                if (type == FFI::Type::Float) {
+                    // Spec 4: bit_cast<uint32_t>(float) in bits [31:0]; bits [63:32] must be zero.
+                    // Store the narrowed float directly with a 4-byte Float store (as the typed-array
+                    // Float32Array stores do); B3's bitCast does not model Float->Int32.
+                    m_out.storeFloat(m_out.doubleToFloat(value), slot);
+                    m_out.store32(m_out.int32Zero, slotPointer(i, 4));
+                } else {
+                    DFG_ASSERT(m_graph, node, type == FFI::Type::Double);
+                    m_out.storeDouble(value, slot);
+                }
+                break;
+            }
+            case UntypedUse: {
+                // i64 family, pointer family, napi_value and anything the conversion left untyped:
+                // convert out of line. operationFFIWriteSlot throws (never speculates) on a bad
+                // value, so this is an exception check, not an OSR exit.
+                LValue value = lowJSValue(edge);
+                keepAliveValues.append(value);
+                LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(type)));
+                if (needsArena) {
+                    callPreflight();
+                    // Operation return convention (jit/OperationResult.h): a void JIT operation
+                    // returns ExceptionOperationResult<void>, i.e. the pending exception in the
+                    // primary return register, which is exactly what vmCall's
+                    // toOperationType(Void) (= pointerType()) models.
+                    LValue exception = m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                    exceptionCheckWithArenaExit(exception);
+                } else
+                    vmCall(Void, operationFFIWriteSlot, weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                break;
+            }
+            default:
+                DFG_CRASH(m_graph, node, "Bad use kind for a CallFFI argument");
+                break;
+            }
+        }
+
+        // Spec 10.5 step 4: the invoke thunk (unlike an operation) never sets vm.topCallFrame, and
+        // callPreflight() only stores it under !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED, so a
+        // callback re-entering the VM or an exception raised during the native call would otherwise
+        // see a stale frame in release builds. Store it unconditionally, as the last instruction
+        // touching vm.topCallFrame before the call.
+        LValue targetValue = m_out.constIntPtr(target);
+        if (needsArena) {
+            callPreflight();
+            m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+            // The invoke thunk is JIT-generated thunk code, not a registered JIT operation, so it
+            // is called through its raw code address (never via m_out.operation(), which would
+            // tag it as an operation and trip JIT-operation validation), and it returns nothing
+            // and never touches vm.exception itself, so the exception check reloads vm.exception.
+            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
+            exceptionCheckWithArenaExit(nullptr);
+        } else {
+            m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
+            // A JS callback the native code invoked may have left an exception pending: reload
+            // vm.exception (the thunk has no operation return convention to hand it back in).
+            operationExceptionCheck<void>(nullptr);
+        }
+
+        // Keep-alive (spec 10.5 step 6): cell edges (e.g. typed-array views passed as pointers)
+        // must stay live across the native call even though nothing consumes them afterwards.
+        if (!keepAliveValues.isEmpty())
+            ensureStillAliveHere(keepAliveValues);
+
+        // Box the return slot per the spec 5 native -> JS table. The node is NodeResultJS, so
+        // always setJSValue (matches compileCallWasm's result handling).
+        FFI::Type returnType = signature.returnType();
+        TypedPointer returnSlot = slotPointer(nativeArgumentCount);
+        switch (returnType) {
+        case FFI::Type::Void:
+            setJSValue(m_out.constInt64(JSValue::encode(jsUndefined())));
+            break;
+        case FFI::Type::Char:
+        case FFI::Type::Int8:
+        case FFI::Type::Uint8:
+        case FFI::Type::Int16:
+        case FFI::Type::Uint16:
+        case FFI::Type::Int32:
+            // The invoke thunk already sign/zero-extended the return slot to 64 bits (spec 4/7.2),
+            // so its low 32 bits are the exact int32 result.
+            setJSValue(boxInt32(m_out.load32(returnSlot)));
+            break;
+        case FFI::Type::Uint32:
+            // Zero-extended in the slot; box as an int32 when it fits, else as a double.
+            setJSValue(strictInt52ToJSValue(m_out.load64(returnSlot)));
+            break;
+        case FFI::Type::Bool:
+            // The slot is exactly 0 or 1 (spec 4).
+            setJSValue(boxBoolean(m_out.load32(returnSlot)));
+            break;
+        case FFI::Type::Double:
+            // Every native -> JS floating-point value is purifyNaN'ed exactly once, right where it
+            // is loaded from the slot, so a native NaN payload can never forge a JSValue (spec 5).
+            setJSValue(boxDouble(m_out.purifyNaN(m_out.loadDouble(returnSlot))));
+            break;
+        case FFI::Type::Float:
+            setJSValue(boxDouble(m_out.purifyNaN(m_out.floatToDouble(m_out.loadFloat(returnSlot)))));
+            break;
+        case FFI::Type::NapiValue:
+            // Spec 4/5: napi_value is a raw EncodedJSValue pass-through; the slot bits ARE the result.
+            setJSValue(m_out.load64(returnSlot));
+            break;
+        case FFI::Type::Int64:
+        case FFI::Type::Uint64:
+        case FFI::Type::Int64Fast:
+        case FFI::Type::Uint64Fast:
+        case FFI::Type::Pointer:
+        case FFI::Type::CString:
+        case FFI::Type::Function:
+        case FFI::Type::Buffer: {
+            // Exotic boxing (BigInt / MAX_INT52 fast paths / null pointer -> jsNull()) stays out of
+            // line in operationFFIBoxSlot (spec 5, 10.5 step 5).
+            LValue slotValue = m_out.load64(returnSlot);
+            LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(returnType)));
+            LValue boxed;
+            if (needsArena) {
+                callPreflight();
+                // operationFFIBoxSlot returns OperationReturnType<EncodedJSValue> =
+                // ExceptionOperationResult<EncodedJSValue>, a two-register {value, exception}
+                // aggregate modeled as the toOperationType(Int64) B3 tuple -- exactly the
+                // convention vmCall uses; never call it as if it returned a scalar Int64.
+                LValue result = m_out.call(toOperationType(Int64), m_out.operation(operationFFIBoxSlot), weakPointer(globalObject), typeTag, slotValue);
+                boxed = m_out.extract(result, 0);
+                exceptionCheckWithArenaExit(m_out.extract(result, 1));
+            } else
+                boxed = vmCall(Int64, operationFFIBoxSlot, weakPointer(globalObject), typeTag, slotValue);
+            setJSValue(boxed);
+            break;
+        }
+        case FFI::Type::NapiEnv:
+            DFG_CRASH(m_graph, node, "napi_env is never a valid FFI return type");
+            break;
+        }
+
+        // Spec 5: leave the arena only after the return value has been boxed (the exception paths
+        // above already left it before their exception jump).
+        if (needsArena)
+            vmCall(Void, operationFFIArenaExit, weakPointer(globalObject));
+    }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     void compileCallCustomAccessorGetter()
     {

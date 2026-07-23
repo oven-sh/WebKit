@@ -1080,6 +1080,7 @@ private:
         case TailCallForwardVarargsInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case CallCustomAccessorGetter:
         case GetGlobalVar:
         case GetGlobalLexicalVariable:
@@ -1105,6 +1106,17 @@ private:
             setPrediction(m_currentNode->getHeapPrediction());
             break;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        case FFIRawRead: {
+            DataViewData data = m_currentNode->dataViewData();
+            if (!data.isFloatingPoint && (data.byteSize < 4 || data.isSigned))
+                setPrediction(SpecInt32Only);
+            else
+                setPrediction(SpecFullDouble); // u32, ptr/intptr, f32, f64 are surfaced as doubles.
+            break;
+        }
+#endif
 
         case GetWebAssemblyInstanceExports: {
             setPrediction(SpecFinalObject);

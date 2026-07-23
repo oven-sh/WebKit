@@ -211,6 +211,8 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case ConstructForwardVarargs:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case FFIRawRead: // FFI raw-memory readers; JSVALUE64 only, lowers in LowerDFGToB3::compileFFIRawRead().
+    case CallFFI: // FFI: unconditional label (docs/ffi/SPEC.md 13(c)); the node is only created under USE(BUN_JSC_ADDITIONS) and lowers in LowerDFGToB3::compileCallFFI().
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case VarargsLength:

@@ -35,6 +35,9 @@
 #include "DFGInsertionSet.h"
 #include "DFGJITCode.h"
 #include "DFGPhase.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIDFG.h"
+#endif
 #include "JSBoundFunctionInlines.h"
 #include "JSObjectInlines.h"
 #include "JSWebAssemblyInstance.h"
@@ -1998,6 +2001,14 @@ private:
                 }
 
                 m_node->convertToCallWasm(m_graph.freeze(wasmFunction));
+                break;
+            }
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+            // Fold a Call to a constant JSFFIFunction into CallFFI (mirrors the CallWasm conversion above).
+            if (FFI::tryConvertCallToCallFFI(m_graph, m_insertionSet, m_nodeIndex, m_node, function)) {
+                m_changed = true;
                 break;
             }
 #endif

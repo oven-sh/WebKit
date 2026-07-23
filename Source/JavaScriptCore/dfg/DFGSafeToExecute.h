@@ -346,6 +346,9 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case MatchStructure:
     case DateGetInt32OrNaN:
     case DateGetTime:
+#if USE(BUN_JSC_ADDITIONS)
+    case FFIRawRead:
+#endif
     case DataViewGetInt:
     case DataViewGetFloat:
     case ResolveRope:
@@ -667,6 +670,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ConstructVarargs:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case VarargsLength:

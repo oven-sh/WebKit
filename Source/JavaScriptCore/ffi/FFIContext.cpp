@@ -1,0 +1,130 @@
+/*
+ * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+
+#if USE(BUN_JSC_ADDITIONS)
+
+#include "FFIContext.h"
+
+#include <algorithm>
+#include <wtf/TZoneMallocInlines.h>
+
+namespace JSC { namespace FFI {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FFIContext);
+
+FFIContext::FFIContext() = default;
+
+FFIContext::~FFIContext() = default;
+
+const CString* FFIContext::cachedUTF8(StringImpl& impl)
+{
+    for (auto& entry : m_utf8Cache) {
+        if (entry.key.get() == &impl) {
+            entry.lastUse = ++m_utf8CacheClock;
+            return &entry.utf8;
+        }
+    }
+    return nullptr;
+}
+
+const CString& FFIContext::cacheUTF8(StringImpl& impl, CString&& utf8)
+{
+    if (m_utf8Cache.size() < utf8CacheCapacity) {
+        UTF8CacheEntry entry;
+        entry.key = &impl;
+        entry.utf8 = WTF::move(utf8);
+        entry.lastUse = ++m_utf8CacheClock;
+        m_utf8Cache.append(WTF::move(entry));
+        return m_utf8Cache.last().utf8;
+    }
+
+    UTF8CacheEntry* victim = &m_utf8Cache[0];
+    for (auto& entry : m_utf8Cache) {
+        if (entry.lastUse < victim->lastUse)
+            victim = &entry;
+    }
+    victim->key = &impl;
+    victim->utf8 = WTF::move(utf8);
+    victim->lastUse = ++m_utf8CacheClock;
+    return victim->utf8;
+}
+
+void StringArena::enter()
+{
+    // Deferred reclamation (see the class comment): storage handed out during
+    // any earlier bracket -- including a cstring returned by a callback whose
+    // own Scope was the outermost bracket -- stays valid until the next FFI
+    // activity on this context, so recycle it only when a new outermost
+    // bracket opens, never at exit().
+    if (!m_depth)
+        reset();
+    ++m_depth;
+}
+
+void StringArena::reset()
+{
+    ASSERT(!m_depth);
+    m_offsetInLastChunk = 0;
+    if (m_chunks.isEmpty())
+        return;
+    // Keep one modestly-sized chunk around so a steady stream of FFI calls
+    // does not churn the allocator; drop everything else.
+    if (m_chunks[0].sizeInBytes() > maximumRetainedChunkBytes) {
+        m_chunks.clear();
+        return;
+    }
+    m_chunks.shrink(1);
+}
+
+std::span<char> StringArena::allocate(size_t bytes)
+{
+    // Storage handed out here lives until the next outermost enter(), and a
+    // caller must always be inside a bracket (StringArena::Scope or
+    // operationFFIArenaEnter/Exit) so that reclamation point is well-defined.
+    ASSERT(m_depth);
+
+    if (!m_chunks.isEmpty()) {
+        auto lastChunk = m_chunks.last().mutableSpan();
+        if (lastChunk.size() - m_offsetInLastChunk >= bytes) {
+            auto result = lastChunk.subspan(m_offsetInLastChunk, bytes);
+            m_offsetInLastChunk += bytes;
+            return result;
+        }
+    }
+
+    size_t capacity = std::max(defaultChunkBytes, bytes);
+    auto chunk = MallocSpan<char>::tryMalloc(capacity);
+    if (!chunk)
+        return { };
+    m_chunks.append(WTF::move(chunk));
+    m_offsetInLastChunk = bytes;
+    return m_chunks.last().mutableSpan().first(bytes);
+}
+
+} } // namespace JSC::FFI
+
+#endif // USE(BUN_JSC_ADDITIONS)

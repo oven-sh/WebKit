@@ -31,6 +31,20 @@
 
 namespace JSC {
 
+#if USE(BUN_JSC_ADDITIONS)
+// bun:ffi raw-memory readers (ffi/FFIRawMemory.h): `read.u8(address, byteOffset)` etc.
+// ONE intrinsic + ONE DFG/FTL node (FFIRawRead) for all twelve readers: the width/signedness is
+// data, carried by the callee (a JSFFIRawReaderFunction cell holding a DataViewData) and copied into
+// the node -- the DataView read machinery with the base taken from an argument instead of a
+// JSDataView cell. read.i64/u64 (BigInt results) carry no intrinsic (host path only).
+// (The Intrinsic enum is uint8_t and already full, so this must stay a single enumerator per family.)
+#define JSC_FOR_EACH_BUN_FFI_INTRINSIC(macro) \
+    macro(FFIRawReadIntrinsic) \
+
+#else
+#define JSC_FOR_EACH_BUN_FFI_INTRINSIC(macro)
+#endif
+
 #define JSC_FOR_EACH_INTRINSIC(macro) \
     /* Call intrinsics. */ \
     macro(NoIntrinsic) \
@@ -292,6 +306,8 @@ namespace JSC {
     macro(DataViewSetFloat64) \
     macro(DataViewSetBigInt64) \
     macro(DataViewSetBigUint64) \
+    \
+    JSC_FOR_EACH_BUN_FFI_INTRINSIC(macro) \
     \
     macro(WasmFunctionIntrinsic) \
 

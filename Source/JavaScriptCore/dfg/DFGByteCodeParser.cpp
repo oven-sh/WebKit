@@ -69,6 +69,11 @@
 #include "JSBoundFunctionInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIRawMemory.h"
+#include "FFISignature.h"
+#include "JSFFIFunction.h"
+#endif
 #include "JSIteratorHelper.h"
 #include "JSMapIterator.h"
 #include "JSModuleEnvironment.h"
@@ -2346,6 +2351,28 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 auto* executable = callee.executable();
                 if (executable->intrinsic() == WasmFunctionIntrinsic && !Options::forceICFailure())
                     return inliningResult;
+
+#if USE(BUN_JSC_ADDITIONS)
+                // We encourage CallFFI conversion by emitting the constant callee here.
+                // This allows strength reduction to fold this Call to CallFFI.
+                // The feed is skipped (leaving the plain Call and this function's host path) when the
+                // signature's invoke thunk cannot be generated: the DFG/FTL CallFFI codegen calls that
+                // process-shared, immortal thunk, so making it exist here (generation is a plain
+                // LinkBuffer emit under the Signature's own lock, safe on the compiler thread) turns
+                // its non-nullness into an invariant of the conversion instead of a runtime
+                // OutOfMemoryError for the whole node.
+                if (Options::useFFICallInDFG() && callOp == Call && callee.function() && callee.function()->inherits<JSFFIFunction>()
+                    && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {
+                    auto* ffiFunction = uncheckedDowncast<JSFFIFunction>(callee.function());
+                    m_graph.m_plan.recordedStatuses().addCallLinkStatus(currentNodeOrigin().semantic, CallLinkStatus(callee));
+                    auto* frozenFunction = m_graph.freeze(ffiFunction);
+                    addToGraph(CheckIsConstant, OpInfo(frozenFunction), Edge(callTargetNode, CellUse));
+                    m_parameterSlots = std::max(m_parameterSlots, Graph::parameterSlotsForArgCount(
+                        std::max<unsigned>(ffiFunction->signature().slotCount() + 1, argumentCountIncludingThis)));
+                    addCall(result, callOp, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, prediction);
+                    return CallOptimizationResult::Inlined;
+                }
+#endif
 
                 if (executable->intrinsic() == BoundFunctionCallIntrinsic)
                     return inliningResult;
@@ -4973,6 +5000,38 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 addToGraph(op, OpInfo(data.asQuadWord), OpInfo(prediction), get(virtualRegisterForArgumentIncludingThis(0, registerOffset)), get(virtualRegisterForArgumentIncludingThis(1, registerOffset)), littleEndianChild));
             return CallOptimizationResult::Inlined;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        // bun:ffi raw-memory readers: read.u8/i8/u16/i16/u32/i32/f32/f64/ptr/intptr(address, byteOffset).
+        // Same shape and architecture assumptions as the DataView getters above (64-bit, little-endian,
+        // unaligned loads OK), but the base is the unboxed address argument and there is no bounds
+        // check by design (raw caller-owned memory). All readers share this ONE intrinsic; which reader
+        // it is (width/signedness) is looked up from the callee's native function pointer.
+        case FFIRawReadIntrinsic: {
+            if (!is64Bit())
+                return CallOptimizationResult::DidNothing;
+            if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+
+            NativeExecutable* nativeExecutable = variant.nativeExecutable();
+            if (!nativeExecutable)
+                return CallOptimizationResult::DidNothing;
+            std::optional<DataViewData> readerData = FFI::rawReaderDataViewData(nativeExecutable->function());
+            if (!readerData)
+                return CallOptimizationResult::DidNothing; // read.i64 / read.u64 (BigInt): host path.
+
+            insertChecks();
+
+            Node* address = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* byteOffset = argumentCountIncludingThis >= 3
+                ? get(virtualRegisterForArgumentIncludingThis(2, registerOffset))
+                : jsConstant(jsNumber(0));
+            setResult(addToGraph(FFIRawRead, OpInfo(readerData->asQuadWord), OpInfo(prediction), address, byteOffset));
+            return CallOptimizationResult::Inlined;
+        }
+#endif // USE(BUN_JSC_ADDITIONS)
 
         case DataViewSetInt8:
         case DataViewSetUint8:

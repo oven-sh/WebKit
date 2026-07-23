@@ -35,6 +35,11 @@
 #include "AggregateError.h"
 #include "SuppressedError.h"
 #include "InternalFieldTuple.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIContext.h"
+#include "JSFFICallback.h"
+#include "JSFFIFunction.h"
+#endif
 #include "AggregateErrorConstructorInlines.h"
 #include "SuppressedErrorConstructorInlines.h"
 #include "AggregateErrorPrototypeInlines.h"
@@ -2217,6 +2222,17 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     m_asyncContextData.set(vm, this, asyncContext);
+
+    m_ffiFunctionStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSFFIFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+        });
+    m_ffiCallbackStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            // FFI-SPEC-GAP: JSFFICallback is a JSNonFinalObject; the spec (section 9.1) does not name its
+            // prototype, so it is Object.prototype, matching Bun's plain JSCallback objects.
+            init.set(JSFFICallback::createStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
+        });
 #endif
 
     m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
@@ -2983,6 +2999,8 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContextData);
     visitor.append(thisObject->m_internalFieldTupleStructure);
+    thisObject->m_ffiFunctionStructure.visit(visitor);
+    thisObject->m_ffiCallbackStructure.visit(visitor);
 #endif
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
@@ -3785,6 +3803,23 @@ void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
 void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
     queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
+}
+
+FFI::FFIContext& JSGlobalObject::ffiContext()
+{
+    if (!m_ffiContext) [[unlikely]] {
+        // The lazy first-creation is a plain std::unique_ptr store, so it may only happen on the
+        // mutator thread. DFG/FTL compiler threads call ffiContext() to bake its address at
+        // code-generation time, but only for a JSFFIFunction whose create() already materialized
+        // the context here on the mutator (FFIContext.h thread contract); a compiler-thread
+        // first-creation would be an unsynchronized race.
+        ASSERT(!isCompilationThread());
+        // FFI-SPEC-GAP: the spec (section 6) states the context is per-JSGlobalObject and lazily
+        // created here but does not fix FFIContext's constructor; a default-constructible
+        // context (all state internal, nothing borrowed from the global object) is assumed.
+        m_ffiContext = makeUnique<FFI::FFIContext>();
+    }
+    return *m_ffiContext;
 }
 #endif
 

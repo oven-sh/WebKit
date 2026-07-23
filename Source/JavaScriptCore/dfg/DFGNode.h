@@ -35,6 +35,7 @@
 #include "DFGArithMode.h"
 #include "DFGArrayMode.h"
 #include "DFGCommon.h"
+#include "DFGDataViewData.h"
 #include "DFGEpoch.h"
 #include "DFGLazyJSValue.h"
 #include "DFGMultiGetByOffsetData.h"
@@ -82,6 +83,13 @@ class ExecutionCounter;
 }
 
 class Snippet;
+
+#if USE(BUN_JSC_ADDITIONS)
+class JSFFIFunction;
+namespace FFI {
+class Signature;
+} // namespace FFI
+#endif
 
 namespace DFG {
 
@@ -150,19 +158,7 @@ struct NewArrayWithSpeciesData {
 static_assert(sizeof(IndexingType) <= sizeof(unsigned));
 static_assert(sizeof(ArrayMode) <= sizeof(unsigned));
 
-struct DataViewData {
-    union {
-        struct {
-            uint8_t byteSize;
-            bool isSigned;
-            bool isResizable;
-            bool isFloatingPoint; // Used for the DataViewSet node.
-            TriState isLittleEndian;
-        };
-        uint64_t asQuadWord;
-    };
-};
-static_assert(sizeof(DataViewData) == sizeof(uint64_t));
+// DataViewData lives in DFGDataViewData.h (shared with ffi/FFIRawMemory.h under USE(BUN_JSC_ADDITIONS)).
 
 struct BranchTarget {
     BranchTarget() = default;
@@ -963,6 +959,14 @@ public:
     void NODELETE convertToDirectCall(FrozenValue*);
 
     void NODELETE convertToCallWasm(FrozenValue*);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Call -> CallFFI (constant JSFFIFunction callee), OpInfo convention = CallWasm's.
+    void NODELETE convertToCallFFI(FrozenValue*);
+
+    JSFFIFunction* ffiFunction();
+    FFI::Signature& ffiSignature();
+#endif
 
     void NODELETE convertToCallDOM(Graph&);
 
@@ -2136,6 +2140,7 @@ public:
         case TailCallForwardVarargsInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case CallCustomAccessorGetter:
         case GetByOffset:
         case MultiGetByOffset:
@@ -2254,6 +2259,7 @@ public:
         case DirectTailCallInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case RegExpExecNonGlobalOrSticky:
         case RegExpExecSticky:
         case RegExpMatchFastGlobal:
@@ -3007,7 +3013,11 @@ public:
 
     DataViewData dataViewData()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(op() == DataViewGetInt || op() == DataViewGetFloat || op() == DataViewSet || op() == FFIRawRead);
+#else
         ASSERT(op() == DataViewGetInt || op() == DataViewGetFloat || op() == DataViewSet);
+#endif
         return std::bit_cast<DataViewData>(m_opInfo.as<uint64_t>());
     }
 

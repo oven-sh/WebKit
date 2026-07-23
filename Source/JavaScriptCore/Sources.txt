@@ -1318,3 +1318,23 @@ yarr/YarrCanonicalizeUnicode.cpp
 runtime/InternalFieldTuple.cpp
 
 heap/BunV8HeapSnapshotBuilder.cpp
+
+// bun:ffi (JSC FFI). Every file below is internally guarded by USE(BUN_JSC_ADDITIONS).
+ffi/BunFFI.cpp
+ffi/FFICallHost.cpp
+ffi/FFICallbackThunk.cpp
+ffi/FFICallingConvention.cpp
+ffi/FFIContext.cpp
+ffi/FFIConversions.cpp
+ffi/FFIRawMemory.cpp
+ffi/FFIDFG.cpp
+ffi/FFIDFGCodegen.cpp
+ffi/FFIICStub.cpp
+ffi/FFIInvokeThunk.cpp
+ffi/FFISignature.cpp
+ffi/JSFFICallback.cpp
+ffi/JSFFIFunction.cpp
+// The FFI test fixtures compile into the library itself (not testFFI / jsc) so
+// that tools/JSDollarVM.cpp's $vm.ffiFixture can reference ffiTestFixtures()
+// without breaking every other libJavaScriptCore consumer at link time.
+ffi/tests/FFITestFixtures.cpp

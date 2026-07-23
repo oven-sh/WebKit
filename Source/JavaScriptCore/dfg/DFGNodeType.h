@@ -415,6 +415,11 @@ namespace JSC { namespace DFG {
     macro(CallDirectEval, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(CallWasm, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(TailCallInlinedCallerWasm, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    /* bun:ffi (USE(BUN_JSC_ADDITIONS)); the enumerators are unconditional, only their uses are guarded. */\
+    macro(CallFFI, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    /* read.u8/i8/u16/i16/u32/i32/f32/f64/ptr/intptr(address, byteOffset): a DataView-style load whose */\
+    /* base is the (unboxed) address argument. Must-generate: the underlying memory is not modeled. */\
+    macro(FFIRawRead, NodeResultJS | NodeMustGenerate) \
     \
     macro(CallCustomAccessorGetter, NodeResultJS | NodeMustGenerate) \
     macro(CallCustomAccessorSetter, NodeMustGenerate) \

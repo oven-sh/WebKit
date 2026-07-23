@@ -322,6 +322,7 @@ bool doesGC(Graph& graph, Node* node)
     case DirectTailCallInlinedCaller:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case ForceOSRExit:
@@ -535,6 +536,12 @@ bool doesGC(Graph& graph, Node* node)
     case GlobalIsNaN:
         return node->child1().useKind() == UntypedUse;
 
+#if USE(BUN_JSC_ADDITIONS)
+    case FFIRawRead:
+        // Unlike DataViewGetInt (whose 8-byte get returns a BigInt), FFIRawRead's 8-byte results
+        // (ptr / intptr / f64) are unboxed doubles: it never allocates.
+        return false;
+#endif
     case DataViewGetInt:
         return node->dataViewData().byteSize == 8;
 

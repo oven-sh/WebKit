@@ -834,6 +834,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CallDirectEval:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case ToPrimitive:
@@ -2695,6 +2696,15 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         }
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    case FFIRawRead:
+        // Raw foreign memory is outside every modeled abstract heap: treat as reading the World so it
+        // is never hoisted above a call/store that could change it, and def nothing (no CSE of loads).
+        read(World);
+        return;
+#endif
+
 
     case DataViewSet: {
         read(MiscFields);

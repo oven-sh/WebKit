@@ -212,9 +212,18 @@ class Heap;
 #define FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(v)
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+#define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
+    v(ffiFunctionSpace, ffiFunctionHeapCellType, JSFFIFunction) \
+    v(ffiCallbackSpace, ffiCallbackHeapCellType, JSFFICallback)
+#else
+#define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v)
+#endif
+
 #define FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_OBJC_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_GLIB_API_DYNAMIC_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
     \
     v(apiGlobalObjectSpace, apiGlobalObjectHeapCellType, JSAPIGlobalObject) \
     v(apiValueWrapperSpace, cellHeapCellType, JSAPIValueWrapper) \
@@ -1101,6 +1110,10 @@ public:
     IsoHeapCellType intlSegmentIteratorHeapCellType;
     IsoHeapCellType intlSegmenterHeapCellType;
     IsoHeapCellType intlSegmentsHeapCellType;
+#if USE(BUN_JSC_ADDITIONS)
+    IsoHeapCellType ffiFunctionHeapCellType;
+    IsoHeapCellType ffiCallbackHeapCellType;
+#endif
 #if ENABLE(WEBASSEMBLY)
     IsoHeapCellType webAssemblyExceptionHeapCellType;
     IsoHeapCellType webAssemblyFunctionHeapCellType;

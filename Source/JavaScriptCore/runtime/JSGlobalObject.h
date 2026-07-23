@@ -131,6 +131,12 @@ class SymbolTable;
 class WrapperMap;
 class WrapForValidIteratorPrototype;
 
+#if USE(BUN_JSC_ADDITIONS)
+namespace FFI {
+class FFIContext;
+} // namespace FFI
+#endif
+
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
 enum class ErrorType : uint8_t;
@@ -382,6 +388,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrierStructureID m_internalFieldTupleStructure;
+    LazyProperty<JSGlobalObject, Structure> m_ffiFunctionStructure;
+    LazyProperty<JSGlobalObject, Structure> m_ffiCallbackStructure;
 #endif
 
     // Lists the actual structures used for having these particular indexing shapes.
@@ -505,6 +513,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isAsyncContextTrackingEnabled { false };
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+    std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -1099,6 +1108,11 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
+    Structure* ffiFunctionStructure() const { return m_ffiFunctionStructure.get(this); }
+    Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
+    // Per-global bun:ffi state (napi env pointer, UTF-8 string cache, call-scoped string arena).
+    // Lazily created; holds no GC-visited references.
+    JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();
 #endif
 
     JS_EXPORT_PRIVATE void setInspectable(bool);
