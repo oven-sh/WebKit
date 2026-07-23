@@ -79,7 +79,7 @@ template<typename KeyArg, typename ValueArg, typename HashArg, typename KeyTrait
 template<typename Func>
 inline void WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::forEach(Func func)
 {
-    ASSERT(m_vm.heap.isDeferred());
+    ASSERT(m_vm.heap.isDeferred() || m_vm.heap.worldIsStopped());
     for (auto& entry : m_map) {
         if (entry.value) {
             if (func(entry.value.get()) == IterationStatus::Done)
