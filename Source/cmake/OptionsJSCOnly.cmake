@@ -46,6 +46,16 @@ if(USE_BUN_JSC_ADDITIONS)
     # Causing test/cli/test/bun-test.test.ts to fail.
     SET_AND_EXPOSE_TO_BUILD(BUSE_TZONE 0)
     SET_AND_EXPOSE_TO_BUILD(USE_TZONE_MALLOC 0)
+
+    # Shadow <iostream> with a #error shim in non-Debug builds. On libstdc++ a
+    # single <iostream> include anywhere emits a reference to
+    # std::ios_base_library_init, which pulls globals_io.o (the
+    # cin/cout/cerr/clog + full std::locale facet static initializer) into the
+    # final Bun link. <ostream>/<istream>/<sstream> are unaffected. Debug
+    # builds keep the real header for ad-hoc dataLog-style debugging.
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        include_directories(BEFORE "${WTF_DIR}/wtf/bun/BannedIncludes")
+    endif()
 endif()
 
 # Only works on macOS for now.
