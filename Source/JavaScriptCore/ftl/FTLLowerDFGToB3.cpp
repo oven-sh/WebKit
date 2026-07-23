@@ -15434,22 +15434,105 @@ IGNORE_CLANG_WARNINGS_END
                 break;
             }
             case UntypedUse: {
-                // i64 family, pointer family, napi_value and anything the conversion left untyped:
-                // convert out of line. operationFFIWriteSlot throws (never speculates) on a bad
-                // value, so this is an exception check, not an OSR exit.
+                // i64 family, pointer family, napi_value and anything the conversion left untyped.
+                // The pointer family gets the same INLINE fast paths as the DFG (parity keeps the
+                // tiers behaviorally identical, SPEC section 5): numbers, and typed-array /
+                // DataView views resolved straight to their data pointer. Everything else -- and
+                // every case whose semantics live in C++ (detached, shared/resizable, strings,
+                // ArrayBuffers, callbacks, null/undefined) -- converts out of line via
+                // operationFFIWriteSlot, which throws (never speculates) on a bad value: an
+                // exception check, not an OSR exit.
                 LValue value = lowJSValue(edge);
                 keepAliveValues.append(value);
                 LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(type)));
-                if (needsArena) {
-                    callPreflight();
-                    // Operation return convention (jit/OperationResult.h): a void JIT operation
-                    // returns ExceptionOperationResult<void>, i.e. the pending exception in the
-                    // primary return register, which is exactly what vmCall's
-                    // toOperationType(Void) (= pointerType()) models.
-                    LValue exception = m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
-                    exceptionCheckWithArenaExit(exception);
+                TypedPointer slot = slotPointer(i, 0);
+
+                auto emitSlowConversion = [&] {
+                    if (needsArena) {
+                        callPreflight();
+                        // Operation return convention (jit/OperationResult.h): a void JIT
+                        // operation returns ExceptionOperationResult<void>, i.e. the pending
+                        // exception in the primary return register, which is exactly what
+                        // vmCall's toOperationType(Void) (= pointerType()) models.
+                        LValue exception = m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                        exceptionCheckWithArenaExit(exception);
+                    } else
+                        vmCall(Void, operationFFIWriteSlot, weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                };
+
+                bool numbersInline = type == FFI::Type::Pointer || type == FFI::Type::CString || type == FFI::Type::Function;
+                bool viewsInline = numbersInline || type == FFI::Type::Buffer;
+                if (!viewsInline) {
+                    emitSlowConversion();
+                    break;
+                }
+
+                LBasicBlock int32Case = m_out.newBlock();
+                LBasicBlock notInt32Case = m_out.newBlock();
+                LBasicBlock doubleCase = m_out.newBlock();
+                LBasicBlock cellCase = m_out.newBlock();
+                LBasicBlock viewCase = m_out.newBlock();
+                LBasicBlock vectorCase = m_out.newBlock();
+                LBasicBlock slowCase = m_out.newBlock();
+                LBasicBlock done = m_out.newBlock();
+
+                if (numbersInline)
+                    m_out.branch(isInt32(value, provenType(edge)), unsure(int32Case), unsure(notInt32Case));
+                else
+                    m_out.jump(cellCase); // buffer: only views convert inline; numbers throw in C++.
+
+                LBasicBlock lastNext = m_out.appendTo(int32Case, notInt32Case);
+                // int32 pointers are sign-extended (spec section 5, Bun parity).
+                m_out.store64(m_out.signExt32To64(unboxInt32(value)), slot);
+                m_out.jump(done);
+
+                m_out.appendTo(notInt32Case, doubleCase);
+                m_out.branch(isNumber(value, provenType(edge)), unsure(doubleCase), unsure(cellCase));
+
+                m_out.appendTo(doubleCase, cellCase);
+                // MacroAssembler::truncateDoubleToInt64 is FFI::doubleToInt64 by definition
+                // (spec section 5); the DFG emits the same truncation.
+                m_out.store64(m_out.doubleToInt64(unboxDouble(value)), slot);
+                m_out.jump(done);
+
+                m_out.appendTo(cellCase, viewCase);
+                if (!numbersInline) {
+                    // Reached by the unconditional jump above: a non-cell buffer argument throws
+                    // in the slow path with the exact C++ diagnostics.
+                    m_out.branch(isNotCell(value, provenType(edge)), rarely(slowCase), usually(viewCase));
                 } else
-                    vmCall(Void, operationFFIWriteSlot, weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                    m_out.branch(isNotCell(value, provenType(edge)), unsure(slowCase), unsure(viewCase));
+
+                m_out.appendTo(viewCase, vectorCase);
+                // Typed-array and DataView views (JSType range [FirstTypedArrayType,
+                // LastTypedArrayType]) resolve to their (caged) data pointer. Two guards keep
+                // this sound: a DETACHED view has a null m_vector, and a SHARED / RESIZABLE
+                // view is marked in its mode byte (isResizableOrGrowableSharedMode) -- both stay
+                // on the C++ path, whose semantics are authoritative for those cases.
+                LValue jsType = m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoType);
+                LValue isView = m_out.belowOrEqual(
+                    m_out.sub(jsType, m_out.constInt32(FirstTypedArrayType)),
+                    m_out.constInt32(LastTypedArrayType - FirstTypedArrayType));
+                LValue mode = m_out.load8ZeroExt32(value, m_heaps.JSArrayBufferView_mode);
+                LValue isPlainMode = m_out.isZero32(m_out.bitAnd(mode, m_out.constInt32(isResizableOrGrowableSharedMode)));
+                m_out.branch(m_out.bitAnd(isView, isPlainMode), usually(vectorCase), rarely(slowCase));
+
+                m_out.appendTo(vectorCase, slowCase);
+                LValue vector = m_out.loadPtr(value, m_heaps.JSArrayBufferView_vector);
+                LValue storage = caged(Gigacage::Primitive, vector, value);
+                // A null vector (detached view, or a wasteful view with no storage) keeps its
+                // exact semantics in C++.
+                LBasicBlock storeVector = m_out.newBlock();
+                m_out.branch(m_out.isNull(vector), rarely(slowCase), usually(storeVector));
+                m_out.appendTo(storeVector, slowCase);
+                m_out.store64(storage, slot);
+                m_out.jump(done);
+
+                m_out.appendTo(slowCase, done);
+                emitSlowConversion();
+                m_out.jump(done);
+
+                m_out.appendTo(done, lastNext);
                 break;
             }
             default:

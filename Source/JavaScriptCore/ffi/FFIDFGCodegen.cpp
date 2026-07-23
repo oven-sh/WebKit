@@ -304,8 +304,13 @@ void SpeculativeJIT::compileCallFFI(Node* node)
 
             auto storeTypedArrayViewVector = [&] {
                 slowCases.append(branchIfNotType(valueGPR, JSTypeRange { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayType) }));
+                // SHARED / RESIZABLE views are marked in the mode byte; their semantics (and any
+                // future policy for them) stay in C++, so they take the slow path -- exactly like
+                // the FTL twin, keeping the tiers behaviorally identical (SPEC section 5).
+                slowCases.append(branchTest8(NonZero, Address(valueGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
                 loadPtr(Address(valueGPR, JSArrayBufferView::offsetOfVector()), scratchGPR);
-                // A null / detached vector keeps its semantics in C++ (slow path).
+                // A null vector (DETACHED view, or a wasteful view with no storage) keeps its
+                // semantics in C++ (slow path).
                 slowCases.append(branchTestPtr(Zero, scratchGPR));
                 cageTypedArrayStorage(valueGPR, scratchGPR);
                 store64(scratchGPR, slotAddress);
