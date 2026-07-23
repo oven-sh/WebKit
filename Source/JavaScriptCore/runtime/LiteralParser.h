@@ -314,7 +314,7 @@ private:
     static ALWAYS_INLINE bool equalIdentifier(UniquedStringImpl*, typename Lexer::LiteralParserTokenPtr);
     static ALWAYS_INLINE AtomStringImpl* existingIdentifier(VM&, typename Lexer::LiteralParserTokenPtr);
     static ALWAYS_INLINE Identifier makeIdentifier(VM&, typename Lexer::LiteralParserTokenPtr);
-    static ALWAYS_INLINE JSString* makeJSString(VM&, typename Lexer::LiteralParserTokenPtr);
+    static ALWAYS_INLINE JSString* tryMakeJSString(VM&, typename Lexer::LiteralParserTokenPtr);
 
     void setErrorMessageForToken(TokenType);
 

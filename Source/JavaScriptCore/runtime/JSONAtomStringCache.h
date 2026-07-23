@@ -54,7 +54,7 @@ public:
     ALWAYS_INLINE AtomStringImpl* existingIdentifier(std::span<const CharacterType> characters);
 
     template<typename CharacterType>
-    ALWAYS_INLINE JSString* makeJSString(std::span<const CharacterType> characters);
+    ALWAYS_INLINE JSString* tryMakeJSString(std::span<const CharacterType> characters);
 
     ALWAYS_INLINE void clear()
     {

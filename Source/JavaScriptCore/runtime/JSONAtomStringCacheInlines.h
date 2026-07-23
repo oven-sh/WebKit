@@ -84,7 +84,7 @@ ALWAYS_INLINE AtomStringImpl* JSONAtomStringCache::existingIdentifier(std::span<
 }
 
 template<typename CharacterType>
-ALWAYS_INLINE JSString* JSONAtomStringCache::makeJSString(std::span<const CharacterType> characters)
+ALWAYS_INLINE JSString* JSONAtomStringCache::tryMakeJSString(std::span<const CharacterType> characters)
 {
     VM& vm = this->vm();
     if (characters.empty())
