@@ -2640,8 +2640,21 @@ public:
             gpr();
     }
 
+    explicit SpeculateInt32Operand(SpeculateInt32Operand&& other)
+    {
+        m_jit = other.m_jit;
+        m_edge = other.m_edge;
+        m_gprOrInvalid = other.m_gprOrInvalid;
+        m_format = other.m_format;
+
+        other.m_gprOrInvalid = InvalidGPRReg;
+        other.m_edge = Edge();
+    }
+
     ~SpeculateInt32Operand()
     {
+        if (!m_edge)
+            return;
         ASSERT(m_gprOrInvalid != InvalidGPRReg);
         m_jit->unlock(m_gprOrInvalid);
     }
@@ -2791,9 +2804,21 @@ public:
         if (jit->isFilled(node()))
             gpr();
     }
-    
+
+    explicit SpeculateStrictInt52Operand(SpeculateStrictInt52Operand&& other)
+    {
+        m_jit = other.m_jit;
+        m_edge = other.m_edge;
+        m_gprOrInvalid = other.m_gprOrInvalid;
+
+        other.m_gprOrInvalid = InvalidGPRReg;
+        other.m_edge = Edge();
+    }
+
     ~SpeculateStrictInt52Operand()
     {
+        if (!m_edge)
+            return;
         ASSERT(m_gprOrInvalid != InvalidGPRReg);
         m_jit->unlock(m_gprOrInvalid);
     }
@@ -3032,9 +3057,21 @@ public:
         if (jit->isFilled(node()))
             gpr();
     }
-    
+
+    explicit SpeculateBooleanOperand(SpeculateBooleanOperand&& other)
+    {
+        m_jit = other.m_jit;
+        m_edge = other.m_edge;
+        m_gprOrInvalid = other.m_gprOrInvalid;
+
+        other.m_gprOrInvalid = InvalidGPRReg;
+        other.m_edge = Edge();
+    }
+
     ~SpeculateBooleanOperand()
     {
+        if (!m_edge)
+            return;
         ASSERT(m_gprOrInvalid != InvalidGPRReg);
         m_jit->unlock(m_gprOrInvalid);
     }

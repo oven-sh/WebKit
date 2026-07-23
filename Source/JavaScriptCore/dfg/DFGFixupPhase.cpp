@@ -5302,11 +5302,9 @@ private:
             unsigned index = 0;
             bool shouldConvertToCallDOM = true;
             m_graph.doToChildren(node, [&](Edge& edge) {
-                // Callee. Ignore this. DFGByteCodeParser already emit appropriate checks.
-                if (!index)
-                    return;
-
-                if (index == 1) {
+                if (!index) {
+                    // Callee. Ignore this. DFGByteCodeParser already emit appropriate checks.
+                } else if (index == 1) {
                     // DOM node case.
                     if (edge->shouldSpeculateNotCell())
                         shouldConvertToCallDOM = false;
