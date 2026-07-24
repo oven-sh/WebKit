@@ -279,7 +279,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeE
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->evaluateWithScopeExtension(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->evaluateWithScopeExtension(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionSubtype, (JSGlobalObject* globalObject, CallFrame* callFrame))

@@ -197,7 +197,7 @@ JSValue JSJavaScriptCallFrame::scopeChain(JSGlobalObject* globalObject) const
         return { };
     }
 
-    return constructArray(this->realm(), static_cast<ArrayAllocationProfile*>(nullptr), list);
+    RELEASE_AND_RETURN(scope, constructArray(this->realm(), static_cast<ArrayAllocationProfile*>(nullptr), list));
 }
 
 JSValue JSJavaScriptCallFrame::thisObject(JSGlobalObject* globalObject) const
