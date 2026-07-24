@@ -24,6 +24,9 @@
  */
 
 #include "config.h"
+
+#if !USE(BUN_JSC_ADDITIONS) || BUN_ENABLE_JSDOLLARVM || defined(BUN_JSDOLLARVM_FORCE)
+
 #include "JSDollarVM.h"
 
 #include "AccessCase.h"
@@ -4758,6 +4761,25 @@ REFTRACKER_IMPL(StrongRefTracker, {
     JSC::initialize();
 });
 
+SUPPRESS_ASAN void JSGlobalObject::exposeDollarVM(VM& vm)
+{
+    RELEASE_ASSERT(g_jscConfig.restrictedOptionsEnabled && Options::useDollarVM());
+    PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (getOwnPropertySlot(this, this, vm.propertyNames->builtinNames().dollarVMPrivateName(), slot))
+        return;
+
+    JSDollarVM* dollarVM = JSDollarVM::create(vm, JSDollarVM::createStructure(vm, this, m_objectPrototype.get()));
+
+    GlobalPropertyInfo extraStaticGlobals[] = {
+        GlobalPropertyInfo(vm.propertyNames->builtinNames().dollarVMPrivateName(), dollarVM, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+    };
+    addStaticGlobals(extraStaticGlobals);
+
+    putDirect(vm, Identifier::fromString(vm, "$vm"_s), dollarVM, static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
 } // namespace JSC
 
 IGNORE_WARNINGS_END
+
+#endif // !USE(BUN_JSC_ADDITIONS) || BUN_ENABLE_JSDOLLARVM || defined(BUN_JSDOLLARVM_FORCE)
