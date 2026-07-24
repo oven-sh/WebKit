@@ -4623,6 +4623,25 @@ void SpeculativeJIT::compile(Node* node)
     case DateSetTime:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI: // CallFFI is JSVALUE64 only (spec docs/ffi/SPEC.md 10.4); the strength reduction never creates it here.
+    case FunctionBind:
+    case NewBoundFunction:
+    case EnumeratorPutByVal:
+    case GetByIdMegamorphic:
+    case GetByIdWithThisMegamorphic:
+    case GetByValMegamorphic:
+    case GetByValWithThisMegamorphic:
+    case PutByIdMegamorphic:
+    case PutByValMegamorphic:
+    case InByIdMegamorphic:
+    case InByValMegamorphic:
+    case MultiGetByVal:
+    case MultiPutByVal:
+    case MapStorage:
+    case ArrayShift:
+    case ArrayUnshift:
+        DFG_CRASH(m_graph, node, "unexpected node in DFG backend");
+        break;
     }
 
     if (!m_compileOkay)
