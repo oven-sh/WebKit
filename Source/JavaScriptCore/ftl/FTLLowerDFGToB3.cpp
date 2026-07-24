@@ -15363,15 +15363,64 @@ IGNORE_CLANG_WARNINGS_END
             vmCall(Void, operationFFIArenaEnter, weakPointer(globalObject));
 
         Vector<LValue> keepAliveValues;
+
+        // DIRECT-CALL path (no invoke thunk): when every argument converts to a SINGLE typed SSA
+        // value (int32-family / bool / f32 / f64 via KnownInt32/KnownBoolean/DoubleRep) and there
+        // is no string arena, no synthetic napi_env and a scalar/void return, call the native target
+        // straight from B3 as a CCallValue with the arguments in registers. This removes the thunk's
+        // extra call/ret + frame and the store-then-reload of every argument through the slot
+        // buffer. UntypedUse arguments (which convert into their slot from several basic blocks)
+        // and everything else keep the thunk path unchanged.
+        // DIRECT-CALL: the native target is a compile-time constant here, so the FTL calls it
+        // straight from B3 as a CCallValue with the arguments in registers -- no invoke thunk (its
+        // extra call/ret + frame + slot-buffer store/reload disappear). Arguments the JIT lowers to
+        // a single typed SSA value (KnownInt32 / KnownBoolean / DoubleRep) become register operands
+        // directly. UntypedUse / synthetic arguments keep their existing conversion code, which
+        // finishes by leaving the canonical 64-bit value in the slot; the direct call simply reloads
+        // that slot as its operand -- so the typed-array-view path, i64/u64 (BigInt, wrapping mod
+        // 2^64) and the C++ slow path all feed the direct call unchanged.
+        bool directCall = Options::useFFIDirectCall();
+#if CPU(ARM64) && OS(DARWIN)
+        // Darwin/arm64 packs sub-8-byte STACK arguments at their natural size (a spilled uint8_t
+        // occupies 1 byte), and B3's C-call marshalling derives that size from the child's B3
+        // type -- but B3 has no 8/16-bit value type, so a char/i8/u8/i16/u16 argument that spills to
+        // the stack would be laid out at Int32 (4-byte) stride and the callee would misread it. Args
+        // in registers are width-agnostic, so the direct call is exact whenever every sub-32-bit
+        // integer argument lands in an argument GPR; otherwise keep the thunk, which implements the
+        // Darwin packing by hand. (AAPCS64 counts integer/pointer args separately from f32/f64.)
+        if (directCall) {
+            unsigned gprCount = 0;
+            for (unsigned i = 0; i < nativeArgumentCount; ++i) {
+                FFI::Type t = signature.argumentType(i);
+                bool isFloating = t == FFI::Type::Float || t == FFI::Type::Double;
+                if (isFloating)
+                    continue;
+                bool subWord = t == FFI::Type::Char || t == FFI::Type::Int8 || t == FFI::Type::Uint8
+                    || t == FFI::Type::Int16 || t == FFI::Type::Uint16;
+                if (subWord && gprCount >= GPRInfo::numberOfArgumentRegisters) {
+                    directCall = false;
+                    break;
+                }
+                ++gprCount;
+            }
+        }
+#endif
+        Vector<LValue> directOperands;
+
         unsigned jsArgumentIndex = 0;
         for (unsigned i = 0; i < nativeArgumentCount; ++i) {
             FFI::Type type = signature.argumentType(i);
             TypedPointer slot = slotPointer(i);
+            LValue directOperand = nullptr; // set by the single-value cases; else reloaded from the slot
 
             if (FFI::isSyntheticArgument(type)) {
                 // Type::NapiEnv is supplied by the engine: load the embedder's napi env LIVE at
                 // call time (spec 6), never as an immediate baked at compile time.
-                m_out.store64(m_out.load64(m_out.absolute(context.addressOfNapiEnv())), slot);
+                LValue env = m_out.load64(m_out.absolute(context.addressOfNapiEnv()));
+                if (directCall)
+                    directOperands.append(env); // napi_env is a pointer: pass it in a register
+                else
+                    m_out.store64(env, slot);
                 continue;
             }
 
@@ -15410,26 +15459,42 @@ IGNORE_CLANG_WARNINGS_END
                     DFG_CRASH(m_graph, node, "Bad FFI argument type for a KnownInt32Use CallFFI child");
                     break;
                 }
-                m_out.store64(slotValue, slot);
+                if (directCall) {
+                    // The C ABI wants the value at its natural width: pass the widened 64-bit slot
+                    // value as an Int32 operand for sub-64-bit integer types (the low bits are already
+                    // correctly sign/zero-extended above), so the callee reads the right register width.
+                    directOperand = m_out.castToInt32(slotValue);
+                } else
+                    m_out.store64(slotValue, slot);
                 break;
             }
             case KnownBooleanUse: {
                 DFG_ASSERT(m_graph, node, type == FFI::Type::Bool);
                 // The boolean payload is 0/1, which is exactly the canonical bool slot encoding (spec 4).
-                m_out.store64(m_out.zeroExt(lowBoolean(edge), Int64), slot);
+                if (directCall)
+                    directOperand = m_out.zeroExt(lowBoolean(edge), Int32);
+                else
+                    m_out.store64(m_out.zeroExt(lowBoolean(edge), Int64), slot);
                 break;
             }
             case DoubleRepUse: {
                 LValue value = lowDouble(edge);
                 if (type == FFI::Type::Float) {
-                    // Spec 4: bit_cast<uint32_t>(float) in bits [31:0]; bits [63:32] must be zero.
-                    // Store the narrowed float directly with a 4-byte Float store (as the typed-array
-                    // Float32Array stores do); B3's bitCast does not model Float->Int32.
-                    m_out.storeFloat(m_out.doubleToFloat(value), slot);
-                    m_out.store32(m_out.int32Zero, slotPointer(i, 4));
+                    if (directCall)
+                        directOperand = m_out.doubleToFloat(value); // real float operand -> FPR
+                    else {
+                        // Spec 4: bit_cast<uint32_t>(float) in bits [31:0]; bits [63:32] must be zero.
+                        // Store the narrowed float directly with a 4-byte Float store (as the typed-array
+                        // Float32Array stores do); B3's bitCast does not model Float->Int32.
+                        m_out.storeFloat(m_out.doubleToFloat(value), slot);
+                        m_out.store32(m_out.int32Zero, slotPointer(i, 4));
+                    }
                 } else {
                     DFG_ASSERT(m_graph, node, type == FFI::Type::Double);
-                    m_out.storeDouble(value, slot);
+                    if (directCall)
+                        directOperand = value;
+                    else
+                        m_out.storeDouble(value, slot);
                 }
                 break;
             }
@@ -15539,6 +15604,8 @@ IGNORE_CLANG_WARNINGS_END
                 DFG_CRASH(m_graph, node, "Bad use kind for a CallFFI argument");
                 break;
             }
+            if (directCall)
+                directOperands.append(directOperand ? directOperand : m_out.load64(slotPointer(i)));
         }
 
         // Spec 10.5 step 4: the invoke thunk (unlike an operation) never sets vm.topCallFrame, and
@@ -15546,8 +15613,71 @@ IGNORE_CLANG_WARNINGS_END
         // callback re-entering the VM or an exception raised during the native call would otherwise
         // see a stale frame in release builds. Store it unconditionally, as the last instruction
         // touching vm.topCallFrame before the call.
+        FFI::Type returnType = signature.returnType();
         LValue targetValue = m_out.constIntPtr(target);
-        if (needsArena) {
+        if (directCall) {
+            // Call the native target directly (tagged exactly as the thunk calls it: a raw
+            // CFunctionPtrTag call). topCallFrame first: a JS callback or an exception raised from
+            // inside the native call must see this frame.
+            m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+            LValue callee = m_out.constIntPtr(tagCFunctionPtr<void*, CFunctionPtrTag>(target));
+            LType returnLType = Void;
+            switch (returnType) {
+            case FFI::Type::Void: returnLType = Void; break;
+            case FFI::Type::Float: returnLType = Float; break;
+            case FFI::Type::Double: returnLType = Double; break;
+            case FFI::Type::Char: case FFI::Type::Int8: case FFI::Type::Uint8:
+            case FFI::Type::Int16: case FFI::Type::Uint16:
+            case FFI::Type::Int32: case FFI::Type::Uint32: case FFI::Type::Bool:
+                returnLType = Int32; break;
+            default: returnLType = Int64; break; // i64/u64 (+fast), pointer family, napi_value
+            }
+            LValue rawReturn = m_out.call(returnLType, callee, directOperands);
+            // Normalize into the canonical return slot exactly as the thunk's return
+            // normalization does (spec 4/7.2), so the boxing switch below reads a slot with the
+            // identical encoding regardless of which path made the call.
+            TypedPointer returnSlot = slotPointer(nativeArgumentCount);
+            switch (returnType) {
+            case FFI::Type::Void:
+                break;
+            case FFI::Type::Char: case FFI::Type::Int8:
+                m_out.store64(m_out.signExt32To64(m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(24)), m_out.constInt32(24))), returnSlot);
+                break;
+            case FFI::Type::Uint8:
+                m_out.store64(m_out.zeroExt(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), Int64), returnSlot);
+                break;
+            case FFI::Type::Int16:
+                m_out.store64(m_out.signExt32To64(m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(16)), m_out.constInt32(16))), returnSlot);
+                break;
+            case FFI::Type::Uint16:
+                m_out.store64(m_out.zeroExt(m_out.bitAnd(rawReturn, m_out.constInt32(0xffff)), Int64), returnSlot);
+                break;
+            case FFI::Type::Int32:
+                m_out.store64(m_out.signExt32To64(rawReturn), returnSlot);
+                break;
+            case FFI::Type::Uint32:
+                m_out.store64(m_out.zeroExt(rawReturn, Int64), returnSlot);
+                break;
+            case FFI::Type::Bool:
+                // C _Bool arrives as 0/1 in the low byte; the callee may leave upper bits dirty.
+                m_out.store64(m_out.zeroExt(m_out.notEqual(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), m_out.int32Zero), Int64), returnSlot);
+                break;
+            case FFI::Type::Float:
+                m_out.storeFloat(rawReturn, returnSlot);
+                m_out.store32(m_out.int32Zero, slotPointer(nativeArgumentCount, 4));
+                break;
+            case FFI::Type::Double:
+                m_out.storeDouble(rawReturn, returnSlot);
+                break;
+            default: // 64-bit integers, pointer family, napi_value: raw 64 bits are the encoding.
+                m_out.store64(rawReturn, returnSlot);
+                break;
+            }
+            if (needsArena)
+                exceptionCheckWithArenaExit(nullptr);
+            else
+                operationExceptionCheck<void>(nullptr);
+        } else if (needsArena) {
             callPreflight();
             m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
             // The invoke thunk is JIT-generated thunk code, not a registered JIT operation, so it
@@ -15571,7 +15701,6 @@ IGNORE_CLANG_WARNINGS_END
 
         // Box the return slot per the spec 5 native -> JS table. The node is NodeResultJS, so
         // always setJSValue (matches compileCallWasm's result handling).
-        FFI::Type returnType = signature.returnType();
         TypedPointer returnSlot = slotPointer(nativeArgumentCount);
         switch (returnType) {
         case FFI::Type::Void:

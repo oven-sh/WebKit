@@ -84,6 +84,7 @@ bool hasCapacityToUseLargeGigacage();
 #define FOR_EACH_JSC_FFI_OPTION(v) \
     v(Bool, useFFIICStub, true, Normal, "install per-function FFI IC stubs"_s) \
     v(Bool, useFFICallInDFG, true, Normal, "allow Call -> CallFFI in DFG/FTL"_s) \
+    v(Bool, useFFIDirectCall, true, Normal, "FTL calls the native FFI target directly (no invoke thunk)"_s) \
     v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
 #else
