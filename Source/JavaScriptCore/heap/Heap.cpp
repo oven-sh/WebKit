@@ -2587,8 +2587,7 @@ void Heap::updateAllocationLimits()
         m_sizeAfterLastEdenCollect = currentHeapSize;
         dataLogLnIf(verbose, "Eden: sizeAfterLastEdenCollect = ", currentHeapSize);
         double edenToOldGenerationRatio = (double)remainingHeapSize / (double)m_maxHeapSize;
-        double minEdenToOldGenerationRatio = 1.0 / 3.0;
-        if (edenToOldGenerationRatio < minEdenToOldGenerationRatio)
+        if (edenToOldGenerationRatio < Options::minEdenToOldGenerationRatio())
             m_shouldDoFullCollection = true;
         m_maxHeapSize = std::max(m_maxHeapSize, currentHeapSize + m_maxEdenSize);
         dataLogLnIf(verbose, "Eden: maxHeapSize = ", m_maxHeapSize);

@@ -229,6 +229,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, miniVMHeapGrowthFactor, 1.20, Normal, nullptr) \
     v(Double, heapGrowthSteepnessFactor, 2.00, Normal, nullptr) \
     v(Double, heapGrowthMaxIncrease, 3.00, Normal, nullptr) \
+    v(Double, minEdenToOldGenerationRatio, 1.0 / 3.0, Normal, "after an eden GC, schedule a full collection if remainingHeapSize / maxHeapSize falls below this; bounds the usable heap growth factor below at 1 / (1 - value)"_s) \
     v(Unsigned, heapGrowthFunctionThresholdInMB, 16 * 1024, Normal, nullptr) \
     v(Double, criticalGCMemoryThreshold, 0.80, Normal, "percent memory in use the GC considers critical.  The collector is much more aggressive above this threshold"_s) \
     v(Double, customFullGCCallbackBailThreshold, -1.0, Normal, "percent of memory paged out before we bail out of timer based Full GCs. -1.0 means use (maxHeapGrowthFactor - 1)"_s) \
