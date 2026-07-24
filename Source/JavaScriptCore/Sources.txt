@@ -1326,7 +1326,6 @@ ffi/FFICallbackThunk.cpp
 ffi/FFICallingConvention.cpp
 ffi/FFIContext.cpp
 ffi/FFIConversions.cpp
-ffi/FFIRawMemory.cpp
 ffi/FFIDFG.cpp
 ffi/FFIDFGCodegen.cpp
 ffi/FFIICStub.cpp

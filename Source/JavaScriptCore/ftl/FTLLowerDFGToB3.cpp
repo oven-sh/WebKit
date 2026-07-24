@@ -1573,9 +1573,6 @@ private:
             compileCallWasm();
             break;
 #if USE(BUN_JSC_ADDITIONS)
-        case FFIRawRead:
-            compileFFIRawRead();
-            break;
 #endif
         case CallFFI:
 #if USE(BUN_JSC_ADDITIONS)
@@ -15204,58 +15201,6 @@ IGNORE_CLANG_WARNINGS_END
     // UntypedUse children convert out of line via operationFFIWriteSlot with an exception check.
     // read.<t>(address, byteOffset): the DataView load with the base taken from the unboxed address
     // operand -- no vector load, no bounds/detach checks (raw caller-owned memory), native endianness.
-    void compileFFIRawRead()
-    {
-        DataViewData data = m_node->dataViewData();
-
-        LValue address;
-        switch (m_node->child1().useKind()) {
-        case Int32Use:
-            address = m_out.signExt32To64(lowInt32(m_node->child1()));
-            break;
-        case Int52RepUse:
-            address = lowStrictInt52(m_node->child1());
-            break;
-        case DoubleRepUse:
-            // Value truncation toward zero (same instruction/semantics as FFI::doubleToInt64), NOT a bitcast.
-            address = m_out.doubleToInt64(lowDouble(m_node->child1()));
-            break;
-        default:
-            DFG_CRASH(m_graph, m_node, "Bad use kind for FFIRawRead address");
-            return;
-        }
-        LValue pointer = m_out.add(address, m_out.signExt32To64(lowInt32(m_node->child2())));
-        TypedPointer typedPointer(m_heaps.root, pointer); // foreign memory: not a modeled abstract heap
-
-        if (data.isFloatingPoint) {
-            if (data.byteSize == 4)
-                setDouble(m_out.floatToDouble(m_out.loadFloat(typedPointer)));
-            else
-                setDouble(m_out.loadDouble(typedPointer));
-            return;
-        }
-
-        switch (data.byteSize) {
-        case 1:
-            setInt32(data.isSigned ? m_out.load8SignExt32(typedPointer) : m_out.load8ZeroExt32(typedPointer));
-            return;
-        case 2:
-            setInt32(data.isSigned ? m_out.load16SignExt32(typedPointer) : m_out.load16ZeroExt32(typedPointer));
-            return;
-        case 4:
-            if (data.isSigned)
-                setInt32(m_out.load32(typedPointer));
-            else
-                setDouble(m_out.unsignedToDouble(m_out.load32(typedPointer))); // u32: exact as a double
-            return;
-        case 8:
-            // ptr / intptr: the 64-bit value surfaced as a double (host-path parity).
-            setDouble(m_out.intToDouble(m_out.load64(typedPointer)));
-            return;
-        default:
-            DFG_CRASH(m_graph, m_node, "Bad FFIRawRead byte size");
-        }
-    }
 
     template<bool DirectCall>
     void compileCallFFIImpl()
@@ -15582,8 +15527,20 @@ IGNORE_CLANG_WARNINGS_END
                 DFG_CRASH(m_graph, node, "Bad use kind for a CallFFI argument");
                 break;
             }
-            if constexpr (directCall)
-                directOperands.append(directOperand ? directOperand : m_out.load64(slotPointer(i)));
+            if constexpr (directCall) {
+                if (directOperand)
+                    directOperands.append(directOperand);
+                else if (type == FFI::Type::Double) {
+                    // UntypedUse f64 (FFIDFG only speculates when shouldSpeculateNumber): the slot
+                    // holds the raw f64 bits, and the operand must be a Double so B3 passes it in an
+                    // FPR -- load64 here would send it out in a GPR and the callee would read junk.
+                    directOperands.append(m_out.loadDouble(slotPointer(i)));
+                } else if (type == FFI::Type::Float) {
+                    // Same, for f32: the slot's low 32 bits are the float (SPEC section 4).
+                    directOperands.append(m_out.loadFloat(slotPointer(i)));
+                } else
+                    directOperands.append(m_out.load64(slotPointer(i)));
+            }
         }
 
         // Spec 10.5 step 4: the invoke thunk (unlike an operation) never sets vm.topCallFrame, and
@@ -15780,7 +15737,7 @@ IGNORE_CLANG_WARNINGS_END
                 if (t == FFI::Type::Float || t == FFI::Type::Double)
                     continue;
                 bool subWord = t == FFI::Type::Char || t == FFI::Type::Int8 || t == FFI::Type::Uint8
-                    || t == FFI::Type::Int16 || t == FFI::Type::Uint16;
+                    || t == FFI::Type::Int16 || t == FFI::Type::Uint16 || t == FFI::Type::Bool;
                 if (subWord && gprCount >= GPRInfo::numberOfArgumentRegisters) {
                     directCall = false;
                     break;

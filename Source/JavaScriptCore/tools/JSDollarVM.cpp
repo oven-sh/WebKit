@@ -111,7 +111,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include "BunFFI.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
-#include "FFIRawMemory.h"
 #include "FFISignature.h"
 #include "FFITestFixtures.h"
 #include "FFIType.h"
@@ -4823,13 +4822,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFISignatureString, (JSGlobalObject* globalObje
 
 // Usage: $vm.ffiRead(ptr, type) -> value read from raw memory using the SPEC
 // section 5 native->JS conversion.
-// Usage: $vm.ffiReadObject() -> bun:ffi's `read` singleton (FFI::createReadObject), whose readers
-// carry FFIRawReadIntrinsic so a hot read.u32(addr, off) compiles to a bare load (FFIRawRead).
-JSC_DEFINE_HOST_FUNCTION(functionFFIReadObject, (JSGlobalObject* globalObject, CallFrame*))
-{
-    DollarVMAssertScope assertScope;
-    return JSValue::encode(FFI::createReadObject(globalObject));
-}
 
 JSC_DEFINE_HOST_FUNCTION(functionFFIRead, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -5157,7 +5149,6 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "ffiFixtures"_s, functionFFIFixtures, 0);
     addFunction(vm, allowIfNotFuzz, "ffiSignatureString"_s, functionFFISignatureString, 1);
     addFunction(vm, allowIfNotFuzz, "ffiRead"_s, functionFFIRead, 2);
-    addFunction(vm, allowIfNotFuzz, "ffiReadObject"_s, functionFFIReadObject, 0);
     addFunction(vm, allowIfNotFuzz, "ffiWrite"_s, functionFFIWrite, 3);
     addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
     addFunction(vm, allowIfNotFuzz, "ffiSetNapiEnv"_s, functionFFISetNapiEnv, 1);

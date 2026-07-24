@@ -2057,7 +2057,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ffi/FFICallingConvention.h
     ffi/FFIContext.h
     ffi/FFIConversions.h
-    ffi/FFIRawMemory.h
     ffi/FFIDFG.h
     ffi/FFIICStub.h
     ffi/FFIInvokeThunk.h

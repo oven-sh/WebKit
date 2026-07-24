@@ -70,7 +70,6 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #if USE(BUN_JSC_ADDITIONS)
-#include "FFIRawMemory.h"
 #include "FFISignature.h"
 #include "JSFFIFunction.h"
 #endif
@@ -5005,35 +5004,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        // bun:ffi raw-memory readers: read.u8/i8/u16/i16/u32/i32/f32/f64/ptr/intptr(address, byteOffset).
-        // Same shape and architecture assumptions as the DataView getters above (64-bit, little-endian,
-        // unaligned loads OK), but the base is the unboxed address argument and there is no bounds
-        // check by design (raw caller-owned memory). All readers share this ONE intrinsic; which reader
-        // it is (width/signedness) is looked up from the callee's native function pointer.
-        case FFIRawReadIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-            if (argumentCountIncludingThis < 2)
-                return CallOptimizationResult::DidNothing;
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
-                return CallOptimizationResult::DidNothing;
-
-            NativeExecutable* nativeExecutable = variant.nativeExecutable();
-            if (!nativeExecutable)
-                return CallOptimizationResult::DidNothing;
-            std::optional<DataViewData> readerData = FFI::rawReaderDataViewData(nativeExecutable->function());
-            if (!readerData)
-                return CallOptimizationResult::DidNothing; // read.i64 / read.u64 (BigInt): host path.
-
-            insertChecks();
-
-            Node* address = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
-            Node* byteOffset = argumentCountIncludingThis >= 3
-                ? get(virtualRegisterForArgumentIncludingThis(2, registerOffset))
-                : jsConstant(jsNumber(0));
-            setResult(addToGraph(FFIRawRead, OpInfo(readerData->asQuadWord), OpInfo(prediction), address, byteOffset));
-            return CallOptimizationResult::Inlined;
-        }
 #endif // USE(BUN_JSC_ADDITIONS)
 
         case DataViewSetInt8:

@@ -230,9 +230,6 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         result = ExitsForExceptions;
         break;
 
-    case FFIRawRead: // argument speculation (Int32Use / Int52RepUse / DoubleRepUse) can exit; no exceptions.
-        result = Exits;
-        break;
 
     case NewRegExpUntyped: {
         if (node->child1().useKind() == StringUse && node->child2().useKind() == StringUse) {

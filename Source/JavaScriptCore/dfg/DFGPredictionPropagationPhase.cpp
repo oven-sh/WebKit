@@ -1107,19 +1107,6 @@ private:
             break;
         }
 
-        case FFIRawRead: {
-#if USE(BUN_JSC_ADDITIONS)
-            DataViewData data = m_currentNode->dataViewData();
-            if (!data.isFloatingPoint && (data.byteSize < 4 || data.isSigned))
-                setPrediction(SpecInt32Only);
-            else
-                setPrediction(SpecFullDouble); // u32, ptr/intptr, f32, f64 are surfaced as doubles.
-#else
-            DFG_CRASH(m_graph, m_currentNode, "Unexpected node type");
-#endif
-            break;
-        }
-
         case GetWebAssemblyInstanceExports: {
             setPrediction(SpecFinalObject);
             break;

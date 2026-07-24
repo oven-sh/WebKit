@@ -6318,14 +6318,6 @@ void SpeculativeJIT::compile(Node* node)
         compileCallDOM(node);
         break;
 
-    case FFIRawRead:
-#if USE(BUN_JSC_ADDITIONS)
-        compileFFIRawRead(node);
-#else
-        DFG_CRASH(m_graph, node, "Unexpected node");
-#endif
-        break;
-
     case CallFFI:
 #if USE(BUN_JSC_ADDITIONS)
         compileCallFFI(node);

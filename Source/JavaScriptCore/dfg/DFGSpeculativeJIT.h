@@ -1518,7 +1518,6 @@ public:
     void compileCallDOM(Node*);
 #if USE(BUN_JSC_ADDITIONS)
     void compileCallFFI(Node*); // Defined out-of-line in ffi/FFIDFGCodegen.cpp (JSVALUE64 only).
-    void compileFFIRawRead(Node*); // ffi/FFIDFGCodegen.cpp: read.<t>(address, byteOffset) as a bare load.
 #endif
     void compileCheckJSCast(Node*);
     void compileCallCustomAccessorGetter(Node*);

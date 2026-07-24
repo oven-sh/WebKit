@@ -72,7 +72,7 @@ function main() {
         i64Threw = e instanceof TypeError;
     }
     check(i64Threw, true, "echo_i64() with a missing i64 argument throws TypeError");
-    // f32 follows the same loose rule as f64: a missing argument is +0.
+    // f32 follows the same loose rule as f64: a missing argument is undefined -> NaN.
     check(addF32(1.5), NaN, "add_f32(1.5) with a missing f32 argument is 1.5 + NaN");
 
     // ---- Extra arguments are ignored.

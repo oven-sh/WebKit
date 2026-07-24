@@ -35,7 +35,6 @@
 #include "DFGArithMode.h"
 #include "DFGArrayMode.h"
 #include "DFGCommon.h"
-#include "DFGDataViewData.h"
 #include "DFGEpoch.h"
 #include "DFGLazyJSValue.h"
 #include "DFGMultiGetByOffsetData.h"
@@ -158,7 +157,19 @@ struct NewArrayWithSpeciesData {
 static_assert(sizeof(IndexingType) <= sizeof(unsigned));
 static_assert(sizeof(ArrayMode) <= sizeof(unsigned));
 
-// DataViewData lives in DFGDataViewData.h (shared with ffi/FFIRawMemory.h under USE(BUN_JSC_ADDITIONS)).
+struct DataViewData {
+    union {
+        struct {
+            uint8_t byteSize;
+            bool isSigned;
+            bool isResizable;
+            bool isFloatingPoint; // Used for the DataViewSet node.
+            TriState isLittleEndian;
+        };
+        uint64_t asQuadWord;
+    };
+};
+static_assert(sizeof(DataViewData) == sizeof(uint64_t));
 
 struct BranchTarget {
     BranchTarget() = default;
@@ -3014,7 +3025,7 @@ public:
     DataViewData dataViewData()
     {
 #if USE(BUN_JSC_ADDITIONS)
-        ASSERT(op() == DataViewGetInt || op() == DataViewGetFloat || op() == DataViewSet || op() == FFIRawRead);
+        ASSERT(op() == DataViewGetInt || op() == DataViewGetFloat || op() == DataViewSet);
 #else
         ASSERT(op() == DataViewGetInt || op() == DataViewGetFloat || op() == DataViewSet);
 #endif

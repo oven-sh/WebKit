@@ -536,15 +536,6 @@ bool doesGC(Graph& graph, Node* node)
     case GlobalIsNaN:
         return node->child1().useKind() == UntypedUse;
 
-    case FFIRawRead:
-#if USE(BUN_JSC_ADDITIONS)
-        // Unlike DataViewGetInt (whose 8-byte get returns a BigInt), FFIRawRead's 8-byte results
-        // (ptr / intptr / f64) are unboxed doubles: it never allocates.
-        return false;
-#else
-        DFG_CRASH(graph, node, "Unexpected node type");
-        return true;
-#endif
     case DataViewGetInt:
         return node->dataViewData().byteSize == 8;
 
