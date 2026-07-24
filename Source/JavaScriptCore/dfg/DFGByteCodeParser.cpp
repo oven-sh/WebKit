@@ -5132,12 +5132,31 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 data.isResizable = getArrayMode(descriptor->isWrite ? Array::Write : Array::Read).mayBeResizableOrGrowableSharedTypedArray();
             ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, descriptor->isWrite ? Array::Write : Array::Read);
 
-            // `offset = 0`: an absent argument, or (after inlining) a literal undefined.
+            if (descriptor->byteLengthFromArgument) {
+                // read(U)Int{LE,BE}(offset, byteLength) / write(U)Int{LE,BE}(value, offset, byteLength): a
+                // constant byteLength of 1, 2 or 4 becomes the fixed-width node (same semantics for the
+                // in-range case; the argument-validation differences all live on the host path). offset
+                // has no default here (Node requires it), so it must be present too.
+                int byteLengthArgument = descriptor->isWrite ? 3 : 2;
+                if (argumentCountIncludingThis <= byteLengthArgument)
+                    return CallOptimizationResult::DidNothing;
+                Node* byteLength = get(virtualRegisterForArgumentIncludingThis(byteLengthArgument, registerOffset));
+                if (!byteLength->isNumberConstant())
+                    return CallOptimizationResult::DidNothing;
+                double width = byteLength->asNumber();
+                if (width != 1 && width != 2 && width != 4)
+                    return CallOptimizationResult::DidNothing;
+                data.byteSize = static_cast<uint8_t>(width);
+            }
+
+            // The fixed-width accessors default an absent (or, after inlining, a literal undefined)
+            // offset to 0; the variable-width ones require the argument, so leave it as-is (an
+            // undefined offset fails the Int32 speculation and the host throws).
             auto offsetArgument = [&](int argumentIndex) -> Node* {
                 if (argumentCountIncludingThis <= argumentIndex)
                     return jsConstant(jsNumber(0));
                 Node* offset = get(virtualRegisterForArgumentIncludingThis(argumentIndex, registerOffset));
-                if (offset->isUndefinedOrNullConstant() && !offset->asJSValue().isNull())
+                if (!descriptor->byteLengthFromArgument && offset->isUndefinedOrNullConstant() && !offset->asJSValue().isNull())
                     return jsConstant(jsNumber(0));
                 return offset;
             };

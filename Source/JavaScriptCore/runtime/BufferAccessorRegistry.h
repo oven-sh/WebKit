@@ -48,6 +48,10 @@ namespace JSC {
 struct BufferAccessorDescriptor {
     DFG::DataViewData data;
     bool isWrite;
+    // The width is not fixed: it comes from a trailing `byteLength` argument (readIntLE(offset,
+    // byteLength) and friends); data.byteSize is 0. The DFG only inlines call sites where that
+    // argument is a constant 1, 2 or 4 and leaves every other width to the host function.
+    bool byteLengthFromArgument { false };
 };
 
 // Register `function` as a buffer accessor. Must be called (on any thread, at any time before the

@@ -5320,6 +5320,79 @@ static const Entry entries[] = {
 
 #undef BUFFER_ACCESSOR_TEST_ENTRY
 
+// Variable-width accessors: read(U)Int{LE,BE}(offset, byteLength) / write(U)Int{LE,BE}(value, offset,
+// byteLength) with byteLength 1..6. The JIT only inlines a constant byteLength of 1, 2 or 4.
+template<bool isSigned, bool isLittleEndian, bool isWrite>
+static EncodedJSValue varWidthAccessor(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->thisValue());
+    if (!view)
+        return throwVMTypeError(globalObject, scope, "Buffer accessor receiver must be an ArrayBufferView"_s);
+
+    double numberValue = 0;
+    if constexpr (isWrite) {
+        numberValue = callFrame->argument(0).toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    JSValue offsetValue = callFrame->argument(isWrite ? 1 : 0);
+    JSValue byteLengthValue = callFrame->argument(isWrite ? 2 : 1);
+    if (!byteLengthValue.isNumber() || byteLengthValue.asNumber() < 1 || byteLengthValue.asNumber() > 6 || std::floor(byteLengthValue.asNumber()) != byteLengthValue.asNumber())
+        return throwVMRangeError(globalObject, scope, "Buffer accessor byteLength must be 1..6"_s);
+    size_t byteLength = static_cast<size_t>(byteLengthValue.asNumber());
+    if (!offsetValue.isNumber())
+        return throwVMTypeError(globalObject, scope, "Buffer accessor offset must be a number"_s);
+    double offsetNumber = offsetValue.asNumber();
+    size_t viewByteLength = view->byteLength();
+    if (std::floor(offsetNumber) != offsetNumber || viewByteLength < byteLength || !(offsetNumber >= 0 && offsetNumber <= static_cast<double>(viewByteLength - byteLength)))
+        return throwVMRangeError(globalObject, scope, "Buffer accessor offset is out of range"_s);
+    size_t offset = static_cast<size_t>(offsetNumber);
+    uint8_t* address = static_cast<uint8_t*>(view->vector()) + offset;
+
+    if constexpr (isWrite) {
+        double min = isSigned ? -std::pow(2.0, 8.0 * byteLength - 1) : 0;
+        double max = (isSigned ? std::pow(2.0, 8.0 * byteLength - 1) : std::pow(2.0, 8.0 * byteLength)) - 1;
+        if (numberValue < min || numberValue > max)
+            return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
+        int64_t bits = static_cast<int64_t>(std::trunc(numberValue));
+        for (size_t i = 0; i < byteLength; ++i)
+            address[isLittleEndian ? i : byteLength - 1 - i] = static_cast<uint8_t>(static_cast<uint64_t>(bits) >> (8 * i));
+        return JSValue::encode(jsNumber(offset + byteLength));
+    }
+
+    uint64_t bits = 0;
+    for (size_t i = 0; i < byteLength; ++i)
+        bits |= static_cast<uint64_t>(address[isLittleEndian ? i : byteLength - 1 - i]) << (8 * i);
+    if constexpr (isSigned) {
+        unsigned shift = 64 - 8 * byteLength;
+        return JSValue::encode(jsNumber(static_cast<double>(static_cast<int64_t>(bits << shift) >> shift)));
+    } else
+        return JSValue::encode(jsNumber(static_cast<double>(bits)));
+}
+
+struct VarWidthEntry {
+    ASCIILiteral name;
+    NativeFunction function;
+    bool isSigned;
+    bool isLittleEndian;
+    bool isWrite;
+    unsigned arity;
+};
+
+static const VarWidthEntry varWidthEntries[] = {
+    { "readIntLE"_s, varWidthAccessor<true, true, false>, true, true, false, 2 },
+    { "readIntBE"_s, varWidthAccessor<true, false, false>, true, false, false, 2 },
+    { "readUIntLE"_s, varWidthAccessor<false, true, false>, false, true, false, 2 },
+    { "readUIntBE"_s, varWidthAccessor<false, false, false>, false, false, false, 2 },
+    { "writeIntLE"_s, varWidthAccessor<true, true, true>, true, true, true, 3 },
+    { "writeIntBE"_s, varWidthAccessor<true, false, true>, true, false, true, 3 },
+    { "writeUIntLE"_s, varWidthAccessor<false, true, true>, false, true, true, 3 },
+    { "writeUIntBE"_s, varWidthAccessor<false, false, true>, false, false, true, 3 },
+};
+
 } // namespace BufferAccessorTest
 
 static JSC_DECLARE_HOST_FUNCTION(functionCreateBufferAccessors);
@@ -5338,6 +5411,17 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateBufferAccessors, (JSGlobalObject* globalO
         data.isResizable = false;
         data.isLittleEndian = triState(entry.isLittleEndian);
         registerBufferAccessor(toTagged(entry.function), BufferAccessorDescriptor { data, entry.isWrite });
+        JSFunction* function = JSFunction::create(vm, globalObject, entry.arity, entry.name, entry.function, ImplementationVisibility::Public, BufferAccessorIntrinsic);
+        result->putDirect(vm, Identifier::fromString(vm, entry.name), function);
+    }
+    for (auto& entry : varWidthEntries) {
+        DFG::DataViewData data { };
+        data.byteSize = 0;
+        data.isSigned = entry.isSigned;
+        data.isFloatingPoint = false;
+        data.isResizable = false;
+        data.isLittleEndian = triState(entry.isLittleEndian);
+        registerBufferAccessor(toTagged(entry.function), BufferAccessorDescriptor { data, entry.isWrite, true });
         JSFunction* function = JSFunction::create(vm, globalObject, entry.arity, entry.name, entry.function, ImplementationVisibility::Public, BufferAccessorIntrinsic);
         result->putDirect(vm, Identifier::fromString(vm, entry.name), function);
     }

@@ -41,7 +41,12 @@ struct BufferAccessorRegistry {
     Lock lock;
     // Keyed by the untagged code pointer: NativeFunction and TaggedNativeFunction carry different
     // pointer tags (and PAC signatures on ARM64E), the raw address is the stable identity.
-    UncheckedKeyHashMap<void*, std::pair<uint64_t, bool>> entries WTF_GUARDED_BY_LOCK(lock);
+    struct Entry {
+        uint64_t data { 0 };
+        bool isWrite { false };
+        bool byteLengthFromArgument { false };
+    };
+    UncheckedKeyHashMap<void*, Entry> entries WTF_GUARDED_BY_LOCK(lock);
 };
 
 static BufferAccessorRegistry& bufferAccessorRegistry()
@@ -56,11 +61,11 @@ static BufferAccessorRegistry& bufferAccessorRegistry()
 
 void registerBufferAccessor(TaggedNativeFunction function, BufferAccessorDescriptor descriptor)
 {
-    ASSERT(descriptor.data.byteSize == 1 || descriptor.data.byteSize == 2 || descriptor.data.byteSize == 4 || descriptor.data.byteSize == 8);
+    ASSERT(descriptor.byteLengthFromArgument ? !descriptor.data.byteSize : (descriptor.data.byteSize == 1 || descriptor.data.byteSize == 2 || descriptor.data.byteSize == 4 || descriptor.data.byteSize == 8));
     ASSERT(descriptor.data.byteSize == 1 || descriptor.data.isLittleEndian != TriState::Indeterminate);
     auto& registry = bufferAccessorRegistry();
     Locker locker { registry.lock };
-    registry.entries.set(function.untaggedPtr(), std::pair { descriptor.data.asQuadWord, descriptor.isWrite });
+    registry.entries.set(function.untaggedPtr(), BufferAccessorRegistry::Entry { descriptor.data.asQuadWord, descriptor.isWrite, descriptor.byteLengthFromArgument });
 }
 
 std::optional<BufferAccessorDescriptor> bufferAccessorDescriptor(TaggedNativeFunction function)
@@ -71,8 +76,9 @@ std::optional<BufferAccessorDescriptor> bufferAccessorDescriptor(TaggedNativeFun
     if (iterator == registry.entries.end())
         return std::nullopt;
     BufferAccessorDescriptor descriptor;
-    descriptor.data.asQuadWord = iterator->value.first;
-    descriptor.isWrite = iterator->value.second;
+    descriptor.data.asQuadWord = iterator->value.data;
+    descriptor.isWrite = iterator->value.isWrite;
+    descriptor.byteLengthFromArgument = iterator->value.byteLengthFromArgument;
     return descriptor;
 }
 
