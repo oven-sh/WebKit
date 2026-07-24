@@ -5204,9 +5204,9 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES accessor(JSGlobalObject* globalOb
         else if constexpr (kind == Kind::Uint32)
             return JSValue::encode(jsNumber(swapIfBigEndian(WTF::unalignedLoad<uint32_t>(address))));
         else if constexpr (kind == Kind::Float32)
-            return JSValue::encode(jsNumber(std::bit_cast<float>(swapIfBigEndian(WTF::unalignedLoad<uint32_t>(address)))));
+            return JSValue::encode(jsNumber(purifyNaN(std::bit_cast<float>(swapIfBigEndian(WTF::unalignedLoad<uint32_t>(address))))));
         else if constexpr (kind == Kind::Float64)
-            return JSValue::encode(jsNumber(std::bit_cast<double>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address)))));
+            return JSValue::encode(jsNumber(purifyNaN(std::bit_cast<double>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address))))));
         else if constexpr (kind == Kind::BigInt64) {
             int64_t loaded = static_cast<int64_t>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address)));
             RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, loaded)));
@@ -5355,7 +5355,10 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES varWidthAccessor(JSGlobalObject* 
     if constexpr (isWrite) {
         double min = isSigned ? -std::pow(2.0, 8.0 * byteLength - 1) : 0;
         double max = (isSigned ? std::pow(2.0, 8.0 * byteLength - 1) : std::pow(2.0, 8.0 * byteLength)) - 1;
-        if (numberValue < min || numberValue > max)
+        // Negated so NaN (which compares false both ways) throws instead of reaching the cast below,
+        // where an unrepresentable value would be undefined behavior. This is stricter than Node,
+        // which stores 0 for NaN; the embedder's host function owns the real semantics.
+        if (!(numberValue >= min && numberValue <= max))
             return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
         int64_t bits = static_cast<int64_t>(std::trunc(numberValue));
         for (size_t i = 0; i < byteLength; ++i)

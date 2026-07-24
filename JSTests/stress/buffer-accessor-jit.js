@@ -127,3 +127,22 @@ for (let i = 0; i < 1e4; ++i) {
   );
   shouldBe(dv.getInt32(12, true), 7, "writeInt32LE valueOf store");
 }
+
+// Every bit pattern is readable, including the impure NaNs that must be purified before boxing.
+{
+  const impure = new Buffer(16);
+  impure.fill(0xff);
+  const dvImpure = new DataView(impure.buffer);
+  const readFloat = new Function("b", "o", "return b.readFloatLE(o);");
+  const readDouble = new Function("b", "o", "return b.readDoubleLE(o);");
+  noInline(readFloat);
+  noInline(readDouble);
+  for (let i = 0; i < 1e4; ++i) {
+    const f = readFloat(impure, 0);
+    const d = readDouble(impure, 8);
+    shouldBe(f, dvImpure.getFloat32(0, true), "impure NaN float matches the DataView reference");
+    shouldBe(d, dvImpure.getFloat64(8, true), "impure NaN double matches the DataView reference");
+    shouldBe(f + 1, NaN, "the boxed NaN stays usable in arithmetic");
+    shouldBe(d * 2, NaN, "the boxed NaN stays usable in arithmetic");
+  }
+}

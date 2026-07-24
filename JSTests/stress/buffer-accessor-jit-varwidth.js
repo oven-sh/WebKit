@@ -113,4 +113,10 @@ for (let i = 0; i < 3e3; ++i) {
   shouldThrow(() => readInt32ConstLE(buf, 61), RangeError, "out of bounds");
   shouldThrow(() => writeInt8Const(scratch, 128, 0), RangeError, "value out of range");
   shouldThrow(() => writeUIntBE(scratch, 2 ** 24, 0, 3), RangeError, "3-byte value out of range");
+  // The $vm reference rejects NaN (Node itself stores 0): what matters here is that the JIT and the
+  // host function agree, and that neither reaches an out-of-range float-to-int conversion.
+  shouldThrow(() => writeIntLE(scratch, NaN, 0, 4), RangeError, "NaN value");
+  shouldThrow(() => writeIntLE(scratch, Infinity, 0, 4), RangeError, "Infinity value");
+  shouldThrow(() => writeIntLE(scratch, -Infinity, 0, 4), RangeError, "-Infinity value");
+  shouldThrow(() => writeInt8Const(scratch, NaN, 0), RangeError, "NaN value, constant width");
 }
