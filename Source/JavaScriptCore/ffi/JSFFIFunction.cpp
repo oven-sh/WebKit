@@ -145,7 +145,15 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 bool JSFFIFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     JSFFIFunction* thisObject = uncheckedDowncast<JSFFIFunction>(object);
-    if (propertyName == Identifier::fromString(thisObject->vm(), "ptr"_s)) [[unlikely]] {
+    VM& vm = thisObject->vm();
+    // "native" (Bun API parity: symbol.native is the raw callable -- for the engine-native
+    // function that is the function itself). Intrinsic for the same reason as "ptr": adding it
+    // as an own property would transition this cell's Structure and slow every polymorphic call.
+    if (propertyName == Identifier::fromString(vm, "native"_s)) [[unlikely]] {
+        slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), thisObject);
+        return true;
+    }
+    if (propertyName == Identifier::fromString(vm, "ptr"_s)) [[unlikely]] {
         slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete),
             jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(thisObject->target()))));
         return true;
