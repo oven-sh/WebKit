@@ -5124,7 +5124,7 @@ static constexpr uint8_t byteSizeFor(Kind kind)
 }
 
 template<Kind kind, bool isLittleEndian, bool isWrite>
-static EncodedJSValue accessor(JSGlobalObject* globalObject, CallFrame* callFrame)
+static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES accessor(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
@@ -5323,7 +5323,7 @@ static const Entry entries[] = {
 // Variable-width accessors: read(U)Int{LE,BE}(offset, byteLength) / write(U)Int{LE,BE}(value, offset,
 // byteLength) with byteLength 1..6. The JIT only inlines a constant byteLength of 1, 2 or 4.
 template<bool isSigned, bool isLittleEndian, bool isWrite>
-static EncodedJSValue varWidthAccessor(JSGlobalObject* globalObject, CallFrame* callFrame)
+static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES varWidthAccessor(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
