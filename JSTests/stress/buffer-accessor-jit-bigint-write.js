@@ -1,9 +1,5 @@
 //@ requireOptions("--useDollarVM=1")
 
-// writeBigInt64* / writeBigUInt64*: a BufferWrite node with a heap-BigInt value edge and an inline
-// "fits in 64 bits" check; anything wider (or negative, for the unsigned writers) OSR-exits to the
-// host function, which throws.
-
 function shouldBe(actual, expected, message) {
   if (actual !== expected) throw new Error(message + ": expected " + expected + " but got " + actual);
 }
@@ -57,7 +53,6 @@ for (let i = 0; i < 2e4; ++i) {
   }
 }
 
-// unsigned max, and the out-of-range / wrong-type exits.
 for (let i = 0; i < 2e4; ++i) {
   shouldBe(writeBigUInt64LE(buf, 2n ** 64n - 1n, 0), 8, "unsigned max");
   shouldBe(dv.getBigUint64(0, true), 2n ** 64n - 1n, "unsigned max store");

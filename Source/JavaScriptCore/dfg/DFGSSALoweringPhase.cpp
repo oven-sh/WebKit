@@ -206,25 +206,15 @@ private:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Buffer accessors: like lowerBoundsCheck() (the receiver is a Uint8Array, so its "length" is
-    // its byte length), except that the element stride is one byte while the access spans byteSize
-    // bytes, so a multi-byte access needs a second check on its last byte: `offset + byteSize - 1`.
-    // Both checks (and the length load feeding them) are ordinary GetArrayLength / CheckInBounds
-    // nodes, hence CSE-able, hoistable and eliminable by IntegerRangeOptimization; they are appended
-    // as trailing untyped children purely so that they keep dominating the access. The exiting
-    // behavior is what Node.js requires: an out-of-bounds Buffer read/write always throws (it never
-    // returns undefined), and the throw is materialized by the host function after the OSR exit.
     void lowerBufferAccessBoundsChecks()
     {
         ArrayMode arrayMode = m_node->arrayMode();
         if (arrayMode.type() == Array::ForceExit)
-            return; // Fixup found no predictions and inserted a ForceOSRExit; nothing to lower.
+            return;
         RELEASE_ASSERT(arrayMode.type() == Array::Uint8Array && arrayMode.isInBounds() && !arrayMode.lengthNeedsStorage());
         DataViewData data = m_node->bufferAccessData();
         Edge base = m_graph.varArgChild(m_node, 0);
         Edge offset = m_graph.varArgChild(m_node, 1);
-        // Buffer accessor offsets are int32 (a >2GB receiver keeps the length load exiting via
-        // Overflow, which then disables the intrinsic at this call site): the int32 length suffices.
         RELEASE_ASSERT(offset.useKind() == Int32Use);
 
         Node* length = m_insertionSet.insertNode(
@@ -245,11 +235,6 @@ private:
             appended = 2;
         }
 
-        // The 1- and 2-byte integer writes also range-check the (Int32) value here, as graph nodes,
-        // so integer range analysis / CSE / LICM can hoist or eliminate it: unsigned width W is
-        // exactly CheckInBounds(value, 2^W); signed width W is CheckInBounds(value + 2^(W-1), 2^W)
-        // (a value whose biased add overflows int32 is out of range anyway, so that exit is also
-        // right). Wider writes keep their checks in the backends (Int52 / BigInt values).
         Node* checkValueRange = nullptr;
         if (m_node->op() == BufferWrite && !data.isFloatingPoint && data.byteSize <= 2) {
             Edge value = m_graph.varArgChild(m_node, 2);
@@ -304,4 +289,3 @@ bool performSSALowering(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

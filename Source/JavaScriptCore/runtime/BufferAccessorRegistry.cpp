@@ -34,13 +34,8 @@
 
 namespace JSC {
 
-// One process-wide table: host function pointers are process-static, and the descriptor is a
-// property of the function, not of any global object. Registration happens on the JS thread when
-// the embedder builds its prototype; lookups happen from concurrent compiler threads.
 struct BufferAccessorRegistry {
     Lock lock;
-    // Keyed by the untagged code pointer: NativeFunction and TaggedNativeFunction carry different
-    // pointer tags (and PAC signatures on ARM64E), the raw address is the stable identity.
     struct Entry {
         uint64_t data { 0 };
         bool isWrite { false };

@@ -972,7 +972,6 @@ private:
             op = TailCallInlinedCaller;
         }
 
-
         Node* call = addCallWithoutSettingResult(op, opInfo, callee, argCount, registerOffset, OpInfo(prediction), thisValueForEval, scopeForEval);
         if (result.isValid())
             set(result, call);
@@ -1707,7 +1706,6 @@ bool ByteCodeParser::handleRecursiveTailCall(Node* callTargetNode, CallVariant c
         else if (stackEntry->m_inlineCallFrame->isClosureCall)
             setDirect(remapOperand(stackEntry->m_inlineCallFrame, CallFrameSlot::callee), callTargetNode, NormalSet);
 
-
         // We must set the arguments to the right values
         if (!stackEntry->m_inlineCallFrame)
             addToGraph(SetArgumentCountIncludingThis, OpInfo(argumentCountIncludingThis));
@@ -2320,7 +2318,6 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
     // exit to: LoadVarargs is effectful and it's part of the op_call_varargs, so we can't exit without
     // calling LoadVarargs twice.
     inlineCall(callTargetNode, result, callVariant, registerOffset, maxArgumentCountIncludingThis, kind, nullptr, insertChecks);
-
 
     VERBOSE_LOG("Successful inlining (varargs, monomorphic).\nStack: ", currentCodeOrigin(), "\n");
     return true;
@@ -5098,20 +5095,10 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        // Buffer accessors: `buffer.readInt32LE(offset)`, `buffer.writeDoubleBE(value, offset)`, ...
-        // (Node.js Buffer.prototype). Same architecture assumptions as the DataView accessors above
-        // (64-bit, unaligned loads/stores OK); the difference is that the base is the receiver (a
-        // Uint8Array, refined via ArrayMode/CheckArray rather than a DataView cell), the offset defaults
-        // to 0, endianness is fixed per accessor, and every accessor of the family shares ONE
-        // intrinsic -- which accessor this is comes from the registry, keyed by the callee's native
-        // function pointer.
         case BufferAccessorIntrinsic: {
             if (!is64Bit())
                 return CallOptimizationResult::DidNothing;
 
-            // Everything the nodes speculate falls back to the host function, so any repeated
-            // failure at this call site (wrong receiver type, non-int32 / out-of-bounds offset,
-            // out-of-range value, >2GB receiver) leaves the plain Call in place on recompile.
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
                 || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)
                 || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, OutOfBounds)
@@ -5133,10 +5120,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, descriptor->isWrite ? Array::Write : Array::Read);
 
             if (descriptor->byteLengthFromArgument) {
-                // read(U)Int{LE,BE}(offset, byteLength) / write(U)Int{LE,BE}(value, offset, byteLength): a
-                // constant byteLength of 1, 2 or 4 becomes the fixed-width node (same semantics for the
-                // in-range case; the argument-validation differences all live on the host path). offset
-                // has no default here (Node requires it), so it must be present too.
                 int byteLengthArgument = descriptor->isWrite ? 3 : 2;
                 if (argumentCountIncludingThis <= byteLengthArgument)
                     return CallOptimizationResult::DidNothing;
@@ -5149,9 +5132,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 data.byteSize = static_cast<uint8_t>(width);
             }
 
-            // The fixed-width accessors default an absent (or, after inlining, a literal undefined)
-            // offset to 0; the variable-width ones require the argument, so leave it as-is (an
-            // undefined offset fails the Int32 speculation and the host throws).
             auto offsetArgument = [&](int argumentIndex) -> Node* {
                 if (argumentCountIncludingThis <= argumentIndex)
                     return jsConstant(jsNumber(0));
@@ -5162,34 +5142,29 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             };
 
             if (descriptor->isWrite) {
-                // write*(value, offset = 0)
                 if (argumentCountIncludingThis < 2)
                     return CallOptimizationResult::DidNothing;
 
                 insertChecks();
 
                 Node* offset = offsetArgument(2);
-                // Node returns the offset just past the written bytes: an ordinary add, emitted before
-                // the store (so its overflow check may exit), which DCE removes when the caller ignores
-                // it. ArithAdd never invokes user code: a non-numeric offset only fails a speculation.
                 Node* returnValue = makeSafe(addToGraph(ArithAdd, offset, jsConstant(jsNumber(data.byteSize))));
-                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset))); // base (the receiver)
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset)));
                 addVarArgChild(offset);
-                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))); // value
-                addVarArgChild(nullptr); // Leave room for property storage.
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
+                addVarArgChild(nullptr);
                 addToGraph(Node::VarArg, BufferWrite, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord));
                 setResult(returnValue);
                 return CallOptimizationResult::Inlined;
             }
 
-            // read*(offset = 0)
             insertChecks();
 
             Node* offset = offsetArgument(1);
 
-            addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset))); // base (the receiver)
+            addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset)));
             addVarArgChild(offset);
-            addVarArgChild(nullptr); // Leave room for property storage.
+            addVarArgChild(nullptr);
             setResult(addToGraph(Node::VarArg, data.isFloatingPoint ? BufferReadFloat : BufferReadInt, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord)));
             return CallOptimizationResult::Inlined;
         }
@@ -5792,7 +5767,6 @@ bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DO
     addCall(result, Call, OpInfo(signature), callTarget, argumentCountIncludingThis, registerOffset, prediction);
     return true;
 }
-
 
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks)
@@ -9201,7 +9175,6 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     ASSERT(identifier.isSymbol());
                     FrozenValue* frozen = m_graph.freezeStrong(identifier.cell());
                     addToGraph(CheckIsConstant, OpInfo(frozen), brand);
-
 
                     // FIXME: We should include a MultiSetPrivateBrand to handle polymorphic cases
                     // https://bugs.webkit.org/show_bug.cgi?id=221570

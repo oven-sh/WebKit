@@ -1330,5 +1330,4 @@ ffi/JSFFICallback.cpp
 ffi/JSFFIFunction.cpp
 ffi/tests/FFITestFixtures.cpp
 
-// Buffer accessors (Node.js Buffer.prototype.read* / write* JIT); guarded by USE(BUN_JSC_ADDITIONS).
 runtime/BufferAccessorRegistry.cpp

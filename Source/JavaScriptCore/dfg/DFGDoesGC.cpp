@@ -540,7 +540,6 @@ bool doesGC(Graph& graph, Node* node)
         return node->dataViewData().byteSize == 8;
 
     case BufferReadInt:
-        // The 8-byte reads (readBigInt64 / readBigUInt64) allocate a JSBigInt; the rest are ints.
         return node->bufferAccessData().byteSize == 8;
 
     case BufferReadFloat:

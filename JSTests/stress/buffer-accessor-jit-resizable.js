@@ -1,10 +1,5 @@
 //@ requireOptions("--useDollarVM=1")
 
-// Buffer accessors on views over a resizable ArrayBuffer / a growable SharedArrayBuffer: the length
-// load must track the current (byte) length, the first resizable receiver at a site OSR-exits
-// (UnexpectedResizableArrayBufferView) and the recompile keeps working, and out-of-bounds after a
-// shrink must throw.
-
 function shouldBe(actual, expected, message) {
   if (actual !== expected) throw new Error(message + ": expected " + expected + " but got " + actual);
 }
@@ -31,7 +26,6 @@ function writeUInt16LE(b, v, o) {
 }
 noInline(writeUInt16LE);
 
-// Warm up on fixed-length views first, so the resizable ones arrive after the code is optimized.
 {
   const fixed = new Buffer(64);
   for (let i = 0; i < 1e4; ++i) {
@@ -40,7 +34,6 @@ noInline(writeUInt16LE);
   }
 }
 
-// A length-tracking view over a resizable ArrayBuffer.
 {
   const rab = new ArrayBuffer(16, { maxByteLength: 64 });
   const tracking = new Buffer(rab);
@@ -66,7 +59,6 @@ noInline(writeUInt16LE);
   }
 }
 
-// A fixed-length view over a resizable ArrayBuffer that shrinks out from under it.
 {
   const rab = new ArrayBuffer(32, { maxByteLength: 64 });
   const fixed = new Buffer(rab, 8, 16);
@@ -75,14 +67,13 @@ noInline(writeUInt16LE);
     shouldBe(writeUInt16LE(fixed, i & 0xffff, 14), 16, "fixed-length view write");
     shouldBe(readUInt16LE(fixed, 14), i & 0xffff, "fixed-length view read");
   }
-  rab.resize(16); // The view [8, 24) no longer fits: it is out of bounds now.
+  rab.resize(16);
   for (let i = 0; i < 1e3; ++i) {
     shouldThrow(() => readUInt16LE(fixed, 0), RangeError, "out-of-bounds view read");
     shouldThrow(() => writeUInt16LE(fixed, 0, 0), RangeError, "out-of-bounds view write");
   }
 }
 
-// A view over a growable SharedArrayBuffer.
 {
   const gsab = new SharedArrayBuffer(16, { maxByteLength: 64 });
   const shared = new Buffer(gsab);

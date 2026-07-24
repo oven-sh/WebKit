@@ -2875,7 +2875,6 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
                     resultReg, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
         }
 
-
         jsValueResult(resultReg, node);
         break;
     }
@@ -2988,7 +2987,6 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
             GPRReg resultGPR = resultRegs.gpr();
 
             speculationCheck(OutOfBounds, JSValueRegs(), nullptr, branch32(AboveOrEqual, propertyReg, Address(storageReg, ArrayStorage::vectorLengthOffset())));
-
 
             load64(BaseIndex(storageReg, propertyReg, TimesEight, ArrayStorage::vectorOffset()), resultGPR);
             speculationCheck(LoadFromHole, JSValueRegs(), nullptr, branchIfEmpty(resultGPR));
@@ -7157,7 +7155,6 @@ void SpeculativeJIT::compileArithRandom(Node* node)
     doubleResult(result.fpr(), node);
 }
 
-
 void SpeculativeJIT::compileDateGet(Node* node)
 {
     SpeculateCellOperand base(this, node->child1());
@@ -9998,12 +9995,6 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
 
 #if USE(BUN_JSC_ADDITIONS)
 
-// Buffer accessors (runtime/BufferAccessorRegistry.h). The DFG tier does its own length load and
-// bounds check inline, exactly like compileDataViewGet/Set but with the receiver being a Uint8Array
-// (already proven by the CheckArray that Fixup inserted) and the vector coming from the storage child
-// (the GetIndexedPropertyStorage node). Endianness is fixed per accessor, so there is never a
-// runtime endianness branch. Every failed check OSR-exits, and the host function reproduces the
-// exact Node.js error for the same arguments.
 void SpeculativeJIT::compileBufferRead(Node* node)
 {
     Edge& baseEdge = m_graph.varArgChild(node, 0);
@@ -10024,7 +10015,6 @@ void SpeculativeJIT::compileBufferRead(Node* node)
     GPRReg t1 = temp1.gpr();
     GPRReg t2 = temp2.gpr();
 
-    // The receiver's length (in bytes: it is a Uint8Array).
     if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
         loadTypedArrayLength(baseGPR, t1, t2, t1, TypeUint8);
     else {
@@ -10037,7 +10027,6 @@ void SpeculativeJIT::compileBufferRead(Node* node)
 #endif
     }
 
-    // 0 <= offset && offset + byteSize <= length. A detached receiver has length 0 and always exits.
     speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(LessThan, offsetGPR, TrustedImm32(0)));
     zeroExtend32ToWord(offsetGPR, t2);
     if (data.byteSize > 1)
@@ -10201,10 +10190,6 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
         add64(TrustedImm32(data.byteSize - 1), t2);
     speculationCheck(OutOfBounds, JSValueRegs(), node, branch64(AboveOrEqual, t2, t1));
 
-    // Node's write* range-checks the value (unlike DataView's set*, which wraps): exit for anything
-    // out of range so the host function throws ERR_OUT_OF_RANGE. int32 writes need no check (any
-    // int32 is representable), and floats accept every double. (The FTL gets the 1- and 2-byte
-    // checks as graph nodes from SSA lowering instead; that phase does not run for this tier.)
     if (!data.isFloatingPoint) {
         switch (data.byteSize) {
         case 1:
@@ -10221,31 +10206,25 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
             if (data.isSigned)
                 RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
             else {
-                // uint32: the value is a strict int52; a single unsigned 64-bit compare rejects both
-                // negatives and anything above 2^32 - 1.
                 RELEASE_ASSERT(valueEdge.useKind() == Int52RepUse);
                 speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch64(Above, valueGPR, TrustedImm64(0xffffffffLL)));
             }
             break;
         case 8: {
-            // writeBigInt64* / writeBigUInt64*: the BigInt must fit in 64 bits (Node throws otherwise), so
-            // at most one digit; unsigned wants a non-negative BigInt, signed a magnitude within
-            // [-2^63, 2^63 - 1] -- after wrapping the digit to an int64 that is exactly "zero, or the
-            // wrapped sign matches the BigInt's sign". valueGPR becomes the raw 64 bits to store.
             RELEASE_ASSERT(valueEdge.useKind() == HeapBigIntUse);
             speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(Above, Address(valueGPR, JSBigInt::offsetOfLength()), TrustedImm32(1)));
             load8(Address(valueGPR, JSCell::typeInfoFlagsOffset()), t1);
-            and32(TrustedImm32(TypeInfoPerCellBit), t1); // The BigInt's sign bit (non-zero: negative).
+            and32(TrustedImm32(TypeInfoPerCellBit), t1);
             if (data.isSigned) {
-                toBigInt64(valueGPR, t2); // Wrapped digit (0 for a zero-length BigInt): the bytes to store.
+                toBigInt64(valueGPR, t2);
                 auto isZero = branchTest64(Zero, t2);
-                compare32(NotEqual, t1, TrustedImm32(0), t1); // 1 if negative.
-                compare64(LessThan, t2, TrustedImm32(0), t3); // 1 if the wrapped value is negative.
+                compare32(NotEqual, t1, TrustedImm32(0), t1);
+                compare64(LessThan, t2, TrustedImm32(0), t3);
                 speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(NotEqual, t1, t3));
                 isZero.link(this);
             } else {
                 speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branchTest32(NonZero, t1));
-                toBigInt64(valueGPR, t2); // The bytes to store.
+                toBigInt64(valueGPR, t2);
             }
             break;
         }
@@ -10253,7 +10232,6 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
             RELEASE_ASSERT_NOT_REACHED();
         }
     }
-
 
     zeroExtend32ToWord(offsetGPR, t1);
     auto address = BaseIndex(storageGPR, t1, TimesOne);
@@ -10303,7 +10281,6 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
                 store32(valueGPR, address);
             break;
         case 8:
-            // t2 holds the (range-checked) 64 bits of the BigInt from the check above.
             if (isBigEndian)
                 byteSwap64(t2);
             store64(t2, address);
@@ -10313,7 +10290,7 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
         }
     }
 
-    noResult(node); // The `offset + byteSize` return value is a separate node the parser emitted.
+    noResult(node);
 }
 
 #endif // USE(BUN_JSC_ADDITIONS)

@@ -163,8 +163,6 @@ static_assert(sizeof(IndexingType) <= sizeof(uint8_t));
 static_assert(sizeof(ArrayMode) <= sizeof(unsigned));
 static_assert(sizeof(NewArrayWithSpeciesData) == sizeof(uint64_t));
 
-// DataViewData lives in DFGDataViewData.h (shared with the Buffer accessor nodes under USE(BUN_JSC_ADDITIONS)).
-
 struct BranchTarget {
     BranchTarget() = default;
     explicit BranchTarget(BasicBlock* block)
@@ -3038,8 +3036,6 @@ public:
         return std::bit_cast<DataViewData>(m_opInfo.as<uint64_t>());
     }
 
-    // Buffer accessor nodes carry their ArrayMode in opInfo1 (like GetByVal) and the access
-    // descriptor (width / signedness / float-ness / endianness) in opInfo2.
     DataViewData bufferAccessData()
     {
         ASSERT(op() == BufferReadInt || op() == BufferReadFloat || op() == BufferWrite);

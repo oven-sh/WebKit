@@ -404,7 +404,6 @@ public:
             m_out.jump(firstDFGBasicBlock);
         }
 
-
         m_out.appendTo(m_handleExceptions, firstDFGBasicBlock);
         Box<CCallHelpers::Label> exceptionHandler = state->exceptionHandler;
         m_out.patchpoint(Void)->setGenerator(
@@ -3039,7 +3038,6 @@ private:
         patchpoint->setGenerator(
             [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
-
 
                 Box<CCallHelpers::JumpList> exceptions =
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
@@ -6225,7 +6223,6 @@ IGNORE_CLANG_WARNINGS_END
 #endif
     }
 
-
     void compileGetArrayLength()
     {
         switch (m_node->arrayMode().type()) {
@@ -7585,7 +7582,6 @@ IGNORE_CLANG_WARNINGS_END
                 Void, slowPathFunction,
                 weakPointer(globalObject), base, index, value);
             m_out.jump(continuation);
-
 
             if (arrayMode.isSlowPut()) {
                 m_out.appendTo(inBoundCase, doStoreCase);
@@ -9031,7 +9027,6 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
-
     void compileArrayPop()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
@@ -9470,7 +9465,6 @@ IGNORE_CLANG_WARNINGS_END
             isAsyncFunction ? allocateObject<JSAsyncFunction>(structure, m_out.intPtrZero, slowPath) :
             isAsyncGeneratorFunction ? allocateObject<JSAsyncGeneratorFunction>(structure, m_out.intPtrZero, slowPath) :
             allocateObject<JSFunction>(structure, m_out.intPtrZero, slowPath);
-
 
         // We don't need memory barriers since we just fast-created the function, so it
         // must be young.
@@ -11467,7 +11461,6 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(Int64, fastResult, slowResult));
     }
-
 
     void compileToStringOrCallStringConstructorOrStringValueOf()
     {
@@ -14656,7 +14649,6 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
-
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
 
         // Append the forms of the arguments that we will use before any clobbering happens.
@@ -15786,7 +15778,6 @@ IGNORE_CLANG_WARNINGS_END
                 knownLength = 0;
             return m_out.constInt32(knownLength);
         }
-
 
         // We need to perform the same logical operation as the code above, but through dynamic operations.
         if (!numberOfArgumentsToSkip)
@@ -18893,7 +18884,6 @@ IGNORE_CLANG_WARNINGS_END
         // If it's an Int32 and we use it as such this boxing will be DCE'd by b3 later anyway.
         lowJSValue(propertyNameEdge, ManualOperandSpeculation);
 
-
         LValue index = lowInt32(indexEdge);
         LValue mode = lowInt32(m_graph.varArgChild(m_node, 4));
         LValue enumerator = lowCell(m_graph.varArgChild(m_node, 5));
@@ -19600,7 +19590,6 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.storePtr(scope, fastObject, m_heaps.JSScope_next);
         m_out.storePtr(weakPointer(table), fastObject, m_heaps.JSSymbolTableObject_symbolTable);
-
 
         ValueFromBlock fastResult = m_out.anchor(fastObject);
         m_out.jump(continuation);
@@ -22549,11 +22538,6 @@ IGNORE_CLANG_WARNINGS_END
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Buffer accessors (runtime/BufferAccessorRegistry.h). By this point Fixup has proven the receiver
-    // is a Uint8Array (CheckArray) and materialized the storage (GetIndexedPropertyStorage), and SSA
-    // lowering has emitted the GetArrayLength + CheckInBounds nodes that dominate this access, so all
-    // that is left is the load / store itself -- the same shape as an in-bounds typed-array GetByVal /
-    // PutByVal, with the width / signedness / endianness coming from the accessor descriptor.
     void compileBufferRead()
     {
         DataViewData data = m_node->bufferAccessData();
@@ -22567,7 +22551,6 @@ IGNORE_CLANG_WARNINGS_END
         bool isBigEndian = data.isLittleEndian == TriState::False;
 
         auto keepBaseAlive = [&] {
-            // We have to keep base alive since that keeps storage alive.
             ensureStillAliveHere(base);
         };
 
@@ -22682,19 +22665,13 @@ IGNORE_CLANG_WARNINGS_END
             RELEASE_ASSERT_NOT_REACHED();
         }
 
-        // Node's write* range-checks the value (unlike DataView's set*, which wraps): exit for anything
-        // out of range so the host function throws ERR_OUT_OF_RANGE. int32 writes need no check (any
-        // int32 is representable), and floats accept every double.
         if (bigInt) {
-            // writeBigInt64* / writeBigUInt64*: the BigInt must fit in 64 bits, so at most one digit;
-            // unsigned wants a non-negative BigInt, signed a magnitude within [-2^63, 2^63 - 1] -- after
-            // wrapping the digit to an int64 that is exactly "zero, or the wrapped sign matches".
             RELEASE_ASSERT(data.byteSize == 8);
             speculate(Overflow, noValue(), nullptr, m_out.above(m_out.load32NonNegative(bigInt, m_heaps.JSBigInt_length), m_out.constInt32(1)));
             LValue isNegative = m_out.testNonZero32(m_out.load8ZeroExt32(bigInt, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(TypeInfoPerCellBit));
             if (!data.isSigned)
                 speculate(Overflow, noValue(), nullptr, isNegative);
-            valueToStore = toBigInt64(bigInt); // The wrapped digit: the 64 bits to store.
+            valueToStore = toBigInt64(bigInt);
             if (data.isSigned) {
                 LValue signMismatch = m_out.notEqual(isNegative, m_out.lessThan(valueToStore, m_out.int64Zero));
                 speculate(Overflow, noValue(), nullptr, m_out.bitAnd(m_out.notZero64(valueToStore), signMismatch));
@@ -22703,16 +22680,12 @@ IGNORE_CLANG_WARNINGS_END
             switch (data.byteSize) {
             case 1:
             case 2:
-                // The 1- and 2-byte int32 ranges were checked by graph nodes SSA lowering inserted (a
-                // biased CheckInBounds), so they are visible to range analysis; nothing to do here.
                 RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
                 break;
             case 4:
                 if (data.isSigned)
                     RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
                 else {
-                    // uint32: the value is a strict int52; a single unsigned compare rejects both negatives
-                    // and anything above 2^32 - 1.
                     RELEASE_ASSERT(valueEdge.useKind() == Int52RepUse);
                     speculate(Overflow, noValue(), nullptr, m_out.above(valueToStore, m_out.constInt64(0xffffffffLL)));
                     valueToStore = m_out.castToInt32(valueToStore);
@@ -22722,8 +22695,6 @@ IGNORE_CLANG_WARNINGS_END
                 RELEASE_ASSERT_NOT_REACHED();
             }
         }
-
-        // The result: `offset + byteSize` (can only overflow for a >2GB receiver).
 
         TypedPointer pointer(m_heaps.TypedArrayProperties, m_out.add(storage, m_out.zeroExtPtr(offset)));
         bool isBigEndian = data.isLittleEndian == TriState::False;
@@ -22783,7 +22754,6 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
-        // We have to keep base alive since that keeps storage alive.
         ensureStillAliveHere(base);
     }
 #endif // USE(BUN_JSC_ADDITIONS)
@@ -23955,7 +23925,6 @@ IGNORE_CLANG_WARNINGS_END
             m_out.add(
                 m_out.shl(m_out.zeroExt(preCapacity, pointerType()), m_out.constIntPtr(3)),
                 m_out.constIntPtr(sizeof(IndexingHeader))));
-
 
         m_out.store32(publicLength, butterfly, m_heaps.Butterfly_publicLength);
         m_out.store32(vectorLength, butterfly, m_heaps.Butterfly_vectorLength);

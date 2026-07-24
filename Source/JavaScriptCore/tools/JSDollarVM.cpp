@@ -1107,7 +1107,6 @@ private:
     int32_t m_value { 42 };
 };
 
-
 static JSC_DECLARE_CUSTOM_GETTER(domJITGetterCustomGetter);
 JSC_DECLARE_JIT_OPERATION(domJITGetterSlowCall, EncodedJSValue, (JSGlobalObject*, void*));
 
@@ -1212,7 +1211,6 @@ JSC_DEFINE_JIT_OPERATION(domJITGetterSlowCall, EncodedJSValue, (JSGlobalObject* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(static_cast<DOMJITGetter*>(pointer)->value())));
 }
-
 
 static JSC_DECLARE_CUSTOM_GETTER(domJITGetterNoEffectCustomGetter);
 JSC_DECLARE_JIT_OPERATION(domJITGetterNoEffectSlowCall, EncodedJSValue, (JSGlobalObject*, void*));
@@ -1732,7 +1730,6 @@ public:
 
     DECLARE_INFO;
 };
-
 
 static JSC_DECLARE_CUSTOM_GETTER(customGetAccessor);
 static JSC_DECLARE_CUSTOM_GETTER(customGetValue);
@@ -4550,7 +4547,6 @@ JSC_DEFINE_HOST_FUNCTION(functionEnsureArrayStorage, (JSGlobalObject* globalObje
     return JSValue::encode(jsUndefined());
 }
 
-
 #if PLATFORM(COCOA)
 JSC_DEFINE_HOST_FUNCTION(functionSetCrashLogMessage, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -5089,15 +5085,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
 #endif // USE(BUN_JSC_ADDITIONS)
 
 #if USE(BUN_JSC_ADDITIONS)
-// $vm.createBufferAccessors(): a Node.js-Buffer-like accessor set for testing the BufferReadInt /
-// BufferReadFloat / BufferWrite nodes without an embedder. Returns an object of host functions
-// (readInt8 ... writeDoubleBE, plus the BigInt reads), each carrying BufferAccessorIntrinsic and
-// registered in the BufferAccessorRegistry, meant to be installed on a Uint8Array (subclass)
-// prototype by the test. The semantics are deliberately simple but are the reference the JIT must
-// agree with for every input it does not exit on: the receiver must be an ArrayBufferView; the
-// offset (default 0) an int32 with `0 <= offset && offset + byteSize <= byteLength` (else a
-// RangeError); a write's value must be a number within the accessor's range (else a RangeError;
-// NaN and fractions truncate); a read returns the value, a write returns `offset + byteSize`.
 namespace BufferAccessorTest {
 
 enum class Kind : uint8_t { Int8, Uint8, Int16, Uint16, Int32, Uint32, Float32, Float64, BigInt64, BigUint64 };
@@ -5138,8 +5125,6 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES accessor(JSGlobalObject* globalOb
     if (!view)
         return throwVMTypeError(globalObject, scope, "Buffer accessor receiver must be an ArrayBufferView"_s);
 
-    // Coerce the value first (this may run user code), then validate the offset -- the order
-    // Node.js uses and therefore the order the JIT relies on when it OSR-exits back here.
     double numberValue = 0;
     uint64_t bigIntValue = 0;
     if constexpr (isWrite) {
@@ -5147,7 +5132,6 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES accessor(JSGlobalObject* globalOb
         if constexpr (isBigInt) {
             if (!value.isBigInt())
                 return throwVMTypeError(globalObject, scope, "Buffer accessor value must be a BigInt"_s);
-            // Node.js's write*BigInt64* throws for a BigInt that does not fit in 64 bits.
             if (auto* heapBigInt = value.isCell() ? dynamicDowncast<JSBigInt>(value.asCell()) : nullptr) {
                 if (heapBigInt->length() > 1)
                     return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
@@ -5253,7 +5237,6 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES accessor(JSGlobalObject* globalOb
             }
             if (numberValue < minimum || numberValue > maximum)
                 return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
-            // NaN passes the range check and stores 0 (ToInt32 semantics), like Node.js / DataView.
             if constexpr (byteSize == 1)
                 WTF::unalignedStore<uint8_t>(address, static_cast<uint8_t>(toInt32(numberValue)));
             else if constexpr (byteSize == 2)
@@ -5320,8 +5303,6 @@ static const Entry entries[] = {
 
 #undef BUFFER_ACCESSOR_TEST_ENTRY
 
-// Variable-width accessors: read(U)Int{LE,BE}(offset, byteLength) / write(U)Int{LE,BE}(value, offset,
-// byteLength) with byteLength 1..6. The JIT only inlines a constant byteLength of 1, 2 or 4.
 template<bool isSigned, bool isLittleEndian, bool isWrite>
 static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES varWidthAccessor(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
@@ -5355,9 +5336,6 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES varWidthAccessor(JSGlobalObject* 
     if constexpr (isWrite) {
         double min = isSigned ? -std::pow(2.0, 8.0 * byteLength - 1) : 0;
         double max = (isSigned ? std::pow(2.0, 8.0 * byteLength - 1) : std::pow(2.0, 8.0 * byteLength)) - 1;
-        // Negated so NaN (which compares false both ways) throws instead of reaching the cast below,
-        // where an unrepresentable value would be undefined behavior. This is stricter than Node,
-        // which stores 0 for NaN; the embedder's host function owns the real semantics.
         if (!(numberValue >= min && numberValue <= max))
             return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
         int64_t bits = static_cast<int64_t>(std::trunc(numberValue));

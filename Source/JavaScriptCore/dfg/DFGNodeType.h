@@ -667,18 +667,6 @@ namespace JSC { namespace DFG {
     macro(DataViewSet, NodeMustGenerate | NodeMustGenerate | NodeHasVarArgs) \
     macro(DataViewGetByteLength, NodeResultInt32) \
     macro(DataViewGetByteLengthAsInt52, NodeResultInt52) \
-    /* Buffer accessors (runtime/BufferAccessorRegistry.h, USE(BUN_JSC_ADDITIONS)): a Node.js */\
-    /* Buffer.prototype.read* / write*(value,) offset call on a Uint8Array receiver, modeled like */\
-    /* GetByVal / PutByVal on a typed array: vararg children (base, offset[, value], storage) with */\
-    /* opInfo1 = ArrayMode and opInfo2 = DataViewData (width / signedness / float-ness / endianness). */\
-    /* Fixup blesses the array operation (CheckArray + GetIndexedPropertyStorage); SSA lowering appends */\
-    /* the GetArrayLength / CheckInBounds nodes as trailing untyped children, so the receiver check, the */\
-    /* storage load, the length load and the bounds checks are all separately CSE-able / hoistable. */\
-    /* Anything not speculated (bad receiver, non-int32 or out-of-bounds offset, out-of-range value) */\
-    /* OSR-exits to the host function, which owns the exact error behavior. Reads are must-generate */\
-    /* like the DataView gets: the DFG-tier codegen does the bounds check inline. BufferWrite has no */\
-    /* result: the parser emits Node's `offset + byteSize` return value as a separate ArithAdd, which */\
-    /* is dead when the caller ignores it. Enumerators are unconditional; only their uses are guarded. */\
     macro(BufferReadInt, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(BufferReadFloat, NodeResultDouble | NodeMustGenerate | NodeHasVarArgs) \
     macro(BufferWrite, NodeMustGenerate | NodeHasVarArgs) \
@@ -698,7 +686,6 @@ namespace JSC { namespace DFG {
     macro(PromiseThen, NodeMustGenerate | NodeResultJS) \
     macro(PerformPromiseThen, NodeMustGenerate | NodeHasVarArgs) \
     macro(PerformPromiseThenOneHandler, NodeMustGenerate) \
-
 
 // This enum generates a monotonically increasing id for all Node types,
 // and is used by the subsequent enum to fill out the id (as accessed via the NodeIdMask).

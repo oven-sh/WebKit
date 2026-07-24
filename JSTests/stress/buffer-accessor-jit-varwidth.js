@@ -1,9 +1,5 @@
 //@ requireOptions("--useDollarVM=1")
 
-// read(U)Int{LE,BE}(offset, byteLength) / write(U)Int{LE,BE}(value, offset, byteLength): a constant
-// byteLength of 1, 2 or 4 becomes the fixed-width JIT node; every other width (and a non-constant
-// one) stays on the host function. All shapes must agree with the reference after tier-up.
-
 function shouldBe(actual, expected, message) {
   if (actual !== expected) throw new Error(message + ": expected " + expected + " but got " + actual);
 }
@@ -42,7 +38,6 @@ function writeIntLE(b, v, o, l) {
 function writeUIntBE(b, v, o, l) {
   return b.writeUIntBE(v, o, l);
 }
-// Constant widths: these get the JIT node (1, 2, 4) or must stay correct without one (3).
 function readInt32ConstLE(b, o) {
   return b.readIntLE(o, 4);
 }
@@ -104,8 +99,6 @@ for (let i = 0; i < 1e4; ++i) {
   shouldBe(scratchDV.getInt8(o), (i & 0xff) - 128, "writeIntLE const 1 store");
 }
 
-// The exits: non-constant widths that turn out invalid, a missing/undefined offset (no default here),
-// out-of-range values and offsets -- all keep throwing after tier-up.
 for (let i = 0; i < 3e3; ++i) {
   shouldThrow(() => readIntLE(buf, 0, 7), RangeError, "byteLength 7");
   shouldThrow(() => readIntLE(buf, 0, 0), RangeError, "byteLength 0");
@@ -113,8 +106,6 @@ for (let i = 0; i < 3e3; ++i) {
   shouldThrow(() => readInt32ConstLE(buf, 61), RangeError, "out of bounds");
   shouldThrow(() => writeInt8Const(scratch, 128, 0), RangeError, "value out of range");
   shouldThrow(() => writeUIntBE(scratch, 2 ** 24, 0, 3), RangeError, "3-byte value out of range");
-  // The $vm reference rejects NaN (Node itself stores 0): what matters here is that the JIT and the
-  // host function agree, and that neither reaches an out-of-range float-to-int conversion.
   shouldThrow(() => writeIntLE(scratch, NaN, 0, 4), RangeError, "NaN value");
   shouldThrow(() => writeIntLE(scratch, Infinity, 0, 4), RangeError, "Infinity value");
   shouldThrow(() => writeIntLE(scratch, -Infinity, 0, 4), RangeError, "-Infinity value");

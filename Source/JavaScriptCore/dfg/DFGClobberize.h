@@ -2718,11 +2718,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             write(SideState);
             return;
         }
-        // A typed-array load through the (blessed) storage: the receiver's length / vector fields are
-        // MiscFields reads, the bytes are TypedArrayProperties. The def location's heap carries the
-        // access descriptor as its payload so that CSE only unifies loads of the same width /
-        // signedness / endianness at the same (base, offset), while any write to TypedArrayProperties
-        // (top payload) still invalidates them all.
         DataViewData data = node->bufferAccessData();
         read(MiscFields);
         read(TypedArrayProperties);
@@ -2745,8 +2740,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             write(MiscFields);
         }
         write(TypedArrayProperties);
-        // FIXME: We could def() the just-stored value for load elimination, but the store truncates
-        // its input (like a typed-array PutByVal), so the def would have to be the truncated value.
         return;
     }
 

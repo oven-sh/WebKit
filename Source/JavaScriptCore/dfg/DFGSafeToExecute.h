@@ -435,9 +435,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case StringCharAt:
     case StringCharCodeAt:
     case StringCodePointAt:
-    // The Buffer reads bounds-check inline in the DFG (no LICM there) and via the dominating
-    // CheckInBounds children in the FTL, which must themselves be hoisted first (edgesDominate), so
-    // only the receiver-type check needs to have been proven already.
     case BufferReadInt:
     case BufferReadFloat:
         return node->arrayMode().alreadyChecked(graph, node, state.forNode(graph.child(node, 0)));

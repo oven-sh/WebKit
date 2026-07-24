@@ -1,9 +1,5 @@
 //@ requireOptions("--useDollarVM=1")
 
-// Node.js Buffer.prototype.read* / write* JIT (BufferReadInt / BufferReadFloat / BufferWrite nodes,
-// runtime/BufferAccessorRegistry.h): every accessor must agree with a DataView reference across all
-// tiers, including everything the JIT does not speculate (it OSR-exits back to the host function).
-
 function shouldBe(actual, expected, message) {
   if (Number.isNaN(expected)) {
     if (!Number.isNaN(actual)) throw new Error(message + ": expected NaN but got " + actual);
@@ -47,7 +43,6 @@ for (let [name, reference] of readers) {
     let o = i & 31;
     shouldBe(read(buf, o), reference(o), name + " @" + o);
   }
-  // The offset is optional (0), and a plain Uint8Array receiver (same bytes) keeps working.
   let readDefault = new Function("b", `return b.${name}();`);
   noInline(readDefault);
   let accessor = accessors[name];
@@ -96,9 +91,6 @@ for (let [name, reference, value] of writers) {
   }
 }
 
-// Fractional and NaN values truncate (ToInt32) like a typed-array store; 1e10 fits a uint32-range
-// check only after truncation would matter, so it must throw for the narrow types (see the exceptions
-// test) -- here just the in-range coercions the JIT exits for and the host performs.
 function writeInt32LEValue(b, v) {
   return b.writeInt32LE(v, 12);
 }
@@ -128,7 +120,6 @@ for (let i = 0; i < 1e4; ++i) {
   shouldBe(dv.getInt32(12, true), 7, "writeInt32LE valueOf store");
 }
 
-// Every bit pattern is readable, including the impure NaNs that must be purified before boxing.
 {
   const impure = new Buffer(16);
   impure.fill(0xff);

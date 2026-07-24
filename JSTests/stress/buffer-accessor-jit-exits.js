@@ -1,10 +1,5 @@
 //@ requireOptions("--useDollarVM=1")
 
-// The Buffer accessor nodes speculate: a Uint8Array receiver, an int32 in-bounds offset, an in-range
-// value. Everything else must OSR-exit to the host function and behave exactly as it does in the
-// interpreter -- in particular an out-of-bounds access must always throw, never return undefined,
-// and no store may happen (or happen twice) around an exit.
-
 function shouldThrow(f, expected, message) {
   let error = null;
   try {
@@ -26,7 +21,6 @@ Object.assign(Buffer.prototype, accessors);
 const buf = new Buffer(16);
 const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 
-// Offsets that leave the fast path.
 function readInt32LE(b, o) {
   return b.readInt32LE(o);
 }
@@ -50,7 +44,6 @@ for (let i = 0; i < 1e4; ++i) {
   shouldThrow(() => readUInt8(buf, 16), RangeError, "one-byte read one past the end");
 }
 
-// Values that leave the fast path: the narrow writers range-check.
 function writeInt8(b, v, o) {
   return b.writeInt8(v, o);
 }
@@ -82,8 +75,6 @@ for (let i = 0; i < 1e4; ++i) {
   shouldBe(dv.getUint32(4, true), 4294967295, "writeUInt32LE max store");
 }
 
-// Receivers other than a Uint8Array (Buffer) exit the CheckArray and take the host path, which
-// (unlike the JIT'd form) accepts any ArrayBufferView with byte-length semantics and rejects the rest.
 {
   const floats = new Float64Array(4);
   const dataView = new DataView(new ArrayBuffer(8));
@@ -103,7 +94,6 @@ for (let i = 0; i < 1e4; ++i) {
   }
 }
 
-// A detached receiver has length 0: always the host path, always a RangeError.
 {
   const detached = new Buffer(16);
   function readDetached(b) {
@@ -115,8 +105,6 @@ for (let i = 0; i < 1e4; ++i) {
   for (let i = 0; i < 1e3; ++i) shouldThrow(() => readDetached(detached), RangeError, "after detach");
 }
 
-// A write's value coercion happens exactly once even when the offset then fails (the JIT exits
-// before any effect; the host coerces first and validates the offset second).
 {
   let calls = 0;
   const value = {

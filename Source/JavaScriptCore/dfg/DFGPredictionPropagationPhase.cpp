@@ -398,7 +398,6 @@ private:
             break;
         }
 
-
         case ToNumber:
         case ToNumeric: {
             SpeculatedType prediction = node->child1()->prediction();
@@ -1109,8 +1108,6 @@ private:
         }
 
         case BufferReadInt: {
-            // Statically typed by the accessor descriptor (no per-callsite value profile is kept): the
-            // narrow / signed-32 reads are int32; uint32 is int52 (64-bit only); the 8-byte reads are BigInt.
             DataViewData data = m_currentNode->bufferAccessData();
             switch (data.byteSize) {
             case 1:
@@ -1978,4 +1975,3 @@ bool performPredictionPropagation(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

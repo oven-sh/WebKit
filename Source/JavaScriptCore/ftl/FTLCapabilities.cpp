@@ -523,7 +523,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case DataViewGetInt:
     case DataViewGetFloat:
     case DataViewSet:
-    case BufferReadInt: // Buffer accessors: JSVALUE64 only, lower in LowerDFGToB3::compileBufferRead/Write().
+    case BufferReadInt:
     case BufferReadFloat:
     case BufferWrite:
     case DateNow:
@@ -699,4 +699,3 @@ CapabilityLevel canCompile(Graph& graph)
 } } // namespace JSC::FTL
 
 #endif // ENABLE(FTL_JIT)
-

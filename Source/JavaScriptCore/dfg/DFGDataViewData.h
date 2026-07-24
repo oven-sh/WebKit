@@ -31,18 +31,13 @@
 
 namespace JSC { namespace DFG {
 
-// The descriptor for a typed memory load/store: which width, signedness and (for stores/float loads)
-// float-ness, plus endianness/resizability for the DataView case. Packed into one 64-bit OpInfo.
-// Shared by the DataView nodes (DataViewGetInt/GetFloat/Set) and, under USE(BUN_JSC_ADDITIONS),
-// the Buffer accessor nodes (BufferReadInt/BufferReadFloat/BufferWrite) and the accessor registry
-// (runtime/BufferAccessorRegistry.h) -- hence its own dependency-free header.
 struct DataViewData {
     union {
         struct {
             uint8_t byteSize;
             bool isSigned;
             bool isResizable;
-            bool isFloatingPoint; // Used for the DataViewSet node.
+            bool isFloatingPoint;
             TriState isLittleEndian;
         };
         uint64_t asQuadWord;

@@ -33,34 +33,14 @@
 
 namespace JSC {
 
-// A "buffer accessor" is an ordinary host JSFunction, placed on some prototype by the embedder,
-// whose receiver is a JSArrayBufferView (Node.js's Buffer.prototype.readInt32LE / writeDoubleBE
-// ... on a Uint8Array) and which reads or writes a fixed-width scalar at a byte-offset argument
-// with array-index semantics: `read*(offset = 0)` and `write*(value, offset = 0)`, throwing on any
-// non-int32-in-bounds offset (the host function owns the exact error). All accessors share ONE
-// intrinsic (BufferAccessorIntrinsic); the width / signedness / float-ness / endianness /
-// read-vs-write is data, registered here against the (process-wide unique) native function pointer
-// and copied into the DFG's BufferReadInt / BufferReadFloat / BufferWrite node at parse time. The
-// DFG/FTL then compile the call site down to a bounds-checked load/store on the receiver's storage,
-// OSR-exiting to the host function for everything they do not speculate (bad receiver, non-int32
-// or out-of-bounds offset, out-of-range value), so the host function is the single source of truth
-// for error behavior.
 struct BufferAccessorDescriptor {
     DFG::DataViewData data;
     bool isWrite;
-    // The width is not fixed: it comes from a trailing `byteLength` argument (readIntLE(offset,
-    // byteLength) and friends); data.byteSize is 0. The DFG only inlines call sites where that
-    // argument is a constant 1, 2 or 4 and leaves every other width to the host function.
     bool byteLengthFromArgument { false };
 };
 
-// Register `function` as a buffer accessor. Must be called (on any thread, at any time before the
-// function can be called from JIT-compiled code -- typically when the embedder creates the prototype)
-// exactly once per distinct native function; registering the same function twice is harmless if the
-// descriptor matches. Lookups happen concurrently on compiler threads.
 JS_EXPORT_PRIVATE void registerBufferAccessor(TaggedNativeFunction function, BufferAccessorDescriptor);
 
-// nullopt if `function` was never registered (the DFG then leaves the plain Call).
 JS_EXPORT_PRIVATE std::optional<BufferAccessorDescriptor> bufferAccessorDescriptor(TaggedNativeFunction function);
 
 } // namespace JSC

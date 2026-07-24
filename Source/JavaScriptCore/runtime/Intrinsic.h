@@ -32,12 +32,6 @@
 namespace JSC {
 
 #if USE(BUN_JSC_ADDITIONS)
-// Buffer accessors (runtime/BufferAccessorRegistry.h): `Buffer.prototype.readInt32LE(offset)`,
-// `writeDoubleBE(value, offset)`, etc. ONE intrinsic for the whole family: which accessor a call
-// site targets (width / signedness / float-ness / endianness / read-vs-write) is data, looked up
-// from the callee's native function pointer at parse time and copied into the DFG node
-// (BufferReadInt / BufferReadFloat / BufferWrite). (The Intrinsic enum is uint8_t and nearly full,
-// so this must stay a single enumerator for the family.)
 #define JSC_FOR_EACH_BUN_JSC_INTRINSIC(macro) \
     macro(BufferAccessorIntrinsic) \
 

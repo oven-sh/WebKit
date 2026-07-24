@@ -1284,7 +1284,6 @@ private:
                 }
             }
             
-            
             node->setArrayMode(
                 node->arrayMode().refine(
                     m_graph, node,
@@ -1305,7 +1304,6 @@ private:
                 if (!CCallHelpers::supportsFloat16())
                     node->setArrayMode(ArrayMode(Array::Generic, node->arrayMode().action()));
                 break;
-
 
             case Array::ForceExit: {
                 // Don't force OSR because we have only seen OwnStructureMode.
@@ -3738,25 +3736,15 @@ private:
         case BufferReadFloat:
         case BufferWrite: {
 #if USE(BUN_JSC_ADDITIONS)
-            // The receiver must be a Uint8Array (Node.js Buffer). Rather than refining the mode from
-            // predictions we force it: any other receiver OSR-exits at the CheckArray (BadIndexingType)
-            // that blessArrayOperation inserts, and that exit site stops the ByteCodeParser from
-            // re-forming this node on recompile. blessArrayOperation also creates the
-            // GetIndexedPropertyStorage node (into the storage slot), so the storage load CSEs / hoists.
             Edge& base = m_graph.varArgChild(node, 0);
             Edge& offset = m_graph.varArgChild(node, 1);
             DataViewData data = node->bufferAccessData();
 
             bool forceExit = !base->prediction() || !offset->prediction();
             if (forceExit) {
-                // Never executed (no incoming predictions): OSR-exit, as ArrayMode::refine() would decide.
-                // The edges below are still fixed so the node stays well-formed for the backends,
-                // even though the code after the ForceOSRExit is unreachable.
                 node->setArrayMode(ArrayMode(Array::ForceExit, node->arrayMode().action()));
                 blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
             } else {
-                // A double-typed but integral offset (e.g. `i * 4` predicted double) is accepted the way
-                // GetByVal's index is: convert with a DoubleAsInt32 that exits on a genuine fraction.
                 if (!isInt32Speculation(offset->prediction()) && isFullNumberSpeculation(offset->prediction())) {
                     Node* newOffset = m_insertionSet.insertNode(
                         m_indexInBlock, SpecInt32Only, DoubleAsInt32, node->origin,
@@ -3786,18 +3774,15 @@ private:
                         node->setResult(NodeResultInt52);
                     break;
                 case 8:
-                    node->setResult(NodeResultJS); // BigInt64 / BigUint64
+                    node->setResult(NodeResultJS);
                     break;
                 default:
                     RELEASE_ASSERT_NOT_REACHED();
                 }
                 break;
             case BufferReadFloat:
-                break; // NodeResultDouble is the declared result.
+                break;
             case BufferWrite: {
-                // The value is the caller's Node semantics `+value`: a non-number, NaN or fractional value
-                // fails the Int32 / Int52 speculation and takes the host path (which coerces, range-
-                // checks and throws exactly as Node does). Floats accept any double.
                 Edge& value = m_graph.varArgChild(node, 2);
                 if (data.isFloatingPoint)
                     fixEdge<DoubleRepUse>(value);
@@ -3811,10 +3796,10 @@ private:
                         if (data.isSigned)
                             fixEdge<Int32Use>(value);
                         else
-                            fixEdge<Int52RepUse>(value); // uint32: [0, 2^32) does not fit an int32.
+                            fixEdge<Int52RepUse>(value);
                         break;
                     case 8:
-                        fixEdge<HeapBigIntUse>(value); // writeBigInt64* / writeBigUInt64*
+                        fixEdge<HeapBigIntUse>(value);
                         break;
                     default:
                         RELEASE_ASSERT_NOT_REACHED();
@@ -5739,7 +5724,6 @@ private:
                 return;
         }
 
-
         if (Node::shouldSpeculateBoolean(node->child1().node(), node->child2().node())) {
             fixEdge<BooleanUse>(node->child1());
             fixEdge<BooleanUse>(node->child2());
@@ -5856,7 +5840,6 @@ private:
             node->setOpAndDefaultFlags(CompareStrictEq);
             return;
         }
-
 
         if (node->child1()->shouldSpeculateMisc() && node->child2()->shouldSpeculateMisc()) {
             fixEdge<MiscUse>(node->child1());
