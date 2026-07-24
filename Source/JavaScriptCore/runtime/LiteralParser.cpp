@@ -192,11 +192,11 @@ ALWAYS_INLINE Identifier LiteralParser<CharType, reviverMode>::makeIdentifier(VM
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
-ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::makeJSString(VM& vm, typename Lexer::LiteralParserTokenPtr token)
+ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM& vm, typename Lexer::LiteralParserTokenPtr token)
 {
     if (token->stringIs8Bit)
-        return vm.jsonAtomStringCache.makeJSString(token->string8());
-    return vm.jsonAtomStringCache.makeJSString(token->string16());
+        return vm.jsonAtomStringCache.tryMakeJSString(token->string8());
+    return vm.jsonAtomStringCache.tryMakeJSString(token->string16());
 }
 
 [[maybe_unused]] static ALWAYS_INLINE bool NODELETE cannotBeIdentPartOrEscapeStart(Latin1Character)
@@ -1248,7 +1248,12 @@ ALWAYS_INLINE JSValue LiteralParser<CharType, reviverMode>::parsePrimitiveValue(
 {
     switch (m_lexer.currentToken()->type) {
     case TokString: {
-        JSString* result = makeJSString(vm, m_lexer.currentToken());
+        JSString* result = tryMakeJSString(vm, m_lexer.currentToken());
+        if (!result) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwOutOfMemoryError(m_globalObject, scope);
+            return { };
+        }
         m_lexer.next();
         return result;
     }
