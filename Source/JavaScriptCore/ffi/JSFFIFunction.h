@@ -49,7 +49,13 @@ class JSFFIFunction final : public JSFunction {
 public:
     using Base = JSFunction;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    // "ptr" (the resolved native target as a double-encoded pointer, Bun parity) is an
+    // INTRINSIC property served from m_target below -- never a putDirect on the instance. An
+    // own-property addition would transition this cell's Structure, and a JSFFIFunction with a
+    // non-canonical structure loses the callee fast paths on POLYMORPHIC (non-devirtualized)
+    // call sites: measured ~2.5x slower per call. Keeping the structure canonical keeps every
+    // call site fast, not just the ones the DFG turns into CallFFI.
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot;
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction; // Holds Ref<Signature> + RefPtr<JITCode>.
     static void destroy(JSCell*);
@@ -76,6 +82,8 @@ public:
     // The IC entry stub installed as this function's executable call code, or
     // null when the plain host-function path is in use.
     JITCode* icCode() const { return m_icCode.get(); }
+
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
 
     static constexpr ptrdiff_t offsetOfSignature() { return OBJECT_OFFSETOF(JSFFIFunction, m_signature); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }

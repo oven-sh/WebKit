@@ -139,6 +139,20 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 #endif
 }
 
+
+// "ptr": intrinsic, read-only, non-enumerable -- served straight from m_target so no instance
+// ever carries an own property (no Structure transition; see the class comment on StructureFlags).
+bool JSFFIFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    JSFFIFunction* thisObject = uncheckedDowncast<JSFFIFunction>(object);
+    if (propertyName == Identifier::fromString(thisObject->vm(), "ptr"_s)) [[unlikely]] {
+        slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete),
+            jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(thisObject->target()))));
+        return true;
+    }
+    return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+}
+
 } // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)
