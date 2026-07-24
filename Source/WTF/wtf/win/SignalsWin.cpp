@@ -107,12 +107,9 @@ LONG WINAPI vectoredHandler(struct _EXCEPTION_POINTERS *exceptionInfo)
 
     PlatformRegisters& registers = *(exceptionInfo->ContextRecord);
 
-    // A vectored exception handler may only return EXCEPTION_CONTINUE_EXECUTION or
-    // EXCEPTION_CONTINUE_SEARCH. Defaulting to EXCEPTION_EXECUTE_HANDLER here is undefined;
-    // in practice the dispatcher treats it as EXCEPTION_CONTINUE_EXECUTION, re-executes the
-    // faulting instruction, and loops forever without letting handlers further down the chain
-    // (e.g. ASan's shadow-page committer) see the exception. Continue the search when no
-    // registered handler claims the fault, matching the POSIX/Mach "not handled" behavior.
+    // A vectored handler may only return EXCEPTION_CONTINUE_EXECUTION or EXCEPTION_CONTINUE_SEARCH.
+    // Default to search so faults no handler claims proceed down the chain (e.g. to ASan's shadow
+    // committer) instead of looping on the faulting instruction; matches the POSIX/Mach NotHandled path.
     long result = EXCEPTION_CONTINUE_SEARCH;
     handlers.forEachHandler(signal, [&] (const SignalHandler& handler) {
         switch (handler(signal, sigInfo, registers)) {
