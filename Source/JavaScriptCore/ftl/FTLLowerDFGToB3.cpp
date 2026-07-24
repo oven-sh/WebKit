@@ -15257,7 +15257,8 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
-    void compileCallFFI()
+    template<bool DirectCall>
+    void compileCallFFIImpl()
     {
         Node* node = m_node;
         JSFFIFunction* ffiFunction = node->ffiFunction();
@@ -15379,32 +15380,9 @@ IGNORE_CLANG_WARNINGS_END
         // finishes by leaving the canonical 64-bit value in the slot; the direct call simply reloads
         // that slot as its operand -- so the typed-array-view path, i64/u64 (BigInt, wrapping mod
         // 2^64) and the C++ slow path all feed the direct call unchanged.
-        bool directCall = Options::useFFIDirectCall();
-#if CPU(ARM64) && OS(DARWIN)
-        // Darwin/arm64 packs sub-8-byte STACK arguments at their natural size (a spilled uint8_t
-        // occupies 1 byte), and B3's C-call marshalling derives that size from the child's B3
-        // type -- but B3 has no 8/16-bit value type, so a char/i8/u8/i16/u16 argument that spills to
-        // the stack would be laid out at Int32 (4-byte) stride and the callee would misread it. Args
-        // in registers are width-agnostic, so the direct call is exact whenever every sub-32-bit
-        // integer argument lands in an argument GPR; otherwise keep the thunk, which implements the
-        // Darwin packing by hand. (AAPCS64 counts integer/pointer args separately from f32/f64.)
-        if (directCall) {
-            unsigned gprCount = 0;
-            for (unsigned i = 0; i < nativeArgumentCount; ++i) {
-                FFI::Type t = signature.argumentType(i);
-                bool isFloating = t == FFI::Type::Float || t == FFI::Type::Double;
-                if (isFloating)
-                    continue;
-                bool subWord = t == FFI::Type::Char || t == FFI::Type::Int8 || t == FFI::Type::Uint8
-                    || t == FFI::Type::Int16 || t == FFI::Type::Uint16;
-                if (subWord && gprCount >= GPRInfo::numberOfArgumentRegisters) {
-                    directCall = false;
-                    break;
-                }
-                ++gprCount;
-            }
-        }
-#endif
+        // Selected at instantiation time by compileCallFFI() below (which evaluates the option and
+        // the Darwin sub-word-spill eligibility once), so the dead call path folds away entirely.
+        constexpr bool directCall = DirectCall;
         Vector<LValue> directOperands;
 
         unsigned jsArgumentIndex = 0;
@@ -15417,7 +15395,7 @@ IGNORE_CLANG_WARNINGS_END
                 // Type::NapiEnv is supplied by the engine: load the embedder's napi env LIVE at
                 // call time (spec 6), never as an immediate baked at compile time.
                 LValue env = m_out.load64(m_out.absolute(context.addressOfNapiEnv()));
-                if (directCall)
+                if constexpr (directCall)
                     directOperands.append(env); // napi_env is a pointer: pass it in a register
                 else
                     m_out.store64(env, slot);
@@ -15459,7 +15437,7 @@ IGNORE_CLANG_WARNINGS_END
                     DFG_CRASH(m_graph, node, "Bad FFI argument type for a KnownInt32Use CallFFI child");
                     break;
                 }
-                if (directCall) {
+                if constexpr (directCall) {
                     // The C ABI wants the value at its natural width: pass the widened 64-bit slot
                     // value as an Int32 operand for sub-64-bit integer types (the low bits are already
                     // correctly sign/zero-extended above), so the callee reads the right register width.
@@ -15471,7 +15449,7 @@ IGNORE_CLANG_WARNINGS_END
             case KnownBooleanUse: {
                 DFG_ASSERT(m_graph, node, type == FFI::Type::Bool);
                 // The boolean payload is 0/1, which is exactly the canonical bool slot encoding (spec 4).
-                if (directCall)
+                if constexpr (directCall)
                     directOperand = m_out.zeroExt(lowBoolean(edge), Int32);
                 else
                     m_out.store64(m_out.zeroExt(lowBoolean(edge), Int64), slot);
@@ -15480,7 +15458,7 @@ IGNORE_CLANG_WARNINGS_END
             case DoubleRepUse: {
                 LValue value = lowDouble(edge);
                 if (type == FFI::Type::Float) {
-                    if (directCall)
+                    if constexpr (directCall)
                         directOperand = m_out.doubleToFloat(value); // real float operand -> FPR
                     else {
                         // Spec 4: bit_cast<uint32_t>(float) in bits [31:0]; bits [63:32] must be zero.
@@ -15491,7 +15469,7 @@ IGNORE_CLANG_WARNINGS_END
                     }
                 } else {
                     DFG_ASSERT(m_graph, node, type == FFI::Type::Double);
-                    if (directCall)
+                    if constexpr (directCall)
                         directOperand = value;
                     else
                         m_out.storeDouble(value, slot);
@@ -15604,7 +15582,7 @@ IGNORE_CLANG_WARNINGS_END
                 DFG_CRASH(m_graph, node, "Bad use kind for a CallFFI argument");
                 break;
             }
-            if (directCall)
+            if constexpr (directCall)
                 directOperands.append(directOperand ? directOperand : m_out.load64(slotPointer(i)));
         }
 
@@ -15615,7 +15593,7 @@ IGNORE_CLANG_WARNINGS_END
         // touching vm.topCallFrame before the call.
         FFI::Type returnType = signature.returnType();
         LValue targetValue = m_out.constIntPtr(target);
-        if (directCall) {
+        if constexpr (directCall) {
             // Call the native target directly (tagged exactly as the thunk calls it: a raw
             // CFunctionPtrTag call). topCallFrame first: a JS callback or an exception raised from
             // inside the native call must see this frame.
@@ -15772,6 +15750,39 @@ IGNORE_CLANG_WARNINGS_END
         // above already left it before their exception jump).
         if (needsArena)
             vmCall(Void, operationFFIArenaExit, weakPointer(globalObject));
+    }
+
+    void compileCallFFI()
+    {
+        bool directCall = Options::useFFIDirectCall();
+#if CPU(ARM64) && OS(DARWIN)
+        // Darwin/arm64 packs sub-8-byte STACK arguments at their natural size, and B3 has no
+        // 8/16-bit value type: a spilled char/i8/u8/i16/u16 argument would be laid out at Int32
+        // stride by CCallValue marshalling. Args in registers are width-agnostic, so the direct
+        // call is exact whenever every sub-32-bit integer argument lands in an argument GPR;
+        // otherwise fall back to the invoke thunk, which implements the packing by hand.
+        // (AAPCS64 counts integer/pointer arguments separately from f32/f64.)
+        if (directCall) {
+            FFI::Signature& signature = m_node->ffiFunction()->signature();
+            unsigned gprCount = 0;
+            for (unsigned i = 0; i < signature.argumentCount(); ++i) {
+                FFI::Type t = signature.argumentType(i);
+                if (t == FFI::Type::Float || t == FFI::Type::Double)
+                    continue;
+                bool subWord = t == FFI::Type::Char || t == FFI::Type::Int8 || t == FFI::Type::Uint8
+                    || t == FFI::Type::Int16 || t == FFI::Type::Uint16;
+                if (subWord && gprCount >= GPRInfo::numberOfArgumentRegisters) {
+                    directCall = false;
+                    break;
+                }
+                ++gprCount;
+            }
+        }
+#endif
+        if (directCall)
+            compileCallFFIImpl<true>();
+        else
+            compileCallFFIImpl<false>();
     }
 #endif // USE(BUN_JSC_ADDITIONS)
 
