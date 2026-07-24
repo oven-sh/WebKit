@@ -155,7 +155,15 @@ void SignalHandlers::finalize()
 
     for (unsigned i = 0; i < numberOfSignals; ++i) {
         if (handlers.numberOfHandlers[i]) {
+#if ASAN_ENABLED
+            // AddressSanitizer's runtime commits its shadow lazily from its own vectored
+            // handler and unpoisons the dispatch context for the handlers behind it. Registered
+            // ahead of it we would read the CONTEXT and dispatch stack before ASan has unpoisoned
+            // them, producing spurious stack-buffer reports on every fault. Register behind it.
+            AddVectoredExceptionHandler(0, vectoredHandler);
+#else
             AddVectoredExceptionHandler(1, vectoredHandler);
+#endif
             break;
         }
     }
