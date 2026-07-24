@@ -780,6 +780,16 @@
 #endif
 #endif
 
+/* JSDollarVM ($vm) is a debugging-only object reached via the restricted
+   JSC_useDollarVM option. It is large (~4600 lines that pull in many runtime
+   internals) and has no production use, so compile it out of release builds.
+   Like the disassembler above this defaults to ASSERT_ENABLED, and can be
+   forced on via a compiler flag. The jsc shell compiles it separately (see
+   tools/JSDollarVMShell.cpp) so $vm keeps working there regardless. */
+#if !defined(BUN_ENABLE_JSDOLLARVM)
+#define BUN_ENABLE_JSDOLLARVM ASSERT_ENABLED
+#endif
+
 /* If possible, try to enable a disassembler. This is optional. We proceed in two
    steps: first we try to find some disassembler that we can use, and then we
    decide if the high-level disassembler API can be enabled. */

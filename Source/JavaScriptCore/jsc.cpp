@@ -641,6 +641,11 @@ private:
         Base::finishCreation(vm);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
+#if USE(BUN_JSC_ADDITIONS) && !BUN_ENABLE_JSDOLLARVM
+        if (Options::useDollarVM()) [[unlikely]]
+            exposeDollarVM(vm);
+#endif
+
         // Set loop counts based on enabled engine tiers. When concurrent JIT is off,
         // clamp to a small multiple of the top tier's warm-up threshold so eager
         // modes don't balloon stress-test runtime on the main thread.

@@ -1,4 +1,4 @@
-set(jsc_SOURCES ../jsc.cpp)
+set(jsc_SOURCES ../jsc.cpp ../tools/JSDollarVMShell.cpp)
 set(jsc_LIBRARIES ${CMAKE_DL_LIBS})
 set(jsc_FRAMEWORKS
     JavaScriptCore

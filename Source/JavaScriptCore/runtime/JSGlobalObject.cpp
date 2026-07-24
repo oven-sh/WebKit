@@ -147,7 +147,6 @@
 #include "JSDataViewPrototype.h"
 #include "JSDisposableStack.h"
 #include "JSDisposableStackInlines.h"
-#include "JSDollarVM.h"
 #include "JSFinalizationRegistry.h"
 #include "JSFunction.h"
 #include "JSFunctionWithFields.h"
@@ -2245,8 +2244,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     initStaticGlobals(vm);
 
+#if !USE(BUN_JSC_ADDITIONS) || BUN_ENABLE_JSDOLLARVM
     if (Options::useDollarVM()) [[unlikely]]
         exposeDollarVM(vm);
+#endif
 
 #if ENABLE(WEBASSEMBLY)
     if (Wasm::isSupported()) {
@@ -3232,22 +3233,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, JSGlobalObject);
 
-SUPPRESS_ASAN void JSGlobalObject::exposeDollarVM(VM& vm)
-{
-    RELEASE_ASSERT(g_jscConfig.restrictedOptionsEnabled && Options::useDollarVM());
-    PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (getOwnPropertySlot(this, this, vm.propertyNames->builtinNames().dollarVMPrivateName(), slot))
-        return;
-
-    JSDollarVM* dollarVM = JSDollarVM::create(vm, JSDollarVM::createStructure(vm, this, m_objectPrototype.get()));
-
-    GlobalPropertyInfo extraStaticGlobals[] = {
-        GlobalPropertyInfo(vm.propertyNames->builtinNames().dollarVMPrivateName(), dollarVM, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-    };
-    addStaticGlobals(extraStaticGlobals);
-
-    putDirect(vm, Identifier::fromString(vm, "$vm"_s), dollarVM, static_cast<unsigned>(PropertyAttribute::DontEnum));
-}
+// JSGlobalObject::exposeDollarVM is defined in tools/JSDollarVM.cpp so that
+// release builds which compile JSDollarVM out do not carry a reference to it.
 
 void JSGlobalObject::addStaticGlobals(std::span<GlobalPropertyInfo> globals)
 {
