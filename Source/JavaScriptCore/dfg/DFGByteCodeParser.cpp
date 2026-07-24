@@ -2361,7 +2361,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 // LinkBuffer emit under the Signature's own lock, safe on the compiler thread) turns
                 // its non-nullness into an invariant of the conversion instead of a runtime
                 // OutOfMemoryError for the whole node.
-                if (Options::useFFICallInDFG() && callOp == Call && callee.function() && callee.function()->inherits<JSFFIFunction>()
+                if (Options::useFFICallInDFG() && (callOp == Call || callOp == TailCall) && callee.function() && callee.function()->inherits<JSFFIFunction>()
                     && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {
                     auto* ffiFunction = uncheckedDowncast<JSFFIFunction>(callee.function());
                     m_graph.m_plan.recordedStatuses().addCallLinkStatus(currentNodeOrigin().semantic, CallLinkStatus(callee));
@@ -2369,7 +2369,10 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                     addToGraph(CheckIsConstant, OpInfo(frozenFunction), Edge(callTargetNode, CellUse));
                     m_parameterSlots = std::max(m_parameterSlots, Graph::parameterSlotsForArgCount(
                         std::max<unsigned>(ffiFunction->signature().slotCount() + 1, argumentCountIncludingThis)));
-                    addCall(result, callOp, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, prediction);
+                    // A bytecode tail call (arrow expression body / strict-mode tail position -- all
+                    // ESM code is strict) is emitted as a plain Call: CallFFI is a non-terminal node, and
+                    // dropping the tail-call frame reuse is a legal optimization loss, not a semantic one.
+                    addCall(result, Call, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, prediction);
                     return CallOptimizationResult::Inlined;
                 }
 #endif

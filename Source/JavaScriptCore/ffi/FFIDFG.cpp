@@ -47,6 +47,8 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         return false;
 
     // Only plain calls become CallFFI - never Construct / TailCall / TailCallInlinedCaller.
+    // (A TailCall reaching here is a block terminal; the parser feed instead emits FFI calls that
+    // were bytecode tail calls as plain Calls, so this phase only ever sees op() == Call.)
     if (node->op() != DFG::Call)
         return false;
 
