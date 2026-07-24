@@ -10178,10 +10178,10 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
 
     GPRTemporary temp1(this);
     GPRTemporary temp2(this);
-    GPRTemporary result(this);
+    GPRTemporary temp3(this);
     GPRReg t1 = temp1.gpr();
     GPRReg t2 = temp2.gpr();
-    GPRReg resultGPR = result.gpr();
+    GPRReg t3 = temp3.gpr();
 
     if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
         loadTypedArrayLength(baseGPR, t1, t2, t1, TypeUint8);
@@ -10203,7 +10203,8 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
 
     // Node's write* range-checks the value (unlike DataView's set*, which wraps): exit for anything
     // out of range so the host function throws ERR_OUT_OF_RANGE. int32 writes need no check (any
-    // int32 is representable), and floats accept every double.
+    // int32 is representable), and floats accept every double. (The FTL gets the 1- and 2-byte
+    // checks as graph nodes from SSA lowering instead; that phase does not run for this tier.)
     if (!data.isFloatingPoint) {
         switch (data.byteSize) {
         case 1:
@@ -10239,8 +10240,8 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
                 toBigInt64(valueGPR, t2); // Wrapped digit (0 for a zero-length BigInt): the bytes to store.
                 auto isZero = branchTest64(Zero, t2);
                 compare32(NotEqual, t1, TrustedImm32(0), t1); // 1 if negative.
-                compare64(LessThan, t2, TrustedImm32(0), resultGPR); // 1 if the wrapped value is negative.
-                speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(NotEqual, t1, resultGPR));
+                compare64(LessThan, t2, TrustedImm32(0), t3); // 1 if the wrapped value is negative.
+                speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(NotEqual, t1, t3));
                 isZero.link(this);
             } else {
                 speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branchTest32(NonZero, t1));
@@ -10253,10 +10254,6 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
         }
     }
 
-    // The result is `offset + byteSize` (the offset just past the written bytes); it can only
-    // overflow for a >2GB receiver.
-    move(offsetGPR, resultGPR);
-    speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branchAdd32(Overflow, TrustedImm32(data.byteSize), resultGPR));
 
     zeroExtend32ToWord(offsetGPR, t1);
     auto address = BaseIndex(storageGPR, t1, TimesOne);
@@ -10316,7 +10313,7 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
         }
     }
 
-    strictInt32Result(resultGPR, node);
+    noResult(node); // The `offset + byteSize` return value is a separate node the parser emitted.
 }
 
 #endif // USE(BUN_JSC_ADDITIONS)

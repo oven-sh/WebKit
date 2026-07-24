@@ -1134,11 +1134,6 @@ private:
             break;
         }
 
-        case BufferWrite: {
-            setPrediction(SpecInt32Only); // offset + byteSize
-            break;
-        }
-
         case GetWebAssemblyInstanceExports: {
             setPrediction(SpecFinalObject);
             break;
@@ -1889,6 +1884,7 @@ private:
         case FilterSetPrivateBrandStatus:
         case ClearCatchLocals:
         case DataViewSet:
+        case BufferWrite:
         case InvalidationPoint:
         case ObjectAssign:
         case ResolvePromiseFirstResolving:

@@ -245,10 +245,35 @@ private:
             appended = 2;
         }
 
+        // The 1- and 2-byte integer writes also range-check the (Int32) value here, as graph nodes,
+        // so integer range analysis / CSE / LICM can hoist or eliminate it: unsigned width W is
+        // exactly CheckInBounds(value, 2^W); signed width W is CheckInBounds(value + 2^(W-1), 2^W)
+        // (a value whose biased add overflows int32 is out of range anyway, so that exit is also
+        // right). Wider writes keep their checks in the backends (Int52 / BigInt values).
+        Node* checkValueRange = nullptr;
+        if (m_node->op() == BufferWrite && !data.isFloatingPoint && data.byteSize <= 2) {
+            Edge value = m_graph.varArgChild(m_node, 2);
+            RELEASE_ASSERT(value.useKind() == Int32Use);
+            int32_t range = 1 << (8 * data.byteSize);
+            Node* checked = value.node();
+            if (data.isSigned) {
+                checked = m_insertionSet.insertNode(
+                    m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(Arith::CheckOverflow),
+                    Edge(value.node(), Int32Use),
+                    m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(range / 2), Int32Use));
+            }
+            checkValueRange = m_insertionSet.insertNode(
+                m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, Edge(checked, Int32Use),
+                m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(range), Int32Use));
+            appended++;
+        }
+
         AdjacencyList adjacencyList = m_graph.copyVarargChildren(m_node);
         m_graph.m_varArgChildren.append(Edge(checkFirstByte, UntypedUse));
         if (checkLastByte)
             m_graph.m_varArgChildren.append(Edge(checkLastByte, UntypedUse));
+        if (checkValueRange)
+            m_graph.m_varArgChildren.append(Edge(checkValueRange, UntypedUse));
         adjacencyList.setNumChildren(adjacencyList.numChildren() + appended);
         m_node->children = adjacencyList;
     }

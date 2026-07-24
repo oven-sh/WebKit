@@ -22702,14 +22702,10 @@ IGNORE_CLANG_WARNINGS_END
         } else if (!data.isFloatingPoint) {
             switch (data.byteSize) {
             case 1:
-                RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
-                speculate(Overflow, noValue(), nullptr, m_out.lessThan(valueToStore, m_out.constInt32(data.isSigned ? -0x80 : 0)));
-                speculate(Overflow, noValue(), nullptr, m_out.greaterThan(valueToStore, m_out.constInt32(data.isSigned ? 0x7f : 0xff)));
-                break;
             case 2:
+                // The 1- and 2-byte int32 ranges were checked by graph nodes SSA lowering inserted (a
+                // biased CheckInBounds), so they are visible to range analysis; nothing to do here.
                 RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
-                speculate(Overflow, noValue(), nullptr, m_out.lessThan(valueToStore, m_out.constInt32(data.isSigned ? -0x8000 : 0)));
-                speculate(Overflow, noValue(), nullptr, m_out.greaterThan(valueToStore, m_out.constInt32(data.isSigned ? 0x7fff : 0xffff)));
                 break;
             case 4:
                 if (data.isSigned)
@@ -22728,8 +22724,6 @@ IGNORE_CLANG_WARNINGS_END
         }
 
         // The result: `offset + byteSize` (can only overflow for a >2GB receiver).
-        CheckValue* result = m_out.speculateAdd(offset, m_out.constInt32(data.byteSize));
-        blessSpeculation(result, Overflow, noValue(), nullptr, m_origin);
 
         TypedPointer pointer(m_heaps.TypedArrayProperties, m_out.add(storage, m_out.zeroExtPtr(offset)));
         bool isBigEndian = data.isLittleEndian == TriState::False;
@@ -22791,7 +22785,6 @@ IGNORE_CLANG_WARNINGS_END
 
         // We have to keep base alive since that keeps storage alive.
         ensureStillAliveHere(base);
-        setInt32(result);
     }
 #endif // USE(BUN_JSC_ADDITIONS)
 

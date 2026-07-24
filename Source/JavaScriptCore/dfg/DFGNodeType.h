@@ -676,12 +676,12 @@ namespace JSC { namespace DFG {
     /* storage load, the length load and the bounds checks are all separately CSE-able / hoistable. */\
     /* Anything not speculated (bad receiver, non-int32 or out-of-bounds offset, out-of-range value) */\
     /* OSR-exits to the host function, which owns the exact error behavior. Reads are must-generate */\
-    /* like the DataView gets: the DFG-tier codegen does the bounds check inline. BufferWrite's result */\
-    /* is `offset + byteSize` (Node returns the offset past the written bytes). The enumerators are */\
-    /* unconditional; only their uses are guarded by USE(BUN_JSC_ADDITIONS). */\
+    /* like the DataView gets: the DFG-tier codegen does the bounds check inline. BufferWrite has no */\
+    /* result: the parser emits Node's `offset + byteSize` return value as a separate ArithAdd, which */\
+    /* is dead when the caller ignores it. Enumerators are unconditional; only their uses are guarded. */\
     macro(BufferReadInt, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(BufferReadFloat, NodeResultDouble | NodeMustGenerate | NodeHasVarArgs) \
-    macro(BufferWrite, NodeResultInt32 | NodeMustGenerate | NodeHasVarArgs) \
+    macro(BufferWrite, NodeMustGenerate | NodeHasVarArgs) \
     /* Date access */ \
     macro(DateNow, NodeMustGenerate | NodeResultDouble) \
     macro(DateGetInt32OrNaN, NodeResultJS) \

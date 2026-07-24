@@ -5169,11 +5169,16 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 insertChecks();
 
                 Node* offset = offsetArgument(2);
+                // Node returns the offset just past the written bytes: an ordinary add, emitted before
+                // the store (so its overflow check may exit), which DCE removes when the caller ignores
+                // it. ArithAdd never invokes user code: a non-numeric offset only fails a speculation.
+                Node* returnValue = makeSafe(addToGraph(ArithAdd, offset, jsConstant(jsNumber(data.byteSize))));
                 addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset))); // base (the receiver)
                 addVarArgChild(offset);
                 addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))); // value
                 addVarArgChild(nullptr); // Leave room for property storage.
-                setResult(addToGraph(Node::VarArg, BufferWrite, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord)));
+                addToGraph(Node::VarArg, BufferWrite, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord));
+                setResult(returnValue);
                 return CallOptimizationResult::Inlined;
             }
 

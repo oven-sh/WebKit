@@ -5908,11 +5908,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
 
     case BufferWrite: {
-        if (node->arrayMode().type() == Array::ForceExit) {
+        if (node->arrayMode().type() == Array::ForceExit)
             m_state.setIsValid(false);
-            break;
-        }
-        setNonCellTypeForNode(node, SpecInt32Only); // offset + byteSize
         break;
     }
 
