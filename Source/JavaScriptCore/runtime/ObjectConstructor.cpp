@@ -1133,12 +1133,25 @@ bool testIntegrityLevel(JSGlobalObject* globalObject, VM& vm, JSObject* object)
     return true;
 }
 
+// True when sealing / freezing |object| via the generic SetIntegrityLevel loop
+// is not observable and the result is equivalent to JSObject::seal / freeze,
+// which applies attributes to the PropertyTable and SparseArrayValueMap in bulk
+// without allocating a property-name array or dispatching through the method
+// table per element. This is the dominant cost for large arrays.
+static ALWAYS_INLINE bool canFastSetIntegrityLevel(JSObject* object)
+{
+    // JSFinalObject and (exact) JSArray use ordinary [[PreventExtensions]] and
+    // [[DefineOwnProperty]] and have no lazy own properties that must be reified
+    // via getOwnPropertyNames. JSArray's "length" is handled separately.
+    return is<JSFinalObject>(object) || isJSArray(object);
+}
+
 JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (canFastSetIntegrityLevel(object)) {
         object->seal(vm);
         return object;
     }
@@ -1171,7 +1184,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (canFastSetIntegrityLevel(object)) {
         object->freeze(vm);
         return object;
     }
