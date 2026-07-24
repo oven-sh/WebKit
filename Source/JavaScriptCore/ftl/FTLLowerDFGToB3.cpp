@@ -15755,7 +15755,17 @@ IGNORE_CLANG_WARNINGS_END
     void compileCallFFI()
     {
         bool directCall = Options::useFFIDirectCall();
-#if CPU(ARM64) && OS(DARWIN)
+#if OS(WINDOWS)
+        // B3's CCallValue marshalling implements JSC's INTERNAL calling convention, and JSC on
+        // Windows is built with SYSV_ABI: a direct call would pass integer/pointer arguments in the
+        // SysV registers (RDI, RSI, ...) to a native target that expects Win64 (RCX, RDX, R8, R9 --
+        // positional, shared with XMM0-3, plus 32 bytes of shadow space). Observed as the callee
+        // reading garbage from RCX after FTL tier-up, for every integer/pointer type and position
+        // (floats survive only because arg1 lands in XMM0 under both conventions). The invoke thunk
+        // implements Win64 by hand and is verified correct (38/38 Win64 ABI stress shapes), so
+        // Windows keeps the thunk path until B3 grows a Win64 CCall marshalling mode.
+        directCall = false;
+#elif CPU(ARM64) && OS(DARWIN)
         // Darwin/arm64 packs sub-8-byte STACK arguments at their natural size, and B3 has no
         // 8/16-bit value type: a spilled char/i8/u8/i16/u16 argument would be laid out at Int32
         // stride by CCallValue marshalling. Args in registers are width-agnostic, so the direct
