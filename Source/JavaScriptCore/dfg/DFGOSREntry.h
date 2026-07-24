@@ -31,6 +31,7 @@
 #include "MacroAssemblerCodeRef.h"
 #include "Operands.h"
 #include <wtf/BitVector.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC {
 
@@ -53,10 +54,104 @@ struct OSREntryReshuffling {
     int toOffset;
 };
 
+// Sparse storage for the per-OSR-entry expected value table. The dense
+// Operands<AbstractValue> captured at each entrypoint is dominated by
+// bytecode-top entries (dead operands are forced to bytecode-top in
+// JITCompiler::noticeOSREntry, and tmps stay at full-top from block
+// construction and are never consulted by prepareOSREntry). Storing only the
+// constrained operands and answering bytecode-top for everything else keeps
+// the observable behaviour of prepareOSREntry unchanged: validateOSREntryValue
+// early-outs on bytecode-top, isType(SpecInt32Only) is false for it, and
+// AbstractValue::validateReferences is a no-op for it.
+class OSREntryExpectedValues {
+public:
+    OSREntryExpectedValues() = default;
+
+    template<typename U>
+    explicit OSREntryExpectedValues(const Operands<AbstractValue, U>& source)
+        : m_numberOfArguments(source.numberOfArguments())
+        , m_numberOfLocals(source.numberOfLocals())
+    {
+        // prepareOSREntry never looks at tmps, so drop them here.
+        unsigned end = m_numberOfArguments + m_numberOfLocals;
+        unsigned count = 0;
+        for (unsigned i = 0; i < end; ++i) {
+            if (!source[i].isBytecodeTop())
+                ++count;
+        }
+        Vector<Entry, 8> entries;
+        entries.reserveInitialCapacity(count);
+        for (unsigned i = 0; i < end; ++i) {
+            if (!source[i].isBytecodeTop())
+                entries.append(Entry { i, source[i] });
+        }
+        m_constrained = WTF::move(entries);
+    }
+
+    unsigned numberOfArguments() const { return m_numberOfArguments; }
+    unsigned numberOfLocals() const { return m_numberOfLocals; }
+
+    const AbstractValue& argument(unsigned argument) const
+    {
+        ASSERT(argument < m_numberOfArguments);
+        return forIndex(argument);
+    }
+
+    const AbstractValue& local(unsigned local) const
+    {
+        ASSERT(local < m_numberOfLocals);
+        return forIndex(m_numberOfArguments + local);
+    }
+
+    const AbstractValue& operand(VirtualRegister reg) const
+    {
+        if (reg.isArgument())
+            return argument(reg.toArgument());
+        return local(reg.toLocal());
+    }
+
+    template<typename Functor>
+    void forEachValue(const Functor& functor)
+    {
+        for (auto& entry : m_constrained)
+            functor(entry.value);
+    }
+
+    size_t byteSize() const { return m_constrained.byteSize(); }
+
+private:
+    struct Entry {
+        unsigned index;
+        AbstractValue value;
+    };
+
+    const AbstractValue& forIndex(unsigned index) const
+    {
+        if (const Entry* entry = tryBinarySearch<const Entry, unsigned>(m_constrained, m_constrained.size(), index, [](const Entry* entry) { return entry->index; }))
+            return entry->value;
+        return sharedBytecodeTop();
+    }
+
+    static const AbstractValue& sharedBytecodeTop()
+    {
+        static LazyNeverDestroyed<AbstractValue> value;
+        static std::once_flag once;
+        std::call_once(once, [] {
+            value.construct();
+            value.get().makeBytecodeTop();
+        });
+        return value.get();
+    }
+
+    unsigned m_numberOfArguments { 0 };
+    unsigned m_numberOfLocals { 0 };
+    FixedVector<Entry> m_constrained;
+};
+
 struct OSREntryData {
     BytecodeIndex m_bytecodeIndex;
     CodeLocationLabel<OSREntryPtrTag> m_machineCode;
-    FixedOperands<AbstractValue> m_expectedValues;
+    OSREntryExpectedValues m_expectedValues;
     // Use bitvectors here because they tend to only require one word.
     BitVector m_localsForcedDouble;
     BitVector m_localsForcedAnyInt;

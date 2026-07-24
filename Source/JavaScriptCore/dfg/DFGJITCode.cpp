@@ -431,8 +431,9 @@ void JITCode::validateReferences(const TrackedReferences& trackedReferences)
     common.validateReferences(trackedReferences);
     
     for (OSREntryData& entry : m_osrEntry) {
-        for (unsigned i = entry.m_expectedValues.size(); i--;)
-            entry.m_expectedValues[i].validateReferences(trackedReferences);
+        entry.m_expectedValues.forEachValue([&](AbstractValue& value) {
+            value.validateReferences(trackedReferences);
+        });
     }
     
     minifiedDFG.validateReferences(trackedReferences);
