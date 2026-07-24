@@ -5126,7 +5126,10 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             DataViewData data = descriptor->data;
-            data.isResizable = m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, UnexpectedResizableArrayBufferView);
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, UnexpectedResizableArrayBufferView))
+                data.isResizable = true;
+            else
+                data.isResizable = getArrayMode(descriptor->isWrite ? Array::Write : Array::Read).mayBeResizableOrGrowableSharedTypedArray();
             ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, descriptor->isWrite ? Array::Write : Array::Read);
 
             // `offset = 0`: an absent argument, or (after inlining) a literal undefined.

@@ -60,7 +60,7 @@ noInline(writeUInt16LE);
   rab.resize(8);
   shouldBe(tracking.length, 8, "shrunk tracking length");
   for (let i = 0; i < 1e3; ++i) {
-    shouldBe(readUInt16LE(tracking, 6), readUInt16LE(tracking, 6), "read near the shrunk end");
+    shouldBe(readUInt16LE(tracking, 6), 0, "read near the shrunk end (never written)");
     shouldThrow(() => readUInt16LE(tracking, 7), RangeError, "read straddling the shrunk end");
     shouldThrow(() => writeUInt16LE(tracking, 0, 62), RangeError, "write past the shrunk end");
   }

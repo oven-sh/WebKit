@@ -2001,10 +2001,18 @@ private:
             break;
         case BufferReadInt:
         case BufferReadFloat:
+#if USE(BUN_JSC_ADDITIONS)
             compileBufferRead();
+#else
+            DFG_CRASH(m_graph, m_node, "Unexpected node");
+#endif
             break;
         case BufferWrite:
+#if USE(BUN_JSC_ADDITIONS)
             compileBufferWrite();
+#else
+            DFG_CRASH(m_graph, m_node, "Unexpected node");
+#endif
             break;
 
         case ResolvePromiseFirstResolving:
@@ -22540,6 +22548,7 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
     // Buffer accessors (runtime/BufferAccessorRegistry.h). By this point Fixup has proven the receiver
     // is a Uint8Array (CheckArray) and materialized the storage (GetIndexedPropertyStorage), and SSA
     // lowering has emitted the GetArrayLength + CheckInBounds nodes that dominate this access, so all
@@ -22784,6 +22793,7 @@ IGNORE_CLANG_WARNINGS_END
         ensureStillAliveHere(base);
         setInt32(result);
     }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     void compileDateNow()
     {
