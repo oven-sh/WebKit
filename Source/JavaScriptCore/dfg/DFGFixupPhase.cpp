@@ -3747,28 +3747,30 @@ private:
             Edge& offset = m_graph.varArgChild(node, 1);
             DataViewData data = node->bufferAccessData();
 
-            if (!base->prediction() || !offset->prediction()) {
+            bool forceExit = !base->prediction() || !offset->prediction();
+            if (forceExit) {
                 // Never executed (no incoming predictions): OSR-exit, as ArrayMode::refine() would decide.
+                // The edges below are still fixed so the node stays well-formed for the backends,
+                // even though the code after the ForceOSRExit is unreachable.
                 node->setArrayMode(ArrayMode(Array::ForceExit, node->arrayMode().action()));
                 blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
-                break;
-            }
+            } else {
+                // A double-typed but integral offset (e.g. `i * 4` predicted double) is accepted the way
+                // GetByVal's index is: convert with a DoubleAsInt32 that exits on a genuine fraction.
+                if (!isInt32Speculation(offset->prediction()) && isFullNumberSpeculation(offset->prediction())) {
+                    Node* newOffset = m_insertionSet.insertNode(
+                        m_indexInBlock, SpecInt32Only, DoubleAsInt32, node->origin,
+                        Edge(offset.node(), DoubleRepUse));
+                    newOffset->setArithMode(Arith::CheckOverflow);
+                    offset.setNode(newOffset);
+                }
 
-            // A double-typed but integral offset (e.g. `i * 4` predicted double) is accepted the way
-            // GetByVal's index is: convert with a DoubleAsInt32 that exits on a genuine fraction.
-            if (!isInt32Speculation(offset->prediction()) && isFullNumberSpeculation(offset->prediction())) {
-                Node* newOffset = m_insertionSet.insertNode(
-                    m_indexInBlock, SpecInt32Only, DoubleAsInt32, node->origin,
-                    Edge(offset.node(), DoubleRepUse));
-                newOffset->setArithMode(Arith::CheckOverflow);
-                offset.setNode(newOffset);
+                bool mayBeResizable = data.isResizable || m_graph.hasExitSite(node->origin.semantic, UnexpectedResizableArrayBufferView);
+                node->setArrayMode(ArrayMode(Array::Uint8Array, Array::NonArray, Array::InBounds, Array::AsIs, node->arrayMode().action(), false, mayBeResizable));
+                blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
+                fixEdge<KnownCellUse>(base);
+                fixEdge<Int32Use>(offset);
             }
-
-            bool mayBeResizable = data.isResizable || m_graph.hasExitSite(node->origin.semantic, UnexpectedResizableArrayBufferView);
-            node->setArrayMode(ArrayMode(Array::Uint8Array, Array::NonArray, Array::InBounds, Array::AsIs, node->arrayMode().action(), false, mayBeResizable));
-            blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
-            fixEdge<KnownCellUse>(base);
-            fixEdge<Int32Use>(offset);
 
             switch (node->op()) {
             case BufferReadInt:
