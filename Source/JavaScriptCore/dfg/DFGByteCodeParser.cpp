@@ -70,6 +70,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #if USE(BUN_JSC_ADDITIONS)
+#include "BufferAccessorRegistry.h"
 #include "FFISignature.h"
 #include "JSFFIFunction.h"
 #endif
@@ -5095,6 +5096,77 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             setResult(addToGraph(JSConstant, OpInfo(m_constantUndefined)));
             return CallOptimizationResult::Inlined;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Buffer accessors: `buffer.readInt32LE(offset)`, `buffer.writeDoubleBE(value, offset)`, ...
+        // (Node.js Buffer.prototype). Same architecture assumptions as the DataView accessors above
+        // (64-bit, unaligned loads/stores OK); the difference is that the base is the receiver (a
+        // Uint8Array, refined via ArrayMode/CheckArray rather than a DataView cell), the offset defaults
+        // to 0, endianness is fixed per accessor, and every accessor of the family shares ONE
+        // intrinsic -- which accessor this is comes from the registry, keyed by the callee's native
+        // function pointer.
+        case BufferAccessorIntrinsic: {
+            if (!is64Bit())
+                return CallOptimizationResult::DidNothing;
+
+            // Everything the nodes speculate falls back to the host function, so any repeated
+            // failure at this call site (wrong receiver type, non-int32 / out-of-bounds offset,
+            // out-of-range value, >2GB receiver) leaves the plain Call in place on recompile.
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, OutOfBounds)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow))
+                return CallOptimizationResult::DidNothing;
+
+            NativeExecutable* nativeExecutable = variant.nativeExecutable();
+            if (!nativeExecutable)
+                return CallOptimizationResult::DidNothing;
+            std::optional<BufferAccessorDescriptor> descriptor = bufferAccessorDescriptor(nativeExecutable->function());
+            if (!descriptor)
+                return CallOptimizationResult::DidNothing;
+
+            DataViewData data = descriptor->data;
+            data.isResizable = m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, UnexpectedResizableArrayBufferView);
+            ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, descriptor->isWrite ? Array::Write : Array::Read);
+
+            // `offset = 0`: an absent argument, or (after inlining) a literal undefined.
+            auto offsetArgument = [&](int argumentIndex) -> Node* {
+                if (argumentCountIncludingThis <= argumentIndex)
+                    return jsConstant(jsNumber(0));
+                Node* offset = get(virtualRegisterForArgumentIncludingThis(argumentIndex, registerOffset));
+                if (offset->isUndefinedOrNullConstant() && !offset->asJSValue().isNull())
+                    return jsConstant(jsNumber(0));
+                return offset;
+            };
+
+            if (descriptor->isWrite) {
+                // write*(value, offset = 0)
+                if (argumentCountIncludingThis < 2)
+                    return CallOptimizationResult::DidNothing;
+
+                insertChecks();
+
+                Node* offset = offsetArgument(2);
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset))); // base (the receiver)
+                addVarArgChild(offset);
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))); // value
+                addVarArgChild(nullptr); // Leave room for property storage.
+                setResult(addToGraph(Node::VarArg, BufferWrite, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord)));
+                return CallOptimizationResult::Inlined;
+            }
+
+            // read*(offset = 0)
+            insertChecks();
+
+            Node* offset = offsetArgument(1);
+
+            addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset))); // base (the receiver)
+            addVarArgChild(offset);
+            addVarArgChild(nullptr); // Leave room for property storage.
+            setResult(addToGraph(Node::VarArg, data.isFloatingPoint ? BufferReadFloat : BufferReadInt, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord)));
+            return CallOptimizationResult::Inlined;
+        }
+#endif // USE(BUN_JSC_ADDITIONS)
 
         case ObjectHasOwnIntrinsic:
         case HasOwnPropertyIntrinsic: {

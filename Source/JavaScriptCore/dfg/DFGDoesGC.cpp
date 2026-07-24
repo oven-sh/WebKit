@@ -539,6 +539,14 @@ bool doesGC(Graph& graph, Node* node)
     case DataViewGetInt:
         return node->dataViewData().byteSize == 8;
 
+    case BufferReadInt:
+        // The 8-byte reads (readBigInt64 / readBigUInt64) allocate a JSBigInt; the rest are ints.
+        return node->bufferAccessData().byteSize == 8;
+
+    case BufferReadFloat:
+    case BufferWrite:
+        return false;
+
     case CallNumberConstructor:
         switch (node->child1().useKind()) {
         case BigInt32Use:

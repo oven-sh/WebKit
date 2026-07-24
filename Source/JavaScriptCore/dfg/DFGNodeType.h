@@ -667,6 +667,21 @@ namespace JSC { namespace DFG {
     macro(DataViewSet, NodeMustGenerate | NodeMustGenerate | NodeHasVarArgs) \
     macro(DataViewGetByteLength, NodeResultInt32) \
     macro(DataViewGetByteLengthAsInt52, NodeResultInt52) \
+    /* Buffer accessors (runtime/BufferAccessorRegistry.h, USE(BUN_JSC_ADDITIONS)): a Node.js */\
+    /* Buffer.prototype.read* / write*(value,) offset call on a Uint8Array receiver, modeled like */\
+    /* GetByVal / PutByVal on a typed array: vararg children (base, offset[, value], storage) with */\
+    /* opInfo1 = ArrayMode and opInfo2 = DataViewData (width / signedness / float-ness / endianness). */\
+    /* Fixup blesses the array operation (CheckArray + GetIndexedPropertyStorage); SSA lowering appends */\
+    /* the GetArrayLength / CheckInBounds nodes as trailing untyped children, so the receiver check, the */\
+    /* storage load, the length load and the bounds checks are all separately CSE-able / hoistable. */\
+    /* Anything not speculated (bad receiver, non-int32 or out-of-bounds offset, out-of-range value) */\
+    /* OSR-exits to the host function, which owns the exact error behavior. Reads are must-generate */\
+    /* like the DataView gets: the DFG-tier codegen does the bounds check inline. BufferWrite's result */\
+    /* is `offset + byteSize` (Node returns the offset past the written bytes). The enumerators are */\
+    /* unconditional; only their uses are guarded by USE(BUN_JSC_ADDITIONS). */\
+    macro(BufferReadInt, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    macro(BufferReadFloat, NodeResultDouble | NodeMustGenerate | NodeHasVarArgs) \
+    macro(BufferWrite, NodeResultInt32 | NodeMustGenerate | NodeHasVarArgs) \
     /* Date access */ \
     macro(DateNow, NodeMustGenerate | NodeResultDouble) \
     macro(DateGetInt32OrNaN, NodeResultJS) \

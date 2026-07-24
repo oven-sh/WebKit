@@ -175,6 +175,9 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(BooleanToNumber, Common) \
     CLONE_STATUS(BottomValue, Common) \
     CLONE_STATUS(Branch, Special) \
+    CLONE_STATUS(BufferReadFloat, Common) \
+    CLONE_STATUS(BufferReadInt, Common) \
+    CLONE_STATUS(BufferWrite, Common) \
     CLONE_STATUS(Call, Common) \
     CLONE_STATUS(CallCustomAccessorGetter, Common) \
     CLONE_STATUS(CallDirectEval, Common) \

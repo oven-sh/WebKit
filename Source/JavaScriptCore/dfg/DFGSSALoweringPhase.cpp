@@ -91,6 +91,17 @@ private:
             break;
         }
 
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite: {
+#if USE(BUN_JSC_ADDITIONS)
+            lowerBufferAccessBoundsChecks();
+#else
+            DFG_CRASH(m_graph, m_node, "Unexpected node type");
+#endif
+            break;
+        }
+
         case StringCharCodeAt: {
             lowerStringBoundsCheck(m_graph.child(m_node, 0), m_graph.child(m_node, 1), m_graph.child(m_node, 2));
             break;
@@ -193,6 +204,55 @@ private:
         m_node->children = adjacencyList;
         return true;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Buffer accessors: like lowerBoundsCheck() (the receiver is a Uint8Array, so its "length" is
+    // its byte length), except that the element stride is one byte while the access spans byteSize
+    // bytes, so a multi-byte access needs a second check on its last byte: `offset + byteSize - 1`.
+    // Both checks (and the length load feeding them) are ordinary GetArrayLength / CheckInBounds
+    // nodes, hence CSE-able, hoistable and eliminable by IntegerRangeOptimization; they are appended
+    // as trailing untyped children purely so that they keep dominating the access. The exiting
+    // behavior is what Node.js requires: an out-of-bounds Buffer read/write always throws (it never
+    // returns undefined), and the throw is materialized by the host function after the OSR exit.
+    void lowerBufferAccessBoundsChecks()
+    {
+        ArrayMode arrayMode = m_node->arrayMode();
+        if (arrayMode.type() == Array::ForceExit)
+            return; // Fixup found no predictions and inserted a ForceOSRExit; nothing to lower.
+        RELEASE_ASSERT(arrayMode.type() == Array::Uint8Array && arrayMode.isInBounds() && !arrayMode.lengthNeedsStorage());
+        DataViewData data = m_node->bufferAccessData();
+        Edge base = m_graph.varArgChild(m_node, 0);
+        Edge offset = m_graph.varArgChild(m_node, 1);
+        // Buffer accessor offsets are int32 (a >2GB receiver keeps the length load exiting via
+        // Overflow, which then disables the intrinsic at this call site): the int32 length suffices.
+        RELEASE_ASSERT(offset.useKind() == Int32Use);
+
+        Node* length = m_insertionSet.insertNode(
+            m_nodeIndex, SpecInt32Only, GetArrayLength, m_node->origin,
+            OpInfo(arrayMode.asWord()), Edge(base.node(), KnownCellUse), Edge());
+        if (arrayMode.mayBeResizableOrGrowableSharedTypedArray())
+            m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+
+        unsigned appended = 1;
+        Node* checkFirstByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, offset, Edge(length, KnownInt32Use));
+        Node* checkLastByte = nullptr;
+        if (data.byteSize > 1) {
+            Node* lastByteOffset = m_insertionSet.insertNode(
+                m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(Arith::CheckOverflow),
+                Edge(offset.node(), Int32Use),
+                m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(data.byteSize - 1), Int32Use));
+            checkLastByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, Edge(lastByteOffset, Int32Use), Edge(length, KnownInt32Use));
+            appended = 2;
+        }
+
+        AdjacencyList adjacencyList = m_graph.copyVarargChildren(m_node);
+        m_graph.m_varArgChildren.append(Edge(checkFirstByte, UntypedUse));
+        if (checkLastByte)
+            m_graph.m_varArgChildren.append(Edge(checkLastByte, UntypedUse));
+        adjacencyList.setNumChildren(adjacencyList.numChildren() + appended);
+        m_node->children = adjacencyList;
+    }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     bool lowerStringBoundsCheck(Edge base, Edge index, Edge& checkInBoundsEdge)
     {

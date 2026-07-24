@@ -190,6 +190,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case ArraySortCompact:
         case ArraySortCommit:
         case GetCellButterflySlot:
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite:
             return clobberTop();
         default:
             DFG_CRASH(graph, node, "Unhandled ArrayMode opcode.");
@@ -2706,6 +2709,44 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         if (node->dataViewData().isResizable)
             write(MiscFields);
         write(TypedArrayProperties);
+        return;
+    }
+
+    case BufferReadInt:
+    case BufferReadFloat: {
+        if (node->arrayMode().type() == Array::ForceExit) {
+            write(SideState);
+            return;
+        }
+        // A typed-array load through the (blessed) storage: the receiver's length / vector fields are
+        // MiscFields reads, the bytes are TypedArrayProperties. The def location's heap carries the
+        // access descriptor as its payload so that CSE only unifies loads of the same width /
+        // signedness / endianness at the same (base, offset), while any write to TypedArrayProperties
+        // (top payload) still invalidates them all.
+        DataViewData data = node->bufferAccessData();
+        read(MiscFields);
+        read(TypedArrayProperties);
+        if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray()) {
+            write(MiscFields);
+            write(TypedArrayProperties);
+        } else
+            def(HeapLocation(indexedPropertyLocForResultType(node->result()), AbstractHeap(TypedArrayProperties, data.asQuadWord), graph.varArgChild(node, 0), graph.varArgChild(node, 1)), LazyNode(node));
+        return;
+    }
+
+    case BufferWrite: {
+        if (node->arrayMode().type() == Array::ForceExit) {
+            write(SideState);
+            return;
+        }
+        read(MiscFields);
+        if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray()) {
+            read(TypedArrayProperties);
+            write(MiscFields);
+        }
+        write(TypedArrayProperties);
+        // FIXME: We could def() the just-stored value for load elimination, but the store truncates
+        // its input (like a typed-array PutByVal), so the def would have to be the truncated value.
         return;
     }
 

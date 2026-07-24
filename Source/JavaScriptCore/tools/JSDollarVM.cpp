@@ -78,6 +78,14 @@
 #include "VMInspector.h"
 #include "VMTrapsInlines.h"
 #include "WasmCapabilities.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "BufferAccessorRegistry.h"
+#include "JSArrayBufferView.h"
+#include "JSBigInt.h"
+#include "MathCommon.h"
+#include "ObjectConstructor.h"
+#include <wtf/UnalignedAccess.h>
+#endif
 #include <bmalloc/BPlatform.h>
 #include <unicode/uversion.h>
 #include <wtf/ApproximateTime.h>
@@ -5080,6 +5088,263 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
 
 #endif // USE(BUN_JSC_ADDITIONS)
 
+#if USE(BUN_JSC_ADDITIONS)
+// $vm.createBufferAccessors(): a Node.js-Buffer-like accessor set for testing the BufferReadInt /
+// BufferReadFloat / BufferWrite nodes without an embedder. Returns an object of host functions
+// (readInt8 ... writeDoubleBE, plus the BigInt reads), each carrying BufferAccessorIntrinsic and
+// registered in the BufferAccessorRegistry, meant to be installed on a Uint8Array (subclass)
+// prototype by the test. The semantics are deliberately simple but are the reference the JIT must
+// agree with for every input it does not exit on: the receiver must be an ArrayBufferView; the
+// offset (default 0) an int32 with `0 <= offset && offset + byteSize <= byteLength` (else a
+// RangeError); a write's value must be a number within the accessor's range (else a RangeError;
+// NaN and fractions truncate); a read returns the value, a write returns `offset + byteSize`.
+namespace BufferAccessorTest {
+
+enum class Kind : uint8_t { Int8, Uint8, Int16, Uint16, Int32, Uint32, Float32, Float64, BigInt64, BigUint64 };
+
+static constexpr uint8_t byteSizeFor(Kind kind)
+{
+    switch (kind) {
+    case Kind::Int8:
+    case Kind::Uint8:
+        return 1;
+    case Kind::Int16:
+    case Kind::Uint16:
+        return 2;
+    case Kind::Int32:
+    case Kind::Uint32:
+    case Kind::Float32:
+        return 4;
+    case Kind::Float64:
+    case Kind::BigInt64:
+    case Kind::BigUint64:
+        return 8;
+    }
+    return 0;
+}
+
+template<Kind kind, bool isLittleEndian, bool isWrite>
+static EncodedJSValue accessor(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    constexpr size_t byteSize = byteSizeFor(kind);
+    constexpr bool isBigInt = kind == Kind::BigInt64 || kind == Kind::BigUint64;
+    constexpr bool isFloat = kind == Kind::Float32 || kind == Kind::Float64;
+
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->thisValue());
+    if (!view)
+        return throwVMTypeError(globalObject, scope, "Buffer accessor receiver must be an ArrayBufferView"_s);
+
+    // Coerce the value first (this may run user code), then validate the offset -- the order
+    // Node.js uses and therefore the order the JIT relies on when it OSR-exits back here.
+    double numberValue = 0;
+    uint64_t bigIntValue = 0;
+    if constexpr (isWrite) {
+        JSValue value = callFrame->argument(0);
+        if constexpr (isBigInt) {
+            if (!value.isBigInt())
+                return throwVMTypeError(globalObject, scope, "Buffer accessor value must be a BigInt"_s);
+            // Node.js's write*BigInt64* throws for a BigInt that does not fit in 64 bits.
+            if (auto* heapBigInt = value.isCell() ? dynamicDowncast<JSBigInt>(value.asCell()) : nullptr) {
+                if (heapBigInt->length() > 1)
+                    return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
+                uint64_t digit = heapBigInt->length() ? heapBigInt->digit(0) : 0;
+                bool outOfRange = kind == Kind::BigUint64
+                    ? heapBigInt->sign() && heapBigInt->length()
+                    : (heapBigInt->sign() ? digit > (1ULL << 63) : digit > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+                if (outOfRange)
+                    return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
+            }
+            bigIntValue = kind == Kind::BigInt64 ? static_cast<uint64_t>(value.toBigInt64(globalObject)) : value.toBigUInt64(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        } else {
+            numberValue = value.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+
+    JSValue offsetValue = callFrame->argument(isWrite ? 1 : 0);
+    double offsetNumber = 0;
+    if (!offsetValue.isUndefined()) {
+        if (!offsetValue.isNumber())
+            return throwVMRangeError(globalObject, scope, "Buffer accessor offset must be a number"_s);
+        offsetNumber = offsetValue.asNumber();
+    }
+    size_t byteLength = view->byteLength();
+    if (std::floor(offsetNumber) != offsetNumber || byteLength < byteSize || !(offsetNumber >= 0 && offsetNumber <= static_cast<double>(byteLength - byteSize)))
+        return throwVMRangeError(globalObject, scope, "Buffer accessor offset is out of range"_s);
+    size_t offset = static_cast<size_t>(offsetNumber);
+    uint8_t* address = static_cast<uint8_t*>(view->vector()) + offset;
+
+    auto swapIfBigEndian = [](auto integer) {
+        if constexpr (isLittleEndian || sizeof(integer) == 1)
+            return integer;
+        else if constexpr (sizeof(integer) == 2)
+            return static_cast<decltype(integer)>(__builtin_bswap16(integer));
+        else if constexpr (sizeof(integer) == 4)
+            return static_cast<decltype(integer)>(__builtin_bswap32(integer));
+        else
+            return static_cast<decltype(integer)>(__builtin_bswap64(integer));
+    };
+
+    if constexpr (!isWrite) {
+        if constexpr (kind == Kind::Int8)
+            return JSValue::encode(jsNumber(WTF::unalignedLoad<int8_t>(address)));
+        else if constexpr (kind == Kind::Uint8)
+            return JSValue::encode(jsNumber(WTF::unalignedLoad<uint8_t>(address)));
+        else if constexpr (kind == Kind::Int16)
+            return JSValue::encode(jsNumber(static_cast<int16_t>(swapIfBigEndian(WTF::unalignedLoad<uint16_t>(address)))));
+        else if constexpr (kind == Kind::Uint16)
+            return JSValue::encode(jsNumber(swapIfBigEndian(WTF::unalignedLoad<uint16_t>(address))));
+        else if constexpr (kind == Kind::Int32)
+            return JSValue::encode(jsNumber(static_cast<int32_t>(swapIfBigEndian(WTF::unalignedLoad<uint32_t>(address)))));
+        else if constexpr (kind == Kind::Uint32)
+            return JSValue::encode(jsNumber(swapIfBigEndian(WTF::unalignedLoad<uint32_t>(address))));
+        else if constexpr (kind == Kind::Float32)
+            return JSValue::encode(jsNumber(std::bit_cast<float>(swapIfBigEndian(WTF::unalignedLoad<uint32_t>(address)))));
+        else if constexpr (kind == Kind::Float64)
+            return JSValue::encode(jsNumber(std::bit_cast<double>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address)))));
+        else if constexpr (kind == Kind::BigInt64) {
+            int64_t loaded = static_cast<int64_t>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, loaded)));
+        } else {
+            uint64_t loaded = swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, loaded)));
+        }
+    } else {
+        if constexpr (isFloat) {
+            if constexpr (kind == Kind::Float32)
+                WTF::unalignedStore<uint32_t>(address, swapIfBigEndian(std::bit_cast<uint32_t>(static_cast<float>(numberValue))));
+            else
+                WTF::unalignedStore<uint64_t>(address, swapIfBigEndian(std::bit_cast<uint64_t>(numberValue)));
+        } else if constexpr (isBigInt)
+            WTF::unalignedStore<uint64_t>(address, swapIfBigEndian(bigIntValue));
+        else {
+            double minimum, maximum;
+            switch (kind) {
+            case Kind::Int8:
+                minimum = -0x80;
+                maximum = 0x7f;
+                break;
+            case Kind::Uint8:
+                minimum = 0;
+                maximum = 0xff;
+                break;
+            case Kind::Int16:
+                minimum = -0x8000;
+                maximum = 0x7fff;
+                break;
+            case Kind::Uint16:
+                minimum = 0;
+                maximum = 0xffff;
+                break;
+            case Kind::Int32:
+                minimum = INT32_MIN;
+                maximum = INT32_MAX;
+                break;
+            case Kind::Uint32:
+            default:
+                minimum = 0;
+                maximum = 4294967295.0;
+                break;
+            }
+            if (numberValue < minimum || numberValue > maximum)
+                return throwVMRangeError(globalObject, scope, "Buffer accessor value is out of range"_s);
+            // NaN passes the range check and stores 0 (ToInt32 semantics), like Node.js / DataView.
+            if constexpr (byteSize == 1)
+                WTF::unalignedStore<uint8_t>(address, static_cast<uint8_t>(toInt32(numberValue)));
+            else if constexpr (byteSize == 2)
+                WTF::unalignedStore<uint16_t>(address, swapIfBigEndian(static_cast<uint16_t>(toInt32(numberValue))));
+            else if constexpr (kind == Kind::Int32)
+                WTF::unalignedStore<uint32_t>(address, swapIfBigEndian(static_cast<uint32_t>(toInt32(numberValue))));
+            else
+                WTF::unalignedStore<uint32_t>(address, swapIfBigEndian(toUInt32(numberValue)));
+        }
+        return JSValue::encode(jsNumber(offset + byteSize));
+    }
+}
+
+struct Entry {
+    ASCIILiteral name;
+    NativeFunction function;
+    Kind kind;
+    bool isLittleEndian;
+    bool isWrite;
+    unsigned arity;
+};
+
+#define BUFFER_ACCESSOR_TEST_ENTRY(name, kindName, isLittleEndian, isWrite, arity) \
+    { name ""_s, accessor<Kind::kindName, isLittleEndian, isWrite>, Kind::kindName, isLittleEndian, isWrite, arity }
+
+static const Entry entries[] = {
+    BUFFER_ACCESSOR_TEST_ENTRY("readInt8", Int8, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readUInt8", Uint8, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readInt16LE", Int16, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readInt16BE", Int16, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readUInt16LE", Uint16, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readUInt16BE", Uint16, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readInt32LE", Int32, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readInt32BE", Int32, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readUInt32LE", Uint32, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readUInt32BE", Uint32, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readFloatLE", Float32, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readFloatBE", Float32, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readDoubleLE", Float64, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readDoubleBE", Float64, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readBigInt64LE", BigInt64, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readBigInt64BE", BigInt64, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readBigUInt64LE", BigUint64, true, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("readBigUInt64BE", BigUint64, false, false, 1),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeInt8", Int8, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeUInt8", Uint8, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeInt16LE", Int16, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeInt16BE", Int16, false, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeUInt16LE", Uint16, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeUInt16BE", Uint16, false, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeInt32LE", Int32, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeInt32BE", Int32, false, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeUInt32LE", Uint32, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeUInt32BE", Uint32, false, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeFloatLE", Float32, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeFloatBE", Float32, false, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeDoubleLE", Float64, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeDoubleBE", Float64, false, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeBigInt64LE", BigInt64, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeBigInt64BE", BigInt64, false, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeBigUInt64LE", BigUint64, true, true, 2),
+    BUFFER_ACCESSOR_TEST_ENTRY("writeBigUInt64BE", BigUint64, false, true, 2),
+};
+
+#undef BUFFER_ACCESSOR_TEST_ENTRY
+
+} // namespace BufferAccessorTest
+
+static JSC_DECLARE_HOST_FUNCTION(functionCreateBufferAccessors);
+JSC_DEFINE_HOST_FUNCTION(functionCreateBufferAccessors, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+
+    using namespace BufferAccessorTest;
+    JSObject* result = constructEmptyObject(globalObject);
+    for (auto& entry : entries) {
+        DFG::DataViewData data { };
+        data.byteSize = byteSizeFor(entry.kind);
+        data.isSigned = entry.kind == Kind::Int8 || entry.kind == Kind::Int16 || entry.kind == Kind::Int32 || entry.kind == Kind::BigInt64;
+        data.isFloatingPoint = entry.kind == Kind::Float32 || entry.kind == Kind::Float64;
+        data.isResizable = false;
+        data.isLittleEndian = triState(entry.isLittleEndian);
+        registerBufferAccessor(toTagged(entry.function), BufferAccessorDescriptor { data, entry.isWrite });
+        JSFunction* function = JSFunction::create(vm, globalObject, entry.arity, entry.name, entry.function, ImplementationVisibility::Public, BufferAccessorIntrinsic);
+        result->putDirect(vm, Identifier::fromString(vm, entry.name), function);
+    }
+    return JSValue::encode(result);
+}
+#endif // USE(BUN_JSC_ADDITIONS)
+
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
 
 void JSDollarVM::finishCreation(VM& vm)
@@ -5303,6 +5568,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "cachedCallFromCPP"_s, functionCachedCallFromCPP, 2);
     addFunction(vm, alwaysAllow, "dumpLineBreakData"_s, functionDumpLineBreakData, 0);
     addFunction(vm, alwaysAllow, "weakCreate"_s, functionWeakCreate, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "createBufferAccessors"_s, functionCreateBufferAccessors, 0);
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
