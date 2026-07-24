@@ -35,6 +35,8 @@
 #include "OperandsInlines.h"
 #include <wtf/DataLog.h>
 #include <wtf/HashMap.h>
+#include <wtf/LEBDecoder.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace DFG {
 
@@ -43,6 +45,174 @@ void VariableEventStreamBuilder::logEvent(const VariableEvent& event)
     dataLog("seq#", static_cast<unsigned>(m_stream.size()), ":");
     event.dump(WTF::dataFile());
     dataLogLn(" ");
+}
+
+static_assert(static_cast<unsigned>(InvalidEventKind) < (1u << VariableEventStream::operandKindShift));
+static_assert(static_cast<unsigned>(lastOperandKind) < (1u << (CHAR_BIT - VariableEventStream::operandKindShift)));
+static_assert(sizeof(MacroAssembler::RegisterID) == 1);
+static_assert(sizeof(MacroAssembler::FPRegisterID) == 1);
+
+static ALWAYS_INLINE void encodeUnsigned(Vector<uint8_t>& out, uint32_t value)
+{
+    while (value >= 0x80) {
+        out.append(static_cast<uint8_t>(value | 0x80));
+        value >>= 7;
+    }
+    out.append(static_cast<uint8_t>(value));
+}
+
+static ALWAYS_INLINE void encodeSigned(Vector<uint8_t>& out, int32_t value)
+{
+    for (;;) {
+        uint8_t byte = value & 0x7f;
+        value >>= 7;
+        bool signBit = byte & 0x40;
+        if ((!value && !signBit) || (value == -1 && signBit)) {
+            out.append(byte);
+            return;
+        }
+        out.append(byte | 0x80);
+    }
+}
+
+void VariableEventStream::encodeEvent(Vector<uint8_t>& out, const VariableEvent& event)
+{
+    VariableEventKind kind = event.kind();
+    switch (kind) {
+    case Reset:
+        out.append(static_cast<uint8_t>(kind));
+        return;
+    case Birth:
+    case Death:
+        out.append(static_cast<uint8_t>(kind));
+        encodeUnsigned(out, event.id().bits());
+        return;
+    case BirthToFill:
+    case Fill: {
+        out.append(static_cast<uint8_t>(kind));
+        encodeUnsigned(out, event.id().bits());
+        DataFormat format = event.dataFormat();
+        out.append(static_cast<uint8_t>(format));
+        if (format == DataFormatDouble)
+            out.append(static_cast<uint8_t>(event.fpr()));
+#if USE(JSVALUE32_64)
+        else if (format & DataFormatJS) {
+            out.append(static_cast<uint8_t>(event.tagGPR()));
+            out.append(static_cast<uint8_t>(event.payloadGPR()));
+        }
+#endif
+        else
+            out.append(static_cast<uint8_t>(event.gpr()));
+        return;
+    }
+    case BirthToSpill:
+    case Spill:
+        out.append(static_cast<uint8_t>(kind));
+        encodeUnsigned(out, event.id().bits());
+        out.append(static_cast<uint8_t>(event.dataFormat()));
+        encodeSigned(out, event.spillRegister().offset());
+        return;
+    case MovHintEvent: {
+        Operand operand = event.operand();
+        out.append(static_cast<uint8_t>(kind) | (static_cast<uint8_t>(operand.kind()) << operandKindShift));
+        encodeUnsigned(out, event.id().bits());
+        encodeSigned(out, operand.value());
+        return;
+    }
+    case SetLocalEvent: {
+        Operand operand = event.operand();
+        out.append(static_cast<uint8_t>(kind) | (static_cast<uint8_t>(operand.kind()) << operandKindShift));
+        encodeSigned(out, event.machineRegister().offset());
+        out.append(static_cast<uint8_t>(event.dataFormat()));
+        encodeSigned(out, operand.value());
+        return;
+    }
+    case InvalidEventKind:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+VariableEvent VariableEventStream::decodeEvent(size_t& offset) const
+{
+    std::span<const uint8_t> bytes = m_bytes.span();
+
+    auto readByte = [&]() -> uint8_t {
+        return bytes[offset++];
+    };
+    auto readUnsigned = [&]() -> uint32_t {
+        uint32_t result = 0;
+        bool ok = WTF::LEBDecoder::decodeUInt32(bytes, offset, result);
+        RELEASE_ASSERT(ok);
+        return result;
+    };
+    auto readSigned = [&]() -> int32_t {
+        int32_t result = 0;
+        bool ok = WTF::LEBDecoder::decodeInt32(bytes, offset, result);
+        RELEASE_ASSERT(ok);
+        return result;
+    };
+
+    uint8_t tag = readByte();
+    VariableEventKind kind = static_cast<VariableEventKind>(tag & eventKindMask);
+    switch (kind) {
+    case Reset:
+        return VariableEvent::reset();
+    case Birth:
+        return VariableEvent::birth(MinifiedID::fromBits(readUnsigned()));
+    case Death:
+        return VariableEvent::death(MinifiedID::fromBits(readUnsigned()));
+    case BirthToFill:
+    case Fill: {
+        MinifiedID id = MinifiedID::fromBits(readUnsigned());
+        DataFormat format = static_cast<DataFormat>(readByte());
+        if (format == DataFormatDouble)
+            return VariableEvent::fillFPR(kind, id, static_cast<MacroAssembler::FPRegisterID>(static_cast<int8_t>(readByte())));
+#if USE(JSVALUE32_64)
+        if (format & DataFormatJS) {
+            auto tagGPR = static_cast<MacroAssembler::RegisterID>(static_cast<int8_t>(readByte()));
+            auto payloadGPR = static_cast<MacroAssembler::RegisterID>(static_cast<int8_t>(readByte()));
+            return VariableEvent::fillPair(kind, id, tagGPR, payloadGPR);
+        }
+#endif
+        return VariableEvent::fillGPR(kind, id, static_cast<MacroAssembler::RegisterID>(static_cast<int8_t>(readByte())), format);
+    }
+    case BirthToSpill:
+    case Spill: {
+        MinifiedID id = MinifiedID::fromBits(readUnsigned());
+        DataFormat format = static_cast<DataFormat>(readByte());
+        return VariableEvent::spill(kind, id, VirtualRegister(readSigned()), format);
+    }
+    case MovHintEvent: {
+        OperandKind operandKind = static_cast<OperandKind>(tag >> operandKindShift);
+        MinifiedID id = MinifiedID::fromBits(readUnsigned());
+        return VariableEvent::movHint(id, Operand(operandKind, readSigned()));
+    }
+    case SetLocalEvent: {
+        OperandKind operandKind = static_cast<OperandKind>(tag >> operandKindShift);
+        VirtualRegister machineReg(readSigned());
+        DataFormat format = static_cast<DataFormat>(readByte());
+        return VariableEvent::setLocal(Operand(operandKind, readSigned()), machineReg, format);
+    }
+    case InvalidEventKind:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return VariableEvent();
+}
+
+VariableEventStream::VariableEventStream(Vector<VariableEvent>&& stream)
+{
+    Vector<uint8_t> bytes;
+    bytes.reserveInitialCapacity(stream.size() * 2);
+    Vector<Checkpoint> checkpoints;
+    for (unsigned i = 0; i < stream.size(); ++i) {
+        if (stream[i].kind() == Reset)
+            checkpoints.append(Checkpoint { i, static_cast<unsigned>(bytes.size()) });
+        encodeEvent(bytes, stream[i]);
+    }
+    m_bytes = WTF::move(bytes);
+    m_checkpoints = WTF::move(checkpoints);
 }
 
 namespace {
@@ -172,18 +342,25 @@ unsigned VariableEventStream::reconstruct(
         return numVariables;
     }
     
-    // Step 1: Find the last checkpoint, and figure out the number of virtual registers as we go.
-    unsigned startIndex = index - 1;
-    while (m_stream.at(startIndex).kind() != Reset)
-        startIndex--;
-    
+    // Step 1: Find the last checkpoint at or before index - 1. SpeculativeJIT
+    // emits a Reset before any other event for each basic block, so a non-zero
+    // index always has one.
+    RELEASE_ASSERT(!m_checkpoints.isEmpty());
+    const Checkpoint* checkpoint = approximateBinarySearch<const Checkpoint, unsigned>(
+        m_checkpoints, m_checkpoints.size(), index - 1,
+        [](const Checkpoint* checkpoint) { return checkpoint->eventIndex; });
+    if (checkpoint->eventIndex > index - 1 && checkpoint != m_checkpoints.begin())
+        --checkpoint;
+    RELEASE_ASSERT(checkpoint->eventIndex <= index - 1);
+
     // Step 2: Create a mock-up of the DFG's state and execute the events.
     Operands<ValueSource> operandSources(codeBlock->numParameters(), numVariables, numTmps);
     for (unsigned i = operandSources.size(); i--;)
         operandSources[i] = ValueSource(SourceIsDead);
     UncheckedKeyHashMap<MinifiedID, MinifiedGenerationInfo> generationInfos;
-    for (unsigned i = startIndex; i < index; ++i) {
-        const VariableEvent& event = m_stream.at(i);
+    size_t byteOffset = checkpoint->byteOffset;
+    for (unsigned i = checkpoint->eventIndex; i < index; ++i) {
+        VariableEvent event = decodeEvent(byteOffset);
         dataLogLnIf(verbose, "Processing event ", event);
         switch (event.kind()) {
         case Reset:
@@ -308,4 +485,3 @@ unsigned VariableEventStream::reconstruct(
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-
