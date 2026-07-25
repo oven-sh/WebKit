@@ -1734,13 +1734,21 @@ end
 .stackHeightOK:
     if X86_64 or ARM64
         # We need to start zeroing from sp as it has been adjusted after saving callee saves.
+        # Both the old and new sp are stack aligned (16 bytes), so zero two words per
+        # iteration with a bottom-tested loop.
         move sp, t2
         move t0, sp
+        bpeq t0, t2, .zeroStackDone
+        move 0, t3
 .zeroStackLoop:
-        bpeq sp, t2, .zeroStackDone
-        subp PtrSize, t2
-        storep 0, [t2]
-        jmp .zeroStackLoop
+        subp 2 * PtrSize, t2
+        if ARM64 or ARM64E
+            storepairq t3, t3, [t2]
+        else
+            storeq t3, [t2]
+            storeq t3, PtrSize[t2]
+        end
+        bpa t2, t0, .zeroStackLoop
 .zeroStackDone:
     else
         move t0, sp
