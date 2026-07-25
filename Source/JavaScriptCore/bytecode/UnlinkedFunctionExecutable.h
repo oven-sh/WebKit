@@ -353,7 +353,12 @@ public:
 };
 
 #if !ASSERT_ENABLED
+#if USE(BUN_JSC_ADDITIONS)
+// Identifier carries a lazily-materialized AtomString under BUN_JSC_ADDITIONS (phase D.1), which grows this type.
+static_assert(sizeof(UnlinkedFunctionExecutable) <= 112, "UnlinkedFunctionExecutable needs to be small");
+#else
 static_assert(sizeof(UnlinkedFunctionExecutable) <= 96, "UnlinkedFunctionExecutable needs to be small");
+#endif
 #endif
 
 } // namespace JSC

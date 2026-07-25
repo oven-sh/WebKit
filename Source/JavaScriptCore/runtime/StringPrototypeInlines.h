@@ -591,11 +591,19 @@ inline JSString* tryReplaceOneCharUsingString(JSGlobalObject* globalObject, JSSt
         return nullptr;
 
     RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    auto searchString = search->view(globalObject);
+#else
     auto searchString = search->value(globalObject);
+#endif
     if (searchString->length() != 1)
         RELEASE_AND_RETURN(scope, nullptr);
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto replaceString = replacement->view(globalObject);
+#else
     auto replaceString = replacement->value(globalObject);
+#endif
     RETURN_IF_EXCEPTION(scope, nullptr);
     if constexpr (check == DollarCheck::Yes) {
         if (replaceString->find('$') != notFound)
@@ -908,7 +916,13 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
             auto jsString = jsResult.toString(globalObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
 
+#if USE(BUN_JSC_ADDITIONS)
+            // Only is8Bit()+length() are read; use view() so inline results
+            // are not materialized to a StringImpl here.
+            auto string = jsString->view(globalObject);
+#else
             auto string = jsString->value(globalObject);
+#endif
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
 
             replacementsAre8Bit &= string->is8Bit();
@@ -944,8 +958,13 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
             substring.getCharacters8(buffer.subspan(bufferPos));
             bufferPos += substring.length();
 
+#if USE(BUN_JSC_ADDITIONS)
+            auto replacement = asString(slot)->view(globalObject);
+            StringView { replacement }.getCharacters8(buffer.subspan(bufferPos));
+#else
             auto replacement = asString(slot)->value(globalObject);
             StringView { replacement }.getCharacters8(buffer.subspan(bufferPos));
+#endif
             bufferPos += replacement->length();
 
             ++index;
@@ -979,8 +998,13 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
         substring.getCharacters(buffer.subspan(bufferPos));
         bufferPos += substring.length();
 
+#if USE(BUN_JSC_ADDITIONS)
+        auto replacement = asString(slot)->view(globalObject);
+        StringView { replacement }.getCharacters(buffer.subspan(bufferPos));
+#else
         auto replacement = asString(slot)->value(globalObject);
         StringView { replacement }.getCharacters(buffer.subspan(bufferPos));
+#endif
         bufferPos += replacement->length();
 
         ++index;

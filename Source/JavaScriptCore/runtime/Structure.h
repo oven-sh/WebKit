@@ -787,7 +787,17 @@ public:
 
     static bool shouldConvertToPolyProto(const Structure* a, const Structure* b);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Back to the upstream CompactRefPtr layout with fiber-aware ref/deref traits:
+    // RAII dtor handles the deref (so ~Structure stays = default and GC sweep is
+    // trivially destructible when enableIdentifierFiberWords is off), and operator=
+    // replaces the manual uidRef/uidDeref setter.
     UniquedStringImpl* transitionPropertyName() const { return m_transitionPropertyName.get(); }
+    void setTransitionPropertyName(UniquedStringImpl* rep) { m_transitionPropertyName = rep; }
+    void clearTransitionPropertyName() { m_transitionPropertyName = nullptr; }
+#else
+    UniquedStringImpl* transitionPropertyName() const { return m_transitionPropertyName.get(); }
+#endif
 
     struct PropertyHashEntry {
         const HashTable* table;
@@ -1027,7 +1037,21 @@ private:
 
     WriteBarrier<JSCell> m_previousOrRareData;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // CompactRefPtr storage + FiberAwareRefDerefTraits: same packing as upstream,
+    // fiber-safe when enableIdentifierFiberWords is on, identical to CompactRefPtr
+    // (tag-bit test is always false) when off.
+    RefPtr<UniquedStringImpl, CompactPtrTraits<UniquedStringImpl>, FiberAwareRefDerefTraits> m_transitionPropertyName;
+    // A maxFiberWordKeyLength (5-char, 8-bit) fiber word occupies byte0 tag|is8Bit|len
+    // + bytes1..5 payload = 48 bits; CompactPtr on !HAVE(36BIT_ADDRESS) stores a raw
+    // uintptr_t so encode/decode is the identity and the word round-trips losslessly.
+    static_assert(!enableIdentifierFiberWords
+        || (!CompactPtrTraits<UniquedStringImpl>::is32Bit
+            && (1 + maxFiberWordKeyLength) * 8 <= sizeof(CompactPtr<UniquedStringImpl>::StorageType) * 8),
+        "CompactPtrTraits must round-trip a 48-bit fiber-word m_transitionPropertyName");
+#else
     CompactRefPtr<UniquedStringImpl> m_transitionPropertyName;
+#endif
 
     const ClassInfo* m_classInfo;
 

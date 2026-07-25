@@ -36,6 +36,9 @@ BrandedStructure::BrandedStructure(VM& vm, Structure* previous, UniquedStringImp
     , m_brand(brandUid)
     , m_parentBrand(previous->isBrandedStructure() ? previous : nullptr, WriteBarrierEarlyInit)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!isInlinePropertyKey(brandUid));
+#endif
     ASSERT(isBrandedStructure());
 }
 

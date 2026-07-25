@@ -347,11 +347,35 @@ struct HashTable {
         if (!uid)
             return nullptr;
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Static tables are indexed by the build-time content hash (create_hash_table's
+        // perl rapidhash), NOT uidHash() which hashes the pointer bits. Probe with the
+        // StringImpl content hash / inlinePropertyKeyHash so we match the generated index.
+        uintptr_t uidWord = reinterpret_cast<uintptr_t>(uid);
+        int indexEntry = (isInlinePropertyKey(uidWord) ? inlinePropertyKeyHash(uidWord) : uid->hash()) & indexMask;
+#else
         int indexEntry = IdentifierRepHash::hash(uid) & indexMask;
+#endif
         int valueIndex = index[indexEntry].value;
         if (valueIndex == -1)
             return nullptr;
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (isInlinePropertyKey(uidWord)) [[unlikely]] {
+            auto keySpan = inlinePropertyKeySpan8(uidWord);
+            while (true) {
+                auto& tableKey = values[valueIndex].m_key;
+                if (!tableKey.isNull() && tableKey.length() == keySpan.size()
+                    && !memcmp(tableKey.characters(), keySpan.data(), keySpan.size()))
+                    return &values[valueIndex];
+                indexEntry = index[indexEntry].next;
+                if (indexEntry == -1)
+                    return nullptr;
+                valueIndex = index[indexEntry].value;
+                ASSERT(valueIndex != -1);
+            }
+        }
+#endif
         while (true) {
             if (!values[valueIndex].m_key.isNull() && WTF::equal(uid, values[valueIndex].m_key))
                 return &values[valueIndex];

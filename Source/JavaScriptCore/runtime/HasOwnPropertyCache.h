@@ -30,6 +30,10 @@
 #include "Structure.h"
 #include <wtf/UniqueRef.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -47,7 +51,11 @@ public:
         static constexpr ptrdiff_t offsetOfImpl() { return OBJECT_OFFSETOF(Entry, impl); }
         static constexpr ptrdiff_t offsetOfResult() { return OBJECT_OFFSETOF(Entry, result); }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr impl;
+#else
         RefPtr<UniquedStringImpl> impl;
+#endif
         StructureID structureID;
         bool result { false };
     };
@@ -70,7 +78,11 @@ public:
 
     ALWAYS_INLINE static uint32_t hash(StructureID structureID, UniquedStringImpl* impl)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return std::bit_cast<uint32_t>(structureID) + uidHash(impl);
+#else
         return std::bit_cast<uint32_t>(structureID) + impl->hash();
+#endif
     }
 
     ALWAYS_INLINE std::optional<bool> get(Structure* structure, PropertyName propName)
@@ -110,7 +122,11 @@ public:
             UniquedStringImpl* impl = propName.uid();
             StructureID id = structure->id();
             uint32_t index = HasOwnPropertyCache::hash(id, impl) & mask;
+#if USE(BUN_JSC_ADDITIONS)
+            std::bit_cast<Entry*>(this)[index] = Entry { FiberAwareRefPtr(impl), id, result };
+#else
             std::bit_cast<Entry*>(this)[index] = Entry { RefPtr<UniquedStringImpl>(impl), id, result };
+#endif
         }
     }
 

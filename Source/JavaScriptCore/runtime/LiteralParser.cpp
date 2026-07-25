@@ -158,6 +158,40 @@ bool LiteralParser<CharType, reviverMode>::tryJSONPParse(Vector<JSONPData>& resu
 template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::equalIdentifier(UniquedStringImpl* rep, typename Lexer::LiteralParserTokenPtr token)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Structure::transitionPropertyName() may hand us a fiber-word-tagged
+    // UniquedStringImpl* (2..5-char Latin-1 keys). Decode and compare spans
+    // instead of dereferencing.
+    if (isInlinePropertyKey(rep)) {
+        uintptr_t word = reinterpret_cast<uintptr_t>(rep);
+        unsigned len = inlinePropertyKeyLength(word);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+        auto equalSpan = [&](auto tokenSpan) ALWAYS_INLINE_LAMBDA -> bool {
+            if (tokenSpan.size() != len)
+                return false;
+            if (inlinePropertyKeyIs8Bit(word)) {
+                const Latin1Character* chars = bytes + 1;
+                for (unsigned i = 0; i < len; ++i) {
+                    if (static_cast<char16_t>(chars[i]) != static_cast<char16_t>(tokenSpan[i]))
+                        return false;
+                }
+            } else {
+                const char16_t* chars = reinterpret_cast<const char16_t*>(bytes + 2);
+                for (unsigned i = 0; i < len; ++i) {
+                    if (chars[i] != static_cast<char16_t>(tokenSpan[i]))
+                        return false;
+                }
+            }
+            return true;
+        };
+        if (token->type == TokIdentifier)
+            return equalSpan(token->identifier());
+        ASSERT(token->type == TokString);
+        if (token->stringIs8Bit)
+            return equalSpan(token->string8());
+        return equalSpan(token->string16());
+    }
+#endif
     // In the literal parser, we don't want to follow property addition transitions if the property name is a symbol.
     if (rep->isSymbol())
         return false;

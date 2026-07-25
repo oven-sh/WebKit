@@ -602,8 +602,14 @@ private:
         void add(UniquedStringImpl* uid)
         {
             auto result = m_names.add(uid);
+#if USE(BUN_JSC_ADDITIONS)
+            // A fiber-word uid is self-owning; nothing to keep alive.
+            if (result.isNewEntry && !isInlinePropertyKey(uid))
+                m_strings.append(uid);
+#else
             if (result.isNewEntry)
                 m_strings.append(uid);
+#endif
         }
 
         bool contains(UniquedStringImpl* name) const { return m_names.contains(name); }

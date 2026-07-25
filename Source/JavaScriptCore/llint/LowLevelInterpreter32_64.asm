@@ -2228,7 +2228,7 @@ llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
     bineq t1, CellTag, .opSwitchCharFallThrough
     bbneq JSCell::m_type[t0], StringType, .opSwitchCharFallThrough
     loadp JSString::m_fiber[t0], t1
-    btpnz t1, isRopeInPointer, .opSwitchOnRope
+    btpnz t1, notStringImplMask, .opSwitchOnRope
     bineq StringImpl::m_length[t1], 1, .opSwitchCharFallThrough
 
     loadi UnlinkedSimpleJumpTable::m_min[t2], t3
@@ -2254,6 +2254,14 @@ llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
     dispatchIndirect(t1)
 
 .opSwitchOnRope:
+    # Inline small string (notStringImplMask set, isRopeInPointer clear): length is in
+    # bits 3..7 of the fiber in t1; avoid the rope-layout length read below.
+    btpnz t1, isRopeInPointer, .opSwitchOnRealRope
+    urshiftp 3, t1
+    andp (constexpr JSString::inlineLengthMask), t1
+    bineq t1, 1, .opSwitchCharFallThrough
+    jmp .opSwitchSlow
+.opSwitchOnRealRope:
     bineq JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t0], 1, .opSwitchCharFallThrough
 
 .opSwitchSlow:

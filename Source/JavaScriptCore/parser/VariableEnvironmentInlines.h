@@ -100,7 +100,7 @@ ALWAYS_INLINE PrivateNameEnvironment::AddResult VariableEnvironment::addPrivateN
     return addPrivateName(identifier.impl());
 }
 
-ALWAYS_INLINE PrivateNameEnvironment::AddResult VariableEnvironment::addPrivateName(const RefPtr<UniquedStringImpl>& identifier)
+ALWAYS_INLINE PrivateNameEnvironment::AddResult VariableEnvironment::addPrivateName(const VERefPtr& identifier)
 {
     if (!m_rareData)
         m_rareData = makeUnique<VariableEnvironment::RareData>();

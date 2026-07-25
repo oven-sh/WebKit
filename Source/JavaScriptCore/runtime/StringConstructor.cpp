@@ -26,6 +26,9 @@
 #include "SparseArrayValueMap.h"
 #include "StringPrototype.h"
 #include <wtf/text/StringBuilder.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include "JSStringBuilder.h"
+#endif
 
 namespace JSC {
 
@@ -123,7 +126,11 @@ JSC_DEFINE_HOST_FUNCTION(stringFromCodePoint, (JSGlobalObject* globalObject, Cal
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     unsigned length = callFrame->argumentCount();
+#if USE(BUN_JSC_ADDITIONS)
+    JSStringBuilder builder;
+#else
     StringBuilder builder;
+#endif
     builder.reserveCapacity(length);
 
     for (unsigned i = 0; i < length; ++i) {
@@ -143,7 +150,11 @@ JSC_DEFINE_HOST_FUNCTION(stringFromCodePoint, (JSGlobalObject* globalObject, Cal
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_AND_RETURN(scope, JSValue::encode(builder.toJS(vm)));
+#else
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, builder.toString())));
+#endif
 }
 
 JSString* stringFromCodePoint(JSGlobalObject* globalObject, int32_t arg)

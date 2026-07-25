@@ -209,7 +209,20 @@ void JSToken::dump(PrintStream& out) const
 
 static ALWAYS_INLINE bool NODELETE isPrivateFieldName(UniquedStringImpl* uid)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(uid)) {
+        uintptr_t word = reinterpret_cast<uintptr_t>(uid);
+        if (!inlinePropertyKeyLength(word))
+            return false;
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+        if (inlinePropertyKeyIs8Bit(word))
+            return bytes[1] == '#';
+        return reinterpret_cast<const char16_t*>(bytes + 2)[0] == '#';
+    }
     return uid->length() && uid->at(0) == '#';
+#else
+    return uid->length() && uid->at(0) == '#';
+#endif
 }
 
 template <typename LexerType>
@@ -1113,7 +1126,11 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::createB
 {
     ASSERT(!name.isNull());
     
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(isInlinePropertyKey(name.impl()) || name.impl()->isAtom() || name.impl()->isSymbol());
+#else
     ASSERT(name.impl()->isAtom() || name.impl()->isSymbol());
+#endif
 
     switch (kind) {
     case DestructuringKind::DestructureToVariables: {

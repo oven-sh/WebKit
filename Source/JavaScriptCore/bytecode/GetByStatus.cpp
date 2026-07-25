@@ -501,8 +501,13 @@ GetByStatus GetByStatus::computeFor(JSGlobalObject* globalObject, const Structur
     if (set.isEmpty())
         return GetByStatus();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (parseIndex(PropertyName(identifier.uid())))
+        return GetByStatus(LikelyTakesSlowPath);
+#else
     if (parseIndex(*identifier.uid()))
         return GetByStatus(LikelyTakesSlowPath);
+#endif
 
     VM& vm = globalObject->vm();
     auto attempToFold = [&]() -> std::optional<GetByStatus> {

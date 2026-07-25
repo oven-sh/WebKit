@@ -138,6 +138,10 @@ ALWAYS_INLINE void PropertyNameArrayBuilder::add(UniquedStringImpl* identifier)
 
 ALWAYS_INLINE bool PropertyNameArrayBuilder::isUidMatchedToTypeMode(UniquedStringImpl* identifier)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(identifier))
+        return includeStringProperties();
+#endif
     if (identifier->isSymbol()) {
         if (!includeSymbolProperties())
             return false;

@@ -27,6 +27,10 @@
 #include "JSPropertyNameEnumerator.h"
 
 #include "JSObjectInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "IdentifierInlines.h"
+#include "InlinePropertyKey.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -81,6 +85,9 @@ void JSPropertyNameEnumerator::finishCreation(VM& vm, RefPtr<PropertyNameArray>&
     ASSERT(m_endGenericPropertyIndex == vector.size());
     for (unsigned i = 0; i < vector.size(); ++i) {
         const Identifier& identifier = vector[i];
+        // audit-string-materialize: KEEP atom-backed here. for-in keys flow into
+        // user JS where DFG StringCharAt / substring / length inline the m_fiber
+        // → StringImpl::m_length load without an inline-cell guard.
         m_propertyNames.get()[i].set(vm, this, jsString(vm, identifier.string()));
     }
 }
@@ -204,8 +211,19 @@ JSString* JSPropertyNameEnumerator::computeNext(JSGlobalObject* globalObject, JS
                 break;
             auto id = name->toAtomString(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+            // D.4 coherence: id.data is an AtomStringImpl*; Structure::get's
+            // seenProperties bloom filter was keyed on the canonical fiber word
+            // at add() time, so re-encode here or the bloom filter rules us out.
+            UniquedStringImpl* uid = id.data;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+                uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+            if (base->hasEnumerableProperty(globalObject, uid))
+                break;
+#else
             if (base->hasEnumerableProperty(globalObject, id.data))
                 break;
+#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
             name = nullptr;
             index++;

@@ -118,7 +118,7 @@ void VariableEnvironment::markVariableAsExported(const UniquedStringImpl* identi
     findResult->value.setIsExported();
 }
 
-VariableEnvironment::Map::AddResult VariableEnvironment::declarePrivateField(const RefPtr<UniquedStringImpl>& identifier)
+VariableEnvironment::Map::AddResult VariableEnvironment::declarePrivateField(const VERefPtr& identifier)
 {
     getOrAddPrivateName(identifier.get());
     auto entry = VariableEnvironmentEntry();
@@ -128,7 +128,7 @@ VariableEnvironment::Map::AddResult VariableEnvironment::declarePrivateField(con
     return m_map.add(identifier, entry);
 }
 
-VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declarePrivateAccessor(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry accessorTraits)
+VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declarePrivateAccessor(const VERefPtr& identifier, PrivateNameEntry accessorTraits)
 {
     if (!m_rareData)
         m_rareData = WTF::makeUnique<VariableEnvironment::RareData>();
@@ -176,17 +176,17 @@ VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declarePrivat
     return PrivateDeclarationResult::Success;
 }
 
-VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declarePrivateSetter(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits modifierTraits)
+VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declarePrivateSetter(const VERefPtr& identifier, PrivateNameEntry::Traits modifierTraits)
 {
     return declarePrivateAccessor(identifier, PrivateNameEntry(PrivateNameEntry::Traits::IsSetter | modifierTraits));
 }
 
-VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declarePrivateGetter(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits modifierTraits)
+VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declarePrivateGetter(const VERefPtr& identifier, PrivateNameEntry::Traits modifierTraits)
 {
     return declarePrivateAccessor(identifier, PrivateNameEntry(PrivateNameEntry::Traits::IsGetter | modifierTraits));
 }
 
-bool VariableEnvironment::declarePrivateMethod(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits addionalTraits)
+bool VariableEnvironment::declarePrivateMethod(const VERefPtr& identifier, PrivateNameEntry::Traits addionalTraits)
 {
     if (!m_rareData)
         m_rareData = makeUnique<VariableEnvironment::RareData>();
@@ -226,10 +226,17 @@ void CompactTDZEnvironment::sortCompact(Compact& compact)
 CompactTDZEnvironment::CompactTDZEnvironment(const TDZEnvironment& env)
 {
     m_hash = 0; // Note: XOR is commutative so order doesn't matter here.
+#if USE(BUN_JSC_ADDITIONS)
+    Compact variables = WTF::map(env, [this](auto& key) -> FiberAwarePackedRefPtr {
+        m_hash ^= uidHash(key.get());
+        return key.get();
+    });
+#else
     Compact variables = WTF::map(env, [this](auto& key) -> PackedRefPtr<UniquedStringImpl> {
         m_hash ^= key->hash();
         return key.get();
     });
+#endif
 
     sortCompact(variables);
     m_variables = WTF::move(variables);

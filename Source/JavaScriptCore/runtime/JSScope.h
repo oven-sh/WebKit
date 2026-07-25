@@ -35,7 +35,11 @@ class ScopeChainIterator;
 class SymbolTable;
 class WatchpointSet;
 
+#if USE(BUN_JSC_ADDITIONS)
+// TDZEnvironment is defined in VariableEnvironment.h with FiberAwareRefPtr; avoid a conflicting redefinition here.
+#else
 using TDZEnvironment = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
+#endif
 
 class JSScope : public JSNonFinalObject {
 public:

@@ -369,8 +369,13 @@ PutByStatus PutByStatus::computeFor(CodeBlock* baselineBlock, ICStatusMap& basel
 PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const StructureSet& set, CacheableIdentifier identifier, bool isDirect, PrivateFieldPutKind privateFieldPutKind)
 {
     UniquedStringImpl* uid = identifier.uid();
+#if USE(BUN_JSC_ADDITIONS)
+    if (parseIndex(PropertyName(uid)))
+        return PutByStatus(LikelyTakesSlowPath);
+#else
     if (parseIndex(*uid))
         return PutByStatus(LikelyTakesSlowPath);
+#endif
 
     if (set.isEmpty())
         return PutByStatus();

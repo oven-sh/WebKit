@@ -796,8 +796,15 @@ void JIT::compileOpStrictEq(const JSInstruction* currentInstruction)
 
         fallThrough.append(branchIfNotString(stringGPR));
         loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT5);
+#if USE(BUN_JSC_ADDITIONS)
+        addSlowCase(branchIfActualRopeStringImpl(regT5));
+        // Inline small strings cannot pointer-equal the heap AtomStringImpl* constant below; route to slow path.
+        addSlowCase(branchIfInlineStringImpl(regT5));
+        addSlowCase(branchTest32(Zero, Address(regT5, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#else
         addSlowCase(branchIfRopeStringImpl(regT5));
         addSlowCase(branchTest32(Zero, Address(regT5, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
         fallThrough.append(branchPtr(NotEqual, regT5, TrustedImmPtr(string->tryGetValueImpl())));
 
         equals.link(this);
@@ -971,8 +978,15 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
 
             fallThrough.append(branchIfNotString(stringGPR));
             loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT2);
+#if USE(BUN_JSC_ADDITIONS)
+            addSlowCase(branchIfActualRopeStringImpl(regT2));
+            // Inline small strings cannot pointer-equal the heap AtomStringImpl* constant below; route to slow path.
+            addSlowCase(branchIfInlineStringImpl(regT2));
+            addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#else
             addSlowCase(branchIfRopeStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             addJump(branchPtr(Equal, regT2, TrustedImmPtr(string->tryGetValueImpl())), target);
         } else {
             fallThrough.append(branch64(Equal, stringGPR, knownStringGPR));
@@ -980,8 +994,15 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
 
             addJump(branchIfNotString(stringGPR), target);
             loadPtr(Address(stringGPR, JSString::offsetOfValue()), regT2);
+#if USE(BUN_JSC_ADDITIONS)
+            addSlowCase(branchIfActualRopeStringImpl(regT2));
+            // Inline small strings cannot pointer-equal the heap AtomStringImpl* constant below; route to slow path.
+            addSlowCase(branchIfInlineStringImpl(regT2));
+            addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#else
             addSlowCase(branchIfRopeStringImpl(regT2));
             addSlowCase(branchTest32(Zero, Address(regT2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             addJump(branchPtr(NotEqual, regT2, TrustedImmPtr(string->tryGetValueImpl())), target);
         }
         fallThrough.link(this);
@@ -1367,7 +1388,19 @@ void JIT::emit_op_switch_char(const JSInstruction* currentInstruction)
     }
 
     isRope.link(this);
+#if USE(BUN_JSC_ADDITIONS)
+    // Inline small string: length is in bits 3..7 of regT4. switch_char only matches
+    // length-1; the only inline length-1 case is a single non-Latin-1 code unit.
+    auto notInline = branchTestPtr(NonZero, regT4, TrustedImm32(JSString::isRopeInPointer));
+    and32(TrustedImm32(JSString::inlineLengthMask << JSString::inlineLengthShift), regT4, regT2);
+    addJump(branch32(NotEqual, regT2, TrustedImm32(1 << JSString::inlineLengthShift)), defaultOffset);
+    auto resolveInline = jump();
+    notInline.link(this);
+#endif
     addJump(branch32(NotEqual, Address(jsRegT10.payloadGPR(), JSRopeString::offsetOfLength()), TrustedImm32(1)), defaultOffset);
+#if USE(BUN_JSC_ADDITIONS)
+    resolveInline.link(this);
+#endif
     loadGlobalObject(regT2);
     callOperation(operationResolveRope, regT2, jsRegT10.payloadGPR());
     jump().linkTo(dispatch, this);

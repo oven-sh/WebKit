@@ -4854,9 +4854,9 @@ static void processClauseList(ClauseListNode* list, Vector<ExpressionNode*, 8>& 
                 typeForTable = SwitchNeither;
                 break;
             }
-            auto& value = static_cast<StringNode*>(clauseExpression)->value().string();
+            const Identifier& value = static_cast<StringNode*>(clauseExpression)->value();
             if (singleCharacterSwitch &= value.length() == 1) {
-                int32_t intVal = value[0];
+                int32_t intVal = value.string()[0];
                 if (intVal < min_num)
                     min_num = intVal;
                 if (intVal > max_num)

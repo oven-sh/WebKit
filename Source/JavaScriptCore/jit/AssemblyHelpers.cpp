@@ -511,7 +511,11 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
     xor32(scratch2GPR, scratch3GPR);
 #endif
     if (uid)
+#if USE(BUN_JSC_ADDITIONS)
+        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+#else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
+#endif
     else {
         // Note that we don't test if the hash is zero here. AtomStringImpl's can't have a zero
         // hash, however, a SymbolImpl may. But, because this is a cache, we don't care. We only
@@ -519,9 +523,21 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::primaryHash(). Only scratch2 is consumed (imul64 preserves
+        // uidGPR), so scratch1 (StructureID) and scratch3 (sid-xor) survive untouched.
+        // Option A; not gated on enableIdentifierFiberWords — correct for both reps,
+        // and JIT stays in lockstep with C++ uidHash() under either flag value.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
+        add32(scratch2GPR, scratch3GPR);
+#else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
+#endif
     }
 
     and32(TrustedImm32(primaryMask), scratch3GPR);
@@ -639,7 +655,11 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
 #endif
 
     if (uid)
+#if USE(BUN_JSC_ADDITIONS)
+        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+#else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
+#endif
     else {
         // Note that we don't test if the hash is zero here. AtomStringImpl's can't have a zero
         // hash, however, a SymbolImpl may. But, because this is a cache, we don't care. We only
@@ -647,9 +667,19 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::storeCachePrimaryHash(). Only scratch2 is consumed; scratch1
+        // (StructureID) and scratch3 (sid-xor) survive untouched.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
+        add32(scratch2GPR, scratch3GPR);
+#else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
+#endif
     }
 
     and32(TrustedImm32(MegamorphicCache::storeCachePrimaryMask), scratch3GPR);
@@ -734,7 +764,11 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
     xor32(scratch2GPR, scratch3GPR);
 #endif
     if (uid)
+#if USE(BUN_JSC_ADDITIONS)
+        add32(TrustedImm32(uidHash(uid)), scratch3GPR);
+#else
         add32(TrustedImm32(uid->hash()), scratch3GPR);
+#endif
     else {
         // Note that we don't test if the hash is zero here. AtomStringImpl's can't have a zero
         // hash, however, a SymbolImpl may. But, because this is a cache, we don't care. We only
@@ -742,9 +776,19 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // Branch-free: uidHash() = (bits * uidHashMultiplier) >> 32 — matches
+        // MegamorphicCache::hasCachePrimaryHash(). Only scratch2 is consumed; scratch1
+        // (StructureID) and scratch3 (sid-xor) survive untouched.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), scratch2GPR);
+        mul64(uidGPR, scratch2GPR);
+        urshift64(TrustedImm32(32), scratch2GPR);
+        add32(scratch2GPR, scratch3GPR);
+#else
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
         add32(scratch2GPR, scratch3GPR);
+#endif
     }
 
     and32(TrustedImm32(MegamorphicCache::hasCachePrimaryMask), scratch3GPR);
@@ -809,9 +853,23 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
     JumpList slowCases;
     if (propertyIsString) {
         loadPtr(Address(propertyGPR, JSString::offsetOfValue()), destGPR);
+#if USE(BUN_JSC_ADDITIONS)
+        if (canBeRope)
+            slowCases.append(branchIfActualRopeStringImpl(destGPR));
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isInline = branchIfInlineStringImpl(destGPR);
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(this);
+        } else {
+            // Producer disabled: inline small-string cells must not flow through as a uid.
+            slowCases.append(branchIfInlineStringImpl(destGPR));
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        }
+#else
         if (canBeRope)
             slowCases.append(branchIfRopeStringImpl(destGPR));
         slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
     } else if (propertyIsSymbol)
         loadPtr(Address(propertyGPR, Symbol::offsetOfSymbolImpl()), destGPR);
     else {
@@ -823,9 +881,23 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
 
         isString.link(this);
         loadPtr(Address(propertyGPR, JSString::offsetOfValue()), destGPR);
+#if USE(BUN_JSC_ADDITIONS)
+        if (canBeRope)
+            slowCases.append(branchIfActualRopeStringImpl(destGPR));
+        if constexpr (enableIdentifierFiberWords) {
+            Jump isInline = branchIfInlineStringImpl(destGPR);
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(this);
+        } else {
+            // Producer disabled: inline small-string cells must not flow through as a uid.
+            slowCases.append(branchIfInlineStringImpl(destGPR));
+            slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        }
+#else
         if (canBeRope)
             slowCases.append(branchIfRopeStringImpl(destGPR));
         slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
 
         done.link(this);
     }

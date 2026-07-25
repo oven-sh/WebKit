@@ -28,6 +28,10 @@
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 namespace JSC {
 
 class CallFrame;
@@ -84,6 +88,210 @@ ALWAYS_INLINE std::optional<uint32_t> parseIndex(const StringImpl& impl)
     return impl.is8Bit() ? parseIndex(impl.span8()) : parseIndex(impl.span16());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+class Identifier {
+    friend class Structure;
+public:
+    Identifier() = default;
+    enum class EmptyIdentifierFlag { EmptyIdentifier };
+    Identifier(EmptyIdentifierFlag)
+    {
+        auto* empty = StringImpl::empty();
+        empty->ref();
+        m_bits = reinterpret_cast<uintptr_t>(empty);
+        ASSERT(empty->isAtom());
+    }
+
+    // Single-word storage (sizeof(Identifier) == sizeof(void*)): copy/move/
+    // assign/dtor touch only m_bits plus a fiber-aware ref/deref. string() is
+    // by-value so no per-instance materialization cache is needed.
+    Identifier(const Identifier& other)
+        : m_bits(other.m_bits)
+    {
+        if (m_bits)
+            uidRef(reinterpret_cast<UniquedStringImpl*>(m_bits));
+    }
+
+    Identifier(Identifier&& other)
+        : m_bits(std::exchange(other.m_bits, 0))
+    {
+    }
+
+    ~Identifier()
+    {
+        if (m_bits)
+            uidDeref(reinterpret_cast<UniquedStringImpl*>(m_bits));
+    }
+
+    Identifier& operator=(const Identifier& other)
+    {
+        uintptr_t newBits = other.m_bits;
+        if (newBits)
+            uidRef(reinterpret_cast<UniquedStringImpl*>(newBits));
+        uintptr_t oldBits = std::exchange(m_bits, newBits);
+        if (oldBits)
+            uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
+        return *this;
+    }
+
+    Identifier& operator=(Identifier&& other)
+    {
+        uintptr_t oldBits = std::exchange(m_bits, std::exchange(other.m_bits, 0));
+        if (oldBits)
+            uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
+        return *this;
+    }
+
+    enum class FromFiberWordTag { T };
+    static Identifier fromFiberWord(uintptr_t word) { return Identifier(FromFiberWordTag::T, word); }
+
+    AtomString string() const
+    {
+        if (!m_bits)
+            return nullAtom();
+        if (isInlinePropertyKey(m_bits)) [[unlikely]] {
+            unsigned len = inlinePropertyKeyLength(m_bits);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&m_bits);
+            if (inlinePropertyKeyIs8Bit(m_bits))
+                return AtomString(std::span<const Latin1Character> { bytes + 1, len });
+            return AtomString(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+        }
+        return AtomString(reinterpret_cast<UniquedStringImpl*>(m_bits));
+    }
+
+    // May return a fiber-word-tagged pointer; callers are phase-A shimmed.
+    UniquedStringImpl* impl() const { return reinterpret_cast<UniquedStringImpl*>(m_bits); }
+
+    RefPtr<AtomStringImpl> releaseImpl()
+    {
+        AtomString result = string();
+        uintptr_t oldBits = std::exchange(m_bits, 0);
+        if (oldBits)
+            uidDeref(reinterpret_cast<UniquedStringImpl*>(oldBits));
+        return result.releaseImpl();
+    }
+
+    int length() const { return m_bits ? static_cast<int>(uidLength(reinterpret_cast<UniquedStringImpl*>(m_bits))) : 0; }
+
+    // Bypass string() so a fiber-word decode never touches the thread-local
+    // AtomStringTable: FTL compiler threads reach here via
+    // CodeBlock::inferredName() -> ecmaName().utf8(), and an atom materialized
+    // there would later be destroyed on the main thread's GC sweep.
+    CString ascii() const { return stringWithoutAtomizing().ascii(); }
+    CString utf8() const { return stringWithoutAtomizing().utf8(); }
+
+    String stringWithoutAtomizing() const
+    {
+        if (!m_bits)
+            return String();
+        if (isInlinePropertyKey(m_bits)) {
+            unsigned len = inlinePropertyKeyLength(m_bits);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&m_bits);
+            if (inlinePropertyKeyIs8Bit(m_bits))
+                return String(std::span<const Latin1Character> { bytes + 1, len });
+            return String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+        }
+        return String(reinterpret_cast<StringImpl*>(m_bits));
+    }
+
+    // There's 2 functions to construct Identifier from string, (1) fromString and (2) fromUid.
+    // They have different meanings in keeping or discarding symbol-ness of strings.
+    // (1): fromString
+    // Just construct Identifier from string. String held by Identifier is always atomized.
+    // Symbol-ness of StringImpl*, which represents that the string is inteded to be used for ES6 Symbols, is discarded.
+    // So a constructed Identifier never represents a symbol.
+    // (2): fromUid
+    // `StringImpl* uid` represents ether String or Symbol property.
+    // fromUid keeps symbol-ness of provided StringImpl* while fromString discards it.
+    // Use fromUid when constructing Identifier from StringImpl* which may represent symbols.
+
+    static Identifier fromString(VM&, ASCIILiteral);
+    static Identifier fromString(VM&, std::span<const Latin1Character>);
+    static Identifier fromString(VM&, std::span<const char16_t>);
+    static Identifier fromString(VM&, const String&);
+    static Identifier fromString(VM&, AtomStringImpl*);
+    static Identifier fromString(VM&, Ref<AtomStringImpl>&&);
+    static Identifier fromString(VM&, const AtomString&);
+    static Identifier fromString(VM&, SymbolImpl*);
+
+    static Identifier NODELETE fromUid(VM&, UniquedStringImpl* uid);
+    static Identifier fromUid(const PrivateName&);
+    static Identifier fromUid(SymbolImpl&);
+
+    static inline Identifier createLatin1(VM& vm, std::span<const char16_t> string); // Defined in IdentifierInlines.h
+
+    JS_EXPORT_PRIVATE static Identifier from(VM&, unsigned y);
+    JS_EXPORT_PRIVATE static Identifier from(VM&, int y);
+    JS_EXPORT_PRIVATE static Identifier from(VM&, double y);
+    ALWAYS_INLINE static Identifier from(VM& vm, uint64_t y)
+    {
+        if (static_cast<uint32_t>(y) == y)
+            return from(vm, static_cast<uint32_t>(y));
+        ASSERT(static_cast<uint64_t>(static_cast<double>(y)) == y);
+        return from(vm, static_cast<double>(y));
+    }
+
+    bool isNull() const { return !m_bits; }
+    // Matches AtomString::isEmpty(): null OR zero-length. BreakNode/ContinueNode
+    // pass a null-m_bits Identifier for the unlabeled case and test isEmpty().
+    bool isEmpty() const { return !m_bits || (!isInlinePropertyKey(m_bits) && !reinterpret_cast<StringImpl*>(m_bits)->length()); }
+    bool isSymbol() const { return m_bits && uidIsSymbol(reinterpret_cast<UniquedStringImpl*>(m_bits)); }
+    bool isPrivateName() const { return isSymbol() && static_cast<const SymbolImpl*>(impl())->isPrivate(); }
+
+    friend bool operator==(const Identifier&, const Identifier&);
+
+    static bool equal(const StringImpl*, std::span<const Latin1Character>);
+    static bool equal(const StringImpl*, std::span<const char16_t>);
+    static bool equal(const StringImpl* a, const StringImpl* b) { return ::equal(a, b); }
+
+    void dump(PrintStream&) const;
+
+    // Phase D.4 coherence: every construction path for a 2..5-char Latin-1
+    // name must yield the same encodeInline8 fiber word so PropertyTable's
+    // pointer-identity compare hits regardless of which producer ran.
+    static uintptr_t canonicalFiberWordFor(const StringImpl*); // Defined in IdentifierInlines.h
+
+private:
+    uintptr_t m_bits { 0 };
+
+    Identifier(FromFiberWordTag, uintptr_t word)
+        : m_bits(word)
+    {
+        ASSERT(isInlinePropertyKey(word));
+    }
+
+    inline Identifier(VM&, std::span<const Latin1Character>); // Defined in IdentifierInlines.h
+    inline Identifier(VM&, std::span<const char16_t>); // Defined in IdentifierInlines.h
+    ALWAYS_INLINE Identifier(VM&, ASCIILiteral); // Defined in IdentifierInlines.h
+    inline Identifier(VM&, AtomStringImpl*); // Defined in IdentifierInlines.h
+    inline Identifier(VM&, const AtomString&); // Defined in IdentifierInlines.h
+    inline Identifier(VM&, const String&);
+    inline Identifier(VM&, StringImpl*);
+    inline Identifier(VM&, Ref<AtomStringImpl>&&); // Defined in IdentifierInlines.h
+
+    Identifier(SymbolImpl& uid)
+    {
+        uid.ref();
+        m_bits = reinterpret_cast<uintptr_t>(&uid);
+    }
+
+    static bool equal(const Identifier& a, const Identifier& b) { return a.m_bits == b.m_bits; }
+
+    template <typename T> inline static Ref<AtomStringImpl> add(VM&, std::span<const T>); // Defined in IdentifierInlines.h
+    static Ref<AtomStringImpl> add8(VM&, std::span<const char16_t>);
+    template <typename T> ALWAYS_INLINE static constexpr bool canUseSingleCharacterString(T);
+
+    static Ref<AtomStringImpl> add(VM&, StringImpl*);
+    inline static Ref<AtomStringImpl> add(VM&, ASCIILiteral); // Defined in IdentifierInlines.h
+
+#ifndef NDEBUG
+    JS_EXPORT_PRIVATE static void checkCurrentAtomStringTable(VM&);
+#else
+    JS_EXPORT_PRIVATE NO_RETURN_DUE_TO_CRASH static void checkCurrentAtomStringTable(VM&);
+#endif
+};
+static_assert(sizeof(Identifier) == sizeof(void*), "Identifier must stay single-word so parser/bytecompiler copies are one ref/deref");
+#else
 class Identifier {
     friend class Structure;
 public:
@@ -185,6 +393,7 @@ private:
     JS_EXPORT_PRIVATE NO_RETURN_DUE_TO_CRASH static void checkCurrentAtomStringTable(VM&);
 #endif
 };
+#endif
 
 template <> ALWAYS_INLINE constexpr bool Identifier::canUseSingleCharacterString(Latin1Character)
 {
@@ -204,22 +413,60 @@ inline bool operator==(const Identifier& a, const Identifier& b)
 
 inline bool Identifier::equal(const StringImpl* r, std::span<const Latin1Character> s)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(reinterpret_cast<const UniquedStringImpl*>(r))) [[unlikely]] {
+        uintptr_t w = reinterpret_cast<uintptr_t>(r);
+        if (!inlinePropertyKeyIs8Bit(w))
+            return false;
+        auto span = inlinePropertyKeySpan8(w);
+        return span.size() == s.size() && !memcmp(span.data(), s.data(), s.size());
+    }
+#endif
     return WTF::equal(r, s);
 }
 
 inline bool Identifier::equal(const StringImpl* r, std::span<const char16_t> s)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(reinterpret_cast<const UniquedStringImpl*>(r))) [[unlikely]] {
+        uintptr_t w = reinterpret_cast<uintptr_t>(r);
+        if (!inlinePropertyKeyIs8Bit(w))
+            return false;
+        auto span = inlinePropertyKeySpan8(w);
+        if (span.size() != s.size())
+            return false;
+        for (size_t i = 0; i < s.size(); ++i)
+            if (span[i] != s[i])
+                return false;
+        return true;
+    }
+#endif
     return WTF::equal(r, s);
 }
 
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(const Identifier& identifier)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    auto uid = identifier.impl();
+    if (!uid || uidIsSymbol(uid))
+        return std::nullopt;
+    if (isInlinePropertyKey(uid)) {
+        // D.4 coherence means numeric strings "42".."9999999" arrive here as
+        // fiber words; decode so obj["42"] still hits the indexed-property path.
+        uintptr_t w = reinterpret_cast<uintptr_t>(uid);
+        if (inlinePropertyKeyIs8Bit(w))
+            return parseIndex(inlinePropertyKeySpan8(w));
+        return std::nullopt;
+    }
+    return parseIndex(*uid);
+#else
     auto uid = identifier.impl();
     if (!uid)
         return std::nullopt;
     if (uid->isSymbol())
         return std::nullopt;
     return parseIndex(*uid);
+#endif
 }
 
 JSValue identifierToJSValue(VM&, const Identifier&);
@@ -232,7 +479,14 @@ JSValue identifierToSafePublicJSValue(VM&, const Identifier&);
 // crashes in code that somehow dangled a StringImpl.
 // https://bugs.webkit.org/show_bug.cgi?id=150137
 struct IdentifierRepHash : PtrHash<RefPtr<UniquedStringImpl>> {
-    static unsigned hash(const UniquedStringImpl* key) { return key->existingSymbolAwareHash(); }
+    static unsigned hash(const UniquedStringImpl* key)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        return uidHash(key);
+#else
+        return key->existingSymbolAwareHash();
+#endif
+    }
     static constexpr bool hasHashInValue = true;
 };
 
@@ -241,14 +495,22 @@ struct IdentifierMapIndexHashTraits : HashTraits<int> {
     static constexpr bool emptyValueIsZero = false;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+typedef UncheckedKeyHashSet<FiberAwareRefPtr, IdentifierRepHash> IdentifierSet;
+typedef UncheckedKeyHashMap<FiberAwareRefPtr, int, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, IdentifierMapIndexHashTraits> IdentifierMap;
+typedef UncheckedKeyHashMap<UniquedStringImpl*, int, IdentifierRepHash, HashTraits<UniquedStringImpl*>, IdentifierMapIndexHashTraits> BorrowedIdentifierMap;
+#else
 typedef UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash> IdentifierSet;
 typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, int, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, IdentifierMapIndexHashTraits> IdentifierMap;
 typedef UncheckedKeyHashMap<UniquedStringImpl*, int, IdentifierRepHash, HashTraits<UniquedStringImpl*>, IdentifierMapIndexHashTraits> BorrowedIdentifierMap;
+#endif
 
 } // namespace JSC
 
 namespace WTF {
 
+// Identifier is a single uintptr_t (m_bits); equality is m_bits == m_bits, so
+// memcmp comparison is sound again now that the materialized-string cache is gone.
 template <> struct VectorTraits<JSC::Identifier> : SimpleClassVectorTraits { };
 
 } // namespace WTF

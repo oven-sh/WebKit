@@ -166,7 +166,11 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncTest, (JSGlobalObject* globalObject, Cal
         auto* regExp = dynamicDowncast<RegExpObject>(thisValue);
         if (!regExp) [[unlikely]]
             return throwVMTypeError(globalObject, scope, "Builtin RegExp exec can only be called on a RegExp object"_s);
+#if USE(BUN_JSC_ADDITIONS)
+        auto strValue = str->view(globalObject);
+#else
         auto strValue = str->value(globalObject);
+#endif
         RETURN_IF_EXCEPTION(scope, { });
         if (!strValue->isNull() && regExp->getLastIndex().isNumber()) [[likely]]
             RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(regExp->test(globalObject, str))));
@@ -210,6 +214,19 @@ static JSValue regExpMatchSlow(JSGlobalObject* globalObject, JSObject* thisObjec
     // 4. Let flags be ? ToString(? Get(regexp, "flags")).
     JSValue flagsValue = thisObject->get(globalObject, vm.propertyNames->flags);
     RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+    auto* flagsJSString = flagsValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto flags = flagsJSString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // 5. If flags does not contain "g", return ? RegExpExec(regexp, string).
+    if (!flags->contains('g'))
+        RELEASE_AND_RETURN(scope, regExpExec(globalObject, thisObject, string));
+
+    // 6. If flags contains "u" or flags contains "v", let fullUnicode be true; else let fullUnicode be false.
+    bool fullUnicode = flags->contains('u') || flags->contains('v');
+#else
     String flags = flagsValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -219,6 +236,7 @@ static JSValue regExpMatchSlow(JSGlobalObject* globalObject, JSObject* thisObjec
 
     // 6. If flags contains "u" or flags contains "v", let fullUnicode be true; else let fullUnicode be false.
     bool fullUnicode = flags.contains('u') || flags.contains('v');
+#endif
 
     // 7. Perform ? Set(regexp, "lastIndex", +0𝔽, true).
     PutPropertySlot lastIndexSlot(thisObject, true);
@@ -336,8 +354,21 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncCompile, (JSGlobalObject* globalObject, 
         String pattern = arg0.isUndefined() ? emptyString() : arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
+#if USE(BUN_JSC_ADDITIONS)
+        std::optional<OptionSet<Yarr::Flags>> flags;
+        if (arg1.isUndefined())
+            flags = OptionSet<Yarr::Flags> { };
+        else {
+            auto* arg1String = arg1.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            auto arg1View = arg1String->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            flags = Yarr::parseFlags(StringView(arg1View));
+        }
+#else
         auto flags = arg1.isUndefined() ? std::make_optional(OptionSet<Yarr::Flags> { }) : Yarr::parseFlags(arg1.toWTFString(globalObject));
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
+#endif
         if (!flags)
             return throwVMError(globalObject, scope, createSyntaxError(globalObject, "Invalid flags supplied to RegExp constructor."_s));
 
@@ -420,6 +451,21 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncToString, (JSGlobalObject* globalObject,
 
     JSValue sourceValue = thisObject->get(globalObject, vm.propertyNames->source);
     RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+    auto* sourceJSString = sourceValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto source = sourceJSString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    JSValue flagsValue = thisObject->get(globalObject, vm.propertyNames->flags);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* flagsJSString = flagsValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto flags = flagsJSString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, '/', StringView(source), '/', StringView(flags))));
+#else
     String source = sourceValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -429,6 +475,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncToString, (JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, '/', source, '/', flags)));
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(regExpProtoGetterGlobal, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1031,6 +1078,20 @@ JSValue regExpSplitSlow(JSGlobalObject* globalObject, JSObject* thisObject, JSSt
     // 5. Let flags be ? ToString(? Get(regexp, "flags")).
     JSValue flagsValue = thisObject->get(globalObject, vm.propertyNames->flags);
     RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+    auto* flagsJSString = flagsValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto flags = flagsJSString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // 6. If flags contains "u" or flags contains "v", let unicodeMatching be true.
+    // 7. Else, let unicodeMatching be false.
+    bool unicodeMatching = flags->contains('u') || flags->contains('v');
+
+    // 8. If flags contains "y", let newFlags be flags.
+    // 9. Else, let newFlags be the string-concatenation of flags and "y".
+    String newFlags = flags->contains('y') ? flags->toString() : tryMakeString(StringView(flags), 'y');
+#else
     String flags = flagsValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -1041,6 +1102,7 @@ JSValue regExpSplitSlow(JSGlobalObject* globalObject, JSObject* thisObject, JSSt
     // 8. If flags contains "y", let newFlags be flags.
     // 9. Else, let newFlags be the string-concatenation of flags and "y".
     String newFlags = flags.contains('y') ? flags : tryMakeString(flags, 'y');
+#endif
     if (newFlags.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return { };
@@ -1265,9 +1327,17 @@ static inline String getSubstitution(JSGlobalObject* globalObject, const String&
                     JSValue capture = namedCaptures->get(globalObject, Identifier::fromString(vm, groupName));
                     RETURN_IF_EXCEPTION(scope, String());
                     if (!capture.isUndefined()) {
+#if USE(BUN_JSC_ADDITIONS)
+                        auto* captureJSString = capture.toString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, String());
+                        auto captureString = captureJSString->view(globalObject);
+                        RETURN_IF_EXCEPTION(scope, String());
+                        result.append(StringView(captureString));
+#else
                         String captureString = capture.toWTFString(globalObject);
                         RETURN_IF_EXCEPTION(scope, String());
                         result.append(captureString);
+#endif
                     }
                     start = groupNameEndIndex + 1;
                     break;
@@ -1350,6 +1420,22 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
     // 7. Let flags be ? ToString(? Get(rx, "flags")).
     JSValue flagsValue = thisObject->get(globalObject, vm.propertyNames->flags);
     RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+    auto* flagsJSString = flagsValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto flags = flagsJSString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // 8. If flags contains "g", let global be true. Else, let global be false.
+    bool global = flags->contains('g');
+
+    // 9. If global is true, then
+    //    a. If flags contains "u" or "v", let fullUnicode be true. Else, let fullUnicode be false.
+    //    b. Perform ? Set(rx, "lastIndex", +0F, true).
+    bool fullUnicode = false;
+    if (global) {
+        fullUnicode = flags->contains('u') || flags->contains('v');
+#else
     String flags = flagsValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -1362,6 +1448,7 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
     bool fullUnicode = false;
     if (global) {
         fullUnicode = flags.contains('u') || flags.contains('v');
+#endif
         PutPropertySlot slot(thisObject, true);
         thisObject->methodTable()->put(thisObject, globalObject, vm.propertyNames->lastIndex, jsNumber(0), slot);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1400,6 +1487,22 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
         JSObject* resultObject = asObject(result);
         JSValue matchValue = resultObject->get(globalObject, static_cast<unsigned>(0));
         RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+        // phase-3 audit: all 9 view() swaps of 96decd2dc1 here are KEEP — none sit
+        // in JetStream's fast path (stringProtoFuncReplace → replaceUsingRegExpSearch,
+        // not this slow generic). −13% regexp regression lives in StringPrototype.cpp
+        // replaceUsingRegExpSearch / ed331542f6 jsSubstringOfResolved, not this file.
+        // length() below is a harmless local micro-opt, not the regression fix.
+        auto* matchJSString = matchValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+
+        //         2. If matchStr is the empty String, then
+        //            a. Let thisIndex be R(? ToLength(? Get(rx, "lastIndex"))).
+        //            b. If flags contains "u" or flags contains "v", let fullUnicode be true; otherwise let fullUnicode be false.
+        //            c. Let nextIndex be AdvanceStringIndex(S, thisIndex, fullUnicode).
+        //            d. Perform ? Set(rx, "lastIndex", F(nextIndex), true).
+        if (!matchJSString->length()) {
+#else
         String matchStr = matchValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
 
@@ -1409,6 +1512,7 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
         //            c. Let nextIndex be AdvanceStringIndex(S, thisIndex, fullUnicode).
         //            d. Perform ? Set(rx, "lastIndex", F(nextIndex), true).
         if (matchStr.isEmpty()) {
+#endif
             JSValue lastIndexValue = thisObject->get(globalObject, vm.propertyNames->lastIndex);
             RETURN_IF_EXCEPTION(scope, { });
             uint64_t thisIndex = lastIndexValue.toLength(globalObject);

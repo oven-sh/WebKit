@@ -30,6 +30,9 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 
 #define DUMP_PROPERTYMAP_STATS 0
 #define DUMP_PROPERTYMAP_COLLISIONS 0
@@ -303,6 +306,9 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
     unsigned indexMask = m_indexMask;
     unsigned probeCount = 0;
     unsigned index = hash & indexMask;
+#if USE(BUN_JSC_ADDITIONS) && ASSERT_ENABLED
+    bool keyIsFiber = isInlinePropertyKey(key);
+#endif
 
 #if DUMP_PROPERTYMAP_STATS
     ++propertyTableStats->numFinds;
@@ -317,6 +323,22 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
             ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
             return FindResult { entryIndex, index, entry.offset(), entry.attributes() };
         }
+#if USE(BUN_JSC_ADDITIONS) && ASSERT_ENABLED
+        // D.4 single-rep coherence guarantees one uid per key content (fiber XOR atom).
+        // A cross-rep content match means a producer bypassed canonicalFiberWordFor —
+        // assert in debug so it gets fixed; release builds pay nothing for this check.
+        else {
+            UniquedStringImpl* entryKey = entry.key();
+            bool entryIsFiber = isInlinePropertyKey(entryKey);
+            if (keyIsFiber != entryIsFiber) [[unlikely]] {
+                const UniquedStringImpl* implSide = keyIsFiber ? entryKey : key;
+                uintptr_t fiberWord = inlinePropertyKeyWord(keyIsFiber ? key : entryKey);
+                if (implSide && !implSide->isSymbol() && inlinePropertyKeyIs8Bit(fiberWord)
+                    && WTF::equal(implSide, inlinePropertyKeySpan8(fiberWord)))
+                    ASSERT_NOT_REACHED_WITH_MESSAGE("dual-rep key reached PropertyTable");
+            }
+        }
+#endif
 
 #if DUMP_PROPERTYMAP_STATS
         ++propertyTableStats->numCollisions;
@@ -335,7 +357,11 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
 inline PropertyTable::FindResult PropertyTable::find(const KeyType& key)
 {
     ASSERT(key);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(isInlinePropertyKey(key) || key->isAtom() || key->isSymbol());
+#else
     ASSERT(key->isAtom() || key->isSymbol());
+#endif
     return withIndexVector([&](auto* vector) {
         return findImpl(vector, tableFromIndexVector(vector), key);
     });
@@ -344,7 +370,11 @@ inline PropertyTable::FindResult PropertyTable::find(const KeyType& key)
 inline std::tuple<PropertyOffset, unsigned> PropertyTable::get(const KeyType& key)
 {
     ASSERT(key);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(isInlinePropertyKey(key) || key->isAtom() || key->isSymbol());
+#else
     ASSERT(key->isAtom() || key->isSymbol());
+#endif
     ASSERT(key != PROPERTY_MAP_DELETED_ENTRY_KEY);
 
     if (!m_keyCount)
@@ -372,7 +402,11 @@ ALWAYS_INLINE std::tuple<PropertyOffset, unsigned, bool> PropertyTable::addAfter
 #endif
 
     // Ref the key
+#if USE(BUN_JSC_ADDITIONS)
+    uidRef(entry.key());
+#else
     entry.key()->ref();
+#endif
 
     // ensure capacity is available.
     if (!canInsert(entry)) {
@@ -408,7 +442,11 @@ inline void PropertyTable::remove(VM& vm, KeyType key, unsigned entryIndex, unsi
         vector[index] = deletedEntryIndex();
         tableFromIndexVector(vector)[entryIndex - 1].setKey(PROPERTY_MAP_DELETED_ENTRY_KEY);
     });
+#if USE(BUN_JSC_ADDITIONS)
+    uidDeref(key);
+#else
     key->deref();
+#endif
 
     ASSERT(m_keyCount >= 1);
     --m_keyCount;

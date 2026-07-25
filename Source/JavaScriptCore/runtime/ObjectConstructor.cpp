@@ -421,7 +421,12 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
     }
 
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // entry.key() may be a fiber-word-tagged UniquedStringImpl*; use fiber-aware ref/deref.
+        Vector<FiberAwareRefPtr, 8> properties;
+#else
         Vector<RefPtr<UniquedStringImpl>, 8> properties;
+#endif
         MarkedArgumentBuffer values;
         bool canUseFastPath = false;
         if (!target->canHaveExistingOwnIndexedProperties() && !target->hasNonReifiedStaticProperties()) {
@@ -432,8 +437,13 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
 
+#if USE(BUN_JSC_ADDITIONS)
+                    if (uidIsSymbol(entry.key()))
+                        return true;
+#else
                     if (entry.key()->isSymbol())
                         return true;
+#endif
 
                     properties.append(entry.key());
                     values.appendWithCrashOnOverflow(target->getDirect(entry.offset()));
@@ -469,7 +479,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     auto* newButterfly = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numProperties);
                     for (size_t i = 0; i < numProperties; i++) {
                         const auto& identifier = properties[i];
+#if USE(BUN_JSC_ADDITIONS)
+                        newButterfly->setIndex(vm, i, jsStringFromFiberOrImpl(vm, identifier.get()));
+#else
                         newButterfly->setIndex(vm, i, jsOwnedString(vm, identifier.get()));
+#endif
                     }
 
                     targetStructure->setCachedPropertyNames(vm, CachedPropertyNamesKind::EnumerableStrings, newButterfly);
@@ -482,12 +496,26 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                 JSString* key = nullptr;
                 if (cachedButterfly) {
                     auto* cachedKey = asString(cachedButterfly->get(i));
+#if USE(BUN_JSC_ADDITIONS)
+                    UniquedStringImpl* uid = properties[i].get();
+                    bool hit = isInlinePropertyKey(uid)
+                        ? (cachedKey->isInline() && cachedKey->inlineFiberWord() == inlinePropertyKeyWord(uid))
+                        : (cachedKey->tryGetValueImpl() == uid);
+                    if (hit)
+                        key = cachedKey;
+#else
                     if (cachedKey->tryGetValueImpl() == properties[i].get())
                         key = cachedKey;
+#endif
                 }
 
-                if (!key)
+                if (!key) {
+#if USE(BUN_JSC_ADDITIONS)
+                    key = jsStringFromFiberOrImpl(vm, properties[i].get());
+#else
                     key = jsOwnedString(vm, properties[i].get());
+#endif
+                }
 
                 JSArray* entry = nullptr;
                 {
@@ -533,7 +561,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
             value = target->get(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, void());
 
+#if USE(BUN_JSC_ADDITIONS)
+        JSString* key = jsStringFromFiberOrImpl(vm, propertyName.uid());
+#else
         JSString* key = jsOwnedString(vm, propertyName.uid());
+#endif
         JSArray* entry = nullptr;
         {
             ObjectInitializationScope initializationScope(vm);
@@ -580,8 +612,13 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
 
+#if USE(BUN_JSC_ADDITIONS)
+                    if (uidIsSymbol(entry.key()))
+                        return true;
+#else
                     if (entry.key()->isSymbol())
                         return true;
+#endif
 
                     namedPropertyValues.appendWithCrashOnOverflow(target->getDirect(entry.offset()));
                     return true;
@@ -885,7 +922,12 @@ static JSValue defineProperties(JSGlobalObject* globalObject, JSObject* object, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // entry.key() may be a fiber-word-tagged UniquedStringImpl*; DefaultRefDerefTraits::refIfNotNull would deref it.
+    Vector<FiberAwareRefPtr, 8> propertyNames;
+#else
     Vector<RefPtr<UniquedStringImpl>, 8> propertyNames;
+#endif
     MarkedArgumentBuffer values;
     bool canUseFastPath = false;
     if (!hasIndexedProperties(properties->indexingType())) {
@@ -1322,7 +1364,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                     ASSERT(!identifier.isPrivateName());
                     buffer[i].set(vm, owner, Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl())));
                 } else
+#if USE(BUN_JSC_ADDITIONS)
+                    buffer[i].set(vm, owner, jsOwnedAtomBackedString(vm, identifier));
+#else
                     buffer[i].set(vm, owner, jsOwnedString(vm, identifier.string()));
+#endif
             }
         };
 
@@ -1359,7 +1405,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
         for (size_t i = 0; i < numProperties; i++) {
             const auto& identifier = properties[i];
             ASSERT(!identifier.isSymbol());
+#if USE(BUN_JSC_ADDITIONS)
+            pushDirect(globalObject, keys, jsOwnedAtomBackedString(vm, identifier));
+#else
             pushDirect(globalObject, keys, jsOwnedString(vm, identifier.string()));
+#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         break;
@@ -1383,7 +1433,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                 ASSERT(!identifier.isPrivateName());
                 pushDirect(globalObject, keys, Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl())));
             } else
+#if USE(BUN_JSC_ADDITIONS)
+                pushDirect(globalObject, keys, jsOwnedAtomBackedString(vm, identifier));
+#else
                 pushDirect(globalObject, keys, jsOwnedString(vm, identifier.string()));
+#endif
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         break;

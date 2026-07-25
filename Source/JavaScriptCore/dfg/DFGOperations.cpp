@@ -49,6 +49,9 @@
 #include "FTLOSREntry.h"
 #include "FrameTracers.h"
 #include "HasOwnPropertyCache.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "Interpreter.h"
 #include "InterpreterInlines.h"
 #include "IntlCollator.h"
@@ -919,10 +922,27 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValObjectString, EncodedJSValue, (JSGloba
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // D.4 coherence + perf: grab the canonical fiber word straight from an
+    // inline cell's m_fiber (no toAtomString round-trip, m_fiber left unmutated).
+    GCOwnedDataScope<AtomStringImpl*> propertyName;
+    UniquedStringImpl* uid;
+    if (uintptr_t fiber = asString(string)->tryGetCanonicalInlineFiberWord())
+        uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+    else {
+        propertyName = asString(string)->toAtomString(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        uid = propertyName.data;
+        if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+    }
+    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), uid)));
+#else
     auto propertyName = asString(string)->toAtomString(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), propertyName.data)));
+#endif
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValObjectSymbol, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* base, JSCell* symbol))
@@ -4884,32 +4904,82 @@ JSC_DEFINE_JIT_OPERATION(operationSwitchString, char*, (JSGlobalObject* globalOb
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    const StringJumpTable& linkedTable = codeBlock->dfgStringSwitchJumpTable(tableIndex);
+#if USE(BUN_JSC_ADDITIONS)
+    if (string->isInline()) {
+        unsigned length = string->length();
+        RefPtr<AtomStringImpl> atom = string->is8Bit()
+            ? AtomStringImpl::lookUp(std::span { string->inlineData8(), length })
+            : AtomStringImpl::lookUp(std::span { string->inlineData16(), length });
+        OPERATION_RETURN(scope, atom
+            ? linkedTable.ctiForValue(*unlinkedTable, atom.get()).taggedPtr<char*>()
+            : linkedTable.ctiDefault().taggedPtr<char*>());
+    }
+#endif
     auto str = string->value(globalObject);
 
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    CodeBlock* codeBlock = callFrame->codeBlock();
-    const StringJumpTable& linkedTable = codeBlock->dfgStringSwitchJumpTable(tableIndex);
     OPERATION_RETURN(scope, linkedTable.ctiForValue(*unlinkedTable, str->impl()).taggedPtr<char*>());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Phase C.1 lets fiber words pass speculateStringIdentAndLoadStorage, so either
+// argument here may be a bit-1-tagged inline property key rather than a heap
+// StringImpl*. Decode to a StringView over the word's embedded bytes before
+// handing off to codePointCompare.
+static ALWAYS_INLINE std::strong_ordering codePointCompareMaybeInline(StringImpl* a, StringImpl* b)
+{
+    uintptr_t aWord = reinterpret_cast<uintptr_t>(a);
+    uintptr_t bWord = reinterpret_cast<uintptr_t>(b);
+    auto viewFor = [](const uintptr_t& word, StringImpl* impl) ALWAYS_INLINE_LAMBDA -> StringView {
+        if (isInlinePropertyKey(word)) [[unlikely]] {
+            unsigned len = inlinePropertyKeyLength(word);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+            if (inlinePropertyKeyIs8Bit(word))
+                return StringView { std::span<const Latin1Character> { bytes + 1, len } };
+            return StringView { std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len } };
+        }
+        return StringView { impl };
+    };
+    return codePointCompare(viewFor(aWord, a), viewFor(bWord, b));
+}
+#endif
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplLess, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) < 0;
+#else
     return codePointCompare(a, b) < 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplLessEq, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) <= 0;
+#else
     return codePointCompare(a, b) <= 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplGreater, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) > 0;
+#else
     return codePointCompare(a, b) > 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplGreaterEq, uintptr_t, (StringImpl* a, StringImpl* b))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return codePointCompareMaybeInline(a, b) >= 0;
+#else
     return codePointCompare(a, b) >= 0;
+#endif
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompareHeapBigIntLess, uintptr_t, (JSCell* a, JSCell* b))
@@ -5018,6 +5088,37 @@ JSC_DEFINE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject* globa
     JSValue key = JSValue::decode(encodedKey);
 
     if (key.isString()) [[likely]] {
+#if USE(BUN_JSC_ADDITIONS)
+        // DFG/FTL compileHasOwnProperty loads m_fiber and probes the cache at
+        // uidHash(m_fiber). A fresh inline cell's m_fiber is the fiber word;
+        // if we call toAtomString() that word is overwritten with the atom
+        // pointer, and the cache ends up keyed by atom — so every *new* inline
+        // cell (same content, same fiber word) misses. Key BOTH the object
+        // lookup and the HasOwnPropertyCache by whatever m_fiber currently
+        // holds so the next JIT probe (same bits) hits.
+        GCOwnedDataScope<AtomStringImpl*> propertyName;
+        UniquedStringImpl* cacheUid;
+        UniquedStringImpl* lookupUid;
+        if (uintptr_t fiber = asString(key)->tryGetCanonicalInlineFiberWord()) {
+            cacheUid = reinterpret_cast<UniquedStringImpl*>(fiber);
+            lookupUid = cacheUid;
+        } else {
+            propertyName = asString(key)->toAtomString(globalObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope, false);
+            cacheUid = propertyName.data;
+            lookupUid = cacheUid;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(cacheUid))
+                lookupUid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        }
+        PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool result = thisObject->hasOwnProperty(globalObject, lookupUid, slot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+
+        HasOwnPropertyCache* hasOwnPropertyCache = vm.hasOwnPropertyCache();
+        ASSERT(hasOwnPropertyCache);
+        hasOwnPropertyCache->tryAdd(slot, thisObject, cacheUid, result);
+        OPERATION_RETURN(scope, result);
+#else
         auto propertyName = asString(key)->toAtomString(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, false);
 
@@ -5029,6 +5130,7 @@ JSC_DEFINE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject* globa
         ASSERT(hasOwnPropertyCache);
         hasOwnPropertyCache->tryAdd(slot, thisObject, propertyName.data, result);
         OPERATION_RETURN(scope, result);
+#endif
     }
 
     Identifier propertyName = key.toPropertyKey(globalObject);

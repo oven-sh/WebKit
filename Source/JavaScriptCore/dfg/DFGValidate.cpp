@@ -252,7 +252,11 @@ public:
 
                 if (node->hasCacheableIdentifier()) {
                     auto* uid = node->cacheableIdentifier().uid();
+#if USE(BUN_JSC_ADDITIONS)
+                    VALIDATE((node), isInlinePropertyKey(uid) || uid->isSymbol() || !parseIndex(*uid));
+#else
                     VALIDATE((node), uid->isSymbol() || !parseIndex(*uid));
+#endif
                 }
                  
                 switch (node->op()) {

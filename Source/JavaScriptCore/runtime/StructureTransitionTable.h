@@ -30,6 +30,9 @@
 #include "WeakGCMap.h"
 #include <wtf/HashFunctions.h>
 #include <wtf/text/UniquedStringImpl.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 
 namespace JSC {
 
@@ -187,6 +190,11 @@ class StructureTransitionTable {
             static constexpr unsigned transitionKindShift = 56;
             static constexpr uintptr_t stringMask = (1ULL << attributesShift) - 1;
             static constexpr uintptr_t hashTableDeletedValue = 0x2;
+#if USE(BUN_JSC_ADDITIONS)
+            // Fiber words share bit 1 with hashTableDeletedValue but always carry
+            // >=2 payload bytes, so the encoded word can never equal exactly 0x2.
+            static_assert(JSC::inlinePropertyKeyTag == hashTableDeletedValue, "");
+#endif
             static_assert(sizeof(TransitionPropertyAttributes) * 8 <= 8);
             static_assert(sizeof(TransitionKind) * 8 <= 8);
             static_assert(hashTableDeletedValue < 8);
@@ -197,7 +205,11 @@ class StructureTransitionTable {
                 : m_encodedData(impl.raw() | (static_cast<uintptr_t>(attributes) << attributesShift) | (static_cast<uintptr_t>(transitionKind) << transitionKindShift))
             {
                 ASSERT(impl == this->impl());
+#if USE(BUN_JSC_ADDITIONS)
+                ASSERT(isInlinePropertyKey(impl.raw()) || roundUpToMultipleOf<8>(impl.raw()) == impl.raw());
+#else
                 ASSERT(roundUpToMultipleOf<8>(impl.raw()) == impl.raw());
+#endif
                 ASSERT(attributes <= UINT8_MAX);
                 ASSERT(attributes == this->attributes());
                 ASSERT(transitionKind != TransitionKind::Unknown);

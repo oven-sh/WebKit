@@ -45,6 +45,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "GetterSetter.h"
 #include "ICStats.h"
 #include "InlineCacheCompiler.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#include <wtf/HashFunctions.h>
+#endif
 #include "Interpreter.h"
 #include "JIT.h"
 #include "JITExceptions.h"
@@ -890,6 +894,15 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
 
     JSObject* baseObject = asObject(baseValue);
     UniquedStringImpl* uid = propertyName.impl();
+#if USE(BUN_JSC_ADDITIONS)
+    // JIT hasMegamorphicProperty probes with loadPtr(JSString::offsetOfValue()),
+    // so key the cache by that (atom or fiber word), not the D.4-canonical uid.
+    UniquedStringImpl* cacheUid = uid;
+    if (subscript.isString()) {
+        if (StringImpl* atom = asString(subscript)->tryGetValueImpl())
+            cacheUid = static_cast<UniquedStringImpl*>(atom);
+    }
+#endif
     if (!canUseMegamorphicInById(vm, uid)) [[unlikely]] {
         dataLogLnIf(verbose, " ", __LINE__);
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
@@ -923,7 +936,11 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
         if (hasProperty) {
             if (cacheable && slot.isCacheable()) [[likely]] {
                 if (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())
+#if USE(BUN_JSC_ADDITIONS)
+                    vm.megamorphicCache()->initAsHasHit(baseObject->structureID(), cacheUid);
+#else
                     vm.megamorphicCache()->initAsHasHit(baseObject->structureID(), uid);
+#endif
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         dataLogLnIf(verbose, " ", __LINE__);
@@ -951,7 +968,11 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
         if (!prototype.isObject()) {
             if (cacheable) [[likely]] {
                 if (!baseObject->structure()->isDictionary()) [[likely]] {
+#if USE(BUN_JSC_ADDITIONS)
+                    vm.megamorphicCache()->initAsHasMiss(baseObject->structureID(), cacheUid);
+#else
                     vm.megamorphicCache()->initAsHasMiss(baseObject->structureID(), uid);
+#endif
                     return jsBoolean(false);
                 }
                 if (!baseObject->structure()->hasBeenFlattenedBefore()) [[likely]]
@@ -1657,8 +1678,19 @@ static ALWAYS_INLINE void putByVal(JSGlobalObject* globalObject, JSValue baseVal
     Identifier propertyKey;
     UniquedStringImpl* uid = nullptr;
     if (subscript.isString()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (uintptr_t fiber = asString(subscript)->tryGetCanonicalInlineFiberWord())
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        else {
+            propertyName = asString(subscript)->toAtomString(globalObject);
+            uid = propertyName.data;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+                uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        }
+#else
         propertyName = asString(subscript)->toAtomString(globalObject);
         uid = propertyName.data;
+#endif
     } else {
         propertyKey = subscript.toPropertyKey(globalObject);
         uid = propertyKey.impl();
@@ -1757,7 +1789,11 @@ static ALWAYS_INLINE void putByValOptimize(JSGlobalObject* globalObject, CodeBlo
             bool isNonStringPrimitiveKey = false;
             if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
                 RETURN_IF_EXCEPTION(scope, void());
+#if USE(BUN_JSC_ADDITIONS)
+                if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
                 if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                     identifier = CacheableIdentifier::createFromCell(subscript.asCell());
             } else {
                 identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);
@@ -1840,7 +1876,11 @@ static ALWAYS_INLINE void directPutByValOptimize(JSGlobalObject* globalObject, C
         bool isNonStringPrimitiveKey = false;
         if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
             RETURN_IF_EXCEPTION(scope, void());
+#if USE(BUN_JSC_ADDITIONS)
+            if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
             if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                 identifier = CacheableIdentifier::createFromCell(subscript.asCell());
         } else {
             identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);
@@ -2036,6 +2076,15 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
     PutPropertySlot slot(baseValue, isStrict);
 
     UniquedStringImpl* uid = propertyName.impl();
+#if USE(BUN_JSC_ADDITIONS)
+    // JIT storeMegamorphicProperty probes with loadPtr(JSString::offsetOfValue()),
+    // so key the cache by that (atom or fiber word), not the D.4-canonical uid.
+    UniquedStringImpl* cacheUid = uid;
+    if (subscript.isString()) {
+        if (StringImpl* atom = asString(subscript)->tryGetValueImpl())
+            cacheUid = static_cast<UniquedStringImpl*>(atom);
+    }
+#endif
     if (!canUseMegamorphicPutById(vm, uid) || structure->typeInfo().overridesPut()) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
             repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
@@ -2076,7 +2125,11 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
     if (slot.type() == PutPropertySlot::ExistingProperty) {
         if (oldStructure == newStructure && slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]] {
             oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset()); // Ensure invalidating watchpoint set.
+#if USE(BUN_JSC_ADDITIONS)
+            vm.megamorphicCache()->initAsReplace(StructureID::encode(oldStructure), cacheUid, slot.cachedOffset());
+#else
             vm.megamorphicCache()->initAsReplace(StructureID::encode(oldStructure), uid, slot.cachedOffset());
+#endif
         }
         return;
     }
@@ -2095,7 +2148,11 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
 
     bool reallocating = newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity();
     if (slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]]
+#if USE(BUN_JSC_ADDITIONS)
+        vm.megamorphicCache()->initAsTransition(StructureID::encode(oldStructure), StructureID::encode(newStructure), cacheUid, slot.cachedOffset(), reallocating);
+#else
         vm.megamorphicCache()->initAsTransition(StructureID::encode(oldStructure), StructureID::encode(newStructure), uid, slot.cachedOffset(), reallocating);
+#endif
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValStrictMegamorphic, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
@@ -3572,9 +3629,42 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (subscript.isString()) {
+#if USE(BUN_JSC_ADDITIONS)
+        // D.4 coherence: Structure::get()'s m_seenProperties bloom filter and
+        // PropertyTable are keyed by the canonical fiber word for 2..5-char
+        // Latin-1 names, so look up with that — not the raw AtomStringImpl*.
+        // Fast path: grab the word straight from an inline cell's m_fiber and
+        // skip toAtomString (which would atomize in-place and desync m_fiber
+        // from the JIT fast-path's last-seen bits).
+        GCOwnedDataScope<AtomStringImpl*> propertyName;
+        UniquedStringImpl* uid;
+        if (uintptr_t fiber = asString(subscript)->tryGetCanonicalInlineFiberWord())
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        else {
+            propertyName = asString(subscript)->toAtomString(globalObject);
+            RETURN_IF_EXCEPTION(scope, JSValue());
+            uid = propertyName.data;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+                uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        }
+
+        if (baseValue.isCell()) [[likely]] {
+            Structure& structure = *baseValue.asCell()->structure();
+            if (JSCell::canUseFastGetOwnProperty(structure)) {
+                if (JSValue result = baseValue.asCell()->fastGetOwnProperty(vm, structure, uid)) {
+                    ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+                    return result;
+                }
+            }
+
+            RELEASE_AND_RETURN(scope, baseValue.get(globalObject, uid));
+        }
+
+        ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+        RELEASE_AND_RETURN(scope, baseValue.get(globalObject, uid));
+#else
         auto propertyName = asString(subscript)->toAtomString(globalObject);
         RETURN_IF_EXCEPTION(scope, JSValue());
-
         if (baseValue.isCell()) [[likely]] {
             Structure& structure = *baseValue.asCell()->structure();
             if (JSCell::canUseFastGetOwnProperty(structure)) {
@@ -3589,6 +3679,7 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
 
         ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
         RELEASE_AND_RETURN(scope, baseValue.get(globalObject, propertyName.data));
+#endif
     } else if (std::optional<uint32_t> index = subscript.tryGetAsUint32Index()) {
         uint32_t i = *index;
         if (isJSString(baseValue)) {
@@ -3684,7 +3775,11 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValOptimize, EncodedJSValue, (EncodedJSVa
             bool isNonStringPrimitiveKey = false;
             if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+#if USE(BUN_JSC_ADDITIONS)
+                if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
                 if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                     identifier = CacheableIdentifier::createFromCell(subscript.asCell());
             } else {
                 identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);
@@ -3716,9 +3811,37 @@ ALWAYS_INLINE static JSValue getByValWithThis(JSGlobalObject* globalObject, Call
     PropertySlot slot(thisValue, PropertySlot::PropertySlot::InternalMethodType::Get);
 
     if (subscript.isString()) {
+#if USE(BUN_JSC_ADDITIONS)
+        // D.4 coherence + perf: grab the canonical fiber word straight from an
+        // inline cell's m_fiber, skipping the toAtomString()+canonicalFiberWordFor()
+        // round-trip and leaving m_fiber unmutated for the next JIT probe.
+        GCOwnedDataScope<AtomStringImpl*> propertyName;
+        UniquedStringImpl* uid;
+        if (uintptr_t fiber = asString(subscript)->tryGetCanonicalInlineFiberWord())
+            uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        else {
+            propertyName = asString(subscript)->toAtomString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            uid = propertyName.data;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+                uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        }
+
+        if (baseValue.isCell()) [[likely]] {
+            Structure& structure = *baseValue.asCell()->structure();
+            if (JSCell::canUseFastGetOwnProperty(structure)) {
+                if (JSValue result = baseValue.asCell()->fastGetOwnProperty(vm, structure, uid)) {
+                    ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+                    return result;
+                }
+            }
+        }
+
+        ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
+        RELEASE_AND_RETURN(scope, baseValue.get(globalObject, uid, slot));
+#else
         auto propertyName = asString(subscript)->toAtomString(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-
         if (baseValue.isCell()) [[likely]] {
             Structure& structure = *baseValue.asCell()->structure();
             if (JSCell::canUseFastGetOwnProperty(structure)) {
@@ -3731,6 +3854,7 @@ ALWAYS_INLINE static JSValue getByValWithThis(JSGlobalObject* globalObject, Call
 
         ASSERT(callFrame->bytecodeIndex() != BytecodeIndex(0));
         RELEASE_AND_RETURN(scope, baseValue.get(globalObject, propertyName.data, slot));
+#endif
     } else if (std::optional<uint32_t> index = subscript.tryGetAsUint32Index()) {
         uint32_t i = *index;
         if (isJSString(baseValue)) {
@@ -3795,12 +3919,38 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
     GCOwnedDataScope<AtomStringImpl*> propertyName;
     Identifier propertyKey;
     UniquedStringImpl* uid = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    // cacheUid: exactly what JSString::m_fiber holds after this block — the JIT
+    // loadMegamorphicProperty fast path probes with loadPtr(offsetOfValue()), so
+    // MegamorphicCache::initAsHit/Miss MUST be keyed by that word, not the
+    // D.4-canonical fiber word. lookupUid: the canonical form for Structure/
+    // PropertyTable lookup. For 2-char ASCII substrings (keyAtomStringCache
+    // atom-backed) cacheUid==atom, lookupUid==fiber; keying the cache by fiber
+    // here was a 100% miss → 2.6× getByVal regression (Babylon/acorn-wtb).
+    UniquedStringImpl* cacheUid = nullptr;
+#endif
     if (subscript.isString()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (uintptr_t fiber = asString(subscript)->tryGetCanonicalInlineFiberWord()) {
+            cacheUid = reinterpret_cast<UniquedStringImpl*>(fiber);
+            uid = cacheUid;
+        } else {
+            propertyName = asString(subscript)->toAtomString(globalObject);
+            cacheUid = propertyName.data;
+            uid = cacheUid;
+            if (uintptr_t fiber = Identifier::canonicalFiberWordFor(uid))
+                uid = reinterpret_cast<UniquedStringImpl*>(fiber);
+        }
+#else
         propertyName = asString(subscript)->toAtomString(globalObject);
         uid = propertyName.data;
+#endif
     } else {
         propertyKey = subscript.toPropertyKey(globalObject);
         uid = propertyKey.impl();
+#if USE(BUN_JSC_ADDITIONS)
+        cacheUid = uid;
+#endif
     }
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -3812,7 +3962,11 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
         RELEASE_AND_RETURN(scope, getByValWithThis(globalObject, callFrame, profile, baseValue, subscript, thisValue));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto index = parseIndex(PropertyName(uid)); index) [[unlikely]] {
+#else
     if (auto index = parseIndex(*uid); index) [[unlikely]] {
+#endif
         if (!baseObject->structure()->isCacheableDictionary() || index.value() >= 100) {
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
                 repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
@@ -3847,7 +4001,11 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
         if (hasProperty) {
             if (cacheable && slot.isCacheableValue() && slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]] {
                 if (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())
+#if USE(BUN_JSC_ADDITIONS)
+                    vm.megamorphicCache()->initAsHit(baseObject->structureID(), cacheUid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
+#else
                     vm.megamorphicCache()->initAsHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
+#endif
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
@@ -3871,7 +4029,11 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
         if (!prototype.isObject()) {
             if (cacheable) [[likely]] {
                 if (!baseObject->structure()->isDictionary()) [[likely]] {
+#if USE(BUN_JSC_ADDITIONS)
+                    vm.megamorphicCache()->initAsMiss(baseObject->structureID(), cacheUid);
+#else
                     vm.megamorphicCache()->initAsMiss(baseObject->structureID(), uid);
+#endif
                     return jsUndefined();
                 }
                 if (!baseObject->structure()->hasBeenFlattenedBefore()) [[likely]]
@@ -3974,7 +4136,11 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValWithThisOptimize, EncodedJSValue, (Enc
             bool isNonStringPrimitiveKey = false;
             if (auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript)) {
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+#if USE(BUN_JSC_ADDITIONS)
+                if (subscript.isSymbol() || !parseIndex(PropertyName(propertyName.data)))
+#else
                 if (subscript.isSymbol() || !parseIndex(*propertyName.data))
+#endif
                     identifier = CacheableIdentifier::createFromCell(subscript.asCell());
             } else {
                 identifier = nonStringPrimitiveKeyForSubscript(vm, subscript);
@@ -4610,6 +4776,14 @@ JSC_DEFINE_JIT_OPERATION(operationResolveRopeString, JSString*, (JSGlobalObject*
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // compileResolveRope routes inline small strings here via the widened
+    // notStringImplMask test; those are plain JSStrings, not JSRopeStrings.
+    if (static_cast<JSString*>(string)->isInline()) {
+        static_cast<JSString*>(string)->resolveInline(globalObject);
+        OPERATION_RETURN(scope, static_cast<JSString*>(string));
+    }
+#endif
     string->resolveRope(globalObject);
     OPERATION_RETURN(scope, string);
 }
@@ -4633,6 +4807,15 @@ JSC_DEFINE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlob
         unsigned length = string->length();
         if (length < unlinkedTable.minLength() || length > unlinkedTable.maxLength())
             result = linkedTable.ctiDefault().taggedPtr();
+#if USE(BUN_JSC_ADDITIONS)
+        else if (string->isInline()) {
+            RefPtr<AtomStringImpl> atom = string->is8Bit()
+                ? AtomStringImpl::lookUp(std::span { string->inlineData8(), length })
+                : AtomStringImpl::lookUp(std::span { string->inlineData16(), length });
+            result = atom ? linkedTable.ctiForValue(unlinkedTable, atom.get()).taggedPtr()
+                          : linkedTable.ctiDefault().taggedPtr();
+        }
+#endif
         else {
             auto value = string->value(globalObject);
             OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -4872,6 +5055,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWriteBarrierSlowPath, void, (VM* vmPo
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     vm.writeBarrierSlowPath(cell);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationInlinePropertyKeyHash, UCPUStrictInt32, (uintptr_t word))
+{
+    return toUCPUStrictInt32(uidHash(reinterpret_cast<const UniquedStringImpl*>(word)));
+}
+#endif
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationLookupExceptionHandler, void, (VM* vmPointer))
 {

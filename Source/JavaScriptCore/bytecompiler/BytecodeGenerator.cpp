@@ -4575,6 +4575,24 @@ void BytecodeGenerator::endSwitch(const Vector<Ref<Label>, 8>& labels, Expressio
             ASSERT(!labels[i]->isForward());
 
             ASSERT(nodes[i]->isString());
+#if USE(BUN_JSC_ADDITIONS)
+            // StringOffsetTable is RefPtr<StringImpl>-keyed and the runtime lookup
+            // compares real StringImpl*, so materialize the fiber word here instead
+            // of letting a tagged pointer reach DefaultRefDerefTraits::refIfNotNull.
+            const Identifier& caseIdent = static_cast<StringNode*>(nodes[i])->value();
+            // string() is by-value now; keep the atom alive across add() so a
+            // fiber-word materialization survives until the table takes its ref.
+            AtomString clauseAtom = caseIdent.string();
+            UniquedStringImpl* clause = clauseAtom.impl();
+            ASSERT(!isInlinePropertyKey(clause));
+            ASSERT(clause->isAtom());
+            auto result = jumpTable.m_offsetTable.add(clause, UnlinkedStringJumpTable::OffsetLocation { labels[i]->bind(switchInfo.bytecodeOffset), 0 });
+            if (result.isNewEntry) {
+                result.iterator->value.m_indexInTable = jumpTable.m_offsetTable.size() - 1;
+                jumpTable.m_minLength = std::min(jumpTable.m_minLength, clause->length());
+                jumpTable.m_maxLength = std::max(jumpTable.m_maxLength, clause->length());
+            }
+#else
             UniquedStringImpl* clause = static_cast<StringNode*>(nodes[i])->value().impl();
             ASSERT(clause->isAtom());
             auto result = jumpTable.m_offsetTable.add(clause, UnlinkedStringJumpTable::OffsetLocation { labels[i]->bind(switchInfo.bytecodeOffset), 0 });
@@ -4583,6 +4601,7 @@ void BytecodeGenerator::endSwitch(const Vector<Ref<Label>, 8>& labels, Expressio
                 jumpTable.m_minLength = std::min(jumpTable.m_minLength, clause->length());
                 jumpTable.m_maxLength = std::max(jumpTable.m_maxLength, clause->length());
             }
+#endif
         }
         ASSERT(!defaultLabel.isForward());
         jumpTable.m_defaultOffset = defaultLabel.bind(switchInfo.bytecodeOffset);
@@ -5127,11 +5146,19 @@ RegisterID* BytecodeGenerator::emitGetTemplateObject(RegisterID* dst, TaggedTemp
     for (; templateString; templateString = templateString->next()) {
         auto* string = templateString->value();
         ASSERT(string->raw());
+#if USE(BUN_JSC_ADDITIONS)
+        rawStrings.append(string->raw()->string());
+        if (!string->cooked())
+            cookedStrings.append(std::nullopt);
+        else
+            cookedStrings.append(string->cooked()->string());
+#else
         rawStrings.append(string->raw()->impl());
         if (!string->cooked())
             cookedStrings.append(std::nullopt);
         else
             cookedStrings.append(string->cooked()->impl());
+#endif
     }
     RefPtr<RegisterID> constant = addTemplateObjectConstant(TemplateObjectDescriptor::create(WTF::move(rawStrings), WTF::move(cookedStrings)), taggedTemplate->endOffset());
     if (!dst)

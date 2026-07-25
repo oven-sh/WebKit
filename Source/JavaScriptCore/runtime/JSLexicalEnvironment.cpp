@@ -81,8 +81,13 @@ void JSLexicalEnvironment::getOwnSpecialPropertyNames(JSObject* object, JSGlobal
                 continue;
             if (!thisObject->isValidScopeOffset(it->value.scopeOffset()))
                 continue;
+#if USE(BUN_JSC_ADDITIONS)
+            if (!propertyNames.includeSymbolProperties() && uidIsSymbol(it->key.get()))
+                continue;
+#else
             if (!propertyNames.includeSymbolProperties() && it->key->isSymbol())
                 continue;
+#endif
             if (propertyNames.privateSymbolMode() == PrivateSymbolMode::Exclude && symbolTable->hasPrivateName(it->key))
                 continue;
             propertyNames.add(Identifier::fromUid(vm, it->key.get()));

@@ -42,6 +42,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSDateMath.h"
 #include "JSONAtomStringCache.h"
 #include "KeyAtomStringCache.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlineStringCache.h"
+#endif
 #include "NativeFunction.h"
 #include "NumericStrings.h"
 #include "SmallStrings.h"
@@ -635,6 +638,10 @@ public:
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
     KeyAtomStringCache keyAtomStringCache;
+#if USE(BUN_JSC_ADDITIONS)
+    InlineStringCache inlineStringCache;
+    InlineAtomCache inlineAtomCache;
+#endif
     StringSplitCache stringSplitCache;
     Vector<unsigned> stringSplitIndice;
     StringReplaceCache stringReplaceCache;

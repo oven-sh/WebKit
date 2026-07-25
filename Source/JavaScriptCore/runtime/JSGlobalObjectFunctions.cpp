@@ -41,6 +41,9 @@
 #include "ObjectConstructorInlines.h"
 #include "ParseInt.h"
 #include "SourceProfiler.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "JSStringBuilder.h"
+#endif
 #include <stdio.h>
 #include <wtf/ASCIICType.h>
 #include <wtf/Assertions.h>
@@ -68,7 +71,11 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
         return JSC::throwException(globalObject, scope, createURIError(globalObject, "String contained an illegal UTF-16 sequence."_s));
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    JSStringBuilder builder(OverflowPolicy::RecordOverflow);
+#else
     StringBuilder builder(OverflowPolicy::RecordOverflow);
+#endif
     builder.reserveCapacity(characters.size());
 
     // 4. Repeat
@@ -135,7 +142,11 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
 
     if (builder.hasOverflowed()) [[unlikely]]
         return throwOutOfMemoryError(globalObject, scope);
+#if USE(BUN_JSC_ADDITIONS)
+    return builder.toJS(vm);
+#else
     return jsString(vm, builder.toString());
+#endif
 }
 
 static JSValue encode(JSGlobalObject* globalObject, JSValue argument, const WTF::BitSet<256>& doNotEscape)
@@ -154,7 +165,11 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    JSStringBuilder builder(OverflowPolicy::RecordOverflow);
+#else
     StringBuilder builder(OverflowPolicy::RecordOverflow);
+#endif
     size_t k = 0;
     char16_t u = 0;
     while (k < characters.size()) {
@@ -219,7 +234,11 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
     }
     if (builder.hasOverflowed()) [[unlikely]]
         return throwOutOfMemoryError(globalObject, scope);
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_AND_RETURN(scope, builder.toJS(vm));
+#else
     RELEASE_AND_RETURN(scope, jsString(vm, builder.toString()));
+#endif
 }
 
 static JSValue decode(JSGlobalObject* globalObject, JSValue argument, const WTF::BitSet<256>& doNotUnescape, bool strict)
@@ -615,7 +634,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEscape, (JSGlobalObject* globalObject, CallFr
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+        JSStringBuilder builder(OverflowPolicy::RecordOverflow);
+#else
         StringBuilder builder(OverflowPolicy::RecordOverflow);
+#endif
         if (view.is8Bit()) {
             for (auto character : view.span8()) {
                 if (doNotEscape.get(character))
@@ -638,7 +661,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEscape, (JSGlobalObject* globalObject, CallFr
             throwOutOfMemoryError(globalObject, scope);
             return { };
         }
+#if USE(BUN_JSC_ADDITIONS)
+        return builder.toJS(vm);
+#else
         return jsString(vm, builder.toString());
+#endif
     }));
 }
 
@@ -653,7 +680,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+        JSStringBuilder builder(OverflowPolicy::RecordOverflow);
+#else
         StringBuilder builder(OverflowPolicy::RecordOverflow);
+#endif
         builder.reserveCapacity(length);
 
         if (view.is8Bit()) {
@@ -701,7 +732,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
             throwOutOfMemoryError(globalObject, scope);
             return { };
         }
+#if USE(BUN_JSC_ADDITIONS)
+        return builder.toJS(vm);
+#else
         return jsString(vm, builder.toString());
+#endif
     }));
 }
 

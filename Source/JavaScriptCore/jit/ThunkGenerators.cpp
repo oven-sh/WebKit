@@ -694,6 +694,22 @@ MacroAssemblerCodeRef<JITThunkPtrTag> stringEqualThunkGenerator(VM& vm)
 
         // Rope: must be substring rope (concat ropes go to slowCase).
         isRope.link(&jit);
+#if USE(BUN_JSC_ADDITIONS)
+        // Inline small string: decode length/is8Bit from the fiber word and point dataGPR at the
+        // in-cell character bytes.
+        auto notInline = jit.branchTestPtr(JIT::NonZero, dataGPR, JIT::TrustedImm32(JSString::isRopeInPointer));
+        jit.move(dataGPR, lengthGPR);
+        jit.urshiftPtr(JIT::TrustedImm32(JSString::inlineLengthShift), lengthGPR);
+        jit.and32(JIT::TrustedImm32(JSString::inlineLengthMask), lengthGPR);
+        jit.move(dataGPR, flagsGPR);
+        jit.and32(JIT::TrustedImm32(StringImpl::flagIs8Bit()), flagsGPR);
+        jit.addPtr(JIT::TrustedImm32(JSString::offsetOfValue() + 1), jsStringGPR, dataGPR);
+        auto inlineIs8 = jit.branchTest32(JIT::NonZero, flagsGPR);
+        jit.addPtr(JIT::TrustedImm32(1), dataGPR);
+        inlineIs8.link(&jit);
+        auto inlineDone = jit.jump();
+        notInline.link(&jit);
+#endif
         slowCase.append(jit.branchTest64(JIT::Zero, dataGPR, JIT::TrustedImm64(JSRopeString::isSubstringInPointer)));
 
         // Load substring base raw (low 48 bits of fiber1) and mask. and64(TrustedImm64) is one
@@ -716,6 +732,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> stringEqualThunkGenerator(VM& vm)
         jit.addPtr(lengthGPR, dataGPR);
         jit.load32(JIT::Address(jsStringGPR, JSRopeString::offsetOfLength()), lengthGPR);
 
+#if USE(BUN_JSC_ADDITIONS)
+        inlineDone.link(&jit);
+#endif
         done.link(&jit);
     };
 

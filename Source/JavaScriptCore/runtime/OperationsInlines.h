@@ -154,6 +154,33 @@ ALWAYS_INLINE JSString* jsString(JSGlobalObject* globalObject, JSString* s1, JSS
         return nullptr;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Short concats: write both sides into a 16/24-byte inline cell instead of a
+    // 32-byte rope that would need resolving later. Only when both sides'
+    // characters are available without allocation (non-rope).
+    unsigned total = length1 + length2;
+    if (total <= JSString::maxBigInlineLength8 && !s1->isRope() && !s2->isRope()) {
+        auto view1 = s1->view(globalObject);
+        auto view2 = s2->view(globalObject);
+        if (view1->is8Bit() && view2->is8Bit()) {
+            Latin1Character buf[JSString::maxBigInlineLength8];
+            memcpy(buf, view1->span8().data(), length1);
+            memcpy(buf + length1, view2->span8().data(), length2);
+            if (total <= JSString::maxInlineLength8)
+                return JSString::createInline8(vm, std::span { buf, total });
+            return JSBigInlineString::create8(vm, std::span { buf, total });
+        }
+        if (total <= JSString::maxBigInlineLength16) {
+            char16_t buf16[JSString::maxBigInlineLength16];
+            view1->getCharacters(std::span { buf16, length1 });
+            view2->getCharacters(std::span { buf16 + length1, length2 });
+            if (total <= JSString::maxInlineLength16)
+                return JSString::createInline16(vm, std::span { buf16, total });
+            return JSBigInlineString::create16(vm, std::span { buf16, total });
+        }
+    }
+#endif
+
     return JSRopeString::create(vm, s1, s2);
 }
 
@@ -179,6 +206,24 @@ ALWAYS_INLINE JSString* jsString(JSGlobalObject* globalObject, JSString* s1, JSS
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned total = length1 + length2 + length3;
+    if (total <= JSString::maxBigInlineLength8 && !s1->isRope() && !s2->isRope() && !s3->isRope()) {
+        auto v1 = s1->view(globalObject);
+        auto v2 = s2->view(globalObject);
+        auto v3 = s3->view(globalObject);
+        if (v1->is8Bit() && v2->is8Bit() && v3->is8Bit()) {
+            Latin1Character buf[JSString::maxBigInlineLength8];
+            memcpy(buf, v1->span8().data(), length1);
+            memcpy(buf + length1, v2->span8().data(), length2);
+            memcpy(buf + length1 + length2, v3->span8().data(), length3);
+            if (total <= JSString::maxInlineLength8)
+                return JSString::createInline8(vm, std::span { buf, total });
+            return JSBigInlineString::create8(vm, std::span { buf, total });
+        }
+    }
+#endif
 
     return JSRopeString::create(vm, s1, s2, s3);
 }

@@ -4263,20 +4263,42 @@ void SpeculativeJIT::compile(Node* node)
         case StringUse: {
             speculateString(node->child2(), keyRegs.payloadGPR());
             loadPtr(Address(keyRegs.payloadGPR(), JSString::offsetOfValue()), implGPR);
+#if USE(BUN_JSC_ADDITIONS)
+            slowPath.append(branchIfActualRopeStringImpl(implGPR));
+            {
+                Jump isInline = branchIfInlineStringImpl(implGPR);
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+                isInline.link(this);
+            }
+#else
             slowPath.append(branchIfRopeStringImpl(implGPR));
             slowPath.append(branchTest32(
                 Zero, Address(implGPR, StringImpl::flagsOffset()),
                 TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             break;
         }
         case UntypedUse: {
             slowPath.append(branchIfNotCell(keyRegs));
             auto isNotString = branchIfNotString(keyRegs.payloadGPR());
             loadPtr(Address(keyRegs.payloadGPR(), JSString::offsetOfValue()), implGPR);
+#if USE(BUN_JSC_ADDITIONS)
+            slowPath.append(branchIfActualRopeStringImpl(implGPR));
+            {
+                Jump isInline = branchIfInlineStringImpl(implGPR);
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+                isInline.link(this);
+            }
+#else
             slowPath.append(branchIfRopeStringImpl(implGPR));
             slowPath.append(branchTest32(
                 Zero, Address(implGPR, StringImpl::flagsOffset()),
                 TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             auto hasUniquedImpl = jump();
 
             isNotString.link(this);
@@ -4296,8 +4318,14 @@ void SpeculativeJIT::compile(Node* node)
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // 64-bit mul64/urshift64 are JSVALUE64-only, so compute uidHash(word)
+        // via the operation unconditionally on 32-bit (matches HasOwnPropertyCache::hash()).
+        callOperationWithSilentSpill(operationInlinePropertyKeyHash, hashGPR, implGPR);
+#else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
+#endif
         load32(Address(objectGPR, JSCell::structureIDOffset()), structureIDGPR);
         add32(structureIDGPR, hashGPR);
         and32(TrustedImm32(HasOwnPropertyCache::mask), hashGPR);

@@ -665,7 +665,11 @@ public:
     bool isArgumentsPrototypeIteratorProtocolFastAndNonObservable();
 
 #if ENABLE(DFG_JIT)
+#if USE(BUN_JSC_ADDITIONS)
+    using ReferencedGlobalPropertyWatchpointSets = UncheckedKeyHashMap<FiberAwareRefPtr, Ref<WatchpointSet>, IdentifierRepHash>;
+#else
     using ReferencedGlobalPropertyWatchpointSets = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
+#endif
     ReferencedGlobalPropertyWatchpointSets m_referencedGlobalPropertyWatchpointSets;
     ConcurrentJSLock m_referencedGlobalPropertyWatchpointSetsLock;
 #endif

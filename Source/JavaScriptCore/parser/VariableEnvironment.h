@@ -142,7 +142,13 @@ struct PrivateNameEntryHashTraits : HashTraits<PrivateNameEntry> {
     static constexpr bool needsDestruction = false;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+typedef UncheckedKeyHashMap<FiberAwarePackedRefPtr, PrivateNameEntry, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, PrivateNameEntryHashTraits> PrivateNameEnvironment;
+using VERefPtr = FiberAwareRefPtr;
+#else
 typedef UncheckedKeyHashMap<PackedRefPtr<UniquedStringImpl>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> PrivateNameEnvironment;
+using VERefPtr = RefPtr<UniquedStringImpl>;
+#endif
 
 class VariableEnvironment {
     WTF_MAKE_TZONE_ALLOCATED(VariableEnvironment);
@@ -151,7 +157,11 @@ public:
     static constexpr unsigned inlineMapCapacity = 9;
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    typedef InlineMap<FiberAwarePackedRefPtr, VariableEnvironmentEntry, inlineMapCapacity, IdentifierRepHash, HashTraits<FiberAwareRefPtr>, VariableEnvironmentEntryHashTraits> Map;
+#else
     typedef InlineMap<PackedRefPtr<UniquedStringImpl>, VariableEnvironmentEntry, inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> Map;
+#endif
 
 public:
 
@@ -171,13 +181,18 @@ public:
     ALWAYS_INLINE Map::iterator end() { return m_map.end(); }
     ALWAYS_INLINE Map::const_iterator begin() const { return m_map.begin(); }
     ALWAYS_INLINE Map::const_iterator end() const { return m_map.end(); }
-    ALWAYS_INLINE Map::AddResult add(const RefPtr<UniquedStringImpl>& identifier) { return m_map.add(identifier, VariableEnvironmentEntry()); }
+#if USE(BUN_JSC_ADDITIONS)
+    ALWAYS_INLINE Map::AddResult add(UniquedStringImpl* identifier) { return m_map.add(FiberAwareRefPtr(identifier), VariableEnvironmentEntry()); }
+    ALWAYS_INLINE Map::AddResult add(const FiberAwareRefPtr& identifier) { return m_map.add(identifier, VariableEnvironmentEntry()); }
+#else
+    ALWAYS_INLINE Map::AddResult add(const VERefPtr& identifier) { return m_map.add(identifier, VariableEnvironmentEntry()); }
+#endif
     ALWAYS_INLINE Map::AddResult add(const Identifier& identifier) { return add(identifier.impl()); }
 
     // Defined in VariableEnvironmentInlines.h.
     PrivateNameEnvironment::AddResult addPrivateName(const Identifier& identifier);
     // Defined in VariableEnvironmentInlines.h.
-    PrivateNameEnvironment::AddResult addPrivateName(const RefPtr<UniquedStringImpl>& identifier);
+    PrivateNameEnvironment::AddResult addPrivateName(const VERefPtr& identifier);
 
     ALWAYS_INLINE unsigned size() const { return m_map.size() + privateNamesSize(); }
     ALWAYS_INLINE unsigned mapSize() const { return m_map.size(); }
@@ -223,7 +238,7 @@ public:
 
     // Defined in VariableEnvironmentInlines.h.
     bool declarePrivateMethod(const Identifier& identifier);
-    bool declarePrivateMethod(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits addionalTraits = PrivateNameEntry::Traits::None);
+    bool declarePrivateMethod(const VERefPtr& identifier, PrivateNameEntry::Traits addionalTraits = PrivateNameEntry::Traits::None);
 
     enum class PrivateDeclarationResult {
         Success,
@@ -231,7 +246,7 @@ public:
         InvalidStaticNonStatic
     };
 
-    PrivateDeclarationResult declarePrivateAccessor(const RefPtr<UniquedStringImpl>&, PrivateNameEntry accessorTraits);
+    PrivateDeclarationResult declarePrivateAccessor(const VERefPtr&, PrivateNameEntry accessorTraits);
 
     // Defined in VariableEnvironmentInlines.h.
     bool declareStaticPrivateMethod(const Identifier& identifier);
@@ -240,15 +255,15 @@ public:
     PrivateDeclarationResult declarePrivateSetter(const Identifier& identifier);
     // Defined in VariableEnvironmentInlines.h.
     PrivateDeclarationResult declareStaticPrivateSetter(const Identifier& identifier);
-    PrivateDeclarationResult declarePrivateSetter(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits modifierTraits = PrivateNameEntry::Traits::None);
+    PrivateDeclarationResult declarePrivateSetter(const VERefPtr& identifier, PrivateNameEntry::Traits modifierTraits = PrivateNameEntry::Traits::None);
 
     // Defined in VariableEnvironmentInlines.h.
     PrivateDeclarationResult declarePrivateGetter(const Identifier& identifier);
     // Defined in VariableEnvironmentInlines.h.
     PrivateDeclarationResult declareStaticPrivateGetter(const Identifier& identifier);
-    PrivateDeclarationResult declarePrivateGetter(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits modifierTraits = PrivateNameEntry::Traits::None);
+    PrivateDeclarationResult declarePrivateGetter(const VERefPtr& identifier, PrivateNameEntry::Traits modifierTraits = PrivateNameEntry::Traits::None);
 
-    Map::AddResult declarePrivateField(const RefPtr<UniquedStringImpl>&);
+    Map::AddResult declarePrivateField(const VERefPtr&);
 
     ALWAYS_INLINE PrivateNamesRange privateNames() const
     {
@@ -342,7 +357,11 @@ private:
     std::unique_ptr<VariableEnvironment::RareData> m_rareData;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+using TDZEnvironment = UncheckedKeyHashSet<FiberAwareRefPtr, IdentifierRepHash>;
+#else
 using TDZEnvironment = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
+#endif
 
 class CompactTDZEnvironment {
     WTF_MAKE_TZONE_ALLOCATED(CompactTDZEnvironment);
@@ -350,7 +369,11 @@ class CompactTDZEnvironment {
 
     friend class CachedCompactTDZEnvironment;
 
+#if USE(BUN_JSC_ADDITIONS)
+    using Compact = Vector<FiberAwarePackedRefPtr>;
+#else
     using Compact = Vector<PackedRefPtr<UniquedStringImpl>>;
+#endif
     using Inflated = TDZEnvironment;
     using Variables = Variant<Compact, Inflated>;
 

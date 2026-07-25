@@ -157,7 +157,11 @@ ALWAYS_INLINE bool canUseMegamorphicGetByIdExcludingIndex(VM& vm, UniquedStringI
 
 inline bool canUseMegamorphicGetById(VM& vm, UniquedStringImpl* uid)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return !parseIndex(PropertyName(uid)) && canUseMegamorphicGetByIdExcludingIndex(vm, uid);
+#else
     return !parseIndex(*uid) && canUseMegamorphicGetByIdExcludingIndex(vm, uid);
+#endif
 }
 
 inline bool canUseMegamorphicInById(VM& vm, UniquedStringImpl* uid)
@@ -167,7 +171,11 @@ inline bool canUseMegamorphicInById(VM& vm, UniquedStringImpl* uid)
 
 inline bool canUseMegamorphicPutById(VM& vm, UniquedStringImpl* uid)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return !parseIndex(PropertyName(uid)) && uid != vm.propertyNames->underscoreProto;
+#else
     return !parseIndex(*uid) && uid != vm.propertyNames->underscoreProto;
+#endif
 }
 
 bool NODELETE canBeViaGlobalProxy(AccessCase::AccessType);

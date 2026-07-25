@@ -27,6 +27,9 @@
 
 #include "BigIntPrototype.h"
 #include "BrandedStructure.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include "JSArrayBufferView.h"
 #include "JSGlobalObject.h"
 #include "JSObjectInlines.h"
@@ -83,6 +86,26 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
     UncheckedKeyHashSet<UniquedStringImpl*> seenProperties;
 
     for (auto* structure : structures) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!structure->transitionPropertyName() || seenProperties.contains(structure->transitionPropertyName()))
+            continue;
+
+        seenProperties.add(structure->transitionPropertyName());
+
+        switch (structure->transitionKind()) {
+        case TransitionKind::PropertyAddition:
+        case TransitionKind::PropertyAttributeChange:
+            break;
+        case TransitionKind::PropertyDeletion:
+        case TransitionKind::SetBrand:
+            continue;
+        default:
+            ASSERT_NOT_REACHED();
+            break;
+        }
+
+        if (!functor(PropertyTableEntry(structure->transitionPropertyName(), structure->transitionOffset(), structure->transitionPropertyAttributes()))) {
+#else
         if (!structure->m_transitionPropertyName || seenProperties.contains(structure->m_transitionPropertyName.get()))
             continue;
 
@@ -101,6 +124,7 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
         }
 
         if (!functor(PropertyTableEntry(structure->m_transitionPropertyName.get(), structure->transitionOffset(), structure->transitionPropertyAttributes()))) {
+#endif
             if (didFindStructure) {
                 assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
                 tableStructure->m_lock.unlock();
@@ -271,7 +295,11 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
 
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_propertyHash = m_propertyHash ^ uidHash(rep);
+#else
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
+#endif
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
 
     auto [offset, attribute, result] = table->add(vm, PropertyTableEntry(rep, newOffset, attributes));
@@ -429,7 +457,11 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
 
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_propertyHash = m_propertyHash ^ uidHash(rep);
+#else
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
+#endif
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
 
     auto [offset, attributes, result] = table->addAfterFind(vm, PropertyTableEntry(rep, newOffset, newAttributes), WTF::move(findResult));
@@ -481,7 +513,11 @@ inline void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)
     setIsPinnedPropertyTable(true);
     setPropertyTable(vm, table);
     clearPreviousID();
+#if USE(BUN_JSC_ADDITIONS)
+    clearTransitionPropertyName();
+#else
     m_transitionPropertyName = nullptr;
+#endif
 }
 
 ALWAYS_INLINE bool Structure::shouldConvertToPolyProto(const Structure* a, const Structure* b)
@@ -585,7 +621,11 @@ ALWAYS_INLINE StructureTransitionTable::Hash::Key StructureTransitionTable::Hash
     case TransitionKind::ChangePrototype:
         return StructureTransitionTable::Hash::createKey(structure->storedPrototype().isNull() ? nullptr : asObject(structure->storedPrototype()), structure->transitionPropertyAttributes(), structure->transitionKind());
     default:
+#if USE(BUN_JSC_ADDITIONS)
+        return StructureTransitionTable::Hash::createKey(structure->transitionPropertyName(), structure->transitionPropertyAttributes(), structure->transitionKind());
+#else
         return StructureTransitionTable::Hash::createKey(structure->m_transitionPropertyName.get(), structure->transitionPropertyAttributes(), structure->transitionKind());
+#endif
     }
 }
 

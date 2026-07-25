@@ -28,6 +28,10 @@
 #include "Structure.h"
 #include <wtf/TZoneMalloc.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 namespace JSC {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MegamorphicCache);
@@ -92,7 +96,11 @@ public:
             m_holder = (ownProperty) ? JSCell::seenMultipleCalleeObjects() : holder;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr m_uid;
+#else
         RefPtr<UniquedStringImpl> m_uid;
+#endif
         StructureID m_structureID { };
         uint16_t m_epoch { invalidEpoch };
         uint16_t m_offset { 0 };
@@ -117,7 +125,11 @@ public:
             m_reallocating = reallocating;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr m_uid;
+#else
         RefPtr<UniquedStringImpl> m_uid;
+#endif
         StructureID m_oldStructureID { };
         StructureID m_newStructureID { };
         uint16_t m_epoch { invalidEpoch };
@@ -139,7 +151,11 @@ public:
             m_result = !!result;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        FiberAwareRefPtr m_uid;
+#else
         RefPtr<UniquedStringImpl> m_uid;
+#endif
         StructureID m_structureID { };
         uint16_t m_epoch { invalidEpoch };
         uint16_t m_result { false };
@@ -182,7 +198,11 @@ public:
     ALWAYS_INLINE static uint32_t primaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
+#if USE(BUN_JSC_ADDITIONS)
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + uidHash(uid);
+#else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + uid->hash();
+#endif
     }
 
     ALWAYS_INLINE static uint32_t secondaryHash(StructureID structureID, UniquedStringImpl* uid)
@@ -194,7 +214,11 @@ public:
     ALWAYS_INLINE static uint32_t storeCachePrimaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
+#if USE(BUN_JSC_ADDITIONS)
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + uidHash(uid);
+#else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + uid->hash();
+#endif
     }
 
     ALWAYS_INLINE static uint32_t storeCacheSecondaryHash(StructureID structureID, UniquedStringImpl* uid)
@@ -206,7 +230,11 @@ public:
     ALWAYS_INLINE static uint32_t hasCachePrimaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
         uint32_t sid = std::bit_cast<uint32_t>(structureID);
+#if USE(BUN_JSC_ADDITIONS)
+        return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + uidHash(uid);
+#else
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + uid->hash();
+#endif
     }
 
     ALWAYS_INLINE static uint32_t hasCacheSecondaryHash(StructureID structureID, UniquedStringImpl* uid)

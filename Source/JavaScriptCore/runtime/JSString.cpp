@@ -75,6 +75,10 @@ void JSString::dumpToStream(const JSCell* cell, PrintStream& out)
             out.printf("[substring]");
         else
             out.printf("[rope]");
+#if USE(BUN_JSC_ADDITIONS)
+    } else if (isInlineFiber(pointer)) {
+        out.printf("[inline %s]", (pointer & JSRopeString::is8BitInPointer) ? "8" : "16");
+#endif
     } else {
         if (WTF::StringImpl* ourImpl = std::bit_cast<StringImpl*>(pointer)) {
             if (ourImpl->is8Bit())
@@ -95,7 +99,7 @@ size_t JSString::estimatedSize(JSCell* cell, VM& vm)
 {
     JSString* thisObject = asString(cell);
     uintptr_t pointer = thisObject->fiberConcurrently();
-    if (pointer & isRopeInPointer)
+    if (pointer & notStringImplMask)
         return Base::estimatedSize(cell, vm);
     return Base::estimatedSize(cell, vm) + std::bit_cast<StringImpl*>(pointer)->costDuringGC();
 }
@@ -135,9 +139,74 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         }
         return;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlineFiber(pointer))
+        return;
+#endif
     if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer))
         visitor.reportExtraMemoryVisited(impl->costDuringGC());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+const String& JSString::resolveInline(JSGlobalObject* globalObject) const
+{
+    ASSERT(isInline());
+    uintptr_t fiber = m_fiber;
+    unsigned len = inlineLengthFromFiber(fiber);
+    String result = (fiber & JSRopeString::is8BitInPointer)
+        ? String(StringImpl::create(std::span { inlineData8(), len }))
+        : String(StringImpl::create(std::span { inlineData16(), len }));
+    WTF::storeStoreFence();
+    new (&uninitializedValueInternal()) String(WTF::move(result));
+    if (globalObject)
+        getVM(globalObject).heap.reportExtraMemoryAllocated(this, valueInternal().impl()->cost());
+    return valueInternal();
+}
+
+AtomStringImpl* JSString::resolveInlineToAtomString(JSGlobalObject* globalObject) const
+{
+    ASSERT(isInline());
+    uintptr_t fiber = m_fiber;
+    unsigned len = inlineLengthFromFiber(fiber);
+    bool is8Bit = fiber & JSRopeString::is8BitInPointer;
+    // 16-byte inline: consult the fiber-word-keyed atom cache first.
+    VM& vm = globalObject ? getVM(globalObject) : this->vm();
+    if ((is8Bit && len <= maxInlineLength8) || (!is8Bit && len <= maxInlineLength16)) {
+        if (auto* cached = vm.inlineAtomCache.lookup(fiber)) {
+            WTF::storeStoreFence();
+            new (&uninitializedValueInternal()) String(RefPtr { cached });
+            return cached;
+        }
+    }
+    // Look up (or create) the atom directly from the in-cell bytes; no
+    // intermediate non-atom StringImpl is allocated.
+    AtomString atom = is8Bit
+        ? AtomString(std::span { inlineData8(), len })
+        : AtomString(std::span { inlineData16(), len });
+    if ((is8Bit && len <= maxInlineLength8) || (!is8Bit && len <= maxInlineLength16))
+        vm.inlineAtomCache.insert(fiber, atom.impl());
+    size_t sizeToReport = atom.impl()->hasOneRef() ? atom.impl()->cost() : 0;
+    WTF::storeStoreFence();
+    new (&uninitializedValueInternal()) String(atom.releaseImpl());
+    vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+    return static_cast<AtomStringImpl*>(valueInternal().impl());
+}
+
+AtomStringImpl* JSString::resolveInlineToExistingAtomString() const
+{
+    ASSERT(isInline());
+    uintptr_t fiber = m_fiber;
+    unsigned len = inlineLengthFromFiber(fiber);
+    RefPtr<AtomStringImpl> atom = (fiber & JSRopeString::is8BitInPointer)
+        ? AtomStringImpl::lookUp(std::span { inlineData8(), len })
+        : AtomStringImpl::lookUp(std::span { inlineData16(), len });
+    if (!atom)
+        return nullptr;
+    WTF::storeStoreFence();
+    new (&uninitializedValueInternal()) String(WTF::move(atom));
+    return static_cast<AtomStringImpl*>(valueInternal().impl());
+}
+#endif
 
 DEFINE_VISIT_CHILDREN(JSString);
 
@@ -349,6 +418,10 @@ GCOwnedDataScope<const String&> JSString::tryGetValueWithoutGC() const
         // Pass nullptr for the JSGlobalObject so that resolveRope does not throw in the event of an OOM error.
         return { this, static_cast<const JSRopeString*>(this)->resolveRopeWithoutGC() };
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInline())
+        return { this, resolveInline(nullptr) };
+#endif
     return { this, valueInternal() };
 }
 

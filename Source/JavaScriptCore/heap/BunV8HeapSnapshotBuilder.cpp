@@ -22,10 +22,29 @@
 
 #include "DateInstance.h"
 #include "HeapSnapshotBuilder.h"
+#include "InlinePropertyKey.h"
 #include "RegExpObject.h"
 #include "HeapSnapshot.h"
 
 namespace JSC {
+
+// JSObject::analyzeHeap and JSLexicalEnvironment::analyzeHeap pass
+// PropertyTable/SymbolTable keys here; with InlinePropertyKey D.2 those may be
+// fiber-word-tagged pointers. This runs from Heap::didFinishCollection where
+// the thread AtomStringTable is nulled, so decode to a plain String (heap copy,
+// no atom-table lookup) rather than Identifier::string().
+static ALWAYS_INLINE String uidToStringWithoutAtomizing(UniquedStringImpl* uid)
+{
+    if (isInlinePropertyKey(uid)) [[unlikely]] {
+        uintptr_t word = inlinePropertyKeyWord(uid);
+        unsigned len = inlinePropertyKeyLength(word);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+        if (inlinePropertyKeyIs8Bit(word))
+            return String(std::span<const Latin1Character> { bytes + 1, len });
+        return String(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+    }
+    return String(static_cast<StringImpl*>(uid));
+}
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BunV8HeapSnapshotBuilder);
 
@@ -250,7 +269,7 @@ void BunV8HeapSnapshotBuilder::analyzePropertyNameEdge(JSCell* from, JSCell* to,
     edge.fromNodeId = getOrCreateNodeId(from);
     edge.toNodeId = getOrCreateNodeId(to);
     edge.typeIndex = static_cast<unsigned>(V8EdgeType::Property);
-    edge.name = WTF::String(propertyName);
+    edge.name = uidToStringWithoutAtomizing(propertyName);
     m_edges.append(WTF::move(edge));
 }
 
@@ -264,7 +283,7 @@ void BunV8HeapSnapshotBuilder::analyzeVariableNameEdge(JSCell* from, JSCell* to,
     edge.fromNodeId = getOrCreateNodeId(from);
     edge.toNodeId = getOrCreateNodeId(to);
     edge.typeIndex = static_cast<unsigned>(V8EdgeType::Context);
-    edge.name = String(variableName);
+    edge.name = uidToStringWithoutAtomizing(variableName);
 
     m_edges.append(WTF::move(edge));
 }

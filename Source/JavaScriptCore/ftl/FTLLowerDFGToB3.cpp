@@ -4887,9 +4887,17 @@ private:
             slowCases.append(jit.branchIfNotCell(subscriptGPR));
             slowCases.append(jit.branchIfNotString(subscriptGPR));
             jit.loadPtr(CCallHelpers::Address(subscriptGPR, JSString::offsetOfValue()), scratch4GPR);
+#if USE(BUN_JSC_ADDITIONS)
+            if (needsRopeCase)
+                slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, scratch4GPR, CCallHelpers::TrustedImm32(JSString::isRopeInPointer)));
+            auto isInline = jit.branchTestPtr(CCallHelpers::NonZero, scratch4GPR, CCallHelpers::TrustedImm32(JSString::isInlineInPointer));
+            slowCases.append(jit.branchTest32(CCallHelpers::Zero, CCallHelpers::Address(scratch4GPR, StringImpl::flagsOffset()), CCallHelpers::TrustedImm32(StringImpl::flagIsAtom())));
+            isInline.link(&jit);
+#else
             if (needsRopeCase)
                 slowCases.append(jit.branchIfRopeStringImpl(scratch4GPR));
             slowCases.append(jit.branchTest32(CCallHelpers::Zero, CCallHelpers::Address(scratch4GPR, StringImpl::flagsOffset()), CCallHelpers::TrustedImm32(StringImpl::flagIsAtom())));
+#endif
 
             slowCases.append(jit.loadMegamorphicProperty(state->vm(), baseGPR, scratch4GPR, nullptr, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR));
             CCallHelpers::Label doneForSlow = jit.label();
@@ -6230,22 +6238,61 @@ IGNORE_CLANG_WARNINGS_END
                 return;
             }
 
+#if USE(BUN_JSC_ADDITIONS)
+            if (isLikelyInlineString(m_node->child1())) {
+                LValue fiber = m_out.loadPtr(string, m_heaps.JSString_value);
+                speculate(BadType, jsValueValue(string), m_node->child1().node(),
+                    m_out.notEqual(
+                        m_out.bitAnd(fiber, m_out.constIntPtr(JSString::notStringImplMask)),
+                        m_out.constIntPtr(JSString::isInlineInPointer)));
+                setInt32(m_out.bitAnd(
+                    m_out.castToInt32(m_out.lShr(fiber, m_out.constInt32(JSString::inlineLengthShift))),
+                    m_out.constInt32(JSString::inlineLengthMask)));
+                return;
+            }
+#endif
+
             LBasicBlock ropePath = m_out.newBlock();
             LBasicBlock nonRopePath = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
 
             m_out.branch(isRopeString(string, m_node->child1()), rarely(ropePath), usually(nonRopePath));
 
+#if USE(BUN_JSC_ADDITIONS)
+            LBasicBlock realRopePath = m_out.newBlock();
+            LBasicBlock inlinePath = m_out.newBlock();
+
+            LBasicBlock lastNext = m_out.appendTo(ropePath, inlinePath);
+            LValue fiber = m_out.loadPtr(string, m_heaps.JSString_value);
+            m_out.branch(
+                m_out.testNonZeroPtr(fiber, m_out.constIntPtr(JSString::isRopeInPointer)),
+                usually(realRopePath), rarely(inlinePath));
+
+            m_out.appendTo(inlinePath, realRopePath);
+            ValueFromBlock inlineLength = m_out.anchor(m_out.bitAnd(
+                m_out.castToInt32(m_out.lShr(fiber, m_out.constInt32(JSString::inlineLengthShift))),
+                m_out.constInt32(JSString::inlineLengthMask)));
+            m_out.jump(continuation);
+
+            m_out.appendTo(realRopePath, nonRopePath);
+            ValueFromBlock ropeLength = m_out.anchor(m_out.load32NonNegative(string, m_heaps.JSRopeString_length));
+            m_out.jump(continuation);
+#else
             LBasicBlock lastNext = m_out.appendTo(ropePath, nonRopePath);
             ValueFromBlock ropeLength = m_out.anchor(m_out.load32NonNegative(string, m_heaps.JSRopeString_length));
             m_out.jump(continuation);
+#endif
 
             m_out.appendTo(nonRopePath, continuation);
             ValueFromBlock nonRopeLength = m_out.anchor(m_out.load32NonNegative(m_out.loadPtr(string, m_heaps.JSString_value), m_heaps.StringImpl_length));
             m_out.jump(continuation);
 
             m_out.appendTo(continuation, lastNext);
+#if USE(BUN_JSC_ADDITIONS)
+            setInt32(m_out.phi(Int32, inlineLength, ropeLength, nonRopeLength));
+#else
             setInt32(m_out.phi(Int32, ropeLength, nonRopeLength));
+#endif
             return;
         }
 
@@ -11757,10 +11804,12 @@ IGNORE_CLANG_WARNINGS_END
 
         Allocator allocator = allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists);
 
+#if !USE(BUN_JSC_ADDITIONS)
         LValue result = allocateCell(m_out.constIntPtr(allocator.localAllocator()), vm().stringStructure.get(), slowPath);
 
         // This puts nullptr for the first fiber. It makes visitChildren safe even if this JSRopeString is discarded due to the speculation failure in the following path.
         m_out.storePtr(m_out.constIntPtr(JSString::isRopeInPointer), result, m_heaps.JSRopeString_fiber0);
+#endif
 
         auto getFlagsAndLength = [&] (Edge& edge, LValue child) {
             if (JSString* string = edge->dynamicCastConstant<JSString*>()) {
@@ -11777,6 +11826,16 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isRopeString(child, edge), unsure(ropeCase), unsure(notRopeCase));
 
             LBasicBlock lastNext = m_out.appendTo(ropeCase, notRopeCase);
+#if USE(BUN_JSC_ADDITIONS)
+            // Inline small-string child: the rope-layout loads below would read past the
+            // 16-byte inline cell, so defer to operationMakeRope* via slowPath.
+            LBasicBlock realRopeCase = m_out.newBlock();
+            LValue childFiber = m_out.loadPtr(child, m_heaps.JSString_value);
+            m_out.branch(
+                m_out.testNonZeroPtr(childFiber, m_out.constIntPtr(JSString::isRopeInPointer)),
+                usually(realRopeCase), rarely(slowPath));
+            m_out.appendTo(realRopeCase, notRopeCase);
+#endif
             ValueFromBlock flagsForRope = m_out.anchor(m_out.load32NonNegative(child, m_heaps.JSRopeString_flags));
             ValueFromBlock lengthForRope = m_out.anchor(m_out.load32NonNegative(child, m_heaps.JSRopeString_length));
             m_out.jump(continuation);
@@ -11815,6 +11874,22 @@ IGNORE_CLANG_WARNINGS_END
                 flagsAndLength = mergeFlagsAndLength(edges[i], kids[i], flagsAndLength);
             }
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Short all-8-bit result: defer to operationMakeRope* so jsString() can
+        // emit a 16-byte inline cell. Limited to <=7; see DFG compileMakeRope.
+        {
+            LBasicBlock notShortInline = m_out.newBlock();
+            LValue is8Bit = m_out.testNonZero32(flagsAndLength.flags, m_out.constInt32(StringImpl::flagIs8Bit()));
+            LValue shortEnough = m_out.belowOrEqual(flagsAndLength.length, m_out.constInt32(JSString::maxInlineLength8));
+            m_out.branch(m_out.bitAnd(is8Bit, shortEnough), rarely(slowPath), usually(notShortInline));
+            m_out.appendTo(notShortInline);
+        }
+        // All slowPath bails (inline child, short result, length overflow) are
+        // behind us; allocate the rope cell now so it is never wasted.
+        LValue result = allocateCell(m_out.constIntPtr(allocator.localAllocator()), vm().stringStructure.get(), slowPath);
+        m_out.storePtr(m_out.constIntPtr(JSString::isRopeInPointer), result, m_heaps.JSRopeString_fiber0);
+#endif
 
         m_out.storePtr(
             m_out.bitOr(
@@ -12132,6 +12207,40 @@ IGNORE_CLANG_WARNINGS_END
         LValue index = lowInt32(m_node->child2());
 
         LValue stringImpl = m_out.loadPtr(base, m_heaps.JSString_value);
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Match the exact FixupPhase condition that skipped ResolveRope.
+        SpeculatedType pred = m_node->child1()->prediction() & SpecString;
+        if (pred && !(pred & ~SpecStringInline)) {
+            LBasicBlock inline8 = m_out.newBlock();
+            LBasicBlock inline16 = m_out.newBlock();
+            LBasicBlock inlineDone = m_out.newBlock();
+            speculate(BadType, jsValueValue(base), m_node->child1().node(),
+                m_out.notEqual(
+                    m_out.bitAnd(stringImpl, m_out.constIntPtr(JSString::notStringImplMask)),
+                    m_out.constIntPtr(JSString::isInlineInPointer)));
+            LValue inlineLen = m_out.bitAnd(
+                m_out.castToInt32(m_out.lShr(stringImpl, m_out.constInt32(JSString::inlineLengthShift))),
+                m_out.constInt32(JSString::inlineLengthMask));
+            speculate(Uncountable, noValue(), nullptr, m_out.aboveOrEqual(index, inlineLen));
+            m_out.branch(
+                m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
+                unsure(inline8), unsure(inline16));
+            LBasicBlock lastNextI = m_out.appendTo(inline8, inline16);
+            ValueFromBlock ch8 = m_out.anchor(m_out.load8ZeroExt32(
+                m_out.baseIndex(m_heaps.characters8, base, m_out.zeroExtPtr(index), provenValue(m_node->child2()), JSString::offsetOfValue() + 1)));
+            m_out.jump(inlineDone);
+            m_out.appendTo(inline16, inlineDone);
+            ValueFromBlock ch16 = m_out.anchor(m_out.load16ZeroExt32(
+                m_out.baseIndex(m_heaps.characters16, base, m_out.zeroExtPtr(index), provenValue(m_node->child2()), JSString::offsetOfValue() + 2)));
+            m_out.jump(inlineDone);
+            m_out.appendTo(inlineDone, lastNextI);
+            ensureStillAliveHere(base);
+            setInt32(m_out.phi(Int32, ch8, ch16));
+            return;
+        }
+#endif
+
         LValue data = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
 
         if (!m_node->arrayMode().isInBounds()) {
@@ -12178,6 +12287,53 @@ IGNORE_CLANG_WARNINGS_END
         LValue index = lowInt32(m_node->child2());
 
         LValue stringImpl = m_out.loadPtr(base, m_heaps.JSString_value);
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Match the FixupPhase condition that skipped ResolveRope.
+        SpeculatedType pred = m_node->child1()->prediction() & SpecString;
+        if (pred && !(pred & ~SpecStringInline)) {
+            speculate(BadType, jsValueValue(base), m_node->child1().node(),
+                m_out.notEqual(
+                    m_out.bitAnd(stringImpl, m_out.constIntPtr(JSString::notStringImplMask)),
+                    m_out.constIntPtr(JSString::isInlineInPointer)));
+            LValue inlineLen = m_out.bitAnd(
+                m_out.castToInt32(m_out.lShr(stringImpl, m_out.constInt32(JSString::inlineLengthShift))),
+                m_out.constInt32(JSString::inlineLengthMask));
+            speculate(Uncountable, noValue(), nullptr, m_out.aboveOrEqual(index, inlineLen));
+            LValue data16 = m_out.add(base, m_out.constIntPtr(JSString::offsetOfValue() + 2));
+            m_out.branch(
+                m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
+                unsure(is8Bit), unsure(is16Bit));
+
+            LBasicBlock lastNextI = m_out.appendTo(is8Bit, is16Bit);
+            ValueFromBlock c8 = m_out.anchor(m_out.load8ZeroExt32(
+                m_out.baseIndex(m_heaps.characters8, base, m_out.zeroExtPtr(index), provenValue(m_node->child2()), JSString::offsetOfValue() + 1)));
+            m_out.jump(continuation);
+
+            m_out.appendTo(is16Bit, isLeadSurrogate);
+            LValue lead = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, data16, m_out.zeroExtPtr(index), provenValue(m_node->child2())));
+            ValueFromBlock c16 = m_out.anchor(lead);
+            LValue nextIndex = m_out.add(index, m_out.int32One);
+            m_out.branch(m_out.aboveOrEqual(nextIndex, inlineLen), unsure(continuation), unsure(isLeadSurrogate));
+
+            m_out.appendTo(isLeadSurrogate, mayHaveTrailSurrogate);
+            m_out.branch(m_out.notEqual(m_out.bitAnd(lead, m_out.constInt32(0xfffffc00)), m_out.constInt32(0xd800)), unsure(continuation), unsure(mayHaveTrailSurrogate));
+
+            m_out.appendTo(mayHaveTrailSurrogate, hasTrailSurrogate);
+            LValue trail = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, data16, m_out.zeroExtPtr(nextIndex)));
+            m_out.branch(m_out.notEqual(m_out.bitAnd(trail, m_out.constInt32(0xfffffc00)), m_out.constInt32(0xdc00)), unsure(continuation), unsure(hasTrailSurrogate));
+
+            m_out.appendTo(hasTrailSurrogate, continuation);
+            ValueFromBlock cSurr = m_out.anchor(m_out.sub(m_out.add(m_out.shl(lead, m_out.constInt32(10)), trail), m_out.constInt32(U16_SURROGATE_OFFSET)));
+            m_out.jump(continuation);
+
+            m_out.appendTo(continuation, lastNextI);
+            ensureStillAliveHere(base);
+            setInt32(m_out.phi(Int32, c8, c16, cSurr));
+            return;
+        }
+#endif
+
         LValue length;
         if (auto stringLength = tryGetConstantStringLength(m_node->child1()))
             length = m_out.constInt32(*stringLength);
@@ -17506,6 +17662,27 @@ IGNORE_CLANG_WARNINGS_END
         LValue keyAsValue = nullptr;
         switch (m_node->child2().useKind()) {
         case StringUse: {
+#if USE(BUN_JSC_ADDITIONS)
+            LBasicBlock isNonEmptyString = m_out.newBlock();
+            LBasicBlock isNotInline = m_out.newBlock();
+            LBasicBlock isAtomString = m_out.newBlock();
+
+            keyAsValue = lowString(m_node->child2());
+            uniquedStringImpl = m_out.loadPtr(keyAsValue, m_heaps.JSString_value);
+            m_out.branch(isActualRopeStringImplPtr(uniquedStringImpl), rarely(slowCase), usually(isNonEmptyString));
+
+            lastNext = m_out.appendTo(isNonEmptyString, isNotInline);
+            if constexpr (enableIdentifierFiberWords)
+                m_out.branch(isInlineStringImplPtr(uniquedStringImpl), unsure(isAtomString), unsure(isNotInline));
+            else
+                m_out.branch(isInlineStringImplPtr(uniquedStringImpl), rarely(slowCase), usually(isNotInline));
+
+            m_out.appendTo(isNotInline, isAtomString);
+            LValue isNotAtomic = m_out.testIsZero32(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom()));
+            m_out.branch(isNotAtomic, rarely(slowCase), usually(isAtomString));
+
+            m_out.appendTo(isAtomString, slowCase);
+#else
             LBasicBlock isNonEmptyString = m_out.newBlock();
             LBasicBlock isAtomString = m_out.newBlock();
 
@@ -17518,6 +17695,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isNotAtomic, rarely(slowCase), usually(isAtomString));
 
             m_out.appendTo(isAtomString, slowCase);
+#endif
             break;
         }
         case SymbolUse: {
@@ -17531,6 +17709,9 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock isStringCase = m_out.newBlock();
             LBasicBlock notStringCase = m_out.newBlock();
             LBasicBlock isNonEmptyString = m_out.newBlock();
+#if USE(BUN_JSC_ADDITIONS)
+            LBasicBlock isNotInline = m_out.newBlock();
+#endif
             LBasicBlock isSymbolCase = m_out.newBlock();
             LBasicBlock hasUniquedStringImpl = m_out.newBlock();
 
@@ -17540,6 +17721,23 @@ IGNORE_CLANG_WARNINGS_END
             lastNext = m_out.appendTo(isCellCase, isStringCase);
             m_out.branch(isString(keyAsValue), unsure(isStringCase), unsure(notStringCase));
 
+#if USE(BUN_JSC_ADDITIONS)
+            m_out.appendTo(isStringCase, isNonEmptyString);
+            LValue implFromString = m_out.loadPtr(keyAsValue, m_heaps.JSString_value);
+            m_out.branch(isActualRopeStringImplPtr(implFromString), rarely(slowCase), usually(isNonEmptyString));
+
+            m_out.appendTo(isNonEmptyString, isNotInline);
+            ValueFromBlock stringInlineResult = m_out.anchor(implFromString);
+            if constexpr (enableIdentifierFiberWords)
+                m_out.branch(isInlineStringImplPtr(implFromString), unsure(hasUniquedStringImpl), unsure(isNotInline));
+            else
+                m_out.branch(isInlineStringImplPtr(implFromString), rarely(slowCase), usually(isNotInline));
+
+            m_out.appendTo(isNotInline, notStringCase);
+            ValueFromBlock stringResult = m_out.anchor(implFromString);
+            LValue isNotAtomic = m_out.testIsZero32(m_out.load32(implFromString, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom()));
+            m_out.branch(isNotAtomic, rarely(slowCase), usually(hasUniquedStringImpl));
+#else
             m_out.appendTo(isStringCase, isNonEmptyString);
             m_out.branch(isNotRopeString(keyAsValue, m_node->child2()), usually(isNonEmptyString), rarely(slowCase));
 
@@ -17548,6 +17746,7 @@ IGNORE_CLANG_WARNINGS_END
             ValueFromBlock stringResult = m_out.anchor(implFromString);
             LValue isNotAtomic = m_out.testIsZero32(m_out.load32(implFromString, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom()));
             m_out.branch(isNotAtomic, rarely(slowCase), usually(hasUniquedStringImpl));
+#endif
 
             m_out.appendTo(notStringCase, isSymbolCase);
             m_out.branch(isSymbol(keyAsValue), unsure(isSymbolCase), unsure(slowCase));
@@ -17557,7 +17756,11 @@ IGNORE_CLANG_WARNINGS_END
             m_out.jump(hasUniquedStringImpl);
 
             m_out.appendTo(hasUniquedStringImpl, slowCase);
+#if USE(BUN_JSC_ADDITIONS)
+            uniquedStringImpl = m_out.phi(pointerType(), stringInlineResult, stringResult, symbolResult);
+#else
             uniquedStringImpl = m_out.phi(pointerType(), stringResult, symbolResult);
+#endif
             break;
         }
         default:
@@ -17572,7 +17775,15 @@ IGNORE_CLANG_WARNINGS_END
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // uniquedStringImpl may be an inline fiber word (bit 1 set) after the atom-check bypass above.
+        // Branch-free uidHash() = (bits * uidHashMultiplier) >> 32; matches HasOwnPropertyCache::hash().
+        // Option A; not gated on enableIdentifierFiberWords — correct for both reps,
+        // and B3 stays in lockstep with C++ uidHash() under either flag value.
+        LValue hash = m_out.castToInt32(m_out.lShr(m_out.mul(uniquedStringImpl, m_out.constInt64(uidHashMultiplier)), m_out.constInt32(32)));
+#else
         LValue hash = m_out.lShr(m_out.load32(uniquedStringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
+#endif
 
         LValue structureID = m_out.load32(object, m_heaps.JSCell_structureID);
         LValue index = m_out.add(hash, structureID);
@@ -22363,6 +22574,45 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Inline-vs-inline: two inline small strings with matching width are
+        // equal iff their m_fiber words are identical.
+        std::optional<ValueFromBlock> inlineResult;
+        if (!leftAtom && !rightAtom) {
+            LBasicBlock inlineSameWidth = m_out.newBlock();
+            LBasicBlock inlineDispatch = m_out.newBlock();
+            LBasicBlock notBothInline = m_out.newBlock();
+
+            LValue leftFiber = m_out.loadPtr(leftJSString, m_heaps.JSString_value);
+            LValue rightFiber = m_out.loadPtr(rightJSString, m_heaps.JSString_value);
+            LValue xored = m_out.bitXor(leftFiber, rightFiber);
+            m_out.branch(
+                m_out.testNonZeroPtr(m_out.bitAnd(leftFiber, rightFiber), m_out.constIntPtr(JSString::isInlineInPointer)),
+                usually(inlineDispatch), unsure(notBothInline));
+
+            m_out.appendTo(inlineDispatch, inlineSameWidth);
+            // Single-word compare is only sound for 16-byte inline: len <= 7
+            // Latin-1 or len <= 3 UTF-16. Pick the length mask by the AND'd
+            // is8Bit bit (set iff both sides are 8-bit). Also bail on cross-width.
+            LValue ored = m_out.bitOr(leftFiber, rightFiber);
+            LValue anded = m_out.bitAnd(leftFiber, rightFiber);
+            LValue both8Bit = m_out.testNonZeroPtr(anded, m_out.constIntPtr(JSRopeString::is8BitInPointer));
+            LValue bigMask = m_out.select(both8Bit,
+                m_out.constIntPtr(static_cast<uintptr_t>((JSString::inlineLengthMask & ~JSString::maxInlineLength8) << JSString::inlineLengthShift)),
+                m_out.constIntPtr(static_cast<uintptr_t>((JSString::inlineLengthMask & ~JSString::maxInlineLength16) << JSString::inlineLengthShift)));
+            LValue eitherBigOrCrossWidth = m_out.bitOr(
+                m_out.testNonZeroPtr(ored, bigMask),
+                m_out.testNonZeroPtr(xored, m_out.constIntPtr(JSRopeString::is8BitInPointer)));
+            m_out.branch(eitherBigOrCrossWidth, rarely(slowCase), usually(inlineSameWidth));
+
+            m_out.appendTo(inlineSameWidth, notBothInline);
+            inlineResult = m_out.anchor(m_out.isZero64(xored));
+            m_out.jump(continuation);
+
+            m_out.appendTo(notBothInline, leftReadyCase);
+        }
+#endif
+
         if (leftAtom)
             m_out.jump(leftReadyCase);
         else
@@ -22513,6 +22763,10 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
+#if USE(BUN_JSC_ADDITIONS)
+        if (inlineResult)
+            return m_out.phi(Int32, trueResult, falseResult, slowResult, *inlineResult);
+#endif
         return m_out.phi(Int32, trueResult, falseResult, slowResult);
     }
 
@@ -23714,8 +23968,19 @@ IGNORE_CLANG_WARNINGS_END
         LValue ropeLength;
         if (auto stringLength = tryGetConstantStringLength(edge))
             ropeLength = m_out.constInt32(*stringLength);
-        else
+        else {
+#if USE(BUN_JSC_ADDITIONS)
+            // Inline small strings reach here via the widened notStringImplMask test; route them to
+            // the slow switch to avoid reading the (out-of-bounds) rope length.
+            LBasicBlock realRopeBlock = m_out.newBlock();
+            LValue ropeFiber = m_out.loadPtr(string, m_heaps.JSString_value);
+            m_out.branch(
+                m_out.testNonZeroPtr(ropeFiber, m_out.constIntPtr(JSString::isRopeInPointer)),
+                usually(realRopeBlock), rarely(slowBlock));
+            m_out.appendTo(realRopeBlock, slowBlock);
+#endif
             ropeLength = m_out.load32NonNegative(string, m_heaps.JSRopeString_length);
+        }
         m_out.branch(m_out.belowOrEqual(m_out.sub(ropeLength, m_out.constInt32(unlinkedTable.minLength())), m_out.constInt32(unlinkedTable.maxLength() - unlinkedTable.minLength())), unsure(slowBlock), unsure(lowBlock(data->fallThrough.block)));
 
         m_out.appendTo(slowBlock, lastNext);
@@ -25765,6 +26030,16 @@ IGNORE_CLANG_WARNINGS_END
             m_out.constInt32(StringType));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool isLikelyInlineString(Edge edge)
+    {
+        if (!edge)
+            return false;
+        SpeculatedType type = provenType(edge) & SpecString;
+        return type && !(type & ~SpecStringInline);
+    }
+#endif
+
     bool canBeRope(Edge edge)
     {
         if (!edge)
@@ -25773,8 +26048,13 @@ IGNORE_CLANG_WARNINGS_END
         if (!((provenType(edge) & SpecString) & ~SpecStringResolved))
             return false;
         if (JSValue value = provenValue(edge)) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (value.isCell() && value.asCell()->type() == StringType && !asString(value)->isRope() && !asString(value)->isInline())
+                return false;
+#else
             if (value.isCell() && value.asCell()->type() == StringType && !asString(value)->isRope())
                 return false;
+#endif
         }
         String value = edge->tryGetString(m_graph);
         if (!value.isNull()) {
@@ -25788,7 +26068,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (!canBeRope(edge))
             return m_out.booleanFalse;
-        return m_out.testNonZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer));
+        return m_out.testNonZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::notStringImplMask));
     }
 
     std::optional<unsigned> tryGetConstantStringLength(Edge edge)
@@ -25805,8 +26085,20 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (!canBeRope(edge))
             return m_out.booleanTrue;
-        return m_out.testIsZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer));
+        return m_out.testIsZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::notStringImplMask));
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    LValue isInlineStringImplPtr(LValue stringImpl)
+    {
+        return m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSString::isInlineInPointer));
+    }
+
+    LValue isActualRopeStringImplPtr(LValue stringImpl)
+    {
+        return m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSString::isRopeInPointer));
+    }
+#endif
 
     LValue isNotSymbol(LValue cell, SpeculatedType type = SpecFullTop)
     {
@@ -26297,12 +26589,24 @@ IGNORE_CLANG_WARNINGS_END
         if (!m_interpreter.needsTypeCheck(edge, SpecStringIdent | ~SpecString))
             return;
 
+#if USE(BUN_JSC_ADDITIONS)
+        speculate(BadStringType, jsValueValue(string), edge.node(), isActualRopeStringImplPtr(stringImpl));
+        // Inline small strings are SpecStringInline, not SpecStringIdent; downstream callers pointer-compare against
+        // heap AtomStringImpl* (CompareStrictEq StringIdentUse, SwitchString), so OSR-exit here to match DFG.
+        speculate(BadStringType, jsValueValue(string), edge.node(), isInlineStringImplPtr(stringImpl));
+        speculate(
+            BadStringType, jsValueValue(string), edge.node(),
+            m_out.testIsZero32(
+                m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
+                m_out.constInt32(StringImpl::flagIsAtom())));
+#else
         speculate(BadStringType, jsValueValue(string), edge.node(), isRopeString(string));
         speculate(
             BadStringType, jsValueValue(string), edge.node(),
             m_out.testIsZero32(
                 m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
                 m_out.constInt32(StringImpl::flagIsAtom())));
+#endif
         m_interpreter.filter(edge, SpecStringIdent | ~SpecString);
     }
 

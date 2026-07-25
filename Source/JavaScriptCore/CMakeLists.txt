@@ -1339,6 +1339,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/InferredValueInlines.h
     runtime/InitializeThreading.h
     runtime/InlineAttribute.h
+    runtime/InlinePropertyKey.h
+    runtime/InlineStringCache.h
     runtime/Int16Array.h
     runtime/Int32Array.h
     runtime/Int8Array.h
@@ -1534,6 +1536,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSSourceCode.h
     runtime/JSSourceCodeInlines.h
     runtime/JSString.h
+    runtime/JSStringBuilder.h
     runtime/JSStringInlines.h
     runtime/JSStringIterator.h
     runtime/JSStringIteratorInlines.h

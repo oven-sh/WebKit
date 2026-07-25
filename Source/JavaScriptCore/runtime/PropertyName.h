@@ -31,6 +31,10 @@
 #include "PrivateName.h"
 #include <wtf/dtoa.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -72,12 +76,20 @@ public:
 
     bool isSymbol() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return m_impl && uidIsSymbol(m_impl);
+#else
         return m_impl && m_impl->isSymbol();
+#endif
     }
 
     bool isPrivateName() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return m_impl && !isInlinePropertyKey(m_impl) && m_impl->isSymbol() && static_cast<const SymbolImpl*>(m_impl)->isPrivate();
+#else
         return isSymbol() && static_cast<const SymbolImpl*>(m_impl)->isPrivate();
+#endif
     }
 
     UniquedStringImpl* uid() const
@@ -87,15 +99,49 @@ public:
 
     AtomStringImpl* publicName() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_impl)
+            return nullptr;
+        if (isInlinePropertyKey(m_impl)) [[unlikely]] {
+            // Callers (Bun bindings, Lookup.cpp, JSCustom*Function) assume
+            // "not symbol ⇒ non-null". Materialize the atom; the leaked ref
+            // just pins one interned 2..5-char string — pre-fiber behaviour.
+            uintptr_t w = reinterpret_cast<uintptr_t>(m_impl);
+            unsigned len = inlinePropertyKeyLength(w);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&w);
+            RefPtr<AtomStringImpl> atom = inlinePropertyKeyIs8Bit(w)
+                ? AtomStringImpl::add(std::span<const Latin1Character> { bytes + 1, len })
+                : AtomStringImpl::add(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len });
+            return atom.leakRef();
+        }
+        return m_impl->isSymbol() ? nullptr : static_cast<AtomStringImpl*>(m_impl);
+#else
         return (!m_impl || m_impl->isSymbol()) ? nullptr : static_cast<AtomStringImpl*>(m_impl);
+#endif
     }
 
     void dump(PrintStream& out) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_impl) {
+            if (isInlinePropertyKey(m_impl)) {
+                uintptr_t word = reinterpret_cast<uintptr_t>(m_impl);
+                unsigned len = inlinePropertyKeyLength(word);
+                const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+                if (inlinePropertyKeyIs8Bit(word))
+                    out.print(StringView(std::span<const Latin1Character> { bytes + 1, len }));
+                else
+                    out.print(StringView(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len }));
+            } else
+                out.print(m_impl);
+        } else
+            out.print("<null property name>");
+#else
         if (m_impl)
             out.print(m_impl);
         else
             out.print("<null property name>");
+#endif
     }
 
 private:
@@ -115,17 +161,56 @@ inline bool operator==(PropertyName a, PropertyName b)
 
 inline bool operator==(PropertyName a, const char* b)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    auto* uid = a.uid();
+    if (isInlinePropertyKey(uid)) {
+        if (!b)
+            return false;
+        uintptr_t w = reinterpret_cast<uintptr_t>(uid);
+        unsigned len = inlinePropertyKeyLength(w);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&w);
+        if (inlinePropertyKeyIs8Bit(w)) {
+            const Latin1Character* chars = bytes + 1;
+            for (unsigned i = 0; i < len; ++i) {
+                if (!b[i] || static_cast<Latin1Character>(b[i]) != chars[i])
+                    return false;
+            }
+            return !b[len];
+        }
+        const char16_t* chars = reinterpret_cast<const char16_t*>(bytes + 2);
+        for (unsigned i = 0; i < len; ++i) {
+            if (!b[i] || static_cast<char16_t>(static_cast<unsigned char>(b[i])) != chars[i])
+                return false;
+        }
+        return !b[len];
+    }
+    return equal(uid, b);
+#else
     return equal(a.uid(), b);
+#endif
 }
 
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(PropertyName propertyName)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    auto uid = propertyName.uid();
+    if (!uid || uidIsSymbol(uid))
+        return std::nullopt;
+    if (isInlinePropertyKey(uid)) {
+        uintptr_t w = reinterpret_cast<uintptr_t>(uid);
+        if (inlinePropertyKeyIs8Bit(w))
+            return parseIndex(inlinePropertyKeySpan8(w));
+        return std::nullopt;
+    }
+    return parseIndex(*uid);
+#else
     auto uid = propertyName.uid();
     if (!uid)
         return std::nullopt;
     if (uid->isSymbol())
         return std::nullopt;
     return parseIndex(*uid);
+#endif
 }
 
 template<typename CharacterType>
@@ -157,6 +242,39 @@ ALWAYS_INLINE bool isCanonicalNumericIndexString(UniquedStringImpl* propertyName
 {
     if (!propertyName)
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    if (isInlinePropertyKey(propertyName)) {
+        uintptr_t w = reinterpret_cast<uintptr_t>(propertyName);
+        unsigned len = inlinePropertyKeyLength(w);
+        if (!len)
+            return false;
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&w);
+        if (inlinePropertyKeyIs8Bit(w)) {
+            std::span<const Latin1Character> chars { bytes + 1, len };
+            auto fastResult = fastIsCanonicalNumericIndexString(chars);
+            if (fastResult)
+                return *fastResult;
+            double index = jsToNumber(StringView(chars));
+            NumberToStringBuffer buffer;
+            auto out = WTF::numberToStringAndSize(index, buffer);
+            return WTF::equal(chars, byteCast<Latin1Character>(out));
+        }
+        std::span<const char16_t> chars { reinterpret_cast<const char16_t*>(bytes + 2), len };
+        auto fastResult = fastIsCanonicalNumericIndexString(chars);
+        if (fastResult)
+            return *fastResult;
+        double index = jsToNumber(StringView(chars));
+        NumberToStringBuffer buffer;
+        auto out = byteCast<Latin1Character>(WTF::numberToStringAndSize(index, buffer));
+        if (chars.size() != out.size())
+            return false;
+        for (size_t i = 0; i < out.size(); ++i) {
+            if (chars[i] != static_cast<char16_t>(out[i]))
+                return false;
+        }
+        return true;
+    }
+#endif
     if (propertyName->isSymbol())
         return false;
     if (!propertyName->length())

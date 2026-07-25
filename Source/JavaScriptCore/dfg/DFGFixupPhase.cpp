@@ -1160,6 +1160,19 @@ private:
                 ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::OutOfBounds) || node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::InBounds));
             else
                 ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read));
+#if USE(BUN_JSC_ADDITIONS)
+            // For StringCharCodeAt/StringCodePointAt on a monomorphic-inline
+            // profile, skip the ResolveRope insertion so the compile functions
+            // read from the cell bytes directly without a StringImpl.
+            {
+                SpeculatedType pred = node->child1()->prediction() & SpecString;
+                if ((op == StringCharCodeAt || op == StringCodePointAt) && pred && !(pred & ~SpecStringInline)) {
+                    fixEdge<StringUse>(node->child1());
+                    fixEdge<Int32Use>(node->child2());
+                    break;
+                }
+            }
+#endif
             blessArrayOperation(node->child1(), node->child2(), node->child1()); // Rewrite child1 with ResolveRope.
             fixEdge<KnownStringUse>(node->child1());
             fixEdge<Int32Use>(node->child2());
@@ -2636,7 +2649,7 @@ private:
         }
 
         case CheckIdent: {
-            if (node->uidOperand()->isSymbol())
+            if (uidIsSymbol(node->uidOperand()))
                 fixEdge<SymbolUse>(node->child1());
             else
                 fixEdge<StringIdentUse>(node->child1());

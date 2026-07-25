@@ -290,6 +290,10 @@ void JSValue::dumpInContextAssumingStructure(
             out.print("String");
             if (string->isRope())
                 out.print(" (rope)");
+#if USE(BUN_JSC_ADDITIONS)
+            if (string->isInline())
+                out.print(" (inline)");
+#endif
             const StringImpl* impl = string->tryGetValueImpl();
             if (impl) {
                 if (impl->isAtom())

@@ -76,7 +76,15 @@ void JSWebAssemblyModule::finishCreation(VM& vm)
     }
     for (auto& exp : moduleInformation.exports) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+#if USE(BUN_JSC_ADDITIONS)
+        // D.4 coherence: WebAssemblyModuleRecord::initializeExports() looks these
+        // up via Identifier::fromString() which yields a fiber word for 2..5-char
+        // names; key the table with the same canonical representation so the
+        // pointer-identity compare in SymbolTable::Map hits.
+        exportSymbolTable->set(NoLockingNecessary, Identifier::fromString(vm, makeAtomString(exp.field)).impl(), SymbolTableEntry(VarOffset(offset)));
+#else
         exportSymbolTable->set(NoLockingNecessary, makeAtomString(exp.field).impl(), SymbolTableEntry(VarOffset(offset)));
+#endif
     }
 
     m_exportSymbolTable.set(vm, this, exportSymbolTable);

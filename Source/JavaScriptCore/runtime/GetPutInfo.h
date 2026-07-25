@@ -26,6 +26,9 @@
 #pragma once
 
 #include "ECMAMode.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InlinePropertyKey.h"
+#endif
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/UniquedStringImpl.h>
 
@@ -217,7 +220,11 @@ struct ResolveOp {
     JSLexicalEnvironment* lexicalEnvironment;
     WatchpointSet* watchpointSet;
     uintptr_t operand;
+#if USE(BUN_JSC_ADDITIONS)
+    FiberAwareRefPtr importedName;
+#else
     RefPtr<UniquedStringImpl> importedName;
+#endif
 };
 
 class GetPutInfo {

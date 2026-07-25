@@ -318,7 +318,11 @@ struct AbstractModuleRecord::ResolveQuery {
     // The module record is not marked from the GC. But these records are reachable from the JSGlobalObject.
     // So we don't care the reachability to this record.
     AbstractModuleRecord* moduleRecord;
+#if USE(BUN_JSC_ADDITIONS)
+    FiberAwareRefPtr exportName;
+#else
     RefPtr<UniquedStringImpl> exportName;
+#endif
 };
 
 inline unsigned NODELETE AbstractModuleRecord::ResolveQuery::Hash::hash(const ResolveQuery& query)
@@ -636,7 +640,11 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
         // Enqueue the tasks in reverse order.
         for (auto iterator = query.moduleRecord->starExportEntries().rbegin(), end = query.moduleRecord->starExportEntries().rend(); iterator != end; ++iterator) {
+#if USE(BUN_JSC_ADDITIONS)
+            const FiberAwareRefPtr& starModuleName = *iterator;
+#else
             const RefPtr<UniquedStringImpl>& starModuleName = *iterator;
+#endif
             AbstractModuleRecord* importedModuleRecord = query.moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()));
             RETURN_IF_EXCEPTION(scope, false);
             pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::Query });
@@ -1495,16 +1503,40 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
     return index;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static String printableName(UniquedStringImpl* uid)
+{
+    if (isInlinePropertyKey(uid)) {
+        uintptr_t word = reinterpret_cast<uintptr_t>(uid);
+        unsigned len = inlinePropertyKeyLength(word);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&word);
+        if (inlinePropertyKeyIs8Bit(word))
+            return WTF::makeString('\'', StringView(std::span<const Latin1Character> { bytes + 1, len }), '\'');
+        return WTF::makeString('\'', StringView(std::span<const char16_t> { reinterpret_cast<const char16_t*>(bytes + 2), len }), '\'');
+    }
+    if (uid->isSymbol())
+        return uid;
+    return WTF::makeString('\'', StringView(uid), '\'');
+}
+#else
 static String printableName(const RefPtr<UniquedStringImpl>& uid)
 {
     if (uid->isSymbol())
         return uid.get();
     return WTF::makeString('\'', StringView(uid.get()), '\'');
 }
+#endif
 
 static String printableName(const Identifier& ident)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    UniquedStringImpl* impl = ident.impl();
+    if (isInlinePropertyKey(impl))
+        return WTF::makeString('\'', ident.string(), '\'');
+    return printableName(impl);
+#else
     return printableName(ident.impl());
+#endif
 }
 
 ScriptFetchParameters::Type AbstractModuleRecord::moduleType() const

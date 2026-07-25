@@ -47,7 +47,11 @@ void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<S
         moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes), phase);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const FiberAwareRefPtr& localName, const VariableEnvironmentEntry& variable)
+#else
 void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const RefPtr<UniquedStringImpl>& localName, const VariableEnvironmentEntry& variable)
+#endif
 {
     // In the parser, we already marked the variables as Exported and Imported.
     // By leveraging this information, we collect the information that is needed

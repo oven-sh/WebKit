@@ -6062,22 +6062,58 @@ void SpeculativeJIT::compile(Node* node)
         case StringUse: {
             speculateString(node->child2(), keyGPR);
             loadPtr(Address(keyGPR, JSString::offsetOfValue()), implGPR);
+#if USE(BUN_JSC_ADDITIONS)
+            if (canBeRope(node->child2()))
+                slowPath.append(branchIfActualRopeStringImpl(implGPR));
+            if constexpr (enableIdentifierFiberWords) {
+                Jump isInline = branchIfInlineStringImpl(implGPR);
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+                isInline.link(this);
+            } else {
+                // Producer disabled: inline small-string cells must not flow through as a uid.
+                slowPath.append(branchIfInlineStringImpl(implGPR));
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+            }
+#else
             if (canBeRope(node->child2()))
                 slowPath.append(branchIfRopeStringImpl(implGPR));
             slowPath.append(branchTest32(
                 Zero, Address(implGPR, StringImpl::flagsOffset()),
                 TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             break;
         }
         case UntypedUse: {
             slowPath.append(branchIfNotCell(JSValueRegs(keyGPR)));
             auto isNotString = branchIfNotString(keyGPR);
             loadPtr(Address(keyGPR, JSString::offsetOfValue()), implGPR);
+#if USE(BUN_JSC_ADDITIONS)
+            if (canBeRope(node->child2()))
+                slowPath.append(branchIfActualRopeStringImpl(implGPR));
+            if constexpr (enableIdentifierFiberWords) {
+                Jump isInline = branchIfInlineStringImpl(implGPR);
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+                isInline.link(this);
+            } else {
+                // Producer disabled: inline small-string cells must not flow through as a uid.
+                slowPath.append(branchIfInlineStringImpl(implGPR));
+                slowPath.append(branchTest32(
+                    Zero, Address(implGPR, StringImpl::flagsOffset()),
+                    TrustedImm32(StringImpl::flagIsAtom())));
+            }
+#else
             if (canBeRope(node->child2()))
                 slowPath.append(branchIfRopeStringImpl(implGPR));
             slowPath.append(branchTest32(
                 Zero, Address(implGPR, StringImpl::flagsOffset()),
                 TrustedImm32(StringImpl::flagIsAtom())));
+#endif
             auto hasUniquedImpl = jump();
 
             isNotString.link(this);
@@ -6097,8 +6133,18 @@ void SpeculativeJIT::compile(Node* node)
         // So we either get super lucky and use zero for the hash and somehow collide with the entity
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
+#if USE(BUN_JSC_ADDITIONS)
+        // Branch-free uidHash() = (bits * uidHashMultiplier) >> 32; matches
+        // HasOwnPropertyCache::hash(). implGPR is the imul src, preserved.
+        // Option A; not gated on enableIdentifierFiberWords — correct for both reps,
+        // and JIT stays in lockstep with C++ uidHash() under either flag value.
+        move(TrustedImm64(static_cast<int64_t>(uidHashMultiplier)), hashGPR);
+        mul64(implGPR, hashGPR);
+        urshift64(TrustedImm32(32), hashGPR);
+#else
         load32(Address(implGPR, UniquedStringImpl::flagsOffset()), hashGPR);
         urshift32(TrustedImm32(StringImpl::s_flagCount), hashGPR);
+#endif
         load32(Address(objectGPR, JSCell::structureIDOffset()), structureIDGPR);
         add32(structureIDGPR, hashGPR);
         and32(TrustedImm32(HasOwnPropertyCache::mask), hashGPR);
@@ -8451,9 +8497,23 @@ void SpeculativeJIT::compileGetByValWithThisMegamorphic(Node* node)
     slowCases.append(branchIfNotCell(subscriptRegs));
     slowCases.append(branchIfNotString(subscriptRegs.payloadGPR()));
     loadPtr(Address(subscriptRegs.payloadGPR(), JSString::offsetOfValue()), scratch4GPR);
+#if USE(BUN_JSC_ADDITIONS)
+    if (canBeRope(m_graph.child(node, 2)))
+        slowCases.append(branchIfActualRopeStringImpl(scratch4GPR));
+    if constexpr (enableIdentifierFiberWords) {
+        Jump isInline = branchIfInlineStringImpl(scratch4GPR);
+        slowCases.append(branchTest32(Zero, Address(scratch4GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        isInline.link(this);
+    } else {
+        // Producer disabled: inline small-string cells must not flow through as a uid.
+        slowCases.append(branchIfInlineStringImpl(scratch4GPR));
+        slowCases.append(branchTest32(Zero, Address(scratch4GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    }
+#else
     if (canBeRope(m_graph.child(node, 2)))
         slowCases.append(branchIfRopeStringImpl(scratch4GPR));
     slowCases.append(branchTest32(Zero, Address(scratch4GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+#endif
 
     slowCases.append(loadMegamorphicProperty(vm(), baseGPR, scratch4GPR, nullptr, scratch3GPR, scratch1GPR, scratch2GPR, scratch3GPR));
     addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValWithThisMegamorphicGeneric, scratch3GPR, LinkableConstant::globalObject(*this, node), baseGPR, subscriptRegs, thisValueRegs));

@@ -53,7 +53,11 @@ public:
     void fail(std::tuple<ErrorType, String>&& errorMessage) { m_errorMessage = errorMessage; }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    void exportVariable(ModuleProgramNode&, const FiberAwareRefPtr&, const VariableEnvironmentEntry&);
+#else
     void exportVariable(ModuleProgramNode&, const RefPtr<UniquedStringImpl>&, const VariableEnvironmentEntry&);
+#endif
 
     VM& m_vm;
     JSModuleRecord* m_moduleRecord;

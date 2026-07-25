@@ -57,6 +57,23 @@ Identifier Identifier::from(VM& vm, double value)
 
 void Identifier::dump(PrintStream& out) const
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (impl()) {
+        if (isInlinePropertyKey(impl())) {
+            // Avoid string(): dump() runs on JIT compiler threads and must not
+            // materialize the fiber word via the thread-local atom table.
+            out.print(stringWithoutAtomizing());
+            return;
+        }
+        if (uidIsSymbol(impl())) {
+            auto* symbol = static_cast<SymbolImpl*>(impl());
+            if (symbol->isPrivate())
+                out.print("PrivateSymbol.");
+        }
+        out.print(impl());
+    } else
+        out.print("<null identifier>");
+#else
     if (impl()) {
         if (impl()->isSymbol()) {
             auto* symbol = static_cast<SymbolImpl*>(impl());
@@ -66,6 +83,7 @@ void Identifier::dump(PrintStream& out) const
         out.print(impl());
     } else
         out.print("<null identifier>");
+#endif
 }
 
 #ifndef NDEBUG
