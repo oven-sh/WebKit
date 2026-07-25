@@ -85,12 +85,18 @@ struct HandlerInfoBase {
     uint32_t start;
     uint32_t end;
     uint32_t target;
-    uint32_t typeBits : 2; // HandlerType
+    // A full-width field rather than `: 2`: the unused bits of a bitfield are
+    // padding the constructors never write, and UnlinkedHandlerInfo is serialized
+    // bytewise into the bytecode cache, which must be reproducible.
+    uint32_t typeBits { 0 }; // HandlerType
 };
 
 struct UnlinkedHandlerInfo : public HandlerInfoBase {
     UnlinkedHandlerInfo()
     {
+        start = 0;
+        end = 0;
+        target = 0;
     }
 
     UnlinkedHandlerInfo(uint32_t start, uint32_t end, uint32_t target, HandlerType handlerType)
