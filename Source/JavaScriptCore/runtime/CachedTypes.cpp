@@ -208,7 +208,7 @@ private:
     class Page {
     public:
         Page(size_t size)
-            : m_buffer(MallocSpan<uint8_t, VMMalloc>::malloc(size))
+            : m_buffer(MallocSpan<uint8_t, VMMalloc>::zeroedMalloc(size)) // zeroed: alignment padding must be deterministic (blob is hashed/embedded)
         {
         }
 
