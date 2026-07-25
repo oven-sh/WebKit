@@ -338,10 +338,21 @@ class Node
             node.riscLowerMalformedImmediatesRecurse(list, validImmediates)
         }
     end
+
+    def riscLowerMalformedLogicalImmediatesRecurse(list, validImmediates, width)
+        mapChildren {
+            | node |
+            node.riscLowerMalformedLogicalImmediatesRecurse(list, validImmediates, width)
+        }
+    end
 end
 
 class Address
     def riscLowerMalformedImmediatesRecurse(list, validImmediates)
+        self
+    end
+
+    def riscLowerMalformedLogicalImmediatesRecurse(list, validImmediates, width)
         self
     end
 end
@@ -350,10 +361,18 @@ class BaseIndex
     def riscLowerMalformedImmediatesRecurse(list, validImmediates)
         self
     end
+
+    def riscLowerMalformedLogicalImmediatesRecurse(list, validImmediates, width)
+        self
+    end
 end
 
 class AbsoluteAddress
     def riscLowerMalformedImmediatesRecurse(list, validImmediates)
+        self
+    end
+
+    def riscLowerMalformedLogicalImmediatesRecurse(list, validImmediates, width)
         self
     end
 end
@@ -366,6 +385,24 @@ class Immediate
             tmp
         else
             self
+        end
+    end
+
+    # Logical (bitmask) immediates are checked against their unsigned two's-complement
+    # encoding for the operation width so that negative masks like ~7 are recognized.
+    # 32-bit patterns are matched replicated to 64 bits, which is how validImmediates
+    # lists them. The immediate is rewritten in its unsigned form so the assembler
+    # sees the canonical bitmask value.
+    def riscLowerMalformedLogicalImmediatesRecurse(list, validImmediates, width)
+        return self if validImmediates.include? value
+        unsignedValue = value % (1 << width)
+        checkValue = width == 32 ? (unsignedValue | (unsignedValue << 32)) : unsignedValue
+        if validImmediates.include? checkValue
+            Immediate.new(codeOrigin, unsignedValue)
+        else
+            tmp = Tmp.new(codeOrigin, :gpr)
+            list << Instruction.new(codeOrigin, "move", [self, tmp])
+            tmp
         end
     end
 end
@@ -396,15 +433,24 @@ def riscLowerMalformedImmediates(list, validImmediates, validLogicalImmediates)
                     newList << node.riscLowerMalformedImmediatesRecurse(newList, validImmediates)
                 end
             when "muli", "mulp", "mulq"
-                if node.operands[0].is_a? Immediate
+                if node.operands[0].is_a? Immediate and node.operands.size == 2 and
+                        node.operands[0].value >= 2 and (node.operands[0].value & (node.operands[0].value - 1)) == 0
+                    # Strength-reduce multiplication by a power of two into a shift.
+                    shift = node.operands[0].value.bit_length - 1
+                    newOpcode = "lshift" + node.opcode[-1..-1]
+                    newList << Instruction.new(node.codeOrigin, newOpcode, [Immediate.new(node.codeOrigin, shift), node.operands[1]], annotation)
+                elsif node.operands[0].is_a? Immediate
                     tmp = Tmp.new(codeOrigin, :gpr)
                     newList << Instruction.new(node.codeOrigin, "move", [node.operands[0], tmp], annotation)
                     newList << Instruction.new(node.codeOrigin, node.opcode, [tmp] + node.operands[1..-1])
                 else
                     newList << node.riscLowerMalformedImmediatesRecurse(newList, validImmediates)
                 end
-            when "ori", "orh", "orp", "oris", "xori", "xorp", "andi", "andp"
-                newList << node.riscLowerMalformedImmediatesRecurse(newList, validLogicalImmediates)
+            when "ori", "orh", "oris", "xori", "andi"
+                newList << node.riscLowerMalformedLogicalImmediatesRecurse(newList, validLogicalImmediates, 32)
+            when "orp", "xorp", "andp", "orq", "xorq", "andq"
+                width = (node.opcode =~ /p$/ and not $currentSettings["ADDRESS64"]) ? 32 : 64
+                newList << node.riscLowerMalformedLogicalImmediatesRecurse(newList, validLogicalImmediates, width)
             else
                 newList << node.riscLowerMalformedImmediatesRecurse(newList, validImmediates)
             end
