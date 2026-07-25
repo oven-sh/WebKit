@@ -40,6 +40,11 @@ JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_STATIC_
 #define INITIALIZE_BUILTIN_PRIVATE_NAMES(name) SymbolImpl::StaticSymbolImpl name##PrivateName { #name, SymbolImpl::s_flagIsPrivate };
 JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
 JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
+#if USE(BUN_JSC_ADDITIONS)
+#define INITIALIZE_PRIMORDIAL_PRIVATE_NAMES(name, key, kind) INITIALIZE_BUILTIN_PRIVATE_NAMES(name)
+JSC_FOREACH_PRIMORDIAL_NAME(INITIALIZE_PRIMORDIAL_PRIVATE_NAMES)
+#undef INITIALIZE_PRIMORDIAL_PRIVATE_NAMES
+#endif
 #undef INITIALIZE_BUILTIN_PRIVATE_NAMES
 
 SymbolImpl::StaticSymbolImpl dollarVMPrivateName { "$vm", SymbolImpl::s_flagIsPrivate };
@@ -48,6 +53,10 @@ SymbolImpl::StaticSymbolImpl polyProtoPrivateName { "PolyProto", SymbolImpl::s_f
 } // namespace Symbols
 
 #define INITIALIZE_BUILTIN_NAMES_IN_JSC(name) , m_##name(JSC::Identifier::fromString(vm, #name ""_s))
+#if USE(BUN_JSC_ADDITIONS)
+#define INITIALIZE_PRIMORDIAL_NAMES_IN_JSC(name, key, kind) INITIALIZE_BUILTIN_NAMES_IN_JSC(name)
+#define INITIALIZE_PRIMORDIAL_PUBLIC_TO_PRIVATE_ENTRY(name, key, kind) INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY(name)
+#endif
 #define INITIALIZE_BUILTIN_SYMBOLS_IN_JSC(name) \
     , m_##name##Symbol(JSC::Identifier::fromUid(vm, &static_cast<SymbolImpl&>(JSC::Symbols::name##Symbol))) \
     , m_##name##SymbolPrivateIdentifier(JSC::Identifier::fromString(vm, #name ""_s))
@@ -73,6 +82,9 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
     : m_emptyIdentifier(commonIdentifiers->emptyIdentifier)
     JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES_IN_JSC)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_NAMES_IN_JSC)
+#if USE(BUN_JSC_ADDITIONS)
+    JSC_FOREACH_PRIMORDIAL_NAME(INITIALIZE_PRIMORDIAL_NAMES_IN_JSC)
+#endif
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_SYMBOLS_IN_JSC)
     , m_dollarVMName(Identifier::fromString(vm, "$vm"_s))
     , m_dollarVMPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::dollarVMPrivateName)))
@@ -80,6 +92,9 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
 {
     JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)
+#if USE(BUN_JSC_ADDITIONS)
+    JSC_FOREACH_PRIMORDIAL_NAME(INITIALIZE_PRIMORDIAL_PUBLIC_TO_PRIVATE_ENTRY)
+#endif
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY)
     m_privateNameSet.add(static_cast<SymbolImpl*>(m_dollarVMPrivateName.impl()));
 }
@@ -88,6 +103,10 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
 #undef INITIALIZE_BUILTIN_SYMBOLS_IN_JSC
 #undef INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY
 #undef INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY
+#if USE(BUN_JSC_ADDITIONS)
+#undef INITIALIZE_PRIMORDIAL_NAMES_IN_JSC
+#undef INITIALIZE_PRIMORDIAL_PUBLIC_TO_PRIVATE_ENTRY
+#endif
 
 
 using Latin1Buffer = WTF::HashTranslatorCharBuffer<Latin1Character>;

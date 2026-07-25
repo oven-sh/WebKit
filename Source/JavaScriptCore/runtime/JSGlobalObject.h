@@ -135,6 +135,9 @@ enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
 enum class ErrorType : uint8_t;
 enum class LinkTimeConstant : int32_t;
+#if USE(BUN_JSC_ADDITIONS)
+enum class PrimordialHolder : uint8_t;
+#endif
 enum class FunctionConstructionMode : uint8_t;
 enum class JSPromiseRejectionOperation : unsigned;
 
@@ -496,6 +499,10 @@ public:
 #undef DECLARE_TYPED_ARRAY_TYPE_STRUCTURE
 
     FixedVector<LazyProperty<JSGlobalObject, JSCell>> m_linkTimeConstants;
+
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void capturePrimordials(VM&, JSObject* holder, PrimordialHolder);
+#endif
 
     StructureCache m_structureCache;
     WeakGCMap<SymbolTable*, SymbolTable> m_symbolTableCache;

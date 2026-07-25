@@ -415,25 +415,41 @@ static JSValue createProxyProperty(VM& vm, JSObject* object)
 static JSValue createJSONProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return JSONObject::create(vm, global, JSONObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = JSONObject::create(vm, global, JSONObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->capturePrimordials(vm, holder, PrimordialHolder::JSONObject);
+#endif
+    return holder;
 }
 
 static JSValue createMathProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return MathObject::create(vm, global, MathObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = MathObject::create(vm, global, MathObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->capturePrimordials(vm, holder, PrimordialHolder::MathObject);
+#endif
+    return holder;
 }
 
 static JSValue createReflectProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return ReflectObject::create(vm, global, ReflectObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = ReflectObject::create(vm, global, ReflectObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->capturePrimordials(vm, holder, PrimordialHolder::ReflectObject);
+#endif
+    return holder;
 }
 
 static JSValue createAtomicsProperty(VM& vm, JSObject *object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return AtomicsObject::create(vm, global, AtomicsObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = AtomicsObject::create(vm, global, AtomicsObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->capturePrimordials(vm, holder, PrimordialHolder::AtomicsObject);
+#endif
+    return holder;
 }
 
 static JSValue createConsoleProperty(VM& vm, JSObject* object)
@@ -1217,7 +1233,11 @@ void JSGlobalObject::init(VM& vm)
         });
     m_typedArrayProto.initLater(
         [] (const Initializer<JSTypedArrayViewPrototype>& init) {
-            init.set(JSTypedArrayViewPrototype::create(init.vm, init.owner, JSTypedArrayViewPrototype::createStructure(init.vm, init.owner, init.owner->m_objectPrototype.get())));
+            JSTypedArrayViewPrototype* prototype = JSTypedArrayViewPrototype::create(init.vm, init.owner, JSTypedArrayViewPrototype::createStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
+            init.set(prototype);
+#if USE(BUN_JSC_ADDITIONS)
+            init.owner->capturePrimordials(init.vm, prototype, PrimordialHolder::TypedArrayPrototype);
+#endif
 
             // Make sure that the constructor gets initialized, too.
             init.owner->m_typedArraySuperConstructor.get(init.owner);
@@ -1228,6 +1248,9 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype);
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
+#if USE(BUN_JSC_ADDITIONS)
+            init.owner->capturePrimordials(init.vm, constructor, PrimordialHolder::TypedArrayConstructor);
+#endif
         });
 
 #define INIT_TYPED_ARRAY_LATER(type) \
@@ -1255,6 +1278,9 @@ void JSGlobalObject::init(VM& vm)
             init.setStructure(JSDataView::createStructure(init.vm, init.global, init.prototype));
             init.setConstructor(JSDataViewConstructor::create(init.vm, init.global, JSDataViewConstructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()), init.prototype, "DataView"_s));
             init.global->typedArrayStructure(TypeDataView, /* isResizableOrGrowableShared */ true); /* Initialize resizable Structure too */
+#if USE(BUN_JSC_ADDITIONS)
+            init.global->capturePrimordials(init.vm, init.prototype, PrimordialHolder::DataViewPrototype);
+#endif
         });
     m_resizableOrGrowableSharedTypedArrayDataViewStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -1466,18 +1492,28 @@ void JSGlobalObject::init(VM& vm)
 
 #undef CREATE_PROTOTYPE_FOR_SIMPLE_TYPE
 
+#if USE(BUN_JSC_ADDITIONS)
+#define CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS(capitalName) \
+            init.global->capturePrimordials(init.vm, init.prototype, PrimordialHolder::capitalName##Prototype); \
+            init.global->capturePrimordials(init.vm, init.constructor, PrimordialHolder::capitalName##Constructor);
+#else
+#define CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS(capitalName)
+#endif
+
 #define CREATE_PROTOTYPE_FOR_LAZY_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) if (featureFlag) {  \
     m_ ## properName ## Structure.initLater(\
         [] (LazyClassStructure::Initializer& init) { \
             init.setPrototype(capitalName##Prototype::create(init.vm, init.global, capitalName##Prototype::createStructure(init.vm, init.global, init.global->m_ ## prototypeBase ## Prototype.get()))); \
             init.setStructure(instanceType::createStructure(init.vm, init.global, init.prototype)); \
             init.setConstructor(capitalName ## Constructor::create(init.vm, capitalName ## Constructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()), uncheckedDowncast<capitalName ## Prototype>(init.prototype))); \
+            CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS(capitalName) \
         }); \
     }
 
     FOR_EACH_LAZY_BUILTIN_TYPE(CREATE_PROTOTYPE_FOR_LAZY_TYPE)
 
 #undef CREATE_PROTOTYPE_FOR_LAZY_TYPE
+#undef CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS
 
     // Constructors
 
@@ -1919,6 +1955,81 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         RELEASE_ASSERT(is<JSFunction>(hasOwnPropertyFunction));
         m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::hasOwnPropertyFunction)].set(vm, this, uncheckedDowncast<JSFunction>(hasOwnPropertyFunction));
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    capturePrimordials(vm, m_objectPrototype.get(), PrimordialHolder::ObjectPrototype);
+    capturePrimordials(vm, m_objectConstructor.get(), PrimordialHolder::ObjectConstructor);
+    capturePrimordials(vm, m_functionPrototype.get(), PrimordialHolder::FunctionPrototype);
+    capturePrimordials(vm, m_arrayPrototype.get(), PrimordialHolder::ArrayPrototype);
+    capturePrimordials(vm, m_arrayConstructor.get(), PrimordialHolder::ArrayConstructor);
+    capturePrimordials(vm, m_stringPrototype.get(), PrimordialHolder::StringPrototype);
+    capturePrimordials(vm, stringConstructor, PrimordialHolder::StringConstructor);
+    capturePrimordials(vm, m_regExpPrototype.get(), PrimordialHolder::RegExpPrototype);
+    capturePrimordials(vm, m_symbolPrototype.get(), PrimordialHolder::SymbolPrototype);
+    capturePrimordials(vm, symbolConstructor, PrimordialHolder::SymbolConstructor);
+    capturePrimordials(vm, m_bigIntPrototype.get(), PrimordialHolder::BigIntPrototype);
+    capturePrimordials(vm, bigIntConstructor, PrimordialHolder::BigIntConstructor);
+    capturePrimordials(vm, m_promisePrototype.get(), PrimordialHolder::PromisePrototype);
+    capturePrimordials(vm, m_promiseConstructor.get(), PrimordialHolder::PromiseConstructor);
+    capturePrimordials(vm, m_iteratorPrototype.get(), PrimordialHolder::IteratorPrototype);
+    capturePrimordials(vm, m_iteratorConstructor.get(), PrimordialHolder::IteratorConstructor);
+    capturePrimordials(vm, m_arrayIteratorPrototype.get(), PrimordialHolder::ArrayIteratorPrototype);
+    capturePrimordials(vm, m_stringIteratorPrototype.get(), PrimordialHolder::StringIteratorPrototype);
+    capturePrimordials(vm, m_mapIteratorPrototype.get(), PrimordialHolder::MapIteratorPrototype);
+    capturePrimordials(vm, m_setIteratorPrototype.get(), PrimordialHolder::SetIteratorPrototype);
+    capturePrimordials(vm, m_regExpStringIteratorStructure.get()->storedPrototypeObject(), PrimordialHolder::RegExpStringIteratorPrototype);
+    capturePrimordials(vm, m_iteratorHelperPrototype.get(), PrimordialHolder::IteratorHelperPrototype);
+    capturePrimordials(vm, m_wrapForValidIteratorStructure.get()->storedPrototypeObject(), PrimordialHolder::WrapForValidIteratorPrototype);
+    capturePrimordials(vm, m_asyncIteratorPrototype.get(), PrimordialHolder::AsyncIteratorPrototype);
+    capturePrimordials(vm, m_weakObjectRefPrototype.get(), PrimordialHolder::WeakRefPrototype);
+    capturePrimordials(vm, m_finalizationRegistryPrototype.get(), PrimordialHolder::FinalizationRegistryPrototype);
+    capturePrimordials(vm, this, PrimordialHolder::GlobalFunctions);
+    catchScope.assertNoException();
+
+    // Lazy holders (LazyClassStructure / LazyProperty / PropertyCallback) capture
+    // their primordials inside their own init bodies via capturePrimordials(), but
+    // a builtin referencing @MapPrototypeGet can link before anything touches Map.
+    // Give each lazy primordial slot an initLater that forces the holder; the
+    // holder's init body calls capturePrimordials() which .set()s the slot we are
+    // initializing, so the lambda body itself does not call init.set().
+#define JSC_INIT_PRIMORDIAL_LATER(name, key, kind) \
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::name)].initLater(lambda);
+
+#define JSC_REGISTER_LAZY_PRIMORDIALS(ProtoHolder, CtorHolder, ForceExpr) do { \
+        auto lambda = [] (const Initializer<JSCell>& init) { (void)(init.owner->ForceExpr); }; \
+        JSC_FOREACH_PRIMORDIAL_##ProtoHolder(JSC_INIT_PRIMORDIAL_LATER) \
+        JSC_FOREACH_PRIMORDIAL_##CtorHolder(JSC_INIT_PRIMORDIAL_LATER) \
+    } while (0);
+
+    JSC_REGISTER_LAZY_PRIMORDIALS(BooleanPrototype, BooleanConstructor, booleanObjectConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(DatePrototype, DateConstructor, dateConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(ErrorPrototype, ErrorConstructor, errorConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(MapPrototype, MapConstructor, mapConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(NumberPrototype, NumberConstructor, numberObjectConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(SetPrototype, SetConstructor, setConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(WeakMapPrototype, WeakMapConstructor, weakMapConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(WeakSetPrototype, WeakSetConstructor, weakSetConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(JSArrayBufferPrototype, JSArrayBufferConstructor, arrayBufferConstructor())
+    JSC_REGISTER_LAZY_PRIMORDIALS(TypedArrayPrototype, TypedArrayConstructor, m_typedArrayProto.get(init.owner))
+    do {
+        auto lambda = [] (const Initializer<JSCell>& init) { (void)init.owner->typedArrayConstructor(TypeDataView); };
+        JSC_FOREACH_PRIMORDIAL_DataViewPrototype(JSC_INIT_PRIMORDIAL_LATER)
+    } while (0);
+
+#define JSC_REGISTER_CALLBACK_PRIMORDIALS(Holder, Creator) do { \
+        auto lambda = [] (const Initializer<JSCell>& init) { (void)Creator(init.vm, init.owner); }; \
+        JSC_FOREACH_PRIMORDIAL_##Holder(JSC_INIT_PRIMORDIAL_LATER) \
+    } while (0);
+
+    JSC_REGISTER_CALLBACK_PRIMORDIALS(MathObject, createMathProperty)
+    JSC_REGISTER_CALLBACK_PRIMORDIALS(JSONObject, createJSONProperty)
+    JSC_REGISTER_CALLBACK_PRIMORDIALS(ReflectObject, createReflectProperty)
+    JSC_REGISTER_CALLBACK_PRIMORDIALS(AtomicsObject, createAtomicsProperty)
+
+#undef JSC_REGISTER_CALLBACK_PRIMORDIALS
+#undef JSC_REGISTER_LAZY_PRIMORDIALS
+#undef JSC_INIT_PRIMORDIAL_LATER
+#endif
 
 #define INIT_PRIVATE_GLOBAL(funcName, code) \
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::funcName)].initLater([] (const Initializer<JSCell>& init) { \
