@@ -442,6 +442,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpHeapOnLowMemory, false, Normal, "Dump a heap dump when the memory handler is triggered. Use alongside $vm.triggerMemoryPressure() and enableStrongRefTracker."_s) \
     v(Bool, forceCodeBlockToJettisonDueToOldAge, false, Normal, "If true, this means that anytime we can jettison a CodeBlock due to old age, we do."_s) \
     v(Bool, useEagerCodeBlockJettisonTiming, false, Normal, "If true, the time slices for jettisoning a CodeBlock due to old age are shrunk significantly."_s) \
+    v(Double, interpreterThunkTimeToLiveSeconds, 5.0, Normal, "Seconds before an InterpreterThunk CodeBlock is eligible for old-age jettison."_s) \
+    v(Double, baselineJITTimeToLiveSeconds, 15.0, Normal, "Seconds before a BaselineJIT CodeBlock is eligible for old-age jettison."_s) \
+    v(Double, dfgJITTimeToLiveSeconds, 20.0, Normal, "Seconds before a DFGJIT CodeBlock is eligible for old-age jettison."_s) \
+    v(Double, ftlJITTimeToLiveSeconds, 60.0, Normal, "Seconds before an FTLJIT CodeBlock is eligible for old-age jettison."_s) \
     \
     v(Bool, useTypeProfiler, false, Normal, nullptr) \
     v(Bool, useControlFlowProfiler, false, Normal, nullptr) \

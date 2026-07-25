@@ -1289,15 +1289,15 @@ static Seconds NODELETE timeToLive(JITType jitType)
 
     switch (jitType) {
     case JITType::InterpreterThunk:
-        return 5_s;
+        return Seconds(Options::interpreterThunkTimeToLiveSeconds());
     case JITType::BaselineJIT:
         // Effectively 10 additional seconds, since BaselineJIT and
         // InterpreterThunk share a CodeBlock.
-        return 15_s;
+        return Seconds(Options::baselineJITTimeToLiveSeconds());
     case JITType::DFGJIT:
-        return 20_s;
+        return Seconds(Options::dfgJITTimeToLiveSeconds());
     case JITType::FTLJIT:
-        return 60_s;
+        return Seconds(Options::ftlJITTimeToLiveSeconds());
     default:
         return Seconds::infinity();
     }
