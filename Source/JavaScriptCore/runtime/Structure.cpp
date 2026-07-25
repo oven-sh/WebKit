@@ -1169,8 +1169,24 @@ void Structure::startWatchingPropertyForReplacements(VM& vm, PropertyName proper
     startWatchingPropertyForReplacements(vm, get(vm, propertyName));
 }
 
+InlineWatchpointSet& Structure::ensureAnyPropertyReplacementWatchpointSet(VM& vm)
+{
+    ASSERT(!isCompilationThread());
+    if (!hasRareData())
+        allocateRareData(vm);
+    StructureRareData* rareData = this->rareData();
+    if (!rareData->m_anyPropertyReplacedWatchpointEnsured) {
+        rareData->m_anyPropertyReplacedWatchpointEnsured = true;
+        rareData->incrementActiveReplacementWatchpointSet();
+        setIsWatchingReplacement(true);
+    }
+    return rareData->anyPropertyReplacedWatchpointSet();
+}
+
 void Structure::didReplacePropertySlow(PropertyOffset offset)
 {
+    if (auto* rareData = tryRareData())
+        rareData->anyPropertyReplacedWatchpointSet().fireAll(vm(), "Structure property replaced");
     firePropertyReplacementWatchpointSet(vm(), offset, "Property did get replaced");
 }
 
